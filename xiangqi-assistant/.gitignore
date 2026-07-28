@@ -1,6 +1,8 @@
-/target/
+.local/
+target/
 node_modules/
-/.pnpm-store/
-/apps/desktop/dist/
-/apps/desktop/src-tauri/gen/
-/.env
+.idea/
+apps/desktop/dist/
+apps/desktop/node_modules/
+apps/desktop/public/wasm/
+apps/desktop/src-tauri/gen/

@@ -3,7 +3,14 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "scripts": { "dev": "vite --port 1420", "build": "tsc && vite build", "tauri": "tauri" },
+  "scripts": {
+    "wasm:build": "wasm-pack build ../../crates/web-core --target web --out-dir ../../apps/desktop/public/wasm --out-name xiangqi_web_core",
+    "dev": "vite --port 1420",
+    "build": "tsc && vite build",
+    "web:dev": "pnpm wasm:build && vite --port 1420",
+    "web:build": "pnpm wasm:build && pnpm build",
+    "tauri": "tauri"
+  },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",
     "lucide-react": "^0.468.0",

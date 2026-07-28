@@ -3,6 +3,7 @@ resolver = "2"
 members = [
   "crates/xiangqi-core",
   "crates/manual",
+  "crates/web-core",
   "crates/engine-protocol",
   "crates/sync-protocol",
   "crates/local-store",

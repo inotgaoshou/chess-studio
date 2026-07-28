@@ -1,11 +1,13 @@
 use std::path::Path;
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+use tokio::sync::Mutex;
 use tokio::time::timeout;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -151,8 +153,27 @@ pub fn parse_engine_line(line: &str) -> EngineEvent {
 pub struct EngineSession {
     protocol: Protocol,
     child: Child,
-    stdin: ChildStdin,
+    control: EngineControl,
     lines: Lines<BufReader<ChildStdout>>,
+}
+
+#[derive(Clone)]
+pub struct EngineControl {
+    stdin: Arc<Mutex<ChildStdin>>,
+}
+
+impl EngineControl {
+    pub async fn stop(&self) -> Result<(), EngineError> {
+        self.send("stop").await
+    }
+
+    async fn send(&self, command: &str) -> Result<(), EngineError> {
+        let mut stdin = self.stdin.lock().await;
+        stdin.write_all(command.as_bytes()).await?;
+        stdin.write_all(b"\n").await?;
+        stdin.flush().await?;
+        Ok(())
+    }
 }
 
 impl EngineSession {
@@ -173,7 +194,9 @@ impl EngineSession {
         let mut session = Self {
             protocol: Protocol::Uci,
             child,
-            stdin,
+            control: EngineControl {
+                stdin: Arc::new(Mutex::new(stdin)),
+            },
             lines: BufReader::new(stdout).lines(),
         };
 
@@ -196,6 +219,10 @@ impl EngineSession {
         self.protocol
     }
 
+    pub fn control(&self) -> EngineControl {
+        self.control.clone()
+    }
+
     pub async fn configure(&mut self, name: &str, value: &str) -> Result<(), EngineError> {
         let command = match self.protocol {
             Protocol::Uci => format!("setoption name {name} value {value}"),
@@ -215,7 +242,7 @@ impl EngineSession {
     }
 
     pub async fn stop(&mut self) -> Result<(), EngineError> {
-        self.send("stop").await
+        self.control.stop().await
     }
 
     pub async fn next_event(&mut self) -> Result<EngineEvent, EngineError> {
@@ -240,10 +267,7 @@ impl EngineSession {
     }
 
     async fn send(&mut self, command: &str) -> Result<(), EngineError> {
-        self.stdin.write_all(command.as_bytes()).await?;
-        self.stdin.write_all(b"\n").await?;
-        self.stdin.flush().await?;
-        Ok(())
+        self.control.send(command).await
     }
 
     async fn wait_ready(

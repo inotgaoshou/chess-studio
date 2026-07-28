@@ -1,0 +1,14 @@
+{
+  "name": "棋研 · Xiangqi Studio",
+  "short_name": "棋研",
+  "description": "离线打谱、棋谱变例与 Pikafish 云端分析",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#171b1a",
+  "theme_color": "#252b28",
+  "orientation": "any",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

@@ -1,0 +1,19 @@
+[package]
+name = "xiangqi-web-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+uuid = { version = "1.18", features = ["v4", "serde", "js"] }
+wasm-bindgen = "0.2"
+xiangqi-core = { path = "../xiangqi-core" }
+xiangqi-manual = { path = "../manual" }
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"

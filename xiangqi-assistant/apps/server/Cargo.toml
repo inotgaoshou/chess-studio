@@ -10,6 +10,7 @@ argon2 = "0.5"
 axum.workspace = true
 chrono.workspace = true
 dotenvy = "0.15"
+engine-protocol = { path = "../../crates/engine-protocol" }
 jsonwebtoken = { version = "10.3", default-features = false, features = ["rust_crypto"] }
 password-hash = { version = "0.5", features = ["getrandom"] }
 serde.workspace = true
@@ -22,6 +23,7 @@ tower-http = { version = "0.6", features = ["cors", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid.workspace = true
+xiangqi-core = { path = "../../crates/xiangqi-core" }
 
 [[bin]]
 name = "xiangqi-server"

@@ -5,13 +5,18 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Operation {
+    #[serde(alias = "opId")]
     pub op_id: Uuid,
+    #[serde(alias = "deviceId")]
     pub device_id: Uuid,
+    #[serde(alias = "entityId")]
     pub entity_id: Uuid,
+    #[serde(alias = "gameId")]
     pub game_id: Uuid,
     pub kind: OperationKind,
     pub payload: Value,
     pub lamport: u64,
+    #[serde(alias = "createdAt")]
     pub created_at: DateTime<Utc>,
 }
 
@@ -23,6 +28,47 @@ pub enum OperationKind {
     UpdateComment,
     SetMainline,
     DeleteNode,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateGamePayload {
+    pub title: String,
+    pub fen: String,
+    pub root_id: Uuid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AddMovePayload {
+    pub node_id: Uuid,
+    pub parent_id: Uuid,
+    #[serde(rename = "move")]
+    pub move_iccs: String,
+    #[serde(default)]
+    pub order_key: u64,
+    #[serde(default)]
+    pub is_mainline: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateCommentPayload {
+    pub node_id: Uuid,
+    pub comment: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SetMainlinePayload {
+    pub parent_id: Uuid,
+    pub node_id: Uuid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteNodePayload {
+    pub node_id: Uuid,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,4 +92,42 @@ pub struct SequencedOperation {
 pub struct PullResponse {
     pub operations: Vec<SequencedOperation>,
     pub cursor: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn operation_wire_format_remains_compatible_and_accepts_browser_fields() {
+        let operation = Operation {
+            op_id: Uuid::nil(),
+            device_id: Uuid::nil(),
+            entity_id: Uuid::nil(),
+            game_id: Uuid::nil(),
+            kind: OperationKind::CreateGame,
+            payload: serde_json::json!({}),
+            lamport: 1,
+            created_at: Utc::now(),
+        };
+        let value = serde_json::to_value(&operation).unwrap();
+        assert!(value.get("op_id").is_some());
+        assert!(value.get("game_id").is_some());
+        assert!(value.get("created_at").is_some());
+
+        let browser_value = serde_json::json!({
+            "opId": operation.op_id,
+            "deviceId": operation.device_id,
+            "entityId": operation.entity_id,
+            "gameId": operation.game_id,
+            "kind": "create_game",
+            "payload": {},
+            "lamport": 1,
+            "createdAt": operation.created_at,
+        });
+        assert_eq!(
+            serde_json::from_value::<Operation>(browser_value).unwrap(),
+            operation
+        );
+    }
 }

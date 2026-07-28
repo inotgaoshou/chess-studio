@@ -57,7 +57,9 @@ impl ManualTree {
     }
 
     pub fn restore_node(&mut self, node: MoveNode) -> Result<(), ManualError> {
-        self.ensure_parent(node.parent_id)?;
+        if node.parent_id != self.root_id && !self.nodes.contains_key(&node.parent_id) {
+            return Err(ManualError::NodeNotFound);
+        }
         self.next_order = self.next_order.max(node.order_key + 1);
         self.nodes.insert(node.id, node);
         Ok(())
@@ -144,14 +146,20 @@ impl ManualTree {
     }
 
     pub fn remove(&mut self, node_id: Uuid) -> Result<(), ManualError> {
-        let (parent_id, was_mainline) = {
-            let node = self
-                .nodes
-                .get_mut(&node_id)
-                .ok_or(ManualError::NodeNotFound)?;
-            node.deleted = true;
-            (node.parent_id, node.is_mainline)
-        };
+        let node = self.nodes.get(&node_id).ok_or(ManualError::NodeNotFound)?;
+        let (parent_id, was_mainline) = (node.parent_id, node.is_mainline);
+        let mut pending = vec![node_id];
+        while let Some(current) = pending.pop() {
+            pending.extend(
+                self.nodes
+                    .values()
+                    .filter(|node| node.parent_id == current && !node.deleted)
+                    .map(|node| node.id),
+            );
+            if let Some(node) = self.nodes.get_mut(&current) {
+                node.deleted = true;
+            }
+        }
         if was_mainline {
             let next = self
                 .nodes
@@ -160,7 +168,9 @@ impl ManualTree {
                 .min_by_key(|node| node.order_key)
                 .map(|node| node.id);
             if let Some(next) = next {
-                self.nodes.get_mut(&next).unwrap().is_mainline = true;
+                if let Some(node) = self.nodes.get_mut(&next) {
+                    node.is_mainline = true;
+                }
             }
         }
         Ok(())
@@ -258,6 +268,20 @@ mod tests {
         tree.remove(node).unwrap();
         assert!(tree.branches(root).unwrap().is_empty());
         assert!(tree.node(node).unwrap().deleted);
+    }
+
+    #[test]
+    fn removing_a_branch_tombstones_its_descendants() {
+        let mut tree = ManualTree::new();
+        let parent = tree
+            .add_move(tree.root_id(), Move::from_iccs("a0a1").unwrap(), "")
+            .unwrap();
+        let child = tree
+            .add_move(parent, Move::from_iccs("a9a8").unwrap(), "")
+            .unwrap();
+        tree.remove(parent).unwrap();
+        assert!(tree.node(parent).unwrap().deleted);
+        assert!(tree.node(child).unwrap().deleted);
     }
 
     #[test]

@@ -1,27 +1,48 @@
+use std::collections::BTreeMap;
 use std::env;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::{Duration as StdDuration, Instant};
 
 use anyhow::Context;
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use axum::{
     Json, Router,
+    extract::DefaultBodyLimit,
     extract::{Query, State},
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, header},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
 use chrono::{Duration, Utc};
+use engine_protocol::{EngineEvent, EngineSession, SearchLimit};
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use password_hash::{SaltString, rand_core::OsRng};
 use serde::{Deserialize, Serialize};
 use sqlx::{MySql, MySqlPool, Transaction, mysql::MySqlPoolOptions};
-use sync_protocol::{Operation, PullResponse, PushRequest, PushResponse, SequencedOperation};
+use sync_protocol::{
+    AddMovePayload, CreateGamePayload, DeleteNodePayload, Operation, OperationKind, PullResponse,
+    PushRequest, PushResponse, SequencedOperation, SetMainlinePayload, UpdateCommentPayload,
+};
+use tokio::sync::Semaphore;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use uuid::Uuid;
+use xiangqi_core::Board;
 
 #[derive(Clone)]
 struct AppState {
     pool: MySqlPool,
     jwt_secret: String,
+    engine: EngineConfig,
+    engine_slots: Arc<Semaphore>,
+}
+
+#[derive(Clone)]
+struct EngineConfig {
+    path: Option<PathBuf>,
+    threads: u32,
+    hash_mb: u32,
+    timeout: StdDuration,
 }
 
 #[derive(Debug, Serialize)]
@@ -39,6 +60,43 @@ struct Credentials {
 struct AuthResponse {
     user_id: Uuid,
     token: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AnalysisRequest {
+    fen: String,
+    mode: AnalysisMode,
+    value: u64,
+    multi_pv: u32,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum AnalysisMode {
+    Time,
+    Depth,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AnalysisResponse {
+    engine: &'static str,
+    elapsed_ms: u64,
+    lines: Vec<AnalysisLine>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AnalysisLine {
+    depth: Option<u32>,
+    score_cp: Option<i32>,
+    mate: Option<i32>,
+    nps: Option<u64>,
+    time_ms: Option<u64>,
+    multipv: u32,
+    notation: Vec<String>,
+    pv: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -64,6 +122,12 @@ enum ApiError {
     Conflict(String),
     #[error("database error")]
     Database(#[from] sqlx::Error),
+    #[error("analysis service is busy")]
+    EngineBusy,
+    #[error("analysis service is unavailable")]
+    EngineUnavailable,
+    #[error("analysis timed out")]
+    EngineTimeout,
     #[error("internal error")]
     Internal,
 }
@@ -74,6 +138,9 @@ impl IntoResponse for ApiError {
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::Invalid(_) => StatusCode::BAD_REQUEST,
             Self::Conflict(_) => StatusCode::CONFLICT,
+            Self::EngineBusy => StatusCode::TOO_MANY_REQUESTS,
+            Self::EngineUnavailable => StatusCode::SERVICE_UNAVAILABLE,
+            Self::EngineTimeout => StatusCode::GATEWAY_TIMEOUT,
             Self::Database(_) | Self::Internal => StatusCode::INTERNAL_SERVER_ERROR,
         };
         (
@@ -93,6 +160,13 @@ async fn main() -> anyhow::Result<()> {
     let database_url = env::var("DATABASE_URL").context("DATABASE_URL is required")?;
     let jwt_secret = env::var("JWT_SECRET").context("JWT_SECRET is required")?;
     let bind = env::var("BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:8080".into());
+    let engine = EngineConfig {
+        path: env::var_os("PIKAFISH_PATH").map(PathBuf::from),
+        threads: env_value("ENGINE_THREADS", 2).clamp(1, 64),
+        hash_mb: env_value("ENGINE_HASH_MB", 256).clamp(16, 4096),
+        timeout: StdDuration::from_millis(env_value("ENGINE_TIMEOUT_MS", 12_000)),
+    };
+    let max_concurrent = env_value("ENGINE_MAX_CONCURRENT", 2usize).clamp(1, 32);
     let pool = MySqlPoolOptions::new()
         .max_connections(20)
         .connect(&database_url)
@@ -100,23 +174,83 @@ async fn main() -> anyhow::Result<()> {
     sqlx::raw_sql(include_str!("../migrations/0001_initial.sql"))
         .execute(&pool)
         .await?;
-    let app = router(AppState { pool, jwt_secret });
+    let app = router(
+        AppState {
+            pool,
+            jwt_secret,
+            engine,
+            engine_slots: Arc::new(Semaphore::new(max_concurrent)),
+        },
+        cors_layer()?,
+    );
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     tracing::info!(%bind, "xiangqi sync server listening");
     axum::serve(listener, app).await?;
     Ok(())
 }
 
-fn router(state: AppState) -> Router {
+fn router(state: AppState, cors: CorsLayer) -> Router {
     Router::new()
         .route("/health", get(|| async { Json(Health { status: "ok" }) }))
         .route("/api/v1/auth/register", post(register))
         .route("/api/v1/auth/login", post(login))
         .route("/api/v1/sync/push", post(push))
         .route("/api/v1/sync/pull", get(pull))
+        .route("/api/v1/analysis", post(analyze))
+        .layer(DefaultBodyLimit::max(32 * 1024))
         .layer(TraceLayer::new_for_http())
-        .layer(CorsLayer::permissive())
+        .layer(cors)
         .with_state(state)
+}
+
+fn env_value<T>(name: &str, default: T) -> T
+where
+    T: std::str::FromStr,
+{
+    env::var(name)
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(default)
+}
+
+fn cors_layer() -> anyhow::Result<CorsLayer> {
+    let configured = env::var("ALLOWED_ORIGINS")
+        .unwrap_or_else(|_| "http://127.0.0.1:1420,http://localhost:1420".into());
+    let origins: Vec<HeaderValue> = configured
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(allowed_origin)
+        .collect::<Result<_, _>>()?;
+    Ok(CorsLayer::new()
+        .allow_origin(origins)
+        .allow_methods([Method::GET, Method::POST])
+        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE]))
+}
+
+fn allowed_origin(value: &str) -> anyhow::Result<HeaderValue> {
+    let uri: Uri = value
+        .parse()
+        .with_context(|| format!("invalid ALLOWED_ORIGINS entry: {value}"))?;
+    let scheme = uri
+        .scheme_str()
+        .ok_or_else(|| anyhow::anyhow!("origin is missing a scheme: {value}"))?;
+    let host = uri
+        .host()
+        .ok_or_else(|| anyhow::anyhow!("origin is missing a host: {value}"))?;
+    let local_http = scheme == "http" && matches!(host, "localhost" | "127.0.0.1" | "::1");
+    if scheme != "https" && !local_http {
+        anyhow::bail!("non-local ALLOWED_ORIGINS entries must use HTTPS: {value}");
+    }
+    if uri
+        .path_and_query()
+        .is_some_and(|value| value.as_str() != "/")
+    {
+        anyhow::bail!("ALLOWED_ORIGINS entries must not include a path: {value}");
+    }
+    value
+        .parse()
+        .with_context(|| format!("invalid ALLOWED_ORIGINS header value: {value}"))
 }
 
 async fn register(
@@ -249,26 +383,135 @@ async fn pull(
     }))
 }
 
+async fn analyze(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<AnalysisRequest>,
+) -> Result<Json<AnalysisResponse>, ApiError> {
+    authenticated_user(&headers, &state.jwt_secret)?;
+    validate_analysis_request(&request)?;
+    let permit = state
+        .engine_slots
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| ApiError::EngineBusy)?;
+    let timeout = state.engine.timeout;
+    let result = tokio::time::timeout(timeout, run_analysis(&state.engine, &request)).await;
+    drop(permit);
+    match result {
+        Ok(Ok(response)) => Ok(Json(response)),
+        Ok(Err(error)) => {
+            tracing::warn!(%error, "Pikafish analysis failed");
+            Err(ApiError::EngineUnavailable)
+        }
+        Err(_) => Err(ApiError::EngineTimeout),
+    }
+}
+
+fn validate_analysis_request(request: &AnalysisRequest) -> Result<(), ApiError> {
+    Board::from_fen(&request.fen)
+        .map_err(|error| ApiError::Invalid(format!("invalid FEN: {error}")))?;
+    if !(1..=5).contains(&request.multi_pv) {
+        return Err(ApiError::Invalid("multiPv must be between 1 and 5".into()));
+    }
+    match request.mode {
+        AnalysisMode::Time if !(100..=5_000).contains(&request.value) => Err(ApiError::Invalid(
+            "time value must be between 100 and 5000 milliseconds".into(),
+        )),
+        AnalysisMode::Depth if !(1..=30).contains(&request.value) => Err(ApiError::Invalid(
+            "depth value must be between 1 and 30".into(),
+        )),
+        _ => Ok(()),
+    }
+}
+
+async fn run_analysis(
+    config: &EngineConfig,
+    request: &AnalysisRequest,
+) -> Result<AnalysisResponse, String> {
+    let analysis_board = Board::from_fen(&request.fen).map_err(|error| error.to_string())?;
+    let path = config
+        .path
+        .as_ref()
+        .ok_or_else(|| "PIKAFISH_PATH is not configured".to_owned())?;
+    let limit = match request.mode {
+        AnalysisMode::Time => SearchLimit::MoveTime(request.value),
+        AnalysisMode::Depth => SearchLimit::Depth(request.value as u32),
+    };
+    let started = Instant::now();
+    let mut session = EngineSession::launch(path, StdDuration::from_secs(2))
+        .await
+        .map_err(|error| error.to_string())?;
+    session
+        .configure("Threads", &config.threads.to_string())
+        .await
+        .map_err(|error| error.to_string())?;
+    session
+        .configure("Hash", &config.hash_mb.to_string())
+        .await
+        .map_err(|error| error.to_string())?;
+    session
+        .configure("MultiPV", &request.multi_pv.to_string())
+        .await
+        .map_err(|error| error.to_string())?;
+    session
+        .analyze(&request.fen, &[], limit)
+        .await
+        .map_err(|error| error.to_string())?;
+    let mut lines = BTreeMap::new();
+    loop {
+        match session
+            .next_event()
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            EngineEvent::Info(info) if !info.pv.is_empty() => {
+                lines.insert(
+                    info.multipv,
+                    AnalysisLine {
+                        depth: info.depth,
+                        score_cp: info.score_cp,
+                        mate: info.mate,
+                        nps: info.nps,
+                        time_ms: info.time_ms,
+                        multipv: info.multipv,
+                        notation: analysis_board
+                            .chinese_pv_notation(&info.pv)
+                            .unwrap_or_default(),
+                        pv: info.pv,
+                    },
+                );
+            }
+            EngineEvent::BestMove { .. } => break,
+            _ => {}
+        }
+    }
+    session.close().await.map_err(|error| error.to_string())?;
+    Ok(AnalysisResponse {
+        engine: "Pikafish",
+        elapsed_ms: started.elapsed().as_millis() as u64,
+        lines: lines.into_values().collect(),
+    })
+}
+
 async fn persist_operation(
     transaction: &mut Transaction<'_, MySql>,
     user_id: Uuid,
     operation: &Operation,
 ) -> Result<(), ApiError> {
+    validate_operation(operation)?;
     let kind = serde_json::to_value(operation.kind)
         .map_err(|_| ApiError::Internal)?
         .as_str()
         .ok_or(ApiError::Internal)?
         .to_owned();
-    if matches!(operation.kind, sync_protocol::OperationKind::CreateGame) {
-        let title = operation
-            .payload
-            .get("title")
-            .and_then(|value| value.as_str())
-            .unwrap_or("Untitled");
+    if matches!(operation.kind, OperationKind::CreateGame) {
+        let payload: CreateGamePayload = serde_json::from_value(operation.payload.clone())
+            .map_err(|_| ApiError::Invalid("invalid create-game payload".into()))?;
         sqlx::query("INSERT IGNORE INTO games (id, owner_id, title) VALUES (?, ?, ?)")
             .bind(operation.game_id.to_string())
             .bind(user_id.to_string())
-            .bind(title)
+            .bind(payload.title)
             .execute(&mut **transaction)
             .await?;
     }
@@ -290,6 +533,43 @@ async fn persist_operation(
     ).bind(operation.op_id.to_string()).bind(user_id.to_string()).bind(operation.device_id.to_string())
         .bind(operation.entity_id.to_string()).bind(operation.game_id.to_string()).bind(kind).bind(&operation.payload)
         .bind(operation.lamport as i64).bind(operation.created_at).execute(&mut **transaction).await?;
+    Ok(())
+}
+
+fn validate_operation(operation: &Operation) -> Result<(), ApiError> {
+    let entity_matches = match operation.kind {
+        OperationKind::CreateGame => {
+            serde_json::from_value::<CreateGamePayload>(operation.payload.clone())
+                .map_err(|_| ApiError::Invalid("invalid create-game payload".into()))?;
+            operation.entity_id == operation.game_id
+        }
+        OperationKind::AddMove => {
+            let payload: AddMovePayload = serde_json::from_value(operation.payload.clone())
+                .map_err(|_| ApiError::Invalid("invalid add-move payload".into()))?;
+            payload.node_id == operation.entity_id
+        }
+        OperationKind::UpdateComment => {
+            let payload: UpdateCommentPayload =
+                serde_json::from_value(operation.payload.clone())
+                    .map_err(|_| ApiError::Invalid("invalid update-comment payload".into()))?;
+            payload.node_id == operation.entity_id
+        }
+        OperationKind::SetMainline => {
+            let payload: SetMainlinePayload = serde_json::from_value(operation.payload.clone())
+                .map_err(|_| ApiError::Invalid("invalid set-mainline payload".into()))?;
+            payload.node_id == operation.entity_id
+        }
+        OperationKind::DeleteNode => {
+            let payload: DeleteNodePayload = serde_json::from_value(operation.payload.clone())
+                .map_err(|_| ApiError::Invalid("invalid delete-node payload".into()))?;
+            payload.node_id == operation.entity_id
+        }
+    };
+    if !entity_matches {
+        return Err(ApiError::Invalid(
+            "operation entity does not match its payload".into(),
+        ));
+    }
     Ok(())
 }
 
@@ -365,5 +645,70 @@ mod tests {
             })
             .is_err()
         );
+    }
+
+    #[test]
+    fn analysis_limits_are_enforced() {
+        let valid = AnalysisRequest {
+            fen: xiangqi_core::STARTING_FEN.into(),
+            mode: AnalysisMode::Time,
+            value: 1_500,
+            multi_pv: 3,
+        };
+        assert!(validate_analysis_request(&valid).is_ok());
+        let invalid = AnalysisRequest {
+            value: 10_000,
+            multi_pv: 6,
+            ..valid
+        };
+        assert!(validate_analysis_request(&invalid).is_err());
+    }
+
+    #[test]
+    fn cors_requires_https_except_for_local_development() {
+        assert!(allowed_origin("https://chess.example.com").is_ok());
+        assert!(allowed_origin("http://127.0.0.1:1420").is_ok());
+        assert!(allowed_origin("http://localhost:1420").is_ok());
+        assert!(allowed_origin("http://chess.example.com").is_err());
+        assert!(allowed_origin("https://chess.example.com/path").is_err());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn analysis_collects_multi_pv_from_a_uci_engine() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = std::env::temp_dir().join(format!("xiangqi-fake-engine-{}", Uuid::new_v4()));
+        std::fs::write(
+            &path,
+            r#"#!/bin/sh
+while IFS= read -r line; do
+  case "$line" in
+    uci) echo "id name Testfish"; echo "uciok" ;;
+    go*) echo "info depth 8 multipv 1 score cp 42 nodes 10 nps 1000 time 10 pv h2e2 h9g7"; echo "info depth 8 multipv 2 score cp 20 nodes 10 nps 1000 time 10 pv b2e2"; echo "bestmove h2e2" ;;
+    quit) exit 0 ;;
+  esac
+done
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let config = EngineConfig {
+            path: Some(path.clone()),
+            threads: 2,
+            hash_mb: 64,
+            timeout: StdDuration::from_secs(2),
+        };
+        let request = AnalysisRequest {
+            fen: xiangqi_core::STARTING_FEN.into(),
+            mode: AnalysisMode::Depth,
+            value: 8,
+            multi_pv: 2,
+        };
+        let response = run_analysis(&config, &request).await.unwrap();
+        assert_eq!(response.lines.len(), 2);
+        assert_eq!(response.lines[0].score_cp, Some(42));
+        assert_eq!(response.lines[0].notation, ["炮二平五", "马8进7"]);
+        std::fs::remove_file(path).unwrap();
     }
 }

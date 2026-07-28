@@ -205,6 +205,77 @@ impl Board {
         }
     }
 
+    pub fn chinese_move_notation(&self, mv: Move) -> Result<String, ChessError> {
+        self.apply_move(mv)?;
+        let piece = self.piece_at(mv.from).ok_or(ChessError::IllegalMove)?;
+        let piece_name = chinese_piece_name(piece);
+        let same_file = self.same_file_pieces(piece, mv.from.col);
+        let prefix = if same_file.len() > 1 {
+            let index = same_file
+                .iter()
+                .position(|square| *square == mv.from)
+                .ok_or(ChessError::IllegalMove)?;
+            Some(disambiguation_prefix(piece.kind, index, same_file.len()))
+        } else {
+            None
+        };
+
+        let mut notation = String::new();
+        if let Some(prefix) = prefix {
+            notation.push_str(prefix);
+            notation.push_str(piece_name);
+        } else {
+            notation.push_str(piece_name);
+            notation.push_str(file_number(piece.color, mv.from.col));
+        }
+
+        if mv.from.row == mv.to.row {
+            notation.push('平');
+            notation.push_str(file_number(piece.color, mv.to.col));
+            return Ok(notation);
+        }
+
+        let advances = match piece.color {
+            Color::Red => mv.to.row < mv.from.row,
+            Color::Black => mv.to.row > mv.from.row,
+        };
+        notation.push(if advances { '进' } else { '退' });
+        let operand = match piece.kind {
+            PieceKind::Horse | PieceKind::Elephant | PieceKind::Advisor => {
+                file_number(piece.color, mv.to.col)
+            }
+            PieceKind::King | PieceKind::Rook | PieceKind::Cannon | PieceKind::Pawn => {
+                move_number(piece.color, mv.from.row.abs_diff(mv.to.row))
+            }
+        };
+        notation.push_str(operand);
+        Ok(notation)
+    }
+
+    pub fn chinese_pv_notation(&self, moves: &[String]) -> Result<Vec<String>, ChessError> {
+        let mut board = self.clone();
+        let mut notation = Vec::with_capacity(moves.len());
+        for iccs in moves {
+            let mv = Move::from_iccs(iccs)?;
+            notation.push(board.chinese_move_notation(mv)?);
+            board = board.apply_move(mv)?;
+        }
+        Ok(notation)
+    }
+
+    fn same_file_pieces(&self, piece: Piece, col: u8) -> Vec<Square> {
+        let mut squares: Vec<_> = (0..10)
+            .filter_map(|row| {
+                let square = Square { row, col };
+                (self.piece_at(square) == Some(piece)).then_some(square)
+            })
+            .collect();
+        if piece.color == Color::Black {
+            squares.reverse();
+        }
+        squares
+    }
+
     pub fn apply_iccs(&self, value: &str) -> Result<Self, ChessError> {
         self.apply_move(Move::from_iccs(value)?)
     }
@@ -472,6 +543,57 @@ fn symbol_from_piece(piece: Piece) -> char {
     }
 }
 
+fn chinese_piece_name(piece: Piece) -> &'static str {
+    match (piece.color, piece.kind) {
+        (Color::Red, PieceKind::King) => "帅",
+        (Color::Black, PieceKind::King) => "将",
+        (Color::Red, PieceKind::Advisor) => "仕",
+        (Color::Black, PieceKind::Advisor) => "士",
+        (Color::Red, PieceKind::Elephant) => "相",
+        (Color::Black, PieceKind::Elephant) => "象",
+        (_, PieceKind::Horse) => "马",
+        (_, PieceKind::Rook) => "车",
+        (_, PieceKind::Cannon) => "炮",
+        (Color::Red, PieceKind::Pawn) => "兵",
+        (Color::Black, PieceKind::Pawn) => "卒",
+    }
+}
+
+fn disambiguation_prefix(kind: PieceKind, index: usize, count: usize) -> &'static str {
+    match (kind, count, index) {
+        (_, 2, 0) => "前",
+        (_, 2, _) => "后",
+        (PieceKind::Pawn, 3, 0) => "前",
+        (PieceKind::Pawn, 3, 1) => "中",
+        (PieceKind::Pawn, 3, _) => "后",
+        (PieceKind::Pawn, _, 0) => "一",
+        (PieceKind::Pawn, _, 1) => "二",
+        (PieceKind::Pawn, _, 2) => "三",
+        (PieceKind::Pawn, _, 3) => "四",
+        (PieceKind::Pawn, _, _) => "五",
+        (_, _, 0) => "前",
+        (_, _, index) if index + 1 == count => "后",
+        _ => "中",
+    }
+}
+
+fn file_number(color: Color, col: u8) -> &'static str {
+    let number = match color {
+        Color::Red => 9 - col,
+        Color::Black => col + 1,
+    };
+    move_number(color, number)
+}
+
+fn move_number(color: Color, number: u8) -> &'static str {
+    const RED: [&str; 10] = ["", "一", "二", "三", "四", "五", "六", "七", "八", "九"];
+    const BLACK: [&str; 10] = ["", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
+    match color {
+        Color::Red => RED[number as usize],
+        Color::Black => BLACK[number as usize],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -512,5 +634,65 @@ mod tests {
     fn rejects_a_horse_move_when_its_leg_is_blocked() {
         let board = Board::from_fen(STARTING_FEN).unwrap();
         assert_eq!(board.apply_iccs("b0d1"), Err(ChessError::IllegalMove));
+    }
+
+    #[test]
+    fn formats_the_opening_line_with_traditional_chinese_numerals() {
+        let mut board = Board::from_fen(STARTING_FEN).unwrap();
+        for (iccs, notation) in [
+            ("h2e2", "炮二平五"),
+            ("h9g7", "马8进7"),
+            ("h0g2", "马二进三"),
+            ("g6g5", "卒7进1"),
+        ] {
+            let mv = Move::from_iccs(iccs).unwrap();
+            assert_eq!(board.chinese_move_notation(mv).unwrap(), notation);
+            board = board.apply_move(mv).unwrap();
+        }
+    }
+
+    #[test]
+    fn formats_an_engine_pv_as_a_chinese_move_sequence() {
+        let board = Board::from_fen(STARTING_FEN).unwrap();
+        let pv = ["h2e2".to_owned(), "h9g7".to_owned(), "h0g2".to_owned()];
+
+        assert_eq!(
+            board.chinese_pv_notation(&pv).unwrap(),
+            ["炮二平五", "马8进7", "马二进三"]
+        );
+    }
+
+    #[test]
+    fn disambiguates_same_file_rooks_from_the_movers_perspective() {
+        let board = Board::from_fen("4k4/9/9/9/4P4/R8/9/R8/9/4K4 w - - 0 1").unwrap();
+        assert_eq!(
+            board
+                .chinese_move_notation(Move::from_iccs("a4b4").unwrap())
+                .unwrap(),
+            "前车平八"
+        );
+        assert_eq!(
+            board
+                .chinese_move_notation(Move::from_iccs("a2b2").unwrap())
+                .unwrap(),
+            "后车平八"
+        );
+    }
+
+    #[test]
+    fn disambiguates_three_same_file_pawns() {
+        let board = Board::from_fen("4k4/9/P8/P8/P8/4P4/9/9/9/4K4 w - - 0 1").unwrap();
+        for (iccs, notation) in [
+            ("a7a8", "前兵进一"),
+            ("a6b6", "中兵平八"),
+            ("a5b5", "后兵平八"),
+        ] {
+            assert_eq!(
+                board
+                    .chinese_move_notation(Move::from_iccs(iccs).unwrap())
+                    .unwrap(),
+                notation
+            );
+        }
     }
 }
