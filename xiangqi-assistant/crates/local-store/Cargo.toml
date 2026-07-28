@@ -1,0 +1,15 @@
+[package]
+name = "local-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+chrono.workspace = true
+rusqlite = { version = "0.31", features = ["bundled", "uuid"] }
+serde_json.workspace = true
+sync-protocol = { path = "../sync-protocol" }
+thiserror.workspace = true
+uuid.workspace = true
+xiangqi-core = { path = "../xiangqi-core" }
+xiangqi-manual = { path = "../manual" }

@@ -1,0 +1,6 @@
+/target/
+node_modules/
+/.pnpm-store/
+/apps/desktop/dist/
+/apps/desktop/src-tauri/gen/
+/.env
