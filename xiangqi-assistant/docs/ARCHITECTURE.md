@@ -12,6 +12,8 @@ Web/PWA 通过 `xiangqi-web-core` 的 wasm-bindgen API 复用同一套 `xiangqi-
 
 桌面端直接启动本地 Pikafish。Web 端调用要求 JWT 的 `POST /api/v1/analysis`，服务端为每次请求创建独立引擎进程，并用信号量、超时、固定时间/固定深度范围和 MultiPV 上限约束资源。移动端离线时不发起新分析，只读取 IndexedDB 中已有缓存。
 
+自动分析由前端监听当前棋谱节点变化触发。新局面到来时先停止仍在运行的旧搜索，并只排队最新节点；自动模式不会使用无限搜索。候选线路由 Rust 按当前 FEN 逐着转换为中文记谱，前端按红黑回合排版。趋势分数统一换算为红方视角，并复用 SQLite 中各节点的最新主线路分数。
+
 ## 同步
 
 桌面端从 SQLite 读取未上传操作，携带 JWT 调用 `POST /api/v1/sync/push`。服务端按 `op_id` 幂等插入 MySQL 并分配递增 `sequence_id`。桌面端再调用 `GET /api/v1/sync/pull?cursor=N`，在同一 SQLite 事务中将远端操作投影到棋谱、保存操作日志并推进游标；当前打开的棋谱随后从本地投影重新加载。

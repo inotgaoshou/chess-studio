@@ -8,6 +8,7 @@
 - Rust 中国象棋规则、FEN、ICCS、将军与将帅照面校验
 - UUID 棋谱树、节点导航、同级变例、评论、主线切换和 tombstone 删除
 - UCI/UCCI 自动握手、MultiPV、固定时间/深度/无限分析与停止控制
+- 落子与节点切换后的自动分析、中文候选棋谱、红方视角优劣分和历史趋势
 - SQLite 本地棋谱、引擎配置、分析结果、远端操作投影和幂等 outbox
 - 实验中的移动 Web/PWA，使用 Rust/WASM 棋规和 IndexedDB 离线打谱
 - Axum + MySQL 8.0 的注册、登录、JWT、同步和服务端 Pikafish 分析

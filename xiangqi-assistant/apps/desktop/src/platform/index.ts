@@ -67,7 +67,7 @@ class DesktopPlatform implements ChessPlatform {
       multipv: options.multipv,
     });
   }
-  stopAnalysis() { return invoke<boolean>("stop_analysis"); }
+  stopAnalysis(discardResult = false) { return invoke<boolean>("stop_analysis", { discardResult }); }
   loadSavedAnalysis() { return invoke<AnalysisLine[]>("get_saved_analysis"); }
   synchronize(serverUrl: string, token: string) { return invoke<SyncResult>("sync_now", { serverUrl, token }); }
 }
@@ -313,4 +313,4 @@ class WebPlatform implements ChessPlatform {
 
 const tauriAvailable = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 export const chessPlatform: ChessPlatform = tauriAvailable ? new DesktopPlatform() : new WebPlatform();
-export type { AnalysisLine, AnalysisOptions, BoardState, ChessPlatform, GameSummary, MoveItem, Piece, SyncResult } from "./types";
+export type { AnalysisLine, AnalysisOptions, BoardState, ChessPlatform, GameSummary, MoveItem, Piece, Side, SyncResult } from "./types";

@@ -17,10 +17,12 @@ import {
   Save,
   Settings2,
   Square,
+  TrendingUp,
   Trash2,
   Zap,
 } from "lucide-react";
 import { chessPlatform, type AnalysisLine, type BoardState, type GameSummary, type MoveItem, type Piece } from "./platform";
+import { positionEvaluation, pvMoveRows, trendPoints } from "./analysisView";
 
 
 const startingFen = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1";
@@ -53,6 +55,14 @@ const pieceCode: Record<string, string> = {
   pawn: "p",
 };
 const analysisArrowColors = ["#53b848", "#c5438c", "#d0b52d"];
+
+function initialAutoAnalysis() {
+  try {
+    return localStorage.getItem("xiangqi:auto-analysis") !== "false";
+  } catch {
+    return true;
+  }
+}
 
 function normalizeBoardState(value?: Partial<BoardState> | null): BoardState {
   return {
@@ -114,6 +124,8 @@ export default function App() {
   const [threads, setThreads] = useState(2);
   const [hashMb, setHashMb] = useState(256);
   const [multipv, setMultipv] = useState(3);
+  const [autoAnalyze, setAutoAnalyze] = useState(initialAutoAnalysis);
+  const [autoRetry, setAutoRetry] = useState(0);
   const [analysisBusy, setAnalysisBusy] = useState(false);
   const [syncBusy, setSyncBusy] = useState(false);
   const [comment, setComment] = useState("");
@@ -123,6 +135,10 @@ export default function App() {
   const [mobilePanel, setMobilePanel] = useState<"board" | "library" | "analysis" | "settings">("board");
   const [online, setOnline] = useState(typeof navigator === "undefined" ? true : navigator.onLine);
   const boardRevision = useRef(0);
+  const analysisLoadRevision = useRef(0);
+  const boardRef = useRef<BoardState>(fallback);
+  const analysisBusyRef = useRef(false);
+  const pendingAutoAnalysis = useRef(false);
 
   useEffect(() => {
     void chessPlatform.initialize()
@@ -158,9 +174,33 @@ export default function App() {
     setComment(current?.comment ?? "");
   }, [board.currentNode, board.history]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem("xiangqi:auto-analysis", String(autoAnalyze));
+    } catch {
+      // Preference persistence is optional in restricted browser contexts.
+    }
+  }, [autoAnalyze]);
+
+  useEffect(() => {
+    if (!autoAnalyze) return;
+    if (chessPlatform.kind === "desktop" && !enginePath.trim()) return;
+    if (chessPlatform.kind === "web" && (!online || !token.trim())) return;
+    if (analysisBusyRef.current) {
+      pendingAutoAnalysis.current = true;
+      setNotice("局面已更新，正在切换自动分析…");
+      void chessPlatform.stopAnalysis(true).catch(() => undefined);
+      return;
+    }
+    const timer = window.setTimeout(() => void runAnalysis(true), 180);
+    return () => window.clearTimeout(timer);
+  }, [autoAnalyze, autoRetry, board.currentNode, board.fen, enginePath, online, serverUrl, token]);
+
   const pieceMap = useMemo(() => new Map(board.pieces.map((piece) => [`${piece.row}-${piece.col}`, piece])), [board.pieces]);
   const cells = useMemo(() => Array.from({ length: 90 }, (_, index) => ({ row: Math.floor(index / 9), col: index % 9 })), []);
   const lastMove = board.history.at(-1);
+  const evaluation = useMemo(() => positionEvaluation(board, analysis), [analysis, board]);
+  const evaluationTrend = useMemo(() => trendPoints(evaluation?.samples ?? []), [evaluation]);
   const analysisArrows = useMemo(() => analysis
     .slice()
     .sort((left, right) => left.multipv - right.multipv)
@@ -212,21 +252,38 @@ export default function App() {
     }
   }
 
-  async function runAnalysis() {
-    if (chessPlatform.kind === "desktop" && !enginePath.trim()) {
-      setNotice("未找到 Pikafish，请填写引擎路径");
+  async function runAnalysis(automatic = false) {
+    if (analysisBusyRef.current) {
+      if (automatic) {
+        pendingAutoAnalysis.current = true;
+        setNotice("局面已更新，正在切换自动分析…");
+        await chessPlatform.stopAnalysis(true).catch(() => undefined);
+      }
       return;
     }
+    if (chessPlatform.kind === "desktop" && !enginePath.trim()) {
+      if (!automatic) setNotice("未找到 Pikafish，请填写引擎路径");
+      return;
+    }
+    if (chessPlatform.kind === "web" && (!online || !token.trim())) {
+      if (!automatic) setNotice(online ? "服务端分析需要先填写登录令牌" : "当前离线，无法启动云端分析");
+      return;
+    }
+    analysisBusyRef.current = true;
+    analysisLoadRevision.current += 1;
     setAnalysisBusy(true);
-    setNotice("Pikafish 正在计算…");
-    const analyzedFen = board.fen;
+    setNotice(automatic ? "Pikafish 正在自动分析…" : "Pikafish 正在计算…");
+    const currentBoard = boardRef.current;
+    const analyzedFen = currentBoard.fen;
     const analyzedRevision = boardRevision.current;
+    const effectiveMode = automatic && searchMode === "infinite" ? "time" : searchMode;
+    const effectiveValue = automatic && searchMode === "infinite" ? 1500 : searchValue;
     try {
       const result = await chessPlatform.analyze({
         enginePath,
         fen: analyzedFen,
-        searchMode,
-        searchValue,
+        searchMode: effectiveMode,
+        searchValue: effectiveValue,
         threads,
         hashMb,
         multipv,
@@ -234,20 +291,26 @@ export default function App() {
         token,
       });
       if (boardRevision.current !== analyzedRevision) {
-        setNotice("原局面分析已保存；当前棋盘已变化，未覆盖当前候选线");
+        setNotice("原局面分析已结束；当前棋盘已变化，未覆盖当前候选线");
         return;
       }
       setAnalysis(result);
       if (chessPlatform.kind === "desktop") applyBoard(await chessPlatform.initialize());
-      setNotice("分析完成并已保存");
+      setNotice(automatic ? "自动分析完成并已保存" : "分析完成并已保存");
     } catch (error) {
       setNotice(friendlyError(error));
     } finally {
+      analysisBusyRef.current = false;
       setAnalysisBusy(false);
+      if (pendingAutoAnalysis.current) {
+        pendingAutoAnalysis.current = false;
+        setAutoRetry((value) => value + 1);
+      }
     }
   }
 
   async function stopAnalysis() {
+    pendingAutoAnalysis.current = false;
     try {
       await chessPlatform.stopAnalysis();
       setNotice("正在停止 Pikafish");
@@ -259,15 +322,23 @@ export default function App() {
   function applyBoard(value?: Partial<BoardState> | null) {
     const next = normalizeBoardState(value);
     boardRevision.current += 1;
+    boardRef.current = next;
     setBoard(next);
     setFenInput(next.fen);
   }
 
   async function loadSavedAnalysis(fen = board.fen) {
+    const loadRevision = ++analysisLoadRevision.current;
+    const expectedBoardRevision = boardRevision.current;
     try {
-      setAnalysis(await chessPlatform.loadSavedAnalysis(fen));
+      const saved = await chessPlatform.loadSavedAnalysis(fen);
+      if (loadRevision === analysisLoadRevision.current && expectedBoardRevision === boardRevision.current && boardRef.current.fen === fen) {
+        setAnalysis(saved);
+      }
     } catch {
-      // The browser preview has no Tauri command bridge.
+      if (loadRevision === analysisLoadRevision.current && expectedBoardRevision === boardRevision.current) {
+        setAnalysis([]);
+      }
     }
   }
 
@@ -482,7 +553,13 @@ export default function App() {
           <section className="engine-control">
             <div className="engine-heading">
               <div><Activity size={16}/><strong>{chessPlatform.kind === "web" ? "云端 Pikafish" : "Pikafish 引擎"}</strong></div>
-              <span className={analysisBusy ? "running" : ""}>{analysisBusy ? "分析中" : chessPlatform.kind === "web" ? online ? "在线" : "离线" : enginePath ? "就绪" : "未配置"}</span>
+              <div className="engine-heading-actions">
+                <label className="auto-analysis-toggle" title="每次落子或切换棋谱节点后自动分析">
+                  <input type="checkbox" checked={autoAnalyze} onChange={(event) => setAutoAnalyze(event.target.checked)}/>
+                  <span aria-hidden="true"/><strong>自动</strong>
+                </label>
+                <span className={`engine-state ${analysisBusy ? "running" : ""}`}>{analysisBusy ? "分析中" : chessPlatform.kind === "web" ? online ? "在线" : "离线" : enginePath ? "就绪" : "未配置"}</span>
+              </div>
             </div>
             {chessPlatform.kind === "desktop" && <>
               <label className="path-field">引擎路径<input id="engine-path" value={enginePath} onChange={(event) => setEnginePath(event.target.value)} placeholder="自动检测或输入 pikafish 路径" /></label>
@@ -505,16 +582,55 @@ export default function App() {
           </section>
 
           <section className="variations">
+            {evaluation && (
+              <div className="position-evaluation">
+                <div className="evaluation-heading">
+                  <span><TrendingUp size={13}/>局面趋势</span>
+                  <strong>{evaluation.label}</strong>
+                </div>
+                <div className="evaluation-score-row">
+                  <strong>{evaluation.scoreText}</strong>
+                  <span>{evaluation.deltaText ?? "当前局面基准"}</span>
+                  <small>{evaluation.detail}</small>
+                </div>
+                <div className="evaluation-balance" title={`红方占比 ${evaluation.redShare.toFixed(0)}%`}>
+                  <span className="red-label">红</span>
+                  <div><i style={{ width: `${evaluation.redShare}%` }}/></div>
+                  <span className="black-label">黑</span>
+                </div>
+                {evaluationTrend.length > 0 && (
+                  <svg className="trend-chart" viewBox="0 0 300 56" preserveAspectRatio="none" role="img" aria-label="历史局面分数趋势">
+                    <line x1="10" y1="28" x2="290" y2="28"/>
+                    <polyline points={evaluationTrend.map((point) => `${point.x},${point.y}`).join(" ")}/>
+                    {evaluationTrend.map((point, index) => (
+                      <circle key={`${point.label}-${index}`} cx={point.x} cy={point.y} r={index === evaluationTrend.length - 1 ? 3.5 : 2.2}>
+                        <title>{point.label}：{point.scoreCp > 0 ? "+" : ""}{(point.scoreCp / 100).toFixed(2)}</title>
+                      </circle>
+                    ))}
+                  </svg>
+                )}
+              </div>
+            )}
             <div className="section-title"><strong>候选线路</strong><span>MultiPV {multipv}</span></div>
             <div className="analysis-lines">
               {analysis.length === 0
                 ? <div className="empty-analysis"><Activity size={24}/><strong>等待分析</strong><span>启动 Pikafish 后显示候选线路</span></div>
-                : analysis.map((line) => (
-                  <article className="pv-line" key={line.multipv} style={{ "--pv-color": analysisArrowColors[line.multipv - 1] ?? "transparent" } as CSSProperties}>
-                    <div className="pv-meta"><span>PV {line.multipv}</span><strong>{line.mate != null ? `杀 ${line.mate}` : `${((line.scoreCp ?? 0) / 100).toFixed(2)}`}</strong><small>深度 {line.depth ?? "-"} · {formatNps(line.nps)} NPS · {((line.timeMs ?? 0) / 1000).toFixed(1)}s</small></div>
-                    <p title={`ICCS: ${line.pv.join(" ")}`}>{line.notation?.length ? line.notation.join("  ") : line.pv.join("  ")}</p>
-                  </article>
-                ))}
+                : analysis.map((line) => {
+                  const rows = pvMoveRows(line, board.sideToMove, board.fen);
+                  return (
+                    <article className="pv-line" key={line.multipv} style={{ "--pv-color": analysisArrowColors[line.multipv - 1] ?? "transparent" } as CSSProperties} title={`ICCS: ${line.pv.join(" ")}`}>
+                      <div className="pv-meta"><span>PV {line.multipv}</span><strong>{line.mate != null ? `杀 ${line.mate}` : `${((line.scoreCp ?? 0) / 100).toFixed(2)}`}</strong><small>深度 {line.depth ?? "-"} · {formatNps(line.nps)} NPS · {((line.timeMs ?? 0) / 1000).toFixed(1)}s</small></div>
+                      <div className="pv-move-table" role="table" aria-label={`候选线路 ${line.multipv}`}>
+                        <div className="pv-table-head" role="row"><span>回合</span><span>红方</span><span>黑方</span></div>
+                        {rows.map((row) => (
+                          <div className="pv-table-row" role="row" key={row.number}>
+                            <span role="cell">{row.number}</span><strong role="cell">{row.red ?? ""}</strong><strong role="cell">{row.black ?? ""}</strong>
+                          </div>
+                        ))}
+                      </div>
+                    </article>
+                  );
+                })}
             </div>
           </section>
 

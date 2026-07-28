@@ -1,10 +1,11 @@
 export type Piece = { row: number; col: number; color: "red" | "black"; kind: string; label: string };
 export type MoveSquare = { row: number; col: number };
+export type Side = "红方" | "黑方";
 export type MoveItem = {
   id: string;
   iccs: string;
   notation: string;
-  movedBy: "红方" | "黑方";
+  movedBy: Side;
   from: MoveSquare;
   to: MoveSquare;
   scoreCp?: number;
@@ -14,7 +15,7 @@ export type MoveItem = {
 };
 export type BoardState = {
   fen: string;
-  sideToMove: string;
+  sideToMove: Side;
   status: string;
   pieces: Piece[];
   history: MoveItem[];
@@ -58,7 +59,7 @@ export interface ChessPlatform {
   setMainline(nodeId: string): Promise<Partial<BoardState>>;
   deleteNode(nodeId: string): Promise<Partial<BoardState>>;
   analyze(options: AnalysisOptions): Promise<AnalysisLine[]>;
-  stopAnalysis(): Promise<boolean>;
+  stopAnalysis(discardResult?: boolean): Promise<boolean>;
   loadSavedAnalysis(fen: string): Promise<AnalysisLine[]>;
   synchronize(serverUrl: string, token: string): Promise<SyncResult>;
 }

@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use std::time::Instant;
 
@@ -31,6 +32,7 @@ struct AppModel {
 struct DesktopState {
     model: Mutex<AppModel>,
     engine: tokio::sync::Mutex<Option<EngineControl>>,
+    analysis_generation: AtomicU64,
 }
 
 #[derive(Serialize)]
@@ -339,6 +341,7 @@ async fn analyze_position(
     multipv: u32,
     state: State<'_, DesktopState>,
 ) -> Result<Vec<AnalysisLine>, String> {
+    let analysis_generation = state.analysis_generation.load(Ordering::SeqCst);
     let analysis_board = Board::from_fen(&fen).map_err(|error| error.to_string())?;
     let (analysis_game_id, analysis_node_id) = {
         let model = state
@@ -436,6 +439,9 @@ async fn analyze_position(
         .store
         .save_engine_profile(engine_name, &engine_path, protocol_name(protocol))
         .map_err(|error| error.to_string())?;
+    if state.analysis_generation.load(Ordering::SeqCst) != analysis_generation {
+        return Ok(lines);
+    }
     let config_hash =
         format!("{search_mode}:{search_value}:threads:{threads}:hash:{hash_mb}:multipv:{multipv}");
     let primary = lines.first();
@@ -506,7 +512,13 @@ fn pikafish_candidates(base: &Path) -> Vec<PathBuf> {
 }
 
 #[tauri::command]
-async fn stop_analysis(state: State<'_, DesktopState>) -> Result<bool, String> {
+async fn stop_analysis(
+    discard_result: bool,
+    state: State<'_, DesktopState>,
+) -> Result<bool, String> {
+    if discard_result {
+        state.analysis_generation.fetch_add(1, Ordering::SeqCst);
+    }
     let control = state.engine.lock().await.clone();
     if let Some(control) = control {
         control.stop().await.map_err(|error| error.to_string())?;
@@ -866,6 +878,7 @@ fn main() {
                     store,
                 }),
                 engine: tokio::sync::Mutex::new(None),
+                analysis_generation: AtomicU64::new(0),
             });
             Ok(())
         })
