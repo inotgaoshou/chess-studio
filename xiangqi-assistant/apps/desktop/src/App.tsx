@@ -22,7 +22,7 @@ import {
   Zap,
 } from "lucide-react";
 import { chessPlatform, type AnalysisLine, type BoardState, type GameSummary, type MoveItem, type Piece } from "./platform";
-import { positionEvaluation, pvMoveRows, trendPoints } from "./analysisView";
+import { positionEvaluation, trendPoints } from "./analysisView";
 
 
 const startingFen = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1";
@@ -102,6 +102,12 @@ function pieceAsset(piece: Piece) {
 function formatNps(nps?: number) {
   if (!nps) return "-";
   return nps >= 1_000_000 ? `${(nps / 1_000_000).toFixed(1)}M` : `${Math.round(nps / 1000)}K`;
+}
+
+function formatAnalysisScore(line: AnalysisLine) {
+  if (line.mate != null) return line.mate >= 0 ? `杀 ${line.mate}` : `被杀 ${Math.abs(line.mate)}`;
+  const score = ((line.scoreCp ?? 0) / 100).toFixed(2);
+  return (line.scoreCp ?? 0) > 0 ? `+${score}` : score;
 }
 
 function formatMoveScore(move: MoveItem) {
@@ -201,9 +207,15 @@ export default function App() {
   const lastMove = board.history.at(-1);
   const evaluation = useMemo(() => positionEvaluation(board, analysis), [analysis, board]);
   const evaluationTrend = useMemo(() => trendPoints(evaluation?.samples ?? []), [evaluation]);
-  const analysisArrows = useMemo(() => analysis
-    .slice()
-    .sort((left, right) => left.multipv - right.multipv)
+  const orderedAnalysis = useMemo(() => analysis.slice().sort((left, right) => left.multipv - right.multipv), [analysis]);
+  const primaryAnalysis = orderedAnalysis[0];
+  const primaryMove = primaryAnalysis?.notation?.[0] ?? primaryAnalysis?.pv[0];
+  const searchLimitLabel = searchMode === "infinite"
+    ? "持续分析"
+    : searchMode === "depth"
+      ? `固定深度 ${searchValue}`
+      : `固定时间 ${(searchValue / 1000).toFixed(1)}s`;
+  const analysisArrows = useMemo(() => orderedAnalysis
     .filter((line) => line.multipv <= 3 && line.pv.length > 0)
     .flatMap((line) => {
       const from = squareFromIccs(line.pv[0].slice(0, 2));
@@ -215,7 +227,7 @@ export default function App() {
         from: boardPoint(from, reversed),
         to: boardPoint(to, reversed),
       }];
-    }), [analysis, reversed]);
+    }), [orderedAnalysis, reversed]);
 
   async function selectSquare(row: number, col: number) {
     const piece = pieceMap.get(`${row}-${col}`);
@@ -542,6 +554,15 @@ export default function App() {
             <span className="board-meta">节点 {board.history.length}</span>
             <span className="board-meta">{reversed ? "黑方视角" : "红方视角"}</span>
           </div>
+          {primaryAnalysis && (
+            <div className="engine-livebar">
+              <span>
+                深度 {primaryAnalysis.depth ?? "-"} · PV {primaryAnalysis.multipv} · 分数 {formatAnalysisScore(primaryAnalysis)} · NPS {formatNps(primaryAnalysis.nps)} · 时间 {((primaryAnalysis.timeMs ?? 0) / 1000).toFixed(1)}s
+                {primaryMove ? ` · ${primaryMove}` : ""}
+              </span>
+              <strong>{searchLimitLabel}</strong>
+            </div>
+          )}
           <div className="fen-row">
             <label>FEN</label>
             <input value={fenInput} onChange={(event) => setFenInput(event.target.value)} />
@@ -562,23 +583,25 @@ export default function App() {
               </div>
             </div>
             {chessPlatform.kind === "desktop" && <>
-              <label className="path-field">引擎路径<input id="engine-path" value={enginePath} onChange={(event) => setEnginePath(event.target.value)} placeholder="自动检测或输入 pikafish 路径" /></label>
-              <div className="engine-settings">
-                <label>线程<input type="number" min={1} max={64} value={threads} onChange={(event) => setThreads(Number(event.target.value))}/></label>
-                <label>Hash<input type="number" min={16} max={4096} step={16} value={hashMb} onChange={(event) => setHashMb(Number(event.target.value))}/><small>MB</small></label>
-                <label>MultiPV<input type="number" min={1} max={10} value={multipv} onChange={(event) => setMultipv(Number(event.target.value))}/></label>
+              <div className="engine-config-row">
+                <label className="path-field"><span>引擎</span><input id="engine-path" value={enginePath} onChange={(event) => setEnginePath(event.target.value)} placeholder="pikafish 路径" /></label>
+                <label className="engine-number" title="引擎线程数"><span>线程</span><input aria-label="线程" type="number" min={1} max={64} value={threads} onChange={(event) => setThreads(Number(event.target.value))}/></label>
+                <label className="engine-number" title="置换表大小"><span>Hash</span><input aria-label="Hash MB" type="number" min={16} max={4096} step={16} value={hashMb} onChange={(event) => setHashMb(Number(event.target.value))}/><small>MB</small></label>
+                <label className="engine-number" title="候选线路数量"><span>PV</span><input aria-label="MultiPV" type="number" min={1} max={10} value={multipv} onChange={(event) => setMultipv(Number(event.target.value))}/></label>
               </div>
             </>}
             {chessPlatform.kind === "web" && <div className="web-engine-source"><span>{serverUrl}</span><strong>MultiPV {multipv}</strong></div>}
-            <div className={`search-modes ${chessPlatform.kind === "web" ? "web-modes" : ""}`} role="group" aria-label="搜索模式">
-              <button className={searchMode === "time" ? "active" : ""} onClick={() => { setSearchMode("time"); setSearchValue(1500); }}>时间</button>
-              <button className={searchMode === "depth" ? "active" : ""} onClick={() => { setSearchMode("depth"); setSearchValue(18); }}>深度</button>
-              {chessPlatform.kind === "desktop" && <button className={searchMode === "infinite" ? "active" : ""} onClick={() => setSearchMode("infinite")}>持续</button>}
-              <input type="number" aria-label="搜索限制" disabled={searchMode === "infinite"} min={searchMode === "depth" ? 1 : 100} max={searchMode === "depth" ? 100 : 30000} value={searchValue} onChange={(event) => setSearchValue(Number(event.target.value))}/>
+            <div className="engine-run-row">
+              <div className={`search-modes ${chessPlatform.kind === "web" ? "web-modes" : ""}`} role="group" aria-label="搜索模式">
+                <button className={searchMode === "time" ? "active" : ""} onClick={() => { setSearchMode("time"); setSearchValue(1500); }}>时间</button>
+                <button className={searchMode === "depth" ? "active" : ""} onClick={() => { setSearchMode("depth"); setSearchValue(18); }}>深度</button>
+                {chessPlatform.kind === "desktop" && <button className={searchMode === "infinite" ? "active" : ""} onClick={() => setSearchMode("infinite")}>持续</button>}
+                <input type="number" aria-label="搜索限制" disabled={searchMode === "infinite"} min={searchMode === "depth" ? 1 : 100} max={searchMode === "depth" ? 100 : 30000} value={searchValue} onChange={(event) => setSearchValue(Number(event.target.value))}/>
+              </div>
+              {analysisBusy
+                ? <button className="analysis-action stop" onClick={() => void stopAnalysis()} title="停止分析"><Square size={13}/><span>停止</span></button>
+                : <button className="analysis-action" onClick={() => void runAnalysis()} title="分析当前局面"><Play size={14}/><span>分析</span></button>}
             </div>
-            {analysisBusy
-              ? <button className="analysis-action stop" onClick={() => void stopAnalysis()}><Square size={14}/>停止分析</button>
-              : <button className="analysis-action" onClick={() => void runAnalysis()}><Play size={15}/>分析当前局面</button>}
           </section>
 
           <section className="variations">
@@ -611,26 +634,22 @@ export default function App() {
                 )}
               </div>
             )}
-            <div className="section-title"><strong>候选线路</strong><span>MultiPV {multipv}</span></div>
+            <div className="section-title"><strong>引擎输出</strong><span>MultiPV {multipv}</span></div>
             <div className="analysis-lines">
               {analysis.length === 0
                 ? <div className="empty-analysis"><Activity size={24}/><strong>等待分析</strong><span>启动 Pikafish 后显示候选线路</span></div>
-                : analysis.map((line) => {
-                  const rows = pvMoveRows(line, board.sideToMove, board.fen);
-                  return (
-                    <article className="pv-line" key={line.multipv} style={{ "--pv-color": analysisArrowColors[line.multipv - 1] ?? "transparent" } as CSSProperties} title={`ICCS: ${line.pv.join(" ")}`}>
-                      <div className="pv-meta"><span>PV {line.multipv}</span><strong>{line.mate != null ? `杀 ${line.mate}` : `${((line.scoreCp ?? 0) / 100).toFixed(2)}`}</strong><small>深度 {line.depth ?? "-"} · {formatNps(line.nps)} NPS · {((line.timeMs ?? 0) / 1000).toFixed(1)}s</small></div>
-                      <div className="pv-move-table" role="table" aria-label={`候选线路 ${line.multipv}`}>
-                        <div className="pv-table-head" role="row"><span>回合</span><span>红方</span><span>黑方</span></div>
-                        {rows.map((row) => (
-                          <div className="pv-table-row" role="row" key={row.number}>
-                            <span role="cell">{row.number}</span><strong role="cell">{row.red ?? ""}</strong><strong role="cell">{row.black ?? ""}</strong>
-                          </div>
-                        ))}
-                      </div>
-                    </article>
-                  );
-                })}
+                : orderedAnalysis.map((line) => (
+                  <article className="pv-line" key={line.multipv} style={{ "--pv-color": analysisArrowColors[line.multipv - 1] ?? "transparent" } as CSSProperties} title={`ICCS: ${line.pv.join(" ")}`}>
+                    <div className="pv-meta">
+                      <span>深度 {line.depth ?? "-"}</span>
+                      <span>PV {line.multipv}</span>
+                      <strong>分数 {formatAnalysisScore(line)}</strong>
+                      <span>NPS {formatNps(line.nps)}</span>
+                      <span>时间 {((line.timeMs ?? 0) / 1000).toFixed(1)}s</span>
+                    </div>
+                    <p>{line.notation?.length ? line.notation.join("  ") : line.pv.join("  ")}</p>
+                  </article>
+                ))}
             </div>
           </section>
 
