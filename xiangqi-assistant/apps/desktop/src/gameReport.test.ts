@@ -25,8 +25,21 @@ describe("buildGameReportPresentation", () => {
     expect(report.red).toMatchObject({ overall: 100, grade: "优", coachQuality: "优" });
     expect(report.black).toMatchObject({ overall: 14, grade: "错", coachQuality: "错" });
     expect(report.black.counts).toMatchObject({ error: 1 });
+    expect(report.coachInsights.branchName).toContain("马8进7");
+    expect(report.coachInsights.weaknessFixes.join("")).toContain("开局");
+    expect(report.coachInsights.namingTips.join("")).toContain("变招A/B");
     expect(report.issues).toEqual([
-      expect.objectContaining({ nodeId: "black", notation: "马8进7", score: 14, grade: "错" }),
+      expect.objectContaining({
+        nodeId: "black",
+        notation: "马8进7",
+        score: 14,
+        grade: "错",
+        coach: expect.objectContaining({
+          intent: expect.stringContaining("严重局面损失"),
+          solution: expect.stringContaining("马炮车出动"),
+          branchPlan: expect.stringContaining("变招分支"),
+        }),
+      }),
     ]);
     expect(report.standards.map(({ grade, qualityRange }) => `${grade}:${qualityRange}`)).toEqual([
       "优:80-100 分", "良:60-79 分", "中:40-59 分", "差:20-39 分", "错:0-19 分",

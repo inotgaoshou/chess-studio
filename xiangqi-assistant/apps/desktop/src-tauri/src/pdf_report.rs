@@ -71,6 +71,36 @@ pub(crate) struct ReportIssueDto {
     pub best_notation: Option<String>,
     #[serde(default)]
     pub pv_notation: Vec<String>,
+    #[serde(default)]
+    pub coach: MoveCoachInsightDto,
+}
+
+#[derive(Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MoveCoachInsightDto {
+    #[serde(default)]
+    pub intent: String,
+    #[serde(default)]
+    pub weakness: String,
+    #[serde(default)]
+    pub solution: String,
+    #[serde(default)]
+    pub branch_plan: String,
+}
+
+#[derive(Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct BranchCoachInsightDto {
+    #[serde(default)]
+    pub branch_name: String,
+    #[serde(default)]
+    pub branch_purpose: String,
+    #[serde(default)]
+    pub naming_tips: Vec<String>,
+    #[serde(default)]
+    pub weakness_fixes: Vec<String>,
+    #[serde(default)]
+    pub study_plan: Vec<String>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -115,6 +145,8 @@ pub(crate) struct GameReportPresentationDto {
     pub opening_summary: Option<OpeningSummaryDto>,
     pub red: ReportSidePresentationDto,
     pub black: ReportSidePresentationDto,
+    #[serde(default)]
+    pub coach_insights: BranchCoachInsightDto,
     pub trend: Vec<ReportTrendDto>,
     pub issues: Vec<ReportIssueDto>,
     pub standards: Vec<ReportStandardDto>,
@@ -182,6 +214,13 @@ fn wrap_text(value: &str, max_units: f32) -> Vec<String> {
         lines.push(current);
     }
     lines
+}
+
+fn issue_recommendation(issue: &ReportIssueDto) -> Option<&str> {
+    issue
+        .best_notation
+        .as_deref()
+        .or_else(|| issue.pv_notation.first().map(String::as_str))
 }
 
 struct ReportLayout {
@@ -256,6 +295,15 @@ impl ReportLayout {
             self.y -= line_height;
         }
         self.y -= 5.0;
+    }
+
+    fn wrapped_text_at(&mut self, value: &str, x: f32, size: f32, max_units: f32, color: Color) {
+        let line_height = size * 1.48;
+        for line in wrap_text(value, max_units) {
+            self.ensure(line_height);
+            self.text_at(line, x, self.y, size, color.clone());
+            self.y -= line_height;
+        }
     }
 
     fn horizontal_rule(&mut self) {
@@ -341,6 +389,71 @@ impl ReportLayout {
             );
         }
         self.y -= 108.0;
+    }
+
+    fn coach_insights(&mut self, report: &GameReportPresentationDto) {
+        if report.coach_insights.branch_name.is_empty()
+            && report.coach_insights.branch_purpose.is_empty()
+            && report.coach_insights.weakness_fixes.is_empty()
+            && report.coach_insights.study_plan.is_empty()
+        {
+            return;
+        }
+        self.heading("私教建议与变招命名", 14.0);
+        if !report.coach_insights.branch_name.is_empty() {
+            self.wrapped_text_at(
+                &format!("建议分支名：{}", report.coach_insights.branch_name),
+                MARGIN,
+                9.5,
+                58.0,
+                rgb(34, 42, 38),
+            );
+        }
+        if !report.coach_insights.branch_purpose.is_empty() {
+            self.paragraph(&report.coach_insights.branch_purpose, 9.0, 58.0);
+        }
+        if !report.coach_insights.weakness_fixes.is_empty() {
+            self.text_at("布局弱点与解决方案", MARGIN, self.y, 10.5, rgb(34, 42, 38));
+            self.y -= 15.0;
+            for item in &report.coach_insights.weakness_fixes {
+                self.wrapped_text_at(
+                    &format!("• {item}"),
+                    MARGIN + 8.0,
+                    8.7,
+                    62.0,
+                    rgb(67, 75, 71),
+                );
+            }
+            self.y -= 4.0;
+        }
+        if !report.coach_insights.study_plan.is_empty() {
+            self.text_at("多分支复盘步骤", MARGIN, self.y, 10.5, rgb(34, 42, 38));
+            self.y -= 15.0;
+            for (index, item) in report.coach_insights.study_plan.iter().enumerate() {
+                self.wrapped_text_at(
+                    &format!("{}. {item}", index + 1),
+                    MARGIN + 8.0,
+                    8.7,
+                    62.0,
+                    rgb(67, 75, 71),
+                );
+            }
+            self.y -= 4.0;
+        }
+        if !report.coach_insights.naming_tips.is_empty() {
+            self.text_at("命名建议", MARGIN, self.y, 10.5, rgb(34, 42, 38));
+            self.y -= 15.0;
+            for item in &report.coach_insights.naming_tips {
+                self.wrapped_text_at(
+                    &format!("• {item}"),
+                    MARGIN + 8.0,
+                    8.5,
+                    62.0,
+                    rgb(82, 90, 86),
+                );
+            }
+        }
+        self.y -= 8.0;
     }
 
     fn radar(&mut self, report: &GameReportPresentationDto) {
@@ -620,72 +733,106 @@ impl ReportLayout {
             return;
         }
         for (index, issue) in report.issues.iter().enumerate() {
-            self.ensure(27.0);
+            self.ensure(72.0);
             let marker = if issue.missed_mate {
                 "错 · 漏杀"
             } else {
                 issue.grade.as_str()
             };
             self.text_at(
-                format!(
-                    "{}. {}  {}{}",
-                    index + 1,
-                    issue.moved_by,
-                    issue.notation,
-                    issue
-                        .best_iccs
-                        .as_ref()
-                        .map(|value| format!("  推荐ICCS {value}"))
-                        .unwrap_or_default()
-                ),
+                format!("{}. {}  {}", index + 1, issue.moved_by, issue.notation),
                 MARGIN,
                 self.y,
-                9.5,
+                10.0,
                 rgb(45, 53, 49),
             );
-            self.text_at(
-                format!(
-                    "局面 {:+}  变化 {:+}  损失 {}cp  质量 {}分{}",
-                    issue.red_score_cp,
-                    issue.delta_cp,
-                    issue.loss_cp,
-                    issue.score,
-                    issue
-                        .best_notation
-                        .as_ref()
-                        .map(|value| format!("  {recommendation_label} {value}"))
-                        .unwrap_or_default()
+            self.text_at(marker, 495.0, self.y, 10.0, grade_color(&issue.grade));
+            self.y -= 14.0;
+            self.wrapped_text_at(
+                &format!(
+                    "局面 {:+} · 变化 {:+} · 损失 {}cp · 质量 {}分",
+                    issue.red_score_cp, issue.delta_cp, issue.loss_cp, issue.score
                 ),
-                290.0,
-                self.y,
-                9.0,
+                MARGIN + 18.0,
+                8.7,
+                64.0,
                 rgb(82, 90, 86),
             );
-            self.text_at(marker, 495.0, self.y, 9.5, grade_color(&issue.grade));
+            if let Some(recommendation) = issue_recommendation(issue) {
+                self.wrapped_text_at(
+                    &format!("{recommendation_label}：{recommendation}"),
+                    MARGIN + 18.0,
+                    8.7,
+                    64.0,
+                    rgb(45, 53, 49),
+                );
+            } else if issue.best_iccs.is_some() {
+                self.wrapped_text_at(
+                    "推荐着法：旧报告缺少中文着法，请重新分析后可显示中文推荐",
+                    MARGIN + 18.0,
+                    8.2,
+                    64.0,
+                    rgb(105, 112, 108),
+                );
+            }
             if let Some(opening) = &issue.opening {
-                self.y -= 12.0;
-                self.text_at(
-                    format!(
+                self.wrapped_text_at(
+                    &format!(
                         "官着：{} · {} · 第{}层 · {}",
                         opening.code, opening.name, opening.ply, opening.source
                     ),
                     MARGIN + 18.0,
-                    self.y,
                     8.2,
+                    66.0,
                     rgb(94, 139, 51),
                 );
             }
             if !issue.pv_notation.is_empty() {
-                self.y -= 12.0;
-                self.text_at(
-                    format!("后续推演：{}", issue.pv_notation.join(" ")),
+                self.wrapped_text_at(
+                    &format!("后续推演：{}", issue.pv_notation.join(" ")),
                     MARGIN + 18.0,
-                    self.y,
                     8.2,
+                    66.0,
                     rgb(82, 90, 86),
                 );
             }
-            self.y -= 22.0;
+            if !issue.coach.intent.is_empty() {
+                self.wrapped_text_at(
+                    &format!("目的：{}", issue.coach.intent),
+                    MARGIN + 18.0,
+                    8.2,
+                    66.0,
+                    rgb(67, 75, 71),
+                );
+            }
+            if !issue.coach.weakness.is_empty() {
+                self.wrapped_text_at(
+                    &format!("弱点：{}", issue.coach.weakness),
+                    MARGIN + 18.0,
+                    8.2,
+                    66.0,
+                    rgb(82, 90, 86),
+                );
+            }
+            if !issue.coach.solution.is_empty() {
+                self.wrapped_text_at(
+                    &format!("方案：{}", issue.coach.solution),
+                    MARGIN + 18.0,
+                    8.2,
+                    66.0,
+                    rgb(45, 53, 49),
+                );
+            }
+            if !issue.coach.branch_plan.is_empty() {
+                self.wrapped_text_at(
+                    &format!("变招：{}", issue.coach.branch_plan),
+                    MARGIN + 18.0,
+                    8.2,
+                    66.0,
+                    rgb(94, 139, 51),
+                );
+            }
+            self.y -= 12.0;
         }
         self.y -= 8.0;
     }
@@ -808,6 +955,7 @@ fn render_report_pdf(
         );
         layout.paragraph(&side.coach_summary, 9.5, 54.0);
     }
+    layout.coach_insights(report);
     layout.radar(report);
     layout.trend(report);
     layout.phase_table(report);
@@ -968,6 +1116,16 @@ mod tests {
             }),
             red: side("红方"),
             black: side("黑方"),
+            coach_insights: BranchCoachInsightDto {
+                branch_name: "中炮局-黑方修正马8进7".into(),
+                branch_purpose: "这条线路用于比较实战着和 AI 推荐线的进攻思路。".into(),
+                naming_tips: vec!["主线保存实战。".into(), "变招A保存推荐线。".into()],
+                weakness_fixes: vec![
+                    "红方开局优先完成出子。".into(),
+                    "黑方中局先补防再反击。".into(),
+                ],
+                study_plan: vec!["先定位最大转折。".into(), "再建立推荐变招。".into()],
+            },
             trend: (0..40)
                 .map(|index| ReportTrendDto {
                     label: format!("第{}着", index + 1),
@@ -998,6 +1156,12 @@ mod tests {
                     best_iccs: Some("h2e2".into()),
                     best_notation: Some("炮二平五".into()),
                     pv_notation: vec!["炮二平五".into(), "马8进7".into()],
+                    coach: MoveCoachInsightDto {
+                        intent: "延续中炮局官着。".into(),
+                        weakness: "出子速度不足。".into(),
+                        solution: "优先试走炮二平五。".into(),
+                        branch_plan: "建立推荐变招分支。".into(),
+                    },
                 })
                 .collect(),
             standards: [
@@ -1033,6 +1197,20 @@ mod tests {
     fn sanitizes_cross_platform_pdf_file_names() {
         assert_eq!(sanitize_pdf_filename("  测试:/棋局*?  "), "测试__棋局__");
         assert_eq!(sanitize_pdf_filename("..."), "未命名棋局");
+    }
+
+    #[test]
+    fn issue_recommendation_prefers_chinese_notation_over_iccs() {
+        let mut issue = report().issues.remove(0);
+        assert_eq!(issue_recommendation(&issue), Some("炮二平五"));
+
+        issue.best_notation = None;
+        issue.best_iccs = Some("h0g2".into());
+        issue.pv_notation = vec!["马二进三".into(), "马8进7".into()];
+        assert_eq!(issue_recommendation(&issue), Some("马二进三"));
+
+        issue.pv_notation.clear();
+        assert_eq!(issue_recommendation(&issue), None);
     }
 
     #[test]

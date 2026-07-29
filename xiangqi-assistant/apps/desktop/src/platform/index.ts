@@ -468,4 +468,4 @@ class WebPlatform implements ChessPlatform {
 
 const tauriAvailable = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 export const chessPlatform: ChessPlatform = tauriAvailable ? new DesktopPlatform() : new WebPlatform();
-export type { AnalysisLine, AnalysisOptions, BoardState, ChessPlatform, DesktopPreferencesDto, EngineProbeDto, EngineRuntimeEvent, EngineRuntimeState, GameReportDatasetDto, GameReportOptionsDto, GameReportPositionDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, MoveItem, Piece, QualityGrade, ReportPhase, ReportSidePresentationDto, Side, SyncAccountDto, SyncResult } from "./types";
+export type { AnalysisLine, AnalysisOptions, BoardState, BranchCoachInsightDto, ChessPlatform, DesktopPreferencesDto, EngineProbeDto, EngineRuntimeEvent, EngineRuntimeState, GameReportDatasetDto, GameReportOptionsDto, GameReportPositionDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, MoveCoachInsightDto, MoveItem, OpeningBookHitDto, Piece, QualityGrade, ReportPhase, ReportSidePresentationDto, Side, SyncAccountDto, SyncResult } from "./types";

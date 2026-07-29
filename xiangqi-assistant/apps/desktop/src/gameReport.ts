@@ -1,4 +1,5 @@
 import { calculateGameReport, coachProfile, moveGradeStandards, qualityGradeForScore } from "./analysisView";
+import { branchCoachInsights, moveCoachInsight } from "./coachInsights";
 import type { GameReportDatasetDto, GameReportPresentationDto, ReportPhase, ReportSidePresentationDto, Side } from "./platform";
 
 const phases: ReportPhase[] = ["opening", "middle", "endgame"];
@@ -77,6 +78,7 @@ export function buildGameReportPresentation(title: string, dataset: GameReportDa
   let previousScore: number | undefined;
   const red = enhancedSideSummary("红方", sidePresentation("红方", calculated), calculated, opening?.name, officialMoves, dataset.analysisDepth);
   const black = enhancedSideSummary("黑方", sidePresentation("黑方", calculated), calculated, opening?.name, officialMoves, dataset.analysisDepth);
+  const coachInsights = branchCoachInsights(calculated.red, calculated.black, calculated.moves, opening);
   return {
     title: title.trim() || "未命名棋局",
     generatedAt: dataset.generatedAt,
@@ -88,6 +90,7 @@ export function buildGameReportPresentation(title: string, dataset: GameReportDa
     openingSummary: opening ? { ...opening, officialMoves } : undefined,
     red,
     black,
+    coachInsights,
     trend: dataset.positions.flatMap((position, index) => {
       const scoreCp = reportPositionValue(position);
       if (scoreCp == null) return [];
@@ -102,7 +105,11 @@ export function buildGameReportPresentation(title: string, dataset: GameReportDa
     }),
     issues: calculated.moves
       .filter((move) => move.grade === "差" || move.grade === "错" || move.missedMate)
-      .map(({ nodeId, notation, movedBy, lossCp, score, grade, missedMate, redScoreCp, deltaCp, opening, bestIccs, bestNotation, pvNotation }) => ({
+      .map((move) => ({
+        ...move,
+        coach: moveCoachInsight(move),
+      }))
+      .map(({ nodeId, notation, movedBy, lossCp, score, grade, missedMate, redScoreCp, deltaCp, opening, bestIccs, bestNotation, pvNotation, coach }) => ({
         nodeId,
         notation,
         movedBy,
@@ -116,6 +123,7 @@ export function buildGameReportPresentation(title: string, dataset: GameReportDa
         bestIccs,
         bestNotation,
         pvNotation,
+        coach,
       })),
     standards: moveGradeStandards,
     scoreGuide: [

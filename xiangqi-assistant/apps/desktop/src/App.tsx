@@ -46,6 +46,7 @@ import { DesktopMenuBar, type MenuCommand } from "./DesktopMenuBar";
 import { DesktopDialogs, type DesktopDialog } from "./DesktopDialogs";
 import { GameReportDialog, GameReportView } from "./GameReportView";
 import { buildGameReportPresentation } from "./gameReport";
+import { moveThoughtHint } from "./coachInsights";
 import { MobileToolbar, type MobileToolbarCommand } from "./MobileToolbar";
 import type { DesktopPreferencesDto, SyncAccountDto } from "./platform";
 import { applyColorTheme, initialColorTheme, type ColorTheme } from "./theme";
@@ -462,6 +463,16 @@ export default function App() {
   }), [evaluationTrend]);
   const activeTrendPoint = trendCursorIndex == null ? undefined : evaluationTrend[trendCursorIndex];
   const activeTrendDelta = trendCursorIndex == null || trendCursorIndex <= 0 ? undefined : evaluationTrend[trendCursorIndex].scoreCp - evaluationTrend[trendCursorIndex - 1].scoreCp;
+  const currentTrendPoint = useMemo(() => {
+    if (evaluationTrend.length === 0) return undefined;
+    return evaluationTrend.find((point) => point.nodeId === board.currentNode) ?? evaluationTrend.at(-1);
+  }, [board.currentNode, evaluationTrend]);
+  const visibleTrendPoint = activeTrendPoint ?? currentTrendPoint;
+  const visibleTrendDelta = activeTrendPoint ? activeTrendDelta : undefined;
+  const trendMarkerOnLeft = (visibleTrendPoint?.x ?? 0) > 200;
+  const trendMarkerX = visibleTrendPoint ? visibleTrendPoint.x + (trendMarkerOnLeft ? -88 : 4) : 0;
+  const trendMarkerY = visibleTrendPoint ? Math.max(12, visibleTrendPoint.y - 16) : 0;
+  const trendMarkerText = visibleTrendPoint ? `${visibleTrendPoint.label.replace("第 ", "")} · ${formatRedScore(visibleTrendPoint.scoreCp)}` : "";
   const trendTurns = useMemo(() => trendTurningPoints(evaluation?.samples ?? []), [evaluation]);
   const trendTurnsByNode = useMemo(() => new Map(trendTurns.map((turn) => [turn.nodeId, turn])), [trendTurns]);
   const reportPositionByNode = useMemo(() => new Map((gameReport?.positions ?? []).flatMap((position, index, positions) => {
@@ -479,9 +490,11 @@ export default function App() {
   const overviewReport = useMemo(() => reports.find((report) => report.move.id === board.currentNode), [board.currentNode, reports]);
   const reportByMoveId = useMemo(() => new Map(reports.map((report) => [report.move.id, report])), [reports]);
   const boardEvaluationScore = evaluation?.samples.at(-1)?.scoreCp;
-  const boardEvaluationSide = boardEvaluationScore == null || Math.abs(boardEvaluationScore) <= 50
-    ? "均势"
-    : boardEvaluationScore > 0 ? "红优" : "黑优";
+  const boardEvaluationSide = evaluation?.mateSide
+    ? `${evaluation.mateSide}绝杀`
+    : boardEvaluationScore == null || Math.abs(boardEvaluationScore) <= 50
+      ? "均势"
+      : boardEvaluationScore > 0 ? "红优" : "黑优";
   const boardEvaluationRailShare = boardEvaluationScore == null
     ? 50
     : boardEvaluationScore < -50 ? 100 - (evaluation?.redShare ?? 50) : evaluation?.redShare ?? 50;
@@ -1143,6 +1156,7 @@ export default function App() {
       if (playbackToken != null && playbackToken !== playbackRevision.current) return null;
       applyBoard(next);
       setSelected(null);
+      setTrendCursorIndex(undefined);
       await loadSavedAnalysis(next.fen ?? board.fen);
       await loadGameReport();
       setNotice(playbackToken == null ? nodeId ? "已切换棋谱节点" : "已回到根局面" : "正在播放主线棋谱");
@@ -1668,15 +1682,15 @@ export default function App() {
                 <strong>{boardEvaluationSide}</strong>
                 <span>{evaluation?.scoreText ?? "--"}</span>
               </div>
-              {overviewReport?.grade && overviewReport.score != null
-                ? <div className={`board-eval-quality grade-${overviewReport.grade}`} title={`当前着法质量 ${overviewReport.score} 分`}>
-                  <b>{overviewReport.grade}</b><span>{overviewReport.score}分</span><small>质量分</small>
-                </div>
-                : <div className="board-eval-quality pending"><b>-</b><span>待评</span><small>质量分</small></div>}
             </aside>
             </div>
           </div>
           <div className="board-statusbar">
+            {overviewReport?.grade && overviewReport.score != null && (
+              <span className={`board-quality-chip grade-${overviewReport.grade}`} title={`当前着法质量 ${overviewReport.score} 分`}>
+                <b>{overviewReport.grade}</b><span>{overviewReport.score}分</span>
+              </span>
+            )}
             {lastMove && <span className="last-move-status">上一着：<strong>{lastMove.movedBy}</strong> {lastMove.notation}</span>}
             {lastMove && <span className="status-separator" />}
             <span className={`turn-dot ${board.sideToMove === "红方" ? "red" : "black"}`} />
@@ -1878,12 +1892,17 @@ export default function App() {
                         onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && point.nodeId) void navigateTo(point.nodeId); }}
                       ><title>{point.label}：{formatRedScore(point.scoreCp)}{turn ? `，波动 ${turn.deltaCp > 0 ? "+" : ""}${Math.round(turn.deltaCp)}` : ""}</title></circle>
                     )})}
-                    {activeTrendPoint && <>
-                      <line className="trend-crosshair" x1={activeTrendPoint.x} y1="12" x2={activeTrendPoint.x} y2="108"/>
-                      <line className="trend-crosshair" x1="10" y1={activeTrendPoint.y} x2="290" y2={activeTrendPoint.y}/>
+                    {visibleTrendPoint && <>
+                      <line className="trend-current-line" x1={visibleTrendPoint.x} y1="12" x2={visibleTrendPoint.x} y2="108"/>
+                      <circle className="trend-current-halo" cx={visibleTrendPoint.x} cy={visibleTrendPoint.y} r="7"/>
+                      <circle className="trend-current-node" cx={visibleTrendPoint.x} cy={visibleTrendPoint.y} r="3.5"/>
+                      <g className={`trend-marker-label ${visibleTrendPoint.scoreCp >= 0 ? "red" : "black"}`} transform={`translate(${trendMarkerX} ${trendMarkerY})`}>
+                        <rect width="84" height="14" rx="3"/>
+                        <text x="4" y="10">{trendMarkerText}</text>
+                      </g>
                     </>}
                   </svg>
-                  <div className="trend-axis"><span>+1000 / +500 / 0 / -500 / -1000</span><span>{activeTrendPoint ? `${activeTrendPoint.label} · ${formatRedScore(activeTrendPoint.scoreCp)}${activeTrendDelta != null ? ` · 变化 ${formatRedScore(activeTrendDelta)}` : ""}` : "拖动十字游标，松开定位"}</span><span>第 {board.history.length} 着</span></div>
+                  <div className="trend-axis"><span>+1000 / +500 / 0 / -500 / -1000</span><span>{visibleTrendPoint ? `${visibleTrendPoint.label} · ${formatRedScore(visibleTrendPoint.scoreCp)}${visibleTrendDelta != null ? ` · 变化 ${formatRedScore(visibleTrendDelta)}` : ""}` : "拖动趋势线，松开定位"}</span><span>第 {board.history.length} 着</span></div>
                   {trendTurns.length > 0 && <section className="trend-turning-list"><header><strong>关键转折</strong><span>分差变化 ≥ 120</span></header>{trendTurns.map((turn) => <button key={turn.nodeId ?? turn.label} onClick={() => turn.nodeId && void navigateTo(turn.nodeId)}><span className={turn.severity}/><strong>{turn.label}</strong><small>{turn.deltaCp > 0 ? "红方" : "黑方"}获益 {Math.abs(Math.round(turn.deltaCp))}</small></button>)}</section>}
                 </>}
             </div>}
@@ -1896,12 +1915,22 @@ export default function App() {
                   const opening = reportPosition?.position.opening;
                   const bestNotation = reportPosition?.before?.bestNotation;
                   const recommendationDepth = reportPosition?.before?.depth ?? gameReport?.analysisDepth ?? desktopPreferences.reportDepth;
+                  const thought = moveThoughtHint({
+                    notation: report.move.notation,
+                    movedBy: report.move.movedBy,
+                    grade: report.grade,
+                    missedMate: report.missedMate,
+                    opening,
+                    bestNotation,
+                    deltaCp: report.deltaCp,
+                  });
                   return <button className={`report-row ${report.grade ? `grade-${report.grade}` : ""} ${report.missedMate ? "missed-mate" : ""} ${board.currentNode === report.move.id ? "active" : ""}`} key={report.move.id} onClick={() => void navigateTo(report.move.id)}>
                     <span className="report-number">{report.index + 1}</span>
                     <span className={`report-side ${report.move.movedBy === "红方" ? "red" : "black"}`}/>
                     <span className="report-move" title={feedback?.description}>
                       <strong>{report.move.notation}{report.grade && <em className={`report-inline-grade grade-${report.grade}`}>{report.grade}</em>}{report.missedMate && <em className="missed-mate-chip">漏杀</em>}</strong>
                       <small>{report.move.movedBy} · {formatScoreDelta(report.deltaCp)}{feedback ? ` · ${feedback.hint}` : ""}{opening ? ` · 官着 ${opening.name}` : ""}{bestNotation ? ` · 深度${recommendationDepth}推荐 ${bestNotation}` : ""}</small>
+                      <small className="report-move-thought">{thought}</small>
                     </span>
                     <span className="report-position-score" title="Pikafish 局面分，正数表示红方占优，负数表示黑方占优"><small>局面</small><b>{formatReportScore(report.move, report.redScoreCp)}</b></span>
                     {report.grade && report.score != null

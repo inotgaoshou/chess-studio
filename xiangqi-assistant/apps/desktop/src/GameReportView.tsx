@@ -107,6 +107,27 @@ export function GameReportView({ report, currentNode, disabled = false, onNaviga
         <p>{side.coachSummary}</p>
       </article>)}
     </section>
+    <section className="coach-insights">
+      <header>
+        <div><strong>私教建议与变招命名</strong><small>{report.coachInsights.branchName}</small></div>
+        <span>规则型 AI 讲解</span>
+      </header>
+      <p>{report.coachInsights.branchPurpose}</p>
+      <div className="coach-insight-columns">
+        <article>
+          <strong>布局弱点与解决方案</strong>
+          <ul>{report.coachInsights.weaknessFixes.map((item) => <li key={item}>{item}</li>)}</ul>
+        </article>
+        <article>
+          <strong>多分支复盘方法</strong>
+          <ul>{report.coachInsights.studyPlan.map((item) => <li key={item}>{item}</li>)}</ul>
+        </article>
+      </div>
+      <details>
+        <summary>分支/分表命名建议</summary>
+        <ul>{report.coachInsights.namingTips.map((item) => <li key={item}>{item}</li>)}</ul>
+      </details>
+    </section>
     <CoachRadar red={report.red} black={report.black}/>
     <ReportTrend report={report}/>
     <section className="phase-scores">
@@ -127,6 +148,11 @@ export function GameReportView({ report, currentNode, disabled = false, onNaviga
             <span className="report-issue-score"><small>局面 {signedPawnScore(move.redScoreCp)} · 变化 {signedPawnScore(move.deltaCp)}{move.opening ? ` · 官着 ${move.opening.name}` : ""}</small><em>{move.movedBy}损失 {move.lossCp}cp · 质量 {move.score}分{move.bestNotation ? ` · ${recommendationLabel} ${move.bestNotation}` : ""}</em></span>
             <GradeBadge grade={move.grade} missedMate={move.missedMate}/>
           </button>
+          <div className="report-issue-coach">
+            <p><strong>目的</strong>{move.coach.intent}</p>
+            <p><strong>弱点</strong>{move.coach.weakness}</p>
+            <p><strong>方案</strong>{move.coach.solution}</p>
+          </div>
           <button className="coach-study-action" disabled={disabled} title={`回到 ${move.notation} 之前推演`} onClick={() => onStudy(move.nodeId)}><GitFork size={13}/>推演</button>
         </div>)}
     </section>

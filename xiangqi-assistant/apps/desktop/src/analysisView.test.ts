@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { calculateGameReport, coachProfile, moveGradeStandards, moveQualityFeedback, moveQualityScore, moveReports, pvMoveRows, qualityGradeForScore, reportMovePhase, trendTurningPoints } from "./analysisView";
-import type { AnalysisLine, GameReportDatasetDto, MoveItem } from "./platform";
+import { calculateGameReport, coachProfile, moveGradeStandards, moveQualityFeedback, moveQualityScore, moveReports, positionEvaluation, pvMoveRows, qualityGradeForScore, reportMovePhase, trendTurningPoints } from "./analysisView";
+import type { AnalysisLine, BoardState, GameReportDatasetDto, MoveItem } from "./platform";
 
 function dataset(positions: GameReportDatasetDto["positions"]): GameReportDatasetDto {
   return {
@@ -217,6 +217,43 @@ describe("trendTurningPoints", () => {
       expect.objectContaining({ nodeId: "three", deltaCp: -160, severity: "major" }),
       expect.objectContaining({ nodeId: "four", deltaCp: 310, severity: "critical" }),
     ]);
+  });
+});
+
+describe("positionEvaluation", () => {
+  const board = (sideToMove: BoardState["sideToMove"]): BoardState => ({
+    fen: "9/9/9/9/9/9/9/9/9/9 w - - 0 1",
+    rootSideToMove: sideToMove,
+    sideToMove,
+    status: "进行中",
+    pieces: [],
+    history: [],
+    branches: [],
+    title: "测试棋谱",
+    note: "",
+    playable: true,
+  });
+
+  it("shows the mating side and remaining moves instead of an equal score", () => {
+    const evaluation = positionEvaluation(board("红方"), [{ multipv: 1, mate: 4, pv: [] }]);
+
+    expect(evaluation).toMatchObject({
+      label: "红方绝杀",
+      scoreText: "剩余 4 步杀",
+      mateSide: "红方",
+      mateIn: 4,
+    });
+  });
+
+  it("converts a black-to-move mate score to black's mating line", () => {
+    const evaluation = positionEvaluation(board("黑方"), [{ multipv: 1, mate: 3, pv: [] }]);
+
+    expect(evaluation).toMatchObject({
+      label: "黑方绝杀",
+      scoreText: "剩余 3 步杀",
+      mateSide: "黑方",
+      mateIn: 3,
+    });
   });
 });
 

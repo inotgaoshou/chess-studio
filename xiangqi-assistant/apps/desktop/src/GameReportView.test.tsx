@@ -29,8 +29,31 @@ const report: GameReportPresentationDto = {
   openingSummary: { code: "R01", name: "中炮局", officialMoves: 1, source: "内置开局库" },
   red: side("红方"),
   black: side("黑方"),
+  coachInsights: {
+    branchName: "中炮局-第1着-红方修正炮二平五",
+    branchPurpose: "这条线路用于比较实战着与推荐线的进攻思路。",
+    namingTips: ["主线保存实战。", "变招A/B用于比较不同候选着法。"],
+    weaknessFixes: ["红方开局阶段优先完成出子。", "黑方中局阶段先补防再反击。"],
+    studyPlan: ["先定位最大转折。", "再建立推荐变招分支。"],
+  },
   trend: [{ label: "炮二平五", scoreCp: 20, nodeId: "move-1" }],
-  issues: [{ nodeId: "move-1", notation: "炮二平五", movedBy: "红方", lossCp: 500, score: 14, grade: "错", missedMate: true, redScoreCp: -240, deltaCp: -500 }],
+  issues: [{
+    nodeId: "move-1",
+    notation: "炮二平五",
+    movedBy: "红方",
+    lossCp: 500,
+    score: 14,
+    grade: "错",
+    missedMate: true,
+    redScoreCp: -240,
+    deltaCp: -500,
+    coach: {
+      intent: "走前已有强制杀棋。",
+      weakness: "本着后红方视角变化 -500。",
+      solution: "优先试走推荐线。",
+      branchPlan: "建立变招分支。",
+    },
+  }],
   standards: [
     { grade: "优", qualityRange: "80-100 分", description: "接近最佳" },
     { grade: "良", qualityRange: "60-79 分", description: "质量良好" },
@@ -49,6 +72,8 @@ describe("GameReportDialog", () => {
 
     expect(screen.getByRole("dialog", { name: "测试棋局整局分析报告" })).toBeTruthy();
     expect(screen.getByText("线路已变化，此报告已过期")).toBeTruthy();
+    expect(screen.getByText("私教建议与变招命名")).toBeTruthy();
+    expect(screen.getByText("中炮局-第1着-红方修正炮二平五")).toBeTruthy();
     expect(screen.getByRole("table", { name: "质量评分等级" }).textContent).toContain("优80-100 分");
     fireEvent.keyDown(document, { key: "Escape" });
     expect(onClose).toHaveBeenCalledOnce();

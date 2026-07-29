@@ -121,6 +121,19 @@ export type ReportSidePresentationDto = {
   coachSummary: string;
   dimensions: Record<"opening" | "middle" | "endgame" | "accuracy" | "stability", number | undefined>;
 };
+export type MoveCoachInsightDto = {
+  intent: string;
+  weakness: string;
+  solution: string;
+  branchPlan: string;
+};
+export type BranchCoachInsightDto = {
+  branchName: string;
+  branchPurpose: string;
+  namingTips: string[];
+  weaknessFixes: string[];
+  studyPlan: string[];
+};
 export type ReportIssuePresentationDto = {
   nodeId: string;
   notation: string;
@@ -135,6 +148,7 @@ export type ReportIssuePresentationDto = {
   bestIccs?: string;
   bestNotation?: string;
   pvNotation?: string[];
+  coach: MoveCoachInsightDto;
 };
 export type GameReportPresentationDto = {
   title: string;
@@ -147,6 +161,7 @@ export type GameReportPresentationDto = {
   openingSummary?: { code: string; name: string; officialMoves: number; source: string };
   red: ReportSidePresentationDto;
   black: ReportSidePresentationDto;
+  coachInsights: BranchCoachInsightDto;
   trend: Array<{ label: string; scoreCp: number; nodeId?: string; deltaCp?: number }>;
   issues: ReportIssuePresentationDto[];
   standards: Array<{ grade: QualityGrade; qualityRange: string; description: string }>;

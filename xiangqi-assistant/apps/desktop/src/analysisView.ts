@@ -24,6 +24,8 @@ export type PositionEvaluation = {
   scoreText: string;
   detail: string;
   redShare: number;
+  mateSide?: Side;
+  mateIn?: number;
   deltaText?: string;
   samples: TrendSample[];
 };
@@ -347,12 +349,14 @@ export function positionEvaluation(board: BoardState, analysis: AnalysisLine[]):
   const mateSide = currentMate == null ? undefined : currentMate > 0 ? "红方" : "黑方";
   const boundedScore = currentMate != null ? (currentMate > 0 ? 800 : -800) : currentScore ?? 0;
   return {
-    label: mateSide ? `${mateSide}有杀` : evaluationLabel(boundedScore),
-    scoreText: currentMate != null ? `${mateSide} ${Math.abs(currentMate)} 步杀` : scoreText(boundedScore),
+    label: mateSide ? `${mateSide}绝杀` : evaluationLabel(boundedScore),
+    scoreText: currentMate != null ? `剩余 ${Math.abs(currentMate)} 步杀` : scoreText(boundedScore),
     detail: primary
       ? `深度 ${primary.depth ?? "-"} · ${primary.nps ? `${(primary.nps / 1_000_000).toFixed(1)}M` : "-"} NPS · ${((primary.timeMs ?? 0) / 1000).toFixed(1)}s`
       : "已保存节点分数",
     redShare: Math.max(5, Math.min(95, 50 + boundedScore / 16)),
+    mateSide,
+    mateIn: currentMate == null ? undefined : Math.abs(currentMate),
     deltaText: delta == null ? undefined : `较上一局面 ${delta >= 0 ? "+" : ""}${Math.round(delta)}`,
     samples,
   };
