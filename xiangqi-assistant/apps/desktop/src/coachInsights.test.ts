@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { branchCoachInsights, moveCoachInsight, moveThoughtHint } from "./coachInsights";
+import { branchCoachInsights, currentCoachAdvice, moveCoachInsight, moveThoughtHint } from "./coachInsights";
 import type { GameReportMove, SideReport } from "./analysisView";
+import type { BoardState, GameReportPresentationDto } from "./platform";
 
 const sideReport = (opening: number, middle: number): SideReport => ({
   overall: Math.round((opening + middle) / 2),
@@ -56,4 +57,73 @@ describe("coachInsights", () => {
     expect(insights.weaknessFixes.join("")).toContain("红方开局评分最低");
     expect(insights.studyPlan.join("")).toContain("最大转折");
   });
+
+  it("shows opening advice before the first move or any engine line", () => {
+    const advice = currentCoachAdvice({
+      board: board({ history: [] }),
+    });
+
+    expect(advice.title).toBe("开局前的 AI 私教建议");
+    expect(advice.suggestions.join("")).toContain("布局目标");
+    expect(advice.nextAction).toContain("分析当前局面");
+  });
+
+  it("uses the current engine candidate when available", () => {
+    const advice = currentCoachAdvice({
+      board: board({ history: [moveItem("n1")] }),
+      primaryAnalysis: { multipv: 1, notation: ["马二进三", "马8进7"], pv: ["h0g2"] },
+    });
+
+    expect(advice.title).toBe("当前局面 AI 私教建议");
+    expect(advice.status).toContain("马二进三");
+    expect(advice.suggestions.join("")).toContain("推荐线：马二进三 马8进7");
+  });
+
+  it("falls back to report issue coaching for the selected move", () => {
+    const advice = currentCoachAdvice({
+      board: board({ currentNode: "n1", history: [moveItem("n1")] }),
+      report: {
+        issues: [{
+          nodeId: "n1",
+          notation: "马8进7",
+          movedBy: "黑方",
+          lossCp: 320,
+          score: 39,
+          grade: "差",
+          missedMate: false,
+          redScoreCp: 420,
+          deltaCp: 320,
+          coach: moveCoachInsight(move),
+        }],
+      } as GameReportPresentationDto,
+    });
+
+    expect(advice.title).toContain("马8进7");
+    expect(advice.status).toContain("39分");
+    expect(advice.nextAction).toContain("变招分支");
+  });
 });
+
+function moveItem(id: string): BoardState["history"][number] {
+  return {
+    id,
+    iccs: "h9g7",
+    notation: "马8进7",
+    movedBy: "黑方",
+    from: { row: 0, col: 7 },
+    to: { row: 2, col: 6 },
+    comment: "",
+    isMainline: true,
+  };
+}
+
+function board(overrides: Partial<Pick<BoardState, "history" | "currentNode" | "sideToMove" | "playable" | "status">> = {}): Pick<BoardState, "history" | "sideToMove" | "currentNode" | "playable" | "status"> {
+  return {
+    history: [moveItem("n1")],
+    sideToMove: "红方",
+    currentNode: undefined,
+    playable: true,
+    status: "进行中",
+    ...overrides,
+  };
+}

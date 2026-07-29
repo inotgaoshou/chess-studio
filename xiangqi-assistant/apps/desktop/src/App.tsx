@@ -46,7 +46,7 @@ import { DesktopMenuBar, type MenuCommand } from "./DesktopMenuBar";
 import { DesktopDialogs, type DesktopDialog } from "./DesktopDialogs";
 import { GameReportDialog, GameReportView } from "./GameReportView";
 import { buildGameReportPresentation } from "./gameReport";
-import { moveThoughtHint } from "./coachInsights";
+import { currentCoachAdvice, moveThoughtHint } from "./coachInsights";
 import { MobileToolbar, type MobileToolbarCommand } from "./MobileToolbar";
 import type { DesktopPreferencesDto, SyncAccountDto } from "./platform";
 import { applyColorTheme, initialColorTheme, type ColorTheme } from "./theme";
@@ -501,6 +501,12 @@ export default function App() {
   const reportPresentation = useMemo(() => gameReport ? buildGameReportPresentation(board.title, gameReport) : undefined, [board.title, gameReport]);
   const orderedAnalysis = useMemo(() => analysis.slice().sort((left, right) => left.multipv - right.multipv), [analysis]);
   const primaryAnalysis = orderedAnalysis[0];
+  const liveCoachAdvice = useMemo(() => currentCoachAdvice({
+    board,
+    primaryAnalysis,
+    report: reportPresentation,
+    analysisBusy,
+  }), [analysisBusy, board, primaryAnalysis, reportPresentation]);
   const primaryMove = primaryAnalysis?.notation?.[0] ?? primaryAnalysis?.pv[0];
   const searchLimitLabel = searchMode === "infinite"
     ? "持续分析"
@@ -1604,6 +1610,13 @@ export default function App() {
         <section className={`board-section ${mobilePanel === "board" ? "mobile-visible" : ""}`}>
           <div className="board-stage">
             <div className="board-stage-inner">
+            <aside className="board-quality-rail" aria-label="当前着法质量">
+              {overviewReport?.grade && overviewReport.score != null && (
+                <span className={`board-quality-chip grade-${overviewReport.grade}`} title={`当前着法质量 ${overviewReport.score} 分`}>
+                  <b>{overviewReport.grade}</b><span>{overviewReport.score}分</span>
+                </span>
+              )}
+            </aside>
             <div className="board" aria-label="中国象棋棋盘">
               <div className="board-art" />
               {cells.map(({ row, col }) => {
@@ -1686,11 +1699,6 @@ export default function App() {
             </div>
           </div>
           <div className="board-statusbar">
-            {overviewReport?.grade && overviewReport.score != null && (
-              <span className={`board-quality-chip grade-${overviewReport.grade}`} title={`当前着法质量 ${overviewReport.score} 分`}>
-                <b>{overviewReport.grade}</b><span>{overviewReport.score}分</span>
-              </span>
-            )}
             {lastMove && <span className="last-move-status">上一着：<strong>{lastMove.movedBy}</strong> {lastMove.notation}</span>}
             {lastMove && <span className="status-separator" />}
             <span className={`turn-dot ${board.sideToMove === "红方" ? "red" : "black"}`} />
@@ -1770,6 +1778,15 @@ export default function App() {
                 : <button className="analysis-action" disabled={!board.playable || isPlaying} onClick={() => void runAnalysis()} title="分析当前局面"><Play size={14}/><span>分析</span></button>}
             </div>
             <button className="force-alternative" disabled={analysisBusy || !primaryAnalysis?.pv[0] || !board.playable} onClick={() => void runAnalysis(false, primaryAnalysis?.pv[0])}><GitFork size={12}/>强制变招：排除当前第一候选并重搜</button>
+          </section>
+
+          <section className="live-coach-advice" aria-label="AI 私教建议">
+            <header>
+              <div><strong>{liveCoachAdvice.title}</strong><small>{liveCoachAdvice.status}</small></div>
+              <button disabled={analysisBusy || !board.playable || isPlaying} onClick={() => void runAnalysis()}><Zap size={12}/>获取候选</button>
+            </header>
+            <ul>{liveCoachAdvice.suggestions.map((item) => <li key={item}>{item}</li>)}</ul>
+            <p>{liveCoachAdvice.nextAction}</p>
           </section>
 
           <section className="variations">

@@ -1,4 +1,4 @@
-import type { BranchCoachInsightDto, MoveCoachInsightDto, OpeningBookHitDto, QualityGrade, ReportPhase, Side } from "./platform";
+import type { AnalysisLine, BoardState, BranchCoachInsightDto, GameReportPresentationDto, MoveCoachInsightDto, OpeningBookHitDto, QualityGrade, ReportPhase, Side } from "./platform";
 import type { GameReportMove, SideReport } from "./analysisView";
 
 const phaseLabels: Record<ReportPhase, string> = { opening: "开局", middle: "中局", endgame: "残局" };
@@ -48,6 +48,98 @@ function gradePurpose(grade: QualityGrade, missedMate: boolean) {
 
 function recommendationText(move: Pick<GameReportMove, "bestNotation" | "pvNotation">) {
   return move.bestNotation ?? move.pvNotation?.[0];
+}
+
+export type CurrentCoachAdvice = {
+  title: string;
+  status: string;
+  suggestions: string[];
+  nextAction: string;
+};
+
+function analysisRecommendation(line: AnalysisLine | undefined) {
+  return line?.notation?.[0] ?? line?.pv[0];
+}
+
+export function currentCoachAdvice(input: {
+  board: Pick<BoardState, "history" | "sideToMove" | "currentNode" | "playable" | "status">;
+  primaryAnalysis?: AnalysisLine;
+  report?: GameReportPresentationDto;
+  analysisBusy?: boolean;
+}): CurrentCoachAdvice {
+  const { board, primaryAnalysis, report, analysisBusy = false } = input;
+  const recommendation = analysisRecommendation(primaryAnalysis);
+  const currentIssue = board.currentNode ? report?.issues.find((issue) => issue.nodeId === board.currentNode) : undefined;
+  if (!board.playable) {
+    return {
+      title: "当前局面暂不可对弈",
+      status: board.status,
+      suggestions: [
+        "先检查局面编辑：将帅位置、双方棋子数量、行棋方是否合理。",
+        "修正为合法局面后，再使用 AI 分析和整局报告判断弱点。",
+      ],
+      nextAction: "打开局面编辑器修正局面。",
+    };
+  }
+  if (currentIssue) {
+    return {
+      title: `${currentIssue.movedBy} ${currentIssue.notation} 的私教建议`,
+      status: `${currentIssue.grade} · ${currentIssue.score}分 · 损失 ${currentIssue.lossCp}cp`,
+      suggestions: [
+        currentIssue.coach.intent,
+        currentIssue.coach.weakness,
+        currentIssue.coach.solution,
+      ],
+      nextAction: currentIssue.coach.branchPlan,
+    };
+  }
+  if (recommendation) {
+    return {
+      title: "当前局面 AI 私教建议",
+      status: `${board.sideToMove}行棋 · 首选 ${recommendation}`,
+      suggestions: [
+        `先把「${recommendation}」当作主候选，观察它是否在抢先、补防、兑子或制造威胁。`,
+        primaryAnalysis?.notation?.length
+          ? `推荐线：${primaryAnalysis.notation.slice(0, 6).join(" ")}。`
+          : "当前只有 ICCS 候选，建议生成整局报告后可得到中文推荐与后续推演。",
+        "如果你想研究别的想法，用“强制变招”排除第一候选，再比较局面分差异。",
+      ],
+      nextAction: "可以直接点击候选线第一步试走，或把它保存为变招分支。",
+    };
+  }
+  if (analysisBusy) {
+    return {
+      title: "AI 正在思考",
+      status: `${board.sideToMove}行棋 · 等待候选线`,
+      suggestions: [
+        "先观察当前局面有哪些直接威胁：将军、吃子、捉双、抽将。",
+        "再列 2-3 个候选：一个进攻、一个补防、一个调整子力。",
+      ],
+      nextAction: "等 Pikafish 返回首选后，再比较你的候选和 AI 推荐。",
+    };
+  }
+  if (board.history.length === 0) {
+    return {
+      title: "开局前的 AI 私教建议",
+      status: `${board.sideToMove}先行 · 尚未走棋`,
+      suggestions: [
+        "第一步不要只看能否吃子，先考虑布局目标：争中路、快出子、保持将帅安全。",
+        "如果从标准局面开始，可以用中炮、飞相、仙人指路等思路建立主线，再用变招比较不同体系。",
+        "生成整局报告后，官着库会标记经典布局走法，但质量分仍按 Pikafish 计算。",
+      ],
+      nextAction: "先点击“分析当前局面”，或直接走第一步建立主线。",
+    };
+  }
+  return {
+    title: "当前节点暂无 AI 候选",
+    status: `${board.sideToMove}行棋 · 已走 ${board.history.length} 着`,
+    suggestions: [
+      "先回看上一着的目的：它是在进攻、补防、兑子、抢先，还是单纯移动子力。",
+      "当前没有候选线时，先用局面问题清单：王安全、子力活跃度、兵卒结构、对方直接威胁。",
+      report ? "已有整局报告时，可以切到“摘要/报告”查看历史着法的私教建议。" : "还没有整局报告时，生成报告后会补齐每步目的、弱点和变招方案。",
+    ],
+    nextAction: "点击“分析”获取当前局面的候选线；若要逐步复盘，点击“生成报告”。",
+  };
 }
 
 export function moveCoachInsight(move: GameReportMove): MoveCoachInsightDto {
