@@ -643,16 +643,16 @@ button:disabled { cursor: default; opacity: .45; }
 .report-position-score { min-width: 0; display: grid; justify-items: end; gap: 2px; color: #bfc8c2; font: 11px ui-monospace, SFMono-Regular, monospace; }
 .report-position-score small { color: #7e8a83; font: 10px Inter, "PingFang SC", sans-serif; }
 .report-position-score b { font-weight: 700; }
-.report-quality { width: 62px; min-height: 30px; padding: 3px 5px; border: 1px solid currentColor; border-radius: 3px; display: grid; grid-template-columns: 18px 1fr; align-items: center; gap: 3px; }
-.report-quality b { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; background: currentColor; color: #fff; font-size: 11px; }
+.report-quality { --grade-color: #6f7a74; width: 62px; min-height: 30px; padding: 3px 5px; border: 1px solid var(--grade-color); border-radius: 3px; color: var(--grade-color); display: grid; grid-template-columns: 18px 1fr; align-items: center; gap: 3px; }
+.report-quality b { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; background: var(--grade-color); color: #161b19; font-size: 11px; }
 .report-quality small { color: inherit; font-size: 11px; font-weight: 700; white-space: nowrap; }
-.report-quality.grade-优 { color: #55ad80; }
-.report-quality.grade-佳 { color: #83ae68; }
-.report-quality.grade-疑 { color: #d0aa4f; }
-.report-quality.grade-错 { color: #dc8152; }
-.report-quality.grade-漏 { color: #df6863; }
+.report-quality.grade-优 { --grade-color: #55ad80; }
+.report-quality.grade-佳 { --grade-color: #83ae68; }
+.report-quality.grade-疑 { --grade-color: #d0aa4f; }
+.report-quality.grade-错 { --grade-color: #dc8152; }
+.report-quality.grade-漏 { --grade-color: #df6863; }
 .report-quality.pending { border-color: #4a534e; color: #6f7a74; grid-template-columns: 18px 1fr; }
-.report-quality.pending b { border: 1px solid currentColor; background: transparent; }
+.report-quality.pending b { border: 1px solid currentColor; background: transparent; color: inherit; }
 .report-note { position: sticky; bottom: 0; min-height: 25px; margin: 0; padding: 6px 8px; border-top: 1px solid #414944; background: #252b28; color: #717d76; font-size: 11px; }
 .game-report { height: 100%; overflow-y: auto; scrollbar-gutter: stable; background: #29302d; }
 .game-report > .empty-review { height: 180px; min-height: 150px; }
@@ -1079,12 +1079,11 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 .report-move small,
 .report-position-score small { color: var(--text-muted); }
 .report-position-score { color: var(--text-secondary); }
-.report-quality b { color: var(--surface-0); }
-.report-quality.grade-优 { color: var(--accent); }
-.report-quality.grade-佳 { color: #a7cc78; }
-.report-quality.grade-疑 { color: var(--warning); }
-.report-quality.grade-错 { color: #e58c5b; }
-.report-quality.grade-漏 { color: var(--red); }
+.report-quality.grade-优 { --grade-color: var(--accent); }
+.report-quality.grade-佳 { --grade-color: #a7cc78; }
+.report-quality.grade-疑 { --grade-color: var(--warning); }
+.report-quality.grade-错 { --grade-color: #e58c5b; }
+.report-quality.grade-漏 { --grade-color: var(--red); }
 .report-quality.pending { color: var(--text-muted); border-color: var(--border); }
 .report-quality.pending b { color: var(--text-muted); }
 
@@ -1167,9 +1166,10 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 .score-standard-notes code { color: var(--warning); }
 
 :root[data-theme="light"] .report-quality.grade-佳,
-:root[data-theme="light"] .score-standard-table b.grade-佳 { color: #477124; }
+:root[data-theme="light"] .score-standard-table b.grade-佳 { --grade-color: #477124; color: #477124; }
 :root[data-theme="light"] .report-quality.grade-错,
-:root[data-theme="light"] .score-standard-table b.grade-错 { color: #a24318; }
+:root[data-theme="light"] .score-standard-table b.grade-错 { --grade-color: #a24318; color: #a24318; }
+:root[data-theme="light"] .report-quality:not(.pending) b { color: #fff; }
 
 :root[data-theme="light"] .board-section { background: #dce3df; }
 :root[data-theme="light"] .board-art { filter: none; opacity: 1; }

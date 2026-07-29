@@ -61,6 +61,7 @@ export type TrendTurningPoint = TrendSample & {
 const initialMaterial = 5660;
 type MoveGradeBand = {
   grade: MoveGrade;
+  hint: string;
   minLossCp: number;
   maxLossCp?: number;
   penaltyOriginCp: number;
@@ -71,11 +72,11 @@ type MoveGradeBand = {
 };
 
 const moveGradeBands: MoveGradeBand[] = [
-  { grade: "优", minLossCp: 0, maxLossCp: 20, penaltyOriginCp: 0, penaltyAtOrigin: 0, penaltyPerCp: 0, qualityRange: "通常 100 分", description: "接近引擎首选，局面价值基本没有损失" },
-  { grade: "佳", minLossCp: 21, maxLossCp: 60, penaltyOriginCp: 20, penaltyAtOrigin: 0, penaltyPerCp: .1, qualityRange: "约 96-100 分", description: "质量较高，只有轻微的局面价值损失" },
-  { grade: "疑", minLossCp: 61, maxLossCp: 120, penaltyOriginCp: 60, penaltyAtOrigin: 4, penaltyPerCp: .2, qualityRange: "约 84-96 分", description: "值得复盘，局面优势出现可见下降" },
-  { grade: "错", minLossCp: 121, maxLossCp: 250, penaltyOriginCp: 120, penaltyAtOrigin: 16, penaltyPerCp: .25, qualityRange: "约 51-84 分", description: "明显失误，通常会改变局面的优劣程度" },
-  { grade: "漏", minLossCp: 251, penaltyOriginCp: 250, penaltyAtOrigin: 48.5, penaltyPerCp: .15, qualityRange: "0-51 分", description: "严重失误，可能丢失大量优势或直接改变胜负趋势" },
+  { grade: "优", hint: "接近最佳", minLossCp: 0, maxLossCp: 20, penaltyOriginCp: 0, penaltyAtOrigin: 0, penaltyPerCp: 0, qualityRange: "通常 100 分", description: "接近引擎首选，局面价值基本没有损失" },
+  { grade: "佳", hint: "轻微损失", minLossCp: 21, maxLossCp: 60, penaltyOriginCp: 20, penaltyAtOrigin: 0, penaltyPerCp: .1, qualityRange: "约 96-100 分", description: "质量较高，只有轻微的局面价值损失" },
+  { grade: "疑", hint: "值得复盘", minLossCp: 61, maxLossCp: 120, penaltyOriginCp: 60, penaltyAtOrigin: 4, penaltyPerCp: .2, qualityRange: "约 84-96 分", description: "值得复盘，局面优势出现可见下降" },
+  { grade: "错", hint: "明显失误", minLossCp: 121, maxLossCp: 250, penaltyOriginCp: 120, penaltyAtOrigin: 16, penaltyPerCp: .25, qualityRange: "约 51-84 分", description: "明显失误，通常会改变局面的优劣程度" },
+  { grade: "漏", hint: "严重失误", minLossCp: 251, penaltyOriginCp: 250, penaltyAtOrigin: 48.5, penaltyPerCp: .15, qualityRange: "0-51 分", description: "严重失误，可能丢失大量优势或直接改变胜负趋势" },
 ];
 
 function rangeText(band: MoveGradeBand, divisor: number, suffix = "") {
@@ -91,6 +92,12 @@ export const moveGradeStandards: MoveGradeStandard[] = moveGradeBands.map((band)
   qualityRange: band.qualityRange,
   description: band.description,
 }));
+
+export function moveQualityFeedback(grade: MoveGrade, missedMate = false) {
+  if (missedMate) return { hint: "漏掉杀棋", description: "走前存在强制杀棋，本着后杀棋消失" };
+  const band = moveGradeBands.find((candidate) => candidate.grade === grade)!;
+  return { hint: band.hint, description: band.description };
+}
 
 export function reportMovePhase(ply: number, material: number): ReportPhase {
   if (material <= initialMaterial * .45 || ply > 80) return "endgame";

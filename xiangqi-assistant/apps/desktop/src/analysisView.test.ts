@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calculateGameReport, coachProfile, moveGradeStandards, moveQualityScore, moveReports, pvMoveRows, reportMovePhase, trendTurningPoints } from "./analysisView";
+import { calculateGameReport, coachProfile, moveGradeStandards, moveQualityFeedback, moveQualityScore, moveReports, pvMoveRows, reportMovePhase, trendTurningPoints } from "./analysisView";
 import type { AnalysisLine, GameReportDatasetDto, MoveItem } from "./platform";
 
 function dataset(positions: GameReportDatasetDto["positions"]): GameReportDatasetDto {
@@ -105,6 +105,17 @@ describe("move quality score", () => {
 
   it("scores a missed mate as zero regardless of centipawn loss", () => {
     expect(moveQualityScore(0, true)).toEqual({ score: 0, grade: "漏" });
+  });
+
+  it.each([
+    ["优", false, { hint: "接近最佳", description: "接近引擎首选，局面价值基本没有损失" }],
+    ["佳", false, { hint: "轻微损失", description: "质量较高，只有轻微的局面价值损失" }],
+    ["疑", false, { hint: "值得复盘", description: "值得复盘，局面优势出现可见下降" }],
+    ["错", false, { hint: "明显失误", description: "明显失误，通常会改变局面的优劣程度" }],
+    ["漏", false, { hint: "严重失误", description: "严重失误，可能丢失大量优势或直接改变胜负趋势" }],
+    ["漏", true, { hint: "漏掉杀棋", description: "走前存在强制杀棋，本着后杀棋消失" }],
+  ] as const)("provides coaching feedback for %s", (grade, missedMate, expected) => {
+    expect(moveQualityFeedback(grade, missedMate)).toEqual(expected);
   });
 
   it("publishes the same five boundaries used by the report explanation", () => {

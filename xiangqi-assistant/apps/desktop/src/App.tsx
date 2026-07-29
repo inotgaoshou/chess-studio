@@ -38,7 +38,7 @@ import {
   Zap,
 } from "lucide-react";
 import { chessPlatform, type AnalysisLine, type BoardState, type EngineRuntimeState, type GameReportDatasetDto, type GameReportProgressDto, type GameSummary, type MoveItem, type Piece } from "./platform";
-import { calculateGameReport, coachProfile, moveGradeStandards, moveReports, positionEvaluation, trendPoints, trendTurningPoints } from "./analysisView";
+import { calculateGameReport, coachProfile, moveGradeStandards, moveQualityFeedback, moveReports, positionEvaluation, trendPoints, trendTurningPoints } from "./analysisView";
 import { CandidateLine } from "./CandidateLine";
 import { CoachRadar } from "./CoachRadar";
 import { DesktopMenuBar, type MenuCommand } from "./DesktopMenuBar";
@@ -1712,17 +1712,18 @@ export default function App() {
             {workspacePanel === "summary" && <div id="workspace-panel-summary" className="review-empty-or-content report-review" role="tabpanel" aria-labelledby="workspace-tab-summary">
               {reports.length === 0
                 ? <div className="empty-review"><ClipboardList size={24}/><strong>暂无分析摘要</strong><span>录入并分析着法后生成逐着局面变化</span></div>
-                : reports.map((report) => (
-                  <button className={`report-row ${board.currentNode === report.move.id ? "active" : ""}`} key={report.move.id} onClick={() => void navigateTo(report.move.id)}>
+                : reports.map((report) => {
+                  const feedback = report.grade ? moveQualityFeedback(report.grade, report.missedMate) : undefined;
+                  return <button className={`report-row ${board.currentNode === report.move.id ? "active" : ""}`} key={report.move.id} onClick={() => void navigateTo(report.move.id)}>
                     <span className="report-number">{report.index + 1}</span>
                     <span className={`report-side ${report.move.movedBy === "红方" ? "red" : "black"}`}/>
-                    <span className="report-move"><strong>{report.move.notation}</strong><small>{report.move.movedBy} · {formatScoreDelta(report.deltaCp)}{report.missedMate ? " · 漏杀" : ""}</small></span>
+                    <span className="report-move" title={feedback?.description}><strong>{report.move.notation}</strong><small>{report.move.movedBy} · {formatScoreDelta(report.deltaCp)}{feedback ? ` · ${feedback.hint}` : ""}</small></span>
                     <span className="report-position-score" title="Pikafish 局面分，正数表示红方占优，负数表示黑方占优"><small>局面</small><b>{formatReportScore(report.move, report.redScoreCp)}</b></span>
                     {report.grade && report.score != null
-                      ? <span className={`report-quality grade-${report.grade}`} title={report.missedMate ? "漏掉强制杀棋，单着质量 0 分" : `单着质量 ${report.score} 分，等级 ${report.grade}`}><b>{report.grade}</b><small>{report.score}分</small></span>
+                      ? <span className={`report-quality grade-${report.grade}`} title={`${feedback?.hint}：${feedback?.description}。单着质量 ${report.score} 分，等级 ${report.grade}`}><b>{report.grade}</b><small>{report.score}分</small></span>
                       : <span className="report-quality pending"><b>-</b><small>待分析</small></span>}
                   </button>
-                ))}
+                })}
               <p className="report-note">局面分表示当前优劣；质量分表示该着相对前一局面的表现。</p>
             </div>}
             {workspacePanel === "report" && <div id="workspace-panel-report" className="review-empty-or-content game-report" role="tabpanel" aria-labelledby="workspace-tab-report">
