@@ -467,6 +467,14 @@ export default function App() {
     });
   }, [board.history, board.rootMate, board.rootScoreCp, board.rootSideToMove, gameReport]);
   const overviewReport = useMemo(() => reports.find((report) => report.move.id === board.currentNode), [board.currentNode, reports]);
+  const reportByMoveId = useMemo(() => new Map(reports.map((report) => [report.move.id, report])), [reports]);
+  const boardEvaluationScore = evaluation?.samples.at(-1)?.scoreCp;
+  const boardEvaluationSide = boardEvaluationScore == null || Math.abs(boardEvaluationScore) <= 50
+    ? "均势"
+    : boardEvaluationScore > 0 ? "红优" : "黑优";
+  const boardEvaluationRailShare = boardEvaluationScore == null
+    ? 50
+    : boardEvaluationScore < -50 ? 100 - (evaluation?.redShare ?? 50) : evaluation?.redShare ?? 50;
   const reportPresentation = useMemo(() => gameReport ? buildGameReportPresentation(board.title, gameReport) : undefined, [board.title, gameReport]);
   const orderedAnalysis = useMemo(() => analysis.slice().sort((left, right) => left.multipv - right.multipv), [analysis]);
   const primaryAnalysis = orderedAnalysis[0];
@@ -1571,6 +1579,7 @@ export default function App() {
 
         <section className={`board-section ${mobilePanel === "board" ? "mobile-visible" : ""}`}>
           <div className="board-stage">
+            <div className="board-stage-inner">
             <div className="board" aria-label="中国象棋棋盘">
               <div className="board-art" />
               {cells.map(({ row, col }) => {
@@ -1595,6 +1604,11 @@ export default function App() {
                   >
                     {piece && <img src={pieceAsset(piece)} alt="" draggable={false} />}
                     {isSelected && <img className="selection-mask" src="/skins/tchess/mask2.png" alt="" />}
+                    {isLastTo && board.currentNode === lastMove?.id && overviewReport?.grade && overviewReport.score != null && (
+                      <span className={`board-move-grade grade-${overviewReport.grade}`} title={`本着质量 ${overviewReport.score} 分，等级 ${overviewReport.grade}`}>
+                        {overviewReport.grade}
+                      </span>
+                    )}
                   </button>
                 );
               })}
@@ -1630,6 +1644,22 @@ export default function App() {
                   </svg>
                 </>
               )}
+            </div>
+            <aside className={`board-eval-rail ${boardEvaluationScore == null ? "pending" : boardEvaluationScore < -50 ? "black" : boardEvaluationScore > 50 ? "red" : "balanced"}`} aria-label="棋盘局势评分条">
+              <div className="board-eval-help" title="局面分说明：正数红优，负数黑优；±50 内可近似看作均势">?</div>
+              <div className="board-eval-track" aria-hidden="true">
+                <span style={{ height: `${Math.max(8, Math.min(92, boardEvaluationRailShare))}%` }}/>
+              </div>
+              <div className="board-eval-label">
+                <strong>{boardEvaluationSide}</strong>
+                <span>{evaluation?.scoreText ?? "--"}</span>
+              </div>
+              {overviewReport?.grade && overviewReport.score != null
+                ? <div className={`board-eval-quality grade-${overviewReport.grade}`} title={`当前着法质量 ${overviewReport.score} 分`}>
+                  <b>{overviewReport.grade}</b><span>{overviewReport.score}</span>
+                </div>
+                : <div className="board-eval-quality pending"><b>-</b><span>待评</span></div>}
+            </aside>
             </div>
           </div>
           <div className="board-statusbar">
@@ -1744,20 +1774,23 @@ export default function App() {
                   <button className={`move-table-row root ${!board.currentNode ? "active" : ""}`} role="row" onClick={() => void navigateTo()}>
                     <span role="cell">0</span><span role="cell"><GitBranch size={12}/>开始局面</span><span role="cell" />
                   </button>
-                {board.history.map((move, index) => (
+                {board.history.map((move, index) => {
+                  const quality = reportByMoveId.get(move.id);
+                  return (
                     <button
                       ref={board.currentNode === move.id ? activeMoveRef : undefined}
-                      className={`move-table-row ${board.currentNode === move.id ? "active" : ""}`}
+                      className={`move-table-row ${quality?.grade ? `grade-${quality.grade}` : ""} ${board.currentNode === move.id ? "active" : ""}`}
                       key={move.id}
                       role="row"
-                      title={`${move.movedBy} · ICCS ${move.iccs}`}
+                      title={`${move.movedBy} · ICCS ${move.iccs}${quality?.score != null ? ` · 质量 ${quality.score} 分 ${quality.grade}` : ""}`}
                       onClick={() => void navigateTo(move.id)}
                     >
                       <span role="cell">{index + 1}</span>
-                      <span role="cell"><i className={move.movedBy === "红方" ? "red" : "black"}/><strong>{move.notation}</strong>{move.comment && <MessageSquare className="comment-marker" size={11}/>} {move.isMainline && <small>主线</small>}</span>
-                      <span role="cell" className={move.mate != null ? "mate-score" : ""}>{formatMoveScore(move)}</span>
+                      <span role="cell"><i className={move.movedBy === "红方" ? "red" : "black"}/><strong>{move.notation}</strong>{quality?.grade && <em className={`move-quality-mini grade-${quality.grade}`}>{quality.grade}</em>}{move.comment && <MessageSquare className="comment-marker" size={11}/>} {move.isMainline && <small>主线</small>}</span>
+                      <span role="cell" className={move.mate != null ? "mate-score" : ""}>{quality?.score != null ? `${quality.score}分` : formatMoveScore(move)}</span>
                     </button>
-                ))}
+                  );
+                })}
                 </div>
               </div>
               {board.currentNode && (
@@ -1849,10 +1882,13 @@ export default function App() {
                   const opening = reportPosition?.position.opening;
                   const bestNotation = reportPosition?.before?.bestNotation;
                   const recommendationDepth = reportPosition?.before?.depth ?? gameReport?.analysisDepth ?? desktopPreferences.reportDepth;
-                  return <button className={`report-row ${board.currentNode === report.move.id ? "active" : ""}`} key={report.move.id} onClick={() => void navigateTo(report.move.id)}>
+                  return <button className={`report-row ${report.grade ? `grade-${report.grade}` : ""} ${report.missedMate ? "missed-mate" : ""} ${board.currentNode === report.move.id ? "active" : ""}`} key={report.move.id} onClick={() => void navigateTo(report.move.id)}>
                     <span className="report-number">{report.index + 1}</span>
                     <span className={`report-side ${report.move.movedBy === "红方" ? "red" : "black"}`}/>
-                    <span className="report-move" title={feedback?.description}><strong>{report.move.notation}</strong><small>{report.move.movedBy} · {formatScoreDelta(report.deltaCp)}{feedback ? ` · ${feedback.hint}` : ""}{opening ? ` · 官着 ${opening.name}` : ""}{bestNotation ? ` · 深度${recommendationDepth}推荐 ${bestNotation}` : ""}</small></span>
+                    <span className="report-move" title={feedback?.description}>
+                      <strong>{report.move.notation}{report.grade && <em className={`report-inline-grade grade-${report.grade}`}>{report.grade}</em>}{report.missedMate && <em className="missed-mate-chip">漏杀</em>}</strong>
+                      <small>{report.move.movedBy} · {formatScoreDelta(report.deltaCp)}{feedback ? ` · ${feedback.hint}` : ""}{opening ? ` · 官着 ${opening.name}` : ""}{bestNotation ? ` · 深度${recommendationDepth}推荐 ${bestNotation}` : ""}</small>
+                    </span>
                     <span className="report-position-score" title="Pikafish 局面分，正数表示红方占优，负数表示黑方占优"><small>局面</small><b>{formatReportScore(report.move, report.redScoreCp)}</b></span>
                     {report.grade && report.score != null
                       ? <span className={`report-quality grade-${report.grade}`} title={`${feedback?.hint}：${feedback?.description}。单着质量 ${report.score} 分，等级 ${report.grade}`}><b>{report.grade}</b><small>{report.score}分</small></span>
