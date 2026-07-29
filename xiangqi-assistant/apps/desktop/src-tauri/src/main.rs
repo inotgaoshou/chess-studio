@@ -1,8 +1,10 @@
 mod credential_store;
 
 use std::collections::BTreeMap;
+use std::fs::File;
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::time::Instant;
@@ -18,6 +20,7 @@ use manual_format::{
     import_document,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use sync_protocol::{
     AddMovePayload, CreateGamePayload, DeleteNodePayload, Operation, OperationKind,
     ReorderBranchesPayload, SetMainlinePayload, UpdateCommentPayload, UpdateGameMetadataPayload,
@@ -25,7 +28,7 @@ use sync_protocol::{
 use tauri::{Emitter, Manager, State};
 use uuid::Uuid;
 use xiangqi_core::{Board, Color, GameStatus, PieceKind, STARTING_FEN, Square};
-use xiangqi_manual::ManualTree;
+use xiangqi_manual::{ManualTree, MoveNode};
 
 struct AppModel {
     board: Board,
@@ -47,9 +50,13 @@ struct DesktopState {
     model: Mutex<AppModel>,
     credentials: SharedCredentialStore,
     engine: tokio::sync::Mutex<Option<EngineControl>>,
+    report_engine: tokio::sync::Mutex<Option<EngineControl>>,
+    report_commit: tokio::sync::Mutex<()>,
     play_session: tokio::sync::Mutex<Option<EngineRuntime>>,
     analysis_generation: AtomicU64,
     play_generation: AtomicU64,
+    report_generation: AtomicU64,
+    report_running: AtomicBool,
 }
 
 #[derive(Serialize)]
@@ -208,6 +215,52 @@ struct AnalysisLine {
     #[serde(default)]
     notation: Vec<String>,
     pv: Vec<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GameReportMoveDto {
+    node_id: Uuid,
+    notation: String,
+    moved_by: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GameReportPositionDto {
+    fen: String,
+    side_to_move: String,
+    ply: usize,
+    phase: String,
+    material: u32,
+    score_cp: Option<i32>,
+    mate: Option<i32>,
+    depth: Option<u32>,
+    elapsed_ms: Option<u64>,
+    #[serde(rename = "move")]
+    move_: Option<GameReportMoveDto>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GameReportDatasetDto {
+    game_id: Uuid,
+    line_signature: String,
+    engine_fingerprint: String,
+    config_hash: String,
+    generated_at: String,
+    stale: bool,
+    positions: Vec<GameReportPositionDto>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GameReportProgressDto {
+    completed: usize,
+    total: usize,
+    node_id: Option<Uuid>,
+    elapsed_ms: u64,
+    state: &'static str,
 }
 
 #[derive(Serialize)]
@@ -631,6 +684,9 @@ async fn analyze_position(
     app: tauri::AppHandle,
     state: State<'_, DesktopState>,
 ) -> Result<Vec<AnalysisLine>, String> {
+    if state.report_running.load(Ordering::SeqCst) {
+        return Err("整局报告正在生成，请先取消报告分析".into());
+    }
     let analysis_generation = state.analysis_generation.load(Ordering::SeqCst);
     let analysis_board = Board::from_fen(&fen).map_err(|error| error.to_string())?;
     let (analysis_game_id, analysis_node_id) = {
@@ -859,6 +915,9 @@ async fn engine_play_move(
     app: tauri::AppHandle,
     state: State<'_, DesktopState>,
 ) -> Result<EngineMoveDto, String> {
+    if state.report_running.load(Ordering::SeqCst) {
+        return Err("整局报告正在生成，请先取消报告分析".into());
+    }
     let play_generation = state.play_generation.load(Ordering::SeqCst);
     let (fen, expected_game, expected_node) = {
         let model = state
@@ -1145,6 +1204,209 @@ fn pikafish_candidates(base: &Path) -> Vec<PathBuf> {
     .collect()
 }
 
+fn report_line_nodes(
+    tree: &ManualTree,
+    current_node: Option<Uuid>,
+) -> Result<Vec<MoveNode>, String> {
+    let mut nodes: Vec<MoveNode> = current_node
+        .map(|node_id| {
+            tree.active_line(node_id)
+                .map(|line| line.into_iter().cloned().collect())
+        })
+        .transpose()
+        .map_err(|error| error.to_string())?
+        .unwrap_or_default();
+    let mut parent = current_node.unwrap_or_else(|| tree.root_id());
+    loop {
+        let branches = tree.branches(parent).map_err(|error| error.to_string())?;
+        let next = branches
+            .iter()
+            .find(|node| node.is_mainline)
+            .or_else(|| branches.first())
+            .copied();
+        let Some(next) = next else { break };
+        nodes.push(next.clone());
+        parent = next.id;
+    }
+    Ok(nodes)
+}
+
+fn report_line_signature(tree: &ManualTree, current_node: Option<Uuid>) -> Result<String, String> {
+    let mut ids = vec![tree.root_id().to_string()];
+    ids.extend(
+        report_line_nodes(tree, current_node)?
+            .into_iter()
+            .map(|node| node.id.to_string()),
+    );
+    Ok(ids.join(":"))
+}
+
+fn report_material(board: &Board) -> u32 {
+    let mut total = 0;
+    for row in 0..10 {
+        for col in 0..9 {
+            let Some(piece) = board.piece_at(Square { row, col }) else {
+                continue;
+            };
+            total += match piece.kind {
+                PieceKind::King => 0,
+                PieceKind::Rook => 500,
+                PieceKind::Horse | PieceKind::Cannon => 250,
+                PieceKind::Advisor | PieceKind::Elephant => 120,
+                PieceKind::Pawn => 70,
+            };
+        }
+    }
+    total
+}
+
+fn report_phase(ply: usize, material: u32) -> &'static str {
+    if material <= 2547 || ply > 80 {
+        "endgame"
+    } else if ply <= 20 {
+        "opening"
+    } else {
+        "middle"
+    }
+}
+
+fn fen_starting_ply(fen: &str) -> usize {
+    let fields = fen.split_whitespace().collect::<Vec<_>>();
+    let fullmove = fields
+        .get(5)
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(1)
+        .max(1);
+    (fullmove - 1) * 2 + usize::from(fields.get(1) == Some(&"b"))
+}
+
+fn terminal_report_mate(board: &Board) -> Option<i32> {
+    (board.status() == GameStatus::Checkmate).then_some(-1)
+}
+
+fn update_fingerprint(hasher: &mut Sha256, path: &Path) -> Result<(), String> {
+    let mut file =
+        File::open(path).map_err(|error| format!("无法读取引擎或 NNUE 文件：{error}"))?;
+    let mut buffer = [0_u8; 1024 * 1024];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|error| format!("无法读取引擎或 NNUE 文件：{error}"))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(())
+}
+
+fn report_engine_fingerprint(engine_path: &Path) -> Result<String, String> {
+    let mut hasher = Sha256::new();
+    hasher.update(b"engine\0");
+    update_fingerprint(&mut hasher, engine_path)?;
+
+    let mut nnue_files = engine_path
+        .parent()
+        .and_then(|parent| std::fs::read_dir(parent).ok())
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("nnue"))
+        })
+        .collect::<Vec<_>>();
+    nnue_files.sort();
+    for path in nnue_files {
+        hasher.update(b"nnue\0");
+        if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
+            hasher.update(name.as_bytes());
+        }
+        hasher.update(b"\0");
+        update_fingerprint(&mut hasher, &path)?;
+    }
+    Ok(format!("sha256:{:x}", hasher.finalize()))
+}
+
+fn report_side(board: &Board) -> String {
+    if board.side_to_move() == Color::Red {
+        "红方"
+    } else {
+        "黑方"
+    }
+    .into()
+}
+
+fn report_positions(model: &AppModel) -> Result<(String, Vec<GameReportPositionDto>), String> {
+    let nodes = report_line_nodes(&model.tree, model.current_node)?;
+    let signature = report_line_signature(&model.tree, model.current_node)?;
+    let mut board = Board::from_fen(&model.starting_fen).map_err(|error| error.to_string())?;
+    let starting_ply = fen_starting_ply(&model.starting_fen);
+    let root_material = report_material(&board);
+    let mut positions = vec![GameReportPositionDto {
+        fen: board.to_fen(),
+        side_to_move: report_side(&board),
+        ply: starting_ply,
+        phase: report_phase(starting_ply, root_material).into(),
+        material: root_material,
+        score_cp: None,
+        mate: None,
+        depth: None,
+        elapsed_ms: None,
+        move_: None,
+    }];
+    for (index, node) in nodes.iter().enumerate() {
+        let notation = board
+            .chinese_move_notation(node.mv)
+            .map_err(|error| error.to_string())?;
+        let moved_by = if board.side_to_move() == Color::Red {
+            "红方"
+        } else {
+            "黑方"
+        };
+        board = board
+            .apply_move(node.mv)
+            .map_err(|error| error.to_string())?;
+        let material = report_material(&board);
+        positions.push(GameReportPositionDto {
+            fen: board.to_fen(),
+            side_to_move: report_side(&board),
+            ply: starting_ply + index + 1,
+            phase: report_phase(starting_ply + index + 1, material).into(),
+            material,
+            score_cp: None,
+            mate: None,
+            depth: None,
+            elapsed_ms: None,
+            move_: Some(GameReportMoveDto {
+                node_id: node.id,
+                notation,
+                moved_by: moved_by.into(),
+            }),
+        });
+    }
+    Ok((signature, positions))
+}
+
+fn emit_report_progress(app: &tauri::AppHandle, progress: GameReportProgressDto) {
+    let _ = app.emit("game-report-progress", progress);
+}
+
+async fn wait_for_engine_idle(state: &DesktopState, duration: Duration) -> bool {
+    let deadline = tokio::time::Instant::now() + duration;
+    loop {
+        if state.engine.lock().await.is_none() {
+            return true;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
 #[tauri::command]
 async fn stop_analysis(
     discard_result: bool,
@@ -1187,6 +1449,407 @@ fn get_saved_analysis(state: State<'_, DesktopState>) -> Result<Vec<AnalysisLine
         }
     }
     Ok(lines)
+}
+
+async fn generate_game_report_inner(
+    engine_path: String,
+    search_mode: String,
+    search_value: u64,
+    threads: u32,
+    hash_mb: u32,
+    generation: u64,
+    app: &tauri::AppHandle,
+    state: &DesktopState,
+) -> Result<GameReportDatasetDto, String> {
+    let engine_path = engine_path.trim().to_owned();
+    if !Path::new(&engine_path).is_file() {
+        return Err("引擎可执行文件不存在".into());
+    }
+    let engine_fingerprint = report_engine_fingerprint(Path::new(&engine_path))?;
+    let (effective_mode, effective_value, limit) = match search_mode.as_str() {
+        "time" => (
+            "time",
+            search_value.clamp(100, 30_000),
+            SearchLimit::MoveTime(search_value.clamp(100, 30_000)),
+        ),
+        "depth" => (
+            "depth",
+            search_value.clamp(1, 100),
+            SearchLimit::Depth(search_value.clamp(1, 100) as u32),
+        ),
+        "nodes" => (
+            "nodes",
+            search_value.clamp(1_000, 100_000_000),
+            SearchLimit::Nodes(search_value.clamp(1_000, 100_000_000)),
+        ),
+        "infinite" => ("time", 1000, SearchLimit::MoveTime(1000)),
+        _ => return Err("unsupported report search mode".into()),
+    };
+    let threads = threads.clamp(1, 64);
+    let hash_mb = hash_mb.clamp(16, 4096);
+    let config_hash = format!(
+        "report:{effective_mode}:{effective_value}:threads:{threads}:hash:{hash_mb}:multipv:1"
+    );
+    let (game_id, line_anchor, line_signature, mut positions) = {
+        let model = state
+            .model
+            .lock()
+            .map_err(|_| "state lock poisoned".to_owned())?;
+        let (signature, positions) = report_positions(&model)?;
+        (model.game_id, model.current_node, signature, positions)
+    };
+    let started = Instant::now();
+    let total = positions.len();
+    let mut completed = 0;
+
+    {
+        let model = state
+            .model
+            .lock()
+            .map_err(|_| "state lock poisoned".to_owned())?;
+        for position in &mut positions {
+            let position_board =
+                Board::from_fen(&position.fen).map_err(|error| error.to_string())?;
+            if let Some(mate) = terminal_report_mate(&position_board) {
+                position.mate = Some(mate);
+                position.depth = Some(0);
+                position.elapsed_ms = Some(0);
+                completed += 1;
+                continue;
+            }
+            let node_id = position.move_.as_ref().map(|mv| mv.node_id);
+            let cached = model
+                .store
+                .load_analysis_for_config(game_id, node_id, &engine_fingerprint, &config_hash)
+                .map_err(|error| error.to_string())?;
+            let Some(cached) = cached else { continue };
+            let lines: Vec<AnalysisLine> =
+                serde_json::from_str(&cached).map_err(|error| error.to_string())?;
+            if let Some(primary) = lines.iter().min_by_key(|line| line.multipv) {
+                position.score_cp = primary.score_cp;
+                position.mate = primary.mate;
+                position.depth = primary.depth;
+                position.elapsed_ms = primary.time_ms;
+                completed += 1;
+            }
+        }
+    }
+
+    if state.report_generation.load(Ordering::SeqCst) != generation {
+        emit_report_progress(
+            app,
+            GameReportProgressDto {
+                completed,
+                total,
+                node_id: None,
+                elapsed_ms: started.elapsed().as_millis() as u64,
+                state: "cancelled",
+            },
+        );
+        return Err("报告分析已取消".into());
+    }
+
+    emit_report_progress(
+        app,
+        GameReportProgressDto {
+            completed,
+            total,
+            node_id: None,
+            elapsed_ms: started.elapsed().as_millis() as u64,
+            state: "running",
+        },
+    );
+
+    if completed < total {
+        if !wait_for_engine_idle(state, Duration::from_secs(3)).await {
+            return Err("引擎正在执行其他搜索，请先停止".into());
+        }
+        let mut slot = state.play_session.lock().await;
+        if let Some(runtime) = slot.take() {
+            let _ = runtime.session.close().await;
+        }
+        let mut session = EngineSession::launch(&engine_path, Duration::from_secs(5))
+            .await
+            .map_err(|error| format!("引擎握手失败：{error}"))?;
+        session
+            .configure("Threads", &threads.to_string())
+            .await
+            .map_err(|error| error.to_string())?;
+        session
+            .configure("Hash", &hash_mb.to_string())
+            .await
+            .map_err(|error| error.to_string())?;
+        session
+            .configure("MultiPV", "1")
+            .await
+            .map_err(|error| error.to_string())?;
+        let protocol = session.protocol();
+        *state.report_engine.lock().await = Some(session.control());
+
+        let search_result: Result<(), String> = async {
+            for position in &mut positions {
+                if position.score_cp.is_some() || position.mate.is_some() {
+                    continue;
+                }
+                if state.report_generation.load(Ordering::SeqCst) != generation {
+                    emit_report_progress(
+                        app,
+                        GameReportProgressDto {
+                            completed,
+                            total,
+                            node_id: position.move_.as_ref().map(|mv| mv.node_id),
+                            elapsed_ms: started.elapsed().as_millis() as u64,
+                            state: "cancelled",
+                        },
+                    );
+                    return Err("报告分析已取消".into());
+                }
+                session
+                    .search(&position.fen, &[], limit.clone(), &[], false)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                let position_board =
+                    Board::from_fen(&position.fen).map_err(|error| error.to_string())?;
+                let mut primary = None;
+                loop {
+                    match session.next_event().await {
+                        Ok(EngineEvent::Info(info))
+                            if info.multipv == 1
+                                && (!info.pv.is_empty() || info.mate.is_some()) =>
+                        {
+                            primary = Some(AnalysisLine {
+                                depth: info.depth,
+                                score_cp: info.score_cp,
+                                mate: info.mate,
+                                nps: info.nps,
+                                time_ms: info.time_ms,
+                                multipv: 1,
+                                notation: if info.pv.is_empty() {
+                                    Vec::new()
+                                } else {
+                                    position_board
+                                        .chinese_pv_notation(&info.pv)
+                                        .unwrap_or_default()
+                                },
+                                pv: info.pv,
+                            });
+                        }
+                        Ok(EngineEvent::BestMove { .. }) => break,
+                        Ok(_) => {}
+                        Err(error) => return Err(error.to_string()),
+                    }
+                }
+                if state.report_generation.load(Ordering::SeqCst) != generation {
+                    emit_report_progress(
+                        app,
+                        GameReportProgressDto {
+                            completed,
+                            total,
+                            node_id: position.move_.as_ref().map(|mv| mv.node_id),
+                            elapsed_ms: started.elapsed().as_millis() as u64,
+                            state: "cancelled",
+                        },
+                    );
+                    return Err("报告分析已取消".into());
+                }
+                let mut line = primary.ok_or_else(|| "Pikafish 未返回有效报告分数".to_owned())?;
+                if line.mate == Some(0) {
+                    line.mate = Some(-1);
+                }
+                position.score_cp = line.score_cp;
+                position.mate = line.mate;
+                position.depth = line.depth;
+                position.elapsed_ms = line.time_ms;
+                let node_id = position.move_.as_ref().map(|mv| mv.node_id);
+                {
+                    let mut model = state
+                        .model
+                        .lock()
+                        .map_err(|_| "state lock poisoned".to_owned())?;
+                    model
+                        .store
+                        .save_analysis(
+                            game_id,
+                            node_id,
+                            &engine_fingerprint,
+                            &config_hash,
+                            line.depth,
+                            line.score_cp,
+                            line.mate,
+                            &serde_json::to_string(&vec![line])
+                                .map_err(|error| error.to_string())?,
+                            position.elapsed_ms.unwrap_or_default(),
+                        )
+                        .map_err(|error| error.to_string())?;
+                }
+                completed += 1;
+                emit_report_progress(
+                    app,
+                    GameReportProgressDto {
+                        completed,
+                        total,
+                        node_id,
+                        elapsed_ms: started.elapsed().as_millis() as u64,
+                        state: "running",
+                    },
+                );
+            }
+            Ok(())
+        }
+        .await;
+        *state.report_engine.lock().await = None;
+        if let Err(error) = search_result {
+            return Err(error);
+        }
+        *slot = Some(EngineRuntime {
+            path: engine_path.clone(),
+            session,
+            pondering_fen: None,
+            state: EngineRuntimeState::Idle,
+        });
+        let profile_result = state
+            .model
+            .lock()
+            .map_err(|_| "state lock poisoned".to_owned())
+            .and_then(|mut model| {
+                model
+                    .store
+                    .save_engine_profile("Pikafish report", &engine_path, protocol_name(protocol))
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+            });
+        profile_result?;
+    }
+
+    let _commit = state.report_commit.lock().await;
+    if state.report_generation.load(Ordering::SeqCst) != generation {
+        emit_report_progress(
+            app,
+            GameReportProgressDto {
+                completed,
+                total,
+                node_id: None,
+                elapsed_ms: started.elapsed().as_millis() as u64,
+                state: "cancelled",
+            },
+        );
+        return Err("报告分析已取消".into());
+    }
+
+    let dataset = GameReportDatasetDto {
+        game_id,
+        line_signature: line_signature.clone(),
+        engine_fingerprint: engine_fingerprint.clone(),
+        config_hash: config_hash.clone(),
+        generated_at: Utc::now().to_rfc3339(),
+        stale: false,
+        positions,
+    };
+    {
+        let mut model = state
+            .model
+            .lock()
+            .map_err(|_| "state lock poisoned".to_owned())?;
+        if model.game_id != game_id
+            || report_line_signature(&model.tree, line_anchor)? != line_signature
+        {
+            return Err("棋谱线路已变化，报告结果未覆盖当前线路".into());
+        }
+        model
+            .store
+            .save_game_report(
+                game_id,
+                &line_signature,
+                &engine_fingerprint,
+                &config_hash,
+                &serde_json::to_string(&dataset).map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| error.to_string())?;
+    }
+    state.report_running.store(false, Ordering::SeqCst);
+    emit_report_progress(
+        app,
+        GameReportProgressDto {
+            completed: total,
+            total,
+            node_id: None,
+            elapsed_ms: started.elapsed().as_millis() as u64,
+            state: "complete",
+        },
+    );
+    Ok(dataset)
+}
+
+#[tauri::command]
+async fn generate_game_report(
+    engine_path: String,
+    search_mode: String,
+    search_value: u64,
+    threads: u32,
+    hash_mb: u32,
+    app: tauri::AppHandle,
+    state: State<'_, DesktopState>,
+) -> Result<GameReportDatasetDto, String> {
+    let generation = state.report_generation.load(Ordering::SeqCst);
+    if state
+        .report_running
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return Err("整局报告正在生成".into());
+    }
+    let result = generate_game_report_inner(
+        engine_path,
+        search_mode,
+        search_value,
+        threads,
+        hash_mb,
+        generation,
+        &app,
+        &state,
+    )
+    .await;
+    state.report_running.store(false, Ordering::SeqCst);
+    result
+}
+
+#[tauri::command]
+async fn cancel_game_report(state: State<'_, DesktopState>) -> Result<bool, String> {
+    let commit = state.report_commit.lock().await;
+    if !state.report_running.load(Ordering::SeqCst) {
+        return Ok(false);
+    }
+    state.report_generation.fetch_add(1, Ordering::SeqCst);
+    let control = state.report_engine.lock().await.clone();
+    drop(commit);
+    if let Some(control) = control {
+        control.stop().await.map_err(|error| error.to_string())?;
+    }
+    Ok(true)
+}
+
+#[tauri::command]
+fn get_game_report(state: State<'_, DesktopState>) -> Result<Option<GameReportDatasetDto>, String> {
+    let model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    let current_signature = report_line_signature(&model.tree, model.current_node)?;
+    let Some(stored) = model
+        .store
+        .load_game_report(model.game_id, &current_signature)
+        .and_then(|exact| match exact {
+            Some(report) => Ok(Some(report)),
+            None => model.store.load_latest_game_report(model.game_id),
+        })
+        .map_err(|error| error.to_string())?
+    else {
+        return Ok(None);
+    };
+    let mut dataset: GameReportDatasetDto =
+        serde_json::from_str(&stored.dataset_json).map_err(|error| error.to_string())?;
+    dataset.stale = dataset.line_signature != current_signature;
+    Ok(Some(dataset))
 }
 
 fn protocol_name(protocol: Protocol) -> &'static str {
@@ -2100,9 +2763,13 @@ fn main() {
                 }),
                 credentials: Arc::new(SystemCredentialStore),
                 engine: tokio::sync::Mutex::new(None),
+                report_engine: tokio::sync::Mutex::new(None),
+                report_commit: tokio::sync::Mutex::new(()),
                 play_session: tokio::sync::Mutex::new(None),
                 analysis_generation: AtomicU64::new(0),
                 play_generation: AtomicU64::new(0),
+                report_generation: AtomicU64::new(0),
+                report_running: AtomicBool::new(false),
             });
             Ok(())
         })
@@ -2131,6 +2798,9 @@ fn main() {
             stop_engine_play,
             stop_analysis,
             get_saved_analysis,
+            generate_game_report,
+            cancel_game_report,
+            get_game_report,
             get_desktop_preferences,
             save_desktop_preferences,
             probe_engine,
@@ -2242,6 +2912,110 @@ mod tests {
         assert!(!position_is_playable(
             &Board::from_fen("9/9/9/4k4/9/9/9/9/9/4K4 w - - 0 1").unwrap()
         ));
+    }
+
+    #[test]
+    fn report_line_uses_selected_path_then_mainline_continuation() {
+        let mut tree = ManualTree::new();
+        let first = tree
+            .add_move(
+                tree.root_id(),
+                xiangqi_core::Move::from_iccs("h2e2").unwrap(),
+                "",
+            )
+            .unwrap();
+        let reply = tree
+            .add_move(first, xiangqi_core::Move::from_iccs("h9g7").unwrap(), "")
+            .unwrap();
+        let continuation = tree
+            .add_move(reply, xiangqi_core::Move::from_iccs("h0g2").unwrap(), "")
+            .unwrap();
+        tree.add_move(first, xiangqi_core::Move::from_iccs("b9c7").unwrap(), "")
+            .unwrap();
+
+        let nodes = report_line_nodes(&tree, Some(first)).unwrap();
+        assert_eq!(
+            nodes.iter().map(|node| node.id).collect::<Vec<_>>(),
+            vec![first, reply, continuation]
+        );
+        assert!(
+            report_line_signature(&tree, Some(first))
+                .unwrap()
+                .starts_with(&tree.root_id().to_string())
+        );
+    }
+
+    #[test]
+    fn report_positions_include_root_chinese_moves_and_post_move_material() {
+        let mut tree = ManualTree::new();
+        let first = tree
+            .add_move(
+                tree.root_id(),
+                xiangqi_core::Move::from_iccs("h2e2").unwrap(),
+                "",
+            )
+            .unwrap();
+        let second = tree
+            .add_move(first, xiangqi_core::Move::from_iccs("h9g7").unwrap(), "")
+            .unwrap();
+        let model = AppModel {
+            board: Board::from_fen(STARTING_FEN).unwrap(),
+            starting_fen: STARTING_FEN.into(),
+            tree,
+            current_node: Some(second),
+            game_id: Uuid::new_v4(),
+            device_id: Uuid::new_v4(),
+            lamport: 0,
+            store: LocalStore::open_in_memory().unwrap(),
+            metadata: ManualMetadata::default(),
+            note: String::new(),
+            source_path: None,
+            source_format: None,
+            playable: true,
+        };
+
+        let (_, positions) = report_positions(&model).unwrap();
+        assert_eq!(positions.len(), 3);
+        assert!(positions[0].move_.is_none());
+        assert_eq!(positions[0].material, 5660);
+        assert_eq!(positions[1].move_.as_ref().unwrap().notation, "炮二平五");
+        assert_eq!(positions[2].move_.as_ref().unwrap().notation, "马8进7");
+        assert_eq!(positions[2].side_to_move, "红方");
+        assert_eq!(positions[2].phase, "opening");
+    }
+
+    #[test]
+    fn report_phase_uses_the_starting_fen_move_number() {
+        assert_eq!(fen_starting_ply(STARTING_FEN), 0);
+        assert_eq!(fen_starting_ply("4k4/9/9/9/9/9/9/9/9/4K4 b - - 0 40"), 79);
+        assert_eq!(report_phase(79, 5000), "middle");
+        assert_eq!(report_phase(81, 5000), "endgame");
+        assert_eq!(report_phase(0, 1000), "endgame");
+    }
+
+    #[test]
+    fn terminal_report_positions_score_the_mated_side_as_losing() {
+        let board = Board::from_fen("4k4/3RRR3/9/9/9/9/9/9/9/4K4 b - - 0 1").unwrap();
+        assert_eq!(board.status(), GameStatus::Checkmate);
+        assert_eq!(terminal_report_mate(&board), Some(-1));
+    }
+
+    #[test]
+    fn report_engine_fingerprint_changes_with_engine_or_nnue_content() {
+        let directory = tempfile::tempdir().unwrap();
+        let engine = directory.path().join("pikafish");
+        let nnue = directory.path().join("pikafish.nnue");
+        std::fs::write(&engine, b"engine-one").unwrap();
+        std::fs::write(&nnue, b"network-one").unwrap();
+        let first = report_engine_fingerprint(&engine).unwrap();
+
+        std::fs::write(&nnue, b"network-two").unwrap();
+        let second = report_engine_fingerprint(&engine).unwrap();
+        assert_ne!(first, second);
+
+        std::fs::write(&engine, b"engine-two").unwrap();
+        let third = report_engine_fingerprint(&engine).unwrap();
+        assert_ne!(second, third);
     }
 
     #[tokio::test]

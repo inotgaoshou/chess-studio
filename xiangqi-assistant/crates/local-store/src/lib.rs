@@ -60,6 +60,8 @@ pub struct DesktopPreferences {
     pub move_time_ms: u64,
     pub ponder: bool,
     pub auto_analyze: bool,
+    #[serde(default)]
+    pub library_collapsed: bool,
     pub server_url: String,
 }
 
@@ -75,6 +77,7 @@ impl Default for DesktopPreferences {
             move_time_ms: 5000,
             ponder: false,
             auto_analyze: true,
+            library_collapsed: false,
             server_url: "http://127.0.0.1:8080".into(),
         }
     }
@@ -95,6 +98,15 @@ pub struct LocalStore {
 pub struct AnalysisSummary {
     pub score_cp: Option<i32>,
     pub mate: Option<i32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredGameReport {
+    pub line_signature: String,
+    pub engine_fingerprint: String,
+    pub config_hash: String,
+    pub dataset_json: String,
+    pub generated_at: String,
 }
 
 impl LocalStore {
@@ -595,9 +607,34 @@ impl LocalStore {
             .connection
             .query_row(
                 "SELECT pv_json FROM analysis_results
-                 WHERE game_id = ?1 AND node_id IS ?2
+                 WHERE game_id = ?1 AND node_id IS ?2 AND config_hash NOT LIKE 'report:%'
                  ORDER BY created_at DESC LIMIT 1",
                 params![game_id.to_string(), node_id.map(|id| id.to_string())],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
+    pub fn load_analysis_for_config(
+        &self,
+        game_id: Uuid,
+        node_id: Option<Uuid>,
+        engine_fingerprint: &str,
+        config_hash: &str,
+    ) -> Result<Option<String>, StoreError> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT pv_json FROM analysis_results
+             WHERE game_id = ?1 AND node_id IS ?2
+               AND engine_fingerprint = ?3 AND config_hash = ?4
+             ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                params![
+                    game_id.to_string(),
+                    node_id.map(|id| id.to_string()),
+                    engine_fingerprint,
+                    config_hash
+                ],
                 |row| row.get(0),
             )
             .optional()?)
@@ -628,6 +665,82 @@ impl LocalStore {
                 .or_insert(AnalysisSummary { score_cp, mate });
         }
         Ok(summaries)
+    }
+
+    pub fn save_game_report(
+        &mut self,
+        game_id: Uuid,
+        line_signature: &str,
+        engine_fingerprint: &str,
+        config_hash: &str,
+        dataset_json: &str,
+    ) -> Result<(), StoreError> {
+        self.connection.execute(
+            "INSERT INTO game_reports
+             (id, game_id, line_signature, engine_fingerprint, config_hash, dataset_json, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(game_id, line_signature, engine_fingerprint, config_hash)
+             DO UPDATE SET dataset_json=excluded.dataset_json, created_at=excluded.created_at",
+            params![
+                Uuid::new_v4().to_string(),
+                game_id.to_string(),
+                line_signature,
+                engine_fingerprint,
+                config_hash,
+                dataset_json,
+                chrono::Utc::now().to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn load_latest_game_report(
+        &self,
+        game_id: Uuid,
+    ) -> Result<Option<StoredGameReport>, StoreError> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT line_signature, engine_fingerprint, config_hash, dataset_json, created_at
+             FROM game_reports WHERE game_id = ?1 ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                [game_id.to_string()],
+                |row| {
+                    Ok(StoredGameReport {
+                        line_signature: row.get(0)?,
+                        engine_fingerprint: row.get(1)?,
+                        config_hash: row.get(2)?,
+                        dataset_json: row.get(3)?,
+                        generated_at: row.get(4)?,
+                    })
+                },
+            )
+            .optional()?)
+    }
+
+    pub fn load_game_report(
+        &self,
+        game_id: Uuid,
+        line_signature: &str,
+    ) -> Result<Option<StoredGameReport>, StoreError> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT line_signature, engine_fingerprint, config_hash, dataset_json, created_at
+                 FROM game_reports
+                 WHERE game_id = ?1 AND line_signature = ?2
+                 ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                params![game_id.to_string(), line_signature],
+                |row| {
+                    Ok(StoredGameReport {
+                        line_signature: row.get(0)?,
+                        engine_fingerprint: row.get(1)?,
+                        config_hash: row.get(2)?,
+                        dataset_json: row.get(3)?,
+                        generated_at: row.get(4)?,
+                    })
+                },
+            )
+            .optional()?)
     }
 
     pub fn apply_remote_operation(
@@ -788,6 +901,13 @@ impl LocalStore {
                depth INTEGER, score_cp INTEGER, mate INTEGER, pv_json TEXT NOT NULL,
                elapsed_ms INTEGER NOT NULL, created_at TEXT NOT NULL,
                UNIQUE(game_id, node_id, engine_fingerprint, config_hash)
+             );
+             CREATE TABLE IF NOT EXISTS game_reports (
+               id TEXT PRIMARY KEY, game_id TEXT NOT NULL,
+               line_signature TEXT NOT NULL, engine_fingerprint TEXT NOT NULL,
+               config_hash TEXT NOT NULL, dataset_json TEXT NOT NULL,
+               created_at TEXT NOT NULL,
+               UNIQUE(game_id, line_signature, engine_fingerprint, config_hash)
              );
              UPDATE operations
              SET payload = json_set(
@@ -1462,6 +1582,41 @@ mod tests {
     }
 
     #[test]
+    fn report_cache_loads_the_latest_root_analysis_for_an_exact_config() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let game_id = Uuid::new_v4();
+        for json in ["[1]", "[2]"] {
+            store
+                .save_analysis(
+                    game_id,
+                    None,
+                    "/engine",
+                    "report:time:1000",
+                    Some(12),
+                    Some(20),
+                    None,
+                    json,
+                    10,
+                )
+                .unwrap();
+        }
+
+        assert_eq!(
+            store
+                .load_analysis_for_config(game_id, None, "/engine", "report:time:1000")
+                .unwrap(),
+            Some("[2]".into())
+        );
+        assert_eq!(
+            store
+                .load_analysis_for_config(game_id, None, "/engine", "report:depth:12")
+                .unwrap(),
+            None
+        );
+        assert_eq!(store.load_latest_analysis(game_id, None).unwrap(), None);
+    }
+
+    #[test]
     fn latest_analysis_summaries_are_returned_for_each_move_node() {
         let mut store = LocalStore::open_in_memory().unwrap();
         let game_id = Uuid::new_v4();
@@ -1681,6 +1836,7 @@ mod tests {
             move_time_ms: 2200,
             ponder: true,
             auto_analyze: false,
+            library_collapsed: true,
             server_url: "https://sync.example.com".into(),
         };
         {
@@ -1690,6 +1846,59 @@ mod tests {
         let store = LocalStore::open(&path).unwrap();
         assert_eq!(store.desktop_preferences().unwrap(), preferences);
         assert!(store.sync_value("jwt").unwrap().is_none());
+    }
+
+    #[test]
+    fn desktop_preferences_accept_legacy_json_without_layout_fields() {
+        let preferences: DesktopPreferences = serde_json::from_str(
+            r#"{"enginePath":"/opt/pikafish","threads":2,"hashMb":256,"multipv":3,"searchMode":"time","searchValue":1500,"moveTimeMs":5000,"ponder":false,"autoAnalyze":true,"serverUrl":"http://127.0.0.1:8080"}"#,
+        )
+        .unwrap();
+        assert!(!preferences.library_collapsed);
+    }
+
+    #[test]
+    fn game_report_dataset_survives_reopen_and_restores_exact_line() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("reports.sqlite3");
+        let game_id = Uuid::new_v4();
+        {
+            let mut store = LocalStore::open(&path).unwrap();
+            store
+                .save_game_report(
+                    game_id,
+                    "root:first",
+                    "/engine",
+                    "time:1000",
+                    "{\"version\":1}",
+                )
+                .unwrap();
+            store
+                .save_game_report(
+                    game_id,
+                    "root:first:second",
+                    "/engine",
+                    "time:1000",
+                    "{\"version\":2}",
+                )
+                .unwrap();
+        }
+        let store = LocalStore::open(&path).unwrap();
+        let report = store.load_latest_game_report(game_id).unwrap().unwrap();
+        assert_eq!(report.line_signature, "root:first:second");
+        assert_eq!(report.dataset_json, "{\"version\":2}");
+        let first = store
+            .load_game_report(game_id, "root:first")
+            .unwrap()
+            .unwrap();
+        assert_eq!(first.line_signature, "root:first");
+        assert_eq!(first.dataset_json, "{\"version\":1}");
+        assert!(
+            store
+                .load_game_report(game_id, "root:missing")
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

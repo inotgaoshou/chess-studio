@@ -338,6 +338,38 @@ impl EngineSession {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    fn mock_engine() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let engine = directory.path().join("mock-uci.sh");
+        let log = directory.path().join("commands.log");
+        let script = format!(
+            r#"#!/bin/sh
+log='{}'
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$log"
+  case "$line" in
+    uci) printf 'id name Mock UCI\nuciok\n' ;;
+    'go depth 1') printf 'info depth 1 score cp 12 multipv 1 pv a0a1\nbestmove a0a1\n' ;;
+    'go depth 2') printf 'info depth 2 score cp 24 multipv 1 pv b0b1\nbestmove b0b1\n' ;;
+    'go infinite') ;;
+    stop) printf 'info depth 3 score cp 36 multipv 1 pv c0c1\nbestmove c0c1\n' ;;
+    'go nodes 99') exit 7 ;;
+    quit) exit 0 ;;
+  esac
+done
+"#,
+            log.display()
+        );
+        std::fs::write(&engine, script).unwrap();
+        let mut permissions = std::fs::metadata(&engine).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&engine, permissions).unwrap();
+        (directory, engine, log)
+    }
+
     #[test]
     fn builds_position_and_search_commands() {
         assert_eq!(
@@ -398,5 +430,91 @@ mod tests {
                 ponder: Some("h9g7".into())
             }
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn one_mock_process_runs_searches_serially_and_stops_infinite_search() {
+        let (_directory, engine, log) = mock_engine();
+        let mut session = EngineSession::launch(&engine, Duration::from_secs(1))
+            .await
+            .unwrap();
+
+        session
+            .search("fen-one", &[], SearchLimit::Depth(1), &[], false)
+            .await
+            .unwrap();
+        assert!(matches!(
+            session.next_event().await.unwrap(),
+            EngineEvent::Info(_)
+        ));
+        assert_eq!(
+            session.next_event().await.unwrap(),
+            EngineEvent::BestMove {
+                best: "a0a1".into(),
+                ponder: None
+            }
+        );
+
+        session
+            .search("fen-two", &[], SearchLimit::Depth(2), &[], false)
+            .await
+            .unwrap();
+        assert!(matches!(
+            session.next_event().await.unwrap(),
+            EngineEvent::Info(_)
+        ));
+        assert!(matches!(
+            session.next_event().await.unwrap(),
+            EngineEvent::BestMove { ref best, .. } if best == "b0b1"
+        ));
+
+        session
+            .search("fen-three", &[], SearchLimit::Infinite, &[], false)
+            .await
+            .unwrap();
+        session.control().stop().await.unwrap();
+        assert!(matches!(
+            session.next_event().await.unwrap(),
+            EngineEvent::Info(_)
+        ));
+        assert!(matches!(
+            session.next_event().await.unwrap(),
+            EngineEvent::BestMove { ref best, .. } if best == "c0c1"
+        ));
+        session.close().await.unwrap();
+
+        let commands = std::fs::read_to_string(log).unwrap();
+        let expected = [
+            "position fen fen-one",
+            "go depth 1",
+            "position fen fen-two",
+            "go depth 2",
+            "position fen fen-three",
+            "go infinite",
+            "stop",
+        ];
+        let mut offset = 0;
+        for command in expected {
+            let index = commands[offset..].find(command).unwrap() + offset;
+            offset = index + command.len();
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn reports_when_mock_engine_exits_during_search() {
+        let (_directory, engine, _log) = mock_engine();
+        let mut session = EngineSession::launch(&engine, Duration::from_secs(1))
+            .await
+            .unwrap();
+        session
+            .search("fen", &[], SearchLimit::Nodes(99), &[], false)
+            .await
+            .unwrap();
+        assert!(matches!(
+            session.next_event().await,
+            Err(EngineError::Exited)
+        ));
     }
 }

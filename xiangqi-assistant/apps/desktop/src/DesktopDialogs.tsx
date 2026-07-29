@@ -10,7 +10,7 @@ type Props = {
   account: SyncAccountDto;
   busy: boolean;
   onClose(): void;
-  onChooseEngine(): Promise<string | undefined>;
+  onChooseEngine(currentPath: string): Promise<string | undefined>;
   onSaveEngine(preferences: DesktopPreferencesDto): Promise<void>;
   onSaveSync(serverUrl: string): Promise<void>;
   onAuthenticate(mode: "register" | "login", email: string, password: string): Promise<void>;
@@ -20,6 +20,8 @@ export function DesktopDialogs({ dialog, preferences, account, busy, onClose, on
   const [draft, setDraft] = useState(preferences);
   const [email, setEmail] = useState(account.email ?? "");
   const [password, setPassword] = useState("");
+  const [enginePickerBusy, setEnginePickerBusy] = useState(false);
+  const [enginePickerError, setEnginePickerError] = useState("");
 
   useEffect(() => {
     if (!dialog) {
@@ -29,6 +31,8 @@ export function DesktopDialogs({ dialog, preferences, account, busy, onClose, on
     setDraft(preferences);
     setEmail(account.email ?? "");
     setPassword("");
+    setEnginePickerBusy(false);
+    setEnginePickerError("");
   }, [account.email, dialog, preferences]);
 
   if (!dialog) return null;
@@ -46,6 +50,20 @@ export function DesktopDialogs({ dialog, preferences, account, busy, onClose, on
     }
   }
 
+  async function chooseEngine() {
+    setEnginePickerBusy(true);
+    setEnginePickerError("");
+    try {
+      const path = await onChooseEngine(draft.enginePath.trim());
+      if (path) setDraft((current) => ({ ...current, enginePath: path }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setEnginePickerError(`选择引擎文件失败：${message}`);
+    } finally {
+      setEnginePickerBusy(false);
+    }
+  }
+
   return (
     <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) close(); }}>
       <section className="settings-dialog" role="dialog" aria-modal="true" aria-label={dialog === "engine" ? "引擎设置" : dialog === "syncSettings" ? "同步设置" : dialog === "register" ? "注册同步账号" : "登录同步账号"}>
@@ -55,7 +73,8 @@ export function DesktopDialogs({ dialog, preferences, account, busy, onClose, on
         </header>
 
         {dialog === "engine" && <div className="dialog-form engine-settings-form">
-          <label className="full"><span>引擎可执行文件</span><div className="dialog-input-action"><input value={draft.enginePath} onChange={(event) => setDraft({ ...draft, enginePath: event.target.value })}/><button title="选择引擎文件" onClick={async () => { const path = await onChooseEngine(); if (path) setDraft({ ...draft, enginePath: path }); }}><FolderOpen size={15}/></button></div></label>
+          <label className="full"><span>引擎可执行文件</span><div className="dialog-input-action"><input value={draft.enginePath} onChange={(event) => { setEnginePickerError(""); setDraft({ ...draft, enginePath: event.target.value }); }}/><button type="button" title="选择引擎文件" disabled={busy || enginePickerBusy} onClick={() => void chooseEngine()}><FolderOpen size={15}/></button></div></label>
+          {enginePickerError && <p className="dialog-warning full" role="alert">{enginePickerError}</p>}
           <label><span>线程</span><input type="number" min={1} max={64} value={draft.threads} onChange={(event) => setDraft({ ...draft, threads: Number(event.target.value) })}/></label>
           <label><span>Hash (MB)</span><input type="number" min={16} max={4096} step={16} value={draft.hashMb} onChange={(event) => setDraft({ ...draft, hashMb: Number(event.target.value) })}/></label>
           <label><span>MultiPV</span><input type="number" min={1} max={10} value={draft.multipv} onChange={(event) => setDraft({ ...draft, multipv: Number(event.target.value) })}/></label>
@@ -64,7 +83,7 @@ export function DesktopDialogs({ dialog, preferences, account, busy, onClose, on
           <label><span>每步时间 (ms)</span><input type="number" min={100} max={30000} step={100} value={draft.moveTimeMs} onChange={(event) => setDraft({ ...draft, moveTimeMs: Number(event.target.value) })}/></label>
           <label className="check-row"><input type="checkbox" checked={draft.ponder} onChange={(event) => setDraft({ ...draft, ponder: event.target.checked })}/><span>后台思考</span></label>
           <label className="check-row"><input type="checkbox" checked={draft.autoAnalyze} onChange={(event) => setDraft({ ...draft, autoAnalyze: event.target.checked })}/><span>每步自动分析</span></label>
-          <footer><button onClick={close} disabled={busy}>取消</button><button className="primary" disabled={busy || !draft.enginePath.trim()} onClick={() => void onSaveEngine(draft)}><Save size={14}/>{busy ? "检测中…" : "检测并保存"}</button></footer>
+          <footer><button onClick={close} disabled={busy || enginePickerBusy}>取消</button><button className="primary" disabled={busy || enginePickerBusy || !draft.enginePath.trim()} onClick={() => void onSaveEngine(draft)}><Save size={14}/>{busy ? "检测中…" : enginePickerBusy ? "选择中…" : "检测并保存"}</button></footer>
         </div>}
 
         {dialog === "syncSettings" && <div className="dialog-form">

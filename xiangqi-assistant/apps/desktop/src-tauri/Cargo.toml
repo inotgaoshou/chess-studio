@@ -16,6 +16,7 @@ keyring = "3"
 reqwest = { version = "0.13", features = ["json"] }
 serde.workspace = true
 serde_json.workspace = true
+sha2 = "0.10"
 sync-protocol = { path = "../../../crates/sync-protocol" }
 tauri = { version = "2", features = [] }
 tauri-plugin-clipboard-manager = "2"
@@ -28,3 +29,6 @@ xiangqi-manual = { path = "../../../crates/manual" }
 [[bin]]
 name = "xiangqi-desktop"
 path = "src/main.rs"
+
+[dev-dependencies]
+tempfile = "3.23"

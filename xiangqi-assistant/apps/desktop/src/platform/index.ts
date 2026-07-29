@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { webDatabase, type SyncOperation, type WebGameRecord } from "./indexedDb";
-import type { AnalysisLine, AnalysisOptions, BoardState, ChessPlatform, DesktopPreferencesDto, EngineMoveResult, EnginePlayOptions, EngineProbeDto, EngineRuntimeEvent, GameSummary, SyncAccountDto, SyncResult } from "./types";
+import type { AnalysisLine, AnalysisOptions, BoardState, ChessPlatform, DesktopPreferencesDto, EngineMoveResult, EnginePlayOptions, EngineProbeDto, EngineRuntimeEvent, GameReportDatasetDto, GameReportOptionsDto, GameReportProgressDto, GameSummary, SyncAccountDto, SyncResult } from "./types";
 
 type WebGameInstance = {
   stateJson(): string;
@@ -60,8 +60,13 @@ class DesktopPlatform implements ChessPlatform {
   detectEngine() { return invoke<string | null>("detect_pikafish"); }
   getDesktopPreferences() { return invoke<DesktopPreferencesDto>("get_desktop_preferences"); }
   saveDesktopPreferences(preferences: DesktopPreferencesDto) { return invoke<DesktopPreferencesDto>("save_desktop_preferences", { preferences }); }
-  async chooseEngineExecutable() {
-    const path = await open({ multiple: false, directory: false, title: "选择 Pikafish 可执行文件" });
+  async chooseEngineExecutable(currentPath?: string) {
+    const path = await open({
+      multiple: false,
+      directory: false,
+      defaultPath: currentPath || undefined,
+      title: "选择 Pikafish 可执行文件",
+    });
     return typeof path === "string" ? path : undefined;
   }
   probeEngine(path: string) { return invoke<EngineProbeDto>("probe_engine", { path }); }
@@ -105,6 +110,20 @@ class DesktopPlatform implements ChessPlatform {
   stopEnginePlay() { return invoke<boolean>("stop_engine_play"); }
   subscribeEngineEvents(listener: (event: EngineRuntimeEvent) => void) {
     return listen<EngineRuntimeEvent>("engine-runtime", (event) => listener(event.payload));
+  }
+  generateGameReport(options: GameReportOptionsDto) {
+    return invoke<GameReportDatasetDto>("generate_game_report", {
+      enginePath: options.enginePath,
+      searchMode: options.searchMode,
+      searchValue: options.searchValue,
+      threads: options.threads,
+      hashMb: options.hashMb,
+    });
+  }
+  cancelGameReport() { return invoke<boolean>("cancel_game_report"); }
+  async getGameReport() { return (await invoke<GameReportDatasetDto | null>("get_game_report")) ?? undefined; }
+  subscribeGameReportProgress(listener: (progress: GameReportProgressDto) => void) {
+    return listen<GameReportProgressDto>("game-report-progress", (event) => listener(event.payload));
   }
   loadSavedAnalysis() { return invoke<AnalysisLine[]>("get_saved_analysis"); }
   getSyncAccount() { return invoke<SyncAccountDto>("get_sync_account"); }
@@ -184,6 +203,10 @@ class WebPlatform implements ChessPlatform {
   async moveNow() { return false; }
   async stopEnginePlay() { return false; }
   async subscribeEngineEvents() { return () => undefined; }
+  async generateGameReport(): Promise<GameReportDatasetDto> { throw new Error("Web 端不支持本地整局分析报告"); }
+  async cancelGameReport() { return false; }
+  async getGameReport(): Promise<GameReportDatasetDto | undefined> { throw new Error("Web 端不支持本地整局分析报告"); }
+  async subscribeGameReportProgress() { return () => undefined; }
 
   async playMove(iccs: string): Promise<Partial<BoardState>> {
     const before = this.state();
@@ -404,4 +427,4 @@ class WebPlatform implements ChessPlatform {
 
 const tauriAvailable = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 export const chessPlatform: ChessPlatform = tauriAvailable ? new DesktopPlatform() : new WebPlatform();
-export type { AnalysisLine, AnalysisOptions, BoardState, ChessPlatform, DesktopPreferencesDto, EngineProbeDto, EngineRuntimeEvent, EngineRuntimeState, GameSummary, MoveItem, Piece, Side, SyncAccountDto, SyncResult } from "./types";
+export type { AnalysisLine, AnalysisOptions, BoardState, ChessPlatform, DesktopPreferencesDto, EngineProbeDto, EngineRuntimeEvent, EngineRuntimeState, GameReportDatasetDto, GameReportOptionsDto, GameReportPositionDto, GameReportProgressDto, GameSummary, MoveItem, Piece, ReportPhase, Side, SyncAccountDto, SyncResult } from "./types";

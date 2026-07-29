@@ -1120,6 +1120,7 @@ name = "engine-protocol"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "tempfile",
  "thiserror 2.0.19",
  "tokio",
 ]
@@ -6761,11 +6762,13 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sha2",
  "sync-protocol",
  "tauri",
  "tauri-build",
  "tauri-plugin-clipboard-manager",
  "tauri-plugin-dialog",
+ "tempfile",
  "tokio",
  "uuid",
  "xiangqi-core",

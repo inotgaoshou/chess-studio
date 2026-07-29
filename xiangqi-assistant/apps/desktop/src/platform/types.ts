@@ -50,6 +50,43 @@ export type AnalysisOptions = {
   searchMoves?: string[];
   excludeMove?: string;
 };
+export type ReportPhase = "opening" | "middle" | "endgame";
+export type GameReportMoveDto = { nodeId: string; notation: string; movedBy: Side };
+export type GameReportPositionDto = {
+  fen: string;
+  sideToMove: Side;
+  ply: number;
+  phase: ReportPhase;
+  material?: number;
+  scoreCp?: number;
+  mate?: number;
+  depth?: number;
+  elapsedMs?: number;
+  move?: GameReportMoveDto;
+};
+export type GameReportDatasetDto = {
+  gameId: string;
+  lineSignature: string;
+  engineFingerprint: string;
+  configHash: string;
+  generatedAt: string;
+  stale: boolean;
+  positions: GameReportPositionDto[];
+};
+export type GameReportOptionsDto = {
+  enginePath: string;
+  searchMode: "time" | "depth" | "nodes" | "infinite";
+  searchValue: number;
+  threads: number;
+  hashMb: number;
+};
+export type GameReportProgressDto = {
+  completed: number;
+  total: number;
+  nodeId?: string;
+  elapsedMs: number;
+  state: "running" | "cancelled" | "complete";
+};
 export type SyncResult = { uploaded: number; downloaded: number; cursor: number };
 export type DesktopPreferencesDto = {
   enginePath: string;
@@ -61,6 +98,7 @@ export type DesktopPreferencesDto = {
   moveTimeMs: number;
   ponder: boolean;
   autoAnalyze: boolean;
+  libraryCollapsed: boolean;
   serverUrl: string;
 };
 export type SyncAccountDto = {
@@ -89,7 +127,7 @@ export interface ChessPlatform {
   detectEngine(): Promise<string | null>;
   getDesktopPreferences(): Promise<DesktopPreferencesDto>;
   saveDesktopPreferences(preferences: DesktopPreferencesDto): Promise<DesktopPreferencesDto>;
-  chooseEngineExecutable(): Promise<string | undefined>;
+  chooseEngineExecutable(currentPath?: string): Promise<string | undefined>;
   probeEngine(path: string): Promise<EngineProbeDto>;
   playMove(iccs: string): Promise<Partial<BoardState>>;
   newGame(fen: string, title?: string, note?: string): Promise<Partial<BoardState>>;
@@ -110,6 +148,10 @@ export interface ChessPlatform {
   stopEnginePlay(): Promise<boolean>;
   stopAnalysis(discardResult?: boolean): Promise<boolean>;
   subscribeEngineEvents(listener: (event: EngineRuntimeEvent) => void): Promise<() => void>;
+  generateGameReport(options: GameReportOptionsDto): Promise<GameReportDatasetDto>;
+  cancelGameReport(): Promise<boolean>;
+  getGameReport(): Promise<GameReportDatasetDto | undefined>;
+  subscribeGameReportProgress(listener: (progress: GameReportProgressDto) => void): Promise<() => void>;
   loadSavedAnalysis(fen: string): Promise<AnalysisLine[]>;
   getSyncAccount(): Promise<SyncAccountDto>;
   registerSyncAccount(email: string, password: string): Promise<SyncAccountDto>;

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   Activity,
   BarChart3,
@@ -19,6 +19,7 @@ import {
   GripVertical,
   Link,
   LayoutGrid,
+  Library,
   ListStart,
   MessageSquare,
   Pause,
@@ -34,11 +35,12 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { chessPlatform, type AnalysisLine, type BoardState, type EngineRuntimeState, type GameSummary, type MoveItem, type Piece } from "./platform";
-import { moveReports, positionEvaluation, trendPoints } from "./analysisView";
+import { chessPlatform, type AnalysisLine, type BoardState, type EngineRuntimeState, type GameReportDatasetDto, type GameReportProgressDto, type GameSummary, type MoveItem, type Piece } from "./platform";
+import { calculateGameReport, moveReports, positionEvaluation, trendPoints } from "./analysisView";
 import { DesktopMenuBar, type MenuCommand } from "./DesktopMenuBar";
 import { DesktopDialogs, type DesktopDialog } from "./DesktopDialogs";
 import type { DesktopPreferencesDto, SyncAccountDto } from "./platform";
+import { WorkspaceTabs, type WorkspacePanel } from "./WorkspaceTabs";
 
 
 const startingFen = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1";
@@ -85,7 +87,6 @@ const analysisArrowColors = [
   "#88b04b",
   "#db7093",
 ];
-const reviewPanels = ["moves", "trend", "report"] as const;
 const defaultDesktopPreferences: DesktopPreferencesDto = {
   enginePath: "",
   threads: 2,
@@ -96,6 +97,7 @@ const defaultDesktopPreferences: DesktopPreferencesDto = {
   moveTimeMs: 5000,
   ponder: false,
   autoAnalyze: true,
+  libraryCollapsed: false,
   serverUrl: "http://127.0.0.1:8080",
 };
 const defaultSyncAccount: SyncAccountDto = {
@@ -232,7 +234,7 @@ export default function App() {
   const [token, setToken] = useState("");
   const [notice, setNotice] = useState("本地数据已保存");
   const [mobilePanel, setMobilePanel] = useState<"board" | "library" | "analysis" | "settings">("board");
-  const [reviewPanel, setReviewPanel] = useState<"moves" | "trend" | "report">("moves");
+  const [workspacePanel, setWorkspacePanel] = useState<WorkspacePanel>("moves");
   const [isPlaying, setIsPlaying] = useState(false);
   const [positionEditorOpen, setPositionEditorOpen] = useState(false);
   const [editorPieces, setEditorPieces] = useState<Piece[]>(initialPieces);
@@ -248,24 +250,31 @@ export default function App() {
   const [ponderMove, setPonderMove] = useState<string | undefined>();
   const [engineRuntimeState, setEngineRuntimeState] = useState<EngineRuntimeState>("idle");
   const [desktopPreferences, setDesktopPreferences] = useState(defaultDesktopPreferences);
+  const [libraryCollapsed, setLibraryCollapsed] = useState(false);
+  const [gameReport, setGameReport] = useState<GameReportDatasetDto>();
+  const [reportProgress, setReportProgress] = useState<GameReportProgressDto>();
+  const [reportBusy, setReportBusy] = useState(false);
   const [syncAccount, setSyncAccount] = useState(defaultSyncAccount);
   const [desktopDialog, setDesktopDialog] = useState<DesktopDialog>(null);
   const [dialogBusy, setDialogBusy] = useState(false);
   const [online, setOnline] = useState(typeof navigator === "undefined" ? true : navigator.onLine);
   const boardRevision = useRef(0);
   const analysisLoadRevision = useRef(0);
+  const reportLoadRevision = useRef(0);
   const boardRef = useRef<BoardState>(fallback);
   const analysisBusyRef = useRef(false);
   const pendingAutoAnalysis = useRef(false);
   const playbackRevision = useRef(0);
   const navigationRevision = useRef(0);
   const boardOperationQueue = useRef<Promise<void>>(Promise.resolve());
+  const activeMoveRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     void chessPlatform.initialize()
       .then((state) => {
         applyBoard(state);
         void loadSavedAnalysis(state.fen ?? startingFen);
+        if (chessPlatform.kind === "desktop") void loadGameReport();
         void refreshGames();
         if (chessPlatform.kind === "web") setNotice("离线棋谱已就绪");
       })
@@ -285,6 +294,24 @@ export default function App() {
       }).catch((error) => setNotice(friendlyError(error)));
       void chessPlatform.getSyncAccount().then(setSyncAccount).catch((error) => setNotice(friendlyError(error)));
     }
+  }, []);
+
+  useEffect(() => {
+    if (chessPlatform.kind !== "desktop") return;
+    let disposed = false;
+    let unsubscribe: (() => void) | undefined;
+    void chessPlatform.subscribeGameReportProgress((progress) => {
+      if (disposed) return;
+      setReportProgress(progress);
+      setReportBusy(progress.state === "running");
+    }).then((stop) => {
+      if (disposed) stop();
+      else unsubscribe = stop;
+    }).catch(() => undefined);
+    return () => {
+      disposed = true;
+      unsubscribe?.();
+    };
   }, []);
 
   useEffect(() => {
@@ -318,6 +345,11 @@ export default function App() {
   }, [autoAnalyze]);
 
   useEffect(() => {
+    if (workspacePanel !== "moves") return;
+    activeMoveRef.current?.scrollIntoView({ block: "nearest" });
+  }, [board.currentNode, workspacePanel]);
+
+  useEffect(() => {
     let disposed = false;
     let unsubscribe: (() => void) | undefined;
     void chessPlatform.subscribeEngineEvents((event) => {
@@ -348,7 +380,7 @@ export default function App() {
 
   useEffect(() => {
     if (!autoAnalyze) return;
-    if (isPlaying) return;
+    if (isPlaying || reportBusy) return;
     if (engineSide !== "none" || engineThinking) return;
     if (!board.playable) return;
     if (chessPlatform.kind === "desktop" && !enginePath.trim()) return;
@@ -361,7 +393,7 @@ export default function App() {
     }
     const timer = window.setTimeout(() => void runAnalysis(true), 180);
     return () => window.clearTimeout(timer);
-  }, [autoAnalyze, autoRetry, board.currentNode, board.fen, board.playable, enginePath, engineSide, engineThinking, hashMb, isPlaying, multipv, online, searchMode, searchValue, serverUrl, threads, token]);
+  }, [autoAnalyze, autoRetry, board.currentNode, board.fen, board.playable, enginePath, engineSide, engineThinking, hashMb, isPlaying, multipv, online, reportBusy, searchMode, searchValue, serverUrl, threads, token]);
 
   const pieceMap = useMemo(() => new Map(board.pieces.map((piece) => [`${piece.row}-${piece.col}`, piece])), [board.pieces]);
   const editorPieceMap = useMemo(() => new Map(editorPieces.map((piece) => [`${piece.row}-${piece.col}`, piece])), [editorPieces]);
@@ -370,6 +402,7 @@ export default function App() {
   const evaluation = useMemo(() => positionEvaluation(board, analysis), [analysis, board]);
   const evaluationTrend = useMemo(() => trendPoints(evaluation?.samples ?? [], board.history.length), [board.history.length, evaluation]);
   const reports = useMemo(() => moveReports(board.history), [board.history]);
+  const calculatedGameReport = useMemo(() => gameReport ? calculateGameReport(gameReport) : undefined, [gameReport]);
   const orderedAnalysis = useMemo(() => analysis.slice().sort((left, right) => left.multipv - right.multipv), [analysis]);
   const primaryAnalysis = orderedAnalysis[0];
   const primaryMove = primaryAnalysis?.notation?.[0] ?? primaryAnalysis?.pv[0];
@@ -413,7 +446,91 @@ export default function App() {
     setMoveTimeMs(preferences.moveTimeMs);
     setPonderEnabled(preferences.ponder);
     setAutoAnalyze(preferences.autoAnalyze);
+    setLibraryCollapsed(preferences.libraryCollapsed);
     setServerUrl(preferences.serverUrl);
+  }
+
+  async function setLibraryVisibility(collapsed: boolean) {
+    setLibraryCollapsed(collapsed);
+    if (chessPlatform.kind !== "desktop") return;
+    try {
+      const saved = await chessPlatform.saveDesktopPreferences({ ...desktopPreferences, libraryCollapsed: collapsed });
+      setDesktopPreferences(saved);
+    } catch (error) {
+      setLibraryCollapsed(desktopPreferences.libraryCollapsed);
+      setNotice(friendlyError(error));
+    }
+  }
+
+  async function loadGameReport() {
+    if (chessPlatform.kind !== "desktop") return;
+    const loadRevision = ++reportLoadRevision.current;
+    const expectedBoardRevision = boardRevision.current;
+    try {
+      const loaded = await chessPlatform.getGameReport();
+      if (loadRevision === reportLoadRevision.current && expectedBoardRevision === boardRevision.current) {
+        setGameReport(loaded);
+      }
+    } catch (error) {
+      if (loadRevision === reportLoadRevision.current && expectedBoardRevision === boardRevision.current) {
+        setGameReport(undefined);
+        setNotice(friendlyError(error));
+      }
+    }
+  }
+
+  async function generateGameReport() {
+    if (chessPlatform.kind !== "desktop") {
+      setNotice("整局分析报告仅支持桌面版");
+      return;
+    }
+    if (!enginePath.trim()) {
+      setNotice("请先在引擎设置中选择 Pikafish");
+      return;
+    }
+    stopPlayback();
+    setEngineSide("none");
+    setPonderMove(undefined);
+    if (engineThinking) await chessPlatform.moveNow().catch(() => false);
+    await chessPlatform.stopEnginePlay().catch(() => false);
+    await cancelAnalysisForDocumentChange();
+    setWorkspacePanel("report");
+    setReportBusy(true);
+    setReportProgress({ completed: 0, total: Math.max(1, board.history.length + 1), elapsedMs: 0, state: "running" });
+    setNotice("正在生成整局分析报告…");
+    const reportBoardRevision = boardRevision.current;
+    try {
+      const dataset = await chessPlatform.generateGameReport({ enginePath, searchMode, searchValue, threads, hashMb });
+      if (reportBoardRevision === boardRevision.current) setGameReport(dataset);
+      else await loadGameReport();
+      setReportProgress((current) => ({
+        completed: dataset.positions.length,
+        total: dataset.positions.length,
+        elapsedMs: current?.elapsedMs ?? 0,
+        state: "complete",
+      }));
+      setNotice("整局分析报告已生成并保存");
+    } catch (error) {
+      const message = friendlyError(error);
+      if (!message.includes("取消")) setNotice(message);
+    } finally {
+      setReportBusy(false);
+    }
+  }
+
+  async function cancelGameReport(showNotice = true) {
+    if (!reportBusy || chessPlatform.kind !== "desktop") return;
+    try {
+      await chessPlatform.cancelGameReport();
+      if (showNotice) setNotice("正在取消整局分析，已完成的节点缓存会保留");
+    } catch (error) {
+      if (showNotice) setNotice(friendlyError(error));
+    }
+  }
+
+  async function cancelGameReportForStructureChange() {
+    reportLoadRevision.current += 1;
+    if (reportBusy) await cancelGameReport(false);
   }
 
   async function selectSquare(row: number, col: number) {
@@ -438,10 +555,12 @@ export default function App() {
     }
     const iccs = `${squareToIccs(selected.row, selected.col)}${squareToIccs(row, col)}`;
     try {
+      await cancelGameReportForStructureChange();
       await enqueueBoardOperation(() => chessPlatform.navigateTo(boardRef.current.currentNode));
       const next = normalizeBoardState(await enqueueBoardOperation(() => chessPlatform.playMove(iccs)));
       applyBoard(next);
       setAnalysis([]);
+      await loadGameReport();
       setNotice(`已记录 ${next.history.at(-1)?.notation ?? iccs}`);
       await requestEngineMove(next);
     } catch (error) {
@@ -454,11 +573,13 @@ export default function App() {
     stopPlayback();
     stopEnginePlay();
     await cancelAnalysisForDocumentChange();
+    await cancelGameReportForStructureChange();
     try {
       applyBoard(await enqueueBoardOperation(() => chessPlatform.newGame(fen)));
       await refreshGames();
       setSelected(null);
       setAnalysis([]);
+      setGameReport(undefined);
       setNotice("已创建新棋谱");
     } catch (error) {
       setNotice(friendlyError(error));
@@ -469,6 +590,7 @@ export default function App() {
     stopPlayback();
     stopEnginePlay();
     await cancelAnalysisForDocumentChange();
+    await cancelGameReportForStructureChange();
     try {
       const next = await enqueueBoardOperation(() => chessPlatform.openDocument());
       if (!next) {
@@ -477,6 +599,7 @@ export default function App() {
       }
       applyBoard(next);
       setAnalysis([]);
+      await loadGameReport();
       await refreshGames();
       setNotice("棋谱已导入并自动保存到本地库");
     } catch (error) {
@@ -520,9 +643,11 @@ export default function App() {
     stopPlayback();
     stopEnginePlay();
     await cancelAnalysisForDocumentChange();
+    await cancelGameReportForStructureChange();
     try {
       applyBoard(await enqueueBoardOperation(() => chessPlatform.pasteDocument()));
       setAnalysis([]);
+      await loadGameReport();
       await refreshGames();
       setNotice("剪贴板内容已识别并导入");
     } catch (error) {
@@ -567,8 +692,10 @@ export default function App() {
     const fen = piecesToFen(editorPieces, editorSide);
     try {
       await cancelAnalysisForDocumentChange();
+      await cancelGameReportForStructureChange();
       applyBoard(await enqueueBoardOperation(() => chessPlatform.newGame(fen, gameTitle.trim() || "研究局面", gameNote)));
       setAnalysis([]);
+      setGameReport(undefined);
       setPositionEditorOpen(false);
       await refreshGames();
       setNotice("研究局面已创建；异常局面会禁用走棋和引擎");
@@ -583,7 +710,9 @@ export default function App() {
     const [moved] = ordered.splice(from, 1);
     ordered.splice(to, 0, moved);
     try {
+      await cancelGameReportForStructureChange();
       applyBoard(await enqueueBoardOperation(() => chessPlatform.reorderBranches(ordered)));
+      await loadGameReport();
       setNotice("变招顺序已保存");
     } catch (error) {
       setNotice(friendlyError(error));
@@ -610,7 +739,7 @@ export default function App() {
   }
 
   async function requestEngineMove(state = boardRef.current, side = engineSide) {
-    if (chessPlatform.kind !== "desktop" || side === "none" || !isEngineTurn(state, side) || engineThinking) return;
+    if (chessPlatform.kind !== "desktop" || side === "none" || !isEngineTurn(state, side) || engineThinking || reportBusy) return;
     if (!enginePath.trim()) {
       setNotice("未找到 Pikafish，无法开始人机对弈");
       setEngineSide("none");
@@ -631,6 +760,7 @@ export default function App() {
       const result = await chessPlatform.playEngineMove({ enginePath, moveTimeMs, threads, hashMb, ponder: ponderEnabled });
       applyBoard(result.board);
       setAnalysis([]);
+      await loadGameReport();
       setPonderMove(result.ponder);
       setNotice(`Pikafish 已走 ${result.board.history.at(-1)?.notation ?? "一着"}${result.ponder ? ` · 预测 ${result.ponder}` : ""}`);
     } catch (error) {
@@ -642,6 +772,10 @@ export default function App() {
   }
 
   function toggleEngineSide(side: "red" | "black") {
+    if (reportBusy) {
+      setNotice("整局报告生成期间不能开始人机对弈");
+      return;
+    }
     if (engineThinking && engineSide !== side) {
       setNotice("Pikafish 正在思考，请先停止当前对弈再切换执方");
       return;
@@ -668,6 +802,10 @@ export default function App() {
   }
 
   async function runAnalysis(automatic = false, excludeMove?: string) {
+    if (reportBusy) {
+      if (!automatic) setNotice("整局报告生成期间不能分析当前局面");
+      return;
+    }
     if (engineSide !== "none" || engineThinking) {
       if (!automatic) setNotice("请先停止人机对弈再进入分析模式");
       return;
@@ -774,11 +912,14 @@ export default function App() {
   async function openGame(gameId: string) {
     stopPlayback();
     stopEnginePlay();
+    await cancelAnalysisForDocumentChange();
+    await cancelGameReportForStructureChange();
     try {
       const next = await enqueueBoardOperation(() => chessPlatform.openGame(gameId));
       applyBoard(next);
       setSelected(null);
       await loadSavedAnalysis(next.fen ?? startingFen);
+      await loadGameReport();
       await refreshGames();
       setNotice("已打开棋谱");
       setMobilePanel("board");
@@ -823,6 +964,7 @@ export default function App() {
       applyBoard(next);
       setSelected(null);
       await loadSavedAnalysis(next.fen ?? board.fen);
+      await loadGameReport();
       setNotice(playbackToken == null ? nodeId ? "已切换棋谱节点" : "已回到根局面" : "正在播放主线棋谱");
       return next;
     } catch (error) {
@@ -906,7 +1048,7 @@ export default function App() {
       state = navigated;
       if (state.branches.length > 1) {
         setIsPlaying(false);
-        setReviewPanel("moves");
+        setWorkspacePanel("moves");
         setNotice(`已到下一分支点，共 ${state.branches.length} 个变招`);
         return;
       }
@@ -918,19 +1060,6 @@ export default function App() {
       setIsPlaying(false);
       setNotice("后续主线没有新的分支点");
     }
-  }
-
-  function handleReviewTabKey(event: KeyboardEvent<HTMLButtonElement>, index: number) {
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight" && event.key !== "Home" && event.key !== "End") return;
-    event.preventDefault();
-    const nextIndex = event.key === "Home"
-      ? 0
-      : event.key === "End"
-        ? reviewPanels.length - 1
-        : (index + (event.key === "ArrowRight" ? 1 : -1) + reviewPanels.length) % reviewPanels.length;
-    const nextPanel = reviewPanels[nextIndex];
-    setReviewPanel(nextPanel);
-    window.requestAnimationFrame(() => document.getElementById(`review-tab-${nextPanel}`)?.focus());
   }
 
   async function saveComment() {
@@ -946,7 +1075,9 @@ export default function App() {
   async function makeMainline(nodeId: string) {
     stopPlayback();
     try {
+      await cancelGameReportForStructureChange();
       applyBoard(await enqueueBoardOperation(() => chessPlatform.setMainline(nodeId)));
+      await loadGameReport();
       setNotice("已设为主线");
     } catch (error) {
       setNotice(friendlyError(error));
@@ -956,8 +1087,10 @@ export default function App() {
   async function removeNode(nodeId: string) {
     stopPlayback();
     try {
+      await cancelGameReportForStructureChange();
       applyBoard(await enqueueBoardOperation(() => chessPlatform.deleteNode(nodeId)));
       setAnalysis([]);
+      await loadGameReport();
       setNotice("节点已删除");
     } catch (error) {
       setNotice(friendlyError(error));
@@ -974,10 +1107,12 @@ export default function App() {
       setNotice("请先填写登录令牌");
       return;
     }
+    await cancelGameReportForStructureChange();
     setSyncBusy(true);
     try {
       const result = await chessPlatform.synchronize(serverUrl, token);
       applyBoard(await chessPlatform.initialize());
+      await loadGameReport();
       await refreshGames();
       if (chessPlatform.kind === "desktop") setSyncAccount(await chessPlatform.getSyncAccount());
       setNotice(`同步完成：上传 ${result.uploaded}，下载 ${result.downloaded}`);
@@ -1108,7 +1243,7 @@ export default function App() {
         account={syncAccount}
         busy={dialogBusy}
         onClose={() => setDesktopDialog(null)}
-        onChooseEngine={() => chessPlatform.chooseEngineExecutable()}
+        onChooseEngine={(currentPath) => chessPlatform.chooseEngineExecutable(currentPath)}
         onSaveEngine={saveEnginePreferences}
         onSaveSync={saveSyncPreferences}
         onAuthenticate={authenticateSync}
@@ -1131,9 +1266,13 @@ export default function App() {
         <button className="tool-button" title="引擎设置" onClick={() => setDesktopDialog("engine")}><Settings2 size={16}/></button>
       </div>
 
-      <main className="workspace">
-        <aside className={`library-panel ${mobilePanel === "library" || mobilePanel === "settings" ? "mobile-visible" : ""} ${mobilePanel === "settings" ? "mobile-settings-mode" : ""}`}>
-          <div className="pane-title"><strong>棋谱库</strong><button className="tool-button" title="新建棋谱" onClick={() => void createGame(startingFen)}><Plus size={15}/></button></div>
+      <main className={`workspace ${libraryCollapsed ? "library-collapsed" : ""}`}>
+        <aside className={`library-panel ${libraryCollapsed ? "collapsed" : ""} ${mobilePanel === "library" || mobilePanel === "settings" ? "mobile-visible" : ""} ${mobilePanel === "settings" ? "mobile-settings-mode" : ""}`}>
+          <div className="pane-title">
+            <strong>{libraryCollapsed ? <Library size={16}/> : "棋谱库"}</strong>
+            {!libraryCollapsed && <button className="tool-button" title="新建棋谱" onClick={() => void createGame(startingFen)}><Plus size={15}/></button>}
+            {chessPlatform.kind === "desktop" && <button className="tool-button library-toggle" title={libraryCollapsed ? "展开棋谱库" : "收起棋谱库"} aria-label={libraryCollapsed ? "展开棋谱库" : "收起棋谱库"} onClick={() => void setLibraryVisibility(!libraryCollapsed)}>{libraryCollapsed ? <ChevronRight size={16}/> : <ChevronLeft size={16}/>}</button>}
+          </div>
           <label className="library-search"><FolderOpen size={14}/><input placeholder="搜索棋谱" /></label>
           <div className="library-tree">
             <div className="tree-group"><ChevronDown size={14}/><strong>古谱</strong></div>
@@ -1243,15 +1382,12 @@ export default function App() {
             <span className="board-meta">节点 {board.history.length}</span>
             <span className="board-meta">{reversed ? "黑方视角" : "红方视角"}</span>
           </div>
-          {primaryAnalysis && (
-            <div className="engine-livebar">
-              <span>
-                深度 {primaryAnalysis.depth ?? "-"} · PV {primaryAnalysis.multipv} · 分数 {formatAnalysisScore(primaryAnalysis)} · NPS {formatNps(primaryAnalysis.nps)} · 时间 {((primaryAnalysis.timeMs ?? 0) / 1000).toFixed(1)}s
-                {primaryMove ? ` · ${primaryMove}` : ""}
-              </span>
-              <strong>{searchLimitLabel}</strong>
-            </div>
-          )}
+          <div className={`engine-livebar ${primaryAnalysis ? "has-analysis" : "empty"}`}>
+            <span>{primaryAnalysis
+              ? <>深度 {primaryAnalysis.depth ?? "-"} · PV {primaryAnalysis.multipv} · 分数 {formatAnalysisScore(primaryAnalysis)} · NPS {formatNps(primaryAnalysis.nps)} · 时间 {((primaryAnalysis.timeMs ?? 0) / 1000).toFixed(1)}s{primaryMove ? ` · ${primaryMove}` : ""}</>
+              : "等待局面分析"}</span>
+            <strong>{searchLimitLabel}</strong>
+          </div>
           <div className="fen-row">
             <label>FEN</label>
             <input value={fenInput} onChange={(event) => setFenInput(event.target.value)} />
@@ -1260,6 +1396,20 @@ export default function App() {
         </section>
 
         <aside className={`analysis-panel ${mobilePanel === "analysis" ? "mobile-visible" : ""}`}>
+          <div className="position-overview" aria-label="局势概览">
+            <div className="overview-heading"><span><TrendingUp size={14}/>局势概览</span><strong>{evaluation?.label ?? "等待分析"}</strong></div>
+            <div className="overview-metrics">
+              <div><small>红方视角</small><strong>{evaluation?.scoreText ?? "--"}</strong></div>
+              <div><small>红方</small><strong>{evaluation ? `${evaluation.redShare.toFixed(0)}%` : "--"}</strong></div>
+              <div><small>黑方</small><strong>{evaluation ? `${(100 - evaluation.redShare).toFixed(0)}%` : "--"}</strong></div>
+              <div><small>深度</small><strong>{primaryAnalysis?.depth ?? "--"}</strong></div>
+              <div><small>耗时</small><strong>{primaryAnalysis?.timeMs != null ? `${(primaryAnalysis.timeMs / 1000).toFixed(1)}s` : "--"}</strong></div>
+            </div>
+            <div className="overview-balance" aria-label={evaluation ? `红方占比 ${evaluation.redShare.toFixed(0)}%` : "等待局势分析"}><i style={{ width: `${evaluation?.redShare ?? 50}%` }}/></div>
+          </div>
+          <WorkspaceTabs active={workspacePanel} onChange={setWorkspacePanel}/>
+
+          {workspacePanel === "analysis" && <div id="workspace-panel-analysis" className="workspace-content analysis-workspace" role="tabpanel" aria-labelledby="workspace-tab-analysis">
           <section className="engine-control">
             <div className="engine-heading">
               <div><Activity size={16}/><strong>{chessPlatform.kind === "web" ? "云端 Pikafish" : "Pikafish 引擎"}</strong></div>
@@ -1303,35 +1453,6 @@ export default function App() {
           </section>
 
           <section className="variations">
-            {evaluation && (
-              <div className="position-evaluation">
-                <div className="evaluation-heading">
-                  <span><TrendingUp size={13}/>局面趋势</span>
-                  <strong>{evaluation.label}</strong>
-                </div>
-                <div className="evaluation-score-row">
-                  <strong>{evaluation.scoreText}</strong>
-                  <span>{evaluation.deltaText ?? "当前局面基准"}</span>
-                  <small>{evaluation.detail}</small>
-                </div>
-                <div className="evaluation-balance" title={`红方占比 ${evaluation.redShare.toFixed(0)}%`}>
-                  <span className="red-label">红</span>
-                  <div><i style={{ width: `${evaluation.redShare}%` }}/></div>
-                  <span className="black-label">黑</span>
-                </div>
-                {evaluationTrend.length > 0 && (
-                  <svg className="trend-chart" viewBox="0 0 300 56" preserveAspectRatio="none" role="img" aria-label="历史局面分数趋势">
-                    <line x1="10" y1="28" x2="290" y2="28"/>
-                    <polyline points={evaluationTrend.map((point) => `${point.x},${point.y}`).join(" ")}/>
-                    {evaluationTrend.map((point, index) => (
-                      <circle key={`${point.label}-${index}`} cx={point.x} cy={point.y} r={index === evaluationTrend.length - 1 ? 3.5 : 2.2}>
-                        <title>{point.label}：{point.scoreCp > 0 ? "+" : ""}{(point.scoreCp / 100).toFixed(2)}</title>
-                      </circle>
-                    ))}
-                  </svg>
-                )}
-              </div>
-            )}
             <div className="section-title"><strong>引擎输出</strong><span>MultiPV {multipv}</span></div>
             <div className="analysis-lines">
               {analysis.length === 0
@@ -1350,13 +1471,10 @@ export default function App() {
                 ))}
             </div>
           </section>
+          </div>}
 
-          <section className="move-tree">
-            <div className="review-tabs" role="tablist" aria-label="复盘视图">
-              <button id="review-tab-moves" role="tab" aria-controls="review-panel-moves" aria-selected={reviewPanel === "moves"} tabIndex={reviewPanel === "moves" ? 0 : -1} className={reviewPanel === "moves" ? "active" : ""} onKeyDown={(event) => handleReviewTabKey(event, 0)} onClick={() => setReviewPanel("moves")}><BookOpen size={12}/>棋谱</button>
-              <button id="review-tab-trend" role="tab" aria-controls="review-panel-trend" aria-selected={reviewPanel === "trend"} tabIndex={reviewPanel === "trend" ? 0 : -1} className={reviewPanel === "trend" ? "active" : ""} onKeyDown={(event) => handleReviewTabKey(event, 1)} onClick={() => setReviewPanel("trend")}><BarChart3 size={12}/>局势图</button>
-              <button id="review-tab-report" role="tab" aria-controls="review-panel-report" aria-selected={reviewPanel === "report"} tabIndex={reviewPanel === "report" ? 0 : -1} className={reviewPanel === "report" ? "active" : ""} onKeyDown={(event) => handleReviewTabKey(event, 2)} onClick={() => setReviewPanel("report")}><ClipboardList size={12}/>分析摘要</button>
-            </div>
+          {workspacePanel !== "analysis" && <section className="workspace-content review-workspace">
+            {workspacePanel === "moves" && <div id="workspace-panel-moves" className="moves-workspace" role="tabpanel" aria-labelledby="workspace-tab-moves">
             <div className="playback-controls" aria-label="棋谱播放控制">
               <button title="回到开局" disabled={!board.currentNode} onClick={() => void navigateTo()}><ChevronsLeft size={15}/></button>
               <button title="上一着" disabled={!board.currentNode} onClick={() => void goPrevious()}><ChevronLeft size={15}/></button>
@@ -1366,7 +1484,7 @@ export default function App() {
               <button className="variation-jump" title="下变：跳到下一个分支点" disabled={!preferredContinuation(board)} onClick={() => void goToNextBranchPoint()}><GitFork size={13}/><small>下变</small></button>
               <span>第 <strong>{board.history.length}</strong> 着</span>
             </div>
-            {reviewPanel === "moves" && <div id="review-panel-moves" className="move-review-pane" role="tabpanel" aria-labelledby="review-tab-moves">
+            <div className="move-review-pane">
               <div className="move-table" role="table" aria-label="棋谱着法">
                 <div className="move-table-head" role="row">
                   <span role="columnheader">序号</span><span role="columnheader">着法</span><span role="columnheader">分数</span>
@@ -1377,6 +1495,7 @@ export default function App() {
                   </button>
                 {board.history.map((move, index) => (
                     <button
+                      ref={board.currentNode === move.id ? activeMoveRef : undefined}
                       className={`move-table-row ${board.currentNode === move.id ? "active" : ""}`}
                       key={move.id}
                       role="row"
@@ -1420,8 +1539,8 @@ export default function App() {
                     </div>
                   ))}
               </div>
-            </div>}
-            {reviewPanel === "trend" && <div id="review-panel-trend" className="review-empty-or-content trend-review" role="tabpanel" aria-labelledby="review-tab-trend">
+            </div></div>}
+            {workspacePanel === "trend" && <div id="workspace-panel-trend" className="review-empty-or-content trend-review" role="tabpanel" aria-labelledby="workspace-tab-trend">
               {evaluationTrend.length === 0
                 ? <div className="empty-review"><BarChart3 size={24}/><strong>暂无局势曲线</strong><span>分析棋谱节点后，这里会按红方视角显示历史分数</span></div>
                 : <>
@@ -1449,7 +1568,7 @@ export default function App() {
                   <div className="trend-axis"><span>开局</span><span>红方视角，点击节点定位</span><span>第 {board.history.length} 着</span></div>
                 </>}
             </div>}
-            {reviewPanel === "report" && <div id="review-panel-report" className="review-empty-or-content report-review" role="tabpanel" aria-labelledby="review-tab-report">
+            {workspacePanel === "summary" && <div id="workspace-panel-summary" className="review-empty-or-content report-review" role="tabpanel" aria-labelledby="workspace-tab-summary">
               {reports.length === 0
                 ? <div className="empty-review"><ClipboardList size={24}/><strong>暂无分析摘要</strong><span>录入并分析着法后生成逐着局面变化</span></div>
                 : reports.map((report) => (
@@ -1463,7 +1582,42 @@ export default function App() {
                 ))}
               <p className="report-note">评价依据相邻已分析局面的分数变化，仅作复盘提示。</p>
             </div>}
-          </section>
+            {workspacePanel === "report" && <div id="workspace-panel-report" className="review-empty-or-content game-report" role="tabpanel" aria-labelledby="workspace-tab-report">
+              <header className="game-report-actions">
+                <div><strong>整局分析报告</strong><small>{gameReport ? new Date(gameReport.generatedAt).toLocaleString() : "分析当前选中线路"}</small></div>
+                {reportBusy
+                  ? <button className="danger" onClick={() => void cancelGameReport()}><Square size={13}/>取消</button>
+                  : <button disabled={!enginePath.trim()} onClick={() => void generateGameReport()}><Activity size={13}/>{gameReport ? "重新分析" : "生成报告"}</button>}
+              </header>
+              {reportBusy && <div className="report-progress" aria-live="polite">
+                <div><span>正在分析第 {Math.min((reportProgress?.completed ?? 0) + 1, reportProgress?.total ?? 1)} 个局面</span><strong>{reportProgress?.completed ?? 0}/{reportProgress?.total ?? "--"}</strong></div>
+                <progress max={Math.max(1, reportProgress?.total ?? 1)} value={reportProgress?.completed ?? 0}/>
+                <small>已用 {((reportProgress?.elapsedMs ?? 0) / 1000).toFixed(1)} 秒，已完成节点会作为下次续跑缓存</small>
+              </div>}
+              {gameReport?.stale && <div className="stale-report">线路结构已变化，此报告已过期。旧结果仍可查看。</div>}
+              {!gameReport || !calculatedGameReport
+                ? !reportBusy && <div className="empty-review"><ClipboardList size={26}/><strong>尚未生成整局报告</strong><span>从根局面到当前节点，再沿主线逐局面调用 Pikafish 分析</span></div>
+                : <>
+                  <div className="side-score-grid">
+                    {(["red", "black"] as const).map((side) => {
+                      const value = calculatedGameReport[side];
+                      return <article className={side} key={side}><small>{side === "red" ? "红方" : "黑方"}综合评分</small><strong>{value.overall ?? "--"}</strong><span>优 {value.counts.excellent} · 佳 {value.counts.good} · 疑 {value.counts.inaccuracy}</span><span>错 {value.counts.mistake} · 漏 {value.counts.blunder}{value.counts.missedMate ? ` · 漏杀 ${value.counts.missedMate}` : ""}</span></article>;
+                    })}
+                  </div>
+                  <section className="phase-scores">
+                    <header><span>阶段</span><span>红方</span><span>黑方</span></header>
+                    {(["opening", "middle", "endgame"] as const).map((phase) => <div key={phase}><strong>{{ opening: "开局", middle: "中局", endgame: "残局" }[phase]}</strong><span>{calculatedGameReport.red.phases[phase] ?? "--"}</span><span>{calculatedGameReport.black.phases[phase] ?? "--"}</span></div>)}
+                  </section>
+                  <section className="report-issues">
+                    <header><strong>关键问题着法</strong><span>{calculatedGameReport.moves.filter((move) => move.grade === "错" || move.grade === "漏" || move.missedMate).length}</span></header>
+                    {calculatedGameReport.moves.filter((move) => move.grade === "错" || move.grade === "漏" || move.missedMate).length === 0
+                      ? <p>当前线路没有达到“错”或“漏”的着法。</p>
+                      : calculatedGameReport.moves.filter((move) => move.grade === "错" || move.grade === "漏" || move.missedMate).map((move, index) => <button key={move.nodeId} className={board.currentNode === move.nodeId ? "active" : ""} onClick={() => void navigateTo(move.nodeId)}><span>{index + 1}</span><i className={move.movedBy === "红方" ? "red" : "black"}/><strong>{move.notation}</strong><small>{move.movedBy}损失 {move.lossCp}cp</small><b className={`grade-${move.grade}`}>{move.missedMate ? "漏杀" : move.grade}</b></button>)}
+                  </section>
+                  <p className="report-method">评分来自应用自有的引擎损失算法，不代表天天象棋评分。</p>
+                </>}
+            </div>}
+          </section>}
         </aside>
       </main>
       {positionEditorOpen && (

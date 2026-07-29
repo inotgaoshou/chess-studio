@@ -14,6 +14,7 @@ const preferences: DesktopPreferencesDto = {
   moveTimeMs: 5000,
   ponder: false,
   autoAnalyze: true,
+  libraryCollapsed: false,
   serverUrl: "http://127.0.0.1:8080",
 };
 const account: SyncAccountDto = { serverUrl: preferences.serverUrl, status: "unbound" };
@@ -38,6 +39,32 @@ function renderDialog(dialog: "engine" | "syncSettings" | "register" | "login", 
 }
 
 describe("DesktopDialogs", () => {
+  it("writes the selected engine executable into the path field", async () => {
+    const enginePath = "/Applications/Pikafish/pikafish-apple-silicon";
+    const chooseEngine = vi.fn(async () => enginePath);
+    const { user } = renderDialog("engine", {
+      preferences: { ...preferences, enginePath: "" },
+      onChooseEngine: chooseEngine,
+    });
+
+    await user.click(screen.getByRole("button", { name: "选择引擎文件" }));
+
+    expect(chooseEngine).toHaveBeenCalledWith("");
+    expect((screen.getByLabelText("引擎可执行文件") as HTMLInputElement).value).toBe(enginePath);
+    expect((screen.getByRole("button", { name: "检测并保存" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("shows a file picker error instead of failing silently", async () => {
+    const { user } = renderDialog("engine", {
+      preferences: { ...preferences, enginePath: "" },
+      onChooseEngine: vi.fn(async () => { throw new Error("dialog.open not allowed"); }),
+    });
+
+    await user.click(screen.getByRole("button", { name: "选择引擎文件" }));
+
+    expect((await screen.findByRole("alert")).textContent).toContain("选择引擎文件失败：dialog.open not allowed");
+  });
+
   it("submits engine settings through the persistent settings callback", async () => {
     const { props, user } = renderDialog("engine");
     await user.clear(screen.getByLabelText("MultiPV"));

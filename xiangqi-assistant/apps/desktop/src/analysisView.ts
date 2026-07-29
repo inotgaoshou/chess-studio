@@ -1,4 +1,4 @@
-import type { AnalysisLine, BoardState, MoveItem, Side } from "./platform";
+import type { AnalysisLine, BoardState, GameReportDatasetDto, ReportPhase, MoveItem, Side } from "./platform";
 
 export type PvMoveRow = { number: number; red?: string; black?: string };
 export type TrendSample = { label: string; scoreCp: number; nodeId?: string; moveIndex?: number };
@@ -20,6 +20,106 @@ export type PositionEvaluation = {
   deltaText?: string;
   samples: TrendSample[];
 };
+export type GameReportMove = {
+  nodeId: string;
+  notation: string;
+  movedBy: Side;
+  phase: ReportPhase;
+  lossCp: number;
+  score: number;
+  grade: MoveGrade;
+  missedMate: boolean;
+  redScoreCp: number;
+};
+export type SideReport = {
+  overall?: number;
+  phases: Record<ReportPhase, number | undefined>;
+  counts: Record<"excellent" | "good" | "inaccuracy" | "mistake" | "blunder" | "missedMate", number>;
+};
+export type GameReport = { red: SideReport; black: SideReport; moves: GameReportMove[] };
+
+const initialMaterial = 5660;
+
+export function reportMovePhase(ply: number, material: number): ReportPhase {
+  if (material <= initialMaterial * .45 || ply > 80) return "endgame";
+  if (ply <= 20) return "opening";
+  return "middle";
+}
+
+function redPositionValue(position: GameReportDatasetDto["positions"][number]) {
+  const side = position.sideToMove === "红方" ? 1 : -1;
+  if (position.mate != null) return (position.mate === 0 ? -1 : Math.sign(position.mate)) * side * 1000;
+  return position.scoreCp == null ? undefined : position.scoreCp * side;
+}
+
+function redMateSide(position: GameReportDatasetDto["positions"][number]) {
+  if (position.mate == null) return 0;
+  return (position.mate === 0 ? -1 : Math.sign(position.mate)) * (position.sideToMove === "红方" ? 1 : -1);
+}
+
+function gradeForLoss(lossCp: number): MoveGrade {
+  if (lossCp <= 20) return "优";
+  if (lossCp <= 60) return "佳";
+  if (lossCp <= 120) return "疑";
+  if (lossCp <= 250) return "错";
+  return "漏";
+}
+
+function movePenalty(lossCp: number) {
+  if (lossCp <= 20) return 0;
+  if (lossCp <= 60) return (lossCp - 20) * .1;
+  if (lossCp <= 120) return 4 + (lossCp - 60) * .2;
+  if (lossCp <= 250) return 16 + (lossCp - 120) * .25;
+  return Math.min(100, 48.5 + (lossCp - 250) * .15);
+}
+
+function average(values: number[]) {
+  return values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : undefined;
+}
+
+function sideReport(moves: GameReportMove[], side: Side): SideReport {
+  const selected = moves.filter((move) => move.movedBy === side);
+  const phaseScore = (phase: ReportPhase) => average(selected.filter((move) => move.phase === phase).map((move) => move.score));
+  return {
+    overall: average(selected.map((move) => move.score)),
+    phases: { opening: phaseScore("opening"), middle: phaseScore("middle"), endgame: phaseScore("endgame") },
+    counts: {
+      excellent: selected.filter((move) => move.grade === "优").length,
+      good: selected.filter((move) => move.grade === "佳").length,
+      inaccuracy: selected.filter((move) => move.grade === "疑").length,
+      mistake: selected.filter((move) => move.grade === "错").length,
+      blunder: selected.filter((move) => move.grade === "漏").length,
+      missedMate: selected.filter((move) => move.missedMate).length,
+    },
+  };
+}
+
+export function calculateGameReport(dataset: GameReportDatasetDto): GameReport {
+  const moves: GameReportMove[] = [];
+  for (let index = 1; index < dataset.positions.length; index += 1) {
+    const before = dataset.positions[index - 1];
+    const after = dataset.positions[index];
+    if (!after.move) continue;
+    const beforeValue = redPositionValue(before);
+    const afterValue = redPositionValue(after);
+    if (beforeValue == null || afterValue == null) continue;
+    const moverSign = after.move.movedBy === "红方" ? 1 : -1;
+    const missedMate = redMateSide(before) === moverSign && redMateSide(after) !== moverSign;
+    const rawLoss = moverSign === 1 ? beforeValue - afterValue : afterValue - beforeValue;
+    const lossCp = Math.max(0, Math.round(rawLoss));
+    const score = missedMate ? 0 : Math.max(0, Math.round(100 - movePenalty(lossCp)));
+    moves.push({
+      ...after.move,
+      phase: after.material == null ? after.phase : reportMovePhase(after.ply, after.material),
+      lossCp,
+      score,
+      grade: missedMate ? "漏" : gradeForLoss(lossCp),
+      missedMate,
+      redScoreCp: afterValue,
+    });
+  }
+  return { red: sideReport(moves, "红方"), black: sideReport(moves, "黑方"), moves };
+}
 
 function fullmoveNumber(fen: string) {
   const value = Number(fen.trim().split(/\s+/)[5]);
@@ -35,14 +135,6 @@ export function redScoreAfterMove(move: MoveItem) {
   return move.movedBy === "黑方" ? move.scoreCp : -move.scoreCp;
 }
 
-function moveGrade(lossCp: number): MoveGrade {
-  if (lossCp <= 20) return "优";
-  if (lossCp <= 60) return "佳";
-  if (lossCp <= 120) return "疑";
-  if (lossCp <= 250) return "错";
-  return "漏";
-}
-
 export function moveReports(history: MoveItem[]): MoveReport[] {
   return history.map((move, index) => {
     const redScoreCp = redScoreAfterMove(move);
@@ -52,7 +144,7 @@ export function moveReports(history: MoveItem[]): MoveReport[] {
     const deltaCp = redScoreCp - previousScore;
     const moverImprovement = move.movedBy === "红方" ? deltaCp : -deltaCp;
     const moverLossCp = Math.max(0, -moverImprovement);
-    return { move, index, redScoreCp, deltaCp, moverLossCp, grade: moveGrade(moverLossCp) };
+    return { move, index, redScoreCp, deltaCp, moverLossCp, grade: gradeForLoss(moverLossCp) };
   });
 }
 
