@@ -35,7 +35,7 @@ describe("CandidateLine", () => {
   });
 
   it("shows coach explanation and a three-round continuation", () => {
-    render(<CandidateLine
+    const view = render(<CandidateLine
       coach={{
         rank: 1,
         move: "炮二平五",
@@ -57,6 +57,7 @@ describe("CandidateLine", () => {
 
     expect(screen.getByLabelText("候选线路 1 私教讲解").textContent).toContain("主候选");
     expect(screen.getByRole("table", { name: "候选线路 1 3回合推演" }).textContent).toContain("车9平8");
+    expect(view.container.querySelector('[role="table"]')?.getAttribute("aria-label")).toBe("候选线路 1 3回合推演");
   });
 
   it("keeps black-to-move continuation aligned under black first", () => {

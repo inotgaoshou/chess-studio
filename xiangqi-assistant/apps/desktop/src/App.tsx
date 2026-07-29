@@ -232,6 +232,7 @@ export default function App() {
   const [fenInput, setFenInput] = useState(startingFen);
   const [enginePath, setEnginePath] = useState("");
   const [analysis, setAnalysis] = useState<AnalysisLine[]>([]);
+  const [analysisArrowFen, setAnalysisArrowFen] = useState<string>();
   const [games, setGames] = useState<GameSummary[]>([]);
   const [searchMode, setSearchMode] = useState<"time" | "depth" | "nodes" | "infinite">("time");
   const [searchValue, setSearchValue] = useState(1500);
@@ -491,7 +492,7 @@ export default function App() {
   const reportByMoveId = useMemo(() => new Map(reports.map((report) => [report.move.id, report])), [reports]);
   const boardEvaluationScore = evaluation?.samples.at(-1)?.scoreCp;
   const boardEvaluationSide = evaluation?.mateSide
-    ? `${evaluation.mateSide}绝杀`
+    ? `${evaluation.mateSide}${evaluation.isCheckmate ? "绝杀胜" : "绝杀"}`
     : boardEvaluationScore == null || Math.abs(boardEvaluationScore) <= 50
       ? "均势"
       : boardEvaluationScore > 0 ? "红优" : "黑优";
@@ -525,7 +526,7 @@ export default function App() {
     stopping: "停止中",
     faulted: "故障",
   };
-  const analysisArrows = useMemo(() => orderedAnalysis
+  const analysisArrows = useMemo(() => analysisArrowFen === board.fen ? orderedAnalysis
     .filter((line) => line.multipv >= 1 && line.multipv <= analysisArrowColors.length && line.pv.length > 0)
     .flatMap((line) => {
       const from = squareFromIccs(line.pv[0].slice(0, 2));
@@ -537,7 +538,7 @@ export default function App() {
         from: boardPoint(from, reversed),
         to: boardPoint(to, reversed),
       }];
-    }), [orderedAnalysis, reversed]);
+    }) : [], [analysisArrowFen, board.fen, orderedAnalysis, reversed]);
 
   function applyDesktopPreferences(preferences: DesktopPreferencesDto) {
     desktopPreferencesRef.current = preferences;
@@ -927,6 +928,7 @@ export default function App() {
     if (!analysisBusyRef.current) return;
     pendingAutoAnalysis.current = false;
     analysisBusyRef.current = false;
+    setAnalysisArrowFen(undefined);
     setAnalysisBusy(false);
     await chessPlatform.stopAnalysis(true).catch(() => undefined);
   }
@@ -1027,14 +1029,16 @@ export default function App() {
       if (!automatic) setNotice(online ? "服务端分析需要先填写登录令牌" : "当前离线，无法启动云端分析");
       return;
     }
-    analysisBusyRef.current = true;
-    analysisLoadRevision.current += 1;
-    setAnalysis([]);
-    setAnalysisBusy(true);
-    setNotice(automatic ? "Pikafish 正在自动分析…" : "Pikafish 正在计算…");
     const currentBoard = boardRef.current;
     const analyzedFen = currentBoard.fen;
     const analyzedRevision = boardRevision.current;
+    analysisBusyRef.current = true;
+    analysisLoadRevision.current += 1;
+    setAnalysis([]);
+    setAnalysisArrowFen(automatic ? undefined : analyzedFen);
+    setAnalysisBusy(true);
+    if (!automatic) setWorkspacePanel("analysis");
+    setNotice(automatic ? "Pikafish 正在自动分析…" : "Pikafish 正在计算…");
     const effectiveMode = automatic && searchMode === "infinite" ? "time" : searchMode;
     const effectiveValue = automatic && searchMode === "infinite" ? 1500 : searchValue;
     try {
@@ -1071,6 +1075,7 @@ export default function App() {
 
   async function stopAnalysis() {
     pendingAutoAnalysis.current = false;
+    setAnalysisArrowFen(undefined);
     try {
       await chessPlatform.stopAnalysis();
       setNotice("正在停止 Pikafish");
@@ -1792,10 +1797,10 @@ export default function App() {
           </section>
 
           <section className="variations">
-            <div className="section-title"><strong>引擎输出</strong><span>MultiPV {multipv}</span></div>
+            <div className="section-title"><strong>候选推演</strong><span>MultiPV {multipv} · 每条 3 回合</span></div>
             <div className="analysis-lines">
               {analysis.length === 0
-                ? <div className="empty-analysis"><Activity size={24}/><strong>等待分析</strong><span>启动 Pikafish 后显示候选线路</span></div>
+                ? <div className="empty-analysis"><Activity size={24}/><strong>等待分析</strong><span>启动 Pikafish 后显示每条候选的私教讲解与 3 回合推演</span></div>
                 : orderedAnalysis.map((line) => <CandidateLine
                   coach={candidateInsights.find((candidate) => candidate.rank === line.multipv)}
                   color={analysisArrowColors[line.multipv - 1] ?? "transparent"}
