@@ -1,0 +1,13 @@
+[package]
+name = "manual-format"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+encoding_rs = "0.8"
+serde.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+xiangqi-core = { path = "../xiangqi-core" }
+xiangqi-manual = { path = "../manual" }

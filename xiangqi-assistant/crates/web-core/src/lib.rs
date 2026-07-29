@@ -11,8 +11,8 @@ struct AddMovePayload {
     parent_id: Uuid,
     #[serde(rename = "move")]
     move_iccs: String,
-    #[serde(default)]
-    order_key: u64,
+    #[serde(default, rename = "orderKey")]
+    _order_key: u64,
     #[serde(default)]
     is_mainline: bool,
 }
@@ -22,6 +22,13 @@ struct AddMovePayload {
 struct UpdateCommentPayload {
     node_id: Uuid,
     comment: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReorderBranchesPayload {
+    parent_id: Uuid,
+    node_ids: Vec<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -220,6 +227,14 @@ impl WebGame {
                 let payload: AddMovePayload =
                     serde_json::from_str(payload_json).map_err(js_error)?;
                 if self.tree.node(payload.node_id).is_err() {
+                    let order_key = self
+                        .tree
+                        .branches(payload.parent_id)
+                        .map_err(js_error)?
+                        .iter()
+                        .map(|node| node.order_key)
+                        .max()
+                        .map_or(0, |value| value + 1);
                     self.tree
                         .restore_node(MoveNode {
                             id: payload.node_id,
@@ -228,7 +243,7 @@ impl WebGame {
                             comment: String::new(),
                             is_mainline: payload.is_mainline,
                             deleted: false,
-                            order_key: payload.order_key,
+                            order_key,
                         })
                         .map_err(js_error)?;
                 }
@@ -238,6 +253,25 @@ impl WebGame {
                     serde_json::from_str(payload_json).map_err(js_error)?;
                 self.tree
                     .update_comment(payload.node_id, payload.comment)
+                    .map_err(js_error)?;
+            }
+            "update_game_metadata" => {}
+            "reorder_branches" => {
+                let payload: ReorderBranchesPayload =
+                    serde_json::from_str(payload_json).map_err(js_error)?;
+                let current = self.tree.branches(payload.parent_id).map_err(js_error)?;
+                let mut ordered: Vec<_> = payload
+                    .node_ids
+                    .into_iter()
+                    .filter(|node_id| current.iter().any(|node| node.id == *node_id))
+                    .collect();
+                for node in current {
+                    if !ordered.contains(&node.id) {
+                        ordered.push(node.id);
+                    }
+                }
+                self.tree
+                    .reorder_branches(payload.parent_id, &ordered)
                     .map_err(js_error)?;
             }
             "set_mainline" => {
@@ -438,7 +472,7 @@ mod tests {
         });
         game.apply_operation("add_move", &payload.to_string())
             .unwrap();
-        assert_eq!(game.tree.node(node_id).unwrap().order_key, 7);
+        assert_eq!(game.tree.node(node_id).unwrap().id, node_id);
     }
 
     #[test]
@@ -446,6 +480,53 @@ mod tests {
         let root_id = Uuid::new_v4();
         let game = WebGame::from_remote(STARTING_FEN.into(), &root_id.to_string()).unwrap();
         assert_eq!(game.tree.root_id(), root_id);
+    }
+
+    #[test]
+    fn concurrent_remote_move_is_appended_after_reordered_branches() {
+        let mut game = WebGame::new(None).unwrap();
+        let root_id = game.tree.root_id();
+        let first = Uuid::new_v4();
+        let second = Uuid::new_v4();
+        for (node_id, move_iccs) in [(first, "h2e2"), (second, "b2e2")] {
+            let payload = serde_json::json!({
+                "nodeId": node_id,
+                "parentId": root_id,
+                "move": move_iccs,
+                "orderKey": 0,
+                "isMainline": node_id == first
+            });
+            game.apply_operation("add_move", &payload.to_string())
+                .unwrap();
+        }
+        game.apply_operation(
+            "reorder_branches",
+            &serde_json::json!({ "parentId": root_id, "nodeIds": [second, first] }).to_string(),
+        )
+        .unwrap();
+        let third = Uuid::new_v4();
+        game.apply_operation(
+            "add_move",
+            &serde_json::json!({
+                "nodeId": third,
+                "parentId": root_id,
+                "move": "h0g2",
+                "orderKey": 0,
+                "isMainline": false
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            game.tree
+                .branches(root_id)
+                .unwrap()
+                .into_iter()
+                .map(|node| node.id)
+                .collect::<Vec<_>>(),
+            vec![second, first, third]
+        );
     }
 
     #[cfg(target_arch = "wasm32")]

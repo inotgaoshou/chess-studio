@@ -29,6 +29,8 @@ pub enum ManualError {
     NodeNotFound,
     #[error("node is not a child of the selected parent")]
     NotAChild,
+    #[error("branch order must contain every live child exactly once")]
+    InvalidOrder,
 }
 
 impl Default for ManualTree {
@@ -62,6 +64,29 @@ impl ManualTree {
         }
         self.next_order = self.next_order.max(node.order_key + 1);
         self.nodes.insert(node.id, node);
+        Ok(())
+    }
+
+    pub fn restore_nodes(
+        &mut self,
+        nodes: impl IntoIterator<Item = MoveNode>,
+    ) -> Result<(), ManualError> {
+        let mut pending: Vec<_> = nodes.into_iter().collect();
+        while !pending.is_empty() {
+            let before = pending.len();
+            let mut deferred = Vec::new();
+            for node in pending {
+                if node.parent_id == self.root_id || self.nodes.contains_key(&node.parent_id) {
+                    self.restore_node(node)?;
+                } else {
+                    deferred.push(node);
+                }
+            }
+            if deferred.len() == before {
+                return Err(ManualError::NodeNotFound);
+            }
+            pending = deferred;
+        }
         Ok(())
     }
 
@@ -128,6 +153,40 @@ impl ManualTree {
             .filter(|node| node.parent_id == parent_id && !node.deleted)
         {
             node.is_mainline = node.id == node_id;
+        }
+        Ok(())
+    }
+
+    pub fn reorder_branches(
+        &mut self,
+        parent_id: Uuid,
+        ordered_ids: &[Uuid],
+    ) -> Result<(), ManualError> {
+        self.ensure_parent(parent_id)?;
+        let mut siblings: Vec<_> = self
+            .nodes
+            .values()
+            .filter(|node| node.parent_id == parent_id && !node.deleted)
+            .map(|node| (node.id, node.order_key))
+            .collect();
+        let mut expected: Vec<_> = siblings.iter().map(|(id, _)| *id).collect();
+        let mut requested = ordered_ids.to_vec();
+        expected.sort_unstable();
+        requested.sort_unstable();
+        if requested != expected {
+            return Err(ManualError::InvalidOrder);
+        }
+
+        siblings.sort_by_key(|(_, order_key)| *order_key);
+        let order_keys: Vec<_> = siblings
+            .into_iter()
+            .map(|(_, order_key)| order_key)
+            .collect();
+        for (node_id, order_key) in ordered_ids.iter().zip(order_keys) {
+            self.nodes
+                .get_mut(node_id)
+                .ok_or(ManualError::InvalidOrder)?
+                .order_key = order_key;
         }
         Ok(())
     }
@@ -268,6 +327,88 @@ mod tests {
         tree.remove(node).unwrap();
         assert!(tree.branches(root).unwrap().is_empty());
         assert!(tree.node(node).unwrap().deleted);
+    }
+
+    #[test]
+    fn reorders_all_live_siblings_without_changing_the_mainline() {
+        let mut tree = ManualTree::new();
+        let root = tree.root_id();
+        let first = tree
+            .add_move(root, Move::from_iccs("a0a1").unwrap(), "")
+            .unwrap();
+        let second = tree
+            .add_move(root, Move::from_iccs("b0c2").unwrap(), "")
+            .unwrap();
+        let third = tree
+            .add_move(root, Move::from_iccs("c0e2").unwrap(), "")
+            .unwrap();
+
+        tree.reorder_branches(root, &[third, first, second])
+            .unwrap();
+
+        assert_eq!(
+            tree.branches(root)
+                .unwrap()
+                .into_iter()
+                .map(|node| node.id)
+                .collect::<Vec<_>>(),
+            vec![third, first, second]
+        );
+        assert!(tree.node(first).unwrap().is_mainline);
+    }
+
+    #[test]
+    fn reorder_rejects_partial_or_foreign_sibling_lists() {
+        let mut tree = ManualTree::new();
+        let root = tree.root_id();
+        let first = tree
+            .add_move(root, Move::from_iccs("a0a1").unwrap(), "")
+            .unwrap();
+        let second = tree
+            .add_move(root, Move::from_iccs("b0c2").unwrap(), "")
+            .unwrap();
+
+        assert_eq!(
+            tree.reorder_branches(root, &[first]),
+            Err(ManualError::InvalidOrder)
+        );
+        assert_eq!(
+            tree.reorder_branches(root, &[first, Uuid::new_v4()]),
+            Err(ManualError::InvalidOrder)
+        );
+        assert_eq!(tree.branches(root).unwrap().len(), 2);
+        assert_eq!(tree.node(second).unwrap().order_key, 1);
+    }
+
+    #[test]
+    fn reordered_tree_restores_when_a_child_sorts_before_its_parent() {
+        let mut tree = ManualTree::new();
+        let root = tree.root_id();
+        let first = tree
+            .add_move(root, Move::from_iccs("h2e2").unwrap(), "")
+            .unwrap();
+        tree.add_move(first, Move::from_iccs("h9g7").unwrap(), "")
+            .unwrap();
+        let second = tree
+            .add_move(root, Move::from_iccs("b2e2").unwrap(), "")
+            .unwrap();
+        tree.reorder_branches(root, &[second, first]).unwrap();
+        let mut nodes: Vec<_> = tree.nodes.values().cloned().collect();
+        nodes.sort_by_key(|node| node.order_key);
+
+        let mut restored = ManualTree::with_root(root);
+        restored.restore_nodes(nodes).unwrap();
+
+        assert_eq!(
+            restored
+                .branches(root)
+                .unwrap()
+                .into_iter()
+                .map(|node| node.id)
+                .collect::<Vec<_>>(),
+            vec![second, first]
+        );
+        assert_eq!(restored.branches(first).unwrap().len(), 1);
     }
 
     #[test]

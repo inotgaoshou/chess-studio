@@ -20,6 +20,7 @@ pub enum Protocol {
 pub enum SearchLimit {
     Depth(u32),
     MoveTime(u64),
+    Nodes(u64),
     Infinite,
 }
 
@@ -86,8 +87,34 @@ pub fn go_command(limit: SearchLimit) -> String {
     match limit {
         SearchLimit::Depth(depth) => format!("go depth {depth}"),
         SearchLimit::MoveTime(ms) => format!("go movetime {ms}"),
+        SearchLimit::Nodes(nodes) => format!("go nodes {nodes}"),
         SearchLimit::Infinite => "go infinite".to_owned(),
     }
+}
+
+pub fn go_command_with_options(
+    limit: SearchLimit,
+    search_moves: &[String],
+    ponder: bool,
+) -> String {
+    let base = go_command(limit);
+    let mut parts = base.split_whitespace();
+    let _ = parts.next();
+    let rest = parts.collect::<Vec<_>>().join(" ");
+    let mut command = if ponder {
+        if rest.is_empty() {
+            "go ponder".to_owned()
+        } else {
+            format!("go ponder {rest}")
+        }
+    } else {
+        base
+    };
+    if !search_moves.is_empty() {
+        command.push_str(" searchmoves ");
+        command.push_str(&search_moves.join(" "));
+    }
+    command
 }
 
 pub fn parse_engine_line(line: &str) -> EngineEvent {
@@ -241,6 +268,23 @@ impl EngineSession {
         self.send(&go_command(limit)).await
     }
 
+    pub async fn search(
+        &mut self,
+        fen: &str,
+        moves: &[String],
+        limit: SearchLimit,
+        search_moves: &[String],
+        ponder: bool,
+    ) -> Result<(), EngineError> {
+        self.send(&position_command(fen, moves)).await?;
+        self.send(&go_command_with_options(limit, search_moves, ponder))
+            .await
+    }
+
+    pub async fn ponder_hit(&mut self) -> Result<(), EngineError> {
+        self.send("ponderhit").await
+    }
+
     pub async fn stop(&mut self) -> Result<(), EngineError> {
         self.control.stop().await
     }
@@ -303,6 +347,23 @@ mod tests {
         assert_eq!(go_command(SearchLimit::Depth(18)), "go depth 18");
         assert_eq!(go_command(SearchLimit::MoveTime(1500)), "go movetime 1500");
         assert_eq!(go_command(SearchLimit::Infinite), "go infinite");
+    }
+
+    #[test]
+    fn builds_node_limited_and_forced_move_searches() {
+        assert_eq!(go_command(SearchLimit::Nodes(250_000)), "go nodes 250000");
+        assert_eq!(
+            go_command_with_options(
+                SearchLimit::Depth(18),
+                &["h2e2".into(), "b2e2".into()],
+                false,
+            ),
+            "go depth 18 searchmoves h2e2 b2e2"
+        );
+        assert_eq!(
+            go_command_with_options(SearchLimit::Infinite, &[], true),
+            "go ponder infinite"
+        );
     }
 
     #[test]

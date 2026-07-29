@@ -11,11 +11,14 @@ tauri-build = { version = "2", features = [] }
 chrono.workspace = true
 engine-protocol = { path = "../../../crates/engine-protocol" }
 local-store = { path = "../../../crates/local-store" }
+manual-format = { path = "../../../crates/manual-format" }
 reqwest = { version = "0.13", features = ["json"] }
 serde.workspace = true
 serde_json.workspace = true
 sync-protocol = { path = "../../../crates/sync-protocol" }
 tauri = { version = "2", features = [] }
+tauri-plugin-clipboard-manager = "2"
+tauri-plugin-dialog = "2"
 tokio.workspace = true
 uuid.workspace = true
 xiangqi-core = { path = "../../../crates/xiangqi-core" }

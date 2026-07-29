@@ -7,13 +7,17 @@ use std::time::Instant;
 
 use chrono::Utc;
 use engine_protocol::{EngineControl, EngineEvent, EngineSession, Protocol, SearchLimit};
-use local_store::{AnalysisSummary, LocalGame, LocalStore};
+use local_store::{AnalysisSummary, ImportedGame, LocalGame, LocalStore};
+use manual_format::{
+    ManualDocument, ManualFormat, ManualMetadata, detect_format, export_mainline_pgn, export_pgn,
+    import_document,
+};
 use serde::Serialize;
 use sync_protocol::{
     AddMovePayload, CreateGamePayload, DeleteNodePayload, Operation, OperationKind,
-    SetMainlinePayload, UpdateCommentPayload,
+    ReorderBranchesPayload, SetMainlinePayload, UpdateCommentPayload, UpdateGameMetadataPayload,
 };
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 use uuid::Uuid;
 use xiangqi_core::{Board, Color, GameStatus, PieceKind, STARTING_FEN, Square};
 use xiangqi_manual::ManualTree;
@@ -27,12 +31,80 @@ struct AppModel {
     device_id: Uuid,
     lamport: u64,
     store: LocalStore,
+    metadata: ManualMetadata,
+    note: String,
+    source_path: Option<String>,
+    source_format: Option<String>,
+    playable: bool,
 }
 
 struct DesktopState {
     model: Mutex<AppModel>,
     engine: tokio::sync::Mutex<Option<EngineControl>>,
+    play_session: tokio::sync::Mutex<Option<EngineRuntime>>,
     analysis_generation: AtomicU64,
+    play_generation: AtomicU64,
+}
+
+struct EngineRuntime {
+    path: String,
+    session: EngineSession,
+    pondering_fen: Option<String>,
+    state: EngineRuntimeState,
+}
+
+#[derive(Clone, Copy)]
+enum EngineRuntimeState {
+    Idle,
+    Analyzing,
+    Thinking,
+    Pondering,
+    Stopping,
+    Faulted,
+}
+
+impl EngineRuntimeState {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Analyzing => "analyzing",
+            Self::Thinking => "thinking",
+            Self::Pondering => "pondering",
+            Self::Stopping => "stopping",
+            Self::Faulted => "faulted",
+        }
+    }
+}
+
+#[derive(Clone, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+enum EngineRuntimeEvent {
+    State {
+        state: &'static str,
+    },
+    Info {
+        line: AnalysisLine,
+    },
+    Bestmove {
+        best: String,
+        ponder: Option<String>,
+    },
+    Error {
+        message: String,
+    },
+}
+
+fn emit_engine_event(app: &tauri::AppHandle, event: EngineRuntimeEvent) {
+    let _ = app.emit("engine-runtime", event);
+}
+
+fn emit_engine_state(app: &tauri::AppHandle, state: EngineRuntimeState) {
+    emit_engine_event(
+        app,
+        EngineRuntimeEvent::State {
+            state: state.as_str(),
+        },
+    );
 }
 
 #[derive(Serialize)]
@@ -76,6 +148,21 @@ struct BoardDto {
     history: Vec<MoveDto>,
     branches: Vec<MoveDto>,
     current_node: Option<Uuid>,
+    title: String,
+    note: String,
+    source_path: Option<String>,
+    source_format: Option<String>,
+    playable: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GameSummaryDto {
+    id: Uuid,
+    title: String,
+    fen: String,
+    updated_at: String,
+    current: bool,
 }
 
 #[derive(Clone, serde::Deserialize, Serialize)]
@@ -100,6 +187,13 @@ struct SyncResult {
     cursor: u64,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EngineMoveDto {
+    board: BoardDto,
+    ponder: Option<String>,
+}
+
 #[tauri::command]
 fn get_state(state: State<'_, DesktopState>) -> Result<BoardDto, String> {
     let model = state
@@ -110,11 +204,54 @@ fn get_state(state: State<'_, DesktopState>) -> Result<BoardDto, String> {
 }
 
 #[tauri::command]
+fn list_games(state: State<'_, DesktopState>) -> Result<Vec<GameSummaryDto>, String> {
+    let model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    Ok(model
+        .store
+        .load_games()
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .map(|game| GameSummaryDto {
+            id: game.id,
+            title: game.title,
+            fen: game.starting_fen,
+            updated_at: game.updated_at,
+            current: game.id == model.game_id,
+        })
+        .collect())
+}
+
+#[tauri::command]
+fn open_game(game_id: Uuid, state: State<'_, DesktopState>) -> Result<BoardDto, String> {
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    let game = model
+        .store
+        .load_game(game_id)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "棋谱不存在".to_owned())?;
+    load_game_into_model(&mut model, game)?;
+    board_dto(&model)
+}
+
+#[tauri::command]
 fn play_move(iccs: String, state: State<'_, DesktopState>) -> Result<BoardDto, String> {
     let mut model = state
         .model
         .lock()
         .map_err(|_| "state lock poisoned".to_owned())?;
+    commit_move(&mut model, &iccs)
+}
+
+fn commit_move(model: &mut AppModel, iccs: &str) -> Result<BoardDto, String> {
+    if !model.playable {
+        return Err("当前研究局面不可对弈，请先在局面编辑器中修正".into());
+    };
     let mv = xiangqi_core::Move::from_iccs(&iccs).map_err(|error| error.to_string())?;
     let next = model
         .board
@@ -135,7 +272,7 @@ fn play_move(iccs: String, state: State<'_, DesktopState>) -> Result<BoardDto, S
         payload: serde_json::to_value(AddMovePayload {
             node_id,
             parent_id: parent,
-            move_iccs: iccs,
+            move_iccs: iccs.to_owned(),
             order_key: model
                 .tree
                 .node(node_id)
@@ -172,43 +309,162 @@ fn play_move(iccs: String, state: State<'_, DesktopState>) -> Result<BoardDto, S
         .map_err(|error| error.to_string())?;
     model.current_node = Some(node_id);
     model.board = next;
-    board_dto(&model)
+    board_dto(model)
 }
 
 #[tauri::command]
-fn new_game(fen: String, state: State<'_, DesktopState>) -> Result<BoardDto, String> {
-    let board = Board::from_fen(&fen).map_err(|error| error.to_string())?;
+fn new_game(
+    fen: String,
+    title: Option<String>,
+    note: Option<String>,
+    state: State<'_, DesktopState>,
+) -> Result<BoardDto, String> {
+    let mut document = ManualDocument::new(fen).map_err(|error| error.to_string())?;
+    document.metadata.title = title.unwrap_or_else(|| "新建棋谱".into());
+    document.note = note.unwrap_or_default();
     let mut model = state
         .model
         .lock()
         .map_err(|_| "state lock poisoned".to_owned())?;
-    model.board = board;
-    model.starting_fen = fen.clone();
-    model.tree = ManualTree::new();
-    model.current_node = None;
-    model.game_id = Uuid::new_v4();
-    model.lamport += 1;
-    let operation = Operation {
-        op_id: Uuid::new_v4(),
-        device_id: model.device_id,
-        entity_id: model.game_id,
-        game_id: model.game_id,
-        kind: OperationKind::CreateGame,
-        payload: serde_json::to_value(CreateGamePayload {
-            title: "New study".into(),
-            fen: fen.clone(),
-            root_id: model.tree.root_id(),
-        })
-        .map_err(|error| error.to_string())?,
-        lamport: model.lamport,
-        created_at: Utc::now(),
+    install_document(&mut model, document, None, None)?;
+    board_dto(&model)
+}
+
+#[tauri::command]
+fn open_document(path: String, state: State<'_, DesktopState>) -> Result<BoardDto, String> {
+    let bytes = std::fs::read(&path).map_err(|error| format!("读取棋谱失败：{error}"))?;
+    let hint = format_hint_from_path(&path);
+    let format = detect_format(&bytes, hint);
+    let document = import_document(&bytes, Some(format)).map_err(|error| error.to_string())?;
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    install_document(
+        &mut model,
+        document,
+        Some(path),
+        Some(format_name(format).into()),
+    )?;
+    board_dto(&model)
+}
+
+#[tauri::command]
+fn import_text(text: String, state: State<'_, DesktopState>) -> Result<BoardDto, String> {
+    let document = if Board::from_fen(text.trim()).is_ok() {
+        ManualDocument::new(text.trim()).map_err(|error| error.to_string())?
+    } else {
+        import_document(text.as_bytes(), Some(ManualFormat::Pgn))
+            .map_err(|error| error.to_string())?
     };
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    install_document(&mut model, document, None, None)?;
+    board_dto(&model)
+}
+
+#[tauri::command]
+fn export_text(mainline_only: bool, state: State<'_, DesktopState>) -> Result<String, String> {
+    let model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    let document = document_from_model(&model);
+    if mainline_only {
+        export_mainline_pgn(&document).map_err(|error| error.to_string())
+    } else {
+        Ok(export_pgn(&document))
+    }
+}
+
+#[tauri::command]
+fn save_document(path: Option<String>, state: State<'_, DesktopState>) -> Result<String, String> {
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    let target = match path {
+        Some(path) => path,
+        None if model.source_format.as_deref() == Some("pgn") => model
+            .source_path
+            .clone()
+            .ok_or_else(|| "当前棋谱尚未关联文件，请使用另存为".to_owned())?,
+        None => return Err("导入格式不可覆盖保存，请另存为 PGN".into()),
+    };
+    std::fs::write(&target, export_pgn(&document_from_model(&model)))
+        .map_err(|error| format!("保存棋谱失败：{error}"))?;
     let game_id = model.game_id;
-    let root_id = model.tree.root_id();
     model
         .store
-        .save_game_with_operation(game_id, "New study", &fen, root_id, &operation)
+        .set_game_source(game_id, Some(&target), Some("pgn"))
         .map_err(|error| error.to_string())?;
+    model.source_path = Some(target.clone());
+    model.source_format = Some("pgn".into());
+    Ok(target)
+}
+
+#[tauri::command]
+fn update_game_metadata(
+    title: String,
+    note: String,
+    state: State<'_, DesktopState>,
+) -> Result<BoardDto, String> {
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    let game_id = model.game_id;
+    let mut metadata = model.metadata.clone();
+    metadata.title = title.clone();
+    let payload = metadata_payload(&metadata, &note);
+    let metadata_json = serde_json::to_string(&metadata).map_err(|error| error.to_string())?;
+    let operation = next_operation(
+        &mut model,
+        game_id,
+        OperationKind::UpdateGameMetadata,
+        serde_json::to_value(payload).map_err(|error| error.to_string())?,
+    );
+    model
+        .store
+        .update_game_metadata_with_operation(game_id, &title, &note, &metadata_json, &operation)
+        .map_err(|error| error.to_string())?;
+    model.metadata = metadata;
+    model.note = note;
+    board_dto(&model)
+}
+
+#[tauri::command]
+fn reorder_branches(
+    node_ids: Vec<Uuid>,
+    state: State<'_, DesktopState>,
+) -> Result<BoardDto, String> {
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    let parent_id = model.current_node.unwrap_or_else(|| model.tree.root_id());
+    let mut reordered_tree = model.tree.clone();
+    reordered_tree
+        .reorder_branches(parent_id, &node_ids)
+        .map_err(|error| error.to_string())?;
+    let operation = next_operation(
+        &mut model,
+        parent_id,
+        OperationKind::ReorderBranches,
+        serde_json::to_value(ReorderBranchesPayload {
+            parent_id,
+            node_ids: node_ids.clone(),
+        })
+        .map_err(|error| error.to_string())?,
+    );
+    let game_id = model.game_id;
+    model
+        .store
+        .reorder_branches_with_operation(game_id, parent_id, &node_ids, &operation)
+        .map_err(|error| error.to_string())?;
+    model.tree = reordered_tree;
     board_dto(&model)
 }
 
@@ -339,6 +595,9 @@ async fn analyze_position(
     threads: u32,
     hash_mb: u32,
     multipv: u32,
+    search_moves: Vec<String>,
+    exclude_move: Option<String>,
+    app: tauri::AppHandle,
     state: State<'_, DesktopState>,
 ) -> Result<Vec<AnalysisLine>, String> {
     let analysis_generation = state.analysis_generation.load(Ordering::SeqCst);
@@ -356,63 +615,128 @@ async fn analyze_position(
     let limit = match search_mode.as_str() {
         "time" => SearchLimit::MoveTime(search_value.clamp(100, 30_000)),
         "depth" => SearchLimit::Depth(search_value.clamp(1, 100) as u32),
+        "nodes" => SearchLimit::Nodes(search_value.clamp(1_000, 100_000_000)),
         "infinite" => SearchLimit::Infinite,
         _ => return Err("unsupported search mode".into()),
     };
     let multipv = multipv.clamp(1, 10);
-    let mut session = EngineSession::launch(&engine_path, Duration::from_secs(2))
-        .await
-        .map_err(|error| error.to_string())?;
-    let protocol = session.protocol();
+    let mut search_moves = search_moves
+        .into_iter()
+        .take(90)
+        .map(|value| {
+            let mv = xiangqi_core::Move::from_iccs(&value).map_err(|error| error.to_string())?;
+            analysis_board
+                .apply_move(mv)
+                .map_err(|_| format!("强制搜索包含非法着法：{value}"))?;
+            Ok(value)
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    if search_moves.is_empty() {
+        if let Some(excluded) = exclude_move.as_deref() {
+            search_moves = analysis_board
+                .legal_moves()
+                .into_iter()
+                .map(|mv| mv.to_iccs())
+                .filter(|value| value != excluded)
+                .collect();
+            if search_moves.is_empty() {
+                return Err("当前局面没有可替代的合法着法".into());
+            }
+        }
+    }
+    if state.engine.lock().await.is_some() {
+        return Err("an engine search is already running".into());
+    }
+    let mut slot = state.play_session.lock().await;
+    if slot
+        .as_ref()
+        .is_some_and(|runtime| runtime.path != engine_path)
+    {
+        if let Some(runtime) = slot.take() {
+            let _ = runtime.session.close().await;
+        }
+    }
+    if slot.is_none() {
+        let session = EngineSession::launch(&engine_path, Duration::from_secs(2))
+            .await
+            .map_err(|error| error.to_string())?;
+        *slot = Some(EngineRuntime {
+            path: engine_path.clone(),
+            session,
+            pondering_fen: None,
+            state: EngineRuntimeState::Idle,
+        });
+    }
+    let runtime = slot.as_mut().expect("engine runtime was initialized");
+    if runtime.pondering_fen.take().is_some() {
+        runtime
+            .session
+            .stop()
+            .await
+            .map_err(|error| error.to_string())?;
+        loop {
+            match runtime.session.next_event().await {
+                Ok(EngineEvent::BestMove { .. }) => break,
+                Ok(_) => {}
+                Err(error) => return Err(error.to_string()),
+            }
+        }
+    }
+    let protocol = runtime.session.protocol();
     let threads = threads.clamp(1, 64);
     let hash_mb = hash_mb.clamp(16, 4096);
-    session
+    runtime
+        .session
         .configure("Threads", &threads.to_string())
         .await
         .map_err(|error| error.to_string())?;
-    session
+    runtime
+        .session
         .configure("Hash", &hash_mb.to_string())
         .await
         .map_err(|error| error.to_string())?;
-    session
+    runtime
+        .session
         .configure("MultiPV", &multipv.to_string())
         .await
         .map_err(|error| error.to_string())?;
-    session
-        .analyze(&fen, &[], limit)
+    runtime
+        .session
+        .search(&fen, &[], limit, &search_moves, false)
         .await
         .map_err(|error| error.to_string())?;
-    {
-        let mut active = state.engine.lock().await;
-        if active.is_some() {
-            let _ = session.close().await;
-            return Err("an engine analysis is already running".into());
-        }
-        *active = Some(session.control());
-    }
+    runtime.state = EngineRuntimeState::Analyzing;
+    *state.engine.lock().await = Some(runtime.session.control());
+    emit_engine_state(&app, runtime.state);
     let started = Instant::now();
     let mut lines = BTreeMap::new();
     let mut read_error = None;
     loop {
-        match session.next_event().await {
+        match runtime.session.next_event().await {
             Ok(EngineEvent::Info(info)) if !info.pv.is_empty() => {
-                lines.insert(
-                    info.multipv,
-                    AnalysisLine {
-                        depth: info.depth,
-                        score_cp: info.score_cp,
-                        mate: info.mate,
-                        nps: info.nps,
-                        time_ms: info.time_ms,
-                        multipv: info.multipv,
-                        notation: analysis_board
-                            .chinese_pv_notation(&info.pv)
-                            .unwrap_or_default(),
-                        pv: info.pv,
-                    },
-                );
+                let line = AnalysisLine {
+                    depth: info.depth,
+                    score_cp: info.score_cp,
+                    mate: info.mate,
+                    nps: info.nps,
+                    time_ms: info.time_ms,
+                    multipv: info.multipv,
+                    notation: analysis_board
+                        .chinese_pv_notation(&info.pv)
+                        .unwrap_or_default(),
+                    pv: info.pv,
+                };
+                if state.analysis_generation.load(Ordering::SeqCst) == analysis_generation {
+                    emit_engine_event(&app, EngineRuntimeEvent::Info { line: line.clone() });
+                }
+                lines.insert(line.multipv, line);
             }
-            Ok(EngineEvent::BestMove { .. }) => break,
+            Ok(EngineEvent::BestMove { best, ponder }) => {
+                if state.analysis_generation.load(Ordering::SeqCst) == analysis_generation {
+                    emit_engine_event(&app, EngineRuntimeEvent::Bestmove { best, ponder });
+                }
+                break;
+            }
             Err(error) => {
                 read_error = Some(error.to_string());
                 break;
@@ -420,11 +744,28 @@ async fn analyze_position(
             _ => {}
         }
     }
-    let _ = session.close().await;
     *state.engine.lock().await = None;
     if let Some(error) = read_error {
+        runtime.state = EngineRuntimeState::Faulted;
+        emit_engine_state(&app, runtime.state);
+        if state.analysis_generation.load(Ordering::SeqCst) == analysis_generation {
+            emit_engine_event(
+                &app,
+                EngineRuntimeEvent::Error {
+                    message: error.clone(),
+                },
+            );
+        }
+        let failed = slot.take();
+        drop(slot);
+        if let Some(failed) = failed {
+            let _ = failed.session.close().await;
+        }
         return Err(error);
     }
+    runtime.state = EngineRuntimeState::Idle;
+    emit_engine_state(&app, runtime.state);
+    drop(slot);
     let lines: Vec<_> = lines.into_values().collect();
     let elapsed_ms = started.elapsed().as_millis() as u64;
     let mut model = state
@@ -442,8 +783,10 @@ async fn analyze_position(
     if state.analysis_generation.load(Ordering::SeqCst) != analysis_generation {
         return Ok(lines);
     }
-    let config_hash =
-        format!("{search_mode}:{search_value}:threads:{threads}:hash:{hash_mb}:multipv:{multipv}");
+    let config_hash = format!(
+        "{search_mode}:{search_value}:threads:{threads}:hash:{hash_mb}:multipv:{multipv}:searchmoves:{}",
+        search_moves.join(",")
+    );
     let primary = lines.first();
     model
         .store
@@ -460,6 +803,251 @@ async fn analyze_position(
         )
         .map_err(|error| error.to_string())?;
     Ok(lines)
+}
+
+#[tauri::command]
+async fn engine_play_move(
+    engine_path: String,
+    move_time_ms: u64,
+    threads: u32,
+    hash_mb: u32,
+    ponder: bool,
+    app: tauri::AppHandle,
+    state: State<'_, DesktopState>,
+) -> Result<EngineMoveDto, String> {
+    let play_generation = state.play_generation.load(Ordering::SeqCst);
+    let (fen, expected_game, expected_node) = {
+        let model = state
+            .model
+            .lock()
+            .map_err(|_| "state lock poisoned".to_owned())?;
+        if !model.playable {
+            return Err("当前研究局面不可对弈".into());
+        }
+        (model.board.to_fen(), model.game_id, model.current_node)
+    };
+    if state.engine.lock().await.is_some() {
+        return Err("引擎正在执行其他搜索，请先停止".into());
+    }
+    let mut slot = state.play_session.lock().await;
+    if slot.as_ref().is_some_and(|play| play.path != engine_path) {
+        if let Some(play) = slot.take() {
+            let _ = play.session.close().await;
+        }
+    }
+    if slot.is_none() {
+        let session = EngineSession::launch(&engine_path, Duration::from_secs(2))
+            .await
+            .map_err(|error| error.to_string())?;
+        *slot = Some(EngineRuntime {
+            path: engine_path.clone(),
+            session,
+            pondering_fen: None,
+            state: EngineRuntimeState::Idle,
+        });
+    }
+    let play = slot.as_mut().expect("engine session was initialized");
+    let mut ponder_hit = false;
+    if let Some(predicted_fen) = play.pondering_fen.take() {
+        if predicted_fen == fen {
+            play.session
+                .ponder_hit()
+                .await
+                .map_err(|error| error.to_string())?;
+            ponder_hit = true;
+        } else {
+            play.session
+                .stop()
+                .await
+                .map_err(|error| error.to_string())?;
+            loop {
+                match play.session.next_event().await {
+                    Ok(EngineEvent::BestMove { .. }) => break,
+                    Ok(_) => {}
+                    Err(error) => {
+                        slot.take();
+                        return Err(error.to_string());
+                    }
+                }
+            }
+        }
+    }
+    if !ponder_hit {
+        play.session
+            .configure("Threads", &threads.clamp(1, 64).to_string())
+            .await
+            .map_err(|error| error.to_string())?;
+        play.session
+            .configure("Hash", &hash_mb.clamp(16, 4096).to_string())
+            .await
+            .map_err(|error| error.to_string())?;
+        play.session
+            .configure("MultiPV", "1")
+            .await
+            .map_err(|error| error.to_string())?;
+        play.session
+            .configure("Ponder", if ponder { "true" } else { "false" })
+            .await
+            .map_err(|error| error.to_string())?;
+        play.session
+            .search(
+                &fen,
+                &[],
+                SearchLimit::MoveTime(move_time_ms.clamp(100, 30_000)),
+                &[],
+                false,
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+    play.state = EngineRuntimeState::Thinking;
+    *state.engine.lock().await = Some(play.session.control());
+    emit_engine_state(&app, play.state);
+    let (best_move, ponder_move) = loop {
+        match play.session.next_event().await {
+            Ok(EngineEvent::BestMove { best, ponder }) => {
+                break (best, ponder);
+            }
+            Ok(EngineEvent::Info(info)) if !info.pv.is_empty() => {
+                if state.play_generation.load(Ordering::SeqCst) != play_generation {
+                    continue;
+                }
+                let board = Board::from_fen(&fen).map_err(|error| error.to_string())?;
+                emit_engine_event(
+                    &app,
+                    EngineRuntimeEvent::Info {
+                        line: AnalysisLine {
+                            depth: info.depth,
+                            score_cp: info.score_cp,
+                            mate: info.mate,
+                            nps: info.nps,
+                            time_ms: info.time_ms,
+                            multipv: info.multipv,
+                            notation: board.chinese_pv_notation(&info.pv).unwrap_or_default(),
+                            pv: info.pv,
+                        },
+                    },
+                );
+            }
+            Ok(_) => {}
+            Err(error) => {
+                *state.engine.lock().await = None;
+                if state.play_generation.load(Ordering::SeqCst) != play_generation {
+                    play.state = EngineRuntimeState::Stopping;
+                    slot.take();
+                    return Err("引擎对弈已停止，本次输出已丢弃".into());
+                }
+                play.state = EngineRuntimeState::Faulted;
+                emit_engine_state(&app, play.state);
+                emit_engine_event(
+                    &app,
+                    EngineRuntimeEvent::Error {
+                        message: error.to_string(),
+                    },
+                );
+                slot.take();
+                return Err(error.to_string());
+            }
+        }
+    };
+    *state.engine.lock().await = None;
+    let predicted_fen = if ponder {
+        ponder_move.as_deref().and_then(|predicted| {
+            let board = Board::from_fen(&fen).ok()?;
+            let best = xiangqi_core::Move::from_iccs(&best_move).ok()?;
+            let board = board.apply_move(best).ok()?;
+            let predicted = xiangqi_core::Move::from_iccs(predicted).ok()?;
+            board.apply_move(predicted).ok().map(|board| board.to_fen())
+        })
+    } else {
+        None
+    };
+    let board = {
+        let mut model = state
+            .model
+            .lock()
+            .map_err(|_| "state lock poisoned".to_owned())?;
+        if model.game_id != expected_game
+            || model.current_node != expected_node
+            || model.board.to_fen() != fen
+            || state.play_generation.load(Ordering::SeqCst) != play_generation
+        {
+            play.state = EngineRuntimeState::Stopping;
+            emit_engine_state(&app, play.state);
+            return Err("引擎完成前棋盘已变化，本次着法已丢弃".into());
+        }
+        commit_move(&mut model, &best_move)?
+    };
+    emit_engine_event(
+        &app,
+        EngineRuntimeEvent::Bestmove {
+            best: best_move.clone(),
+            ponder: ponder_move.clone(),
+        },
+    );
+    if let Some(predicted_fen) = predicted_fen {
+        play.session
+            .search(
+                &predicted_fen,
+                &[],
+                SearchLimit::MoveTime(move_time_ms.clamp(100, 30_000)),
+                &[],
+                true,
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        play.pondering_fen = Some(predicted_fen);
+        play.state = EngineRuntimeState::Pondering;
+    } else {
+        play.state = EngineRuntimeState::Idle;
+    }
+    emit_engine_state(&app, play.state);
+    Ok(EngineMoveDto {
+        board,
+        ponder: ponder_move,
+    })
+}
+
+#[tauri::command]
+async fn stop_engine_play(
+    app: tauri::AppHandle,
+    state: State<'_, DesktopState>,
+) -> Result<bool, String> {
+    state.play_generation.fetch_add(1, Ordering::SeqCst);
+    emit_engine_state(&app, EngineRuntimeState::Stopping);
+    if let Some(control) = state.engine.lock().await.clone() {
+        let _ = control.stop().await;
+    }
+    let mut slot = state.play_session.lock().await;
+    let should_close = slot.as_ref().is_some_and(|runtime| {
+        runtime.pondering_fen.is_some() || !matches!(runtime.state, EngineRuntimeState::Idle)
+    });
+    if !should_close {
+        emit_engine_state(&app, EngineRuntimeState::Idle);
+        return Ok(false);
+    }
+    if let Some(play) = slot.take() {
+        *state.engine.lock().await = None;
+        play.session
+            .close()
+            .await
+            .map_err(|error| error.to_string())?;
+        emit_engine_state(&app, EngineRuntimeState::Idle);
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+#[tauri::command]
+async fn move_now(state: State<'_, DesktopState>) -> Result<bool, String> {
+    let control = state.engine.lock().await.clone();
+    if let Some(control) = control {
+        control.stop().await.map_err(|error| error.to_string())?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
 }
 
 #[tauri::command]
@@ -514,6 +1102,7 @@ fn pikafish_candidates(base: &Path) -> Vec<PathBuf> {
 #[tauri::command]
 async fn stop_analysis(
     discard_result: bool,
+    app: tauri::AppHandle,
     state: State<'_, DesktopState>,
 ) -> Result<bool, String> {
     if discard_result {
@@ -521,6 +1110,7 @@ async fn stop_analysis(
     }
     let control = state.engine.lock().await.clone();
     if let Some(control) = control {
+        emit_engine_state(&app, EngineRuntimeState::Stopping);
         control.stop().await.map_err(|error| error.to_string())?;
         Ok(true)
     } else {
@@ -639,11 +1229,7 @@ async fn sync_now(
                 .load_game(model.game_id)
                 .map_err(|error| error.to_string())?
                 .ok_or_else(|| "synchronized game is unavailable".to_owned())?;
-            let (board, tree) = restore_game(&model.store, &game)?;
-            model.board = board;
-            model.starting_fen = game.starting_fen;
-            model.tree = tree;
-            model.current_node = game.current_node_id;
+            load_game_into_model(&mut model, game)?;
         }
     }
     Ok(SyncResult {
@@ -718,16 +1304,230 @@ fn board_dto(model: &AppModel) -> Result<BoardDto, String> {
         } else {
             "黑方"
         },
-        status: match model.board.status() {
-            GameStatus::Ongoing => "进行中",
-            GameStatus::Check => "将军",
-            GameStatus::Checkmate => "将死",
+        status: if model.playable {
+            match model.board.status() {
+                GameStatus::Ongoing => "进行中",
+                GameStatus::Check => "将军",
+                GameStatus::Checkmate => "将死",
+            }
+        } else {
+            "不可对弈"
         },
         pieces,
         history,
         branches,
         current_node: model.current_node,
+        title: model.metadata.title.clone(),
+        note: model.note.clone(),
+        source_path: model.source_path.clone(),
+        source_format: model.source_format.clone(),
+        playable: model.playable,
     })
+}
+
+fn metadata_payload(metadata: &ManualMetadata, note: &str) -> UpdateGameMetadataPayload {
+    UpdateGameMetadataPayload {
+        title: metadata.title.clone(),
+        note: note.to_owned(),
+        event: Some(metadata.event.clone()),
+        site: Some(metadata.site.clone()),
+        date: Some(metadata.date.clone()),
+        red: Some(metadata.red.clone()),
+        black: Some(metadata.black.clone()),
+        result: Some(metadata.result.clone()),
+    }
+}
+
+fn install_document(
+    model: &mut AppModel,
+    document: ManualDocument,
+    source_path: Option<String>,
+    source_format: Option<String>,
+) -> Result<(), String> {
+    let board = Board::from_fen(&document.starting_fen).map_err(|error| error.to_string())?;
+    let playable = position_is_playable(&board);
+    let game_id = Uuid::new_v4();
+    let root_id = document.tree.root_id();
+    let nodes = collect_nodes(&document.tree)?;
+    let mut operations = Vec::with_capacity(nodes.len() + 2);
+    model.lamport += 1;
+    operations.push(Operation {
+        op_id: Uuid::new_v4(),
+        device_id: model.device_id,
+        entity_id: game_id,
+        game_id,
+        kind: OperationKind::CreateGame,
+        payload: serde_json::to_value(CreateGamePayload {
+            title: document.metadata.title.clone(),
+            fen: document.starting_fen.clone(),
+            root_id,
+        })
+        .map_err(|error| error.to_string())?,
+        lamport: model.lamport,
+        created_at: Utc::now(),
+    });
+    model.lamport += 1;
+    operations.push(Operation {
+        op_id: Uuid::new_v4(),
+        device_id: model.device_id,
+        entity_id: game_id,
+        game_id,
+        kind: OperationKind::UpdateGameMetadata,
+        payload: serde_json::to_value(metadata_payload(&document.metadata, &document.note))
+            .map_err(|error| error.to_string())?,
+        lamport: model.lamport,
+        created_at: Utc::now(),
+    });
+    for node in &nodes {
+        model.lamport += 1;
+        operations.push(Operation {
+            op_id: Uuid::new_v4(),
+            device_id: model.device_id,
+            entity_id: node.id,
+            game_id,
+            kind: OperationKind::AddMove,
+            payload: serde_json::to_value(AddMovePayload {
+                node_id: node.id,
+                parent_id: node.parent_id,
+                move_iccs: node.mv.to_iccs(),
+                order_key: node.order_key,
+                is_mainline: node.is_mainline,
+            })
+            .map_err(|error| error.to_string())?,
+            lamport: model.lamport,
+            created_at: Utc::now(),
+        });
+        if !node.comment.is_empty() {
+            model.lamport += 1;
+            operations.push(Operation {
+                op_id: Uuid::new_v4(),
+                device_id: model.device_id,
+                entity_id: node.id,
+                game_id,
+                kind: OperationKind::UpdateComment,
+                payload: serde_json::to_value(UpdateCommentPayload {
+                    node_id: node.id,
+                    comment: node.comment.clone(),
+                })
+                .map_err(|error| error.to_string())?,
+                lamport: model.lamport,
+                created_at: Utc::now(),
+            });
+        }
+    }
+    let metadata_json =
+        serde_json::to_string(&document.metadata).map_err(|error| error.to_string())?;
+    model
+        .store
+        .import_game_with_operations(
+            ImportedGame {
+                id: game_id,
+                title: &document.metadata.title,
+                starting_fen: &document.starting_fen,
+                root_id,
+                current_node_id: None,
+                note: &document.note,
+                source_path: source_path.as_deref(),
+                source_format: source_format.as_deref(),
+                playable,
+                metadata_json: &metadata_json,
+            },
+            &nodes,
+            &operations,
+        )
+        .map_err(|error| error.to_string())?;
+    model.board = board;
+    model.starting_fen = document.starting_fen;
+    model.tree = document.tree;
+    model.current_node = None;
+    model.game_id = game_id;
+    model.metadata = document.metadata;
+    model.note = document.note;
+    model.source_path = source_path;
+    model.source_format = source_format;
+    model.playable = playable;
+    Ok(())
+}
+
+fn collect_nodes(tree: &ManualTree) -> Result<Vec<xiangqi_manual::MoveNode>, String> {
+    fn visit(
+        tree: &ManualTree,
+        parent_id: Uuid,
+        nodes: &mut Vec<xiangqi_manual::MoveNode>,
+    ) -> Result<(), String> {
+        for node in tree
+            .branches(parent_id)
+            .map_err(|error| error.to_string())?
+        {
+            nodes.push(node.clone());
+            visit(tree, node.id, nodes)?;
+        }
+        Ok(())
+    }
+    let mut nodes = Vec::new();
+    visit(tree, tree.root_id(), &mut nodes)?;
+    nodes.sort_by_key(|node| node.order_key);
+    Ok(nodes)
+}
+
+fn document_from_model(model: &AppModel) -> ManualDocument {
+    ManualDocument {
+        metadata: model.metadata.clone(),
+        starting_fen: model.starting_fen.clone(),
+        note: model.note.clone(),
+        tree: model.tree.clone(),
+        warnings: Vec::new(),
+    }
+}
+
+fn position_is_playable(board: &Board) -> bool {
+    let mut red_king = None;
+    let mut black_king = None;
+    for row in 0..10 {
+        for col in 0..9 {
+            if let Some(piece) = board.piece_at(Square { row, col }) {
+                if piece.kind == PieceKind::King {
+                    match piece.color {
+                        Color::Red if red_king.is_none() => red_king = Some(Square { row, col }),
+                        Color::Black if black_king.is_none() => {
+                            black_king = Some(Square { row, col })
+                        }
+                        _ => return false,
+                    }
+                }
+            }
+        }
+    }
+    let (Some(red_king), Some(black_king)) = (red_king, black_king) else {
+        return false;
+    };
+    let red_in_palace = (7..=9).contains(&red_king.row) && (3..=5).contains(&red_king.col);
+    let black_in_palace = black_king.row <= 2 && (3..=5).contains(&black_king.col);
+    red_in_palace
+        && black_in_palace
+        && !(board.is_in_check(Color::Red) && board.is_in_check(Color::Black))
+}
+
+fn format_hint_from_path(path: &str) -> Option<ManualFormat> {
+    match Path::new(path)
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("pgn") => Some(ManualFormat::Pgn),
+        Some("xqf") => Some(ManualFormat::Xqf),
+        Some("cbr") => Some(ManualFormat::Cbr),
+        _ => None,
+    }
+}
+
+fn format_name(format: ManualFormat) -> &'static str {
+    match format {
+        ManualFormat::Pgn => "pgn",
+        ManualFormat::Xqf => "xqf",
+        ManualFormat::Cbr => "cbr",
+    }
 }
 
 fn move_dto(
@@ -777,14 +1577,37 @@ fn board_at(starting_fen: &str, tree: &ManualTree, node_id: Option<Uuid>) -> Res
 
 fn restore_game(store: &LocalStore, game: &LocalGame) -> Result<(Board, ManualTree), String> {
     let mut tree = ManualTree::with_root(game.root_id);
-    for node in store
-        .load_move_nodes(game.id)
-        .map_err(|error| error.to_string())?
-    {
-        tree.restore_node(node).map_err(|error| error.to_string())?;
-    }
+    tree.restore_nodes(
+        store
+            .load_move_nodes(game.id)
+            .map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
     let board = board_at(&game.starting_fen, &tree, game.current_node_id)?;
     Ok((board, tree))
+}
+
+fn load_game_into_model(model: &mut AppModel, game: LocalGame) -> Result<(), String> {
+    let (board, tree) = restore_game(&model.store, &game)?;
+    let metadata =
+        serde_json::from_str::<ManualMetadata>(&game.metadata_json).unwrap_or_else(|_| {
+            ManualMetadata {
+                title: game.title.clone(),
+                result: "*".into(),
+                ..ManualMetadata::default()
+            }
+        });
+    model.board = board;
+    model.starting_fen = game.starting_fen;
+    model.tree = tree;
+    model.current_node = game.current_node_id;
+    model.game_id = game.id;
+    model.metadata = metadata;
+    model.note = game.note;
+    model.source_path = game.source_path;
+    model.source_format = game.source_format;
+    model.playable = game.playable;
+    Ok(())
 }
 
 fn next_operation(
@@ -814,58 +1637,92 @@ fn main() {
             let mut store = LocalStore::open(data_dir.join("xiangqi.sqlite3"))?;
             let device_id = store.device_id()?;
             let mut lamport = store.max_lamport()?;
-            let (board, starting_fen, tree, current_node, game_id) =
-                if let Some(game) = store.load_latest_game()? {
-                    let mut tree = ManualTree::with_root(game.root_id);
-                    for node in store.load_move_nodes(game.id)? {
-                        tree.restore_node(node)?;
+            let (
+                board,
+                starting_fen,
+                tree,
+                current_node,
+                game_id,
+                metadata,
+                note,
+                source_path,
+                source_format,
+                playable,
+            ) = if let Some(game) = store.load_latest_game()? {
+                let mut tree = ManualTree::with_root(game.root_id);
+                tree.restore_nodes(store.load_move_nodes(game.id)?)?;
+                let mut board = Board::from_fen(&game.starting_fen)?;
+                if let Some(current) = game.current_node_id {
+                    for mv in tree.line_to(current)? {
+                        board = board.apply_move(mv)?;
                     }
-                    let mut board = Board::from_fen(&game.starting_fen)?;
-                    if let Some(current) = game.current_node_id {
-                        for mv in tree.line_to(current)? {
-                            board = board.apply_move(mv)?;
-                        }
-                    }
-                    (
-                        board,
-                        game.starting_fen,
-                        tree,
-                        game.current_node_id,
-                        game.id,
-                    )
-                } else {
-                    let game_id = Uuid::new_v4();
-                    let tree = ManualTree::new();
-                    lamport += 1;
-                    let operation = Operation {
-                        op_id: Uuid::new_v4(),
-                        device_id,
-                        entity_id: game_id,
-                        game_id,
-                        kind: OperationKind::CreateGame,
-                        payload: serde_json::to_value(CreateGamePayload {
-                            title: "New study".into(),
-                            fen: STARTING_FEN.into(),
-                            root_id: tree.root_id(),
-                        })?,
-                        lamport,
-                        created_at: Utc::now(),
-                    };
-                    store.save_game_with_operation(
-                        game_id,
-                        "New study",
-                        STARTING_FEN,
-                        tree.root_id(),
-                        &operation,
-                    )?;
-                    (
-                        Board::from_fen(STARTING_FEN)?,
-                        STARTING_FEN.into(),
-                        tree,
-                        None,
-                        game_id,
-                    )
+                }
+                let metadata =
+                    serde_json::from_str(&game.metadata_json).unwrap_or_else(|_| ManualMetadata {
+                        title: game.title.clone(),
+                        result: "*".into(),
+                        ..ManualMetadata::default()
+                    });
+                (
+                    board,
+                    game.starting_fen,
+                    tree,
+                    game.current_node_id,
+                    game.id,
+                    metadata,
+                    game.note,
+                    game.source_path,
+                    game.source_format,
+                    game.playable,
+                )
+            } else {
+                let game_id = Uuid::new_v4();
+                let tree = ManualTree::new();
+                let metadata = ManualMetadata {
+                    title: "新建棋谱".into(),
+                    result: "*".into(),
+                    ..ManualMetadata::default()
                 };
+                lamport += 1;
+                let operation = Operation {
+                    op_id: Uuid::new_v4(),
+                    device_id,
+                    entity_id: game_id,
+                    game_id,
+                    kind: OperationKind::CreateGame,
+                    payload: serde_json::to_value(CreateGamePayload {
+                        title: metadata.title.clone(),
+                        fen: STARTING_FEN.into(),
+                        root_id: tree.root_id(),
+                    })?,
+                    lamport,
+                    created_at: Utc::now(),
+                };
+                store.save_game_with_operation(
+                    game_id,
+                    &metadata.title,
+                    STARTING_FEN,
+                    tree.root_id(),
+                    &operation,
+                )?;
+                store.set_game_document_properties(
+                    game_id,
+                    &serde_json::to_string(&metadata)?,
+                    true,
+                )?;
+                (
+                    Board::from_fen(STARTING_FEN)?,
+                    STARTING_FEN.into(),
+                    tree,
+                    None,
+                    game_id,
+                    metadata,
+                    String::new(),
+                    None,
+                    None,
+                    true,
+                )
+            };
             app.manage(DesktopState {
                 model: Mutex::new(AppModel {
                     board,
@@ -876,22 +1733,42 @@ fn main() {
                     device_id,
                     lamport,
                     store,
+                    metadata,
+                    note,
+                    source_path,
+                    source_format,
+                    playable,
                 }),
                 engine: tokio::sync::Mutex::new(None),
+                play_session: tokio::sync::Mutex::new(None),
                 analysis_generation: AtomicU64::new(0),
+                play_generation: AtomicU64::new(0),
             });
             Ok(())
         })
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .invoke_handler(tauri::generate_handler![
             get_state,
+            list_games,
+            open_game,
             play_move,
             new_game,
+            open_document,
+            import_text,
+            export_text,
+            save_document,
+            update_game_metadata,
+            reorder_branches,
             navigate_to,
             update_comment,
             set_mainline,
             delete_node,
             detect_pikafish,
             analyze_position,
+            engine_play_move,
+            move_now,
+            stop_engine_play,
             stop_analysis,
             get_saved_analysis,
             sync_now
@@ -938,6 +1815,15 @@ mod tests {
             device_id: Uuid::new_v4(),
             lamport: 0,
             store,
+            metadata: ManualMetadata {
+                title: "测试棋谱".into(),
+                result: "*".into(),
+                ..ManualMetadata::default()
+            },
+            note: "关键局面".into(),
+            source_path: Some("/tmp/study.pgn".into()),
+            source_format: Some("pgn".into()),
+            playable: true,
         };
 
         let dto = board_dto(&model).unwrap();
@@ -947,5 +1833,26 @@ mod tests {
         assert_eq!(dto.history[1].notation, "马8进7");
         assert_eq!(dto.history[1].moved_by, "黑方");
         assert_eq!(dto.history[1].score_cp, None);
+        assert_eq!(dto.title, "测试棋谱");
+        assert_eq!(dto.note, "关键局面");
+        assert_eq!(dto.source_path.as_deref(), Some("/tmp/study.pgn"));
+        assert_eq!(dto.source_format.as_deref(), Some("pgn"));
+        assert!(dto.playable);
+    }
+
+    #[test]
+    fn only_legal_king_placements_are_playable() {
+        assert!(position_is_playable(
+            &Board::from_fen(STARTING_FEN).unwrap()
+        ));
+        assert!(!position_is_playable(
+            &Board::from_fen("9/9/9/9/9/9/9/9/9/4K4 w - - 0 1").unwrap()
+        ));
+        assert!(!position_is_playable(
+            &Board::from_fen("4k4/9/9/9/9/9/9/9/9/4K4 w - - 0 1").unwrap()
+        ));
+        assert!(!position_is_playable(
+            &Board::from_fen("9/9/9/4k4/9/9/9/9/9/4K4 w - - 0 1").unwrap()
+        ));
     }
 }

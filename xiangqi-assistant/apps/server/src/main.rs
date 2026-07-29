@@ -22,7 +22,8 @@ use serde::{Deserialize, Serialize};
 use sqlx::{MySql, MySqlPool, Transaction, mysql::MySqlPoolOptions};
 use sync_protocol::{
     AddMovePayload, CreateGamePayload, DeleteNodePayload, Operation, OperationKind, PullResponse,
-    PushRequest, PushResponse, SequencedOperation, SetMainlinePayload, UpdateCommentPayload,
+    PushRequest, PushResponse, ReorderBranchesPayload, SequencedOperation, SetMainlinePayload,
+    UpdateCommentPayload, UpdateGameMetadataPayload,
 };
 use tokio::sync::Semaphore;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
@@ -554,6 +555,16 @@ fn validate_operation(operation: &Operation) -> Result<(), ApiError> {
                     .map_err(|_| ApiError::Invalid("invalid update-comment payload".into()))?;
             payload.node_id == operation.entity_id
         }
+        OperationKind::UpdateGameMetadata => {
+            serde_json::from_value::<UpdateGameMetadataPayload>(operation.payload.clone())
+                .map_err(|_| ApiError::Invalid("invalid game-metadata payload".into()))?;
+            operation.entity_id == operation.game_id
+        }
+        OperationKind::ReorderBranches => {
+            let payload: ReorderBranchesPayload = serde_json::from_value(operation.payload.clone())
+                .map_err(|_| ApiError::Invalid("invalid branch-order payload".into()))?;
+            payload.parent_id == operation.entity_id
+        }
         OperationKind::SetMainline => {
             let payload: SetMainlinePayload = serde_json::from_value(operation.payload.clone())
                 .map_err(|_| ApiError::Invalid("invalid set-mainline payload".into()))?;
@@ -563,6 +574,9 @@ fn validate_operation(operation: &Operation) -> Result<(), ApiError> {
             let payload: DeleteNodePayload = serde_json::from_value(operation.payload.clone())
                 .map_err(|_| ApiError::Invalid("invalid delete-node payload".into()))?;
             payload.node_id == operation.entity_id
+        }
+        OperationKind::Unknown => {
+            return Err(ApiError::Invalid("unknown operation kind".into()));
         }
     };
     if !entity_matches {

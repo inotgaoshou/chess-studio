@@ -7,7 +7,10 @@
 - Windows、macOS、Linux 的 Tauri 2 桌面壳与 React 工作台
 - Rust 中国象棋规则、FEN、ICCS、将军与将帅照面校验
 - UUID 棋谱树、节点导航、同级变例、评论、主线切换和 tombstone 删除
-- UCI/UCCI 自动握手、MultiPV、固定时间/深度/无限分析与停止控制
+- 桌面棋谱工作流：新局、文件打开/保存、局面编辑、FEN/棋谱剪贴板交换和分支排序
+- PGN ICCS/中文着法、RAV 变例、注释、自定义 FEN、UTF-8 BOM 与 GB18030/GBK 回退
+- UCI/UCCI 自动握手、MultiPV、固定时间/深度/节点/无限分析、强制变招与停止控制
+- Pikafish 执红/执黑、固定每步时间、立即出招和可选后台思考
 - 落子与节点切换后的自动分析、中文候选棋谱、红方视角优劣分和历史趋势
 - SQLite 本地棋谱、引擎配置、分析结果、远端操作投影和幂等 outbox
 - 实验中的移动 Web/PWA，使用 Rust/WASM 棋规和 IndexedDB 离线打谱
@@ -57,6 +60,8 @@ pnpm --filter xiangqi-desktop-ui exec vite preview --host 0.0.0.0 --port 4173
 
 Web 端使用 IndexedDB 保存棋谱、变例、评论、分析缓存和待同步操作。离线时可以继续打谱并查看已缓存分析；联网且填写 JWT 后可同步并调用服务端 Pikafish。移动端不会下载或执行本地引擎。
 
+XQF、CBR 已接入统一格式检测入口，但解析器需要真实样例验证具体版本、编码、注释和变例结构。目前选择这两种文件会返回明确的暂不支持错误，不会修改正在编辑的棋局。
+
 注册并获取桌面同步所需令牌：
 
 ```bash
@@ -83,6 +88,7 @@ apps/desktop           React + Tauri 2 桌面端
 apps/server            Axum + MySQL 同步服务
 crates/xiangqi-core    棋规与局面
 crates/manual          棋谱变例树
+crates/manual-format   PGN 与旧棋谱格式适配层
 crates/web-core        浏览器 WASM 适配层
 crates/engine-protocol UCI/UCCI 进程适配
 crates/local-store     SQLite 与 outbox

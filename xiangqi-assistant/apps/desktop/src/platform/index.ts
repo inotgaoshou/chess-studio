@@ -1,6 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import { webDatabase, type SyncOperation, type WebGameRecord } from "./indexedDb";
-import type { AnalysisLine, AnalysisOptions, BoardState, ChessPlatform, GameSummary, SyncResult } from "./types";
+import type { AnalysisLine, AnalysisOptions, BoardState, ChessPlatform, EngineMoveResult, EnginePlayOptions, EngineRuntimeEvent, GameSummary, SyncResult } from "./types";
 
 type WebGameInstance = {
   stateJson(): string;
@@ -21,7 +24,8 @@ type WebCoreModule = {
     fromRemote(fen: string, rootId: string): WebGameInstance;
   };
 };
-type WireSyncOperation = SyncOperation & {
+type WireSyncOperation = Omit<SyncOperation, "kind"> & {
+  kind: string;
   op_id?: string;
   device_id?: string;
   entity_id?: string;
@@ -29,7 +33,7 @@ type WireSyncOperation = SyncOperation & {
   created_at?: string;
 };
 
-function normalizeSyncOperation(value: WireSyncOperation): SyncOperation {
+function normalizeSyncOperation(value: WireSyncOperation): SyncOperation | undefined {
   const opId = value.opId ?? value.op_id;
   const deviceId = value.deviceId ?? value.device_id;
   const entityId = value.entityId ?? value.entity_id;
@@ -38,20 +42,39 @@ function normalizeSyncOperation(value: WireSyncOperation): SyncOperation {
   if (!opId || !deviceId || !entityId || !gameId || !createdAt) {
     throw new Error("同步操作缺少必要标识");
   }
-  return { ...value, opId, deviceId, entityId, gameId, createdAt };
+  const supported = new Set<SyncOperation["kind"]>([
+    "create_game", "add_move", "update_comment", "update_game_metadata",
+    "reorder_branches", "set_mainline", "delete_node",
+  ]);
+  if (!supported.has(value.kind as SyncOperation["kind"])) return undefined;
+  return { ...value, kind: value.kind as SyncOperation["kind"], opId, deviceId, entityId, gameId, createdAt };
 }
 
 class DesktopPlatform implements ChessPlatform {
   readonly kind = "desktop" as const;
   initialize() { return invoke<Partial<BoardState>>("get_state"); }
   async listGames(): Promise<GameSummary[]> {
-    const state = await this.initialize();
-    return [{ id: "desktop-current", title: "当前研习棋谱", fen: state.fen ?? "", updatedAt: "", current: true }];
+    return invoke<GameSummary[]>("list_games");
   }
-  openGame() { return this.initialize(); }
+  openGame(gameId: string) { return invoke<Partial<BoardState>>("open_game", { gameId }); }
   detectEngine() { return invoke<string | null>("detect_pikafish"); }
   playMove(iccs: string) { return invoke<Partial<BoardState>>("play_move", { iccs }); }
-  newGame(fen: string) { return invoke<Partial<BoardState>>("new_game", { fen }); }
+  newGame(fen: string, title?: string, note?: string) { return invoke<Partial<BoardState>>("new_game", { fen, title, note }); }
+  async openDocument() {
+    const path = await open({ multiple: false, directory: false, filters: [{ name: "象棋棋谱", extensions: ["pgn", "xqf", "cbr"] }] });
+    if (!path || Array.isArray(path)) return undefined;
+    return invoke<Partial<BoardState>>("open_document", { path });
+  }
+  async saveDocument(saveAs = false) {
+    const path = saveAs ? await save({ defaultPath: "未命名.pgn", filters: [{ name: "PGN 棋谱", extensions: ["pgn"] }] }) : null;
+    if (saveAs && !path) return undefined;
+    return invoke<string>("save_document", { path });
+  }
+  copyPosition(fen: string) { return writeText(fen); }
+  async copyGame(mainlineOnly = false) { await writeText(await invoke<string>("export_text", { mainlineOnly })); }
+  async pasteDocument() { return invoke<Partial<BoardState>>("import_text", { text: await readText() }); }
+  updateGameMetadata(title: string, note: string) { return invoke<Partial<BoardState>>("update_game_metadata", { title, note }); }
+  reorderBranches(nodeIds: string[]) { return invoke<Partial<BoardState>>("reorder_branches", { nodeIds }); }
   navigateTo(nodeId?: string) { return invoke<Partial<BoardState>>("navigate_to", { nodeId: nodeId ?? null }); }
   updateComment(nodeId: string, comment: string) { return invoke<Partial<BoardState>>("update_comment", { nodeId, comment }); }
   setMainline(nodeId: string) { return invoke<Partial<BoardState>>("set_mainline", { nodeId }); }
@@ -65,9 +88,17 @@ class DesktopPlatform implements ChessPlatform {
       threads: options.threads,
       hashMb: options.hashMb,
       multipv: options.multipv,
+      searchMoves: options.searchMoves ?? [],
+      excludeMove: options.excludeMove ?? null,
     });
   }
   stopAnalysis(discardResult = false) { return invoke<boolean>("stop_analysis", { discardResult }); }
+  playEngineMove(options: EnginePlayOptions) { return invoke<EngineMoveResult>("engine_play_move", options); }
+  moveNow() { return invoke<boolean>("move_now"); }
+  stopEnginePlay() { return invoke<boolean>("stop_engine_play"); }
+  subscribeEngineEvents(listener: (event: EngineRuntimeEvent) => void) {
+    return listen<EngineRuntimeEvent>("engine-runtime", (event) => listener(event.payload));
+  }
   loadSavedAnalysis() { return invoke<AnalysisLine[]>("get_saved_analysis"); }
   synchronize(serverUrl: string, token: string) { return invoke<SyncResult>("sync_now", { serverUrl, token }); }
 }
@@ -123,6 +154,17 @@ class WebPlatform implements ChessPlatform {
   }
 
   async detectEngine() { return null; }
+  async openDocument(): Promise<Partial<BoardState> | undefined> { throw new Error("Web 端暂不支持原生文件对话框"); }
+  async saveDocument(): Promise<string | undefined> { throw new Error("Web 端暂不支持原生文件保存"); }
+  copyPosition(fen: string) { return navigator.clipboard.writeText(fen); }
+  async copyGame() { throw new Error("Web 端棋谱文本导出将在后续版本开放"); }
+  async pasteDocument(): Promise<Partial<BoardState>> { throw new Error("Web 端棋谱粘贴将在后续版本开放"); }
+  async updateGameMetadata(): Promise<Partial<BoardState>> { throw new Error("Web 端棋局元数据编辑将在后续版本开放"); }
+  async reorderBranches(): Promise<Partial<BoardState>> { throw new Error("Web 端变招排序将在后续版本开放"); }
+  async playEngineMove(): Promise<EngineMoveResult> { throw new Error("Web 端不运行本地引擎对弈"); }
+  async moveNow() { return false; }
+  async stopEnginePlay() { return false; }
+  async subscribeEngineEvents() { return () => undefined; }
 
   async playMove(iccs: string): Promise<Partial<BoardState>> {
     const before = this.state();
@@ -140,7 +182,10 @@ class WebPlatform implements ChessPlatform {
     return this.scoredState(state);
   }
 
-  async newGame(fen: string): Promise<Partial<BoardState>> {
+  async newGame(fen: string, title?: string, note?: string): Promise<Partial<BoardState>> {
+    if (title !== undefined || note !== undefined) {
+      throw new Error("Web 端暂不支持带元数据的局面编辑，请使用桌面版");
+    }
     const module = await this.core();
     this.game = new module.WebGame(fen);
     this.gameId = crypto.randomUUID();
@@ -229,6 +274,7 @@ class WebPlatform implements ChessPlatform {
     const projected = new Map<string, { game: WebGameInstance; record: WebGameRecord }>();
     for (const item of pulled.operations) {
       const operation = normalizeSyncOperation(item.operation);
+      if (!operation) continue;
       let target = projected.get(operation.gameId);
       if (!target) {
         const record = await webDatabase.game(operation.gameId);
@@ -242,6 +288,7 @@ class WebPlatform implements ChessPlatform {
             record: {
               id: operation.gameId,
               title: payload.title ?? "同步棋谱",
+              note: "",
               fen: payload.fen,
               snapshot: "",
               updatedAt: operation.createdAt,
@@ -253,6 +300,11 @@ class WebPlatform implements ChessPlatform {
         projected.set(operation.gameId, target);
       }
       target.game.applyOperation(operation.kind, JSON.stringify(operation.payload));
+      if (operation.kind === "update_game_metadata") {
+        const payload = operation.payload as { title?: string; note?: string };
+        if (payload.title) target.record.title = payload.title;
+        if (payload.note != null) target.record.note = payload.note;
+      }
       const state = JSON.parse(target.game.stateJson()) as BoardState;
       target.record = {
         ...target.record,
@@ -292,17 +344,23 @@ class WebPlatform implements ChessPlatform {
     const nodeIds = [...state.history, ...state.branches].map((move) => move.id);
     const scores = await webDatabase.nodeAnalyses(this.gameId, nodeIds);
     const withScore = (move: BoardState["history"][number]) => ({ ...move, ...scores.get(move.id) });
+    const record = await webDatabase.game(this.gameId);
     return {
       ...state,
+      title: record?.title ?? "Web study",
+      note: record?.note ?? "",
+      playable: true,
       history: state.history.map(withScore),
       branches: state.branches.map(withScore),
     };
   }
 
   private async persist(state: BoardState): Promise<void> {
+    const existing = await webDatabase.game(this.gameId);
     await webDatabase.saveGame({
       id: this.gameId,
-      title: "Web study",
+      title: existing?.title ?? "Web study",
+      note: existing?.note ?? "",
       snapshot: this.requireGame().exportJson(),
       fen: state.fen,
       updatedAt: new Date().toISOString(),
@@ -327,4 +385,4 @@ class WebPlatform implements ChessPlatform {
 
 const tauriAvailable = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 export const chessPlatform: ChessPlatform = tauriAvailable ? new DesktopPlatform() : new WebPlatform();
-export type { AnalysisLine, AnalysisOptions, BoardState, ChessPlatform, GameSummary, MoveItem, Piece, Side, SyncResult } from "./types";
+export type { AnalysisLine, AnalysisOptions, BoardState, ChessPlatform, EngineRuntimeEvent, EngineRuntimeState, GameSummary, MoveItem, Piece, Side, SyncResult } from "./types";

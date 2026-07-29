@@ -26,8 +26,12 @@ pub enum OperationKind {
     CreateGame,
     AddMove,
     UpdateComment,
+    UpdateGameMetadata,
+    ReorderBranches,
     SetMainline,
     DeleteNode,
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -56,6 +60,32 @@ pub struct AddMovePayload {
 pub struct UpdateCommentPayload {
     pub node_id: Uuid,
     pub comment: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateGameMetadataPayload {
+    pub title: String,
+    pub note: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub site: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub date: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub red: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub black: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReorderBranchesPayload {
+    pub parent_id: Uuid,
+    pub node_ids: Vec<Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -128,6 +158,47 @@ mod tests {
         assert_eq!(
             serde_json::from_value::<Operation>(browser_value).unwrap(),
             operation
+        );
+    }
+
+    #[test]
+    fn branch_order_and_game_metadata_use_stable_camel_case_payloads() {
+        let parent_id = Uuid::new_v4();
+        let node_ids = vec![Uuid::new_v4(), Uuid::new_v4()];
+        assert_eq!(
+            serde_json::to_value(ReorderBranchesPayload {
+                parent_id,
+                node_ids: node_ids.clone()
+            })
+            .unwrap(),
+            serde_json::json!({ "parentId": parent_id, "nodeIds": node_ids })
+        );
+        assert_eq!(
+            serde_json::to_value(UpdateGameMetadataPayload {
+                title: "残局".into(),
+                note: "红先".into(),
+                ..UpdateGameMetadataPayload::default()
+            })
+            .unwrap(),
+            serde_json::json!({ "title": "残局", "note": "红先" })
+        );
+    }
+
+    #[test]
+    fn unknown_operation_kinds_can_be_skipped_by_newer_clients() {
+        let value = serde_json::json!({
+            "op_id": Uuid::new_v4(),
+            "device_id": Uuid::new_v4(),
+            "entity_id": Uuid::new_v4(),
+            "game_id": Uuid::new_v4(),
+            "kind": "future_operation",
+            "payload": {},
+            "lamport": 2,
+            "created_at": Utc::now(),
+        });
+        assert_eq!(
+            serde_json::from_value::<Operation>(value).unwrap().kind,
+            OperationKind::Unknown
         );
     }
 }

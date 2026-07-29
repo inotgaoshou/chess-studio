@@ -1,12 +1,12 @@
 import type { AnalysisLine } from "./types";
 
-export type WebGameRecord = { id: string; title: string; snapshot: string; fen: string; updatedAt: string };
+export type WebGameRecord = { id: string; title: string; note?: string; snapshot: string; fen: string; updatedAt: string };
 export type SyncOperation = {
   opId: string;
   deviceId: string;
   entityId: string;
   gameId: string;
-  kind: "create_game" | "add_move" | "update_comment" | "set_mainline" | "delete_node";
+  kind: "create_game" | "add_move" | "update_comment" | "update_game_metadata" | "reorder_branches" | "set_mainline" | "delete_node";
   payload: Record<string, unknown>;
   lamport: number;
   createdAt: string;

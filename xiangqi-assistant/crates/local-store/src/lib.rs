@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use sync_protocol::{
     AddMovePayload, CreateGamePayload, DeleteNodePayload, Operation, OperationKind,
-    SetMainlinePayload, UpdateCommentPayload,
+    ReorderBranchesPayload, SetMainlinePayload, UpdateCommentPayload, UpdateGameMetadataPayload,
 };
 use thiserror::Error;
 use uuid::Uuid;
@@ -16,6 +16,25 @@ pub struct LocalGame {
     pub starting_fen: String,
     pub root_id: Uuid,
     pub current_node_id: Option<Uuid>,
+    pub note: String,
+    pub source_path: Option<String>,
+    pub source_format: Option<String>,
+    pub playable: bool,
+    pub updated_at: String,
+    pub metadata_json: String,
+}
+
+pub struct ImportedGame<'a> {
+    pub id: Uuid,
+    pub title: &'a str,
+    pub starting_fen: &'a str,
+    pub root_id: Uuid,
+    pub current_node_id: Option<Uuid>,
+    pub note: &'a str,
+    pub source_path: Option<&'a str>,
+    pub source_format: Option<&'a str>,
+    pub playable: bool,
+    pub metadata_json: &'a str,
 }
 
 #[derive(Debug, Error)]
@@ -81,6 +100,61 @@ impl LocalStore {
             params![game_id.to_string(), title, fen, root_id.to_string(), operation.created_at.to_rfc3339()],
         )?;
         insert_operation(&transaction, operation, false)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn import_game_with_operations(
+        &mut self,
+        game: ImportedGame<'_>,
+        nodes: &[MoveNode],
+        operations: &[Operation],
+    ) -> Result<(), StoreError> {
+        let transaction = self.connection.transaction()?;
+        let updated_at = operations
+            .last()
+            .map(|operation| operation.created_at)
+            .unwrap_or_else(chrono::Utc::now)
+            .to_rfc3339();
+        transaction.execute(
+            "INSERT INTO games
+             (id, title, starting_fen, root_id, current_node_id, updated_at, note,
+              source_path, source_format, playable, metadata_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                game.id.to_string(),
+                game.title,
+                game.starting_fen,
+                game.root_id.to_string(),
+                game.current_node_id.map(|id| id.to_string()),
+                updated_at,
+                game.note,
+                game.source_path,
+                game.source_format,
+                game.playable as i32,
+                game.metadata_json,
+            ],
+        )?;
+        for node in nodes {
+            transaction.execute(
+                "INSERT INTO move_nodes
+                 (id, game_id, parent_id, move_iccs, comment, order_key, is_mainline, deleted_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    node.id.to_string(),
+                    game.id.to_string(),
+                    node.parent_id.to_string(),
+                    node.mv.to_iccs(),
+                    node.comment,
+                    node.order_key as i64,
+                    node.is_mainline as i32,
+                    node.deleted.then(|| chrono::Utc::now().to_rfc3339()),
+                ],
+            )?;
+        }
+        for operation in operations {
+            insert_operation(&transaction, operation, false)?;
+        }
         transaction.commit()?;
         Ok(())
     }
@@ -196,6 +270,75 @@ impl LocalStore {
         )?;
         insert_operation(&transaction, operation, false)?;
         transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn update_game_metadata_with_operation(
+        &mut self,
+        game_id: Uuid,
+        title: &str,
+        note: &str,
+        metadata_json: &str,
+        operation: &Operation,
+    ) -> Result<(), StoreError> {
+        let transaction = self.connection.transaction()?;
+        transaction.execute(
+            "UPDATE games SET title = ?1, note = ?2, metadata_json = ?3,
+             updated_at = ?4 WHERE id = ?5",
+            params![
+                title,
+                note,
+                metadata_json,
+                operation.created_at.to_rfc3339(),
+                game_id.to_string()
+            ],
+        )?;
+        insert_operation(&transaction, operation, false)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn reorder_branches_with_operation(
+        &mut self,
+        game_id: Uuid,
+        parent_id: Uuid,
+        ordered_ids: &[Uuid],
+        operation: &Operation,
+    ) -> Result<(), StoreError> {
+        let transaction = self.connection.transaction()?;
+        reorder_projected_branches(&transaction, game_id, parent_id, ordered_ids)?;
+        transaction.execute(
+            "UPDATE games SET updated_at = ?1 WHERE id = ?2",
+            params![operation.created_at.to_rfc3339(), game_id.to_string()],
+        )?;
+        insert_operation(&transaction, operation, false)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn set_game_source(
+        &mut self,
+        game_id: Uuid,
+        source_path: Option<&str>,
+        source_format: Option<&str>,
+    ) -> Result<(), StoreError> {
+        self.connection.execute(
+            "UPDATE games SET source_path = ?1, source_format = ?2 WHERE id = ?3",
+            params![source_path, source_format, game_id.to_string()],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_game_document_properties(
+        &mut self,
+        game_id: Uuid,
+        metadata_json: &str,
+        playable: bool,
+    ) -> Result<(), StoreError> {
+        self.connection.execute(
+            "UPDATE games SET metadata_json = ?1, playable = ?2 WHERE id = ?3",
+            params![metadata_json, playable as i32, game_id.to_string()],
+        )?;
         Ok(())
     }
 
@@ -419,37 +562,36 @@ impl LocalStore {
         )
     }
 
+    pub fn load_games(&self) -> Result<Vec<LocalGame>, StoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, title, starting_fen, root_id, current_node_id, note,
+                    source_path, source_format, playable, updated_at, metadata_json
+             FROM games WHERE deleted_at IS NULL ORDER BY updated_at DESC",
+        )?;
+        let rows = statement.query_map([], local_game_from_row)?;
+        rows.collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .map(parse_local_game)
+            .collect()
+    }
+
     fn load_game_where<const N: usize>(
         &self,
         clause: &str,
         params: [String; N],
     ) -> Result<Option<LocalGame>, StoreError> {
-        let sql =
-            format!("SELECT id, title, starting_fen, root_id, current_node_id FROM games {clause}");
-        let row: Option<(String, String, String, String, Option<String>)> = self
+        let sql = format!(
+            "SELECT id, title, starting_fen, root_id, current_node_id, note, source_path, source_format, playable, updated_at, metadata_json FROM games {clause}"
+        );
+        let row = self
             .connection
-            .query_row(&sql, rusqlite::params_from_iter(params), |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                ))
-            })
+            .query_row(
+                &sql,
+                rusqlite::params_from_iter(params),
+                local_game_from_row,
+            )
             .optional()?;
-        row.map(|(id, title, starting_fen, root_id, current_node_id)| {
-            Ok(LocalGame {
-                id: Uuid::parse_str(&id).map_err(json_error)?,
-                title,
-                starting_fen,
-                root_id: Uuid::parse_str(&root_id).map_err(json_error)?,
-                current_node_id: current_node_id
-                    .map(|id| Uuid::parse_str(&id).map_err(json_error))
-                    .transpose()?,
-            })
-        })
-        .transpose()
+        row.map(parse_local_game).transpose()
     }
 
     fn sync_value(&self, key: &str) -> Result<Option<String>, StoreError> {
@@ -510,7 +652,9 @@ impl LocalStore {
              PRAGMA journal_mode = WAL;
              CREATE TABLE IF NOT EXISTS games (
                id TEXT PRIMARY KEY, title TEXT NOT NULL, starting_fen TEXT NOT NULL,
-               root_id TEXT NOT NULL, current_node_id TEXT, updated_at TEXT NOT NULL, deleted_at TEXT
+               root_id TEXT NOT NULL, current_node_id TEXT, updated_at TEXT NOT NULL, deleted_at TEXT,
+               note TEXT NOT NULL DEFAULT '', source_path TEXT, source_format TEXT,
+               playable INTEGER NOT NULL DEFAULT 1, metadata_json TEXT NOT NULL DEFAULT '{}'
              );
              CREATE TABLE IF NOT EXISTS move_nodes (
                id TEXT PRIMARY KEY, game_id TEXT NOT NULL, parent_id TEXT,
@@ -547,6 +691,11 @@ impl LocalStore {
              WHERE kind = '\"create_game\"'
                AND json_extract(payload, '$.rootId') IS NULL;",
         )?;
+        ensure_game_column(&connection, "note", "TEXT NOT NULL DEFAULT ''")?;
+        ensure_game_column(&connection, "source_path", "TEXT")?;
+        ensure_game_column(&connection, "source_format", "TEXT")?;
+        ensure_game_column(&connection, "playable", "INTEGER NOT NULL DEFAULT 1")?;
+        ensure_game_column(&connection, "metadata_json", "TEXT NOT NULL DEFAULT '{}'")?;
         Ok(Self { connection })
     }
 }
@@ -575,6 +724,68 @@ fn insert_operation(
     Ok(())
 }
 
+type LocalGameRow = (
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    String,
+    Option<String>,
+    Option<String>,
+    bool,
+    String,
+    String,
+);
+
+fn local_game_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalGameRow> {
+    Ok((
+        row.get(0)?,
+        row.get(1)?,
+        row.get(2)?,
+        row.get(3)?,
+        row.get(4)?,
+        row.get(5)?,
+        row.get(6)?,
+        row.get(7)?,
+        row.get(8)?,
+        row.get(9)?,
+        row.get(10)?,
+    ))
+}
+
+fn parse_local_game(
+    (
+        id,
+        title,
+        starting_fen,
+        root_id,
+        current_node_id,
+        note,
+        source_path,
+        source_format,
+        playable,
+        updated_at,
+        metadata_json,
+    ): LocalGameRow,
+) -> Result<LocalGame, StoreError> {
+    Ok(LocalGame {
+        id: Uuid::parse_str(&id).map_err(json_error)?,
+        title,
+        starting_fen,
+        root_id: Uuid::parse_str(&root_id).map_err(json_error)?,
+        current_node_id: current_node_id
+            .map(|id| Uuid::parse_str(&id).map_err(json_error))
+            .transpose()?,
+        note,
+        source_path,
+        source_format,
+        playable,
+        updated_at,
+        metadata_json,
+    })
+}
+
 fn project_operation(connection: &Connection, operation: &Operation) -> Result<(), StoreError> {
     match operation.kind {
         OperationKind::CreateGame => {
@@ -596,6 +807,16 @@ fn project_operation(connection: &Connection, operation: &Operation) -> Result<(
         }
         OperationKind::AddMove => {
             let payload: AddMovePayload = serde_json::from_value(operation.payload.clone())?;
+            let order_key = connection.query_row(
+                "SELECT COALESCE(MAX(order_key), -1) + 1 FROM move_nodes
+                 WHERE game_id = ?1 AND parent_id = ?2 AND deleted_at IS NULL AND id != ?3",
+                params![
+                    operation.game_id.to_string(),
+                    payload.parent_id.to_string(),
+                    payload.node_id.to_string()
+                ],
+                |row| row.get::<_, i64>(0),
+            )?;
             if payload.is_mainline {
                 connection.execute(
                     "UPDATE move_nodes SET is_mainline = 0
@@ -615,7 +836,7 @@ fn project_operation(connection: &Connection, operation: &Operation) -> Result<(
                     operation.game_id.to_string(),
                     payload.parent_id.to_string(),
                     payload.move_iccs,
-                    payload.order_key as i64,
+                    order_key,
                     payload.is_mainline as i32
                 ],
             )?;
@@ -644,6 +865,33 @@ fn project_operation(connection: &Connection, operation: &Operation) -> Result<(
                     operation.created_at.to_rfc3339(),
                     operation.game_id.to_string()
                 ],
+            )?;
+        }
+        OperationKind::UpdateGameMetadata => {
+            let payload: UpdateGameMetadataPayload =
+                serde_json::from_value(operation.payload.clone())?;
+            let metadata_json =
+                metadata_json_with_payload(connection, operation.game_id, &payload)?;
+            connection.execute(
+                "UPDATE games SET title = ?1, note = ?2, metadata_json = ?3,
+                 updated_at = ?4 WHERE id = ?5",
+                params![
+                    payload.title,
+                    payload.note,
+                    metadata_json,
+                    operation.created_at.to_rfc3339(),
+                    operation.game_id.to_string()
+                ],
+            )?;
+        }
+        OperationKind::ReorderBranches => {
+            let payload: ReorderBranchesPayload =
+                serde_json::from_value(operation.payload.clone())?;
+            reorder_projected_branches(
+                connection,
+                operation.game_id,
+                payload.parent_id,
+                &payload.node_ids,
             )?;
         }
         OperationKind::SetMainline => {
@@ -699,6 +947,103 @@ fn project_operation(connection: &Connection, operation: &Operation) -> Result<(
             )?;
             promote_first_live_sibling(connection, payload.node_id)?;
         }
+        OperationKind::Unknown => {}
+    }
+    Ok(())
+}
+
+fn ensure_game_column(
+    connection: &Connection,
+    column: &str,
+    definition: &str,
+) -> Result<(), StoreError> {
+    let mut statement = connection.prepare("PRAGMA table_info(games)")?;
+    let names = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?;
+    if !names.iter().any(|name| name == column) {
+        connection.execute(
+            &format!("ALTER TABLE games ADD COLUMN {column} {definition}"),
+            [],
+        )?;
+    }
+    Ok(())
+}
+
+fn metadata_json_with_payload(
+    connection: &Connection,
+    game_id: Uuid,
+    payload: &UpdateGameMetadataPayload,
+) -> Result<String, StoreError> {
+    let current: Option<String> = connection
+        .query_row(
+            "SELECT metadata_json FROM games WHERE id = ?1",
+            [game_id.to_string()],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let mut metadata = current
+        .as_deref()
+        .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok())
+        .filter(|value| value.is_object())
+        .unwrap_or_else(|| serde_json::json!({}));
+    let object = metadata
+        .as_object_mut()
+        .expect("metadata object was initialized above");
+    object.insert(
+        "title".into(),
+        serde_json::Value::String(payload.title.clone()),
+    );
+    for (key, value) in [
+        ("event", &payload.event),
+        ("site", &payload.site),
+        ("date", &payload.date),
+        ("red", &payload.red),
+        ("black", &payload.black),
+        ("result", &payload.result),
+    ] {
+        if let Some(value) = value {
+            object.insert(key.into(), serde_json::Value::String(value.clone()));
+        }
+    }
+    Ok(serde_json::to_string(&metadata)?)
+}
+
+fn reorder_projected_branches(
+    connection: &Connection,
+    game_id: Uuid,
+    parent_id: Uuid,
+    ordered_ids: &[Uuid],
+) -> Result<(), StoreError> {
+    let mut statement = connection.prepare(
+        "SELECT id, order_key FROM move_nodes
+         WHERE game_id = ?1 AND parent_id = ?2 AND deleted_at IS NULL
+         ORDER BY order_key, id",
+    )?;
+    let rows = statement.query_map(params![game_id.to_string(), parent_id.to_string()], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    })?;
+    let existing = rows.collect::<Result<Vec<_>, _>>()?;
+    let mut keys: Vec<_> = existing.iter().map(|(_, key)| *key).collect();
+    keys.sort_unstable();
+    let existing_ids: std::collections::HashSet<_> =
+        existing.iter().map(|(id, _)| id.as_str()).collect();
+    let mut requested: Vec<_> = ordered_ids
+        .iter()
+        .filter(|id| existing_ids.contains(id.to_string().as_str()))
+        .copied()
+        .collect();
+    for (id, _) in &existing {
+        let id = Uuid::parse_str(id).map_err(json_error)?;
+        if !requested.contains(&id) {
+            requested.push(id);
+        }
+    }
+    for (node_id, key) in requested.into_iter().zip(keys) {
+        connection.execute(
+            "UPDATE move_nodes SET order_key = ?1 WHERE id = ?2 AND game_id = ?3",
+            params![key, node_id.to_string(), game_id.to_string()],
+        )?;
     }
     Ok(())
 }
@@ -840,6 +1185,45 @@ mod tests {
     }
 
     #[test]
+    fn imported_game_is_rolled_back_when_any_operation_fails() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let game_id = Uuid::new_v4();
+        let root_id = Uuid::new_v4();
+        let node_id = Uuid::new_v4();
+        let node = MoveNode {
+            id: node_id,
+            parent_id: root_id,
+            mv: Move::from_iccs("h2e2").unwrap(),
+            comment: "main".into(),
+            order_key: 0,
+            is_mainline: true,
+            deleted: false,
+        };
+        let create = operation(game_id);
+        let result = store.import_game_with_operations(
+            ImportedGame {
+                id: game_id,
+                title: "Imported",
+                starting_fen: xiangqi_core::STARTING_FEN,
+                root_id,
+                current_node_id: Some(node_id),
+                note: "note",
+                source_path: Some("/tmp/imported.pgn"),
+                source_format: Some("pgn"),
+                playable: true,
+                metadata_json: "{}",
+            },
+            &[node.clone(), node],
+            &[create],
+        );
+
+        assert!(result.is_err());
+        assert!(store.load_game(game_id).unwrap().is_none());
+        assert!(store.load_move_nodes(game_id).unwrap().is_empty());
+        assert!(store.pending_operations(10).unwrap().is_empty());
+    }
+
+    #[test]
     fn remote_operations_are_projected_into_the_move_tree() {
         let mut store = LocalStore::open_in_memory().unwrap();
         let game_id = Uuid::new_v4();
@@ -918,12 +1302,17 @@ mod tests {
         assert_eq!(game.current_node_id, None);
         let nodes = store.load_move_nodes(game_id).unwrap();
         assert_eq!(nodes.len(), 2);
-        assert_eq!(nodes[0].comment, "remote note");
+        assert_eq!(
+            nodes
+                .iter()
+                .find(|node| node.id == node_id)
+                .unwrap()
+                .comment,
+            "remote note"
+        );
         assert!(nodes.iter().all(|node| node.deleted));
         let mut tree = xiangqi_manual::ManualTree::with_root(root_id);
-        for node in nodes {
-            tree.restore_node(node).unwrap();
-        }
+        tree.restore_nodes(nodes).unwrap();
         assert!(tree.branches(root_id).unwrap().is_empty());
         assert_eq!(store.remote_cursor().unwrap(), 5);
     }
@@ -998,5 +1387,176 @@ mod tests {
         assert_eq!(summaries[&first].mate, None);
         assert_eq!(summaries[&second].score_cp, None);
         assert_eq!(summaries[&second].mate, Some(3));
+    }
+
+    #[test]
+    fn reordered_branches_and_metadata_survive_reload() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let game_id = Uuid::new_v4();
+        let root_id = Uuid::new_v4();
+        let first = Uuid::new_v4();
+        let second = Uuid::new_v4();
+        let mut create = operation(game_id);
+        create.payload = json!({
+            "title": "Study", "fen": xiangqi_core::STARTING_FEN, "rootId": root_id
+        });
+        store
+            .save_game_with_operation(
+                game_id,
+                "Study",
+                xiangqi_core::STARTING_FEN,
+                root_id,
+                &create,
+            )
+            .unwrap();
+        for (index, node_id) in [first, second].into_iter().enumerate() {
+            let mut add = operation(game_id);
+            add.entity_id = node_id;
+            add.kind = OperationKind::AddMove;
+            store
+                .save_move_with_operation(
+                    node_id,
+                    game_id,
+                    Some(root_id),
+                    if index == 0 { "a0a1" } else { "b0c2" },
+                    "",
+                    index as u64,
+                    index == 0,
+                    &add,
+                )
+                .unwrap();
+        }
+        let mut reorder = operation(game_id);
+        reorder.entity_id = root_id;
+        reorder.kind = OperationKind::ReorderBranches;
+        store
+            .reorder_branches_with_operation(game_id, root_id, &[second, first], &reorder)
+            .unwrap();
+        let mut metadata = operation(game_id);
+        metadata.kind = OperationKind::UpdateGameMetadata;
+        store
+            .update_game_metadata_with_operation(
+                game_id,
+                "残局研究",
+                "红先胜",
+                r#"{"title":"残局研究","result":"*"}"#,
+                &metadata,
+            )
+            .unwrap();
+
+        let game = store.load_game(game_id).unwrap().unwrap();
+        assert_eq!(game.title, "残局研究");
+        assert_eq!(game.note, "红先胜");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&game.metadata_json).unwrap()["title"],
+            "残局研究"
+        );
+        assert_eq!(
+            store
+                .load_move_nodes(game_id)
+                .unwrap()
+                .into_iter()
+                .map(|node| node.id)
+                .collect::<Vec<_>>(),
+            vec![second, first]
+        );
+        assert_eq!(store.pending_operations(20).unwrap().len(), 5);
+    }
+
+    #[test]
+    fn remote_move_is_appended_after_locally_ordered_branches() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let game_id = Uuid::new_v4();
+        let root_id = Uuid::new_v4();
+        let first = Uuid::new_v4();
+        let second = Uuid::new_v4();
+        let third = Uuid::new_v4();
+        let mut create = operation(game_id);
+        create.payload = serde_json::to_value(CreateGamePayload {
+            title: "Study".into(),
+            fen: xiangqi_core::STARTING_FEN.into(),
+            root_id,
+        })
+        .unwrap();
+        store.apply_remote_operation(&create, 1).unwrap();
+
+        for (cursor, node_id, move_iccs, order_key) in [
+            (2, first, "h2e2", 10),
+            (3, second, "b2e2", 11),
+            (5, third, "h0g2", 0),
+        ] {
+            let mut add = operation(game_id);
+            add.entity_id = node_id;
+            add.kind = OperationKind::AddMove;
+            add.payload = serde_json::to_value(AddMovePayload {
+                node_id,
+                parent_id: root_id,
+                move_iccs: move_iccs.into(),
+                order_key,
+                is_mainline: node_id == first,
+            })
+            .unwrap();
+            if cursor == 5 {
+                let mut reorder = operation(game_id);
+                reorder.entity_id = root_id;
+                reorder.kind = OperationKind::ReorderBranches;
+                reorder.payload = serde_json::to_value(ReorderBranchesPayload {
+                    parent_id: root_id,
+                    node_ids: vec![second, first],
+                })
+                .unwrap();
+                store.apply_remote_operation(&reorder, 4).unwrap();
+            }
+            store.apply_remote_operation(&add, cursor).unwrap();
+        }
+
+        assert_eq!(
+            store
+                .load_move_nodes(game_id)
+                .unwrap()
+                .into_iter()
+                .map(|node| node.id)
+                .collect::<Vec<_>>(),
+            vec![second, first, third]
+        );
+    }
+
+    #[test]
+    fn remote_metadata_updates_the_structured_document_fields() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let game_id = Uuid::new_v4();
+        let root_id = Uuid::new_v4();
+        let mut create = operation(game_id);
+        create.payload = serde_json::to_value(CreateGamePayload {
+            title: "Old".into(),
+            fen: xiangqi_core::STARTING_FEN.into(),
+            root_id,
+        })
+        .unwrap();
+        store.apply_remote_operation(&create, 1).unwrap();
+        store
+            .set_game_document_properties(game_id, r#"{"title":"Old","result":"*"}"#, true)
+            .unwrap();
+        let mut metadata = operation(game_id);
+        metadata.kind = OperationKind::UpdateGameMetadata;
+        metadata.payload = serde_json::to_value(UpdateGameMetadataPayload {
+            title: "New".into(),
+            note: "remote".into(),
+            event: Some("联赛".into()),
+            red: Some("甲".into()),
+            result: Some("1-0".into()),
+            ..UpdateGameMetadataPayload::default()
+        })
+        .unwrap();
+        store.apply_remote_operation(&metadata, 2).unwrap();
+
+        let game = store.load_game(game_id).unwrap().unwrap();
+        assert_eq!(game.title, "New");
+        assert_eq!(game.note, "remote");
+        let value: serde_json::Value = serde_json::from_str(&game.metadata_json).unwrap();
+        assert_eq!(value["title"], "New");
+        assert_eq!(value["event"], "联赛");
+        assert_eq!(value["red"], "甲");
+        assert_eq!(value["result"], "1-0");
     }
 }
