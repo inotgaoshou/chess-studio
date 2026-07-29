@@ -54,7 +54,18 @@ const pieceCode: Record<string, string> = {
   cannon: "c",
   pawn: "p",
 };
-const analysisArrowColors = ["#53b848", "#c5438c", "#d0b52d"];
+const analysisArrowColors = [
+  "#53b848",
+  "#c5438c",
+  "#d0b52d",
+  "#3fa7d6",
+  "#e77d35",
+  "#7e68c9",
+  "#d65b52",
+  "#2ca58d",
+  "#88b04b",
+  "#db7093",
+];
 
 function initialAutoAnalysis() {
   try {
@@ -200,7 +211,7 @@ export default function App() {
     }
     const timer = window.setTimeout(() => void runAnalysis(true), 180);
     return () => window.clearTimeout(timer);
-  }, [autoAnalyze, autoRetry, board.currentNode, board.fen, enginePath, online, serverUrl, token]);
+  }, [autoAnalyze, autoRetry, board.currentNode, board.fen, enginePath, hashMb, multipv, online, searchMode, searchValue, serverUrl, threads, token]);
 
   const pieceMap = useMemo(() => new Map(board.pieces.map((piece) => [`${piece.row}-${piece.col}`, piece])), [board.pieces]);
   const cells = useMemo(() => Array.from({ length: 90 }, (_, index) => ({ row: Math.floor(index / 9), col: index % 9 })), []);
@@ -216,7 +227,7 @@ export default function App() {
       ? `固定深度 ${searchValue}`
       : `固定时间 ${(searchValue / 1000).toFixed(1)}s`;
   const analysisArrows = useMemo(() => orderedAnalysis
-    .filter((line) => line.multipv <= 3 && line.pv.length > 0)
+    .filter((line) => line.multipv >= 1 && line.multipv <= analysisArrowColors.length && line.pv.length > 0)
     .flatMap((line) => {
       const from = squareFromIccs(line.pv[0].slice(0, 2));
       const to = squareFromIccs(line.pv[0].slice(2, 4));
