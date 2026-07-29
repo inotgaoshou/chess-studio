@@ -62,7 +62,13 @@ pub struct DesktopPreferences {
     pub auto_analyze: bool,
     #[serde(default)]
     pub library_collapsed: bool,
+    #[serde(default = "default_color_theme")]
+    pub color_theme: String,
     pub server_url: String,
+}
+
+fn default_color_theme() -> String {
+    "dark".into()
 }
 
 impl Default for DesktopPreferences {
@@ -78,6 +84,7 @@ impl Default for DesktopPreferences {
             ponder: false,
             auto_analyze: true,
             library_collapsed: false,
+            color_theme: default_color_theme(),
             server_url: "http://127.0.0.1:8080".into(),
         }
     }
@@ -1837,6 +1844,7 @@ mod tests {
             ponder: true,
             auto_analyze: false,
             library_collapsed: true,
+            color_theme: "light".into(),
             server_url: "https://sync.example.com".into(),
         };
         {
@@ -1855,6 +1863,7 @@ mod tests {
         )
         .unwrap();
         assert!(!preferences.library_collapsed);
+        assert_eq!(preferences.color_theme, "dark");
     }
 
     #[test]

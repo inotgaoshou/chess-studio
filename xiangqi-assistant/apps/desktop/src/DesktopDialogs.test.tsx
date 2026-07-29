@@ -15,6 +15,7 @@ const preferences: DesktopPreferencesDto = {
   ponder: false,
   autoAnalyze: true,
   libraryCollapsed: false,
+  colorTheme: "dark",
   serverUrl: "http://127.0.0.1:8080",
 };
 const account: SyncAccountDto = { serverUrl: preferences.serverUrl, status: "unbound" };

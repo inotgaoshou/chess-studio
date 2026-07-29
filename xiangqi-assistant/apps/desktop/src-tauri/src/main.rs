@@ -1870,6 +1870,9 @@ fn validate_server_url(value: &str) -> Result<(), String> {
 }
 
 fn validate_preferences(preferences: &DesktopPreferences) -> Result<(), String> {
+    if !matches!(preferences.color_theme.as_str(), "light" | "dark") {
+        return Err("不支持的颜色主题".into());
+    }
     if !(1..=64).contains(&preferences.threads) {
         return Err("线程数必须在 1 到 64 之间".into());
     }
@@ -3073,6 +3076,12 @@ mod tests {
         assert_eq!(
             validate_preferences(&preferences).unwrap_err(),
             "线程数必须在 1 到 64 之间"
+        );
+        let mut preferences = DesktopPreferences::default();
+        preferences.color_theme = "high-contrast".into();
+        assert_eq!(
+            validate_preferences(&preferences).unwrap_err(),
+            "不支持的颜色主题"
         );
     }
 }

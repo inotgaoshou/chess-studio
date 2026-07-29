@@ -37,6 +37,17 @@ export type SideReport = {
   counts: Record<"excellent" | "good" | "inaccuracy" | "mistake" | "blunder" | "missedMate", number>;
 };
 export type GameReport = { red: SideReport; black: SideReport; moves: GameReportMove[] };
+export type CoachDimensions = Record<"opening" | "middle" | "endgame" | "accuracy" | "stability", number | undefined>;
+export type CoachProfile = {
+  quality: "卓越" | "精准" | "稳健" | "尚可" | "待提高" | "样本不足";
+  dimensions: CoachDimensions;
+  summary: string;
+  criticalMove?: GameReportMove;
+};
+export type TrendTurningPoint = TrendSample & {
+  deltaCp: number;
+  severity: "major" | "critical";
+};
 
 const initialMaterial = 5660;
 
@@ -119,6 +130,43 @@ export function calculateGameReport(dataset: GameReportDatasetDto): GameReport {
     });
   }
   return { red: sideReport(moves, "红方"), black: sideReport(moves, "黑方"), moves };
+}
+
+function qualityForScore(score?: number): CoachProfile["quality"] {
+  if (score == null) return "样本不足";
+  if (score >= 95) return "卓越";
+  if (score >= 90) return "精准";
+  if (score >= 80) return "稳健";
+  if (score >= 70) return "尚可";
+  return "待提高";
+}
+
+export function coachProfile(report: GameReport, side: Side): CoachProfile {
+  const sideKey = side === "红方" ? "red" : "black";
+  const sideReport = report[sideKey];
+  const moves = report.moves.filter((move) => move.movedBy === side);
+  const mean = sideReport.overall;
+  const stability = mean == null || moves.length === 0
+    ? undefined
+    : Math.max(0, Math.round(100 - Math.sqrt(moves.reduce((sum, move) => sum + (move.score - mean) ** 2, 0) / moves.length)));
+  const criticalMove = moves.reduce<GameReportMove | undefined>((worst, move) => !worst || move.lossCp > worst.lossCp ? move : worst, undefined);
+  const errors = sideReport.counts.mistake + sideReport.counts.blunder;
+  const quality = qualityForScore(mean);
+  const summary = mean == null
+    ? `${side}尚无足够的已分析着法，无法生成质量结论。`
+    : `${side}本局表现${quality}，综合 ${mean} 分；${errors > 0 ? `共有 ${errors} 次错着或漏着` : "没有达到错着等级的着法"}${criticalMove && criticalMove.lossCp > 20 ? `，最值得复盘的是 ${criticalMove.notation}（损失 ${criticalMove.lossCp}cp）` : ""}。`;
+  return {
+    quality,
+    dimensions: {
+      opening: sideReport.phases.opening,
+      middle: sideReport.phases.middle,
+      endgame: sideReport.phases.endgame,
+      accuracy: mean,
+      stability,
+    },
+    summary,
+    criticalMove,
+  };
 }
 
 function fullmoveNumber(fen: string) {
@@ -238,4 +286,12 @@ export function trendPoints(samples: TrendSample[], totalMoves = samples.length)
       : 12 + (sample.moveIndex ?? index) * (276 / Math.max(1, lastMoveIndex)),
     y: 28 - Math.max(-1, Math.min(1, sample.scoreCp / 500)) * 21,
   }));
+}
+
+export function trendTurningPoints(samples: TrendSample[], thresholdCp = 120): TrendTurningPoint[] {
+  return samples.slice(1).flatMap((sample, index) => {
+    const deltaCp = sample.scoreCp - samples[index].scoreCp;
+    if (Math.abs(deltaCp) < thresholdCp) return [];
+    return [{ ...sample, deltaCp, severity: Math.abs(deltaCp) > 250 ? "critical" as const : "major" as const }];
+  });
 }

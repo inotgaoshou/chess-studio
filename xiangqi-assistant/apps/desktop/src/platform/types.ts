@@ -99,6 +99,7 @@ export type DesktopPreferencesDto = {
   ponder: boolean;
   autoAnalyze: boolean;
   libraryCollapsed: boolean;
+  colorTheme: "light" | "dark";
   serverUrl: string;
 };
 export type SyncAccountDto = {

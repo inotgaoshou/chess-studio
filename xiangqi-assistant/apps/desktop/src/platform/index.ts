@@ -24,6 +24,12 @@ type WebCoreModule = {
     fromRemote(fen: string, rootId: string): WebGameInstance;
   };
 };
+declare global {
+  interface Window {
+    __xiangqiWebCore?: WebCoreModule;
+    __xiangqiWebCoreError?: string;
+  }
+}
 type WireSyncOperation = Omit<SyncOperation, "kind"> & {
   kind: string;
   op_id?: string;
@@ -141,6 +147,7 @@ class WebPlatform implements ChessPlatform {
   private lamport = 0;
   private abort?: AbortController;
   private module?: WebCoreModule;
+  private corePromise?: Promise<WebCoreModule>;
 
   async initialize(): Promise<Partial<BoardState>> {
     const module = await this.core();
@@ -370,12 +377,39 @@ class WebPlatform implements ChessPlatform {
   }
 
   private async core(): Promise<WebCoreModule> {
-    if (!this.module) {
-      const moduleUrl = "/wasm/xiangqi_web_core.js";
-      const module = await import(/* @vite-ignore */ moduleUrl) as WebCoreModule;
-      await module.default();
-      this.module = module;
-    }
+    if (this.module) return this.module;
+    this.corePromise ??= new Promise<WebCoreModule>((resolve, reject) => {
+      const finish = () => {
+        cleanup();
+        if (window.__xiangqiWebCore) resolve(window.__xiangqiWebCore);
+        else reject(new Error(window.__xiangqiWebCoreError || "浏览器棋规模块加载失败，请先运行 pnpm wasm:build"));
+      };
+      const cleanup = () => {
+        window.removeEventListener("xiangqi-web-core-ready", finish);
+        window.removeEventListener("xiangqi-web-core-error", finish);
+      };
+      if (window.__xiangqiWebCore || window.__xiangqiWebCoreError) {
+        finish();
+        return;
+      }
+      window.addEventListener("xiangqi-web-core-ready", finish);
+      window.addEventListener("xiangqi-web-core-error", finish);
+      if (!document.querySelector('script[data-xiangqi-web-core="true"]')) {
+        const script = document.createElement("script");
+        script.type = "module";
+        script.src = "/web-core-loader.js";
+        script.dataset.xiangqiWebCore = "true";
+        script.addEventListener("error", () => {
+          window.__xiangqiWebCoreError = "浏览器棋规加载器不可用";
+          finish();
+        }, { once: true });
+        document.head.append(script);
+      }
+    }).catch((error) => {
+      this.corePromise = undefined;
+      throw error;
+    });
+    this.module = await this.corePromise;
     return this.module;
   }
 
