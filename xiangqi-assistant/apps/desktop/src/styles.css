@@ -94,6 +94,17 @@ button:disabled { cursor: default; opacity: .45; }
 .menu-popup { position: absolute; z-index: 30; top: 33px; left: 0; width: 190px; padding: 5px; border: 1px solid #59635e; background: #2d3531; box-shadow: 0 8px 22px rgba(0, 0, 0, .42); }
 .menu-popup button { width: 100%; height: 30px; padding: 0 9px; border: 0; background: transparent; color: #d3dad6; display: flex; align-items: center; gap: 9px; text-align: left; font-size: 11px; }
 .menu-popup button:hover { background: #42604f; color: #fff; }
+.menu-popup button:disabled { color: #68716c; cursor: not-allowed; }
+.menu-popup button:disabled:hover { background: transparent; }
+.menu-popup button.active { color: #8fd1aa; background: #35473e; }
+.sync-menu-popup { width: 220px; }
+.menu-account-status { min-height: 34px; margin-bottom: 4px; padding: 7px 9px; border-bottom: 1px solid #46504b; color: #9ba69f; display: flex; align-items: center; gap: 8px; font-size: 10px; }
+.menu-account-status span { min-width: 0; display: grid; gap: 2px; }
+.menu-account-status small { overflow: hidden; color: #737f78; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.menu-account-status.signedIn { color: #80c69a; }
+.menu-account-status.expired { color: #d8a05c; }
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 .engine-chip { margin-left: auto; display: flex; align-items: center; gap: 7px; font-size: 10px; }
 .engine-chip svg { color: #55a87c; }
 .engine-chip strong { color: #d9deda; }
@@ -213,6 +224,8 @@ button:disabled { cursor: default; opacity: .45; }
   color: #edf4ef;
   font-size: 10px;
 }
+.desktop-sync-summary > span { margin-top: 5px; overflow: hidden; text-overflow: ellipsis; color: #c2cbc5; font-size: 9px; white-space: nowrap; }
+.desktop-sync-summary > small { margin-top: 3px; color: #77827c; font-size: 8px; }
 
 .board-section {
   min-width: 0;
@@ -509,6 +522,29 @@ button:disabled { cursor: default; opacity: .45; }
 .branch-order { color: #9da9a2; font-size: 11px; }
 
 .modal-backdrop { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; padding: 18px; background: rgba(8, 11, 10, .76); }
+.dialog-backdrop { position: fixed; z-index: 120; inset: 0; display: grid; place-items: center; padding: 18px; background: rgba(8, 11, 10, .78); }
+.settings-dialog { width: min(520px, calc(100vw - 36px)); max-height: calc(100dvh - 36px); overflow: hidden; border: 1px solid #59635e; border-radius: 6px; background: #262d2a; box-shadow: 0 22px 70px rgba(0, 0, 0, .65); }
+.settings-dialog > header { height: 42px; padding: 0 10px 0 14px; border-bottom: 1px solid #47504b; display: flex; align-items: center; justify-content: space-between; }
+.settings-dialog > header > div { display: flex; align-items: center; gap: 8px; color: #e2e7e4; font-size: 12px; }
+.dialog-form { max-height: calc(100dvh - 80px); overflow: auto; padding: 14px; display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
+.dialog-form label { min-width: 0; display: grid; gap: 5px; color: #929d97; font-size: 9px; }
+.dialog-form label.full, .dialog-hint, .dialog-warning, .dialog-form footer { grid-column: 1 / -1; }
+.dialog-form input, .dialog-form select { width: 100%; height: 31px; min-width: 0; padding: 0 8px; border: 1px solid #4b5550; border-radius: 3px; background: #1f2523; color: #d4dbd7; outline: 0; }
+.dialog-form input:focus, .dialog-form select:focus { border-color: #65a77e; }
+.dialog-form input:disabled { color: #747e78; background: #242a27; }
+.dialog-input-action { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) 34px; gap: 5px; }
+.dialog-input-action button { border: 1px solid #4b5550; border-radius: 3px; background: #333c37; color: #bdc6c0; }
+.dialog-form .check-row { min-height: 31px; grid-template-columns: 15px 1fr; align-items: center; align-content: center; }
+.dialog-form .check-row input { width: 14px; height: 14px; padding: 0; }
+.dialog-hint, .dialog-warning { margin: 0; color: #87928b; font-size: 9px; line-height: 1.55; }
+.dialog-warning { color: #d2a262; }
+.dialog-form footer { padding-top: 4px; display: flex; justify-content: flex-end; gap: 7px; }
+.dialog-form footer button { min-width: 82px; height: 31px; padding: 0 12px; border: 1px solid #505a54; border-radius: 3px; background: #333c37; color: #cbd3ce; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.dialog-form footer button.primary { border-color: #4f8768; background: #3e6d52; color: #f1f6f3; }
+.dialog-form footer button:disabled { opacity: .55; cursor: not-allowed; }
+.engine-config-summary { width: 100%; height: 32px; padding: 0 8px; border: 1px solid #46504b; border-radius: 3px; background: #2c3430; color: #aeb8b2; display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: center; gap: 7px; text-align: left; }
+.engine-config-summary span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.engine-config-summary small { color: #77827c; font-size: 8px; }
 .position-editor { width: min(880px, calc(100vw - 36px)); max-height: calc(100dvh - 36px); overflow: hidden; border: 1px solid #59635e; border-radius: 6px; background: #262d2a; box-shadow: 0 22px 70px rgba(0, 0, 0, .6); display: grid; grid-template-rows: 42px minmax(0, 1fr) 48px; }
 .position-editor > header { padding: 0 10px 0 14px; border-bottom: 1px solid #47504b; display: flex; align-items: center; justify-content: space-between; }
 .position-editor > header > div { display: flex; align-items: center; gap: 8px; color: #e2e7e4; font-size: 12px; }

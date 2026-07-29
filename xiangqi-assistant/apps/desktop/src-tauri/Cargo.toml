@@ -12,6 +12,7 @@ chrono.workspace = true
 engine-protocol = { path = "../../../crates/engine-protocol" }
 local-store = { path = "../../../crates/local-store" }
 manual-format = { path = "../../../crates/manual-format" }
+keyring = "3"
 reqwest = { version = "0.13", features = ["json"] }
 serde.workspace = true
 serde_json.workspace = true

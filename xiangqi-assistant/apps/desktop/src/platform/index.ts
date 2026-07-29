@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { webDatabase, type SyncOperation, type WebGameRecord } from "./indexedDb";
-import type { AnalysisLine, AnalysisOptions, BoardState, ChessPlatform, EngineMoveResult, EnginePlayOptions, EngineRuntimeEvent, GameSummary, SyncResult } from "./types";
+import type { AnalysisLine, AnalysisOptions, BoardState, ChessPlatform, DesktopPreferencesDto, EngineMoveResult, EnginePlayOptions, EngineProbeDto, EngineRuntimeEvent, GameSummary, SyncAccountDto, SyncResult } from "./types";
 
 type WebGameInstance = {
   stateJson(): string;
@@ -58,10 +58,17 @@ class DesktopPlatform implements ChessPlatform {
   }
   openGame(gameId: string) { return invoke<Partial<BoardState>>("open_game", { gameId }); }
   detectEngine() { return invoke<string | null>("detect_pikafish"); }
+  getDesktopPreferences() { return invoke<DesktopPreferencesDto>("get_desktop_preferences"); }
+  saveDesktopPreferences(preferences: DesktopPreferencesDto) { return invoke<DesktopPreferencesDto>("save_desktop_preferences", { preferences }); }
+  async chooseEngineExecutable() {
+    const path = await open({ multiple: false, directory: false, title: "选择 Pikafish 可执行文件" });
+    return typeof path === "string" ? path : undefined;
+  }
+  probeEngine(path: string) { return invoke<EngineProbeDto>("probe_engine", { path }); }
   playMove(iccs: string) { return invoke<Partial<BoardState>>("play_move", { iccs }); }
   newGame(fen: string, title?: string, note?: string) { return invoke<Partial<BoardState>>("new_game", { fen, title, note }); }
   async openDocument() {
-    const path = await open({ multiple: false, directory: false, filters: [{ name: "象棋棋谱", extensions: ["pgn", "xqf", "cbr"] }] });
+    const path = await open({ multiple: false, directory: false, filters: [{ name: "PGN 象棋棋谱", extensions: ["pgn"] }] });
     if (!path || Array.isArray(path)) return undefined;
     return invoke<Partial<BoardState>>("open_document", { path });
   }
@@ -100,7 +107,11 @@ class DesktopPlatform implements ChessPlatform {
     return listen<EngineRuntimeEvent>("engine-runtime", (event) => listener(event.payload));
   }
   loadSavedAnalysis() { return invoke<AnalysisLine[]>("get_saved_analysis"); }
-  synchronize(serverUrl: string, token: string) { return invoke<SyncResult>("sync_now", { serverUrl, token }); }
+  getSyncAccount() { return invoke<SyncAccountDto>("get_sync_account"); }
+  registerSyncAccount(email: string, password: string) { return invoke<SyncAccountDto>("register_sync_account", { email, password }); }
+  loginSyncAccount(email: string, password: string) { return invoke<SyncAccountDto>("login_sync_account", { email, password }); }
+  logoutSyncAccount() { return invoke<SyncAccountDto>("logout_sync_account"); }
+  synchronize() { return invoke<SyncResult>("sync_now"); }
 }
 
 class WebPlatform implements ChessPlatform {
@@ -154,6 +165,14 @@ class WebPlatform implements ChessPlatform {
   }
 
   async detectEngine() { return null; }
+  async getDesktopPreferences(): Promise<DesktopPreferencesDto> { throw new Error("Web 端不支持桌面偏好设置"); }
+  async saveDesktopPreferences(): Promise<DesktopPreferencesDto> { throw new Error("Web 端不支持桌面偏好设置"); }
+  async chooseEngineExecutable(): Promise<string | undefined> { throw new Error("Web 端不支持选择本地引擎"); }
+  async probeEngine(): Promise<EngineProbeDto> { throw new Error("Web 端不运行本地引擎"); }
+  async getSyncAccount(): Promise<SyncAccountDto> { throw new Error("Web 端账号菜单不在本阶段开放"); }
+  async registerSyncAccount(): Promise<SyncAccountDto> { throw new Error("Web 端账号菜单不在本阶段开放"); }
+  async loginSyncAccount(): Promise<SyncAccountDto> { throw new Error("Web 端账号菜单不在本阶段开放"); }
+  async logoutSyncAccount(): Promise<SyncAccountDto> { throw new Error("Web 端账号菜单不在本阶段开放"); }
   async openDocument(): Promise<Partial<BoardState> | undefined> { throw new Error("Web 端暂不支持原生文件对话框"); }
   async saveDocument(): Promise<string | undefined> { throw new Error("Web 端暂不支持原生文件保存"); }
   copyPosition(fen: string) { return navigator.clipboard.writeText(fen); }
@@ -385,4 +404,4 @@ class WebPlatform implements ChessPlatform {
 
 const tauriAvailable = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 export const chessPlatform: ChessPlatform = tauriAvailable ? new DesktopPlatform() : new WebPlatform();
-export type { AnalysisLine, AnalysisOptions, BoardState, ChessPlatform, EngineRuntimeEvent, EngineRuntimeState, GameSummary, MoveItem, Piece, Side, SyncResult } from "./types";
+export type { AnalysisLine, AnalysisOptions, BoardState, ChessPlatform, DesktopPreferencesDto, EngineProbeDto, EngineRuntimeEvent, EngineRuntimeState, GameSummary, MoveItem, Piece, Side, SyncAccountDto, SyncResult } from "./types";

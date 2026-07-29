@@ -51,14 +51,34 @@ export type AnalysisOptions = {
   excludeMove?: string;
 };
 export type SyncResult = { uploaded: number; downloaded: number; cursor: number };
+export type DesktopPreferencesDto = {
+  enginePath: string;
+  threads: number;
+  hashMb: number;
+  multipv: number;
+  searchMode: "time" | "depth" | "nodes" | "infinite";
+  searchValue: number;
+  moveTimeMs: number;
+  ponder: boolean;
+  autoAnalyze: boolean;
+  serverUrl: string;
+};
+export type SyncAccountDto = {
+  serverUrl: string;
+  userId?: string;
+  email?: string;
+  status: "unbound" | "signedOut" | "signedIn" | "expired";
+  lastSyncResult?: string;
+};
+export type EngineProbeDto = { path: string; protocol: "uci" | "ucci" };
 export type GameSummary = { id: string; title: string; fen: string; updatedAt: string; current: boolean };
 export type EnginePlayOptions = { enginePath: string; moveTimeMs: number; threads: number; hashMb: number; ponder: boolean };
 export type EngineMoveResult = { board: BoardState; ponder?: string };
 export type EngineRuntimeState = "idle" | "analyzing" | "thinking" | "pondering" | "stopping" | "faulted";
 export type EngineRuntimeEvent =
   | { type: "state"; state: EngineRuntimeState }
-  | { type: "info"; line: AnalysisLine }
-  | { type: "bestmove"; best: string; ponder?: string }
+  | { type: "info"; fen: string; line: AnalysisLine }
+  | { type: "bestmove"; fen: string; best: string; ponder?: string }
   | { type: "error"; message: string };
 
 export interface ChessPlatform {
@@ -67,6 +87,10 @@ export interface ChessPlatform {
   listGames(): Promise<GameSummary[]>;
   openGame(gameId: string): Promise<Partial<BoardState>>;
   detectEngine(): Promise<string | null>;
+  getDesktopPreferences(): Promise<DesktopPreferencesDto>;
+  saveDesktopPreferences(preferences: DesktopPreferencesDto): Promise<DesktopPreferencesDto>;
+  chooseEngineExecutable(): Promise<string | undefined>;
+  probeEngine(path: string): Promise<EngineProbeDto>;
   playMove(iccs: string): Promise<Partial<BoardState>>;
   newGame(fen: string, title?: string, note?: string): Promise<Partial<BoardState>>;
   openDocument(): Promise<Partial<BoardState> | undefined>;
@@ -87,5 +111,9 @@ export interface ChessPlatform {
   stopAnalysis(discardResult?: boolean): Promise<boolean>;
   subscribeEngineEvents(listener: (event: EngineRuntimeEvent) => void): Promise<() => void>;
   loadSavedAnalysis(fen: string): Promise<AnalysisLine[]>;
-  synchronize(serverUrl: string, token: string): Promise<SyncResult>;
+  getSyncAccount(): Promise<SyncAccountDto>;
+  registerSyncAccount(email: string, password: string): Promise<SyncAccountDto>;
+  loginSyncAccount(email: string, password: string): Promise<SyncAccountDto>;
+  logoutSyncAccount(): Promise<SyncAccountDto>;
+  synchronize(serverUrl?: string, token?: string): Promise<SyncResult>;
 }

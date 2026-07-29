@@ -24,13 +24,16 @@ Web/PWA 通过 `xiangqi-web-core` 的 wasm-bindgen API 复用同一套 `xiangqi-
 
 ## 同步
 
-桌面端从 SQLite 读取未上传操作，携带 JWT 调用 `POST /api/v1/sync/push`。服务端按 `op_id` 幂等插入 MySQL 并分配递增 `sequence_id`。桌面端再调用 `GET /api/v1/sync/pull?cursor=N`，在同一 SQLite 事务中将远端操作投影到棋谱、保存操作日志并推进游标；当前打开的棋谱随后从本地投影重新加载。
+桌面端从 SQLite 读取未上传操作，Rust 从系统钥匙串读取 JWT 后调用 `POST /api/v1/sync/push`。JWT 不进入 React 或 SQLite。服务端按 `op_id` 幂等插入 MySQL 并分配递增 `sequence_id`。桌面端再调用 `GET /api/v1/sync/pull?cursor=N`，在同一 SQLite 事务中将远端操作投影到棋谱、保存操作日志并推进游标；当前打开的棋谱随后从本地投影重新加载。
+
+本地 SQLite 棋谱库首次成功注册或登录时绑定账号。退出仅删除钥匙串中的 JWT，保留账号绑定、棋谱和 outbox；其他账号登录会被拒绝。同步服务地址在绑定后锁定，非本机地址必须使用 HTTPS。服务不可用、未登录或令牌过期只影响联网同步，不影响本地编辑。
 
 同一父节点下的并发 `add_move` 不冲突，而是形成两个变例。显式 `reorder_branches` 只重排操作中已知的完整子节点集合；其后到达的并发新增分支追加到已排序节点之后，且不改变主线标记。服务端递增游标决定投影顺序，操作同时保留 `lamport` 和稳定 `device_id`，为后续字段级冲突策略保留上下文；删除保留 tombstone。
 
 ## 安全约束
 
 - 客户端永不直连 MySQL。
+- 桌面 JWT 使用系统钥匙串保存，不通过 Tauri DTO 暴露给 React，也不写入 SQLite。
 - 密码使用 Argon2 哈希；同步接口要求 30 天有效期的 HS256 JWT。
 - 服务端拒绝不属于当前用户棋谱的操作，并限制单批最多 500 条。
 - 本地引擎路径来自用户配置的 `PIKAFISH_PATH`、界面输入或受控的应用目录/系统 `PATH` 自动发现；应用不下载引擎，进程仅通过 stdin/stdout 交互。

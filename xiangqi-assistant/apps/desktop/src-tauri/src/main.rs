@@ -1,18 +1,23 @@
+mod credential_store;
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::time::Instant;
 
 use chrono::Utc;
+use credential_store::{SharedCredentialStore, SystemCredentialStore, TOKEN_KEY};
 use engine_protocol::{EngineControl, EngineEvent, EngineSession, Protocol, SearchLimit};
-use local_store::{AnalysisSummary, ImportedGame, LocalGame, LocalStore};
+use local_store::{
+    AnalysisSummary, DesktopPreferences, ImportedGame, LocalGame, LocalStore, SyncAccountBinding,
+};
 use manual_format::{
     ManualDocument, ManualFormat, ManualMetadata, detect_format, export_mainline_pgn, export_pgn,
     import_document,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sync_protocol::{
     AddMovePayload, CreateGamePayload, DeleteNodePayload, Operation, OperationKind,
     ReorderBranchesPayload, SetMainlinePayload, UpdateCommentPayload, UpdateGameMetadataPayload,
@@ -40,10 +45,34 @@ struct AppModel {
 
 struct DesktopState {
     model: Mutex<AppModel>,
+    credentials: SharedCredentialStore,
     engine: tokio::sync::Mutex<Option<EngineControl>>,
     play_session: tokio::sync::Mutex<Option<EngineRuntime>>,
     analysis_generation: AtomicU64,
     play_generation: AtomicU64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SyncAccountDto {
+    server_url: String,
+    user_id: Option<Uuid>,
+    email: Option<String>,
+    status: &'static str,
+    last_sync_result: Option<String>,
+}
+
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+struct AuthResponse {
+    user_id: Uuid,
+    token: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EngineProbeDto {
+    path: String,
+    protocol: &'static str,
 }
 
 struct EngineRuntime {
@@ -83,9 +112,11 @@ enum EngineRuntimeEvent {
         state: &'static str,
     },
     Info {
+        fen: String,
         line: AnalysisLine,
     },
     Bestmove {
+        fen: String,
         best: String,
         ponder: Option<String>,
     },
@@ -727,13 +758,26 @@ async fn analyze_position(
                     pv: info.pv,
                 };
                 if state.analysis_generation.load(Ordering::SeqCst) == analysis_generation {
-                    emit_engine_event(&app, EngineRuntimeEvent::Info { line: line.clone() });
+                    emit_engine_event(
+                        &app,
+                        EngineRuntimeEvent::Info {
+                            fen: fen.clone(),
+                            line: line.clone(),
+                        },
+                    );
                 }
                 lines.insert(line.multipv, line);
             }
             Ok(EngineEvent::BestMove { best, ponder }) => {
                 if state.analysis_generation.load(Ordering::SeqCst) == analysis_generation {
-                    emit_engine_event(&app, EngineRuntimeEvent::Bestmove { best, ponder });
+                    emit_engine_event(
+                        &app,
+                        EngineRuntimeEvent::Bestmove {
+                            fen: fen.clone(),
+                            best,
+                            ponder,
+                        },
+                    );
                 }
                 break;
             }
@@ -916,6 +960,7 @@ async fn engine_play_move(
                 emit_engine_event(
                     &app,
                     EngineRuntimeEvent::Info {
+                        fen: fen.clone(),
                         line: AnalysisLine {
                             depth: info.depth,
                             score_cp: info.score_cp,
@@ -981,6 +1026,7 @@ async fn engine_play_move(
     emit_engine_event(
         &app,
         EngineRuntimeEvent::Bestmove {
+            fen,
             best: best_move.clone(),
             ponder: ponder_move.clone(),
         },
@@ -1150,25 +1196,303 @@ fn protocol_name(protocol: Protocol) -> &'static str {
     }
 }
 
+fn validate_server_url(value: &str) -> Result<(), String> {
+    let url = reqwest::Url::parse(value.trim()).map_err(|_| "同步服务地址格式不正确")?;
+    let host = url.host_str().ok_or("同步服务地址缺少主机名")?;
+    let local = matches!(host, "localhost" | "127.0.0.1" | "::1");
+    if url.scheme() != "https" && !(url.scheme() == "http" && local) {
+        return Err("非本机同步服务必须使用 HTTPS".into());
+    }
+    Ok(())
+}
+
+fn validate_preferences(preferences: &DesktopPreferences) -> Result<(), String> {
+    if !(1..=64).contains(&preferences.threads) {
+        return Err("线程数必须在 1 到 64 之间".into());
+    }
+    if !(16..=4096).contains(&preferences.hash_mb) {
+        return Err("Hash 必须在 16 到 4096 MB 之间".into());
+    }
+    if !(1..=10).contains(&preferences.multipv) {
+        return Err("MultiPV 必须在 1 到 10 之间".into());
+    }
+    if !(100..=30_000).contains(&preferences.move_time_ms) {
+        return Err("每步时间必须在 100 到 30000 毫秒之间".into());
+    }
+    if !matches!(
+        preferences.search_mode.as_str(),
+        "time" | "depth" | "nodes" | "infinite"
+    ) {
+        return Err("不支持的搜索模式".into());
+    }
+    let limit_valid = match preferences.search_mode.as_str() {
+        "time" => (100..=30_000).contains(&preferences.search_value),
+        "depth" => (1..=100).contains(&preferences.search_value),
+        "nodes" => (1_000..=100_000_000).contains(&preferences.search_value),
+        "infinite" => true,
+        _ => false,
+    };
+    if !limit_valid {
+        return Err("搜索限制超出允许范围".into());
+    }
+    validate_server_url(&preferences.server_url)
+}
+
 #[tauri::command]
-async fn sync_now(
-    server_url: String,
-    token: String,
+fn get_desktop_preferences(state: State<'_, DesktopState>) -> Result<DesktopPreferences, String> {
+    state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?
+        .store
+        .desktop_preferences()
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn save_desktop_preferences(
+    preferences: DesktopPreferences,
     state: State<'_, DesktopState>,
-) -> Result<SyncResult, String> {
-    let pending = {
+) -> Result<DesktopPreferences, String> {
+    validate_preferences(&preferences)?;
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    let current = model
+        .store
+        .desktop_preferences()
+        .map_err(|error| error.to_string())?;
+    if model
+        .store
+        .sync_account_binding()
+        .map_err(|error| error.to_string())?
+        .is_some()
+        && current.server_url.trim_end_matches('/') != preferences.server_url.trim_end_matches('/')
+    {
+        return Err("本地棋谱库已绑定账号，不能修改同步服务地址".into());
+    }
+    model
+        .store
+        .save_desktop_preferences(&preferences)
+        .map_err(|error| error.to_string())?;
+    Ok(preferences)
+}
+
+#[tauri::command]
+async fn probe_engine(path: String) -> Result<EngineProbeDto, String> {
+    let path = PathBuf::from(path.trim());
+    if !path.is_file() {
+        return Err("引擎可执行文件不存在".into());
+    }
+    let session = EngineSession::launch(&path, Duration::from_secs(5))
+        .await
+        .map_err(|error| format!("引擎握手失败：{error}"))?;
+    Ok(EngineProbeDto {
+        path: path.to_string_lossy().into_owned(),
+        protocol: protocol_name(session.protocol()),
+    })
+}
+
+fn sync_account_dto(state: &DesktopState) -> Result<SyncAccountDto, String> {
+    let model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    let preferences = model
+        .store
+        .desktop_preferences()
+        .map_err(|error| error.to_string())?;
+    let binding = model
+        .store
+        .sync_account_binding()
+        .map_err(|error| error.to_string())?;
+    let expired = model
+        .store
+        .sync_token_expired()
+        .map_err(|error| error.to_string())?;
+    let last_sync_result = model
+        .store
+        .last_sync_result()
+        .map_err(|error| error.to_string())?;
+    drop(model);
+    let has_token = state.credentials.get(TOKEN_KEY)?.is_some();
+    let status = match (&binding, expired, has_token) {
+        (None, _, _) => "unbound",
+        (Some(_), true, _) => "expired",
+        (Some(_), false, true) => "signedIn",
+        (Some(_), false, false) => "signedOut",
+    };
+    Ok(SyncAccountDto {
+        server_url: preferences.server_url,
+        user_id: binding.as_ref().map(|account| account.user_id),
+        email: binding.map(|account| account.email),
+        status,
+        last_sync_result,
+    })
+}
+
+#[tauri::command]
+fn get_sync_account(state: State<'_, DesktopState>) -> Result<SyncAccountDto, String> {
+    sync_account_dto(&state)
+}
+
+async fn authenticate_sync_account(
+    endpoint: &str,
+    email: String,
+    password: String,
+    require_unbound: bool,
+    state: &DesktopState,
+) -> Result<SyncAccountDto, String> {
+    let email = email.trim().to_lowercase();
+    if !email.contains('@') {
+        return Err("请输入有效邮箱".into());
+    }
+    if password.len() < 10 {
+        return Err("密码至少需要 10 个字符".into());
+    }
+    let (server_url, binding) = {
         let model = state
+            .model
+            .lock()
+            .map_err(|_| "state lock poisoned".to_owned())?;
+        let preferences = model
+            .store
+            .desktop_preferences()
+            .map_err(|error| error.to_string())?;
+        let binding = model
+            .store
+            .sync_account_binding()
+            .map_err(|error| error.to_string())?;
+        (preferences.server_url, binding)
+    };
+    validate_server_url(&server_url)?;
+    if require_unbound && binding.is_some() {
+        return Err("本地棋谱库已经绑定账号，请直接登录".into());
+    }
+    if let Some(existing) = &binding {
+        if existing.email != email {
+            return Err(format!(
+                "本地棋谱库已绑定账号 {}，不能切换账号",
+                existing.email
+            ));
+        }
+    }
+    let auth = request_auth(&server_url, endpoint, &email, &password).await?;
+    let account = SyncAccountBinding {
+        user_id: auth.user_id,
+        email,
+    };
+    {
+        let mut model = state
             .model
             .lock()
             .map_err(|_| "state lock poisoned".to_owned())?;
         model
             .store
+            .bind_sync_account(&account)
+            .map_err(|error| error.to_string())?;
+        model
+            .store
+            .set_sync_token_expired(false)
+            .map_err(|error| error.to_string())?;
+    }
+    state.credentials.set(TOKEN_KEY, &auth.token)?;
+    sync_account_dto(state)
+}
+
+async fn request_auth(
+    server_url: &str,
+    endpoint: &str,
+    email: &str,
+    password: &str,
+) -> Result<AuthResponse, String> {
+    let response = reqwest::Client::new()
+        .post(format!(
+            "{}/api/v1/auth/{endpoint}",
+            server_url.trim_end_matches('/')
+        ))
+        .json(&serde_json::json!({ "email": email, "password": password }))
+        .send()
+        .await
+        .map_err(|error| format!("同步服务不可用：{error}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(match status.as_u16() {
+            401 => "邮箱或密码不正确".into(),
+            409 => "该邮箱已经注册，请直接登录".into(),
+            _ => format!("账号服务返回错误 {status}"),
+        });
+    }
+    response
+        .json()
+        .await
+        .map_err(|_| "账号服务返回了无效数据".into())
+}
+
+#[tauri::command]
+async fn register_sync_account(
+    email: String,
+    password: String,
+    state: State<'_, DesktopState>,
+) -> Result<SyncAccountDto, String> {
+    authenticate_sync_account("register", email, password, true, &state).await
+}
+
+#[tauri::command]
+async fn login_sync_account(
+    email: String,
+    password: String,
+    state: State<'_, DesktopState>,
+) -> Result<SyncAccountDto, String> {
+    authenticate_sync_account("login", email, password, false, &state).await
+}
+
+#[tauri::command]
+fn logout_sync_account(state: State<'_, DesktopState>) -> Result<SyncAccountDto, String> {
+    state.credentials.delete(TOKEN_KEY)?;
+    state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?
+        .store
+        .set_sync_token_expired(false)
+        .map_err(|error| error.to_string())?;
+    sync_account_dto(&state)
+}
+
+#[tauri::command]
+async fn sync_now(state: State<'_, DesktopState>) -> Result<SyncResult, String> {
+    let (pending, server_url) = {
+        let model = state
+            .model
+            .lock()
+            .map_err(|_| "state lock poisoned".to_owned())?;
+        let pending = model
+            .store
             .pending_operations(500)
+            .map_err(|error| error.to_string())?;
+        let preferences = model
+            .store
+            .desktop_preferences()
+            .map_err(|error| error.to_string())?;
+        if model
+            .store
+            .sync_account_binding()
             .map_err(|error| error.to_string())?
+            .is_none()
+        {
+            return Err("请先注册或登录同步账号".into());
+        }
+        (pending, preferences.server_url)
     };
+    let token = state
+        .credentials
+        .get(TOKEN_KEY)?
+        .ok_or("登录已退出，请重新登录")?;
     let client = reqwest::Client::new();
     let base = server_url.trim_end_matches('/');
-    let push: sync_protocol::PushResponse = client
+    let push_response = client
         .post(format!("{base}/api/v1/sync/push"))
         .bearer_auth(&token)
         .json(&sync_protocol::PushRequest {
@@ -1176,9 +1500,21 @@ async fn sync_now(
         })
         .send()
         .await
-        .map_err(|error| error.to_string())?
+        .map_err(|error| format!("同步服务不可用：{error}"))?;
+    if push_response.status() == reqwest::StatusCode::UNAUTHORIZED {
+        state.credentials.delete(TOKEN_KEY)?;
+        state
+            .model
+            .lock()
+            .map_err(|_| "state lock poisoned".to_owned())?
+            .store
+            .set_sync_token_expired(true)
+            .map_err(|error| error.to_string())?;
+        return Err("登录已过期，请重新登录".into());
+    }
+    let push: sync_protocol::PushResponse = push_response
         .error_for_status()
-        .map_err(|error| error.to_string())?
+        .map_err(|error| format!("同步上传失败：{error}"))?
         .json()
         .await
         .map_err(|error| error.to_string())?;
@@ -1196,14 +1532,26 @@ async fn sync_now(
             .remote_cursor()
             .map_err(|error| error.to_string())?
     };
-    let pull: sync_protocol::PullResponse = client
+    let pull_response = client
         .get(format!("{base}/api/v1/sync/pull?cursor={cursor}"))
         .bearer_auth(&token)
         .send()
         .await
-        .map_err(|error| error.to_string())?
+        .map_err(|error| format!("同步服务不可用：{error}"))?;
+    if pull_response.status() == reqwest::StatusCode::UNAUTHORIZED {
+        state.credentials.delete(TOKEN_KEY)?;
+        state
+            .model
+            .lock()
+            .map_err(|_| "state lock poisoned".to_owned())?
+            .store
+            .set_sync_token_expired(true)
+            .map_err(|error| error.to_string())?;
+        return Err("登录已过期，请重新登录".into());
+    }
+    let pull: sync_protocol::PullResponse = pull_response
         .error_for_status()
-        .map_err(|error| error.to_string())?
+        .map_err(|error| format!("同步下载失败：{error}"))?
         .json()
         .await
         .map_err(|error| error.to_string())?;
@@ -1232,11 +1580,22 @@ async fn sync_now(
             load_game_into_model(&mut model, game)?;
         }
     }
-    Ok(SyncResult {
+    let result = SyncResult {
         uploaded: pending.len(),
         downloaded: pull.operations.len(),
         cursor: pull.cursor,
-    })
+    };
+    state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?
+        .store
+        .set_last_sync_result(&format!(
+            "上传 {}，下载 {}",
+            result.uploaded, result.downloaded
+        ))
+        .map_err(|error| error.to_string())?;
+    Ok(result)
 }
 
 fn board_dto(model: &AppModel) -> Result<BoardDto, String> {
@@ -1739,6 +2098,7 @@ fn main() {
                     source_format,
                     playable,
                 }),
+                credentials: Arc::new(SystemCredentialStore),
                 engine: tokio::sync::Mutex::new(None),
                 play_session: tokio::sync::Mutex::new(None),
                 analysis_generation: AtomicU64::new(0),
@@ -1771,6 +2131,13 @@ fn main() {
             stop_engine_play,
             stop_analysis,
             get_saved_analysis,
+            get_desktop_preferences,
+            save_desktop_preferences,
+            probe_engine,
+            get_sync_account,
+            register_sync_account,
+            login_sync_account,
+            logout_sync_account,
             sync_now
         ])
         .run(tauri::generate_context!())
@@ -1779,7 +2146,28 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
     use super::*;
+
+    async fn mock_auth_server(status: &str, body: String) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let status = status.to_owned();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = vec![0; 4096];
+            let read = socket.read(&mut request).await.unwrap();
+            let request = String::from_utf8_lossy(&request[..read]);
+            assert!(request.starts_with("POST /api/v1/auth/login HTTP/1.1"));
+            let response = format!(
+                "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            socket.write_all(response.as_bytes()).await.unwrap();
+        });
+        format!("http://{address}")
+    }
 
     #[test]
     fn board_dto_formats_history_and_attaches_saved_scores() {
@@ -1854,5 +2242,63 @@ mod tests {
         assert!(!position_is_playable(
             &Board::from_fen("9/9/9/4k4/9/9/9/9/9/4K4 w - - 0 1").unwrap()
         ));
+    }
+
+    #[tokio::test]
+    async fn auth_http_maps_success_and_common_failures() {
+        let user_id = Uuid::new_v4();
+        let server = mock_auth_server(
+            "200 OK",
+            serde_json::json!({ "user_id": user_id, "token": "jwt-secret" }).to_string(),
+        )
+        .await;
+        assert_eq!(
+            request_auth(&server, "login", "user@example.com", "password-123")
+                .await
+                .unwrap(),
+            AuthResponse {
+                user_id,
+                token: "jwt-secret".into()
+            }
+        );
+
+        let duplicate = mock_auth_server("409 Conflict", r#"{"error":"duplicate"}"#.into()).await;
+        assert_eq!(
+            request_auth(&duplicate, "login", "user@example.com", "password-123")
+                .await
+                .unwrap_err(),
+            "该邮箱已经注册，请直接登录"
+        );
+
+        let unauthorized =
+            mock_auth_server("401 Unauthorized", r#"{"error":"invalid"}"#.into()).await;
+        assert_eq!(
+            request_auth(&unauthorized, "login", "user@example.com", "password-123")
+                .await
+                .unwrap_err(),
+            "邮箱或密码不正确"
+        );
+
+        let unavailable =
+            mock_auth_server("503 Service Unavailable", r#"{"error":"down"}"#.into()).await;
+        assert!(
+            request_auth(&unavailable, "login", "user@example.com", "password-123")
+                .await
+                .unwrap_err()
+                .contains("503")
+        );
+    }
+
+    #[test]
+    fn preference_validation_rejects_remote_http_and_invalid_engine_limits() {
+        assert!(validate_server_url("http://127.0.0.1:8080").is_ok());
+        assert!(validate_server_url("https://sync.example.com").is_ok());
+        assert!(validate_server_url("http://sync.example.com").is_err());
+        let mut preferences = DesktopPreferences::default();
+        preferences.threads = 0;
+        assert_eq!(
+            validate_preferences(&preferences).unwrap_err(),
+            "线程数必须在 1 到 64 之间"
+        );
     }
 }

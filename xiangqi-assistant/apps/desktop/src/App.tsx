@@ -36,6 +36,9 @@ import {
 } from "lucide-react";
 import { chessPlatform, type AnalysisLine, type BoardState, type EngineRuntimeState, type GameSummary, type MoveItem, type Piece } from "./platform";
 import { moveReports, positionEvaluation, trendPoints } from "./analysisView";
+import { DesktopMenuBar, type MenuCommand } from "./DesktopMenuBar";
+import { DesktopDialogs, type DesktopDialog } from "./DesktopDialogs";
+import type { DesktopPreferencesDto, SyncAccountDto } from "./platform";
 
 
 const startingFen = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1";
@@ -83,6 +86,22 @@ const analysisArrowColors = [
   "#db7093",
 ];
 const reviewPanels = ["moves", "trend", "report"] as const;
+const defaultDesktopPreferences: DesktopPreferencesDto = {
+  enginePath: "",
+  threads: 2,
+  hashMb: 256,
+  multipv: 3,
+  searchMode: "time",
+  searchValue: 1500,
+  moveTimeMs: 5000,
+  ponder: false,
+  autoAnalyze: true,
+  serverUrl: "http://127.0.0.1:8080",
+};
+const defaultSyncAccount: SyncAccountDto = {
+  serverUrl: defaultDesktopPreferences.serverUrl,
+  status: "unbound",
+};
 const editorPalette: Piece[] = [
   ...["rook", "horse", "elephant", "advisor", "king", "cannon", "pawn"].map((kind, index) => ({ row: 0, col: index, color: "red" as const, kind, label: ["车", "马", "相", "仕", "帅", "炮", "兵"][index] })),
   ...["rook", "horse", "elephant", "advisor", "king", "cannon", "pawn"].map((kind, index) => ({ row: 1, col: index, color: "black" as const, kind, label: ["车", "马", "象", "士", "将", "炮", "卒"][index] })),
@@ -228,6 +247,10 @@ export default function App() {
   const [ponderEnabled, setPonderEnabled] = useState(false);
   const [ponderMove, setPonderMove] = useState<string | undefined>();
   const [engineRuntimeState, setEngineRuntimeState] = useState<EngineRuntimeState>("idle");
+  const [desktopPreferences, setDesktopPreferences] = useState(defaultDesktopPreferences);
+  const [syncAccount, setSyncAccount] = useState(defaultSyncAccount);
+  const [desktopDialog, setDesktopDialog] = useState<DesktopDialog>(null);
+  const [dialogBusy, setDialogBusy] = useState(false);
   const [online, setOnline] = useState(typeof navigator === "undefined" ? true : navigator.onLine);
   const boardRevision = useRef(0);
   const analysisLoadRevision = useRef(0);
@@ -247,14 +270,21 @@ export default function App() {
         if (chessPlatform.kind === "web") setNotice("离线棋谱已就绪");
       })
       .catch((error) => setNotice(friendlyError(error)));
-    void chessPlatform.detectEngine()
-      .then((path) => {
-        if (path) {
-          setEnginePath(path);
-          setNotice("已自动识别 Pikafish 2026");
+    if (chessPlatform.kind === "desktop") {
+      void chessPlatform.getDesktopPreferences().then((preferences) => {
+        applyDesktopPreferences(preferences);
+        if (!preferences.enginePath) {
+          void chessPlatform.detectEngine().then((path) => {
+            if (path) {
+              setEnginePath(path);
+              setDesktopPreferences((current) => ({ ...current, enginePath: path }));
+              setNotice("已自动识别 Pikafish 2026，请在引擎设置中保存");
+            }
+          }).catch(() => undefined);
         }
-      })
-      .catch(() => undefined);
+      }).catch((error) => setNotice(friendlyError(error)));
+      void chessPlatform.getSyncAccount().then(setSyncAccount).catch((error) => setNotice(friendlyError(error)));
+    }
   }, []);
 
   useEffect(() => {
@@ -278,10 +308,12 @@ export default function App() {
   }, [board.note, board.title]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem("xiangqi:auto-analysis", String(autoAnalyze));
-    } catch {
-      // Preference persistence is optional in restricted browser contexts.
+    if (chessPlatform.kind === "web") {
+      try {
+        localStorage.setItem("xiangqi:auto-analysis", String(autoAnalyze));
+      } catch {
+        // Preference persistence is optional in restricted browser contexts.
+      }
     }
   }, [autoAnalyze]);
 
@@ -294,9 +326,11 @@ export default function App() {
         setEngineRuntimeState(event.state);
         setEngineThinking(event.state === "thinking");
       } else if (event.type === "info") {
+        if (event.fen !== boardRef.current.fen) return;
         setAnalysis((current) => [...current.filter((line) => line.multipv !== event.line.multipv), event.line]
           .sort((left, right) => left.multipv - right.multipv));
       } else if (event.type === "bestmove") {
+        if (event.fen !== boardRef.current.fen) return;
         setPonderMove(event.ponder);
       } else {
         setNotice(event.message);
@@ -310,6 +344,7 @@ export default function App() {
       unsubscribe?.();
     };
   }, []);
+
 
   useEffect(() => {
     if (!autoAnalyze) return;
@@ -367,6 +402,20 @@ export default function App() {
       }];
     }), [orderedAnalysis, reversed]);
 
+  function applyDesktopPreferences(preferences: DesktopPreferencesDto) {
+    setDesktopPreferences(preferences);
+    setEnginePath(preferences.enginePath);
+    setThreads(preferences.threads);
+    setHashMb(preferences.hashMb);
+    setMultipv(preferences.multipv);
+    setSearchMode(preferences.searchMode);
+    setSearchValue(preferences.searchValue);
+    setMoveTimeMs(preferences.moveTimeMs);
+    setPonderEnabled(preferences.ponder);
+    setAutoAnalyze(preferences.autoAnalyze);
+    setServerUrl(preferences.serverUrl);
+  }
+
   async function selectSquare(row: number, col: number) {
     stopPlayback();
     if (!board.playable) {
@@ -404,6 +453,7 @@ export default function App() {
   async function createGame(fen = fenInput) {
     stopPlayback();
     stopEnginePlay();
+    await cancelAnalysisForDocumentChange();
     try {
       applyBoard(await enqueueBoardOperation(() => chessPlatform.newGame(fen)));
       await refreshGames();
@@ -418,9 +468,13 @@ export default function App() {
   async function openDocument() {
     stopPlayback();
     stopEnginePlay();
+    await cancelAnalysisForDocumentChange();
     try {
       const next = await enqueueBoardOperation(() => chessPlatform.openDocument());
-      if (!next) return;
+      if (!next) {
+        setNotice("已取消打开棋谱");
+        return;
+      }
       applyBoard(next);
       setAnalysis([]);
       await refreshGames();
@@ -436,6 +490,8 @@ export default function App() {
       if (path) {
         applyBoard({ ...boardRef.current, sourcePath: path, sourceFormat: "pgn" });
         setNotice(`棋谱已保存：${path.split(/[\\/]/).at(-1)}`);
+      } else {
+        setNotice("已取消保存棋谱");
       }
     } catch (error) {
       setNotice(friendlyError(error));
@@ -463,6 +519,7 @@ export default function App() {
   async function pasteDocument() {
     stopPlayback();
     stopEnginePlay();
+    await cancelAnalysisForDocumentChange();
     try {
       applyBoard(await enqueueBoardOperation(() => chessPlatform.pasteDocument()));
       setAnalysis([]);
@@ -486,6 +543,7 @@ export default function App() {
   function openPositionEditor() {
     stopPlayback();
     stopEnginePlay();
+    void cancelAnalysisForDocumentChange();
     if (chessPlatform.kind === "web") {
       setNotice("Web 端暂不支持局面编辑，请使用桌面版");
       return;
@@ -508,6 +566,7 @@ export default function App() {
   async function confirmPositionEditor() {
     const fen = piecesToFen(editorPieces, editorSide);
     try {
+      await cancelAnalysisForDocumentChange();
       applyBoard(await enqueueBoardOperation(() => chessPlatform.newGame(fen, gameTitle.trim() || "研究局面", gameNote)));
       setAnalysis([]);
       setPositionEditorOpen(false);
@@ -540,6 +599,14 @@ export default function App() {
     setPonderMove(undefined);
     if (engineThinking) void chessPlatform.moveNow().catch(() => undefined);
     void chessPlatform.stopEnginePlay().catch(() => undefined);
+  }
+
+  async function cancelAnalysisForDocumentChange() {
+    if (!analysisBusyRef.current) return;
+    pendingAutoAnalysis.current = false;
+    analysisBusyRef.current = false;
+    setAnalysisBusy(false);
+    await chessPlatform.stopAnalysis(true).catch(() => undefined);
   }
 
   async function requestEngineMove(state = boardRef.current, side = engineSide) {
@@ -575,6 +642,10 @@ export default function App() {
   }
 
   function toggleEngineSide(side: "red" | "black") {
+    if (engineThinking && engineSide !== side) {
+      setNotice("Pikafish 正在思考，请先停止当前对弈再切换执方");
+      return;
+    }
     const next = engineSide === side ? "none" : side;
     setEngineSide(next);
     setPonderMove(undefined);
@@ -894,7 +965,12 @@ export default function App() {
   }
 
   async function synchronize() {
-    if (!token.trim()) {
+    if (chessPlatform.kind === "desktop" && syncAccount.status !== "signedIn") {
+      setNotice(syncAccount.status === "expired" ? "登录已过期，请重新登录" : "请先登录同步账号");
+      setDesktopDialog("login");
+      return;
+    }
+    if (chessPlatform.kind === "web" && !token.trim()) {
       setNotice("请先填写登录令牌");
       return;
     }
@@ -903,11 +979,98 @@ export default function App() {
       const result = await chessPlatform.synchronize(serverUrl, token);
       applyBoard(await chessPlatform.initialize());
       await refreshGames();
+      if (chessPlatform.kind === "desktop") setSyncAccount(await chessPlatform.getSyncAccount());
       setNotice(`同步完成：上传 ${result.uploaded}，下载 ${result.downloaded}`);
     } catch (error) {
       setNotice(friendlyError(error));
+      if (chessPlatform.kind === "desktop") void chessPlatform.getSyncAccount().then(setSyncAccount).catch(() => undefined);
     } finally {
       setSyncBusy(false);
+    }
+  }
+
+  async function saveEnginePreferences(preferences: DesktopPreferencesDto) {
+    setDialogBusy(true);
+    try {
+      stopEnginePlay();
+      await cancelAnalysisForDocumentChange();
+      const probe = await chessPlatform.probeEngine(preferences.enginePath);
+      const saved = await chessPlatform.saveDesktopPreferences({ ...preferences, enginePath: probe.path });
+      applyDesktopPreferences(saved);
+      setDesktopDialog(null);
+      setNotice(`引擎设置已保存，${probe.protocol.toUpperCase()} 握手成功`);
+    } catch (error) {
+      setNotice(friendlyError(error));
+    } finally {
+      setDialogBusy(false);
+    }
+  }
+
+  async function saveSyncPreferences(nextServerUrl: string) {
+    setDialogBusy(true);
+    try {
+      const saved = await chessPlatform.saveDesktopPreferences({ ...desktopPreferences, serverUrl: nextServerUrl });
+      applyDesktopPreferences(saved);
+      setSyncAccount(await chessPlatform.getSyncAccount());
+      setDesktopDialog(null);
+      setNotice("同步服务地址已保存");
+    } catch (error) {
+      setNotice(friendlyError(error));
+    } finally {
+      setDialogBusy(false);
+    }
+  }
+
+  async function authenticateSync(mode: "register" | "login", email: string, password: string) {
+    setDialogBusy(true);
+    try {
+      const account = mode === "register"
+        ? await chessPlatform.registerSyncAccount(email, password)
+        : await chessPlatform.loginSyncAccount(email, password);
+      setSyncAccount(account);
+      setDesktopDialog(null);
+      setNotice(mode === "register" ? "账号已注册并绑定本地棋谱库" : "同步账号已登录");
+    } catch (error) {
+      setNotice(friendlyError(error));
+    } finally {
+      setDialogBusy(false);
+    }
+  }
+
+  async function logoutSync() {
+    try {
+      setSyncAccount(await chessPlatform.logoutSyncAccount());
+      setNotice("已退出登录，本地棋谱和待同步改动保留");
+    } catch (error) {
+      setNotice(friendlyError(error));
+    }
+  }
+
+  async function executeMenuCommand(command: MenuCommand) {
+    switch (command) {
+      case "newGame": await createGame(startingFen); break;
+      case "openDocument": await openDocument(); break;
+      case "saveDocument": await saveDocument(); break;
+      case "saveDocumentAs": await saveDocument(true); break;
+      case "editPosition": openPositionEditor(); break;
+      case "flipBoard": setReversed((value) => !value); break;
+      case "copyFen": await copyPosition(); break;
+      case "pasteDocument":
+      case "pasteTextManual": await pasteDocument(); break;
+      case "copyFullManual": await copyGame(); break;
+      case "copyMainline": await copyGame(true); break;
+      case "nextBranch": await goToNextBranchPoint(); break;
+      case "engineRed": toggleEngineSide("red"); break;
+      case "engineBlack": toggleEngineSide("black"); break;
+      case "moveNow": await moveNow(); break;
+      case "analyze": await runAnalysis(); break;
+      case "stopAnalysis": await stopAnalysis(); break;
+      case "engineSettings": setDesktopDialog("engine"); break;
+      case "syncRegister": setDesktopDialog("register"); break;
+      case "syncLogin": setDesktopDialog("login"); break;
+      case "syncNow": await synchronize(); break;
+      case "syncSettings": setDesktopDialog("syncSettings"); break;
+      case "syncLogout": await logoutSync(); break;
     }
   }
 
@@ -920,36 +1083,36 @@ export default function App() {
       </header>
 
       <nav className="menubar" aria-label="主菜单">
-        <div className="menu-items">
-          <details><summary>棋局</summary><div className="menu-popup">
-            <button onClick={() => void createGame(startingFen)}><Plus size={14}/>新建棋局</button>
-            <button onClick={() => void openDocument()}><FolderOpen size={14}/>打开棋谱</button>
-            <button onClick={() => void saveDocument()}><Save size={14}/>保存棋谱</button>
-            <button onClick={() => void saveDocument(true)}><Save size={14}/>另存为 PGN</button>
-          </div></details>
-          <details><summary>局面</summary><div className="menu-popup">
-            <button onClick={openPositionEditor}><LayoutGrid size={14}/>编辑局面</button>
-            <button onClick={() => setReversed((value) => !value)}><RotateCcw size={14}/>翻转棋盘</button>
-            <button onClick={() => void copyPosition()}><Copy size={14}/>复制局面 FEN</button>
-            <button onClick={() => void pasteDocument()}><ClipboardPaste size={14}/>粘贴局面或棋谱</button>
-          </div></details>
-          <details><summary>棋谱</summary><div className="menu-popup">
-            <button onClick={() => void copyGame()}><Copy size={14}/>复制完整棋谱</button>
-            <button onClick={() => void copyGame(true)}><ClipboardList size={14}/>复制当前主线</button>
-            <button onClick={() => void pasteDocument()}><ClipboardPaste size={14}/>粘贴文本棋谱</button>
-            <button onClick={() => void goToNextBranchPoint()}><GitFork size={14}/>跳到下个分支点</button>
-          </div></details>
-          <details><summary>引擎</summary><div className="menu-popup">
-            <button className={engineSide === "red" ? "active" : ""} onClick={() => toggleEngineSide("red")}><Bot size={14}/>引擎执红</button>
-            <button className={engineSide === "black" ? "active" : ""} onClick={() => toggleEngineSide("black")}><Bot size={14}/>引擎执黑</button>
-            <button disabled={!engineThinking} onClick={() => void moveNow()}><Zap size={14}/>立即出招</button>
-            <button disabled={!board.playable || analysisBusy} onClick={() => void runAnalysis()}><Zap size={14}/>分析当前局面</button>
-            <button onClick={() => document.getElementById("engine-path")?.focus()}><Settings2 size={14}/>引擎设置</button>
-          </div></details>
-          <button className="menu-command" onClick={() => setMobilePanel("settings")}>同步</button>
-        </div>
+        {chessPlatform.kind === "desktop" && <DesktopMenuBar
+          status={{
+            playable: board.playable,
+            isPlaying,
+            analysisBusy,
+            engineThinking,
+            engineConfigured: !!enginePath.trim(),
+            engineSide,
+            hasContinuation: !!preferredContinuation(board),
+            syncBusy,
+            syncStatus: syncAccount.status,
+            syncEmail: syncAccount.email,
+            syncLastResult: syncAccount.lastSyncResult,
+          }}
+          execute={executeMenuCommand}
+        />}
         <div className="engine-chip"><Activity size={13}/><strong>Pikafish</strong><span>{chessPlatform.kind === "web" ? online ? "云端" : "离线" : enginePath ? engineRuntimeLabel[engineRuntimeState] : "未检测"}</span></div>
       </nav>
+
+      {chessPlatform.kind === "desktop" && <DesktopDialogs
+        dialog={desktopDialog}
+        preferences={desktopPreferences}
+        account={syncAccount}
+        busy={dialogBusy}
+        onClose={() => setDesktopDialog(null)}
+        onChooseEngine={() => chessPlatform.chooseEngineExecutable()}
+        onSaveEngine={saveEnginePreferences}
+        onSaveSync={saveSyncPreferences}
+        onAuthenticate={authenticateSync}
+      />}
 
       <div className="actionbar">
         <button className="wide-tool" onClick={() => void createGame(startingFen)}><FolderOpen size={14}/>新建研习棋谱</button>
@@ -962,10 +1125,10 @@ export default function App() {
         </div>
         <div className="tool-divider" />
         <button className="mode-tool" onClick={() => void runAnalysis()} disabled={!board.playable || analysisBusy || isPlaying}><Zap size={15}/>分析当前局面</button>
-        <button className={`mode-tool engine-side ${engineSide === "red" ? "active" : ""}`} disabled={!board.playable} onClick={() => toggleEngineSide("red")}><Bot size={15}/>引擎红</button>
-        <button className={`mode-tool engine-side ${engineSide === "black" ? "active" : ""}`} disabled={!board.playable} onClick={() => toggleEngineSide("black")}><Bot size={15}/>引擎黑</button>
+        <button className={`mode-tool engine-side ${engineSide === "red" ? "active" : ""}`} disabled={!board.playable || (engineThinking && engineSide !== "red")} onClick={() => toggleEngineSide("red")}><Bot size={15}/>引擎红</button>
+        <button className={`mode-tool engine-side ${engineSide === "black" ? "active" : ""}`} disabled={!board.playable || (engineThinking && engineSide !== "black")} onClick={() => toggleEngineSide("black")}><Bot size={15}/>引擎黑</button>
         <button className="tool-button" title="立即出招" disabled={!engineThinking} onClick={() => void moveNow()}><Zap size={15}/></button>
-        <button className="tool-button" title="引擎设置" onClick={() => document.getElementById("engine-path")?.focus()}><Settings2 size={16}/></button>
+        <button className="tool-button" title="引擎设置" onClick={() => setDesktopDialog("engine")}><Settings2 size={16}/></button>
       </div>
 
       <main className="workspace">
@@ -993,12 +1156,18 @@ export default function App() {
             <label>当前局面<input value={board.status} readOnly /></label>
             <label>行棋方<input value={board.sideToMove} readOnly /></label>
           </section>
-          <section className="sync-box">
+          {chessPlatform.kind === "web" && <section className="sync-box">
             <div className="sync-title"><Link size={14}/><strong>个人同步</strong></div>
             <input value={serverUrl} onChange={(event) => setServerUrl(event.target.value)} aria-label="同步服务地址" />
             <input type="password" value={token} onChange={(event) => setToken(event.target.value)} placeholder="登录令牌" aria-label="登录令牌" />
             <button onClick={() => void synchronize()} disabled={syncBusy}>{syncBusy ? "同步中…" : "立即同步"}</button>
-          </section>
+          </section>}
+          {chessPlatform.kind === "desktop" && <section className="sync-box desktop-sync-summary">
+            <div className="sync-title"><Link size={14}/><strong>个人同步</strong></div>
+            <span>{syncAccount.email ?? "未绑定账号"}</span>
+            <small>{syncAccount.lastSyncResult ?? (syncAccount.status === "signedIn" ? "已登录，等待同步" : "本地编辑不受影响")}</small>
+            <button disabled={syncBusy} onClick={() => syncAccount.status === "signedIn" ? void synchronize() : setDesktopDialog(syncAccount.status === "unbound" ? "register" : "login")}>{syncBusy ? "同步中…" : syncAccount.status === "signedIn" ? "立即同步" : syncAccount.status === "expired" ? "重新登录" : syncAccount.status === "signedOut" ? "登录" : "注册账号"}</button>
+          </section>}
         </aside>
 
         <section className={`board-section ${mobilePanel === "board" ? "mobile-visible" : ""}`}>
@@ -1113,12 +1282,9 @@ export default function App() {
                 <button className="move-now" disabled={!engineThinking} onClick={() => void moveNow()}><Zap size={12}/>立即</button>
               </div>
               {engineSide !== "none" && <div className="engine-play-status"><span className={engineThinking ? "thinking" : ""}/><strong>人机对弈</strong><small>Pikafish 执{engineSide === "red" ? "红" : "黑"}{ponderMove ? ` · 预测 ${ponderMove}` : ""}</small></div>}
-              <div className="engine-config-row">
-                <label className="path-field"><span>引擎</span><input id="engine-path" value={enginePath} onChange={(event) => setEnginePath(event.target.value)} placeholder="pikafish 路径" /></label>
-                <label className="engine-number" title="引擎线程数"><span>线程</span><input aria-label="线程" type="number" min={1} max={64} value={threads} onChange={(event) => setThreads(Number(event.target.value))}/></label>
-                <label className="engine-number" title="置换表大小"><span>Hash</span><input aria-label="Hash MB" type="number" min={16} max={4096} step={16} value={hashMb} onChange={(event) => setHashMb(Number(event.target.value))}/><small>MB</small></label>
-                <label className="engine-number" title="候选线路数量"><span>PV</span><input aria-label="MultiPV" type="number" min={1} max={10} value={multipv} onChange={(event) => setMultipv(Number(event.target.value))}/></label>
-              </div>
+              <button className="engine-config-summary" onClick={() => setDesktopDialog("engine")}>
+                <Settings2 size={14}/><span>{enginePath ? enginePath.split(/[\\/]/).at(-1) : "选择 Pikafish"}</span><small>{threads} 线程 · Hash {hashMb} MB · MultiPV {multipv}</small>
+              </button>
             </>}
             {chessPlatform.kind === "web" && <div className="web-engine-source"><span>{serverUrl}</span><strong>MultiPV {multipv}</strong></div>}
             <div className="engine-run-row">

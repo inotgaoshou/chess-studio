@@ -1,4 +1,5 @@
 use rusqlite::{Connection, OptionalExtension, params};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use sync_protocol::{
@@ -43,6 +44,47 @@ pub enum StoreError {
     Sql(#[from] rusqlite::Error),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+    #[error("本地棋谱库已绑定账号 {email}，不能切换到其他账号")]
+    AccountAlreadyBound { email: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopPreferences {
+    pub engine_path: String,
+    pub threads: u32,
+    pub hash_mb: u32,
+    pub multipv: u32,
+    pub search_mode: String,
+    pub search_value: u64,
+    pub move_time_ms: u64,
+    pub ponder: bool,
+    pub auto_analyze: bool,
+    pub server_url: String,
+}
+
+impl Default for DesktopPreferences {
+    fn default() -> Self {
+        Self {
+            engine_path: String::new(),
+            threads: 2,
+            hash_mb: 256,
+            multipv: 3,
+            search_mode: "time".into(),
+            search_value: 1500,
+            move_time_ms: 5000,
+            ponder: false,
+            auto_analyze: true,
+            server_url: "http://127.0.0.1:8080".into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncAccountBinding {
+    pub user_id: Uuid,
+    pub email: String,
 }
 
 pub struct LocalStore {
@@ -63,6 +105,68 @@ impl LocalStore {
 
     pub fn open_in_memory() -> Result<Self, StoreError> {
         Self::initialize(Connection::open_in_memory()?)
+    }
+
+    pub fn desktop_preferences(&self) -> Result<DesktopPreferences, StoreError> {
+        let json: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT preferences_json FROM desktop_preferences WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        json.map(|value| serde_json::from_str(&value))
+            .transpose()
+            .map(|value| value.unwrap_or_default())
+            .map_err(Into::into)
+    }
+
+    pub fn save_desktop_preferences(
+        &mut self,
+        preferences: &DesktopPreferences,
+    ) -> Result<(), StoreError> {
+        self.connection.execute(
+            "INSERT INTO desktop_preferences (id, preferences_json) VALUES (1, ?1)
+             ON CONFLICT(id) DO UPDATE SET preferences_json=excluded.preferences_json",
+            [serde_json::to_string(preferences)?],
+        )?;
+        Ok(())
+    }
+
+    pub fn sync_account_binding(&self) -> Result<Option<SyncAccountBinding>, StoreError> {
+        self.sync_value("sync_account")?
+            .map(|value| serde_json::from_str(&value))
+            .transpose()
+            .map_err(Into::into)
+    }
+
+    pub fn bind_sync_account(&mut self, account: &SyncAccountBinding) -> Result<(), StoreError> {
+        if let Some(existing) = self.sync_account_binding()? {
+            if existing.user_id != account.user_id {
+                return Err(StoreError::AccountAlreadyBound {
+                    email: existing.email,
+                });
+            }
+            return Ok(());
+        }
+        self.set_sync_value("sync_account", &serde_json::to_string(account)?)
+    }
+
+    pub fn sync_token_expired(&self) -> Result<bool, StoreError> {
+        Ok(self.sync_value("sync_token_expired")?.as_deref() == Some("true"))
+    }
+
+    pub fn set_sync_token_expired(&mut self, expired: bool) -> Result<(), StoreError> {
+        self.set_sync_value("sync_token_expired", if expired { "true" } else { "false" })
+    }
+
+    pub fn last_sync_result(&self) -> Result<Option<String>, StoreError> {
+        self.sync_value("last_sync_result")
+    }
+
+    pub fn set_last_sync_result(&mut self, result: &str) -> Result<(), StoreError> {
+        self.set_sync_value("last_sync_result", result)
     }
 
     pub fn device_id(&mut self) -> Result<Uuid, StoreError> {
@@ -671,6 +775,9 @@ impl LocalStore {
              );
              CREATE INDEX IF NOT EXISTS idx_operations_outbox ON operations(uploaded, local_sequence);
              CREATE TABLE IF NOT EXISTS sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS desktop_preferences (
+               id INTEGER PRIMARY KEY CHECK (id = 1), preferences_json TEXT NOT NULL
+             );
              CREATE TABLE IF NOT EXISTS engine_profiles (
                id TEXT PRIMARY KEY, name TEXT NOT NULL, executable_path TEXT NOT NULL,
                protocol TEXT NOT NULL, options_json TEXT NOT NULL DEFAULT '{}'
@@ -1558,5 +1665,69 @@ mod tests {
         assert_eq!(value["event"], "联赛");
         assert_eq!(value["red"], "甲");
         assert_eq!(value["result"], "1-0");
+    }
+
+    #[test]
+    fn desktop_preferences_survive_reopen_without_credentials() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("preferences.sqlite3");
+        let preferences = DesktopPreferences {
+            engine_path: "/opt/pikafish".into(),
+            threads: 6,
+            hash_mb: 512,
+            multipv: 4,
+            search_mode: "nodes".into(),
+            search_value: 800_000,
+            move_time_ms: 2200,
+            ponder: true,
+            auto_analyze: false,
+            server_url: "https://sync.example.com".into(),
+        };
+        {
+            let mut store = LocalStore::open(&path).unwrap();
+            store.save_desktop_preferences(&preferences).unwrap();
+        }
+        let store = LocalStore::open(&path).unwrap();
+        assert_eq!(store.desktop_preferences().unwrap(), preferences);
+        assert!(store.sync_value("jwt").unwrap().is_none());
+    }
+
+    #[test]
+    fn sync_account_binding_accepts_same_account_and_rejects_another() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let first = SyncAccountBinding {
+            user_id: Uuid::new_v4(),
+            email: "first@example.com".into(),
+        };
+        store.bind_sync_account(&first).unwrap();
+        store.bind_sync_account(&first).unwrap();
+        assert_eq!(store.sync_account_binding().unwrap(), Some(first.clone()));
+
+        let error = store
+            .bind_sync_account(&SyncAccountBinding {
+                user_id: Uuid::new_v4(),
+                email: "second@example.com".into(),
+            })
+            .unwrap_err();
+        assert!(matches!(error, StoreError::AccountAlreadyBound { .. }));
+        assert_eq!(store.sync_account_binding().unwrap(), Some(first));
+    }
+
+    #[test]
+    fn signing_out_does_not_remove_outbox_or_account_binding() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let account = SyncAccountBinding {
+            user_id: Uuid::new_v4(),
+            email: "offline@example.com".into(),
+        };
+        store.bind_sync_account(&account).unwrap();
+        let game_id = Uuid::new_v4();
+        let op = operation(game_id);
+        store
+            .save_game_with_operation(game_id, "Offline", "fen", Uuid::new_v4(), &op)
+            .unwrap();
+
+        assert_eq!(store.sync_account_binding().unwrap(), Some(account));
+        assert_eq!(store.pending_operations(10).unwrap(), vec![op]);
     }
 }

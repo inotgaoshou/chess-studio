@@ -7,6 +7,7 @@
     "wasm:build": "wasm-pack build ../../crates/web-core --target web --out-dir ../../apps/desktop/public/wasm --out-name xiangqi_web_core",
     "dev": "vite --port 1420",
     "build": "tsc && vite build",
+    "test": "vitest run",
     "web:dev": "pnpm wasm:build && vite --port 1420",
     "web:build": "pnpm wasm:build && pnpm build",
     "tauri": "tauri"
@@ -21,10 +22,14 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.8.0",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.4",
+    "jsdom": "^30.0.0",
     "typescript": "^5.7.2",
-    "vite": "^6.0.5"
+    "vite": "^6.0.5",
+    "vitest": "^4.1.10"
   }
 }

@@ -12,7 +12,8 @@
 - UCI/UCCI 自动握手、MultiPV、固定时间/深度/节点/无限分析、强制变招与停止控制
 - Pikafish 执红/执黑、固定每步时间、立即出招和可选后台思考
 - 落子与节点切换后的自动分析、中文候选棋谱、红方视角优劣分和历史趋势
-- SQLite 本地棋谱、引擎配置、分析结果、远端操作投影和幂等 outbox
+- SQLite 本地棋谱、桌面偏好、分析结果、远端操作投影和幂等 outbox
+- 桌面同步账号注册/登录、系统钥匙串 JWT 和单账号棋谱库绑定
 - 实验中的移动 Web/PWA，使用 Rust/WASM 棋规和 IndexedDB 离线打谱
 - Axum + MySQL 8.0 的注册、登录、JWT、同步和服务端 Pikafish 分析
 
@@ -26,7 +27,7 @@ PIKAFISH_PATH=/absolute/path/to/pikafish-apple-silicon \
   pnpm --filter xiangqi-desktop-ui tauri dev
 ```
 
-桌面端会自动查找 `PIKAFISH_PATH`、TCHESS macOS 安装目录、应用资源目录及系统 `PATH` 中的 Pikafish。也可以在右侧“Pikafish 引擎”面板手动填写可执行文件路径；`pikafish.nnue` 应放在可执行文件同目录。默认参数为 2 线程、256 MB Hash 和 MultiPV 3。
+桌面端会自动查找 `PIKAFISH_PATH`、TCHESS macOS 安装目录、应用资源目录及系统 `PATH` 中的 Pikafish。也可以从“引擎 -> 引擎设置”选择可执行文件；保存前会完成 UCI/UCCI 握手。`pikafish.nnue` 应放在可执行文件同目录。默认参数为 2 线程、256 MB Hash 和 MultiPV 3。
 
 本机已验证的引擎路径为 `/path/to/Pikafish.2026-01-02/MacOS/pikafish-apple-silicon`。对应 `pikafish.nnue` 必须位于 `MacOS` 目录中，或以软链接指向发布包根目录的同名文件。
 
@@ -60,17 +61,9 @@ pnpm --filter xiangqi-desktop-ui exec vite preview --host 0.0.0.0 --port 4173
 
 Web 端使用 IndexedDB 保存棋谱、变例、评论、分析缓存和待同步操作。离线时可以继续打谱并查看已缓存分析；联网且填写 JWT 后可同步并调用服务端 Pikafish。移动端不会下载或执行本地引擎。
 
-XQF、CBR 已接入统一格式检测入口，但解析器需要真实样例验证具体版本、编码、注释和变例结构。目前选择这两种文件会返回明确的暂不支持错误，不会修改正在编辑的棋局。
+XQF、CBR 已接入统一格式检测入口，但解析器需要真实样例验证具体版本、编码、注释和变例结构。桌面文件对话框目前只显示完整支持的 PGN，不提供 XQF/CBR 入口。
 
-注册并获取桌面同步所需令牌：
-
-```bash
-curl -X POST http://127.0.0.1:8080/api/v1/auth/register \
-  -H 'content-type: application/json' \
-  -d '{"email":"user@example.com","password":"change-me-now"}'
-```
-
-将返回的 `token` 填入桌面端左下角“个人同步”。
+启动服务端后，从桌面“同步”菜单注册或登录。JWT 只保存在操作系统钥匙串，不返回 React，也不写入 SQLite；退出登录不会删除本地棋谱或 outbox。一个本地棋谱库首次登录后绑定该账号，不能切换到其他账号或同步服务器。
 
 ## 验证
 
