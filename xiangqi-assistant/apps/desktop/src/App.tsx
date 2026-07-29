@@ -466,6 +466,7 @@ export default function App() {
       mate: board.rootMate ?? reportRoot?.mate,
     });
   }, [board.history, board.rootMate, board.rootScoreCp, board.rootSideToMove, gameReport]);
+  const overviewReport = useMemo(() => reports.find((report) => report.move.id === board.currentNode), [board.currentNode, reports]);
   const reportPresentation = useMemo(() => gameReport ? buildGameReportPresentation(board.title, gameReport) : undefined, [board.title, gameReport]);
   const orderedAnalysis = useMemo(() => analysis.slice().sort((left, right) => left.multipv - right.multipv), [analysis]);
   const primaryAnalysis = orderedAnalysis[0];
@@ -1659,7 +1660,8 @@ export default function App() {
           <div className="position-overview" aria-label="局势概览">
             <div className="overview-heading"><span><TrendingUp size={14}/>局势概览</span><strong>{evaluation?.label ?? "等待分析"}</strong></div>
             <div className="overview-metrics">
-              <div><small>红方视角</small><strong>{evaluation?.scoreText ?? "--"}</strong></div>
+              <div><small>局面分</small><strong>{evaluation?.scoreText ?? "--"}</strong></div>
+              <div><small>质量分</small><strong className={overviewReport?.grade ? `overview-quality grade-${overviewReport.grade}` : "overview-quality"}>{overviewReport?.score != null ? `${overviewReport.score} ${overviewReport.grade}` : "--"}</strong></div>
               <div><small>红方</small><strong>{evaluation ? `${evaluation.redShare.toFixed(0)}%` : "--"}</strong></div>
               <div><small>黑方</small><strong>{evaluation ? `${(100 - evaluation.redShare).toFixed(0)}%` : "--"}</strong></div>
               <div><small>深度</small><strong>{primaryAnalysis?.depth ?? "--"}</strong></div>

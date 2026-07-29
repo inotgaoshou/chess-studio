@@ -370,11 +370,16 @@ button:disabled { cursor: default; opacity: .45; }
 .overview-heading span { display: flex; align-items: center; gap: 6px; color: #89968e; font-size: 11px; }
 .overview-heading svg { color: #61ad80; }
 .overview-heading strong { overflow: hidden; color: #d9dfdc; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
-.overview-metrics { height: 35px; display: grid; grid-template-columns: 1.3fr repeat(4, 1fr); gap: 7px; align-items: center; }
+.overview-metrics { height: 35px; display: grid; grid-template-columns: 1.25fr 1.05fr repeat(4, 1fr); gap: 7px; align-items: center; }
 .overview-metrics > div { min-width: 0; display: grid; gap: 2px; }
 .overview-metrics small { overflow: hidden; color: #707d76; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
 .overview-metrics strong { overflow: hidden; color: #cfd7d2; text-overflow: ellipsis; white-space: nowrap; font: 700 10px ui-monospace, SFMono-Regular, monospace; }
 .overview-metrics > div:first-child strong { color: #e4b0ad; font-size: 13px; }
+.overview-quality.grade-优 { color: #61c98b; }
+.overview-quality.grade-良 { color: #9dce67; }
+.overview-quality.grade-中 { color: #e0b34d; }
+.overview-quality.grade-差 { color: #ea8248; }
+.overview-quality.grade-错 { color: #ed6262; }
 .overview-balance { height: 7px; margin-top: 6px; overflow: hidden; border-radius: 2px; background: #4d8bb2; }
 .overview-balance i { display: block; height: 100%; background: #d95c55; }
 .workspace-tabs { min-width: 0; display: grid; grid-template-columns: repeat(5, 1fr); border-bottom: 1px solid #434b47; background: #252c29; }
@@ -911,7 +916,7 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 .overview-heading { height: 24px; }
 .overview-heading span { font-size: 12px; }
 .overview-heading strong { font-size: 14px; }
-.overview-metrics { height: 43px; gap: 10px; }
+.overview-metrics { height: 43px; gap: 8px; }
 .overview-metrics small { font-size: 11px; }
 .overview-metrics strong { font-size: 12px; }
 .overview-metrics > div:first-child strong { color: var(--red-soft); font-size: 17px; }
