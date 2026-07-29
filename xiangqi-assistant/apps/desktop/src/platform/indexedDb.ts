@@ -14,9 +14,17 @@ export type SyncOperation = {
 type OutboxRecord = { sequence?: number; operation: SyncOperation };
 type MetaRecord = { key: string; value: string };
 type AnalysisRecord = { fen: string; lines: AnalysisLine[]; updatedAt: string };
+type NodeAnalysisRecord = {
+  key: string;
+  gameId: string;
+  nodeId: string;
+  scoreCp?: number;
+  mate?: number;
+  updatedAt: string;
+};
 
 const databaseName = "xiangqi-studio-web";
-const databaseVersion = 1;
+const databaseVersion = 2;
 
 function requestResult<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -41,6 +49,7 @@ async function openDatabase(): Promise<IDBDatabase> {
     if (!database.objectStoreNames.contains("outbox")) database.createObjectStore("outbox", { keyPath: "sequence", autoIncrement: true });
     if (!database.objectStoreNames.contains("meta")) database.createObjectStore("meta", { keyPath: "key" });
     if (!database.objectStoreNames.contains("analysis")) database.createObjectStore("analysis", { keyPath: "fen" });
+    if (!database.objectStoreNames.contains("nodeAnalysis")) database.createObjectStore("nodeAnalysis", { keyPath: "key" });
   };
   return requestResult(request);
 }
@@ -130,5 +139,33 @@ export const webDatabase = {
 
   async analysis(fen: string): Promise<AnalysisLine[]> {
     return (await readOne<AnalysisRecord>("analysis", fen))?.lines ?? [];
+  },
+
+  async saveNodeAnalysis(gameId: string, nodeId: string, lines: AnalysisLine[]): Promise<void> {
+    const primary = lines.slice().sort((left, right) => left.multipv - right.multipv)[0];
+    if (!primary) return;
+    await writeOne("nodeAnalysis", {
+      key: `${gameId}:${nodeId}`,
+      gameId,
+      nodeId,
+      scoreCp: primary.scoreCp,
+      mate: primary.mate,
+      updatedAt: new Date().toISOString(),
+    } satisfies NodeAnalysisRecord);
+  },
+
+  async nodeAnalyses(gameId: string, nodeIds: string[]): Promise<Map<string, Pick<NodeAnalysisRecord, "scoreCp" | "mate">>> {
+    if (nodeIds.length === 0) return new Map();
+    const database = await openDatabase();
+    const transaction = database.transaction("nodeAnalysis", "readonly");
+    const done = transactionDone(transaction);
+    const store = transaction.objectStore("nodeAnalysis");
+    const records = await Promise.all(nodeIds.map((nodeId) => requestResult(store.get(`${gameId}:${nodeId}`))));
+    await done;
+    database.close();
+    return new Map(records.flatMap((value) => {
+      const record = value as NodeAnalysisRecord | undefined;
+      return record ? [[record.nodeId, { scoreCp: record.scoreCp, mate: record.mate }]] : [];
+    }));
   },
 };

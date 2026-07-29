@@ -1,15 +1,22 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import {
   Activity,
+  BarChart3,
   BookOpen,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+  ClipboardList,
   Database,
   FolderOpen,
   GitBranch,
+  GitFork,
   Link,
   LayoutGrid,
   ListStart,
+  Pause,
   Play,
   Plus,
   RefreshCw,
@@ -22,7 +29,7 @@ import {
   Zap,
 } from "lucide-react";
 import { chessPlatform, type AnalysisLine, type BoardState, type GameSummary, type MoveItem, type Piece } from "./platform";
-import { positionEvaluation, trendPoints } from "./analysisView";
+import { moveReports, positionEvaluation, trendPoints } from "./analysisView";
 
 
 const startingFen = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1";
@@ -66,6 +73,7 @@ const analysisArrowColors = [
   "#88b04b",
   "#db7093",
 ];
+const reviewPanels = ["moves", "trend", "report"] as const;
 
 function initialAutoAnalysis() {
   try {
@@ -128,6 +136,26 @@ function formatMoveScore(move: MoveItem) {
   return move.scoreCp > 0 ? `+${score}` : score;
 }
 
+function formatRedScore(scoreCp?: number) {
+  if (scoreCp == null) return "待分析";
+  const score = (scoreCp / 100).toFixed(2);
+  return scoreCp > 0 ? `+${score}` : score;
+}
+
+function formatScoreDelta(scoreCp?: number) {
+  if (scoreCp == null) return "缺少相邻局面分数";
+  const score = (scoreCp / 100).toFixed(2);
+  return `红方视角 ${scoreCp >= 0 ? "+" : ""}${score}`;
+}
+
+function formatReportScore(move: MoveItem, redScoreCp?: number) {
+  if (move.mate != null) {
+    const redMate = move.movedBy === "黑方" ? move.mate : -move.mate;
+    return `${redMate >= 0 ? "红" : "黑"}杀${Math.abs(redMate)}`;
+  }
+  return formatRedScore(redScoreCp);
+}
+
 export default function App() {
   const [board, setBoard] = useState<BoardState>(fallback);
   const [selected, setSelected] = useState<{ row: number; col: number } | null>(null);
@@ -150,12 +178,17 @@ export default function App() {
   const [token, setToken] = useState("");
   const [notice, setNotice] = useState("本地数据已保存");
   const [mobilePanel, setMobilePanel] = useState<"board" | "library" | "analysis" | "settings">("board");
+  const [reviewPanel, setReviewPanel] = useState<"moves" | "trend" | "report">("moves");
+  const [isPlaying, setIsPlaying] = useState(false);
   const [online, setOnline] = useState(typeof navigator === "undefined" ? true : navigator.onLine);
   const boardRevision = useRef(0);
   const analysisLoadRevision = useRef(0);
   const boardRef = useRef<BoardState>(fallback);
   const analysisBusyRef = useRef(false);
   const pendingAutoAnalysis = useRef(false);
+  const playbackRevision = useRef(0);
+  const navigationRevision = useRef(0);
+  const boardOperationQueue = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
     void chessPlatform.initialize()
@@ -201,6 +234,7 @@ export default function App() {
 
   useEffect(() => {
     if (!autoAnalyze) return;
+    if (isPlaying) return;
     if (chessPlatform.kind === "desktop" && !enginePath.trim()) return;
     if (chessPlatform.kind === "web" && (!online || !token.trim())) return;
     if (analysisBusyRef.current) {
@@ -211,13 +245,14 @@ export default function App() {
     }
     const timer = window.setTimeout(() => void runAnalysis(true), 180);
     return () => window.clearTimeout(timer);
-  }, [autoAnalyze, autoRetry, board.currentNode, board.fen, enginePath, hashMb, multipv, online, searchMode, searchValue, serverUrl, threads, token]);
+  }, [autoAnalyze, autoRetry, board.currentNode, board.fen, enginePath, hashMb, isPlaying, multipv, online, searchMode, searchValue, serverUrl, threads, token]);
 
   const pieceMap = useMemo(() => new Map(board.pieces.map((piece) => [`${piece.row}-${piece.col}`, piece])), [board.pieces]);
   const cells = useMemo(() => Array.from({ length: 90 }, (_, index) => ({ row: Math.floor(index / 9), col: index % 9 })), []);
   const lastMove = board.history.at(-1);
   const evaluation = useMemo(() => positionEvaluation(board, analysis), [analysis, board]);
-  const evaluationTrend = useMemo(() => trendPoints(evaluation?.samples ?? []), [evaluation]);
+  const evaluationTrend = useMemo(() => trendPoints(evaluation?.samples ?? [], board.history.length), [board.history.length, evaluation]);
+  const reports = useMemo(() => moveReports(board.history), [board.history]);
   const orderedAnalysis = useMemo(() => analysis.slice().sort((left, right) => left.multipv - right.multipv), [analysis]);
   const primaryAnalysis = orderedAnalysis[0];
   const primaryMove = primaryAnalysis?.notation?.[0] ?? primaryAnalysis?.pv[0];
@@ -241,6 +276,7 @@ export default function App() {
     }), [orderedAnalysis, reversed]);
 
   async function selectSquare(row: number, col: number) {
+    stopPlayback();
     const piece = pieceMap.get(`${row}-${col}`);
     if (!selected) {
       if (piece) setSelected({ row, col });
@@ -253,7 +289,8 @@ export default function App() {
     }
     const iccs = `${squareToIccs(selected.row, selected.col)}${squareToIccs(row, col)}`;
     try {
-      const next = normalizeBoardState(await chessPlatform.playMove(iccs));
+      await enqueueBoardOperation(() => chessPlatform.navigateTo(boardRef.current.currentNode));
+      const next = normalizeBoardState(await enqueueBoardOperation(() => chessPlatform.playMove(iccs)));
       applyBoard(next);
       setAnalysis([]);
       setNotice(`已记录 ${next.history.at(-1)?.notation ?? iccs}`);
@@ -264,8 +301,9 @@ export default function App() {
   }
 
   async function createGame(fen = fenInput) {
+    stopPlayback();
     try {
-      applyBoard(await chessPlatform.newGame(fen));
+      applyBoard(await enqueueBoardOperation(() => chessPlatform.newGame(fen)));
       await refreshGames();
       setSelected(null);
       setAnalysis([]);
@@ -318,7 +356,7 @@ export default function App() {
         return;
       }
       setAnalysis(result);
-      if (chessPlatform.kind === "desktop") applyBoard(await chessPlatform.initialize());
+      applyBoard(await chessPlatform.initialize());
       setNotice(automatic ? "自动分析完成并已保存" : "分析完成并已保存");
     } catch (error) {
       setNotice(friendlyError(error));
@@ -374,8 +412,9 @@ export default function App() {
   }
 
   async function openGame(gameId: string) {
+    stopPlayback();
     try {
-      const next = await chessPlatform.openGame(gameId);
+      const next = await enqueueBoardOperation(() => chessPlatform.openGame(gameId));
       applyBoard(next);
       setSelected(null);
       await loadSavedAnalysis(next.fen ?? startingFen);
@@ -387,22 +426,153 @@ export default function App() {
     }
   }
 
-  async function navigateTo(nodeId?: string) {
+  function stopPlayback(keepBusy = false) {
+    playbackRevision.current += 1;
+    navigationRevision.current += 1;
+    if (!keepBusy) setIsPlaying(false);
+  }
+
+  function startPlayback() {
+    const token = ++playbackRevision.current;
+    setIsPlaying(true);
+    if (analysisBusyRef.current) {
+      pendingAutoAnalysis.current = false;
+      void chessPlatform.stopAnalysis(true).catch(() => undefined);
+    }
+    return token;
+  }
+
+  function enqueueBoardOperation<T>(run: () => Promise<T>) {
+    const operation = boardOperationQueue.current.then(run);
+    boardOperationQueue.current = operation.then(() => undefined, () => undefined);
+    return operation;
+  }
+
+  async function navigateTo(nodeId?: string, playbackToken?: number): Promise<BoardState | null> {
+    if (playbackToken == null) stopPlayback();
+    if (playbackToken != null && playbackToken !== playbackRevision.current) return null;
+    const requestRevision = ++navigationRevision.current;
     try {
-      const next = await chessPlatform.navigateTo(nodeId);
+      const next = normalizeBoardState(await enqueueBoardOperation(() => chessPlatform.navigateTo(nodeId)));
+      if (requestRevision !== navigationRevision.current) return null;
+      if (playbackToken != null && playbackToken !== playbackRevision.current) return null;
       applyBoard(next);
       setSelected(null);
       await loadSavedAnalysis(next.fen ?? board.fen);
-      setNotice(nodeId ? "已切换棋谱节点" : "已回到根局面");
+      setNotice(playbackToken == null ? nodeId ? "已切换棋谱节点" : "已回到根局面" : "正在播放主线棋谱");
+      return next;
     } catch (error) {
       setNotice(friendlyError(error));
+      stopPlayback();
+      return null;
     }
+  }
+
+  function preferredContinuation(state: BoardState) {
+    return state.branches.find((move) => move.isMainline) ?? state.branches[0];
+  }
+
+  async function goPrevious() {
+    const previous = board.history.at(-2);
+    await navigateTo(previous?.id);
+  }
+
+  async function goNext() {
+    const next = preferredContinuation(board);
+    if (next) await navigateTo(next.id);
+  }
+
+  async function goToEnd() {
+    const token = startPlayback();
+    let state = boardRef.current;
+    let next = preferredContinuation(state);
+    while (next) {
+      const navigated = await navigateTo(next.id, token);
+      if (!navigated) return;
+      state = navigated;
+      next = preferredContinuation(state);
+    }
+    if (token === playbackRevision.current) {
+      setIsPlaying(false);
+      setNotice("已到主线终局");
+    }
+  }
+
+  async function togglePlayback() {
+    if (isPlaying) {
+      const visibleNode = boardRef.current.currentNode;
+      stopPlayback(true);
+      await navigateTo(visibleNode, playbackRevision.current);
+      setIsPlaying(false);
+      setNotice("已暂停棋谱播放");
+      return;
+    }
+
+    const token = startPlayback();
+    let state = boardRef.current;
+    if (!preferredContinuation(state)) {
+      const root = await navigateTo(undefined, token);
+      if (!root) return;
+      state = root;
+    }
+
+    while (token === playbackRevision.current) {
+      const next = preferredContinuation(state);
+      if (!next) break;
+      await new Promise((resolve) => window.setTimeout(resolve, 700));
+      if (token !== playbackRevision.current) return;
+      const navigated = await navigateTo(next.id, token);
+      if (!navigated) return;
+      state = navigated;
+    }
+    if (token === playbackRevision.current) {
+      setIsPlaying(false);
+      setNotice("主线棋谱播放完成");
+    }
+  }
+
+  async function goToNextBranchPoint() {
+    const originalNode = boardRef.current.currentNode;
+    const token = startPlayback();
+    let state = boardRef.current;
+    let next = preferredContinuation(state);
+    while (next) {
+      const navigated = await navigateTo(next.id, token);
+      if (!navigated) return;
+      state = navigated;
+      if (state.branches.length > 1) {
+        setIsPlaying(false);
+        setReviewPanel("moves");
+        setNotice(`已到下一分支点，共 ${state.branches.length} 个变招`);
+        return;
+      }
+      next = preferredContinuation(state);
+    }
+
+    const restored = await navigateTo(originalNode, token);
+    if (restored && token === playbackRevision.current) {
+      setIsPlaying(false);
+      setNotice("后续主线没有新的分支点");
+    }
+  }
+
+  function handleReviewTabKey(event: KeyboardEvent<HTMLButtonElement>, index: number) {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight" && event.key !== "Home" && event.key !== "End") return;
+    event.preventDefault();
+    const nextIndex = event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? reviewPanels.length - 1
+        : (index + (event.key === "ArrowRight" ? 1 : -1) + reviewPanels.length) % reviewPanels.length;
+    const nextPanel = reviewPanels[nextIndex];
+    setReviewPanel(nextPanel);
+    window.requestAnimationFrame(() => document.getElementById(`review-tab-${nextPanel}`)?.focus());
   }
 
   async function saveComment() {
     if (!board.currentNode) return;
     try {
-      applyBoard(await chessPlatform.updateComment(board.currentNode, comment));
+      applyBoard(await enqueueBoardOperation(() => chessPlatform.updateComment(board.currentNode!, comment)));
       setNotice("注释已保存");
     } catch (error) {
       setNotice(friendlyError(error));
@@ -410,8 +580,9 @@ export default function App() {
   }
 
   async function makeMainline(nodeId: string) {
+    stopPlayback();
     try {
-      applyBoard(await chessPlatform.setMainline(nodeId));
+      applyBoard(await enqueueBoardOperation(() => chessPlatform.setMainline(nodeId)));
       setNotice("已设为主线");
     } catch (error) {
       setNotice(friendlyError(error));
@@ -419,8 +590,9 @@ export default function App() {
   }
 
   async function removeNode(nodeId: string) {
+    stopPlayback();
     try {
-      applyBoard(await chessPlatform.deleteNode(nodeId));
+      applyBoard(await enqueueBoardOperation(() => chessPlatform.deleteNode(nodeId)));
       setAnalysis([]);
       setNotice("节点已删除");
     } catch (error) {
@@ -463,12 +635,12 @@ export default function App() {
         <button className="wide-tool" onClick={() => void createGame(startingFen)}><FolderOpen size={14}/>新建研习棋谱</button>
         <div className="tool-group">
           <button className="tool-button" title="新建棋谱" onClick={() => void createGame(startingFen)}><Plus size={17}/></button>
-          <button className="tool-button" title="保存当前注释" disabled={!board.currentNode} onClick={() => void saveComment()}><Save size={16}/></button>
+          <button className="tool-button" title="保存当前注释" disabled={!board.currentNode || isPlaying} onClick={() => void saveComment()}><Save size={16}/></button>
           <button className="tool-button" title="翻转棋盘" onClick={() => setReversed((value) => !value)}><RotateCcw size={16}/></button>
           <button className="tool-button" title="返回根局面" onClick={() => void navigateTo()}><RefreshCw size={16}/></button>
         </div>
         <div className="tool-divider" />
-        <button className="mode-tool" onClick={() => void runAnalysis()} disabled={analysisBusy}><Zap size={15}/>分析当前局面</button>
+        <button className="mode-tool" onClick={() => void runAnalysis()} disabled={analysisBusy || isPlaying}><Zap size={15}/>分析当前局面</button>
         <button className="tool-button" title="引擎设置" onClick={() => document.getElementById("engine-path")?.focus()}><Settings2 size={16}/></button>
       </div>
 
@@ -523,6 +695,7 @@ export default function App() {
                     key={`${row}-${col}`}
                     className={`board-square ${isSelected ? "selected" : ""} ${isLastFrom ? "last-from" : ""} ${isLastTo ? "last-to" : ""}`}
                     style={style}
+                    disabled={isPlaying}
                     onClick={() => void selectSquare(row, col)}
                     aria-label={`${squareToIccs(row, col)}${piece ? ` ${piece.color === "red" ? "红" : "黑"}${piece.label}` : ""}`}
                   >
@@ -611,7 +784,7 @@ export default function App() {
               </div>
               {analysisBusy
                 ? <button className="analysis-action stop" onClick={() => void stopAnalysis()} title="停止分析"><Square size={13}/><span>停止</span></button>
-                : <button className="analysis-action" onClick={() => void runAnalysis()} title="分析当前局面"><Play size={14}/><span>分析</span></button>}
+                : <button className="analysis-action" disabled={isPlaying} onClick={() => void runAnalysis()} title="分析当前局面"><Play size={14}/><span>分析</span></button>}
             </div>
           </section>
 
@@ -665,50 +838,107 @@ export default function App() {
           </section>
 
           <section className="move-tree">
-            <div className="section-title"><strong>棋谱</strong><span>{board.history.length} 着</span></div>
-            <div className="move-table" role="table" aria-label="棋谱着法">
-              <div className="move-table-head" role="row">
-                <span role="columnheader">序号</span><span role="columnheader">着法</span><span role="columnheader">分数</span>
-              </div>
-              <div className="move-table-body" role="rowgroup">
-                <button className={`move-table-row root ${!board.currentNode ? "active" : ""}`} role="row" onClick={() => void navigateTo()}>
-                  <span role="cell">0</span><span role="cell"><GitBranch size={12}/>开始局面</span><span role="cell" />
-                </button>
-              {board.history.map((move, index) => (
-                  <button
-                    className={`move-table-row ${board.currentNode === move.id ? "active" : ""}`}
-                    key={move.id}
-                    role="row"
-                    title={`${move.movedBy} · ICCS ${move.iccs}`}
-                    onClick={() => void navigateTo(move.id)}
-                  >
-                    <span role="cell">{index + 1}</span>
-                    <span role="cell"><i className={move.movedBy === "红方" ? "red" : "black"}/><strong>{move.notation}</strong>{move.isMainline && <small>主线</small>}</span>
-                    <span role="cell" className={move.mate != null ? "mate-score" : ""}>{formatMoveScore(move)}</span>
+            <div className="review-tabs" role="tablist" aria-label="复盘视图">
+              <button id="review-tab-moves" role="tab" aria-controls="review-panel-moves" aria-selected={reviewPanel === "moves"} tabIndex={reviewPanel === "moves" ? 0 : -1} className={reviewPanel === "moves" ? "active" : ""} onKeyDown={(event) => handleReviewTabKey(event, 0)} onClick={() => setReviewPanel("moves")}><BookOpen size={12}/>棋谱</button>
+              <button id="review-tab-trend" role="tab" aria-controls="review-panel-trend" aria-selected={reviewPanel === "trend"} tabIndex={reviewPanel === "trend" ? 0 : -1} className={reviewPanel === "trend" ? "active" : ""} onKeyDown={(event) => handleReviewTabKey(event, 1)} onClick={() => setReviewPanel("trend")}><BarChart3 size={12}/>局势图</button>
+              <button id="review-tab-report" role="tab" aria-controls="review-panel-report" aria-selected={reviewPanel === "report"} tabIndex={reviewPanel === "report" ? 0 : -1} className={reviewPanel === "report" ? "active" : ""} onKeyDown={(event) => handleReviewTabKey(event, 2)} onClick={() => setReviewPanel("report")}><ClipboardList size={12}/>分析摘要</button>
+            </div>
+            <div className="playback-controls" aria-label="棋谱播放控制">
+              <button title="回到开局" disabled={!board.currentNode} onClick={() => void navigateTo()}><ChevronsLeft size={15}/></button>
+              <button title="上一着" disabled={!board.currentNode} onClick={() => void goPrevious()}><ChevronLeft size={15}/></button>
+              <button className={isPlaying ? "active" : ""} title={isPlaying ? "暂停播放" : "播放主线"} disabled={board.history.length === 0 && board.branches.length === 0} onClick={() => void togglePlayback()}>{isPlaying ? <Pause size={14}/> : <Play size={14}/>}</button>
+              <button title="下一着" disabled={!preferredContinuation(board)} onClick={() => void goNext()}><ChevronRight size={15}/></button>
+              <button title="前往主线终局" disabled={!preferredContinuation(board)} onClick={() => void goToEnd()}><ChevronsRight size={15}/></button>
+              <button className="variation-jump" title="下变：跳到下一个分支点" disabled={!preferredContinuation(board)} onClick={() => void goToNextBranchPoint()}><GitFork size={13}/><small>下变</small></button>
+              <span>第 <strong>{board.history.length}</strong> 着</span>
+            </div>
+            {reviewPanel === "moves" && <div id="review-panel-moves" className="move-review-pane" role="tabpanel" aria-labelledby="review-tab-moves">
+              <div className="move-table" role="table" aria-label="棋谱着法">
+                <div className="move-table-head" role="row">
+                  <span role="columnheader">序号</span><span role="columnheader">着法</span><span role="columnheader">分数</span>
+                </div>
+                <div className="move-table-body" role="rowgroup">
+                  <button className={`move-table-row root ${!board.currentNode ? "active" : ""}`} role="row" onClick={() => void navigateTo()}>
+                    <span role="cell">0</span><span role="cell"><GitBranch size={12}/>开始局面</span><span role="cell" />
                   </button>
-              ))}
-              </div>
-            </div>
-            {board.currentNode && (
-              <div className="node-editor">
-                <input value={comment} onChange={(event) => setComment(event.target.value)} placeholder="当前着法注释" />
-                <button className="tool-button" title="保存注释" onClick={() => void saveComment()}><Save size={14}/></button>
-                <button className="tool-button" title="设为主线" onClick={() => void makeMainline(board.currentNode!)}><ListStart size={14}/></button>
-                <button className="tool-button danger" title="删除节点" onClick={() => void removeNode(board.currentNode!)}><Trash2 size={14}/></button>
-              </div>
-            )}
-            <div className="branch-list">
-              <div className="branch-heading"><strong>变招列表</strong><span>{board.branches.length}</span></div>
-              {board.branches.length === 0
-                ? <p className="empty-branch">在当前局面落子以建立分支</p>
-                : board.branches.map((move) => (
-                  <div className="branch-row" key={move.id}>
-                    <button title={`${move.movedBy} · ICCS ${move.iccs}`} onClick={() => void navigateTo(move.id)}><GitBranch size={12}/><span>{move.notation}</span><small>{formatMoveScore(move)}</small></button>
-                    <button className="tool-button" title="设为主线" onClick={() => void makeMainline(move.id)}><ListStart size={13}/></button>
-                    <button className="tool-button danger" title="删除分支" onClick={() => void removeNode(move.id)}><Trash2 size={13}/></button>
-                  </div>
+                {board.history.map((move, index) => (
+                    <button
+                      className={`move-table-row ${board.currentNode === move.id ? "active" : ""}`}
+                      key={move.id}
+                      role="row"
+                      title={`${move.movedBy} · ICCS ${move.iccs}`}
+                      onClick={() => void navigateTo(move.id)}
+                    >
+                      <span role="cell">{index + 1}</span>
+                      <span role="cell"><i className={move.movedBy === "红方" ? "red" : "black"}/><strong>{move.notation}</strong>{move.isMainline && <small>主线</small>}</span>
+                      <span role="cell" className={move.mate != null ? "mate-score" : ""}>{formatMoveScore(move)}</span>
+                    </button>
                 ))}
-            </div>
+                </div>
+              </div>
+              {board.currentNode && (
+                <div className="node-editor">
+                  <input disabled={isPlaying} value={comment} onChange={(event) => setComment(event.target.value)} placeholder="当前着法注释" />
+                  <button className="tool-button" disabled={isPlaying} title="保存注释" onClick={() => void saveComment()}><Save size={14}/></button>
+                  <button className="tool-button" disabled={isPlaying} title="设为主线" onClick={() => void makeMainline(board.currentNode!)}><ListStart size={14}/></button>
+                  <button className="tool-button danger" disabled={isPlaying} title="删除节点" onClick={() => void removeNode(board.currentNode!)}><Trash2 size={14}/></button>
+                </div>
+              )}
+              <div className="branch-list">
+                <div className="branch-heading"><strong>变招列表</strong><span>{board.branches.length}</span></div>
+                {board.branches.length === 0
+                  ? <p className="empty-branch">在当前局面落子以建立分支</p>
+                  : board.branches.map((move) => (
+                    <div className="branch-row" key={move.id}>
+                      <button disabled={isPlaying} title={`${move.movedBy} · ICCS ${move.iccs}`} onClick={() => void navigateTo(move.id)}><GitBranch size={12}/><span>{move.notation}</span><small>{formatMoveScore(move)}</small></button>
+                      <button className="tool-button" disabled={isPlaying} title="设为主线" onClick={() => void makeMainline(move.id)}><ListStart size={13}/></button>
+                      <button className="tool-button danger" disabled={isPlaying} title="删除分支" onClick={() => void removeNode(move.id)}><Trash2 size={13}/></button>
+                    </div>
+                  ))}
+              </div>
+            </div>}
+            {reviewPanel === "trend" && <div id="review-panel-trend" className="review-empty-or-content trend-review" role="tabpanel" aria-labelledby="review-tab-trend">
+              {evaluationTrend.length === 0
+                ? <div className="empty-review"><BarChart3 size={24}/><strong>暂无局势曲线</strong><span>分析棋谱节点后，这里会按红方视角显示历史分数</span></div>
+                : <>
+                  <div className="trend-legend"><span>红方优势</span><strong>{evaluation?.scoreText}</strong><span>黑方优势</span></div>
+                  <svg className="trend-chart-large" viewBox="0 0 300 120" preserveAspectRatio="none" role="group" aria-label="可点击的历史局面分数趋势">
+                    <line className="trend-grid top" x1="10" y1="20" x2="290" y2="20"/>
+                    <line className="trend-grid middle" x1="10" y1="60" x2="290" y2="60"/>
+                    <line className="trend-grid bottom" x1="10" y1="100" x2="290" y2="100"/>
+                    <polyline points={evaluationTrend.map((point) => `${point.x},${60 + (point.y - 28) * 1.8}`).join(" ")}/>
+                    {evaluationTrend.map((point, index) => (
+                      <circle
+                        className={point.nodeId === board.currentNode ? "current" : ""}
+                        key={`${point.label}-${index}`}
+                        cx={point.x}
+                        cy={60 + (point.y - 28) * 1.8}
+                        r={point.nodeId === board.currentNode ? 5 : 3.5}
+                        tabIndex={point.nodeId ? 0 : undefined}
+                        role={point.nodeId ? "button" : undefined}
+                        aria-label={point.nodeId ? `${point.label}，红方视角 ${formatRedScore(point.scoreCp)}，点击定位` : undefined}
+                        onClick={() => point.nodeId && void navigateTo(point.nodeId)}
+                        onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && point.nodeId) void navigateTo(point.nodeId); }}
+                      ><title>{point.label}：{formatRedScore(point.scoreCp)}</title></circle>
+                    ))}
+                  </svg>
+                  <div className="trend-axis"><span>开局</span><span>红方视角，点击节点定位</span><span>第 {board.history.length} 着</span></div>
+                </>}
+            </div>}
+            {reviewPanel === "report" && <div id="review-panel-report" className="review-empty-or-content report-review" role="tabpanel" aria-labelledby="review-tab-report">
+              {reports.length === 0
+                ? <div className="empty-review"><ClipboardList size={24}/><strong>暂无分析摘要</strong><span>录入并分析着法后生成逐着局面变化</span></div>
+                : reports.map((report) => (
+                  <button className={`report-row ${board.currentNode === report.move.id ? "active" : ""}`} key={report.move.id} onClick={() => void navigateTo(report.move.id)}>
+                    <span className="report-number">{report.index + 1}</span>
+                    <span className={`report-side ${report.move.movedBy === "红方" ? "red" : "black"}`}/>
+                    <span className="report-move"><strong>{report.move.notation}</strong><small>{report.move.movedBy} · {formatScoreDelta(report.deltaCp)}</small></span>
+                    <span className="report-score">{formatReportScore(report.move, report.redScoreCp)}</span>
+                    {report.grade ? <span className={`report-grade grade-${report.grade}`}>{report.grade}</span> : <span className="report-grade pending">-</span>}
+                  </button>
+                ))}
+              <p className="report-note">评价依据相邻已分析局面的分数变化，仅作复盘提示。</p>
+            </div>}
           </section>
         </aside>
       </main>

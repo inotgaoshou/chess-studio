@@ -98,7 +98,7 @@ class WebPlatform implements ChessPlatform {
         rootId: this.requireGame().rootId(),
       });
     }
-    return this.state();
+    return this.scoredState();
   }
 
   async listGames(): Promise<GameSummary[]> {
@@ -119,7 +119,7 @@ class WebPlatform implements ChessPlatform {
     this.game = module.WebGame.importJson(record.snapshot);
     this.gameId = record.id;
     await webDatabase.saveGame(record, true);
-    return this.state();
+    return this.scoredState();
   }
 
   async detectEngine() { return null; }
@@ -137,7 +137,7 @@ class WebPlatform implements ChessPlatform {
       orderKey: Date.now(),
       isMainline: node.isMainline,
     });
-    return state;
+    return this.scoredState(state);
   }
 
   async newGame(fen: string): Promise<Partial<BoardState>> {
@@ -147,20 +147,20 @@ class WebPlatform implements ChessPlatform {
     const state = this.state();
     await this.persist(state);
     await this.enqueue("create_game", this.gameId, { title: "Web study", fen, rootId: this.requireGame().rootId() });
-    return state;
+    return this.scoredState(state);
   }
 
   async navigateTo(nodeId?: string): Promise<Partial<BoardState>> {
     const state = this.parseState(this.requireGame().navigateTo(nodeId));
     await this.persist(state);
-    return state;
+    return this.scoredState(state);
   }
 
   async updateComment(nodeId: string, comment: string): Promise<Partial<BoardState>> {
     const state = this.parseState(this.requireGame().updateComment(nodeId, comment));
     await this.persist(state);
     await this.enqueue("update_comment", nodeId, { nodeId, comment });
-    return state;
+    return this.scoredState(state);
   }
 
   async setMainline(nodeId: string): Promise<Partial<BoardState>> {
@@ -169,20 +169,22 @@ class WebPlatform implements ChessPlatform {
     const state = this.parseState(this.requireGame().setMainline(nodeId));
     await this.persist(state);
     await this.enqueue("set_mainline", nodeId, { parentId, nodeId });
-    return state;
+    return this.scoredState(state);
   }
 
   async deleteNode(nodeId: string): Promise<Partial<BoardState>> {
     const state = this.parseState(this.requireGame().deleteNode(nodeId));
     await this.persist(state);
     await this.enqueue("delete_node", nodeId, { nodeId });
-    return state;
+    return this.scoredState(state);
   }
 
   async analyze(options: AnalysisOptions): Promise<AnalysisLine[]> {
     if (!navigator.onLine) throw new Error("当前离线，可查看缓存分析，联网后才能启动 Pikafish");
     if (!options.token.trim()) throw new Error("服务端分析需要先填写登录令牌");
     if (options.searchMode === "infinite") throw new Error("Web 端不支持持续分析，请选择时间或深度");
+    const analyzedGameId = this.gameId;
+    const analyzedNode = this.state().currentNode;
     this.abort = new AbortController();
     const response = await fetch(`${options.serverUrl.replace(/\/$/, "")}/api/v1/analysis`, {
       method: "POST",
@@ -194,6 +196,7 @@ class WebPlatform implements ChessPlatform {
     if (!response.ok) throw new Error(payload.error ?? `分析服务返回 ${response.status}`);
     const lines = payload.lines ?? [];
     await webDatabase.saveAnalysis(options.fen, lines);
+    if (analyzedNode) await webDatabase.saveNodeAnalysis(analyzedGameId, analyzedNode, lines);
     return lines;
   }
 
@@ -284,6 +287,17 @@ class WebPlatform implements ChessPlatform {
 
   private state(): BoardState { return this.parseState(this.requireGame().stateJson()); }
   private parseState(value: string): BoardState { return JSON.parse(value) as BoardState; }
+
+  private async scoredState(state = this.state()): Promise<BoardState> {
+    const nodeIds = [...state.history, ...state.branches].map((move) => move.id);
+    const scores = await webDatabase.nodeAnalyses(this.gameId, nodeIds);
+    const withScore = (move: BoardState["history"][number]) => ({ ...move, ...scores.get(move.id) });
+    return {
+      ...state,
+      history: state.history.map(withScore),
+      branches: state.branches.map(withScore),
+    };
+  }
 
   private async persist(state: BoardState): Promise<void> {
     await webDatabase.saveGame({

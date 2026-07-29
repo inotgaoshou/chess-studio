@@ -1,8 +1,17 @@
 import type { AnalysisLine, BoardState, MoveItem, Side } from "./platform";
 
 export type PvMoveRow = { number: number; red?: string; black?: string };
-export type TrendSample = { label: string; scoreCp: number };
+export type TrendSample = { label: string; scoreCp: number; nodeId?: string; moveIndex?: number };
 export type TrendPoint = TrendSample & { x: number; y: number };
+export type MoveGrade = "优" | "佳" | "疑" | "错" | "漏";
+export type MoveReport = {
+  move: MoveItem;
+  index: number;
+  redScoreCp?: number;
+  deltaCp?: number;
+  moverLossCp?: number;
+  grade?: MoveGrade;
+};
 export type PositionEvaluation = {
   label: string;
   scoreText: string;
@@ -21,9 +30,30 @@ function toRedPerspective(scoreCp: number, sideToMove: Side) {
   return sideToMove === "红方" ? scoreCp : -scoreCp;
 }
 
-function redScoreAfterMove(move: MoveItem) {
+export function redScoreAfterMove(move: MoveItem) {
   if (move.scoreCp == null) return undefined;
   return move.movedBy === "黑方" ? move.scoreCp : -move.scoreCp;
+}
+
+function moveGrade(lossCp: number): MoveGrade {
+  if (lossCp <= 20) return "优";
+  if (lossCp <= 60) return "佳";
+  if (lossCp <= 120) return "疑";
+  if (lossCp <= 250) return "错";
+  return "漏";
+}
+
+export function moveReports(history: MoveItem[]): MoveReport[] {
+  return history.map((move, index) => {
+    const redScoreCp = redScoreAfterMove(move);
+    const previousScore = index > 0 ? redScoreAfterMove(history[index - 1]) : undefined;
+    if (redScoreCp == null || previousScore == null) return { move, index, redScoreCp };
+
+    const deltaCp = redScoreCp - previousScore;
+    const moverImprovement = move.movedBy === "红方" ? deltaCp : -deltaCp;
+    const moverLossCp = Math.max(0, -moverImprovement);
+    return { move, index, redScoreCp, deltaCp, moverLossCp, grade: moveGrade(moverLossCp) };
+  });
 }
 
 function scoreText(scoreCp: number) {
@@ -79,14 +109,14 @@ export function positionEvaluation(board: BoardState, analysis: AnalysisLine[]):
 
   const samples: TrendSample[] = board.history.flatMap((move, index) => {
     const score = redScoreAfterMove(move);
-    return score == null ? [] : [{ label: `第 ${index + 1} 着`, scoreCp: score }];
+    return score == null ? [] : [{ label: `第 ${index + 1} 着`, scoreCp: score, nodeId: move.id, moveIndex: index }];
   });
   if (currentScore != null) {
     const currentLabel = board.currentNode ? `第 ${board.history.length} 着` : "开始局面";
-    if (samples.length > 0 && board.currentNode === board.history.at(-1)?.id) {
-      samples[samples.length - 1] = { label: currentLabel, scoreCp: currentScore };
+    if (samples.at(-1)?.nodeId === board.currentNode) {
+      samples[samples.length - 1] = { label: currentLabel, scoreCp: currentScore, nodeId: currentMove?.id, moveIndex: board.history.length - 1 };
     } else {
-      samples.push({ label: currentLabel, scoreCp: currentScore });
+      samples.push({ label: currentLabel, scoreCp: currentScore, nodeId: currentMove?.id, moveIndex: board.history.length - 1 });
     }
   }
 
@@ -106,11 +136,14 @@ export function positionEvaluation(board: BoardState, analysis: AnalysisLine[]):
   };
 }
 
-export function trendPoints(samples: TrendSample[]): TrendPoint[] {
+export function trendPoints(samples: TrendSample[], totalMoves = samples.length): TrendPoint[] {
   if (samples.length === 0) return [];
+  const lastMoveIndex = Math.max(totalMoves - 1, ...samples.map((sample) => sample.moveIndex ?? 0));
   return samples.map((sample, index) => ({
     ...sample,
-    x: samples.length === 1 ? 150 : 12 + index * (276 / (samples.length - 1)),
+    x: samples.length === 1
+      ? 150
+      : 12 + (sample.moveIndex ?? index) * (276 / Math.max(1, lastMoveIndex)),
     y: 28 - Math.max(-1, Math.min(1, sample.scoreCp / 500)) * 21,
   }));
 }
