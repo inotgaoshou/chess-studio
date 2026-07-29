@@ -56,18 +56,90 @@ export type CurrentCoachAdvice = {
   suggestions: string[];
   nextAction: string;
 };
+export type CandidateCoachInsight = {
+  rank: number;
+  move: string;
+  scoreText: string;
+  depthText: string;
+  intent: string;
+  possibility: string;
+  risk: string;
+  followUp: string[];
+  shortLine: boolean;
+  usesIccs: boolean;
+};
 
 function analysisRecommendation(line: AnalysisLine | undefined) {
   return line?.notation?.[0] ?? line?.pv[0];
 }
 
+function lineScoreValue(line: AnalysisLine) {
+  if (line.mate != null) return line.mate > 0 ? 100_000 - Math.abs(line.mate) : -100_000 + Math.abs(line.mate);
+  return line.scoreCp ?? 0;
+}
+
+function scoreLabel(line: AnalysisLine) {
+  if (line.mate != null) return line.mate > 0 ? `${line.mate}步杀` : `${Math.abs(line.mate)}步被杀`;
+  return line.scoreCp == null ? "--" : signed(line.scoreCp);
+}
+
+function linePurpose(rank: number, move: string, sideToMove: Side) {
+  if (rank === 1) return `主候选「${move}」：优先作为${sideToMove}当前局面的基准方案，先看它如何保持或扩大局面价值。`;
+  if (rank === 2) return `备选「${move}」：适合用来比较不同次序，判断是否能更稳地处理对方反击。`;
+  return `变招「${move}」：用于探索另一种可能性，重点看 3 回合后局面是否仍然站得住。`;
+}
+
+function linePossibility(rank: number, gap: number) {
+  if (rank === 1) return "主攻线：作为当前局面的第一参考线。";
+  if (gap <= 50) return "等价候选：与第一候选差距很小，可以作为实战选择认真比较。";
+  if (gap <= 150) return "可选变招：思路可能成立，但需要看后续是否有补偿。";
+  return "探索线：与第一候选差距较大，更适合研究或作为反例复盘。";
+}
+
+function lineRisk(rank: number, gap: number, line: AnalysisLine, shortLine: boolean, usesIccs: boolean) {
+  if (usesIccs) return "当前候选仅有 ICCS，已保留原始线路；重新分析或生成整局报告后可补齐中文推演。";
+  if (shortLine) return `当前深度只返回 ${Math.max(line.notation?.length ?? 0, line.pv.length)} 个半回合，线路较短，建议提高深度或时间再判断。`;
+  if (rank === 1) return "风险参考：仍需检查对方是否有直接将军、吃子或反先手段。";
+  if (gap <= 50) return `风险较低：与首选分差约 ${Math.round(gap)}cp，可重点比较走法目的。`;
+  if (gap <= 150) return `风险中等：与首选分差约 ${Math.round(gap)}cp，适合先作为变招推演。`;
+  return `风险较高：与首选分差约 ${Math.round(gap)}cp，实战采用前需要找到明确补偿。`;
+}
+
+export function candidateCoachInsights(lines: AnalysisLine[], board: Pick<BoardState, "sideToMove">): CandidateCoachInsight[] {
+  const ordered = lines.slice().sort((left, right) => left.multipv - right.multipv);
+  const primaryValue = ordered[0] ? lineScoreValue(ordered[0]) : 0;
+  return ordered.map((line, index) => {
+    const followUpSource = line.notation?.length ? line.notation : line.pv;
+    const usesIccs = !line.notation?.length;
+    const followUp = followUpSource.slice(0, 6);
+    const move = followUp[0] ?? "暂无候选";
+    const gap = Math.abs(primaryValue - lineScoreValue(line));
+    const shortLine = followUp.length > 0 && followUp.length < 6;
+    const rank = line.multipv || index + 1;
+    return {
+      rank,
+      move,
+      scoreText: scoreLabel(line),
+      depthText: `深度 ${line.depth ?? "-"}`,
+      intent: linePurpose(rank, move, board.sideToMove),
+      possibility: linePossibility(rank, gap),
+      risk: lineRisk(rank, gap, line, shortLine, usesIccs),
+      followUp,
+      shortLine,
+      usesIccs,
+    };
+  });
+}
+
 export function currentCoachAdvice(input: {
   board: Pick<BoardState, "history" | "sideToMove" | "currentNode" | "playable" | "status">;
   primaryAnalysis?: AnalysisLine;
+  analysisLines?: AnalysisLine[];
   report?: GameReportPresentationDto;
   analysisBusy?: boolean;
 }): CurrentCoachAdvice {
   const { board, primaryAnalysis, report, analysisBusy = false } = input;
+  const analysisLines = input.analysisLines ?? (primaryAnalysis ? [primaryAnalysis] : []);
   const recommendation = analysisRecommendation(primaryAnalysis);
   const currentIssue = board.currentNode ? report?.issues.find((issue) => issue.nodeId === board.currentNode) : undefined;
   if (!board.playable) {
@@ -94,15 +166,16 @@ export function currentCoachAdvice(input: {
     };
   }
   if (recommendation) {
+    const count = analysisLines.length || 1;
     return {
       title: "当前局面 AI 私教建议",
-      status: `${board.sideToMove}行棋 · 首选 ${recommendation}`,
+      status: `${board.sideToMove}行棋 · 首选 ${recommendation} · MultiPV ${count}`,
       suggestions: [
         `先把「${recommendation}」当作主候选，观察它是否在抢先、补防、兑子或制造威胁。`,
         primaryAnalysis?.notation?.length
-          ? `推荐线：${primaryAnalysis.notation.slice(0, 6).join(" ")}。`
+          ? `主线 3 回合推演：${primaryAnalysis.notation.slice(0, 6).join(" ")}。`
           : "当前只有 ICCS 候选，建议生成整局报告后可得到中文推荐与后续推演。",
-        "如果你想研究别的想法，用“强制变招”排除第一候选，再比较局面分差异。",
+        count > 1 ? `下面已列出 ${count} 条候选的想法、风险和 3 回合推演，可逐条比较。` : "如果你想研究别的想法，用“强制变招”排除第一候选，再比较局面分差异。",
       ],
       nextAction: "可以直接点击候选线第一步试走，或把它保存为变招分支。",
     };
@@ -110,7 +183,7 @@ export function currentCoachAdvice(input: {
   if (analysisBusy) {
     return {
       title: "AI 正在思考",
-      status: `${board.sideToMove}行棋 · 等待候选线`,
+      status: `${board.sideToMove}行棋 · 正在比较 MultiPV 候选`,
       suggestions: [
         "先观察当前局面有哪些直接威胁：将军、吃子、捉双、抽将。",
         "再列 2-3 个候选：一个进攻、一个补防、一个调整子力。",

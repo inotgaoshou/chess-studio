@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { branchCoachInsights, currentCoachAdvice, moveCoachInsight, moveThoughtHint } from "./coachInsights";
+import { branchCoachInsights, candidateCoachInsights, currentCoachAdvice, moveCoachInsight, moveThoughtHint } from "./coachInsights";
 import type { GameReportMove, SideReport } from "./analysisView";
 import type { BoardState, GameReportPresentationDto } from "./platform";
 
@@ -72,11 +72,17 @@ describe("coachInsights", () => {
     const advice = currentCoachAdvice({
       board: board({ history: [moveItem("n1")] }),
       primaryAnalysis: { multipv: 1, notation: ["马二进三", "马8进7"], pv: ["h0g2"] },
+      analysisLines: [
+        { multipv: 1, notation: ["马二进三", "马8进7"], pv: ["h0g2"] },
+        { multipv: 2, notation: ["炮二平五", "马8进7"], pv: ["h2e2"] },
+      ],
     });
 
     expect(advice.title).toBe("当前局面 AI 私教建议");
     expect(advice.status).toContain("马二进三");
-    expect(advice.suggestions.join("")).toContain("推荐线：马二进三 马8进7");
+    expect(advice.status).toContain("MultiPV 2");
+    expect(advice.suggestions.join("")).toContain("主线 3 回合推演：马二进三 马8进7");
+    expect(advice.suggestions.join("")).toContain("2 条候选");
   });
 
   it("falls back to report issue coaching for the selected move", () => {
@@ -101,6 +107,22 @@ describe("coachInsights", () => {
     expect(advice.title).toContain("马8进7");
     expect(advice.status).toContain("39分");
     expect(advice.nextAction).toContain("变招分支");
+  });
+
+  it("builds one three-round coach insight for each MultiPV line", () => {
+    const insights = candidateCoachInsights([
+      { multipv: 1, depth: 20, scoreCp: 80, pv: ["h0g2"], notation: ["马二进三", "马8进7", "炮二平五", "炮8平5", "车一平二", "车9平8", "兵七进一"] },
+      { multipv: 2, depth: 20, scoreCp: 52, pv: ["h2e2"], notation: ["炮二平五", "马8进7", "马二进三", "卒7进1", "车一平二", "车9平8"] },
+      { multipv: 3, depth: 18, scoreCp: -120, pv: ["b0c2", "b9c7"], notation: ["马八进七", "马2进3"] },
+      { multipv: 4, depth: 16, scoreCp: -260, pv: ["c3c4", "h9g7", "h0g2", "i9h9", "h2e2", "b9c7"] },
+    ], board({ sideToMove: "红方" }));
+
+    expect(insights).toHaveLength(4);
+    expect(insights[0]).toMatchObject({ rank: 1, move: "马二进三", followUp: ["马二进三", "马8进7", "炮二平五", "炮8平5", "车一平二", "车9平8"], shortLine: false, usesIccs: false });
+    expect(insights[1].possibility).toContain("等价候选");
+    expect(insights[2].shortLine).toBe(true);
+    expect(insights[2].risk).toContain("线路较短");
+    expect(insights[3]).toMatchObject({ usesIccs: true, followUp: ["c3c4", "h9g7", "h0g2", "i9h9", "h2e2", "b9c7"] });
   });
 });
 

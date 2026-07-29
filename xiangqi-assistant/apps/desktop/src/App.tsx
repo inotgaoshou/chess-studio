@@ -46,7 +46,7 @@ import { DesktopMenuBar, type MenuCommand } from "./DesktopMenuBar";
 import { DesktopDialogs, type DesktopDialog } from "./DesktopDialogs";
 import { GameReportDialog, GameReportView } from "./GameReportView";
 import { buildGameReportPresentation } from "./gameReport";
-import { currentCoachAdvice, moveThoughtHint } from "./coachInsights";
+import { candidateCoachInsights, currentCoachAdvice, moveThoughtHint } from "./coachInsights";
 import { MobileToolbar, type MobileToolbarCommand } from "./MobileToolbar";
 import type { DesktopPreferencesDto, SyncAccountDto } from "./platform";
 import { applyColorTheme, initialColorTheme, type ColorTheme } from "./theme";
@@ -501,12 +501,14 @@ export default function App() {
   const reportPresentation = useMemo(() => gameReport ? buildGameReportPresentation(board.title, gameReport) : undefined, [board.title, gameReport]);
   const orderedAnalysis = useMemo(() => analysis.slice().sort((left, right) => left.multipv - right.multipv), [analysis]);
   const primaryAnalysis = orderedAnalysis[0];
+  const candidateInsights = useMemo(() => candidateCoachInsights(orderedAnalysis, board), [board, orderedAnalysis]);
   const liveCoachAdvice = useMemo(() => currentCoachAdvice({
     board,
     primaryAnalysis,
+    analysisLines: orderedAnalysis,
     report: reportPresentation,
     analysisBusy,
-  }), [analysisBusy, board, primaryAnalysis, reportPresentation]);
+  }), [analysisBusy, board, orderedAnalysis, primaryAnalysis, reportPresentation]);
   const primaryMove = primaryAnalysis?.notation?.[0] ?? primaryAnalysis?.pv[0];
   const searchLimitLabel = searchMode === "infinite"
     ? "持续分析"
@@ -1795,6 +1797,7 @@ export default function App() {
               {analysis.length === 0
                 ? <div className="empty-analysis"><Activity size={24}/><strong>等待分析</strong><span>启动 Pikafish 后显示候选线路</span></div>
                 : orderedAnalysis.map((line) => <CandidateLine
+                  coach={candidateInsights.find((candidate) => candidate.rank === line.multipv)}
                   color={analysisArrowColors[line.multipv - 1] ?? "transparent"}
                   fen={board.fen}
                   key={line.multipv}
