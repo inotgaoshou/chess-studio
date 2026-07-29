@@ -269,6 +269,7 @@ export default function App() {
   const [reportBusy, setReportBusy] = useState(false);
   const [reportDialogOpen, setReportDialogOpen] = useState(false);
   const [reportExporting, setReportExporting] = useState(false);
+  const [analysisHelpOpen, setAnalysisHelpOpen] = useState(false);
   const [trendCursorIndex, setTrendCursorIndex] = useState<number | undefined>();
   const [syncAccount, setSyncAccount] = useState(defaultSyncAccount);
   const [desktopDialog, setDesktopDialog] = useState<DesktopDialog>(null);
@@ -380,6 +381,15 @@ export default function App() {
     if (workspacePanel !== "moves") return;
     activeMoveRef.current?.scrollIntoView({ block: "nearest" });
   }, [board.currentNode, workspacePanel]);
+
+  useEffect(() => {
+    if (!analysisHelpOpen) return;
+    const closeOnEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") setAnalysisHelpOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [analysisHelpOpen]);
 
   useEffect(() => {
     let disposed = false;
@@ -1605,7 +1615,11 @@ export default function App() {
                     {piece && <img src={pieceAsset(piece)} alt="" draggable={false} />}
                     {isSelected && <img className="selection-mask" src="/skins/tchess/mask2.png" alt="" />}
                     {isLastTo && board.currentNode === lastMove?.id && overviewReport?.grade && overviewReport.score != null && (
-                      <span className={`board-move-grade grade-${overviewReport.grade}`} title={`本着质量 ${overviewReport.score} 分，等级 ${overviewReport.grade}`}>
+                      <span
+                        className={`board-move-grade grade-${overviewReport.grade}`}
+                        data-tooltip={`${overviewReport.grade} ${overviewReport.score}分 · ${formatScoreDelta(overviewReport.deltaCp)}`}
+                        title={`本着质量 ${overviewReport.score} 分，等级 ${overviewReport.grade}`}
+                      >
                         {overviewReport.grade}
                       </span>
                     )}
@@ -1646,7 +1660,7 @@ export default function App() {
               )}
             </div>
             <aside className={`board-eval-rail ${boardEvaluationScore == null ? "pending" : boardEvaluationScore < -50 ? "black" : boardEvaluationScore > 50 ? "red" : "balanced"}`} aria-label="棋盘局势评分条">
-              <div className="board-eval-help" title="局面分说明：正数红优，负数黑优；±50 内可近似看作均势">?</div>
+              <button className="board-eval-help" type="button" title="查看棋谱分析说明" aria-label="查看棋谱分析说明" onClick={() => setAnalysisHelpOpen(true)}>?</button>
               <div className="board-eval-track" aria-hidden="true">
                 <span style={{ height: `${Math.max(8, Math.min(92, boardEvaluationRailShare))}%` }}/>
               </div>
@@ -1656,9 +1670,9 @@ export default function App() {
               </div>
               {overviewReport?.grade && overviewReport.score != null
                 ? <div className={`board-eval-quality grade-${overviewReport.grade}`} title={`当前着法质量 ${overviewReport.score} 分`}>
-                  <b>{overviewReport.grade}</b><span>{overviewReport.score}</span>
+                  <b>{overviewReport.grade}</b><span>{overviewReport.score}分</span><small>质量分</small>
                 </div>
-                : <div className="board-eval-quality pending"><b>-</b><span>待评</span></div>}
+                : <div className="board-eval-quality pending"><b>-</b><span>待评</span><small>质量分</small></div>}
             </aside>
             </div>
           </div>
@@ -1935,6 +1949,32 @@ export default function App() {
         onNavigate={(nodeId) => void navigateTo(nodeId)}
         onStudy={(nodeId) => void startCoachStudy(nodeId)}
       />}
+      {analysisHelpOpen && (
+        <div className="analysis-help-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setAnalysisHelpOpen(false); }}>
+          <section className="analysis-help-dialog" role="dialog" aria-modal="true" aria-labelledby="analysis-help-title">
+            <header>
+              <button className="tool-button" title="关闭" aria-label="关闭说明" onClick={() => setAnalysisHelpOpen(false)}><X size={18}/></button>
+              <strong id="analysis-help-title">棋谱分析</strong>
+            </header>
+            <div className="analysis-help-scroll">
+              <p>棋谱分析是一个智能复盘功能，棋力相当于强大师水平（AI=20 层）。它会结合内置经典开局“官着”信息，并调用 Pikafish 自动算出每步招法优劣和评分。分析需要一定时间，耗时取决于本机性能、线程、Hash 和设定深度。</p>
+              <h3>局势图</h3>
+              <p>当棋谱分析完成后，可以通过局势图快速找到本局局势转折点，定位哪一步出现明显问题。</p>
+              <p>曲线在 0 上方表示红方占优，局面分 &gt; 0；曲线在 0 下方表示黑方占优，局面分 &lt; 0。局面分近似理解：1000 分相当于多一个车，500 相当于多一个马或炮，200 相当于多一个过河兵，100 相当于多一个兵。50 分以内可能有计算误差，可忽略不计。</p>
+              <h3>分析</h3>
+              <p>当你不明白实战着为什么差、AI 推荐为什么好时，可以切换到“分析”页查看后续招法推演。棋盘上的绿色/彩色箭头代表当前 MultiPV 候选线路，编号与右侧候选线路一致。</p>
+              <h3>报告</h3>
+              <p>报告会根据每步表现用 100 分制打分。100 分表示在当前分析深度下几乎没有局面损失，可视作“特级大师级准确招法”的本应用定义。</p>
+              <p>评价图标标准：优 ≥ 80，良 ≥ 60，中 ≥ 40，差 ≥ 20，错 &lt; 20。评分不是棋力绝对值，而是本局每一步相对引擎推荐造成的局面损失；遇到更强对手，失误可能更多，评分也会偏低。</p>
+              <p>官着表示开局阶段人类历史积累下来的经典布局招法，只作标记与开局说明，不会强行提高该步质量分。</p>
+              <p>失误表示整局中评分较低的着法数量；漏杀表示有绝杀机会但实战走漏的次数。残局判断按双方大子（车、马、炮）数量和总子力估算，对局未进入残局时不会显示残局评分。</p>
+              <h3>自我分析与重试</h3>
+              <p>如果想研究某个局面，可以从问题着法进入推演，重新尝试其他走法；应用会尽量复用已有分析缓存，让你专注比较不同变招的后续演变。</p>
+            </div>
+            <footer><button onClick={() => setAnalysisHelpOpen(false)}>知道了</button></footer>
+          </section>
+        </div>
+      )}
       {(mobilePanel === "library" || mobilePanel === "settings") && <button className="mobile-drawer-backdrop" aria-label="关闭侧栏" onClick={() => setMobilePanel("board")}/>}
       {positionEditorOpen && (
         <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPositionEditorOpen(false); }}>
