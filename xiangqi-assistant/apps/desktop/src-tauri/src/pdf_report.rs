@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use lopdf::{Document, Object, text_string};
 use printpdf::{
     Color, FontId, Line, LinePoint, Mm, Op, ParsedFont, PdfDocument, PdfPage, PdfSaveOptions,
     Point, Pt, Rgb, TextItem,
@@ -818,9 +819,42 @@ fn render_report_pdf(
         .into_iter()
         .map(|ops| PdfPage::new(Mm(210.0), Mm(297.0), ops))
         .collect();
-    Ok(document
+    let bytes = document
         .with_pages(pages)
-        .save(&PdfSaveOptions::default(), &mut warnings))
+        .save(&PdfSaveOptions::default(), &mut warnings);
+    encode_pdf_info_title(bytes, &format!("{}复盘报告", report.title))
+}
+
+fn encode_pdf_info_title(bytes: Vec<u8>, title: &str) -> Result<Vec<u8>, String> {
+    let mut document =
+        Document::load_mem(&bytes).map_err(|error| format!("无法读取 PDF 元数据：{error}"))?;
+    let title = text_string(title);
+    let info = document.trailer.get(b"Info").cloned();
+    match info {
+        Ok(Object::Reference(id)) => {
+            let info = document
+                .get_object_mut(id)
+                .and_then(Object::as_dict_mut)
+                .map_err(|error| format!("无法更新 PDF 标题：{error}"))?;
+            info.set("Title", title);
+        }
+        Ok(Object::Dictionary(_)) => {
+            let info = document
+                .trailer
+                .get_mut(b"Info")
+                .and_then(Object::as_dict_mut)
+                .map_err(|error| format!("无法更新 PDF 标题：{error}"))?;
+            info.set("Title", title);
+        }
+        Ok(_) | Err(_) => {
+            return Err("PDF 缺少可写入的文档信息字典".to_owned());
+        }
+    }
+    let mut output = Vec::new();
+    document
+        .save_to(&mut output)
+        .map_err(|error| format!("无法写入 PDF 元数据：{error}"))?;
+    Ok(output)
 }
 
 pub(crate) fn sanitize_pdf_filename(value: &str) -> String {
@@ -880,6 +914,7 @@ pub(crate) fn write_report_pdf(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lopdf::decode_text_string;
 
     fn side(name: &str) -> ReportSidePresentationDto {
         ReportSidePresentationDto {
@@ -1007,10 +1042,22 @@ mod tests {
         std::fs::write(&path, b"old report").unwrap();
         let saved = write_report_pdf(&path, &report()).unwrap();
         let bytes = std::fs::read(&saved).unwrap();
+        let document = Document::load_mem(&bytes).unwrap();
+        let info_id = document
+            .trailer
+            .get(b"Info")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        let info = document.get_object(info_id).unwrap().as_dict().unwrap();
 
         assert_eq!(
             saved.extension().and_then(|value| value.to_str()),
             Some("pdf")
+        );
+        assert_eq!(
+            decode_text_string(info.get(b"Title").unwrap()).unwrap(),
+            "中文测试棋局复盘报告"
         );
         assert!(bytes.starts_with(b"%PDF-"));
         assert!(

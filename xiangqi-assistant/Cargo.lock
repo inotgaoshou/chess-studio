@@ -7451,6 +7451,7 @@ dependencies = [
  "engine-protocol",
  "keyring",
  "local-store",
+ "lopdf",
  "manual-format",
  "printpdf",
  "reqwest",

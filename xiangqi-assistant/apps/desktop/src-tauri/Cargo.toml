@@ -11,6 +11,7 @@ tauri-build = { version = "2", features = [] }
 chrono.workspace = true
 engine-protocol = { path = "../../../crates/engine-protocol" }
 local-store = { path = "../../../crates/local-store" }
+lopdf = { version = "0.35.0", default-features = false, features = ["nom_parser"] }
 manual-format = { path = "../../../crates/manual-format" }
 keyring = "3"
 reqwest = { version = "0.13", features = ["json"] }
