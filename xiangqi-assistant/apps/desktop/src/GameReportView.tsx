@@ -11,8 +11,8 @@ function GradeBadge({ grade, missedMate = false }: { grade?: QualityGrade; misse
 }
 
 function signedPawnScore(scoreCp: number) {
-  const score = (scoreCp / 100).toFixed(2);
-  return scoreCp > 0 ? `+${score}` : score;
+  const score = Math.round(scoreCp);
+  return score > 0 ? `+${score}` : `${score}`;
 }
 
 function ReportTrend({ report }: { report: GameReportPresentationDto }) {
@@ -26,15 +26,49 @@ function ReportTrend({ report }: { report: GameReportPresentationDto }) {
       x: report.trend.length === 1 ? width / 2 : index * width / (report.trend.length - 1),
       y: height / 2 - value / 1000 * (height / 2 - 12),
     }));
-    return { width, height, points, path: points.map((point) => `${point.x},${point.y}`).join(" ") };
+    const lines = points.slice(1).flatMap((point, index) => {
+      const prev = points[index];
+      const prevValue = prev.scoreCp;
+      const nextValue = point.scoreCp;
+      if ((prevValue >= 0 && nextValue >= 0) || (prevValue <= 0 && nextValue <= 0)) {
+        return [{ from: prev, to: point, side: prevValue >= 0 || nextValue >= 0 ? "red" : "black" }];
+      }
+      const ratio = Math.abs(prevValue) / (Math.abs(prevValue) + Math.abs(nextValue));
+      const zero = {
+        ...point,
+        x: prev.x + (point.x - prev.x) * ratio,
+        y: height / 2,
+        scoreCp: 0,
+      };
+      return [
+        { from: prev, to: zero, side: prevValue > 0 ? "red" : "black" },
+        { from: zero, to: point, side: nextValue > 0 ? "red" : "black" },
+      ];
+    });
+    const ticks = [
+      { label: "+1000", value: 1000 },
+      { label: "+500", value: 500 },
+      { label: "0", value: 0 },
+      { label: "-500", value: -500 },
+      { label: "-1000", value: -1000 },
+    ].map((tick) => ({
+      ...tick,
+      y: height / 2 - tick.value / 1000 * (height / 2 - 12),
+    }));
+    return { width, height, points, lines, ticks };
   }, [report.trend]);
   if (!geometry) return <div className="report-trend-empty">暂无可绘制的局势数据</div>;
   return <section className="report-trend" aria-labelledby="report-trend-title">
-    <header><strong id="report-trend-title">局势走势</strong><small>红方视角 · +10.00 至 -10.00</small></header>
+    <header><strong id="report-trend-title">局势走势</strong><small>红方视角 · 原始 cp · ±50 为均势区</small></header>
     <svg viewBox={`-10 -10 ${geometry.width + 20} ${geometry.height + 20}`} role="img" aria-label="整局局势分数走势图">
+      <rect className="trend-equal-band" x="0" y={geometry.height / 2 - 4.2} width={geometry.width} height="8.4"/>
+      {geometry.ticks.map((tick) => <g key={tick.label}>
+        <line className={`trend-grid-line ${tick.value === 0 ? "zero-tick" : ""}`} x1="0" y1={tick.y} x2={geometry.width} y2={tick.y}/>
+        <text x="4" y={tick.y - 3}>{tick.label}</text>
+      </g>)}
       <line className="trend-zero" x1="0" y1={geometry.height / 2} x2={geometry.width} y2={geometry.height / 2}/>
-      <polyline points={geometry.path}/>
-      {geometry.points.map((point, index) => <circle key={`${point.nodeId ?? "root"}-${index}`} cx={point.x} cy={point.y} r="4"><title>{point.label}：{(point.scoreCp / 100).toFixed(2)}</title></circle>)}
+      {geometry.lines.map((line, index) => <line key={index} className={`trend-segment ${line.side}`} x1={line.from.x} y1={line.from.y} x2={line.to.x} y2={line.to.y}/>)}
+      {geometry.points.map((point, index) => <circle key={`${point.nodeId ?? "root"}-${index}`} cx={point.x} cy={point.y} r="4"><title>{point.label}：{signedPawnScore(point.scoreCp)}</title></circle>)}
     </svg>
   </section>;
 }
@@ -48,8 +82,17 @@ export type GameReportViewProps = {
 };
 
 export function GameReportView({ report, currentNode, disabled = false, onNavigate, onStudy }: GameReportViewProps) {
+  const recommendationLabel = report.analysisDepth ? `深度${report.analysisDepth}推荐` : "AI推荐";
   return <div className="game-report-document">
     {report.stale && <div className="stale-report">线路已变化，此报告已过期</div>}
+    <section className="report-meta-grid">
+      <div><small>复盘档位</small><strong>{report.analysisDepth ? `深度 ${report.analysisDepth} · 强大师参考` : "旧版分析配置"}</strong></div>
+      <div><small>引擎</small><strong>{report.engineLabel}</strong></div>
+      <div><small>总耗时</small><strong>{(report.totalElapsedMs / 1000).toFixed(1)}s</strong></div>
+      <div><small>缓存</small><strong>{report.cachedPositions}</strong></div>
+      <div><small>开局识别</small><strong>{report.openingSummary?.name ?? "未命中"}</strong></div>
+      <div><small>官着</small><strong>{report.openingSummary?.officialMoves ?? 0}</strong></div>
+    </section>
     <div className="side-score-grid">
       {([report.red, report.black] as const).map((side) => <article className={side.side === "红方" ? "red" : "black"} key={side.side}>
         <div><small>{side.side}综合评分</small><GradeBadge grade={side.grade}/></div>
@@ -81,7 +124,7 @@ export function GameReportView({ report, currentNode, disabled = false, onNaviga
         : report.issues.map((move, index) => <div key={move.nodeId} className={`report-issue-row ${currentNode === move.nodeId ? "active" : ""}`}>
           <button className="report-issue-location" aria-label={`定位${move.notation}`} disabled={disabled} onClick={() => onNavigate(move.nodeId)}>
             <span>{index + 1}</span><i className={move.movedBy === "红方" ? "red" : "black"}/><strong>{move.notation}</strong>
-            <span className="report-issue-score"><small>局面 {signedPawnScore(move.redScoreCp)} · 变化 {signedPawnScore(move.deltaCp)}</small><em>{move.movedBy}损失 {move.lossCp}cp · 质量 {move.score}分</em></span>
+            <span className="report-issue-score"><small>局面 {signedPawnScore(move.redScoreCp)} · 变化 {signedPawnScore(move.deltaCp)}{move.opening ? ` · 官着 ${move.opening.name}` : ""}</small><em>{move.movedBy}损失 {move.lossCp}cp · 质量 {move.score}分{move.bestNotation ? ` · ${recommendationLabel} ${move.bestNotation}` : ""}</em></span>
             <GradeBadge grade={move.grade} missedMate={move.missedMate}/>
           </button>
           <button className="coach-study-action" disabled={disabled} title={`回到 ${move.notation} 之前推演`} onClick={() => onStudy(move.nodeId)}><GitFork size={13}/>推演</button>
@@ -94,7 +137,11 @@ export function GameReportView({ report, currentNode, disabled = false, onNaviga
       </div>
       <div className="score-standard-notes">
         <p><strong>局面分：</strong>Pikafish 的 centipawn（cp）优劣值，正数表示红方占优，负数表示黑方占优。</p>
+        <p><strong>换算参考：</strong>{report.scoreGuide.map((item) => `${item.scoreCp}≈${item.label}`).join("；")}。</p>
+        <p><strong>官着：</strong>开局阶段的人类经典布局着法，本应用只标记名称与来源，不改变 Pikafish 质量分。</p>
         <p><strong>质量分：</strong>该着相对引擎评价造成的局面损失折算为 0-100 分；综合分是一方所有有效着法质量分的平均值。</p>
+        <p><strong>100分：</strong>表示在当前分析深度下几乎没有局面损失，可视为本应用定义的“特级大师级准确度”，不代表官方棋力认证。</p>
+        <p><strong>复盘档位：</strong>深度 20 可作为强大师参考；实际效果受 Pikafish 版本、NNUE、线程和机器性能影响。</p>
         <p>{report.disclaimer}</p>
       </div>
     </section>

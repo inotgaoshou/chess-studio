@@ -1,4 +1,5 @@
 mod credential_store;
+mod opening_book;
 mod pdf_report;
 
 use std::collections::BTreeMap;
@@ -225,8 +226,19 @@ struct AnalysisLine {
 #[serde(rename_all = "camelCase")]
 struct GameReportMoveDto {
     node_id: Uuid,
+    #[serde(default)]
+    iccs: String,
     notation: String,
     moved_by: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OpeningBookHitDto {
+    code: String,
+    name: String,
+    ply: usize,
+    source: String,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -241,6 +253,16 @@ struct GameReportPositionDto {
     mate: Option<i32>,
     depth: Option<u32>,
     elapsed_ms: Option<u64>,
+    #[serde(default)]
+    cached: bool,
+    #[serde(default)]
+    best_iccs: Option<String>,
+    #[serde(default)]
+    best_notation: Option<String>,
+    #[serde(default)]
+    pv_notation: Vec<String>,
+    #[serde(default)]
+    opening: Option<OpeningBookHitDto>,
     #[serde(rename = "move")]
     move_: Option<GameReportMoveDto>,
 }
@@ -254,6 +276,10 @@ struct GameReportDatasetDto {
     config_hash: String,
     generated_at: String,
     stale: bool,
+    #[serde(default)]
+    analysis_depth: Option<u32>,
+    #[serde(default)]
+    cached_positions: usize,
     positions: Vec<GameReportPositionDto>,
 }
 
@@ -264,6 +290,10 @@ struct GameReportProgressDto {
     total: usize,
     node_id: Option<Uuid>,
     elapsed_ms: u64,
+    target_depth: Option<u32>,
+    current_depth: Option<u32>,
+    cached: usize,
+    estimated_remaining_ms: Option<u64>,
     state: &'static str,
 }
 
@@ -1359,6 +1389,11 @@ fn report_positions(model: &AppModel) -> Result<(String, Vec<GameReportPositionD
         mate: None,
         depth: None,
         elapsed_ms: None,
+        cached: false,
+        best_iccs: None,
+        best_notation: None,
+        pv_notation: Vec::new(),
+        opening: None,
         move_: None,
     }];
     for (index, node) in nodes.iter().enumerate() {
@@ -1384,8 +1419,14 @@ fn report_positions(model: &AppModel) -> Result<(String, Vec<GameReportPositionD
             mate: None,
             depth: None,
             elapsed_ms: None,
+            cached: false,
+            best_iccs: None,
+            best_notation: None,
+            pv_notation: Vec::new(),
+            opening: None,
             move_: Some(GameReportMoveDto {
                 node_id: node.id,
+                iccs: node.mv.to_iccs(),
                 notation,
                 moved_by: moved_by.into(),
             }),
@@ -1396,6 +1437,45 @@ fn report_positions(model: &AppModel) -> Result<(String, Vec<GameReportPositionD
 
 fn emit_report_progress(app: &tauri::AppHandle, progress: GameReportProgressDto) {
     let _ = app.emit("game-report-progress", progress);
+}
+
+fn apply_report_line_to_position(
+    position: &mut GameReportPositionDto,
+    line: &AnalysisLine,
+    cached: bool,
+) -> Result<(), String> {
+    let position_board = Board::from_fen(&position.fen).map_err(|error| error.to_string())?;
+    let notation = if line.pv.is_empty() {
+        Vec::new()
+    } else if line.notation.is_empty() {
+        position_board
+            .chinese_pv_notation(&line.pv)
+            .unwrap_or_default()
+    } else {
+        line.notation.clone()
+    };
+    position.score_cp = line.score_cp;
+    position.mate = line.mate;
+    position.depth = line.depth;
+    position.elapsed_ms = line.time_ms;
+    position.cached = cached;
+    position.best_iccs = line.pv.first().cloned();
+    position.best_notation = notation.first().cloned();
+    position.pv_notation = notation.into_iter().take(12).collect();
+    Ok(())
+}
+
+fn report_estimated_remaining_ms(
+    elapsed_ms: u64,
+    completed: usize,
+    cached: usize,
+    total: usize,
+) -> Option<u64> {
+    let searched = completed.saturating_sub(cached);
+    if searched == 0 || completed >= total {
+        return None;
+    }
+    Some(elapsed_ms / searched as u64 * (total - completed) as u64)
 }
 
 async fn wait_for_engine_idle(state: &DesktopState, duration: Duration) -> bool {
@@ -1457,8 +1537,7 @@ fn get_saved_analysis(state: State<'_, DesktopState>) -> Result<Vec<AnalysisLine
 
 async fn generate_game_report_inner(
     engine_path: String,
-    search_mode: String,
-    search_value: u64,
+    report_depth: u32,
     threads: u32,
     hash_mb: u32,
     generation: u64,
@@ -1470,41 +1549,31 @@ async fn generate_game_report_inner(
         return Err("引擎可执行文件不存在".into());
     }
     let engine_fingerprint = report_engine_fingerprint(Path::new(&engine_path))?;
-    let (effective_mode, effective_value, limit) = match search_mode.as_str() {
-        "time" => (
-            "time",
-            search_value.clamp(100, 30_000),
-            SearchLimit::MoveTime(search_value.clamp(100, 30_000)),
-        ),
-        "depth" => (
-            "depth",
-            search_value.clamp(1, 100),
-            SearchLimit::Depth(search_value.clamp(1, 100) as u32),
-        ),
-        "nodes" => (
-            "nodes",
-            search_value.clamp(1_000, 100_000_000),
-            SearchLimit::Nodes(search_value.clamp(1_000, 100_000_000)),
-        ),
-        "infinite" => ("time", 1000, SearchLimit::MoveTime(1000)),
-        _ => return Err("unsupported report search mode".into()),
-    };
+    let report_depth = report_depth.clamp(8, 40);
+    let limit = SearchLimit::Depth(report_depth);
     let threads = threads.clamp(1, 64);
     let hash_mb = hash_mb.clamp(16, 4096);
     let config_hash = format!(
-        "report:{effective_mode}:{effective_value}:threads:{threads}:hash:{hash_mb}:multipv:1"
+        "report:engine:{engine_fingerprint}:depth:{report_depth}:threads:{threads}:hash:{hash_mb}:multipv:1"
     );
-    let (game_id, line_anchor, line_signature, mut positions) = {
+    let (game_id, line_anchor, line_signature, starting_fen, mut positions) = {
         let model = state
             .model
             .lock()
             .map_err(|_| "state lock poisoned".to_owned())?;
         let (signature, positions) = report_positions(&model)?;
-        (model.game_id, model.current_node, signature, positions)
+        (
+            model.game_id,
+            model.current_node,
+            signature,
+            model.starting_fen.clone(),
+            positions,
+        )
     };
     let started = Instant::now();
     let total = positions.len();
     let mut completed = 0;
+    let mut cached_count = 0;
 
     {
         let model = state
@@ -1530,14 +1599,13 @@ async fn generate_game_report_inner(
             let lines: Vec<AnalysisLine> =
                 serde_json::from_str(&cached).map_err(|error| error.to_string())?;
             if let Some(primary) = lines.iter().min_by_key(|line| line.multipv) {
-                position.score_cp = primary.score_cp;
-                position.mate = primary.mate;
-                position.depth = primary.depth;
-                position.elapsed_ms = primary.time_ms;
+                apply_report_line_to_position(position, primary, true)?;
                 completed += 1;
+                cached_count += 1;
             }
         }
     }
+    opening_book::annotate_positions(&starting_fen, &mut positions)?;
 
     if state.report_generation.load(Ordering::SeqCst) != generation {
         emit_report_progress(
@@ -1547,6 +1615,10 @@ async fn generate_game_report_inner(
                 total,
                 node_id: None,
                 elapsed_ms: started.elapsed().as_millis() as u64,
+                target_depth: Some(report_depth),
+                current_depth: None,
+                cached: cached_count,
+                estimated_remaining_ms: None,
                 state: "cancelled",
             },
         );
@@ -1560,6 +1632,10 @@ async fn generate_game_report_inner(
             total,
             node_id: None,
             elapsed_ms: started.elapsed().as_millis() as u64,
+            target_depth: Some(report_depth),
+            current_depth: None,
+            cached: cached_count,
+            estimated_remaining_ms: None,
             state: "running",
         },
     );
@@ -1603,6 +1679,15 @@ async fn generate_game_report_inner(
                             total,
                             node_id: position.move_.as_ref().map(|mv| mv.node_id),
                             elapsed_ms: started.elapsed().as_millis() as u64,
+                            target_depth: Some(report_depth),
+                            current_depth: None,
+                            cached: cached_count,
+                            estimated_remaining_ms: report_estimated_remaining_ms(
+                                started.elapsed().as_millis() as u64,
+                                completed,
+                                cached_count,
+                                total,
+                            ),
                             state: "cancelled",
                         },
                     );
@@ -1612,8 +1697,6 @@ async fn generate_game_report_inner(
                     .search(&position.fen, &[], limit.clone(), &[], false)
                     .await
                     .map_err(|error| error.to_string())?;
-                let position_board =
-                    Board::from_fen(&position.fen).map_err(|error| error.to_string())?;
                 let mut primary = None;
                 loop {
                     match session.next_event().await {
@@ -1621,6 +1704,27 @@ async fn generate_game_report_inner(
                             if info.multipv == 1
                                 && (!info.pv.is_empty() || info.mate.is_some()) =>
                         {
+                            emit_report_progress(
+                                app,
+                                GameReportProgressDto {
+                                    completed,
+                                    total,
+                                    node_id: position.move_.as_ref().map(|mv| mv.node_id),
+                                    elapsed_ms: started.elapsed().as_millis() as u64,
+                                    target_depth: Some(report_depth),
+                                    current_depth: info.depth,
+                                    cached: cached_count,
+                                    estimated_remaining_ms: report_estimated_remaining_ms(
+                                        started.elapsed().as_millis() as u64,
+                                        completed,
+                                        cached_count,
+                                        total,
+                                    ),
+                                    state: "running",
+                                },
+                            );
+                            let position_board = Board::from_fen(&position.fen)
+                                .map_err(|error| error.to_string())?;
                             primary = Some(AnalysisLine {
                                 depth: info.depth,
                                 score_cp: info.score_cp,
@@ -1651,6 +1755,15 @@ async fn generate_game_report_inner(
                             total,
                             node_id: position.move_.as_ref().map(|mv| mv.node_id),
                             elapsed_ms: started.elapsed().as_millis() as u64,
+                            target_depth: Some(report_depth),
+                            current_depth: None,
+                            cached: cached_count,
+                            estimated_remaining_ms: report_estimated_remaining_ms(
+                                started.elapsed().as_millis() as u64,
+                                completed,
+                                cached_count,
+                                total,
+                            ),
                             state: "cancelled",
                         },
                     );
@@ -1660,10 +1773,7 @@ async fn generate_game_report_inner(
                 if line.mate == Some(0) {
                     line.mate = Some(-1);
                 }
-                position.score_cp = line.score_cp;
-                position.mate = line.mate;
-                position.depth = line.depth;
-                position.elapsed_ms = line.time_ms;
+                apply_report_line_to_position(position, &line, false)?;
                 let node_id = position.move_.as_ref().map(|mv| mv.node_id);
                 {
                     let mut model = state
@@ -1680,7 +1790,7 @@ async fn generate_game_report_inner(
                             line.depth,
                             line.score_cp,
                             line.mate,
-                            &serde_json::to_string(&vec![line])
+                            &serde_json::to_string(&vec![line.clone()])
                                 .map_err(|error| error.to_string())?,
                             position.elapsed_ms.unwrap_or_default(),
                         )
@@ -1694,6 +1804,15 @@ async fn generate_game_report_inner(
                         total,
                         node_id,
                         elapsed_ms: started.elapsed().as_millis() as u64,
+                        target_depth: Some(report_depth),
+                        current_depth: line.depth,
+                        cached: cached_count,
+                        estimated_remaining_ms: report_estimated_remaining_ms(
+                            started.elapsed().as_millis() as u64,
+                            completed,
+                            cached_count,
+                            total,
+                        ),
                         state: "running",
                     },
                 );
@@ -1734,6 +1853,15 @@ async fn generate_game_report_inner(
                 total,
                 node_id: None,
                 elapsed_ms: started.elapsed().as_millis() as u64,
+                target_depth: Some(report_depth),
+                current_depth: None,
+                cached: cached_count,
+                estimated_remaining_ms: report_estimated_remaining_ms(
+                    started.elapsed().as_millis() as u64,
+                    completed,
+                    cached_count,
+                    total,
+                ),
                 state: "cancelled",
             },
         );
@@ -1747,6 +1875,8 @@ async fn generate_game_report_inner(
         config_hash: config_hash.clone(),
         generated_at: Utc::now().to_rfc3339(),
         stale: false,
+        analysis_depth: Some(report_depth),
+        cached_positions: cached_count,
         positions,
     };
     {
@@ -1778,6 +1908,10 @@ async fn generate_game_report_inner(
             total,
             node_id: None,
             elapsed_ms: started.elapsed().as_millis() as u64,
+            target_depth: Some(report_depth),
+            current_depth: Some(report_depth),
+            cached: cached_count,
+            estimated_remaining_ms: None,
             state: "complete",
         },
     );
@@ -1787,8 +1921,7 @@ async fn generate_game_report_inner(
 #[tauri::command]
 async fn generate_game_report(
     engine_path: String,
-    search_mode: String,
-    search_value: u64,
+    report_depth: u32,
     threads: u32,
     hash_mb: u32,
     app: tauri::AppHandle,
@@ -1804,8 +1937,7 @@ async fn generate_game_report(
     }
     let result = generate_game_report_inner(
         engine_path,
-        search_mode,
-        search_value,
+        report_depth,
         threads,
         hash_mb,
         generation,
@@ -1853,6 +1985,7 @@ fn get_game_report(state: State<'_, DesktopState>) -> Result<Option<GameReportDa
     let mut dataset: GameReportDatasetDto =
         serde_json::from_str(&stored.dataset_json).map_err(|error| error.to_string())?;
     dataset.stale = dataset.line_signature != current_signature;
+    opening_book::annotate_positions(&model.starting_fen, &mut dataset.positions)?;
     Ok(Some(dataset))
 }
 
@@ -1897,6 +2030,9 @@ fn validate_preferences(preferences: &DesktopPreferences) -> Result<(), String> 
     }
     if !(100..=30_000).contains(&preferences.move_time_ms) {
         return Err("每步时间必须在 100 到 30000 毫秒之间".into());
+    }
+    if !(8..=40).contains(&preferences.report_depth) {
+        return Err("整局复盘深度必须在 8 到 40 层之间".into());
     }
     if !matches!(
         preferences.search_mode.as_str(),

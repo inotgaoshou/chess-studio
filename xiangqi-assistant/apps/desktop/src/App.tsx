@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
 import {
   Activity,
   BarChart3,
@@ -109,6 +109,7 @@ const defaultDesktopPreferences: DesktopPreferencesDto = {
   autoAnalyze: true,
   libraryCollapsed: false,
   colorTheme: "dark",
+  reportDepth: 20,
   serverUrl: "http://127.0.0.1:8080",
 };
 const defaultSyncAccount: SyncAccountDto = {
@@ -192,27 +193,27 @@ function formatNps(nps?: number) {
 
 function formatAnalysisScore(line: AnalysisLine) {
   if (line.mate != null) return line.mate >= 0 ? `杀 ${line.mate}` : `被杀 ${Math.abs(line.mate)}`;
-  const score = ((line.scoreCp ?? 0) / 100).toFixed(2);
-  return (line.scoreCp ?? 0) > 0 ? `+${score}` : score;
+  const score = Math.round(line.scoreCp ?? 0);
+  return score > 0 ? `+${score}` : `${score}`;
 }
 
 function formatMoveScore(move: MoveItem) {
   if (move.mate != null) return move.mate >= 0 ? `杀${move.mate}` : `被杀${Math.abs(move.mate)}`;
   if (move.scoreCp == null) return "";
-  const score = (move.scoreCp / 100).toFixed(2);
-  return move.scoreCp > 0 ? `+${score}` : score;
+  const score = Math.round(move.scoreCp);
+  return score > 0 ? `+${score}` : `${score}`;
 }
 
 function formatRedScore(scoreCp?: number) {
   if (scoreCp == null) return "待分析";
-  const score = (scoreCp / 100).toFixed(2);
-  return scoreCp > 0 ? `+${score}` : score;
+  const score = Math.round(scoreCp);
+  return score > 0 ? `+${score}` : `${score}`;
 }
 
 function formatScoreDelta(scoreCp?: number) {
   if (scoreCp == null) return "缺少相邻局面分数";
-  const score = (scoreCp / 100).toFixed(2);
-  return `红方视角 ${scoreCp >= 0 ? "+" : ""}${score}`;
+  const score = Math.round(scoreCp);
+  return `红方视角 ${score >= 0 ? "+" : ""}${score}`;
 }
 
 function formatReportScore(move: MoveItem, redScoreCp?: number) {
@@ -268,6 +269,7 @@ export default function App() {
   const [reportBusy, setReportBusy] = useState(false);
   const [reportDialogOpen, setReportDialogOpen] = useState(false);
   const [reportExporting, setReportExporting] = useState(false);
+  const [trendCursorIndex, setTrendCursorIndex] = useState<number | undefined>();
   const [syncAccount, setSyncAccount] = useState(defaultSyncAccount);
   const [desktopDialog, setDesktopDialog] = useState<DesktopDialog>(null);
   const [dialogBusy, setDialogBusy] = useState(false);
@@ -431,8 +433,31 @@ export default function App() {
   const lastMove = board.history.at(-1);
   const evaluation = useMemo(() => positionEvaluation(board, analysis), [analysis, board]);
   const evaluationTrend = useMemo(() => trendPoints(evaluation?.samples ?? [], board.history.length), [board.history.length, evaluation]);
+  const trendSegments = useMemo(() => evaluationTrend.slice(1).flatMap((point, index) => {
+    const previous = evaluationTrend[index];
+    if ((previous.scoreCp >= 0 && point.scoreCp >= 0) || (previous.scoreCp <= 0 && point.scoreCp <= 0)) {
+      return [{ from: previous, to: point, side: previous.scoreCp >= 0 || point.scoreCp >= 0 ? "red" : "black" }];
+    }
+    const ratio = Math.abs(previous.scoreCp) / (Math.abs(previous.scoreCp) + Math.abs(point.scoreCp));
+    const zero = {
+      ...point,
+      x: previous.x + (point.x - previous.x) * ratio,
+      y: 60,
+      scoreCp: 0,
+    };
+    return [
+      { from: previous, to: zero, side: previous.scoreCp > 0 ? "red" : "black" },
+      { from: zero, to: point, side: point.scoreCp > 0 ? "red" : "black" },
+    ];
+  }), [evaluationTrend]);
+  const activeTrendPoint = trendCursorIndex == null ? undefined : evaluationTrend[trendCursorIndex];
+  const activeTrendDelta = trendCursorIndex == null || trendCursorIndex <= 0 ? undefined : evaluationTrend[trendCursorIndex].scoreCp - evaluationTrend[trendCursorIndex - 1].scoreCp;
   const trendTurns = useMemo(() => trendTurningPoints(evaluation?.samples ?? []), [evaluation]);
   const trendTurnsByNode = useMemo(() => new Map(trendTurns.map((turn) => [turn.nodeId, turn])), [trendTurns]);
+  const reportPositionByNode = useMemo(() => new Map((gameReport?.positions ?? []).flatMap((position, index, positions) => {
+    if (!position.move?.nodeId) return [];
+    return [[position.move.nodeId, { position, before: positions[index - 1] }]] as const;
+  })), [gameReport]);
   const reports = useMemo(() => {
     const reportRoot = gameReport?.positions[0];
     return moveReports(board.history, {
@@ -581,11 +606,19 @@ export default function App() {
     await cancelAnalysisForDocumentChange();
     setWorkspacePanel("report");
     setReportBusy(true);
-    setReportProgress({ completed: 0, total: Math.max(1, board.history.length + 1), elapsedMs: 0, state: "running" });
+    setReportProgress({
+      completed: 0,
+      total: Math.max(1, board.history.length + 1),
+      elapsedMs: 0,
+      targetDepth: desktopPreferencesRef.current.reportDepth,
+      currentDepth: undefined,
+      cached: 0,
+      state: "running",
+    });
     setNotice("正在生成整局分析报告…");
     const reportBoardRevision = boardRevision.current;
     try {
-      const dataset = await chessPlatform.generateGameReport({ enginePath, searchMode, searchValue, threads, hashMb });
+      const dataset = await chessPlatform.generateGameReport({ enginePath, reportDepth: desktopPreferencesRef.current.reportDepth, threads, hashMb });
       if (reportBoardRevision === boardRevision.current) setGameReport(dataset);
       else await loadGameReport();
       setReportProgress((current) => ({
@@ -1114,12 +1147,60 @@ export default function App() {
   async function startCoachStudy(nodeId: string) {
     const moveIndex = board.history.findIndex((move) => move.id === nodeId);
     const previousNode = moveIndex > 0 ? board.history[moveIndex - 1].id : undefined;
+    const cached = reportPositionByNode.get(nodeId)?.before;
     const next = await navigateTo(previousNode);
     if (!next) return;
     setWorkspacePanel("analysis");
+    if (cached?.bestIccs) {
+      setAnalysis([{
+        depth: cached.depth,
+        scoreCp: cached.scoreCp,
+        mate: cached.mate,
+        timeMs: cached.elapsedMs,
+        multipv: 1,
+        notation: cached.pvNotation ?? [],
+        pv: cached.bestIccs ? [cached.bestIccs] : [],
+      }]);
+      setNotice(`已载入报告缓存推荐：${cached.bestNotation ?? cached.bestIccs}`);
+      return;
+    }
     setNotice("已回到问题着法之前，可按候选线路建立变招推演");
     if (!autoAnalyze && next.playable && !analysisBusyRef.current) {
       window.setTimeout(() => void runAnalysis(), 0);
+    }
+  }
+
+  function trendIndexFromPointer(event: PointerEvent<SVGSVGElement>) {
+    if (evaluationTrend.length === 0) return undefined;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = (event.clientX - rect.left) / rect.width * 300;
+    let nearest = 0;
+    for (let index = 1; index < evaluationTrend.length; index += 1) {
+      if (Math.abs(evaluationTrend[index].x - x) < Math.abs(evaluationTrend[nearest].x - x)) nearest = index;
+    }
+    return nearest;
+  }
+
+  function updateTrendCursor(event: PointerEvent<SVGSVGElement>) {
+    const index = trendIndexFromPointer(event);
+    if (index != null) setTrendCursorIndex(index);
+  }
+
+  function releaseTrendCursor() {
+    if (activeTrendPoint?.nodeId) void navigateTo(activeTrendPoint.nodeId);
+  }
+
+  function trendKeyDown(event: KeyboardEvent<SVGSVGElement>) {
+    if (evaluationTrend.length === 0) return;
+    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      event.preventDefault();
+      const current = trendCursorIndex ?? Math.max(0, evaluationTrend.findIndex((point) => point.nodeId === board.currentNode));
+      const next = event.key === "ArrowLeft" ? Math.max(0, current - 1) : Math.min(evaluationTrend.length - 1, current + 1);
+      setTrendCursorIndex(next);
+    }
+    if (event.key === "Enter" && activeTrendPoint?.nodeId) {
+      event.preventDefault();
+      void navigateTo(activeTrendPoint.nodeId);
     }
   }
 
@@ -1280,6 +1361,7 @@ export default function App() {
         moveTimeMs: preferences.moveTimeMs,
         ponder: preferences.ponder,
         autoAnalyze: preferences.autoAnalyze,
+        reportDepth: preferences.reportDepth,
       });
       applyDesktopPreferences(saved);
       setDesktopDialog(null);
@@ -1712,11 +1794,25 @@ export default function App() {
                 ? <div className="empty-review"><BarChart3 size={24}/><strong>暂无局势曲线</strong><span>分析棋谱节点后，这里会按红方视角显示历史分数</span></div>
                 : <>
                   <div className="trend-legend"><span>红方优势</span><strong>{evaluation?.scoreText}</strong><span>黑方优势</span></div>
-                  <svg className="trend-chart-large" viewBox="0 0 300 120" preserveAspectRatio="none" role="group" aria-label="可点击的历史局面分数趋势">
+                  <svg
+                    className="trend-chart-large"
+                    viewBox="0 0 300 120"
+                    preserveAspectRatio="none"
+                    role="group"
+                    aria-label="可拖动的历史局面分数趋势"
+                    tabIndex={0}
+                    onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); updateTrendCursor(event); }}
+                    onPointerMove={(event) => { if (event.buttons) updateTrendCursor(event); }}
+                    onPointerUp={() => releaseTrendCursor()}
+                    onKeyDown={trendKeyDown}
+                  >
+                    <rect className="trend-equal-band" x="10" y="58" width="280" height="4"/>
                     <line className="trend-grid top" x1="10" y1="20" x2="290" y2="20"/>
+                    <line className="trend-grid upper" x1="10" y1="40" x2="290" y2="40"/>
                     <line className="trend-grid middle" x1="10" y1="60" x2="290" y2="60"/>
+                    <line className="trend-grid lower" x1="10" y1="80" x2="290" y2="80"/>
                     <line className="trend-grid bottom" x1="10" y1="100" x2="290" y2="100"/>
-                    <polyline points={evaluationTrend.map((point) => `${point.x},${60 + (point.y - 28) * 1.8}`).join(" ")}/>
+                    {trendSegments.map((segment, index) => <line key={index} className={`trend-segment ${segment.side}`} x1={segment.from.x} y1={segment.from.y} x2={segment.to.x} y2={segment.to.y}/>)}
                     {evaluationTrend.map((point, index) => {
                       const turn = trendTurnsByNode.get(point.nodeId);
                       return (
@@ -1724,18 +1820,22 @@ export default function App() {
                         className={`${point.nodeId === board.currentNode ? "current" : ""} ${turn ? `turning ${turn.severity}` : ""}`}
                         key={`${point.label}-${index}`}
                         cx={point.x}
-                        cy={60 + (point.y - 28) * 1.8}
+                        cy={point.y}
                         r={point.nodeId === board.currentNode ? 5 : 3.5}
                         tabIndex={point.nodeId ? 0 : undefined}
                         role={point.nodeId ? "button" : undefined}
                         aria-label={point.nodeId ? `${point.label}，红方视角 ${formatRedScore(point.scoreCp)}，点击定位` : undefined}
                         onClick={() => point.nodeId && void navigateTo(point.nodeId)}
                         onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && point.nodeId) void navigateTo(point.nodeId); }}
-                      ><title>{point.label}：{formatRedScore(point.scoreCp)}{turn ? `，波动 ${turn.deltaCp > 0 ? "+" : ""}${(turn.deltaCp / 100).toFixed(2)}` : ""}</title></circle>
+                      ><title>{point.label}：{formatRedScore(point.scoreCp)}{turn ? `，波动 ${turn.deltaCp > 0 ? "+" : ""}${Math.round(turn.deltaCp)}` : ""}</title></circle>
                     )})}
+                    {activeTrendPoint && <>
+                      <line className="trend-crosshair" x1={activeTrendPoint.x} y1="12" x2={activeTrendPoint.x} y2="108"/>
+                      <line className="trend-crosshair" x1="10" y1={activeTrendPoint.y} x2="290" y2={activeTrendPoint.y}/>
+                    </>}
                   </svg>
-                  <div className="trend-axis"><span>开局</span><span>红方视角，点击节点定位</span><span>第 {board.history.length} 着</span></div>
-                  {trendTurns.length > 0 && <section className="trend-turning-list"><header><strong>关键转折</strong><span>分差变化 ≥ 1.20</span></header>{trendTurns.map((turn) => <button key={turn.nodeId ?? turn.label} onClick={() => turn.nodeId && void navigateTo(turn.nodeId)}><span className={turn.severity}/><strong>{turn.label}</strong><small>{turn.deltaCp > 0 ? "红方" : "黑方"}获益 {Math.abs(turn.deltaCp / 100).toFixed(2)}</small></button>)}</section>}
+                  <div className="trend-axis"><span>+1000 / +500 / 0 / -500 / -1000</span><span>{activeTrendPoint ? `${activeTrendPoint.label} · ${formatRedScore(activeTrendPoint.scoreCp)}${activeTrendDelta != null ? ` · 变化 ${formatRedScore(activeTrendDelta)}` : ""}` : "拖动十字游标，松开定位"}</span><span>第 {board.history.length} 着</span></div>
+                  {trendTurns.length > 0 && <section className="trend-turning-list"><header><strong>关键转折</strong><span>分差变化 ≥ 120</span></header>{trendTurns.map((turn) => <button key={turn.nodeId ?? turn.label} onClick={() => turn.nodeId && void navigateTo(turn.nodeId)}><span className={turn.severity}/><strong>{turn.label}</strong><small>{turn.deltaCp > 0 ? "红方" : "黑方"}获益 {Math.abs(Math.round(turn.deltaCp))}</small></button>)}</section>}
                 </>}
             </div>}
             {workspacePanel === "summary" && <div id="workspace-panel-summary" className="review-empty-or-content report-review" role="tabpanel" aria-labelledby="workspace-tab-summary">
@@ -1743,10 +1843,14 @@ export default function App() {
                 ? <div className="empty-review"><ClipboardList size={24}/><strong>暂无分析摘要</strong><span>录入并分析着法后生成逐着局面变化</span></div>
                 : reports.map((report) => {
                   const feedback = report.grade ? moveQualityFeedback(report.grade, report.missedMate) : undefined;
+                  const reportPosition = reportPositionByNode.get(report.move.id);
+                  const opening = reportPosition?.position.opening;
+                  const bestNotation = reportPosition?.before?.bestNotation;
+                  const recommendationDepth = reportPosition?.before?.depth ?? gameReport?.analysisDepth ?? desktopPreferences.reportDepth;
                   return <button className={`report-row ${board.currentNode === report.move.id ? "active" : ""}`} key={report.move.id} onClick={() => void navigateTo(report.move.id)}>
                     <span className="report-number">{report.index + 1}</span>
                     <span className={`report-side ${report.move.movedBy === "红方" ? "red" : "black"}`}/>
-                    <span className="report-move" title={feedback?.description}><strong>{report.move.notation}</strong><small>{report.move.movedBy} · {formatScoreDelta(report.deltaCp)}{feedback ? ` · ${feedback.hint}` : ""}</small></span>
+                    <span className="report-move" title={feedback?.description}><strong>{report.move.notation}</strong><small>{report.move.movedBy} · {formatScoreDelta(report.deltaCp)}{feedback ? ` · ${feedback.hint}` : ""}{opening ? ` · 官着 ${opening.name}` : ""}{bestNotation ? ` · 深度${recommendationDepth}推荐 ${bestNotation}` : ""}</small></span>
                     <span className="report-position-score" title="Pikafish 局面分，正数表示红方占优，负数表示黑方占优"><small>局面</small><b>{formatReportScore(report.move, report.redScoreCp)}</b></span>
                     {report.grade && report.score != null
                       ? <span className={`report-quality grade-${report.grade}`} title={`${feedback?.hint}：${feedback?.description}。单着质量 ${report.score} 分，等级 ${report.grade}`}><b>{report.grade}</b><small>{report.score}分</small></span>
@@ -1767,9 +1871,9 @@ export default function App() {
                 </nav>
               </header>
               {reportBusy && <div className="report-progress" aria-live="polite">
-                <div><span>正在分析第 {Math.min((reportProgress?.completed ?? 0) + 1, reportProgress?.total ?? 1)} 个局面</span><strong>{reportProgress?.completed ?? 0}/{reportProgress?.total ?? "--"}</strong></div>
+                <div><span>正在分析第 {Math.min((reportProgress?.completed ?? 0) + 1, reportProgress?.total ?? 1)} 个局面{reportProgress?.currentDepth ? ` · 深度 ${reportProgress.currentDepth}/${reportProgress.targetDepth ?? desktopPreferences.reportDepth}` : ` · 目标深度 ${reportProgress?.targetDepth ?? desktopPreferences.reportDepth}`}</span><strong>{reportProgress?.completed ?? 0}/{reportProgress?.total ?? "--"}</strong></div>
                 <progress max={Math.max(1, reportProgress?.total ?? 1)} value={reportProgress?.completed ?? 0}/>
-                <small>已用 {((reportProgress?.elapsedMs ?? 0) / 1000).toFixed(1)} 秒，已完成节点会作为下次续跑缓存</small>
+                <small>已用 {((reportProgress?.elapsedMs ?? 0) / 1000).toFixed(1)} 秒 · 缓存 {reportProgress?.cached ?? 0} 个{reportProgress?.estimatedRemainingMs ? ` · 预计剩余 ${(reportProgress.estimatedRemainingMs / 1000).toFixed(0)} 秒` : ""}</small>
               </div>}
               {!gameReport || !reportPresentation
                 ? !reportBusy && <div className="empty-review"><ClipboardList size={26}/><strong>尚未生成整局报告</strong><span>从根局面到当前节点，再沿主线逐局面调用 Pikafish 分析</span></div>

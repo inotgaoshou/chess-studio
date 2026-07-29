@@ -1,0 +1,191 @@
+{
+  "version": "xiangqi-openings-v1",
+  "license": "CC0-1.0",
+  "description": "A compact offline Xiangqi opening reference curated for factual move-name recognition. It contains 30 auditable opening categories and 120 validated short lines from the standard initial position.",
+  "sources": [
+    "Traditional public-domain Xiangqi opening terminology",
+    "ICCS coordinates validated by xiangqi-core from the standard initial position"
+  ],
+  "categories": [
+    { "code": "O001", "name": "中炮对屏风马", "lines": [
+      { "moves": ["h2e2", "h9g7"] },
+      { "moves": ["h2e2", "b9c7"] },
+      { "moves": ["h2e2", "c6c5"] },
+      { "moves": ["h2e2", "g6g5"] }
+    ] },
+    { "code": "O002", "name": "中炮对顺炮", "lines": [
+      { "moves": ["h2e2", "h7e7"] },
+      { "moves": ["h2e2", "b7e7"] },
+      { "moves": ["h2e2", "e6e5"] },
+      { "moves": ["h2e2", "a9a8"] }
+    ] },
+    { "code": "O003", "name": "左中炮体系", "lines": [
+      { "moves": ["b2e2", "b9c7"] },
+      { "moves": ["b2e2", "h9g7"] },
+      { "moves": ["b2e2", "h7e7"] },
+      { "moves": ["b2e2", "b7e7"] }
+    ] },
+    { "code": "O004", "name": "起右马局", "lines": [
+      { "moves": ["h0g2", "h9g7"] },
+      { "moves": ["h0g2", "b9c7"] },
+      { "moves": ["h0g2", "c6c5"] },
+      { "moves": ["h0g2", "g6g5"] }
+    ] },
+    { "code": "O005", "name": "起左马局", "lines": [
+      { "moves": ["b0c2", "b9c7"] },
+      { "moves": ["b0c2", "h9g7"] },
+      { "moves": ["b0c2", "e6e5"] },
+      { "moves": ["b0c2", "i6i5"] }
+    ] },
+    { "code": "O006", "name": "仙人指路对卒底炮", "lines": [
+      { "moves": ["c3c4", "b7e7"] },
+      { "moves": ["c3c4", "h7e7"] },
+      { "moves": ["c3c4", "h9g7"] },
+      { "moves": ["c3c4", "b9c7"] }
+    ] },
+    { "code": "O007", "name": "挺三兵局", "lines": [
+      { "moves": ["g3g4", "h9g7"] },
+      { "moves": ["g3g4", "b9c7"] },
+      { "moves": ["g3g4", "c6c5"] },
+      { "moves": ["g3g4", "g6g5"] }
+    ] },
+    { "code": "O008", "name": "挺中兵局", "lines": [
+      { "moves": ["e3e4", "e6e5"] },
+      { "moves": ["e3e4", "h9g7"] },
+      { "moves": ["e3e4", "b9c7"] },
+      { "moves": ["e3e4", "h7e7"] }
+    ] },
+    { "code": "O009", "name": "边兵局", "lines": [
+      { "moves": ["a3a4", "a6a5"] },
+      { "moves": ["a3a4", "i6i5"] },
+      { "moves": ["a3a4", "h9g7"] },
+      { "moves": ["a3a4", "b9c7"] }
+    ] },
+    { "code": "O010", "name": "右翼边兵局", "lines": [
+      { "moves": ["i3i4", "i6i5"] },
+      { "moves": ["i3i4", "a6a5"] },
+      { "moves": ["i3i4", "h9g7"] },
+      { "moves": ["i3i4", "b9c7"] }
+    ] },
+    { "code": "O011", "name": "左起横车局", "lines": [
+      { "moves": ["a0a1", "a9a8"] },
+      { "moves": ["a0a1", "h9g7"] },
+      { "moves": ["a0a1", "b9c7"] },
+      { "moves": ["a0a1", "h7e7"] }
+    ] },
+    { "code": "O012", "name": "右起横车局", "lines": [
+      { "moves": ["i0i1", "i9i8"] },
+      { "moves": ["i0i1", "h9g7"] },
+      { "moves": ["i0i1", "b9c7"] },
+      { "moves": ["i0i1", "b7e7"] }
+    ] },
+    { "code": "O013", "name": "左边马局", "lines": [
+      { "moves": ["b0a2", "b9a7"] },
+      { "moves": ["b0a2", "h9i7"] },
+      { "moves": ["b0a2", "c6c5"] },
+      { "moves": ["b0a2", "h7e7"] }
+    ] },
+    { "code": "O014", "name": "右边马局", "lines": [
+      { "moves": ["h0i2", "h9i7"] },
+      { "moves": ["h0i2", "b9a7"] },
+      { "moves": ["h0i2", "g6g5"] },
+      { "moves": ["h0i2", "b7e7"] }
+    ] },
+    { "code": "O015", "name": "左飞相局", "lines": [
+      { "moves": ["c0e2", "c9e7"] },
+      { "moves": ["c0e2", "g9e7"] },
+      { "moves": ["c0e2", "h9g7"] },
+      { "moves": ["c0e2", "b9c7"] }
+    ] },
+    { "code": "O016", "name": "右飞相局", "lines": [
+      { "moves": ["g0e2", "g9e7"] },
+      { "moves": ["g0e2", "c9e7"] },
+      { "moves": ["g0e2", "h7e7"] },
+      { "moves": ["g0e2", "b7e7"] }
+    ] },
+    { "code": "O017", "name": "过宫炮局", "lines": [
+      { "moves": ["b2f2", "h9g7"] },
+      { "moves": ["b2f2", "b9c7"] },
+      { "moves": ["b2f2", "c6c5"] },
+      { "moves": ["b2f2", "h7e7"] }
+    ] },
+    { "code": "O018", "name": "右过宫炮局", "lines": [
+      { "moves": ["h2d2", "h9g7"] },
+      { "moves": ["h2d2", "b9c7"] },
+      { "moves": ["h2d2", "g6g5"] },
+      { "moves": ["h2d2", "b7e7"] }
+    ] },
+    { "code": "O019", "name": "中炮对单提马", "lines": [
+      { "moves": ["h2e2", "b9a7"] },
+      { "moves": ["h2e2", "h9i7"] },
+      { "moves": ["h2e2", "c9e7"] },
+      { "moves": ["h2e2", "g9e7"] }
+    ] },
+    { "code": "O020", "name": "中炮对补士象", "lines": [
+      { "moves": ["h2e2", "d9e8"] },
+      { "moves": ["h2e2", "e9e8"] },
+      { "moves": ["h2e2", "i9i8"] },
+      { "moves": ["h2e2", "i6i5"] }
+    ] },
+    { "code": "O021", "name": "仙人指路对飞象", "lines": [
+      { "moves": ["c3c4", "c9e7"] },
+      { "moves": ["c3c4", "g9e7"] },
+      { "moves": ["c3c4", "d9e8"] },
+      { "moves": ["c3c4", "e9e8"] }
+    ] },
+    { "code": "O022", "name": "挺三兵对挺卒", "lines": [
+      { "moves": ["g3g4", "e6e5"] },
+      { "moves": ["g3g4", "a6a5"] },
+      { "moves": ["g3g4", "i6i5"] },
+      { "moves": ["g3g4", "i9i8"] }
+    ] },
+    { "code": "O023", "name": "飞相对进马", "lines": [
+      { "moves": ["c0e2", "b9a7"] },
+      { "moves": ["c0e2", "h9i7"] },
+      { "moves": ["c0e2", "a9a8"] },
+      { "moves": ["c0e2", "i9i8"] }
+    ] },
+    { "code": "O024", "name": "飞相对士角", "lines": [
+      { "moves": ["g0e2", "d9e8"] },
+      { "moves": ["g0e2", "e9e8"] },
+      { "moves": ["g0e2", "a6a5"] },
+      { "moves": ["g0e2", "i6i5"] }
+    ] },
+    { "code": "O025", "name": "横车对进马", "lines": [
+      { "moves": ["a0a1", "b9a7"] },
+      { "moves": ["a0a1", "h9i7"] },
+      { "moves": ["i0i1", "b9a7"] },
+      { "moves": ["i0i1", "h9i7"] }
+    ] },
+    { "code": "O026", "name": "横车对飞象", "lines": [
+      { "moves": ["a0a1", "c9e7"] },
+      { "moves": ["a0a1", "g9e7"] },
+      { "moves": ["i0i1", "c9e7"] },
+      { "moves": ["i0i1", "g9e7"] }
+    ] },
+    { "code": "O027", "name": "边马对挺卒", "lines": [
+      { "moves": ["b0a2", "e6e5"] },
+      { "moves": ["b0a2", "a6a5"] },
+      { "moves": ["h0i2", "e6e5"] },
+      { "moves": ["h0i2", "i6i5"] }
+    ] },
+    { "code": "O028", "name": "过宫炮对飞象", "lines": [
+      { "moves": ["b2f2", "c9e7"] },
+      { "moves": ["b2f2", "g9e7"] },
+      { "moves": ["h2d2", "c9e7"] },
+      { "moves": ["h2d2", "g9e7"] }
+    ] },
+    { "code": "O029", "name": "边兵对起横车", "lines": [
+      { "moves": ["a3a4", "a9a8"] },
+      { "moves": ["a3a4", "i9i8"] },
+      { "moves": ["i3i4", "a9a8"] },
+      { "moves": ["i3i4", "i9i8"] }
+    ] },
+    { "code": "O030", "name": "中兵对补士象", "lines": [
+      { "moves": ["e3e4", "c9e7"] },
+      { "moves": ["e3e4", "g9e7"] },
+      { "moves": ["e3e4", "d9e8"] },
+      { "moves": ["e3e4", "e9e8"] }
+    ] }
+  ]
+}

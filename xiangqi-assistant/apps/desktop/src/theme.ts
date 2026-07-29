@@ -8,14 +8,14 @@ export const themePalettes = {
     "surface-input": "#181e1c", "surface-active": "#385045",
     "text-primary": "#f1f5f2", "text-secondary": "#c4cdc8", "text-muted": "#9da9a2", "text-disabled": "#7d8982",
     border: "#4c5852", "border-strong": "#65716b", accent: "#72c493", "accent-surface": "#355a47",
-    red: "#ed7770", "red-soft": "#f2a09b", "black-side": "#76b6dd", warning: "#e4b663",
+    red: "#ed7770", "red-soft": "#f2a09b", "black-side": "#76b6dd", "trend-black": "#eef3ef", warning: "#e4b663",
   },
   light: {
     "surface-0": "#e8edea", "surface-1": "#ffffff", "surface-2": "#f3f6f4", "surface-3": "#e1e8e4",
     "surface-input": "#ffffff", "surface-active": "#d8eadf",
     "text-primary": "#17211c", "text-secondary": "#3e4b44", "text-muted": "#58665e", "text-disabled": "#78857e",
     border: "#bdc8c1", "border-strong": "#98a79f", accent: "#26794e", "accent-surface": "#d5eadf",
-    red: "#b83d38", "red-soft": "#9d302c", "black-side": "#23658c", warning: "#8b610d",
+    red: "#b83d38", "red-soft": "#9d302c", "black-side": "#23658c", "trend-black": "#17211c", warning: "#8b610d",
   },
 } as const;
 

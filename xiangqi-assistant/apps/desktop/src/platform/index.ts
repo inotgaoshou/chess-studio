@@ -120,8 +120,7 @@ class DesktopPlatform implements ChessPlatform {
   generateGameReport(options: GameReportOptionsDto) {
     return invoke<GameReportDatasetDto>("generate_game_report", {
       enginePath: options.enginePath,
-      searchMode: options.searchMode,
-      searchValue: options.searchValue,
+      reportDepth: options.reportDepth,
       threads: options.threads,
       hashMb: options.hashMb,
     });

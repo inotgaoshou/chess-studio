@@ -1,4 +1,5 @@
 .local/
+.codegraph/
 target/
 node_modules/
 .idea/

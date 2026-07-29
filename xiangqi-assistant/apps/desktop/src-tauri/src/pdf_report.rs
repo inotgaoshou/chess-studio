@@ -38,6 +38,17 @@ pub(crate) struct ReportSidePresentationDto {
 pub(crate) struct ReportTrendDto {
     pub label: String,
     pub score_cp: i32,
+    #[serde(default)]
+    pub delta_cp: Option<i32>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct OpeningBookHitDto {
+    pub code: String,
+    pub name: String,
+    pub ply: usize,
+    pub source: String,
 }
 
 #[derive(Clone, Deserialize)]
@@ -51,6 +62,14 @@ pub(crate) struct ReportIssueDto {
     pub missed_mate: bool,
     pub red_score_cp: i32,
     pub delta_cp: i32,
+    #[serde(default)]
+    pub opening: Option<OpeningBookHitDto>,
+    #[serde(default)]
+    pub best_iccs: Option<String>,
+    #[serde(default)]
+    pub best_notation: Option<String>,
+    #[serde(default)]
+    pub pv_notation: Vec<String>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -63,15 +82,43 @@ pub(crate) struct ReportStandardDto {
 
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct ScoreGuideDto {
+    pub score_cp: i32,
+    pub label: String,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct OpeningSummaryDto {
+    pub code: String,
+    pub name: String,
+    pub official_moves: usize,
+    pub source: String,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct GameReportPresentationDto {
     pub title: String,
     pub generated_at: String,
     pub stale: bool,
+    #[serde(default)]
+    pub analysis_depth: Option<u32>,
+    #[serde(default)]
+    pub engine_label: String,
+    #[serde(default)]
+    pub total_elapsed_ms: u64,
+    #[serde(default)]
+    pub cached_positions: usize,
+    #[serde(default)]
+    pub opening_summary: Option<OpeningSummaryDto>,
     pub red: ReportSidePresentationDto,
     pub black: ReportSidePresentationDto,
     pub trend: Vec<ReportTrendDto>,
     pub issues: Vec<ReportIssueDto>,
     pub standards: Vec<ReportStandardDto>,
+    #[serde(default)]
+    pub score_guide: Vec<ScoreGuideDto>,
     pub disclaimer: String,
 }
 
@@ -392,6 +439,9 @@ impl ReportLayout {
         let top = self.y;
         let height = 110.0;
         let zero = top - height / 2.0;
+        let equal_offset = 50.0 / 1000.0 * (height / 2.0 - 5.0);
+        let y_for_score =
+            |score: i32| zero - score.clamp(-1000, 1000) as f32 / 1000.0 * (height / 2.0 - 5.0);
         self.ops.extend([
             Op::SetOutlineColor {
                 col: rgb(205, 211, 207),
@@ -400,7 +450,31 @@ impl ReportLayout {
             Op::DrawLine {
                 line: line([(left, zero), (right, zero)], false),
             },
+            Op::DrawLine {
+                line: line(
+                    [(left, zero + equal_offset), (right, zero + equal_offset)],
+                    false,
+                ),
+            },
+            Op::DrawLine {
+                line: line(
+                    [(left, zero - equal_offset), (right, zero - equal_offset)],
+                    false,
+                ),
+            },
         ]);
+        for score in [1000, 500, -500, -1000] {
+            let y = y_for_score(score);
+            self.ops.extend([
+                Op::SetOutlineColor {
+                    col: rgb(220, 224, 221),
+                },
+                Op::SetOutlineThickness { pt: Pt(0.45) },
+                Op::DrawLine {
+                    line: line([(left, y), (right, y)], false),
+                },
+            ]);
+        }
         let denominator = report.trend.len().saturating_sub(1).max(1) as f32;
         let points = report
             .trend
@@ -408,19 +482,59 @@ impl ReportLayout {
             .enumerate()
             .map(|(index, sample)| {
                 let x = left + index as f32 / denominator * (right - left);
-                let value = sample.score_cp.clamp(-1000, 1000) as f32 / 1000.0;
-                (x, zero + value * (height / 2.0 - 5.0))
+                (x, y_for_score(sample.score_cp), sample.score_cp)
             })
             .collect::<Vec<_>>();
-        self.ops.extend([
-            Op::SetOutlineColor {
-                col: rgb(43, 139, 83),
-            },
-            Op::SetOutlineThickness { pt: Pt(2.0) },
-            Op::DrawLine {
-                line: line(points, false),
-            },
-        ]);
+        self.ops.push(Op::SetOutlineThickness { pt: Pt(2.0) });
+        for pair in points.windows(2) {
+            let (x1, y1, s1) = pair[0];
+            let (x2, y2, s2) = pair[1];
+            if (s1 >= 0 && s2 >= 0) || (s1 <= 0 && s2 <= 0) {
+                self.ops.extend([
+                    Op::SetOutlineColor {
+                        col: if s1 >= 0 || s2 >= 0 {
+                            rgb(181, 70, 61)
+                        } else {
+                            rgb(45, 53, 49)
+                        },
+                    },
+                    Op::DrawLine {
+                        line: line([(x1, y1), (x2, y2)], false),
+                    },
+                ]);
+            } else {
+                let ratio =
+                    s1.unsigned_abs() as f32 / (s1.unsigned_abs() + s2.unsigned_abs()) as f32;
+                let zx = x1 + (x2 - x1) * ratio;
+                self.ops.extend([
+                    Op::SetOutlineColor {
+                        col: if s1 > 0 {
+                            rgb(181, 70, 61)
+                        } else {
+                            rgb(45, 53, 49)
+                        },
+                    },
+                    Op::DrawLine {
+                        line: line([(x1, y1), (zx, zero)], false),
+                    },
+                    Op::SetOutlineColor {
+                        col: if s2 > 0 {
+                            rgb(181, 70, 61)
+                        } else {
+                            rgb(45, 53, 49)
+                        },
+                    },
+                    Op::DrawLine {
+                        line: line([(zx, zero), (x2, y2)], false),
+                    },
+                ]);
+            }
+        }
+        self.text_at("+1000", left, top - 8.0, 7.2, rgb(181, 70, 61));
+        self.text_at("+500", left, y_for_score(500) - 3.0, 7.2, rgb(181, 70, 61));
+        self.text_at("0", left, zero - 3.0, 7.2, rgb(105, 112, 108));
+        self.text_at("-500", left, y_for_score(-500) - 3.0, 7.2, rgb(45, 53, 49));
+        self.text_at("-1000", left, top - height + 4.0, 7.2, rgb(45, 53, 49));
         let first_label = report
             .trend
             .first()
@@ -445,6 +559,20 @@ impl ReportLayout {
             8.0,
             rgb(105, 112, 108),
         );
+        if let Some(change) = report
+            .trend
+            .iter()
+            .filter_map(|sample| sample.delta_cp)
+            .max_by_key(|value| value.unsigned_abs())
+        {
+            self.text_at(
+                format!("最大波动 {change:+}"),
+                left + 210.0,
+                top - height - 14.0,
+                8.0,
+                rgb(105, 112, 108),
+            );
+        }
         self.y -= 145.0;
     }
 
@@ -482,6 +610,10 @@ impl ReportLayout {
 
     fn issues(&mut self, report: &GameReportPresentationDto) {
         self.heading("关键问题着法", 14.0);
+        let recommendation_label = report
+            .analysis_depth
+            .map(|depth| format!("深度{depth}推荐"))
+            .unwrap_or_else(|| "AI推荐".to_owned());
         if report.issues.is_empty() {
             self.paragraph("当前线路没有达到“差”或“错”的着法。", 10.0, 48.0);
             return;
@@ -494,7 +626,17 @@ impl ReportLayout {
                 issue.grade.as_str()
             };
             self.text_at(
-                format!("{}. {}  {}", index + 1, issue.moved_by, issue.notation),
+                format!(
+                    "{}. {}  {}{}",
+                    index + 1,
+                    issue.moved_by,
+                    issue.notation,
+                    issue
+                        .best_iccs
+                        .as_ref()
+                        .map(|value| format!("  推荐ICCS {value}"))
+                        .unwrap_or_default()
+                ),
                 MARGIN,
                 self.y,
                 9.5,
@@ -502,11 +644,16 @@ impl ReportLayout {
             );
             self.text_at(
                 format!(
-                    "局面 {:+.2}  变化 {:+.2}  损失 {}cp  质量 {}分",
-                    issue.red_score_cp as f32 / 100.0,
-                    issue.delta_cp as f32 / 100.0,
+                    "局面 {:+}  变化 {:+}  损失 {}cp  质量 {}分{}",
+                    issue.red_score_cp,
+                    issue.delta_cp,
                     issue.loss_cp,
-                    issue.score
+                    issue.score,
+                    issue
+                        .best_notation
+                        .as_ref()
+                        .map(|value| format!("  {recommendation_label} {value}"))
+                        .unwrap_or_default()
                 ),
                 290.0,
                 self.y,
@@ -514,6 +661,29 @@ impl ReportLayout {
                 rgb(82, 90, 86),
             );
             self.text_at(marker, 495.0, self.y, 9.5, grade_color(&issue.grade));
+            if let Some(opening) = &issue.opening {
+                self.y -= 12.0;
+                self.text_at(
+                    format!(
+                        "官着：{} · {} · 第{}层 · {}",
+                        opening.code, opening.name, opening.ply, opening.source
+                    ),
+                    MARGIN + 18.0,
+                    self.y,
+                    8.2,
+                    rgb(94, 139, 51),
+                );
+            }
+            if !issue.pv_notation.is_empty() {
+                self.y -= 12.0;
+                self.text_at(
+                    format!("后续推演：{}", issue.pv_notation.join(" ")),
+                    MARGIN + 18.0,
+                    self.y,
+                    8.2,
+                    rgb(82, 90, 86),
+                );
+            }
             self.y -= 22.0;
         }
         self.y -= 8.0;
@@ -539,7 +709,33 @@ impl ReportLayout {
             9.0,
             58.0,
         );
+        if !report.score_guide.is_empty() {
+            self.paragraph(
+                &format!(
+                    "换算参考：{}。",
+                    report
+                        .score_guide
+                        .iter()
+                        .map(|item| format!("{}≈{}", item.score_cp, item.label))
+                        .collect::<Vec<_>>()
+                        .join("；")
+                ),
+                9.0,
+                58.0,
+            );
+        }
+        self.paragraph(
+            "官着：开局阶段的人类经典布局着法，本应用只标记名称与来源，不改变 Pikafish 质量分。",
+            9.0,
+            58.0,
+        );
         self.paragraph("质量分：该着相对引擎评价造成的局面损失折算为 0-100 分；综合分是一方所有有效着法质量分的平均值。", 9.0, 58.0);
+        self.paragraph("100分表示在当前分析深度下几乎没有局面损失，可视为本应用定义的“特级大师级准确度”，不代表官方棋力认证。", 9.0, 58.0);
+        self.paragraph(
+            "深度20可作为强大师参考；实际效果受 Pikafish 版本、NNUE、线程和机器性能影响。",
+            9.0,
+            58.0,
+        );
         self.paragraph(&report.disclaimer, 8.5, 62.0);
     }
 }
@@ -564,6 +760,34 @@ fn render_report_pdf(
         rgb(82, 90, 86),
     );
     layout.y -= 20.0;
+    layout.paragraph(
+        &format!(
+            "复盘档位：{}；引擎：{}；总耗时 {:.1}s；缓存命中 {} 个局面；开局：{}；官着 {} 步。",
+            report
+                .analysis_depth
+                .map(|depth| format!("深度 {depth} · 强大师参考"))
+                .unwrap_or_else(|| "旧版分析配置".to_owned()),
+            if report.engine_label.is_empty() {
+                "Pikafish"
+            } else {
+                &report.engine_label
+            },
+            report.total_elapsed_ms as f32 / 1000.0,
+            report.cached_positions,
+            report
+                .opening_summary
+                .as_ref()
+                .map(|opening| format!("{}({}) · {}", opening.name, opening.code, opening.source))
+                .unwrap_or_else(|| "未命中".to_owned()),
+            report
+                .opening_summary
+                .as_ref()
+                .map(|opening| opening.official_moves)
+                .unwrap_or(0),
+        ),
+        9.0,
+        62.0,
+    );
     if report.stale {
         layout.text_at(
             "线路已变化，此报告已过期",
@@ -697,12 +921,23 @@ mod tests {
             title: "中文测试棋局".into(),
             generated_at: "2026-07-29T08:30:00Z".into(),
             stale: true,
+            analysis_depth: Some(20),
+            engine_label: "Pikafish".into(),
+            total_elapsed_ms: 12_000,
+            cached_positions: 3,
+            opening_summary: Some(OpeningSummaryDto {
+                code: "R01".into(),
+                name: "中炮局".into(),
+                official_moves: 2,
+                source: "内置开局库".into(),
+            }),
             red: side("红方"),
             black: side("黑方"),
             trend: (0..40)
                 .map(|index| ReportTrendDto {
                     label: format!("第{}着", index + 1),
                     score_cp: index * 35 - 500,
+                    delta_cp: Some(35),
                 })
                 .collect(),
             issues: (0..28)
@@ -719,6 +954,15 @@ mod tests {
                     missed_mate: index == 0,
                     red_score_cp: 240,
                     delta_cp: -320,
+                    opening: Some(OpeningBookHitDto {
+                        code: "R01".into(),
+                        name: "中炮局".into(),
+                        ply: 1,
+                        source: "内置开局库".into(),
+                    }),
+                    best_iccs: Some("h2e2".into()),
+                    best_notation: Some("炮二平五".into()),
+                    pv_notation: vec!["炮二平五".into(), "马8进7".into()],
                 })
                 .collect(),
             standards: [
@@ -735,6 +979,16 @@ mod tests {
                 description: "质量分等级说明".into(),
             })
             .collect(),
+            score_guide: vec![
+                ScoreGuideDto {
+                    score_cp: 1000,
+                    label: "约一车".into(),
+                },
+                ScoreGuideDto {
+                    score_cp: 50,
+                    label: "50以内可忽略".into(),
+                },
+            ],
             disclaimer: "参考常见象棋复盘产品的信息层次与分档方式，不等同于天天象棋内部算法。"
                 .into(),
         }

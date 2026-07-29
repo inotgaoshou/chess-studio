@@ -64,11 +64,17 @@ pub struct DesktopPreferences {
     pub library_collapsed: bool,
     #[serde(default = "default_color_theme")]
     pub color_theme: String,
+    #[serde(default = "default_report_depth")]
+    pub report_depth: u32,
     pub server_url: String,
 }
 
 fn default_color_theme() -> String {
     "dark".into()
+}
+
+fn default_report_depth() -> u32 {
+    20
 }
 
 impl Default for DesktopPreferences {
@@ -85,6 +91,7 @@ impl Default for DesktopPreferences {
             auto_analyze: true,
             library_collapsed: false,
             color_theme: default_color_theme(),
+            report_depth: default_report_depth(),
             server_url: "http://127.0.0.1:8080".into(),
         }
     }
@@ -1874,6 +1881,7 @@ mod tests {
             auto_analyze: false,
             library_collapsed: true,
             color_theme: "light".into(),
+            report_depth: 24,
             server_url: "https://sync.example.com".into(),
         };
         {
@@ -1893,6 +1901,7 @@ mod tests {
         .unwrap();
         assert!(!preferences.library_collapsed);
         assert_eq!(preferences.color_theme, "dark");
+        assert_eq!(preferences.report_depth, 20);
     }
 
     #[test]

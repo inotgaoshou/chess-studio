@@ -55,7 +55,8 @@ export type AnalysisOptions = {
 };
 export type ReportPhase = "opening" | "middle" | "endgame";
 export type QualityGrade = "优" | "良" | "中" | "差" | "错";
-export type GameReportMoveDto = { nodeId: string; notation: string; movedBy: Side };
+export type GameReportMoveDto = { nodeId: string; iccs?: string; notation: string; movedBy: Side };
+export type OpeningBookHitDto = { code: string; name: string; ply: number; source: string };
 export type GameReportPositionDto = {
   fen: string;
   sideToMove: Side;
@@ -66,6 +67,11 @@ export type GameReportPositionDto = {
   mate?: number;
   depth?: number;
   elapsedMs?: number;
+  cached?: boolean;
+  bestIccs?: string;
+  bestNotation?: string;
+  pvNotation?: string[];
+  opening?: OpeningBookHitDto;
   move?: GameReportMoveDto;
 };
 export type GameReportDatasetDto = {
@@ -75,12 +81,13 @@ export type GameReportDatasetDto = {
   configHash: string;
   generatedAt: string;
   stale: boolean;
+  analysisDepth?: number;
+  cachedPositions?: number;
   positions: GameReportPositionDto[];
 };
 export type GameReportOptionsDto = {
   enginePath: string;
-  searchMode: "time" | "depth" | "nodes" | "infinite";
-  searchValue: number;
+  reportDepth: number;
   threads: number;
   hashMb: number;
 };
@@ -89,6 +96,10 @@ export type GameReportProgressDto = {
   total: number;
   nodeId?: string;
   elapsedMs: number;
+  targetDepth?: number;
+  currentDepth?: number;
+  cached?: number;
+  estimatedRemainingMs?: number;
   state: "running" | "cancelled" | "complete";
 };
 export type ReportQualityCountsDto = {
@@ -120,16 +131,26 @@ export type ReportIssuePresentationDto = {
   missedMate: boolean;
   redScoreCp: number;
   deltaCp: number;
+  opening?: OpeningBookHitDto;
+  bestIccs?: string;
+  bestNotation?: string;
+  pvNotation?: string[];
 };
 export type GameReportPresentationDto = {
   title: string;
   generatedAt: string;
   stale: boolean;
+  analysisDepth?: number;
+  engineLabel: string;
+  totalElapsedMs: number;
+  cachedPositions: number;
+  openingSummary?: { code: string; name: string; officialMoves: number; source: string };
   red: ReportSidePresentationDto;
   black: ReportSidePresentationDto;
-  trend: Array<{ label: string; scoreCp: number; nodeId?: string }>;
+  trend: Array<{ label: string; scoreCp: number; nodeId?: string; deltaCp?: number }>;
   issues: ReportIssuePresentationDto[];
   standards: Array<{ grade: QualityGrade; qualityRange: string; description: string }>;
+  scoreGuide: Array<{ scoreCp: number; label: string }>;
   disclaimer: string;
 };
 export type SyncResult = { uploaded: number; downloaded: number; cursor: number };
@@ -145,6 +166,7 @@ export type DesktopPreferencesDto = {
   autoAnalyze: boolean;
   libraryCollapsed: boolean;
   colorTheme: "light" | "dark";
+  reportDepth: number;
   serverUrl: string;
 };
 export type SyncAccountDto = {

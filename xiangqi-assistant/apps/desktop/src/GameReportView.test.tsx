@@ -22,6 +22,11 @@ const report: GameReportPresentationDto = {
   title: "测试棋局",
   generatedAt: "2026-07-29T08:30:00Z",
   stale: true,
+  analysisDepth: 20,
+  engineLabel: "Pikafish",
+  totalElapsedMs: 2000,
+  cachedPositions: 1,
+  openingSummary: { code: "R01", name: "中炮局", officialMoves: 1, source: "内置开局库" },
   red: side("红方"),
   black: side("黑方"),
   trend: [{ label: "炮二平五", scoreCp: 20, nodeId: "move-1" }],
@@ -33,6 +38,7 @@ const report: GameReportPresentationDto = {
     { grade: "差", qualityRange: "20-39 分", description: "明显失误" },
     { grade: "错", qualityRange: "0-19 分", description: "严重错误" },
   ],
+  scoreGuide: [{ scoreCp: 1000, label: "约一车" }],
   disclaimer: "不等同于天天象棋内部算法。",
 };
 
@@ -93,7 +99,7 @@ describe("GameReportDialog", () => {
   it("shows raw position change separately from move quality", () => {
     render(<GameReportDialog report={report} exporting={false} onClose={vi.fn()} onExport={vi.fn()} onRegenerate={vi.fn()} onNavigate={vi.fn()} onStudy={vi.fn()}/>);
 
-    expect(screen.getByText("局面 -2.40 · 变化 -5.00")).toBeTruthy();
+    expect(screen.getByText("局面 -240 · 变化 -500")).toBeTruthy();
     expect(screen.getByText("红方损失 500cp · 质量 14分")).toBeTruthy();
   });
 });

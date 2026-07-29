@@ -29,6 +29,7 @@ export type PositionEvaluation = {
 };
 export type GameReportMove = {
   nodeId: string;
+  iccs?: string;
   notation: string;
   movedBy: Side;
   phase: ReportPhase;
@@ -38,6 +39,10 @@ export type GameReportMove = {
   missedMate: boolean;
   redScoreCp: number;
   deltaCp: number;
+  opening?: GameReportDatasetDto["positions"][number]["opening"];
+  bestIccs?: string;
+  bestNotation?: string;
+  pvNotation?: string[];
 };
 export type SideReport = {
   overall?: number;
@@ -182,6 +187,10 @@ export function calculateGameReport(dataset: GameReportDatasetDto): GameReport {
       missedMate,
       redScoreCp: afterValue,
       deltaCp,
+      opening: after.opening,
+      bestIccs: before.bestIccs,
+      bestNotation: before.bestNotation,
+      pvNotation: before.pvNotation,
     });
   }
   return { red: sideReport(moves, "红方"), black: sideReport(moves, "黑方"), moves };
@@ -270,8 +279,8 @@ export function moveReports(history: MoveItem[], initial?: PositionScore): MoveR
 }
 
 function scoreText(scoreCp: number) {
-  const value = (scoreCp / 100).toFixed(2);
-  return scoreCp > 0 ? `+${value}` : value;
+  const value = Math.round(scoreCp);
+  return value > 0 ? `+${value}` : `${value}`;
 }
 
 function evaluationLabel(scoreCp: number) {
@@ -344,7 +353,7 @@ export function positionEvaluation(board: BoardState, analysis: AnalysisLine[]):
       ? `深度 ${primary.depth ?? "-"} · ${primary.nps ? `${(primary.nps / 1_000_000).toFixed(1)}M` : "-"} NPS · ${((primary.timeMs ?? 0) / 1000).toFixed(1)}s`
       : "已保存节点分数",
     redShare: Math.max(5, Math.min(95, 50 + boundedScore / 16)),
-    deltaText: delta == null ? undefined : `较上一局面 ${delta >= 0 ? "+" : ""}${(delta / 100).toFixed(2)}`,
+    deltaText: delta == null ? undefined : `较上一局面 ${delta >= 0 ? "+" : ""}${Math.round(delta)}`,
     samples,
   };
 }
@@ -356,8 +365,8 @@ export function trendPoints(samples: TrendSample[], totalMoves = samples.length)
     ...sample,
     x: samples.length === 1
       ? 150
-      : 12 + (sample.moveIndex ?? index) * (276 / Math.max(1, lastMoveIndex)),
-    y: 28 - Math.max(-1, Math.min(1, sample.scoreCp / 500)) * 21,
+      : 10 + (sample.moveIndex ?? index) * (280 / Math.max(1, lastMoveIndex)),
+    y: 60 - Math.max(-1, Math.min(1, sample.scoreCp / 1000)) * 40,
   }));
 }
 
