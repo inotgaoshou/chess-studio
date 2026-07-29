@@ -622,6 +622,28 @@ impl LocalStore {
             .optional()?)
     }
 
+    pub fn load_latest_analysis_summary(
+        &self,
+        game_id: Uuid,
+        node_id: Option<Uuid>,
+    ) -> Result<Option<AnalysisSummary>, StoreError> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT score_cp, mate FROM analysis_results
+                 WHERE game_id = ?1 AND node_id IS ?2
+                 ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                params![game_id.to_string(), node_id.map(|id| id.to_string())],
+                |row| {
+                    Ok(AnalysisSummary {
+                        score_cp: row.get(0)?,
+                        mate: row.get(1)?,
+                    })
+                },
+            )
+            .optional()?)
+    }
+
     pub fn load_analysis_for_config(
         &self,
         game_id: Uuid,
@@ -1656,6 +1678,13 @@ mod tests {
         assert_eq!(summaries[&first].mate, None);
         assert_eq!(summaries[&second].score_cp, None);
         assert_eq!(summaries[&second].mate, Some(3));
+        assert_eq!(
+            store.load_latest_analysis_summary(game_id, None).unwrap(),
+            Some(AnalysisSummary {
+                score_cp: Some(99),
+                mate: None,
+            })
+        );
     }
 
     #[test]

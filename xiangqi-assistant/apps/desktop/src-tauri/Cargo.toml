@@ -14,6 +14,7 @@ local-store = { path = "../../../crates/local-store" }
 manual-format = { path = "../../../crates/manual-format" }
 keyring = "3"
 reqwest = { version = "0.13", features = ["json"] }
+printpdf = { version = "0.8.2", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"
@@ -21,6 +22,7 @@ sync-protocol = { path = "../../../crates/sync-protocol" }
 tauri = { version = "2", features = [] }
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-dialog = "2"
+tempfile = "3.23"
 tokio.workspace = true
 uuid.workspace = true
 xiangqi-core = { path = "../../../crates/xiangqi-core" }
@@ -29,6 +31,3 @@ xiangqi-manual = { path = "../../../crates/manual" }
 [[bin]]
 name = "xiangqi-desktop"
 path = "src/main.rs"
-
-[dev-dependencies]
-tempfile = "3.23"

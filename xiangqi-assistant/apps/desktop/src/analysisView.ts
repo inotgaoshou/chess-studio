@@ -1,9 +1,9 @@
-import type { AnalysisLine, BoardState, GameReportDatasetDto, ReportPhase, MoveItem, Side } from "./platform";
+import type { AnalysisLine, BoardState, GameReportDatasetDto, QualityGrade, ReportPhase, MoveItem, Side } from "./platform";
 
 export type PvMoveRow = { number: number; red?: string; black?: string };
 export type TrendSample = { label: string; scoreCp: number; nodeId?: string; moveIndex?: number };
 export type TrendPoint = TrendSample & { x: number; y: number };
-export type MoveGrade = "优" | "佳" | "疑" | "错" | "漏";
+export type MoveGrade = QualityGrade;
 export type MoveReport = {
   move: MoveItem;
   index: number;
@@ -15,9 +15,7 @@ export type MoveReport = {
   missedMate?: boolean;
 };
 export type MoveGradeStandard = {
-  grade: MoveGrade;
-  lossRangeCp: string;
-  lossPawnRange: string;
+  grade: QualityGrade;
   qualityRange: string;
   description: string;
 };
@@ -39,16 +37,17 @@ export type GameReportMove = {
   grade: MoveGrade;
   missedMate: boolean;
   redScoreCp: number;
+  deltaCp: number;
 };
 export type SideReport = {
   overall?: number;
   phases: Record<ReportPhase, number | undefined>;
-  counts: Record<"excellent" | "good" | "inaccuracy" | "mistake" | "blunder" | "missedMate", number>;
+  counts: Record<"excellent" | "good" | "average" | "poor" | "error" | "missedMate", number>;
 };
 export type GameReport = { red: SideReport; black: SideReport; moves: GameReportMove[] };
 export type CoachDimensions = Record<"opening" | "middle" | "endgame" | "accuracy" | "stability", number | undefined>;
 export type CoachProfile = {
-  quality: "卓越" | "精准" | "稳健" | "尚可" | "待提高" | "样本不足";
+  quality: QualityGrade | "样本不足";
   dimensions: CoachDimensions;
   summary: string;
   criticalMove?: GameReportMove;
@@ -59,43 +58,46 @@ export type TrendTurningPoint = TrendSample & {
 };
 
 const initialMaterial = 5660;
-type MoveGradeBand = {
-  grade: MoveGrade;
-  hint: string;
+type LossPenaltyBand = {
   minLossCp: number;
   maxLossCp?: number;
   penaltyOriginCp: number;
   penaltyAtOrigin: number;
   penaltyPerCp: number;
+};
+type QualityGradeBand = {
+  grade: QualityGrade;
+  minScore: number;
   qualityRange: string;
+  hint: string;
   description: string;
 };
 
-const moveGradeBands: MoveGradeBand[] = [
-  { grade: "优", hint: "接近最佳", minLossCp: 0, maxLossCp: 20, penaltyOriginCp: 0, penaltyAtOrigin: 0, penaltyPerCp: 0, qualityRange: "通常 100 分", description: "接近引擎首选，局面价值基本没有损失" },
-  { grade: "佳", hint: "轻微损失", minLossCp: 21, maxLossCp: 60, penaltyOriginCp: 20, penaltyAtOrigin: 0, penaltyPerCp: .1, qualityRange: "约 96-100 分", description: "质量较高，只有轻微的局面价值损失" },
-  { grade: "疑", hint: "值得复盘", minLossCp: 61, maxLossCp: 120, penaltyOriginCp: 60, penaltyAtOrigin: 4, penaltyPerCp: .2, qualityRange: "约 84-96 分", description: "值得复盘，局面优势出现可见下降" },
-  { grade: "错", hint: "明显失误", minLossCp: 121, maxLossCp: 250, penaltyOriginCp: 120, penaltyAtOrigin: 16, penaltyPerCp: .25, qualityRange: "约 51-84 分", description: "明显失误，通常会改变局面的优劣程度" },
-  { grade: "漏", hint: "严重失误", minLossCp: 251, penaltyOriginCp: 250, penaltyAtOrigin: 48.5, penaltyPerCp: .15, qualityRange: "0-51 分", description: "严重失误，可能丢失大量优势或直接改变胜负趋势" },
+const lossPenaltyBands: LossPenaltyBand[] = [
+  { minLossCp: 0, maxLossCp: 20, penaltyOriginCp: 0, penaltyAtOrigin: 0, penaltyPerCp: 0 },
+  { minLossCp: 21, maxLossCp: 60, penaltyOriginCp: 20, penaltyAtOrigin: 0, penaltyPerCp: .1 },
+  { minLossCp: 61, maxLossCp: 120, penaltyOriginCp: 60, penaltyAtOrigin: 4, penaltyPerCp: .2 },
+  { minLossCp: 121, maxLossCp: 250, penaltyOriginCp: 120, penaltyAtOrigin: 16, penaltyPerCp: .25 },
+  { minLossCp: 251, penaltyOriginCp: 250, penaltyAtOrigin: 48.5, penaltyPerCp: .15 },
 ];
 
-function rangeText(band: MoveGradeBand, divisor: number, suffix = "") {
-  const format = (value: number) => divisor === 1 ? String(value) : (value / divisor).toFixed(2);
-  if (band.maxLossCp == null) return `>${format(band.penaltyOriginCp)}${suffix}`;
-  return `${format(band.minLossCp)}-${format(band.maxLossCp)}${suffix}`;
-}
+const qualityGradeBands: QualityGradeBand[] = [
+  { grade: "优", minScore: 80, qualityRange: "80-100 分", hint: "接近最佳", description: "整体接近引擎首选，局面价值保持良好" },
+  { grade: "良", minScore: 60, qualityRange: "60-79 分", hint: "质量良好", description: "整体可靠，局面价值损失仍在可控范围" },
+  { grade: "中", minScore: 40, qualityRange: "40-59 分", hint: "可以改进", description: "造成一定局面损失，存在更稳健的选择" },
+  { grade: "差", minScore: 20, qualityRange: "20-39 分", hint: "明显失误", description: "造成明显局面损失，通常会改变优势程度" },
+  { grade: "错", minScore: 0, qualityRange: "0-19 分", hint: "严重错误", description: "造成严重局面损失，可能直接改变胜负趋势" },
+];
 
-export const moveGradeStandards: MoveGradeStandard[] = moveGradeBands.map((band) => ({
+export const moveGradeStandards: MoveGradeStandard[] = qualityGradeBands.map((band) => ({
   grade: band.grade,
-  lossRangeCp: rangeText(band, 1, " cp"),
-  lossPawnRange: rangeText(band, 100),
   qualityRange: band.qualityRange,
   description: band.description,
 }));
 
 export function moveQualityFeedback(grade: MoveGrade, missedMate = false) {
   if (missedMate) return { hint: "漏掉杀棋", description: "走前存在强制杀棋，本着后杀棋消失" };
-  const band = moveGradeBands.find((candidate) => candidate.grade === grade)!;
+  const band = qualityGradeBands.find((candidate) => candidate.grade === grade)!;
   return { hint: band.hint, description: band.description };
 }
 
@@ -116,21 +118,23 @@ function redMateSide(position: GameReportDatasetDto["positions"][number]) {
   return (position.mate === 0 ? -1 : Math.sign(position.mate)) * (position.sideToMove === "红方" ? 1 : -1);
 }
 
-function gradeForLoss(lossCp: number): MoveGrade {
-  return moveGradeBands.find((band) => band.maxLossCp == null || lossCp <= band.maxLossCp)!.grade;
+export function qualityGradeForScore(score: number): QualityGrade {
+  const normalized = Math.max(0, Math.min(100, Math.round(score)));
+  return qualityGradeBands.find((band) => normalized >= band.minScore)!.grade;
 }
 
 function movePenalty(lossCp: number) {
-  const band = moveGradeBands.find((candidate) => candidate.maxLossCp == null || lossCp <= candidate.maxLossCp)!;
+  const band = lossPenaltyBands.find((candidate) => candidate.maxLossCp == null || lossCp <= candidate.maxLossCp)!;
   return Math.min(100, band.penaltyAtOrigin + (lossCp - band.penaltyOriginCp) * band.penaltyPerCp);
 }
 
 export function moveQualityScore(lossCp: number, missedMate = false): { score: number; grade: MoveGrade } {
-  if (missedMate) return { score: 0, grade: "漏" };
+  if (missedMate) return { score: 0, grade: "错" };
   const normalizedLoss = Math.max(0, lossCp);
+  const score = Math.max(0, Math.round(100 - movePenalty(normalizedLoss)));
   return {
-    score: Math.max(0, Math.round(100 - movePenalty(normalizedLoss))),
-    grade: gradeForLoss(normalizedLoss),
+    score,
+    grade: qualityGradeForScore(score),
   };
 }
 
@@ -146,10 +150,10 @@ function sideReport(moves: GameReportMove[], side: Side): SideReport {
     phases: { opening: phaseScore("opening"), middle: phaseScore("middle"), endgame: phaseScore("endgame") },
     counts: {
       excellent: selected.filter((move) => move.grade === "优").length,
-      good: selected.filter((move) => move.grade === "佳").length,
-      inaccuracy: selected.filter((move) => move.grade === "疑").length,
-      mistake: selected.filter((move) => move.grade === "错").length,
-      blunder: selected.filter((move) => move.grade === "漏").length,
+      good: selected.filter((move) => move.grade === "良").length,
+      average: selected.filter((move) => move.grade === "中").length,
+      poor: selected.filter((move) => move.grade === "差").length,
+      error: selected.filter((move) => move.grade === "错").length,
       missedMate: selected.filter((move) => move.missedMate).length,
     },
   };
@@ -167,6 +171,7 @@ export function calculateGameReport(dataset: GameReportDatasetDto): GameReport {
     const moverSign = after.move.movedBy === "红方" ? 1 : -1;
     const missedMate = redMateSide(before) === moverSign && redMateSide(after) !== moverSign;
     const rawLoss = moverSign === 1 ? beforeValue - afterValue : afterValue - beforeValue;
+    const deltaCp = afterValue - beforeValue;
     const lossCp = Math.max(0, Math.round(rawLoss));
     const quality = moveQualityScore(lossCp, missedMate);
     moves.push({
@@ -176,18 +181,10 @@ export function calculateGameReport(dataset: GameReportDatasetDto): GameReport {
       ...quality,
       missedMate,
       redScoreCp: afterValue,
+      deltaCp,
     });
   }
   return { red: sideReport(moves, "红方"), black: sideReport(moves, "黑方"), moves };
-}
-
-function qualityForScore(score?: number): CoachProfile["quality"] {
-  if (score == null) return "样本不足";
-  if (score >= 95) return "卓越";
-  if (score >= 90) return "精准";
-  if (score >= 80) return "稳健";
-  if (score >= 70) return "尚可";
-  return "待提高";
 }
 
 export function coachProfile(report: GameReport, side: Side): CoachProfile {
@@ -199,8 +196,8 @@ export function coachProfile(report: GameReport, side: Side): CoachProfile {
     ? undefined
     : Math.max(0, Math.round(100 - Math.sqrt(moves.reduce((sum, move) => sum + (move.score - mean) ** 2, 0) / moves.length)));
   const criticalMove = moves.reduce<GameReportMove | undefined>((worst, move) => !worst || move.lossCp > worst.lossCp ? move : worst, undefined);
-  const errors = sideReport.counts.mistake + sideReport.counts.blunder;
-  const quality = qualityForScore(mean);
+  const errors = sideReport.counts.poor + sideReport.counts.error;
+  const quality = mean == null ? "样本不足" : qualityGradeForScore(mean);
   const summary = mean == null
     ? `${side}尚无足够的已分析着法，无法生成质量结论。`
     : `${side}本局表现${quality}，综合 ${mean} 分；${errors > 0 ? `共有 ${errors} 次错着或漏着` : "没有达到错着等级的着法"}${criticalMove && criticalMove.lossCp > 20 ? `，最值得复盘的是 ${criticalMove.notation}（损失 ${criticalMove.lossCp}cp）` : ""}。`;
@@ -240,17 +237,33 @@ function redMateSideAfterMove(move: MoveItem) {
   return (move.mate === 0 ? -1 : Math.sign(move.mate)) * sideToMove;
 }
 
-export function moveReports(history: MoveItem[]): MoveReport[] {
+type PositionScore = { sideToMove: Side; scoreCp?: number; mate?: number };
+
+function redScoreForPosition(position: PositionScore) {
+  const side = position.sideToMove === "红方" ? 1 : -1;
+  if (position.mate != null) return (position.mate === 0 ? -1 : Math.sign(position.mate)) * side * 1000;
+  return position.scoreCp == null ? undefined : position.scoreCp * side;
+}
+
+function redMateSideForPosition(position: PositionScore) {
+  if (position.mate == null) return 0;
+  return (position.mate === 0 ? -1 : Math.sign(position.mate)) * (position.sideToMove === "红方" ? 1 : -1);
+}
+
+export function moveReports(history: MoveItem[], initial?: PositionScore): MoveReport[] {
   return history.map((move, index) => {
     const redScoreCp = redScoreAfterMove(move);
-    const previousScore = index > 0 ? redScoreAfterMove(history[index - 1]) : undefined;
+    const previousScore = index > 0 ? redScoreAfterMove(history[index - 1]) : initial ? redScoreForPosition(initial) : undefined;
     if (redScoreCp == null || previousScore == null) return { move, index, redScoreCp };
 
     const deltaCp = redScoreCp - previousScore;
     const moverImprovement = move.movedBy === "红方" ? deltaCp : -deltaCp;
     const moverLossCp = Math.max(0, -moverImprovement);
     const moverSign = move.movedBy === "红方" ? 1 : -1;
-    const missedMate = redMateSideAfterMove(history[index - 1]) === moverSign && redMateSideAfterMove(move) !== moverSign;
+    const previousMateSide = index > 0
+      ? redMateSideAfterMove(history[index - 1])
+      : initial ? redMateSideForPosition(initial) : 0;
+    const missedMate = previousMateSide === moverSign && redMateSideAfterMove(move) !== moverSign;
     const quality = moveQualityScore(moverLossCp, missedMate);
     return { move, index, redScoreCp, deltaCp, moverLossCp, ...quality, missedMate };
   });

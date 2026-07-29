@@ -13,6 +13,7 @@ import {
   ClipboardPaste,
   Copy,
   Database,
+  Download,
   FolderOpen,
   GitBranch,
   GitFork,
@@ -22,6 +23,7 @@ import {
   Library,
   ListStart,
   MessageSquare,
+  Maximize2,
   Moon,
   Pause,
   Play,
@@ -38,11 +40,12 @@ import {
   Zap,
 } from "lucide-react";
 import { chessPlatform, type AnalysisLine, type BoardState, type EngineRuntimeState, type GameReportDatasetDto, type GameReportProgressDto, type GameSummary, type MoveItem, type Piece } from "./platform";
-import { calculateGameReport, coachProfile, moveGradeStandards, moveQualityFeedback, moveReports, positionEvaluation, trendPoints, trendTurningPoints } from "./analysisView";
+import { moveQualityFeedback, moveReports, positionEvaluation, trendPoints, trendTurningPoints } from "./analysisView";
 import { CandidateLine } from "./CandidateLine";
-import { CoachRadar } from "./CoachRadar";
 import { DesktopMenuBar, type MenuCommand } from "./DesktopMenuBar";
 import { DesktopDialogs, type DesktopDialog } from "./DesktopDialogs";
+import { GameReportDialog, GameReportView } from "./GameReportView";
+import { buildGameReportPresentation } from "./gameReport";
 import { MobileToolbar, type MobileToolbarCommand } from "./MobileToolbar";
 import type { DesktopPreferencesDto, SyncAccountDto } from "./platform";
 import { applyColorTheme, initialColorTheme, type ColorTheme } from "./theme";
@@ -63,6 +66,7 @@ const initialPieces: Piece[] = [
 ];
 const fallback: BoardState = {
   fen: startingFen,
+  rootSideToMove: "红方",
   sideToMove: "红方",
   status: "进行中",
   pieces: initialPieces,
@@ -262,11 +266,14 @@ export default function App() {
   const [gameReport, setGameReport] = useState<GameReportDatasetDto>();
   const [reportProgress, setReportProgress] = useState<GameReportProgressDto>();
   const [reportBusy, setReportBusy] = useState(false);
+  const [reportDialogOpen, setReportDialogOpen] = useState(false);
+  const [reportExporting, setReportExporting] = useState(false);
   const [syncAccount, setSyncAccount] = useState(defaultSyncAccount);
   const [desktopDialog, setDesktopDialog] = useState<DesktopDialog>(null);
   const [dialogBusy, setDialogBusy] = useState(false);
   const [online, setOnline] = useState(typeof navigator === "undefined" ? true : navigator.onLine);
   const boardRevision = useRef(0);
+  const reportExportingRef = useRef(false);
   const analysisLoadRevision = useRef(0);
   const reportLoadRevision = useRef(0);
   const boardRef = useRef<BoardState>(fallback);
@@ -426,12 +433,15 @@ export default function App() {
   const evaluationTrend = useMemo(() => trendPoints(evaluation?.samples ?? [], board.history.length), [board.history.length, evaluation]);
   const trendTurns = useMemo(() => trendTurningPoints(evaluation?.samples ?? []), [evaluation]);
   const trendTurnsByNode = useMemo(() => new Map(trendTurns.map((turn) => [turn.nodeId, turn])), [trendTurns]);
-  const reports = useMemo(() => moveReports(board.history), [board.history]);
-  const calculatedGameReport = useMemo(() => gameReport ? calculateGameReport(gameReport) : undefined, [gameReport]);
-  const coachProfiles = useMemo(() => calculatedGameReport ? {
-    red: coachProfile(calculatedGameReport, "红方"),
-    black: coachProfile(calculatedGameReport, "黑方"),
-  } : undefined, [calculatedGameReport]);
+  const reports = useMemo(() => {
+    const reportRoot = gameReport?.positions[0];
+    return moveReports(board.history, {
+      sideToMove: reportRoot?.sideToMove ?? board.rootSideToMove,
+      scoreCp: board.rootScoreCp ?? reportRoot?.scoreCp,
+      mate: board.rootMate ?? reportRoot?.mate,
+    });
+  }, [board.history, board.rootMate, board.rootScoreCp, board.rootSideToMove, gameReport]);
+  const reportPresentation = useMemo(() => gameReport ? buildGameReportPresentation(board.title, gameReport) : undefined, [board.title, gameReport]);
   const orderedAnalysis = useMemo(() => analysis.slice().sort((left, right) => left.multipv - right.multipv), [analysis]);
   const primaryAnalysis = orderedAnalysis[0];
   const primaryMove = primaryAnalysis?.notation?.[0] ?? primaryAnalysis?.pv[0];
@@ -600,6 +610,25 @@ export default function App() {
       if (showNotice) setNotice("正在取消整局分析，已完成的节点缓存会保留");
     } catch (error) {
       if (showNotice) setNotice(friendlyError(error));
+    }
+  }
+
+  async function exportGameReport() {
+    if (!reportPresentation || reportBusy || reportExportingRef.current) return;
+    if (chessPlatform.kind !== "desktop") {
+      setNotice("PDF 报告导出仅支持桌面版");
+      return;
+    }
+    reportExportingRef.current = true;
+    setReportExporting(true);
+    try {
+      const path = await chessPlatform.exportGameReportPdf(reportPresentation);
+      setNotice(path ? `PDF 报告已导出：${path.split(/[\\/]/).at(-1)}` : "已取消导出报告");
+    } catch (error) {
+      setNotice(friendlyError(error));
+    } finally {
+      reportExportingRef.current = false;
+      setReportExporting(false);
     }
   }
 
@@ -1729,70 +1758,41 @@ export default function App() {
             {workspacePanel === "report" && <div id="workspace-panel-report" className="review-empty-or-content game-report" role="tabpanel" aria-labelledby="workspace-tab-report">
               <header className="game-report-actions">
                 <div><strong>整局分析报告</strong><small>{gameReport ? new Date(gameReport.generatedAt).toLocaleString() : "分析当前选中线路"}</small></div>
-                {reportBusy
-                  ? <button className="danger" onClick={() => void cancelGameReport()}><Square size={13}/>取消</button>
-                  : <button disabled={!enginePath.trim()} onClick={() => void generateGameReport()}><Activity size={13}/>{gameReport ? "重新分析" : "生成报告"}</button>}
+                <nav aria-label="整局报告操作">
+                  {reportPresentation && <button title="放大查看报告" disabled={reportBusy} onClick={() => setReportDialogOpen(true)}><Maximize2 size={13}/>放大</button>}
+                  {reportPresentation && <button title="导出 PDF 报告" disabled={reportBusy || reportExporting} onClick={() => void exportGameReport()}><Download size={13}/>{reportExporting ? "导出中" : "PDF"}</button>}
+                  {reportBusy
+                    ? <button className="danger" onClick={() => void cancelGameReport()}><Square size={13}/>取消</button>
+                    : <button disabled={!enginePath.trim()} onClick={() => void generateGameReport()}><Activity size={13}/>{gameReport ? "重新分析" : "生成报告"}</button>}
+                </nav>
               </header>
               {reportBusy && <div className="report-progress" aria-live="polite">
                 <div><span>正在分析第 {Math.min((reportProgress?.completed ?? 0) + 1, reportProgress?.total ?? 1)} 个局面</span><strong>{reportProgress?.completed ?? 0}/{reportProgress?.total ?? "--"}</strong></div>
                 <progress max={Math.max(1, reportProgress?.total ?? 1)} value={reportProgress?.completed ?? 0}/>
                 <small>已用 {((reportProgress?.elapsedMs ?? 0) / 1000).toFixed(1)} 秒，已完成节点会作为下次续跑缓存</small>
               </div>}
-              {gameReport?.stale && <div className="stale-report">线路结构已变化，此报告已过期。旧结果仍可查看。</div>}
-              {!gameReport || !calculatedGameReport
+              {!gameReport || !reportPresentation
                 ? !reportBusy && <div className="empty-review"><ClipboardList size={26}/><strong>尚未生成整局报告</strong><span>从根局面到当前节点，再沿主线逐局面调用 Pikafish 分析</span></div>
-                : <>
-                  <div className="side-score-grid">
-                    {(["red", "black"] as const).map((side) => {
-                      const value = calculatedGameReport[side];
-                      return <article className={side} key={side}><small>{side === "red" ? "红方" : "黑方"}综合评分</small><strong>{value.overall ?? "--"}</strong><span>优 {value.counts.excellent} · 佳 {value.counts.good} · 疑 {value.counts.inaccuracy}</span><span>错 {value.counts.mistake} · 漏 {value.counts.blunder}{value.counts.missedMate ? ` · 漏杀 ${value.counts.missedMate}` : ""}</span></article>;
-                    })}
-                  </div>
-                  {coachProfiles && <>
-                    <section className="coach-summary-grid">
-                      {(["red", "black"] as const).map((side) => <article className={side} key={side}>
-                        <header><strong>{side === "red" ? "红方" : "黑方"}私教总结</strong><span>{coachProfiles[side].quality}</span></header>
-                        <p>{coachProfiles[side].summary}</p>
-                      </article>)}
-                    </section>
-                    <CoachRadar red={coachProfiles.red} black={coachProfiles.black}/>
-                  </>}
-                  <section className="phase-scores">
-                    <header><span>阶段</span><span>红方</span><span>黑方</span></header>
-                    {(["opening", "middle", "endgame"] as const).map((phase) => <div key={phase}><strong>{{ opening: "开局", middle: "中局", endgame: "残局" }[phase]}</strong><span>{calculatedGameReport.red.phases[phase] ?? "--"}</span><span>{calculatedGameReport.black.phases[phase] ?? "--"}</span></div>)}
-                  </section>
-                  <section className="report-issues">
-                    <header><strong>关键问题着法</strong><span>{calculatedGameReport.moves.filter((move) => move.grade === "错" || move.grade === "漏" || move.missedMate).length}</span></header>
-                    {calculatedGameReport.moves.filter((move) => move.grade === "错" || move.grade === "漏" || move.missedMate).length === 0
-                      ? <p>当前线路没有达到“错”或“漏”的着法。</p>
-                      : calculatedGameReport.moves.filter((move) => move.grade === "错" || move.grade === "漏" || move.missedMate).map((move, index) => <div key={move.nodeId} className={`report-issue-row ${board.currentNode === move.nodeId ? "active" : ""}`}>
-                        <button className="report-issue-location" onClick={() => void navigateTo(move.nodeId)}><span>{index + 1}</span><i className={move.movedBy === "红方" ? "red" : "black"}/><strong>{move.notation}</strong><span className="report-issue-score"><small>{move.movedBy}损失 {move.lossCp}cp</small><em>质量 {move.score}分</em></span><b className={`grade-${move.grade}`}>{move.missedMate ? "漏杀" : move.grade}</b></button>
-                        <button className="coach-study-action" title={`回到 ${move.notation} 之前推演`} onClick={() => void startCoachStudy(move.nodeId)}><GitFork size={13}/>推演</button>
-                      </div>)}
-                  </section>
-                </>}
-              <details className="score-standards" open>
-                <summary><span><strong>评分标准</strong><small>局面损失、等级与单着质量分的对应关系</small></span><ChevronDown size={15}/></summary>
-                <div className="score-standard-table" role="table" aria-label="单着评分标准">
-                  <div className="score-standard-head" role="row"><span>等级</span><span>局面损失</span><span>损失折算</span><span>质量分</span></div>
-                  {moveGradeStandards.map((standard) => <div role="row" key={standard.grade}>
-                    <b className={`grade-${standard.grade}`}>{standard.grade}</b>
-                    <code>{standard.lossRangeCp}</code>
-                    <code>{standard.lossPawnRange}</code>
-                    <strong>{standard.qualityRange}</strong>
-                    <small>{standard.description}</small>
-                  </div>)}
-                </div>
-                <div className="score-standard-notes">
-                  <p><strong>局面分：</strong>Pikafish 的 centipawn（cp）数值，<code>100cp = 1.00</code>，大致相当于一个兵的量级，同时包含子力、位置和攻势等因素。正数表示红方占优，负数表示黑方占优。</p>
-                  <p><strong>单着质量分：</strong>根据走棋前后的局面价值损失换算为 0-100 分；分数越高，说明越接近引擎首选。漏掉已有强制杀棋时标记“漏杀”，质量固定为 0 分。</p>
-                  <p>本标准参考常见象棋复盘产品的信息呈现方式，计算使用本应用自有的 Pikafish 局面损失算法，不等同于天天象棋内部评分。</p>
-                </div>
-              </details>
+                : <GameReportView
+                  report={reportPresentation}
+                  currentNode={board.currentNode}
+                  onNavigate={(nodeId) => void navigateTo(nodeId)}
+                  onStudy={(nodeId) => void startCoachStudy(nodeId)}
+                />}
             </div>}
           </section>}
         </aside>
       </main>
+      {reportDialogOpen && reportPresentation && <GameReportDialog
+        report={reportPresentation}
+        currentNode={board.currentNode}
+        exporting={reportExporting}
+        onClose={() => setReportDialogOpen(false)}
+        onExport={() => void exportGameReport()}
+        onRegenerate={() => { setReportDialogOpen(false); void generateGameReport(); }}
+        onNavigate={(nodeId) => void navigateTo(nodeId)}
+        onStudy={(nodeId) => void startCoachStudy(nodeId)}
+      />}
       {(mobilePanel === "library" || mobilePanel === "settings") && <button className="mobile-drawer-backdrop" aria-label="关闭侧栏" onClick={() => setMobilePanel("board")}/>}
       {positionEditorOpen && (
         <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPositionEditorOpen(false); }}>

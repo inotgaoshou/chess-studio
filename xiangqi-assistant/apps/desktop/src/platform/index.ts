@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { webDatabase, type SyncOperation, type WebGameRecord } from "./indexedDb";
-import type { AnalysisLine, AnalysisOptions, BoardState, ChessPlatform, DesktopPreferencesDto, EngineMoveResult, EnginePlayOptions, EngineProbeDto, EngineRuntimeEvent, GameReportDatasetDto, GameReportOptionsDto, GameReportProgressDto, GameSummary, SyncAccountDto, SyncResult } from "./types";
+import type { AnalysisLine, AnalysisOptions, BoardState, ChessPlatform, DesktopPreferencesDto, EngineMoveResult, EnginePlayOptions, EngineProbeDto, EngineRuntimeEvent, GameReportDatasetDto, GameReportOptionsDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, SyncAccountDto, SyncResult } from "./types";
 
 type WebGameInstance = {
   stateJson(): string;
@@ -128,6 +128,13 @@ class DesktopPlatform implements ChessPlatform {
   }
   cancelGameReport() { return invoke<boolean>("cancel_game_report"); }
   async getGameReport() { return (await invoke<GameReportDatasetDto | null>("get_game_report")) ?? undefined; }
+  async exportGameReportPdf(report: GameReportPresentationDto) {
+    const date = report.generatedAt.slice(0, 10).replaceAll("-", "") || new Date().toISOString().slice(0, 10).replaceAll("-", "");
+    const title = report.title.replace(/[\\/:*?"<>|\x00-\x1f]/g, "_").trim().slice(0, 80) || "未命名棋局";
+    const path = await save({ defaultPath: `${title}-复盘报告-${date}.pdf`, filters: [{ name: "PDF 复盘报告", extensions: ["pdf"] }] });
+    if (!path) return undefined;
+    return invoke<string>("export_game_report_pdf", { path, report });
+  }
   subscribeGameReportProgress(listener: (progress: GameReportProgressDto) => void) {
     return listen<GameReportProgressDto>("game-report-progress", (event) => listener(event.payload));
   }
@@ -213,6 +220,7 @@ class WebPlatform implements ChessPlatform {
   async generateGameReport(): Promise<GameReportDatasetDto> { throw new Error("Web 端不支持本地整局分析报告"); }
   async cancelGameReport() { return false; }
   async getGameReport(): Promise<GameReportDatasetDto | undefined> { throw new Error("Web 端不支持本地整局分析报告"); }
+  async exportGameReportPdf(): Promise<string | undefined> { throw new Error("Web 端不支持桌面 PDF 报告导出"); }
   async subscribeGameReportProgress() { return () => undefined; }
 
   async playMove(iccs: string): Promise<Partial<BoardState>> {
@@ -461,4 +469,4 @@ class WebPlatform implements ChessPlatform {
 
 const tauriAvailable = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 export const chessPlatform: ChessPlatform = tauriAvailable ? new DesktopPlatform() : new WebPlatform();
-export type { AnalysisLine, AnalysisOptions, BoardState, ChessPlatform, DesktopPreferencesDto, EngineProbeDto, EngineRuntimeEvent, EngineRuntimeState, GameReportDatasetDto, GameReportOptionsDto, GameReportPositionDto, GameReportProgressDto, GameSummary, MoveItem, Piece, ReportPhase, Side, SyncAccountDto, SyncResult } from "./types";
+export type { AnalysisLine, AnalysisOptions, BoardState, ChessPlatform, DesktopPreferencesDto, EngineProbeDto, EngineRuntimeEvent, EngineRuntimeState, GameReportDatasetDto, GameReportOptionsDto, GameReportPositionDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, MoveItem, Piece, QualityGrade, ReportPhase, ReportSidePresentationDto, Side, SyncAccountDto, SyncResult } from "./types";

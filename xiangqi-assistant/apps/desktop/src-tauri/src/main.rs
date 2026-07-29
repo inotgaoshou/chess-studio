@@ -1,4 +1,5 @@
 mod credential_store;
+mod pdf_report;
 
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -180,6 +181,9 @@ struct MoveDto {
 #[serde(rename_all = "camelCase")]
 struct BoardDto {
     fen: String,
+    root_side_to_move: &'static str,
+    root_score_cp: Option<i32>,
+    root_mate: Option<i32>,
     side_to_move: &'static str,
     status: &'static str,
     pieces: Vec<PieceDto>,
@@ -1852,6 +1856,15 @@ fn get_game_report(state: State<'_, DesktopState>) -> Result<Option<GameReportDa
     Ok(Some(dataset))
 }
 
+#[tauri::command]
+fn export_game_report_pdf(
+    path: String,
+    report: pdf_report::GameReportPresentationDto,
+) -> Result<String, String> {
+    let saved = pdf_report::write_report_pdf(Path::new(&path), &report)?;
+    Ok(saved.to_string_lossy().into_owned())
+}
+
 fn protocol_name(protocol: Protocol) -> &'static str {
     match protocol {
         Protocol::Uci => "uci",
@@ -2269,6 +2282,11 @@ fn board_dto(model: &AppModel) -> Result<BoardDto, String> {
         .store
         .load_latest_analysis_summaries(model.game_id)
         .map_err(|error| error.to_string())?;
+    let root_analysis = model
+        .store
+        .load_latest_analysis_summary(model.game_id, None)
+        .map_err(|error| error.to_string())?;
+    let root_board = Board::from_fen(&model.starting_fen).map_err(|error| error.to_string())?;
     let mut pieces = Vec::new();
     for row in 0..10 {
         for col in 0..9 {
@@ -2324,6 +2342,13 @@ fn board_dto(model: &AppModel) -> Result<BoardDto, String> {
         .collect::<Result<Vec<_>, _>>()?;
     Ok(BoardDto {
         fen: model.board.to_fen(),
+        root_side_to_move: if root_board.side_to_move() == Color::Red {
+            "红方"
+        } else {
+            "黑方"
+        },
+        root_score_cp: root_analysis.as_ref().and_then(|summary| summary.score_cp),
+        root_mate: root_analysis.as_ref().and_then(|summary| summary.mate),
         side_to_move: if model.board.side_to_move() == Color::Red {
             "红方"
         } else {
@@ -2804,6 +2829,7 @@ fn main() {
             generate_game_report,
             cancel_game_report,
             get_game_report,
+            export_game_report_pdf,
             get_desktop_preferences,
             save_desktop_preferences,
             probe_engine,

@@ -1,4 +1,4 @@
-import type { CoachDimensions, CoachProfile } from "./analysisView";
+import type { CoachDimensions } from "./analysisView";
 
 const dimensions: Array<{ key: keyof CoachDimensions; label: string }> = [
   { key: "opening", label: "开局" },
@@ -19,7 +19,7 @@ export function radarPolygon(values: CoachDimensions) {
   return dimensions.map(({ key }, index) => point(index, values[key] ?? fallback)).join(" ");
 }
 
-export function CoachRadar({ red, black }: { red: CoachProfile; black: CoachProfile }) {
+export function CoachRadar({ red, black }: { red: { dimensions: CoachDimensions }; black: { dimensions: CoachDimensions } }) {
   return <section className="coach-radar" aria-labelledby="coach-radar-title">
     <header>
       <div><strong id="coach-radar-title">五维对局质量</strong><small>应用自有可解释评分</small></div>

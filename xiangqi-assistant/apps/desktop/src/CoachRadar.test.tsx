@@ -6,7 +6,7 @@ import type { CoachProfile } from "./analysisView";
 afterEach(cleanup);
 
 const profile = (accuracy: number): CoachProfile => ({
-  quality: "稳健",
+  quality: "优",
   dimensions: { opening: 90, middle: 80, endgame: undefined, accuracy, stability: 75 },
   summary: "测试总结",
 });

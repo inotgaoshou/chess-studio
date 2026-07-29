@@ -15,6 +15,9 @@ export type MoveItem = {
 };
 export type BoardState = {
   fen: string;
+  rootSideToMove: Side;
+  rootScoreCp?: number;
+  rootMate?: number;
   sideToMove: Side;
   status: string;
   pieces: Piece[];
@@ -51,6 +54,7 @@ export type AnalysisOptions = {
   excludeMove?: string;
 };
 export type ReportPhase = "opening" | "middle" | "endgame";
+export type QualityGrade = "优" | "良" | "中" | "差" | "错";
 export type GameReportMoveDto = { nodeId: string; notation: string; movedBy: Side };
 export type GameReportPositionDto = {
   fen: string;
@@ -86,6 +90,47 @@ export type GameReportProgressDto = {
   nodeId?: string;
   elapsedMs: number;
   state: "running" | "cancelled" | "complete";
+};
+export type ReportQualityCountsDto = {
+  excellent: number;
+  good: number;
+  average: number;
+  poor: number;
+  error: number;
+  missedMate: number;
+};
+export type ReportSidePresentationDto = {
+  side: Side;
+  overall?: number;
+  grade?: QualityGrade;
+  phases: Record<ReportPhase, number | undefined>;
+  phaseGrades: Record<ReportPhase, QualityGrade | undefined>;
+  counts: ReportQualityCountsDto;
+  coachQuality: QualityGrade | "样本不足";
+  coachSummary: string;
+  dimensions: Record<"opening" | "middle" | "endgame" | "accuracy" | "stability", number | undefined>;
+};
+export type ReportIssuePresentationDto = {
+  nodeId: string;
+  notation: string;
+  movedBy: Side;
+  lossCp: number;
+  score: number;
+  grade: QualityGrade;
+  missedMate: boolean;
+  redScoreCp: number;
+  deltaCp: number;
+};
+export type GameReportPresentationDto = {
+  title: string;
+  generatedAt: string;
+  stale: boolean;
+  red: ReportSidePresentationDto;
+  black: ReportSidePresentationDto;
+  trend: Array<{ label: string; scoreCp: number; nodeId?: string }>;
+  issues: ReportIssuePresentationDto[];
+  standards: Array<{ grade: QualityGrade; qualityRange: string; description: string }>;
+  disclaimer: string;
 };
 export type SyncResult = { uploaded: number; downloaded: number; cursor: number };
 export type DesktopPreferencesDto = {
@@ -152,6 +197,7 @@ export interface ChessPlatform {
   generateGameReport(options: GameReportOptionsDto): Promise<GameReportDatasetDto>;
   cancelGameReport(): Promise<boolean>;
   getGameReport(): Promise<GameReportDatasetDto | undefined>;
+  exportGameReportPdf(report: GameReportPresentationDto): Promise<string | undefined>;
   subscribeGameReportProgress(listener: (progress: GameReportProgressDto) => void): Promise<() => void>;
   loadSavedAnalysis(fen: string): Promise<AnalysisLine[]>;
   getSyncAccount(): Promise<SyncAccountDto>;

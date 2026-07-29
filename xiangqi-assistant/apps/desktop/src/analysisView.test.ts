@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calculateGameReport, coachProfile, moveGradeStandards, moveQualityFeedback, moveQualityScore, moveReports, pvMoveRows, reportMovePhase, trendTurningPoints } from "./analysisView";
+import { calculateGameReport, coachProfile, moveGradeStandards, moveQualityFeedback, moveQualityScore, moveReports, pvMoveRows, qualityGradeForScore, reportMovePhase, trendTurningPoints } from "./analysisView";
 import type { AnalysisLine, GameReportDatasetDto, MoveItem } from "./platform";
 
 function dataset(positions: GameReportDatasetDto["positions"]): GameReportDatasetDto {
@@ -23,7 +23,7 @@ describe("calculateGameReport", () => {
     ]));
 
     expect(report.moves[0]).toMatchObject({ lossCp: 20, score: 100, grade: "优", missedMate: false });
-    expect(report.moves[1]).toMatchObject({ lossCp: 100, score: 88, grade: "疑", missedMate: false });
+    expect(report.moves[1]).toMatchObject({ lossCp: 100, score: 88, grade: "优", missedMate: false });
     expect(report.red.overall).toBe(100);
     expect(report.black.overall).toBe(88);
   });
@@ -34,7 +34,7 @@ describe("calculateGameReport", () => {
       { fen: "after-red", sideToMove: "黑方", ply: 1, phase: "opening", scoreCp: -200, move: { nodeId: "first", notation: "车一平二", movedBy: "红方" } },
     ]));
 
-    expect(report.moves[0]).toMatchObject({ lossCp: 800, score: 0, grade: "漏", missedMate: true });
+    expect(report.moves[0]).toMatchObject({ lossCp: 800, score: 0, grade: "错", missedMate: true });
     expect(report.red.counts.missedMate).toBe(1);
   });
 
@@ -49,11 +49,11 @@ describe("calculateGameReport", () => {
 
   it.each([
     [20, 100, "优"],
-    [60, 96, "佳"],
-    [120, 84, "疑"],
-    [250, 52, "错"],
-    [251, 51, "漏"],
-    [1000, 0, "漏"],
+    [60, 96, "优"],
+    [120, 84, "优"],
+    [250, 52, "中"],
+    [251, 51, "中"],
+    [1000, 0, "错"],
   ] as const)("applies the segmented penalty at %icp loss", (lossCp, score, grade) => {
     const report = calculateGameReport(dataset([
       { fen: "root", sideToMove: "红方", ply: 0, phase: "opening", scoreCp: 500 },
@@ -89,42 +89,57 @@ describe("calculateGameReport", () => {
 
 describe("move quality score", () => {
   it.each([
+    [100, "优"],
+    [80, "优"],
+    [79, "良"],
+    [60, "良"],
+    [59, "中"],
+    [40, "中"],
+    [39, "差"],
+    [20, "差"],
+    [19, "错"],
+    [0, "错"],
+  ] as const)("maps %i quality points to the unified %s grade", (score, grade) => {
+    expect(qualityGradeForScore(score)).toBe(grade);
+  });
+
+  it.each([
     [0, 100, "优"],
     [20, 100, "优"],
-    [21, 100, "佳"],
-    [60, 96, "佳"],
-    [61, 96, "疑"],
-    [120, 84, "疑"],
-    [121, 84, "错"],
-    [250, 52, "错"],
-    [251, 51, "漏"],
-    [1000, 0, "漏"],
+    [21, 100, "优"],
+    [60, 96, "优"],
+    [61, 96, "优"],
+    [120, 84, "优"],
+    [121, 84, "优"],
+    [250, 52, "中"],
+    [251, 51, "中"],
+    [1000, 0, "错"],
   ] as const)("maps %icp loss to %i points and %s", (lossCp, score, grade) => {
     expect(moveQualityScore(lossCp)).toEqual({ score, grade });
   });
 
   it("scores a missed mate as zero regardless of centipawn loss", () => {
-    expect(moveQualityScore(0, true)).toEqual({ score: 0, grade: "漏" });
+    expect(moveQualityScore(0, true)).toEqual({ score: 0, grade: "错" });
   });
 
   it.each([
-    ["优", false, { hint: "接近最佳", description: "接近引擎首选，局面价值基本没有损失" }],
-    ["佳", false, { hint: "轻微损失", description: "质量较高，只有轻微的局面价值损失" }],
-    ["疑", false, { hint: "值得复盘", description: "值得复盘，局面优势出现可见下降" }],
-    ["错", false, { hint: "明显失误", description: "明显失误，通常会改变局面的优劣程度" }],
-    ["漏", false, { hint: "严重失误", description: "严重失误，可能丢失大量优势或直接改变胜负趋势" }],
-    ["漏", true, { hint: "漏掉杀棋", description: "走前存在强制杀棋，本着后杀棋消失" }],
+    ["优", false, { hint: "接近最佳", description: "整体接近引擎首选，局面价值保持良好" }],
+    ["良", false, { hint: "质量良好", description: "整体可靠，局面价值损失仍在可控范围" }],
+    ["中", false, { hint: "可以改进", description: "造成一定局面损失，存在更稳健的选择" }],
+    ["差", false, { hint: "明显失误", description: "造成明显局面损失，通常会改变优势程度" }],
+    ["错", false, { hint: "严重错误", description: "造成严重局面损失，可能直接改变胜负趋势" }],
+    ["错", true, { hint: "漏掉杀棋", description: "走前存在强制杀棋，本着后杀棋消失" }],
   ] as const)("provides coaching feedback for %s", (grade, missedMate, expected) => {
     expect(moveQualityFeedback(grade, missedMate)).toEqual(expected);
   });
 
   it("publishes the same five boundaries used by the report explanation", () => {
-    expect(moveGradeStandards.map(({ grade, lossRangeCp, lossPawnRange, qualityRange }) => ({ grade, lossRangeCp, lossPawnRange, qualityRange }))).toEqual([
-      { grade: "优", lossRangeCp: "0-20 cp", lossPawnRange: "0.00-0.20", qualityRange: "通常 100 分" },
-      { grade: "佳", lossRangeCp: "21-60 cp", lossPawnRange: "0.21-0.60", qualityRange: "约 96-100 分" },
-      { grade: "疑", lossRangeCp: "61-120 cp", lossPawnRange: "0.61-1.20", qualityRange: "约 84-96 分" },
-      { grade: "错", lossRangeCp: "121-250 cp", lossPawnRange: "1.21-2.50", qualityRange: "约 51-84 分" },
-      { grade: "漏", lossRangeCp: ">250 cp", lossPawnRange: ">2.50", qualityRange: "0-51 分" },
+    expect(moveGradeStandards.map(({ grade, qualityRange }) => ({ grade, qualityRange }))).toEqual([
+      { grade: "优", qualityRange: "80-100 分" },
+      { grade: "良", qualityRange: "60-79 分" },
+      { grade: "中", qualityRange: "40-59 分" },
+      { grade: "差", qualityRange: "20-39 分" },
+      { grade: "错", qualityRange: "0-19 分" },
     ]);
   });
 
@@ -134,7 +149,21 @@ describe("move quality score", () => {
       { id: "black", iccs: "h9g7", notation: "马8进7", movedBy: "黑方", from: { row: 0, col: 7 }, to: { row: 2, col: 6 }, scoreCp: 200, comment: "", isMainline: true },
     ];
 
-    expect(moveReports(history)[1]).toMatchObject({ moverLossCp: 100, grade: "疑", score: 88 });
+    expect(moveReports(history)[1]).toMatchObject({ moverLossCp: 100, grade: "优", score: 88 });
+  });
+
+  it("scores the first analyzed move when the root evaluation is available", () => {
+    const history: MoveItem[] = [
+      { id: "red", iccs: "h2e2", notation: "炮二平五", movedBy: "红方", from: { row: 7, col: 7 }, to: { row: 7, col: 4 }, scoreCp: -40, comment: "", isMainline: true },
+    ];
+
+    expect(moveReports(history, { sideToMove: "红方", scoreCp: 100 })[0]).toMatchObject({
+      redScoreCp: 40,
+      deltaCp: -60,
+      moverLossCp: 60,
+      score: 96,
+      grade: "优",
+    });
   });
 
   it("marks a forced mate lost in the live summary as a zero-point missed mate", () => {
@@ -143,7 +172,7 @@ describe("move quality score", () => {
       { id: "red", iccs: "a0a1", notation: "车一进一", movedBy: "红方", from: { row: 9, col: 0 }, to: { row: 8, col: 0 }, scoreCp: 0, comment: "", isMainline: true },
     ];
 
-    expect(moveReports(history)[1]).toMatchObject({ moverLossCp: 1000, grade: "漏", score: 0, missedMate: true });
+    expect(moveReports(history)[1]).toMatchObject({ moverLossCp: 1000, grade: "错", score: 0, missedMate: true });
   });
 });
 
@@ -157,7 +186,7 @@ describe("coachProfile", () => {
     ]));
 
     const red = coachProfile(report, "红方");
-    expect(red.quality).toBe("精准");
+    expect(red.quality).toBe("优");
     expect(red.dimensions).toEqual({ opening: 100, middle: 88, endgame: undefined, accuracy: 94, stability: 94 });
     expect(red.summary).toContain("红方");
     expect(red.summary).toContain("车一平二");
@@ -165,8 +194,8 @@ describe("coachProfile", () => {
 
   it("reports insufficient samples without inventing a score", () => {
     const empty = coachProfile({
-      red: { overall: undefined, phases: { opening: undefined, middle: undefined, endgame: undefined }, counts: { excellent: 0, good: 0, inaccuracy: 0, mistake: 0, blunder: 0, missedMate: 0 } },
-      black: { overall: undefined, phases: { opening: undefined, middle: undefined, endgame: undefined }, counts: { excellent: 0, good: 0, inaccuracy: 0, mistake: 0, blunder: 0, missedMate: 0 } },
+      red: { overall: undefined, phases: { opening: undefined, middle: undefined, endgame: undefined }, counts: { excellent: 0, good: 0, average: 0, poor: 0, error: 0, missedMate: 0 } },
+      black: { overall: undefined, phases: { opening: undefined, middle: undefined, endgame: undefined }, counts: { excellent: 0, good: 0, average: 0, poor: 0, error: 0, missedMate: 0 } },
       moves: [],
     }, "黑方");
 
