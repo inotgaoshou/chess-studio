@@ -628,7 +628,7 @@ button:disabled { cursor: default; opacity: .45; }
 .trend-axis { display: flex; justify-content: space-between; gap: 5px; color: #707d76; font-size: 11px; }
 .trend-axis span:nth-child(2) { color: #8f9b94; text-align: center; }
 .report-review { position: relative; height: 100%; padding-bottom: 28px; }
-.report-row { width: 100%; min-height: 43px; display: grid; grid-template-columns: 26px 7px minmax(0, 1fr) 47px 25px; align-items: center; gap: 5px; padding: 4px 8px; border: 0; border-bottom: 1px solid #3a423e; background: transparent; color: #cbd2ce; text-align: left; }
+.report-row { width: 100%; min-height: 48px; display: grid; grid-template-columns: 26px 7px minmax(0, 1fr) 54px 62px; align-items: center; gap: 5px; padding: 4px 8px; border: 0; border-bottom: 1px solid #3a423e; background: transparent; color: #cbd2ce; text-align: left; }
 .report-row:hover { background: #343d39; }
 .report-row.active { box-shadow: inset 3px 0 #63c4d4; background: #344b4e; }
 .report-number { color: #727f78; font: 11px ui-monospace, SFMono-Regular, monospace; }
@@ -640,17 +640,22 @@ button:disabled { cursor: default; opacity: .45; }
 .report-move small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .report-move strong { color: #dfe4e1; font: 600 11px KaiTi, STKaiti, "PingFang SC", serif; }
 .report-move small { margin-top: 3px; color: #7e8a83; font-size: 11px; }
-.report-score { color: #bfc8c2; text-align: right; font: 11px ui-monospace, SFMono-Regular, monospace; }
-.report-grade { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-size: 11px; font-weight: 800; }
-.report-grade.grade-优 { background: #3d9970; }
-.report-grade.grade-佳 { background: #598e54; }
-.report-grade.grade-疑 { background: #9a853f; }
-.report-grade.grade-错 { background: #a45f3d; }
-.report-grade.grade-漏 { background: #a74444; }
-.report-grade.pending { border: 1px solid #4a534e; color: #6f7a74; }
+.report-position-score { min-width: 0; display: grid; justify-items: end; gap: 2px; color: #bfc8c2; font: 11px ui-monospace, SFMono-Regular, monospace; }
+.report-position-score small { color: #7e8a83; font: 10px Inter, "PingFang SC", sans-serif; }
+.report-position-score b { font-weight: 700; }
+.report-quality { width: 62px; min-height: 30px; padding: 3px 5px; border: 1px solid currentColor; border-radius: 3px; display: grid; grid-template-columns: 18px 1fr; align-items: center; gap: 3px; }
+.report-quality b { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; background: currentColor; color: #fff; font-size: 11px; }
+.report-quality small { color: inherit; font-size: 11px; font-weight: 700; white-space: nowrap; }
+.report-quality.grade-优 { color: #55ad80; }
+.report-quality.grade-佳 { color: #83ae68; }
+.report-quality.grade-疑 { color: #d0aa4f; }
+.report-quality.grade-错 { color: #dc8152; }
+.report-quality.grade-漏 { color: #df6863; }
+.report-quality.pending { border-color: #4a534e; color: #6f7a74; grid-template-columns: 18px 1fr; }
+.report-quality.pending b { border: 1px solid currentColor; background: transparent; }
 .report-note { position: sticky; bottom: 0; min-height: 25px; margin: 0; padding: 6px 8px; border-top: 1px solid #414944; background: #252b28; color: #717d76; font-size: 11px; }
 .game-report { height: 100%; overflow-y: auto; scrollbar-gutter: stable; background: #29302d; }
-.game-report > .empty-review { height: calc(100% - 48px); min-height: 150px; }
+.game-report > .empty-review { height: 180px; min-height: 150px; }
 .game-report-actions { position: sticky; z-index: 2; top: 0; min-height: 48px; padding: 7px 9px; border-bottom: 1px solid #424a45; background: #29302d; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .game-report-actions > div { min-width: 0; display: grid; gap: 3px; }
 .game-report-actions strong { color: #e0e5e2; font-size: 11px; }
@@ -697,7 +702,32 @@ button:disabled { cursor: default; opacity: .45; }
 .report-issues button > b { justify-self: end; color: #fff; font-size: 11px; font-weight: 700; }
 .report-issues button > b.grade-错 { color: #e89562; }
 .report-issues button > b.grade-漏 { color: #ee7770; }
-.report-method { margin: 0; padding: 6px 9px 12px; color: #68746d; font-size: 11px; line-height: 1.5; }
+.score-standards { margin: 0 9px 12px; border: 1px solid #454d49; background: #252b29; }
+.score-standards > summary { min-height: 46px; padding: 7px 9px; display: flex; align-items: center; justify-content: space-between; gap: 8px; cursor: pointer; list-style: none; }
+.score-standards > summary::-webkit-details-marker { display: none; }
+.score-standards > summary > span { min-width: 0; display: grid; gap: 2px; }
+.score-standards > summary strong { color: #dfe4e1; font-size: 13px; }
+.score-standards > summary small { color: #859189; font-size: 11px; }
+.score-standards > summary svg { flex: 0 0 auto; transition: transform .16s ease; }
+.score-standards[open] > summary svg { transform: rotate(180deg); }
+.score-standard-table { border-top: 1px solid #454d49; }
+.score-standard-table > div { min-height: 38px; padding: 5px 8px; border-bottom: 1px solid #3b423e; display: grid; grid-template-columns: 42px 76px 82px minmax(0, 1fr); align-items: center; gap: 5px; }
+.score-standard-table > div:last-child { border-bottom: 0; }
+.score-standard-table .score-standard-head { min-height: 30px; color: #859189; background: #29302d; font-size: 11px; }
+.score-standard-table b { justify-self: start; min-width: 24px; padding: 2px 5px; border: 1px solid currentColor; border-radius: 3px; font-size: 11px; text-align: center; }
+.score-standard-table b.grade-优 { color: #55ad80; }
+.score-standard-table b.grade-佳 { color: #83ae68; }
+.score-standard-table b.grade-疑 { color: #d0aa4f; }
+.score-standard-table b.grade-错 { color: #dc8152; }
+.score-standard-table b.grade-漏 { color: #df6863; }
+.score-standard-table code { color: #bfc8c2; font: 11px ui-monospace, SFMono-Regular, monospace; white-space: nowrap; }
+.score-standard-table strong { color: #dfe4e1; font-size: 11px; }
+.score-standard-table small { grid-column: 2 / -1; color: #859189; font-size: 11px; line-height: 1.45; }
+.score-standard-notes { padding: 8px 10px; border-top: 1px solid #454d49; }
+.score-standard-notes p { margin: 0 0 7px; color: #9ca7a1; font-size: 11px; line-height: 1.55; }
+.score-standard-notes p:last-child { margin-bottom: 0; }
+.score-standard-notes strong { color: #dfe4e1; }
+.score-standard-notes code { color: #d8b574; font: 11px ui-monospace, SFMono-Regular, monospace; }
 .mobile-nav { display: none; }
 
 ::-webkit-scrollbar { width: 7px; height: 7px; }
@@ -835,7 +865,6 @@ button:disabled { cursor: default; opacity: .45; }
 .empty-review strong,
 .trend-legend,
 .report-move small,
-.report-score,
 .report-progress,
 .side-score-grid small,
 .phase-scores > div strong,
@@ -873,8 +902,7 @@ button:disabled { cursor: default; opacity: .45; }
 .report-issues > header span,
 .report-issues > p,
 .report-issues button > span,
-.report-issues button > small,
-.report-method { color: var(--text-muted); }
+.report-issues button > small { color: var(--text-muted); }
 
 button:disabled { color: var(--text-disabled); opacity: .62; }
 .menu-popup button:disabled { color: var(--text-disabled); }
@@ -1043,8 +1071,22 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 .report-issues > p { padding: 22px 10px; }
 .report-issues button { min-height: 46px; }
 .report-issues button > strong { font-size: 13px; }
-.report-method { padding: 10px 12px 16px; font-size: 11px; }
 .report-note { min-height: 34px; font-size: 11px; }
+.report-row { border-color: var(--border); color: var(--text-secondary); }
+.report-row:hover { background: var(--surface-3); }
+.report-row.active { background: var(--surface-active); }
+.report-move strong { color: var(--text-primary); font-size: 13px; }
+.report-move small,
+.report-position-score small { color: var(--text-muted); }
+.report-position-score { color: var(--text-secondary); }
+.report-quality b { color: var(--surface-0); }
+.report-quality.grade-优 { color: var(--accent); }
+.report-quality.grade-佳 { color: #a7cc78; }
+.report-quality.grade-疑 { color: var(--warning); }
+.report-quality.grade-错 { color: #e58c5b; }
+.report-quality.grade-漏 { color: var(--red); }
+.report-quality.pending { color: var(--text-muted); border-color: var(--border); }
+.report-quality.pending b { color: var(--text-muted); }
 
 .trend-review { overflow-y: auto; scrollbar-gutter: stable; }
 .trend-chart-large circle.turning { r: 5px; fill: var(--warning); stroke: var(--surface-0); stroke-width: 2.5; }
@@ -1094,9 +1136,40 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 .report-issues .report-issue-row { min-height: 46px; display: grid; grid-template-columns: minmax(0, 1fr) 58px; border-bottom: 1px solid var(--border); }
 .report-issues .report-issue-row.active { background: var(--surface-active); }
 .report-issues .report-issue-location { min-width: 0; min-height: 45px; display: grid; grid-template-columns: 22px 7px minmax(62px, .8fr) minmax(100px, 1.4fr) 35px; align-items: center; gap: 5px; border: 0; background: transparent; color: var(--text-secondary); text-align: left; }
+.report-issues .report-issue-score { min-width: 0; display: grid; gap: 2px; }
+.report-issues .report-issue-score small,
+.report-issues .report-issue-score em { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; font-style: normal; }
+.report-issues .report-issue-score small { color: var(--text-muted); }
+.report-issues .report-issue-score em { color: var(--text-primary); font-weight: 700; }
 .report-issues .coach-study-action { min-width: 0; min-height: 45px; padding: 0 5px; border: 0; border-left: 1px solid var(--border); background: transparent; color: var(--accent); display: flex; align-items: center; justify-content: center; gap: 3px; font-size: 11px; }
 .report-issues .coach-study-action:hover,
 .report-issues .report-issue-location:hover { background: var(--surface-3); }
+
+.score-standards { margin: 0 12px 14px; border-color: var(--border); background: var(--surface-1); }
+.score-standards > summary { color: var(--text-secondary); }
+.score-standards > summary strong,
+.score-standard-table strong,
+.score-standard-notes strong { color: var(--text-primary); }
+.score-standards > summary small,
+.score-standard-table .score-standard-head,
+.score-standard-table small,
+.score-standard-notes p { color: var(--text-muted); }
+.score-standard-table,
+.score-standard-table > div,
+.score-standard-notes { border-color: var(--border); }
+.score-standard-table .score-standard-head { background: var(--surface-2); }
+.score-standard-table code { color: var(--text-secondary); }
+.score-standard-table b.grade-优 { color: var(--accent); }
+.score-standard-table b.grade-佳 { color: #a7cc78; }
+.score-standard-table b.grade-疑 { color: var(--warning); }
+.score-standard-table b.grade-错 { color: #e58c5b; }
+.score-standard-table b.grade-漏 { color: var(--red); }
+.score-standard-notes code { color: var(--warning); }
+
+:root[data-theme="light"] .report-quality.grade-佳,
+:root[data-theme="light"] .score-standard-table b.grade-佳 { color: #477124; }
+:root[data-theme="light"] .report-quality.grade-错,
+:root[data-theme="light"] .score-standard-table b.grade-错 { color: #a24318; }
 
 :root[data-theme="light"] .board-section { background: #dce3df; }
 :root[data-theme="light"] .board-art { filter: none; opacity: 1; }

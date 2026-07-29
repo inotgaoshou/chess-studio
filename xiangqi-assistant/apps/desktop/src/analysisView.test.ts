@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { calculateGameReport, coachProfile, pvMoveRows, reportMovePhase, trendTurningPoints } from "./analysisView";
-import type { AnalysisLine, GameReportDatasetDto } from "./platform";
+import { calculateGameReport, coachProfile, moveGradeStandards, moveQualityScore, moveReports, pvMoveRows, reportMovePhase, trendTurningPoints } from "./analysisView";
+import type { AnalysisLine, GameReportDatasetDto, MoveItem } from "./platform";
 
 function dataset(positions: GameReportDatasetDto["positions"]): GameReportDatasetDto {
   return {
@@ -84,6 +84,55 @@ describe("calculateGameReport", () => {
     expect(report.moves.map((move) => move.phase)).toEqual(["middle", "endgame"]);
     expect(report.red.phases.middle).toBe(100);
     expect(report.black.phases.endgame).toBe(100);
+  });
+});
+
+describe("move quality score", () => {
+  it.each([
+    [0, 100, "优"],
+    [20, 100, "优"],
+    [21, 100, "佳"],
+    [60, 96, "佳"],
+    [61, 96, "疑"],
+    [120, 84, "疑"],
+    [121, 84, "错"],
+    [250, 52, "错"],
+    [251, 51, "漏"],
+    [1000, 0, "漏"],
+  ] as const)("maps %icp loss to %i points and %s", (lossCp, score, grade) => {
+    expect(moveQualityScore(lossCp)).toEqual({ score, grade });
+  });
+
+  it("scores a missed mate as zero regardless of centipawn loss", () => {
+    expect(moveQualityScore(0, true)).toEqual({ score: 0, grade: "漏" });
+  });
+
+  it("publishes the same five boundaries used by the report explanation", () => {
+    expect(moveGradeStandards.map(({ grade, lossRangeCp, lossPawnRange, qualityRange }) => ({ grade, lossRangeCp, lossPawnRange, qualityRange }))).toEqual([
+      { grade: "优", lossRangeCp: "0-20 cp", lossPawnRange: "0.00-0.20", qualityRange: "通常 100 分" },
+      { grade: "佳", lossRangeCp: "21-60 cp", lossPawnRange: "0.21-0.60", qualityRange: "约 96-100 分" },
+      { grade: "疑", lossRangeCp: "61-120 cp", lossPawnRange: "0.61-1.20", qualityRange: "约 84-96 分" },
+      { grade: "错", lossRangeCp: "121-250 cp", lossPawnRange: "1.21-2.50", qualityRange: "约 51-84 分" },
+      { grade: "漏", lossRangeCp: ">250 cp", lossPawnRange: ">2.50", qualityRange: "0-51 分" },
+    ]);
+  });
+
+  it("adds a quality score to adjacent analyzed moves in the summary", () => {
+    const history: MoveItem[] = [
+      { id: "red", iccs: "h2e2", notation: "炮二平五", movedBy: "红方", from: { row: 7, col: 7 }, to: { row: 7, col: 4 }, scoreCp: -100, comment: "", isMainline: true },
+      { id: "black", iccs: "h9g7", notation: "马8进7", movedBy: "黑方", from: { row: 0, col: 7 }, to: { row: 2, col: 6 }, scoreCp: 200, comment: "", isMainline: true },
+    ];
+
+    expect(moveReports(history)[1]).toMatchObject({ moverLossCp: 100, grade: "疑", score: 88 });
+  });
+
+  it("marks a forced mate lost in the live summary as a zero-point missed mate", () => {
+    const history: MoveItem[] = [
+      { id: "black", iccs: "h9g7", notation: "马8进7", movedBy: "黑方", from: { row: 0, col: 7 }, to: { row: 2, col: 6 }, mate: 3, comment: "", isMainline: true },
+      { id: "red", iccs: "a0a1", notation: "车一进一", movedBy: "红方", from: { row: 9, col: 0 }, to: { row: 8, col: 0 }, scoreCp: 0, comment: "", isMainline: true },
+    ];
+
+    expect(moveReports(history)[1]).toMatchObject({ moverLossCp: 1000, grade: "漏", score: 0, missedMate: true });
   });
 });
 

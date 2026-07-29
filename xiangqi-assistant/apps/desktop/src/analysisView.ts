@@ -10,7 +10,16 @@ export type MoveReport = {
   redScoreCp?: number;
   deltaCp?: number;
   moverLossCp?: number;
+  score?: number;
   grade?: MoveGrade;
+  missedMate?: boolean;
+};
+export type MoveGradeStandard = {
+  grade: MoveGrade;
+  lossRangeCp: string;
+  lossPawnRange: string;
+  qualityRange: string;
+  description: string;
 };
 export type PositionEvaluation = {
   label: string;
@@ -50,6 +59,38 @@ export type TrendTurningPoint = TrendSample & {
 };
 
 const initialMaterial = 5660;
+type MoveGradeBand = {
+  grade: MoveGrade;
+  minLossCp: number;
+  maxLossCp?: number;
+  penaltyOriginCp: number;
+  penaltyAtOrigin: number;
+  penaltyPerCp: number;
+  qualityRange: string;
+  description: string;
+};
+
+const moveGradeBands: MoveGradeBand[] = [
+  { grade: "优", minLossCp: 0, maxLossCp: 20, penaltyOriginCp: 0, penaltyAtOrigin: 0, penaltyPerCp: 0, qualityRange: "通常 100 分", description: "接近引擎首选，局面价值基本没有损失" },
+  { grade: "佳", minLossCp: 21, maxLossCp: 60, penaltyOriginCp: 20, penaltyAtOrigin: 0, penaltyPerCp: .1, qualityRange: "约 96-100 分", description: "质量较高，只有轻微的局面价值损失" },
+  { grade: "疑", minLossCp: 61, maxLossCp: 120, penaltyOriginCp: 60, penaltyAtOrigin: 4, penaltyPerCp: .2, qualityRange: "约 84-96 分", description: "值得复盘，局面优势出现可见下降" },
+  { grade: "错", minLossCp: 121, maxLossCp: 250, penaltyOriginCp: 120, penaltyAtOrigin: 16, penaltyPerCp: .25, qualityRange: "约 51-84 分", description: "明显失误，通常会改变局面的优劣程度" },
+  { grade: "漏", minLossCp: 251, penaltyOriginCp: 250, penaltyAtOrigin: 48.5, penaltyPerCp: .15, qualityRange: "0-51 分", description: "严重失误，可能丢失大量优势或直接改变胜负趋势" },
+];
+
+function rangeText(band: MoveGradeBand, divisor: number, suffix = "") {
+  const format = (value: number) => divisor === 1 ? String(value) : (value / divisor).toFixed(2);
+  if (band.maxLossCp == null) return `>${format(band.penaltyOriginCp)}${suffix}`;
+  return `${format(band.minLossCp)}-${format(band.maxLossCp)}${suffix}`;
+}
+
+export const moveGradeStandards: MoveGradeStandard[] = moveGradeBands.map((band) => ({
+  grade: band.grade,
+  lossRangeCp: rangeText(band, 1, " cp"),
+  lossPawnRange: rangeText(band, 100),
+  qualityRange: band.qualityRange,
+  description: band.description,
+}));
 
 export function reportMovePhase(ply: number, material: number): ReportPhase {
   if (material <= initialMaterial * .45 || ply > 80) return "endgame";
@@ -69,19 +110,21 @@ function redMateSide(position: GameReportDatasetDto["positions"][number]) {
 }
 
 function gradeForLoss(lossCp: number): MoveGrade {
-  if (lossCp <= 20) return "优";
-  if (lossCp <= 60) return "佳";
-  if (lossCp <= 120) return "疑";
-  if (lossCp <= 250) return "错";
-  return "漏";
+  return moveGradeBands.find((band) => band.maxLossCp == null || lossCp <= band.maxLossCp)!.grade;
 }
 
 function movePenalty(lossCp: number) {
-  if (lossCp <= 20) return 0;
-  if (lossCp <= 60) return (lossCp - 20) * .1;
-  if (lossCp <= 120) return 4 + (lossCp - 60) * .2;
-  if (lossCp <= 250) return 16 + (lossCp - 120) * .25;
-  return Math.min(100, 48.5 + (lossCp - 250) * .15);
+  const band = moveGradeBands.find((candidate) => candidate.maxLossCp == null || lossCp <= candidate.maxLossCp)!;
+  return Math.min(100, band.penaltyAtOrigin + (lossCp - band.penaltyOriginCp) * band.penaltyPerCp);
+}
+
+export function moveQualityScore(lossCp: number, missedMate = false): { score: number; grade: MoveGrade } {
+  if (missedMate) return { score: 0, grade: "漏" };
+  const normalizedLoss = Math.max(0, lossCp);
+  return {
+    score: Math.max(0, Math.round(100 - movePenalty(normalizedLoss))),
+    grade: gradeForLoss(normalizedLoss),
+  };
 }
 
 function average(values: number[]) {
@@ -118,13 +161,12 @@ export function calculateGameReport(dataset: GameReportDatasetDto): GameReport {
     const missedMate = redMateSide(before) === moverSign && redMateSide(after) !== moverSign;
     const rawLoss = moverSign === 1 ? beforeValue - afterValue : afterValue - beforeValue;
     const lossCp = Math.max(0, Math.round(rawLoss));
-    const score = missedMate ? 0 : Math.max(0, Math.round(100 - movePenalty(lossCp)));
+    const quality = moveQualityScore(lossCp, missedMate);
     moves.push({
       ...after.move,
       phase: after.material == null ? after.phase : reportMovePhase(after.ply, after.material),
       lossCp,
-      score,
-      grade: missedMate ? "漏" : gradeForLoss(lossCp),
+      ...quality,
       missedMate,
       redScoreCp: afterValue,
     });
@@ -179,8 +221,16 @@ function toRedPerspective(scoreCp: number, sideToMove: Side) {
 }
 
 export function redScoreAfterMove(move: MoveItem) {
+  const mateSide = redMateSideAfterMove(move);
+  if (move.mate != null) return mateSide * 1000;
   if (move.scoreCp == null) return undefined;
   return move.movedBy === "黑方" ? move.scoreCp : -move.scoreCp;
+}
+
+function redMateSideAfterMove(move: MoveItem) {
+  if (move.mate == null) return 0;
+  const sideToMove = move.movedBy === "黑方" ? 1 : -1;
+  return (move.mate === 0 ? -1 : Math.sign(move.mate)) * sideToMove;
 }
 
 export function moveReports(history: MoveItem[]): MoveReport[] {
@@ -192,7 +242,10 @@ export function moveReports(history: MoveItem[]): MoveReport[] {
     const deltaCp = redScoreCp - previousScore;
     const moverImprovement = move.movedBy === "红方" ? deltaCp : -deltaCp;
     const moverLossCp = Math.max(0, -moverImprovement);
-    return { move, index, redScoreCp, deltaCp, moverLossCp, grade: gradeForLoss(moverLossCp) };
+    const moverSign = move.movedBy === "红方" ? 1 : -1;
+    const missedMate = redMateSideAfterMove(history[index - 1]) === moverSign && redMateSideAfterMove(move) !== moverSign;
+    const quality = moveQualityScore(moverLossCp, missedMate);
+    return { move, index, redScoreCp, deltaCp, moverLossCp, ...quality, missedMate };
   });
 }
 

@@ -38,7 +38,7 @@ import {
   Zap,
 } from "lucide-react";
 import { chessPlatform, type AnalysisLine, type BoardState, type EngineRuntimeState, type GameReportDatasetDto, type GameReportProgressDto, type GameSummary, type MoveItem, type Piece } from "./platform";
-import { calculateGameReport, coachProfile, moveReports, positionEvaluation, trendPoints, trendTurningPoints } from "./analysisView";
+import { calculateGameReport, coachProfile, moveGradeStandards, moveReports, positionEvaluation, trendPoints, trendTurningPoints } from "./analysisView";
 import { CandidateLine } from "./CandidateLine";
 import { CoachRadar } from "./CoachRadar";
 import { DesktopMenuBar, type MenuCommand } from "./DesktopMenuBar";
@@ -1716,12 +1716,14 @@ export default function App() {
                   <button className={`report-row ${board.currentNode === report.move.id ? "active" : ""}`} key={report.move.id} onClick={() => void navigateTo(report.move.id)}>
                     <span className="report-number">{report.index + 1}</span>
                     <span className={`report-side ${report.move.movedBy === "红方" ? "red" : "black"}`}/>
-                    <span className="report-move"><strong>{report.move.notation}</strong><small>{report.move.movedBy} · {formatScoreDelta(report.deltaCp)}</small></span>
-                    <span className="report-score">{formatReportScore(report.move, report.redScoreCp)}</span>
-                    {report.grade ? <span className={`report-grade grade-${report.grade}`}>{report.grade}</span> : <span className="report-grade pending">-</span>}
+                    <span className="report-move"><strong>{report.move.notation}</strong><small>{report.move.movedBy} · {formatScoreDelta(report.deltaCp)}{report.missedMate ? " · 漏杀" : ""}</small></span>
+                    <span className="report-position-score" title="Pikafish 局面分，正数表示红方占优，负数表示黑方占优"><small>局面</small><b>{formatReportScore(report.move, report.redScoreCp)}</b></span>
+                    {report.grade && report.score != null
+                      ? <span className={`report-quality grade-${report.grade}`} title={report.missedMate ? "漏掉强制杀棋，单着质量 0 分" : `单着质量 ${report.score} 分，等级 ${report.grade}`}><b>{report.grade}</b><small>{report.score}分</small></span>
+                      : <span className="report-quality pending"><b>-</b><small>待分析</small></span>}
                   </button>
                 ))}
-              <p className="report-note">评价依据相邻已分析局面的分数变化，仅作复盘提示。</p>
+              <p className="report-note">局面分表示当前优劣；质量分表示该着相对前一局面的表现。</p>
             </div>}
             {workspacePanel === "report" && <div id="workspace-panel-report" className="review-empty-or-content game-report" role="tabpanel" aria-labelledby="workspace-tab-report">
               <header className="game-report-actions">
@@ -1763,12 +1765,29 @@ export default function App() {
                     {calculatedGameReport.moves.filter((move) => move.grade === "错" || move.grade === "漏" || move.missedMate).length === 0
                       ? <p>当前线路没有达到“错”或“漏”的着法。</p>
                       : calculatedGameReport.moves.filter((move) => move.grade === "错" || move.grade === "漏" || move.missedMate).map((move, index) => <div key={move.nodeId} className={`report-issue-row ${board.currentNode === move.nodeId ? "active" : ""}`}>
-                        <button className="report-issue-location" onClick={() => void navigateTo(move.nodeId)}><span>{index + 1}</span><i className={move.movedBy === "红方" ? "red" : "black"}/><strong>{move.notation}</strong><small>{move.movedBy}损失 {move.lossCp}cp</small><b className={`grade-${move.grade}`}>{move.missedMate ? "漏杀" : move.grade}</b></button>
+                        <button className="report-issue-location" onClick={() => void navigateTo(move.nodeId)}><span>{index + 1}</span><i className={move.movedBy === "红方" ? "red" : "black"}/><strong>{move.notation}</strong><span className="report-issue-score"><small>{move.movedBy}损失 {move.lossCp}cp</small><em>质量 {move.score}分</em></span><b className={`grade-${move.grade}`}>{move.missedMate ? "漏杀" : move.grade}</b></button>
                         <button className="coach-study-action" title={`回到 ${move.notation} 之前推演`} onClick={() => void startCoachStudy(move.nodeId)}><GitFork size={13}/>推演</button>
                       </div>)}
                   </section>
-                  <p className="report-method">评分来自应用自有的引擎损失算法，不代表天天象棋评分。</p>
                 </>}
+              <details className="score-standards" open>
+                <summary><span><strong>评分标准</strong><small>局面损失、等级与单着质量分的对应关系</small></span><ChevronDown size={15}/></summary>
+                <div className="score-standard-table" role="table" aria-label="单着评分标准">
+                  <div className="score-standard-head" role="row"><span>等级</span><span>局面损失</span><span>损失折算</span><span>质量分</span></div>
+                  {moveGradeStandards.map((standard) => <div role="row" key={standard.grade}>
+                    <b className={`grade-${standard.grade}`}>{standard.grade}</b>
+                    <code>{standard.lossRangeCp}</code>
+                    <code>{standard.lossPawnRange}</code>
+                    <strong>{standard.qualityRange}</strong>
+                    <small>{standard.description}</small>
+                  </div>)}
+                </div>
+                <div className="score-standard-notes">
+                  <p><strong>局面分：</strong>Pikafish 的 centipawn（cp）数值，<code>100cp = 1.00</code>，大致相当于一个兵的量级，同时包含子力、位置和攻势等因素。正数表示红方占优，负数表示黑方占优。</p>
+                  <p><strong>单着质量分：</strong>根据走棋前后的局面价值损失换算为 0-100 分；分数越高，说明越接近引擎首选。漏掉已有强制杀棋时标记“漏杀”，质量固定为 0 分。</p>
+                  <p>本标准参考常见象棋复盘产品的信息呈现方式，计算使用本应用自有的 Pikafish 局面损失算法，不等同于天天象棋内部评分。</p>
+                </div>
+              </details>
             </div>}
           </section>}
         </aside>
