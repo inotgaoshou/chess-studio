@@ -12,6 +12,7 @@ describe("CandidateLine", () => {
       line={{ multipv: 1, depth: 18, scoreCp: 36, pv: ["h2e2", "h9g7", "h0g2"], notation: ["炮二平五", "马8进7", "马二进三"] }}
       sideToMove="红方"
       onPlay={vi.fn()}
+      onPreview={vi.fn()}
     />);
 
     expect(screen.getByText("12")).toBeTruthy();
@@ -28,10 +29,64 @@ describe("CandidateLine", () => {
       line={{ multipv: 2, pv: ["h9g7", "h0g2"], notation: ["马8进7", "马二进三"] }}
       sideToMove="黑方"
       onPlay={onPlay}
+      onPreview={vi.fn()}
     />);
 
     fireEvent.click(screen.getByRole("button", { name: "走候选着法 马8进7" }));
     expect(onPlay).toHaveBeenCalledWith("h9g7", "position-fen");
+  });
+
+  it("starts a non-mutating preview for the selected candidate line", () => {
+    const onPreview = vi.fn();
+    const line = { multipv: 1, pv: ["h2e2", "h9g7"], notation: ["炮二平五", "马8进7"] };
+    render(<CandidateLine
+      color="#53b848"
+      fen="position-fen"
+      line={line}
+      sideToMove="红方"
+      onPlay={vi.fn()}
+      onPreview={onPreview}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: "预览候选 1" }));
+    expect(onPreview).toHaveBeenCalledWith(line, "position-fen");
+  });
+
+  it("marks stale candidates and disables stale actions while the new position updates", () => {
+    const onPlay = vi.fn();
+    const onPreview = vi.fn();
+    const { container } = render(<CandidateLine
+      color="#53b848"
+      disabled
+      fen="previous-fen"
+      line={{ multipv: 1, pv: ["h2e2", "h9g7"], notation: ["炮二平五", "马8进7"] }}
+      sideToMove="红方"
+      stale
+      onPlay={onPlay}
+      onPreview={onPreview}
+    />);
+
+    expect(container.querySelector(".pv-line")?.classList.contains("stale")).toBe(true);
+    expect(screen.getByText(/旧候选/)).toBeTruthy();
+    expect(screen.getByText("更新中")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "预览候选 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "走候选着法 炮二平五" }));
+    expect(onPreview).not.toHaveBeenCalled();
+    expect(onPlay).not.toHaveBeenCalled();
+  });
+
+  it("keeps the full PV table collapsed behind a clear summary", () => {
+    render(<CandidateLine
+      color="#53b848"
+      fen="position-fen"
+      line={{ multipv: 1, pv: ["h2e2", "h9g7"], notation: ["炮二平五", "马8进7"] }}
+      sideToMove="红方"
+      onPlay={vi.fn()}
+      onPreview={vi.fn()}
+    />);
+
+    expect(screen.getByText("完整 PV 表")).toBeTruthy();
+    expect(screen.getByText("候选 1 · 炮二平五")).toBeTruthy();
   });
 
   it("shows coach explanation and a three-round continuation", () => {
@@ -53,10 +108,12 @@ describe("CandidateLine", () => {
       line={{ multipv: 1, depth: 20, scoreCp: 80, pv: ["h2e2"], notation: ["炮二平五", "马8进7"] }}
       sideToMove="红方"
       onPlay={vi.fn()}
+      onPreview={vi.fn()}
     />);
 
+    expect(screen.getByLabelText("候选 1 3回合快览").textContent).toContain("车9平8");
+    expect(screen.getByText("私教讲解 / 3回合表")).toBeTruthy();
     expect(screen.getByLabelText("候选线路 1 私教讲解").textContent).toContain("主候选");
-    expect(screen.getByRole("table", { name: "候选线路 1 3回合推演" }).textContent).toContain("车9平8");
     expect(view.container.querySelector('[role="table"]')?.getAttribute("aria-label")).toBe("候选线路 1 3回合推演");
   });
 
@@ -79,6 +136,7 @@ describe("CandidateLine", () => {
       line={{ multipv: 2, pv: ["h9g7"], notation: ["马8进7"] }}
       sideToMove="黑方"
       onPlay={vi.fn()}
+      onPreview={vi.fn()}
     />);
 
     const firstRow = screen.getByRole("table", { name: "候选线路 2 3回合推演" }).querySelectorAll(".pv-move-row")[0];

@@ -40,6 +40,15 @@ export type AnalysisLine = {
   notation?: string[];
   pv: string[];
 };
+export type PreviewLineStep = {
+  fen: string;
+  notation: string;
+  movedBy: Side;
+  from: MoveSquare;
+  to: MoveSquare;
+  pieces: Piece[];
+  status: string;
+};
 export type AnalysisOptions = {
   enginePath: string;
   fen: string;
@@ -225,6 +234,7 @@ export interface ChessPlatform {
   updateComment(nodeId: string, comment: string): Promise<Partial<BoardState>>;
   setMainline(nodeId: string): Promise<Partial<BoardState>>;
   deleteNode(nodeId: string): Promise<Partial<BoardState>>;
+  previewLine(fen: string, pv: string[]): Promise<PreviewLineStep[]>;
   analyze(options: AnalysisOptions): Promise<AnalysisLine[]>;
   playEngineMove(options: EnginePlayOptions): Promise<EngineMoveResult>;
   moveNow(): Promise<boolean>;

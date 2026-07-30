@@ -255,6 +255,19 @@ describe("positionEvaluation", () => {
       mateIn: 3,
     });
   });
+
+  it("shows the winner when the rules already confirm checkmate without engine analysis", () => {
+    const checkmated = { ...board("黑方"), status: "将死" };
+    const evaluation = positionEvaluation(checkmated, []);
+
+    expect(evaluation).toMatchObject({
+      label: "红方绝杀获胜",
+      scoreText: "将死获胜",
+      mateSide: "红方",
+      mateIn: 0,
+      isCheckmate: true,
+    });
+  });
 });
 
 describe("reportMovePhase", () => {

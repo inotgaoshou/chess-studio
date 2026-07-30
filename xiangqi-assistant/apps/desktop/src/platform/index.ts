@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { webDatabase, type SyncOperation, type WebGameRecord } from "./indexedDb";
-import type { AnalysisLine, AnalysisOptions, BoardState, ChessPlatform, DesktopPreferencesDto, EngineMoveResult, EnginePlayOptions, EngineProbeDto, EngineRuntimeEvent, GameReportDatasetDto, GameReportOptionsDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, SyncAccountDto, SyncResult } from "./types";
+import type { AnalysisLine, AnalysisOptions, BoardState, ChessPlatform, DesktopPreferencesDto, EngineMoveResult, EnginePlayOptions, EngineProbeDto, EngineRuntimeEvent, GameReportDatasetDto, GameReportOptionsDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, PreviewLineStep, SyncAccountDto, SyncResult } from "./types";
 
 type WebGameInstance = {
   stateJson(): string;
@@ -97,6 +97,7 @@ class DesktopPlatform implements ChessPlatform {
   updateComment(nodeId: string, comment: string) { return invoke<Partial<BoardState>>("update_comment", { nodeId, comment }); }
   setMainline(nodeId: string) { return invoke<Partial<BoardState>>("set_mainline", { nodeId }); }
   deleteNode(nodeId: string) { return invoke<Partial<BoardState>>("delete_node", { nodeId }); }
+  previewLine(fen: string, pv: string[]) { return invoke<PreviewLineStep[]>("preview_line", { fen, pv }); }
   analyze(options: AnalysisOptions) {
     return invoke<AnalysisLine[]>("analyze_position", {
       enginePath: options.enginePath,
@@ -278,6 +279,10 @@ class WebPlatform implements ChessPlatform {
     await this.persist(state);
     await this.enqueue("delete_node", nodeId, { nodeId });
     return this.scoredState(state);
+  }
+
+  async previewLine(): Promise<PreviewLineStep[]> {
+    throw new Error("Web 端暂不支持本地候选线路动画预览");
   }
 
   async analyze(options: AnalysisOptions): Promise<AnalysisLine[]> {
@@ -468,4 +473,4 @@ class WebPlatform implements ChessPlatform {
 
 const tauriAvailable = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 export const chessPlatform: ChessPlatform = tauriAvailable ? new DesktopPlatform() : new WebPlatform();
-export type { AnalysisLine, AnalysisOptions, BoardState, BranchCoachInsightDto, ChessPlatform, DesktopPreferencesDto, EngineProbeDto, EngineRuntimeEvent, EngineRuntimeState, GameReportDatasetDto, GameReportOptionsDto, GameReportPositionDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, MoveCoachInsightDto, MoveItem, OpeningBookHitDto, Piece, QualityGrade, ReportPhase, ReportSidePresentationDto, Side, SyncAccountDto, SyncResult } from "./types";
+export type { AnalysisLine, AnalysisOptions, BoardState, BranchCoachInsightDto, ChessPlatform, DesktopPreferencesDto, EngineProbeDto, EngineRuntimeEvent, EngineRuntimeState, GameReportDatasetDto, GameReportOptionsDto, GameReportPositionDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, MoveCoachInsightDto, MoveItem, OpeningBookHitDto, Piece, PreviewLineStep, QualityGrade, ReportPhase, ReportSidePresentationDto, Side, SyncAccountDto, SyncResult } from "./types";

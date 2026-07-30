@@ -200,6 +200,18 @@ struct BoardDto {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct PreviewLineStepDto {
+    fen: String,
+    notation: String,
+    moved_by: &'static str,
+    from: SquareDto,
+    to: SquareDto,
+    pieces: Vec<PieceDto>,
+    status: &'static str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct GameSummaryDto {
     id: Uuid,
     title: String,
@@ -364,6 +376,47 @@ fn play_move(iccs: String, state: State<'_, DesktopState>) -> Result<BoardDto, S
         .lock()
         .map_err(|_| "state lock poisoned".to_owned())?;
     commit_move(&mut model, &iccs)
+}
+
+#[tauri::command]
+fn preview_line(fen: String, pv: Vec<String>) -> Result<Vec<PreviewLineStepDto>, String> {
+    preview_line_steps(&fen, &pv)
+}
+
+fn preview_line_steps(fen: &str, pv: &[String]) -> Result<Vec<PreviewLineStepDto>, String> {
+    let mut board = Board::from_fen(fen).map_err(|error| error.to_string())?;
+    let mut steps = Vec::with_capacity(pv.len());
+    for (index, iccs) in pv.iter().enumerate() {
+        let mv = xiangqi_core::Move::from_iccs(iccs).map_err(|error| {
+            format!("候选线路第 {} 步格式不正确：{}", index + 1, error)
+        })?;
+        let piece = board.piece_at(mv.from).ok_or_else(|| {
+            format!("候选线路第 {} 步非法：起点没有棋子", index + 1)
+        })?;
+        let notation = board
+            .chinese_move_notation(mv)
+            .map_err(|error| format!("候选线路第 {} 步无法生成中文记谱：{}", index + 1, error))?;
+        let next = board
+            .apply_move(mv)
+            .map_err(|error| format!("候选线路第 {} 步非法：{}", index + 1, error))?;
+        steps.push(PreviewLineStepDto {
+            fen: next.to_fen(),
+            notation,
+            moved_by: side_label(piece.color),
+            from: SquareDto {
+                row: mv.from.row,
+                col: mv.from.col,
+            },
+            to: SquareDto {
+                row: mv.to.row,
+                col: mv.to.col,
+            },
+            pieces: board_pieces(&next),
+            status: game_status_label(next.status()),
+        });
+        board = next;
+    }
+    Ok(steps)
 }
 
 fn commit_move(model: &mut AppModel, iccs: &str) -> Result<BoardDto, String> {
@@ -2413,20 +2466,27 @@ async fn sync_now(state: State<'_, DesktopState>) -> Result<SyncResult, String> 
     Ok(result)
 }
 
-fn board_dto(model: &AppModel) -> Result<BoardDto, String> {
-    let analysis = model
-        .store
-        .load_latest_analysis_summaries(model.game_id)
-        .map_err(|error| error.to_string())?;
-    let root_analysis = model
-        .store
-        .load_latest_analysis_summary(model.game_id, None)
-        .map_err(|error| error.to_string())?;
-    let root_board = Board::from_fen(&model.starting_fen).map_err(|error| error.to_string())?;
+fn side_label(color: Color) -> &'static str {
+    if color == Color::Red {
+        "红方"
+    } else {
+        "黑方"
+    }
+}
+
+fn game_status_label(status: GameStatus) -> &'static str {
+    match status {
+        GameStatus::Ongoing => "进行中",
+        GameStatus::Check => "将军",
+        GameStatus::Checkmate => "将死",
+    }
+}
+
+fn board_pieces(board: &Board) -> Vec<PieceDto> {
     let mut pieces = Vec::new();
     for row in 0..10 {
         for col in 0..9 {
-            if let Some(piece) = model.board.piece_at(Square { row, col }) {
+            if let Some(piece) = board.piece_at(Square { row, col }) {
                 let (kind, red_label, black_label) = match piece.kind {
                     PieceKind::King => ("king", "帅", "将"),
                     PieceKind::Advisor => ("advisor", "仕", "士"),
@@ -2454,6 +2514,20 @@ fn board_dto(model: &AppModel) -> Result<BoardDto, String> {
             }
         }
     }
+    pieces
+}
+
+fn board_dto(model: &AppModel) -> Result<BoardDto, String> {
+    let analysis = model
+        .store
+        .load_latest_analysis_summaries(model.game_id)
+        .map_err(|error| error.to_string())?;
+    let root_analysis = model
+        .store
+        .load_latest_analysis_summary(model.game_id, None)
+        .map_err(|error| error.to_string())?;
+    let root_board = Board::from_fen(&model.starting_fen).map_err(|error| error.to_string())?;
+    let pieces = board_pieces(&model.board);
     let mut history = Vec::new();
     if let Some(node) = model.current_node {
         let mut board = Board::from_fen(&model.starting_fen).map_err(|error| error.to_string())?;
@@ -2478,24 +2552,12 @@ fn board_dto(model: &AppModel) -> Result<BoardDto, String> {
         .collect::<Result<Vec<_>, _>>()?;
     Ok(BoardDto {
         fen: model.board.to_fen(),
-        root_side_to_move: if root_board.side_to_move() == Color::Red {
-            "红方"
-        } else {
-            "黑方"
-        },
+        root_side_to_move: side_label(root_board.side_to_move()),
         root_score_cp: root_analysis.as_ref().and_then(|summary| summary.score_cp),
         root_mate: root_analysis.as_ref().and_then(|summary| summary.mate),
-        side_to_move: if model.board.side_to_move() == Color::Red {
-            "红方"
-        } else {
-            "黑方"
-        },
+        side_to_move: side_label(model.board.side_to_move()),
         status: if model.playable {
-            match model.board.status() {
-                GameStatus::Ongoing => "进行中",
-                GameStatus::Check => "将军",
-                GameStatus::Checkmate => "将死",
-            }
+            game_status_label(model.board.status())
         } else {
             "不可对弈"
         },
@@ -2944,6 +3006,7 @@ fn main() {
             list_games,
             open_game,
             play_move,
+            preview_line,
             new_game,
             open_document,
             import_text,
@@ -3061,6 +3124,37 @@ mod tests {
         assert_eq!(dto.source_path.as_deref(), Some("/tmp/study.pgn"));
         assert_eq!(dto.source_format.as_deref(), Some("pgn"));
         assert!(dto.playable);
+    }
+
+    #[test]
+    fn preview_line_simulates_moves_without_model_state() {
+        let steps = preview_line_steps(
+            STARTING_FEN,
+            &["h2e2".to_owned(), "h9g7".to_owned()],
+        )
+        .unwrap();
+
+        assert_eq!(steps.len(), 2);
+        assert_eq!(steps[0].notation, "炮二平五");
+        assert_eq!(steps[0].moved_by, "红方");
+        assert_eq!(steps[0].from.row, 7);
+        assert_eq!(steps[0].to.col, 4);
+        assert_eq!(steps[0].status, "进行中");
+        assert_eq!(steps[1].notation, "马8进7");
+        assert_eq!(steps[1].moved_by, "黑方");
+        assert!(steps[1].pieces.iter().any(|piece| piece.row == 2 && piece.col == 6 && piece.label == "马"));
+    }
+
+    #[test]
+    fn preview_line_rejects_illegal_candidate_move() {
+        let error = preview_line_steps(
+            STARTING_FEN,
+            &["h2e2".to_owned(), "h2e2".to_owned()],
+        )
+        .err()
+        .unwrap();
+
+        assert!(error.contains("第 2 步非法"));
     }
 
     #[test]

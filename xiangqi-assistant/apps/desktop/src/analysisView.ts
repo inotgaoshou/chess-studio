@@ -26,6 +26,7 @@ export type PositionEvaluation = {
   redShare: number;
   mateSide?: Side;
   mateIn?: number;
+  isCheckmate?: boolean;
   deltaText?: string;
   samples: TrendSample[];
 };
@@ -321,14 +322,18 @@ export function pvMoveRows(line: AnalysisLine, sideToMove: Side, fen: string): P
 export function positionEvaluation(board: BoardState, analysis: AnalysisLine[]): PositionEvaluation | null {
   const primary = analysis.slice().sort((left, right) => left.multipv - right.multipv)[0];
   const currentMove = board.history.at(-1);
+  // A rules-confirmed checkmate is authoritative even before an engine result arrives.
+  const checkmateWinner = board.status === "将死" ? (board.sideToMove === "红方" ? "黑方" : "红方") : undefined;
   const currentScore = primary?.scoreCp != null
     ? toRedPerspective(primary.scoreCp, board.sideToMove)
     : currentMove ? redScoreAfterMove(currentMove) : undefined;
-  const currentMate = primary?.mate != null
-    ? (board.sideToMove === "红方" ? primary.mate : -primary.mate)
-    : currentMove?.mate != null
-      ? (board.sideToMove === "红方" ? currentMove.mate : -currentMove.mate)
-      : undefined;
+  const currentMate = checkmateWinner
+    ? (checkmateWinner === "红方" ? 1 : -1)
+    : primary?.mate != null
+      ? (board.sideToMove === "红方" ? primary.mate : -primary.mate)
+      : currentMove?.mate != null
+        ? (board.sideToMove === "红方" ? currentMove.mate : -currentMove.mate)
+        : undefined;
   if (currentScore == null && currentMate == null) return null;
 
   const samples: TrendSample[] = board.history.flatMap((move, index) => {
@@ -349,14 +354,15 @@ export function positionEvaluation(board: BoardState, analysis: AnalysisLine[]):
   const mateSide = currentMate == null ? undefined : currentMate > 0 ? "红方" : "黑方";
   const boundedScore = currentMate != null ? (currentMate > 0 ? 800 : -800) : currentScore ?? 0;
   return {
-    label: mateSide ? `${mateSide}绝杀` : evaluationLabel(boundedScore),
-    scoreText: currentMate != null ? `剩余 ${Math.abs(currentMate)} 步杀` : scoreText(boundedScore),
+    label: mateSide ? `${mateSide}${checkmateWinner ? "绝杀获胜" : "绝杀"}` : evaluationLabel(boundedScore),
+    scoreText: checkmateWinner ? "将死获胜" : currentMate != null ? `剩余 ${Math.abs(currentMate)} 步杀` : scoreText(boundedScore),
     detail: primary
       ? `深度 ${primary.depth ?? "-"} · ${primary.nps ? `${(primary.nps / 1_000_000).toFixed(1)}M` : "-"} NPS · ${((primary.timeMs ?? 0) / 1000).toFixed(1)}s`
       : "已保存节点分数",
     redShare: Math.max(5, Math.min(95, 50 + boundedScore / 16)),
     mateSide,
-    mateIn: currentMate == null ? undefined : Math.abs(currentMate),
+    mateIn: checkmateWinner ? 0 : currentMate == null ? undefined : Math.abs(currentMate),
+    isCheckmate: Boolean(checkmateWinner),
     deltaText: delta == null ? undefined : `较上一局面 ${delta >= 0 ? "+" : ""}${Math.round(delta)}`,
     samples,
   };

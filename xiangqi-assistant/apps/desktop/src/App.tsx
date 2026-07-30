@@ -39,7 +39,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { chessPlatform, type AnalysisLine, type BoardState, type EngineRuntimeState, type GameReportDatasetDto, type GameReportProgressDto, type GameSummary, type MoveItem, type Piece } from "./platform";
+import { chessPlatform, type AnalysisLine, type BoardState, type EngineRuntimeState, type GameReportDatasetDto, type GameReportProgressDto, type GameSummary, type MoveItem, type Piece, type PreviewLineStep } from "./platform";
 import { moveQualityFeedback, moveReports, positionEvaluation, trendPoints, trendTurningPoints } from "./analysisView";
 import { CandidateLine } from "./CandidateLine";
 import { DesktopMenuBar, type MenuCommand } from "./DesktopMenuBar";
@@ -225,6 +225,26 @@ function formatReportScore(move: MoveItem, redScoreCp?: number) {
   return formatRedScore(redScoreCp);
 }
 
+type CandidatePreviewState = {
+  rank: number;
+  color: string;
+  sourceFen: string;
+  firstMove: string;
+  intent: string;
+  possibility: string;
+  risk: string;
+  steps: PreviewLineStep[];
+  step: number;
+};
+
+function previewStepAdvice(preview: CandidatePreviewState, step: PreviewLineStep) {
+  if (preview.step === 0) return preview.intent;
+  if (step.status === "将军") return `${step.movedBy}通过「${step.notation}」形成将军，下一步要重点看对方是否只能应将。`;
+  if (step.status === "将死") return `${step.movedBy}通过「${step.notation}」进入将死局面，这条线已经出现强制结果。`;
+  if (preview.step % 2 === 1) return `对方用「${step.notation}」回应，主要观察它是否化解首选威胁，或制造反先手。`;
+  return `${step.movedBy}继续「${step.notation}」，看这条线能否延续首着计划并保持局面分。`;
+}
+
 export default function App() {
   const [board, setBoard] = useState<BoardState>(fallback);
   const [selected, setSelected] = useState<{ row: number; col: number } | null>(null);
@@ -232,7 +252,10 @@ export default function App() {
   const [fenInput, setFenInput] = useState(startingFen);
   const [enginePath, setEnginePath] = useState("");
   const [analysis, setAnalysis] = useState<AnalysisLine[]>([]);
+  const [analysisFen, setAnalysisFen] = useState<string>();
+  const [analysisSideToMove, setAnalysisSideToMove] = useState<BoardState["sideToMove"]>();
   const [analysisArrowFen, setAnalysisArrowFen] = useState<string>();
+  const [analysisHintsEnabled, setAnalysisHintsEnabled] = useState(false);
   const [games, setGames] = useState<GameSummary[]>([]);
   const [searchMode, setSearchMode] = useState<"time" | "depth" | "nodes" | "infinite">("time");
   const [searchValue, setSearchValue] = useState(1500);
@@ -273,6 +296,7 @@ export default function App() {
   const [reportExporting, setReportExporting] = useState(false);
   const [analysisHelpOpen, setAnalysisHelpOpen] = useState(false);
   const [trendCursorIndex, setTrendCursorIndex] = useState<number | undefined>();
+  const [candidatePreview, setCandidatePreview] = useState<CandidatePreviewState>();
   const [syncAccount, setSyncAccount] = useState(defaultSyncAccount);
   const [desktopDialog, setDesktopDialog] = useState<DesktopDialog>(null);
   const [dialogBusy, setDialogBusy] = useState(false);
@@ -282,7 +306,9 @@ export default function App() {
   const analysisLoadRevision = useRef(0);
   const reportLoadRevision = useRef(0);
   const boardRef = useRef<BoardState>(fallback);
+  const analysisFenRef = useRef<string | undefined>(undefined);
   const analysisBusyRef = useRef(false);
+  const analysisHintsEnabledRef = useRef(false);
   const pendingAutoAnalysis = useRef(false);
   const playbackRevision = useRef(0);
   const navigationRevision = useRef(0);
@@ -403,7 +429,11 @@ export default function App() {
         setEngineThinking(event.state === "thinking");
       } else if (event.type === "info") {
         if (event.fen !== boardRef.current.fen) return;
-        setAnalysis((current) => [...current.filter((line) => line.multipv !== event.line.multipv), event.line]
+        const previousFen = analysisFenRef.current;
+        analysisFenRef.current = event.fen;
+        setAnalysisFen(event.fen);
+        setAnalysisSideToMove(boardRef.current.sideToMove);
+        setAnalysis((current) => [...(previousFen === event.fen ? current : []).filter((line) => line.multipv !== event.line.multipv), event.line]
           .sort((left, right) => left.multipv - right.multipv));
       } else if (event.type === "bestmove") {
         if (event.fen !== boardRef.current.fen) return;
@@ -423,7 +453,7 @@ export default function App() {
 
 
   useEffect(() => {
-    if (!autoAnalyze) return;
+    if (!autoAnalyze && !analysisHintsEnabledRef.current) return;
     if (isPlaying || reportBusy) return;
     if (engineSide !== "none" || engineThinking) return;
     if (!board.playable) return;
@@ -439,11 +469,21 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [autoAnalyze, autoRetry, board.currentNode, board.fen, board.playable, enginePath, engineSide, engineThinking, hashMb, isPlaying, multipv, online, reportBusy, searchMode, searchValue, serverUrl, threads, token]);
 
-  const pieceMap = useMemo(() => new Map(board.pieces.map((piece) => [`${piece.row}-${piece.col}`, piece])), [board.pieces]);
+  const previewStep = candidatePreview?.steps[candidatePreview.step];
+  const displayedPieces = previewStep?.pieces ?? board.pieces;
+  const displayedLastMove = previewStep ? {
+    from: previewStep.from,
+    to: previewStep.to,
+    notation: previewStep.notation,
+    movedBy: previewStep.movedBy,
+  } : undefined;
+  const pieceMap = useMemo(() => new Map(displayedPieces.map((piece) => [`${piece.row}-${piece.col}`, piece])), [displayedPieces]);
   const editorPieceMap = useMemo(() => new Map(editorPieces.map((piece) => [`${piece.row}-${piece.col}`, piece])), [editorPieces]);
   const cells = useMemo(() => Array.from({ length: 90 }, (_, index) => ({ row: Math.floor(index / 9), col: index % 9 })), []);
   const lastMove = board.history.at(-1);
   const evaluation = useMemo(() => positionEvaluation(board, analysis), [analysis, board]);
+  const analysisIsStale = analysis.length > 0 && analysisFen !== board.fen;
+  const boardRailEvaluation = useMemo(() => positionEvaluation(board, analysisBusy || analysisIsStale ? [] : analysis), [analysis, analysisBusy, analysisIsStale, board]);
   const evaluationTrend = useMemo(() => trendPoints(evaluation?.samples ?? [], board.history.length), [board.history.length, evaluation]);
   const trendSegments = useMemo(() => evaluationTrend.slice(1).flatMap((point, index) => {
     const previous = evaluationTrend[index];
@@ -490,19 +530,20 @@ export default function App() {
   }, [board.history, board.rootMate, board.rootScoreCp, board.rootSideToMove, gameReport]);
   const overviewReport = useMemo(() => reports.find((report) => report.move.id === board.currentNode), [board.currentNode, reports]);
   const reportByMoveId = useMemo(() => new Map(reports.map((report) => [report.move.id, report])), [reports]);
-  const boardEvaluationScore = evaluation?.samples.at(-1)?.scoreCp;
-  const boardEvaluationSide = evaluation?.mateSide
-    ? `${evaluation.mateSide}${evaluation.isCheckmate ? "绝杀胜" : "绝杀"}`
+  const boardEvaluationScore = boardRailEvaluation?.samples.at(-1)?.scoreCp;
+  const boardEvaluationSide = boardRailEvaluation?.mateSide
+    ? `${boardRailEvaluation.mateSide}${boardRailEvaluation.isCheckmate ? "绝杀胜" : "绝杀"}`
     : boardEvaluationScore == null || Math.abs(boardEvaluationScore) <= 50
       ? "均势"
       : boardEvaluationScore > 0 ? "红优" : "黑优";
   const boardEvaluationRailShare = boardEvaluationScore == null
     ? 50
-    : boardEvaluationScore < -50 ? 100 - (evaluation?.redShare ?? 50) : evaluation?.redShare ?? 50;
+    : boardEvaluationScore < -50 ? 100 - (boardRailEvaluation?.redShare ?? 50) : boardRailEvaluation?.redShare ?? 50;
   const reportPresentation = useMemo(() => gameReport ? buildGameReportPresentation(board.title, gameReport) : undefined, [board.title, gameReport]);
   const orderedAnalysis = useMemo(() => analysis.slice().sort((left, right) => left.multipv - right.multipv), [analysis]);
   const primaryAnalysis = orderedAnalysis[0];
-  const candidateInsights = useMemo(() => candidateCoachInsights(orderedAnalysis, board), [board, orderedAnalysis]);
+  const candidateSideToMove = analysisSideToMove ?? board.sideToMove;
+  const candidateInsights = useMemo(() => candidateCoachInsights(orderedAnalysis, { sideToMove: candidateSideToMove }), [candidateSideToMove, orderedAnalysis]);
   const liveCoachAdvice = useMemo(() => currentCoachAdvice({
     board,
     primaryAnalysis,
@@ -539,6 +580,15 @@ export default function App() {
         to: boardPoint(to, reversed),
       }];
     }) : [], [analysisArrowFen, board.fen, orderedAnalysis, reversed]);
+  const boardArrows = useMemo(() => {
+    if (!candidatePreview || !previewStep) return analysisArrows;
+    return [{
+      rank: candidatePreview.rank,
+      color: candidatePreview.color,
+      from: boardPoint(previewStep.from, reversed),
+      to: boardPoint(previewStep.to, reversed),
+    }];
+  }, [analysisArrows, candidatePreview, previewStep, reversed]);
 
   function applyDesktopPreferences(preferences: DesktopPreferencesDto) {
     desktopPreferencesRef.current = preferences;
@@ -730,7 +780,6 @@ export default function App() {
       await enqueueBoardOperation(() => chessPlatform.navigateTo(boardRef.current.currentNode));
       const next = normalizeBoardState(await enqueueBoardOperation(() => chessPlatform.playMove(iccs)));
       applyBoard(next);
-      setAnalysis([]);
       await loadGameReport();
       setNotice(`已记录 ${next.history.at(-1)?.notation ?? iccs}`);
       await requestEngineMove(next);
@@ -738,6 +787,67 @@ export default function App() {
       setNotice(friendlyError(error));
     }
     setSelected(null);
+  }
+
+  async function previewCandidateLine(line: AnalysisLine, expectedFen: string) {
+    stopPlayback();
+    if (boardRef.current.fen !== expectedFen) {
+      setNotice("候选线路已过期，请重新分析后再预览");
+      return;
+    }
+    const pv = line.pv.slice(0, 6);
+    if (pv.length === 0) {
+      setNotice("当前候选没有可预览的 PV 线路");
+      return;
+    }
+    const coach = candidateInsights.find((candidate) => candidate.rank === line.multipv);
+    try {
+      const steps = await chessPlatform.previewLine(expectedFen, pv);
+      if (boardRef.current.fen !== expectedFen) {
+        setNotice("预览生成后局面已变化，请重新分析");
+        return;
+      }
+      if (steps.length === 0) {
+        setNotice("当前候选没有可播放的合法步骤");
+        return;
+      }
+      setSelected(null);
+      setCandidatePreview({
+        rank: line.multipv,
+        color: analysisArrowColors[line.multipv - 1] ?? analysisArrowColors[0],
+        sourceFen: expectedFen,
+        firstMove: line.notation?.[0] ?? line.pv[0] ?? `候选 ${line.multipv}`,
+        intent: coach?.intent ?? `候选 ${line.multipv}：观察这条线能否解决当前局面的主要矛盾。`,
+        possibility: coach?.possibility ?? "可能性：作为当前 MultiPV 返回的可选线路进行比较。",
+        risk: coach?.risk ?? "风险：预览时重点看对方回应后是否有直接反击。",
+        steps,
+        step: 0,
+      });
+      setNotice(`已载入候选 ${line.multipv} 推演：从第 1 步开始，手动点击“下一步”查看后续`);
+    } catch (error) {
+      setCandidatePreview(undefined);
+      setNotice(friendlyError(error));
+    }
+  }
+
+  function stepCandidatePreview(delta: number) {
+    setCandidatePreview((current) => {
+      if (!current) return current;
+      const step = Math.max(0, Math.min(current.steps.length - 1, current.step + delta));
+      return { ...current, step };
+    });
+  }
+
+  function jumpCandidatePreview(step: number) {
+    setCandidatePreview((current) => {
+      if (!current) return current;
+      return { ...current, step: Math.max(0, Math.min(current.steps.length - 1, step)) };
+    });
+  }
+
+  function exitCandidatePreview() {
+    setCandidatePreview(undefined);
+    setNotice("已退出候选推演预览，棋盘回到真实当前局面");
   }
 
   async function selectSquare(row: number, col: number) {
@@ -772,7 +882,7 @@ export default function App() {
       applyBoard(await enqueueBoardOperation(() => chessPlatform.newGame(fen)));
       await refreshGames();
       setSelected(null);
-      setAnalysis([]);
+      clearAnalysisState();
       setGameReport(undefined);
       setNotice("已创建新棋谱");
     } catch (error) {
@@ -792,7 +902,7 @@ export default function App() {
         return;
       }
       applyBoard(next);
-      setAnalysis([]);
+      clearAnalysisState();
       await loadGameReport();
       await refreshGames();
       setNotice("棋谱已导入并自动保存到本地库");
@@ -840,7 +950,7 @@ export default function App() {
     await cancelGameReportForStructureChange();
     try {
       applyBoard(await enqueueBoardOperation(() => chessPlatform.pasteDocument()));
-      setAnalysis([]);
+      clearAnalysisState();
       await loadGameReport();
       await refreshGames();
       setNotice("剪贴板内容已识别并导入");
@@ -888,7 +998,7 @@ export default function App() {
       await cancelAnalysisForDocumentChange();
       await cancelGameReportForStructureChange();
       applyBoard(await enqueueBoardOperation(() => chessPlatform.newGame(fen, gameTitle.trim() || "研究局面", gameNote)));
-      setAnalysis([]);
+      clearAnalysisState();
       setGameReport(undefined);
       setPositionEditorOpen(false);
       await refreshGames();
@@ -925,10 +1035,12 @@ export default function App() {
   }
 
   async function cancelAnalysisForDocumentChange() {
+    analysisHintsEnabledRef.current = false;
+    setAnalysisHintsEnabled(false);
+    setAnalysisArrowFen(undefined);
     if (!analysisBusyRef.current) return;
     pendingAutoAnalysis.current = false;
     analysisBusyRef.current = false;
-    setAnalysisArrowFen(undefined);
     setAnalysisBusy(false);
     await chessPlatform.stopAnalysis(true).catch(() => undefined);
   }
@@ -954,7 +1066,6 @@ export default function App() {
     try {
       const result = await chessPlatform.playEngineMove({ enginePath, moveTimeMs, threads, hashMb, ponder: ponderEnabled });
       applyBoard(result.board);
-      setAnalysis([]);
       await loadGameReport();
       setPonderMove(result.ponder);
       setNotice(`Pikafish 已走 ${result.board.history.at(-1)?.notation ?? "一着"}${result.ponder ? ` · 预测 ${result.ponder}` : ""}`);
@@ -1032,10 +1143,17 @@ export default function App() {
     const currentBoard = boardRef.current;
     const analyzedFen = currentBoard.fen;
     const analyzedRevision = boardRevision.current;
+    setCandidatePreview(undefined);
+    if (!automatic) {
+      analysisHintsEnabledRef.current = true;
+      setAnalysisHintsEnabled(true);
+    }
     analysisBusyRef.current = true;
     analysisLoadRevision.current += 1;
-    setAnalysis([]);
-    setAnalysisArrowFen(automatic ? undefined : analyzedFen);
+    if (analysisFen !== analyzedFen) {
+      setAnalysisArrowFen(undefined);
+    }
+    setAnalysisArrowFen(analysisHintsEnabledRef.current ? analyzedFen : undefined);
     setAnalysisBusy(true);
     if (!automatic) setWorkspacePanel("analysis");
     setNotice(automatic ? "Pikafish 正在自动分析…" : "Pikafish 正在计算…");
@@ -1058,6 +1176,9 @@ export default function App() {
         setNotice("原局面分析已结束；当前棋盘已变化，未覆盖当前候选线");
         return;
       }
+      analysisFenRef.current = analyzedFen;
+      setAnalysisFen(analyzedFen);
+      setAnalysisSideToMove(currentBoard.sideToMove);
       setAnalysis(result);
       applyBoard(await chessPlatform.initialize());
       setNotice(automatic ? "自动分析完成并已保存" : "分析完成并已保存");
@@ -1075,6 +1196,8 @@ export default function App() {
 
   async function stopAnalysis() {
     pendingAutoAnalysis.current = false;
+    analysisHintsEnabledRef.current = false;
+    setAnalysisHintsEnabled(false);
     setAnalysisArrowFen(undefined);
     try {
       await chessPlatform.stopAnalysis();
@@ -1088,20 +1211,36 @@ export default function App() {
     const next = normalizeBoardState(value);
     boardRevision.current += 1;
     boardRef.current = next;
+    setCandidatePreview(undefined);
     setBoard(next);
     setFenInput(next.fen);
   }
 
-  async function loadSavedAnalysis(fen = board.fen) {
+  function clearAnalysisState() {
+    analysisFenRef.current = undefined;
+    setAnalysis([]);
+    setAnalysisFen(undefined);
+    setAnalysisSideToMove(undefined);
+    setAnalysisArrowFen(undefined);
+  }
+
+  async function loadSavedAnalysis(fen = board.fen, options: { keepPreviousOnMiss?: boolean } = {}) {
     const loadRevision = ++analysisLoadRevision.current;
     const expectedBoardRevision = boardRevision.current;
     try {
       const saved = await chessPlatform.loadSavedAnalysis(fen);
       if (loadRevision === analysisLoadRevision.current && expectedBoardRevision === boardRevision.current && boardRef.current.fen === fen) {
+        if (saved.length === 0 && options.keepPreviousOnMiss) return;
+        analysisFenRef.current = fen;
+        setAnalysisFen(fen);
+        setAnalysisSideToMove(boardRef.current.sideToMove);
         setAnalysis(saved);
       }
     } catch {
-      if (loadRevision === analysisLoadRevision.current && expectedBoardRevision === boardRevision.current) {
+      if (loadRevision === analysisLoadRevision.current && expectedBoardRevision === boardRevision.current && !options.keepPreviousOnMiss) {
+        analysisFenRef.current = undefined;
+        setAnalysisFen(undefined);
+        setAnalysisSideToMove(undefined);
         setAnalysis([]);
       }
     }
@@ -1170,7 +1309,7 @@ export default function App() {
       applyBoard(next);
       setSelected(null);
       setTrendCursorIndex(undefined);
-      await loadSavedAnalysis(next.fen ?? board.fen);
+      await loadSavedAnalysis(next.fen ?? board.fen, { keepPreviousOnMiss: true });
       await loadGameReport();
       setNotice(playbackToken == null ? nodeId ? "已切换棋谱节点" : "已回到根局面" : "正在播放主线棋谱");
       return next;
@@ -1198,6 +1337,9 @@ export default function App() {
     if (!next) return;
     setWorkspacePanel("analysis");
     if (cached?.bestIccs) {
+      analysisFenRef.current = next.fen;
+      setAnalysisFen(next.fen);
+      setAnalysisSideToMove(next.sideToMove);
       setAnalysis([{
         depth: cached.depth,
         scoreCp: cached.scoreCp,
@@ -1356,7 +1498,7 @@ export default function App() {
     try {
       await cancelGameReportForStructureChange();
       applyBoard(await enqueueBoardOperation(() => chessPlatform.deleteNode(nodeId)));
-      setAnalysis([]);
+      clearAnalysisState();
       await loadGameReport();
       setNotice("节点已删除");
     } catch (error) {
@@ -1476,7 +1618,7 @@ export default function App() {
       case "engineRed": toggleEngineSide("red"); break;
       case "engineBlack": toggleEngineSide("black"); break;
       case "moveNow": await moveNow(); break;
-      case "analyze": await runAnalysis(); break;
+      case "analyze": analysisHintsEnabled ? await stopAnalysis() : await runAnalysis(); break;
       case "stopAnalysis": await stopAnalysis(); break;
       case "engineSettings": setDesktopDialog("engine"); break;
       case "syncRegister": setDesktopDialog("register"); break;
@@ -1493,7 +1635,7 @@ export default function App() {
       case "settings": setMobilePanel("settings"); break;
       case "newGame": await createGame(startingFen); break;
       case "flipBoard": setReversed((value) => !value); break;
-      case "analysis": analysisBusy ? await stopAnalysis() : await runAnalysis(); break;
+      case "analysis": analysisHintsEnabled ? await stopAnalysis() : await runAnalysis(); break;
       case "theme": await toggleColorTheme(); break;
     }
   }
@@ -1508,6 +1650,29 @@ export default function App() {
       <button className="variation-jump" title="下变：跳到下一个分支点" disabled={!preferredContinuation(board)} onClick={() => void goToNextBranchPoint()}><GitFork size={13}/><small>下变</small></button>
       <span>第 <strong>{board.history.length}</strong> 着</span>
     </div>;
+  }
+
+  function candidateLinesView(className = "") {
+    return <section className={`variations candidate-dock ${className}`.trim()}>
+      <div className="section-title"><strong>棋盘候选</strong><span>{analysisIsStale ? "旧候选保留中 · 新局面正在更新" : `MultiPV ${multipv} · 点预览后手动下一步`}</span></div>
+      <div className="analysis-lines">
+        {analysis.length === 0
+          ? <div className="empty-analysis"><Activity size={24}/><strong>等待分析</strong><span>启动 Pikafish 后在这里显示候选 1/2/3 推演</span></div>
+          : orderedAnalysis.map((line) => <CandidateLine
+            coach={candidateInsights.find((candidate) => candidate.rank === line.multipv)}
+            color={analysisArrowColors[line.multipv - 1] ?? "transparent"}
+            disabled={analysisIsStale}
+            fen={analysisFen ?? board.fen}
+            key={line.multipv}
+            line={line}
+            scoreText={formatAnalysisScore(line)}
+            sideToMove={candidateSideToMove}
+            stale={analysisIsStale}
+            onPlay={(iccs, analyzedFen) => void playIccsMove(iccs, analyzedFen)}
+            onPreview={(candidate, analyzedFen) => void previewCandidateLine(candidate, analyzedFen)}
+          />)}
+      </div>
+    </section>;
   }
 
   return (
@@ -1562,7 +1727,12 @@ export default function App() {
           <button className="tool-button" title="返回根局面" onClick={() => void navigateTo()}><RefreshCw size={16}/></button>
         </div>
         <div className="tool-divider" />
-        <button className="mode-tool" onClick={() => void runAnalysis()} disabled={!board.playable || analysisBusy || isPlaying}><Zap size={15}/>分析当前局面</button>
+        <button
+          className={`mode-tool ${analysisHintsEnabled ? "active" : ""}`}
+          title={analysisHintsEnabled ? "停止自动分析并隐藏 MultiPV 提示" : "开启自动分析与 MultiPV 提示"}
+          onClick={() => void (analysisHintsEnabled ? stopAnalysis() : runAnalysis())}
+          disabled={!analysisHintsEnabled && (!board.playable || isPlaying)}
+        ><Zap size={15}/>{analysisHintsEnabled ? "停止分析提示" : "分析当前局面"}</button>
         <button className={`mode-tool engine-side ${engineSide === "red" ? "active" : ""}`} disabled={!board.playable || (engineThinking && engineSide !== "red")} onClick={() => toggleEngineSide("red")}><Bot size={15}/>引擎红</button>
         <button className={`mode-tool engine-side ${engineSide === "black" ? "active" : ""}`} disabled={!board.playable || (engineThinking && engineSide !== "black")} onClick={() => toggleEngineSide("black")}><Bot size={15}/>引擎黑</button>
         <button className="tool-button" title="立即出招" disabled={!engineThinking} onClick={() => void moveNow()}><Zap size={15}/></button>
@@ -1615,6 +1785,7 @@ export default function App() {
         </aside>
 
         <section className={`board-section ${mobilePanel === "board" ? "mobile-visible" : ""}`}>
+          <div className="board-main-stack">
           <div className="board-stage">
             <div className="board-stage-inner">
             <aside className="board-quality-rail" aria-label="当前着法质量">
@@ -1631,8 +1802,9 @@ export default function App() {
                 const visualRow = reversed ? 9 - row : row;
                 const visualCol = reversed ? 8 - col : col;
                 const isSelected = selected?.row === row && selected?.col === col;
-                const isLastFrom = lastMove?.from.row === row && lastMove.from.col === col;
-                const isLastTo = lastMove?.to.row === row && lastMove.to.col === col;
+                const markerMove = displayedLastMove ?? lastMove;
+                const isLastFrom = markerMove?.from.row === row && markerMove.from.col === col;
+                const isLastTo = markerMove?.to.row === row && markerMove.to.col === col;
                 const style = {
                   "--piece-left": `${((20 + visualCol * 120) / 1120) * 100}%`,
                   "--piece-top": `${((20 + visualRow * 120) / 1240) * 100}%`,
@@ -1640,15 +1812,15 @@ export default function App() {
                 return (
                   <button
                     key={`${row}-${col}`}
-                    className={`board-square ${isSelected ? "selected" : ""} ${isLastFrom ? "last-from" : ""} ${isLastTo ? "last-to" : ""}`}
+                    className={`board-square ${candidatePreview ? "previewing" : ""} ${isSelected ? "selected" : ""} ${isLastFrom ? "last-from" : ""} ${isLastTo ? "last-to" : ""}`}
                     style={style}
-                    disabled={isPlaying || !board.playable}
+                    disabled={isPlaying || !board.playable || !!candidatePreview}
                     onClick={() => void selectSquare(row, col)}
                     aria-label={`${squareToIccs(row, col)}${piece ? ` ${piece.color === "red" ? "红" : "黑"}${piece.label}` : ""}`}
                   >
                     {piece && <img src={pieceAsset(piece)} alt="" draggable={false} />}
                     {isSelected && <img className="selection-mask" src="/skins/tchess/mask2.png" alt="" />}
-                    {isLastTo && board.currentNode === lastMove?.id && overviewReport?.grade && overviewReport.score != null && (
+                    {!candidatePreview && isLastTo && board.currentNode === lastMove?.id && overviewReport?.grade && overviewReport.score != null && (
                       <span
                         className={`board-move-grade grade-${overviewReport.grade}`}
                         data-tooltip={`${overviewReport.grade} ${overviewReport.score}分 · ${formatScoreDelta(overviewReport.deltaCp)}`}
@@ -1660,17 +1832,17 @@ export default function App() {
                   </button>
                 );
               })}
-              {analysisArrows.length > 0 && (
+              {boardArrows.length > 0 && (
                 <>
                   <svg className="analysis-arrow-lines" viewBox="0 0 1120 1240" aria-hidden="true">
                   <defs>
-                    {analysisArrows.map((arrow) => (
+                    {boardArrows.map((arrow) => (
                       <marker key={arrow.rank} id={`analysis-arrowhead-${arrow.rank}`} markerWidth="48" markerHeight="48" refX="40" refY="24" orient="auto" markerUnits="userSpaceOnUse">
                         <path d="M 0 0 L 48 24 L 0 48 z" fill={arrow.color}/>
                       </marker>
                     ))}
                   </defs>
-                  {analysisArrows.map((arrow) => {
+                  {boardArrows.map((arrow) => {
                     return (
                       <g key={arrow.rank} style={{ "--arrow-color": arrow.color } as CSSProperties}>
                         <line x1={arrow.from.x} y1={arrow.from.y} x2={arrow.to.x} y2={arrow.to.y} markerEnd={`url(#analysis-arrowhead-${arrow.rank})`}/>
@@ -1679,7 +1851,7 @@ export default function App() {
                   })}
                   </svg>
                   <svg className="analysis-arrow-labels" viewBox="0 0 1120 1240" aria-hidden="true">
-                    {analysisArrows.map((arrow) => {
+                    {boardArrows.map((arrow) => {
                       const labelX = arrow.from.x + (arrow.to.x - arrow.from.x) * .55;
                       const labelY = arrow.from.y + (arrow.to.y - arrow.from.y) * .55;
                       return (
@@ -1700,17 +1872,53 @@ export default function App() {
               </div>
               <div className="board-eval-label">
                 <strong>{boardEvaluationSide}</strong>
-                <span>{evaluation?.scoreText ?? "--"}</span>
+                <span>{boardRailEvaluation?.scoreText ?? "--"}</span>
               </div>
             </aside>
             </div>
           </div>
+          {candidatePreview && previewStep && (
+            <div className="candidate-preview-bar" style={{ "--pv-color": candidatePreview.color } as CSSProperties}>
+              <div className="candidate-preview-main">
+                <span className="pv-rank">{candidatePreview.rank}</span>
+                <div>
+                  <strong>候选{candidatePreview.rank}预览 {candidatePreview.step + 1}/{candidatePreview.steps.length}：{previewStep.notation}</strong>
+                  <small>{previewStep.movedBy}走子 · {previewStep.status} · 首着 {candidatePreview.firstMove}</small>
+                </div>
+              </div>
+              <div className="candidate-preview-text">
+                <span>思路：{previewStepAdvice(candidatePreview, previewStep)}</span>
+                <span>风险/可能性：{candidatePreview.step === 0 ? candidatePreview.possibility : candidatePreview.risk}</span>
+              </div>
+              <div className="candidate-preview-steps" aria-label="候选推演步骤">
+                {candidatePreview.steps.map((step, index) => (
+                  <button
+                    key={`${index}-${step.notation}-${step.fen}`}
+                    type="button"
+                    className={index === candidatePreview.step ? "active" : ""}
+                    onClick={() => jumpCandidatePreview(index)}
+                    title={`${index + 1}. ${step.notation}`}
+                  >
+                    <span>{index + 1}</span>
+                    <small>{step.notation}</small>
+                  </button>
+                ))}
+              </div>
+              <div className="candidate-preview-controls" role="group" aria-label="候选推演预览控制">
+                <button type="button" className="preview-prev" onClick={() => stepCandidatePreview(-1)} disabled={candidatePreview.step === 0} title="上一步"><ChevronLeft size={14}/>上一步</button>
+                <button type="button" className="preview-next" onClick={() => stepCandidatePreview(1)} disabled={candidatePreview.step >= candidatePreview.steps.length - 1} title="下一步">下一步<ChevronRight size={14}/></button>
+                <button type="button" className="preview-exit" onClick={exitCandidatePreview} title="退出预览"><X size={14}/>退出</button>
+              </div>
+            </div>
+          )}
           <div className="board-statusbar">
-            {lastMove && <span className="last-move-status">上一着：<strong>{lastMove.movedBy}</strong> {lastMove.notation}</span>}
-            {lastMove && <span className="status-separator" />}
+            {candidatePreview && previewStep
+              ? <span className="last-move-status">预览着法：<strong>{previewStep.movedBy}</strong> {previewStep.notation}</span>
+              : lastMove && <span className="last-move-status">上一着：<strong>{lastMove.movedBy}</strong> {lastMove.notation}</span>}
+            {(candidatePreview && previewStep || lastMove) && <span className="status-separator" />}
             <span className={`turn-dot ${board.sideToMove === "红方" ? "red" : "black"}`} />
-            <strong>{board.sideToMove}行棋</strong>
-            <span>{board.status}</span>
+            <strong>{candidatePreview && previewStep ? "手动推演中" : `${board.sideToMove}行棋`}</strong>
+            <span>{candidatePreview && previewStep ? `真实棋谱未改变 · 点“下一步”继续` : board.status}</span>
             <span className="status-spacer" />
             <span className="board-meta">节点 {board.history.length}</span>
             <span className="board-meta">{reversed ? "黑方视角" : "红方视角"}</span>
@@ -1727,6 +1935,8 @@ export default function App() {
             <input value={fenInput} onChange={(event) => setFenInput(event.target.value)} />
             <button onClick={() => void createGame()}>载入</button>
           </div>
+          </div>
+          {candidateLinesView("board-candidate-rail")}
         </section>
 
         <aside className={`analysis-panel ${mobilePanel === "analysis" ? "mobile-visible" : ""}`}>
@@ -1796,23 +2006,6 @@ export default function App() {
             <p>{liveCoachAdvice.nextAction}</p>
           </section>
 
-          <section className="variations">
-            <div className="section-title"><strong>候选推演</strong><span>MultiPV {multipv} · 每条 3 回合</span></div>
-            <div className="analysis-lines">
-              {analysis.length === 0
-                ? <div className="empty-analysis"><Activity size={24}/><strong>等待分析</strong><span>启动 Pikafish 后显示每条候选的私教讲解与 3 回合推演</span></div>
-                : orderedAnalysis.map((line) => <CandidateLine
-                  coach={candidateInsights.find((candidate) => candidate.rank === line.multipv)}
-                  color={analysisArrowColors[line.multipv - 1] ?? "transparent"}
-                  fen={board.fen}
-                  key={line.multipv}
-                  line={line}
-                  scoreText={formatAnalysisScore(line)}
-                  sideToMove={board.sideToMove}
-                  onPlay={(iccs, analyzedFen) => void playIccsMove(iccs, analyzedFen)}
-                />)}
-            </div>
-          </section>
           </div>}
 
           {workspacePanel !== "analysis" && <section className="workspace-content review-workspace">
