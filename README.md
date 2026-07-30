@@ -31,7 +31,7 @@ PIKAFISH_PATH=/absolute/path/to/pikafish-apple-silicon \
 
 桌面端会自动查找 `PIKAFISH_PATH`、TCHESS macOS 安装目录、应用资源目录及系统 `PATH` 中的 Pikafish。也可以从“引擎 -> 引擎设置”选择可执行文件；保存前会完成 UCI/UCCI 握手。`pikafish.nnue` 应放在可执行文件同目录。默认参数为 2 线程、256 MB Hash 和 MultiPV 3。
 
-本机已验证的引擎路径为 `/path/to/Pikafish.2026-01-02/MacOS/pikafish-apple-silicon`。对应 `pikafish.nnue` 必须位于 `MacOS` 目录中，或以软链接指向发布包根目录的同名文件。
+本地引擎路径示例为 `/path/to/Pikafish.2026-01-02/MacOS/pikafish-apple-silicon`。对应 `pikafish.nnue` 必须位于 `MacOS` 目录中，或以软链接指向发布包根目录的同名文件。
 
 ## 可选服务端
 
@@ -77,7 +77,7 @@ SIGN_AND_NOTARIZE=0 \
 ./scripts/build-macos-release.sh
 ```
 
-产物位于 `target/release/bundle/`。默认会把本机 `/path/to/Pikafish.2026-01-02` 中的 Apple Silicon Pikafish 与 `pikafish.nnue` 内置到 macOS 安装包。
+产物位于 `target/release/bundle/`。默认会读取 `PIKAFISH_RELEASE_DIR` 指向的 Pikafish 发布目录；未设置时使用项目相邻目录的 `../Pikafish.2026-01-02`。该目录中的 Apple Silicon Pikafish 与 `pikafish.nnue` 会被内置到 macOS 安装包。
 
 GitHub Release 跨平台打包通过 `.github/workflows/release.yml` 完成。推送版本标签即可触发草稿 Release：
 

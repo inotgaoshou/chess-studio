@@ -7,7 +7,7 @@ cd "$ROOT_DIR"
 PNPM_BIN="${PNPM_BIN:-pnpm}"
 EMBED_PIKAFISH="${EMBED_PIKAFISH:-1}"
 SIGN_AND_NOTARIZE="${SIGN_AND_NOTARIZE:-1}"
-PIKAFISH_RELEASE_DIR="${PIKAFISH_RELEASE_DIR:-/path/to/Pikafish.2026-01-02}"
+PIKAFISH_RELEASE_DIR="${PIKAFISH_RELEASE_DIR:-$ROOT_DIR/../Pikafish.2026-01-02}"
 PIKAFISH_RESOURCE_DIR="apps/desktop/src-tauri/resources/pikafish"
 TAURI_RESOURCE_CONFIG='{"bundle":{"resources":["resources/fonts/OFL.txt","resources/pikafish"]}}'
 
