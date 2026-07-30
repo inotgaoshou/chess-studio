@@ -104,9 +104,12 @@ git push origin v1.0.1
 1. 打开 `Actions -> Release`；
 2. 点击 `Run workflow`；
 3. 输入 tag，例如 `v1.0.1`；
-4. 等待 macOS Apple Silicon job 通过。
+4. 勾选 `Build macOS packages and upload them to this release`；
+5. 等待 macOS Apple Silicon job 通过。
 
 成功后会生成 Draft Release。确认 DMG 可用后，再手动发布 Release。
+
+> 推送 release tag 时默认只构建 Windows 和 Linux，以尽快提供下载。需要 macOS DMG 时，针对同一 tag 手动运行一次该 workflow 并勾选上述选项，macOS 资产会追加到同一个 Draft Release。
 
 ## 7. 本地正式包构建
 

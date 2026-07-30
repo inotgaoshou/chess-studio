@@ -10,6 +10,15 @@ on:
         description: "Release tag, for example v1.0.0"
         required: true
         default: "v1.0.0"
+      include_macos:
+        description: "Build macOS packages and upload them to this release"
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
@@ -48,6 +57,9 @@ jobs:
   build:
     needs: validate-macos-signing
     name: ${{ matrix.name }}
+    # Tag pushes publish the two ready-to-ship platforms quickly. Run this workflow
+    # manually with include_macos enabled when signed/notarized macOS packages are needed.
+    if: matrix.platform == 'windows-x64' || matrix.platform == 'linux-x64' || (github.event_name == 'workflow_dispatch' && inputs.include_macos == true)
     strategy:
       fail-fast: false
       matrix:
