@@ -5,7 +5,11 @@ TARGET_PLATFORM="${1:?Usage: prepare-pikafish-resource.sh <macos-arm64|macos-x64
 PIKAFISH_VERSION="${PIKAFISH_VERSION:-2026-01-02}"
 PIKAFISH_TAG="${PIKAFISH_TAG:-Pikafish-${PIKAFISH_VERSION}}"
 RESOURCE_DIR="apps/desktop/src-tauri/resources/pikafish"
-WORK_DIR="${RUNNER_TEMP:-/tmp}/pikafish-${PIKAFISH_VERSION}-${TARGET_PLATFORM}"
+TEMP_ROOT="${RUNNER_TEMP:-/tmp}"
+if command -v cygpath >/dev/null 2>&1; then
+  TEMP_ROOT="$(cygpath --unix "$TEMP_ROOT")"
+fi
+WORK_DIR="$TEMP_ROOT/pikafish-${PIKAFISH_VERSION}-${TARGET_PLATFORM}"
 ARCHIVE_DIR="$WORK_DIR/archive"
 EXTRACT_DIR="$WORK_DIR/extract"
 
@@ -33,16 +37,18 @@ if [[ -z "$ARCHIVE_PATH" ]]; then
   exit 1
 fi
 
-7z x "$ARCHIVE_PATH" -o"$EXTRACT_DIR" -y >/dev/null
-
-SOURCE_ROOT="$EXTRACT_DIR/Pikafish.${PIKAFISH_VERSION}"
-if [[ ! -d "$SOURCE_ROOT" ]]; then
-  SOURCE_ROOT="$(find "$EXTRACT_DIR" -maxdepth 1 -type d -name 'Pikafish*' | head -n 1)"
+SEVEN_ZIP_EXTRACT_DIR="$EXTRACT_DIR"
+if command -v cygpath >/dev/null 2>&1; then
+  SEVEN_ZIP_EXTRACT_DIR="$(cygpath --windows "$EXTRACT_DIR")"
 fi
-if [[ ! -d "$SOURCE_ROOT" ]]; then
-  echo "Cannot find extracted Pikafish root in $EXTRACT_DIR." >&2
+7z x "$ARCHIVE_PATH" -o"$SEVEN_ZIP_EXTRACT_DIR" -y >/dev/null
+
+NNUE_PATH="$(find "$EXTRACT_DIR" -type f -name 'pikafish.nnue' -print -quit)"
+if [[ -z "$NNUE_PATH" ]]; then
+  echo "Cannot find pikafish.nnue after extraction in $EXTRACT_DIR." >&2
   exit 1
 fi
+SOURCE_ROOT="$(dirname "$NNUE_PATH")"
 
 rm -rf "$RESOURCE_DIR"
 mkdir -p "$RESOURCE_DIR"
@@ -86,14 +92,7 @@ if [[ -n "$ENGINE_SOURCE" ]]; then
   fi
 fi
 
-if [[ -f "$SOURCE_ROOT/pikafish.nnue" ]]; then
-  cp "$SOURCE_ROOT/pikafish.nnue" "$RESOURCE_DIR/pikafish.nnue"
-elif [[ -f "$SOURCE_ROOT/MacOS/pikafish.nnue" ]]; then
-  cp "$SOURCE_ROOT/MacOS/pikafish.nnue" "$RESOURCE_DIR/pikafish.nnue"
-else
-  echo "Missing pikafish.nnue in Pikafish release." >&2
-  exit 1
-fi
+cp "$NNUE_PATH" "$RESOURCE_DIR/pikafish.nnue"
 
 cp "$SOURCE_ROOT/Copying.txt" "$RESOURCE_DIR/Copying.txt"
 cp "$SOURCE_ROOT/NNUE-License.md" "$RESOURCE_DIR/NNUE-License.md"
