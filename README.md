@@ -67,6 +67,41 @@ XQF、CBR 已接入统一格式检测入口，但解析器需要真实样例验�
 
 启动服务端后，从桌面“同步”菜单注册或登录。JWT 只保存在操作系统钥匙串，不返回 React，也不写入 SQLite；退出登录不会删除本地棋谱或 outbox。一个本地棋谱库首次登录后绑定该账号，不能切换到其他账号或同步服务器。
 
+## 发布打包
+
+本地 macOS Apple Silicon 内置 Pikafish 打包：
+
+```bash
+PNPM_BIN=pnpm \
+SIGN_AND_NOTARIZE=0 \
+./scripts/build-macos-release.sh
+```
+
+产物位于 `target/release/bundle/`。默认会把本机 `/path/to/Pikafish.2026-01-02` 中的 Apple Silicon Pikafish 与 `pikafish.nnue` 内置到 macOS 安装包。
+
+GitHub Release 跨平台打包通过 `.github/workflows/release.yml` 完成。推送版本标签即可触发草稿 Release：
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+GitHub Actions 会尝试构建：
+
+- macOS Apple Silicon：`.dmg`，内置 Pikafish Apple Silicon
+- macOS Intel：`.dmg`，当前官方 Pikafish 包未提供 Intel macOS 引擎，分析需手动配置外部引擎
+- Windows x64：安装包，内置 Pikafish SSE4.1/POPCNT
+- Linux x64：AppImage/deb/rpm 等 Tauri 产物，内置 Pikafish SSE4.1/POPCNT
+
+如果要让 macOS 包正式签名和公证，需要在 GitHub 仓库 `Settings -> Secrets and variables -> Actions` 中配置：
+
+- `APPLE_CERTIFICATE`
+- `APPLE_CERTIFICATE_PASSWORD`
+- `APPLE_SIGNING_IDENTITY`
+- `APPLE_ID`
+- `APPLE_PASSWORD`
+- `APPLE_TEAM_ID`
+
 ## 验证
 
 ```bash

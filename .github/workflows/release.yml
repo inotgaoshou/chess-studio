@@ -1,0 +1,135 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, for example v1.0.0"
+        required: true
+        default: "v1.0.0"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  PIKAFISH_VERSION: "2026-01-02"
+  TAURI_RESOURCE_CONFIG: '{"bundle":{"resources":["resources/fonts/OFL.txt","resources/pikafish"]}}'
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS Apple Silicon
+            platform: macos-arm64
+            os: macos-14
+            rust_target: aarch64-apple-darwin
+            tauri_args: "--target aarch64-apple-darwin"
+          - name: macOS Intel
+            platform: macos-x64
+            os: macos-13
+            rust_target: x86_64-apple-darwin
+            tauri_args: "--target x86_64-apple-darwin"
+          - name: Windows x64
+            platform: windows-x64
+            os: windows-latest
+            rust_target: x86_64-pc-windows-msvc
+            tauri_args: "--target x86_64-pc-windows-msvc"
+          - name: Linux x64
+            platform: linux-x64
+            os: ubuntu-22.04
+            rust_target: x86_64-unknown-linux-gnu
+            tauri_args: "--target x86_64-unknown-linux-gnu"
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev \
+            p7zip-full
+
+      - name: Install macOS 7z
+        if: runner.os == 'macOS'
+        run: brew install p7zip
+
+      - name: Install Windows 7z
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install 7zip -y --no-progress
+          "C:\Program Files\7-Zip" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+
+      - name: Prepare embedded Pikafish
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/prepare-pikafish-resource.sh ${{ matrix.platform }}
+
+      - name: Build and upload release asset
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          args: ${{ matrix.tauri_args }} --config ${{ env.TAURI_RESOURCE_CONFIG }}
+          tagName: ${{ github.event.inputs.tag || github.ref_name }}
+          releaseName: Xiangqi Studio ${{ github.event.inputs.tag || github.ref_name }}
+          releaseBody: |
+            ## 更新说明
+
+            - 桌面端中国象棋打谱、变例、SQLite 自动保存
+            - 本地 Pikafish 分析、MultiPV 候选线和私教推演
+            - 整局复盘报告、局势图、质量评分和 PDF 导出
+
+            ## 包说明
+
+            - macOS Apple Silicon：内置 Pikafish Apple Silicon
+            - macOS Intel：当前官方 Pikafish 包未提供 Intel macOS 引擎，应用可安装，分析需手动配置外部引擎
+            - Windows x64 / Linux x64：内置 Pikafish SSE4.1/POPCNT 通用 x64 引擎
+          releaseDraft: true
+          prerelease: false
