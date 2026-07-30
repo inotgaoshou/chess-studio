@@ -164,6 +164,9 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
+          # The Tauri config and its pnpm build script live in this workspace package.
+          # Without this, tauri-action runs `pnpm build` from the repository root.
+          projectPath: apps/desktop
           args: ${{ matrix.tauri_args }} --config ${{ env.TAURI_RESOURCE_CONFIG }}
           tagName: ${{ github.event.inputs.tag || github.ref_name }}
           releaseName: Xiangqi Studio ${{ github.event.inputs.tag || github.ref_name }}
