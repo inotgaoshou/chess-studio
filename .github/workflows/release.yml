@@ -126,10 +126,28 @@ jobs:
           workspaces: |
             . -> target
 
+      - name: Import Apple Developer ID certificate
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: scripts/import-apple-certificate.sh
+
+      - name: Verify Apple signing identity
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          security find-identity -v -p codesigning
+          security find-identity -v -p codesigning | grep -F "$APPLE_SIGNING_IDENTITY"
+
       - name: Prepare embedded Pikafish
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: scripts/prepare-pikafish-resource.sh ${{ matrix.platform }}
 
       - name: Build and upload release asset
@@ -160,3 +178,8 @@ jobs:
             - Windows x64 / Linux x64：内置 Pikafish SSE4.1/POPCNT 通用 x64 引擎
           releaseDraft: true
           prerelease: false
+
+      - name: Verify notarized macOS artifacts
+        if: runner.os == 'macOS'
+        shell: bash
+        run: scripts/verify-macos-release.sh

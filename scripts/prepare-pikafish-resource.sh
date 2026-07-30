@@ -78,6 +78,12 @@ if [[ -n "$ENGINE_SOURCE" ]]; then
   fi
   cp "$ENGINE_SOURCE" "$ENGINE_TARGET"
   chmod +x "$ENGINE_TARGET" 2>/dev/null || true
+
+  if [[ "$TARGET_PLATFORM" == macos-* && -n "${APPLE_SIGNING_IDENTITY:-}" ]]; then
+    echo "Signing embedded Pikafish engine: $ENGINE_TARGET"
+    codesign --force --timestamp --options runtime --sign "$APPLE_SIGNING_IDENTITY" "$ENGINE_TARGET"
+    codesign --verify --strict --verbose=2 "$ENGINE_TARGET"
+  fi
 fi
 
 if [[ -f "$SOURCE_ROOT/pikafish.nnue" ]]; then

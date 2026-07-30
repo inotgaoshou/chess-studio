@@ -102,6 +102,8 @@ GitHub Actions 会尝试构建：
 - `APPLE_PASSWORD`
 - `APPLE_TEAM_ID`
 
+完整的 Apple Developer 账号、证书导出、GitHub Secrets、本地签名公证和验收步骤见 [macOS 正式签名、公证与 GitHub Release](docs/MACOS_RELEASE.md)。
+
 ## 验证
 
 ```bash

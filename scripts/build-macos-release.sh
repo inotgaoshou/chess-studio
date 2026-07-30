@@ -45,6 +45,12 @@ if [[ "$SIGN_AND_NOTARIZE" == "1" ]]; then
     security find-identity -v -p codesigning >&2
     exit 1
   }
+
+  if [[ -x "$PIKAFISH_RESOURCE_DIR/pikafish" ]]; then
+    echo "Signing embedded Pikafish engine: $PIKAFISH_RESOURCE_DIR/pikafish"
+    codesign --force --timestamp --options runtime --sign "$APPLE_SIGNING_IDENTITY" "$PIKAFISH_RESOURCE_DIR/pikafish"
+    codesign --verify --strict --verbose=2 "$PIKAFISH_RESOURCE_DIR/pikafish"
+  fi
 fi
 
 if [[ "$PNPM_BIN" == *.cjs ]]; then
@@ -54,6 +60,13 @@ else
 fi
 
 CI=true "${PNPM_COMMAND[@]}" --filter xiangqi-desktop-ui tauri build --config "$TAURI_RESOURCE_CONFIG"
+
+if [[ "$SIGN_AND_NOTARIZE" == "1" ]]; then
+  ./scripts/notarize-macos-release.sh
+  ./scripts/verify-macos-release.sh
+else
+  REQUIRE_GATEKEEPER=0 ./scripts/verify-macos-release.sh
+fi
 
 echo "Done:"
 echo "  target/release/bundle/macos/Xiangqi Studio.app"
