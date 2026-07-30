@@ -90,6 +90,8 @@ APPLE_TEAM_ID
 
 这些 secret 不要提交到仓库，也不要写进 README 示例命令。
 
+如果仓库或组织将 GitHub Actions 的默认 `GITHUB_TOKEN` 限制为只读，请额外创建一个 Fine-grained personal access token，并将其保存为仓库 Actions secret `RELEASE_TOKEN`。该 token 仅授予本仓库，且 `Contents` 权限设为 `Read and write`；不要在聊天、日志或代码中粘贴 token 值。
+
 ## 6. 触发 GitHub Release
 
 方式一：推送标签。

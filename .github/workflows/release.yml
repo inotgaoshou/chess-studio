@@ -168,7 +168,9 @@ jobs:
       - name: Build and upload release asset
         uses: tauri-apps/tauri-action@v0
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          # Repository settings may restrict the default GITHUB_TOKEN to read-only.
+          # RELEASE_TOKEN is an optional fine-grained PAT with Contents: Read and write.
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
