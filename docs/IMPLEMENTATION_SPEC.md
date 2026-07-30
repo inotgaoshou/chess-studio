@@ -5,7 +5,7 @@
 - Desktop-first application for Windows, macOS, and Linux.
 - Tauri 2 + React/TypeScript client with Rust domain modules.
 - Core chess records and local engine analysis only; no screen recognition, third-party board control, or automatic clicking.
-- GPL-3.0 release, with the referenced TCHESS project credited.
+- Third-party attributions and license details are maintained separately in project notices.
 
 ## Required capabilities
 
