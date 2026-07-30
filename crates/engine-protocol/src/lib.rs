@@ -10,6 +10,9 @@ use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex;
 use tokio::time::timeout;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Protocol {
     Uci,
@@ -208,14 +211,18 @@ impl EngineSession {
         path: impl AsRef<Path>,
         handshake_timeout: Duration,
     ) -> Result<Self, EngineError> {
-        let mut child = Command::new(path.as_ref())
+        let mut command = Command::new(path.as_ref());
+        command
             .current_dir(path.as_ref().parent().unwrap_or_else(|| Path::new(".")))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
-            .map_err(EngineError::Start)?;
+            .kill_on_drop(true);
+
+        #[cfg(windows)]
+        command.as_std_mut().creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+
+        let mut child = command.spawn().map_err(EngineError::Start)?;
         let stdin = child.stdin.take().ok_or(EngineError::MissingPipe)?;
         let stdout = child.stdout.take().ok_or(EngineError::MissingPipe)?;
         let mut session = Self {
