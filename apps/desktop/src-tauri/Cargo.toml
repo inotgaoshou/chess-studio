@@ -8,13 +8,18 @@ license.workspace = true
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+ab_glyph = "0.2"
 chrono.workspace = true
 engine-protocol = { path = "../../../crates/engine-protocol" }
 local-store = { path = "../../../crates/local-store" }
 lopdf = { version = "0.35.0", default-features = false, features = ["nom_parser"] }
 manual-format = { path = "../../../crates/manual-format" }
 keyring = "3"
+gif = "0.13"
+image = { version = "0.25", default-features = false, features = ["gif", "png"] }
+imageproc = { version = "0.25", default-features = false }
 reqwest = { version = "0.13", features = ["json"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
 printpdf = { version = "0.8.2", default-features = false }
 serde.workspace = true
 serde_json.workspace = true

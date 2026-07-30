@@ -201,6 +201,130 @@ pub fn export_mainline_pgn(document: &ManualDocument) -> Result<String, FormatEr
     Ok(export_pgn(&mainline))
 }
 
+/// Human-readable Chinese notation. Unlike PGN this is intended for sharing in chat
+/// clients, but keeps the full variation tree using parentheses and comments.
+pub fn export_chinese_text(document: &ManualDocument) -> Result<String, FormatError> {
+    let mut output = String::new();
+    let metadata = &document.metadata;
+    if !metadata.title.trim().is_empty() {
+        output.push_str(metadata.title.trim());
+        output.push('\n');
+    }
+    if !metadata.red.trim().is_empty() || !metadata.black.trim().is_empty() {
+        output.push_str(&format!("红方：{}  黑方：{}\n", nonempty(&metadata.red, "-"), nonempty(&metadata.black, "-")));
+    }
+    if !document.note.trim().is_empty() {
+        output.push_str(&format!("{{{}}}\n", sanitize_comment(&document.note)));
+    }
+    let board = Board::from_fen(&document.starting_fen)
+        .map_err(|error| FormatError::InvalidFen(error.to_string()))?;
+    let fields: Vec<_> = document.starting_fen.split_whitespace().collect();
+    let fullmove = fields.get(5).and_then(|value| value.parse::<usize>().ok()).unwrap_or(1);
+    let ply = (fullmove.saturating_sub(1) * 2) + usize::from(board.side_to_move() == Color::Black);
+    emit_chinese_position(&mut output, document, &board, document.tree.root_id(), ply)?;
+    output.push_str(nonempty(&metadata.result, "*"));
+    output.push('\n');
+    Ok(output)
+}
+
+/// Exports the mainline in the text container used by Dongping Xiangqi.
+/// DhtmlXQ has no portable representation for our comments and variations, so these
+/// are deliberately omitted rather than silently flattening them into metadata.
+pub fn export_dhtmlxq(document: &ManualDocument) -> Result<String, FormatError> {
+    let mut board = Board::from_fen(&document.starting_fen)
+        .map_err(|error| FormatError::InvalidFen(error.to_string()))?;
+    let mut parent = document.tree.root_id();
+    let mut moves = String::new();
+    let mut length = 0usize;
+    while let Some(node) = document.tree.branches(parent).map_err(manual_error)?
+        .into_iter()
+        .find(|node| node.is_mainline)
+        .or_else(|| document.tree.branches(parent).ok().and_then(|branches| branches.into_iter().next()))
+    {
+        // DhtmlXQ stores file plus the rank measured from Red's home side.
+        moves.push_str(&dhtml_square(node.mv.from));
+        moves.push_str(&dhtml_square(node.mv.to));
+        board = board.apply_move(node.mv).map_err(|_error| FormatError::InvalidMove {
+            token: node.mv.to_iccs(),
+            ply: length,
+        })?;
+        parent = node.id;
+        length += 1;
+    }
+    let metadata = &document.metadata;
+    let binit = dhtml_binit(&Board::from_fen(&document.starting_fen).map_err(|error| FormatError::InvalidFen(error.to_string()))?);
+    let result = match metadata.result.as_str() {
+        "1-0" => "红胜",
+        "0-1" => "黑胜",
+        "1/2-1/2" => "和棋",
+        _ => "未知",
+    };
+    Ok(format!(
+        "[DhtmlXQ]\n[DhtmlXQ_ver]xiangqi-studio[/DhtmlXQ_ver]\n[DhtmlXQ_binit]{binit}[/DhtmlXQ_binit]\n[DhtmlXQ_title]{}[/DhtmlXQ_title]\n[DhtmlXQ_event]{}[/DhtmlXQ_event]\n[DhtmlXQ_date]{}[/DhtmlXQ_date]\n[DhtmlXQ_red]{}[/DhtmlXQ_red]\n[DhtmlXQ_black]{}[/DhtmlXQ_black]\n[DhtmlXQ_result]{result}[/DhtmlXQ_result]\n[DhtmlXQ_movelist]{moves}[/DhtmlXQ_movelist]\n[DhtmlXQ_firstnum]0[/DhtmlXQ_firstnum]\n[DhtmlXQ_length]{length}[/DhtmlXQ_length]\n[/DhtmlXQ]\n",
+        dhtml_escape(&metadata.title),
+        dhtml_escape(&metadata.event),
+        dhtml_escape(&metadata.date),
+        dhtml_escape(&metadata.red),
+        dhtml_escape(&metadata.black),
+    ))
+}
+
+fn emit_chinese_position(output: &mut String, document: &ManualDocument, board: &Board, parent_id: Uuid, ply: usize) -> Result<(), FormatError> {
+    let branches = document.tree.branches(parent_id).map_err(manual_error)?;
+    let Some(chosen) = branches.iter().find(|node| node.is_mainline).or_else(|| branches.first()).copied() else {
+        return Ok(());
+    };
+    emit_chinese_branch(output, document, board, parent_id, chosen.id, ply, true)
+}
+
+fn emit_chinese_branch(output: &mut String, document: &ManualDocument, board: &Board, parent_id: Uuid, chosen_id: Uuid, ply: usize, include_siblings: bool) -> Result<(), FormatError> {
+    let chosen = document.tree.node(chosen_id).map_err(manual_error)?;
+    output.push_str(&format_move_number(ply));
+    output.push_str(&board.chinese_move_notation(chosen.mv).map_err(|_error| FormatError::InvalidMove { token: chosen.mv.to_iccs(), ply })?);
+    output.push(' ');
+    if !chosen.comment.trim().is_empty() {
+        output.push_str(&format!("{{{}}} ", sanitize_comment(&chosen.comment)));
+    }
+    if include_siblings {
+        for sibling in document.tree.branches(parent_id).map_err(manual_error)?.into_iter().filter(|node| node.id != chosen_id) {
+            output.push('(');
+            emit_chinese_branch(output, document, board, parent_id, sibling.id, ply, false)?;
+            output.push_str(") ");
+        }
+    }
+    let next = board.apply_move(chosen.mv).map_err(|_error| FormatError::InvalidMove { token: chosen.mv.to_iccs(), ply })?;
+    emit_chinese_position(output, document, &next, chosen.id, ply + 1)
+}
+
+fn dhtml_square(square: xiangqi_core::Square) -> String {
+    format!("{}{}", square.col, 9 - square.row)
+}
+
+fn dhtml_binit(board: &Board) -> String {
+    let mut positions = String::new();
+    // Dongping's initial-position field lists black pieces from right to left and red
+    // pieces from left to right; each coordinate is file plus red-side rank.
+    for color in [Color::Black, Color::Red] {
+        let mut squares: Vec<_> = (0..10).flat_map(|row| (0..9).map(move |col| xiangqi_core::Square { row, col }))
+            .filter(|square| board.piece_at(*square).is_some_and(|piece| piece.color == color))
+            .collect();
+        squares.sort_by_key(|square| {
+            (
+                if color == Color::Black { square.row } else { 9 - square.row },
+                if color == Color::Black { 8 - square.col } else { square.col },
+            )
+        });
+        for square in squares {
+            positions.push_str(&format!("{}{}", square.col, 9 - square.row));
+        }
+    }
+    positions
+}
+
+fn dhtml_escape(value: &str) -> String {
+    value.replace('[', "(").replace(']', ")").replace('\n', " ")
+}
+
 fn decode_text(bytes: &[u8]) -> Result<(String, bool), FormatError> {
     let bytes = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes);
     if let Ok(text) = std::str::from_utf8(bytes) {
@@ -693,6 +817,36 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[test]
+    fn chinese_text_export_uses_notation_comments_and_variations() {
+        let document = import_pgn(
+            "[Title \"中文导出\"]\n\n{局面说明} 1. h2e2 {主线} (1. b2e2 {变招}) 1... h9g7 *".as_bytes(),
+        )
+        .unwrap();
+        let text = export_chinese_text(&document).unwrap();
+        assert!(text.contains("中文导出"));
+        assert!(text.contains("炮二平五"));
+        assert!(text.contains("{主线}"));
+        assert!(text.contains("("));
+        assert!(text.contains("马8进7"));
+    }
+
+    #[test]
+    fn dhtmlxq_export_contains_mainline_and_metadata() {
+        let document = import_pgn(
+            "[Title \"东萍测试\"]\n[Red \"红方\"]\n[Black \"黑方\"]\n[Result \"1-0\"]\n\n1. c3c4 c6c5 1-0".as_bytes(),
+        )
+        .unwrap();
+        let text = export_dhtmlxq(&document).unwrap();
+        assert!(text.starts_with("[DhtmlXQ]"));
+        assert!(text.contains("[DhtmlXQ_title]东萍测试[/DhtmlXQ_title]"));
+        assert!(text.contains("[DhtmlXQ_red]红方[/DhtmlXQ_red]"));
+        assert!(text.contains("[DhtmlXQ_result]红胜[/DhtmlXQ_result]"));
+        assert!(text.contains("[DhtmlXQ_length]2[/DhtmlXQ_length]"));
+        assert!(text.contains("[DhtmlXQ_movelist]23242625[/DhtmlXQ_movelist]"));
+        assert!(text.contains("[DhtmlXQ_binit]8979695949392919097717866646260600102030405060708012720323436383[/DhtmlXQ_binit]"));
     }
 
     #[test]

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import {
+  BarChart3,
   Bot,
+  BookOpen,
   ClipboardList,
   ClipboardPaste,
   Copy,
@@ -24,6 +26,7 @@ import {
 export type MenuCommand =
   | "newGame"
   | "openDocument"
+  | "importXqbOpeningBook"
   | "saveDocument"
   | "saveDocumentAs"
   | "editPosition"
@@ -40,6 +43,7 @@ export type MenuCommand =
   | "analyze"
   | "stopAnalysis"
   | "engineSettings"
+  | "coachProfile"
   | "syncRegister"
   | "syncLogin"
   | "syncNow"
@@ -182,6 +186,7 @@ export function DesktopMenuBar({
         {openMenu === "game" && <div className="menu-popup">
           <MenuItem command="newGame" execute={execute} close={close}><Plus size={14}/>新建棋局</MenuItem>
           <MenuItem command="openDocument" execute={execute} close={close}><FolderOpen size={14}/>打开棋谱</MenuItem>
+          <MenuItem command="importXqbOpeningBook" execute={execute} close={close}><BookOpen size={14}/>导入 XQB 开局库</MenuItem>
           <MenuItem command="saveDocument" execute={execute} close={close}><Save size={14}/>保存棋谱</MenuItem>
           <MenuItem command="saveDocumentAs" execute={execute} close={close}><Save size={14}/>另存为 PGN</MenuItem>
         </div>}
@@ -205,13 +210,14 @@ export function DesktopMenuBar({
         </div>}
       </details>
       <details open={openMenu === "engine"}>
-        {summary("engine", "引擎")}
+        {summary("engine", "人机对弈")}
         {openMenu === "engine" && <div className="menu-popup">
           <MenuItem command="engineRed" execute={execute} close={close} disabled={redUnavailable} title={redUnavailable ? engineUnavailableReason ?? "Pikafish 正在思考，不能切换执方" : undefined} className={status.engineSide === "red" ? "active" : ""}><Bot size={14}/>引擎执红</MenuItem>
           <MenuItem command="engineBlack" execute={execute} close={close} disabled={blackUnavailable} title={blackUnavailable ? engineUnavailableReason ?? "Pikafish 正在思考，不能切换执方" : undefined} className={status.engineSide === "black" ? "active" : ""}><Bot size={14}/>引擎执黑</MenuItem>
           <MenuItem command="moveNow" execute={execute} close={close} disabled={!status.engineThinking} title={!status.engineThinking ? "引擎当前没有正在思考的着法" : undefined}><Zap size={14}/>立即出招</MenuItem>
           <MenuItem command={status.analysisBusy ? "stopAnalysis" : "analyze"} execute={execute} close={close} disabled={!canAnalyze} title={!canAnalyze ? "当前状态不能启动分析" : undefined}>{status.analysisBusy ? <Square size={14}/> : <Zap size={14}/>} {status.analysisBusy ? "停止分析" : "分析当前局面"}</MenuItem>
           <MenuItem command="engineSettings" execute={execute} close={close}><Settings2 size={14}/>引擎设置</MenuItem>
+          <MenuItem command="coachProfile" execute={execute} close={close}><BarChart3 size={14}/>AI 私教档案</MenuItem>
         </div>}
       </details>
       <details open={openMenu === "sync"}>

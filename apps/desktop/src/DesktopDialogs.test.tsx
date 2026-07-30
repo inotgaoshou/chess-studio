@@ -16,6 +16,8 @@ const preferences: DesktopPreferencesDto = {
   autoAnalyze: true,
   libraryCollapsed: false,
   colorTheme: "dark",
+  boardSkin: "original",
+  pieceSkin: "original",
   reportDepth: 20,
   serverUrl: "http://127.0.0.1:8080",
 };

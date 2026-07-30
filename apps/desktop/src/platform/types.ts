@@ -29,6 +29,28 @@ export type BoardState = {
   sourcePath?: string;
   sourceFormat?: string;
   playable: boolean;
+  xqbCandidates?: XqbCandidate[];
+};
+export type XqbCandidate = {
+  iccs: string;
+  notation: string;
+  score: number;
+  win: number;
+  draw: number;
+  loss: number;
+  winRate?: number;
+  memo?: string;
+  source: string;
+};
+export type CloudBookCandidate = {
+  iccs: string;
+  notation: string;
+  score: number;
+  rank?: number;
+  winRate?: number;
+  memo?: string;
+  source: string;
+  cached: boolean;
 };
 export type AnalysisLine = {
   depth?: number;
@@ -97,6 +119,7 @@ export type GameReportDatasetDto = {
 export type GameReportOptionsDto = {
   enginePath: string;
   reportDepth: number;
+  xqbBookPaths?: string[];
   threads: number;
   hashMb: number;
 };
@@ -191,7 +214,14 @@ export type DesktopPreferencesDto = {
   autoAnalyze: boolean;
   libraryCollapsed: boolean;
   colorTheme: "light" | "dark";
+  boardSkin: "original" | "classic" | "neon" | "jade" | "imperial";
+  pieceSkin: "original" | "classic" | "neon" | "jade" | "imperial";
   reportDepth: number;
+  xqbBookPaths?: string[];
+  disabledXqbBookPaths?: string[];
+  activeEngineId?: string;
+  cloudBookEnabled?: boolean;
+  cloudBookUrl?: string;
   serverUrl: string;
 };
 export type SyncAccountDto = {
@@ -202,10 +232,13 @@ export type SyncAccountDto = {
   lastSyncResult?: string;
 };
 export type EngineProbeDto = { path: string; protocol: "uci" | "ucci" };
+export type EngineProfileDto = { id: string; name: string; executablePath: string; protocol: "uci" | "ucci"; active: boolean };
 export type GameSummary = { id: string; title: string; fen: string; updatedAt: string; current: boolean };
 export type EnginePlayOptions = { enginePath: string; moveTimeMs: number; threads: number; hashMb: number; ponder: boolean };
 export type EngineMoveResult = { board: BoardState; ponder?: string };
 export type EngineRuntimeState = "idle" | "analyzing" | "thinking" | "pondering" | "stopping" | "faulted";
+export type ExportFormat = "pgn" | "chinese" | "dhtmlxq";
+export type ReplayExportScope = "currentSelection" | "mainline";
 export type EngineRuntimeEvent =
   | { type: "state"; state: EngineRuntimeState }
   | { type: "info"; fen: string; line: AnalysisLine }
@@ -222,12 +255,22 @@ export interface ChessPlatform {
   saveDesktopPreferences(preferences: DesktopPreferencesDto): Promise<DesktopPreferencesDto>;
   chooseEngineExecutable(currentPath?: string): Promise<string | undefined>;
   probeEngine(path: string): Promise<EngineProbeDto>;
+  listEngineProfiles(): Promise<EngineProfileDto[]>;
+  registerEngineProfile(name: string, path: string): Promise<EngineProfileDto>;
+  setActiveEngineProfile(id: string): Promise<DesktopPreferencesDto>;
+  deleteEngineProfile(id: string): Promise<DesktopPreferencesDto>;
+  queryCloudOpeningBook(fen: string): Promise<CloudBookCandidate[]>;
+  listCoachReports(): Promise<GameReportDatasetDto[]>;
   playMove(iccs: string): Promise<Partial<BoardState>>;
   newGame(fen: string, title?: string, note?: string): Promise<Partial<BoardState>>;
   openDocument(): Promise<Partial<BoardState> | undefined>;
+  importXqbOpeningBook(): Promise<Partial<BoardState> | undefined>;
   saveDocument(saveAs?: boolean): Promise<string | undefined>;
   copyPosition(fen: string): Promise<void>;
   copyGame(mainlineOnly?: boolean): Promise<void>;
+  copyExport(format: ExportFormat): Promise<void>;
+  exportManualFile(format: ExportFormat, title: string): Promise<string | undefined>;
+  exportReplayGif(title: string, scope: ReplayExportScope): Promise<string | undefined>;
   pasteDocument(): Promise<Partial<BoardState>>;
   updateGameMetadata(title: string, note: string): Promise<Partial<BoardState>>;
   reorderBranches(nodeIds: string[]): Promise<Partial<BoardState>>;

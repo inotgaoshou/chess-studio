@@ -46,14 +46,14 @@ describe("DesktopMenuBar", () => {
     await user.click(document.body);
     expect(screen.queryByRole("button", { name: "复制完整棋谱" })).toBeNull();
 
-    await user.click(screen.getByText("引擎", { selector: "summary" }));
+    await user.click(screen.getByText("人机对弈", { selector: "summary" }));
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("button", { name: "引擎设置" })).toBeNull();
   });
 
   it("executes a command once and closes its menu", async () => {
     const { commands, user } = setup();
-    await user.click(screen.getByText("引擎", { selector: "summary" }));
+    await user.click(screen.getByText("人机对弈", { selector: "summary" }));
     await user.click(screen.getByRole("button", { name: "引擎设置" }));
     expect(commands).toEqual(["engineSettings"]);
     expect(screen.queryByRole("button", { name: "引擎设置" })).toBeNull();
@@ -61,7 +61,7 @@ describe("DesktopMenuBar", () => {
 
   it("does not execute commands that are unavailable", async () => {
     const { commands, user } = setup({ ...readyStatus, playable: false, engineConfigured: false });
-    await user.click(screen.getByText("引擎", { selector: "summary" }));
+    await user.click(screen.getByText("人机对弈", { selector: "summary" }));
     const engineRed = screen.getByRole("button", { name: "引擎执红" }) as HTMLButtonElement;
     expect(engineRed.disabled).toBe(true);
     await user.click(engineRed);
@@ -70,7 +70,7 @@ describe("DesktopMenuBar", () => {
 
   it("keeps the active engine side stoppable while preventing a side switch during search", async () => {
     const { commands, user } = setup({ ...readyStatus, engineThinking: true, engineSide: "red" });
-    await user.click(screen.getByText("引擎", { selector: "summary" }));
+    await user.click(screen.getByText("人机对弈", { selector: "summary" }));
     const engineRed = screen.getByRole("button", { name: "引擎执红" }) as HTMLButtonElement;
     const engineBlack = screen.getByRole("button", { name: "引擎执黑" }) as HTMLButtonElement;
     expect(engineRed.disabled).toBe(false);

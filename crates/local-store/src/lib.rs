@@ -64,8 +64,23 @@ pub struct DesktopPreferences {
     pub library_collapsed: bool,
     #[serde(default = "default_color_theme")]
     pub color_theme: String,
+    #[serde(default = "default_board_skin")]
+    pub board_skin: String,
+    #[serde(default = "default_piece_skin")]
+    pub piece_skin: String,
     #[serde(default = "default_report_depth")]
     pub report_depth: u32,
+    /// Paths to read-only XQB opening books selected by the desktop user.
+    #[serde(default)]
+    pub xqb_book_paths: Vec<String>,
+    #[serde(default)]
+    pub disabled_xqb_book_paths: Vec<String>,
+    #[serde(default)]
+    pub active_engine_id: Option<Uuid>,
+    #[serde(default)]
+    pub cloud_book_enabled: bool,
+    #[serde(default = "default_cloud_book_url")]
+    pub cloud_book_url: String,
     pub server_url: String,
 }
 
@@ -73,8 +88,20 @@ fn default_color_theme() -> String {
     "dark".into()
 }
 
+fn default_board_skin() -> String {
+    "original".into()
+}
+
+fn default_piece_skin() -> String {
+    "original".into()
+}
+
 fn default_report_depth() -> u32 {
     20
+}
+
+fn default_cloud_book_url() -> String {
+    "https://www.chessdb.cn/chessdb.php".into()
 }
 
 impl Default for DesktopPreferences {
@@ -89,9 +116,16 @@ impl Default for DesktopPreferences {
             move_time_ms: 5000,
             ponder: false,
             auto_analyze: true,
-            library_collapsed: false,
+            library_collapsed: true,
             color_theme: default_color_theme(),
+            board_skin: default_board_skin(),
+            piece_skin: default_piece_skin(),
             report_depth: default_report_depth(),
+            xqb_book_paths: Vec::new(),
+            disabled_xqb_book_paths: Vec::new(),
+            active_engine_id: None,
+            cloud_book_enabled: false,
+            cloud_book_url: default_cloud_book_url(),
             server_url: "http://127.0.0.1:8080".into(),
         }
     }
@@ -116,11 +150,21 @@ pub struct AnalysisSummary {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredGameReport {
+    pub game_id: Uuid,
     pub line_signature: String,
     pub engine_fingerprint: String,
     pub config_hash: String,
     pub dataset_json: String,
     pub generated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineProfile {
+    pub id: Uuid,
+    pub name: String,
+    pub executable_path: String,
+    pub protocol: String,
 }
 
 impl LocalStore {
@@ -573,6 +617,30 @@ impl LocalStore {
         Ok(id)
     }
 
+    pub fn list_engine_profiles(&self) -> Result<Vec<EngineProfile>, StoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, name, executable_path, protocol FROM engine_profiles ORDER BY name COLLATE NOCASE, rowid",
+        )?;
+        statement
+            .query_map([], |row| {
+                let id: String = row.get(0)?;
+                Ok(EngineProfile {
+                    id: parse_row_uuid(&id, 0)?,
+                    name: row.get(1)?,
+                    executable_path: row.get(2)?,
+                    protocol: row.get(3)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(Into::into)
+    }
+
+    pub fn delete_engine_profile(&mut self, id: Uuid) -> Result<(), StoreError> {
+        self.connection
+            .execute("DELETE FROM engine_profiles WHERE id = ?1", [id.to_string()])?;
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn save_analysis(
         &mut self,
@@ -737,16 +805,17 @@ impl LocalStore {
         Ok(self
             .connection
             .query_row(
-                "SELECT line_signature, engine_fingerprint, config_hash, dataset_json, created_at
+                "SELECT game_id, line_signature, engine_fingerprint, config_hash, dataset_json, created_at
              FROM game_reports WHERE game_id = ?1 ORDER BY created_at DESC, rowid DESC LIMIT 1",
                 [game_id.to_string()],
                 |row| {
                     Ok(StoredGameReport {
-                        line_signature: row.get(0)?,
-                        engine_fingerprint: row.get(1)?,
-                        config_hash: row.get(2)?,
-                        dataset_json: row.get(3)?,
-                        generated_at: row.get(4)?,
+                        game_id: parse_row_uuid(&row.get::<_, String>(0)?, 0)?,
+                        line_signature: row.get(1)?,
+                        engine_fingerprint: row.get(2)?,
+                        config_hash: row.get(3)?,
+                        dataset_json: row.get(4)?,
+                        generated_at: row.get(5)?,
                     })
                 },
             )
@@ -761,22 +830,43 @@ impl LocalStore {
         Ok(self
             .connection
             .query_row(
-                "SELECT line_signature, engine_fingerprint, config_hash, dataset_json, created_at
+                "SELECT game_id, line_signature, engine_fingerprint, config_hash, dataset_json, created_at
                  FROM game_reports
                  WHERE game_id = ?1 AND line_signature = ?2
                  ORDER BY created_at DESC, rowid DESC LIMIT 1",
                 params![game_id.to_string(), line_signature],
                 |row| {
                     Ok(StoredGameReport {
-                        line_signature: row.get(0)?,
-                        engine_fingerprint: row.get(1)?,
-                        config_hash: row.get(2)?,
-                        dataset_json: row.get(3)?,
-                        generated_at: row.get(4)?,
+                        game_id: parse_row_uuid(&row.get::<_, String>(0)?, 0)?,
+                        line_signature: row.get(1)?,
+                        engine_fingerprint: row.get(2)?,
+                        config_hash: row.get(3)?,
+                        dataset_json: row.get(4)?,
+                        generated_at: row.get(5)?,
                     })
                 },
             )
             .optional()?)
+    }
+
+    pub fn load_latest_game_reports(&self) -> Result<Vec<StoredGameReport>, StoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT r.game_id, r.line_signature, r.engine_fingerprint, r.config_hash, r.dataset_json, r.created_at
+             FROM game_reports r
+             INNER JOIN (SELECT game_id, MAX(rowid) AS latest_rowid FROM game_reports GROUP BY game_id) latest
+               ON latest.latest_rowid = r.rowid
+             ORDER BY r.created_at DESC, r.rowid DESC",
+        )?;
+        statement.query_map([], |row| {
+            Ok(StoredGameReport {
+                game_id: parse_row_uuid(&row.get::<_, String>(0)?, 0)?,
+                line_signature: row.get(1)?,
+                engine_fingerprint: row.get(2)?,
+                config_hash: row.get(3)?,
+                dataset_json: row.get(4)?,
+                generated_at: row.get(5)?,
+            })
+        })?.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
     pub fn apply_remote_operation(
@@ -1343,6 +1433,16 @@ fn json_error(error: impl std::fmt::Display) -> serde_json::Error {
     ))
 }
 
+fn parse_row_uuid(value: &str, column: usize) -> rusqlite::Result<Uuid> {
+    Uuid::parse_str(value).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            column,
+            rusqlite::types::Type::Text,
+            Box::new(error),
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::Utc;
@@ -1881,7 +1981,14 @@ mod tests {
             auto_analyze: false,
             library_collapsed: true,
             color_theme: "light".into(),
+            board_skin: "neon".into(),
+            piece_skin: "neon".into(),
             report_depth: 24,
+            xqb_book_paths: vec!["/books/example.xqb".into()],
+            disabled_xqb_book_paths: Vec::new(),
+            active_engine_id: None,
+            cloud_book_enabled: true,
+            cloud_book_url: "https://book.example.com/query".into(),
             server_url: "https://sync.example.com".into(),
         };
         {
@@ -1902,6 +2009,23 @@ mod tests {
         assert!(!preferences.library_collapsed);
         assert_eq!(preferences.color_theme, "dark");
         assert_eq!(preferences.report_depth, 20);
+        assert!(preferences.xqb_book_paths.is_empty());
+        assert!(!preferences.cloud_book_enabled);
+        assert_eq!(preferences.cloud_book_url, "https://www.chessdb.cn/chessdb.php");
+    }
+
+    #[test]
+    fn engine_profiles_are_upserted_listed_and_deleted() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let id = store.save_engine_profile("Pikafish", "/engines/pikafish", "uci").unwrap();
+        assert_eq!(store.list_engine_profiles().unwrap()[0].id, id);
+        let same = store.save_engine_profile("Pikafish 2", "/engines/pikafish", "ucci").unwrap();
+        assert_eq!(same, id);
+        let profiles = store.list_engine_profiles().unwrap();
+        assert_eq!(profiles[0].name, "Pikafish 2");
+        assert_eq!(profiles[0].protocol, "ucci");
+        store.delete_engine_profile(id).unwrap();
+        assert!(store.list_engine_profiles().unwrap().is_empty());
     }
 
     #[test]

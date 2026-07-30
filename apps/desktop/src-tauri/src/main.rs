@@ -1,6 +1,9 @@
 mod credential_store;
+mod cloud_opening_book;
+mod gif_export;
 mod opening_book;
 mod pdf_report;
+mod xqb_opening_book;
 
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -15,11 +18,11 @@ use chrono::Utc;
 use credential_store::{SharedCredentialStore, SystemCredentialStore, TOKEN_KEY};
 use engine_protocol::{EngineControl, EngineEvent, EngineSession, Protocol, SearchLimit};
 use local_store::{
-    AnalysisSummary, DesktopPreferences, ImportedGame, LocalGame, LocalStore, SyncAccountBinding,
+    AnalysisSummary, DesktopPreferences, EngineProfile, ImportedGame, LocalGame, LocalStore, SyncAccountBinding,
 };
 use manual_format::{
-    ManualDocument, ManualFormat, ManualMetadata, detect_format, export_mainline_pgn, export_pgn,
-    import_document,
+    ManualDocument, ManualFormat, ManualMetadata, detect_format, export_chinese_text,
+    export_dhtmlxq, export_mainline_pgn, export_pgn, import_document,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -61,6 +64,7 @@ struct DesktopState {
     play_generation: AtomicU64,
     report_generation: AtomicU64,
     report_running: AtomicBool,
+    cloud_book_cache: Mutex<BTreeMap<String, Vec<cloud_opening_book::CloudBookCandidateDto>>>,
 }
 
 #[derive(Serialize)]
@@ -84,6 +88,16 @@ struct AuthResponse {
 struct EngineProbeDto {
     path: String,
     protocol: &'static str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EngineProfileDto {
+    id: Uuid,
+    name: String,
+    executable_path: String,
+    protocol: String,
+    active: bool,
 }
 
 struct EngineRuntime {
@@ -180,6 +194,38 @@ struct MoveDto {
     is_mainline: bool,
 }
 
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum ExportFormat {
+    Pgn,
+    Chinese,
+    Dhtmlxq,
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum ReplayExportScope {
+    CurrentSelection,
+    Mainline,
+}
+
+impl ExportFormat {
+    fn extension(self) -> &'static str {
+        match self {
+            Self::Pgn => "pgn",
+            Self::Chinese | Self::Dhtmlxq => "txt",
+        }
+    }
+
+    fn export(self, document: &ManualDocument) -> Result<String, String> {
+        match self {
+            Self::Pgn => Ok(export_pgn(document)),
+            Self::Chinese => export_chinese_text(document).map_err(|error| error.to_string()),
+            Self::Dhtmlxq => export_dhtmlxq(document).map_err(|error| error.to_string()),
+        }
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct BoardDto {
@@ -198,6 +244,8 @@ struct BoardDto {
     source_path: Option<String>,
     source_format: Option<String>,
     playable: bool,
+    #[serde(default)]
+    xqb_candidates: Vec<xqb_opening_book::XqbCandidateDto>,
 }
 
 #[derive(Serialize)]
@@ -522,6 +570,19 @@ fn open_document(path: String, state: State<'_, DesktopState>) -> Result<BoardDt
 }
 
 #[tauri::command]
+fn import_xqb_opening_book(path: String, state: State<'_, DesktopState>) -> Result<BoardDto, String> {
+    let target = PathBuf::from(&path);
+    xqb_opening_book::validate(&target)?;
+    let mut model = state.model.lock().map_err(|_| "state lock poisoned".to_owned())?;
+    let mut preferences = model.store.desktop_preferences().map_err(|error| error.to_string())?;
+    if !preferences.xqb_book_paths.iter().any(|existing| existing == &path) {
+        preferences.xqb_book_paths.push(path);
+        model.store.save_desktop_preferences(&preferences).map_err(|error| error.to_string())?;
+    }
+    board_dto(&model)
+}
+
+#[tauri::command]
 fn import_text(text: String, state: State<'_, DesktopState>) -> Result<BoardDto, String> {
     let document = if Board::from_fen(text.trim()).is_ok() {
         ManualDocument::new(text.trim()).map_err(|error| error.to_string())?
@@ -549,6 +610,57 @@ fn export_text(mainline_only: bool, state: State<'_, DesktopState>) -> Result<St
     } else {
         Ok(export_pgn(&document))
     }
+}
+
+#[tauri::command]
+fn export_document_text(format: ExportFormat, state: State<'_, DesktopState>) -> Result<String, String> {
+    let model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    format.export(&document_from_model(&model))
+}
+
+#[tauri::command]
+fn export_document_file(path: String, format: ExportFormat, state: State<'_, DesktopState>) -> Result<String, String> {
+    let contents = {
+        let model = state
+            .model
+            .lock()
+            .map_err(|_| "state lock poisoned".to_owned())?;
+        format.export(&document_from_model(&model))?
+    };
+    let target = PathBuf::from(path);
+    if target.extension().and_then(|extension| extension.to_str()) != Some(format.extension()) {
+        return Err(format!("导出文件必须使用 .{} 扩展名", format.extension()));
+    }
+    std::fs::write(&target, contents).map_err(|error| format!("导出棋谱失败：{error}"))?;
+    Ok(target.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn export_replay_gif(
+    path: String,
+    scope: ReplayExportScope,
+    state: State<'_, DesktopState>,
+) -> Result<String, String> {
+    let target = PathBuf::from(path);
+    if target.extension().and_then(|extension| extension.to_str()) != Some("gif") {
+        return Err("动态图必须使用 .gif 扩展名".into());
+    }
+    let (document, current_node) = {
+        let model = state
+            .model
+            .lock()
+            .map_err(|_| "state lock poisoned".to_owned())?;
+        (document_from_model(&model), model.current_node)
+    };
+    let scope = match scope {
+        ReplayExportScope::CurrentSelection => gif_export::ReplayScope::CurrentSelection,
+        ReplayExportScope::Mainline => gif_export::ReplayScope::Mainline,
+    };
+    gif_export::export_replay_gif(&target, &document, current_node, scope)?;
+    Ok(target.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
@@ -1325,7 +1437,8 @@ fn resolve_engine_path(app: &tauri::AppHandle, value: &str) -> Result<PathBuf, S
     let trimmed = value.trim();
     if trimmed == BUILTIN_ENGINE_PATH {
         return bundled_pikafish_path(app)
-            .ok_or_else(|| "安装包内未找到内置 Pikafish，请重新安装或手动选择外部引擎".to_owned());
+            .or_else(|| std::env::var_os("PIKAFISH_PATH").map(PathBuf::from).filter(|path| path.is_file()))
+            .ok_or_else(|| "安装包内未找到内置 Pikafish；开发模式请设置 PIKAFISH_PATH，或手动选择外部引擎".to_owned());
     }
     if trimmed.is_empty() {
         return Err("请先选择 Pikafish 引擎".into());
@@ -2120,6 +2233,12 @@ fn validate_preferences(preferences: &DesktopPreferences) -> Result<(), String> 
     if !matches!(preferences.color_theme.as_str(), "light" | "dark") {
         return Err("不支持的颜色主题".into());
     }
+    if !matches!(preferences.board_skin.as_str(), "original" | "classic" | "neon" | "jade" | "imperial") {
+        return Err("不支持的棋盘皮肤".into());
+    }
+    if !matches!(preferences.piece_skin.as_str(), "original" | "classic" | "neon" | "jade" | "imperial") {
+        return Err("不支持的棋子皮肤".into());
+    }
     if !(1..=64).contains(&preferences.threads) {
         return Err("线程数必须在 1 到 64 之间".into());
     }
@@ -2151,18 +2270,27 @@ fn validate_preferences(preferences: &DesktopPreferences) -> Result<(), String> 
     if !limit_valid {
         return Err("搜索限制超出允许范围".into());
     }
+    let cloud_url = reqwest::Url::parse(&preferences.cloud_book_url)
+        .map_err(|_| "云库地址格式不正确")?;
+    if cloud_url.scheme() != "https" {
+        return Err("云库地址必须使用 HTTPS".into());
+    }
     validate_server_url(&preferences.server_url)
 }
 
 #[tauri::command]
 fn get_desktop_preferences(state: State<'_, DesktopState>) -> Result<DesktopPreferences, String> {
-    state
-        .model
-        .lock()
-        .map_err(|_| "state lock poisoned".to_owned())?
-        .store
-        .desktop_preferences()
-        .map_err(|error| error.to_string())
+    let mut model = state.model.lock().map_err(|_| "state lock poisoned".to_owned())?;
+    let mut preferences = model.store.desktop_preferences().map_err(|error| error.to_string())?;
+    // Preserve older installations that only stored enginePath before profiles existed.
+    if preferences.active_engine_id.is_none() && !preferences.engine_path.trim().is_empty() {
+        let name = preferences.engine_path.rsplit(['/', '\\']).next().unwrap_or("本地引擎");
+        let id = model.store.save_engine_profile(name, &preferences.engine_path, "uci")
+            .map_err(|error| error.to_string())?;
+        preferences.active_engine_id = Some(id);
+        model.store.save_desktop_preferences(&preferences).map_err(|error| error.to_string())?;
+    }
+    Ok(preferences)
 }
 
 #[tauri::command]
@@ -2209,6 +2337,100 @@ async fn probe_engine(path: String, app: tauri::AppHandle) -> Result<EngineProbe
         },
         protocol: protocol_name(session.protocol()),
     })
+}
+
+fn engine_profile_dto(profile: EngineProfile, active_engine_id: Option<Uuid>) -> EngineProfileDto {
+    EngineProfileDto {
+        id: profile.id,
+        name: profile.name,
+        executable_path: profile.executable_path,
+        protocol: profile.protocol,
+        active: active_engine_id == Some(profile.id),
+    }
+}
+
+#[tauri::command]
+fn list_engine_profiles(state: State<'_, DesktopState>) -> Result<Vec<EngineProfileDto>, String> {
+    let model = state.model.lock().map_err(|_| "state lock poisoned".to_owned())?;
+    let preferences = model.store.desktop_preferences().map_err(|error| error.to_string())?;
+    model.store.list_engine_profiles()
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .map(|profile| Ok(engine_profile_dto(profile, preferences.active_engine_id)))
+        .collect()
+}
+
+#[tauri::command]
+async fn register_engine_profile(
+    name: String,
+    path: String,
+    app: tauri::AppHandle,
+    state: State<'_, DesktopState>,
+) -> Result<EngineProfileDto, String> {
+    let probe = probe_engine(path, app).await?;
+    let mut model = state.model.lock().map_err(|_| "state lock poisoned".to_owned())?;
+    let display_name = if name.trim().is_empty() {
+        probe.path.rsplit(['/', '\\']).next().unwrap_or("本地引擎").to_owned()
+    } else { name.trim().to_owned() };
+    let id = model.store.save_engine_profile(&display_name, &probe.path, probe.protocol)
+        .map_err(|error| error.to_string())?;
+    let mut preferences = model.store.desktop_preferences().map_err(|error| error.to_string())?;
+    preferences.active_engine_id = Some(id);
+    preferences.engine_path = probe.path.clone();
+    model.store.save_desktop_preferences(&preferences).map_err(|error| error.to_string())?;
+    Ok(EngineProfileDto { id, name: display_name, executable_path: probe.path, protocol: probe.protocol.into(), active: true })
+}
+
+#[tauri::command]
+fn set_active_engine_profile(id: Uuid, state: State<'_, DesktopState>) -> Result<DesktopPreferences, String> {
+    let mut model = state.model.lock().map_err(|_| "state lock poisoned".to_owned())?;
+    let profile = model.store.list_engine_profiles().map_err(|error| error.to_string())?
+        .into_iter().find(|profile| profile.id == id).ok_or("引擎档案不存在")?;
+    let mut preferences = model.store.desktop_preferences().map_err(|error| error.to_string())?;
+    preferences.active_engine_id = Some(id);
+    preferences.engine_path = profile.executable_path;
+    model.store.save_desktop_preferences(&preferences).map_err(|error| error.to_string())?;
+    Ok(preferences)
+}
+
+#[tauri::command]
+fn delete_engine_profile(id: Uuid, state: State<'_, DesktopState>) -> Result<DesktopPreferences, String> {
+    let mut model = state.model.lock().map_err(|_| "state lock poisoned".to_owned())?;
+    let mut preferences = model.store.desktop_preferences().map_err(|error| error.to_string())?;
+    model.store.delete_engine_profile(id).map_err(|error| error.to_string())?;
+    if preferences.active_engine_id == Some(id) {
+        preferences.active_engine_id = None;
+        preferences.engine_path.clear();
+        model.store.save_desktop_preferences(&preferences).map_err(|error| error.to_string())?;
+    }
+    Ok(preferences)
+}
+
+#[tauri::command]
+async fn query_cloud_opening_book(fen: String, state: State<'_, DesktopState>) -> Result<Vec<cloud_opening_book::CloudBookCandidateDto>, String> {
+    let (enabled, url) = {
+        let model = state.model.lock().map_err(|_| "state lock poisoned".to_owned())?;
+        let preferences = model.store.desktop_preferences().map_err(|error| error.to_string())?;
+        (preferences.cloud_book_enabled, preferences.cloud_book_url)
+    };
+    if !enabled { return Ok(Vec::new()); }
+    let key = format!("{url}\n{fen}");
+    if let Some(mut cached) = state.cloud_book_cache.lock().map_err(|_| "cache lock poisoned".to_owned())?.get(&key).cloned() {
+        for candidate in &mut cached { candidate.cached = true; }
+        return Ok(cached);
+    }
+    let candidates = cloud_opening_book::query(&url, &fen).await?;
+    state.cloud_book_cache.lock().map_err(|_| "cache lock poisoned".to_owned())?.insert(key, candidates.clone());
+    Ok(candidates)
+}
+
+#[tauri::command]
+fn list_coach_reports(state: State<'_, DesktopState>) -> Result<Vec<GameReportDatasetDto>, String> {
+    let model = state.model.lock().map_err(|_| "state lock poisoned".to_owned())?;
+    Ok(model.store.load_latest_game_reports().map_err(|error| error.to_string())?
+        .into_iter().filter_map(|stored| serde_json::from_str::<GameReportDatasetDto>(&stored.dataset_json).ok())
+        .filter(|report| !report.stale)
+        .collect())
 }
 
 fn sync_account_dto(state: &DesktopState) -> Result<SyncAccountDto, String> {
@@ -2599,6 +2821,17 @@ fn board_dto(model: &AppModel) -> Result<BoardDto, String> {
         .into_iter()
         .map(|node| move_dto(node, &model.board, analysis.get(&node.id)))
         .collect::<Result<Vec<_>, _>>()?;
+    let preferences = model.store.desktop_preferences().map_err(|error| error.to_string())?;
+    let mut xqb_candidates = Vec::new();
+    for path in preferences.xqb_book_paths {
+        if preferences.disabled_xqb_book_paths.iter().any(|disabled| disabled == &path) {
+            continue;
+        }
+        match xqb_opening_book::query(Path::new(&path), &model.board) {
+            Ok(mut candidates) => xqb_candidates.append(&mut candidates),
+            Err(error) => eprintln!("忽略不可用的 XQB 开局库 {path}: {error}"),
+        }
+    }
     Ok(BoardDto {
         fen: model.board.to_fen(),
         root_side_to_move: side_label(root_board.side_to_move()),
@@ -2619,6 +2852,7 @@ fn board_dto(model: &AppModel) -> Result<BoardDto, String> {
         source_path: model.source_path.clone(),
         source_format: model.source_format.clone(),
         playable: model.playable,
+        xqb_candidates,
     })
 }
 
@@ -3045,6 +3279,7 @@ fn main() {
                 play_generation: AtomicU64::new(0),
                 report_generation: AtomicU64::new(0),
                 report_running: AtomicBool::new(false),
+                cloud_book_cache: Mutex::new(BTreeMap::new()),
             });
             Ok(())
         })
@@ -3058,8 +3293,12 @@ fn main() {
             preview_line,
             new_game,
             open_document,
+            import_xqb_opening_book,
             import_text,
             export_text,
+            export_document_text,
+            export_document_file,
+            export_replay_gif,
             save_document,
             update_game_metadata,
             reorder_branches,
@@ -3081,6 +3320,12 @@ fn main() {
             get_desktop_preferences,
             save_desktop_preferences,
             probe_engine,
+            list_engine_profiles,
+            register_engine_profile,
+            set_active_engine_profile,
+            delete_engine_profile,
+            query_cloud_opening_book,
+            list_coach_reports,
             get_sync_account,
             register_sync_account,
             login_sync_account,

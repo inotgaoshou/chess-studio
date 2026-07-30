@@ -227,7 +227,7 @@ export function moveCoachInsight(move: GameReportMove): MoveCoachInsightDto {
   const phase = phaseLabels[move.phase];
   const openingText = move.opening ? `这步仍在「${move.opening.name}」官着脉络内，主要价值是保持经典布局的出子效率。` : "";
   const intent = openingText || gradePurpose(move.grade, move.missedMate);
-  const weakness = move.lossCp <= 20 && !move.missedMate
+  const weakness = move.lossCp <= 50 && !move.missedMate
     ? `${phase}局面保持较稳，暂未暴露明显弱点；后续重点看能否持续扩大先手。`
     : `${phaseWeakness(move.phase)}本着后红方视角变化 ${signed(move.deltaCp)}，${move.movedBy}实际损失 ${move.lossCp}cp。`;
   const solution = recommendation

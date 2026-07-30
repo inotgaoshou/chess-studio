@@ -68,6 +68,16 @@ export function DesktopDialogs({ dialog, preferences, account, busy, onClose, on
     }
   }
 
+  async function saveEngine() {
+    setEnginePickerError("");
+    try {
+      await onSaveEngine(draft);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setEnginePickerError(`保存失败：${message}`);
+    }
+  }
+
   return (
     <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) close(); }}>
       <section className="settings-dialog" role="dialog" aria-modal="true" aria-label={dialog === "engine" ? "引擎设置" : dialog === "syncSettings" ? "同步设置" : dialog === "register" ? "注册同步账号" : "登录同步账号"}>
@@ -89,7 +99,13 @@ export function DesktopDialogs({ dialog, preferences, account, busy, onClose, on
           <label><span>每步时间 (ms)</span><input type="number" min={100} max={30000} step={100} value={draft.moveTimeMs} onChange={(event) => setDraft({ ...draft, moveTimeMs: Number(event.target.value) })}/></label>
           <label className="check-row"><input type="checkbox" checked={draft.ponder} onChange={(event) => setDraft({ ...draft, ponder: event.target.checked })}/><span>后台思考</span></label>
           <label className="check-row"><input type="checkbox" checked={draft.autoAnalyze} onChange={(event) => setDraft({ ...draft, autoAnalyze: event.target.checked })}/><span>每步自动分析</span></label>
-          <footer><button onClick={close} disabled={busy || enginePickerBusy}>取消</button><button className="primary" disabled={busy || enginePickerBusy || !draft.enginePath.trim()} onClick={() => void onSaveEngine(draft)}><Save size={14}/>{busy ? "检测中…" : enginePickerBusy ? "选择中…" : "检测并保存"}</button></footer>
+          <label><span>棋盘皮肤</span><select value={draft.boardSkin} onChange={(event) => setDraft({ ...draft, boardSkin: event.target.value as DesktopPreferencesDto["boardSkin"] })}><option value="original">默认棋盘</option><option value="classic">暖木立体</option><option value="neon">霓虹星空</option><option value="jade">翡翠庭院</option><option value="imperial">朱墙宫阙</option></select></label>
+          <label><span>棋子皮肤</span><select value={draft.pieceSkin} onChange={(event) => setDraft({ ...draft, pieceSkin: event.target.value as DesktopPreferencesDto["pieceSkin"] })}><option value="original">默认棋子</option><option value="classic">暖木立体</option><option value="neon">霓虹发光</option><option value="jade">翡翠琉璃</option><option value="imperial">鎏金宫廷</option></select></label>
+          <label className="check-row"><input type="checkbox" checked={draft.cloudBookEnabled ?? false} onChange={(event) => setDraft({ ...draft, cloudBookEnabled: event.target.checked })}/><span>启用 ChessDB 云开局库</span></label>
+          <label className="full"><span>云库地址</span><input value={draft.cloudBookUrl ?? "https://www.chessdb.cn/chessdb.php"} onChange={(event) => setDraft({ ...draft, cloudBookUrl: event.target.value })}/></label>
+          <p className="dialog-hint full">开启后会向该地址发送当前 FEN，仅用于查询候选着法；网络不可用不会影响本地棋谱和引擎。</p>
+          {!!draft.xqbBookPaths?.length && <div className="full dialog-book-list"><span>本地大师开局库</span>{draft.xqbBookPaths.map((path) => <label className="check-row" key={path}><input type="checkbox" checked={!draft.disabledXqbBookPaths?.includes(path)} onChange={(event) => setDraft({ ...draft, disabledXqbBookPaths: event.target.checked ? (draft.disabledXqbBookPaths ?? []).filter((value) => value !== path) : [...(draft.disabledXqbBookPaths ?? []), path] })}/><span>{path.split(/[\\/]/).at(-1)}</span></label>)}</div>}
+          <footer><button onClick={close} disabled={busy || enginePickerBusy}>取消</button><button className="primary" disabled={busy || enginePickerBusy || !draft.enginePath.trim()} onClick={() => void saveEngine()}><Save size={14}/>{busy ? "检测中…" : enginePickerBusy ? "选择中…" : "检测并保存"}</button></footer>
         </div>}
 
         {dialog === "syncSettings" && <div className="dialog-form">

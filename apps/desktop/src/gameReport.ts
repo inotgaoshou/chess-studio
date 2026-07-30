@@ -59,7 +59,7 @@ function enhancedSideSummary(
     : "未命中内置官着库。";
   const depthText = analysisDepth ? `深度${analysisDepth}` : "当前深度";
   const swingText = swing ? `主要转折在 ${swing.notation}，局面变化 ${signedCp(swing.deltaCp)}。` : "";
-  const worstText = worst && worst.lossCp > 20
+  const worstText = worst && worst.lossCp > 50
     ? `最值得复盘的是 ${worst.notation}，损失 ${worst.lossCp}cp${worst.bestNotation ? `，${depthText}推荐 ${worst.bestNotation}` : ""}。`
     : "没有明显需要单独追查的差错。";
   return {

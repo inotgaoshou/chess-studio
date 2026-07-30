@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calculateGameReport, coachProfile, moveGradeStandards, moveQualityFeedback, moveQualityScore, moveReports, positionEvaluation, pvMoveRows, qualityGradeForScore, reportMovePhase, trendTurningPoints } from "./analysisView";
+import { calculateGameReport, coachProfile, moveGradeStandards, moveQualityFeedback, moveQualityScore, moveReports, positionEvaluation, pvMoveRows, qualityGradeForScore, reportMovePhase, trendPoints, trendTurningPoints } from "./analysisView";
 import type { AnalysisLine, BoardState, GameReportDatasetDto, MoveItem } from "./platform";
 
 function dataset(positions: GameReportDatasetDto["positions"]): GameReportDatasetDto {
@@ -23,9 +23,9 @@ describe("calculateGameReport", () => {
     ]));
 
     expect(report.moves[0]).toMatchObject({ lossCp: 20, score: 100, grade: "优", missedMate: false });
-    expect(report.moves[1]).toMatchObject({ lossCp: 100, score: 88, grade: "优", missedMate: false });
+    expect(report.moves[1]).toMatchObject({ lossCp: 100, score: 75, grade: "良", missedMate: false });
     expect(report.red.overall).toBe(100);
-    expect(report.black.overall).toBe(88);
+    expect(report.black.overall).toBe(75);
   });
 
   it("marks a forced mate that disappears as a missed mate", () => {
@@ -49,10 +49,10 @@ describe("calculateGameReport", () => {
 
   it.each([
     [20, 100, "优"],
-    [60, 96, "优"],
-    [120, 84, "优"],
-    [250, 52, "中"],
-    [251, 51, "中"],
+    [60, 95, "优"],
+    [120, 69, "良"],
+    [250, 35, "差"],
+    [251, 34, "差"],
     [1000, 0, "错"],
   ] as const)("applies the segmented penalty at %icp loss", (lossCp, score, grade) => {
     const report = calculateGameReport(dataset([
@@ -105,14 +105,15 @@ describe("move quality score", () => {
 
   it.each([
     [0, 100, "优"],
+    [2, 100, "优"],
+    [10, 100, "优"],
     [20, 100, "优"],
-    [21, 100, "优"],
-    [60, 96, "优"],
-    [61, 96, "优"],
-    [120, 84, "优"],
-    [121, 84, "优"],
-    [250, 52, "中"],
-    [251, 51, "中"],
+    [50, 100, "优"],
+    [60, 95, "优"],
+    [100, 75, "良"],
+    [200, 47, "中"],
+    [250, 35, "差"],
+    [300, 22, "差"],
     [1000, 0, "错"],
   ] as const)("maps %icp loss to %i points and %s", (lossCp, score, grade) => {
     expect(moveQualityScore(lossCp)).toEqual({ score, grade });
@@ -149,7 +150,7 @@ describe("move quality score", () => {
       { id: "black", iccs: "h9g7", notation: "马8进7", movedBy: "黑方", from: { row: 0, col: 7 }, to: { row: 2, col: 6 }, scoreCp: 200, comment: "", isMainline: true },
     ];
 
-    expect(moveReports(history)[1]).toMatchObject({ moverLossCp: 100, grade: "优", score: 88 });
+    expect(moveReports(history)[1]).toMatchObject({ moverLossCp: 100, grade: "良", score: 75 });
   });
 
   it("scores the first analyzed move when the root evaluation is available", () => {
@@ -161,7 +162,7 @@ describe("move quality score", () => {
       redScoreCp: 40,
       deltaCp: -60,
       moverLossCp: 60,
-      score: 96,
+      score: 95,
       grade: "优",
     });
   });
@@ -187,7 +188,7 @@ describe("coachProfile", () => {
 
     const red = coachProfile(report, "红方");
     expect(red.quality).toBe("优");
-    expect(red.dimensions).toEqual({ opening: 100, middle: 88, endgame: undefined, accuracy: 94, stability: 94 });
+    expect(red.dimensions).toEqual({ opening: 100, middle: 75, endgame: undefined, accuracy: 88, stability: 87 });
     expect(red.summary).toContain("红方");
     expect(red.summary).toContain("车一平二");
   });
@@ -205,6 +206,20 @@ describe("coachProfile", () => {
 });
 
 describe("trendTurningPoints", () => {
+  it("expands ordinary evaluations while bounding decisive positions", () => {
+    const [equal, redAdvantage, redWinning, blackWinning] = trendPoints([
+      { label: "均势", scoreCp: 0 },
+      { label: "红方微优", scoreCp: 100 },
+      { label: "红方胜势", scoreCp: 500 },
+      { label: "黑方胜势", scoreCp: -1000 },
+    ]);
+
+    expect(equal.y).toBe(90);
+    expect(redAdvantage.y).toBeLessThan(60);
+    expect(redWinning.y).toBeLessThan(22);
+    expect(blackWinning.y).toBeGreaterThan(160);
+  });
+
   it("finds steep score changes and preserves the destination node", () => {
     const turns = trendTurningPoints([
       { label: "第 1 着", scoreCp: 10, nodeId: "one" },

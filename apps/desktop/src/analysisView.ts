@@ -65,6 +65,16 @@ export type TrendTurningPoint = TrendSample & {
   severity: "major" | "critical";
 };
 
+export const trendChart = {
+  width: 360,
+  height: 180,
+  left: 30,
+  right: 346,
+  top: 18,
+  bottom: 162,
+  middle: 90,
+} as const;
+
 const initialMaterial = 5660;
 type LossPenaltyBand = {
   minLossCp: number;
@@ -82,11 +92,11 @@ type QualityGradeBand = {
 };
 
 const lossPenaltyBands: LossPenaltyBand[] = [
-  { minLossCp: 0, maxLossCp: 20, penaltyOriginCp: 0, penaltyAtOrigin: 0, penaltyPerCp: 0 },
-  { minLossCp: 21, maxLossCp: 60, penaltyOriginCp: 20, penaltyAtOrigin: 0, penaltyPerCp: .1 },
-  { minLossCp: 61, maxLossCp: 120, penaltyOriginCp: 60, penaltyAtOrigin: 4, penaltyPerCp: .2 },
-  { minLossCp: 121, maxLossCp: 250, penaltyOriginCp: 120, penaltyAtOrigin: 16, penaltyPerCp: .25 },
-  { minLossCp: 251, penaltyOriginCp: 250, penaltyAtOrigin: 48.5, penaltyPerCp: .15 },
+  // A small score gap is normal at finite engine depth and should not downgrade a best-like move.
+  { minLossCp: 0, maxLossCp: 50, penaltyOriginCp: 0, penaltyAtOrigin: 0, penaltyPerCp: 0 },
+  { minLossCp: 51, maxLossCp: 100, penaltyOriginCp: 50, penaltyAtOrigin: 0, penaltyPerCp: .5 },
+  { minLossCp: 101, maxLossCp: 200, penaltyOriginCp: 100, penaltyAtOrigin: 25, penaltyPerCp: .28 },
+  { minLossCp: 201, penaltyOriginCp: 200, penaltyAtOrigin: 53, penaltyPerCp: .25 },
 ];
 
 const qualityGradeBands: QualityGradeBand[] = [
@@ -212,7 +222,7 @@ export function coachProfile(report: GameReport, side: Side): CoachProfile {
   const quality = mean == null ? "样本不足" : qualityGradeForScore(mean);
   const summary = mean == null
     ? `${side}尚无足够的已分析着法，无法生成质量结论。`
-    : `${side}本局表现${quality}，综合 ${mean} 分；${errors > 0 ? `共有 ${errors} 次错着或漏着` : "没有达到错着等级的着法"}${criticalMove && criticalMove.lossCp > 20 ? `，最值得复盘的是 ${criticalMove.notation}（损失 ${criticalMove.lossCp}cp）` : ""}。`;
+    : `${side}本局表现${quality}，综合 ${mean} 分；${errors > 0 ? `共有 ${errors} 次错着或漏着` : "没有达到错着等级的着法"}${criticalMove && criticalMove.lossCp > 50 ? `，最值得复盘的是 ${criticalMove.notation}（损失 ${criticalMove.lossCp}cp）` : ""}。`;
   return {
     quality,
     dimensions: {
@@ -371,12 +381,15 @@ export function positionEvaluation(board: BoardState, analysis: AnalysisLine[]):
 export function trendPoints(samples: TrendSample[], totalMoves = samples.length): TrendPoint[] {
   if (samples.length === 0) return [];
   const lastMoveIndex = Math.max(totalMoves - 1, ...samples.map((sample) => sample.moveIndex ?? 0));
+  const horizontalRange = trendChart.right - trendChart.left;
+  const verticalRange = (trendChart.bottom - trendChart.top) / 2;
   return samples.map((sample, index) => ({
     ...sample,
     x: samples.length === 1
-      ? 150
-      : 10 + (sample.moveIndex ?? index) * (280 / Math.max(1, lastMoveIndex)),
-    y: 60 - Math.max(-1, Math.min(1, sample.scoreCp / 1000)) * 40,
+      ? (trendChart.left + trendChart.right) / 2
+      : trendChart.left + (sample.moveIndex ?? index) * (horizontalRange / Math.max(1, lastMoveIndex)),
+    // Compress decisive evaluations while expanding ordinary +/-100 to +/-300cp swings.
+    y: trendChart.middle - Math.tanh(sample.scoreCp / 180) * verticalRange,
   }));
 }
 

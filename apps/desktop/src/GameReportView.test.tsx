@@ -42,7 +42,7 @@ const report: GameReportPresentationDto = {
     notation: "炮二平五",
     movedBy: "红方",
     lossCp: 500,
-    score: 14,
+    score: 0,
     grade: "错",
     missedMate: true,
     redScoreCp: -240,
@@ -125,6 +125,6 @@ describe("GameReportDialog", () => {
     render(<GameReportDialog report={report} exporting={false} onClose={vi.fn()} onExport={vi.fn()} onRegenerate={vi.fn()} onNavigate={vi.fn()} onStudy={vi.fn()}/>);
 
     expect(screen.getByText("局面 -240 · 变化 -500")).toBeTruthy();
-    expect(screen.getByText("红方损失 500cp · 质量 14分")).toBeTruthy();
+    expect(screen.getByText("红方损失 500cp · 质量 0分")).toBeTruthy();
   });
 });

@@ -23,7 +23,7 @@ describe("buildGameReportPresentation", () => {
     expect(report.title).toBe("测试棋局");
     expect(report.stale).toBe(true);
     expect(report.red).toMatchObject({ overall: 100, grade: "优", coachQuality: "优" });
-    expect(report.black).toMatchObject({ overall: 14, grade: "错", coachQuality: "错" });
+    expect(report.black).toMatchObject({ overall: 0, grade: "错", coachQuality: "错" });
     expect(report.black.counts).toMatchObject({ error: 1 });
     expect(report.coachInsights.branchName).toContain("马8进7");
     expect(report.coachInsights.weaknessFixes.join("")).toContain("开局");
@@ -32,7 +32,7 @@ describe("buildGameReportPresentation", () => {
       expect.objectContaining({
         nodeId: "black",
         notation: "马8进7",
-        score: 14,
+        score: 0,
         grade: "错",
         coach: expect.objectContaining({
           intent: expect.stringContaining("严重局面损失"),

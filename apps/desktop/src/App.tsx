@@ -25,6 +25,7 @@ import {
   MessageSquare,
   Maximize2,
   Moon,
+  Palette,
   Pause,
   Play,
   Plus,
@@ -32,6 +33,7 @@ import {
   RotateCcw,
   Save,
   Settings2,
+  Share2,
   Square,
   Sun,
   TrendingUp,
@@ -39,8 +41,8 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { BUILTIN_ENGINE_PATH, chessPlatform, type AnalysisLine, type BoardState, type EngineRuntimeState, type GameReportDatasetDto, type GameReportProgressDto, type GameSummary, type MoveItem, type Piece, type PreviewLineStep } from "./platform";
-import { moveQualityFeedback, moveReports, positionEvaluation, trendPoints, trendTurningPoints } from "./analysisView";
+import { BUILTIN_ENGINE_PATH, chessPlatform, type AnalysisLine, type BoardState, type CloudBookCandidate, type EngineProfileDto, type EngineRuntimeState, type ExportFormat, type GameReportDatasetDto, type GameReportProgressDto, type GameSummary, type MoveItem, type Piece, type PreviewLineStep, type ReplayExportScope } from "./platform";
+import { moveQualityFeedback, moveReports, positionEvaluation, trendChart, trendPoints, trendTurningPoints } from "./analysisView";
 import { CandidateLine } from "./CandidateLine";
 import { DesktopMenuBar, type MenuCommand } from "./DesktopMenuBar";
 import { DesktopDialogs, type DesktopDialog } from "./DesktopDialogs";
@@ -51,6 +53,8 @@ import { MobileToolbar, type MobileToolbarCommand } from "./MobileToolbar";
 import type { DesktopPreferencesDto, SyncAccountDto } from "./platform";
 import { applyColorTheme, initialColorTheme, type ColorTheme } from "./theme";
 import { WorkspaceTabs, type WorkspacePanel } from "./WorkspaceTabs";
+import { CoachProfileView } from "./CoachProfileView";
+import { SkinShopDialog } from "./SkinShopDialog";
 
 
 const startingFen = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1";
@@ -108,8 +112,10 @@ const defaultDesktopPreferences: DesktopPreferencesDto = {
   moveTimeMs: 5000,
   ponder: false,
   autoAnalyze: true,
-  libraryCollapsed: false,
+  libraryCollapsed: true,
   colorTheme: "dark",
+  boardSkin: "original",
+  pieceSkin: "original",
   reportDepth: 20,
   serverUrl: "http://127.0.0.1:8080",
 };
@@ -296,18 +302,32 @@ export default function App() {
   const [ponderMove, setPonderMove] = useState<string | undefined>();
   const [engineRuntimeState, setEngineRuntimeState] = useState<EngineRuntimeState>("idle");
   const [desktopPreferences, setDesktopPreferences] = useState(defaultDesktopPreferences);
-  const [libraryCollapsed, setLibraryCollapsed] = useState(false);
+  const [libraryCollapsed, setLibraryCollapsed] = useState(true);
   const [colorTheme, setColorTheme] = useState<ColorTheme>(() => initialColorTheme(chessPlatform.kind));
   const [gameReport, setGameReport] = useState<GameReportDatasetDto>();
   const [reportProgress, setReportProgress] = useState<GameReportProgressDto>();
   const [reportBusy, setReportBusy] = useState(false);
   const [reportDialogOpen, setReportDialogOpen] = useState(false);
   const [reportExporting, setReportExporting] = useState(false);
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [skinMenuOpen, setSkinMenuOpen] = useState(false);
+  const [skinShopOpen, setSkinShopOpen] = useState(false);
+  const [manualExporting, setManualExporting] = useState(false);
   const [analysisHelpOpen, setAnalysisHelpOpen] = useState(false);
   const [trendCursorIndex, setTrendCursorIndex] = useState<number | undefined>();
   const [candidatePreview, setCandidatePreview] = useState<CandidatePreviewState>();
   const [syncAccount, setSyncAccount] = useState(defaultSyncAccount);
   const [desktopDialog, setDesktopDialog] = useState<DesktopDialog>(null);
+  const [engineProfiles, setEngineProfiles] = useState<EngineProfileDto[]>([]);
+  const [cloudCandidates, setCloudCandidates] = useState<CloudBookCandidate[]>([]);
+  const [cloudBookError, setCloudBookError] = useState<string>();
+  const [cloudBookLoading, setCloudBookLoading] = useState(false);
+  const [cloudBookVisible, setCloudBookVisible] = useState(true);
+  const [cloudBookCollapsed, setCloudBookCollapsed] = useState(false);
+  const [cloudBookPosition, setCloudBookPosition] = useState<{ left: number; top: number }>();
+  const [cloudBookHeight, setCloudBookHeight] = useState<number>();
+  const [coachReports, setCoachReports] = useState<GameReportDatasetDto[]>([]);
+  const [coachProfileOpen, setCoachProfileOpen] = useState(false);
   const [dialogBusy, setDialogBusy] = useState(false);
   const [online, setOnline] = useState(typeof navigator === "undefined" ? true : navigator.onLine);
   const boardRevision = useRef(0);
@@ -325,6 +345,8 @@ export default function App() {
   const desktopPreferencesRef = useRef(defaultDesktopPreferences);
   const preferenceSaveQueue = useRef<Promise<void>>(Promise.resolve());
   const activeMoveRef = useRef<HTMLButtonElement | null>(null);
+  const cloudBookDragRef = useRef<{ offsetX: number; offsetY: number } | undefined>(undefined);
+  const cloudBookResizeRef = useRef<{ startY: number; startHeight: number; top: number } | undefined>(undefined);
 
   useEffect(() => {
     void chessPlatform.initialize()
@@ -352,8 +374,23 @@ export default function App() {
         }
       }).catch((error) => setNotice(friendlyError(error)));
       void chessPlatform.getSyncAccount().then(setSyncAccount).catch((error) => setNotice(friendlyError(error)));
+      void chessPlatform.listEngineProfiles().then(setEngineProfiles).catch(() => undefined);
     }
   }, []);
+
+  useEffect(() => {
+    if (chessPlatform.kind !== "desktop" || !desktopPreferences.cloudBookEnabled) {
+      setCloudCandidates([]); setCloudBookError(undefined); setCloudBookLoading(false); return;
+    }
+    let cancelled = false;
+    setCloudBookLoading(true);
+    void chessPlatform.queryCloudOpeningBook(board.fen).then((candidates) => {
+      if (!cancelled) { setCloudCandidates(candidates); setCloudBookError(undefined); }
+    }).catch((error) => { if (!cancelled) { setCloudCandidates([]); setCloudBookError(friendlyError(error)); } }).finally(() => {
+      if (!cancelled) setCloudBookLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [board.fen, desktopPreferences.cloudBookEnabled, desktopPreferences.cloudBookUrl]);
 
   useEffect(() => {
     if (chessPlatform.kind !== "desktop") return;
@@ -503,7 +540,7 @@ export default function App() {
     const zero = {
       ...point,
       x: previous.x + (point.x - previous.x) * ratio,
-      y: 60,
+      y: trendChart.middle,
       scoreCp: 0,
     };
     return [
@@ -519,7 +556,7 @@ export default function App() {
   }, [board.currentNode, evaluationTrend]);
   const visibleTrendPoint = activeTrendPoint ?? currentTrendPoint;
   const visibleTrendDelta = activeTrendPoint ? activeTrendDelta : undefined;
-  const trendMarkerOnLeft = (visibleTrendPoint?.x ?? 0) > 200;
+  const trendMarkerOnLeft = (visibleTrendPoint?.x ?? 0) > trendChart.width / 2;
   const trendMarkerX = visibleTrendPoint ? visibleTrendPoint.x + (trendMarkerOnLeft ? -88 : 4) : 0;
   const trendMarkerY = visibleTrendPoint ? Math.max(12, visibleTrendPoint.y - 16) : 0;
   const trendMarkerText = visibleTrendPoint ? `${visibleTrendPoint.label.replace("第 ", "")} · ${formatRedScore(visibleTrendPoint.scoreCp)}` : "";
@@ -651,6 +688,16 @@ export default function App() {
         setDesktopPreferences(restored);
         setColorTheme(previous);
       }
+      setNotice(friendlyError(error));
+    }
+  }
+
+  async function updateBoardSkin(patch: Pick<DesktopPreferencesDto, "boardSkin" | "pieceSkin">) {
+    try {
+      await saveDesktopPreferencePatch(patch);
+      setSkinMenuOpen(false);
+      setNotice("棋盘皮肤已保存");
+    } catch (error) {
       setNotice(friendlyError(error));
     }
   }
@@ -920,6 +967,17 @@ export default function App() {
     }
   }
 
+  async function importXqbOpeningBook() {
+    try {
+      const next = await chessPlatform.importXqbOpeningBook();
+      if (!next) return;
+      applyBoard(next);
+      setNotice("XQB 开局库已导入，候选着法显示在棋盘候选区");
+    } catch (error) {
+      setNotice(friendlyError(error));
+    }
+  }
+
   async function saveDocument(saveAs = false) {
     try {
       const path = await chessPlatform.saveDocument(saveAs || !board.sourcePath || board.sourceFormat !== "pgn");
@@ -949,6 +1007,52 @@ export default function App() {
       setNotice(mainlineOnly ? "当前主线棋谱已复制" : "完整棋谱、变例和注释已复制");
     } catch (error) {
       setNotice(friendlyError(error));
+    }
+  }
+
+  async function copyExport(format: Exclude<ExportFormat, "pgn">, label: string) {
+    try {
+      await chessPlatform.copyExport(format);
+      setNotice(`${label}已复制到剪贴板`);
+      setExportMenuOpen(false);
+    } catch (error) {
+      setNotice(friendlyError(error));
+    }
+  }
+
+  async function exportManualFile(format: ExportFormat, label: string) {
+    if (manualExporting) return;
+    setManualExporting(true);
+    try {
+      const path = await chessPlatform.exportManualFile(format, gameTitle);
+      if (path) {
+        setNotice(`${label}已导出：${path.split(/[\\/]/).at(-1)}`);
+        setExportMenuOpen(false);
+      } else {
+        setNotice("已取消导出");
+      }
+    } catch (error) {
+      setNotice(friendlyError(error));
+    } finally {
+      setManualExporting(false);
+    }
+  }
+
+  async function exportReplayGif(scope: ReplayExportScope) {
+    if (manualExporting) return;
+    setManualExporting(true);
+    try {
+      const path = await chessPlatform.exportReplayGif(gameTitle, scope);
+      if (path) {
+        setNotice(`${scope === "currentSelection" ? "当前分支" : "完整主线"}动态图已导出：${path.split(/[\\/]/).at(-1)}`);
+        setExportMenuOpen(false);
+      } else {
+        setNotice("已取消导出");
+      }
+    } catch (error) {
+      setNotice(friendlyError(error));
+    } finally {
+      setManualExporting(false);
     }
   }
 
@@ -1099,7 +1203,7 @@ export default function App() {
     setEngineSide(next);
     setPonderMove(undefined);
     if (next === "none") {
-      stopEnginePlay();
+      void stopEnginePlay();
       setNotice("人机对弈已停止");
     } else {
       if (analysisBusyRef.current) void chessPlatform.stopAnalysis(true).catch(() => undefined);
@@ -1307,7 +1411,7 @@ export default function App() {
   async function navigateTo(nodeId?: string, playbackToken?: number): Promise<BoardState | null> {
     if (playbackToken == null) {
       stopPlayback();
-      stopEnginePlay();
+      await stopEnginePlay();
     }
     if (playbackToken != null && playbackToken !== playbackRevision.current) return null;
     const requestRevision = ++navigationRevision.current;
@@ -1370,7 +1474,7 @@ export default function App() {
   function trendIndexFromPointer(event: PointerEvent<SVGSVGElement>) {
     if (evaluationTrend.length === 0) return undefined;
     const rect = event.currentTarget.getBoundingClientRect();
-    const x = (event.clientX - rect.left) / rect.width * 300;
+    const x = (event.clientX - rect.left) / rect.width * trendChart.width;
     let nearest = 0;
     for (let index = 1; index < evaluationTrend.length; index += 1) {
       if (Math.abs(evaluationTrend[index].x - x) < Math.abs(evaluationTrend[nearest].x - x)) nearest = index;
@@ -1545,11 +1649,22 @@ export default function App() {
   async function saveEnginePreferences(preferences: DesktopPreferencesDto) {
     setDialogBusy(true);
     try {
-      stopEnginePlay();
-      await cancelAnalysisForDocumentChange();
-      const probe = await chessPlatform.probeEngine(preferences.enginePath);
+      const engineChanged = preferences.enginePath.trim() !== desktopPreferences.enginePath.trim();
+      let activeEngineId = desktopPreferences.activeEngineId;
+      let enginePath = desktopPreferences.enginePath;
+      let handshakeMessage = "开局库与分析参数已保存";
+
+      if (engineChanged) {
+        await stopEnginePlay();
+        await cancelAnalysisForDocumentChange();
+        const profile = await chessPlatform.registerEngineProfile(engineDisplayName(preferences.enginePath), preferences.enginePath);
+        activeEngineId = profile.id;
+        enginePath = profile.executablePath;
+        handshakeMessage = `${profile.protocol.toUpperCase()} 引擎握手成功`;
+      }
       const saved = await saveDesktopPreferencePatch({
-        enginePath: probe.path,
+        enginePath,
+        activeEngineId,
         threads: preferences.threads,
         hashMb: preferences.hashMb,
         multipv: preferences.multipv,
@@ -1559,15 +1674,54 @@ export default function App() {
         ponder: preferences.ponder,
         autoAnalyze: preferences.autoAnalyze,
         reportDepth: preferences.reportDepth,
+        boardSkin: preferences.boardSkin,
+        pieceSkin: preferences.pieceSkin,
+        cloudBookEnabled: preferences.cloudBookEnabled,
+        cloudBookUrl: preferences.cloudBookUrl,
+        disabledXqbBookPaths: preferences.disabledXqbBookPaths,
       });
       applyDesktopPreferences(saved);
+      setEngineProfiles(await chessPlatform.listEngineProfiles());
       setDesktopDialog(null);
-      setNotice(`引擎设置已保存，${probe.protocol.toUpperCase()} 握手成功`);
+      setNotice(`引擎设置已保存，${handshakeMessage}`);
     } catch (error) {
-      setNotice(friendlyError(error));
+      const message = friendlyError(error);
+      setNotice(message);
+      throw new Error(message);
     } finally {
       setDialogBusy(false);
     }
+  }
+
+  async function selectEngineProfile(id: string) {
+    if (id === desktopPreferences.activeEngineId) return;
+    try {
+      await stopAnalysis();
+      await stopEnginePlay();
+      const saved = await chessPlatform.setActiveEngineProfile(id);
+      applyDesktopPreferences(saved);
+      setEngineProfiles(await chessPlatform.listEngineProfiles());
+      setNotice("已切换引擎，后续分析和人机对弈将使用新引擎");
+    } catch (error) { setNotice(friendlyError(error)); }
+  }
+
+  async function removeActiveEngineProfile() {
+    const id = desktopPreferences.activeEngineId;
+    if (!id) return;
+    try {
+      await stopAnalysis();
+      await stopEnginePlay();
+      applyDesktopPreferences(await chessPlatform.deleteEngineProfile(id));
+      setEngineProfiles(await chessPlatform.listEngineProfiles());
+      setNotice("引擎档案已删除");
+    } catch (error) { setNotice(friendlyError(error)); }
+  }
+
+  async function openCoachProfile() {
+    try {
+      setCoachReports(await chessPlatform.listCoachReports());
+      setCoachProfileOpen(true);
+    } catch (error) { setNotice(friendlyError(error)); }
   }
 
   async function saveSyncPreferences(nextServerUrl: string) {
@@ -1614,6 +1768,7 @@ export default function App() {
     switch (command) {
       case "newGame": await createGame(startingFen); break;
       case "openDocument": await openDocument(); break;
+      case "importXqbOpeningBook": await importXqbOpeningBook(); break;
       case "saveDocument": await saveDocument(); break;
       case "saveDocumentAs": await saveDocument(true); break;
       case "editPosition": openPositionEditor(); break;
@@ -1630,6 +1785,7 @@ export default function App() {
       case "analyze": analysisHintsEnabled ? await stopAnalysis() : await runAnalysis(); break;
       case "stopAnalysis": await stopAnalysis(); break;
       case "engineSettings": setDesktopDialog("engine"); break;
+      case "coachProfile": await openCoachProfile(); break;
       case "syncRegister": setDesktopDialog("register"); break;
       case "syncLogin": setDesktopDialog("login"); break;
       case "syncNow": await synchronize(); break;
@@ -1681,11 +1837,64 @@ export default function App() {
             onPreview={(candidate, analyzedFen) => void previewCandidateLine(candidate, analyzedFen)}
           />)}
       </div>
+      {board.xqbCandidates?.length ? <section className="xqb-candidates" aria-label="XQB 开局库候选">
+        <header><BookOpen size={14}/><strong>大师开局库</strong><span>{board.xqbCandidates.length} 个候选</span></header>
+        {board.xqbCandidates.map((candidate) => <button key={`${candidate.source}-${candidate.iccs}`} onClick={() => void playIccsMove(candidate.iccs)} title={candidate.memo || candidate.source}>
+          <strong>{candidate.notation}</strong><span>{candidate.score > 0 ? `+${candidate.score}` : candidate.score}</span><small>{candidate.winRate == null ? "暂无对局" : `胜率 ${candidate.winRate.toFixed(1)}%`} · {candidate.source}</small>
+        </button>)}
+      </section> : null}
     </section>;
   }
 
+  function startCloudBookDrag(event: PointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) return;
+    const panel = event.currentTarget.closest<HTMLElement>(".cloud-book-float");
+    if (!panel) return;
+    const bounds = panel.getBoundingClientRect();
+    cloudBookDragRef.current = { offsetX: event.clientX - bounds.left, offsetY: event.clientY - bounds.top };
+    setCloudBookPosition({ left: bounds.left, top: bounds.top });
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function moveCloudBookDrag(event: PointerEvent<HTMLDivElement>) {
+    const drag = cloudBookDragRef.current;
+    if (!drag) return;
+    const panelWidth = 344;
+    const panelHeight = cloudBookCollapsed ? 42 : cloudBookHeight ?? 380;
+    setCloudBookPosition({
+      left: Math.max(8, Math.min(event.clientX - drag.offsetX, window.innerWidth - panelWidth - 8)),
+      top: Math.max(48, Math.min(event.clientY - drag.offsetY, window.innerHeight - panelHeight - 8)),
+    });
+  }
+
+  function stopCloudBookDrag(event: PointerEvent<HTMLDivElement>) {
+    cloudBookDragRef.current = undefined;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  }
+
+  function startCloudBookResize(event: PointerEvent<HTMLDivElement>) {
+    const panel = event.currentTarget.closest<HTMLElement>(".cloud-book-float");
+    if (!panel) return;
+    const bounds = panel.getBoundingClientRect();
+    cloudBookResizeRef.current = { startY: event.clientY, startHeight: bounds.height, top: bounds.top };
+    setCloudBookHeight(bounds.height);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function moveCloudBookResize(event: PointerEvent<HTMLDivElement>) {
+    const resize = cloudBookResizeRef.current;
+    if (!resize) return;
+    const maxHeight = Math.max(160, window.innerHeight - resize.top - 8);
+    setCloudBookHeight(Math.max(160, Math.min(resize.startHeight + event.clientY - resize.startY, maxHeight)));
+  }
+
+  function stopCloudBookResize(event: PointerEvent<HTMLDivElement>) {
+    cloudBookResizeRef.current = undefined;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  }
+
   return (
-    <div className={`app-shell ${chessPlatform.kind}-shell theme-${colorTheme}`}>
+    <div className={`app-shell ${chessPlatform.kind}-shell theme-${colorTheme} board-skin-${desktopPreferences.boardSkin} piece-skin-${desktopPreferences.pieceSkin}`}>
       <header className="titlebar">
         <div className="window-brand"><span className="brand-seal">象</span><strong>棋研</strong><small>XIANGQI STUDIO</small></div>
         <strong className="window-title">棋研工作台</strong>
@@ -1725,6 +1934,7 @@ export default function App() {
         onSaveSync={saveSyncPreferences}
         onAuthenticate={authenticateSync}
       />}
+      {coachProfileOpen && <CoachProfileView reports={coachReports} onClose={() => setCoachProfileOpen(false)}/>}
 
       <div className="actionbar">
         <button className="wide-tool" onClick={() => void createGame(startingFen)}><FolderOpen size={14}/>新建研习棋谱</button>
@@ -1734,7 +1944,19 @@ export default function App() {
           <button className="tool-button" title="保存棋谱" onClick={() => void saveDocument()}><Save size={16}/></button>
           <button className="tool-button" title="翻转棋盘" onClick={() => setReversed((value) => !value)}><RotateCcw size={16}/></button>
           <button className="tool-button" title="返回根局面" onClick={() => void navigateTo()}><RefreshCw size={16}/></button>
+          {chessPlatform.kind === "desktop" && <button className="tool-button" title="AI 私教棋力档案" onClick={() => void openCoachProfile()}><BarChart3 size={16}/></button>}
         </div>
+        {chessPlatform.kind === "desktop" && <div className="export-menu">
+          <button className={`tool-button ${exportMenuOpen ? "active" : ""}`} title="分享与导出" aria-label="分享与导出" aria-expanded={exportMenuOpen} onClick={() => setExportMenuOpen((open) => !open)}><Share2 size={16}/></button>
+          {exportMenuOpen && <div className="export-menu-popup" role="menu" aria-label="分享与导出">
+            <button role="menuitem" onClick={() => void copyPosition()}><Copy size={15}/>复制局面</button>
+            <button role="menuitem" onClick={() => void copyExport("chinese", "文字棋谱")}><ClipboardList size={15}/>复制文字棋谱</button>
+            <button role="menuitem" onClick={() => void copyExport("dhtmlxq", "东萍棋谱")}><Copy size={15}/>复制东萍棋谱</button>
+            <button role="menuitem" disabled={manualExporting} onClick={() => void exportManualFile("pgn", "PGN 棋谱")}><Download size={15}/>下载 PGN 棋谱</button>
+            <button role="menuitem" disabled={manualExporting} onClick={() => void exportReplayGif("currentSelection")}><Play size={15}/>生成当前分支 GIF</button>
+            <button role="menuitem" disabled={manualExporting} onClick={() => void exportReplayGif("mainline")}><Play size={15}/>生成完整主线 GIF</button>
+          </div>}
+        </div>}
         <div className="tool-divider" />
         <button
           className={`mode-tool ${analysisHintsEnabled ? "active" : ""}`}
@@ -1742,10 +1964,16 @@ export default function App() {
           onClick={() => void (analysisHintsEnabled ? stopAnalysis() : runAnalysis())}
           disabled={!analysisHintsEnabled && (!board.playable || isPlaying)}
         ><Zap size={15}/>{analysisHintsEnabled ? "停止分析提示" : "分析当前局面"}</button>
-        <button className={`mode-tool engine-side ${engineSide === "red" ? "active" : ""}`} disabled={!board.playable || (engineThinking && engineSide !== "red")} onClick={() => toggleEngineSide("red")}><Bot size={15}/>引擎红</button>
-        <button className={`mode-tool engine-side ${engineSide === "black" ? "active" : ""}`} disabled={!board.playable || (engineThinking && engineSide !== "black")} onClick={() => toggleEngineSide("black")}><Bot size={15}/>引擎黑</button>
         <button className="tool-button" title="立即出招" disabled={!engineThinking} onClick={() => void moveNow()}><Zap size={15}/></button>
         <button className="tool-button" title="引擎设置" onClick={() => setDesktopDialog("engine")}><Settings2 size={16}/></button>
+        <div className="skin-menu">
+          <button className={`tool-button ${skinMenuOpen ? "active" : ""}`} title="棋盘皮肤" aria-label="棋盘皮肤" aria-expanded={skinMenuOpen} onClick={() => setSkinMenuOpen((open) => !open)}><Palette size={16}/></button>
+          {skinMenuOpen && <section className="skin-menu-popup" aria-label="棋盘皮肤设置">
+            <div><span>棋盘</span><button className={desktopPreferences.boardSkin === "original" ? "active" : ""} onClick={() => void updateBoardSkin({ boardSkin: "original", pieceSkin: desktopPreferences.pieceSkin })}>默认</button><button className={desktopPreferences.boardSkin === "classic" ? "active" : ""} onClick={() => void updateBoardSkin({ boardSkin: "classic", pieceSkin: desktopPreferences.pieceSkin })}>暖木</button></div>
+            <div><span>棋子</span><button className={desktopPreferences.pieceSkin === "original" ? "active" : ""} onClick={() => void updateBoardSkin({ boardSkin: desktopPreferences.boardSkin, pieceSkin: "original" })}>默认</button><button className={desktopPreferences.pieceSkin === "classic" ? "active" : ""} onClick={() => void updateBoardSkin({ boardSkin: desktopPreferences.boardSkin, pieceSkin: "classic" })}>暖木</button></div>
+            <button className="skin-shop-launch" onClick={() => { setSkinMenuOpen(false); setSkinShopOpen(true); }}>打开装扮坊</button>
+          </section>}
+        </div>
         <button className="tool-button" title={colorTheme === "dark" ? "切换浅色主题" : "切换深色主题"} aria-label={colorTheme === "dark" ? "切换浅色主题" : "切换深色主题"} onClick={() => void toggleColorTheme()}>{colorTheme === "dark" ? <Sun size={16}/> : <Moon size={16}/>}</button>
       </div>
 
@@ -1821,13 +2049,16 @@ export default function App() {
                 return (
                   <button
                     key={`${row}-${col}`}
-                    className={`board-square ${candidatePreview ? "previewing" : ""} ${isSelected ? "selected" : ""} ${isLastFrom ? "last-from" : ""} ${isLastTo ? "last-to" : ""}`}
+                    className={`board-square piece-${piece?.color ?? "empty"} ${candidatePreview ? "previewing" : ""} ${isSelected ? "selected" : ""} ${isLastFrom ? "last-from" : ""} ${isLastTo ? "last-to" : ""}`}
                     style={style}
                     disabled={isPlaying || !board.playable || !!candidatePreview}
                     onClick={() => void selectSquare(row, col)}
                     aria-label={`${squareToIccs(row, col)}${piece ? ` ${piece.color === "red" ? "红" : "黑"}${piece.label}` : ""}`}
                   >
-                    {piece && <img src={pieceAsset(piece)} alt="" draggable={false} />}
+                    {piece && <>
+                      <img src={pieceAsset(piece)} alt="" draggable={false} />
+                      <span className="board-piece-label" aria-hidden="true">{piece.label}</span>
+                    </>}
                     {isSelected && <img className="selection-mask" src="/skins/tchess/mask2.png" alt="" />}
                     {!candidatePreview && isLastTo && board.currentNode === lastMove?.id && overviewReport?.grade && overviewReport.score != null && (
                       <span
@@ -1989,6 +2220,7 @@ export default function App() {
               <button className="engine-config-summary" onClick={() => setDesktopDialog("engine")}>
                 <Settings2 size={14}/><span>{engineDisplayName(enginePath)}</span><small>{threads} 线程 · Hash {hashMb} MB · MultiPV {multipv}</small>
               </button>
+              {engineProfiles.length > 0 && <div className="engine-profile-select"><label><span>当前引擎</span><select value={desktopPreferences.activeEngineId ?? ""} onChange={(event) => void selectEngineProfile(event.target.value)}><option value="" disabled>选择已添加的引擎</option>{engineProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.protocol.toUpperCase()}</option>)}</select></label><button title="删除当前引擎档案" onClick={() => void removeActiveEngineProfile()}><Trash2 size={13}/></button></div>}
             </>}
             {chessPlatform.kind === "web" && <div className="web-engine-source"><span>{serverUrl}</span><strong>MultiPV {multipv}</strong></div>}
             <div className="engine-run-row">
@@ -2086,7 +2318,7 @@ export default function App() {
                   <div className="trend-legend"><span>红方优势</span><strong>{evaluation?.scoreText}</strong><span>黑方优势</span></div>
                   <svg
                     className="trend-chart-large"
-                    viewBox="0 0 300 120"
+                    viewBox={`0 0 ${trendChart.width} ${trendChart.height}`}
                     preserveAspectRatio="none"
                     role="group"
                     aria-label="可拖动的历史局面分数趋势"
@@ -2096,12 +2328,17 @@ export default function App() {
                     onPointerUp={() => releaseTrendCursor()}
                     onKeyDown={trendKeyDown}
                   >
-                    <rect className="trend-equal-band" x="10" y="58" width="280" height="4"/>
-                    <line className="trend-grid top" x1="10" y1="20" x2="290" y2="20"/>
-                    <line className="trend-grid upper" x1="10" y1="40" x2="290" y2="40"/>
-                    <line className="trend-grid middle" x1="10" y1="60" x2="290" y2="60"/>
-                    <line className="trend-grid lower" x1="10" y1="80" x2="290" y2="80"/>
-                    <line className="trend-grid bottom" x1="10" y1="100" x2="290" y2="100"/>
+                    <rect className="trend-equal-band" x={trendChart.left} y={trendChart.middle - 4} width={trendChart.right - trendChart.left} height="8"/>
+                    <line className="trend-grid top" x1={trendChart.left} y1={trendChart.top} x2={trendChart.right} y2={trendChart.top}/>
+                    <line className="trend-grid upper" x1={trendChart.left} y1="54" x2={trendChart.right} y2="54"/>
+                    <line className="trend-grid middle" x1={trendChart.left} y1={trendChart.middle} x2={trendChart.right} y2={trendChart.middle}/>
+                    <line className="trend-grid lower" x1={trendChart.left} y1="126" x2={trendChart.right} y2="126"/>
+                    <line className="trend-grid bottom" x1={trendChart.left} y1={trendChart.bottom} x2={trendChart.right} y2={trendChart.bottom}/>
+                    <text className="trend-scale-label" x="2" y={trendChart.top + 3}>胜势</text>
+                    <text className="trend-scale-label" x="2" y="57">+100</text>
+                    <text className="trend-scale-label" x="2" y={trendChart.middle + 3}>均势</text>
+                    <text className="trend-scale-label" x="2" y="129">-100</text>
+                    <text className="trend-scale-label" x="2" y={trendChart.bottom + 3}>胜势</text>
                     {trendSegments.map((segment, index) => <line key={index} className={`trend-segment ${segment.side}`} x1={segment.from.x} y1={segment.from.y} x2={segment.to.x} y2={segment.to.y}/>)}
                     {evaluationTrend.map((point, index) => {
                       const turn = trendTurnsByNode.get(point.nodeId);
@@ -2120,7 +2357,7 @@ export default function App() {
                       ><title>{point.label}：{formatRedScore(point.scoreCp)}{turn ? `，波动 ${turn.deltaCp > 0 ? "+" : ""}${Math.round(turn.deltaCp)}` : ""}</title></circle>
                     )})}
                     {visibleTrendPoint && <>
-                      <line className="trend-current-line" x1={visibleTrendPoint.x} y1="12" x2={visibleTrendPoint.x} y2="108"/>
+                      <line className="trend-current-line" x1={visibleTrendPoint.x} y1={trendChart.top - 6} x2={visibleTrendPoint.x} y2={trendChart.bottom + 6}/>
                       <circle className="trend-current-halo" cx={visibleTrendPoint.x} cy={visibleTrendPoint.y} r="7"/>
                       <circle className="trend-current-node" cx={visibleTrendPoint.x} cy={visibleTrendPoint.y} r="3.5"/>
                       <g className={`trend-marker-label ${visibleTrendPoint.scoreCp >= 0 ? "red" : "black"}`} transform={`translate(${trendMarkerX} ${trendMarkerY})`}>
@@ -2129,7 +2366,7 @@ export default function App() {
                       </g>
                     </>}
                   </svg>
-                  <div className="trend-axis"><span>+1000 / +500 / 0 / -500 / -1000</span><span>{visibleTrendPoint ? `${visibleTrendPoint.label} · ${formatRedScore(visibleTrendPoint.scoreCp)}${visibleTrendDelta != null ? ` · 变化 ${formatRedScore(visibleTrendDelta)}` : ""}` : "拖动趋势线，松开定位"}</span><span>第 {board.history.length} 着</span></div>
+                  <div className="trend-axis"><span>红方优势</span><span>{visibleTrendPoint ? `${visibleTrendPoint.label} · ${formatRedScore(visibleTrendPoint.scoreCp)}${visibleTrendDelta != null ? ` · 变化 ${formatRedScore(visibleTrendDelta)}` : ""}` : "拖动趋势线，松开定位"}</span><span>第 {board.history.length} 着</span></div>
                   {trendTurns.length > 0 && <section className="trend-turning-list"><header><strong>关键转折</strong><span>分差变化 ≥ 120</span></header>{trendTurns.map((turn) => <button key={turn.nodeId ?? turn.label} onClick={() => turn.nodeId && void navigateTo(turn.nodeId)}><span className={turn.severity}/><strong>{turn.label}</strong><small>{turn.deltaCp > 0 ? "红方" : "黑方"}获益 {Math.abs(Math.round(turn.deltaCp))}</small></button>)}</section>}
                 </>}
             </div>}
@@ -2195,6 +2432,33 @@ export default function App() {
           </section>}
         </aside>
       </main>
+      {skinShopOpen && (
+        <SkinShopDialog preferences={desktopPreferences} onClose={() => setSkinShopOpen(false)} onEquip={(patch) => void updateBoardSkin(patch)}/>
+      )}
+      {chessPlatform.kind === "desktop" && desktopPreferences.cloudBookEnabled && cloudBookVisible && <aside
+        className={`cloud-book-float ${cloudBookCollapsed ? "collapsed" : ""}`}
+        aria-label="ChessDB 云开局库"
+        style={{ ...(cloudBookPosition ? { ...cloudBookPosition, right: "auto", bottom: "auto" } : {}), height: cloudBookCollapsed ? undefined : cloudBookHeight } as CSSProperties}
+      >
+        <div className="cloud-book-float-header" onPointerDown={startCloudBookDrag} onPointerMove={moveCloudBookDrag} onPointerUp={stopCloudBookDrag}>
+          <span><GripVertical size={15}/><BookOpen size={15}/><strong>云库 · ChessDB</strong></span>
+          <small>{cloudBookLoading ? "查询中…" : cloudBookError ?? `${cloudCandidates.length} 个候选`}</small>
+          <button type="button" title="上一步" aria-label="上一步" disabled={!board.currentNode} onPointerDown={(event) => event.stopPropagation()} onClick={() => void goPrevious()}><ChevronLeft size={16}/></button>
+          <button type="button" title="下一步" aria-label="下一步" disabled={!preferredContinuation(board)} onPointerDown={(event) => event.stopPropagation()} onClick={() => void goNext()}><ChevronRight size={16}/></button>
+          <button type="button" title={cloudBookCollapsed ? "展开云库" : "折叠云库"} aria-label={cloudBookCollapsed ? "展开云库" : "折叠云库"} onPointerDown={(event) => event.stopPropagation()} onClick={() => setCloudBookCollapsed((collapsed) => !collapsed)}><ChevronDown size={16}/></button>
+          <button type="button" title="关闭云库面板" aria-label="关闭云库面板" onPointerDown={(event) => event.stopPropagation()} onClick={() => setCloudBookVisible(false)}><X size={16}/></button>
+        </div>
+        {!cloudBookCollapsed && <div className="xqb-candidates cloud-book-candidate-list">
+          {cloudCandidates.map((candidate) => <button key={candidate.iccs} onClick={() => void playIccsMove(candidate.iccs)} title={candidate.memo || candidate.source}>
+            <strong>{candidate.notation}</strong><span>{candidate.score > 0 ? `+${candidate.score}` : candidate.score}</span><small>{candidate.winRate == null ? "云库候选" : `胜率 ${candidate.winRate.toFixed(1)}%`}{candidate.memo ? ` · ${candidate.memo}` : ""}</small>
+          </button>)}
+          {!cloudBookLoading && cloudCandidates.length === 0 && <p className="cloud-book-status">{cloudBookError ? "本局面暂时无法从云库读取候选" : "当前局面暂无云库候选"}</p>}
+        </div>}
+        {!cloudBookCollapsed && (
+          <div className="cloud-book-resize-handle" title="上下拖动调整云库面板高度" onPointerDown={startCloudBookResize} onPointerMove={moveCloudBookResize} onPointerUp={stopCloudBookResize}/>
+        )}
+      </aside>}
+      {chessPlatform.kind === "desktop" && desktopPreferences.cloudBookEnabled && !cloudBookVisible && <button className="cloud-book-reopen" title="打开云库面板" onClick={() => setCloudBookVisible(true)}><BookOpen size={15}/>打开云库</button>}
       {reportDialogOpen && reportPresentation && <GameReportDialog
         report={reportPresentation}
         currentNode={board.currentNode}
