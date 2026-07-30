@@ -7,3 +7,4 @@ apps/desktop/dist/
 apps/desktop/node_modules/
 apps/desktop/public/wasm/
 apps/desktop/src-tauri/gen/
+apps/desktop/src-tauri/resources/pikafish/
