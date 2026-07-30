@@ -1,7 +1,7 @@
 {
   "name": "xiangqi-desktop-ui",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.1",
   "type": "module",
   "scripts": {
     "wasm:build": "wasm-pack build ../../crates/web-core --target web --out-dir ../../apps/desktop/public/wasm --out-name xiangqi_web_core",

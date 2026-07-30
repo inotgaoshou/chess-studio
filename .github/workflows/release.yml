@@ -20,7 +20,30 @@ env:
   TAURI_RESOURCE_CONFIG: '{"bundle":{"resources":["resources/fonts/OFL.txt","resources/pikafish"]}}'
 
 jobs:
+  validate-macos-signing:
+    name: Validate macOS signing
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify signing and notarization secrets
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          missing=0
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!name}" ]; then
+              echo "::error title=Missing release secret::${name} must be configured before publishing a notarized macOS DMG."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
   build:
+    needs: validate-macos-signing
     name: ${{ matrix.name }}
     strategy:
       fail-fast: false
