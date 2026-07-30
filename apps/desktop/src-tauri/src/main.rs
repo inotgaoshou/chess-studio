@@ -32,6 +32,8 @@ use uuid::Uuid;
 use xiangqi_core::{Board, Color, GameStatus, PieceKind, STARTING_FEN, Square};
 use xiangqi_manual::{ManualTree, MoveNode};
 
+const BUILTIN_ENGINE_PATH: &str = "builtin:pikafish";
+
 struct AppModel {
     board: Board,
     starting_fen: String,
@@ -387,12 +389,11 @@ fn preview_line_steps(fen: &str, pv: &[String]) -> Result<Vec<PreviewLineStepDto
     let mut board = Board::from_fen(fen).map_err(|error| error.to_string())?;
     let mut steps = Vec::with_capacity(pv.len());
     for (index, iccs) in pv.iter().enumerate() {
-        let mv = xiangqi_core::Move::from_iccs(iccs).map_err(|error| {
-            format!("候选线路第 {} 步格式不正确：{}", index + 1, error)
-        })?;
-        let piece = board.piece_at(mv.from).ok_or_else(|| {
-            format!("候选线路第 {} 步非法：起点没有棋子", index + 1)
-        })?;
+        let mv = xiangqi_core::Move::from_iccs(iccs)
+            .map_err(|error| format!("候选线路第 {} 步格式不正确：{}", index + 1, error))?;
+        let piece = board
+            .piece_at(mv.from)
+            .ok_or_else(|| format!("候选线路第 {} 步非法：起点没有棋子", index + 1))?;
         let notation = board
             .chinese_move_notation(mv)
             .map_err(|error| format!("候选线路第 {} 步无法生成中文记谱：{}", index + 1, error))?;
@@ -821,21 +822,23 @@ async fn analyze_position(
     if state.engine.lock().await.is_some() {
         return Err("an engine search is already running".into());
     }
+    let resolved_engine_path = resolve_engine_path(&app, &engine_path)?;
+    let resolved_engine_path_text = resolved_engine_path.to_string_lossy().into_owned();
     let mut slot = state.play_session.lock().await;
     if slot
         .as_ref()
-        .is_some_and(|runtime| runtime.path != engine_path)
+        .is_some_and(|runtime| runtime.path != resolved_engine_path_text)
     {
         if let Some(runtime) = slot.take() {
             let _ = runtime.session.close().await;
         }
     }
     if slot.is_none() {
-        let session = EngineSession::launch(&engine_path, Duration::from_secs(2))
+        let session = EngineSession::launch(&resolved_engine_path, Duration::from_secs(2))
             .await
             .map_err(|error| error.to_string())?;
         *slot = Some(EngineRuntime {
-            path: engine_path.clone(),
+            path: resolved_engine_path_text.clone(),
             session,
             pondering_fen: None,
             state: EngineRuntimeState::Idle,
@@ -959,13 +962,17 @@ async fn analyze_position(
         .model
         .lock()
         .map_err(|_| "state lock poisoned".to_owned())?;
-    let engine_name = Path::new(&engine_path)
+    let engine_name = resolved_engine_path
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("Local engine");
     model
         .store
-        .save_engine_profile(engine_name, &engine_path, protocol_name(protocol))
+        .save_engine_profile(
+            engine_name,
+            &resolved_engine_path_text,
+            protocol_name(protocol),
+        )
         .map_err(|error| error.to_string())?;
     if state.analysis_generation.load(Ordering::SeqCst) != analysis_generation {
         return Ok(lines);
@@ -980,7 +987,7 @@ async fn analyze_position(
         .save_analysis(
             analysis_game_id,
             analysis_node_id,
-            &engine_path,
+            &resolved_engine_path_text,
             &config_hash,
             lines.iter().filter_map(|line| line.depth).max(),
             primary.and_then(|line| line.score_cp),
@@ -1019,18 +1026,23 @@ async fn engine_play_move(
     if state.engine.lock().await.is_some() {
         return Err("引擎正在执行其他搜索，请先停止".into());
     }
+    let resolved_engine_path = resolve_engine_path(&app, &engine_path)?;
+    let resolved_engine_path_text = resolved_engine_path.to_string_lossy().into_owned();
     let mut slot = state.play_session.lock().await;
-    if slot.as_ref().is_some_and(|play| play.path != engine_path) {
+    if slot
+        .as_ref()
+        .is_some_and(|play| play.path != resolved_engine_path_text)
+    {
         if let Some(play) = slot.take() {
             let _ = play.session.close().await;
         }
     }
     if slot.is_none() {
-        let session = EngineSession::launch(&engine_path, Duration::from_secs(2))
+        let session = EngineSession::launch(&resolved_engine_path, Duration::from_secs(2))
             .await
             .map_err(|error| error.to_string())?;
         *slot = Some(EngineRuntime {
-            path: engine_path.clone(),
+            path: resolved_engine_path_text.clone(),
             session,
             pondering_fen: None,
             state: EngineRuntimeState::Idle,
@@ -1244,6 +1256,10 @@ async fn move_now(state: State<'_, DesktopState>) -> Result<bool, String> {
 
 #[tauri::command]
 fn detect_pikafish(app: tauri::AppHandle) -> Option<String> {
+    if bundled_pikafish_path(&app).is_some() {
+        return Some(BUILTIN_ENGINE_PATH.into());
+    }
+
     let mut candidates = Vec::new();
     if let Some(path) = std::env::var_os("PIKAFISH_PATH") {
         candidates.push(PathBuf::from(path));
@@ -1276,6 +1292,20 @@ fn detect_pikafish(app: tauri::AppHandle) -> Option<String> {
         .map(|candidate| candidate.to_string_lossy().into_owned())
 }
 
+fn bundled_pikafish_path(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        candidates.extend(pikafish_candidates(&resource_dir));
+    }
+    if let Ok(executable) = std::env::current_exe() {
+        if let Some(parent) = executable.parent() {
+            candidates.extend(pikafish_candidates(parent));
+            candidates.extend(pikafish_candidates(&parent.join("../Resources")));
+        }
+    }
+    candidates.into_iter().find(|candidate| candidate.is_file())
+}
+
 fn pikafish_candidates(base: &Path) -> Vec<PathBuf> {
     [
         "pikafish",
@@ -1289,6 +1319,22 @@ fn pikafish_candidates(base: &Path) -> Vec<PathBuf> {
     .into_iter()
     .map(|relative| base.join(relative))
     .collect()
+}
+
+fn resolve_engine_path(app: &tauri::AppHandle, value: &str) -> Result<PathBuf, String> {
+    let trimmed = value.trim();
+    if trimmed == BUILTIN_ENGINE_PATH {
+        return bundled_pikafish_path(app)
+            .ok_or_else(|| "安装包内未找到内置 Pikafish，请重新安装或手动选择外部引擎".to_owned());
+    }
+    if trimmed.is_empty() {
+        return Err("请先选择 Pikafish 引擎".into());
+    }
+    let path = PathBuf::from(trimmed);
+    if !path.is_file() {
+        return Err("引擎可执行文件不存在".into());
+    }
+    Ok(path)
 }
 
 fn report_line_nodes(
@@ -1597,11 +1643,9 @@ async fn generate_game_report_inner(
     app: &tauri::AppHandle,
     state: &DesktopState,
 ) -> Result<GameReportDatasetDto, String> {
-    let engine_path = engine_path.trim().to_owned();
-    if !Path::new(&engine_path).is_file() {
-        return Err("引擎可执行文件不存在".into());
-    }
-    let engine_fingerprint = report_engine_fingerprint(Path::new(&engine_path))?;
+    let resolved_engine_path = resolve_engine_path(app, &engine_path)?;
+    let resolved_engine_path_text = resolved_engine_path.to_string_lossy().into_owned();
+    let engine_fingerprint = report_engine_fingerprint(&resolved_engine_path)?;
     let report_depth = report_depth.clamp(8, 40);
     let limit = SearchLimit::Depth(report_depth);
     let threads = threads.clamp(1, 64);
@@ -1701,7 +1745,7 @@ async fn generate_game_report_inner(
         if let Some(runtime) = slot.take() {
             let _ = runtime.session.close().await;
         }
-        let mut session = EngineSession::launch(&engine_path, Duration::from_secs(5))
+        let mut session = EngineSession::launch(&resolved_engine_path, Duration::from_secs(5))
             .await
             .map_err(|error| format!("引擎握手失败：{error}"))?;
         session
@@ -1878,7 +1922,7 @@ async fn generate_game_report_inner(
             return Err(error);
         }
         *slot = Some(EngineRuntime {
-            path: engine_path.clone(),
+            path: resolved_engine_path_text.clone(),
             session,
             pondering_fen: None,
             state: EngineRuntimeState::Idle,
@@ -1890,7 +1934,11 @@ async fn generate_game_report_inner(
             .and_then(|mut model| {
                 model
                     .store
-                    .save_engine_profile("Pikafish report", &engine_path, protocol_name(protocol))
+                    .save_engine_profile(
+                        "Pikafish report",
+                        &resolved_engine_path_text,
+                        protocol_name(protocol),
+                    )
                     .map(|_| ())
                     .map_err(|error| error.to_string())
             });
@@ -2148,16 +2196,17 @@ fn save_desktop_preferences(
 }
 
 #[tauri::command]
-async fn probe_engine(path: String) -> Result<EngineProbeDto, String> {
-    let path = PathBuf::from(path.trim());
-    if !path.is_file() {
-        return Err("引擎可执行文件不存在".into());
-    }
-    let session = EngineSession::launch(&path, Duration::from_secs(5))
+async fn probe_engine(path: String, app: tauri::AppHandle) -> Result<EngineProbeDto, String> {
+    let resolved_path = resolve_engine_path(&app, &path)?;
+    let session = EngineSession::launch(&resolved_path, Duration::from_secs(5))
         .await
         .map_err(|error| format!("引擎握手失败：{error}"))?;
     Ok(EngineProbeDto {
-        path: path.to_string_lossy().into_owned(),
+        path: if path.trim() == BUILTIN_ENGINE_PATH {
+            BUILTIN_ENGINE_PATH.into()
+        } else {
+            resolved_path.to_string_lossy().into_owned()
+        },
         protocol: protocol_name(session.protocol()),
     })
 }
@@ -3128,11 +3177,8 @@ mod tests {
 
     #[test]
     fn preview_line_simulates_moves_without_model_state() {
-        let steps = preview_line_steps(
-            STARTING_FEN,
-            &["h2e2".to_owned(), "h9g7".to_owned()],
-        )
-        .unwrap();
+        let steps =
+            preview_line_steps(STARTING_FEN, &["h2e2".to_owned(), "h9g7".to_owned()]).unwrap();
 
         assert_eq!(steps.len(), 2);
         assert_eq!(steps[0].notation, "炮二平五");
@@ -3142,17 +3188,19 @@ mod tests {
         assert_eq!(steps[0].status, "进行中");
         assert_eq!(steps[1].notation, "马8进7");
         assert_eq!(steps[1].moved_by, "黑方");
-        assert!(steps[1].pieces.iter().any(|piece| piece.row == 2 && piece.col == 6 && piece.label == "马"));
+        assert!(
+            steps[1]
+                .pieces
+                .iter()
+                .any(|piece| piece.row == 2 && piece.col == 6 && piece.label == "马")
+        );
     }
 
     #[test]
     fn preview_line_rejects_illegal_candidate_move() {
-        let error = preview_line_steps(
-            STARTING_FEN,
-            &["h2e2".to_owned(), "h2e2".to_owned()],
-        )
-        .err()
-        .unwrap();
+        let error = preview_line_steps(STARTING_FEN, &["h2e2".to_owned(), "h2e2".to_owned()])
+            .err()
+            .unwrap();
 
         assert!(error.contains("第 2 步非法"));
     }

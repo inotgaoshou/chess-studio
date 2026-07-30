@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { FolderOpen, LogIn, Save, Settings2, UserPlus, X } from "lucide-react";
-import type { DesktopPreferencesDto, SyncAccountDto } from "./platform";
+import { BUILTIN_ENGINE_PATH, type DesktopPreferencesDto, type SyncAccountDto } from "./platform";
 
 export type DesktopDialog = "engine" | "syncSettings" | "register" | "login" | null;
 
@@ -15,6 +15,10 @@ type Props = {
   onSaveSync(serverUrl: string): Promise<void>;
   onAuthenticate(mode: "register" | "login", email: string, password: string): Promise<void>;
 };
+
+function engineInputValue(path: string) {
+  return path === BUILTIN_ENGINE_PATH ? "内置 Pikafish（随应用安装，推荐）" : path;
+}
 
 export function DesktopDialogs({ dialog, preferences, account, busy, onClose, onChooseEngine, onSaveEngine, onSaveSync, onAuthenticate }: Props) {
   const [draft, setDraft] = useState(preferences);
@@ -73,7 +77,8 @@ export function DesktopDialogs({ dialog, preferences, account, busy, onClose, on
         </header>
 
         {dialog === "engine" && <div className="dialog-form engine-settings-form">
-          <label className="full"><span>引擎可执行文件</span><div className="dialog-input-action"><input value={draft.enginePath} onChange={(event) => { setEnginePickerError(""); setDraft({ ...draft, enginePath: event.target.value }); }}/><button type="button" title="选择引擎文件" disabled={busy || enginePickerBusy} onClick={() => void chooseEngine()}><FolderOpen size={15}/></button></div></label>
+          <label className="full"><span>引擎可执行文件</span><div className="dialog-input-action"><input value={engineInputValue(draft.enginePath)} readOnly={draft.enginePath === BUILTIN_ENGINE_PATH} placeholder="留空后可选择外部 Pikafish" onChange={(event) => { setEnginePickerError(""); setDraft({ ...draft, enginePath: event.target.value }); }}/><button type="button" title="使用安装包内置 Pikafish" disabled={busy || enginePickerBusy} onClick={() => { setEnginePickerError(""); setDraft({ ...draft, enginePath: BUILTIN_ENGINE_PATH }); }}>内置</button><button type="button" title="选择外部引擎文件" disabled={busy || enginePickerBusy} onClick={() => void chooseEngine()}><FolderOpen size={15}/></button></div></label>
+          {draft.enginePath === BUILTIN_ENGINE_PATH && <p className="dialog-hint full">当前使用安装包内置 Pikafish。正式安装后会从 App 资源目录自动定位，不依赖本机绝对路径。</p>}
           {enginePickerError && <p className="dialog-warning full" role="alert">{enginePickerError}</p>}
           <label><span>线程</span><input type="number" min={1} max={64} value={draft.threads} onChange={(event) => setDraft({ ...draft, threads: Number(event.target.value) })}/></label>
           <label><span>Hash (MB)</span><input type="number" min={16} max={4096} step={16} value={draft.hashMb} onChange={(event) => setDraft({ ...draft, hashMb: Number(event.target.value) })}/></label>

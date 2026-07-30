@@ -2,7 +2,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DesktopDialogs } from "./DesktopDialogs";
-import type { DesktopPreferencesDto, SyncAccountDto } from "./platform";
+import { BUILTIN_ENGINE_PATH, type DesktopPreferencesDto, type SyncAccountDto } from "./platform";
 
 const preferences: DesktopPreferencesDto = {
   enginePath: "/opt/pikafish",
@@ -49,11 +49,23 @@ describe("DesktopDialogs", () => {
       onChooseEngine: chooseEngine,
     });
 
-    await user.click(screen.getByRole("button", { name: "选择引擎文件" }));
+    await user.click(screen.getByRole("button", { name: "选择外部引擎文件" }));
 
     expect(chooseEngine).toHaveBeenCalledWith("");
     expect((screen.getByLabelText("引擎可执行文件") as HTMLInputElement).value).toBe(enginePath);
     expect((screen.getByRole("button", { name: "检测并保存" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("uses a stable built-in engine marker instead of showing an install-specific path", async () => {
+    const { props, user } = renderDialog("engine", {
+      preferences: { ...preferences, enginePath: BUILTIN_ENGINE_PATH },
+    });
+
+    expect((screen.getByLabelText("引擎可执行文件") as HTMLInputElement).value).toBe("内置 Pikafish（随应用安装，推荐）");
+    expect(screen.getByText(/不依赖本机绝对路径/)).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "检测并保存" }));
+    expect(props.onSaveEngine).toHaveBeenCalledWith(expect.objectContaining({ enginePath: BUILTIN_ENGINE_PATH }));
   });
 
   it("shows a file picker error instead of failing silently", async () => {
@@ -62,7 +74,7 @@ describe("DesktopDialogs", () => {
       onChooseEngine: vi.fn(async () => { throw new Error("dialog.open not allowed"); }),
     });
 
-    await user.click(screen.getByRole("button", { name: "选择引擎文件" }));
+    await user.click(screen.getByRole("button", { name: "选择外部引擎文件" }));
 
     expect((await screen.findByRole("alert")).textContent).toContain("选择引擎文件失败：dialog.open not allowed");
   });

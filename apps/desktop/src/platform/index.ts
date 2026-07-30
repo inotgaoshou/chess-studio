@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { webDatabase, type SyncOperation, type WebGameRecord } from "./indexedDb";
+import { BUILTIN_ENGINE_PATH } from "./types";
 import type { AnalysisLine, AnalysisOptions, BoardState, ChessPlatform, DesktopPreferencesDto, EngineMoveResult, EnginePlayOptions, EngineProbeDto, EngineRuntimeEvent, GameReportDatasetDto, GameReportOptionsDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, PreviewLineStep, SyncAccountDto, SyncResult } from "./types";
 
 type WebGameInstance = {
@@ -70,7 +71,7 @@ class DesktopPlatform implements ChessPlatform {
     const path = await open({
       multiple: false,
       directory: false,
-      defaultPath: currentPath || undefined,
+      defaultPath: currentPath && currentPath !== BUILTIN_ENGINE_PATH ? currentPath : undefined,
       title: "选择 Pikafish 可执行文件",
     });
     return typeof path === "string" ? path : undefined;
@@ -473,4 +474,5 @@ class WebPlatform implements ChessPlatform {
 
 const tauriAvailable = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 export const chessPlatform: ChessPlatform = tauriAvailable ? new DesktopPlatform() : new WebPlatform();
+export { BUILTIN_ENGINE_PATH } from "./types";
 export type { AnalysisLine, AnalysisOptions, BoardState, BranchCoachInsightDto, ChessPlatform, DesktopPreferencesDto, EngineProbeDto, EngineRuntimeEvent, EngineRuntimeState, GameReportDatasetDto, GameReportOptionsDto, GameReportPositionDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, MoveCoachInsightDto, MoveItem, OpeningBookHitDto, Piece, PreviewLineStep, QualityGrade, ReportPhase, ReportSidePresentationDto, Side, SyncAccountDto, SyncResult } from "./types";

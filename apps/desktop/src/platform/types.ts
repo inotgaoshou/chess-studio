@@ -178,6 +178,7 @@ export type GameReportPresentationDto = {
   disclaimer: string;
 };
 export type SyncResult = { uploaded: number; downloaded: number; cursor: number };
+export const BUILTIN_ENGINE_PATH = "builtin:pikafish";
 export type DesktopPreferencesDto = {
   enginePath: string;
   threads: number;

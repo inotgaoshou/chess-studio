@@ -39,7 +39,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { chessPlatform, type AnalysisLine, type BoardState, type EngineRuntimeState, type GameReportDatasetDto, type GameReportProgressDto, type GameSummary, type MoveItem, type Piece, type PreviewLineStep } from "./platform";
+import { BUILTIN_ENGINE_PATH, chessPlatform, type AnalysisLine, type BoardState, type EngineRuntimeState, type GameReportDatasetDto, type GameReportProgressDto, type GameSummary, type MoveItem, type Piece, type PreviewLineStep } from "./platform";
 import { moveQualityFeedback, moveReports, positionEvaluation, trendPoints, trendTurningPoints } from "./analysisView";
 import { CandidateLine } from "./CandidateLine";
 import { DesktopMenuBar, type MenuCommand } from "./DesktopMenuBar";
@@ -117,6 +117,15 @@ const defaultSyncAccount: SyncAccountDto = {
   serverUrl: defaultDesktopPreferences.serverUrl,
   status: "unbound",
 };
+
+function engineDisplayName(path: string) {
+  return path === BUILTIN_ENGINE_PATH
+    ? "内置 Pikafish"
+    : path
+      ? path.split(/[\\/]/).at(-1) ?? path
+      : "选择 Pikafish";
+}
+
 const editorPalette: Piece[] = [
   ...["rook", "horse", "elephant", "advisor", "king", "cannon", "pawn"].map((kind, index) => ({ row: 0, col: index, color: "red" as const, kind, label: ["车", "马", "相", "仕", "帅", "炮", "兵"][index] })),
   ...["rook", "horse", "elephant", "advisor", "king", "cannon", "pawn"].map((kind, index) => ({ row: 1, col: index, color: "black" as const, kind, label: ["车", "马", "象", "士", "将", "炮", "卒"][index] })),
@@ -337,7 +346,7 @@ export default function App() {
               const detected = { ...desktopPreferencesRef.current, enginePath: path };
               desktopPreferencesRef.current = detected;
               setDesktopPreferences(detected);
-              setNotice("已自动识别 Pikafish 2026，请在引擎设置中保存");
+              setNotice(path === BUILTIN_ENGINE_PATH ? "已识别安装包内置 Pikafish，请在引擎设置中保存" : "已自动识别 Pikafish，请在引擎设置中保存");
             }
           }).catch(() => undefined);
         }
@@ -1978,7 +1987,7 @@ export default function App() {
               </div>
               {engineSide !== "none" && <div className="engine-play-status"><span className={engineThinking ? "thinking" : ""}/><strong>人机对弈</strong><small>Pikafish 执{engineSide === "red" ? "红" : "黑"}{ponderMove ? ` · 预测 ${ponderMove}` : ""}</small></div>}
               <button className="engine-config-summary" onClick={() => setDesktopDialog("engine")}>
-                <Settings2 size={14}/><span>{enginePath ? enginePath.split(/[\\/]/).at(-1) : "选择 Pikafish"}</span><small>{threads} 线程 · Hash {hashMb} MB · MultiPV {multipv}</small>
+                <Settings2 size={14}/><span>{engineDisplayName(enginePath)}</span><small>{threads} 线程 · Hash {hashMb} MB · MultiPV {multipv}</small>
               </button>
             </>}
             {chessPlatform.kind === "web" && <div className="web-engine-source"><span>{serverUrl}</span><strong>MultiPV {multipv}</strong></div>}
