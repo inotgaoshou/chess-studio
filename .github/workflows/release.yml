@@ -47,7 +47,6 @@ jobs:
 
   build:
     needs: validate-macos-signing
-    if: ${{ matrix.platform != 'macos-arm64' && matrix.platform != 'macos-x64' || needs.validate-macos-signing.outputs.configured == 'true' }}
     name: ${{ matrix.name }}
     strategy:
       fail-fast: false
