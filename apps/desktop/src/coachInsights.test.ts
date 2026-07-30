@@ -120,6 +120,9 @@ describe("coachInsights", () => {
     expect(insights).toHaveLength(4);
     expect(insights[0]).toMatchObject({ rank: 1, move: "马二进三", followUp: ["马二进三", "马8进7", "炮二平五", "炮8平5", "车一平二", "车9平8"], shortLine: false, usesIccs: false });
     expect(insights[1].possibility).toContain("等价候选");
+    expect(insights[1].risk).toContain("首选 +80，本线 +52，相差 28 分");
+    expect(insights[1].risk).not.toContain("cp");
+    expect(insights[1].risk).not.toContain("约");
     expect(insights[2].shortLine).toBe(true);
     expect(insights[2].risk).toContain("线路较短");
     expect(insights[3]).toMatchObject({ usesIccs: true, followUp: ["c3c4", "h9g7", "h0g2", "i9h9", "h2e2", "b9c7"] });

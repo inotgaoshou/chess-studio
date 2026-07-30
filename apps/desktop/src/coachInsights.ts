@@ -96,13 +96,19 @@ function linePossibility(rank: number, gap: number) {
   return "探索线：与第一候选差距较大，更适合研究或作为反例复盘。";
 }
 
-function lineRisk(rank: number, gap: number, line: AnalysisLine, shortLine: boolean, usesIccs: boolean) {
+function scoreGapDetail(primaryValue: number, lineValue: number) {
+  return `首选 ${signed(primaryValue)}，本线 ${signed(lineValue)}，相差 ${Math.round(Math.abs(primaryValue - lineValue))} 分`;
+}
+
+function lineRisk(rank: number, primaryValue: number, lineValue: number, line: AnalysisLine, shortLine: boolean, usesIccs: boolean) {
+  const gap = Math.abs(primaryValue - lineValue);
+  const detail = scoreGapDetail(primaryValue, lineValue);
   if (usesIccs) return "当前候选仅有 ICCS，已保留原始线路；重新分析或生成整局报告后可补齐中文推演。";
   if (shortLine) return `当前深度只返回 ${Math.max(line.notation?.length ?? 0, line.pv.length)} 个半回合，线路较短，建议提高深度或时间再判断。`;
   if (rank === 1) return "风险参考：仍需检查对方是否有直接将军、吃子或反先手段。";
-  if (gap <= 50) return `风险较低：与首选分差约 ${Math.round(gap)}cp，可重点比较走法目的。`;
-  if (gap <= 150) return `风险中等：与首选分差约 ${Math.round(gap)}cp，适合先作为变招推演。`;
-  return `风险较高：与首选分差约 ${Math.round(gap)}cp，实战采用前需要找到明确补偿。`;
+  if (gap <= 50) return `风险较低：${detail}，可重点比较走法目的。`;
+  if (gap <= 150) return `风险中等：${detail}，适合先作为变招推演。`;
+  return `风险较高：${detail}，实战采用前需要找到明确补偿。`;
 }
 
 export function candidateCoachInsights(lines: AnalysisLine[], board: Pick<BoardState, "sideToMove">): CandidateCoachInsight[] {
@@ -113,7 +119,8 @@ export function candidateCoachInsights(lines: AnalysisLine[], board: Pick<BoardS
     const usesIccs = !line.notation?.length;
     const followUp = followUpSource.slice(0, 6);
     const move = followUp[0] ?? "暂无候选";
-    const gap = Math.abs(primaryValue - lineScoreValue(line));
+    const lineValue = lineScoreValue(line);
+    const gap = Math.abs(primaryValue - lineValue);
     const shortLine = followUp.length > 0 && followUp.length < 6;
     const rank = line.multipv || index + 1;
     return {
@@ -123,7 +130,7 @@ export function candidateCoachInsights(lines: AnalysisLine[], board: Pick<BoardS
       depthText: `深度 ${line.depth ?? "-"}`,
       intent: linePurpose(rank, move, board.sideToMove),
       possibility: linePossibility(rank, gap),
-      risk: lineRisk(rank, gap, line, shortLine, usesIccs),
+      risk: lineRisk(rank, primaryValue, lineValue, line, shortLine, usesIccs),
       followUp,
       shortLine,
       usesIccs,
