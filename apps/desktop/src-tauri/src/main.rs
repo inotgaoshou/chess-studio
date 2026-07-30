@@ -1,3 +1,5 @@
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+
 mod credential_store;
 mod cloud_opening_book;
 mod gif_export;

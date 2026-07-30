@@ -117,6 +117,8 @@ const defaultDesktopPreferences: DesktopPreferencesDto = {
   boardSkin: "original",
   pieceSkin: "original",
   reportDepth: 20,
+  cloudBookEnabled: true,
+  cloudBookUrl: "https://www.chessdb.cn/chessdb.php",
   serverUrl: "http://127.0.0.1:8080",
 };
 const defaultSyncAccount: SyncAccountDto = {

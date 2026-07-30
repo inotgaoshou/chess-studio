@@ -77,7 +77,7 @@ pub struct DesktopPreferences {
     pub disabled_xqb_book_paths: Vec<String>,
     #[serde(default)]
     pub active_engine_id: Option<Uuid>,
-    #[serde(default)]
+    #[serde(default = "default_cloud_book_enabled")]
     pub cloud_book_enabled: bool,
     #[serde(default = "default_cloud_book_url")]
     pub cloud_book_url: String,
@@ -104,6 +104,10 @@ fn default_cloud_book_url() -> String {
     "https://www.chessdb.cn/chessdb.php".into()
 }
 
+fn default_cloud_book_enabled() -> bool {
+    true
+}
+
 impl Default for DesktopPreferences {
     fn default() -> Self {
         Self {
@@ -124,7 +128,7 @@ impl Default for DesktopPreferences {
             xqb_book_paths: Vec::new(),
             disabled_xqb_book_paths: Vec::new(),
             active_engine_id: None,
-            cloud_book_enabled: false,
+            cloud_book_enabled: default_cloud_book_enabled(),
             cloud_book_url: default_cloud_book_url(),
             server_url: "http://127.0.0.1:8080".into(),
         }
@@ -2010,7 +2014,7 @@ mod tests {
         assert_eq!(preferences.color_theme, "dark");
         assert_eq!(preferences.report_depth, 20);
         assert!(preferences.xqb_book_paths.is_empty());
-        assert!(!preferences.cloud_book_enabled);
+        assert!(preferences.cloud_book_enabled);
         assert_eq!(preferences.cloud_book_url, "https://www.chessdb.cn/chessdb.php");
     }
 
