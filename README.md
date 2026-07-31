@@ -46,6 +46,8 @@ cargo run -p xiangqi-server
 
 根据本机账号修改 `.env` 中的 `DATABASE_URL`。服务端资源上限由 `ENGINE_MAX_CONCURRENT`、`ENGINE_TIMEOUT_MS`、`ENGINE_THREADS` 和 `ENGINE_HASH_MB` 控制。
 
+本地开发可使用脚本启动：`./scripts/dev-server.sh start`、`./scripts/dev-server.sh restart`、`./scripts/dev-server.sh logs`、`./scripts/dev-desktop.sh`，或使用 `./scripts/dev-all.sh` 一次启动服务端和桌面端。桌面脚本固定使用 NVM 的 Node 24.14.0 与 Corepack，避免系统 Node 版本不兼容 pnpm。
+
 移动 Web/PWA 目前使用独立构建入口，不影响默认桌面构建：
 
 ```bash

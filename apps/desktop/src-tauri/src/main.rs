@@ -58,6 +58,7 @@ struct AppModel {
 struct DesktopState {
     model: Mutex<AppModel>,
     credentials: SharedCredentialStore,
+    session_token: Mutex<Option<String>>,
     engine: tokio::sync::Mutex<Option<EngineControl>>,
     report_engine: tokio::sync::Mutex<Option<EngineControl>>,
     report_commit: tokio::sync::Mutex<()>,
@@ -2265,10 +2266,10 @@ fn validate_preferences(preferences: &DesktopPreferences) -> Result<(), String> 
     if !matches!(preferences.color_theme.as_str(), "light" | "dark") {
         return Err("不支持的颜色主题".into());
     }
-    if !matches!(preferences.board_skin.as_str(), "original" | "classic" | "neon" | "jade" | "imperial") {
+    if !matches!(preferences.board_skin.as_str(), "original" | "classic" | "neon" | "jade" | "imperial" | "jingdian") {
         return Err("不支持的棋盘皮肤".into());
     }
-    if !matches!(preferences.piece_skin.as_str(), "original" | "classic" | "neon" | "jade" | "imperial") {
+    if !matches!(preferences.piece_skin.as_str(), "original" | "classic" | "neon" | "jade" | "imperial" | "jingdian") {
         return Err("不支持的棋子皮肤".into());
     }
     if !(1..=64).contains(&preferences.threads) {
@@ -2331,6 +2332,11 @@ fn save_desktop_preferences(
     state: State<'_, DesktopState>,
 ) -> Result<DesktopPreferences, String> {
     validate_preferences(&preferences)?;
+    if (preferences.board_skin == "jingdian" || preferences.piece_skin == "jingdian")
+        && sync_account_dto(&state)?.status != "signedIn"
+    {
+        return Err("登录同步账号后才能使用经典雅致皮肤".into());
+    }
     let mut model = state
         .model
         .lock()
@@ -2524,7 +2530,7 @@ fn sync_account_dto(state: &DesktopState) -> Result<SyncAccountDto, String> {
         .last_sync_result()
         .map_err(|error| error.to_string())?;
     drop(model);
-    let has_token = state.credentials.get(TOKEN_KEY)?.is_some();
+    let has_token = active_sync_token(state)?.is_some();
     let status = match (&binding, expired, has_token) {
         (None, _, _) => "unbound",
         (Some(_), true, _) => "expired",
@@ -2538,6 +2544,34 @@ fn sync_account_dto(state: &DesktopState) -> Result<SyncAccountDto, String> {
         status,
         last_sync_result,
     })
+}
+
+fn active_sync_token(state: &DesktopState) -> Result<Option<String>, String> {
+    if let Some(token) = state
+        .session_token
+        .lock()
+        .map_err(|_| "session token lock poisoned".to_owned())?
+        .clone()
+    {
+        return Ok(Some(token));
+    }
+    let token = state.credentials.get(TOKEN_KEY)?;
+    if let Some(token) = &token {
+        *state
+            .session_token
+            .lock()
+            .map_err(|_| "session token lock poisoned".to_owned())? = Some(token.clone());
+    }
+    Ok(token)
+}
+
+fn clear_sync_token(state: &DesktopState) -> Result<(), String> {
+    state.credentials.delete(TOKEN_KEY)?;
+    *state
+        .session_token
+        .lock()
+        .map_err(|_| "session token lock poisoned".to_owned())? = None;
+    Ok(())
 }
 
 #[tauri::command]
@@ -2559,10 +2593,7 @@ async fn subscription_request(
         .map_err(|error| error.to_string())?
         .server_url;
     validate_server_url(&server_url)?;
-    let token = state
-        .credentials
-        .get(TOKEN_KEY)?
-        .ok_or("请先登录同步账号")?;
+    let token = active_sync_token(state)?.ok_or("请先登录同步账号")?;
     let client = reqwest::Client::new();
     let url = format!("{}/api/v1/subscription{endpoint}", server_url.trim_end_matches('/'));
     let request = if let Some(code) = code {
@@ -2612,8 +2643,8 @@ async fn authenticate_sync_account(
     if !email.contains('@') {
         return Err("请输入有效邮箱".into());
     }
-    if password.len() < 10 {
-        return Err("密码至少需要 10 个字符".into());
+    if password.len() < 8 {
+        return Err("密码至少需要 8 个字符".into());
     }
     let (server_url, binding) = {
         let model = state
@@ -2647,7 +2678,13 @@ async fn authenticate_sync_account(
         user_id: auth.user_id,
         email,
     };
-    {
+    // Avoid persisting an account binding that cannot be logged into locally.
+    state.credentials.set(TOKEN_KEY, &auth.token)?;
+    *state
+        .session_token
+        .lock()
+        .map_err(|_| "session token lock poisoned".to_owned())? = Some(auth.token.clone());
+    let binding_result = (|| -> Result<(), String> {
         let mut model = state
             .model
             .lock()
@@ -2660,8 +2697,12 @@ async fn authenticate_sync_account(
             .store
             .set_sync_token_expired(false)
             .map_err(|error| error.to_string())?;
+        Ok(())
+    })();
+    if let Err(error) = binding_result {
+        let _ = clear_sync_token(state);
+        return Err(error);
     }
-    state.credentials.set(TOKEN_KEY, &auth.token)?;
     sync_account_dto(state)
 }
 
@@ -2682,9 +2723,22 @@ async fn request_auth(
         .map_err(|error| format!("同步服务不可用：{error}"))?;
     let status = response.status();
     if !status.is_success() {
+        let error_message = response
+            .json::<serde_json::Value>()
+            .await
+            .ok()
+            .and_then(|body| body.get("error").and_then(|value| value.as_str()).map(str::to_owned));
+        let duplicate_email = status.as_u16() == 409
+            || error_message
+                .as_deref()
+                .is_some_and(|message| {
+                    message.contains("email already registered")
+                        || message.contains("duplicate")
+                        || message.contains("Duplicate entry")
+                });
         return Err(match status.as_u16() {
             401 => "邮箱或密码不正确".into(),
-            409 => "该邮箱已经注册，请直接登录".into(),
+            _ if duplicate_email => "该邮箱已经注册，请直接登录".into(),
             _ => format!("账号服务返回错误 {status}"),
         });
     }
@@ -2714,7 +2768,7 @@ async fn login_sync_account(
 
 #[tauri::command]
 fn logout_sync_account(state: State<'_, DesktopState>) -> Result<SyncAccountDto, String> {
-    state.credentials.delete(TOKEN_KEY)?;
+    clear_sync_token(&state)?;
     state
         .model
         .lock()
@@ -2722,6 +2776,25 @@ fn logout_sync_account(state: State<'_, DesktopState>) -> Result<SyncAccountDto,
         .store
         .set_sync_token_expired(false)
         .map_err(|error| error.to_string())?;
+    sync_account_dto(&state)
+}
+
+#[tauri::command]
+fn unbind_sync_account(state: State<'_, DesktopState>) -> Result<SyncAccountDto, String> {
+    clear_sync_token(&state)?;
+    {
+        let mut model = state
+            .model
+            .lock()
+            .map_err(|_| "state lock poisoned".to_owned())?;
+        model
+            .store
+            .reset_sync_library()
+            .map_err(|error| error.to_string())?;
+        model.lamport = 0;
+        let document = ManualDocument::new(STARTING_FEN).map_err(|error| error.to_string())?;
+        install_document(&mut model, document, None, None)?;
+    }
     sync_account_dto(&state)
 }
 
@@ -2750,10 +2823,7 @@ async fn sync_now(state: State<'_, DesktopState>) -> Result<SyncResult, String> 
         }
         (pending, preferences.server_url)
     };
-    let token = state
-        .credentials
-        .get(TOKEN_KEY)?
-        .ok_or("登录已退出，请重新登录")?;
+    let token = active_sync_token(&state)?.ok_or("登录已退出，请重新登录")?;
     let client = reqwest::Client::new();
     let base = server_url.trim_end_matches('/');
     let push_response = client
@@ -2766,7 +2836,7 @@ async fn sync_now(state: State<'_, DesktopState>) -> Result<SyncResult, String> 
         .await
         .map_err(|error| format!("同步服务不可用：{error}"))?;
     if push_response.status() == reqwest::StatusCode::UNAUTHORIZED {
-        state.credentials.delete(TOKEN_KEY)?;
+        clear_sync_token(&state)?;
         state
             .model
             .lock()
@@ -2803,7 +2873,7 @@ async fn sync_now(state: State<'_, DesktopState>) -> Result<SyncResult, String> 
         .await
         .map_err(|error| format!("同步服务不可用：{error}"))?;
     if pull_response.status() == reqwest::StatusCode::UNAUTHORIZED {
-        state.credentials.delete(TOKEN_KEY)?;
+        clear_sync_token(&state)?;
         state
             .model
             .lock()
@@ -3396,6 +3466,7 @@ fn main() {
                     playable,
                 }),
                 credentials: Arc::new(SystemCredentialStore),
+                session_token: Mutex::new(None),
                 engine: tokio::sync::Mutex::new(None),
                 report_engine: tokio::sync::Mutex::new(None),
                 report_commit: tokio::sync::Mutex::new(()),
@@ -3460,6 +3531,7 @@ fn main() {
             register_sync_account,
             login_sync_account,
             logout_sync_account,
+            unbind_sync_account,
             sync_now
         ])
         .run(tauri::generate_context!())
@@ -3723,6 +3795,23 @@ mod tests {
             request_auth(&duplicate, "login", "user@example.com", "password-123")
                 .await
                 .unwrap_err(),
+            "该邮箱已经注册，请直接登录"
+        );
+
+        let legacy_duplicate = mock_auth_server(
+            "400 Bad Request",
+            r#"{"error":"email already registered"}"#.into(),
+        )
+        .await;
+        assert_eq!(
+            request_auth(
+                &legacy_duplicate,
+                "login",
+                "user@example.com",
+                "password-123",
+            )
+            .await
+            .unwrap_err(),
             "该邮箱已经注册，请直接登录"
         );
 

@@ -176,6 +176,7 @@ class DesktopPlatform implements ChessPlatform {
   registerSyncAccount(email: string, password: string) { return invoke<SyncAccountDto>("register_sync_account", { email, password }); }
   loginSyncAccount(email: string, password: string) { return invoke<SyncAccountDto>("login_sync_account", { email, password }); }
   logoutSyncAccount() { return invoke<SyncAccountDto>("logout_sync_account"); }
+  unbindSyncAccount() { return invoke<SyncAccountDto>("unbind_sync_account"); }
   synchronize() { return invoke<SyncResult>("sync_now"); }
 }
 
@@ -247,6 +248,7 @@ class WebPlatform implements ChessPlatform {
   async registerSyncAccount(): Promise<SyncAccountDto> { throw new Error("Web 端账号菜单不在本阶段开放"); }
   async loginSyncAccount(): Promise<SyncAccountDto> { throw new Error("Web 端账号菜单不在本阶段开放"); }
   async logoutSyncAccount(): Promise<SyncAccountDto> { throw new Error("Web 端账号菜单不在本阶段开放"); }
+  async unbindSyncAccount(): Promise<SyncAccountDto> { throw new Error("Web 端账号菜单不在本阶段开放"); }
   async openDocument(): Promise<Partial<BoardState> | undefined> { throw new Error("Web 端暂不支持原生文件对话框"); }
   async importXqbOpeningBook(): Promise<Partial<BoardState> | undefined> { throw new Error("Web 端暂不支持本地 XQB 开局库"); }
   async saveDocument(): Promise<string | undefined> { throw new Error("Web 端暂不支持原生文件保存"); }

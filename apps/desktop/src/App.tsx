@@ -22,6 +22,7 @@ import {
   LayoutGrid,
   Library,
   ListStart,
+  LogOut,
   MessageSquare,
   Maximize2,
   Moon,
@@ -178,8 +179,9 @@ function boardPoint(square: { row: number; col: number }, reversed: boolean) {
   return { x: 80 + col * 120, y: 80 + row * 120 };
 }
 
-function pieceAsset(piece: Piece) {
-  return `/skins/default/${piece.color === "red" ? "r" : "b"}${pieceCode[piece.kind] ?? "p"}.png`;
+function pieceAsset(piece: Piece, skin: DesktopPreferencesDto["pieceSkin"]) {
+  const folder = skin === "jingdian" ? "jingdian" : "default";
+  return `/skins/${folder}/${piece.color === "red" ? "r" : "b"}${pieceCode[piece.kind] ?? "p"}.png`;
 }
 
 function piecesToFen(pieces: Piece[], side: "red" | "black") {
@@ -325,7 +327,7 @@ export default function App() {
   const [cloudCandidates, setCloudCandidates] = useState<CloudBookCandidate[]>([]);
   const [cloudBookError, setCloudBookError] = useState<string>();
   const [cloudBookLoading, setCloudBookLoading] = useState(false);
-  const [cloudBookVisible, setCloudBookVisible] = useState(true);
+  const [cloudBookVisible, setCloudBookVisible] = useState(false);
   const [cloudBookCollapsed, setCloudBookCollapsed] = useState(false);
   const [cloudBookPosition, setCloudBookPosition] = useState<{ left: number; top: number }>();
   const [cloudBookHeight, setCloudBookHeight] = useState<number>();
@@ -334,6 +336,12 @@ export default function App() {
   const [trainingTasks, setTrainingTasks] = useState<TrainingTaskDto[]>([]);
   const [dialogBusy, setDialogBusy] = useState(false);
   const [online, setOnline] = useState(typeof navigator === "undefined" ? true : navigator.onLine);
+  const activeBoardSkin = syncAccount.status === "signedIn" || desktopPreferences.boardSkin !== "jingdian"
+    ? desktopPreferences.boardSkin
+    : "original";
+  const activePieceSkin = syncAccount.status === "signedIn" || desktopPreferences.pieceSkin !== "jingdian"
+    ? desktopPreferences.pieceSkin
+    : "original";
   const boardRevision = useRef(0);
   const reportExportingRef = useRef(false);
   const analysisLoadRevision = useRef(0);
@@ -700,6 +708,10 @@ export default function App() {
   }
 
   async function updateBoardSkin(patch: Pick<DesktopPreferencesDto, "boardSkin" | "pieceSkin">) {
+    if ((patch.boardSkin === "jingdian" || patch.pieceSkin === "jingdian") && syncAccount.status !== "signedIn") {
+      setNotice("登录同步账号后才能使用经典雅致皮肤");
+      return;
+    }
     try {
       await saveDesktopPreferencePatch(patch);
       setSkinMenuOpen(false);
@@ -1749,17 +1761,30 @@ export default function App() {
   async function authenticateSync(mode: "register" | "login", email: string, password: string) {
     setDialogBusy(true);
     try {
-      const account = mode === "register"
-        ? await chessPlatform.registerSyncAccount(email, password)
-        : await chessPlatform.loginSyncAccount(email, password);
+      if (mode === "register") {
+        await chessPlatform.registerSyncAccount(email, password);
+      } else {
+        await chessPlatform.loginSyncAccount(email, password);
+      }
+      const account = await chessPlatform.getSyncAccount();
+      if (account.status !== "signedIn") {
+        throw new Error("登录信息未能保存，请检查系统钥匙串权限后重试");
+      }
       setSyncAccount(account);
-      setSubscription(await chessPlatform.getSubscription());
       setDesktopDialog(null);
       setNotice(mode === "register" ? "账号已注册并绑定本地棋谱库" : "同步账号已登录");
     } catch (error) {
-      setNotice(friendlyError(error));
+      const message = friendlyError(error);
+      setNotice(message);
+      throw new Error(message);
     } finally {
       setDialogBusy(false);
+    }
+
+    try {
+      setSubscription(await chessPlatform.getSubscription());
+    } catch (error) {
+      setNotice(`账号已登录，但权益信息读取失败：${friendlyError(error)}`);
     }
   }
 
@@ -1770,6 +1795,24 @@ export default function App() {
       setNotice("已退出登录，本地棋谱和待同步改动保留");
     } catch (error) {
       setNotice(friendlyError(error));
+    }
+  }
+
+  async function unbindSync() {
+    setDialogBusy(true);
+    try {
+      setSyncAccount(await chessPlatform.unbindSyncAccount());
+      applyBoard(await chessPlatform.initialize());
+      await refreshGames();
+      setSubscription(undefined);
+      setTrainingTasks([]);
+      setNotice("已解除绑定并清空本机棋谱库，可注册或登录其他账号");
+    } catch (error) {
+      const message = friendlyError(error);
+      setNotice(message);
+      throw new Error(message);
+    } finally {
+      setDialogBusy(false);
     }
   }
 
@@ -1950,7 +1993,7 @@ export default function App() {
   }
 
   return (
-    <div className={`app-shell ${chessPlatform.kind}-shell theme-${colorTheme} board-skin-${desktopPreferences.boardSkin} piece-skin-${desktopPreferences.pieceSkin}`}>
+    <div className={`app-shell ${chessPlatform.kind}-shell theme-${colorTheme} board-skin-${activeBoardSkin} piece-skin-${activePieceSkin}`}>
       <header className="titlebar">
         <div className="window-brand"><span className="brand-seal">象</span><strong>棋研</strong><small>XIANGQI STUDIO</small></div>
         <strong className="window-title">棋研工作台</strong>
@@ -1990,6 +2033,7 @@ export default function App() {
         onChooseEngine={(currentPath) => chessPlatform.chooseEngineExecutable(currentPath)}
         onSaveEngine={saveEnginePreferences}
         onSaveSync={saveSyncPreferences}
+        onUnbindSync={unbindSync}
         onAuthenticate={authenticateSync}
         onRedeemSubscription={redeemSubscriptionCode}
         onGenerateTraining={generateTrainingTasks}
@@ -2075,10 +2119,14 @@ export default function App() {
             <button onClick={() => void synchronize()} disabled={syncBusy}>{syncBusy ? "同步中…" : "立即同步"}</button>
           </section>}
           {chessPlatform.kind === "desktop" && <section className="sync-box desktop-sync-summary">
-            <div className="sync-title"><Link size={14}/><strong>个人同步</strong></div>
-            <span>{syncAccount.email ?? "未绑定账号"}</span>
-            <small>{syncAccount.lastSyncResult ?? (syncAccount.status === "signedIn" ? "已登录，等待同步" : "本地编辑不受影响")}</small>
-            <button disabled={syncBusy} onClick={() => syncAccount.status === "signedIn" ? void synchronize() : setDesktopDialog(syncAccount.status === "unbound" ? "register" : "login")}>{syncBusy ? "同步中…" : syncAccount.status === "signedIn" ? "立即同步" : syncAccount.status === "expired" ? "重新登录" : syncAccount.status === "signedOut" ? "登录" : "注册账号"}</button>
+            <div className="sync-title"><Link size={14}/><strong>个人同步</strong><span className={`sync-status ${syncAccount.status}`}>{syncAccount.status === "signedIn" ? "已登录" : syncAccount.status === "expired" ? "已过期" : syncAccount.status === "signedOut" ? "未登录" : "未绑定"}</span></div>
+            <span>{syncAccount.status === "signedOut" ? `已绑定账号：${syncAccount.email}` : syncAccount.email ?? "未绑定账号"}</span>
+            <small>{syncAccount.lastSyncResult ?? (syncAccount.status === "signedIn" ? "已登录，等待同步" : syncAccount.status === "signedOut" ? "登录后可同步，本地编辑不受影响" : "本地编辑不受影响")}</small>
+            <div className="sync-actions">
+              <button disabled={syncBusy} onClick={() => syncAccount.status === "signedIn" ? void synchronize() : setDesktopDialog(syncAccount.status === "unbound" ? "register" : "login")}>{syncBusy ? "同步中…" : syncAccount.status === "signedIn" ? "立即同步" : syncAccount.status === "expired" ? "重新登录" : syncAccount.status === "signedOut" ? "登录该账号" : "注册账号"}</button>
+              {(syncAccount.status === "signedIn" || syncAccount.status === "expired") && <button className="secondary" title="退出后本地棋谱和待同步改动会保留" onClick={() => void logoutSync()}><LogOut size={13}/>退出登录</button>}
+            </div>
+            {syncAccount.status !== "unbound" && <button className="danger" disabled={syncBusy} onClick={() => setDesktopDialog("unbind")}>解除绑定并切换账号</button>}
           </section>}
         </aside>
 
@@ -2117,7 +2165,7 @@ export default function App() {
                     aria-label={`${squareToIccs(row, col)}${piece ? ` ${piece.color === "red" ? "红" : "黑"}${piece.label}` : ""}`}
                   >
                     {piece && <>
-                      <img src={pieceAsset(piece)} alt="" draggable={false} />
+                      <img src={pieceAsset(piece, activePieceSkin)} alt="" draggable={false} />
                       <span className="board-piece-label" aria-hidden="true">{piece.label}</span>
                     </>}
                     {isSelected && <img className="selection-mask" src="/skins/default/mask2.png" alt="" />}
@@ -2494,7 +2542,7 @@ export default function App() {
         </aside>
       </main>
       {skinShopOpen && (
-        <SkinShopDialog preferences={desktopPreferences} onClose={() => setSkinShopOpen(false)} onEquip={(patch) => void updateBoardSkin(patch)}/>
+        <SkinShopDialog preferences={desktopPreferences} signedIn={syncAccount.status === "signedIn"} onClose={() => setSkinShopOpen(false)} onEquip={(patch) => void updateBoardSkin(patch)}/>
       )}
       {chessPlatform.kind === "desktop" && desktopPreferences.cloudBookEnabled && cloudBookVisible && <aside
         className={`cloud-book-float ${cloudBookCollapsed ? "collapsed" : ""}`}
@@ -2565,12 +2613,12 @@ export default function App() {
               <div className="editor-board" aria-label="局面编辑棋盘">
                 {cells.map(({ row, col }) => {
                   const piece = editorPieceMap.get(`${row}-${col}`);
-                  return <button key={`${row}-${col}`} onClick={() => editSquare(row, col)} aria-label={`编辑 ${squareToIccs(row, col)}`}>{piece && <img src={pieceAsset(piece)} alt={piece.label}/>}</button>;
+                  return <button key={`${row}-${col}`} onClick={() => editSquare(row, col)} aria-label={`编辑 ${squareToIccs(row, col)}`}>{piece && <img src={pieceAsset(piece, activePieceSkin)} alt={piece.label}/>}</button>;
                 })}
               </div>
               <aside className="editor-tools">
                 <div className="piece-palette">
-                  {editorPalette.map((piece) => <button key={`${piece.color}-${piece.kind}`} className={editorPiece?.color === piece.color && editorPiece.kind === piece.kind ? "active" : ""} onClick={() => setEditorPiece(piece)}><img src={pieceAsset(piece)} alt={`${piece.color === "red" ? "红" : "黑"}${piece.label}`}/></button>)}
+                  {editorPalette.map((piece) => <button key={`${piece.color}-${piece.kind}`} className={editorPiece?.color === piece.color && editorPiece.kind === piece.kind ? "active" : ""} onClick={() => setEditorPiece(piece)}><img src={pieceAsset(piece, activePieceSkin)} alt={`${piece.color === "red" ? "红" : "黑"}${piece.label}`}/></button>)}
                   <button className={editorPiece == null ? "active erase" : "erase"} onClick={() => setEditorPiece(null)}><Trash2 size={18}/><span>删除</span></button>
                 </div>
                 <div className="editor-actions">

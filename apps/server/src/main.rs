@@ -157,7 +157,10 @@ enum ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        let status = match self {
+        if let Self::Database(error) = &self {
+            tracing::error!(%error, "database request failed");
+        }
+        let status = match &self {
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::Invalid(_) => StatusCode::BAD_REQUEST,
             Self::Conflict(_) => StatusCode::CONFLICT,
@@ -168,9 +171,15 @@ impl IntoResponse for ApiError {
             Self::QuotaExceeded => StatusCode::TOO_MANY_REQUESTS,
             Self::Database(_) | Self::Internal => StatusCode::INTERNAL_SERVER_ERROR,
         };
+        let message = match &self {
+            // Development builds expose the SQLx cause to make local setup failures actionable.
+            // Release builds retain the generic response used in production.
+            Self::Database(error) if cfg!(debug_assertions) => format!("database error: {error}"),
+            _ => self.to_string(),
+        };
         (
             status,
-            Json(serde_json::json!({ "error": self.to_string() })),
+            Json(serde_json::json!({ "error": message })),
         )
             .into_response()
     }
@@ -307,7 +316,9 @@ async fn register(
                 token: create_token(user_id, &state.jwt_secret)?,
             }))
         }
-        Err(sqlx::Error::Database(error)) if error.is_unique_violation() => {
+        Err(sqlx::Error::Database(error))
+            if error.is_unique_violation() || error.code().as_deref() == Some("1062") =>
+        {
             Err(ApiError::Conflict("email already registered".into()))
         }
         Err(error) => Err(ApiError::Database(error)),
@@ -352,7 +363,7 @@ async fn push(
         accepted.push(operation.op_id);
     }
     let cursor: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(MAX(sequence_id), 0) FROM operations WHERE user_id = ?",
+        "SELECT CAST(COALESCE(MAX(sequence_id), 0) AS SIGNED) FROM operations WHERE user_id = ?",
     )
     .bind(user_id.to_string())
     .fetch_one(&mut *transaction)
@@ -373,14 +384,14 @@ async fn pull(
     let cursor = query.cursor.unwrap_or(0);
     let limit = query.limit.unwrap_or(200).clamp(1, 500);
     type OperationRow = (
-        i64,
+        u64,
         String,
         String,
         String,
         String,
         String,
         serde_json::Value,
-        i64,
+        u64,
         chrono::DateTime<Utc>,
     );
     let rows: Vec<OperationRow> = sqlx::query_as(
@@ -391,7 +402,7 @@ async fn pull(
     for (sequence, op_id, device_id, entity_id, game_id, kind, payload, lamport, created_at) in rows
     {
         operations.push(SequencedOperation {
-            sequence: sequence as u64,
+            sequence,
             operation: Operation {
                 op_id: parse_uuid(op_id)?,
                 device_id: parse_uuid(device_id)?,
@@ -400,7 +411,7 @@ async fn pull(
                 kind: serde_json::from_value(serde_json::Value::String(kind))
                     .map_err(|_| ApiError::Internal)?,
                 payload,
-                lamport: lamport as u64,
+                lamport,
                 created_at,
             },
         });
@@ -801,9 +812,9 @@ fn validate_credentials(credentials: &Credentials) -> Result<(), ApiError> {
     if !credentials.email.contains('@') {
         return Err(ApiError::Invalid("valid email required".into()));
     }
-    if credentials.password.len() < 10 {
+    if credentials.password.len() < 8 {
         return Err(ApiError::Invalid(
-            "password must contain at least 10 characters".into(),
+            "password must contain at least 8 characters".into(),
         ));
     }
     Ok(())
@@ -869,6 +880,16 @@ mod tests {
             })
             .is_err()
         );
+        assert!(validate_credentials(&Credentials {
+            email: "user@example.com".into(),
+            password: "1234567".into(),
+        })
+        .is_err());
+        assert!(validate_credentials(&Credentials {
+            email: "user@example.com".into(),
+            password: "12345678".into(),
+        })
+        .is_ok());
     }
 
     #[test]

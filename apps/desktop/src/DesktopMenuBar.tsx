@@ -177,8 +177,8 @@ export function DesktopMenuBar({
     ? status.syncEmail ?? "已登录"
     : status.syncStatus === "expired"
       ? "登录已过期"
-      : status.syncStatus === "signedOut"
-        ? status.syncEmail ?? "已退出"
+    : status.syncStatus === "signedOut"
+        ? status.syncEmail ? `已绑定：${status.syncEmail}（未登录）` : "已退出"
         : "未绑定账号";
 
   return (

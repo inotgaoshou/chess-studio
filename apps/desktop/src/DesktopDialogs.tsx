@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { FolderOpen, LogIn, Save, Settings2, UserPlus, X } from "lucide-react";
 import { BUILTIN_ENGINE_PATH, type DesktopPreferencesDto, type SubscriptionDto, type SyncAccountDto, type TrainingTaskDto } from "./platform";
 
-export type DesktopDialog = "engine" | "syncSettings" | "register" | "login" | "subscription" | "training" | null;
+export type DesktopDialog = "engine" | "syncSettings" | "register" | "login" | "subscription" | "training" | "unbind" | null;
 
 type Props = {
   dialog: DesktopDialog;
@@ -15,6 +15,7 @@ type Props = {
   onChooseEngine(currentPath: string): Promise<string | undefined>;
   onSaveEngine(preferences: DesktopPreferencesDto): Promise<void>;
   onSaveSync(serverUrl: string): Promise<void>;
+  onUnbindSync(): Promise<void>;
   onAuthenticate(mode: "register" | "login", email: string, password: string): Promise<void>;
   onRedeemSubscription(code: string): Promise<void>;
   onGenerateTraining(): Promise<void>;
@@ -25,11 +26,20 @@ function engineInputValue(path: string) {
   return path === BUILTIN_ENGINE_PATH ? "内置 Pikafish（随应用安装，推荐）" : path;
 }
 
-export function DesktopDialogs({ dialog, preferences, account, subscription, trainingTasks, busy, onClose, onChooseEngine, onSaveEngine, onSaveSync, onAuthenticate, onRedeemSubscription, onGenerateTraining, onCompleteTraining }: Props) {
+function authenticationErrorMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /email already registered|邮箱.*已.*注册|\b409\b/i.test(message)
+    ? "该邮箱已经注册，请直接登录"
+    : message;
+}
+
+export function DesktopDialogs({ dialog, preferences, account, subscription, trainingTasks, busy, onClose, onChooseEngine, onSaveEngine, onSaveSync, onUnbindSync, onAuthenticate, onRedeemSubscription, onGenerateTraining, onCompleteTraining }: Props) {
   const [draft, setDraft] = useState(preferences);
   const [email, setEmail] = useState(account.email ?? "");
   const [password, setPassword] = useState("");
   const [redemptionCode, setRedemptionCode] = useState("");
+  const [unbindConfirmation, setUnbindConfirmation] = useState("");
+  const [unbindCompleted, setUnbindCompleted] = useState(false);
   const [enginePickerBusy, setEnginePickerBusy] = useState(false);
   const [enginePickerError, setEnginePickerError] = useState("");
 
@@ -43,6 +53,8 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
     setEmail(account.email ?? "");
     setPassword("");
     setRedemptionCode("");
+    setUnbindConfirmation("");
+    setUnbindCompleted(false);
     setEnginePickerBusy(false);
     setEnginePickerError("");
   }, [account.email, dialog, preferences]);
@@ -55,8 +67,11 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
   }
 
   async function authenticate(mode: "register" | "login") {
+    setEnginePickerError("");
     try {
       await onAuthenticate(mode, email, password);
+    } catch (error) {
+      setEnginePickerError(authenticationErrorMessage(error));
     } finally {
       setPassword("");
     }
@@ -95,11 +110,25 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
     }
   }
 
+  async function unbindSync() {
+    if (unbindConfirmation !== "解除绑定") {
+      setEnginePickerError("请输入“解除绑定”确认此操作");
+      return;
+    }
+    setEnginePickerError("");
+    try {
+      await onUnbindSync();
+      setUnbindCompleted(true);
+    } catch (error) {
+      setEnginePickerError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   return (
     <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) close(); }}>
-      <section className="settings-dialog" role="dialog" aria-modal="true" aria-label={dialog === "engine" ? "引擎设置" : dialog === "syncSettings" ? "同步设置" : dialog === "subscription" ? "Pro 权益" : dialog === "training" ? "训练任务" : dialog === "register" ? "注册同步账号" : "登录同步账号"}>
+      <section className="settings-dialog" role="dialog" aria-modal="true" aria-label={dialog === "engine" ? "引擎设置" : dialog === "syncSettings" ? "同步设置" : dialog === "subscription" ? "Pro 权益" : dialog === "training" ? "训练任务" : dialog === "unbind" ? "解除账号绑定" : dialog === "register" ? "注册同步账号" : "登录同步账号"}>
         <header>
-          <div>{dialog === "register" ? <UserPlus size={17}/> : dialog === "login" ? <LogIn size={17}/> : <Settings2 size={17}/>}<strong>{dialog === "engine" ? "引擎设置" : dialog === "syncSettings" ? "同步设置" : dialog === "subscription" ? "Pro 权益" : dialog === "training" ? "训练任务" : dialog === "register" ? "注册同步账号" : "登录同步账号"}</strong></div>
+          <div>{dialog === "register" ? <UserPlus size={17}/> : dialog === "login" ? <LogIn size={17}/> : <Settings2 size={17}/>}<strong>{dialog === "engine" ? "引擎设置" : dialog === "syncSettings" ? "同步设置" : dialog === "subscription" ? "Pro 权益" : dialog === "training" ? "训练任务" : dialog === "unbind" ? "解除账号绑定" : dialog === "register" ? "注册同步账号" : "登录同步账号"}</strong></div>
           <button className="tool-button" title="关闭" disabled={busy} onClick={close}><X size={16}/></button>
         </header>
 
@@ -116,8 +145,8 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
           <label><span>每步时间 (ms)</span><input type="number" min={100} max={30000} step={100} value={draft.moveTimeMs} onChange={(event) => setDraft({ ...draft, moveTimeMs: Number(event.target.value) })}/></label>
           <label className="check-row"><input type="checkbox" checked={draft.ponder} onChange={(event) => setDraft({ ...draft, ponder: event.target.checked })}/><span>后台思考</span></label>
           <label className="check-row"><input type="checkbox" checked={draft.autoAnalyze} onChange={(event) => setDraft({ ...draft, autoAnalyze: event.target.checked })}/><span>每步自动分析</span></label>
-          <label><span>棋盘皮肤</span><select value={draft.boardSkin} onChange={(event) => setDraft({ ...draft, boardSkin: event.target.value as DesktopPreferencesDto["boardSkin"] })}><option value="original">默认棋盘</option><option value="classic">暖木立体</option><option value="neon">霓虹星空</option><option value="jade">翡翠庭院</option><option value="imperial">朱墙宫阙</option></select></label>
-          <label><span>棋子皮肤</span><select value={draft.pieceSkin} onChange={(event) => setDraft({ ...draft, pieceSkin: event.target.value as DesktopPreferencesDto["pieceSkin"] })}><option value="original">默认棋子</option><option value="classic">暖木立体</option><option value="neon">霓虹发光</option><option value="jade">翡翠琉璃</option><option value="imperial">鎏金宫廷</option></select></label>
+          <label><span>棋盘皮肤</span><select value={draft.boardSkin} onChange={(event) => setDraft({ ...draft, boardSkin: event.target.value as DesktopPreferencesDto["boardSkin"] })}><option value="original">默认棋盘</option><option value="classic">暖木立体</option><option value="neon">霓虹星空</option><option value="jade">翡翠庭院</option><option value="imperial">朱墙宫阙</option>{account.status === "signedIn" && <option value="jingdian">经典雅致</option>}</select></label>
+          <label><span>棋子皮肤</span><select value={draft.pieceSkin} onChange={(event) => setDraft({ ...draft, pieceSkin: event.target.value as DesktopPreferencesDto["pieceSkin"] })}><option value="original">默认棋子</option><option value="classic">暖木立体</option><option value="neon">霓虹发光</option><option value="jade">翡翠琉璃</option><option value="imperial">鎏金宫廷</option>{account.status === "signedIn" && <option value="jingdian">经典雅致</option>}</select></label>
           <label className="check-row"><input type="checkbox" checked={draft.cloudBookEnabled ?? false} onChange={(event) => setDraft({ ...draft, cloudBookEnabled: event.target.checked })}/><span>启用 ChessDB 云开局库</span></label>
           <label className="full"><span>云库地址</span><input value={draft.cloudBookUrl ?? "https://www.chessdb.cn/chessdb.php"} onChange={(event) => setDraft({ ...draft, cloudBookUrl: event.target.value })}/></label>
           <p className="dialog-hint full">开启后会向该地址发送当前 FEN，仅用于查询候选着法；网络不可用不会影响本地棋谱和引擎。</p>
@@ -148,11 +177,27 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
           <footer><button onClick={close} disabled={busy}>关闭</button><button className="primary" disabled={busy} onClick={() => void onGenerateTraining()}>{busy ? "生成中…" : "从报告生成任务"}</button></footer>
         </div>}
 
+        {dialog === "unbind" && !unbindCompleted && <div className="dialog-form account-form">
+          <p className="dialog-warning">此操作会清除本机的棋谱、着法、待同步记录、分析缓存、复盘和训练任务，且无法恢复。</p>
+          <p className="dialog-hint">云端账号和已同步棋谱不会删除；引擎设置、皮肤与应用偏好会保留。</p>
+          <label className="full"><span>确认文本</span><input autoComplete="off" placeholder="请输入 解除绑定" value={unbindConfirmation} onChange={(event) => { setEnginePickerError(""); setUnbindConfirmation(event.target.value); }}/></label>
+          {enginePickerError && <p className="dialog-warning full" role="alert">{enginePickerError}</p>}
+          <footer><button onClick={close} disabled={busy}>取消</button><button className="danger" disabled={busy || unbindConfirmation !== "解除绑定"} onClick={() => void unbindSync()}>{busy ? "清除中…" : "解除并清空本机数据"}</button></footer>
+        </div>}
+
+        {dialog === "unbind" && unbindCompleted && <div className="dialog-form account-form">
+          <p className="dialog-success" role="status">本机棋谱库已解除绑定并清空</p>
+          <p className="dialog-hint">现在可以注册或登录另一个同步账号。云端账号与已同步的棋谱未被删除。</p>
+          <footer><button className="primary" onClick={close}>完成</button></footer>
+        </div>}
+
         {(dialog === "register" || dialog === "login") && <div className="dialog-form account-form">
           <p className="dialog-hint">{dialog === "register" ? "注册后当前本地棋谱库将永久绑定该账号。" : account.email ? `当前棋谱库绑定：${account.email}` : "登录后会绑定当前本地棋谱库。"}</p>
-          <label className="full"><span>邮箱</span><input type="email" autoComplete="username" disabled={!!account.email} value={email} onChange={(event) => setEmail(event.target.value)}/></label>
-          <label className="full"><span>密码</span><input type="password" autoComplete={dialog === "register" ? "new-password" : "current-password"} value={password} onChange={(event) => setPassword(event.target.value)}/></label>
-          <footer><button onClick={close} disabled={busy}>取消</button><button className="primary" disabled={busy || !email.trim() || password.length < 10} onClick={() => void authenticate(dialog)}>{dialog === "register" ? <UserPlus size={14}/> : <LogIn size={14}/>} {busy ? "请稍候…" : dialog === "register" ? "注册并登录" : "登录"}</button></footer>
+          <label className="full"><span>邮箱</span><input type="email" autoComplete="username" placeholder="name@example.com" disabled={!!account.email} value={email} onChange={(event) => setEmail(event.target.value)}/></label>
+          <label className="full"><span>密码</span><input type="password" minLength={8} autoComplete={dialog === "register" ? "new-password" : "current-password"} placeholder="至少 8 个字符" value={password} onChange={(event) => setPassword(event.target.value)}/></label>
+          <p className="dialog-hint">邮箱和至少 8 个字符的密码填写完成后，注册按钮即可使用。</p>
+          {enginePickerError && <p className="dialog-warning full" role="alert">{enginePickerError}</p>}
+          <footer><button onClick={close} disabled={busy}>取消</button><button className="primary" disabled={busy || !email.trim() || password.length < 8} onClick={() => void authenticate(dialog)}>{dialog === "register" ? <UserPlus size={14}/> : <LogIn size={14}/>} {busy ? "请稍候…" : dialog === "register" ? "注册并登录" : "登录"}</button></footer>
         </div>}
       </section>
     </div>

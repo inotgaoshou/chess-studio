@@ -240,6 +240,22 @@ impl LocalStore {
         self.set_sync_value("sync_account", &serde_json::to_string(account)?)
     }
 
+    pub fn reset_sync_library(&mut self) -> Result<(), StoreError> {
+        let transaction = self.connection.transaction()?;
+        transaction.execute("DELETE FROM training_tasks", [])?;
+        transaction.execute("DELETE FROM game_reports", [])?;
+        transaction.execute("DELETE FROM analysis_results", [])?;
+        transaction.execute("DELETE FROM move_nodes", [])?;
+        transaction.execute("DELETE FROM operations", [])?;
+        transaction.execute("DELETE FROM games", [])?;
+        transaction.execute(
+            "DELETE FROM sync_state WHERE key IN ('sync_account', 'sync_token_expired', 'last_sync_result', 'remote_cursor')",
+            [],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
     pub fn sync_token_expired(&self) -> Result<bool, StoreError> {
         Ok(self.sync_value("sync_token_expired")?.as_deref() == Some("true"))
     }
@@ -2196,5 +2212,28 @@ mod tests {
 
         assert_eq!(store.sync_account_binding().unwrap(), Some(account));
         assert_eq!(store.pending_operations(10).unwrap(), vec![op]);
+    }
+
+    #[test]
+    fn resetting_a_sync_library_removes_account_data_and_games() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        store
+            .bind_sync_account(&SyncAccountBinding {
+                user_id: Uuid::new_v4(),
+                email: "old@example.com".into(),
+            })
+            .unwrap();
+        let game_id = Uuid::new_v4();
+        let op = operation(game_id);
+        store
+            .save_game_with_operation(game_id, "Old study", "fen", Uuid::new_v4(), &op)
+            .unwrap();
+
+        store.reset_sync_library().unwrap();
+
+        assert!(store.sync_account_binding().unwrap().is_none());
+        assert!(store.pending_operations(10).unwrap().is_empty());
+        assert!(store.load_game(game_id).unwrap().is_none());
+        assert_eq!(store.remote_cursor().unwrap(), 0);
     }
 }

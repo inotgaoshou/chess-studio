@@ -214,8 +214,8 @@ export type DesktopPreferencesDto = {
   autoAnalyze: boolean;
   libraryCollapsed: boolean;
   colorTheme: "light" | "dark";
-  boardSkin: "original" | "classic" | "neon" | "jade" | "imperial";
-  pieceSkin: "original" | "classic" | "neon" | "jade" | "imperial";
+  boardSkin: "original" | "classic" | "neon" | "jade" | "imperial" | "jingdian";
+  pieceSkin: "original" | "classic" | "neon" | "jade" | "imperial" | "jingdian";
   reportDepth: number;
   xqbBookPaths?: string[];
   disabledXqbBookPaths?: string[];
@@ -318,5 +318,6 @@ export interface ChessPlatform {
   registerSyncAccount(email: string, password: string): Promise<SyncAccountDto>;
   loginSyncAccount(email: string, password: string): Promise<SyncAccountDto>;
   logoutSyncAccount(): Promise<SyncAccountDto>;
+  unbindSyncAccount(): Promise<SyncAccountDto>;
   synchronize(serverUrl?: string, token?: string): Promise<SyncResult>;
 }

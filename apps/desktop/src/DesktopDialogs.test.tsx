@@ -25,7 +25,7 @@ const account: SyncAccountDto = { serverUrl: preferences.serverUrl, status: "unb
 
 afterEach(cleanup);
 
-function renderDialog(dialog: "engine" | "syncSettings" | "register" | "login" | "subscription" | "training", overrides: Partial<Parameters<typeof DesktopDialogs>[0]> = {}) {
+function renderDialog(dialog: "engine" | "syncSettings" | "register" | "login" | "subscription" | "training" | "unbind", overrides: Partial<Parameters<typeof DesktopDialogs>[0]> = {}) {
   const props: Parameters<typeof DesktopDialogs>[0] = {
     dialog,
     preferences,
@@ -36,6 +36,7 @@ function renderDialog(dialog: "engine" | "syncSettings" | "register" | "login" |
     onChooseEngine: vi.fn(async () => undefined),
     onSaveEngine: vi.fn(async () => undefined),
     onSaveSync: vi.fn(async () => undefined),
+    onUnbindSync: vi.fn(async () => undefined),
     onAuthenticate: vi.fn(async () => undefined),
     onRedeemSubscription: vi.fn(async () => undefined),
     onGenerateTraining: vi.fn(async () => undefined),
@@ -103,10 +104,62 @@ describe("DesktopDialogs", () => {
     expect((screen.getByLabelText("密码") as HTMLInputElement).value).toBe("");
   });
 
+  it("allows an eight-character password", async () => {
+    const { user } = renderDialog("register");
+    await user.type(screen.getByLabelText("邮箱"), "user@example.com");
+    await user.type(screen.getByLabelText("密码"), "password");
+
+    expect((screen.getByRole("button", { name: "注册并登录" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("shows an authentication failure in the dialog instead of failing silently", async () => {
+    const authenticate = vi.fn(async () => { throw new Error("同步服务不可用"); });
+    const { user } = renderDialog("register", { onAuthenticate: authenticate });
+    await user.type(screen.getByLabelText("邮箱"), "user@example.com");
+    await user.type(screen.getByLabelText("密码"), "password-123");
+    await user.click(screen.getByRole("button", { name: "注册并登录" }));
+
+    expect((await screen.findByRole("alert")).textContent).toContain("同步服务不可用");
+    expect((screen.getByLabelText("密码") as HTMLInputElement).value).toBe("");
+  });
+
+  it("tells the user to log in when the email is already registered", async () => {
+    const authenticate = vi.fn(async () => { throw new Error("email already registered"); });
+    const { user } = renderDialog("register", { onAuthenticate: authenticate });
+    await user.type(screen.getByLabelText("邮箱"), "existing@example.com");
+    await user.type(screen.getByLabelText("密码"), "password-123");
+    await user.click(screen.getByRole("button", { name: "注册并登录" }));
+
+    expect((await screen.findByRole("alert")).textContent).toBe("该邮箱已经注册，请直接登录");
+  });
+
   it("keeps a bound server address disabled", () => {
     renderDialog("syncSettings", { account: { serverUrl: preferences.serverUrl, status: "signedOut", userId: "id", email: "user@example.com" } });
     expect((screen.getByLabelText("同步服务地址") as HTMLInputElement).disabled).toBe(true);
     expect(screen.getByText(/服务地址已锁定/)).toBeTruthy();
+  });
+
+  it("requires explicit confirmation before clearing a bound library", async () => {
+    const unbind = vi.fn(async () => undefined);
+    const { user } = renderDialog("unbind", { onUnbindSync: unbind });
+    const confirm = screen.getByRole("button", { name: "解除并清空本机数据" }) as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+
+    await user.type(screen.getByLabelText("确认文本"), "解除绑定");
+    expect(confirm.disabled).toBe(false);
+    await user.click(confirm);
+    expect(unbind).toHaveBeenCalledOnce();
+    expect(await screen.findByText("本机棋谱库已解除绑定并清空")).toBeTruthy();
+  });
+
+  it("shows an unbind failure in the confirmation dialog", async () => {
+    const { user } = renderDialog("unbind", {
+      onUnbindSync: vi.fn(async () => { throw new Error("本机棋谱库清除失败"); }),
+    });
+    await user.type(screen.getByLabelText("确认文本"), "解除绑定");
+    await user.click(screen.getByRole("button", { name: "解除并清空本机数据" }));
+
+    expect((await screen.findByRole("alert")).textContent).toContain("本机棋谱库清除失败");
   });
 
   it("submits a redemption code through the subscription callback", async () => {
