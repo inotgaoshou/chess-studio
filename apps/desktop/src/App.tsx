@@ -41,7 +41,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { BUILTIN_ENGINE_PATH, chessPlatform, type AnalysisLine, type BoardState, type CloudBookCandidate, type EngineProfileDto, type EngineRuntimeState, type ExportFormat, type GameReportDatasetDto, type GameReportProgressDto, type GameSummary, type MoveItem, type Piece, type PreviewLineStep, type ReplayExportScope } from "./platform";
+import { BUILTIN_ENGINE_PATH, chessPlatform, type AnalysisLine, type BoardState, type CloudBookCandidate, type EngineProfileDto, type EngineRuntimeState, type ExportFormat, type GameReportDatasetDto, type GameReportProgressDto, type GameSummary, type MoveItem, type Piece, type PreviewLineStep, type ReplayExportScope, type TrainingTaskDto } from "./platform";
 import { moveQualityFeedback, moveReports, positionEvaluation, trendChart, trendPoints, trendTurningPoints } from "./analysisView";
 import { CandidateLine } from "./CandidateLine";
 import { DesktopMenuBar, type MenuCommand } from "./DesktopMenuBar";
@@ -50,7 +50,7 @@ import { GameReportDialog, GameReportView } from "./GameReportView";
 import { buildGameReportPresentation } from "./gameReport";
 import { candidateCoachInsights, currentCoachAdvice, moveThoughtHint } from "./coachInsights";
 import { MobileToolbar, type MobileToolbarCommand } from "./MobileToolbar";
-import type { DesktopPreferencesDto, SyncAccountDto } from "./platform";
+import type { DesktopPreferencesDto, SubscriptionDto, SyncAccountDto } from "./platform";
 import { applyColorTheme, initialColorTheme, type ColorTheme } from "./theme";
 import { WorkspaceTabs, type WorkspacePanel } from "./WorkspaceTabs";
 import { CoachProfileView } from "./CoachProfileView";
@@ -179,7 +179,7 @@ function boardPoint(square: { row: number; col: number }, reversed: boolean) {
 }
 
 function pieceAsset(piece: Piece) {
-  return `/skins/tchess/${piece.color === "red" ? "r" : "b"}${pieceCode[piece.kind] ?? "p"}.png`;
+  return `/skins/default/${piece.color === "red" ? "r" : "b"}${pieceCode[piece.kind] ?? "p"}.png`;
 }
 
 function piecesToFen(pieces: Piece[], side: "red" | "black") {
@@ -319,6 +319,7 @@ export default function App() {
   const [trendCursorIndex, setTrendCursorIndex] = useState<number | undefined>();
   const [candidatePreview, setCandidatePreview] = useState<CandidatePreviewState>();
   const [syncAccount, setSyncAccount] = useState(defaultSyncAccount);
+  const [subscription, setSubscription] = useState<SubscriptionDto>();
   const [desktopDialog, setDesktopDialog] = useState<DesktopDialog>(null);
   const [engineProfiles, setEngineProfiles] = useState<EngineProfileDto[]>([]);
   const [cloudCandidates, setCloudCandidates] = useState<CloudBookCandidate[]>([]);
@@ -330,6 +331,7 @@ export default function App() {
   const [cloudBookHeight, setCloudBookHeight] = useState<number>();
   const [coachReports, setCoachReports] = useState<GameReportDatasetDto[]>([]);
   const [coachProfileOpen, setCoachProfileOpen] = useState(false);
+  const [trainingTasks, setTrainingTasks] = useState<TrainingTaskDto[]>([]);
   const [dialogBusy, setDialogBusy] = useState(false);
   const [online, setOnline] = useState(typeof navigator === "undefined" ? true : navigator.onLine);
   const boardRevision = useRef(0);
@@ -375,7 +377,10 @@ export default function App() {
           }).catch(() => undefined);
         }
       }).catch((error) => setNotice(friendlyError(error)));
-      void chessPlatform.getSyncAccount().then(setSyncAccount).catch((error) => setNotice(friendlyError(error)));
+      void chessPlatform.getSyncAccount().then((account) => {
+        setSyncAccount(account);
+        if (account.status === "signedIn") void chessPlatform.getSubscription().then(setSubscription).catch(() => undefined);
+      }).catch((error) => setNotice(friendlyError(error)));
       void chessPlatform.listEngineProfiles().then(setEngineProfiles).catch(() => undefined);
     }
   }, []);
@@ -1748,6 +1753,7 @@ export default function App() {
         ? await chessPlatform.registerSyncAccount(email, password)
         : await chessPlatform.loginSyncAccount(email, password);
       setSyncAccount(account);
+      setSubscription(await chessPlatform.getSubscription());
       setDesktopDialog(null);
       setNotice(mode === "register" ? "账号已注册并绑定本地棋谱库" : "同步账号已登录");
     } catch (error) {
@@ -1760,7 +1766,45 @@ export default function App() {
   async function logoutSync() {
     try {
       setSyncAccount(await chessPlatform.logoutSyncAccount());
+      setSubscription(undefined);
       setNotice("已退出登录，本地棋谱和待同步改动保留");
+    } catch (error) {
+      setNotice(friendlyError(error));
+    }
+  }
+
+  async function redeemSubscriptionCode(code: string) {
+    setDialogBusy(true);
+    try {
+      const next = await chessPlatform.redeemSubscriptionCode(code);
+      setSubscription(next);
+      setNotice(`Pro 权益已开通，至 ${new Date(next.expiresAt).toLocaleDateString()}`);
+    } finally {
+      setDialogBusy(false);
+    }
+  }
+
+  async function loadTrainingTasks() {
+    if (chessPlatform.kind !== "desktop") return;
+    setTrainingTasks(await chessPlatform.listTrainingTasks());
+  }
+
+  async function generateTrainingTasks() {
+    setDialogBusy(true);
+    try {
+      setTrainingTasks(await chessPlatform.generateTrainingTasks());
+      setNotice("训练任务已从当前报告生成");
+    } catch (error) {
+      setNotice(friendlyError(error));
+    } finally {
+      setDialogBusy(false);
+    }
+  }
+
+  async function completeTrainingTask(taskId: string, completed: boolean) {
+    try {
+      await chessPlatform.completeTrainingTask(taskId, completed);
+      setTrainingTasks((tasks) => tasks.map((task) => task.id === taskId ? { ...task, completedAt: completed ? new Date().toISOString() : undefined } : task));
     } catch (error) {
       setNotice(friendlyError(error));
     }
@@ -1788,9 +1832,19 @@ export default function App() {
       case "stopAnalysis": await stopAnalysis(); break;
       case "engineSettings": setDesktopDialog("engine"); break;
       case "coachProfile": await openCoachProfile(); break;
+      case "trainingTasks":
+        if (subscription?.plan !== "pro" || subscription.status !== "active") {
+          setDesktopDialog("subscription");
+          setNotice("训练任务属于 Pro 内测权益，请先兑换 Pro");
+          break;
+        }
+        await loadTrainingTasks();
+        setDesktopDialog("training");
+        break;
       case "syncRegister": setDesktopDialog("register"); break;
       case "syncLogin": setDesktopDialog("login"); break;
       case "syncNow": await synchronize(); break;
+      case "subscription": setDesktopDialog("subscription"); break;
       case "syncSettings": setDesktopDialog("syncSettings"); break;
       case "syncLogout": await logoutSync(); break;
     }
@@ -1929,12 +1983,17 @@ export default function App() {
         dialog={desktopDialog}
         preferences={desktopPreferences}
         account={syncAccount}
+        subscription={subscription}
+        trainingTasks={trainingTasks}
         busy={dialogBusy}
         onClose={() => setDesktopDialog(null)}
         onChooseEngine={(currentPath) => chessPlatform.chooseEngineExecutable(currentPath)}
         onSaveEngine={saveEnginePreferences}
         onSaveSync={saveSyncPreferences}
         onAuthenticate={authenticateSync}
+        onRedeemSubscription={redeemSubscriptionCode}
+        onGenerateTraining={generateTrainingTasks}
+        onCompleteTraining={completeTrainingTask}
       />}
       {coachProfileOpen && <CoachProfileView reports={coachReports} onClose={() => setCoachProfileOpen(false)}/>}
 
@@ -2061,7 +2120,7 @@ export default function App() {
                       <img src={pieceAsset(piece)} alt="" draggable={false} />
                       <span className="board-piece-label" aria-hidden="true">{piece.label}</span>
                     </>}
-                    {isSelected && <img className="selection-mask" src="/skins/tchess/mask2.png" alt="" />}
+                    {isSelected && <img className="selection-mask" src="/skins/default/mask2.png" alt="" />}
                     {!candidatePreview && isLastTo && board.currentNode === lastMove?.id && overviewReport?.grade && overviewReport.score != null && (
                       <span
                         className={`board-move-grade grade-${overviewReport.grade}`}

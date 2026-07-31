@@ -4,7 +4,7 @@ import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { webDatabase, type SyncOperation, type WebGameRecord } from "./indexedDb";
 import { BUILTIN_ENGINE_PATH } from "./types";
-import type { AnalysisLine, AnalysisOptions, BoardState, ChessPlatform, CloudBookCandidate, DesktopPreferencesDto, EngineMoveResult, EnginePlayOptions, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, ExportFormat, GameReportDatasetDto, GameReportOptionsDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, PreviewLineStep, ReplayExportScope, SyncAccountDto, SyncResult } from "./types";
+import type { AnalysisLine, AnalysisOptions, BoardState, ChessPlatform, CloudBookCandidate, DesktopPreferencesDto, EngineMoveResult, EnginePlayOptions, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, ExportFormat, GameReportDatasetDto, GameReportOptionsDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, PreviewLineStep, ReplayExportScope, SubscriptionDto, SyncAccountDto, SyncResult, TrainingTaskDto } from "./types";
 
 type WebGameInstance = {
   stateJson(): string;
@@ -83,6 +83,9 @@ class DesktopPlatform implements ChessPlatform {
   deleteEngineProfile(id: string) { return invoke<DesktopPreferencesDto>("delete_engine_profile", { id }); }
   queryCloudOpeningBook(fen: string) { return invoke<CloudBookCandidate[]>("query_cloud_opening_book", { fen }); }
   listCoachReports() { return invoke<GameReportDatasetDto[]>("list_coach_reports"); }
+  listTrainingTasks() { return invoke<TrainingTaskDto[]>("list_training_tasks"); }
+  generateTrainingTasks() { return invoke<TrainingTaskDto[]>("generate_training_tasks"); }
+  completeTrainingTask(taskId: string, completed: boolean) { return invoke<void>("complete_training_task", { taskId, completed }); }
   playMove(iccs: string) { return invoke<Partial<BoardState>>("play_move", { iccs }); }
   newGame(fen: string, title?: string, note?: string) { return invoke<Partial<BoardState>>("new_game", { fen, title, note }); }
   async openDocument() {
@@ -168,6 +171,8 @@ class DesktopPlatform implements ChessPlatform {
   }
   loadSavedAnalysis() { return invoke<AnalysisLine[]>("get_saved_analysis"); }
   getSyncAccount() { return invoke<SyncAccountDto>("get_sync_account"); }
+  getSubscription() { return invoke<SubscriptionDto>("get_subscription"); }
+  redeemSubscriptionCode(code: string) { return invoke<SubscriptionDto>("redeem_subscription_code", { code }); }
   registerSyncAccount(email: string, password: string) { return invoke<SyncAccountDto>("register_sync_account", { email, password }); }
   loginSyncAccount(email: string, password: string) { return invoke<SyncAccountDto>("login_sync_account", { email, password }); }
   logoutSyncAccount() { return invoke<SyncAccountDto>("logout_sync_account"); }
@@ -237,6 +242,8 @@ class WebPlatform implements ChessPlatform {
   async queryCloudOpeningBook(): Promise<CloudBookCandidate[]> { return []; }
   async listCoachReports(): Promise<GameReportDatasetDto[]> { return []; }
   async getSyncAccount(): Promise<SyncAccountDto> { throw new Error("Web 端账号菜单不在本阶段开放"); }
+  async getSubscription(): Promise<SubscriptionDto> { throw new Error("Web 端订阅权益不在本阶段开放"); }
+  async redeemSubscriptionCode(): Promise<SubscriptionDto> { throw new Error("Web 端订阅权益不在本阶段开放"); }
   async registerSyncAccount(): Promise<SyncAccountDto> { throw new Error("Web 端账号菜单不在本阶段开放"); }
   async loginSyncAccount(): Promise<SyncAccountDto> { throw new Error("Web 端账号菜单不在本阶段开放"); }
   async logoutSyncAccount(): Promise<SyncAccountDto> { throw new Error("Web 端账号菜单不在本阶段开放"); }
@@ -256,6 +263,9 @@ class WebPlatform implements ChessPlatform {
   async stopEnginePlay() { return false; }
   async subscribeEngineEvents() { return () => undefined; }
   async generateGameReport(): Promise<GameReportDatasetDto> { throw new Error("Web 端不支持本地整局分析报告"); }
+  async listTrainingTasks(): Promise<TrainingTaskDto[]> { throw new Error("Web 端暂不支持训练任务"); }
+  async generateTrainingTasks(): Promise<TrainingTaskDto[]> { throw new Error("Web 端暂不支持训练任务"); }
+  async completeTrainingTask(): Promise<void> { throw new Error("Web 端暂不支持训练任务"); }
   async cancelGameReport() { return false; }
   async getGameReport(): Promise<GameReportDatasetDto | undefined> { throw new Error("Web 端不支持本地整局分析报告"); }
   async exportGameReportPdf(): Promise<string | undefined> { throw new Error("Web 端不支持桌面 PDF 报告导出"); }
@@ -512,4 +522,4 @@ class WebPlatform implements ChessPlatform {
 const tauriAvailable = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 export const chessPlatform: ChessPlatform = tauriAvailable ? new DesktopPlatform() : new WebPlatform();
 export { BUILTIN_ENGINE_PATH } from "./types";
-export type { AnalysisLine, AnalysisOptions, BoardState, BranchCoachInsightDto, ChessPlatform, CloudBookCandidate, DesktopPreferencesDto, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, EngineRuntimeState, ExportFormat, GameReportDatasetDto, GameReportOptionsDto, GameReportPositionDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, MoveCoachInsightDto, MoveItem, OpeningBookHitDto, Piece, PreviewLineStep, QualityGrade, ReplayExportScope, ReportPhase, ReportSidePresentationDto, Side, SyncAccountDto, SyncResult } from "./types";
+export type { AnalysisLine, AnalysisOptions, BoardState, BranchCoachInsightDto, ChessPlatform, CloudBookCandidate, DesktopPreferencesDto, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, EngineRuntimeState, ExportFormat, GameReportDatasetDto, GameReportOptionsDto, GameReportPositionDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, MoveCoachInsightDto, MoveItem, OpeningBookHitDto, Piece, PreviewLineStep, QualityGrade, ReplayExportScope, ReportPhase, ReportSidePresentationDto, Side, SubscriptionDto, SyncAccountDto, SyncResult, TrainingTaskDto } from "./types";

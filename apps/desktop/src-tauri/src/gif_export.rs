@@ -24,7 +24,7 @@ const FRAME_WIDTH: u32 = BOARD_WIDTH;
 const FRAME_HEIGHT: u32 = BOARD_HEIGHT + HEADER_HEIGHT;
 const PIECE_SIZE: u32 = 42;
 
-const BOARD_PNG: &[u8] = include_bytes!("../../public/skins/tchess/board.png");
+const BOARD_PNG: &[u8] = include_bytes!("../../public/skins/default/board.png");
 const FONT: &[u8] = include_bytes!("../resources/fonts/NotoSansSC-VF.ttf");
 
 pub fn export_replay_gif(
@@ -143,20 +143,20 @@ fn apply_desktop_board_theme(image: &mut RgbaImage) {
 
 fn piece_png(color: Color, kind: PieceKind) -> &'static [u8] {
     match (color, kind) {
-        (Color::Red, PieceKind::King) => include_bytes!("../../public/skins/tchess/rk.png"),
-        (Color::Red, PieceKind::Advisor) => include_bytes!("../../public/skins/tchess/ra.png"),
-        (Color::Red, PieceKind::Elephant) => include_bytes!("../../public/skins/tchess/rb.png"),
-        (Color::Red, PieceKind::Horse) => include_bytes!("../../public/skins/tchess/rn.png"),
-        (Color::Red, PieceKind::Rook) => include_bytes!("../../public/skins/tchess/rr.png"),
-        (Color::Red, PieceKind::Cannon) => include_bytes!("../../public/skins/tchess/rc.png"),
-        (Color::Red, PieceKind::Pawn) => include_bytes!("../../public/skins/tchess/rp.png"),
-        (Color::Black, PieceKind::King) => include_bytes!("../../public/skins/tchess/bk.png"),
-        (Color::Black, PieceKind::Advisor) => include_bytes!("../../public/skins/tchess/ba.png"),
-        (Color::Black, PieceKind::Elephant) => include_bytes!("../../public/skins/tchess/bb.png"),
-        (Color::Black, PieceKind::Horse) => include_bytes!("../../public/skins/tchess/bn.png"),
-        (Color::Black, PieceKind::Rook) => include_bytes!("../../public/skins/tchess/br.png"),
-        (Color::Black, PieceKind::Cannon) => include_bytes!("../../public/skins/tchess/bc.png"),
-        (Color::Black, PieceKind::Pawn) => include_bytes!("../../public/skins/tchess/bp.png"),
+        (Color::Red, PieceKind::King) => include_bytes!("../../public/skins/default/rk.png"),
+        (Color::Red, PieceKind::Advisor) => include_bytes!("../../public/skins/default/ra.png"),
+        (Color::Red, PieceKind::Elephant) => include_bytes!("../../public/skins/default/rb.png"),
+        (Color::Red, PieceKind::Horse) => include_bytes!("../../public/skins/default/rn.png"),
+        (Color::Red, PieceKind::Rook) => include_bytes!("../../public/skins/default/rr.png"),
+        (Color::Red, PieceKind::Cannon) => include_bytes!("../../public/skins/default/rc.png"),
+        (Color::Red, PieceKind::Pawn) => include_bytes!("../../public/skins/default/rp.png"),
+        (Color::Black, PieceKind::King) => include_bytes!("../../public/skins/default/bk.png"),
+        (Color::Black, PieceKind::Advisor) => include_bytes!("../../public/skins/default/ba.png"),
+        (Color::Black, PieceKind::Elephant) => include_bytes!("../../public/skins/default/bb.png"),
+        (Color::Black, PieceKind::Horse) => include_bytes!("../../public/skins/default/bn.png"),
+        (Color::Black, PieceKind::Rook) => include_bytes!("../../public/skins/default/br.png"),
+        (Color::Black, PieceKind::Cannon) => include_bytes!("../../public/skins/default/bc.png"),
+        (Color::Black, PieceKind::Pawn) => include_bytes!("../../public/skins/default/bp.png"),
     }
 }
 

@@ -20,7 +20,7 @@ use chrono::Utc;
 use credential_store::{SharedCredentialStore, SystemCredentialStore, TOKEN_KEY};
 use engine_protocol::{EngineControl, EngineEvent, EngineSession, Protocol, SearchLimit};
 use local_store::{
-    AnalysisSummary, DesktopPreferences, EngineProfile, ImportedGame, LocalGame, LocalStore, SyncAccountBinding,
+    AnalysisSummary, DesktopPreferences, EngineProfile, ImportedGame, LocalGame, LocalStore, SyncAccountBinding, TrainingTask,
 };
 use manual_format::{
     ManualDocument, ManualFormat, ManualMetadata, detect_format, export_chinese_text,
@@ -77,6 +77,18 @@ struct SyncAccountDto {
     email: Option<String>,
     status: &'static str,
     last_sync_result: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SubscriptionDto {
+    plan: String,
+    status: String,
+    source: String,
+    starts_at: String,
+    expires_at: String,
+    cloud_analysis_quota: u32,
+    cloud_analysis_used: u32,
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
@@ -359,6 +371,24 @@ struct GameReportProgressDto {
     cached: usize,
     estimated_remaining_ms: Option<u64>,
     state: &'static str,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TrainingTaskDto {
+    id: Uuid,
+    game_id: Uuid,
+    node_id: Uuid,
+    title: String,
+    detail: String,
+    completed_at: Option<String>,
+    created_at: String,
+}
+
+impl From<TrainingTask> for TrainingTaskDto {
+    fn from(task: TrainingTask) -> Self {
+        Self { id: task.id, game_id: task.game_id, node_id: task.node_id, title: task.title, detail: task.detail, completed_at: task.completed_at, created_at: task.created_at }
+    }
 }
 
 #[derive(Serialize)]
@@ -2435,6 +2465,43 @@ fn list_coach_reports(state: State<'_, DesktopState>) -> Result<Vec<GameReportDa
         .collect())
 }
 
+#[tauri::command]
+fn list_training_tasks(state: State<'_, DesktopState>) -> Result<Vec<TrainingTaskDto>, String> {
+    let model = state.model.lock().map_err(|_| "state lock poisoned".to_owned())?;
+    model.store.list_training_tasks().map_err(|error| error.to_string()).map(|tasks| tasks.into_iter().map(Into::into).collect())
+}
+
+#[tauri::command]
+fn generate_training_tasks(state: State<'_, DesktopState>) -> Result<Vec<TrainingTaskDto>, String> {
+    let mut model = state.model.lock().map_err(|_| "state lock poisoned".to_owned())?;
+    let Some(stored) = model.store.load_latest_game_report(model.game_id).map_err(|error| error.to_string())? else {
+        return Err("请先生成一份整局复盘报告".into());
+    };
+    let report: GameReportDatasetDto = serde_json::from_str(&stored.dataset_json).map_err(|_| "本地复盘报告无效".to_owned())?;
+    for (index, position) in report.positions.iter().enumerate().skip(1) {
+        let Some(moved) = position.move_.as_ref() else { continue; };
+        let (Some(before), Some(after)) = (report.positions[index - 1].score_cp, position.score_cp) else { continue; };
+        let loss = if moved.moved_by == "红方" { before - after } else { after - before };
+        if loss < 150 { continue; }
+        let move_number = (position.ply + 1) / 2;
+        let best = position.best_notation.as_deref().unwrap_or("重新寻找更稳健的着法");
+        model.store.upsert_training_task(
+            report.game_id,
+            &report.line_signature,
+            moved.node_id,
+            &format!("复盘第 {move_number} 手：{}", moved.notation),
+            &format!("本着评价变化约 {loss} 分。先自行计算，再比较推荐着法：{best}"),
+        ).map_err(|error| error.to_string())?;
+    }
+    model.store.list_training_tasks().map_err(|error| error.to_string()).map(|tasks| tasks.into_iter().map(Into::into).collect())
+}
+
+#[tauri::command]
+fn complete_training_task(task_id: Uuid, completed: bool, state: State<'_, DesktopState>) -> Result<(), String> {
+    let mut model = state.model.lock().map_err(|_| "state lock poisoned".to_owned())?;
+    model.store.complete_training_task(task_id, completed).map_err(|error| error.to_string())
+}
+
 fn sync_account_dto(state: &DesktopState) -> Result<SyncAccountDto, String> {
     let model = state
         .model
@@ -2476,6 +2543,62 @@ fn sync_account_dto(state: &DesktopState) -> Result<SyncAccountDto, String> {
 #[tauri::command]
 fn get_sync_account(state: State<'_, DesktopState>) -> Result<SyncAccountDto, String> {
     sync_account_dto(&state)
+}
+
+async fn subscription_request(
+    state: &DesktopState,
+    endpoint: &str,
+    code: Option<&str>,
+) -> Result<SubscriptionDto, String> {
+    let server_url = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?
+        .store
+        .desktop_preferences()
+        .map_err(|error| error.to_string())?
+        .server_url;
+    validate_server_url(&server_url)?;
+    let token = state
+        .credentials
+        .get(TOKEN_KEY)?
+        .ok_or("请先登录同步账号")?;
+    let client = reqwest::Client::new();
+    let url = format!("{}/api/v1/subscription{endpoint}", server_url.trim_end_matches('/'));
+    let request = if let Some(code) = code {
+        client.post(url).bearer_auth(token).json(&serde_json::json!({ "code": code }))
+    } else {
+        client.get(url).bearer_auth(token)
+    };
+    let response = request.send().await.map_err(|error| format!("订阅服务不可用：{error}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        let message = response
+            .json::<serde_json::Value>()
+            .await
+            .ok()
+            .and_then(|body| body.get("error").and_then(|value| value.as_str()).map(str::to_owned))
+            .unwrap_or_else(|| format!("订阅服务返回错误 {status}"));
+        return Err(message);
+    }
+    response.json().await.map_err(|_| "订阅服务返回了无效数据".into())
+}
+
+#[tauri::command]
+async fn get_subscription(state: State<'_, DesktopState>) -> Result<SubscriptionDto, String> {
+    subscription_request(&state, "", None).await
+}
+
+#[tauri::command]
+async fn redeem_subscription_code(
+    code: String,
+    state: State<'_, DesktopState>,
+) -> Result<SubscriptionDto, String> {
+    let code = code.trim();
+    if code.is_empty() {
+        return Err("请输入兑换码".into());
+    }
+    subscription_request(&state, "/redeem", Some(code)).await
 }
 
 async fn authenticate_sync_account(
@@ -3328,7 +3451,12 @@ fn main() {
             delete_engine_profile,
             query_cloud_opening_book,
             list_coach_reports,
+            list_training_tasks,
+            generate_training_tasks,
+            complete_training_task,
             get_sync_account,
+            get_subscription,
+            redeem_subscription_code,
             register_sync_account,
             login_sync_account,
             logout_sync_account,

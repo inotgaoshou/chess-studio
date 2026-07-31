@@ -405,7 +405,7 @@ button:disabled { cursor: default; opacity: .45; }
 .board-art {
   position: absolute;
   inset: 0;
-  background: url("/skins/tchess/board.png") center / 100% 100% no-repeat;
+  background: url("/skins/default/board.png") center / 100% 100% no-repeat;
   filter: invert(1) brightness(.62) saturate(1.55);
   opacity: .92;
 }

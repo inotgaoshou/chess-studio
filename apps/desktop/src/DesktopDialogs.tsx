@@ -1,40 +1,48 @@
 import { useEffect, useState } from "react";
 import { FolderOpen, LogIn, Save, Settings2, UserPlus, X } from "lucide-react";
-import { BUILTIN_ENGINE_PATH, type DesktopPreferencesDto, type SyncAccountDto } from "./platform";
+import { BUILTIN_ENGINE_PATH, type DesktopPreferencesDto, type SubscriptionDto, type SyncAccountDto, type TrainingTaskDto } from "./platform";
 
-export type DesktopDialog = "engine" | "syncSettings" | "register" | "login" | null;
+export type DesktopDialog = "engine" | "syncSettings" | "register" | "login" | "subscription" | "training" | null;
 
 type Props = {
   dialog: DesktopDialog;
   preferences: DesktopPreferencesDto;
   account: SyncAccountDto;
+  subscription?: SubscriptionDto;
+  trainingTasks: TrainingTaskDto[];
   busy: boolean;
   onClose(): void;
   onChooseEngine(currentPath: string): Promise<string | undefined>;
   onSaveEngine(preferences: DesktopPreferencesDto): Promise<void>;
   onSaveSync(serverUrl: string): Promise<void>;
   onAuthenticate(mode: "register" | "login", email: string, password: string): Promise<void>;
+  onRedeemSubscription(code: string): Promise<void>;
+  onGenerateTraining(): Promise<void>;
+  onCompleteTraining(taskId: string, completed: boolean): Promise<void>;
 };
 
 function engineInputValue(path: string) {
   return path === BUILTIN_ENGINE_PATH ? "内置 Pikafish（随应用安装，推荐）" : path;
 }
 
-export function DesktopDialogs({ dialog, preferences, account, busy, onClose, onChooseEngine, onSaveEngine, onSaveSync, onAuthenticate }: Props) {
+export function DesktopDialogs({ dialog, preferences, account, subscription, trainingTasks, busy, onClose, onChooseEngine, onSaveEngine, onSaveSync, onAuthenticate, onRedeemSubscription, onGenerateTraining, onCompleteTraining }: Props) {
   const [draft, setDraft] = useState(preferences);
   const [email, setEmail] = useState(account.email ?? "");
   const [password, setPassword] = useState("");
+  const [redemptionCode, setRedemptionCode] = useState("");
   const [enginePickerBusy, setEnginePickerBusy] = useState(false);
   const [enginePickerError, setEnginePickerError] = useState("");
 
   useEffect(() => {
     if (!dialog) {
       setPassword("");
+      setRedemptionCode("");
       return;
     }
     setDraft(preferences);
     setEmail(account.email ?? "");
     setPassword("");
+    setRedemptionCode("");
     setEnginePickerBusy(false);
     setEnginePickerError("");
   }, [account.email, dialog, preferences]);
@@ -78,11 +86,20 @@ export function DesktopDialogs({ dialog, preferences, account, busy, onClose, on
     }
   }
 
+  async function redeemSubscription() {
+    try {
+      await onRedeemSubscription(redemptionCode);
+      setRedemptionCode("");
+    } catch (error) {
+      setEnginePickerError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   return (
     <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) close(); }}>
-      <section className="settings-dialog" role="dialog" aria-modal="true" aria-label={dialog === "engine" ? "引擎设置" : dialog === "syncSettings" ? "同步设置" : dialog === "register" ? "注册同步账号" : "登录同步账号"}>
+      <section className="settings-dialog" role="dialog" aria-modal="true" aria-label={dialog === "engine" ? "引擎设置" : dialog === "syncSettings" ? "同步设置" : dialog === "subscription" ? "Pro 权益" : dialog === "training" ? "训练任务" : dialog === "register" ? "注册同步账号" : "登录同步账号"}>
         <header>
-          <div>{dialog === "register" ? <UserPlus size={17}/> : dialog === "login" ? <LogIn size={17}/> : <Settings2 size={17}/>}<strong>{dialog === "engine" ? "引擎设置" : dialog === "syncSettings" ? "同步设置" : dialog === "register" ? "注册同步账号" : "登录同步账号"}</strong></div>
+          <div>{dialog === "register" ? <UserPlus size={17}/> : dialog === "login" ? <LogIn size={17}/> : <Settings2 size={17}/>}<strong>{dialog === "engine" ? "引擎设置" : dialog === "syncSettings" ? "同步设置" : dialog === "subscription" ? "Pro 权益" : dialog === "training" ? "训练任务" : dialog === "register" ? "注册同步账号" : "登录同步账号"}</strong></div>
           <button className="tool-button" title="关闭" disabled={busy} onClick={close}><X size={16}/></button>
         </header>
 
@@ -113,6 +130,22 @@ export function DesktopDialogs({ dialog, preferences, account, busy, onClose, on
           <label className="full"><span>同步服务地址</span><input disabled={!!account.userId} value={draft.serverUrl} onChange={(event) => setDraft({ ...draft, serverUrl: event.target.value })}/></label>
           {account.userId && <p className="dialog-warning">已绑定 {account.email}，服务地址已锁定。</p>}
           <footer><button onClick={close} disabled={busy}>取消</button><button className="primary" disabled={busy || !!account.userId} onClick={() => void onSaveSync(draft.serverUrl)}><Save size={14}/>保存</button></footer>
+        </div>}
+
+        {dialog === "subscription" && <div className="dialog-form account-form">
+          {subscription?.plan === "pro" && subscription.status === "active"
+            ? <p className="dialog-hint">Pro 已开通，至 {new Date(subscription.expiresAt).toLocaleDateString()}。本周期云分析 {subscription.cloudAnalysisUsed} / {subscription.cloudAnalysisQuota} 次。</p>
+            : <p className="dialog-hint">当前为免费版。本地棋谱、本地引擎和离线复盘始终可用；兑换 Pro 后可使用云端深度分析和训练服务。</p>}
+          <label className="full"><span>Pro 兑换码</span><input value={redemptionCode} placeholder="输入运营发放的兑换码" onChange={(event) => { setEnginePickerError(""); setRedemptionCode(event.target.value); }}/></label>
+          {enginePickerError && <p className="dialog-warning full" role="alert">{enginePickerError}</p>}
+          <footer><button onClick={close} disabled={busy}>关闭</button><button className="primary" disabled={busy || !redemptionCode.trim() || account.status !== "signedIn"} onClick={() => void redeemSubscription()}>{busy ? "兑换中…" : "兑换 Pro"}</button></footer>
+        </div>}
+
+        {dialog === "training" && <div className="dialog-form account-form">
+          <p className="dialog-hint">从当前整局报告的明显失误生成任务。任务只保存在本机，不会上传棋谱正文。</p>
+          {trainingTasks.length === 0 ? <p className="dialog-hint">还没有训练任务。先生成整局报告，再创建任务。</p> : <div className="full dialog-book-list">{trainingTasks.map((task) => <label className="check-row" key={task.id}><input type="checkbox" checked={!!task.completedAt} disabled={busy} onChange={(event) => void onCompleteTraining(task.id, event.target.checked)}/><span><strong>{task.title}</strong><small>{task.detail}</small></span></label>)}</div>}
+          {enginePickerError && <p className="dialog-warning full" role="alert">{enginePickerError}</p>}
+          <footer><button onClick={close} disabled={busy}>关闭</button><button className="primary" disabled={busy} onClick={() => void onGenerateTraining()}>{busy ? "生成中…" : "从报告生成任务"}</button></footer>
         </div>}
 
         {(dialog === "register" || dialog === "login") && <div className="dialog-form account-form">

@@ -4,8 +4,8 @@ const APP_SHELL = [
   "/manifest.webmanifest",
   "/icons/icon-192.png",
   "/icons/icon-512.png",
-  "/skins/tchess/board.png",
-  "/skins/tchess/mask2.png"
+  "/skins/default/board.png",
+  "/skins/default/mask2.png"
 ];
 
 self.addEventListener("install", (event) => {

@@ -44,10 +44,12 @@ export type MenuCommand =
   | "stopAnalysis"
   | "engineSettings"
   | "coachProfile"
+  | "trainingTasks"
   | "syncRegister"
   | "syncLogin"
   | "syncNow"
   | "syncSettings"
+  | "subscription"
   | "syncLogout";
 
 export type SyncAccountStatus = "unbound" | "signedOut" | "signedIn" | "expired";
@@ -218,6 +220,7 @@ export function DesktopMenuBar({
           <MenuItem command={status.analysisBusy ? "stopAnalysis" : "analyze"} execute={execute} close={close} disabled={!canAnalyze} title={!canAnalyze ? "当前状态不能启动分析" : undefined}>{status.analysisBusy ? <Square size={14}/> : <Zap size={14}/>} {status.analysisBusy ? "停止分析" : "分析当前局面"}</MenuItem>
           <MenuItem command="engineSettings" execute={execute} close={close}><Settings2 size={14}/>引擎设置</MenuItem>
           <MenuItem command="coachProfile" execute={execute} close={close}><BarChart3 size={14}/>AI 私教档案</MenuItem>
+          <MenuItem command="trainingTasks" execute={execute} close={close}><ClipboardList size={14}/>训练任务</MenuItem>
         </div>}
       </details>
       <details open={openMenu === "sync"}>
@@ -227,6 +230,7 @@ export function DesktopMenuBar({
           <MenuItem command="syncRegister" execute={execute} close={close} disabled={status.syncStatus !== "unbound"} title={status.syncStatus !== "unbound" ? "本地棋谱库已经绑定账号" : undefined}><UserPlus size={14}/>注册账号</MenuItem>
           <MenuItem command="syncLogin" execute={execute} close={close} disabled={status.syncStatus === "signedIn"} title={status.syncStatus === "signedIn" ? "当前账号已经登录" : undefined}><LogIn size={14}/>登录账号</MenuItem>
           <MenuItem command="syncNow" execute={execute} close={close} disabled={status.syncStatus !== "signedIn" || status.syncBusy} title={status.syncBusy ? "同步正在进行" : status.syncStatus !== "signedIn" ? "请先登录同步账号" : undefined}>{status.syncBusy ? <RefreshCw className="spin" size={14}/> : <RefreshCw size={14}/>}立即同步</MenuItem>
+          <MenuItem command="subscription" execute={execute} close={close} disabled={status.syncStatus !== "signedIn"} title={status.syncStatus !== "signedIn" ? "请先登录同步账号" : undefined}><BarChart3 size={14}/>Pro 权益</MenuItem>
           <MenuItem command="syncSettings" execute={execute} close={close}><Settings2 size={14}/>同步设置</MenuItem>
           <MenuItem command="syncLogout" execute={execute} close={close} disabled={status.syncStatus === "unbound" || status.syncStatus === "signedOut"} title={status.syncStatus === "unbound" ? "本地棋谱库尚未绑定账号" : status.syncStatus === "signedOut" ? "当前已经退出登录" : undefined}><LogOut size={14}/>退出登录</MenuItem>
         </div>}

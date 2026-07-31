@@ -164,6 +164,19 @@ pub struct StoredGameReport {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TrainingTask {
+    pub id: Uuid,
+    pub game_id: Uuid,
+    pub report_signature: String,
+    pub node_id: Uuid,
+    pub title: String,
+    pub detail: String,
+    pub completed_at: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EngineProfile {
     pub id: Uuid,
     pub name: String,
@@ -873,6 +886,54 @@ impl LocalStore {
         })?.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
+    pub fn upsert_training_task(
+        &mut self,
+        game_id: Uuid,
+        report_signature: &str,
+        node_id: Uuid,
+        title: &str,
+        detail: &str,
+    ) -> Result<(), StoreError> {
+        self.connection.execute(
+            "INSERT INTO training_tasks (id, game_id, report_signature, node_id, title, detail, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(game_id, report_signature, node_id)
+             DO UPDATE SET title=excluded.title, detail=excluded.detail",
+            params![
+                Uuid::new_v4().to_string(), game_id.to_string(), report_signature, node_id.to_string(),
+                title, detail, chrono::Utc::now().to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_training_tasks(&self) -> Result<Vec<TrainingTask>, StoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, game_id, report_signature, node_id, title, detail, completed_at, created_at
+             FROM training_tasks ORDER BY completed_at IS NOT NULL, created_at DESC",
+        )?;
+        statement.query_map([], |row| {
+            Ok(TrainingTask {
+                id: parse_row_uuid(&row.get::<_, String>(0)?, 0)?,
+                game_id: parse_row_uuid(&row.get::<_, String>(1)?, 1)?,
+                report_signature: row.get(2)?,
+                node_id: parse_row_uuid(&row.get::<_, String>(3)?, 3)?,
+                title: row.get(4)?,
+                detail: row.get(5)?,
+                completed_at: row.get(6)?,
+                created_at: row.get(7)?,
+            })
+        })?.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn complete_training_task(&mut self, task_id: Uuid, completed: bool) -> Result<(), StoreError> {
+        self.connection.execute(
+            "UPDATE training_tasks SET completed_at = ?2 WHERE id = ?1",
+            params![task_id.to_string(), completed.then(|| chrono::Utc::now().to_rfc3339())],
+        )?;
+        Ok(())
+    }
+
     pub fn apply_remote_operation(
         &mut self,
         operation: &Operation,
@@ -1038,6 +1099,12 @@ impl LocalStore {
                config_hash TEXT NOT NULL, dataset_json TEXT NOT NULL,
                created_at TEXT NOT NULL,
                UNIQUE(game_id, line_signature, engine_fingerprint, config_hash)
+             );
+             CREATE TABLE IF NOT EXISTS training_tasks (
+               id TEXT PRIMARY KEY, game_id TEXT NOT NULL, report_signature TEXT NOT NULL,
+               node_id TEXT NOT NULL, title TEXT NOT NULL, detail TEXT NOT NULL,
+               completed_at TEXT, created_at TEXT NOT NULL,
+               UNIQUE(game_id, report_signature, node_id)
              );
              UPDATE operations
              SET payload = json_set(
@@ -2074,6 +2141,22 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn training_tasks_are_deduplicated_and_can_be_completed() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let game_id = Uuid::new_v4();
+        let node_id = Uuid::new_v4();
+        store.upsert_training_task(game_id, "report-1", node_id, "复盘第 12 手", "重新寻找最佳着法").unwrap();
+        store.upsert_training_task(game_id, "report-1", node_id, "复盘第 12 手", "比较候选着法").unwrap();
+        let tasks = store.list_training_tasks().unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].detail, "比较候选着法");
+        store.complete_training_task(tasks[0].id, true).unwrap();
+        assert!(store.list_training_tasks().unwrap()[0].completed_at.is_some());
+        store.complete_training_task(tasks[0].id, false).unwrap();
+        assert!(store.list_training_tasks().unwrap()[0].completed_at.is_none());
     }
 
     #[test]

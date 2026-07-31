@@ -19,6 +19,7 @@ use engine_protocol::{EngineEvent, EngineSession, SearchLimit};
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use password_hash::{SaltString, rand_core::OsRng};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use sqlx::{MySql, MySqlPool, Transaction, mysql::MySqlPoolOptions};
 use sync_protocol::{
     AddMovePayload, CreateGamePayload, DeleteNodePayload, Operation, OperationKind, PullResponse,
@@ -100,6 +101,23 @@ struct AnalysisLine {
     pv: Vec<String>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SubscriptionDto {
+    plan: String,
+    status: String,
+    source: String,
+    starts_at: chrono::DateTime<Utc>,
+    expires_at: chrono::DateTime<Utc>,
+    cloud_analysis_quota: u32,
+    cloud_analysis_used: u32,
+}
+
+#[derive(Debug, Deserialize)]
+struct RedeemCodeRequest {
+    code: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct Claims {
     sub: String,
@@ -129,6 +147,10 @@ enum ApiError {
     EngineUnavailable,
     #[error("analysis timed out")]
     EngineTimeout,
+    #[error("Pro membership is required for cloud analysis")]
+    ProRequired,
+    #[error("cloud analysis quota has been used for this period")]
+    QuotaExceeded,
     #[error("internal error")]
     Internal,
 }
@@ -142,6 +164,8 @@ impl IntoResponse for ApiError {
             Self::EngineBusy => StatusCode::TOO_MANY_REQUESTS,
             Self::EngineUnavailable => StatusCode::SERVICE_UNAVAILABLE,
             Self::EngineTimeout => StatusCode::GATEWAY_TIMEOUT,
+            Self::ProRequired => StatusCode::PAYMENT_REQUIRED,
+            Self::QuotaExceeded => StatusCode::TOO_MANY_REQUESTS,
             Self::Database(_) | Self::Internal => StatusCode::INTERNAL_SERVER_ERROR,
         };
         (
@@ -197,6 +221,8 @@ fn router(state: AppState, cors: CorsLayer) -> Router {
         .route("/api/v1/auth/login", post(login))
         .route("/api/v1/sync/push", post(push))
         .route("/api/v1/sync/pull", get(pull))
+        .route("/api/v1/subscription", get(subscription))
+        .route("/api/v1/subscription/redeem", post(redeem_code))
         .route("/api/v1/analysis", post(analyze))
         .layer(DefaultBodyLimit::max(32 * 1024))
         .layer(TraceLayer::new_for_http())
@@ -272,10 +298,15 @@ async fn register(
         .execute(&state.pool)
         .await;
     match result {
-        Ok(_) => Ok(Json(AuthResponse {
-            user_id,
-            token: create_token(user_id, &state.jwt_secret)?,
-        })),
+        Ok(_) => {
+            if let Err(error) = record_product_event_for_pool(&state.pool, user_id, "registered").await {
+                tracing::warn!(%error, "failed to record registration event");
+            }
+            Ok(Json(AuthResponse {
+                user_id,
+                token: create_token(user_id, &state.jwt_secret)?,
+            }))
+        }
         Err(sqlx::Error::Database(error)) if error.is_unique_violation() => {
             Err(ApiError::Conflict("email already registered".into()))
         }
@@ -384,28 +415,207 @@ async fn pull(
     }))
 }
 
+async fn subscription(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<SubscriptionDto>, ApiError> {
+    let user_id = authenticated_user(&headers, &state.jwt_secret)?;
+    Ok(Json(load_subscription(&state.pool, user_id).await?))
+}
+
+async fn redeem_code(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<RedeemCodeRequest>,
+) -> Result<Json<SubscriptionDto>, ApiError> {
+    let user_id = authenticated_user(&headers, &state.jwt_secret)?;
+    let code = normalized_redemption_code(&request.code);
+    if !(6..=64).contains(&code.len()) {
+        return Err(ApiError::Invalid("valid redemption code required".into()));
+    }
+    let hash = redemption_code_hash(&code);
+    let now = Utc::now();
+    let mut transaction = state.pool.begin().await?;
+    type CodeRow = (String, String, u32, u32, u32, u32, chrono::DateTime<Utc>, chrono::DateTime<Utc>);
+    let code_row: Option<CodeRow> = sqlx::query_as(
+        "SELECT id, plan, duration_days, cloud_analysis_quota, redemption_count, max_redemptions, starts_at, expires_at
+         FROM redemption_codes WHERE code_hash = ? AND revoked_at IS NULL FOR UPDATE",
+    )
+    .bind(hash)
+    .fetch_optional(&mut *transaction)
+    .await?;
+    let (code_id, plan, duration_days, quota, redemption_count, max_redemptions, starts_at, expires_at) =
+        code_row.ok_or_else(|| ApiError::Invalid("redemption code is unavailable".into()))?;
+    if now < starts_at || now >= expires_at || redemption_count >= max_redemptions {
+        return Err(ApiError::Invalid("redemption code is unavailable".into()));
+    }
+    let redeemed = sqlx::query("INSERT IGNORE INTO code_redemptions (code_id, user_id) VALUES (?, ?)")
+        .bind(&code_id)
+        .bind(user_id.to_string())
+        .execute(&mut *transaction)
+        .await?;
+    if redeemed.rows_affected() == 0 {
+        return Err(ApiError::Conflict("this code has already been redeemed".into()));
+    }
+    sqlx::query("UPDATE redemption_codes SET redemption_count = redemption_count + 1 WHERE id = ?")
+        .bind(&code_id)
+        .execute(&mut *transaction)
+        .await?;
+    let existing_expiry: Option<chrono::DateTime<Utc>> = sqlx::query_scalar(
+        "SELECT expires_at FROM subscription_entitlements WHERE user_id = ? FOR UPDATE",
+    )
+    .bind(user_id.to_string())
+    .fetch_optional(&mut *transaction)
+    .await?;
+    let starts_at = existing_expiry.filter(|value| *value > now).unwrap_or(now);
+    let expires_at = starts_at + Duration::days(i64::from(duration_days));
+    sqlx::query(
+        "INSERT INTO subscription_entitlements
+         (user_id, plan, status, source, starts_at, expires_at, cloud_analysis_quota, cloud_analysis_used, usage_period_started_at)
+         VALUES (?, ?, 'active', 'redemption_code', ?, ?, ?, 0, ?)
+         ON DUPLICATE KEY UPDATE plan=VALUES(plan), status='active', source='redemption_code', starts_at=VALUES(starts_at),
+           expires_at=VALUES(expires_at), cloud_analysis_quota=VALUES(cloud_analysis_quota), cloud_analysis_used=0,
+           usage_period_started_at=VALUES(usage_period_started_at)",
+    )
+    .bind(user_id.to_string())
+    .bind(plan)
+    .bind(starts_at)
+    .bind(expires_at)
+    .bind(quota)
+    .bind(now)
+    .execute(&mut *transaction)
+    .await?;
+    record_product_event(&mut transaction, user_id, "subscription_redeemed").await?;
+    transaction.commit().await?;
+    Ok(Json(load_subscription(&state.pool, user_id).await?))
+}
+
+fn normalized_redemption_code(code: &str) -> String {
+    code.trim().to_ascii_uppercase()
+}
+
+fn redemption_code_hash(code: &str) -> String {
+    format!("{:x}", Sha256::digest(code.as_bytes()))
+}
+
+async fn load_subscription(pool: &MySqlPool, user_id: Uuid) -> Result<SubscriptionDto, ApiError> {
+    type EntitlementRow = (String, String, String, chrono::DateTime<Utc>, chrono::DateTime<Utc>, u32, u32);
+    let row: Option<EntitlementRow> = sqlx::query_as(
+        "SELECT plan, status, source, starts_at, expires_at, cloud_analysis_quota, cloud_analysis_used
+         FROM subscription_entitlements WHERE user_id = ?",
+    )
+    .bind(user_id.to_string())
+    .fetch_optional(pool)
+    .await?;
+    let now = Utc::now();
+    Ok(match row {
+        Some((plan, status, source, starts_at, expires_at, quota, used)) if status == "active" && expires_at > now => SubscriptionDto {
+            plan, status, source, starts_at, expires_at, cloud_analysis_quota: quota, cloud_analysis_used: used,
+        },
+        _ => SubscriptionDto { plan: "free".into(), status: "inactive".into(), source: "none".into(), starts_at: now, expires_at: now, cloud_analysis_quota: 0, cloud_analysis_used: 0 },
+    })
+}
+
+async fn reserve_cloud_analysis(pool: &MySqlPool, user_id: Uuid) -> Result<(), ApiError> {
+    let now = Utc::now();
+    sqlx::query(
+        "UPDATE subscription_entitlements SET cloud_analysis_used = 0, usage_period_started_at = ?
+         WHERE user_id = ? AND usage_period_started_at < DATE_SUB(?, INTERVAL 30 DAY)",
+    )
+    .bind(now)
+    .bind(user_id.to_string())
+    .bind(now)
+    .execute(pool)
+    .await?;
+    let reserved = sqlx::query(
+        "UPDATE subscription_entitlements SET cloud_analysis_used = cloud_analysis_used + 1
+         WHERE user_id = ? AND plan = 'pro' AND status = 'active' AND expires_at > ?
+           AND cloud_analysis_used < cloud_analysis_quota",
+    )
+    .bind(user_id.to_string())
+    .bind(now)
+    .execute(pool)
+    .await?;
+    if reserved.rows_affected() == 1 {
+        return Ok(());
+    }
+    let membership = load_subscription(pool, user_id).await?;
+    if membership.plan == "pro" {
+        Err(ApiError::QuotaExceeded)
+    } else {
+        Err(ApiError::ProRequired)
+    }
+}
+
+async fn release_cloud_analysis(pool: &MySqlPool, user_id: Uuid) {
+    if let Err(error) = sqlx::query(
+        "UPDATE subscription_entitlements SET cloud_analysis_used = cloud_analysis_used - 1
+         WHERE user_id = ? AND cloud_analysis_used > 0",
+    )
+    .bind(user_id.to_string())
+    .execute(pool)
+    .await
+    {
+        tracing::error!(%error, %user_id, "failed to release reserved cloud analysis quota");
+    }
+}
+
+async fn record_product_event_for_pool(
+    pool: &MySqlPool,
+    user_id: Uuid,
+    event_name: &str,
+) -> Result<(), ApiError> {
+    let mut transaction = pool.begin().await?;
+    record_product_event(&mut transaction, user_id, event_name).await?;
+    transaction.commit().await?;
+    Ok(())
+}
+
+async fn record_product_event(
+    transaction: &mut Transaction<'_, MySql>,
+    user_id: Uuid,
+    event_name: &str,
+) -> Result<(), ApiError> {
+    sqlx::query("INSERT INTO product_events (user_id, event_name) VALUES (?, ?)")
+        .bind(user_id.to_string())
+        .bind(event_name)
+        .execute(&mut **transaction)
+        .await?;
+    Ok(())
+}
+
 async fn analyze(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(request): Json<AnalysisRequest>,
 ) -> Result<Json<AnalysisResponse>, ApiError> {
-    authenticated_user(&headers, &state.jwt_secret)?;
+    let user_id = authenticated_user(&headers, &state.jwt_secret)?;
     validate_analysis_request(&request)?;
     let permit = state
         .engine_slots
         .clone()
         .try_acquire_owned()
         .map_err(|_| ApiError::EngineBusy)?;
+    reserve_cloud_analysis(&state.pool, user_id).await?;
     let timeout = state.engine.timeout;
     let result = tokio::time::timeout(timeout, run_analysis(&state.engine, &request)).await;
     drop(permit);
     match result {
-        Ok(Ok(response)) => Ok(Json(response)),
+        Ok(Ok(response)) => {
+            if let Err(error) = record_product_event_for_pool(&state.pool, user_id, "cloud_analysis_consumed").await {
+                tracing::warn!(%error, "failed to record cloud analysis event");
+            }
+            Ok(Json(response))
+        }
         Ok(Err(error)) => {
             tracing::warn!(%error, "Pikafish analysis failed");
+            release_cloud_analysis(&state.pool, user_id).await;
             Err(ApiError::EngineUnavailable)
         }
-        Err(_) => Err(ApiError::EngineTimeout),
+        Err(_) => {
+            release_cloud_analysis(&state.pool, user_id).await;
+            Err(ApiError::EngineTimeout)
+        }
     }
 }
 
@@ -658,6 +868,16 @@ mod tests {
                 password: "short".into()
             })
             .is_err()
+        );
+    }
+
+    #[test]
+    fn redemption_codes_are_case_and_whitespace_insensitive_without_storing_plaintext() {
+        let normalized = normalized_redemption_code("  pro-2026-alpha  ");
+        assert_eq!(normalized, "PRO-2026-ALPHA");
+        assert_eq!(
+            redemption_code_hash(&normalized),
+            "1d9009580e50ba1a70c96b25a6b1ad78d9c671786debf560ca63604444bc2655"
         );
     }
 

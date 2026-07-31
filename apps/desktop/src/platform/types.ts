@@ -231,6 +231,24 @@ export type SyncAccountDto = {
   status: "unbound" | "signedOut" | "signedIn" | "expired";
   lastSyncResult?: string;
 };
+export type SubscriptionDto = {
+  plan: "free" | "pro";
+  status: "inactive" | "active";
+  source: string;
+  startsAt: string;
+  expiresAt: string;
+  cloudAnalysisQuota: number;
+  cloudAnalysisUsed: number;
+};
+export type TrainingTaskDto = {
+  id: string;
+  gameId: string;
+  nodeId: string;
+  title: string;
+  detail: string;
+  completedAt?: string;
+  createdAt: string;
+};
 export type EngineProbeDto = { path: string; protocol: "uci" | "ucci" };
 export type EngineProfileDto = { id: string; name: string; executablePath: string; protocol: "uci" | "ucci"; active: boolean };
 export type GameSummary = { id: string; title: string; fen: string; updatedAt: string; current: boolean };
@@ -261,6 +279,9 @@ export interface ChessPlatform {
   deleteEngineProfile(id: string): Promise<DesktopPreferencesDto>;
   queryCloudOpeningBook(fen: string): Promise<CloudBookCandidate[]>;
   listCoachReports(): Promise<GameReportDatasetDto[]>;
+  listTrainingTasks(): Promise<TrainingTaskDto[]>;
+  generateTrainingTasks(): Promise<TrainingTaskDto[]>;
+  completeTrainingTask(taskId: string, completed: boolean): Promise<void>;
   playMove(iccs: string): Promise<Partial<BoardState>>;
   newGame(fen: string, title?: string, note?: string): Promise<Partial<BoardState>>;
   openDocument(): Promise<Partial<BoardState> | undefined>;
@@ -292,6 +313,8 @@ export interface ChessPlatform {
   subscribeGameReportProgress(listener: (progress: GameReportProgressDto) => void): Promise<() => void>;
   loadSavedAnalysis(fen: string): Promise<AnalysisLine[]>;
   getSyncAccount(): Promise<SyncAccountDto>;
+  getSubscription(): Promise<SubscriptionDto>;
+  redeemSubscriptionCode(code: string): Promise<SubscriptionDto>;
   registerSyncAccount(email: string, password: string): Promise<SyncAccountDto>;
   loginSyncAccount(email: string, password: string): Promise<SyncAccountDto>;
   logoutSyncAccount(): Promise<SyncAccountDto>;

@@ -25,17 +25,21 @@ const account: SyncAccountDto = { serverUrl: preferences.serverUrl, status: "unb
 
 afterEach(cleanup);
 
-function renderDialog(dialog: "engine" | "syncSettings" | "register" | "login", overrides: Partial<Parameters<typeof DesktopDialogs>[0]> = {}) {
+function renderDialog(dialog: "engine" | "syncSettings" | "register" | "login" | "subscription" | "training", overrides: Partial<Parameters<typeof DesktopDialogs>[0]> = {}) {
   const props: Parameters<typeof DesktopDialogs>[0] = {
     dialog,
     preferences,
     account,
+    trainingTasks: [],
     busy: false,
     onClose: vi.fn(),
     onChooseEngine: vi.fn(async () => undefined),
     onSaveEngine: vi.fn(async () => undefined),
     onSaveSync: vi.fn(async () => undefined),
     onAuthenticate: vi.fn(async () => undefined),
+    onRedeemSubscription: vi.fn(async () => undefined),
+    onGenerateTraining: vi.fn(async () => undefined),
+    onCompleteTraining: vi.fn(async () => undefined),
     ...overrides,
   };
   render(<DesktopDialogs {...props}/>);
@@ -103,5 +107,26 @@ describe("DesktopDialogs", () => {
     renderDialog("syncSettings", { account: { serverUrl: preferences.serverUrl, status: "signedOut", userId: "id", email: "user@example.com" } });
     expect((screen.getByLabelText("同步服务地址") as HTMLInputElement).disabled).toBe(true);
     expect(screen.getByText(/服务地址已锁定/)).toBeTruthy();
+  });
+
+  it("submits a redemption code through the subscription callback", async () => {
+    const redeem = vi.fn(async () => undefined);
+    const { user } = renderDialog("subscription", {
+      account: { ...account, status: "signedIn", userId: "user" },
+      onRedeemSubscription: redeem,
+    });
+    await user.type(screen.getByLabelText("Pro 兑换码"), "PRO-2026");
+    await user.click(screen.getByRole("button", { name: "兑换 Pro" }));
+    expect(redeem).toHaveBeenCalledWith("PRO-2026");
+  });
+
+  it("marks a locally persisted training task complete", async () => {
+    const complete = vi.fn(async () => undefined);
+    const { user } = renderDialog("training", {
+      trainingTasks: [{ id: "task-1", gameId: "game-1", nodeId: "node-1", title: "复盘第 12 手", detail: "比较候选着法", createdAt: "2026-01-01T00:00:00Z" }],
+      onCompleteTraining: complete,
+    });
+    await user.click(screen.getByRole("checkbox"));
+    expect(complete).toHaveBeenCalledWith("task-1", true);
   });
 });

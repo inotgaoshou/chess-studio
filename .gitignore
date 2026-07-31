@@ -1,4 +1,5 @@
 .local/
+.env
 .codegraph/
 target/
 node_modules/

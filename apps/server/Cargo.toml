@@ -15,6 +15,7 @@ jsonwebtoken = { version = "10.3", default-features = false, features = ["rust_c
 password-hash = { version = "0.5", features = ["getrandom"] }
 serde.workspace = true
 serde_json.workspace = true
+sha2 = "0.10"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "mysql", "chrono", "json"] }
 sync-protocol = { path = "../../crates/sync-protocol" }
 thiserror.workspace = true

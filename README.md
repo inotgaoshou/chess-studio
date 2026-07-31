@@ -39,7 +39,7 @@ PIKAFISH_PATH=/absolute/path/to/pikafish-apple-silicon \
 
 ```bash
 cp .env.example .env
-mysql -uroot -p -e 'CREATE DATABASE xiangqi CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;'
+mysql -uroot -p < apps/server/migrations/0000_bootstrap_schema.sql
 mysql -uroot -p xiangqi < apps/server/migrations/0001_initial.sql
 cargo run -p xiangqi-server
 ```

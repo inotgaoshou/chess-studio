@@ -7676,6 +7676,7 @@ dependencies = [
  "password-hash",
  "serde",
  "serde_json",
+ "sha2",
  "sqlx",
  "sync-protocol",
  "thiserror 2.0.19",
