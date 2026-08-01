@@ -364,6 +364,9 @@ export default function App() {
   const [cloudBookCollapsed, setCloudBookCollapsed] = useState(false);
   const [cloudBookPosition, setCloudBookPosition] = useState<{ left: number; top: number }>();
   const [cloudBookHeight, setCloudBookHeight] = useState<number>();
+  const [compactEngineCollapsed, setCompactEngineCollapsed] = useState(false);
+  const [compactManualCollapsed, setCompactManualCollapsed] = useState(false);
+  const [compactEngineWeight, setCompactEngineWeight] = useState(1.05);
   const [coachReports, setCoachReports] = useState<GameReportDatasetDto[]>([]);
   const [coachProfileOpen, setCoachProfileOpen] = useState(false);
   const [trainingTasks, setTrainingTasks] = useState<TrainingTaskDto[]>([]);
@@ -395,6 +398,7 @@ export default function App() {
   const persistedPreferencesRef = useRef(defaultDesktopPreferences);
   const preferenceSaveQueue = useRef<Promise<void>>(Promise.resolve());
   const activeMoveRef = useRef<HTMLButtonElement | null>(null);
+  const compactSplitDragRef = useRef<{ startY: number; startWeight: number; height: number } | undefined>(undefined);
   const cloudBookDragRef = useRef<{ offsetX: number; offsetY: number } | undefined>(undefined);
   const cloudBookResizeRef = useRef<{ startY: number; startHeight: number; top: number } | undefined>(undefined);
   if (!autosaveQueue.current) {
@@ -2090,6 +2094,27 @@ export default function App() {
     }
   }
 
+  function startCompactSplitDrag(event: PointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) return;
+    const panel = event.currentTarget.closest<HTMLElement>(".board-candidate-rail");
+    if (!panel) return;
+    const bounds = panel.getBoundingClientRect();
+    compactSplitDragRef.current = { startY: event.clientY, startWeight: compactEngineWeight, height: Math.max(1, bounds.height) };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function moveCompactSplitDrag(event: PointerEvent<HTMLDivElement>) {
+    const drag = compactSplitDragRef.current;
+    if (!drag) return;
+    const deltaRatio = (event.clientY - drag.startY) / drag.height;
+    setCompactEngineWeight(Math.max(.45, Math.min(1.55, drag.startWeight + deltaRatio * 2)));
+  }
+
+  function stopCompactSplitDrag(event: PointerEvent<HTMLDivElement>) {
+    compactSplitDragRef.current = undefined;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  }
+
   function playbackControls(className: string) {
     return <div className={`playback-controls ${className}`} aria-label="棋谱播放控制">
       <button title="回到开局" disabled={!board.currentNode} onClick={() => void navigateTo()}><ChevronsLeft size={15}/></button>
@@ -2104,6 +2129,20 @@ export default function App() {
 
   function candidateLinesView(className = "") {
     const compactLayout = desktopPreferences.layoutMode === "compact";
+    const compactManualWeight = Math.max(.45, 2 - compactEngineWeight);
+    const compactDockClass = [
+      "variations",
+      "candidate-dock",
+      className,
+      compactLayout && compactEngineCollapsed ? "compact-engine-collapsed" : "",
+      compactLayout && compactManualCollapsed ? "compact-manual-collapsed" : "",
+    ].filter(Boolean).join(" ");
+    const compactDockStyle = compactLayout
+      ? {
+        "--compact-engine-fr": `${compactEngineWeight}fr`,
+        "--compact-manual-fr": `${compactManualWeight}fr`,
+      } as CSSProperties
+      : undefined;
     const compactEngineRows: CompactEngineAnalysisRow[] = compactLayout
       ? orderedAnalysis.map((line) => {
         const lineMoves = (line.notation?.length ? line.notation : line.pv).slice(0, 10);
@@ -2127,8 +2166,14 @@ export default function App() {
         <button className="panel-collapse-button" title="展开棋盘候选" aria-label="展开棋盘候选" onClick={() => void setCandidateRailVisibility(false)}><ChevronLeft size={16}/></button>
       </section>;
     }
-    return <section className={`variations candidate-dock ${className}`.trim()}>
-      <div className="section-title"><strong>{compactLayout ? "引擎分析" : "棋盘候选"}</strong><span>{compactLayout ? analysisIsStale ? "旧候选保留中 · 新局面正在更新" : "深度 / 分数 / 时间 / NPS / HF" : analysisIsStale ? "旧候选保留中 · 新局面正在更新" : `MultiPV ${multipv} · 点预览后手动下一步`}</span><button className="panel-collapse-button" title="收起棋盘候选" aria-label="收起棋盘候选" onClick={() => void setCandidateRailVisibility(true)}><ChevronRight size={16}/></button></div>
+    return <section className={compactDockClass.trim()} style={compactDockStyle}>
+      <div className="section-title">
+        <strong>{compactLayout ? "引擎分析" : "棋盘候选"}</strong>
+        <span>{compactLayout ? compactEngineCollapsed ? "已收起 · 点击展开" : analysisIsStale ? "旧候选保留中 · 新局面正在更新" : "深度 / 分数 / 时间 / NPS / HF" : analysisIsStale ? "旧候选保留中 · 新局面正在更新" : `MultiPV ${multipv} · 点预览后手动下一步`}</span>
+        {compactLayout
+          ? <button className="compact-window-toggle" title={compactEngineCollapsed ? "展开引擎分析" : "收起引擎分析"} aria-label={compactEngineCollapsed ? "展开引擎分析" : "收起引擎分析"} onClick={() => setCompactEngineCollapsed((collapsed) => !collapsed)}>{compactEngineCollapsed ? <ChevronDown size={16}/> : <X size={15}/>}</button>
+          : <button className="panel-collapse-button" title="收起棋盘候选" aria-label="收起棋盘候选" onClick={() => void setCandidateRailVisibility(true)}><ChevronRight size={16}/></button>}
+      </div>
       {compactLayout && <div className="compact-engine-strip" aria-label="简洁布局引擎状态">
         <span className={analysisBusy ? "running" : ""}><Activity size={14}/><strong>引擎：</strong></span>
         <div className="compact-engine-config" title={chessPlatform.kind === "web" ? "云端 Pikafish" : enginePath || "未配置引擎"}>
@@ -2166,32 +2211,47 @@ export default function App() {
             onPreviewStep={jumpCandidatePreview}
           />)}
       </div>
+      {compactLayout && <div
+        className="compact-stack-resizer"
+        role="separator"
+        aria-label="拖拽调整引擎和棋谱高度"
+        aria-orientation="horizontal"
+        onPointerDown={startCompactSplitDrag}
+        onPointerMove={moveCompactSplitDrag}
+        onPointerUp={stopCompactSplitDrag}
+      ><span/></div>}
       {!compactLayout && board.xqbCandidates?.length ? <section className="xqb-candidates" aria-label="XQB 开局库候选">
         <header><BookOpen size={14}/><strong>大师开局库</strong><span>{board.xqbCandidates.length} 个候选</span></header>
         {board.xqbCandidates.map((candidate) => <button key={`${candidate.source}-${candidate.iccs}`} onClick={() => void playIccsMove(candidate.iccs)} title={candidate.memo || candidate.source}>
           <strong>{candidate.notation}</strong><span>{candidate.score > 0 ? `+${candidate.score}` : candidate.score}</span><small>{candidate.winRate == null ? "暂无对局" : `胜率 ${candidate.winRate.toFixed(1)}%`} · {candidate.source}</small>
         </button>)}
       </section> : null}
-      {compactLayout && <section className="compact-manual-panel" aria-label="简洁布局棋谱">
-        <header><span><ClipboardList size={14}/><strong>棋谱</strong></span><small>{board.history.length} 着{board.continuation.length ? ` · 后续 ${board.continuation.length} 着` : ""}</small></header>
-        {playbackControls("compact-playback")}
-        <div className="move-table" role="table" aria-label="简洁布局棋谱着法">
-          <div className="move-table-head" role="row"><span role="columnheader">序号</span><span role="columnheader">着法</span><span role="columnheader">分数</span></div>
-          <div className="move-table-body" role="rowgroup">
-            <button className={`move-table-row root ${!board.currentNode ? "active" : ""}`} role="row" onClick={() => void navigateTo()}>
-              <span role="cell">0</span><span role="cell"><GitBranch size={12}/>开始局面</span><span role="cell" />
-            </button>
-            <ManualMoveRows
-              activeMoveRef={activeMoveRef}
-              continuation={board.continuation}
-              currentNode={board.currentNode}
-              formatScore={formatMoveScore}
-              history={board.history}
-              onNavigate={(nodeId) => void navigateTo(nodeId)}
-              qualityByMoveId={reportByMoveId}
-            />
+      {compactLayout && <section className={`compact-manual-panel ${compactManualCollapsed ? "collapsed" : ""}`} aria-label="简洁布局棋谱">
+        <header>
+          <span><ClipboardList size={14}/><strong>棋谱</strong></span>
+          <small>{compactManualCollapsed ? "已收起" : `${board.history.length} 着${board.continuation.length ? ` · 后续 ${board.continuation.length} 着` : ""}`}</small>
+          <button className="compact-window-toggle" title={compactManualCollapsed ? "展开棋谱" : "收起棋谱"} aria-label={compactManualCollapsed ? "展开棋谱" : "收起棋谱"} onClick={() => setCompactManualCollapsed((collapsed) => !collapsed)}>{compactManualCollapsed ? <ChevronDown size={16}/> : <X size={15}/>}</button>
+        </header>
+        {!compactManualCollapsed && <>
+          {playbackControls("compact-playback")}
+          <div className="move-table" role="table" aria-label="简洁布局棋谱着法">
+            <div className="move-table-head" role="row"><span role="columnheader">序号</span><span role="columnheader">着法</span><span role="columnheader">分数</span></div>
+            <div className="move-table-body" role="rowgroup">
+              <button className={`move-table-row root ${!board.currentNode ? "active" : ""}`} role="row" onClick={() => void navigateTo()}>
+                <span role="cell">0</span><span role="cell"><GitBranch size={12}/>开始局面</span><span role="cell" />
+              </button>
+              <ManualMoveRows
+                activeMoveRef={activeMoveRef}
+                continuation={board.continuation}
+                currentNode={board.currentNode}
+                formatScore={formatMoveScore}
+                history={board.history}
+                onNavigate={(nodeId) => void navigateTo(nodeId)}
+                qualityByMoveId={reportByMoveId}
+              />
+            </div>
           </div>
-        </div>
+        </>}
       </section>}
     </section>;
   }

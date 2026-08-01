@@ -35,7 +35,7 @@
     min-width: 0;
     min-height: 0;
     display: grid;
-    grid-template-rows: 42px 54px minmax(160px, 1.12fr) minmax(200px, .88fr);
+    grid-template-rows: 42px 54px minmax(160px, var(--compact-engine-fr, 1.12fr)) 8px minmax(200px, var(--compact-manual-fr, .88fr));
     max-height: none;
     padding: 0;
     place-items: stretch;
@@ -219,6 +219,53 @@
   .compact-overview-balance i { display: block; height: 100%; background: var(--red); }
   .compact-evaluation-table .compact-data-head,
   .compact-evaluation-table .compact-data-body > button { grid-template-columns: minmax(92px, 1fr) 62px 48px 66px; }
+
+  .workspace.layout-compact .compact-window-toggle {
+    width: 28px;
+    height: 28px;
+    margin-left: auto;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--surface-3);
+    color: var(--text-secondary);
+    display: grid;
+    place-items: center;
+  }
+  .workspace.layout-compact .compact-stack-resizer {
+    min-height: 8px;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    background: color-mix(in srgb, var(--surface-2) 78%, var(--accent-surface));
+    display: grid;
+    place-items: center;
+    cursor: row-resize;
+    touch-action: none;
+  }
+  .workspace.layout-compact .compact-stack-resizer span {
+    width: 42px;
+    height: 2px;
+    border-radius: 999px;
+    background: var(--border-strong);
+  }
+  .workspace.layout-compact .compact-engine-collapsed {
+    grid-template-rows: 42px 0 0 0 minmax(0, 1fr);
+  }
+  .workspace.layout-compact .compact-manual-collapsed {
+    grid-template-rows: 42px 54px minmax(0, 1fr) 0 42px;
+  }
+  .workspace.layout-compact .compact-engine-collapsed.compact-manual-collapsed {
+    grid-template-rows: 42px 0 0 0 42px;
+  }
+  .workspace.layout-compact .compact-engine-collapsed .compact-engine-strip,
+  .workspace.layout-compact .compact-engine-collapsed .analysis-lines,
+  .workspace.layout-compact .compact-engine-collapsed .compact-stack-resizer,
+  .workspace.layout-compact .compact-manual-collapsed .compact-stack-resizer {
+    display: none;
+  }
+  .workspace.layout-compact .compact-manual-panel.collapsed {
+    grid-template-rows: 42px;
+  }
 }
 
 /* This skin keeps its warm wood treatment in both application color themes. */
@@ -2453,7 +2500,7 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
   }
   .workspace.layout-compact .board-candidate-rail,
   .workspace.layout-compact.candidate-rail-collapsed .board-candidate-rail {
-    grid-template-rows: 45px 62px minmax(190px, 1.05fr) minmax(220px, .95fr);
+    grid-template-rows: 45px 62px minmax(190px, var(--compact-engine-fr, 1.05fr)) 8px minmax(220px, var(--compact-manual-fr, .95fr));
     border-right: 1px solid #c9ddeb;
   }
   .workspace.layout-compact > .analysis-panel,
@@ -2598,6 +2645,42 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
     grid-template-rows: 45px 42px minmax(0, 1fr);
     border-top: 1px solid #d6e5f2;
     background: #ffffff;
+  }
+  .workspace.layout-compact .compact-window-toggle {
+    width: 30px;
+    height: 30px;
+    margin-left: auto;
+    border-color: #c0d5e8;
+    border-radius: 5px;
+    background: #f4faff;
+    color: #257cc0;
+  }
+  .workspace.layout-compact .compact-stack-resizer {
+    min-height: 8px;
+    border-top: 1px solid #d6e5f2;
+    border-bottom: 1px solid #d6e5f2;
+    background: #e9f4ff;
+  }
+  .workspace.layout-compact .compact-stack-resizer span {
+    background: #96bddf;
+  }
+  .workspace.layout-compact .compact-engine-collapsed {
+    grid-template-rows: 45px 0 0 0 minmax(0, 1fr);
+  }
+  .workspace.layout-compact .compact-manual-collapsed {
+    grid-template-rows: 45px 62px minmax(0, 1fr) 0 45px;
+  }
+  .workspace.layout-compact .compact-engine-collapsed.compact-manual-collapsed {
+    grid-template-rows: 45px 0 0 0 45px;
+  }
+  .workspace.layout-compact .compact-engine-collapsed .compact-engine-strip,
+  .workspace.layout-compact .compact-engine-collapsed .analysis-lines,
+  .workspace.layout-compact .compact-engine-collapsed .compact-stack-resizer,
+  .workspace.layout-compact .compact-manual-collapsed .compact-stack-resizer {
+    display: none;
+  }
+  .workspace.layout-compact .compact-manual-panel.collapsed {
+    grid-template-rows: 45px;
   }
   .workspace.layout-compact .compact-manual-panel .playback-controls {
     min-height: 42px;
