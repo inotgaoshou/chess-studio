@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { Check } from "lucide-react";
 import type { PreviewLineStep } from "./platform";
 
 type Props = {
@@ -34,6 +35,7 @@ export function CandidatePreviewSteps({ activeStep, onSelect, steps }: Props) {
         <span className="preview-step-number">{index + 1}</span>
         <i className={`preview-step-side ${side}`}>{side === "red" ? "红" : "黑"}</i>
         <small>{step.notation}</small>
+        {index === activeStep && <span className="preview-step-active-mark" aria-hidden="true"><Check size={13}/></span>}
       </button>;
     })}
   </div>;

@@ -45,6 +45,7 @@ describe("CandidatePreviewSteps", () => {
 
     expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "auto", block: "nearest", inline: "nearest" });
     expect(screen.getByRole("button", { name: "第 3 步，红方，马二进三" }).getAttribute("aria-current")).toBe("step");
+    expect(screen.getByRole("button", { name: "第 3 步，红方，马二进三" }).querySelector(".preview-step-active-mark")).toBeTruthy();
   });
 
   it("jumps to the selected preview move", () => {
