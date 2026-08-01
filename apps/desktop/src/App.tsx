@@ -59,6 +59,7 @@ import { SkinShopDialog } from "./SkinShopDialog";
 import { CANDIDATE_PREVIEW_HALF_MOVES } from "./candidatePreview";
 import { AutosaveOperationQueue, autosaveLabel, type AutosaveState } from "./autosave";
 import { ManualMoveRows } from "./ManualMoveRows";
+import { CandidatePreviewSteps } from "./CandidatePreviewSteps";
 
 
 const startingFen = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1";
@@ -2333,27 +2334,14 @@ export default function App() {
                 <span className="pv-rank">{candidatePreview.rank}</span>
                 <div>
                   <strong>候选{candidatePreview.rank}预览 {candidatePreview.step + 1}/{candidatePreview.steps.length}：{previewStep.notation}</strong>
-                  <small>{previewStep.movedBy}走子 · {previewStep.status} · 首着 {candidatePreview.firstMove}</small>
+                  <small><em className={`candidate-preview-side ${previewStep.movedBy === "红方" ? "red" : "black"}`}>{previewStep.movedBy}</em>走子 · {previewStep.status} · 首着 {candidatePreview.firstMove}</small>
                 </div>
               </div>
               <div className="candidate-preview-text">
                 <span>思路：{previewStepAdvice(candidatePreview, previewStep)}</span>
                 <span>风险/可能性：{candidatePreview.step === 0 ? candidatePreview.possibility : candidatePreview.risk}</span>
               </div>
-              <div className="candidate-preview-steps" aria-label="候选推演步骤">
-                {candidatePreview.steps.map((step, index) => (
-                  <button
-                    key={`${index}-${step.notation}-${step.fen}`}
-                    type="button"
-                    className={index === candidatePreview.step ? "active" : ""}
-                    onClick={() => jumpCandidatePreview(index)}
-                    title={`${index + 1}. ${step.notation}`}
-                  >
-                    <span>{index + 1}</span>
-                    <small>{step.notation}</small>
-                  </button>
-                ))}
-              </div>
+              <CandidatePreviewSteps activeStep={candidatePreview.step} onSelect={jumpCandidatePreview} steps={candidatePreview.steps}/>
               <div className="candidate-preview-controls" role="group" aria-label="候选推演预览控制">
                 <button type="button" className="preview-prev" onClick={() => stepCandidatePreview(-1)} disabled={candidatePreview.step === 0} title="上一步"><ChevronLeft size={14}/>上一步</button>
                 <button type="button" className="preview-next" onClick={() => stepCandidatePreview(1)} disabled={candidatePreview.step >= candidatePreview.steps.length - 1} title="下一步">下一步<ChevronRight size={14}/></button>
