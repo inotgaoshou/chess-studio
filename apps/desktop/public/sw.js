@@ -1,11 +1,26 @@
-const CACHE_NAME = "xiangqi-studio-v1";
+const CACHE_NAME = "xiangqi-studio-v2";
 const APP_SHELL = [
   "/",
   "/manifest.webmanifest",
   "/icons/icon-192.png",
   "/icons/icon-512.png",
+  "/skins/default/ba.png",
+  "/skins/default/bb.png",
+  "/skins/default/bc.png",
+  "/skins/default/bk.png",
+  "/skins/default/bn.png",
   "/skins/default/board.png",
-  "/skins/default/mask2.png"
+  "/skins/default/bp.png",
+  "/skins/default/br.png",
+  "/skins/default/mask.png",
+  "/skins/default/mask2.png",
+  "/skins/default/ra.png",
+  "/skins/default/rb.png",
+  "/skins/default/rc.png",
+  "/skins/default/rk.png",
+  "/skins/default/rn.png",
+  "/skins/default/rp.png",
+  "/skins/default/rr.png"
 ];
 
 self.addEventListener("install", (event) => {

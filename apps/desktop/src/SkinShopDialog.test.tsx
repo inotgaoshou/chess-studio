@@ -20,6 +20,15 @@ function renderShop(signedIn = false) {
 }
 
 describe("SkinShopDialog", () => {
+  it("labels the compatible original skin slot as the default skin", () => {
+    renderShop();
+    const defaultBoard = screen.getByText("默认棋盘").closest("article")!;
+    expect(defaultBoard.querySelector("button")?.disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "将棋子" }));
+    const defaultPiece = screen.getByText("默认棋子").closest("article")!;
+    expect(defaultPiece.querySelector("button")?.disabled).toBe(true);
+  });
+
   it("keeps board and piece categories above the source tabs", () => {
     renderShop();
     const tabs = screen.getByRole("navigation", { name: "皮肤类别" }).querySelectorAll("button");

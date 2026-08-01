@@ -5,8 +5,8 @@ import { ACCOUNT_SKINS, ASSET_SKINS } from "./skinAccess";
 
 type Skin = DesktopPreferencesDto["boardSkin"];
 type SkinTab = "board" | "piece";
-const boards: Array<[Skin, string, string]> = [["original", "原始棋盘", "原始深色棋盘"], ["classic", "暖木立体", "温润木纹与浮雕边框"], ["neon", "赛博棋阵", "蓝光赛博棋线"], ["jade", "翡翠庭院", "青玉庭院棋盘"], ["imperial", "朱墙宫阙", "朱金宫廷棋盘"], ["hongmu", "红木鎏金", "深色红木与金色棋线"], ["jingdian", "经典雅致", "传统棋盘与经典棋子"], ["xinghe", "霓虹星河", "赛博星空与蓝紫棋线"]];
-const pieces: Array<[Skin, string, string]> = [["original", "原始棋子", "原始红黑棋子"], ["classic", "暖木立体", "木雕浮雕与柔和投影"], ["neon", "赛博光子", "红蓝能量棋子"], ["jade", "翡翠琉璃", "青玉琉璃棋子"], ["imperial", "鎏金宫廷", "金红宫廷棋子"], ["hongmu", "红木鎏金", "金色立体红黑棋子"], ["jingdian", "经典雅致", "传统棋盘与经典棋子"], ["xinghe", "霓虹星河", "赛博蓝光与红蓝棋子"]];
+const boards: Array<[Skin, string, string]> = [["original", "默认棋盘", "浅色木纹默认棋盘"], ["classic", "暖木立体", "温润木纹与浮雕边框"], ["neon", "赛博棋阵", "蓝光赛博棋线"], ["jade", "翡翠庭院", "青玉庭院棋盘"], ["imperial", "朱墙宫阙", "朱金宫廷棋盘"], ["hongmu", "红木鎏金", "深色红木与金色棋线"], ["jingdian", "经典雅致", "传统棋盘与经典棋子"], ["xinghe", "霓虹星河", "赛博星空与蓝紫棋线"]];
+const pieces: Array<[Skin, string, string]> = [["original", "默认棋子", "经典红黑默认棋子"], ["classic", "暖木立体", "木雕浮雕与柔和投影"], ["neon", "赛博光子", "红蓝能量棋子"], ["jade", "翡翠琉璃", "青玉琉璃棋子"], ["imperial", "鎏金宫廷", "金红宫廷棋子"], ["hongmu", "红木鎏金", "金色立体红黑棋子"], ["jingdian", "经典雅致", "传统棋盘与经典棋子"], ["xinghe", "霓虹星河", "赛博蓝光与红蓝棋子"]];
 
 export function SkinShopDialog({ preferences, signedIn, onClose, onPreview, onEquip }: { preferences: DesktopPreferencesDto; signedIn: boolean; onClose(): void; onPreview(patch?: Pick<DesktopPreferencesDto, "boardSkin" | "pieceSkin">): void; onEquip(patch: Pick<DesktopPreferencesDto, "boardSkin" | "pieceSkin">): void }) {
   const [tab, setTab] = useState<SkinTab>("board");
