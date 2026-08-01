@@ -19,6 +19,7 @@ const preferences: DesktopPreferencesDto = {
   candidateRailCollapsed: false,
   analysisPanelCollapsed: false,
   workspacePanel: "moves",
+  layoutMode: "studio",
   colorTheme: "dark",
   boardSkin: "original",
   pieceSkin: "original",

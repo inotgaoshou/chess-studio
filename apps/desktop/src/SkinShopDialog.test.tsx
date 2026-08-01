@@ -9,7 +9,7 @@ const preferences: DesktopPreferencesDto = {
   enginePath: "", threads: 2, hashMb: 256, multipv: 3, candidateLineMoves: 6, searchMode: "time", searchValue: 1500,
   moveTimeMs: 5000, ponder: false, autoAnalyze: true, boardSkin: "original", pieceSkin: "original",
   colorTheme: "dark", activeEngineId: undefined, libraryCollapsed: true, candidateRailCollapsed: false,
-  analysisPanelCollapsed: false, workspacePanel: "moves", reportDepth: 18, serverUrl: "http://127.0.0.1:8080",
+  analysisPanelCollapsed: false, workspacePanel: "moves", layoutMode: "studio", reportDepth: 18, serverUrl: "http://127.0.0.1:8080",
 };
 
 function renderShop(signedIn = false) {

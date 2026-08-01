@@ -24,6 +24,7 @@ const preferences: DesktopPreferencesDto = {
   candidateRailCollapsed: false,
   analysisPanelCollapsed: false,
   workspacePanel: "moves",
+  layoutMode: "studio",
   reportDepth: 20,
   serverUrl: "http://127.0.0.1:8080",
 };

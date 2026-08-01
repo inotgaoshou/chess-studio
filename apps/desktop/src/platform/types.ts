@@ -203,6 +203,7 @@ export type GameReportPresentationDto = {
 };
 export type SyncResult = { uploaded: number; downloaded: number; cursor: number };
 export const BUILTIN_ENGINE_PATH = "builtin:pikafish";
+export type WorkspaceLayoutMode = "studio" | "compact";
 export type DesktopPreferencesDto = {
   enginePath: string;
   threads: number;
@@ -218,6 +219,7 @@ export type DesktopPreferencesDto = {
   candidateRailCollapsed: boolean;
   analysisPanelCollapsed: boolean;
   workspacePanel: "moves" | "analysis" | "trend" | "summary" | "report";
+  layoutMode: WorkspaceLayoutMode;
   colorTheme: "light" | "dark";
   boardSkin: "original" | "classic" | "neon" | "jade" | "imperial" | "hongmu" | "jingdian" | "xinghe";
   pieceSkin: "original" | "classic" | "neon" | "jade" | "imperial" | "hongmu" | "jingdian" | "xinghe";

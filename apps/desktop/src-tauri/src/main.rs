@@ -2282,6 +2282,9 @@ fn validate_preferences(preferences: &DesktopPreferences) -> Result<(), String> 
     ) {
         return Err("不支持的工作区页面".into());
     }
+    if !matches!(preferences.layout_mode.as_str(), "studio" | "compact") {
+        return Err("不支持的工作台布局".into());
+    }
     if !matches!(preferences.board_skin.as_str(), "original" | "classic" | "neon" | "jade" | "imperial" | "hongmu" | "jingdian" | "xinghe") {
         return Err("不支持的棋盘皮肤".into());
     }
@@ -3967,6 +3970,12 @@ mod tests {
         assert_eq!(
             validate_preferences(&preferences).unwrap_err(),
             "不支持的颜色主题"
+        );
+        let mut preferences = DesktopPreferences::default();
+        preferences.layout_mode = "floating".into();
+        assert_eq!(
+            validate_preferences(&preferences).unwrap_err(),
+            "不支持的工作台布局"
         );
         let mut preferences = DesktopPreferences::default();
         preferences.candidate_line_moves = 21;

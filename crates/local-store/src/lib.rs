@@ -70,6 +70,8 @@ pub struct DesktopPreferences {
     pub analysis_panel_collapsed: bool,
     #[serde(default = "default_workspace_panel")]
     pub workspace_panel: String,
+    #[serde(default = "default_layout_mode")]
+    pub layout_mode: String,
     #[serde(default = "default_color_theme")]
     pub color_theme: String,
     #[serde(default = "default_board_skin")]
@@ -98,6 +100,10 @@ fn default_color_theme() -> String {
 
 fn default_workspace_panel() -> String {
     "moves".into()
+}
+
+fn default_layout_mode() -> String {
+    "studio".into()
 }
 
 fn default_board_skin() -> String {
@@ -141,6 +147,7 @@ impl Default for DesktopPreferences {
             candidate_rail_collapsed: false,
             analysis_panel_collapsed: false,
             workspace_panel: default_workspace_panel(),
+            layout_mode: default_layout_mode(),
             color_theme: default_color_theme(),
             board_skin: default_board_skin(),
             piece_skin: default_piece_skin(),
@@ -2131,6 +2138,7 @@ mod tests {
             candidate_rail_collapsed: true,
             analysis_panel_collapsed: true,
             workspace_panel: "summary".into(),
+            layout_mode: "compact".into(),
             color_theme: "light".into(),
             board_skin: "neon".into(),
             piece_skin: "neon".into(),
@@ -2161,6 +2169,7 @@ mod tests {
         assert!(!preferences.candidate_rail_collapsed);
         assert!(!preferences.analysis_panel_collapsed);
         assert_eq!(preferences.workspace_panel, "moves");
+        assert_eq!(preferences.layout_mode, "studio");
         assert_eq!(preferences.color_theme, "dark");
         assert_eq!(preferences.report_depth, 20);
         assert_eq!(preferences.candidate_line_moves, 6);

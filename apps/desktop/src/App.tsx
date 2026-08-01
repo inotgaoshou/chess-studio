@@ -53,6 +53,7 @@ import { MobileToolbar, type MobileToolbarCommand } from "./MobileToolbar";
 import type { DesktopPreferencesDto, SubscriptionDto, SyncAccountDto } from "./platform";
 import { applyColorTheme, initialColorTheme, type ColorTheme } from "./theme";
 import { WorkspaceTabs, type WorkspacePanel } from "./WorkspaceTabs";
+import { WorkspaceLayoutSwitch } from "./WorkspaceLayoutSwitch";
 import { CoachProfileView } from "./CoachProfileView";
 import { SkinShopDialog } from "./SkinShopDialog";
 import { CANDIDATE_PREVIEW_HALF_MOVES, DEFAULT_CANDIDATE_LINE_MOVES } from "./candidatePreview";
@@ -124,6 +125,7 @@ const defaultDesktopPreferences: DesktopPreferencesDto = {
   candidateRailCollapsed: false,
   analysisPanelCollapsed: false,
   workspacePanel: "moves",
+  layoutMode: "studio",
   colorTheme: "dark",
   boardSkin: "original",
   pieceSkin: "original",
@@ -155,6 +157,14 @@ function initialAutoAnalysis() {
     return localStorage.getItem("xiangqi:auto-analysis") !== "false";
   } catch {
     return true;
+  }
+}
+
+function initialWorkspaceLayout(): DesktopPreferencesDto["layoutMode"] {
+  try {
+    return localStorage.getItem("xiangqi:workspace-layout") === "compact" ? "compact" : "studio";
+  } catch {
+    return "studio";
   }
 }
 
@@ -386,6 +396,13 @@ export default function App() {
   multipvRef.current = multipv;
 
   useEffect(() => {
+    if (chessPlatform.kind === "web") {
+      const layoutMode = initialWorkspaceLayout();
+      const preferences = { ...desktopPreferencesRef.current, layoutMode };
+      desktopPreferencesRef.current = preferences;
+      persistedPreferencesRef.current = preferences;
+      setDesktopPreferences(preferences);
+    }
     void chessPlatform.initialize()
       .then((state) => {
         applyBoard(state);
@@ -743,6 +760,25 @@ export default function App() {
     } catch (error) {
       setColorTheme(desktopPreferencesRef.current.colorTheme);
       setNotice(friendlyError(error));
+    }
+  }
+
+  async function setWorkspaceLayout(layoutMode: DesktopPreferencesDto["layoutMode"]) {
+    if (desktopPreferencesRef.current.layoutMode === layoutMode) return;
+    if (chessPlatform.kind === "web") {
+      const preferences = { ...desktopPreferencesRef.current, layoutMode };
+      desktopPreferencesRef.current = preferences;
+      persistedPreferencesRef.current = preferences;
+      setDesktopPreferences(preferences);
+      try { localStorage.setItem("xiangqi:workspace-layout", layoutMode); } catch { /* Browser storage may be unavailable. */ }
+      setNotice(layoutMode === "compact" ? "已切换到简洁分析布局" : "已切换到专业工作台布局");
+      return;
+    }
+    try {
+      await saveDesktopPreferencePatch({ layoutMode });
+      setNotice(layoutMode === "compact" ? "已切换到简洁分析布局" : "已切换到专业工作台布局");
+    } catch (error) {
+      setNotice(`布局切换失败：${friendlyError(error)}`);
     }
   }
 
@@ -2058,13 +2094,22 @@ export default function App() {
   }
 
   function candidateLinesView(className = "") {
-    if (candidateRailCollapsed) {
+    const compactLayout = desktopPreferences.layoutMode === "compact";
+    if (candidateRailCollapsed && !compactLayout) {
       return <section className={`variations candidate-dock collapsed ${className}`.trim()} aria-label="棋盘候选已收起">
         <button className="panel-collapse-button" title="展开棋盘候选" aria-label="展开棋盘候选" onClick={() => void setCandidateRailVisibility(false)}><ChevronLeft size={16}/></button>
       </section>;
     }
     return <section className={`variations candidate-dock ${className}`.trim()}>
-      <div className="section-title"><strong>棋盘候选</strong><span>{analysisIsStale ? "旧候选保留中 · 新局面正在更新" : `MultiPV ${multipv} · 点预览后手动下一步`}</span><button className="panel-collapse-button" title="收起棋盘候选" aria-label="收起棋盘候选" onClick={() => void setCandidateRailVisibility(true)}><ChevronRight size={16}/></button></div>
+      <div className="section-title"><strong>{compactLayout ? "引擎分析" : "棋盘候选"}</strong><span>{analysisIsStale ? "旧候选保留中 · 新局面正在更新" : `MultiPV ${multipv} · 点预览后手动下一步`}</span><button className="panel-collapse-button" title="收起棋盘候选" aria-label="收起棋盘候选" onClick={() => void setCandidateRailVisibility(true)}><ChevronRight size={16}/></button></div>
+      {compactLayout && <div className="compact-engine-strip" aria-label="简洁布局引擎状态">
+        <span className={analysisBusy ? "running" : ""}><Activity size={14}/><strong>{engineDisplayName(enginePath)}</strong></span>
+        <small>深度 {primaryAnalysis?.depth ?? "--"} · 分数 {primaryAnalysis ? formatAnalysisScore(primaryAnalysis) : "--"} · {primaryAnalysis?.timeMs != null ? `${(primaryAnalysis.timeMs / 1000).toFixed(1)}s` : "等待分析"}</small>
+        <button type="button" title="引擎设置" aria-label="引擎设置" onClick={() => setDesktopDialog("engine")}><Settings2 size={14}/></button>
+        {analysisBusy
+          ? <button type="button" className="stop" onClick={() => void stopAnalysis()}><Square size={12}/>停止</button>
+          : <button type="button" disabled={!board.playable || isPlaying} onClick={() => void runAnalysis()}><Play size={13}/>分析</button>}
+      </div>}
       <div className="analysis-lines">
         {analysis.length === 0
           ? <div className="empty-analysis"><Activity size={24}/><strong>等待分析</strong><span>启动 Pikafish 后在这里显示候选 1/2/3 推演</span></div>
@@ -2091,6 +2136,13 @@ export default function App() {
           <strong>{candidate.notation}</strong><span>{candidate.score > 0 ? `+${candidate.score}` : candidate.score}</span><small>{candidate.winRate == null ? "暂无对局" : `胜率 ${candidate.winRate.toFixed(1)}%`} · {candidate.source}</small>
         </button>)}
       </section> : null}
+      {compactLayout && chessPlatform.kind === "desktop" && desktopPreferences.cloudBookEnabled && <section className="xqb-candidates compact-cloud-candidates" aria-label="ChessDB 云库候选">
+        <header><Database size={14}/><strong>云库</strong><span>{cloudBookLoading ? "查询中" : cloudBookError ?? `${cloudCandidates.length} 个候选`}</span></header>
+        {cloudCandidates.slice(0, 5).map((candidate) => <button key={candidate.iccs} onClick={() => void playIccsMove(candidate.iccs)} title={candidate.memo || candidate.source}>
+          <strong>{candidate.notation}</strong><span>{candidate.score > 0 ? `+${candidate.score}` : candidate.score}</span><small>{candidate.winRate == null ? "云库候选" : `胜率 ${candidate.winRate.toFixed(1)}%`}{candidate.memo ? ` · ${candidate.memo}` : ""}</small>
+        </button>)}
+        {!cloudBookLoading && cloudCandidates.length === 0 && <p className="cloud-book-status">{cloudBookError ? "云库暂时不可用" : "当前局面暂无云库候选"}</p>}
+      </section>}
     </section>;
   }
 
@@ -2218,6 +2270,8 @@ export default function App() {
           </div>}
         </div>}
         <div className="tool-divider" />
+        <WorkspaceLayoutSwitch mode={desktopPreferences.layoutMode} onChange={(mode) => void setWorkspaceLayout(mode)}/>
+        <div className="tool-divider" />
         <button
           className={`mode-tool ${analysisHintsEnabled ? "active" : ""}`}
           title={analysisHintsEnabled ? "停止自动分析并隐藏 MultiPV 提示" : "开启自动分析与 MultiPV 提示"}
@@ -2241,7 +2295,7 @@ export default function App() {
         <button className="tool-button" title={colorTheme === "dark" ? "切换浅色主题" : "切换深色主题"} aria-label={colorTheme === "dark" ? "切换浅色主题" : "切换深色主题"} onClick={() => void toggleColorTheme()}>{colorTheme === "dark" ? <Sun size={16}/> : <Moon size={16}/>}</button>
       </div>
 
-      <main className={`workspace ${libraryCollapsed ? "library-collapsed" : ""} ${candidateRailCollapsed ? "candidate-rail-collapsed" : ""} ${analysisPanelCollapsed ? "analysis-panel-collapsed" : ""}`}>
+      <main className={`workspace layout-${desktopPreferences.layoutMode} ${libraryCollapsed ? "library-collapsed" : ""} ${candidateRailCollapsed ? "candidate-rail-collapsed" : ""} ${analysisPanelCollapsed ? "analysis-panel-collapsed" : ""}`}>
         <aside className={`library-panel ${libraryCollapsed ? "collapsed" : ""} ${mobilePanel === "library" || mobilePanel === "settings" ? "mobile-visible" : ""} ${mobilePanel === "settings" ? "mobile-settings-mode" : ""}`}>
           <div className="pane-title">
             <strong>{libraryCollapsed ? <Library size={16}/> : "棋谱库"}</strong>
@@ -2434,11 +2488,11 @@ export default function App() {
           {candidateLinesView("board-candidate-rail")}
         </section>
 
-        <aside className={`analysis-panel ${analysisPanelCollapsed ? "collapsed" : ""} ${mobilePanel === "analysis" ? "mobile-visible" : ""}`}>
-          {analysisPanelCollapsed
+        <aside className={`analysis-panel ${analysisPanelCollapsed && desktopPreferences.layoutMode !== "compact" ? "collapsed" : ""} ${mobilePanel === "analysis" ? "mobile-visible" : ""}`}>
+          {analysisPanelCollapsed && desktopPreferences.layoutMode !== "compact"
             ? <button className="panel-collapse-button analysis-panel-reopen" title="展开局面分析" aria-label="展开局面分析" onClick={() => void setAnalysisPanelVisibility(false)}><ChevronLeft size={16}/></button>
             : null}
-          {!analysisPanelCollapsed && <>
+          {(!analysisPanelCollapsed || desktopPreferences.layoutMode === "compact") && <>
           <div className="position-overview" aria-label="局势概览">
             <div className="overview-heading"><span><TrendingUp size={14}/>局势概览</span><strong>{evaluation?.label ?? "等待分析"}</strong><button className="panel-collapse-button" title="收起局面分析" aria-label="收起局面分析" onClick={() => void setAnalysisPanelVisibility(true)}><ChevronRight size={16}/></button></div>
             <div className="overview-metrics">
