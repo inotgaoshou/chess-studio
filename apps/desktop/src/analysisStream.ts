@@ -6,8 +6,19 @@ export type AnalysisStreamBuffer = {
   published: boolean;
 };
 
+export type AnalysisHistoryBuffer = {
+  fen: string;
+  lines: AnalysisLine[];
+};
+
+export const ENGINE_ANALYSIS_HISTORY_LIMIT = 10;
+
 export function beginAnalysisStream(fen: string): AnalysisStreamBuffer {
   return { fen, lines: [], published: false };
+}
+
+export function beginAnalysisHistory(fen: string): AnalysisHistoryBuffer {
+  return { fen, lines: [] };
 }
 
 export function completeAnalysisStream(fen: string, lines: AnalysisLine[]): AnalysisStreamBuffer {
@@ -36,6 +47,34 @@ export function updateAnalysisStream(
   return { buffer, visible: published ? lines : undefined };
 }
 
+export function updateAnalysisHistory(
+  current: AnalysisHistoryBuffer | undefined,
+  fen: string,
+  line: AnalysisLine,
+  limit = ENGINE_ANALYSIS_HISTORY_LIMIT,
+): AnalysisHistoryBuffer {
+  const source = current?.fen === fen ? current : beginAnalysisHistory(fen);
+  const key = historyLineKey(line);
+  const boundedLimit = Math.max(1, Math.trunc(limit) || ENGINE_ANALYSIS_HISTORY_LIMIT);
+  return {
+    fen,
+    lines: [
+      line,
+      ...source.lines.filter((candidate) => historyLineKey(candidate) !== key),
+    ].slice(0, boundedLimit),
+  };
+}
+
 function orderLines(lines: AnalysisLine[]) {
   return lines.slice().sort((left, right) => left.multipv - right.multipv);
+}
+
+function historyLineKey(line: AnalysisLine) {
+  return [
+    line.multipv,
+    line.depth ?? "",
+    line.scoreCp ?? "",
+    line.mate ?? "",
+    line.pv.join(" "),
+  ].join("|");
 }

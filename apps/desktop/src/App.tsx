@@ -62,11 +62,13 @@ import { CANDIDATE_PREVIEW_HALF_MOVES, DEFAULT_CANDIDATE_LINE_MOVES } from "./ca
 import { AutosaveOperationQueue, autosaveLabel, type AutosaveState } from "./autosave";
 import { ManualMoveRows } from "./ManualMoveRows";
 import { CandidatePreviewSteps } from "./CandidatePreviewSteps";
-import { beginAnalysisStream, completeAnalysisStream, updateAnalysisStream, type AnalysisStreamBuffer } from "./analysisStream";
+import { ENGINE_ANALYSIS_HISTORY_LIMIT, beginAnalysisHistory, beginAnalysisStream, completeAnalysisStream, updateAnalysisHistory, updateAnalysisStream, type AnalysisHistoryBuffer, type AnalysisStreamBuffer } from "./analysisStream";
 import { ACCOUNT_SKINS, normalizeSkinId, requiresSignInForSkinPatch, skinAssetFolder } from "./skinAccess";
 
 
 const COMPACT_PANEL_RETURN_EVENT = "compact-panel-return";
+const COMPACT_ENGINE_LINE_MIN_MOVES = 5;
+const COMPACT_ENGINE_LINE_MAX_MOVES = 10;
 const startingFen = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1";
 const backRankKinds = ["rook", "horse", "elephant", "advisor", "king", "advisor", "elephant", "horse", "rook"];
 const initialPieces: Piece[] = [
@@ -301,6 +303,7 @@ export default function App() {
   const [fenInput, setFenInput] = useState(startingFen);
   const [enginePath, setEnginePath] = useState("");
   const [analysis, setAnalysis] = useState<AnalysisLine[]>([]);
+  const [analysisHistory, setAnalysisHistory] = useState<AnalysisLine[]>([]);
   const [analysisFen, setAnalysisFen] = useState<string>();
   const [analysisSideToMove, setAnalysisSideToMove] = useState<BoardState["sideToMove"]>();
   const [analysisArrowFen, setAnalysisArrowFen] = useState<string>();
@@ -411,6 +414,7 @@ export default function App() {
   const boardRef = useRef<BoardState>(fallback);
   const analysisFenRef = useRef<string | undefined>(undefined);
   const analysisStreamRef = useRef<AnalysisStreamBuffer | undefined>(undefined);
+  const analysisHistoryRef = useRef<AnalysisHistoryBuffer | undefined>(undefined);
   const multipvRef = useRef(multipv);
   const analysisBusyRef = useRef(false);
   const analysisHintsEnabledRef = useRef(false);
@@ -619,6 +623,9 @@ export default function App() {
         setEngineThinking(event.state === "thinking");
       } else if (event.type === "info") {
         if (event.fen !== boardRef.current.fen) return;
+        const history = updateAnalysisHistory(analysisHistoryRef.current, event.fen, event.line);
+        analysisHistoryRef.current = history;
+        setAnalysisHistory(history.lines);
         const stream = updateAnalysisStream(analysisStreamRef.current, event.fen, event.line, multipvRef.current);
         analysisStreamRef.current = stream.buffer;
         if (!stream.visible) return;
@@ -734,23 +741,29 @@ export default function App() {
   const orderedAnalysis = useMemo(() => analysis.slice().sort((left, right) => left.multipv - right.multipv), [analysis]);
   const primaryAnalysis = orderedAnalysis[0];
   const candidateSideToMove = analysisSideToMove ?? board.sideToMove;
-  const compactEngineRows: CompactEngineAnalysisRow[] = useMemo(() => orderedAnalysis.map((line) => {
-    const lineMoveLimit = CANDIDATE_PREVIEW_HALF_MOVES;
-    const lineMoves = (line.notation?.length ? line.notation : line.pv).slice(0, lineMoveLimit);
-    return {
-      id: `engine-${line.multipv}`,
-      iccs: line.pv[0],
-      rank: line.multipv,
-      depthText: `${line.depth ?? "--"}`,
-      scoreText: redAnalysisScoreText(line, candidateSideToMove),
-      timeText: line.timeMs != null ? `${(line.timeMs / 1000).toFixed(1)}s` : "--",
-      npsText: formatNps(line.nps),
-      hfText: formatHashfull(line.hashfull),
-      lineText: lineMoves.length ? lineMoves.join(" ") : "暂无推荐着法",
-      disabled: analysisIsStale,
-      stale: analysisIsStale,
-    };
-  }), [analysisIsStale, candidateSideToMove, orderedAnalysis]);
+  const compactEngineRows: CompactEngineAnalysisRow[] = useMemo(() => {
+    const displayLines = analysisHistory.length >= 2 ? analysisHistory : orderedAnalysis;
+    const lineMoveLimit = Math.max(
+      COMPACT_ENGINE_LINE_MIN_MOVES,
+      Math.min(COMPACT_ENGINE_LINE_MAX_MOVES, Math.trunc(desktopPreferences.candidateLineMoves) || DEFAULT_CANDIDATE_LINE_MOVES),
+    );
+    return displayLines.slice(0, ENGINE_ANALYSIS_HISTORY_LIMIT).map((line, index) => {
+      const lineMoves = (line.notation?.length ? line.notation : line.pv).slice(0, lineMoveLimit);
+      return {
+        id: `engine-${line.multipv}-${line.depth ?? "d"}-${line.timeMs ?? index}-${line.pv.join("-")}`,
+        iccs: line.pv[0],
+        rank: analysisHistory.length >= 2 ? index + 1 : line.multipv,
+        depthText: `${line.depth ?? "--"}`,
+        scoreText: redAnalysisScoreText(line, candidateSideToMove),
+        timeText: line.timeMs != null ? `${(line.timeMs / 1000).toFixed(1)}s` : "--",
+        npsText: formatNps(line.nps),
+        hfText: formatHashfull(line.hashfull),
+        lineText: lineMoves.length ? lineMoves.join(" ") : "暂无推荐着法",
+        disabled: analysisIsStale,
+        stale: analysisIsStale,
+      };
+    });
+  }, [analysisHistory, analysisIsStale, candidateSideToMove, desktopPreferences.candidateLineMoves, orderedAnalysis]);
   const compactBookRows: CompactBookRow[] = useMemo(() => [
     ...(board.xqbCandidates ?? []).map((candidate) => ({
       id: `xqb-${candidate.source}-${candidate.iccs}`,
@@ -804,7 +817,7 @@ export default function App() {
     stopping: "停止中",
     faulted: "故障",
   };
-  const analysisArrows = useMemo(() => analysisArrowFen === board.fen ? orderedAnalysis
+  const analysisArrows = useMemo(() => analysisArrowFen === board.fen ? orderedAnalysis.slice(0, 1)
     .filter((line) => line.multipv >= 1 && line.multipv <= analysisArrowColors.length && line.pv.length > 0)
     .flatMap((line) => {
       const from = squareFromIccs(line.pv[0].slice(0, 2));
@@ -826,6 +839,11 @@ export default function App() {
       to: boardPoint(previewStep.to, reversed),
     }];
   }, [analysisArrows, candidatePreview, previewStep, reversed]);
+
+  function resetAnalysisHistory(fen?: string, lines: AnalysisLine[] = []) {
+    analysisHistoryRef.current = fen ? { fen, lines: lines.slice(0, ENGINE_ANALYSIS_HISTORY_LIMIT) } : undefined;
+    setAnalysisHistory(analysisHistoryRef.current?.lines ?? []);
+  }
 
   function applyDesktopPreferences(preferences: DesktopPreferencesDto) {
     const normalized = { ...preferences, boardSkin: normalizeSkinId(preferences.boardSkin), pieceSkin: normalizeSkinId(preferences.pieceSkin) };
@@ -1553,6 +1571,8 @@ export default function App() {
     const analyzedFen = currentBoard.fen;
     const analyzedRevision = boardRevision.current;
     analysisStreamRef.current = beginAnalysisStream(analyzedFen);
+    analysisHistoryRef.current = beginAnalysisHistory(analyzedFen);
+    setAnalysisHistory([]);
     setCandidatePreview(undefined);
     if (!automatic) {
       analysisHintsEnabledRef.current = true;
@@ -1630,6 +1650,7 @@ export default function App() {
   function clearAnalysisState() {
     analysisFenRef.current = undefined;
     analysisStreamRef.current = undefined;
+    resetAnalysisHistory();
     setAnalysis([]);
     setAnalysisFen(undefined);
     setAnalysisSideToMove(undefined);
@@ -1645,6 +1666,7 @@ export default function App() {
         if (saved.length === 0 && options.keepPreviousOnMiss) return;
         analysisFenRef.current = fen;
         analysisStreamRef.current = completeAnalysisStream(fen, saved);
+        resetAnalysisHistory(fen, saved);
         setAnalysisFen(fen);
         setAnalysisSideToMove(boardRef.current.sideToMove);
         setAnalysis(saved);
@@ -1652,6 +1674,7 @@ export default function App() {
     } catch {
       if (loadRevision === analysisLoadRevision.current && expectedBoardRevision === boardRevision.current && !options.keepPreviousOnMiss) {
         analysisFenRef.current = undefined;
+        resetAnalysisHistory();
         setAnalysisFen(undefined);
         setAnalysisSideToMove(undefined);
         setAnalysis([]);
@@ -1780,6 +1803,15 @@ export default function App() {
       setAnalysisFen(next.fen);
       setAnalysisSideToMove(next.sideToMove);
       setAnalysis([{
+        depth: cached.depth,
+        scoreCp: cached.scoreCp,
+        mate: cached.mate,
+        timeMs: cached.elapsedMs,
+        multipv: 1,
+        notation: cached.pvNotation ?? [],
+        pv: cached.bestIccs ? [cached.bestIccs] : [],
+      }]);
+      resetAnalysisHistory(next.fen, [{
         depth: cached.depth,
         scoreCp: cached.scoreCp,
         mate: cached.mate,

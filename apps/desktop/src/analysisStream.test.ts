@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { beginAnalysisStream, completeAnalysisStream, updateAnalysisStream } from "./analysisStream";
+import { beginAnalysisStream, completeAnalysisStream, updateAnalysisHistory, updateAnalysisStream } from "./analysisStream";
 
 describe("analysis stream buffering", () => {
   it("keeps the previous candidate cards visible until every MultiPV rank arrives", () => {
@@ -68,5 +68,15 @@ describe("analysis stream buffering", () => {
 
     expect(first.visible).toBeUndefined();
     expect(nextDepth.visible).toEqual([expect.objectContaining({ multipv: 1, depth: 9 })]);
+  });
+
+  it("keeps recent engine info history even when MultiPV is one", () => {
+    const first = updateAnalysisHistory(undefined, "fen", { multipv: 1, depth: 40, pv: ["h2e2"] }, 3);
+    const second = updateAnalysisHistory(first, "fen", { multipv: 1, depth: 41, pv: ["h2e2", "h9g7"] }, 3);
+    const duplicate = updateAnalysisHistory(second, "fen", { multipv: 1, depth: 41, pv: ["h2e2", "h9g7"] }, 3);
+    const fourth = updateAnalysisHistory(duplicate, "fen", { multipv: 1, depth: 42, pv: ["h2e2", "h9g7", "b0c2"] }, 3);
+
+    expect(fourth.lines.map((line) => line.depth)).toEqual([42, 41, 40]);
+    expect(duplicate.lines.map((line) => line.depth)).toEqual([41, 40]);
   });
 });

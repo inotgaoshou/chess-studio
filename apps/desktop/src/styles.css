@@ -927,7 +927,7 @@ button:disabled { cursor: default; opacity: .45; }
 }
 .floating-panel-shell .compact-engine-analysis-row {
   width: 100%;
-  min-height: 48px;
+  min-height: 44px;
   padding: 3px 6px;
   border: 0;
   border-bottom: 1px solid #edf3f9;
@@ -981,7 +981,7 @@ button:disabled { cursor: default; opacity: .45; }
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
-  font: 500 10.8px/1.18 KaiTi, STKaiti, "PingFang SC", serif;
+  font: 500 10.5px/1.15 KaiTi, STKaiti, "PingFang SC", serif;
 }
 .floating-panel-shell .compact-engine-empty {
   height: 100%;
@@ -3948,7 +3948,7 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
     min-height: 0;
     height: 100%;
     display: grid;
-  grid-template-rows: 21px minmax(0, 1fr);
+    grid-template-rows: 21px minmax(0, 1fr);
     border: 1px solid #d6e5f2;
     border-radius: 6px;
     background: #ffffff;
@@ -3958,15 +3958,15 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
   .workspace.layout-compact .compact-engine-analysis-row {
     min-width: 0;
     display: grid;
-  grid-template-columns: 26px minmax(0, 1fr);
+    grid-template-columns: 26px minmax(0, 1fr);
     align-items: center;
   }
   .workspace.layout-compact .compact-engine-analysis-head {
-  padding: 0 6px;
+    padding: 0 6px;
     border-bottom: 1px solid #d6e5f2;
     background: #f6fbff;
     color: #61778b;
-  font-size: 9.5px;
+    font-size: 9.5px;
     font-weight: 800;
   }
   .workspace.layout-compact .compact-engine-analysis-head span {
@@ -3983,8 +3983,8 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
   }
   .workspace.layout-compact .compact-engine-analysis-row {
     width: 100%;
-  min-height: 48px;
-  padding: 3px 6px;
+    min-height: 44px;
+    padding: 3px 6px;
     border: 0;
     border-bottom: 1px solid #edf3f9;
     background: #ffffff;
@@ -3998,32 +3998,32 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
     opacity: .7;
   }
   .workspace.layout-compact .compact-engine-rank {
-  width: 19px;
-  height: 19px;
+    width: 19px;
+    height: 19px;
     border-radius: 50%;
     background: #2a97dd;
     color: #ffffff;
     display: grid;
     place-items: center;
-  font-size: 10px;
+    font-size: 10px;
     font-weight: 900;
   }
   .workspace.layout-compact .compact-engine-detail {
     min-width: 0;
     display: grid;
-  gap: 1px;
+    gap: 1px;
   }
   .workspace.layout-compact .compact-engine-metrics {
     min-width: 0;
     display: flex;
     align-items: center;
-  flex-wrap: nowrap;
-  gap: 4px;
-  color: #ed4040;
-  overflow: hidden;
-  white-space: nowrap;
-  font-size: 9.6px;
-  line-height: 1.1;
+    flex-wrap: nowrap;
+    gap: 4px;
+    color: #ed4040;
+    overflow: hidden;
+    white-space: nowrap;
+    font-size: 9.6px;
+    line-height: 1.1;
   }
   .workspace.layout-compact .compact-engine-metrics strong {
     color: #ed4040;
@@ -4031,7 +4031,7 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
   }
   .workspace.layout-compact .compact-engine-metrics small {
     color: #ed4040;
-  font-size: 9.4px;
+    font-size: 9.4px;
     font-weight: 800;
   }
   .workspace.layout-compact .compact-engine-line {
@@ -4041,7 +4041,7 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
-  font: 500 10.8px/1.18 KaiTi, STKaiti, "PingFang SC", serif;
+    font: 500 10.5px/1.15 KaiTi, STKaiti, "PingFang SC", serif;
   }
   .workspace.layout-compact .compact-engine-empty {
     height: 100%;
