@@ -41,11 +41,11 @@ describe("CompactReferencePanels", () => {
 
   it("shows a useful empty state when cloud book is disabled", () => {
     render(<CompactReferencePanels {...common} cloudEnabled={false} bookRows={[]}/>);
-    expect(screen.getByText("当前局面暂无本地库着，ChessDB 云库未启用")).toBeTruthy();
+    expect(screen.getByText("ChessDB 云库未启用")).toBeTruthy();
     expect(screen.getByText("0 条 · 云库关闭")).toBeTruthy();
   });
 
-  it("keeps local book results available when ChessDB is disabled", () => {
+  it("hides not-yet-implemented local book and auto move status entries", () => {
     render(<CompactReferencePanels
       {...common}
       cloudEnabled={false}
@@ -53,7 +53,24 @@ describe("CompactReferencePanels", () => {
     />);
 
     expect(screen.getByText("1 条 · 云库关闭")).toBeTruthy();
-    expect(screen.getByText("本地 XQB")).toBeTruthy();
+    expect(screen.queryByText("本地库")).toBeNull();
+    expect(screen.queryByText("自动出步")).toBeNull();
+  });
+
+  it("shows cloud statistics as a real switchable evaluation view", () => {
+    render(<CompactReferencePanels
+      {...common}
+      bookRows={[
+        { id: "cloud-h2e2", iccs: "h2e2", notation: "马二进三", scoreText: "+18", winRateText: "52%", source: "ChessDB" },
+        { id: "cloud-b2e2", iccs: "b2e2", notation: "炮八平五", scoreText: "+32", winRateText: "57%", source: "ChessDB" },
+      ]}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: "云库统计" }));
+    expect(screen.getByText("云库候选")).toBeTruthy();
+    expect(screen.getByText("最高分")).toBeTruthy();
+    expect(screen.getAllByText("+32").length).toBeGreaterThan(0);
+    expect(screen.getByText("55%")).toBeTruthy();
   });
 
   it("can collapse the compact cloud book column", () => {

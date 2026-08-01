@@ -119,7 +119,7 @@ const defaultDesktopPreferences: DesktopPreferencesDto = {
   enginePath: "",
   threads: 2,
   hashMb: 256,
-  multipv: 6,
+  multipv: 1,
   candidateLineMoves: DEFAULT_CANDIDATE_LINE_MOVES,
   searchMode: "infinite",
   searchValue: 1500,
@@ -313,7 +313,7 @@ export default function App() {
   const [searchValue, setSearchValue] = useState(1500);
   const [threads, setThreads] = useState(2);
   const [hashMb, setHashMb] = useState(256);
-  const [multipv, setMultipv] = useState(3);
+  const [multipv, setMultipv] = useState(1);
   const [autoAnalyze, setAutoAnalyze] = useState(initialAutoAnalysis);
   const [autoRetry, setAutoRetry] = useState(0);
   const [analysisBusy, setAnalysisBusy] = useState(false);
@@ -765,15 +765,6 @@ export default function App() {
     });
   }, [analysisHistory, analysisIsStale, candidateSideToMove, desktopPreferences.candidateLineMoves, orderedAnalysis]);
   const compactBookRows: CompactBookRow[] = useMemo(() => [
-    ...(board.xqbCandidates ?? []).map((candidate) => ({
-      id: `xqb-${candidate.source}-${candidate.iccs}`,
-      iccs: candidate.iccs,
-      notation: candidate.notation,
-      scoreText: candidate.score > 0 ? `+${candidate.score}` : `${candidate.score}`,
-      winRateText: candidate.winRate == null ? "--" : `${candidate.winRate.toFixed(0)}%`,
-      source: candidate.source,
-      detail: candidate.memo,
-    })),
     ...cloudCandidates.map((candidate) => ({
       id: `cloud-${candidate.iccs}`,
       iccs: candidate.iccs,
@@ -783,7 +774,7 @@ export default function App() {
       source: "ChessDB",
       detail: candidate.memo,
     })),
-  ], [board.xqbCandidates, cloudCandidates]);
+  ], [cloudCandidates]);
   const compactEvaluationRows: CompactEvaluationRow[] = useMemo(() => orderedAnalysis.map((line) => ({
     id: `pv-${line.multipv}`,
     iccs: line.pv[0],

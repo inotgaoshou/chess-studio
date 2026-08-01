@@ -136,7 +136,7 @@ impl Default for DesktopPreferences {
             engine_path: String::new(),
             threads: 2,
             hash_mb: 256,
-            multipv: 6,
+            multipv: 1,
             candidate_line_moves: default_candidate_line_moves(),
             search_mode: "infinite".into(),
             search_value: 1500,

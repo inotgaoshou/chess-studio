@@ -1,4 +1,5 @@
-import { Activity, BookOpen, CheckSquare, ChevronLeft, ChevronRight, Database, Maximize2, Settings2, TrendingUp } from "lucide-react";
+import { useState } from "react";
+import { Activity, BookOpen, ChevronLeft, ChevronRight, Database, Maximize2, Settings2, TrendingUp } from "lucide-react";
 
 export type CompactBookRow = {
   id: string;
@@ -119,12 +120,19 @@ export function CompactReferencePanels({
   onPlayBookMove,
   onPlayEvaluationMove,
 }: Props) {
+  const [evaluationTab, setEvaluationTab] = useState<"position" | "cloud">("position");
   const blackShare = redShare == null ? undefined : 100 - redShare;
-  const localBookCount = bookRows.filter((row) => row.source !== "ChessDB").length;
+  const cloudRows = bookRows.filter((row) => row.source === "ChessDB");
+  const sourceRows = cloudRows;
+  const cloudScores = sourceRows.map((row) => Number(row.scoreText.replace(/[+%]/g, ""))).filter(Number.isFinite);
+  const cloudWinRates = sourceRows.map((row) => Number(row.winRateText.replace("%", ""))).filter(Number.isFinite);
+  const topCloudRow = sourceRows[0];
+  const bestCloudScore = cloudScores.length ? Math.max(...cloudScores) : undefined;
+  const averageCloudWinRate = cloudWinRates.length ? cloudWinRates.reduce((sum, value) => sum + value, 0) / cloudWinRates.length : undefined;
   const bookStatus = bookLoading
       ? "查询中"
       : bookError
-        ? localBookCount ? `${localBookCount} 条 · 云库异常` : bookError
+        ? bookError
         : `${bookRows.length} 条${cloudEnabled ? "" : " · 云库关闭"}`;
 
   if (collapsed) {
@@ -147,9 +155,8 @@ export function CompactReferencePanels({
         <button type="button" title="开局库与引擎设置" aria-label="开局库与引擎设置" onClick={onOpenSettings}><Settings2 size={14}/></button>
       </header>
       <div className="compact-source-status" aria-label="开局库状态">
-        <span className={bookRows.some((row) => row.source !== "ChessDB") ? "ready" : ""}><BookOpen size={12}/>本地库</span>
-        <span className={cloudEnabled && !bookError ? "ready" : ""}><CheckSquare size={12}/>自动出步</span>
         <span className={cloudEnabled && !bookError ? "ready" : ""}><Database size={12}/>ChessDB</span>
+        <small>{cloudEnabled ? "当前版本使用 ChessDB 云库，本地库和自动出步入口暂不展示" : "云库已关闭"}</small>
       </div>
       <div className="compact-data-table compact-book-table" role="group" aria-label="开局库候选">
         <div className="compact-data-head"><span>着法</span><span>分数</span><span>胜率</span><span>来源</span></div>
@@ -157,7 +164,7 @@ export function CompactReferencePanels({
           {bookRows.map((row) => <button type="button" key={row.id} onClick={() => onPlayBookMove(row.iccs)} title={row.detail || row.source}>
             <strong>{row.notation}</strong><span>{row.scoreText}</span><span>{row.winRateText}</span><small>{row.source}</small>
           </button>)}
-          {!bookLoading && bookRows.length === 0 && <div className="compact-table-empty"><BookOpen size={20}/><span>{bookError ? "云库暂时不可用" : cloudEnabled ? "当前局面暂无库着" : "当前局面暂无本地库着，ChessDB 云库未启用"}</span></div>}
+          {!bookLoading && bookRows.length === 0 && <div className="compact-table-empty"><BookOpen size={20}/><span>{bookError ? "云库暂时不可用" : cloudEnabled ? "当前局面暂无云库着法" : "ChessDB 云库未启用"}</span></div>}
         </div>
       </div>
     </section>
@@ -190,10 +197,10 @@ export function CompactReferencePanels({
       </div>
       <div className="compact-overview-balance" aria-label={redShare == null ? "等待局势分析" : `红方占比 ${redShare.toFixed(0)}%`}><i style={{ width: `${redShare ?? 50}%` }}/></div>
       <div className="compact-evaluation-tabs" aria-label="评估视图">
-        <span className="active">当前局面</span>
-        <span>云库统计</span>
+        <button type="button" className={evaluationTab === "position" ? "active" : ""} onClick={() => setEvaluationTab("position")}>当前局面</button>
+        <button type="button" className={evaluationTab === "cloud" ? "active" : ""} onClick={() => setEvaluationTab("cloud")}>云库统计</button>
       </div>
-      <div className="compact-data-table compact-evaluation-table" role="group" aria-label="候选着法评估">
+      {evaluationTab === "position" ? <div className="compact-data-table compact-evaluation-table" role="group" aria-label="候选着法评估">
         <div className="compact-data-head"><span>着法</span><span>分数</span><span>深度</span><span>操作</span></div>
         <div className="compact-data-body">
           {evaluationRows.map((row) => <button type="button" key={row.id} disabled={row.disabled || !row.iccs} aria-label={`走候选着法 ${row.notation}`} onClick={() => row.iccs && onPlayEvaluationMove(row.iccs)} title={`${row.role} · 点击后走棋并保存到棋谱`}>
@@ -201,7 +208,23 @@ export function CompactReferencePanels({
           </button>)}
           {evaluationRows.length === 0 && <div className="compact-table-empty"><Activity size={20}/><span>分析后显示候选评估</span></div>}
         </div>
-      </div>
+      </div> : <div className="compact-cloud-stat-view" role="group" aria-label="云库统计">
+        <div className="compact-cloud-stat-grid">
+          <div><small>云库候选</small><strong>{sourceRows.length}</strong></div>
+          <div><small>最高分</small><strong>{bestCloudScore == null ? "--" : bestCloudScore > 0 ? `+${bestCloudScore}` : `${bestCloudScore}`}</strong></div>
+          <div><small>平均胜率</small><strong>{averageCloudWinRate == null ? "--" : `${averageCloudWinRate.toFixed(0)}%`}</strong></div>
+          <div><small>最佳着</small><strong>{topCloudRow?.notation ?? "--"}</strong></div>
+        </div>
+        <div className="compact-data-table compact-cloud-stat-table" role="group" aria-label="云库统计候选">
+          <div className="compact-data-head"><span>着法</span><span>分数</span><span>胜率</span><span>来源</span></div>
+          <div className="compact-data-body">
+            {sourceRows.slice(0, 8).map((row) => <button type="button" key={`stat-${row.id}`} onClick={() => onPlayBookMove(row.iccs)} title={row.detail || row.source}>
+              <strong>{row.notation}</strong><span>{row.scoreText}</span><span>{row.winRateText}</span><small>{row.source}</small>
+            </button>)}
+            {sourceRows.length === 0 && <div className="compact-table-empty"><Database size={20}/><span>{cloudEnabled ? "暂无云库统计" : "ChessDB 云库未启用"}</span></div>}
+          </div>
+        </div>
+      </div>}
     </section>}
   </div>;
 }
