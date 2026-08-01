@@ -366,7 +366,7 @@ export default function App() {
   const [cloudBookHeight, setCloudBookHeight] = useState<number>();
   const [compactEngineCollapsed, setCompactEngineCollapsed] = useState(false);
   const [compactManualCollapsed, setCompactManualCollapsed] = useState(false);
-  const [compactEngineWeight, setCompactEngineWeight] = useState(1.05);
+  const [compactEngineHeight, setCompactEngineHeight] = useState<number>();
   const [coachReports, setCoachReports] = useState<GameReportDatasetDto[]>([]);
   const [coachProfileOpen, setCoachProfileOpen] = useState(false);
   const [trainingTasks, setTrainingTasks] = useState<TrainingTaskDto[]>([]);
@@ -398,7 +398,7 @@ export default function App() {
   const persistedPreferencesRef = useRef(defaultDesktopPreferences);
   const preferenceSaveQueue = useRef<Promise<void>>(Promise.resolve());
   const activeMoveRef = useRef<HTMLButtonElement | null>(null);
-  const compactSplitDragRef = useRef<{ startY: number; startWeight: number; height: number } | undefined>(undefined);
+  const compactSplitDragRef = useRef<{ startY: number; startHeight: number; minHeight: number; maxHeight: number } | undefined>(undefined);
   const cloudBookDragRef = useRef<{ offsetX: number; offsetY: number } | undefined>(undefined);
   const cloudBookResizeRef = useRef<{ startY: number; startHeight: number; top: number } | undefined>(undefined);
   if (!autosaveQueue.current) {
@@ -488,6 +488,8 @@ export default function App() {
       window.removeEventListener("offline", update);
     };
   }, []);
+
+  useEffect(() => () => stopCompactSplitDragWindow(), []);
 
   useEffect(() => {
     const current = board.history.find((move) => move.id === board.currentNode);
@@ -2098,20 +2100,38 @@ export default function App() {
     if (event.button !== 0) return;
     const panel = event.currentTarget.closest<HTMLElement>(".board-candidate-rail");
     if (!panel) return;
-    const bounds = panel.getBoundingClientRect();
-    compactSplitDragRef.current = { startY: event.clientY, startWeight: compactEngineWeight, height: Math.max(1, bounds.height) };
+    const engineBody = panel.querySelector<HTMLElement>(".analysis-lines");
+    const currentHeight = engineBody?.getBoundingClientRect().height ?? Math.max(180, panel.getBoundingClientRect().height * .48);
+    const panelHeight = panel.getBoundingClientRect().height;
+    compactSplitDragRef.current = {
+      startY: event.clientY,
+      startHeight: currentHeight,
+      minHeight: 118,
+      maxHeight: Math.max(160, panelHeight - 210),
+    };
+    document.body.classList.add("compact-panel-resizing");
+    window.addEventListener("pointermove", moveCompactSplitDragWindow);
+    window.addEventListener("pointerup", stopCompactSplitDragWindow, { once: true });
     event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
   }
 
-  function moveCompactSplitDrag(event: PointerEvent<HTMLDivElement>) {
+  function moveCompactSplitDragWindow(event: globalThis.PointerEvent) {
     const drag = compactSplitDragRef.current;
     if (!drag) return;
-    const deltaRatio = (event.clientY - drag.startY) / drag.height;
-    setCompactEngineWeight(Math.max(.45, Math.min(1.55, drag.startWeight + deltaRatio * 2)));
+    const nextHeight = drag.startHeight + event.clientY - drag.startY;
+    setCompactEngineHeight(Math.max(drag.minHeight, Math.min(drag.maxHeight, nextHeight)));
+    event.preventDefault();
+  }
+
+  function stopCompactSplitDragWindow() {
+    compactSplitDragRef.current = undefined;
+    document.body.classList.remove("compact-panel-resizing");
+    window.removeEventListener("pointermove", moveCompactSplitDragWindow);
   }
 
   function stopCompactSplitDrag(event: PointerEvent<HTMLDivElement>) {
-    compactSplitDragRef.current = undefined;
+    stopCompactSplitDragWindow();
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   }
 
@@ -2129,7 +2149,6 @@ export default function App() {
 
   function candidateLinesView(className = "") {
     const compactLayout = desktopPreferences.layoutMode === "compact";
-    const compactManualWeight = Math.max(.45, 2 - compactEngineWeight);
     const compactDockClass = [
       "variations",
       "candidate-dock",
@@ -2139,8 +2158,7 @@ export default function App() {
     ].filter(Boolean).join(" ");
     const compactDockStyle = compactLayout
       ? {
-        "--compact-engine-fr": `${compactEngineWeight}fr`,
-        "--compact-manual-fr": `${compactManualWeight}fr`,
+        "--compact-engine-size": compactEngineHeight == null ? undefined : `${Math.round(compactEngineHeight)}px`,
       } as CSSProperties
       : undefined;
     const compactEngineRows: CompactEngineAnalysisRow[] = compactLayout
@@ -2217,7 +2235,6 @@ export default function App() {
         aria-label="拖拽调整引擎和棋谱高度"
         aria-orientation="horizontal"
         onPointerDown={startCompactSplitDrag}
-        onPointerMove={moveCompactSplitDrag}
         onPointerUp={stopCompactSplitDrag}
       ><span/></div>}
       {!compactLayout && board.xqbCandidates?.length ? <section className="xqb-candidates" aria-label="XQB 开局库候选">
