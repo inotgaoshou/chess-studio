@@ -16,7 +16,7 @@ describe("CandidateLine", () => {
     />);
 
     expect(screen.getByText("12")).toBeTruthy();
-    expect(screen.getByText("马8进7")).toBeTruthy();
+    expect(screen.getAllByText("马8进7")).toHaveLength(2);
     expect(screen.getByText("13")).toBeTruthy();
     expect(screen.getByRole("button", { name: "走候选着法 炮二平五" })).toBeTruthy();
   });
@@ -111,11 +111,39 @@ describe("CandidateLine", () => {
       onPreview={vi.fn()}
     />);
 
-    expect(screen.getByLabelText("候选 1 10回合快览").textContent).toContain("车9平8");
+    expect(screen.getByLabelText("候选 1 后续走法").textContent).toContain("车9平8");
     expect(screen.getByText("私教讲解 / 10回合表")).toBeTruthy();
     expect(screen.getByText("当前深度仅返回 6/20 个半回合")).toBeTruthy();
     expect(screen.getByLabelText("候选线路 1 私教讲解").textContent).toContain("主候选");
     expect(view.container.querySelector('[role="table"]')?.getAttribute("aria-label")).toBe("候选线路 1 10回合推演");
+  });
+
+  it("shows the current preview move and the following textual moves beside the board", () => {
+    const onPreviewStep = vi.fn();
+    render(<CandidateLine
+      color="#53b848"
+      fen="position-fen"
+      line={{ multipv: 1, pv: ["h2e2", "h9g7", "h0g2"], notation: ["炮二平五", "马8进7", "马二进三"] }}
+      preview={{
+        activeStep: 1,
+        steps: [
+          { fen: "fen-1", notation: "炮二平五", movedBy: "红方", from: { row: 7, col: 7 }, to: { row: 7, col: 4 }, pieces: [], status: "进行中" },
+          { fen: "fen-2", notation: "马8进7", movedBy: "黑方", from: { row: 0, col: 7 }, to: { row: 2, col: 6 }, pieces: [], status: "进行中" },
+          { fen: "fen-3", notation: "马二进三", movedBy: "红方", from: { row: 9, col: 7 }, to: { row: 7, col: 6 }, pieces: [], status: "进行中" },
+        ],
+      }}
+      sideToMove="红方"
+      onPlay={vi.fn()}
+      onPreview={vi.fn()}
+      onPreviewStep={onPreviewStep}
+    />);
+
+    expect(screen.getByText("当前与后续")).toBeTruthy();
+    expect(screen.getByText("2/3")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "第 2 步，黑方，马8进7" }).getAttribute("aria-current")).toBe("step");
+    expect(screen.getByRole("button", { name: "第 3 步，红方，马二进三" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "第 3 步，红方，马二进三" }));
+    expect(onPreviewStep).toHaveBeenCalledWith(2);
   });
 
   it("keeps black-to-move continuation aligned under black first", () => {
@@ -144,7 +172,7 @@ describe("CandidateLine", () => {
     expect(firstRow.textContent).toBe("12马8进7");
   });
 
-  it("caps the quick continuation at twenty half-moves", () => {
+  it("keeps the always-visible continuation to three rounds", () => {
     const notation = Array.from({ length: 24 }, (_, index) => `着法${index + 1}`);
     render(<CandidateLine
       color="#53b848"
@@ -167,9 +195,9 @@ describe("CandidateLine", () => {
       onPreview={() => undefined}
     />);
 
-    const quick = screen.getByLabelText("候选 1 10回合快览");
-    expect(quick.querySelectorAll("span")).toHaveLength(20);
-    expect(quick.textContent).toContain("着法20");
-    expect(quick.textContent).not.toContain("着法21");
+    const quick = screen.getByLabelText("候选 1 后续走法");
+    expect(quick.querySelectorAll(".pv-continuation-moves > span")).toHaveLength(6);
+    expect(quick.textContent).toContain("着法6");
+    expect(quick.textContent).not.toContain("着法7");
   });
 });

@@ -397,9 +397,7 @@ button:disabled { cursor: default; opacity: .45; }
 .board-candidate-rail .pv-actions {
   grid-template-columns: 1fr 1fr;
 }
-.board-candidate-rail .pv-continuation-strip span {
-  max-width: 78px;
-}
+.board-candidate-rail .pv-continuation-text { margin-top: 8px; }
 .board-stage-inner {
   /* Keep the board, quality rail, and evaluation rail inside the actual free stage. */
   width: min(100cqw, calc(100cqh * .903225806 + 146px), 836px);
@@ -1578,6 +1576,7 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 .pv-line.stale .pv-play-button {
   cursor: not-allowed;
 }
+.pv-line.preview-active { background: color-mix(in srgb, var(--pv-color) 12%, var(--surface-1)); box-shadow: inset 4px 0 var(--pv-color), inset 0 0 0 1px color-mix(in srgb, var(--pv-color) 42%, transparent); }
 .pv-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
 .pv-title { min-width: 0; display: flex; align-items: center; gap: 8px; }
 .pv-title > div { min-width: 0; display: grid; gap: 2px; }
@@ -1615,10 +1614,23 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 .pv-coach p { margin: 7px 0 0; color: var(--text-muted); font-size: 11px; }
 .pv-coach-table { margin-top: 7px; }
 .pv-coach-table .pv-move-row { font-size: 12px; }
-.pv-continuation-strip { margin-top: 8px; min-width: 0; display: flex; align-items: center; gap: 5px; overflow-x: auto; scrollbar-gutter: stable; }
-.pv-continuation-strip strong { flex: 0 0 auto; color: var(--text-primary); font-size: 11px; }
-.pv-continuation-strip span { flex: 0 0 auto; max-width: 92px; overflow: hidden; padding: 4px 7px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-2); color: var(--text-secondary); font: 700 12px/1.2 KaiTi, STKaiti, "PingFang SC", serif; text-overflow: ellipsis; white-space: nowrap; }
-.pv-continuation-strip small { flex: 0 0 auto; color: var(--text-muted); font-size: 10px; }
+.pv-continuation-text { margin-top: 8px; min-width: 0; padding: 7px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-1); display: grid; gap: 6px; }
+.pv-continuation-text > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pv-continuation-text > header strong { color: var(--text-primary); font-size: 11px; }
+.pv-continuation-text > header span { color: var(--text-muted); font-size: 10px; }
+.pv-continuation-text > p { margin: 0; color: var(--text-muted); font-size: 10px; }
+.pv-continuation-moves { min-width: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
+.pv-continuation-moves > span,
+.pv-continuation-moves > button { min-width: 0; min-height: 26px; padding: 3px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-2); color: var(--text-secondary); display: inline-flex; align-items: center; gap: 4px; }
+.pv-continuation-moves > button { cursor: pointer; }
+.pv-continuation-moves > button:hover { border-color: var(--pv-color); color: var(--text-primary); }
+.pv-continuation-moves > button.current { border: 2px solid var(--pv-color); background: color-mix(in srgb, var(--pv-color) 28%, var(--surface-2)); color: var(--text-primary); box-shadow: 0 0 0 2px color-mix(in srgb, var(--pv-color) 18%, transparent); }
+.pv-continuation-moves i { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; }
+.pv-continuation-moves i.red { background: #eb5a54; box-shadow: 0 0 5px rgba(235, 90, 84, .45); }
+.pv-continuation-moves i.black { background: #65b4e5; box-shadow: 0 0 5px rgba(101, 180, 229, .45); }
+.pv-continuation-moves small { color: var(--text-muted); font: 10px ui-monospace, SFMono-Regular, monospace; }
+.pv-continuation-moves b { overflow: hidden; max-width: 86px; color: inherit; font: 700 12px/1.2 KaiTi, STKaiti, "PingFang SC", serif; text-overflow: ellipsis; white-space: nowrap; }
+.pv-continuation-moves em { color: var(--text-muted); font-size: 10px; font-style: normal; }
 .pv-coach-details,
 .pv-full-line { margin-top: 7px; }
 .pv-coach-details > summary,

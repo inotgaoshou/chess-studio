@@ -2025,11 +2025,13 @@ export default function App() {
             fen={analysisFen ?? board.fen}
             key={line.multipv}
             line={line}
+            preview={candidatePreview?.rank === line.multipv ? { activeStep: candidatePreview.step, steps: candidatePreview.steps } : undefined}
             scoreText={formatAnalysisScore(line)}
             sideToMove={candidateSideToMove}
             stale={analysisIsStale}
             onPlay={(iccs, analyzedFen) => void playIccsMove(iccs, analyzedFen)}
             onPreview={(candidate, analyzedFen) => void previewCandidateLine(candidate, analyzedFen)}
+            onPreviewStep={jumpCandidatePreview}
           />)}
       </div>
       {board.xqbCandidates?.length ? <section className="xqb-candidates" aria-label="XQB 开局库候选">

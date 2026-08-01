@@ -1,7 +1,7 @@
 import type { CSSProperties } from "react";
 import { ChevronDown, Eye, Play } from "lucide-react";
 import { pvMoveRows } from "./analysisView";
-import type { AnalysisLine, Side } from "./platform";
+import type { AnalysisLine, PreviewLineStep, Side } from "./platform";
 import type { CandidateCoachInsight } from "./coachInsights";
 import { CANDIDATE_PREVIEW_HALF_MOVES, candidatePreviewLengthText } from "./candidatePreview";
 
@@ -14,8 +14,10 @@ type Props = {
   sideToMove: Side;
   disabled?: boolean;
   stale?: boolean;
+  preview?: { activeStep: number; steps: PreviewLineStep[] };
   onPlay(iccs: string, analyzedFen: string): void;
   onPreview(line: AnalysisLine, analyzedFen: string): void;
+  onPreviewStep?(step: number): void;
 };
 
 function formatNps(value?: number) {
@@ -23,7 +25,7 @@ function formatNps(value?: number) {
   return value >= 1_000_000 ? `${(value / 1_000_000).toFixed(1)}M` : `${Math.round(value / 1_000)}K`;
 }
 
-export function CandidateLine({ color, fen, line, coach, scoreText, sideToMove, disabled = false, stale = false, onPlay, onPreview }: Props) {
+export function CandidateLine({ color, fen, line, coach, scoreText, sideToMove, disabled = false, stale = false, preview, onPlay, onPreview, onPreviewStep }: Props) {
   const rows = pvMoveRows(line, sideToMove, fen);
   const coachFollowUp = coach?.followUp.slice(0, CANDIDATE_PREVIEW_HALF_MOVES) ?? [];
   const coachRows = coach ? pvMoveRows({ multipv: line.multipv, pv: coachFollowUp, notation: coach.usesIccs ? [] : coachFollowUp }, sideToMove, fen) : [];
@@ -32,8 +34,21 @@ export function CandidateLine({ color, fen, line, coach, scoreText, sideToMove, 
   const canPreview = line.pv.length > 0;
   const compactLine = (coach?.followUp?.length ? coach.followUp : line.notation?.length ? line.notation : line.pv)
     .slice(0, CANDIDATE_PREVIEW_HALF_MOVES);
+  const previewActive = !!preview?.steps.length;
+  const continuationStart = previewActive ? preview.activeStep : 0;
+  const continuationMoves = previewActive
+    ? preview.steps.slice(continuationStart, continuationStart + 6).map((step, offset) => ({
+      index: continuationStart + offset,
+      notation: step.notation,
+      movedBy: step.movedBy,
+    }))
+    : compactLine.slice(0, 6).map((notation, index) => ({
+      index,
+      notation,
+      movedBy: (index % 2 === 0 ? sideToMove : sideToMove === "红方" ? "黑方" : "红方") as Side,
+    }));
   const coachSummary = coach?.possibility ?? `${candidateLabel}：点击预览后在棋盘手动查看后续变化。`;
-  return <article className={`pv-line ${stale ? "stale" : ""}`} style={{ "--pv-color": color } as CSSProperties} title={`ICCS: ${line.pv.join(" ")}`}>
+  return <article className={`pv-line ${stale ? "stale" : ""} ${previewActive ? "preview-active" : ""}`} style={{ "--pv-color": color } as CSSProperties} title={`ICCS: ${line.pv.join(" ")}`}>
     <div className="pv-card-header">
       <div className="pv-title">
         <span className="pv-rank">{line.multipv}</span>
@@ -63,10 +78,22 @@ export function CandidateLine({ color, fen, line, coach, scoreText, sideToMove, 
         {firstNotation && line.pv[0] && <button type="button" disabled={disabled} className="pv-play-button" aria-label={`走候选着法 ${firstNotation}`} onClick={() => onPlay(line.pv[0], fen)}><Play size={13}/><span>走棋</span></button>}
       </div>
     </div>
-    {compactLine.length > 0 && <div className="pv-continuation-strip" aria-label={`候选 ${line.multipv} 10回合快览`} title={candidatePreviewLengthText(compactLine.length)}>
-      <strong>10回合</strong>
-      {compactLine.map((move, index) => <span key={`${line.multipv}-quick-${index}-${move}`}>{index + 1}. {move}</span>)}
-      {compactLine.length < CANDIDATE_PREVIEW_HALF_MOVES && <small>{candidatePreviewLengthText(compactLine.length)}</small>}
+    {compactLine.length > 0 && <div className={`pv-continuation-text ${previewActive ? "preview-active" : ""}`} aria-label={`候选 ${line.multipv} 后续走法`} title={candidatePreviewLengthText(compactLine.length)}>
+      <header>
+        <strong>{previewActive ? "当前与后续" : "后续走法"}</strong>
+        <span>{previewActive ? `${preview.activeStep + 1}/${preview.steps.length}` : `先看 ${Math.min(6, compactLine.length)} 步`}</span>
+      </header>
+      <div className="pv-continuation-moves">
+        {continuationMoves.map((move, offset) => {
+          const side = move.movedBy === "红方" ? "red" : "black";
+          const content = <><i className={side}/><small>{move.index + 1}</small><b>{move.notation}</b></>;
+          return previewActive
+            ? <button key={`${line.multipv}-preview-${move.index}-${move.notation}`} type="button" className={offset === 0 ? "current" : ""} aria-current={offset === 0 ? "step" : undefined} aria-label={`第 ${move.index + 1} 步，${move.movedBy}，${move.notation}`} onClick={() => onPreviewStep?.(move.index)}>{content}</button>
+            : <span key={`${line.multipv}-quick-${move.index}-${move.notation}`}>{content}</span>;
+        })}
+        {previewActive && continuationMoves.length === 1 && <em>已到线路末端</em>}
+      </div>
+      {!previewActive && compactLine.length < CANDIDATE_PREVIEW_HALF_MOVES && <p>{candidatePreviewLengthText(compactLine.length)}</p>}
     </div>}
     {coach && <details className="pv-coach-details">
       <summary><ChevronDown size={13}/>私教讲解 / 10回合表</summary>
