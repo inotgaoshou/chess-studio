@@ -3,7 +3,7 @@ import { ChevronDown, Eye, Play } from "lucide-react";
 import { pvMoveRows } from "./analysisView";
 import type { AnalysisLine, PreviewLineStep, Side } from "./platform";
 import type { CandidateCoachInsight } from "./coachInsights";
-import { CANDIDATE_PREVIEW_HALF_MOVES, candidatePreviewLengthText } from "./candidatePreview";
+import { CANDIDATE_PREVIEW_HALF_MOVES, DEFAULT_CANDIDATE_LINE_MOVES, MAX_CANDIDATE_LINE_MOVES, MIN_CANDIDATE_LINE_MOVES, candidatePreviewLengthText } from "./candidatePreview";
 
 type Props = {
   color: string;
@@ -14,6 +14,7 @@ type Props = {
   sideToMove: Side;
   disabled?: boolean;
   stale?: boolean;
+  visibleMoveCount?: number;
   preview?: { activeStep: number; steps: PreviewLineStep[] };
   onPlay(iccs: string, analyzedFen: string): void;
   onPreview(line: AnalysisLine, analyzedFen: string): void;
@@ -22,10 +23,11 @@ type Props = {
 
 function formatNps(value?: number) {
   if (!value) return "-";
-  return value >= 1_000_000 ? `${(value / 1_000_000).toFixed(1)}M` : `${Math.round(value / 1_000)}K`;
+  return value >= 1_000 ? `${Math.round(value / 1_000)}K` : String(Math.round(value));
 }
 
-export function CandidateLine({ color, fen, line, coach, scoreText, sideToMove, disabled = false, stale = false, preview, onPlay, onPreview, onPreviewStep }: Props) {
+export function CandidateLine({ color, fen, line, coach, scoreText, sideToMove, disabled = false, stale = false, visibleMoveCount = DEFAULT_CANDIDATE_LINE_MOVES, preview, onPlay, onPreview, onPreviewStep }: Props) {
+  const continuationLimit = Math.max(MIN_CANDIDATE_LINE_MOVES, Math.min(MAX_CANDIDATE_LINE_MOVES, Math.trunc(visibleMoveCount) || DEFAULT_CANDIDATE_LINE_MOVES));
   const rows = pvMoveRows(line, sideToMove, fen);
   const coachFollowUp = coach?.followUp.slice(0, CANDIDATE_PREVIEW_HALF_MOVES) ?? [];
   const coachRows = coach ? pvMoveRows({ multipv: line.multipv, pv: coachFollowUp, notation: coach.usesIccs ? [] : coachFollowUp }, sideToMove, fen) : [];
@@ -37,12 +39,12 @@ export function CandidateLine({ color, fen, line, coach, scoreText, sideToMove, 
   const previewActive = !!preview?.steps.length;
   const continuationStart = previewActive ? preview.activeStep : 0;
   const continuationMoves = previewActive
-    ? preview.steps.slice(continuationStart, continuationStart + 6).map((step, offset) => ({
+    ? preview.steps.slice(continuationStart, continuationStart + continuationLimit).map((step, offset) => ({
       index: continuationStart + offset,
       notation: step.notation,
       movedBy: step.movedBy,
     }))
-    : compactLine.slice(0, 6).map((notation, index) => ({
+    : compactLine.slice(0, continuationLimit).map((notation, index) => ({
       index,
       notation,
       movedBy: (index % 2 === 0 ? sideToMove : sideToMove === "红方" ? "黑方" : "红方") as Side,
@@ -53,21 +55,21 @@ export function CandidateLine({ color, fen, line, coach, scoreText, sideToMove, 
       <div className="pv-title">
         <span className="pv-rank">{line.multipv}</span>
         <div>
-          <strong>候选 {line.multipv} · {firstNotation ?? "暂无着法"}</strong>
-          <small>{candidateLabel} · {sideToMove}行棋{stale ? " · 旧候选" : ""}</small>
+          <div className="pv-engine-stats" aria-label={`候选 ${line.multipv} 实时引擎指标`}>
+            <strong className="pv-engine-move">着法 {line.multipv}：</strong>
+            <span>深度 <b>{line.depth ?? "-"}</b></span>
+            <span className="score">红分 <b>{scoreText ?? "--"}</b></span>
+            <span>耗时 <b>{((line.timeMs ?? 0) / 1000).toFixed(1)}s</b></span>
+            <span>NPS <b>{formatNps(line.nps)}</b></span>
+          </div>
+          <small>{firstNotation ?? "暂无着法"} · {candidateLabel} · {sideToMove}行棋{stale ? " · 旧候选" : ""}</small>
         </div>
-      </div>
-      <div className="pv-engine-stats" aria-label={`候选 ${line.multipv} 实时引擎指标`}>
-        <span>深度 <b>{line.depth ?? "-"}</b></span>
-        <span className="score">分数 <b>{scoreText ?? "--"}</b></span>
-        <span>时间 <b>{((line.timeMs ?? 0) / 1000).toFixed(1)}s</b></span>
-        <span>NPS <b>{formatNps(line.nps)}</b></span>
       </div>
     </div>
     {compactLine.length > 0 && <div className={`pv-continuation-text ${previewActive ? "preview-active" : ""}`} aria-label={`候选 ${line.multipv} 后续走法`} title={candidatePreviewLengthText(compactLine.length)}>
       <header>
         <strong>{previewActive ? "当前与后续" : "后续走法"}</strong>
-        <span>{previewActive ? `${preview.activeStep + 1}/${preview.steps.length}` : `先看 ${Math.min(6, compactLine.length)} 步`}</span>
+        <span>{previewActive ? `${preview.activeStep + 1}/${preview.steps.length}` : `先看 ${Math.min(continuationLimit, compactLine.length)} 步`}</span>
       </header>
       <div className="pv-continuation-moves">
         {continuationMoves.map((move, offset) => {

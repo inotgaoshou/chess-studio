@@ -208,6 +208,7 @@ export type DesktopPreferencesDto = {
   threads: number;
   hashMb: number;
   multipv: number;
+  candidateLineMoves: number;
   searchMode: "time" | "depth" | "nodes" | "infinite";
   searchValue: number;
   moveTimeMs: number;

@@ -127,6 +127,16 @@ describe("coachInsights", () => {
     expect(insights[2].risk).toContain("线路较短");
     expect(insights[3]).toMatchObject({ usesIccs: true, followUp: ["c3c4", "h9g7", "h0g2", "i9h9", "h2e2", "b9c7"] });
   });
+
+  it("uses red perspective in black-to-move candidate comparisons", () => {
+    const insights = candidateCoachInsights([
+      { multipv: 1, scoreCp: 80, pv: ["h9g7"], notation: ["马8进7", "马二进三", "车9平8", "车一平二", "炮8平5", "炮二平五"] },
+      { multipv: 2, scoreCp: 20, pv: ["b9c7"], notation: ["马2进3", "马八进七", "车1平2", "车九平八", "炮2平5", "炮八平五"] },
+    ], board({ sideToMove: "黑方" }));
+
+    expect(insights[0].scoreText).toBe("-80");
+    expect(insights[1].risk).toContain("首选 -80，本线 -20，相差 60 分");
+  });
 });
 
 function moveItem(id: string): BoardState["history"][number] {

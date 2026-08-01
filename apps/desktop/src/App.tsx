@@ -43,7 +43,7 @@ import {
   Zap,
 } from "lucide-react";
 import { BUILTIN_ENGINE_PATH, chessPlatform, type AnalysisLine, type BoardState, type CloudBookCandidate, type EngineProfileDto, type EngineRuntimeState, type ExportFormat, type GameReportDatasetDto, type GameReportProgressDto, type GameSummary, type MoveItem, type Piece, type PreviewLineStep, type ReplayExportScope, type TrainingTaskDto } from "./platform";
-import { moveQualityFeedback, moveReports, positionEvaluation, trendChart, trendPoints, trendTurningPoints } from "./analysisView";
+import { moveQualityFeedback, moveReports, positionEvaluation, redAnalysisScoreText, trendChart, trendPoints, trendTurningPoints } from "./analysisView";
 import { CandidateLine } from "./CandidateLine";
 import { DesktopMenuBar, type MenuCommand } from "./DesktopMenuBar";
 import { DesktopDialogs, type DesktopDialog } from "./DesktopDialogs";
@@ -56,7 +56,7 @@ import { applyColorTheme, initialColorTheme, type ColorTheme } from "./theme";
 import { WorkspaceTabs, type WorkspacePanel } from "./WorkspaceTabs";
 import { CoachProfileView } from "./CoachProfileView";
 import { SkinShopDialog } from "./SkinShopDialog";
-import { CANDIDATE_PREVIEW_HALF_MOVES } from "./candidatePreview";
+import { CANDIDATE_PREVIEW_HALF_MOVES, DEFAULT_CANDIDATE_LINE_MOVES } from "./candidatePreview";
 import { AutosaveOperationQueue, autosaveLabel, type AutosaveState } from "./autosave";
 import { ManualMoveRows } from "./ManualMoveRows";
 import { CandidatePreviewSteps } from "./CandidatePreviewSteps";
@@ -113,6 +113,7 @@ const defaultDesktopPreferences: DesktopPreferencesDto = {
   threads: 2,
   hashMb: 256,
   multipv: 3,
+  candidateLineMoves: DEFAULT_CANDIDATE_LINE_MOVES,
   searchMode: "time",
   searchValue: 1500,
   moveTimeMs: 5000,
@@ -1778,6 +1779,7 @@ export default function App() {
         threads: preferences.threads,
         hashMb: preferences.hashMb,
         multipv: preferences.multipv,
+        candidateLineMoves: preferences.candidateLineMoves,
         searchMode: preferences.searchMode,
         searchValue: preferences.searchValue,
         moveTimeMs: preferences.moveTimeMs,
@@ -2025,8 +2027,9 @@ export default function App() {
             fen={analysisFen ?? board.fen}
             key={line.multipv}
             line={line}
+            visibleMoveCount={desktopPreferences.candidateLineMoves}
             preview={candidatePreview?.rank === line.multipv ? { activeStep: candidatePreview.step, steps: candidatePreview.steps } : undefined}
-            scoreText={formatAnalysisScore(line)}
+            scoreText={redAnalysisScoreText(line, candidateSideToMove)}
             sideToMove={candidateSideToMove}
             stale={analysisIsStale}
             onPlay={(iccs, analyzedFen) => void playIccsMove(iccs, analyzedFen)}

@@ -21,7 +21,7 @@ describe("CandidateLine", () => {
     expect(screen.getByRole("button", { name: "走候选着法 炮二平五" })).toBeTruthy();
   });
 
-  it("shows dense live engine metrics above the textual PV", () => {
+  it("shows Pikafish-style live engine metrics above the textual PV", () => {
     render(<CandidateLine
       color="#53b848"
       fen="position-fen"
@@ -33,10 +33,11 @@ describe("CandidateLine", () => {
     />);
 
     const metrics = screen.getByLabelText("候选 1 实时引擎指标");
+    expect(metrics.textContent).toContain("着法 1：");
     expect(metrics.textContent).toContain("深度 28");
-    expect(metrics.textContent).toContain("分数 +49");
-    expect(metrics.textContent).toContain("时间 19.5s");
-    expect(metrics.textContent).toContain("NPS 5.4M");
+    expect(metrics.textContent).toContain("红分 +49");
+    expect(metrics.textContent).toContain("耗时 19.5s");
+    expect(metrics.textContent).toContain("NPS 5425K");
     expect(screen.getByLabelText("候选 1 后续走法").textContent).toContain("炮二平五");
   });
 
@@ -105,7 +106,8 @@ describe("CandidateLine", () => {
     />);
 
     expect(screen.getByText("完整 PV 表")).toBeTruthy();
-    expect(screen.getByText("候选 1 · 炮二平五")).toBeTruthy();
+    expect(screen.getByLabelText("候选 1 实时引擎指标").textContent).toContain("着法 1：");
+    expect(screen.getByText(/炮二平五 · 主候选/)).toBeTruthy();
   });
 
   it("shows coach explanation and a ten-round continuation", () => {
@@ -191,7 +193,7 @@ describe("CandidateLine", () => {
     expect(firstRow.textContent).toBe("12马8进7");
   });
 
-  it("keeps the always-visible continuation to three rounds", () => {
+  it("uses the configured half-move count for the always-visible continuation", () => {
     const notation = Array.from({ length: 24 }, (_, index) => `着法${index + 1}`);
     render(<CandidateLine
       color="#53b848"
@@ -210,13 +212,15 @@ describe("CandidateLine", () => {
         usesIccs: false,
       }}
       sideToMove="红方"
+      visibleMoveCount={4}
       onPlay={() => undefined}
       onPreview={() => undefined}
     />);
 
     const quick = screen.getByLabelText("候选 1 后续走法");
-    expect(quick.querySelectorAll(".pv-continuation-moves > span")).toHaveLength(6);
-    expect(quick.textContent).toContain("着法6");
-    expect(quick.textContent).not.toContain("着法7");
+    expect(quick.querySelectorAll(".pv-continuation-moves > span")).toHaveLength(4);
+    expect(quick.textContent).toContain("先看 4 步");
+    expect(quick.textContent).toContain("着法4");
+    expect(quick.textContent).not.toContain("着法5");
   });
 });

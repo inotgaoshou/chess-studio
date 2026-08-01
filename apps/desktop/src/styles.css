@@ -386,7 +386,7 @@ button:disabled { cursor: default; opacity: .45; }
   gap: 6px;
 }
 .board-candidate-rail .pv-engine-header { display: grid; grid-template-columns: minmax(0, 1fr); }
-.board-candidate-rail .pv-engine-stats { justify-content: flex-start; padding-left: 32px; }
+.board-candidate-rail .pv-engine-stats { justify-content: flex-start; }
 .board-candidate-rail .pv-title strong {
   font-size: 12px;
 }
@@ -1581,13 +1581,14 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 .pv-line.preview-active { background: color-mix(in srgb, var(--pv-color) 12%, var(--surface-1)); box-shadow: inset 4px 0 var(--pv-color), inset 0 0 0 1px color-mix(in srgb, var(--pv-color) 42%, transparent); }
 .pv-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
 .pv-engine-header { min-width: 0; }
-.pv-title { min-width: 0; display: flex; align-items: center; gap: 8px; }
+.pv-title { min-width: 0; width: 100%; display: flex; align-items: center; gap: 8px; }
 .pv-title > div { min-width: 0; display: grid; gap: 2px; }
 .pv-title strong { overflow: hidden; color: var(--text-primary); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .pv-title small { color: var(--text-muted); font-size: 11px; }
 .pv-engine-stats { min-width: 0; display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 3px 8px; color: var(--text-muted); font: 10px ui-monospace, SFMono-Regular, monospace; }
 .pv-engine-stats span { white-space: nowrap; }
 .pv-engine-stats b { color: var(--text-secondary); font-size: 11px; }
+.pv-engine-stats .pv-engine-move { flex: 0 0 auto; overflow: visible; color: var(--text-primary); font: 800 12px/1.2 "PingFang SC", sans-serif; }
 .pv-engine-stats .score,
 .pv-engine-stats .score b { color: var(--red); }
 .pv-main-row { margin-top: 7px; display: grid; grid-template-columns: minmax(0, 1fr) 136px; align-items: center; gap: 8px; }

@@ -79,9 +79,12 @@ function lineScoreValue(line: AnalysisLine) {
   return line.scoreCp ?? 0;
 }
 
-function scoreLabel(line: AnalysisLine) {
-  if (line.mate != null) return line.mate > 0 ? `${line.mate}步杀` : `${Math.abs(line.mate)}步被杀`;
-  return line.scoreCp == null ? "--" : signed(line.scoreCp);
+function scoreLabel(line: AnalysisLine, perspective: number) {
+  if (line.mate != null) {
+    const winner = (line.mate === 0 ? -1 : Math.sign(line.mate)) * perspective;
+    return winner > 0 ? `${Math.abs(line.mate)}步杀` : `${Math.abs(line.mate)}步被杀`;
+  }
+  return line.scoreCp == null ? "--" : signed(line.scoreCp * perspective);
 }
 
 function linePurpose(rank: number, move: string, sideToMove: Side) {
@@ -118,20 +121,21 @@ function lineRisk(rank: number, primaryValue: number, lineValue: number, line: A
 
 export function candidateCoachInsights(lines: AnalysisLine[], board: Pick<BoardState, "sideToMove">): CandidateCoachInsight[] {
   const ordered = lines.slice().sort((left, right) => left.multipv - right.multipv);
-  const primaryValue = ordered[0] ? lineScoreValue(ordered[0]) : 0;
+  const perspective = board.sideToMove === "红方" ? 1 : -1;
+  const primaryValue = ordered[0] ? lineScoreValue(ordered[0]) * perspective : 0;
   return ordered.map((line, index) => {
     const followUpSource = line.notation?.length ? line.notation : line.pv;
     const usesIccs = !line.notation?.length;
     const followUp = followUpSource.slice(0, CANDIDATE_PREVIEW_HALF_MOVES);
     const move = followUp[0] ?? "暂无候选";
-    const lineValue = lineScoreValue(line);
+    const lineValue = lineScoreValue(line) * perspective;
     const gap = Math.abs(primaryValue - lineValue);
     const shortLine = followUp.length > 0 && followUp.length < CANDIDATE_PREVIEW_HALF_MOVES;
     const rank = line.multipv || index + 1;
     return {
       rank,
       move,
-      scoreText: scoreLabel(line),
+      scoreText: scoreLabel(line, perspective),
       depthText: `深度 ${line.depth ?? "-"}`,
       intent: linePurpose(rank, move, board.sideToMove),
       possibility: linePossibility(rank, gap),

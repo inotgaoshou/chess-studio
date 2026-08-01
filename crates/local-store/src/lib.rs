@@ -55,6 +55,8 @@ pub struct DesktopPreferences {
     pub threads: u32,
     pub hash_mb: u32,
     pub multipv: u32,
+    #[serde(default = "default_candidate_line_moves")]
+    pub candidate_line_moves: u32,
     pub search_mode: String,
     pub search_value: u64,
     pub move_time_ms: u64,
@@ -110,6 +112,10 @@ fn default_report_depth() -> u32 {
     20
 }
 
+fn default_candidate_line_moves() -> u32 {
+    6
+}
+
 fn default_cloud_book_url() -> String {
     "https://www.chessdb.cn/chessdb.php".into()
 }
@@ -125,6 +131,7 @@ impl Default for DesktopPreferences {
             threads: 2,
             hash_mb: 256,
             multipv: 3,
+            candidate_line_moves: default_candidate_line_moves(),
             search_mode: "time".into(),
             search_value: 1500,
             move_time_ms: 5000,
@@ -2114,6 +2121,7 @@ mod tests {
             threads: 6,
             hash_mb: 512,
             multipv: 4,
+            candidate_line_moves: 12,
             search_mode: "nodes".into(),
             search_value: 800_000,
             move_time_ms: 2200,
@@ -2155,6 +2163,7 @@ mod tests {
         assert_eq!(preferences.workspace_panel, "moves");
         assert_eq!(preferences.color_theme, "dark");
         assert_eq!(preferences.report_depth, 20);
+        assert_eq!(preferences.candidate_line_moves, 6);
         assert!(preferences.xqb_book_paths.is_empty());
         assert!(preferences.cloud_book_enabled);
         assert_eq!(preferences.cloud_book_url, "https://www.chessdb.cn/chessdb.php");

@@ -246,6 +246,17 @@ function toRedPerspective(scoreCp: number, sideToMove: Side) {
   return sideToMove === "红方" ? scoreCp : -scoreCp;
 }
 
+export function redAnalysisScoreText(line: AnalysisLine, sideToMove: Side) {
+  const side = sideToMove === "红方" ? 1 : -1;
+  if (line.mate != null) {
+    const redMateSide = (line.mate === 0 ? -1 : Math.sign(line.mate)) * side;
+    return redMateSide > 0 ? `杀 ${Math.abs(line.mate)}` : `被杀 ${Math.abs(line.mate)}`;
+  }
+  if (line.scoreCp == null) return "--";
+  const score = Math.round(line.scoreCp * side);
+  return score > 0 ? `+${score}` : `${score}`;
+}
+
 export function redScoreAfterMove(move: MoveItem) {
   const mateSide = redMateSideAfterMove(move);
   if (move.mate != null) return mateSide * 1000;

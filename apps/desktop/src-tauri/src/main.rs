@@ -2291,6 +2291,9 @@ fn validate_preferences(preferences: &DesktopPreferences) -> Result<(), String> 
     if !(1..=10).contains(&preferences.multipv) {
         return Err("MultiPV 必须在 1 到 10 之间".into());
     }
+    if !(2..=20).contains(&preferences.candidate_line_moves) {
+        return Err("后续走法必须在 2 到 20 个半回合之间".into());
+    }
     if !(100..=30_000).contains(&preferences.move_time_ms) {
         return Err("每步时间必须在 100 到 30000 毫秒之间".into());
     }
@@ -3939,6 +3942,12 @@ mod tests {
         assert_eq!(
             validate_preferences(&preferences).unwrap_err(),
             "不支持的颜色主题"
+        );
+        let mut preferences = DesktopPreferences::default();
+        preferences.candidate_line_moves = 21;
+        assert_eq!(
+            validate_preferences(&preferences).unwrap_err(),
+            "后续走法必须在 2 到 20 个半回合之间"
         );
     }
 }

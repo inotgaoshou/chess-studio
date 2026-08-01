@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calculateGameReport, coachProfile, moveGradeStandards, moveQualityFeedback, moveQualityScore, moveReports, positionEvaluation, pvMoveRows, qualityGradeForScore, reportMovePhase, trendPoints, trendTurningPoints } from "./analysisView";
+import { calculateGameReport, coachProfile, moveGradeStandards, moveQualityFeedback, moveQualityScore, moveReports, positionEvaluation, pvMoveRows, qualityGradeForScore, redAnalysisScoreText, reportMovePhase, trendPoints, trendTurningPoints } from "./analysisView";
 import type { AnalysisLine, BoardState, GameReportDatasetDto, MoveItem } from "./platform";
 
 function dataset(positions: GameReportDatasetDto["positions"]): GameReportDatasetDto {
@@ -13,6 +13,19 @@ function dataset(positions: GameReportDatasetDto["positions"]): GameReportDatase
     positions,
   };
 }
+
+describe("redAnalysisScoreText", () => {
+  it("converts engine scores to red perspective without inventing missing values", () => {
+    expect(redAnalysisScoreText({ multipv: 1, scoreCp: 36, pv: [] }, "红方")).toBe("+36");
+    expect(redAnalysisScoreText({ multipv: 1, scoreCp: 36, pv: [] }, "黑方")).toBe("-36");
+    expect(redAnalysisScoreText({ multipv: 1, pv: [] }, "红方")).toBe("--");
+  });
+
+  it("treats mate zero as the side to move already being mated", () => {
+    expect(redAnalysisScoreText({ multipv: 1, mate: 0, pv: [] }, "红方")).toBe("被杀 0");
+    expect(redAnalysisScoreText({ multipv: 1, mate: 0, pv: [] }, "黑方")).toBe("杀 0");
+  });
+});
 
 describe("calculateGameReport", () => {
   it("scores losses from the mover perspective", () => {

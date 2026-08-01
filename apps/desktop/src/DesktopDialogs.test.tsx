@@ -9,6 +9,7 @@ const preferences: DesktopPreferencesDto = {
   threads: 2,
   hashMb: 256,
   multipv: 3,
+  candidateLineMoves: 6,
   searchMode: "time",
   searchValue: 1500,
   moveTimeMs: 5000,
@@ -93,8 +94,10 @@ describe("DesktopDialogs", () => {
     const { props, user } = renderDialog("engine");
     await user.clear(screen.getByLabelText("MultiPV"));
     await user.type(screen.getByLabelText("MultiPV"), "4");
+    await user.clear(screen.getByLabelText("后续走法（半回合）"));
+    await user.type(screen.getByLabelText("后续走法（半回合）"), "12");
     await user.click(screen.getByRole("button", { name: "检测并保存" }));
-    expect(props.onSaveEngine).toHaveBeenCalledWith(expect.objectContaining({ enginePath: "/opt/pikafish", multipv: 4 }));
+    expect(props.onSaveEngine).toHaveBeenCalledWith(expect.objectContaining({ enginePath: "/opt/pikafish", multipv: 4, candidateLineMoves: 12 }));
   });
 
   it("clears the password immediately after an authentication attempt", async () => {
