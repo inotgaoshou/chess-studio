@@ -170,6 +170,8 @@ class DesktopPlatform implements ChessPlatform {
     return listen<GameReportProgressDto>("game-report-progress", (event) => listener(event.payload));
   }
   loadSavedAnalysis() { return invoke<AnalysisLine[]>("get_saved_analysis"); }
+  openCompactFloatingPanel(panel: "engine" | "manual" | "cloud") { return invoke<boolean>("open_compact_floating_panel", { panel }); }
+  returnCompactFloatingPanel(panel: "engine" | "manual" | "cloud") { return invoke<boolean>("return_compact_floating_panel", { panel }); }
   getSyncAccount() { return invoke<SyncAccountDto>("get_sync_account"); }
   getSubscription() { return invoke<SubscriptionDto>("get_subscription"); }
   redeemSubscriptionCode(code: string) { return invoke<SubscriptionDto>("redeem_subscription_code", { code }); }
@@ -272,6 +274,8 @@ class WebPlatform implements ChessPlatform {
   async getGameReport(): Promise<GameReportDatasetDto | undefined> { throw new Error("Web 端不支持本地整局分析报告"); }
   async exportGameReportPdf(): Promise<string | undefined> { throw new Error("Web 端不支持桌面 PDF 报告导出"); }
   async subscribeGameReportProgress() { return () => undefined; }
+  async openCompactFloatingPanel(): Promise<boolean> { throw new Error("Web 端不支持系统级浮动窗口"); }
+  async returnCompactFloatingPanel(): Promise<boolean> { return false; }
 
   async playMove(iccs: string): Promise<Partial<BoardState>> {
     const before = this.state();
@@ -525,4 +529,4 @@ class WebPlatform implements ChessPlatform {
 const tauriAvailable = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 export const chessPlatform: ChessPlatform = tauriAvailable ? new DesktopPlatform() : new WebPlatform();
 export { BUILTIN_ENGINE_PATH } from "./types";
-export type { AnalysisLine, AnalysisOptions, BoardState, BranchCoachInsightDto, ChessPlatform, CloudBookCandidate, DesktopPreferencesDto, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, EngineRuntimeState, ExportFormat, GameReportDatasetDto, GameReportOptionsDto, GameReportPositionDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, MoveCoachInsightDto, MoveItem, OpeningBookHitDto, Piece, PreviewLineStep, QualityGrade, ReplayExportScope, ReportPhase, ReportSidePresentationDto, Side, SubscriptionDto, SyncAccountDto, SyncResult, TrainingTaskDto, WorkspaceLayoutMode } from "./types";
+export type { AnalysisLine, AnalysisOptions, BoardState, BranchCoachInsightDto, ChessPlatform, CloudBookCandidate, DesktopPreferencesDto, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, EngineRuntimeState, ExportFormat, GameReportDatasetDto, GameReportOptionsDto, GameReportPositionDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, LegacySkinId, MoveCoachInsightDto, MoveItem, OpeningBookHitDto, Piece, PreviewLineStep, QualityGrade, ReplayExportScope, ReportPhase, ReportSidePresentationDto, Side, SkinFolder, SkinId, SubscriptionDto, SyncAccountDto, SyncResult, TrainingTaskDto, WorkspaceLayoutMode } from "./types";

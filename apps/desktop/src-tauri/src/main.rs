@@ -1450,6 +1450,62 @@ fn detect_pikafish(app: tauri::AppHandle) -> Option<String> {
         .map(|candidate| candidate.to_string_lossy().into_owned())
 }
 
+#[tauri::command]
+async fn open_compact_floating_panel(app: tauri::AppHandle, panel: String) -> Result<bool, String> {
+    let (label, title, width, height) = match panel.as_str() {
+        "engine" => ("compact-engine", "引擎分析", 430.0, 520.0),
+        "manual" => ("compact-manual", "棋谱", 430.0, 580.0),
+        "cloud" => ("compact-cloud", "云库 / 评估信息", 520.0, 640.0),
+        _ => return Err("未知的浮动面板".into()),
+    };
+    if let Some(window) = app.get_webview_window(label) {
+        window.set_always_on_top(true).map_err(|error| error.to_string())?;
+        window.show().map_err(|error| error.to_string())?;
+        window.set_focus().map_err(|error| error.to_string())?;
+        return Ok(false);
+    }
+
+    tauri::WebviewWindowBuilder::new(
+        &app,
+        label,
+        tauri::WebviewUrl::App(format!("index.html?floatingPanel={panel}").into()),
+    )
+    .title(format!("Xiangqi Studio · {title}"))
+    .inner_size(width, height)
+    .min_inner_size(360.0, 320.0)
+    .resizable(true)
+    .decorations(true)
+    .always_on_top(true)
+    .build()
+    .map_err(|error| error.to_string())?;
+
+    Ok(true)
+}
+
+#[tauri::command]
+fn return_compact_floating_panel(app: tauri::AppHandle, panel: String) -> Result<bool, String> {
+    let label = match panel.as_str() {
+        "engine" => "compact-engine",
+        "manual" => "compact-manual",
+        "cloud" => "compact-cloud",
+        _ => return Err("未知的浮动面板".into()),
+    };
+
+    app.emit("compact-panel-return", serde_json::json!({ "panel": panel }))
+        .map_err(|error| error.to_string())?;
+
+    if let Some(main_window) = app.get_webview_window("main") {
+        let _ = main_window.show();
+        let _ = main_window.set_focus();
+    }
+
+    if let Some(window) = app.get_webview_window(label) {
+        window.destroy().map_err(|error| error.to_string())?;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
 fn bundled_pikafish_path(app: &tauri::AppHandle) -> Option<PathBuf> {
     let mut candidates = Vec::new();
     if let Ok(resource_dir) = app.path().resource_dir() {
@@ -2276,6 +2332,18 @@ fn validate_server_url(value: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn normalize_desktop_preferences(preferences: &mut DesktopPreferences) {
+    preferences.board_skin = normalize_skin_id(&preferences.board_skin);
+    preferences.piece_skin = normalize_skin_id(&preferences.piece_skin);
+}
+
+fn normalize_skin_id(value: &str) -> String {
+    match value {
+        "default" | "hongmu" | "jingdian" | "xinghe" => value.to_owned(),
+        _ => "default".into(),
+    }
+}
+
 fn validate_preferences(preferences: &DesktopPreferences) -> Result<(), String> {
     if !matches!(preferences.color_theme.as_str(), "light" | "dark") {
         return Err("不支持的颜色主题".into());
@@ -2289,10 +2357,10 @@ fn validate_preferences(preferences: &DesktopPreferences) -> Result<(), String> 
     if !matches!(preferences.layout_mode.as_str(), "studio" | "compact") {
         return Err("不支持的工作台布局".into());
     }
-    if !matches!(preferences.board_skin.as_str(), "original" | "classic" | "neon" | "jade" | "imperial" | "hongmu" | "jingdian" | "xinghe") {
+    if !matches!(preferences.board_skin.as_str(), "default" | "hongmu" | "jingdian" | "xinghe") {
         return Err("不支持的棋盘皮肤".into());
     }
-    if !matches!(preferences.piece_skin.as_str(), "original" | "classic" | "neon" | "jade" | "imperial" | "hongmu" | "jingdian" | "xinghe") {
+    if !matches!(preferences.piece_skin.as_str(), "default" | "hongmu" | "jingdian" | "xinghe") {
         return Err("不支持的棋子皮肤".into());
     }
     if !(1..=64).contains(&preferences.threads) {
@@ -2363,6 +2431,11 @@ fn validate_skin_access(
 fn get_desktop_preferences(state: State<'_, DesktopState>) -> Result<DesktopPreferences, String> {
     let mut model = state.model.lock().map_err(|_| "state lock poisoned".to_owned())?;
     let mut preferences = model.store.desktop_preferences().map_err(|error| error.to_string())?;
+    let before_normalize = preferences.clone();
+    normalize_desktop_preferences(&mut preferences);
+    if preferences != before_normalize {
+        model.store.save_desktop_preferences(&preferences).map_err(|error| error.to_string())?;
+    }
     // Preserve older installations that only stored enginePath before profiles existed.
     if preferences.active_engine_id.is_none() && !preferences.engine_path.trim().is_empty() {
         let name = preferences.engine_path.rsplit(['/', '\\']).next().unwrap_or("本地引擎");
@@ -2376,9 +2449,10 @@ fn get_desktop_preferences(state: State<'_, DesktopState>) -> Result<DesktopPref
 
 #[tauri::command]
 fn save_desktop_preferences(
-    preferences: DesktopPreferences,
+    mut preferences: DesktopPreferences,
     state: State<'_, DesktopState>,
 ) -> Result<DesktopPreferences, String> {
+    normalize_desktop_preferences(&mut preferences);
     validate_preferences(&preferences)?;
     let signed_in = sync_account_dto(&state)?.status == "signedIn";
     let mut model = state
@@ -3583,6 +3657,8 @@ fn main() {
             set_mainline,
             delete_node,
             detect_pikafish,
+            open_compact_floating_panel,
+            return_compact_floating_panel,
             analyze_position,
             engine_play_move,
             move_now,

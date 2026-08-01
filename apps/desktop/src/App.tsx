@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
+import { listen } from "@tauri-apps/api/event";
 import {
   Activity,
   BarChart3,
@@ -54,7 +55,7 @@ import type { DesktopPreferencesDto, SubscriptionDto, SyncAccountDto } from "./p
 import { applyColorTheme, initialColorTheme, type ColorTheme } from "./theme";
 import { WorkspaceTabs, type WorkspacePanel } from "./WorkspaceTabs";
 import { WorkspaceLayoutSwitch } from "./WorkspaceLayoutSwitch";
-import { CompactEngineAnalysisList, CompactReferencePanels, type CompactEngineAnalysisRow } from "./CompactWorkspace";
+import { CompactEngineAnalysisList, CompactReferencePanels, type CompactBookRow, type CompactEngineAnalysisRow, type CompactEvaluationRow } from "./CompactWorkspace";
 import { CoachProfileView } from "./CoachProfileView";
 import { SkinShopDialog } from "./SkinShopDialog";
 import { CANDIDATE_PREVIEW_HALF_MOVES, DEFAULT_CANDIDATE_LINE_MOVES } from "./candidatePreview";
@@ -62,9 +63,10 @@ import { AutosaveOperationQueue, autosaveLabel, type AutosaveState } from "./aut
 import { ManualMoveRows } from "./ManualMoveRows";
 import { CandidatePreviewSteps } from "./CandidatePreviewSteps";
 import { beginAnalysisStream, completeAnalysisStream, updateAnalysisStream, type AnalysisStreamBuffer } from "./analysisStream";
-import { ACCOUNT_SKINS, requiresSignInForSkinPatch, skinAssetFolder } from "./skinAccess";
+import { ACCOUNT_SKINS, normalizeSkinId, requiresSignInForSkinPatch, skinAssetFolder } from "./skinAccess";
 
 
+const COMPACT_PANEL_RETURN_EVENT = "compact-panel-return";
 const startingFen = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1";
 const backRankKinds = ["rook", "horse", "elephant", "advisor", "king", "advisor", "elephant", "horse", "rook"];
 const initialPieces: Piece[] = [
@@ -115,9 +117,9 @@ const defaultDesktopPreferences: DesktopPreferencesDto = {
   enginePath: "",
   threads: 2,
   hashMb: 256,
-  multipv: 3,
+  multipv: 6,
   candidateLineMoves: DEFAULT_CANDIDATE_LINE_MOVES,
-  searchMode: "time",
+  searchMode: "infinite",
   searchValue: 1500,
   moveTimeMs: 5000,
   ponder: false,
@@ -126,10 +128,10 @@ const defaultDesktopPreferences: DesktopPreferencesDto = {
   candidateRailCollapsed: false,
   analysisPanelCollapsed: false,
   workspacePanel: "moves",
-  layoutMode: "studio",
+  layoutMode: "compact",
   colorTheme: "dark",
-  boardSkin: "original",
-  pieceSkin: "original",
+  boardSkin: "default",
+  pieceSkin: "default",
   reportDepth: 20,
   cloudBookEnabled: true,
   cloudBookUrl: "https://www.chessdb.cn/chessdb.php",
@@ -163,9 +165,9 @@ function initialAutoAnalysis() {
 
 function initialWorkspaceLayout(): DesktopPreferencesDto["layoutMode"] {
   try {
-    return localStorage.getItem("xiangqi:workspace-layout") === "compact" ? "compact" : "studio";
+    return localStorage.getItem("xiangqi:workspace-layout") === "studio" ? "studio" : "compact";
   } catch {
-    return "studio";
+    return "compact";
   }
 }
 
@@ -304,7 +306,7 @@ export default function App() {
   const [analysisArrowFen, setAnalysisArrowFen] = useState<string>();
   const [analysisHintsEnabled, setAnalysisHintsEnabled] = useState(false);
   const [games, setGames] = useState<GameSummary[]>([]);
-  const [searchMode, setSearchMode] = useState<"time" | "depth" | "nodes" | "infinite">("time");
+  const [searchMode, setSearchMode] = useState<"time" | "depth" | "nodes" | "infinite">("infinite");
   const [searchValue, setSearchValue] = useState(1500);
   const [threads, setThreads] = useState(2);
   const [hashMb, setHashMb] = useState(256);
@@ -340,6 +342,7 @@ export default function App() {
   const [desktopPreferences, setDesktopPreferences] = useState(defaultDesktopPreferences);
   const [libraryCollapsed, setLibraryCollapsed] = useState(true);
   const [colorTheme, setColorTheme] = useState<ColorTheme>(() => initialColorTheme(chessPlatform.kind));
+  const effectiveColorTheme: ColorTheme = desktopPreferences.layoutMode === "compact" ? "light" : "dark";
   const [gameReport, setGameReport] = useState<GameReportDatasetDto>();
   const [reportProgress, setReportProgress] = useState<GameReportProgressDto>();
   const [reportBusy, setReportBusy] = useState(false);
@@ -362,26 +365,43 @@ export default function App() {
   const [cloudBookLoading, setCloudBookLoading] = useState(false);
   const [cloudBookVisible, setCloudBookVisible] = useState(false);
   const [cloudBookCollapsed, setCloudBookCollapsed] = useState(false);
+  const [floatingEvaluationCollapsed, setFloatingEvaluationCollapsed] = useState(false);
   const [cloudBookPosition, setCloudBookPosition] = useState<{ left: number; top: number }>();
   const [cloudBookHeight, setCloudBookHeight] = useState<number>();
   const [compactEngineCollapsed, setCompactEngineCollapsed] = useState(false);
   const [compactManualCollapsed, setCompactManualCollapsed] = useState(false);
+  const [compactDetachedPanels, setCompactDetachedPanels] = useState<Record<"engine" | "manual", boolean>>({
+    engine: false,
+    manual: false,
+  });
+  const [compactPoppedOutPanels, setCompactPoppedOutPanels] = useState<Record<"engine" | "manual" | "cloud", boolean>>({
+    engine: false,
+    manual: false,
+    cloud: false,
+  });
   const [compactWindowPositions, setCompactWindowPositions] = useState<Record<"engine" | "manual", { x: number; y: number }>>({
     engine: { x: 0, y: 0 },
     manual: { x: 0, y: 0 },
   });
   const [compactActiveWindow, setCompactActiveWindow] = useState<"engine" | "manual">("engine");
+  const floatingPanel = useMemo<"engine" | "manual" | "cloud" | null>(() => {
+    if (typeof window === "undefined") return null;
+    const panel = new URLSearchParams(window.location.search).get("floatingPanel");
+    return panel === "engine" || panel === "manual" || panel === "cloud" ? panel : null;
+  }, []);
   const [coachReports, setCoachReports] = useState<GameReportDatasetDto[]>([]);
   const [coachProfileOpen, setCoachProfileOpen] = useState(false);
   const [trainingTasks, setTrainingTasks] = useState<TrainingTaskDto[]>([]);
   const [dialogBusy, setDialogBusy] = useState(false);
   const [online, setOnline] = useState(typeof navigator === "undefined" ? true : navigator.onLine);
-  const activeBoardSkin = syncAccount.status === "signedIn" || !ACCOUNT_SKINS.includes(desktopPreferences.boardSkin)
-    ? desktopPreferences.boardSkin
-    : "original";
-  const activePieceSkin = syncAccount.status === "signedIn" || !ACCOUNT_SKINS.includes(desktopPreferences.pieceSkin)
-    ? desktopPreferences.pieceSkin
-    : "original";
+  const normalizedBoardSkin = normalizeSkinId(desktopPreferences.boardSkin);
+  const normalizedPieceSkin = normalizeSkinId(desktopPreferences.pieceSkin);
+  const activeBoardSkin = syncAccount.status === "signedIn" || !ACCOUNT_SKINS.includes(normalizedBoardSkin)
+    ? normalizedBoardSkin
+    : "default";
+  const activePieceSkin = syncAccount.status === "signedIn" || !ACCOUNT_SKINS.includes(normalizedPieceSkin)
+    ? normalizedPieceSkin
+    : "default";
   const displayedBoardSkin = skinHoverPreview?.boardSkin ?? activeBoardSkin;
   const displayedPieceSkin = skinHoverPreview?.pieceSkin ?? activePieceSkin;
   const boardRevision = useRef(0);
@@ -402,7 +422,7 @@ export default function App() {
   const persistedPreferencesRef = useRef(defaultDesktopPreferences);
   const preferenceSaveQueue = useRef<Promise<void>>(Promise.resolve());
   const activeMoveRef = useRef<HTMLButtonElement | null>(null);
-  const compactWindowDragRef = useRef<{ key: "engine" | "manual"; startX: number; startY: number; startPosition: { x: number; y: number }; bounds: { minX: number; maxX: number; minY: number; maxY: number } } | undefined>(undefined);
+  const compactWindowDragRef = useRef<{ key: "engine" | "manual"; startX: number; startY: number; startPosition: { x: number; y: number }; bounds: { minX: number; maxX: number; minY: number; maxY: number }; moved: boolean } | undefined>(undefined);
   const cloudBookDragRef = useRef<{ offsetX: number; offsetY: number } | undefined>(undefined);
   const cloudBookResizeRef = useRef<{ startY: number; startHeight: number; top: number } | undefined>(undefined);
   if (!autosaveQueue.current) {
@@ -450,6 +470,53 @@ export default function App() {
       void chessPlatform.listEngineProfiles().then(setEngineProfiles).catch(() => undefined);
     }
   }, []);
+
+  useEffect(() => {
+    if (!floatingPanel || chessPlatform.kind !== "desktop") return;
+    const timer = window.setInterval(() => {
+      void chessPlatform.initialize()
+        .then((state) => {
+          const next = normalizeBoardState(state);
+          if (next.fen !== boardRef.current.fen || next.currentNode !== boardRef.current.currentNode || next.history.length !== boardRef.current.history.length) {
+            applyBoard(next);
+          }
+        })
+        .catch(() => undefined);
+    }, 900);
+    return () => window.clearInterval(timer);
+  }, [floatingPanel]);
+
+  useEffect(() => {
+    if (floatingPanel || chessPlatform.kind !== "desktop") return;
+    let disposed = false;
+    let cleanup: (() => void) | undefined;
+    void listen<{ panel?: "engine" | "manual" | "cloud" }>(COMPACT_PANEL_RETURN_EVENT, (event) => {
+      const panel = event.payload?.panel;
+      if (panel === "engine") {
+        setCompactEngineCollapsed(false);
+        setCompactPoppedOutPanels((panels) => ({ ...panels, engine: false }));
+        setCompactDetachedPanels((panels) => ({ ...panels, engine: false }));
+        setCompactWindowPositions((positions) => ({ ...positions, engine: { x: 0, y: 0 } }));
+        setCompactActiveWindow("engine");
+      } else if (panel === "manual") {
+        setCompactManualCollapsed(false);
+        setCompactPoppedOutPanels((panels) => ({ ...panels, manual: false }));
+        setCompactDetachedPanels((panels) => ({ ...panels, manual: false }));
+        setCompactWindowPositions((positions) => ({ ...positions, manual: { x: 0, y: 0 } }));
+        setCompactActiveWindow("manual");
+      } else if (panel === "cloud") {
+        setCompactPoppedOutPanels((panels) => ({ ...panels, cloud: false }));
+        setCloudBookCollapsed(false);
+      }
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else cleanup = unlisten;
+    }).catch(() => undefined);
+    return () => {
+      disposed = true;
+      cleanup?.();
+    };
+  }, [floatingPanel]);
 
   useEffect(() => {
     if (chessPlatform.kind !== "desktop" || !desktopPreferences.cloudBookEnabled) {
@@ -516,7 +583,9 @@ export default function App() {
   }, [autoAnalyze]);
 
   useEffect(() => {
-    applyColorTheme(colorTheme);
+    // Layouts own their visual identity: compact stays light, studio stays dark.
+    // This prevents a persisted professional theme from bleeding into compact, or vice versa.
+    applyColorTheme(effectiveColorTheme);
     if (chessPlatform.kind === "web") {
       try {
         localStorage.setItem("xiangqi:color-theme", colorTheme);
@@ -524,7 +593,7 @@ export default function App() {
         // Theme persistence is optional in restricted browser contexts.
       }
     }
-  }, [colorTheme]);
+  }, [chessPlatform.kind, colorTheme, effectiveColorTheme]);
 
   useEffect(() => {
     if (workspacePanel !== "moves") return;
@@ -665,6 +734,52 @@ export default function App() {
   const orderedAnalysis = useMemo(() => analysis.slice().sort((left, right) => left.multipv - right.multipv), [analysis]);
   const primaryAnalysis = orderedAnalysis[0];
   const candidateSideToMove = analysisSideToMove ?? board.sideToMove;
+  const compactEngineRows: CompactEngineAnalysisRow[] = useMemo(() => orderedAnalysis.map((line) => {
+    const lineMoveLimit = CANDIDATE_PREVIEW_HALF_MOVES;
+    const lineMoves = (line.notation?.length ? line.notation : line.pv).slice(0, lineMoveLimit);
+    return {
+      id: `engine-${line.multipv}`,
+      iccs: line.pv[0],
+      rank: line.multipv,
+      depthText: `${line.depth ?? "--"}`,
+      scoreText: redAnalysisScoreText(line, candidateSideToMove),
+      timeText: line.timeMs != null ? `${(line.timeMs / 1000).toFixed(1)}s` : "--",
+      npsText: formatNps(line.nps),
+      hfText: formatHashfull(line.hashfull),
+      lineText: lineMoves.length ? lineMoves.join(" ") : "暂无推荐着法",
+      disabled: analysisIsStale,
+      stale: analysisIsStale,
+    };
+  }), [analysisIsStale, candidateSideToMove, orderedAnalysis]);
+  const compactBookRows: CompactBookRow[] = useMemo(() => [
+    ...(board.xqbCandidates ?? []).map((candidate) => ({
+      id: `xqb-${candidate.source}-${candidate.iccs}`,
+      iccs: candidate.iccs,
+      notation: candidate.notation,
+      scoreText: candidate.score > 0 ? `+${candidate.score}` : `${candidate.score}`,
+      winRateText: candidate.winRate == null ? "--" : `${candidate.winRate.toFixed(0)}%`,
+      source: candidate.source,
+      detail: candidate.memo,
+    })),
+    ...cloudCandidates.map((candidate) => ({
+      id: `cloud-${candidate.iccs}`,
+      iccs: candidate.iccs,
+      notation: candidate.notation,
+      scoreText: candidate.score > 0 ? `+${candidate.score}` : `${candidate.score}`,
+      winRateText: candidate.winRate == null ? "--" : `${candidate.winRate.toFixed(0)}%`,
+      source: "ChessDB",
+      detail: candidate.memo,
+    })),
+  ], [board.xqbCandidates, cloudCandidates]);
+  const compactEvaluationRows: CompactEvaluationRow[] = useMemo(() => orderedAnalysis.map((line) => ({
+    id: `pv-${line.multipv}`,
+    iccs: line.pv[0],
+    notation: line.notation?.[0] ?? line.pv[0] ?? `候选 ${line.multipv}`,
+    scoreText: redAnalysisScoreText(line, candidateSideToMove),
+    depthText: `${line.depth ?? "--"}`,
+    role: line.multipv === 1 ? "首选" : `候选 ${line.multipv}`,
+    disabled: analysisIsStale,
+  })), [analysisIsStale, candidateSideToMove, orderedAnalysis]);
   const candidateInsights = useMemo(() => candidateCoachInsights(orderedAnalysis, { sideToMove: candidateSideToMove }), [candidateSideToMove, orderedAnalysis]);
   const liveCoachAdvice = useMemo(() => currentCoachAdvice({
     board,
@@ -713,9 +828,10 @@ export default function App() {
   }, [analysisArrows, candidatePreview, previewStep, reversed]);
 
   function applyDesktopPreferences(preferences: DesktopPreferencesDto) {
-    desktopPreferencesRef.current = preferences;
-    persistedPreferencesRef.current = preferences;
-    setDesktopPreferences(preferences);
+    const normalized = { ...preferences, boardSkin: normalizeSkinId(preferences.boardSkin), pieceSkin: normalizeSkinId(preferences.pieceSkin) };
+    desktopPreferencesRef.current = normalized;
+    persistedPreferencesRef.current = normalized;
+    setDesktopPreferences(normalized);
     setEnginePath(preferences.enginePath);
     setThreads(preferences.threads);
     setHashMb(preferences.hashMb);
@@ -734,12 +850,17 @@ export default function App() {
   }
 
   function saveDesktopPreferencePatch(patch: Partial<DesktopPreferencesDto>) {
-    const optimistic = { ...desktopPreferencesRef.current, ...patch };
+    const normalizedPatch = {
+      ...patch,
+      ...(patch.boardSkin ? { boardSkin: normalizeSkinId(patch.boardSkin) } : {}),
+      ...(patch.pieceSkin ? { pieceSkin: normalizeSkinId(patch.pieceSkin) } : {}),
+    };
+    const optimistic = { ...desktopPreferencesRef.current, ...normalizedPatch };
     desktopPreferencesRef.current = optimistic;
     setDesktopPreferences(optimistic);
-    const keys = Object.keys(patch) as Array<keyof DesktopPreferencesDto>;
+    const keys = Object.keys(normalizedPatch) as Array<keyof DesktopPreferencesDto>;
     const operation = preferenceSaveQueue.current.then(async () => {
-      const snapshot = { ...persistedPreferencesRef.current, ...patch };
+      const snapshot = { ...persistedPreferencesRef.current, ...normalizedPatch };
       try {
         const saved = await chessPlatform.saveDesktopPreferences(snapshot);
         persistedPreferencesRef.current = saved;
@@ -767,17 +888,12 @@ export default function App() {
   }
 
   async function toggleColorTheme() {
-    const currentTheme = chessPlatform.kind === "desktop" ? desktopPreferencesRef.current.colorTheme : colorTheme;
-    const next = currentTheme === "dark" ? "light" : "dark";
-    setColorTheme(next);
-    if (chessPlatform.kind !== "desktop") return;
-    try {
-      const saved = await saveDesktopPreferencePatch({ colorTheme: next });
-      if (desktopPreferencesRef.current.colorTheme === next) setColorTheme(saved.colorTheme);
-    } catch (error) {
-      setColorTheme(desktopPreferencesRef.current.colorTheme);
-      setNotice(friendlyError(error));
+    if (chessPlatform.kind === "desktop") {
+      setNotice(desktopPreferencesRef.current.layoutMode === "compact" ? "简洁模式固定浅色主题" : "专业模式固定暗黑主题");
+      return;
     }
+    const next = colorTheme === "dark" ? "light" : "dark";
+    setColorTheme(next);
   }
 
   async function setWorkspaceLayout(layoutMode: DesktopPreferencesDto["layoutMode"]) {
@@ -1860,6 +1976,16 @@ export default function App() {
   async function saveEnginePreferences(preferences: DesktopPreferencesDto) {
     setDialogBusy(true);
     try {
+      let boardSkin = normalizeSkinId(preferences.boardSkin);
+      let pieceSkin = normalizeSkinId(preferences.pieceSkin);
+      if (syncAccount.status !== "signedIn" && (ACCOUNT_SKINS.includes(boardSkin) || ACCOUNT_SKINS.includes(pieceSkin))) {
+        const persisted = await chessPlatform.getDesktopPreferences().catch(() => persistedPreferencesRef.current);
+        persistedPreferencesRef.current = persisted;
+        const persistedBoardSkin = normalizeSkinId(persisted.boardSkin);
+        const persistedPieceSkin = normalizeSkinId(persisted.pieceSkin);
+        if (ACCOUNT_SKINS.includes(boardSkin) && boardSkin !== persistedBoardSkin) boardSkin = persistedBoardSkin;
+        if (ACCOUNT_SKINS.includes(pieceSkin) && pieceSkin !== persistedPieceSkin) pieceSkin = persistedPieceSkin;
+      }
       const engineChanged = preferences.enginePath.trim() !== desktopPreferences.enginePath.trim();
       let activeEngineId = desktopPreferences.activeEngineId;
       let enginePath = desktopPreferences.enginePath;
@@ -1890,8 +2016,8 @@ export default function App() {
         ponder: preferences.ponder,
         autoAnalyze: preferences.autoAnalyze,
         reportDepth: preferences.reportDepth,
-        boardSkin: preferences.boardSkin,
-        pieceSkin: preferences.pieceSkin,
+        boardSkin,
+        pieceSkin,
         cloudBookEnabled: preferences.cloudBookEnabled,
         cloudBookUrl: preferences.cloudBookUrl,
         disabledXqbBookPaths: preferences.disabledXqbBookPaths,
@@ -2100,12 +2226,34 @@ export default function App() {
     }
   }
 
+  async function openCompactFloatingPanel(panel: "engine" | "manual" | "cloud") {
+    if (chessPlatform.kind !== "desktop") return;
+    try {
+      const created = await chessPlatform.openCompactFloatingPanel(panel);
+      if (panel === "engine") {
+        setCompactEngineCollapsed(true);
+        setCompactPoppedOutPanels((panels) => ({ ...panels, engine: true }));
+        setCompactDetachedPanels((panels) => ({ ...panels, engine: false }));
+      } else if (panel === "manual") {
+        setCompactManualCollapsed(true);
+        setCompactPoppedOutPanels((panels) => ({ ...panels, manual: true }));
+        setCompactDetachedPanels((panels) => ({ ...panels, manual: false }));
+      }
+      else {
+        setCompactPoppedOutPanels((panels) => ({ ...panels, cloud: true }));
+        setCloudBookCollapsed(true);
+      }
+      const label = panel === "engine" ? "引擎分析" : panel === "manual" ? "棋谱" : "云库/评估信息";
+      setNotice(created ? `${label}已弹出为独立窗口，可拖到工作台外` : `${label}窗口已置前`);
+    } catch (error) {
+      setNotice(friendlyError(error));
+    }
+  }
+
   function startCompactWindowDrag(key: "engine" | "manual", event: PointerEvent<HTMLElement>) {
     if (event.button !== 0) return;
-    const container = event.currentTarget.closest<HTMLElement>(".board-candidate-rail");
     const windowPanel = event.currentTarget.closest<HTMLElement>(".compact-floating-panel");
-    if (!container || !windowPanel) return;
-    const containerBounds = container.getBoundingClientRect();
+    if (!windowPanel) return;
     const panelBounds = windowPanel.getBoundingClientRect();
     const current = compactWindowPositions[key];
     compactWindowDragRef.current = {
@@ -2114,11 +2262,12 @@ export default function App() {
       startY: event.clientY,
       startPosition: current,
       bounds: {
-        minX: -panelBounds.left + containerBounds.left + 8,
-        maxX: containerBounds.right - panelBounds.right - 8,
-        minY: -panelBounds.top + containerBounds.top + 8,
-        maxY: containerBounds.bottom - panelBounds.bottom - 8,
+        minX: current.x + 8 - panelBounds.left,
+        maxX: current.x + window.innerWidth - panelBounds.right - 8,
+        minY: current.y + 8 - panelBounds.top,
+        maxY: current.y + window.innerHeight - panelBounds.bottom - 8,
       },
+      moved: false,
     };
     setCompactActiveWindow(key);
     document.body.classList.add("compact-panel-dragging");
@@ -2131,13 +2280,20 @@ export default function App() {
   function moveCompactWindowDragWindow(event: globalThis.PointerEvent) {
     const drag = compactWindowDragRef.current;
     if (!drag) return;
-    const x = Math.max(drag.bounds.minX, Math.min(drag.bounds.maxX, drag.startPosition.x + event.clientX - drag.startX));
-    const y = Math.max(drag.bounds.minY, Math.min(drag.bounds.maxY, drag.startPosition.y + event.clientY - drag.startY));
+    const deltaX = event.clientX - drag.startX;
+    const deltaY = event.clientY - drag.startY;
+    if (Math.abs(deltaX) + Math.abs(deltaY) > 6) drag.moved = true;
+    const x = Math.max(drag.bounds.minX, Math.min(drag.bounds.maxX, drag.startPosition.x + deltaX));
+    const y = Math.max(drag.bounds.minY, Math.min(drag.bounds.maxY, drag.startPosition.y + deltaY));
     setCompactWindowPositions((positions) => ({ ...positions, [drag.key]: { x, y } }));
     event.preventDefault();
   }
 
   function stopCompactWindowDragWindow() {
+    const drag = compactWindowDragRef.current;
+    if (drag?.moved) {
+      setCompactDetachedPanels((panels) => ({ ...panels, [drag.key]: true }));
+    }
     compactWindowDragRef.current = undefined;
     document.body.classList.remove("compact-panel-dragging");
     window.removeEventListener("pointermove", moveCompactWindowDragWindow);
@@ -2147,6 +2303,20 @@ export default function App() {
   function stopCompactWindowDrag(event: PointerEvent<HTMLElement>) {
     stopCompactWindowDragWindow();
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  }
+
+  function toggleCompactPanelCollapsed(panel: "engine" | "manual") {
+    if (panel === "engine") {
+      setCompactEngineCollapsed((collapsed) => {
+        if (collapsed) setCompactDetachedPanels((panels) => ({ ...panels, engine: false }));
+        return !collapsed;
+      });
+    } else {
+      setCompactManualCollapsed((collapsed) => {
+        if (collapsed) setCompactDetachedPanels((panels) => ({ ...panels, manual: false }));
+        return !collapsed;
+      });
+    }
   }
 
   function playbackControls(className: string) {
@@ -2170,38 +2340,23 @@ export default function App() {
       compactLayout ? "compact-floating-stack" : "",
       compactLayout && compactEngineCollapsed ? "compact-engine-collapsed" : "",
       compactLayout && compactManualCollapsed ? "compact-manual-collapsed" : "",
+      compactLayout && compactDetachedPanels.engine ? "compact-engine-detached" : "",
+      compactLayout && compactDetachedPanels.manual ? "compact-manual-detached" : "",
     ].filter(Boolean).join(" ");
-    const compactEngineRows: CompactEngineAnalysisRow[] = compactLayout
-      ? orderedAnalysis.map((line) => {
-        const lineMoves = (line.notation?.length ? line.notation : line.pv).slice(0, 10);
-        return {
-          id: `engine-${line.multipv}`,
-          iccs: line.pv[0],
-          rank: line.multipv,
-          depthText: `${line.depth ?? "--"}`,
-          scoreText: redAnalysisScoreText(line, candidateSideToMove),
-          timeText: line.timeMs != null ? `${(line.timeMs / 1000).toFixed(1)}s` : "--",
-          npsText: formatNps(line.nps),
-          hfText: formatHashfull(line.hashfull),
-          lineText: lineMoves.length ? lineMoves.join(" ") : "暂无推荐着法",
-          disabled: analysisIsStale,
-          stale: analysisIsStale,
-        };
-      })
-      : [];
     if (compactLayout) {
       const enginePosition = compactWindowPositions.engine;
       const manualPosition = compactWindowPositions.manual;
       return <section className={compactDockClass.trim()} aria-label="简洁布局可拖动面板">
         <article
-          className={`compact-floating-panel compact-engine-window ${compactEngineCollapsed ? "collapsed" : ""} ${compactActiveWindow === "engine" ? "active" : ""}`}
+          className={`compact-floating-panel compact-engine-window ${compactEngineCollapsed ? "collapsed" : ""} ${compactDetachedPanels.engine ? "detached" : ""} ${compactActiveWindow === "engine" ? "active" : ""}`}
           style={{ transform: `translate(${enginePosition.x}px, ${enginePosition.y}px)` } as CSSProperties}
           onPointerDown={() => setCompactActiveWindow("engine")}
         >
           <div className="section-title compact-drag-handle" onPointerDown={(event) => startCompactWindowDrag("engine", event)} onPointerUp={stopCompactWindowDrag}>
             <strong>引擎分析</strong>
-            <span>{compactEngineCollapsed ? "已收起 · 拖标题移动" : analysisIsStale ? "旧候选保留中 · 新局面正在更新" : "深度 / 分数 / 时间 / NPS / HF"}</span>
-            <button className="compact-window-toggle" title={compactEngineCollapsed ? "展开引擎分析" : "收起引擎分析"} aria-label={compactEngineCollapsed ? "展开引擎分析" : "收起引擎分析"} onPointerDown={(event) => event.stopPropagation()} onClick={() => setCompactEngineCollapsed((collapsed) => !collapsed)}>{compactEngineCollapsed ? <ChevronDown size={16}/> : <X size={15}/>}</button>
+            <span>{compactEngineCollapsed ? "已收起 · 点展开回到停靠区" : compactDetachedPanels.engine ? "浮动中 · 不占棋盘空间" : analysisIsStale ? "旧候选保留中 · 新局面正在更新" : "深度 / 分数 / 时间 / NPS / HF"}</span>
+            {chessPlatform.kind === "desktop" && <button className="compact-window-toggle compact-window-popout" title="弹出为独立窗口，可拖到 App 外面" aria-label="弹出引擎分析独立窗口" onPointerDown={(event) => event.stopPropagation()} onClick={() => void openCompactFloatingPanel("engine")}><Maximize2 size={14}/><span>弹出</span></button>}
+            <button className="compact-window-toggle" title={compactEngineCollapsed ? "展开并停靠引擎分析" : "收起引擎分析"} aria-label={compactEngineCollapsed ? "展开并停靠引擎分析" : "收起引擎分析"} onPointerDown={(event) => event.stopPropagation()} onClick={() => toggleCompactPanelCollapsed("engine")}>{compactEngineCollapsed ? <ChevronDown size={16}/> : <X size={15}/>}</button>
           </div>
           {!compactEngineCollapsed && <>
             <div className="compact-engine-strip" aria-label="简洁布局引擎状态">
@@ -2226,15 +2381,16 @@ export default function App() {
         </article>
 
         <article
-          className={`compact-floating-panel compact-manual-panel ${compactManualCollapsed ? "collapsed" : ""} ${compactActiveWindow === "manual" ? "active" : ""}`}
+          className={`compact-floating-panel compact-manual-panel ${compactManualCollapsed ? "collapsed" : ""} ${compactDetachedPanels.manual ? "detached" : ""} ${compactActiveWindow === "manual" ? "active" : ""}`}
           style={{ transform: `translate(${manualPosition.x}px, ${manualPosition.y}px)` } as CSSProperties}
           aria-label="简洁布局棋谱"
           onPointerDown={() => setCompactActiveWindow("manual")}
         >
           <header className="compact-drag-handle" onPointerDown={(event) => startCompactWindowDrag("manual", event)} onPointerUp={stopCompactWindowDrag}>
+            <button className="compact-window-toggle compact-window-toggle-leading" title={compactManualCollapsed ? "展开并停靠棋谱" : "收起棋谱"} aria-label={compactManualCollapsed ? "展开并停靠棋谱" : "收起棋谱"} onPointerDown={(event) => event.stopPropagation()} onClick={() => toggleCompactPanelCollapsed("manual")}>{compactManualCollapsed ? <ChevronDown size={16}/> : <X size={15}/>}</button>
             <span><ClipboardList size={14}/><strong>棋谱</strong></span>
-            <small>{compactManualCollapsed ? "已收起 · 拖标题移动" : `${board.history.length} 着${board.continuation.length ? ` · 后续 ${board.continuation.length} 着` : ""}`}</small>
-            <button className="compact-window-toggle" title={compactManualCollapsed ? "展开棋谱" : "收起棋谱"} aria-label={compactManualCollapsed ? "展开棋谱" : "收起棋谱"} onPointerDown={(event) => event.stopPropagation()} onClick={() => setCompactManualCollapsed((collapsed) => !collapsed)}>{compactManualCollapsed ? <ChevronDown size={16}/> : <X size={15}/>}</button>
+            <small>{compactManualCollapsed ? "已收起 · 点展开回到停靠区" : compactDetachedPanels.manual ? `浮动中 · ${board.history.length} 着` : `${board.history.length} 着${board.continuation.length ? ` · 后续 ${board.continuation.length} 着` : ""}`}</small>
+            {chessPlatform.kind === "desktop" && <button className="compact-window-toggle compact-window-popout" title="弹出为独立窗口，可拖到 App 外面" aria-label="弹出棋谱独立窗口" onPointerDown={(event) => event.stopPropagation()} onClick={() => void openCompactFloatingPanel("manual")}><Maximize2 size={14}/><span>弹出</span></button>}
           </header>
           {!compactManualCollapsed && <>
             {playbackControls("compact-playback")}
@@ -2269,7 +2425,7 @@ export default function App() {
         <strong>{compactLayout ? "引擎分析" : "棋盘候选"}</strong>
         <span>{compactLayout ? compactEngineCollapsed ? "已收起 · 点击展开" : analysisIsStale ? "旧候选保留中 · 新局面正在更新" : "深度 / 分数 / 时间 / NPS / HF" : analysisIsStale ? "旧候选保留中 · 新局面正在更新" : `MultiPV ${multipv} · 点预览后手动下一步`}</span>
         {compactLayout
-          ? <button className="compact-window-toggle" title={compactEngineCollapsed ? "展开引擎分析" : "收起引擎分析"} aria-label={compactEngineCollapsed ? "展开引擎分析" : "收起引擎分析"} onClick={() => setCompactEngineCollapsed((collapsed) => !collapsed)}>{compactEngineCollapsed ? <ChevronDown size={16}/> : <X size={15}/>}</button>
+          ? <button className="compact-window-toggle" title={compactEngineCollapsed ? "展开并停靠引擎分析" : "收起引擎分析"} aria-label={compactEngineCollapsed ? "展开并停靠引擎分析" : "收起引擎分析"} onClick={() => toggleCompactPanelCollapsed("engine")}>{compactEngineCollapsed ? <ChevronDown size={16}/> : <X size={15}/>}</button>
           : <button className="panel-collapse-button" title="收起棋盘候选" aria-label="收起棋盘候选" onClick={() => void setCandidateRailVisibility(true)}><ChevronRight size={16}/></button>}
       </div>
       {compactLayout && <div className="compact-engine-strip" aria-label="简洁布局引擎状态">
@@ -2319,7 +2475,7 @@ export default function App() {
         <header>
           <span><ClipboardList size={14}/><strong>棋谱</strong></span>
           <small>{compactManualCollapsed ? "已收起" : `${board.history.length} 着${board.continuation.length ? ` · 后续 ${board.continuation.length} 着` : ""}`}</small>
-          <button className="compact-window-toggle" title={compactManualCollapsed ? "展开棋谱" : "收起棋谱"} aria-label={compactManualCollapsed ? "展开棋谱" : "收起棋谱"} onClick={() => setCompactManualCollapsed((collapsed) => !collapsed)}>{compactManualCollapsed ? <ChevronDown size={16}/> : <X size={15}/>}</button>
+          <button className="compact-window-toggle" title={compactManualCollapsed ? "展开并停靠棋谱" : "收起棋谱"} aria-label={compactManualCollapsed ? "展开并停靠棋谱" : "收起棋谱"} onClick={() => toggleCompactPanelCollapsed("manual")}>{compactManualCollapsed ? <ChevronDown size={16}/> : <X size={15}/>}</button>
         </header>
         {!compactManualCollapsed && <>
           {playbackControls("compact-playback")}
@@ -2392,8 +2548,120 @@ export default function App() {
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   }
 
+  async function returnFloatingPanelToMain() {
+    if (!floatingPanel) return;
+    try {
+      await chessPlatform.returnCompactFloatingPanel(floatingPanel);
+    } catch (error) {
+      setNotice(`回到主窗口失败：${friendlyError(error)}`);
+    }
+  }
+
+  if (floatingPanel) {
+    return (
+      <div className={`floating-panel-shell theme-${effectiveColorTheme} board-skin-${displayedBoardSkin} piece-skin-${displayedPieceSkin} floating-panel-${floatingPanel}`}>
+        <header className="floating-panel-titlebar">
+          <span>{floatingPanel === "engine" ? <Activity size={16}/> : floatingPanel === "cloud" ? <Database size={16}/> : <ClipboardList size={16}/>}<strong>{floatingPanel === "engine" ? "引擎分析" : floatingPanel === "cloud" ? "云库 / 评估信息" : "棋谱"}</strong></span>
+          <small>{floatingPanel === "engine" ? (analysisBusy ? "Pikafish 正在计算…" : analysisIsStale ? "旧候选保留中" : "系统独立窗口") : floatingPanel === "cloud" ? (cloudBookLoading ? "查询中…" : cloudBookError ?? `${compactBookRows.length} 条候选`) : `${board.history.length} 着${board.continuation.length ? ` · 后续 ${board.continuation.length} 着` : ""}`}</small>
+          <button className="floating-panel-return" type="button" title="关闭浮窗并回到主窗口停靠显示" onClick={() => void returnFloatingPanelToMain()}><ChevronLeft size={15}/>回主窗口</button>
+        </header>
+        {floatingPanel === "engine" ? (
+          <section className="floating-panel-body floating-engine-body">
+            <div className="compact-engine-strip" aria-label="浮动窗口引擎状态">
+              <span className={analysisBusy ? "running" : ""}><Activity size={14}/><strong>引擎：</strong></span>
+              <div className="compact-engine-config" title={chessPlatform.kind === "web" ? "云端 Pikafish" : enginePath || "未配置引擎"}>
+                <button type="button" onClick={() => chessPlatform.kind === "desktop" ? setDesktopDialog("engine") : selectWorkspacePanel("analysis")}>{chessPlatform.kind === "web" ? "云端 Pikafish" : engineDisplayName(enginePath)}</button>
+                <small>{threads}</small>
+                <small>{hashMb}</small>
+                <i aria-hidden="true"/>
+              </div>
+              <button type="button" title="引擎设置" aria-label="引擎设置" onClick={() => chessPlatform.kind === "desktop" ? setDesktopDialog("engine") : selectWorkspacePanel("analysis")}><Settings2 size={14}/></button>
+              {analysisBusy
+                ? <button type="button" className="stop" onClick={() => void stopAnalysis()}><Square size={12}/>停止</button>
+                : <button type="button" disabled={!board.playable || isPlaying} onClick={() => void runAnalysis()}><Play size={13}/>分析</button>}
+            </div>
+            <div className="analysis-lines">
+              <CompactEngineAnalysisList busy={analysisBusy} rows={compactEngineRows} onPlayMove={(iccs) => void playIccsMove(iccs, analysisFen ?? board.fen)}/>
+            </div>
+            <p className="floating-panel-note">这是系统独立窗口，可拖到主窗口外；候选落子仍会经过棋规校验。</p>
+          </section>
+        ) : floatingPanel === "cloud" ? (
+          <section className="floating-panel-body floating-cloud-body">
+            <CompactReferencePanels
+              cloudEnabled={desktopPreferences.cloudBookEnabled ?? false}
+              bookLoading={cloudBookLoading}
+              bookError={cloudBookError}
+              bookRows={compactBookRows}
+              evaluationRows={compactEvaluationRows}
+              evaluationLabel={evaluation?.label ?? "等待分析"}
+              evaluationScore={evaluation?.scoreText ?? "--"}
+              qualityText={overviewReport?.score != null ? `${overviewReport.score} ${overviewReport.grade}` : "--"}
+              redShare={evaluation?.redShare}
+              depthText={`${primaryAnalysis?.depth ?? "--"}`}
+              timeText={primaryAnalysis?.timeMs != null ? `${(primaryAnalysis.timeMs / 1000).toFixed(1)}s` : "--"}
+              evaluationCollapsed={floatingEvaluationCollapsed}
+              onOpenSettings={() => chessPlatform.kind === "desktop" ? setDesktopDialog("engine") : setNotice("Web 版使用云端引擎，无本地引擎设置")}
+              onToggleEvaluationCollapsed={() => setFloatingEvaluationCollapsed((collapsed) => !collapsed)}
+              onPlayBookMove={(iccs) => void playIccsMove(iccs)}
+              onPlayEvaluationMove={(iccs) => void playIccsMove(iccs, analysisFen ?? board.fen)}
+            />
+            <p className="floating-panel-note">这是系统独立窗口，可拖到主窗口外；主窗口走棋后这里会自动刷新。</p>
+          </section>
+        ) : (
+          <section className="floating-panel-body floating-manual-body">
+            {playbackControls("compact-playback floating-playback")}
+            <div className="move-table" role="table" aria-label="浮动窗口棋谱着法">
+              <div className="move-table-head" role="row"><span role="columnheader">序号</span><span role="columnheader">着法</span><span role="columnheader">分数</span></div>
+              <div className="move-table-body" role="rowgroup">
+                <button className={`move-table-row root ${!board.currentNode ? "active" : ""}`} role="row" onClick={() => void navigateTo()}>
+                  <span role="cell">0</span><span role="cell"><GitBranch size={12}/>开始局面</span><span role="cell" />
+                </button>
+                <ManualMoveRows
+                  activeMoveRef={activeMoveRef}
+                  continuation={board.continuation}
+                  currentNode={board.currentNode}
+                  formatScore={formatMoveScore}
+                  history={board.history}
+                  onNavigate={(nodeId) => void navigateTo(nodeId)}
+                  qualityByMoveId={reportByMoveId}
+                />
+              </div>
+            </div>
+            <p className="floating-panel-note">这是系统独立窗口，可拖到主窗口外；主窗口走棋后这里会自动刷新。</p>
+          </section>
+        )}
+        {chessPlatform.kind === "desktop" && <DesktopDialogs
+          dialog={desktopDialog}
+          preferences={desktopPreferences}
+          account={syncAccount}
+          subscription={subscription}
+          trainingTasks={trainingTasks}
+          busy={dialogBusy}
+          onClose={() => setDesktopDialog(null)}
+          onChooseEngine={(currentPath) => chessPlatform.chooseEngineExecutable(currentPath)}
+          onSaveEngine={saveEnginePreferences}
+          onSaveSync={saveSyncPreferences}
+          onUnbindSync={unbindSync}
+          onAuthenticate={authenticateSync}
+          onRedeemSubscription={redeemSubscriptionCode}
+          onGenerateTraining={generateTrainingTasks}
+          onCompleteTraining={completeTrainingTask}
+        />}
+      </div>
+    );
+  }
+
+  const compactDockMinimized = desktopPreferences.layoutMode === "compact"
+    && (compactEngineCollapsed || compactDetachedPanels.engine)
+    && (compactManualCollapsed || compactDetachedPanels.manual);
+  const compactHasSystemPopout = desktopPreferences.layoutMode === "compact"
+    && Object.values(compactPoppedOutPanels).some(Boolean);
+  const themeToggleTitle = desktopPreferences.layoutMode === "compact"
+    ? "简洁模式固定浅色主题"
+    : "专业模式固定暗黑主题";
+
   return (
-    <div className={`app-shell ${chessPlatform.kind}-shell theme-${colorTheme} layout-${desktopPreferences.layoutMode} board-skin-${displayedBoardSkin} piece-skin-${displayedPieceSkin}`}>
+    <div className={`app-shell ${chessPlatform.kind}-shell theme-${effectiveColorTheme} layout-${desktopPreferences.layoutMode} board-skin-${displayedBoardSkin} piece-skin-${displayedPieceSkin}`}>
       <header className="titlebar">
         <div className="window-brand"><span className="brand-seal">象</span><strong>棋研</strong><small>XIANGQI STUDIO</small></div>
         <strong className="window-title">棋研工作台</strong>
@@ -2406,7 +2674,7 @@ export default function App() {
         <div className="window-state"><span className={analysisBusy ? "pulse" : ""} />{notice}</div>
       </header>
 
-      <MobileToolbar analysisBusy={analysisBusy} analysisDisabled={!board.playable || isPlaying || reportBusy || engineSide !== "none" || engineThinking} colorTheme={colorTheme} onCommand={(command) => void executeMobileToolbar(command)}/>
+      <MobileToolbar analysisBusy={analysisBusy} analysisDisabled={!board.playable || isPlaying || reportBusy || engineSide !== "none" || engineThinking} colorTheme={effectiveColorTheme} onCommand={(command) => void executeMobileToolbar(command)}/>
 
       <nav className="menubar" aria-label="主菜单">
         {chessPlatform.kind === "desktop" && <DesktopMenuBar
@@ -2476,7 +2744,7 @@ export default function App() {
           title={analysisHintsEnabled ? "停止自动分析并隐藏 MultiPV 提示" : "开启自动分析与 MultiPV 提示"}
           onClick={() => void (analysisHintsEnabled ? stopAnalysis() : runAnalysis())}
           disabled={!analysisHintsEnabled && (!board.playable || isPlaying)}
-        ><Zap size={15}/>{analysisHintsEnabled ? "停止分析提示" : "分析当前局面"}</button>
+        ><Zap size={15}/>{analysisHintsEnabled ? "停止分析" : "分析"}</button>
         <button className={`mode-tool move-now-tool ${engineThinking ? "active" : ""}`} title={engineStarting ? "Pikafish 正在启动，请稍候" : engineThinking ? "停止当前搜索并立即采用已找到的最佳着法" : engineSide === "none" ? "先在局面分析中选择 Pikafish 执红或执黑" : isEngineTurn(board) ? "启动 Pikafish 思考" : "当前轮到你行棋"} disabled={chessPlatform.kind !== "desktop" || engineSide === "none" || engineStarting || (!engineThinking && !isEngineTurn(board))} onClick={() => void moveNow()}><Zap size={15}/>{engineStarting ? "引擎启动中" : engineThinking ? "立即出招" : "引擎出招"}</button>
         <button className="mode-tool" title="将当前分析的第一候选着写入棋谱" disabled={!primaryAnalysis?.pv[0] || analysisIsStale || engineSide !== "none" || engineStarting || engineThinking} onClick={() => void playPrimaryAnalysisMove()}><Play size={15}/>采用第一候选</button>
         <button className="tool-button" title="引擎设置" onClick={() => setDesktopDialog("engine")}><Settings2 size={16}/></button>
@@ -2484,17 +2752,17 @@ export default function App() {
           <button className={`tool-button ${skinMenuOpen ? "active" : ""}`} title="棋盘皮肤" aria-label="棋盘皮肤" aria-expanded={skinMenuOpen} onClick={() => setSkinMenuOpen((open) => !open)}><Palette size={16}/></button>
           {skinMenuOpen && <section className="skin-menu-popup" aria-label="棋盘皮肤设置" onPointerLeave={() => setSkinHoverPreview(undefined)}>
             <header><strong>皮肤选择</strong><button className="tool-button" title="关闭皮肤选择" aria-label="关闭皮肤选择" onClick={() => { setSkinHoverPreview(undefined); setSkinMenuOpen(false); }}><X size={15}/></button></header>
-            <div><span>棋盘</span><button className={desktopPreferences.boardSkin === "original" ? "active" : ""} onPointerEnter={() => setSkinHoverPreview({ boardSkin: "original", pieceSkin: activePieceSkin })} onClick={() => void updateBoardSkin({ boardSkin: "original", pieceSkin: desktopPreferences.pieceSkin })}><i className="skin-choice-preview board original"/><b>默认</b></button><button className={desktopPreferences.boardSkin === "classic" ? "active" : ""} onPointerEnter={() => setSkinHoverPreview({ boardSkin: "classic", pieceSkin: activePieceSkin })} onClick={() => void updateBoardSkin({ boardSkin: "classic", pieceSkin: desktopPreferences.pieceSkin })}><i className="skin-choice-preview board classic"/><b>暖木</b></button></div>
-            <div><span>棋子</span><button className={desktopPreferences.pieceSkin === "original" ? "active" : ""} onPointerEnter={() => setSkinHoverPreview({ boardSkin: activeBoardSkin, pieceSkin: "original" })} onClick={() => void updateBoardSkin({ boardSkin: desktopPreferences.boardSkin, pieceSkin: "original" })}><i className="skin-choice-preview piece original">将</i><b>默认</b></button><button className={desktopPreferences.pieceSkin === "classic" ? "active" : ""} onPointerEnter={() => setSkinHoverPreview({ boardSkin: activeBoardSkin, pieceSkin: "classic" })} onClick={() => void updateBoardSkin({ boardSkin: desktopPreferences.boardSkin, pieceSkin: "classic" })}><i className="skin-choice-preview piece classic">将</i><b>暖木</b></button></div>
-            <div className="skin-menu-featured"><span>红木鎏金</span><button className={desktopPreferences.boardSkin === "hongmu" ? "active" : ""} onPointerEnter={() => setSkinHoverPreview({ boardSkin: "hongmu", pieceSkin: activePieceSkin })} onClick={() => void updateBoardSkin({ boardSkin: "hongmu", pieceSkin: desktopPreferences.pieceSkin })}><i className="skin-choice-preview board hongmu"/><b>棋盘</b></button><button className={desktopPreferences.pieceSkin === "hongmu" ? "active" : ""} onPointerEnter={() => setSkinHoverPreview({ boardSkin: activeBoardSkin, pieceSkin: "hongmu" })} onClick={() => void updateBoardSkin({ boardSkin: desktopPreferences.boardSkin, pieceSkin: "hongmu" })}><i className="skin-choice-preview piece hongmu">帅</i><b>棋子</b></button></div>
-            {syncAccount.status === "signedIn" && <><div className="skin-menu-featured"><span>经典雅致</span><button className={desktopPreferences.boardSkin === "jingdian" ? "active" : ""} onPointerEnter={() => setSkinHoverPreview({ boardSkin: "jingdian", pieceSkin: activePieceSkin })} onClick={() => void updateBoardSkin({ boardSkin: "jingdian", pieceSkin: desktopPreferences.pieceSkin })}><i className="skin-choice-preview board jingdian"/><b>棋盘</b></button><button className={desktopPreferences.pieceSkin === "jingdian" ? "active" : ""} onPointerEnter={() => setSkinHoverPreview({ boardSkin: activeBoardSkin, pieceSkin: "jingdian" })} onClick={() => void updateBoardSkin({ boardSkin: desktopPreferences.boardSkin, pieceSkin: "jingdian" })}><i className="skin-choice-preview piece jingdian"/><b>棋子</b></button></div><div className="skin-menu-featured"><span>霓虹星河</span><button className={desktopPreferences.boardSkin === "xinghe" ? "active" : ""} onPointerEnter={() => setSkinHoverPreview({ boardSkin: "xinghe", pieceSkin: activePieceSkin })} onClick={() => void updateBoardSkin({ boardSkin: "xinghe", pieceSkin: desktopPreferences.pieceSkin })}><i className="skin-choice-preview board xinghe"/><b>棋盘</b></button><button className={desktopPreferences.pieceSkin === "xinghe" ? "active" : ""} onPointerEnter={() => setSkinHoverPreview({ boardSkin: activeBoardSkin, pieceSkin: "xinghe" })} onClick={() => void updateBoardSkin({ boardSkin: desktopPreferences.boardSkin, pieceSkin: "xinghe" })}><i className="skin-choice-preview piece xinghe">将</i><b>棋子</b></button></div></>}
+            <div><span>棋盘</span><button className={activeBoardSkin === "default" ? "active" : ""} onPointerEnter={() => setSkinHoverPreview({ boardSkin: "default", pieceSkin: activePieceSkin })} onClick={() => void updateBoardSkin({ boardSkin: "default", pieceSkin: desktopPreferences.pieceSkin })}><i className="skin-choice-preview board default"/><b>默认</b></button></div>
+            <div><span>棋子</span><button className={activePieceSkin === "default" ? "active" : ""} onPointerEnter={() => setSkinHoverPreview({ boardSkin: activeBoardSkin, pieceSkin: "default" })} onClick={() => void updateBoardSkin({ boardSkin: desktopPreferences.boardSkin, pieceSkin: "default" })}><i className="skin-choice-preview piece default">将</i><b>默认</b></button></div>
+            <div className="skin-menu-featured"><span>红木鎏金</span><button className={activeBoardSkin === "hongmu" ? "active" : ""} onPointerEnter={() => setSkinHoverPreview({ boardSkin: "hongmu", pieceSkin: activePieceSkin })} onClick={() => void updateBoardSkin({ boardSkin: "hongmu", pieceSkin: desktopPreferences.pieceSkin })}><i className="skin-choice-preview board hongmu"/><b>棋盘</b></button><button className={activePieceSkin === "hongmu" ? "active" : ""} onPointerEnter={() => setSkinHoverPreview({ boardSkin: activeBoardSkin, pieceSkin: "hongmu" })} onClick={() => void updateBoardSkin({ boardSkin: desktopPreferences.boardSkin, pieceSkin: "hongmu" })}><i className="skin-choice-preview piece hongmu">帅</i><b>棋子</b></button></div>
+            {syncAccount.status === "signedIn" && <><div className="skin-menu-featured"><span>经典雅致</span><button className={activeBoardSkin === "jingdian" ? "active" : ""} onPointerEnter={() => setSkinHoverPreview({ boardSkin: "jingdian", pieceSkin: activePieceSkin })} onClick={() => void updateBoardSkin({ boardSkin: "jingdian", pieceSkin: desktopPreferences.pieceSkin })}><i className="skin-choice-preview board jingdian"/><b>棋盘</b></button><button className={activePieceSkin === "jingdian" ? "active" : ""} onPointerEnter={() => setSkinHoverPreview({ boardSkin: activeBoardSkin, pieceSkin: "jingdian" })} onClick={() => void updateBoardSkin({ boardSkin: desktopPreferences.boardSkin, pieceSkin: "jingdian" })}><i className="skin-choice-preview piece jingdian"/><b>棋子</b></button></div><div className="skin-menu-featured"><span>霓虹星河</span><button className={activeBoardSkin === "xinghe" ? "active" : ""} onPointerEnter={() => setSkinHoverPreview({ boardSkin: "xinghe", pieceSkin: activePieceSkin })} onClick={() => void updateBoardSkin({ boardSkin: "xinghe", pieceSkin: desktopPreferences.pieceSkin })}><i className="skin-choice-preview board xinghe"/><b>棋盘</b></button><button className={activePieceSkin === "xinghe" ? "active" : ""} onPointerEnter={() => setSkinHoverPreview({ boardSkin: activeBoardSkin, pieceSkin: "xinghe" })} onClick={() => void updateBoardSkin({ boardSkin: desktopPreferences.boardSkin, pieceSkin: "xinghe" })}><i className="skin-choice-preview piece xinghe">将</i><b>棋子</b></button></div></>}
             <button className="skin-shop-launch" onClick={() => { setSkinMenuOpen(false); setSkinShopOpen(true); }}>打开装扮坊</button>
           </section>}
         </div>
-        <button className="tool-button" title={colorTheme === "dark" ? "切换浅色主题" : "切换深色主题"} aria-label={colorTheme === "dark" ? "切换浅色主题" : "切换深色主题"} onClick={() => void toggleColorTheme()}>{colorTheme === "dark" ? <Sun size={16}/> : <Moon size={16}/>}</button>
+        <button className="tool-button" title={themeToggleTitle} aria-label={themeToggleTitle} onClick={() => void toggleColorTheme()}>{effectiveColorTheme === "dark" ? <Moon size={16}/> : <Sun size={16}/>}</button>
       </div>
 
-      <main className={`workspace layout-${desktopPreferences.layoutMode} ${libraryCollapsed ? "library-collapsed" : ""} ${candidateRailCollapsed ? "candidate-rail-collapsed" : ""} ${analysisPanelCollapsed ? "analysis-panel-collapsed" : ""} ${desktopPreferences.layoutMode === "compact" && cloudBookCollapsed ? "compact-cloud-collapsed" : ""}`}>
+      <main className={`workspace layout-${desktopPreferences.layoutMode} ${libraryCollapsed ? "library-collapsed" : ""} ${candidateRailCollapsed ? "candidate-rail-collapsed" : ""} ${analysisPanelCollapsed ? "analysis-panel-collapsed" : ""} ${compactDockMinimized ? "compact-dock-minimized" : ""} ${compactHasSystemPopout ? "compact-system-popout" : ""} ${desktopPreferences.layoutMode === "compact" && cloudBookCollapsed ? "compact-cloud-collapsed" : ""}`}>
         <aside className={`library-panel ${libraryCollapsed ? "collapsed" : ""} ${mobilePanel === "library" || mobilePanel === "settings" ? "mobile-visible" : ""} ${mobilePanel === "settings" ? "mobile-settings-mode" : ""}`}>
           <div className="pane-title">
             <strong>{libraryCollapsed ? <Library size={16}/> : "棋谱库"}</strong>
@@ -2697,35 +2965,8 @@ export default function App() {
               cloudEnabled={desktopPreferences.cloudBookEnabled ?? false}
               bookLoading={cloudBookLoading}
               bookError={cloudBookError}
-              bookRows={[
-                ...(board.xqbCandidates ?? []).map((candidate) => ({
-                  id: `xqb-${candidate.source}-${candidate.iccs}`,
-                  iccs: candidate.iccs,
-                  notation: candidate.notation,
-                  scoreText: candidate.score > 0 ? `+${candidate.score}` : `${candidate.score}`,
-                  winRateText: candidate.winRate == null ? "--" : `${candidate.winRate.toFixed(0)}%`,
-                  source: candidate.source,
-                  detail: candidate.memo,
-                })),
-                ...cloudCandidates.map((candidate) => ({
-                  id: `cloud-${candidate.iccs}`,
-                  iccs: candidate.iccs,
-                  notation: candidate.notation,
-                  scoreText: candidate.score > 0 ? `+${candidate.score}` : `${candidate.score}`,
-                  winRateText: candidate.winRate == null ? "--" : `${candidate.winRate.toFixed(0)}%`,
-                  source: "ChessDB",
-                  detail: candidate.memo,
-                })),
-              ]}
-              evaluationRows={orderedAnalysis.map((line) => ({
-                id: `pv-${line.multipv}`,
-                iccs: line.pv[0],
-                notation: line.notation?.[0] ?? line.pv[0] ?? `候选 ${line.multipv}`,
-                scoreText: redAnalysisScoreText(line, candidateSideToMove),
-                depthText: `${line.depth ?? "--"}`,
-                role: line.multipv === 1 ? "首选" : `候选 ${line.multipv}`,
-                disabled: analysisIsStale,
-              }))}
+              bookRows={compactBookRows}
+              evaluationRows={compactEvaluationRows}
               evaluationLabel={evaluation?.label ?? "等待分析"}
               evaluationScore={evaluation?.scoreText ?? "--"}
               qualityText={overviewReport?.score != null ? `${overviewReport.score} ${overviewReport.grade}` : "--"}
@@ -2735,6 +2976,7 @@ export default function App() {
               collapsed={desktopPreferences.layoutMode === "compact" && cloudBookCollapsed}
               onOpenSettings={() => chessPlatform.kind === "desktop" ? setDesktopDialog("engine") : setNotice("Web 版使用云端引擎，无本地引擎设置")}
               onToggleCollapsed={() => setCloudBookCollapsed((collapsed) => !collapsed)}
+              onPopOut={chessPlatform.kind === "desktop" ? () => void openCompactFloatingPanel("cloud") : undefined}
               onPlayBookMove={(iccs) => void playIccsMove(iccs)}
               onPlayEvaluationMove={(iccs) => void playIccsMove(iccs, analysisFen ?? board.fen)}
             />

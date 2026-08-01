@@ -21,8 +21,8 @@ const preferences: DesktopPreferencesDto = {
   workspacePanel: "moves",
   layoutMode: "studio",
   colorTheme: "dark",
-  boardSkin: "original",
-  pieceSkin: "original",
+  boardSkin: "default",
+  pieceSkin: "default",
   reportDepth: 20,
   serverUrl: "http://127.0.0.1:8080",
 };

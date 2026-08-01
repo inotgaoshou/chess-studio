@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { FolderOpen, LogIn, Save, Settings2, UserPlus, X } from "lucide-react";
 import { BUILTIN_ENGINE_PATH, type DesktopPreferencesDto, type SubscriptionDto, type SyncAccountDto, type TrainingTaskDto } from "./platform";
 import { MAX_CANDIDATE_LINE_MOVES, MIN_CANDIDATE_LINE_MOVES } from "./candidatePreview";
+import { normalizeSkinId, skinCatalogFor } from "./skinAccess";
 
 export type DesktopDialog = "engine" | "syncSettings" | "register" | "login" | "subscription" | "training" | "unbind" | null;
 
@@ -32,6 +33,13 @@ function authenticationErrorMessage(error: unknown) {
   return /email already registered|邮箱.*已.*注册|\b409\b/i.test(message)
     ? "该邮箱已经注册，请直接登录"
     : message;
+}
+
+function skinSelectOptions(scope: "board" | "piece", account: SyncAccountDto, selected: DesktopPreferencesDto["boardSkin"]) {
+  const normalizedSelected = normalizeSkinId(selected);
+  return skinCatalogFor(scope)
+    .filter((skin) => !skin.memberOnly || account.status === "signedIn" || normalizedSelected === skin.folder)
+    .map((skin) => <option key={skin.folder} value={skin.folder} disabled={skin.memberOnly && account.status !== "signedIn"}>{skin.memberOnly && account.status !== "signedIn" ? `${skin.title}（未登录，登录后恢复）` : skin.title}</option>);
 }
 
 export function DesktopDialogs({ dialog, preferences, account, subscription, trainingTasks, busy, onClose, onChooseEngine, onSaveEngine, onSaveSync, onUnbindSync, onAuthenticate, onRedeemSubscription, onGenerateTraining, onCompleteTraining }: Props) {
@@ -159,8 +167,8 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
           <label><span>每步时间 (ms)</span><input type="number" min={100} max={30000} step={100} value={draft.moveTimeMs} onChange={(event) => setDraft({ ...draft, moveTimeMs: Number(event.target.value) })}/></label>
           <label className="check-row"><input type="checkbox" checked={draft.ponder} onChange={(event) => setDraft({ ...draft, ponder: event.target.checked })}/><span>后台思考</span></label>
           <label className="check-row"><input type="checkbox" checked={draft.autoAnalyze} onChange={(event) => setDraft({ ...draft, autoAnalyze: event.target.checked })}/><span>每步自动分析</span></label>
-          <label><span>棋盘皮肤</span><select value={draft.boardSkin} onChange={(event) => setDraft({ ...draft, boardSkin: event.target.value as DesktopPreferencesDto["boardSkin"] })}><option value="original">默认棋盘</option><option value="classic">暖木立体</option><option value="neon">赛博棋阵</option><option value="jade">翡翠庭院</option><option value="imperial">朱墙宫阙</option><option value="hongmu">红木鎏金</option>{account.status === "signedIn" ? <><option value="jingdian">经典雅致</option><option value="xinghe">霓虹星河</option></> : <>{draft.boardSkin === "jingdian" && <option value="jingdian" disabled>经典雅致（未登录，登录后恢复）</option>}{draft.boardSkin === "xinghe" && <option value="xinghe" disabled>霓虹星河（未登录，登录后恢复）</option>}</>}</select></label>
-          <label><span>棋子皮肤</span><select value={draft.pieceSkin} onChange={(event) => setDraft({ ...draft, pieceSkin: event.target.value as DesktopPreferencesDto["pieceSkin"] })}><option value="original">默认棋子</option><option value="classic">暖木立体</option><option value="neon">赛博光子</option><option value="jade">翡翠琉璃</option><option value="imperial">鎏金宫廷</option><option value="hongmu">红木鎏金</option>{account.status === "signedIn" ? <><option value="jingdian">经典雅致</option><option value="xinghe">霓虹星河</option></> : <>{draft.pieceSkin === "jingdian" && <option value="jingdian" disabled>经典雅致（未登录，登录后恢复）</option>}{draft.pieceSkin === "xinghe" && <option value="xinghe" disabled>霓虹星河（未登录，登录后恢复）</option>}</>}</select></label>
+          <label><span>棋盘皮肤</span><select value={normalizeSkinId(draft.boardSkin)} onChange={(event) => setDraft({ ...draft, boardSkin: event.target.value as DesktopPreferencesDto["boardSkin"] })}>{skinSelectOptions("board", account, draft.boardSkin)}</select></label>
+          <label><span>棋子皮肤</span><select value={normalizeSkinId(draft.pieceSkin)} onChange={(event) => setDraft({ ...draft, pieceSkin: event.target.value as DesktopPreferencesDto["pieceSkin"] })}>{skinSelectOptions("piece", account, draft.pieceSkin)}</select></label>
           <label className="check-row"><input type="checkbox" checked={draft.cloudBookEnabled ?? false} onChange={(event) => setDraft({ ...draft, cloudBookEnabled: event.target.checked })}/><span>启用 ChessDB 云开局库</span></label>
           <label className="full"><span>云库地址</span><input value={draft.cloudBookUrl ?? "https://www.chessdb.cn/chessdb.php"} onChange={(event) => setDraft({ ...draft, cloudBookUrl: event.target.value })}/></label>
           <p className="dialog-hint full">开启后会向该地址发送当前 FEN，仅用于查询候选着法；网络不可用不会影响本地棋谱和引擎。</p>

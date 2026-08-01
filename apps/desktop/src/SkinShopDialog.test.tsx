@@ -7,7 +7,7 @@ afterEach(cleanup);
 
 const preferences: DesktopPreferencesDto = {
   enginePath: "", threads: 2, hashMb: 256, multipv: 3, candidateLineMoves: 6, searchMode: "time", searchValue: 1500,
-  moveTimeMs: 5000, ponder: false, autoAnalyze: true, boardSkin: "original", pieceSkin: "original",
+  moveTimeMs: 5000, ponder: false, autoAnalyze: true, boardSkin: "default", pieceSkin: "default",
   colorTheme: "dark", activeEngineId: undefined, libraryCollapsed: true, candidateRailCollapsed: false,
   analysisPanelCollapsed: false, workspacePanel: "moves", layoutMode: "studio", reportDepth: 18, serverUrl: "http://127.0.0.1:8080",
 };
@@ -52,15 +52,15 @@ describe("SkinShopDialog", () => {
     expect(screen.getByText("经典雅致")).toBeTruthy();
     expect(screen.getByText("霓虹星河")).toBeTruthy();
     fireEvent.click(screen.getAllByRole("button", { name: "使用" })[0]);
-    expect(onEquip).toHaveBeenCalledWith({ boardSkin: "original", pieceSkin: "jingdian" });
+    expect(onEquip).toHaveBeenCalledWith({ boardSkin: "default", pieceSkin: "jingdian" });
   });
 
   it("previews and clears a base board skin on hover", () => {
     const { onPreview } = renderShop();
-    const card = screen.getByText("暖木立体").closest("article")!;
+    const card = screen.getByText("红木鎏金").closest("article")!;
     fireEvent.pointerEnter(card);
     fireEvent.pointerLeave(card);
-    expect(onPreview).toHaveBeenNthCalledWith(1, { boardSkin: "classic", pieceSkin: "original" });
+    expect(onPreview).toHaveBeenNthCalledWith(1, { boardSkin: "hongmu", pieceSkin: "default" });
     expect(onPreview).toHaveBeenLastCalledWith();
   });
 

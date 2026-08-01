@@ -1,4 +1,4 @@
-import { Activity, BookOpen, CheckSquare, ChevronLeft, ChevronRight, Database, Settings2, TrendingUp } from "lucide-react";
+import { Activity, BookOpen, CheckSquare, ChevronLeft, ChevronRight, Database, Maximize2, Settings2, TrendingUp } from "lucide-react";
 
 export type CompactBookRow = {
   id: string;
@@ -47,8 +47,11 @@ type Props = {
   depthText: string;
   timeText: string;
   collapsed?: boolean;
+  evaluationCollapsed?: boolean;
   onOpenSettings(): void;
   onToggleCollapsed?(): void;
+  onToggleEvaluationCollapsed?(): void;
+  onPopOut?(): void;
   onPlayBookMove(iccs: string): void;
   onPlayEvaluationMove(iccs: string): void;
 };
@@ -63,8 +66,7 @@ export function CompactEngineAnalysisList({ busy, rows, onPlayMove }: EngineList
   return <div className="compact-engine-analysis-list" role="table" aria-label="简洁布局引擎分析">
     <div className="compact-engine-analysis-head" role="row">
       <span role="columnheader">候选</span>
-      <span role="columnheader">指标</span>
-      <span role="columnheader">推荐着法</span>
+      <span role="columnheader">6路候选 · 深/分/时/NPS/HF · 后续走法</span>
     </div>
     <div className="compact-engine-analysis-body" role="rowgroup">
       {rows.map((row) => <button
@@ -77,14 +79,16 @@ export function CompactEngineAnalysisList({ busy, rows, onPlayMove }: EngineList
         onClick={() => row.iccs && onPlayMove(row.iccs)}
       >
         <span role="cell" className="compact-engine-rank">{row.rank}</span>
-        <span role="cell" className="compact-engine-metrics">
-          <strong>深度:{row.depthText}</strong>
-          <strong>分:{row.scoreText}</strong>
-          <small>时间:{row.timeText}</small>
-          <small>NPS:{row.npsText}</small>
-          <small>HF:{row.hfText}</small>
+        <span role="cell" className="compact-engine-detail">
+          <span className="compact-engine-metrics">
+            <strong>深:{row.depthText}</strong>
+            <strong>分:{row.scoreText}</strong>
+            <small>时:{row.timeText}</small>
+            <small>NPS:{row.npsText}</small>
+            <small>HF:{row.hfText}</small>
+          </span>
+          <span className="compact-engine-line">{row.lineText}</span>
         </span>
-        <span role="cell" className="compact-engine-line">{row.lineText}</span>
       </button>)}
       {rows.length === 0 && <div className="compact-engine-empty">
         <Activity size={22}/><strong>{busy ? "AI 正在计算…" : "等待引擎分析"}</strong>
@@ -107,8 +111,11 @@ export function CompactReferencePanels({
   depthText,
   timeText,
   collapsed = false,
+  evaluationCollapsed = false,
   onOpenSettings,
   onToggleCollapsed,
+  onToggleEvaluationCollapsed,
+  onPopOut,
   onPlayBookMove,
   onPlayEvaluationMove,
 }: Props) {
@@ -130,11 +137,12 @@ export function CompactReferencePanels({
     </div>;
   }
 
-  return <div className="compact-reference-stack">
+  return <div className={`compact-reference-stack ${evaluationCollapsed ? "evaluation-collapsed" : ""}`}>
     <section className="compact-reference-panel compact-book-panel" aria-label="简洁布局开局库">
       <header>
         <span><Database size={15}/><strong>云库（开局库）</strong></span>
         <small>{bookStatus}</small>
+        {onPopOut && <button type="button" className="compact-reference-popout" title="弹出为独立窗口，可拖到 App 外面" aria-label="弹出云库独立窗口" onClick={onPopOut}><Maximize2 size={13}/><span>弹出</span></button>}
         {onToggleCollapsed && <button type="button" title="收起云库" aria-label="收起云库" onClick={onToggleCollapsed}><ChevronRight size={14}/></button>}
         <button type="button" title="开局库与引擎设置" aria-label="开局库与引擎设置" onClick={onOpenSettings}><Settings2 size={14}/></button>
       </header>
@@ -154,8 +162,24 @@ export function CompactReferencePanels({
       </div>
     </section>
 
-    <section className="compact-reference-panel compact-evaluation-panel" aria-label="简洁布局评估信息">
-      <header><span><TrendingUp size={15}/><strong>评估信息</strong></span><small>{evaluationLabel}</small></header>
+    {evaluationCollapsed && onToggleEvaluationCollapsed ? <button
+      type="button"
+      className="compact-evaluation-reopen"
+      title="展开评估信息"
+      aria-label="展开评估信息"
+      onClick={onToggleEvaluationCollapsed}
+    >
+      <TrendingUp size={15}/>
+      <strong>评估信息已收起</strong>
+      <small>{evaluationScore} · {depthText === "--" ? "待分析" : `深度 ${depthText}`}</small>
+      <ChevronLeft size={14}/>
+    </button> : <section className="compact-reference-panel compact-evaluation-panel" aria-label="简洁布局评估信息">
+      <header>
+        <span><TrendingUp size={15}/><strong>评估信息</strong></span>
+        <small>{evaluationLabel}</small>
+        {onPopOut && <button type="button" className="compact-reference-popout" title="弹出评估信息与云库独立窗口，可拖到 App 外面" aria-label="弹出评估信息独立窗口" onClick={onPopOut}><Maximize2 size={13}/><span>弹出</span></button>}
+        {onToggleEvaluationCollapsed && <button type="button" title="收起评估信息" aria-label="收起评估信息" onClick={onToggleEvaluationCollapsed}><ChevronRight size={14}/></button>}
+      </header>
       <div className="compact-overview-metrics">
         <div><small>局面分</small><strong>{evaluationScore}</strong></div>
         <div><small>质量分</small><strong>{qualityText}</strong></div>
@@ -178,6 +202,6 @@ export function CompactReferencePanels({
           {evaluationRows.length === 0 && <div className="compact-table-empty"><Activity size={20}/><span>分析后显示候选评估</span></div>}
         </div>
       </div>
-    </section>
+    </section>}
   </div>;
 }

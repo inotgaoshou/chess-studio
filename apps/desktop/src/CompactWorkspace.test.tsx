@@ -84,7 +84,7 @@ describe("CompactEngineAnalysisList", () => {
       onPlayMove={onPlayMove}
     />);
 
-    expect(screen.getByText("深度:44")).toBeTruthy();
+    expect(screen.getByText("深:44")).toBeTruthy();
     expect(screen.getByText("分:+31")).toBeTruthy();
     expect(screen.getByText("NPS:4504K")).toBeTruthy();
     expect(screen.getByText("HF:21%")).toBeTruthy();

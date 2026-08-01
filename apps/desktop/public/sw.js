@@ -1,4 +1,4 @@
-const CACHE_NAME = "xiangqi-studio-v2";
+const CACHE_NAME = "xiangqi-studio-v3";
 const APP_SHELL = [
   "/",
   "/manifest.webmanifest",

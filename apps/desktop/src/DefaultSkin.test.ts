@@ -17,7 +17,7 @@ describe("default skin styles", () => {
 
   it("renders the default quick preview without the legacy inversion filter", () => {
     const preview = document.createElement("i");
-    preview.className = "skin-choice-preview board original";
+    preview.className = "skin-choice-preview board default";
     document.body.append(preview);
 
     expect(getComputedStyle(preview).filter).toBe("none");

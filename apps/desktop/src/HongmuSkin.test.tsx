@@ -17,8 +17,8 @@ const preferences: DesktopPreferencesDto = {
   moveTimeMs: 5000,
   ponder: false,
   autoAnalyze: true,
-  boardSkin: "original",
-  pieceSkin: "original",
+  boardSkin: "default",
+  pieceSkin: "default",
   colorTheme: "dark",
   libraryCollapsed: true,
   candidateRailCollapsed: false,
@@ -43,11 +43,11 @@ describe("hongmu free skin", () => {
     const card = screen.getByText("红木鎏金").closest("article")!;
     fireEvent.click(card.querySelector("button")!);
 
-    expect(onEquip).toHaveBeenCalledWith({ boardSkin: "hongmu", pieceSkin: "original" });
+    expect(onEquip).toHaveBeenCalledWith({ boardSkin: "hongmu", pieceSkin: "default" });
 
     fireEvent.click(screen.getByRole("button", { name: "将棋子" }));
     fireEvent.click(screen.getByText("红木鎏金").closest("article")!.querySelector("button")!);
-    expect(onEquip).toHaveBeenLastCalledWith({ boardSkin: "original", pieceSkin: "hongmu" });
+    expect(onEquip).toHaveBeenLastCalledWith({ boardSkin: "default", pieceSkin: "hongmu" });
   });
 
   it("allows selecting hongmu while retaining an existing account skin", () => {
@@ -56,7 +56,7 @@ describe("hongmu free skin", () => {
       { boardSkin: "hongmu", pieceSkin: "xinghe" },
     )).toBe(false);
     expect(requiresSignInForSkinPatch(
-      { boardSkin: "original", pieceSkin: "original" },
+      { boardSkin: "default", pieceSkin: "default" },
       { boardSkin: "hongmu", pieceSkin: "jingdian" },
     )).toBe(true);
   });

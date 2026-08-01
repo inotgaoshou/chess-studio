@@ -103,15 +103,15 @@ fn default_workspace_panel() -> String {
 }
 
 fn default_layout_mode() -> String {
-    "studio".into()
+    "compact".into()
 }
 
 fn default_board_skin() -> String {
-    "original".into()
+    "default".into()
 }
 
 fn default_piece_skin() -> String {
-    "original".into()
+    "default".into()
 }
 
 fn default_report_depth() -> u32 {
@@ -136,9 +136,9 @@ impl Default for DesktopPreferences {
             engine_path: String::new(),
             threads: 2,
             hash_mb: 256,
-            multipv: 3,
+            multipv: 6,
             candidate_line_moves: default_candidate_line_moves(),
-            search_mode: "time".into(),
+            search_mode: "infinite".into(),
             search_value: 1500,
             move_time_ms: 5000,
             ponder: false,
@@ -2177,8 +2177,8 @@ mod tests {
             workspace_panel: "summary".into(),
             layout_mode: "compact".into(),
             color_theme: "light".into(),
-            board_skin: "neon".into(),
-            piece_skin: "neon".into(),
+            board_skin: "hongmu".into(),
+            piece_skin: "hongmu".into(),
             report_depth: 24,
             xqb_book_paths: vec!["/books/example.xqb".into()],
             disabled_xqb_book_paths: Vec::new(),
@@ -2206,7 +2206,7 @@ mod tests {
         assert!(!preferences.candidate_rail_collapsed);
         assert!(!preferences.analysis_panel_collapsed);
         assert_eq!(preferences.workspace_panel, "moves");
-        assert_eq!(preferences.layout_mode, "studio");
+        assert_eq!(preferences.layout_mode, "compact");
         assert_eq!(preferences.color_theme, "dark");
         assert_eq!(preferences.report_depth, 20);
         assert_eq!(preferences.candidate_line_moves, 6);

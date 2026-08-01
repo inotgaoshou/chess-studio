@@ -205,6 +205,9 @@ export type GameReportPresentationDto = {
 export type SyncResult = { uploaded: number; downloaded: number; cursor: number };
 export const BUILTIN_ENGINE_PATH = "builtin:pikafish";
 export type WorkspaceLayoutMode = "studio" | "compact";
+export type SkinFolder = "default" | "hongmu" | "jingdian" | "xinghe";
+export type LegacySkinId = "original" | "classic" | "neon" | "jade" | "imperial";
+export type SkinId = SkinFolder | LegacySkinId;
 export type DesktopPreferencesDto = {
   enginePath: string;
   threads: number;
@@ -222,8 +225,8 @@ export type DesktopPreferencesDto = {
   workspacePanel: "moves" | "analysis" | "trend" | "summary" | "report";
   layoutMode: WorkspaceLayoutMode;
   colorTheme: "light" | "dark";
-  boardSkin: "original" | "classic" | "neon" | "jade" | "imperial" | "hongmu" | "jingdian" | "xinghe";
-  pieceSkin: "original" | "classic" | "neon" | "jade" | "imperial" | "hongmu" | "jingdian" | "xinghe";
+  boardSkin: SkinId;
+  pieceSkin: SkinId;
   reportDepth: number;
   xqbBookPaths?: string[];
   disabledXqbBookPaths?: string[];
@@ -320,6 +323,8 @@ export interface ChessPlatform {
   exportGameReportPdf(report: GameReportPresentationDto): Promise<string | undefined>;
   subscribeGameReportProgress(listener: (progress: GameReportProgressDto) => void): Promise<() => void>;
   loadSavedAnalysis(fen: string): Promise<AnalysisLine[]>;
+  openCompactFloatingPanel(panel: "engine" | "manual" | "cloud"): Promise<boolean>;
+  returnCompactFloatingPanel(panel: "engine" | "manual" | "cloud"): Promise<boolean>;
   getSyncAccount(): Promise<SyncAccountDto>;
   getSubscription(): Promise<SubscriptionDto>;
   redeemSubscriptionCode(code: string): Promise<SubscriptionDto>;
