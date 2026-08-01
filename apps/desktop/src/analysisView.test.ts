@@ -243,6 +243,7 @@ describe("positionEvaluation", () => {
     status: "进行中",
     pieces: [],
     history: [],
+    continuation: [],
     branches: [],
     title: "测试棋谱",
     note: "",

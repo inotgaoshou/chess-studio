@@ -22,6 +22,7 @@ export type BoardState = {
   status: string;
   pieces: Piece[];
   history: MoveItem[];
+  continuation: MoveItem[];
   branches: MoveItem[];
   currentNode?: string;
   title: string;
@@ -213,6 +214,9 @@ export type DesktopPreferencesDto = {
   ponder: boolean;
   autoAnalyze: boolean;
   libraryCollapsed: boolean;
+  candidateRailCollapsed: boolean;
+  analysisPanelCollapsed: boolean;
+  workspacePanel: "moves" | "analysis" | "trend" | "summary" | "report";
   colorTheme: "light" | "dark";
   boardSkin: "original" | "classic" | "neon" | "jade" | "imperial" | "jingdian";
   pieceSkin: "original" | "classic" | "neon" | "jade" | "imperial" | "jingdian";

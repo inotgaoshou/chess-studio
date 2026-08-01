@@ -89,7 +89,7 @@ describe("CandidateLine", () => {
     expect(screen.getByText("候选 1 · 炮二平五")).toBeTruthy();
   });
 
-  it("shows coach explanation and a three-round continuation", () => {
+  it("shows coach explanation and a ten-round continuation", () => {
     const view = render(<CandidateLine
       coach={{
         rank: 1,
@@ -111,10 +111,11 @@ describe("CandidateLine", () => {
       onPreview={vi.fn()}
     />);
 
-    expect(screen.getByLabelText("候选 1 3回合快览").textContent).toContain("车9平8");
-    expect(screen.getByText("私教讲解 / 3回合表")).toBeTruthy();
+    expect(screen.getByLabelText("候选 1 10回合快览").textContent).toContain("车9平8");
+    expect(screen.getByText("私教讲解 / 10回合表")).toBeTruthy();
+    expect(screen.getByText("当前深度仅返回 6/20 个半回合")).toBeTruthy();
     expect(screen.getByLabelText("候选线路 1 私教讲解").textContent).toContain("主候选");
-    expect(view.container.querySelector('[role="table"]')?.getAttribute("aria-label")).toBe("候选线路 1 3回合推演");
+    expect(view.container.querySelector('[role="table"]')?.getAttribute("aria-label")).toBe("候选线路 1 10回合推演");
   });
 
   it("keeps black-to-move continuation aligned under black first", () => {
@@ -139,7 +140,36 @@ describe("CandidateLine", () => {
       onPreview={vi.fn()}
     />);
 
-    const firstRow = screen.getByRole("table", { name: "候选线路 2 3回合推演" }).querySelectorAll(".pv-move-row")[0];
+    const firstRow = screen.getByRole("table", { name: "候选线路 2 10回合推演" }).querySelectorAll(".pv-move-row")[0];
     expect(firstRow.textContent).toBe("12马8进7");
+  });
+
+  it("caps the quick continuation at twenty half-moves", () => {
+    const notation = Array.from({ length: 24 }, (_, index) => `着法${index + 1}`);
+    render(<CandidateLine
+      color="#53b848"
+      fen="9/9/9/9/9/9/9/9/9/9 w - - 0 1"
+      line={{ multipv: 1, pv: notation.map((_, index) => `a${index % 10}a${(index + 1) % 10}`), notation }}
+      coach={{
+        rank: 1,
+        move: notation[0],
+        scoreText: "0",
+        depthText: "深度 20",
+        intent: "控制中心",
+        possibility: "主攻线",
+        risk: "注意反击",
+        followUp: notation,
+        shortLine: false,
+        usesIccs: false,
+      }}
+      sideToMove="红方"
+      onPlay={() => undefined}
+      onPreview={() => undefined}
+    />);
+
+    const quick = screen.getByLabelText("候选 1 10回合快览");
+    expect(quick.querySelectorAll("span")).toHaveLength(20);
+    expect(quick.textContent).toContain("着法20");
+    expect(quick.textContent).not.toContain("着法21");
   });
 });

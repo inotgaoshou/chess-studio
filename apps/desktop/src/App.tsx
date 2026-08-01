@@ -56,6 +56,9 @@ import { applyColorTheme, initialColorTheme, type ColorTheme } from "./theme";
 import { WorkspaceTabs, type WorkspacePanel } from "./WorkspaceTabs";
 import { CoachProfileView } from "./CoachProfileView";
 import { SkinShopDialog } from "./SkinShopDialog";
+import { CANDIDATE_PREVIEW_HALF_MOVES } from "./candidatePreview";
+import { AutosaveOperationQueue, autosaveLabel, type AutosaveState } from "./autosave";
+import { ManualMoveRows } from "./ManualMoveRows";
 
 
 const startingFen = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1";
@@ -77,6 +80,7 @@ const fallback: BoardState = {
   status: "进行中",
   pieces: initialPieces,
   history: [],
+  continuation: [],
   branches: [],
   title: "新建棋谱",
   note: "",
@@ -114,6 +118,9 @@ const defaultDesktopPreferences: DesktopPreferencesDto = {
   ponder: false,
   autoAnalyze: true,
   libraryCollapsed: true,
+  candidateRailCollapsed: false,
+  analysisPanelCollapsed: false,
+  workspacePanel: "moves",
   colorTheme: "dark",
   boardSkin: "original",
   pieceSkin: "original",
@@ -154,6 +161,7 @@ function normalizeBoardState(value?: Partial<BoardState> | null): BoardState {
     ...value,
     pieces: Array.isArray(value?.pieces) ? value.pieces : fallback.pieces,
     history: Array.isArray(value?.history) ? value.history : [],
+    continuation: Array.isArray(value?.continuation) ? value.continuation : [],
     branches: Array.isArray(value?.branches) ? value.branches : [],
   };
 }
@@ -289,8 +297,11 @@ export default function App() {
   const [serverUrl, setServerUrl] = useState("http://127.0.0.1:8080");
   const [token, setToken] = useState("");
   const [notice, setNotice] = useState("本地数据已保存");
+  const [autosave, setAutosave] = useState<AutosaveState>({ status: "draft" });
   const [mobilePanel, setMobilePanel] = useState<"board" | "library" | "analysis" | "settings">("board");
   const [workspacePanel, setWorkspacePanel] = useState<WorkspacePanel>("moves");
+  const [candidateRailCollapsed, setCandidateRailCollapsed] = useState(false);
+  const [analysisPanelCollapsed, setAnalysisPanelCollapsed] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [positionEditorOpen, setPositionEditorOpen] = useState(false);
   const [editorPieces, setEditorPieces] = useState<Piece[]>(initialPieces);
@@ -353,17 +364,22 @@ export default function App() {
   const pendingAutoAnalysis = useRef(false);
   const playbackRevision = useRef(0);
   const navigationRevision = useRef(0);
-  const boardOperationQueue = useRef<Promise<void>>(Promise.resolve());
+  const autosaveQueue = useRef<AutosaveOperationQueue | undefined>(undefined);
   const desktopPreferencesRef = useRef(defaultDesktopPreferences);
+  const persistedPreferencesRef = useRef(defaultDesktopPreferences);
   const preferenceSaveQueue = useRef<Promise<void>>(Promise.resolve());
   const activeMoveRef = useRef<HTMLButtonElement | null>(null);
   const cloudBookDragRef = useRef<{ offsetX: number; offsetY: number } | undefined>(undefined);
   const cloudBookResizeRef = useRef<{ startY: number; startHeight: number; top: number } | undefined>(undefined);
+  if (!autosaveQueue.current) {
+    autosaveQueue.current = new AutosaveOperationQueue(setAutosave, friendlyError);
+  }
 
   useEffect(() => {
     void chessPlatform.initialize()
       .then((state) => {
         applyBoard(state);
+        setAutosave({ status: "saved" });
         void loadSavedAnalysis(state.fen ?? startingFen);
         if (chessPlatform.kind === "desktop") void loadGameReport();
         void refreshGames();
@@ -653,6 +669,7 @@ export default function App() {
 
   function applyDesktopPreferences(preferences: DesktopPreferencesDto) {
     desktopPreferencesRef.current = preferences;
+    persistedPreferencesRef.current = preferences;
     setDesktopPreferences(preferences);
     setEnginePath(preferences.enginePath);
     setThreads(preferences.threads);
@@ -664,45 +681,56 @@ export default function App() {
     setPonderEnabled(preferences.ponder);
     setAutoAnalyze(preferences.autoAnalyze);
     setLibraryCollapsed(preferences.libraryCollapsed);
+    setCandidateRailCollapsed(preferences.candidateRailCollapsed);
+    setAnalysisPanelCollapsed(preferences.analysisPanelCollapsed);
+    setWorkspacePanel(preferences.workspacePanel);
     setColorTheme(preferences.colorTheme);
     setServerUrl(preferences.serverUrl);
   }
 
   function saveDesktopPreferencePatch(patch: Partial<DesktopPreferencesDto>) {
-    const snapshot = { ...desktopPreferencesRef.current, ...patch };
-    desktopPreferencesRef.current = snapshot;
-    setDesktopPreferences(snapshot);
+    const optimistic = { ...desktopPreferencesRef.current, ...patch };
+    desktopPreferencesRef.current = optimistic;
+    setDesktopPreferences(optimistic);
     const keys = Object.keys(patch) as Array<keyof DesktopPreferencesDto>;
     const operation = preferenceSaveQueue.current.then(async () => {
-      const saved = await chessPlatform.saveDesktopPreferences(snapshot);
-      const current = desktopPreferencesRef.current;
-      const confirmed = Object.fromEntries(keys
-        .filter((key) => Object.is(current[key], snapshot[key]))
-        .map((key) => [key, saved[key]])) as Partial<DesktopPreferencesDto>;
-      const reconciled = { ...current, ...confirmed };
-      desktopPreferencesRef.current = reconciled;
-      setDesktopPreferences(reconciled);
-      return reconciled;
+      const snapshot = { ...persistedPreferencesRef.current, ...patch };
+      try {
+        const saved = await chessPlatform.saveDesktopPreferences(snapshot);
+        persistedPreferencesRef.current = saved;
+        const current = desktopPreferencesRef.current;
+        const confirmed = Object.fromEntries(keys
+          .filter((key) => Object.is(current[key], optimistic[key]))
+          .map((key) => [key, saved[key]])) as Partial<DesktopPreferencesDto>;
+        const reconciled = { ...current, ...confirmed };
+        desktopPreferencesRef.current = reconciled;
+        setDesktopPreferences(reconciled);
+        return reconciled;
+      } catch (error) {
+        const current = desktopPreferencesRef.current;
+        const rolledBack = Object.fromEntries(keys
+          .filter((key) => Object.is(current[key], optimistic[key]))
+          .map((key) => [key, persistedPreferencesRef.current[key]])) as Partial<DesktopPreferencesDto>;
+        const reconciled = { ...current, ...rolledBack };
+        desktopPreferencesRef.current = reconciled;
+        setDesktopPreferences(reconciled);
+        throw error;
+      }
     });
     preferenceSaveQueue.current = operation.then(() => undefined, () => undefined);
     return operation;
   }
 
   async function toggleColorTheme() {
-    const previous = chessPlatform.kind === "desktop" ? desktopPreferencesRef.current.colorTheme : colorTheme;
-    const next = previous === "dark" ? "light" : "dark";
+    const currentTheme = chessPlatform.kind === "desktop" ? desktopPreferencesRef.current.colorTheme : colorTheme;
+    const next = currentTheme === "dark" ? "light" : "dark";
     setColorTheme(next);
     if (chessPlatform.kind !== "desktop") return;
     try {
       const saved = await saveDesktopPreferencePatch({ colorTheme: next });
       if (desktopPreferencesRef.current.colorTheme === next) setColorTheme(saved.colorTheme);
     } catch (error) {
-      if (desktopPreferencesRef.current.colorTheme === next) {
-        const restored = { ...desktopPreferencesRef.current, colorTheme: previous };
-        desktopPreferencesRef.current = restored;
-        setDesktopPreferences(restored);
-        setColorTheme(previous);
-      }
+      setColorTheme(desktopPreferencesRef.current.colorTheme);
       setNotice(friendlyError(error));
     }
   }
@@ -722,20 +750,45 @@ export default function App() {
   }
 
   async function setLibraryVisibility(collapsed: boolean) {
-    const previous = desktopPreferencesRef.current.libraryCollapsed;
     setLibraryCollapsed(collapsed);
     if (chessPlatform.kind !== "desktop") return;
     try {
       await saveDesktopPreferencePatch({ libraryCollapsed: collapsed });
     } catch (error) {
-      if (desktopPreferencesRef.current.libraryCollapsed === collapsed) {
-        const restored = { ...desktopPreferencesRef.current, libraryCollapsed: previous };
-        desktopPreferencesRef.current = restored;
-        setDesktopPreferences(restored);
-        setLibraryCollapsed(previous);
-      }
+      setLibraryCollapsed(desktopPreferencesRef.current.libraryCollapsed);
       setNotice(friendlyError(error));
     }
+  }
+
+  async function setCandidateRailVisibility(collapsed: boolean) {
+    setCandidateRailCollapsed(collapsed);
+    if (chessPlatform.kind !== "desktop") return;
+    try {
+      await saveDesktopPreferencePatch({ candidateRailCollapsed: collapsed });
+    } catch (error) {
+      setCandidateRailCollapsed(desktopPreferencesRef.current.candidateRailCollapsed);
+      setNotice(friendlyError(error));
+    }
+  }
+
+  async function setAnalysisPanelVisibility(collapsed: boolean) {
+    setAnalysisPanelCollapsed(collapsed);
+    if (chessPlatform.kind !== "desktop") return;
+    try {
+      await saveDesktopPreferencePatch({ analysisPanelCollapsed: collapsed });
+    } catch (error) {
+      setAnalysisPanelCollapsed(desktopPreferencesRef.current.analysisPanelCollapsed);
+      setNotice(friendlyError(error));
+    }
+  }
+
+  function selectWorkspacePanel(panel: WorkspacePanel) {
+    setWorkspacePanel(panel);
+    if (chessPlatform.kind !== "desktop") return;
+    void saveDesktopPreferencePatch({ workspacePanel: panel }).catch((error) => {
+      setWorkspacePanel(desktopPreferencesRef.current.workspacePanel);
+      setNotice(friendlyError(error));
+    });
   }
 
   async function loadGameReport() {
@@ -770,7 +823,7 @@ export default function App() {
     if (engineThinking) await chessPlatform.moveNow().catch(() => false);
     await chessPlatform.stopEnginePlay().catch(() => false);
     await cancelAnalysisForDocumentChange();
-    setWorkspacePanel("report");
+    selectWorkspacePanel("report");
     setReportBusy(true);
     setReportProgress({
       completed: 0,
@@ -838,6 +891,7 @@ export default function App() {
 
   async function playIccsMove(iccs: string, expectedFen?: string) {
     stopPlayback();
+    if (!ensureBoardChangeAllowed()) return;
     if (expectedFen && boardRef.current.fen !== expectedFen) {
       setNotice("候选线路已过期，请等待当前局面重新分析");
       return;
@@ -852,7 +906,9 @@ export default function App() {
     }
     try {
       await cancelGameReportForStructureChange();
-      await enqueueBoardOperation(() => chessPlatform.navigateTo(boardRef.current.currentNode));
+      if (chessPlatform.kind === "desktop") {
+        await chessPlatform.previewLine(boardRef.current.fen, [iccs]);
+      }
       const next = normalizeBoardState(await enqueueBoardOperation(() => chessPlatform.playMove(iccs)));
       applyBoard(next);
       await loadGameReport();
@@ -870,7 +926,7 @@ export default function App() {
       setNotice("候选线路已过期，请重新分析后再预览");
       return;
     }
-    const pv = line.pv.slice(0, 6);
+    const pv = line.pv.slice(0, CANDIDATE_PREVIEW_HALF_MOVES);
     if (pv.length === 0) {
       setNotice("当前候选没有可预览的 PV 线路");
       return;
@@ -949,12 +1005,14 @@ export default function App() {
   }
 
   async function createGame(fen = fenInput) {
+    if (!ensureBoardChangeAllowed()) return;
     stopPlayback();
     stopEnginePlay();
     await cancelAnalysisForDocumentChange();
     await cancelGameReportForStructureChange();
     try {
-      applyBoard(await enqueueBoardOperation(() => chessPlatform.newGame(fen)));
+      applyBoard(await chessPlatform.newGame(fen));
+      setAutosave({ status: "saved" });
       await refreshGames();
       setSelected(null);
       clearAnalysisState();
@@ -966,17 +1024,19 @@ export default function App() {
   }
 
   async function openDocument() {
+    if (!ensureBoardChangeAllowed()) return;
     stopPlayback();
     stopEnginePlay();
     await cancelAnalysisForDocumentChange();
     await cancelGameReportForStructureChange();
     try {
-      const next = await enqueueBoardOperation(() => chessPlatform.openDocument());
+      const next = await chessPlatform.openDocument();
       if (!next) {
         setNotice("已取消打开棋谱");
         return;
       }
       applyBoard(next);
+      setAutosave({ status: "saved" });
       clearAnalysisState();
       await loadGameReport();
       await refreshGames();
@@ -1076,12 +1136,14 @@ export default function App() {
   }
 
   async function pasteDocument() {
+    if (!ensureBoardChangeAllowed()) return;
     stopPlayback();
     stopEnginePlay();
     await cancelAnalysisForDocumentChange();
     await cancelGameReportForStructureChange();
     try {
-      applyBoard(await enqueueBoardOperation(() => chessPlatform.pasteDocument()));
+      applyBoard(await chessPlatform.pasteDocument());
+      setAutosave({ status: "saved" });
       clearAnalysisState();
       await loadGameReport();
       await refreshGames();
@@ -1125,11 +1187,13 @@ export default function App() {
   }
 
   async function confirmPositionEditor() {
+    if (!ensureBoardChangeAllowed()) return;
     const fen = piecesToFen(editorPieces, editorSide);
     try {
       await cancelAnalysisForDocumentChange();
       await cancelGameReportForStructureChange();
-      applyBoard(await enqueueBoardOperation(() => chessPlatform.newGame(fen, gameTitle.trim() || "研究局面", gameNote)));
+      applyBoard(await chessPlatform.newGame(fen, gameTitle.trim() || "研究局面", gameNote));
+      setAutosave({ status: "saved" });
       clearAnalysisState();
       setGameReport(undefined);
       setPositionEditorOpen(false);
@@ -1179,6 +1243,7 @@ export default function App() {
 
   async function requestEngineMove(state = boardRef.current, side = engineSide) {
     if (chessPlatform.kind !== "desktop" || side === "none" || !isEngineTurn(state, side) || engineThinking || reportBusy) return;
+    if (!ensureBoardChangeAllowed()) return;
     if (!enginePath.trim()) {
       setNotice("未找到 Pikafish，无法开始人机对弈");
       setEngineSide("none");
@@ -1194,14 +1259,17 @@ export default function App() {
       await chessPlatform.stopAnalysis(true).catch(() => undefined);
     }
     setEngineThinking(true);
+    setAutosave({ status: "saving" });
     setNotice(`Pikafish 执${side === "red" ? "红" : "黑"}思考中…`);
     try {
       const result = await chessPlatform.playEngineMove({ enginePath, moveTimeMs, threads, hashMb, ponder: ponderEnabled });
       applyBoard(result.board);
+      setAutosave({ status: "saved" });
       await loadGameReport();
       setPonderMove(result.ponder);
       setNotice(`Pikafish 已走 ${result.board.history.at(-1)?.notation ?? "一着"}${result.ponder ? ` · 预测 ${result.ponder}` : ""}`);
     } catch (error) {
+      setAutosave({ status: "saved" });
       setNotice(friendlyError(error));
       setEngineSide("none");
     } finally {
@@ -1287,7 +1355,7 @@ export default function App() {
     }
     setAnalysisArrowFen(analysisHintsEnabledRef.current ? analyzedFen : undefined);
     setAnalysisBusy(true);
-    if (!automatic) setWorkspacePanel("analysis");
+    if (!automatic) selectWorkspacePanel("analysis");
     setNotice(automatic ? "Pikafish 正在自动分析…" : "Pikafish 正在计算…");
     const effectiveMode = automatic && searchMode === "infinite" ? "time" : searchMode;
     const effectiveValue = automatic && searchMode === "infinite" ? 1500 : searchValue;
@@ -1387,13 +1455,15 @@ export default function App() {
   }
 
   async function openGame(gameId: string) {
+    if (!ensureBoardChangeAllowed()) return;
     stopPlayback();
     stopEnginePlay();
     await cancelAnalysisForDocumentChange();
     await cancelGameReportForStructureChange();
     try {
-      const next = await enqueueBoardOperation(() => chessPlatform.openGame(gameId));
+      const next = await chessPlatform.openGame(gameId);
       applyBoard(next);
+      setAutosave({ status: "saved" });
       setSelected(null);
       await loadSavedAnalysis(next.fen ?? startingFen);
       await loadGameReport();
@@ -1422,12 +1492,31 @@ export default function App() {
   }
 
   function enqueueBoardOperation<T>(run: () => Promise<T>) {
-    const operation = boardOperationQueue.current.then(run);
-    boardOperationQueue.current = operation.then(() => undefined, () => undefined);
-    return operation;
+    return autosaveQueue.current!.enqueue(run);
+  }
+
+  function ensureBoardChangeAllowed() {
+    if (!autosaveQueue.current!.hasFailure()) return true;
+    setNotice("上一次本地保存失败，请先点击“保存失败”重试，避免棋谱写入错误分支");
+    return false;
+  }
+
+  async function retryLastSave() {
+    const retry = autosaveQueue.current!.retry();
+    if (!retry) return;
+    try {
+      const result = await retry;
+      if (result && typeof result === "object" && "fen" in result) {
+        applyBoard(result as Partial<BoardState>);
+      }
+      setNotice("本地草稿已重新保存");
+    } catch (error) {
+      setNotice(`本地保存失败：${friendlyError(error)}`);
+    }
   }
 
   async function navigateTo(nodeId?: string, playbackToken?: number): Promise<BoardState | null> {
+    if (!ensureBoardChangeAllowed()) return null;
     if (playbackToken == null) {
       stopPlayback();
       await stopEnginePlay();
@@ -1435,7 +1524,7 @@ export default function App() {
     if (playbackToken != null && playbackToken !== playbackRevision.current) return null;
     const requestRevision = ++navigationRevision.current;
     try {
-      const next = normalizeBoardState(await enqueueBoardOperation(() => chessPlatform.navigateTo(nodeId)));
+      const next = normalizeBoardState(await chessPlatform.navigateTo(nodeId));
       if (requestRevision !== navigationRevision.current) return null;
       if (playbackToken != null && playbackToken !== playbackRevision.current) return null;
       applyBoard(next);
@@ -1467,7 +1556,7 @@ export default function App() {
     const cached = reportPositionByNode.get(nodeId)?.before;
     const next = await navigateTo(previousNode);
     if (!next) return;
-    setWorkspacePanel("analysis");
+    selectWorkspacePanel("analysis");
     if (cached?.bestIccs) {
       analysisFenRef.current = next.fen;
       setAnalysisFen(next.fen);
@@ -1589,7 +1678,7 @@ export default function App() {
       state = navigated;
       if (state.branches.length > 1) {
         setIsPlaying(false);
-        setWorkspacePanel("moves");
+        selectWorkspacePanel("moves");
         setNotice(`已到下一分支点，共 ${state.branches.length} 个变招`);
         return;
       }
@@ -1626,13 +1715,14 @@ export default function App() {
   }
 
   async function removeNode(nodeId: string) {
+    if (!window.confirm("确认删除分支？该着法及其后续所有子分支都会从棋谱中删除。回到上一步不需要删除，直接使用“上一着”即可。")) return;
     stopPlayback();
     try {
       await cancelGameReportForStructureChange();
       applyBoard(await enqueueBoardOperation(() => chessPlatform.deleteNode(nodeId)));
       clearAnalysisState();
       await loadGameReport();
-      setNotice("节点已删除");
+      setNotice("分支及其后续着法已删除");
     } catch (error) {
       setNotice(friendlyError(error));
     }
@@ -1917,8 +2007,13 @@ export default function App() {
   }
 
   function candidateLinesView(className = "") {
+    if (candidateRailCollapsed) {
+      return <section className={`variations candidate-dock collapsed ${className}`.trim()} aria-label="棋盘候选已收起">
+        <button className="panel-collapse-button" title="展开棋盘候选" aria-label="展开棋盘候选" onClick={() => void setCandidateRailVisibility(false)}><ChevronLeft size={16}/></button>
+      </section>;
+    }
     return <section className={`variations candidate-dock ${className}`.trim()}>
-      <div className="section-title"><strong>棋盘候选</strong><span>{analysisIsStale ? "旧候选保留中 · 新局面正在更新" : `MultiPV ${multipv} · 点预览后手动下一步`}</span></div>
+      <div className="section-title"><strong>棋盘候选</strong><span>{analysisIsStale ? "旧候选保留中 · 新局面正在更新" : `MultiPV ${multipv} · 点预览后手动下一步`}</span><button className="panel-collapse-button" title="收起棋盘候选" aria-label="收起棋盘候选" onClick={() => void setCandidateRailVisibility(true)}><ChevronRight size={16}/></button></div>
       <div className="analysis-lines">
         {analysis.length === 0
           ? <div className="empty-analysis"><Activity size={24}/><strong>等待分析</strong><span>启动 Pikafish 后在这里显示候选 1/2/3 推演</span></div>
@@ -1997,6 +2092,12 @@ export default function App() {
       <header className="titlebar">
         <div className="window-brand"><span className="brand-seal">象</span><strong>棋研</strong><small>XIANGQI STUDIO</small></div>
         <strong className="window-title">棋研工作台</strong>
+        <button
+          className={`autosave-status ${autosave.status}`}
+          disabled={autosave.status !== "error"}
+          title={autosave.status === "error" ? `本地保存失败：${autosave.message}` : autosaveLabel(autosave)}
+          onClick={() => void retryLastSave()}
+        ><Save size={12}/>{autosaveLabel(autosave)}</button>
         <div className="window-state"><span className={analysisBusy ? "pulse" : ""} />{notice}</div>
       </header>
 
@@ -2082,7 +2183,7 @@ export default function App() {
         <button className="tool-button" title={colorTheme === "dark" ? "切换浅色主题" : "切换深色主题"} aria-label={colorTheme === "dark" ? "切换浅色主题" : "切换深色主题"} onClick={() => void toggleColorTheme()}>{colorTheme === "dark" ? <Sun size={16}/> : <Moon size={16}/>}</button>
       </div>
 
-      <main className={`workspace ${libraryCollapsed ? "library-collapsed" : ""}`}>
+      <main className={`workspace ${libraryCollapsed ? "library-collapsed" : ""} ${candidateRailCollapsed ? "candidate-rail-collapsed" : ""} ${analysisPanelCollapsed ? "analysis-panel-collapsed" : ""}`}>
         <aside className={`library-panel ${libraryCollapsed ? "collapsed" : ""} ${mobilePanel === "library" || mobilePanel === "settings" ? "mobile-visible" : ""} ${mobilePanel === "settings" ? "mobile-settings-mode" : ""}`}>
           <div className="pane-title">
             <strong>{libraryCollapsed ? <Library size={16}/> : "棋谱库"}</strong>
@@ -2288,9 +2389,13 @@ export default function App() {
           {candidateLinesView("board-candidate-rail")}
         </section>
 
-        <aside className={`analysis-panel ${mobilePanel === "analysis" ? "mobile-visible" : ""}`}>
+        <aside className={`analysis-panel ${analysisPanelCollapsed ? "collapsed" : ""} ${mobilePanel === "analysis" ? "mobile-visible" : ""}`}>
+          {analysisPanelCollapsed
+            ? <button className="panel-collapse-button analysis-panel-reopen" title="展开局面分析" aria-label="展开局面分析" onClick={() => void setAnalysisPanelVisibility(false)}><ChevronLeft size={16}/></button>
+            : null}
+          {!analysisPanelCollapsed && <>
           <div className="position-overview" aria-label="局势概览">
-            <div className="overview-heading"><span><TrendingUp size={14}/>局势概览</span><strong>{evaluation?.label ?? "等待分析"}</strong></div>
+            <div className="overview-heading"><span><TrendingUp size={14}/>局势概览</span><strong>{evaluation?.label ?? "等待分析"}</strong><button className="panel-collapse-button" title="收起局面分析" aria-label="收起局面分析" onClick={() => void setAnalysisPanelVisibility(true)}><ChevronRight size={16}/></button></div>
             <div className="overview-metrics">
               <div><small>局面分</small><strong>{evaluation?.scoreText ?? "--"}</strong></div>
               <div><small>质量分</small><strong className={overviewReport?.grade ? `overview-quality grade-${overviewReport.grade}` : "overview-quality"}>{overviewReport?.score != null ? `${overviewReport.score} ${overviewReport.grade}` : "--"}</strong></div>
@@ -2301,7 +2406,7 @@ export default function App() {
             </div>
             <div className="overview-balance" aria-label={evaluation ? `红方占比 ${evaluation.redShare.toFixed(0)}%` : "等待局势分析"}><i style={{ width: `${evaluation?.redShare ?? 50}%` }}/></div>
           </div>
-          <WorkspaceTabs active={workspacePanel} onChange={setWorkspacePanel}/>
+          <WorkspaceTabs active={workspacePanel} onChange={selectWorkspacePanel}/>
 
           {workspacePanel === "analysis" && <div id="workspace-panel-analysis" className="workspace-content analysis-workspace" role="tabpanel" aria-labelledby="workspace-tab-analysis">
           <section className="engine-control">
@@ -2370,23 +2475,15 @@ export default function App() {
                   <button className={`move-table-row root ${!board.currentNode ? "active" : ""}`} role="row" onClick={() => void navigateTo()}>
                     <span role="cell">0</span><span role="cell"><GitBranch size={12}/>开始局面</span><span role="cell" />
                   </button>
-                {board.history.map((move, index) => {
-                  const quality = reportByMoveId.get(move.id);
-                  return (
-                    <button
-                      ref={board.currentNode === move.id ? activeMoveRef : undefined}
-                      className={`move-table-row ${quality?.grade ? `grade-${quality.grade}` : ""} ${board.currentNode === move.id ? "active" : ""}`}
-                      key={move.id}
-                      role="row"
-                      title={`${move.movedBy} · ICCS ${move.iccs}${quality?.score != null ? ` · 质量 ${quality.score} 分 ${quality.grade}` : ""}`}
-                      onClick={() => void navigateTo(move.id)}
-                    >
-                      <span role="cell">{index + 1}</span>
-                      <span role="cell"><i className={move.movedBy === "红方" ? "red" : "black"}/><strong>{move.notation}</strong>{quality?.grade && <em className={`move-quality-mini grade-${quality.grade}`}>{quality.grade}</em>}{move.comment && <MessageSquare className="comment-marker" size={11}/>} {move.isMainline && <small>主线</small>}</span>
-                      <span role="cell" className={move.mate != null ? "mate-score" : ""}>{quality?.score != null ? `${quality.score}分` : formatMoveScore(move)}</span>
-                    </button>
-                  );
-                })}
+                <ManualMoveRows
+                  activeMoveRef={activeMoveRef}
+                  continuation={board.continuation}
+                  currentNode={board.currentNode}
+                  formatScore={formatMoveScore}
+                  history={board.history}
+                  onNavigate={(nodeId) => void navigateTo(nodeId)}
+                  qualityByMoveId={reportByMoveId}
+                />
                 </div>
               </div>
               {board.currentNode && (
@@ -2394,7 +2491,7 @@ export default function App() {
                   <input disabled={isPlaying} value={comment} onChange={(event) => setComment(event.target.value)} placeholder="当前着法注释" />
                   <button className="tool-button" disabled={isPlaying} title="保存注释" onClick={() => void saveComment()}><Save size={14}/></button>
                   <button className="tool-button" disabled={isPlaying} title="设为主线" onClick={() => void makeMainline(board.currentNode!)}><ListStart size={14}/></button>
-                  <button className="tool-button danger" disabled={isPlaying} title="删除节点" onClick={() => void removeNode(board.currentNode!)}><Trash2 size={14}/></button>
+                  <button className="tool-button danger" disabled={isPlaying} title="删除分支（包含后续子分支）" aria-label="删除分支" onClick={() => void removeNode(board.currentNode!)}><Trash2 size={14}/></button>
                 </div>
               )}
               <div className="branch-list">
@@ -2539,6 +2636,7 @@ export default function App() {
                 />}
             </div>}
           </section>}
+          </>}
         </aside>
       </main>
       {skinShopOpen && (

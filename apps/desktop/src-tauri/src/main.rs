@@ -252,6 +252,7 @@ struct BoardDto {
     status: &'static str,
     pieces: Vec<PieceDto>,
     history: Vec<MoveDto>,
+    continuation: Vec<MoveDto>,
     branches: Vec<MoveDto>,
     current_node: Option<Uuid>,
     title: String,
@@ -511,11 +512,10 @@ fn commit_move(model: &mut AppModel, iccs: &str) -> Result<BoardDto, String> {
         .apply_move(mv)
         .map_err(|error| error.to_string())?;
     let parent = model.current_node.unwrap_or_else(|| model.tree.root_id());
-    let node_id = model
-        .tree
+    let mut next_tree = model.tree.clone();
+    let node_id = next_tree
         .add_move(parent, mv, "")
         .map_err(|error| error.to_string())?;
-    model.lamport += 1;
     let operation = Operation {
         op_id: Uuid::new_v4(),
         device_id: model.device_id,
@@ -526,23 +526,20 @@ fn commit_move(model: &mut AppModel, iccs: &str) -> Result<BoardDto, String> {
             node_id,
             parent_id: parent,
             move_iccs: iccs.to_owned(),
-            order_key: model
-                .tree
+            order_key: next_tree
                 .node(node_id)
                 .map_err(|error| error.to_string())?
                 .order_key,
-            is_mainline: model
-                .tree
+            is_mainline: next_tree
                 .node(node_id)
                 .map_err(|error| error.to_string())?
                 .is_mainline,
         })
         .map_err(|error| error.to_string())?,
-        lamport: model.lamport,
+        lamport: model.lamport + 1,
         created_at: Utc::now(),
     };
-    let node = model
-        .tree
+    let node = next_tree
         .node(node_id)
         .map_err(|error| error.to_string())?
         .clone();
@@ -560,6 +557,8 @@ fn commit_move(model: &mut AppModel, iccs: &str) -> Result<BoardDto, String> {
             &operation,
         )
         .map_err(|error| error.to_string())?;
+    model.lamport = operation.lamport;
+    model.tree = next_tree;
     model.current_node = Some(node_id);
     model.board = next;
     board_dto(model)
@@ -811,8 +810,8 @@ fn update_comment(
         .model
         .lock()
         .map_err(|_| "state lock poisoned".to_owned())?;
-    model
-        .tree
+    let mut next_tree = model.tree.clone();
+    next_tree
         .update_comment(node_id, comment.clone())
         .map_err(|error| error.to_string())?;
     let operation = next_operation(
@@ -822,8 +821,7 @@ fn update_comment(
         serde_json::to_value(UpdateCommentPayload { node_id, comment })
             .map_err(|error| error.to_string())?,
     );
-    let comment = model
-        .tree
+    let comment = next_tree
         .node(node_id)
         .map_err(|error| error.to_string())?
         .comment
@@ -832,6 +830,7 @@ fn update_comment(
         .store
         .update_comment_with_operation(node_id, &comment, &operation)
         .map_err(|error| error.to_string())?;
+    model.tree = next_tree;
     board_dto(&model)
 }
 
@@ -846,8 +845,8 @@ fn set_mainline(node_id: Uuid, state: State<'_, DesktopState>) -> Result<BoardDt
         .node(node_id)
         .map_err(|error| error.to_string())?
         .parent_id;
-    model
-        .tree
+    let mut next_tree = model.tree.clone();
+    next_tree
         .set_mainline(parent_id, node_id)
         .map_err(|error| error.to_string())?;
     let operation = next_operation(
@@ -862,6 +861,7 @@ fn set_mainline(node_id: Uuid, state: State<'_, DesktopState>) -> Result<BoardDt
         .store
         .set_mainline_with_operation(game_id, parent_id, node_id, &operation)
         .map_err(|error| error.to_string())?;
+    model.tree = next_tree;
     board_dto(&model)
 }
 
@@ -880,14 +880,20 @@ fn delete_node(node_id: Uuid, state: State<'_, DesktopState>) -> Result<BoardDto
         .current_node
         .and_then(|current| model.tree.active_line(current).ok())
         .is_some_and(|line| line.iter().any(|node| node.id == node_id));
-    model
-        .tree
+    let mut next_tree = model.tree.clone();
+    next_tree
         .remove(node_id)
         .map_err(|error| error.to_string())?;
-    if affects_current_line {
-        model.current_node = (parent_id != model.tree.root_id()).then_some(parent_id);
-        model.board = board_at(&model.starting_fen, &model.tree, model.current_node)?;
-    }
+    let next_current_node = if affects_current_line {
+        (parent_id != next_tree.root_id()).then_some(parent_id)
+    } else {
+        model.current_node
+    };
+    let next_board = if affects_current_line {
+        Some(board_at(&model.starting_fen, &next_tree, next_current_node)?)
+    } else {
+        None
+    };
     let operation = next_operation(
         &mut model,
         node_id,
@@ -895,11 +901,15 @@ fn delete_node(node_id: Uuid, state: State<'_, DesktopState>) -> Result<BoardDto
         serde_json::to_value(DeleteNodePayload { node_id }).map_err(|error| error.to_string())?,
     );
     let game_id = model.game_id;
-    let current_node = model.current_node;
     model
         .store
-        .delete_node_with_operation(game_id, node_id, current_node, &operation)
+        .delete_node_with_operation(game_id, node_id, next_current_node, &operation)
         .map_err(|error| error.to_string())?;
+    model.tree = next_tree;
+    model.current_node = next_current_node;
+    if let Some(board) = next_board {
+        model.board = board;
+    }
     board_dto(&model)
 }
 
@@ -3009,6 +3019,29 @@ fn board_dto(model: &AppModel) -> Result<BoardDto, String> {
         }
     }
     let branch_parent = model.current_node.unwrap_or_else(|| model.tree.root_id());
+    let mut continuation = Vec::new();
+    let mut continuation_parent = branch_parent;
+    let mut continuation_board = model.board.clone();
+    loop {
+        let next = model
+            .tree
+            .branches(continuation_parent)
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .find(|node| node.is_mainline);
+        let Some(node) = next else {
+            break;
+        };
+        continuation.push(move_dto(
+            node,
+            &continuation_board,
+            analysis.get(&node.id),
+        )?);
+        continuation_board = continuation_board
+            .apply_move(node.mv)
+            .map_err(|error| error.to_string())?;
+        continuation_parent = node.id;
+    }
     let branches = model
         .tree
         .branches(branch_parent)
@@ -3040,6 +3073,7 @@ fn board_dto(model: &AppModel) -> Result<BoardDto, String> {
         },
         pieces,
         history,
+        continuation,
         branches,
         current_node: model.current_node,
         title: model.metadata.title.clone(),
@@ -3161,6 +3195,10 @@ fn install_document(
             &nodes,
             &operations,
         )
+        .map_err(|error| error.to_string())?;
+    model
+        .store
+        .set_active_game_id(game_id)
         .map_err(|error| error.to_string())?;
     model.board = board;
     model.starting_fen = document.starting_fen;
@@ -3323,6 +3361,10 @@ fn load_game_into_model(model: &mut AppModel, game: LocalGame) -> Result<(), Str
                 ..ManualMetadata::default()
             }
         });
+    model
+        .store
+        .set_active_game_id(game.id)
+        .map_err(|error| error.to_string())?;
     model.board = board;
     model.starting_fen = game.starting_fen;
     model.tree = tree;
@@ -3374,7 +3416,12 @@ fn main() {
                 source_path,
                 source_format,
                 playable,
-            ) = if let Some(game) = store.load_latest_game()? {
+            ) = if let Some(game) = match store.active_game_id()? {
+                Some(game_id) => store.load_game(game_id)?,
+                None => None,
+            }
+            .or(store.load_latest_game()?)
+            {
                 let mut tree = ManualTree::with_root(game.root_id);
                 tree.restore_nodes(store.load_move_nodes(game.id)?)?;
                 let mut board = Board::from_fen(&game.starting_fen)?;
@@ -3436,6 +3483,7 @@ fn main() {
                     &serde_json::to_string(&metadata)?,
                     true,
                 )?;
+                store.set_active_game_id(game_id)?;
                 (
                     Board::from_fen(STARTING_FEN)?,
                     STARTING_FEN.into(),
@@ -3449,6 +3497,7 @@ fn main() {
                     true,
                 )
             };
+            store.set_active_game_id(game_id)?;
             app.manage(DesktopState {
                 model: Mutex::new(AppModel {
                     board,
@@ -3620,6 +3669,46 @@ mod tests {
         assert_eq!(dto.source_path.as_deref(), Some("/tmp/study.pgn"));
         assert_eq!(dto.source_format.as_deref(), Some("pgn"));
         assert!(dto.playable);
+    }
+
+    #[test]
+    fn board_dto_keeps_mainline_continuation_after_navigating_to_an_old_node() {
+        let mut tree = ManualTree::new();
+        let first_move = xiangqi_core::Move::from_iccs("h2e2").unwrap();
+        let first = tree.add_move(tree.root_id(), first_move, "").unwrap();
+        let second_move = xiangqi_core::Move::from_iccs("h9g7").unwrap();
+        let second = tree.add_move(first, second_move, "").unwrap();
+        let third_move = xiangqi_core::Move::from_iccs("c3c4").unwrap();
+        let third = tree.add_move(second, third_move, "").unwrap();
+        let board = Board::from_fen(STARTING_FEN)
+            .unwrap()
+            .apply_move(first_move)
+            .unwrap();
+        let model = AppModel {
+            board,
+            starting_fen: STARTING_FEN.into(),
+            tree,
+            current_node: Some(first),
+            game_id: Uuid::new_v4(),
+            device_id: Uuid::new_v4(),
+            lamport: 0,
+            store: LocalStore::open_in_memory().unwrap(),
+            metadata: ManualMetadata::default(),
+            note: String::new(),
+            source_path: None,
+            source_format: None,
+            playable: true,
+        };
+
+        let dto = board_dto(&model).unwrap();
+
+        assert_eq!(dto.history.iter().map(|item| item.id).collect::<Vec<_>>(), vec![first]);
+        assert_eq!(
+            dto.continuation.iter().map(|item| item.id).collect::<Vec<_>>(),
+            vec![second, third]
+        );
+        assert_eq!(dto.continuation[0].notation, "马8进7");
+        assert_eq!(dto.continuation[1].notation, "兵七进一");
     }
 
     #[test]

@@ -81,7 +81,7 @@ describe("coachInsights", () => {
     expect(advice.title).toBe("当前局面 AI 私教建议");
     expect(advice.status).toContain("马二进三");
     expect(advice.status).toContain("MultiPV 2");
-    expect(advice.suggestions.join("")).toContain("主线 3 回合推演：马二进三 马8进7");
+    expect(advice.suggestions.join("")).toContain("主线最多 10 回合推演：马二进三 马8进7");
     expect(advice.suggestions.join("")).toContain("2 条候选");
   });
 
@@ -109,7 +109,7 @@ describe("coachInsights", () => {
     expect(advice.nextAction).toContain("变招分支");
   });
 
-  it("builds one three-round coach insight for each MultiPV line", () => {
+  it("builds one ten-round coach insight for each MultiPV line", () => {
     const insights = candidateCoachInsights([
       { multipv: 1, depth: 20, scoreCp: 80, pv: ["h0g2"], notation: ["马二进三", "马8进7", "炮二平五", "炮8平5", "车一平二", "车9平8", "兵七进一"] },
       { multipv: 2, depth: 20, scoreCp: 52, pv: ["h2e2"], notation: ["炮二平五", "马8进7", "马二进三", "卒7进1", "车一平二", "车9平8"] },
@@ -118,7 +118,7 @@ describe("coachInsights", () => {
     ], board({ sideToMove: "红方" }));
 
     expect(insights).toHaveLength(4);
-    expect(insights[0]).toMatchObject({ rank: 1, move: "马二进三", followUp: ["马二进三", "马8进7", "炮二平五", "炮8平5", "车一平二", "车9平8"], shortLine: false, usesIccs: false });
+    expect(insights[0]).toMatchObject({ rank: 1, move: "马二进三", followUp: ["马二进三", "马8进7", "炮二平五", "炮8平5", "车一平二", "车9平8", "兵七进一"], shortLine: true, usesIccs: false });
     expect(insights[1].possibility).toContain("等价候选");
     expect(insights[1].risk).toContain("首选 +80，本线 +52，相差 28 分");
     expect(insights[1].risk).not.toContain("cp");

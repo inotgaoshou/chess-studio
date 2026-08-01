@@ -479,7 +479,7 @@ class WebPlatform implements ChessPlatform {
   private parseState(value: string): BoardState { return JSON.parse(value) as BoardState; }
 
   private async scoredState(state = this.state()): Promise<BoardState> {
-    const nodeIds = [...state.history, ...state.branches].map((move) => move.id);
+    const nodeIds = [...state.history, ...(state.continuation ?? []), ...state.branches].map((move) => move.id);
     const scores = await webDatabase.nodeAnalyses(this.gameId, nodeIds);
     const withScore = (move: BoardState["history"][number]) => ({ ...move, ...scores.get(move.id) });
     const record = await webDatabase.game(this.gameId);
@@ -489,6 +489,7 @@ class WebPlatform implements ChessPlatform {
       note: record?.note ?? "",
       playable: true,
       history: state.history.map(withScore),
+      continuation: (state.continuation ?? []).map(withScore),
       branches: state.branches.map(withScore),
     };
   }

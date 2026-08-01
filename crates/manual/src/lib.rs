@@ -318,6 +318,28 @@ mod tests {
     }
 
     #[test]
+    fn adding_a_move_from_an_old_node_preserves_its_existing_mainline() {
+        let mut tree = ManualTree::new();
+        let root = tree.root_id();
+        let first = tree
+            .add_move(root, Move::from_iccs("h2e2").unwrap(), "")
+            .unwrap();
+        let retained = tree
+            .add_move(first, Move::from_iccs("h9g7").unwrap(), "original future")
+            .unwrap();
+
+        let variation = tree
+            .add_move(first, Move::from_iccs("b9c7").unwrap(), "new branch")
+            .unwrap();
+
+        let branches = tree.branches(first).unwrap();
+        assert_eq!(branches.len(), 2);
+        assert!(tree.node(retained).unwrap().is_mainline);
+        assert!(!tree.node(variation).unwrap().is_mainline);
+        assert_eq!(tree.node(retained).unwrap().comment, "original future");
+    }
+
+    #[test]
     fn remove_uses_a_tombstone() {
         let mut tree = ManualTree::new();
         let root = tree.root_id();

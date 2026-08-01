@@ -1,5 +1,6 @@
 import type { AnalysisLine, BoardState, BranchCoachInsightDto, GameReportPresentationDto, MoveCoachInsightDto, OpeningBookHitDto, QualityGrade, ReportPhase, Side } from "./platform";
 import type { GameReportMove, SideReport } from "./analysisView";
+import { CANDIDATE_PREVIEW_HALF_MOVES } from "./candidatePreview";
 
 const phaseLabels: Record<ReportPhase, string> = { opening: "开局", middle: "中局", endgame: "残局" };
 
@@ -86,7 +87,7 @@ function scoreLabel(line: AnalysisLine) {
 function linePurpose(rank: number, move: string, sideToMove: Side) {
   if (rank === 1) return `主候选「${move}」：优先作为${sideToMove}当前局面的基准方案，先看它如何保持或扩大局面价值。`;
   if (rank === 2) return `备选「${move}」：适合用来比较不同次序，判断是否能更稳地处理对方反击。`;
-  return `变招「${move}」：用于探索另一种可能性，重点看 3 回合后局面是否仍然站得住。`;
+  return `变招「${move}」：用于探索另一种可能性，重点看最多 10 回合后局面是否仍然站得住。`;
 }
 
 function linePossibility(rank: number, gap: number) {
@@ -104,7 +105,11 @@ function lineRisk(rank: number, primaryValue: number, lineValue: number, line: A
   const gap = Math.abs(primaryValue - lineValue);
   const detail = scoreGapDetail(primaryValue, lineValue);
   if (usesIccs) return "当前候选仅有 ICCS，已保留原始线路；重新分析或生成整局报告后可补齐中文推演。";
-  if (shortLine) return `当前深度只返回 ${Math.max(line.notation?.length ?? 0, line.pv.length)} 个半回合，线路较短，建议提高深度或时间再判断。`;
+  if (shortLine) {
+    const length = Math.max(line.notation?.length ?? 0, line.pv.length);
+    const prefix = rank === 1 ? "主候选尚需检查直接反击" : `${gap <= 50 ? "风险较低" : gap <= 150 ? "风险中等" : "风险较高"}：${detail}`;
+    return `${prefix}；当前深度仅返回 ${length}/${CANDIDATE_PREVIEW_HALF_MOVES} 个半回合，线路较短，建议提高深度或时间再判断。`;
+  }
   if (rank === 1) return "风险参考：仍需检查对方是否有直接将军、吃子或反先手段。";
   if (gap <= 50) return `风险较低：${detail}，可重点比较走法目的。`;
   if (gap <= 150) return `风险中等：${detail}，适合先作为变招推演。`;
@@ -117,11 +122,11 @@ export function candidateCoachInsights(lines: AnalysisLine[], board: Pick<BoardS
   return ordered.map((line, index) => {
     const followUpSource = line.notation?.length ? line.notation : line.pv;
     const usesIccs = !line.notation?.length;
-    const followUp = followUpSource.slice(0, 6);
+    const followUp = followUpSource.slice(0, CANDIDATE_PREVIEW_HALF_MOVES);
     const move = followUp[0] ?? "暂无候选";
     const lineValue = lineScoreValue(line);
     const gap = Math.abs(primaryValue - lineValue);
-    const shortLine = followUp.length > 0 && followUp.length < 6;
+    const shortLine = followUp.length > 0 && followUp.length < CANDIDATE_PREVIEW_HALF_MOVES;
     const rank = line.multipv || index + 1;
     return {
       rank,
@@ -180,11 +185,11 @@ export function currentCoachAdvice(input: {
       suggestions: [
         `先把「${recommendation}」当作主候选，观察它是否在抢先、补防、兑子或制造威胁。`,
         primaryAnalysis?.notation?.length
-          ? `主线 3 回合推演：${primaryAnalysis.notation.slice(0, 6).join(" ")}。`
+          ? `主线最多 10 回合推演：${primaryAnalysis.notation.slice(0, CANDIDATE_PREVIEW_HALF_MOVES).join(" ")}。`
           : "当前只有 ICCS 候选，建议生成整局报告后可得到中文推荐与后续推演。",
-        count > 1 ? `下面已列出 ${count} 条候选的想法、风险和 3 回合推演，可逐条比较。` : "如果你想研究别的想法，用“强制变招”排除第一候选，再比较局面分差异。",
+        count > 1 ? `下面已列出 ${count} 条候选的想法、风险和最多 10 回合推演，可逐条比较。` : "如果你想研究别的想法，用“强制变招”排除第一候选，再比较局面分差异。",
       ],
-      nextAction: "在下方每条候选线顶部查看“思路 / 可能性 / 风险 / 3回合推演”，也可以直接点击第一步试走或保存为变招分支。",
+      nextAction: "在下方每条候选线查看“思路 / 可能性 / 风险 / 最多10回合推演”，也可以直接点击第一步试走或保存为变招分支。",
     };
   }
   if (analysisBusy) {

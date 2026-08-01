@@ -83,6 +83,7 @@ struct BoardDto {
     status: &'static str,
     pieces: Vec<PieceDto>,
     history: Vec<MoveDto>,
+    continuation: Vec<MoveDto>,
     branches: Vec<MoveDto>,
     current_node: Option<Uuid>,
 }
@@ -392,6 +393,25 @@ fn board_dto(game: &WebGame) -> Result<BoardDto, String> {
         }
     }
     let branch_parent = game.current_node.unwrap_or_else(|| game.tree.root_id());
+    let mut continuation = Vec::new();
+    let mut continuation_parent = branch_parent;
+    let mut continuation_board = game.board.clone();
+    loop {
+        let next = game
+            .tree
+            .branches(continuation_parent)
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .find(|node| node.is_mainline);
+        let Some(node) = next else {
+            break;
+        };
+        continuation.push(move_dto(node, &continuation_board)?);
+        continuation_board = continuation_board
+            .apply_move(node.mv)
+            .map_err(|error| error.to_string())?;
+        continuation_parent = node.id;
+    }
     let branches = game
         .tree
         .branches(branch_parent)
@@ -413,6 +433,7 @@ fn board_dto(game: &WebGame) -> Result<BoardDto, String> {
         },
         pieces,
         history,
+        continuation,
         branches,
         current_node: game.current_node,
     })
@@ -457,6 +478,22 @@ mod tests {
         assert_eq!(mv["to"], serde_json::json!({ "row": 7, "col": 4 }));
         assert!(mv["scoreCp"].is_null());
         assert!(mv["mate"].is_null());
+    }
+
+    #[test]
+    fn state_json_keeps_mainline_continuation_after_navigation() {
+        let mut game = WebGame::new(None).unwrap();
+        let first: serde_json::Value =
+            serde_json::from_str(&game.play_move("h2e2").unwrap()).unwrap();
+        let first_id = first["currentNode"].as_str().unwrap().to_owned();
+        game.play_move("h9g7").unwrap();
+
+        let state: serde_json::Value =
+            serde_json::from_str(&game.navigate_to(Some(first_id)).unwrap()).unwrap();
+
+        assert_eq!(state["history"].as_array().unwrap().len(), 1);
+        assert_eq!(state["continuation"].as_array().unwrap().len(), 1);
+        assert_eq!(state["continuation"][0]["notation"], "马8进7");
     }
 
     #[test]

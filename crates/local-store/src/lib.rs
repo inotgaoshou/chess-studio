@@ -62,6 +62,12 @@ pub struct DesktopPreferences {
     pub auto_analyze: bool,
     #[serde(default)]
     pub library_collapsed: bool,
+    #[serde(default)]
+    pub candidate_rail_collapsed: bool,
+    #[serde(default)]
+    pub analysis_panel_collapsed: bool,
+    #[serde(default = "default_workspace_panel")]
+    pub workspace_panel: String,
     #[serde(default = "default_color_theme")]
     pub color_theme: String,
     #[serde(default = "default_board_skin")]
@@ -86,6 +92,10 @@ pub struct DesktopPreferences {
 
 fn default_color_theme() -> String {
     "dark".into()
+}
+
+fn default_workspace_panel() -> String {
+    "moves".into()
 }
 
 fn default_board_skin() -> String {
@@ -121,6 +131,9 @@ impl Default for DesktopPreferences {
             ponder: false,
             auto_analyze: true,
             library_collapsed: true,
+            candidate_rail_collapsed: false,
+            analysis_panel_collapsed: false,
+            workspace_panel: default_workspace_panel(),
             color_theme: default_color_theme(),
             board_skin: default_board_skin(),
             piece_skin: default_piece_skin(),
@@ -972,6 +985,22 @@ impl LocalStore {
         Ok(value.and_then(|value| value.parse().ok()).unwrap_or(0))
     }
 
+    pub fn active_game_id(&self) -> Result<Option<Uuid>, StoreError> {
+        self.sync_value("active_game_id")?
+            .map(|value| Uuid::parse_str(&value).map_err(json_error))
+            .transpose()
+            .map_err(Into::into)
+    }
+
+    pub fn set_active_game_id(&mut self, game_id: Uuid) -> Result<(), StoreError> {
+        self.connection.execute(
+            "INSERT INTO sync_state (key, value) VALUES ('active_game_id', ?1)
+             ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [game_id.to_string()],
+        )?;
+        Ok(())
+    }
+
     pub fn load_game(&self, game_id: Uuid) -> Result<Option<LocalGame>, StoreError> {
         self.load_game_where(
             "WHERE id = ?1 AND deleted_at IS NULL",
@@ -1620,6 +1649,30 @@ mod tests {
     }
 
     #[test]
+    fn active_game_is_restored_independently_of_recent_updates() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let older_id = Uuid::new_v4();
+        let mut older = operation(older_id);
+        older.created_at = Utc::now() - chrono::Duration::minutes(2);
+        store
+            .save_game_with_operation(older_id, "Older", "fen", Uuid::new_v4(), &older)
+            .unwrap();
+
+        let newer_id = Uuid::new_v4();
+        let mut newer = operation(newer_id);
+        newer.created_at = Utc::now() - chrono::Duration::minutes(1);
+        store
+            .save_game_with_operation(newer_id, "Newer", "fen", Uuid::new_v4(), &newer)
+            .unwrap();
+        assert_eq!(store.load_latest_game().unwrap().unwrap().id, newer_id);
+
+        store.set_active_game_id(older_id).unwrap();
+        store.set_current_node(newer_id, None).unwrap();
+        assert_eq!(store.load_latest_game().unwrap().unwrap().id, newer_id);
+        assert_eq!(store.active_game_id().unwrap(), Some(older_id));
+    }
+
+    #[test]
     fn device_identity_is_stable_and_lamport_is_restored() {
         let mut store = LocalStore::open_in_memory().unwrap();
         let first = store.device_id().unwrap();
@@ -2067,6 +2120,9 @@ mod tests {
             ponder: true,
             auto_analyze: false,
             library_collapsed: true,
+            candidate_rail_collapsed: true,
+            analysis_panel_collapsed: true,
+            workspace_panel: "summary".into(),
             color_theme: "light".into(),
             board_skin: "neon".into(),
             piece_skin: "neon".into(),
@@ -2094,6 +2150,9 @@ mod tests {
         )
         .unwrap();
         assert!(!preferences.library_collapsed);
+        assert!(!preferences.candidate_rail_collapsed);
+        assert!(!preferences.analysis_panel_collapsed);
+        assert_eq!(preferences.workspace_panel, "moves");
         assert_eq!(preferences.color_theme, "dark");
         assert_eq!(preferences.report_depth, 20);
         assert!(preferences.xqb_book_paths.is_empty());
