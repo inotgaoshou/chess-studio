@@ -2211,7 +2211,7 @@ export default function App() {
   }
 
   return (
-    <div className={`app-shell ${chessPlatform.kind}-shell theme-${colorTheme} board-skin-${displayedBoardSkin} piece-skin-${displayedPieceSkin}`}>
+    <div className={`app-shell ${chessPlatform.kind}-shell theme-${colorTheme} layout-${desktopPreferences.layoutMode} board-skin-${displayedBoardSkin} piece-skin-${displayedPieceSkin}`}>
       <header className="titlebar">
         <div className="window-brand"><span className="brand-seal">象</span><strong>棋研</strong><small>XIANGQI STUDIO</small></div>
         <strong className="window-title">棋研工作台</strong>

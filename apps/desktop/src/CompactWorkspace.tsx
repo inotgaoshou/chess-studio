@@ -1,4 +1,4 @@
-import { Activity, BookOpen, Database, Settings2, TrendingUp } from "lucide-react";
+import { Activity, BookOpen, CheckSquare, Database, Settings2, TrendingUp } from "lucide-react";
 
 export type CompactBookRow = {
   id: string;
@@ -64,12 +64,13 @@ export function CompactReferencePanels({
   return <div className="compact-reference-stack">
     <section className="compact-reference-panel compact-book-panel" aria-label="简洁布局开局库">
       <header>
-        <span><Database size={15}/><strong>开局库与云库</strong></span>
+        <span><Database size={15}/><strong>云库（开局库）</strong></span>
         <small>{bookStatus}</small>
         <button type="button" title="开局库与引擎设置" aria-label="开局库与引擎设置" onClick={onOpenSettings}><Settings2 size={14}/></button>
       </header>
-      <div className="compact-source-status">
+      <div className="compact-source-status" aria-label="开局库状态">
         <span className={bookRows.some((row) => row.source !== "ChessDB") ? "ready" : ""}><BookOpen size={12}/>本地库</span>
+        <span className={cloudEnabled && !bookError ? "ready" : ""}><CheckSquare size={12}/>自动出步</span>
         <span className={cloudEnabled && !bookError ? "ready" : ""}><Database size={12}/>ChessDB</span>
       </div>
       <div className="compact-data-table compact-book-table" role="group" aria-label="开局库候选">
@@ -94,6 +95,10 @@ export function CompactReferencePanels({
         <div><small>耗时</small><strong>{timeText}</strong></div>
       </div>
       <div className="compact-overview-balance" aria-label={redShare == null ? "等待局势分析" : `红方占比 ${redShare.toFixed(0)}%`}><i style={{ width: `${redShare ?? 50}%` }}/></div>
+      <div className="compact-evaluation-tabs" aria-label="评估视图">
+        <span className="active">当前局面</span>
+        <span>云库统计</span>
+      </div>
       <div className="compact-data-table compact-evaluation-table" role="group" aria-label="候选着法评估">
         <div className="compact-data-head"><span>着法</span><span>分数</span><span>深度</span><span>操作</span></div>
         <div className="compact-data-body">
