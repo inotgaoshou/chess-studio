@@ -54,6 +54,7 @@ import type { DesktopPreferencesDto, SubscriptionDto, SyncAccountDto } from "./p
 import { applyColorTheme, initialColorTheme, type ColorTheme } from "./theme";
 import { WorkspaceTabs, type WorkspacePanel } from "./WorkspaceTabs";
 import { WorkspaceLayoutSwitch } from "./WorkspaceLayoutSwitch";
+import { CompactReferencePanels } from "./CompactWorkspace";
 import { CoachProfileView } from "./CoachProfileView";
 import { SkinShopDialog } from "./SkinShopDialog";
 import { CANDIDATE_PREVIEW_HALF_MOVES, DEFAULT_CANDIDATE_LINE_MOVES } from "./candidatePreview";
@@ -2105,9 +2106,9 @@ export default function App() {
     return <section className={`variations candidate-dock ${className}`.trim()}>
       <div className="section-title"><strong>{compactLayout ? "引擎分析" : "棋盘候选"}</strong><span>{analysisIsStale ? "旧候选保留中 · 新局面正在更新" : `MultiPV ${multipv} · 点预览后手动下一步`}</span><button className="panel-collapse-button" title="收起棋盘候选" aria-label="收起棋盘候选" onClick={() => void setCandidateRailVisibility(true)}><ChevronRight size={16}/></button></div>
       {compactLayout && <div className="compact-engine-strip" aria-label="简洁布局引擎状态">
-        <span className={analysisBusy ? "running" : ""}><Activity size={14}/><strong>{engineDisplayName(enginePath)}</strong></span>
-        <small>深度 {primaryAnalysis?.depth ?? "--"} · 分数 {primaryAnalysis ? formatAnalysisScore(primaryAnalysis) : "--"} · {primaryAnalysis?.timeMs != null ? `${(primaryAnalysis.timeMs / 1000).toFixed(1)}s` : "等待分析"}</small>
-        <button type="button" title="引擎设置" aria-label="引擎设置" onClick={() => setDesktopDialog("engine")}><Settings2 size={14}/></button>
+        <span className={analysisBusy ? "running" : ""}><Activity size={14}/><strong>{chessPlatform.kind === "web" ? "云端 Pikafish" : engineDisplayName(enginePath)}</strong></span>
+        <small>深度 {primaryAnalysis?.depth ?? "--"} · 红方视角 {primaryAnalysis ? redAnalysisScoreText(primaryAnalysis, candidateSideToMove) : "--"} · {primaryAnalysis?.timeMs != null ? `${(primaryAnalysis.timeMs / 1000).toFixed(1)}s` : "等待分析"}</small>
+        <button type="button" title="引擎设置" aria-label="引擎设置" onClick={() => chessPlatform.kind === "desktop" ? setDesktopDialog("engine") : selectWorkspacePanel("analysis")}><Settings2 size={14}/></button>
         {analysisBusy
           ? <button type="button" className="stop" onClick={() => void stopAnalysis()}><Square size={12}/>停止</button>
           : <button type="button" disabled={!board.playable || isPlaying} onClick={() => void runAnalysis()}><Play size={13}/>分析</button>}
@@ -2132,18 +2133,32 @@ export default function App() {
             onPreviewStep={jumpCandidatePreview}
           />)}
       </div>
-      {board.xqbCandidates?.length ? <section className="xqb-candidates" aria-label="XQB 开局库候选">
+      {!compactLayout && board.xqbCandidates?.length ? <section className="xqb-candidates" aria-label="XQB 开局库候选">
         <header><BookOpen size={14}/><strong>大师开局库</strong><span>{board.xqbCandidates.length} 个候选</span></header>
         {board.xqbCandidates.map((candidate) => <button key={`${candidate.source}-${candidate.iccs}`} onClick={() => void playIccsMove(candidate.iccs)} title={candidate.memo || candidate.source}>
           <strong>{candidate.notation}</strong><span>{candidate.score > 0 ? `+${candidate.score}` : candidate.score}</span><small>{candidate.winRate == null ? "暂无对局" : `胜率 ${candidate.winRate.toFixed(1)}%`} · {candidate.source}</small>
         </button>)}
       </section> : null}
-      {compactLayout && chessPlatform.kind === "desktop" && desktopPreferences.cloudBookEnabled && <section className="xqb-candidates compact-cloud-candidates" aria-label="ChessDB 云库候选">
-        <header><Database size={14}/><strong>云库</strong><span>{cloudBookLoading ? "查询中" : cloudBookError ?? `${cloudCandidates.length} 个候选`}</span></header>
-        {cloudCandidates.slice(0, 5).map((candidate) => <button key={candidate.iccs} onClick={() => void playIccsMove(candidate.iccs)} title={candidate.memo || candidate.source}>
-          <strong>{candidate.notation}</strong><span>{candidate.score > 0 ? `+${candidate.score}` : candidate.score}</span><small>{candidate.winRate == null ? "云库候选" : `胜率 ${candidate.winRate.toFixed(1)}%`}{candidate.memo ? ` · ${candidate.memo}` : ""}</small>
-        </button>)}
-        {!cloudBookLoading && cloudCandidates.length === 0 && <p className="cloud-book-status">{cloudBookError ? "云库暂时不可用" : "当前局面暂无云库候选"}</p>}
+      {compactLayout && <section className="compact-manual-panel" aria-label="简洁布局棋谱">
+        <header><span><ClipboardList size={14}/><strong>棋谱</strong></span><small>{board.history.length} 着{board.continuation.length ? ` · 后续 ${board.continuation.length} 着` : ""}</small></header>
+        {playbackControls("compact-playback")}
+        <div className="move-table" role="table" aria-label="简洁布局棋谱着法">
+          <div className="move-table-head" role="row"><span role="columnheader">序号</span><span role="columnheader">着法</span><span role="columnheader">分数</span></div>
+          <div className="move-table-body" role="rowgroup">
+            <button className={`move-table-row root ${!board.currentNode ? "active" : ""}`} role="row" onClick={() => void navigateTo()}>
+              <span role="cell">0</span><span role="cell"><GitBranch size={12}/>开始局面</span><span role="cell" />
+            </button>
+            <ManualMoveRows
+              activeMoveRef={activeMoveRef}
+              continuation={board.continuation}
+              currentNode={board.currentNode}
+              formatScore={formatMoveScore}
+              history={board.history}
+              onNavigate={(nodeId) => void navigateTo(nodeId)}
+              qualityByMoveId={reportByMoveId}
+            />
+          </div>
+        </div>
       </section>}
     </section>;
   }
@@ -2347,6 +2362,7 @@ export default function App() {
 
         <section className={`board-section ${mobilePanel === "board" ? "mobile-visible" : ""}`}>
           <div className="board-main-stack">
+          {desktopPreferences.layoutMode === "compact" && <div className="compact-board-heading"><span><LayoutGrid size={15}/><strong>棋盘</strong></span><small>{board.sideToMove}行棋 · {reversed ? "黑方视角" : "红方视角"}</small></div>}
           <div className="board-stage">
             <div className="board-stage-inner">
             <aside className="board-quality-rail" aria-label="当前着法质量">
@@ -2495,6 +2511,50 @@ export default function App() {
             ? <button className="panel-collapse-button analysis-panel-reopen" title="展开局面分析" aria-label="展开局面分析" onClick={() => void setAnalysisPanelVisibility(false)}><ChevronLeft size={16}/></button>
             : null}
           {(!analysisPanelCollapsed || desktopPreferences.layoutMode === "compact") && <>
+            <CompactReferencePanels
+              cloudEnabled={desktopPreferences.cloudBookEnabled ?? false}
+              bookLoading={cloudBookLoading}
+              bookError={cloudBookError}
+              bookRows={[
+                ...(board.xqbCandidates ?? []).map((candidate) => ({
+                  id: `xqb-${candidate.source}-${candidate.iccs}`,
+                  iccs: candidate.iccs,
+                  notation: candidate.notation,
+                  scoreText: candidate.score > 0 ? `+${candidate.score}` : `${candidate.score}`,
+                  winRateText: candidate.winRate == null ? "--" : `${candidate.winRate.toFixed(0)}%`,
+                  source: candidate.source,
+                  detail: candidate.memo,
+                })),
+                ...cloudCandidates.map((candidate) => ({
+                  id: `cloud-${candidate.iccs}`,
+                  iccs: candidate.iccs,
+                  notation: candidate.notation,
+                  scoreText: candidate.score > 0 ? `+${candidate.score}` : `${candidate.score}`,
+                  winRateText: candidate.winRate == null ? "--" : `${candidate.winRate.toFixed(0)}%`,
+                  source: "ChessDB",
+                  detail: candidate.memo,
+                })),
+              ]}
+              evaluationRows={orderedAnalysis.map((line) => ({
+                id: `pv-${line.multipv}`,
+                iccs: line.pv[0],
+                notation: line.notation?.[0] ?? line.pv[0] ?? `候选 ${line.multipv}`,
+                scoreText: redAnalysisScoreText(line, candidateSideToMove),
+                depthText: `${line.depth ?? "--"}`,
+                role: line.multipv === 1 ? "首选" : `候选 ${line.multipv}`,
+                disabled: analysisIsStale,
+              }))}
+              evaluationLabel={evaluation?.label ?? "等待分析"}
+              evaluationScore={evaluation?.scoreText ?? "--"}
+              qualityText={overviewReport?.score != null ? `${overviewReport.score} ${overviewReport.grade}` : "--"}
+              redShare={evaluation?.redShare}
+              depthText={`${primaryAnalysis?.depth ?? "--"}`}
+              timeText={primaryAnalysis?.timeMs != null ? `${(primaryAnalysis.timeMs / 1000).toFixed(1)}s` : "--"}
+              onOpenSettings={() => chessPlatform.kind === "desktop" ? setDesktopDialog("engine") : setNotice("Web 版使用云端引擎，无本地引擎设置")}
+              onPlayBookMove={(iccs) => void playIccsMove(iccs)}
+              onPlayEvaluationMove={(iccs) => void playIccsMove(iccs, analysisFen ?? board.fen)}
+            />
+            <div className="standard-analysis-layout">
           <div className="position-overview" aria-label="局势概览">
             <div className="overview-heading"><span><TrendingUp size={14}/>局势概览</span><strong>{evaluation?.label ?? "等待分析"}</strong><button className="panel-collapse-button" title="收起局面分析" aria-label="收起局面分析" onClick={() => void setAnalysisPanelVisibility(true)}><ChevronRight size={16}/></button></div>
             <div className="overview-metrics">
@@ -2737,13 +2797,13 @@ export default function App() {
                 />}
             </div>}
           </section>}
-          </>}
+          </div></>}
         </aside>
       </main>
       {skinShopOpen && (
         <SkinShopDialog preferences={desktopPreferences} signedIn={syncAccount.status === "signedIn"} onClose={() => { setSkinHoverPreview(undefined); setSkinShopOpen(false); }} onPreview={setSkinHoverPreview} onEquip={(patch) => void updateBoardSkin(patch)}/>
       )}
-      {chessPlatform.kind === "desktop" && desktopPreferences.cloudBookEnabled && cloudBookVisible && <aside
+      {chessPlatform.kind === "desktop" && desktopPreferences.layoutMode !== "compact" && desktopPreferences.cloudBookEnabled && cloudBookVisible && <aside
         className={`cloud-book-float ${cloudBookCollapsed ? "collapsed" : ""}`}
         aria-label="ChessDB 云开局库"
         style={{ ...(cloudBookPosition ? { ...cloudBookPosition, right: "auto", bottom: "auto" } : {}), height: cloudBookCollapsed ? undefined : cloudBookHeight } as CSSProperties}
@@ -2766,7 +2826,7 @@ export default function App() {
           <div className="cloud-book-resize-handle" title="上下拖动调整云库面板高度" onPointerDown={startCloudBookResize} onPointerMove={moveCloudBookResize} onPointerUp={stopCloudBookResize}/>
         )}
       </aside>}
-      {chessPlatform.kind === "desktop" && desktopPreferences.cloudBookEnabled && !cloudBookVisible && <button className="cloud-book-reopen" title="打开云库面板" onClick={() => setCloudBookVisible(true)}><BookOpen size={15}/>打开云库</button>}
+      {chessPlatform.kind === "desktop" && desktopPreferences.layoutMode !== "compact" && desktopPreferences.cloudBookEnabled && !cloudBookVisible && <button className="cloud-book-reopen" title="打开云库面板" onClick={() => setCloudBookVisible(true)}><BookOpen size={15}/>打开云库</button>}
       {reportDialogOpen && reportPresentation && <GameReportDialog
         report={reportPresentation}
         currentNode={board.currentNode}
