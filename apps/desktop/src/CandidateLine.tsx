@@ -26,6 +26,11 @@ function formatNps(value?: number) {
   return value >= 1_000 ? `${Math.round(value / 1_000)}K` : String(Math.round(value));
 }
 
+function scoreTone(score?: string) {
+  if (!score || score === "--" || score === "0") return "neutral";
+  return score.startsWith("-") || score.startsWith("被杀") ? "black" : "red";
+}
+
 export function CandidateLine({ color, fen, line, coach, scoreText, sideToMove, disabled = false, stale = false, visibleMoveCount = DEFAULT_CANDIDATE_LINE_MOVES, preview, onPlay, onPreview, onPreviewStep }: Props) {
   const continuationLimit = Math.max(MIN_CANDIDATE_LINE_MOVES, Math.min(MAX_CANDIDATE_LINE_MOVES, Math.trunc(visibleMoveCount) || DEFAULT_CANDIDATE_LINE_MOVES));
   const rows = pvMoveRows(line, sideToMove, fen);
@@ -49,7 +54,12 @@ export function CandidateLine({ color, fen, line, coach, scoreText, sideToMove, 
       notation,
       movedBy: (index % 2 === 0 ? sideToMove : sideToMove === "红方" ? "黑方" : "红方") as Side,
     }));
+  const continuationPlaceholders = Math.max(0, continuationLimit - continuationMoves.length);
   const coachSummary = coach?.possibility ?? `${candidateLabel}：点击预览后在棋盘手动查看后续变化。`;
+  const continuationScore = scoreText && scoreText !== "--" ? scoreText : undefined;
+  const continuationScoreTitle = continuationScore
+    ? `候选线路根局面分 ${continuationScore}；Pikafish 单条 PV 不包含后续每个节点的独立复算分`
+    : undefined;
   return <article className={`pv-line ${stale ? "stale" : ""} ${previewActive ? "preview-active" : ""}`} style={{ "--pv-color": color } as CSSProperties} title={`ICCS: ${line.pv.join(" ")}`}>
     <div className="pv-card-header pv-engine-header">
       <div className="pv-title">
@@ -74,14 +84,16 @@ export function CandidateLine({ color, fen, line, coach, scoreText, sideToMove, 
       <div className="pv-continuation-moves">
         {continuationMoves.map((move, offset) => {
           const side = move.movedBy === "红方" ? "red" : "black";
-          const content = <><i className={side}/><small>{move.index + 1}</small><b>{move.notation}</b></>;
+          const content = <><i className={side}/><small>{move.index + 1}</small><b>{move.notation}</b>{continuationScore && <em className={`pv-step-score ${scoreTone(continuationScore)}`} title={continuationScoreTitle} aria-label={`线路分 ${continuationScore}`}>{continuationScore}</em>}</>;
           return previewActive
             ? <button key={`${line.multipv}-preview-${move.index}-${move.notation}`} type="button" className={offset === 0 ? "current" : ""} aria-current={offset === 0 ? "step" : undefined} aria-label={`第 ${move.index + 1} 步，${move.movedBy}，${move.notation}`} onClick={() => onPreviewStep?.(move.index)}>{content}</button>
             : <span key={`${line.multipv}-quick-${move.index}-${move.notation}`}>{content}</span>;
         })}
-        {previewActive && continuationMoves.length === 1 && <em>已到线路末端</em>}
+        {Array.from({ length: continuationPlaceholders }, (_, index) => <span className="placeholder-slot" aria-hidden="true" key={`${line.multipv}-placeholder-${index}`}><i/><small>0</small><b>占位</b></span>)}
       </div>
-      {!previewActive && compactLine.length < CANDIDATE_PREVIEW_HALF_MOVES && <p>{candidatePreviewLengthText(compactLine.length)}</p>}
+      <p>{previewActive
+        ? continuationStart >= preview.steps.length - 1 ? "已到线路末端" : "点击任一步可切换预览局面"
+        : candidatePreviewLengthText(compactLine.length)}</p>
     </div>}
     <div className="pv-main-row">
       <div className="pv-quick-read">

@@ -27,6 +27,7 @@ function MoveRow({ move, number, current, continuation, quality, activeMoveRef, 
   return <button
     ref={current ? activeMoveRef : undefined}
     className={`move-table-row ${continuation ? "continuation" : ""} ${quality?.grade ? `grade-${quality.grade}` : ""} ${current ? "active" : ""}`}
+    aria-current={current ? "step" : undefined}
     role="row"
     title={`${continuation ? "后续保留 · " : ""}${move.movedBy} · ICCS ${move.iccs}${quality?.score != null ? ` · 质量 ${quality.score} 分 ${quality.grade}` : ""}`}
     onClick={() => onNavigate(move.id)}
@@ -37,7 +38,7 @@ function MoveRow({ move, number, current, continuation, quality, activeMoveRef, 
       <strong>{move.notation}</strong>
       {!continuation && quality?.grade && <em className={`move-quality-mini grade-${quality.grade}`}>{quality.grade}</em>}
       {move.comment && <MessageSquare className="comment-marker" size={11}/>}
-      <small>{continuation ? "后续保留" : move.isMainline ? "主线" : ""}</small>
+      <small className={current ? "current-marker" : undefined}>{current ? "当前" : continuation ? "后续保留" : move.isMainline ? "主线" : ""}</small>
     </span>
     <span role="cell" className={move.mate != null ? "mate-score" : ""}>{quality?.score != null ? `${quality.score}分` : formatScore(move)}</span>
   </button>;

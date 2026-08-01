@@ -2276,6 +2276,12 @@ fn validate_preferences(preferences: &DesktopPreferences) -> Result<(), String> 
     if !matches!(preferences.color_theme.as_str(), "light" | "dark") {
         return Err("不支持的颜色主题".into());
     }
+    if !matches!(
+        preferences.workspace_panel.as_str(),
+        "moves" | "analysis" | "trend" | "summary" | "report"
+    ) {
+        return Err("不支持的工作区页面".into());
+    }
     if !matches!(preferences.board_skin.as_str(), "original" | "classic" | "neon" | "jade" | "imperial" | "hongmu" | "jingdian" | "xinghe") {
         return Err("不支持的棋盘皮肤".into());
     }

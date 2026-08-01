@@ -23,7 +23,6 @@ import {
   Library,
   ListStart,
   LogOut,
-  MessageSquare,
   Maximize2,
   Moon,
   Palette,
@@ -60,6 +59,7 @@ import { CANDIDATE_PREVIEW_HALF_MOVES, DEFAULT_CANDIDATE_LINE_MOVES } from "./ca
 import { AutosaveOperationQueue, autosaveLabel, type AutosaveState } from "./autosave";
 import { ManualMoveRows } from "./ManualMoveRows";
 import { CandidatePreviewSteps } from "./CandidatePreviewSteps";
+import { beginAnalysisStream, completeAnalysisStream, updateAnalysisStream, type AnalysisStreamBuffer } from "./analysisStream";
 import { ACCOUNT_SKINS, requiresSignInForSkinPatch, skinAssetFolder } from "./skinAccess";
 
 
@@ -314,6 +314,7 @@ export default function App() {
   const [gameNote, setGameNote] = useState("");
   const [draggedBranch, setDraggedBranch] = useState<number | null>(null);
   const [engineSide, setEngineSide] = useState<"none" | "red" | "black">("none");
+  const [engineStarting, setEngineStarting] = useState(false);
   const [engineThinking, setEngineThinking] = useState(false);
   const [moveTimeMs, setMoveTimeMs] = useState(5000);
   const [ponderEnabled, setPonderEnabled] = useState(false);
@@ -365,6 +366,8 @@ export default function App() {
   const reportLoadRevision = useRef(0);
   const boardRef = useRef<BoardState>(fallback);
   const analysisFenRef = useRef<string | undefined>(undefined);
+  const analysisStreamRef = useRef<AnalysisStreamBuffer | undefined>(undefined);
+  const multipvRef = useRef(multipv);
   const analysisBusyRef = useRef(false);
   const analysisHintsEnabledRef = useRef(false);
   const pendingAutoAnalysis = useRef(false);
@@ -380,6 +383,7 @@ export default function App() {
   if (!autosaveQueue.current) {
     autosaveQueue.current = new AutosaveOperationQueue(setAutosave, friendlyError);
   }
+  multipvRef.current = multipv;
 
   useEffect(() => {
     void chessPlatform.initialize()
@@ -512,12 +516,13 @@ export default function App() {
         setEngineThinking(event.state === "thinking");
       } else if (event.type === "info") {
         if (event.fen !== boardRef.current.fen) return;
-        const previousFen = analysisFenRef.current;
+        const stream = updateAnalysisStream(analysisStreamRef.current, event.fen, event.line, multipvRef.current);
+        analysisStreamRef.current = stream.buffer;
+        if (!stream.visible) return;
         analysisFenRef.current = event.fen;
         setAnalysisFen(event.fen);
         setAnalysisSideToMove(boardRef.current.sideToMove);
-        setAnalysis((current) => [...(previousFen === event.fen ? current : []).filter((line) => line.multipv !== event.line.multipv), event.line]
-          .sort((left, right) => left.multipv - right.multipv));
+        setAnalysis(stream.visible);
       } else if (event.type === "bestmove") {
         if (event.fen !== boardRef.current.fen) return;
         setPonderMove(event.ponder);
@@ -643,7 +648,7 @@ export default function App() {
         ? `固定节点 ${searchValue.toLocaleString()}`
       : `固定时间 ${(searchValue / 1000).toFixed(1)}s`;
   const engineRuntimeLabel: Record<EngineRuntimeState, string> = {
-    idle: "已就绪",
+    idle: "待分析",
     analyzing: "分析中",
     thinking: "思考中",
     pondering: "后台思考",
@@ -1248,7 +1253,7 @@ export default function App() {
   }
 
   async function requestEngineMove(state = boardRef.current, side = engineSide) {
-    if (chessPlatform.kind !== "desktop" || side === "none" || !isEngineTurn(state, side) || engineThinking || reportBusy) return;
+    if (chessPlatform.kind !== "desktop" || side === "none" || !isEngineTurn(state, side) || engineStarting || engineThinking || reportBusy) return;
     if (!ensureBoardChangeAllowed()) return;
     if (!enginePath.trim()) {
       setNotice("未找到 Pikafish，无法开始人机对弈");
@@ -1264,9 +1269,9 @@ export default function App() {
       pendingAutoAnalysis.current = false;
       await chessPlatform.stopAnalysis(true).catch(() => undefined);
     }
-    setEngineThinking(true);
+    setEngineStarting(true);
     setAutosave({ status: "saving" });
-    setNotice(`Pikafish 执${side === "red" ? "红" : "黑"}思考中…`);
+    setNotice(`正在启动 Pikafish（执${side === "red" ? "红" : "黑"}）…`);
     try {
       const result = await chessPlatform.playEngineMove({ enginePath, moveTimeMs, threads, hashMb, ponder: ponderEnabled });
       applyBoard(result.board);
@@ -1275,10 +1280,11 @@ export default function App() {
       setPonderMove(result.ponder);
       setNotice(`Pikafish 已走 ${result.board.history.at(-1)?.notation ?? "一着"}${result.ponder ? ` · 预测 ${result.ponder}` : ""}`);
     } catch (error) {
-      setAutosave({ status: "saved" });
+      setAutosave({ status: "draft" });
       setNotice(friendlyError(error));
       setEngineSide("none");
     } finally {
+      setEngineStarting(false);
       setEngineThinking(false);
     }
   }
@@ -1305,12 +1311,43 @@ export default function App() {
   }
 
   async function moveNow() {
+    if (engineStarting) {
+      setNotice("Pikafish 正在启动，请在显示“思考中”后立即出招");
+      return;
+    }
+    if (!engineThinking) {
+      if (engineSide === "none") {
+        setNotice("请先在局面分析中选择 Pikafish 执红或执黑");
+        return;
+      }
+      if (!isEngineTurn(boardRef.current)) {
+        setNotice("当前轮到你行棋，Pikafish 会在轮到它时自动思考");
+        return;
+      }
+      setNotice("正在启动 Pikafish 思考…");
+      await requestEngineMove(boardRef.current, engineSide);
+      return;
+    }
     try {
       const stopped = await chessPlatform.moveNow();
       setNotice(stopped ? "已要求 Pikafish 立即出招" : "引擎当前没有正在计算的着法");
     } catch (error) {
       setNotice(friendlyError(error));
     }
+  }
+
+  async function playPrimaryAnalysisMove() {
+    if (engineSide !== "none" || engineThinking || engineStarting) {
+      setNotice("请先停止人机对弈，再采用分析候选着");
+      return;
+    }
+    const firstMove = primaryAnalysis?.pv[0];
+    const analyzedFen = analysisFen ?? boardRef.current.fen;
+    if (!firstMove || analysisIsStale || analyzedFen !== boardRef.current.fen) {
+      setNotice("当前没有可采用的第一候选，请完成当前局面分析");
+      return;
+    }
+    await playIccsMove(firstMove, analyzedFen);
   }
 
   async function runAnalysis(automatic = false, excludeMove?: string) {
@@ -1349,6 +1386,7 @@ export default function App() {
     const currentBoard = boardRef.current;
     const analyzedFen = currentBoard.fen;
     const analyzedRevision = boardRevision.current;
+    analysisStreamRef.current = beginAnalysisStream(analyzedFen);
     setCandidatePreview(undefined);
     if (!automatic) {
       analysisHintsEnabledRef.current = true;
@@ -1383,9 +1421,10 @@ export default function App() {
         return;
       }
       analysisFenRef.current = analyzedFen;
+      analysisStreamRef.current = completeAnalysisStream(analyzedFen, result);
       setAnalysisFen(analyzedFen);
       setAnalysisSideToMove(currentBoard.sideToMove);
-      setAnalysis(result);
+      setAnalysis(analysisStreamRef.current.lines);
       applyBoard(await chessPlatform.initialize());
       setNotice(automatic ? "自动分析完成并已保存" : "分析完成并已保存");
     } catch (error) {
@@ -1424,6 +1463,7 @@ export default function App() {
 
   function clearAnalysisState() {
     analysisFenRef.current = undefined;
+    analysisStreamRef.current = undefined;
     setAnalysis([]);
     setAnalysisFen(undefined);
     setAnalysisSideToMove(undefined);
@@ -1438,6 +1478,7 @@ export default function App() {
       if (loadRevision === analysisLoadRevision.current && expectedBoardRevision === boardRevision.current && boardRef.current.fen === fen) {
         if (saved.length === 0 && options.keepPreviousOnMiss) return;
         analysisFenRef.current = fen;
+        analysisStreamRef.current = completeAnalysisStream(fen, saved);
         setAnalysisFen(fen);
         setAnalysisSideToMove(boardRef.current.sideToMove);
         setAnalysis(saved);
@@ -1776,6 +1817,10 @@ export default function App() {
         activeEngineId = profile.id;
         enginePath = profile.executablePath;
         handshakeMessage = `${profile.protocol.toUpperCase()} 引擎握手成功`;
+      } else {
+        const probe = await chessPlatform.probeEngine(preferences.enginePath);
+        enginePath = probe.path;
+        handshakeMessage = `${probe.protocol.toUpperCase()} 引擎握手成功`;
       }
       const saved = await saveDesktopPreferencePatch({
         enginePath,
@@ -1797,8 +1842,7 @@ export default function App() {
         disabledXqbBookPaths: preferences.disabledXqbBookPaths,
       });
       applyDesktopPreferences(saved);
-      setEngineProfiles(await chessPlatform.listEngineProfiles());
-      setDesktopDialog(null);
+      void chessPlatform.listEngineProfiles().then(setEngineProfiles).catch(() => undefined);
       setNotice(`引擎设置已保存，${handshakeMessage}`);
     } catch (error) {
       const message = friendlyError(error);
@@ -2130,7 +2174,7 @@ export default function App() {
           }}
           execute={executeMenuCommand}
         />}
-        <div className="engine-chip"><Activity size={13}/><strong>Pikafish</strong><span>{chessPlatform.kind === "web" ? online ? "云端" : "离线" : enginePath ? engineRuntimeLabel[engineRuntimeState] : "未检测"}</span></div>
+        <div className="engine-chip" title={chessPlatform.kind === "desktop" && enginePath && engineRuntimeState === "idle" ? "Pikafish 已配置，当前未开始计算" : undefined}><Activity size={13}/><strong>Pikafish</strong><span>{chessPlatform.kind === "web" ? online ? "云端" : "离线" : enginePath ? engineRuntimeLabel[engineRuntimeState] : "未检测"}</span></div>
       </nav>
 
       {chessPlatform.kind === "desktop" && <DesktopDialogs
@@ -2180,7 +2224,8 @@ export default function App() {
           onClick={() => void (analysisHintsEnabled ? stopAnalysis() : runAnalysis())}
           disabled={!analysisHintsEnabled && (!board.playable || isPlaying)}
         ><Zap size={15}/>{analysisHintsEnabled ? "停止分析提示" : "分析当前局面"}</button>
-        <button className="tool-button" title="立即出招" disabled={!engineThinking} onClick={() => void moveNow()}><Zap size={15}/></button>
+        <button className={`mode-tool move-now-tool ${engineThinking ? "active" : ""}`} title={engineStarting ? "Pikafish 正在启动，请稍候" : engineThinking ? "停止当前搜索并立即采用已找到的最佳着法" : engineSide === "none" ? "先在局面分析中选择 Pikafish 执红或执黑" : isEngineTurn(board) ? "启动 Pikafish 思考" : "当前轮到你行棋"} disabled={chessPlatform.kind !== "desktop" || engineSide === "none" || engineStarting || (!engineThinking && !isEngineTurn(board))} onClick={() => void moveNow()}><Zap size={15}/>{engineStarting ? "引擎启动中" : engineThinking ? "立即出招" : "引擎出招"}</button>
+        <button className="mode-tool" title="将当前分析的第一候选着写入棋谱" disabled={!primaryAnalysis?.pv[0] || analysisIsStale || engineSide !== "none" || engineStarting || engineThinking} onClick={() => void playPrimaryAnalysisMove()}><Play size={15}/>采用第一候选</button>
         <button className="tool-button" title="引擎设置" onClick={() => setDesktopDialog("engine")}><Settings2 size={16}/></button>
         <div className="skin-menu">
           <button className={`tool-button ${skinMenuOpen ? "active" : ""}`} title="棋盘皮肤" aria-label="棋盘皮肤" aria-expanded={skinMenuOpen} onClick={() => setSkinMenuOpen((open) => !open)}><Palette size={16}/></button>
@@ -2428,9 +2473,9 @@ export default function App() {
                 </div>
                 <label><span>每步</span><input type="number" min={100} max={30000} step={100} value={moveTimeMs} onChange={(event) => setMoveTimeMs(Number(event.target.value))}/><small>ms</small></label>
                 <label className="ponder-toggle"><input type="checkbox" checked={ponderEnabled} onChange={(event) => setPonderEnabled(event.target.checked)}/><span>后台思考</span></label>
-                <button className="move-now" disabled={!engineThinking} onClick={() => void moveNow()}><Zap size={12}/>立即</button>
+                <button className="move-now" title={engineStarting ? "Pikafish 正在启动" : engineThinking ? "停止搜索并立即落子" : "等待 Pikafish 思考"} disabled={!engineThinking} onClick={() => void moveNow()}><Zap size={12}/>立即</button>
               </div>
-              {engineSide !== "none" && <div className="engine-play-status"><span className={engineThinking ? "thinking" : ""}/><strong>人机对弈</strong><small>Pikafish 执{engineSide === "red" ? "红" : "黑"}{ponderMove ? ` · 预测 ${ponderMove}` : ""}</small></div>}
+              {engineSide !== "none" && <div className="engine-play-status"><span className={engineThinking ? "thinking" : engineStarting ? "starting" : ""}/><strong>人机对弈</strong><small>Pikafish 执{engineSide === "red" ? "红" : "黑"}{engineStarting ? " · 启动中" : engineThinking ? " · 思考中" : ponderMove ? ` · 预测 ${ponderMove}` : " · 等待行棋"}</small></div>}
               <button className="engine-config-summary" onClick={() => setDesktopDialog("engine")}>
                 <Settings2 size={14}/><span>{engineDisplayName(enginePath)}</span><small>{threads} 线程 · Hash {hashMb} MB · MultiPV {multipv}</small>
               </button>

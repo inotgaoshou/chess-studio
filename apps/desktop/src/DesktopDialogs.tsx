@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FolderOpen, LogIn, Save, Settings2, UserPlus, X } from "lucide-react";
 import { BUILTIN_ENGINE_PATH, type DesktopPreferencesDto, type SubscriptionDto, type SyncAccountDto, type TrainingTaskDto } from "./platform";
 import { MAX_CANDIDATE_LINE_MOVES, MIN_CANDIDATE_LINE_MOVES } from "./candidatePreview";
@@ -43,13 +43,19 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
   const [unbindCompleted, setUnbindCompleted] = useState(false);
   const [enginePickerBusy, setEnginePickerBusy] = useState(false);
   const [enginePickerError, setEnginePickerError] = useState("");
+  const [engineSaveError, setEngineSaveError] = useState("");
+  const [engineSaveSuccess, setEngineSaveSuccess] = useState("");
+  const initializedDialog = useRef<DesktopDialog>(null);
 
   useEffect(() => {
     if (!dialog) {
+      initializedDialog.current = null;
       setPassword("");
       setRedemptionCode("");
       return;
     }
+    if (initializedDialog.current === dialog) return;
+    initializedDialog.current = dialog;
     setDraft(preferences);
     setEmail(account.email ?? "");
     setPassword("");
@@ -58,6 +64,8 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
     setUnbindCompleted(false);
     setEnginePickerBusy(false);
     setEnginePickerError("");
+    setEngineSaveError("");
+    setEngineSaveSuccess("");
   }, [account.email, dialog, preferences]);
 
   if (!dialog) return null;
@@ -81,6 +89,8 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
   async function chooseEngine() {
     setEnginePickerBusy(true);
     setEnginePickerError("");
+    setEngineSaveError("");
+    setEngineSaveSuccess("");
     try {
       const path = await onChooseEngine(draft.enginePath.trim());
       if (path) setDraft((current) => ({ ...current, enginePath: path }));
@@ -93,12 +103,14 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
   }
 
   async function saveEngine() {
-    setEnginePickerError("");
+    setEngineSaveError("");
+    setEngineSaveSuccess("");
     try {
       await onSaveEngine(draft);
+      setEngineSaveSuccess("引擎检测成功，设置已保存");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      setEnginePickerError(`保存失败：${message}`);
+      setEngineSaveError(`保存失败：${message}`);
     }
   }
 
@@ -134,7 +146,7 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
         </header>
 
         {dialog === "engine" && <div className="dialog-form engine-settings-form">
-          <label className="full"><span>引擎可执行文件</span><div className="dialog-input-action"><input value={engineInputValue(draft.enginePath)} readOnly={draft.enginePath === BUILTIN_ENGINE_PATH} placeholder="留空后可选择外部 Pikafish" onChange={(event) => { setEnginePickerError(""); setDraft({ ...draft, enginePath: event.target.value }); }}/><button type="button" title="使用安装包内置 Pikafish" disabled={busy || enginePickerBusy} onClick={() => { setEnginePickerError(""); setDraft({ ...draft, enginePath: BUILTIN_ENGINE_PATH }); }}>内置</button><button type="button" title="选择外部引擎文件" disabled={busy || enginePickerBusy} onClick={() => void chooseEngine()}><FolderOpen size={15}/></button></div></label>
+          <label className="full"><span>引擎可执行文件</span><div className="dialog-input-action"><input value={engineInputValue(draft.enginePath)} readOnly={draft.enginePath === BUILTIN_ENGINE_PATH} placeholder="留空后可选择外部 Pikafish" onChange={(event) => { setEnginePickerError(""); setEngineSaveError(""); setEngineSaveSuccess(""); setDraft({ ...draft, enginePath: event.target.value }); }}/><button type="button" title="使用安装包内置 Pikafish" disabled={busy || enginePickerBusy} onClick={() => { setEnginePickerError(""); setEngineSaveError(""); setEngineSaveSuccess(""); setDraft({ ...draft, enginePath: BUILTIN_ENGINE_PATH }); }}>内置</button><button type="button" title="选择外部引擎文件" disabled={busy || enginePickerBusy} onClick={() => void chooseEngine()}><FolderOpen size={15}/></button></div></label>
           {draft.enginePath === BUILTIN_ENGINE_PATH && <p className="dialog-hint full">当前使用安装包内置 Pikafish。正式安装后会从 App 资源目录自动定位，不依赖本机绝对路径。</p>}
           {enginePickerError && <p className="dialog-warning full" role="alert">{enginePickerError}</p>}
           <label><span>线程</span><input type="number" min={1} max={64} value={draft.threads} onChange={(event) => setDraft({ ...draft, threads: Number(event.target.value) })}/></label>
@@ -153,7 +165,9 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
           <label className="full"><span>云库地址</span><input value={draft.cloudBookUrl ?? "https://www.chessdb.cn/chessdb.php"} onChange={(event) => setDraft({ ...draft, cloudBookUrl: event.target.value })}/></label>
           <p className="dialog-hint full">开启后会向该地址发送当前 FEN，仅用于查询候选着法；网络不可用不会影响本地棋谱和引擎。</p>
           {!!draft.xqbBookPaths?.length && <div className="full dialog-book-list"><span>本地大师开局库</span>{draft.xqbBookPaths.map((path) => <label className="check-row" key={path}><input type="checkbox" checked={!draft.disabledXqbBookPaths?.includes(path)} onChange={(event) => setDraft({ ...draft, disabledXqbBookPaths: event.target.checked ? (draft.disabledXqbBookPaths ?? []).filter((value) => value !== path) : [...(draft.disabledXqbBookPaths ?? []), path] })}/><span>{path.split(/[\\/]/).at(-1)}</span></label>)}</div>}
-          <footer><button onClick={close} disabled={busy || enginePickerBusy}>取消</button><button className="primary" disabled={busy || enginePickerBusy || !draft.enginePath.trim()} onClick={() => void saveEngine()}><Save size={14}/>{busy ? "检测中…" : enginePickerBusy ? "选择中…" : "检测并保存"}</button></footer>
+          {engineSaveError && <p className="dialog-warning full engine-save-error" role="alert">{engineSaveError}</p>}
+          {engineSaveSuccess && <p className="dialog-success full engine-save-success" role="status">{engineSaveSuccess}</p>}
+          <footer><button onClick={close} disabled={busy || enginePickerBusy}>{engineSaveSuccess ? "关闭" : "取消"}</button><button className="primary" disabled={busy || enginePickerBusy || !draft.enginePath.trim()} onClick={() => void saveEngine()}><Save size={14}/>{busy ? "检测中…" : enginePickerBusy ? "选择中…" : "检测并保存"}</button></footer>
         </div>}
 
         {dialog === "syncSettings" && <div className="dialog-form">

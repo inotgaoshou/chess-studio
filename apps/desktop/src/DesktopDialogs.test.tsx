@@ -47,8 +47,8 @@ function renderDialog(dialog: "engine" | "syncSettings" | "register" | "login" |
     onCompleteTraining: vi.fn(async () => undefined),
     ...overrides,
   };
-  render(<DesktopDialogs {...props}/>);
-  return { props, user: userEvent.setup() };
+  const view = render(<DesktopDialogs {...props}/>);
+  return { props, user: userEvent.setup(), ...view };
 }
 
 describe("DesktopDialogs", () => {
@@ -98,6 +98,49 @@ describe("DesktopDialogs", () => {
     await user.type(screen.getByLabelText("后续走法（半回合）"), "12");
     await user.click(screen.getByRole("button", { name: "检测并保存" }));
     expect(props.onSaveEngine).toHaveBeenCalledWith(expect.objectContaining({ enginePath: "/opt/pikafish", multipv: 4, candidateLineMoves: 12 }));
+  });
+
+  it("keeps an engine save failure beside the save controls", async () => {
+    const { user } = renderDialog("engine", {
+      onSaveEngine: vi.fn(async () => { throw new Error("引擎握手失败"); }),
+    });
+
+    await user.click(screen.getByRole("button", { name: "检测并保存" }));
+
+    const alert = await screen.findByRole("alert");
+    const footer = screen.getByRole("button", { name: "检测并保存" }).closest("footer");
+    expect(alert.textContent).toContain("保存失败：引擎握手失败");
+    expect(alert.nextElementSibling).toBe(footer);
+  });
+
+  it("does not clear an engine save failure when preference props are reconciled", async () => {
+    const saveEngine = vi.fn(async () => { throw new Error("登录同步账号后才能使用登录专享皮肤"); });
+    const { props, rerender, user } = renderDialog("engine", { onSaveEngine: saveEngine });
+
+    await user.click(screen.getByRole("button", { name: "检测并保存" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("登录同步账号后才能使用登录专享皮肤");
+
+    rerender(<DesktopDialogs {...props} preferences={{ ...preferences, candidateLineMoves: 12 }}/>);
+    expect(screen.getByRole("alert").textContent).toContain("登录同步账号后才能使用登录专享皮肤");
+  });
+
+  it("shows an explicit confirmation after engine detection and save succeeds", async () => {
+    const { user } = renderDialog("engine");
+
+    await user.click(screen.getByRole("button", { name: "检测并保存" }));
+
+    expect((await screen.findByRole("status")).textContent).toBe("引擎检测成功，设置已保存");
+  });
+
+  it("shows a retained account skin accurately while signed out", () => {
+    renderDialog("engine", {
+      preferences: { ...preferences, boardSkin: "jingdian", pieceSkin: "jingdian" },
+      account: { ...account, status: "signedOut" },
+    });
+
+    expect((screen.getByLabelText("棋盘皮肤") as HTMLSelectElement).value).toBe("jingdian");
+    expect((screen.getByLabelText("棋子皮肤") as HTMLSelectElement).value).toBe("jingdian");
+    expect(screen.getAllByText("经典雅致（未登录，登录后恢复）")).toHaveLength(2);
   });
 
   it("clears the password immediately after an authentication attempt", async () => {

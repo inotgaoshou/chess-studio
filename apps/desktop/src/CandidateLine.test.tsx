@@ -41,6 +41,52 @@ describe("CandidateLine", () => {
     expect(screen.getByLabelText("候选 1 后续走法").textContent).toContain("炮二平五");
   });
 
+  it("marks every visible continuation move with the candidate line score", () => {
+    const { container } = render(<CandidateLine
+      color="#53b848"
+      fen="position-fen"
+      line={{ multipv: 1, depth: 28, scoreCp: 49, pv: ["h2e2", "h9g7", "h0g2", "i9h9"], notation: ["炮二平五", "马8进7", "马二进三", "车9平8"] }}
+      scoreText="+49"
+      sideToMove="红方"
+      visibleMoveCount={4}
+      onPlay={vi.fn()}
+      onPreview={vi.fn()}
+    />);
+
+    const scores = container.querySelectorAll(".pv-continuation-moves .pv-step-score");
+    expect(scores).toHaveLength(4);
+    expect(Array.from(scores).every((score) => score.textContent === "+49")).toBe(true);
+    expect(scores[0].getAttribute("title")).toContain("候选线路根局面分");
+  });
+
+  it("reserves configured continuation slots while a short PV is still growing", () => {
+    const { container, rerender } = render(<CandidateLine
+      color="#53b848"
+      fen="position-fen"
+      line={{ multipv: 1, depth: 8, pv: ["h2e2"], notation: ["炮二平五"] }}
+      sideToMove="红方"
+      visibleMoveCount={6}
+      onPlay={vi.fn()}
+      onPreview={vi.fn()}
+    />);
+
+    expect(container.querySelectorAll(".pv-continuation-moves > *")).toHaveLength(6);
+    expect(container.querySelectorAll(".placeholder-slot")).toHaveLength(5);
+
+    rerender(<CandidateLine
+      color="#53b848"
+      fen="position-fen"
+      line={{ multipv: 1, depth: 12, pv: ["h2e2", "h9g7", "h0g2"], notation: ["炮二平五", "马8进7", "马二进三"] }}
+      sideToMove="红方"
+      visibleMoveCount={6}
+      onPlay={vi.fn()}
+      onPreview={vi.fn()}
+    />);
+
+    expect(container.querySelectorAll(".pv-continuation-moves > *")).toHaveLength(6);
+    expect(container.querySelectorAll(".placeholder-slot")).toHaveLength(3);
+  });
+
   it("executes the first ICCS move against the analyzed position", () => {
     const onPlay = vi.fn();
     render(<CandidateLine
