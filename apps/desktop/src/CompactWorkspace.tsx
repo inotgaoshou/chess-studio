@@ -1,4 +1,4 @@
-import { Activity, BookOpen, CheckSquare, Database, Settings2, TrendingUp } from "lucide-react";
+import { Activity, BookOpen, CheckSquare, ChevronLeft, ChevronRight, Database, Settings2, TrendingUp } from "lucide-react";
 
 export type CompactBookRow = {
   id: string;
@@ -20,6 +20,20 @@ export type CompactEvaluationRow = {
   disabled?: boolean;
 };
 
+export type CompactEngineAnalysisRow = {
+  id: string;
+  iccs?: string;
+  rank: number;
+  depthText: string;
+  scoreText: string;
+  timeText: string;
+  npsText: string;
+  hfText: string;
+  lineText: string;
+  disabled?: boolean;
+  stale?: boolean;
+};
+
 type Props = {
   cloudEnabled: boolean;
   bookLoading: boolean;
@@ -32,10 +46,53 @@ type Props = {
   redShare?: number;
   depthText: string;
   timeText: string;
+  collapsed?: boolean;
   onOpenSettings(): void;
+  onToggleCollapsed?(): void;
   onPlayBookMove(iccs: string): void;
   onPlayEvaluationMove(iccs: string): void;
 };
+
+type EngineListProps = {
+  busy: boolean;
+  rows: CompactEngineAnalysisRow[];
+  onPlayMove(iccs: string): void;
+};
+
+export function CompactEngineAnalysisList({ busy, rows, onPlayMove }: EngineListProps) {
+  return <div className="compact-engine-analysis-list" role="table" aria-label="简洁布局引擎分析">
+    <div className="compact-engine-analysis-head" role="row">
+      <span role="columnheader">候选</span>
+      <span role="columnheader">指标</span>
+      <span role="columnheader">推荐着法</span>
+    </div>
+    <div className="compact-engine-analysis-body" role="rowgroup">
+      {rows.map((row) => <button
+        type="button"
+        role="row"
+        key={row.id}
+        disabled={row.disabled || !row.iccs}
+        className={`compact-engine-analysis-row ${row.stale ? "stale" : ""}`}
+        title={row.iccs ? `点击走 ${row.lineText.split(/\s+/)[0] ?? row.iccs}` : row.lineText}
+        onClick={() => row.iccs && onPlayMove(row.iccs)}
+      >
+        <span role="cell" className="compact-engine-rank">{row.rank}</span>
+        <span role="cell" className="compact-engine-metrics">
+          <strong>深度:{row.depthText}</strong>
+          <strong>分:{row.scoreText}</strong>
+          <small>时间:{row.timeText}</small>
+          <small>NPS:{row.npsText}</small>
+          <small>HF:{row.hfText}</small>
+        </span>
+        <span role="cell" className="compact-engine-line">{row.lineText}</span>
+      </button>)}
+      {rows.length === 0 && <div className="compact-engine-empty">
+        <Activity size={22}/><strong>{busy ? "AI 正在计算…" : "等待引擎分析"}</strong>
+        <span>{busy ? "收到完整候选后在这里显示深度、分数、时间、NPS 和推荐着法" : "点击上方“分析”后显示截图式引擎列表"}</span>
+      </div>}
+    </div>
+  </div>;
+}
 
 export function CompactReferencePanels({
   cloudEnabled,
@@ -49,7 +106,9 @@ export function CompactReferencePanels({
   redShare,
   depthText,
   timeText,
+  collapsed = false,
   onOpenSettings,
+  onToggleCollapsed,
   onPlayBookMove,
   onPlayEvaluationMove,
 }: Props) {
@@ -61,11 +120,22 @@ export function CompactReferencePanels({
         ? localBookCount ? `${localBookCount} 条 · 云库异常` : bookError
         : `${bookRows.length} 条${cloudEnabled ? "" : " · 云库关闭"}`;
 
+  if (collapsed) {
+    return <div className="compact-reference-stack collapsed" aria-label="云库已收起">
+      <button type="button" className="compact-reference-reopen" title="展开云库" aria-label="展开云库" onClick={onToggleCollapsed}>
+        <ChevronLeft size={16}/>
+        <strong>云库</strong>
+        <small>{bookLoading ? "查询" : bookError ? "异常" : `${bookRows.length}条`}</small>
+      </button>
+    </div>;
+  }
+
   return <div className="compact-reference-stack">
     <section className="compact-reference-panel compact-book-panel" aria-label="简洁布局开局库">
       <header>
         <span><Database size={15}/><strong>云库（开局库）</strong></span>
         <small>{bookStatus}</small>
+        {onToggleCollapsed && <button type="button" title="收起云库" aria-label="收起云库" onClick={onToggleCollapsed}><ChevronRight size={14}/></button>}
         <button type="button" title="开局库与引擎设置" aria-label="开局库与引擎设置" onClick={onOpenSettings}><Settings2 size={14}/></button>
       </header>
       <div className="compact-source-status" aria-label="开局库状态">

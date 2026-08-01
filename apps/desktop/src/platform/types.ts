@@ -59,6 +59,7 @@ export type AnalysisLine = {
   mate?: number;
   nps?: number;
   timeMs?: number;
+  hashfull?: number;
   multipv: number;
   notation?: string[];
   pv: string[];

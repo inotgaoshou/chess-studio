@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CompactReferencePanels } from "./CompactWorkspace";
+import { CompactEngineAnalysisList, CompactReferencePanels } from "./CompactWorkspace";
 
 afterEach(cleanup);
 
@@ -54,5 +54,44 @@ describe("CompactReferencePanels", () => {
 
     expect(screen.getByText("1 条 · 云库关闭")).toBeTruthy();
     expect(screen.getByText("本地 XQB")).toBeTruthy();
+  });
+
+  it("can collapse the compact cloud book column", () => {
+    const onToggleCollapsed = vi.fn();
+    render(<CompactReferencePanels {...common} collapsed onToggleCollapsed={onToggleCollapsed}/>);
+    fireEvent.click(screen.getByRole("button", { name: "展开云库" }));
+    expect(onToggleCollapsed).toHaveBeenCalled();
+    expect(screen.queryByRole("region", { name: "简洁布局评估信息" })).toBeNull();
+  });
+});
+
+describe("CompactEngineAnalysisList", () => {
+  it("shows compact TCHESS-style engine metrics without coach or PV detail blocks", () => {
+    const onPlayMove = vi.fn();
+    render(<CompactEngineAnalysisList
+      busy={false}
+      rows={[{
+        id: "pv-1",
+        iccs: "h2e2",
+        rank: 1,
+        depthText: "44",
+        scoreText: "+31",
+        timeText: "13.8s",
+        npsText: "4504K",
+        hfText: "21%",
+        lineText: "马八进七 炮9平7 车三平四",
+      }]}
+      onPlayMove={onPlayMove}
+    />);
+
+    expect(screen.getByText("深度:44")).toBeTruthy();
+    expect(screen.getByText("分:+31")).toBeTruthy();
+    expect(screen.getByText("NPS:4504K")).toBeTruthy();
+    expect(screen.getByText("HF:21%")).toBeTruthy();
+    expect(screen.queryByText(/私教讲解/)).toBeNull();
+    expect(screen.queryByText(/完整 PV/)).toBeNull();
+
+    fireEvent.click(screen.getByRole("row", { name: /马八进七/ }));
+    expect(onPlayMove).toHaveBeenCalledWith("h2e2");
   });
 });

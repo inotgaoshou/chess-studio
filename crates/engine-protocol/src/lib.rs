@@ -34,6 +34,7 @@ pub struct EngineInfo {
     pub mate: Option<i32>,
     pub nps: Option<u64>,
     pub time_ms: Option<u64>,
+    pub hashfull: Option<u32>,
     pub multipv: u32,
     pub pv: Vec<String>,
 }
@@ -46,6 +47,7 @@ impl Default for EngineInfo {
             mate: None,
             nps: None,
             time_ms: None,
+            hashfull: None,
             multipv: 1,
             pv: Vec::new(),
         }
@@ -146,6 +148,7 @@ pub fn parse_engine_line(line: &str) -> EngineEvent {
     while index < tokens.len() {
         match tokens[index] {
             "depth" => info.depth = tokens.get(index + 1).and_then(|v| v.parse().ok()),
+            "hashfull" => info.hashfull = tokens.get(index + 1).and_then(|v| v.parse().ok()),
             "nps" => info.nps = tokens.get(index + 1).and_then(|v| v.parse().ok()),
             "time" => info.time_ms = tokens.get(index + 1).and_then(|v| v.parse().ok()),
             "multipv" => {
@@ -408,7 +411,7 @@ done
     #[test]
     fn parses_multi_pv_engine_output() {
         let event = parse_engine_line(
-            "info depth 16 score cp 38 nps 120000 time 530 multipv 2 pv h2e2 h9g7",
+            "info depth 16 score cp 38 nps 120000 time 530 hashfull 210 multipv 2 pv h2e2 h9g7",
         );
         assert_eq!(
             event,
@@ -418,6 +421,7 @@ done
                 mate: None,
                 nps: Some(120000),
                 time_ms: Some(530),
+                hashfull: Some(210),
                 multipv: 2,
                 pv: vec!["h2e2".into(), "h9g7".into()]
             })

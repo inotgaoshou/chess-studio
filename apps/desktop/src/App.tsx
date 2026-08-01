@@ -54,7 +54,7 @@ import type { DesktopPreferencesDto, SubscriptionDto, SyncAccountDto } from "./p
 import { applyColorTheme, initialColorTheme, type ColorTheme } from "./theme";
 import { WorkspaceTabs, type WorkspacePanel } from "./WorkspaceTabs";
 import { WorkspaceLayoutSwitch } from "./WorkspaceLayoutSwitch";
-import { CompactReferencePanels } from "./CompactWorkspace";
+import { CompactEngineAnalysisList, CompactReferencePanels, type CompactEngineAnalysisRow } from "./CompactWorkspace";
 import { CoachProfileView } from "./CoachProfileView";
 import { SkinShopDialog } from "./SkinShopDialog";
 import { CANDIDATE_PREVIEW_HALF_MOVES, DEFAULT_CANDIDATE_LINE_MOVES } from "./candidatePreview";
@@ -231,6 +231,12 @@ function piecesToFen(pieces: Piece[], side: "red" | "black") {
 function formatNps(nps?: number) {
   if (!nps) return "-";
   return nps >= 1_000_000 ? `${(nps / 1_000_000).toFixed(1)}M` : `${Math.round(nps / 1000)}K`;
+}
+
+function formatHashfull(hashfull?: number) {
+  if (hashfull == null) return "--";
+  const percent = Math.max(0, Math.min(100, hashfull / 10));
+  return `${Number.isInteger(percent) ? percent.toFixed(0) : percent.toFixed(1)}%`;
 }
 
 function formatAnalysisScore(line: AnalysisLine) {
@@ -2098,16 +2104,39 @@ export default function App() {
 
   function candidateLinesView(className = "") {
     const compactLayout = desktopPreferences.layoutMode === "compact";
+    const compactEngineRows: CompactEngineAnalysisRow[] = compactLayout
+      ? orderedAnalysis.map((line) => {
+        const lineMoves = (line.notation?.length ? line.notation : line.pv).slice(0, 10);
+        return {
+          id: `engine-${line.multipv}`,
+          iccs: line.pv[0],
+          rank: line.multipv,
+          depthText: `${line.depth ?? "--"}`,
+          scoreText: redAnalysisScoreText(line, candidateSideToMove),
+          timeText: line.timeMs != null ? `${(line.timeMs / 1000).toFixed(1)}s` : "--",
+          npsText: formatNps(line.nps),
+          hfText: formatHashfull(line.hashfull),
+          lineText: lineMoves.length ? lineMoves.join(" ") : "暂无推荐着法",
+          disabled: analysisIsStale,
+          stale: analysisIsStale,
+        };
+      })
+      : [];
     if (candidateRailCollapsed && !compactLayout) {
       return <section className={`variations candidate-dock collapsed ${className}`.trim()} aria-label="棋盘候选已收起">
         <button className="panel-collapse-button" title="展开棋盘候选" aria-label="展开棋盘候选" onClick={() => void setCandidateRailVisibility(false)}><ChevronLeft size={16}/></button>
       </section>;
     }
     return <section className={`variations candidate-dock ${className}`.trim()}>
-      <div className="section-title"><strong>{compactLayout ? "引擎分析" : "棋盘候选"}</strong><span>{analysisIsStale ? "旧候选保留中 · 新局面正在更新" : `MultiPV ${multipv} · 点预览后手动下一步`}</span><button className="panel-collapse-button" title="收起棋盘候选" aria-label="收起棋盘候选" onClick={() => void setCandidateRailVisibility(true)}><ChevronRight size={16}/></button></div>
+      <div className="section-title"><strong>{compactLayout ? "引擎分析" : "棋盘候选"}</strong><span>{compactLayout ? analysisIsStale ? "旧候选保留中 · 新局面正在更新" : "深度 / 分数 / 时间 / NPS / HF" : analysisIsStale ? "旧候选保留中 · 新局面正在更新" : `MultiPV ${multipv} · 点预览后手动下一步`}</span><button className="panel-collapse-button" title="收起棋盘候选" aria-label="收起棋盘候选" onClick={() => void setCandidateRailVisibility(true)}><ChevronRight size={16}/></button></div>
       {compactLayout && <div className="compact-engine-strip" aria-label="简洁布局引擎状态">
-        <span className={analysisBusy ? "running" : ""}><Activity size={14}/><strong>{chessPlatform.kind === "web" ? "云端 Pikafish" : engineDisplayName(enginePath)}</strong></span>
-        <small>深度 {primaryAnalysis?.depth ?? "--"} · 红方视角 {primaryAnalysis ? redAnalysisScoreText(primaryAnalysis, candidateSideToMove) : "--"} · {primaryAnalysis?.timeMs != null ? `${(primaryAnalysis.timeMs / 1000).toFixed(1)}s` : "等待分析"}</small>
+        <span className={analysisBusy ? "running" : ""}><Activity size={14}/><strong>引擎：</strong></span>
+        <div className="compact-engine-config" title={chessPlatform.kind === "web" ? "云端 Pikafish" : enginePath || "未配置引擎"}>
+          <button type="button" onClick={() => chessPlatform.kind === "desktop" ? setDesktopDialog("engine") : selectWorkspacePanel("analysis")}>{chessPlatform.kind === "web" ? "云端 Pikafish" : engineDisplayName(enginePath)}</button>
+          <small>{threads}</small>
+          <small>{hashMb}</small>
+          <i aria-hidden="true"/>
+        </div>
         <button type="button" title="引擎设置" aria-label="引擎设置" onClick={() => chessPlatform.kind === "desktop" ? setDesktopDialog("engine") : selectWorkspacePanel("analysis")}><Settings2 size={14}/></button>
         {analysisBusy
           ? <button type="button" className="stop" onClick={() => void stopAnalysis()}><Square size={12}/>停止</button>
@@ -2115,8 +2144,12 @@ export default function App() {
       </div>}
       <div className="analysis-lines">
         {analysis.length === 0
-          ? <div className="empty-analysis"><Activity size={24}/><strong>等待分析</strong><span>启动 Pikafish 后在这里显示候选 1/2/3 推演</span></div>
-          : orderedAnalysis.map((line) => <CandidateLine
+          ? compactLayout
+            ? <CompactEngineAnalysisList busy={analysisBusy} rows={[]} onPlayMove={(iccs) => void playIccsMove(iccs, analysisFen ?? board.fen)}/>
+            : <div className="empty-analysis"><Activity size={24}/><strong>等待分析</strong><span>启动 Pikafish 后在这里显示候选 1/2/3 推演</span></div>
+          : compactLayout
+            ? <CompactEngineAnalysisList busy={analysisBusy} rows={compactEngineRows} onPlayMove={(iccs) => void playIccsMove(iccs, analysisFen ?? board.fen)}/>
+            : orderedAnalysis.map((line) => <CandidateLine
             coach={candidateInsights.find((candidate) => candidate.rank === line.multipv)}
             color={analysisArrowColors[line.multipv - 1] ?? "transparent"}
             disabled={analysisIsStale}
@@ -2312,7 +2345,7 @@ export default function App() {
         <button className="tool-button" title={colorTheme === "dark" ? "切换浅色主题" : "切换深色主题"} aria-label={colorTheme === "dark" ? "切换浅色主题" : "切换深色主题"} onClick={() => void toggleColorTheme()}>{colorTheme === "dark" ? <Sun size={16}/> : <Moon size={16}/>}</button>
       </div>
 
-      <main className={`workspace layout-${desktopPreferences.layoutMode} ${libraryCollapsed ? "library-collapsed" : ""} ${candidateRailCollapsed ? "candidate-rail-collapsed" : ""} ${analysisPanelCollapsed ? "analysis-panel-collapsed" : ""}`}>
+      <main className={`workspace layout-${desktopPreferences.layoutMode} ${libraryCollapsed ? "library-collapsed" : ""} ${candidateRailCollapsed ? "candidate-rail-collapsed" : ""} ${analysisPanelCollapsed ? "analysis-panel-collapsed" : ""} ${desktopPreferences.layoutMode === "compact" && cloudBookCollapsed ? "compact-cloud-collapsed" : ""}`}>
         <aside className={`library-panel ${libraryCollapsed ? "collapsed" : ""} ${mobilePanel === "library" || mobilePanel === "settings" ? "mobile-visible" : ""} ${mobilePanel === "settings" ? "mobile-settings-mode" : ""}`}>
           <div className="pane-title">
             <strong>{libraryCollapsed ? <Library size={16}/> : "棋谱库"}</strong>
@@ -2550,7 +2583,9 @@ export default function App() {
               redShare={evaluation?.redShare}
               depthText={`${primaryAnalysis?.depth ?? "--"}`}
               timeText={primaryAnalysis?.timeMs != null ? `${(primaryAnalysis.timeMs / 1000).toFixed(1)}s` : "--"}
+              collapsed={desktopPreferences.layoutMode === "compact" && cloudBookCollapsed}
               onOpenSettings={() => chessPlatform.kind === "desktop" ? setDesktopDialog("engine") : setNotice("Web 版使用云端引擎，无本地引擎设置")}
+              onToggleCollapsed={() => setCloudBookCollapsed((collapsed) => !collapsed)}
               onPlayBookMove={(iccs) => void playIccsMove(iccs)}
               onPlayEvaluationMove={(iccs) => void playIccsMove(iccs, analysisFen ?? board.fen)}
             />

@@ -294,6 +294,7 @@ struct AnalysisLine {
     mate: Option<i32>,
     nps: Option<u64>,
     time_ms: Option<u64>,
+    hashfull: Option<u32>,
     multipv: u32,
     #[serde(default)]
     notation: Vec<String>,
@@ -1052,6 +1053,7 @@ async fn analyze_position(
                     mate: info.mate,
                     nps: info.nps,
                     time_ms: info.time_ms,
+                    hashfull: info.hashfull,
                     multipv: info.multipv,
                     notation: analysis_board
                         .chinese_pv_notation(&info.pv)
@@ -1280,6 +1282,7 @@ async fn engine_play_move(
                             mate: info.mate,
                             nps: info.nps,
                             time_ms: info.time_ms,
+                            hashfull: info.hashfull,
                             multipv: info.multipv,
                             notation: board.chinese_pv_notation(&info.pv).unwrap_or_default(),
                             pv: info.pv,
@@ -1984,6 +1987,7 @@ async fn generate_game_report_inner(
                                 mate: info.mate,
                                 nps: info.nps,
                                 time_ms: info.time_ms,
+                                hashfull: info.hashfull,
                                 multipv: 1,
                                 notation: if info.pv.is_empty() {
                                     Vec::new()
