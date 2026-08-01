@@ -385,6 +385,8 @@ button:disabled { cursor: default; opacity: .45; }
 .board-candidate-rail .pv-card-header {
   gap: 6px;
 }
+.board-candidate-rail .pv-engine-header { display: grid; grid-template-columns: minmax(0, 1fr); }
+.board-candidate-rail .pv-engine-stats { justify-content: flex-start; padding-left: 32px; }
 .board-candidate-rail .pv-title strong {
   font-size: 12px;
 }
@@ -392,11 +394,12 @@ button:disabled { cursor: default; opacity: .45; }
   font-size: 13px;
 }
 .board-candidate-rail .pv-main-row {
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr) 108px;
 }
 .board-candidate-rail .pv-actions {
   grid-template-columns: 1fr 1fr;
 }
+.board-candidate-rail .pv-actions button { min-height: 30px; padding-inline: 5px; font-size: 11px; }
 .board-candidate-rail .pv-continuation-text { margin-top: 8px; }
 .board-stage-inner {
   /* Keep the board, quality rail, and evaluation rail inside the actual free stage. */
@@ -1566,8 +1569,7 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 .pv-line.stale .pv-rank {
   background: var(--warning);
 }
-.pv-line.stale .pv-meta span:first-child,
-.pv-line.stale .pv-meta span:nth-child(3) {
+.pv-line.stale .pv-meta span {
   border-color: color-mix(in srgb, var(--warning) 72%, var(--border));
   color: var(--warning);
   background: color-mix(in srgb, var(--warning) 13%, var(--surface-1));
@@ -1578,13 +1580,16 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 }
 .pv-line.preview-active { background: color-mix(in srgb, var(--pv-color) 12%, var(--surface-1)); box-shadow: inset 4px 0 var(--pv-color), inset 0 0 0 1px color-mix(in srgb, var(--pv-color) 42%, transparent); }
 .pv-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.pv-engine-header { min-width: 0; }
 .pv-title { min-width: 0; display: flex; align-items: center; gap: 8px; }
 .pv-title > div { min-width: 0; display: grid; gap: 2px; }
 .pv-title strong { overflow: hidden; color: var(--text-primary); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .pv-title small { color: var(--text-muted); font-size: 11px; }
-.pv-score-stack { flex: none; display: grid; gap: 2px; justify-items: end; }
-.pv-score-stack strong { color: var(--red); font-size: 14px; font-family: ui-monospace, SFMono-Regular, monospace; }
-.pv-score-stack small { color: var(--text-muted); font-size: 10px; white-space: nowrap; }
+.pv-engine-stats { min-width: 0; display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 3px 8px; color: var(--text-muted); font: 10px ui-monospace, SFMono-Regular, monospace; }
+.pv-engine-stats span { white-space: nowrap; }
+.pv-engine-stats b { color: var(--text-secondary); font-size: 11px; }
+.pv-engine-stats .score,
+.pv-engine-stats .score b { color: var(--red); }
 .pv-main-row { margin-top: 7px; display: grid; grid-template-columns: minmax(0, 1fr) 136px; align-items: center; gap: 8px; }
 .pv-quick-read { min-width: 0; display: grid; gap: 5px; }
 .pv-quick-read p { margin: 0; overflow: hidden; color: var(--text-secondary); font-size: 11px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
@@ -1625,6 +1630,9 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 .pv-continuation-moves > button { cursor: pointer; }
 .pv-continuation-moves > button:hover { border-color: var(--pv-color); color: var(--text-primary); }
 .pv-continuation-moves > button.current { border: 2px solid var(--pv-color); background: color-mix(in srgb, var(--pv-color) 28%, var(--surface-2)); color: var(--text-primary); box-shadow: 0 0 0 2px color-mix(in srgb, var(--pv-color) 18%, transparent); }
+.pv-continuation-text:not(.preview-active) .pv-continuation-moves { gap: 3px 5px; }
+.pv-continuation-text:not(.preview-active) .pv-continuation-moves > span { min-height: 20px; padding: 0; border: 0; background: transparent; }
+.pv-continuation-text:not(.preview-active) .pv-continuation-moves > span:not(:last-child)::after { content: "›"; margin-left: 3px; color: var(--text-muted); font: 700 12px/1 sans-serif; }
 .pv-continuation-moves i { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; }
 .pv-continuation-moves i.red { background: #eb5a54; box-shadow: 0 0 5px rgba(235, 90, 84, .45); }
 .pv-continuation-moves i.black { background: #65b4e5; box-shadow: 0 0 5px rgba(101, 180, 229, .45); }

@@ -21,6 +21,25 @@ describe("CandidateLine", () => {
     expect(screen.getByRole("button", { name: "走候选着法 炮二平五" })).toBeTruthy();
   });
 
+  it("shows dense live engine metrics above the textual PV", () => {
+    render(<CandidateLine
+      color="#53b848"
+      fen="position-fen"
+      line={{ multipv: 1, depth: 28, scoreCp: 49, timeMs: 19_500, nps: 5_425_000, pv: ["h2e2", "h9g7"], notation: ["炮二平五", "马8进7"] }}
+      scoreText="+49"
+      sideToMove="红方"
+      onPlay={vi.fn()}
+      onPreview={vi.fn()}
+    />);
+
+    const metrics = screen.getByLabelText("候选 1 实时引擎指标");
+    expect(metrics.textContent).toContain("深度 28");
+    expect(metrics.textContent).toContain("分数 +49");
+    expect(metrics.textContent).toContain("时间 19.5s");
+    expect(metrics.textContent).toContain("NPS 5.4M");
+    expect(screen.getByLabelText("候选 1 后续走法").textContent).toContain("炮二平五");
+  });
+
   it("executes the first ICCS move against the analyzed position", () => {
     const onPlay = vi.fn();
     render(<CandidateLine

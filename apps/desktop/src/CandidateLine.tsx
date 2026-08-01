@@ -49,7 +49,7 @@ export function CandidateLine({ color, fen, line, coach, scoreText, sideToMove, 
     }));
   const coachSummary = coach?.possibility ?? `${candidateLabel}：点击预览后在棋盘手动查看后续变化。`;
   return <article className={`pv-line ${stale ? "stale" : ""} ${previewActive ? "preview-active" : ""}`} style={{ "--pv-color": color } as CSSProperties} title={`ICCS: ${line.pv.join(" ")}`}>
-    <div className="pv-card-header">
+    <div className="pv-card-header pv-engine-header">
       <div className="pv-title">
         <span className="pv-rank">{line.multipv}</span>
         <div>
@@ -57,25 +57,11 @@ export function CandidateLine({ color, fen, line, coach, scoreText, sideToMove, 
           <small>{candidateLabel} · {sideToMove}行棋{stale ? " · 旧候选" : ""}</small>
         </div>
       </div>
-      <div className="pv-score-stack">
-        <strong>{scoreText ?? "--"}</strong>
-        <small>深度 {line.depth ?? "-"} · {((line.timeMs ?? 0) / 1000).toFixed(1)}s</small>
-      </div>
-    </div>
-    <div className="pv-main-row">
-      <div className="pv-quick-read">
-        <div className="pv-meta" aria-label={`候选 ${line.multipv} 引擎信息`}>
-          <span>NPS {formatNps(line.nps)}</span>
-          <span>PV {line.pv.length}</span>
-          {stale && <span>更新中</span>}
-          {coach?.shortLine && <span>短线</span>}
-          {coach?.usesIccs && <span>ICCS</span>}
-        </div>
-        <p>{coachSummary}</p>
-      </div>
-      <div className="pv-actions">
-        <button type="button" disabled={disabled || !canPreview} className="pv-preview-button" aria-label={`预览候选 ${line.multipv}`} onClick={() => onPreview(line, fen)}><Eye size={14}/><span>预览</span></button>
-        {firstNotation && line.pv[0] && <button type="button" disabled={disabled} className="pv-play-button" aria-label={`走候选着法 ${firstNotation}`} onClick={() => onPlay(line.pv[0], fen)}><Play size={13}/><span>走棋</span></button>}
+      <div className="pv-engine-stats" aria-label={`候选 ${line.multipv} 实时引擎指标`}>
+        <span>深度 <b>{line.depth ?? "-"}</b></span>
+        <span className="score">分数 <b>{scoreText ?? "--"}</b></span>
+        <span>时间 <b>{((line.timeMs ?? 0) / 1000).toFixed(1)}s</b></span>
+        <span>NPS <b>{formatNps(line.nps)}</b></span>
       </div>
     </div>
     {compactLine.length > 0 && <div className={`pv-continuation-text ${previewActive ? "preview-active" : ""}`} aria-label={`候选 ${line.multipv} 后续走法`} title={candidatePreviewLengthText(compactLine.length)}>
@@ -95,6 +81,21 @@ export function CandidateLine({ color, fen, line, coach, scoreText, sideToMove, 
       </div>
       {!previewActive && compactLine.length < CANDIDATE_PREVIEW_HALF_MOVES && <p>{candidatePreviewLengthText(compactLine.length)}</p>}
     </div>}
+    <div className="pv-main-row">
+      <div className="pv-quick-read">
+        <div className="pv-meta" aria-label={`候选 ${line.multipv} 引擎信息`}>
+          <span>PV {line.pv.length}</span>
+          {stale && <span>更新中</span>}
+          {coach?.shortLine && <span>短线</span>}
+          {coach?.usesIccs && <span>ICCS</span>}
+        </div>
+        <p>{coachSummary}</p>
+      </div>
+      <div className="pv-actions">
+        <button type="button" disabled={disabled || !canPreview} className="pv-preview-button" aria-label={`预览候选 ${line.multipv}`} onClick={() => onPreview(line, fen)}><Eye size={14}/><span>预览</span></button>
+        {firstNotation && line.pv[0] && <button type="button" disabled={disabled} className="pv-play-button" aria-label={`走候选着法 ${firstNotation}`} onClick={() => onPlay(line.pv[0], fen)}><Play size={13}/><span>走棋</span></button>}
+      </div>
+    </div>
     {coach && <details className="pv-coach-details">
       <summary><ChevronDown size={13}/>私教讲解 / 10回合表</summary>
       <section className="pv-coach" aria-label={`候选线路 ${line.multipv} 私教讲解`}>
