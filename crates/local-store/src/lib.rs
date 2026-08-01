@@ -389,6 +389,11 @@ impl LocalStore {
         for operation in operations {
             insert_operation(&transaction, operation, false)?;
         }
+        transaction.execute(
+            "INSERT INTO sync_state (key, value) VALUES ('active_game_id', ?1)
+             ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [game.id.to_string()],
+        )?;
         transaction.commit()?;
         Ok(())
     }
@@ -1704,6 +1709,8 @@ mod tests {
     #[test]
     fn imported_game_is_rolled_back_when_any_operation_fails() {
         let mut store = LocalStore::open_in_memory().unwrap();
+        let previous_game_id = Uuid::new_v4();
+        store.set_active_game_id(previous_game_id).unwrap();
         let game_id = Uuid::new_v4();
         let root_id = Uuid::new_v4();
         let node_id = Uuid::new_v4();
@@ -1738,6 +1745,36 @@ mod tests {
         assert!(store.load_game(game_id).unwrap().is_none());
         assert!(store.load_move_nodes(game_id).unwrap().is_empty());
         assert!(store.pending_operations(10).unwrap().is_empty());
+        assert_eq!(store.active_game_id().unwrap(), Some(previous_game_id));
+    }
+
+    #[test]
+    fn imported_game_becomes_the_active_game_in_the_import_transaction() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let game_id = Uuid::new_v4();
+        let root_id = Uuid::new_v4();
+        let create = operation(game_id);
+
+        store
+            .import_game_with_operations(
+                ImportedGame {
+                    id: game_id,
+                    title: "Imported",
+                    starting_fen: xiangqi_core::STARTING_FEN,
+                    root_id,
+                    current_node_id: None,
+                    note: "",
+                    source_path: Some("/tmp/imported.pgn"),
+                    source_format: Some("pgn"),
+                    playable: true,
+                    metadata_json: "{}",
+                },
+                &[],
+                &[create],
+            )
+            .unwrap();
+
+        assert_eq!(store.active_game_id().unwrap(), Some(game_id));
     }
 
     #[test]

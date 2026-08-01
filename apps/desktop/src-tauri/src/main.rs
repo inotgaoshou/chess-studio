@@ -3227,10 +3227,6 @@ fn install_document(
             &operations,
         )
         .map_err(|error| error.to_string())?;
-    model
-        .store
-        .set_active_game_id(game_id)
-        .map_err(|error| error.to_string())?;
     model.board = board;
     model.starting_fen = document.starting_fen;
     model.tree = document.tree;

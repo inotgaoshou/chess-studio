@@ -1306,17 +1306,14 @@ export default function App() {
       await chessPlatform.stopAnalysis(true).catch(() => undefined);
     }
     setEngineStarting(true);
-    setAutosave({ status: "saving" });
     setNotice(`正在启动 Pikafish（执${side === "red" ? "红" : "黑"}）…`);
     try {
-      const result = await chessPlatform.playEngineMove({ enginePath, moveTimeMs, threads, hashMb, ponder: ponderEnabled });
+      const result = await enqueueBoardOperation(() => chessPlatform.playEngineMove({ enginePath, moveTimeMs, threads, hashMb, ponder: ponderEnabled }));
       applyBoard(result.board);
-      setAutosave({ status: "saved" });
       await loadGameReport();
       setPonderMove(result.ponder);
       setNotice(`Pikafish 已走 ${result.board.history.at(-1)?.notation ?? "一着"}${result.ponder ? ` · 预测 ${result.ponder}` : ""}`);
     } catch (error) {
-      setAutosave({ status: "draft" });
       setNotice(friendlyError(error));
       setEngineSide("none");
     } finally {
@@ -1589,8 +1586,13 @@ export default function App() {
     if (!retry) return;
     try {
       const result = await retry;
-      if (result && typeof result === "object" && "fen" in result) {
-        applyBoard(result as Partial<BoardState>);
+      if (result && typeof result === "object") {
+        if ("fen" in result) {
+          applyBoard(result as Partial<BoardState>);
+        } else if ("board" in result && result.board && typeof result.board === "object") {
+          applyBoard(result.board as Partial<BoardState>);
+          if ("ponder" in result && typeof result.ponder === "string") setPonderMove(result.ponder);
+        }
       }
       setNotice("本地草稿已重新保存");
     } catch (error) {
