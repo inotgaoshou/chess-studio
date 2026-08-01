@@ -2276,10 +2276,10 @@ fn validate_preferences(preferences: &DesktopPreferences) -> Result<(), String> 
     if !matches!(preferences.color_theme.as_str(), "light" | "dark") {
         return Err("不支持的颜色主题".into());
     }
-    if !matches!(preferences.board_skin.as_str(), "original" | "classic" | "neon" | "jade" | "imperial" | "jingdian") {
+    if !matches!(preferences.board_skin.as_str(), "original" | "classic" | "neon" | "jade" | "imperial" | "hongmu" | "jingdian" | "xinghe") {
         return Err("不支持的棋盘皮肤".into());
     }
-    if !matches!(preferences.piece_skin.as_str(), "original" | "classic" | "neon" | "jade" | "imperial" | "jingdian") {
+    if !matches!(preferences.piece_skin.as_str(), "original" | "classic" | "neon" | "jade" | "imperial" | "hongmu" | "jingdian" | "xinghe") {
         return Err("不支持的棋子皮肤".into());
     }
     if !(1..=64).contains(&preferences.threads) {
@@ -2324,6 +2324,28 @@ fn validate_preferences(preferences: &DesktopPreferences) -> Result<(), String> 
     validate_server_url(&preferences.server_url)
 }
 
+fn is_account_skin(value: &str) -> bool {
+    matches!(value, "jingdian" | "xinghe")
+}
+
+fn validate_skin_access(
+    current: &DesktopPreferences,
+    preferences: &DesktopPreferences,
+    signed_in: bool,
+) -> Result<(), String> {
+    if signed_in {
+        return Ok(());
+    }
+    let selected_locked_board =
+        is_account_skin(&preferences.board_skin) && preferences.board_skin != current.board_skin;
+    let selected_locked_piece =
+        is_account_skin(&preferences.piece_skin) && preferences.piece_skin != current.piece_skin;
+    if selected_locked_board || selected_locked_piece {
+        return Err("登录同步账号后才能使用登录专享皮肤".into());
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn get_desktop_preferences(state: State<'_, DesktopState>) -> Result<DesktopPreferences, String> {
     let mut model = state.model.lock().map_err(|_| "state lock poisoned".to_owned())?;
@@ -2345,11 +2367,7 @@ fn save_desktop_preferences(
     state: State<'_, DesktopState>,
 ) -> Result<DesktopPreferences, String> {
     validate_preferences(&preferences)?;
-    if (preferences.board_skin == "jingdian" || preferences.piece_skin == "jingdian")
-        && sync_account_dto(&state)?.status != "signedIn"
-    {
-        return Err("登录同步账号后才能使用经典雅致皮肤".into());
-    }
+    let signed_in = sync_account_dto(&state)?.status == "signedIn";
     let mut model = state
         .model
         .lock()
@@ -2358,6 +2376,7 @@ fn save_desktop_preferences(
         .store
         .desktop_preferences()
         .map_err(|error| error.to_string())?;
+    validate_skin_access(&current, &preferences, signed_in)?;
     if model
         .store
         .sync_account_binding()
@@ -3949,5 +3968,39 @@ mod tests {
             validate_preferences(&preferences).unwrap_err(),
             "后续走法必须在 2 到 20 个半回合之间"
         );
+    }
+
+    #[test]
+    fn signed_out_preferences_can_preserve_but_not_select_account_skins() {
+        let mut current = DesktopPreferences::default();
+        current.board_skin = "jingdian".into();
+        current.piece_skin = "jingdian".into();
+
+        let mut updated = current.clone();
+        updated.candidate_line_moves = 12;
+        assert!(validate_skin_access(&current, &updated, false).is_ok());
+
+        updated.board_skin = "xinghe".into();
+        assert_eq!(
+            validate_skin_access(&current, &updated, false).unwrap_err(),
+            "登录同步账号后才能使用登录专享皮肤"
+        );
+
+        let current = DesktopPreferences::default();
+        let mut updated = current.clone();
+        updated.piece_skin = "jingdian".into();
+        assert!(validate_skin_access(&current, &updated, false).is_err());
+        assert!(validate_skin_access(&current, &updated, true).is_ok());
+    }
+
+    #[test]
+    fn hongmu_skin_is_valid_and_free() {
+        let current = DesktopPreferences::default();
+        let mut updated = current.clone();
+        updated.board_skin = "hongmu".into();
+        updated.piece_skin = "hongmu".into();
+
+        assert!(validate_preferences(&updated).is_ok());
+        assert!(validate_skin_access(&current, &updated, false).is_ok());
     }
 }

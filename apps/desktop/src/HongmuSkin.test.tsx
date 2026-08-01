@@ -1,0 +1,62 @@
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { SkinShopDialog } from "./SkinShopDialog";
+import type { DesktopPreferencesDto } from "./platform";
+import { requiresSignInForSkinPatch } from "./skinAccess";
+
+afterEach(cleanup);
+
+const preferences: DesktopPreferencesDto = {
+  enginePath: "",
+  threads: 2,
+  hashMb: 256,
+  multipv: 3,
+  candidateLineMoves: 6,
+  searchMode: "time",
+  searchValue: 1500,
+  moveTimeMs: 5000,
+  ponder: false,
+  autoAnalyze: true,
+  boardSkin: "original",
+  pieceSkin: "original",
+  colorTheme: "dark",
+  libraryCollapsed: true,
+  candidateRailCollapsed: false,
+  analysisPanelCollapsed: false,
+  workspacePanel: "moves",
+  reportDepth: 20,
+  serverUrl: "http://127.0.0.1:8080",
+};
+
+describe("hongmu free skin", () => {
+  it("is available and equippable without signing in", () => {
+    const onEquip = vi.fn();
+    render(<SkinShopDialog
+      preferences={preferences}
+      signedIn={false}
+      onClose={vi.fn()}
+      onPreview={vi.fn()}
+      onEquip={onEquip}
+    />);
+
+    const card = screen.getByText("红木鎏金").closest("article")!;
+    fireEvent.click(card.querySelector("button")!);
+
+    expect(onEquip).toHaveBeenCalledWith({ boardSkin: "hongmu", pieceSkin: "original" });
+
+    fireEvent.click(screen.getByRole("button", { name: "将棋子" }));
+    fireEvent.click(screen.getByText("红木鎏金").closest("article")!.querySelector("button")!);
+    expect(onEquip).toHaveBeenLastCalledWith({ boardSkin: "original", pieceSkin: "hongmu" });
+  });
+
+  it("allows selecting hongmu while retaining an existing account skin", () => {
+    expect(requiresSignInForSkinPatch(
+      { boardSkin: "jingdian", pieceSkin: "xinghe" },
+      { boardSkin: "hongmu", pieceSkin: "xinghe" },
+    )).toBe(false);
+    expect(requiresSignInForSkinPatch(
+      { boardSkin: "original", pieceSkin: "original" },
+      { boardSkin: "hongmu", pieceSkin: "jingdian" },
+    )).toBe(true);
+  });
+});

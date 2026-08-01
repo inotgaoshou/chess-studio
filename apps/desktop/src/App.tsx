@@ -60,6 +60,7 @@ import { CANDIDATE_PREVIEW_HALF_MOVES, DEFAULT_CANDIDATE_LINE_MOVES } from "./ca
 import { AutosaveOperationQueue, autosaveLabel, type AutosaveState } from "./autosave";
 import { ManualMoveRows } from "./ManualMoveRows";
 import { CandidatePreviewSteps } from "./CandidatePreviewSteps";
+import { ACCOUNT_SKINS, requiresSignInForSkinPatch, skinAssetFolder } from "./skinAccess";
 
 
 const startingFen = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1";
@@ -190,7 +191,7 @@ function boardPoint(square: { row: number; col: number }, reversed: boolean) {
 }
 
 function pieceAsset(piece: Piece, skin: DesktopPreferencesDto["pieceSkin"]) {
-  const folder = skin === "jingdian" ? "jingdian" : "default";
+  const folder = skinAssetFolder(skin);
   return `/skins/${folder}/${piece.color === "red" ? "r" : "b"}${pieceCode[piece.kind] ?? "p"}.png`;
 }
 
@@ -329,6 +330,7 @@ export default function App() {
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [skinMenuOpen, setSkinMenuOpen] = useState(false);
   const [skinShopOpen, setSkinShopOpen] = useState(false);
+  const [skinHoverPreview, setSkinHoverPreview] = useState<Pick<DesktopPreferencesDto, "boardSkin" | "pieceSkin">>();
   const [manualExporting, setManualExporting] = useState(false);
   const [analysisHelpOpen, setAnalysisHelpOpen] = useState(false);
   const [trendCursorIndex, setTrendCursorIndex] = useState<number | undefined>();
@@ -349,12 +351,14 @@ export default function App() {
   const [trainingTasks, setTrainingTasks] = useState<TrainingTaskDto[]>([]);
   const [dialogBusy, setDialogBusy] = useState(false);
   const [online, setOnline] = useState(typeof navigator === "undefined" ? true : navigator.onLine);
-  const activeBoardSkin = syncAccount.status === "signedIn" || desktopPreferences.boardSkin !== "jingdian"
+  const activeBoardSkin = syncAccount.status === "signedIn" || !ACCOUNT_SKINS.includes(desktopPreferences.boardSkin)
     ? desktopPreferences.boardSkin
     : "original";
-  const activePieceSkin = syncAccount.status === "signedIn" || desktopPreferences.pieceSkin !== "jingdian"
+  const activePieceSkin = syncAccount.status === "signedIn" || !ACCOUNT_SKINS.includes(desktopPreferences.pieceSkin)
     ? desktopPreferences.pieceSkin
     : "original";
+  const displayedBoardSkin = skinHoverPreview?.boardSkin ?? activeBoardSkin;
+  const displayedPieceSkin = skinHoverPreview?.pieceSkin ?? activePieceSkin;
   const boardRevision = useRef(0);
   const reportExportingRef = useRef(false);
   const analysisLoadRevision = useRef(0);
@@ -738,13 +742,13 @@ export default function App() {
   }
 
   async function updateBoardSkin(patch: Pick<DesktopPreferencesDto, "boardSkin" | "pieceSkin">) {
-    if ((patch.boardSkin === "jingdian" || patch.pieceSkin === "jingdian") && syncAccount.status !== "signedIn") {
-      setNotice("登录同步账号后才能使用经典雅致皮肤");
+    if (syncAccount.status !== "signedIn" && requiresSignInForSkinPatch(desktopPreferences, patch)) {
+      setNotice("登录同步账号后才能使用登录专享皮肤");
       return;
     }
     try {
       await saveDesktopPreferencePatch(patch);
-      setSkinMenuOpen(false);
+      setSkinHoverPreview(undefined);
       setNotice("棋盘皮肤已保存");
     } catch (error) {
       setNotice(friendlyError(error));
@@ -2094,7 +2098,7 @@ export default function App() {
   }
 
   return (
-    <div className={`app-shell ${chessPlatform.kind}-shell theme-${colorTheme} board-skin-${activeBoardSkin} piece-skin-${activePieceSkin}`}>
+    <div className={`app-shell ${chessPlatform.kind}-shell theme-${colorTheme} board-skin-${displayedBoardSkin} piece-skin-${displayedPieceSkin}`}>
       <header className="titlebar">
         <div className="window-brand"><span className="brand-seal">象</span><strong>棋研</strong><small>XIANGQI STUDIO</small></div>
         <strong className="window-title">棋研工作台</strong>
@@ -2180,9 +2184,12 @@ export default function App() {
         <button className="tool-button" title="引擎设置" onClick={() => setDesktopDialog("engine")}><Settings2 size={16}/></button>
         <div className="skin-menu">
           <button className={`tool-button ${skinMenuOpen ? "active" : ""}`} title="棋盘皮肤" aria-label="棋盘皮肤" aria-expanded={skinMenuOpen} onClick={() => setSkinMenuOpen((open) => !open)}><Palette size={16}/></button>
-          {skinMenuOpen && <section className="skin-menu-popup" aria-label="棋盘皮肤设置">
-            <div><span>棋盘</span><button className={desktopPreferences.boardSkin === "original" ? "active" : ""} onClick={() => void updateBoardSkin({ boardSkin: "original", pieceSkin: desktopPreferences.pieceSkin })}>默认</button><button className={desktopPreferences.boardSkin === "classic" ? "active" : ""} onClick={() => void updateBoardSkin({ boardSkin: "classic", pieceSkin: desktopPreferences.pieceSkin })}>暖木</button></div>
-            <div><span>棋子</span><button className={desktopPreferences.pieceSkin === "original" ? "active" : ""} onClick={() => void updateBoardSkin({ boardSkin: desktopPreferences.boardSkin, pieceSkin: "original" })}>默认</button><button className={desktopPreferences.pieceSkin === "classic" ? "active" : ""} onClick={() => void updateBoardSkin({ boardSkin: desktopPreferences.boardSkin, pieceSkin: "classic" })}>暖木</button></div>
+          {skinMenuOpen && <section className="skin-menu-popup" aria-label="棋盘皮肤设置" onPointerLeave={() => setSkinHoverPreview(undefined)}>
+            <header><strong>皮肤选择</strong><button className="tool-button" title="关闭皮肤选择" aria-label="关闭皮肤选择" onClick={() => { setSkinHoverPreview(undefined); setSkinMenuOpen(false); }}><X size={15}/></button></header>
+            <div><span>棋盘</span><button className={desktopPreferences.boardSkin === "original" ? "active" : ""} onPointerEnter={() => setSkinHoverPreview({ boardSkin: "original", pieceSkin: activePieceSkin })} onClick={() => void updateBoardSkin({ boardSkin: "original", pieceSkin: desktopPreferences.pieceSkin })}><i className="skin-choice-preview board original"/><b>原始</b></button><button className={desktopPreferences.boardSkin === "classic" ? "active" : ""} onPointerEnter={() => setSkinHoverPreview({ boardSkin: "classic", pieceSkin: activePieceSkin })} onClick={() => void updateBoardSkin({ boardSkin: "classic", pieceSkin: desktopPreferences.pieceSkin })}><i className="skin-choice-preview board classic"/><b>暖木</b></button></div>
+            <div><span>棋子</span><button className={desktopPreferences.pieceSkin === "original" ? "active" : ""} onPointerEnter={() => setSkinHoverPreview({ boardSkin: activeBoardSkin, pieceSkin: "original" })} onClick={() => void updateBoardSkin({ boardSkin: desktopPreferences.boardSkin, pieceSkin: "original" })}><i className="skin-choice-preview piece original">将</i><b>原始</b></button><button className={desktopPreferences.pieceSkin === "classic" ? "active" : ""} onPointerEnter={() => setSkinHoverPreview({ boardSkin: activeBoardSkin, pieceSkin: "classic" })} onClick={() => void updateBoardSkin({ boardSkin: desktopPreferences.boardSkin, pieceSkin: "classic" })}><i className="skin-choice-preview piece classic">将</i><b>暖木</b></button></div>
+            <div className="skin-menu-featured"><span>红木鎏金</span><button className={desktopPreferences.boardSkin === "hongmu" ? "active" : ""} onPointerEnter={() => setSkinHoverPreview({ boardSkin: "hongmu", pieceSkin: activePieceSkin })} onClick={() => void updateBoardSkin({ boardSkin: "hongmu", pieceSkin: desktopPreferences.pieceSkin })}><i className="skin-choice-preview board hongmu"/><b>棋盘</b></button><button className={desktopPreferences.pieceSkin === "hongmu" ? "active" : ""} onPointerEnter={() => setSkinHoverPreview({ boardSkin: activeBoardSkin, pieceSkin: "hongmu" })} onClick={() => void updateBoardSkin({ boardSkin: desktopPreferences.boardSkin, pieceSkin: "hongmu" })}><i className="skin-choice-preview piece hongmu">帅</i><b>棋子</b></button></div>
+            {syncAccount.status === "signedIn" && <><div className="skin-menu-featured"><span>经典雅致</span><button className={desktopPreferences.boardSkin === "jingdian" ? "active" : ""} onPointerEnter={() => setSkinHoverPreview({ boardSkin: "jingdian", pieceSkin: activePieceSkin })} onClick={() => void updateBoardSkin({ boardSkin: "jingdian", pieceSkin: desktopPreferences.pieceSkin })}><i className="skin-choice-preview board jingdian"/><b>棋盘</b></button><button className={desktopPreferences.pieceSkin === "jingdian" ? "active" : ""} onPointerEnter={() => setSkinHoverPreview({ boardSkin: activeBoardSkin, pieceSkin: "jingdian" })} onClick={() => void updateBoardSkin({ boardSkin: desktopPreferences.boardSkin, pieceSkin: "jingdian" })}><i className="skin-choice-preview piece jingdian"/><b>棋子</b></button></div><div className="skin-menu-featured"><span>霓虹星河</span><button className={desktopPreferences.boardSkin === "xinghe" ? "active" : ""} onPointerEnter={() => setSkinHoverPreview({ boardSkin: "xinghe", pieceSkin: activePieceSkin })} onClick={() => void updateBoardSkin({ boardSkin: "xinghe", pieceSkin: desktopPreferences.pieceSkin })}><i className="skin-choice-preview board xinghe"/><b>棋盘</b></button><button className={desktopPreferences.pieceSkin === "xinghe" ? "active" : ""} onPointerEnter={() => setSkinHoverPreview({ boardSkin: activeBoardSkin, pieceSkin: "xinghe" })} onClick={() => void updateBoardSkin({ boardSkin: desktopPreferences.boardSkin, pieceSkin: "xinghe" })}><i className="skin-choice-preview piece xinghe">将</i><b>棋子</b></button></div></>}
             <button className="skin-shop-launch" onClick={() => { setSkinMenuOpen(false); setSkinShopOpen(true); }}>打开装扮坊</button>
           </section>}
         </div>
@@ -2272,10 +2279,10 @@ export default function App() {
                     aria-label={`${squareToIccs(row, col)}${piece ? ` ${piece.color === "red" ? "红" : "黑"}${piece.label}` : ""}`}
                   >
                     {piece && <>
-                      <img src={pieceAsset(piece, activePieceSkin)} alt="" draggable={false} />
+                      <img src={pieceAsset(piece, displayedPieceSkin)} alt="" draggable={false} />
                       <span className="board-piece-label" aria-hidden="true">{piece.label}</span>
                     </>}
-                    {isSelected && <img className="selection-mask" src="/skins/default/mask2.png" alt="" />}
+                    {isSelected && <img className="selection-mask" src={displayedBoardSkin === "xinghe" || displayedBoardSkin === "hongmu" ? `/skins/${displayedBoardSkin}/mask2.png` : "/skins/default/mask2.png"} alt="" />}
                     {!candidatePreview && isLastTo && board.currentNode === lastMove?.id && overviewReport?.grade && overviewReport.score != null && (
                       <span
                         className={`board-move-grade grade-${overviewReport.grade}`}
@@ -2633,7 +2640,7 @@ export default function App() {
         </aside>
       </main>
       {skinShopOpen && (
-        <SkinShopDialog preferences={desktopPreferences} signedIn={syncAccount.status === "signedIn"} onClose={() => setSkinShopOpen(false)} onEquip={(patch) => void updateBoardSkin(patch)}/>
+        <SkinShopDialog preferences={desktopPreferences} signedIn={syncAccount.status === "signedIn"} onClose={() => { setSkinHoverPreview(undefined); setSkinShopOpen(false); }} onPreview={setSkinHoverPreview} onEquip={(patch) => void updateBoardSkin(patch)}/>
       )}
       {chessPlatform.kind === "desktop" && desktopPreferences.cloudBookEnabled && cloudBookVisible && <aside
         className={`cloud-book-float ${cloudBookCollapsed ? "collapsed" : ""}`}
@@ -2704,12 +2711,12 @@ export default function App() {
               <div className="editor-board" aria-label="局面编辑棋盘">
                 {cells.map(({ row, col }) => {
                   const piece = editorPieceMap.get(`${row}-${col}`);
-                  return <button key={`${row}-${col}`} onClick={() => editSquare(row, col)} aria-label={`编辑 ${squareToIccs(row, col)}`}>{piece && <img src={pieceAsset(piece, activePieceSkin)} alt={piece.label}/>}</button>;
+                  return <button key={`${row}-${col}`} onClick={() => editSquare(row, col)} aria-label={`编辑 ${squareToIccs(row, col)}`}>{piece && <img src={pieceAsset(piece, displayedPieceSkin)} alt={piece.label}/>}</button>;
                 })}
               </div>
               <aside className="editor-tools">
                 <div className="piece-palette">
-                  {editorPalette.map((piece) => <button key={`${piece.color}-${piece.kind}`} className={editorPiece?.color === piece.color && editorPiece.kind === piece.kind ? "active" : ""} onClick={() => setEditorPiece(piece)}><img src={pieceAsset(piece, activePieceSkin)} alt={`${piece.color === "red" ? "红" : "黑"}${piece.label}`}/></button>)}
+                  {editorPalette.map((piece) => <button key={`${piece.color}-${piece.kind}`} className={editorPiece?.color === piece.color && editorPiece.kind === piece.kind ? "active" : ""} onClick={() => setEditorPiece(piece)}><img src={pieceAsset(piece, displayedPieceSkin)} alt={`${piece.color === "red" ? "红" : "黑"}${piece.label}`}/></button>)}
                   <button className={editorPiece == null ? "active erase" : "erase"} onClick={() => setEditorPiece(null)}><Trash2 size={18}/><span>删除</span></button>
                 </div>
                 <div className="editor-actions">

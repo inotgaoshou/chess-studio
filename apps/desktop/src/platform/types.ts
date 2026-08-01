@@ -219,8 +219,8 @@ export type DesktopPreferencesDto = {
   analysisPanelCollapsed: boolean;
   workspacePanel: "moves" | "analysis" | "trend" | "summary" | "report";
   colorTheme: "light" | "dark";
-  boardSkin: "original" | "classic" | "neon" | "jade" | "imperial" | "jingdian";
-  pieceSkin: "original" | "classic" | "neon" | "jade" | "imperial" | "jingdian";
+  boardSkin: "original" | "classic" | "neon" | "jade" | "imperial" | "hongmu" | "jingdian" | "xinghe";
+  pieceSkin: "original" | "classic" | "neon" | "jade" | "imperial" | "hongmu" | "jingdian" | "xinghe";
   reportDepth: number;
   xqbBookPaths?: string[];
   disabledXqbBookPaths?: string[];
