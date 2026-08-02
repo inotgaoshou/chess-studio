@@ -78,6 +78,73 @@ describe("manualTrackModel", () => {
     expect(model.rows[0].fullmove).toBe(1);
   });
 
+  it("keeps a branchless mainline vertical regardless of its length", () => {
+    const r3 = move("r3", "兵七进一", "红方");
+    const b2 = move("b2", "炮8平5", "黑方");
+    const longLine: ManualTreeNode[] = [{
+      move: red1,
+      children: [{
+        move: black1,
+        children: [{
+          move: red2,
+          children: [{
+            move: b2,
+            children: [{ move: r3, children: [] }],
+          }],
+        }],
+      }],
+    }];
+
+    const model = buildManualBranchTreeModel(longLine, [red1, black1, red2, b2, r3], "r3", {
+      collapsed: new Set(),
+      expanded: new Set(),
+      qualityByMoveId: new Map(),
+      formatScore: () => "",
+    });
+
+    expect(model.rows.map((row) => row.depth)).toEqual([0, 0, 0, 0, 0]);
+  });
+
+  it("keeps variation continuations in their branch lane until another fork", () => {
+    const variationStart = move("variation-start", "炮2平5", "红方", false);
+    const variationReply = move("variation-reply", "马8进7", "黑方", true);
+    const variationContinue = move("variation-continue", "车九平八", "红方", true);
+    const nestedVariation = move("nested-variation", "兵七进一", "红方", false);
+    const nestedContinue = move("nested-continue", "炮8平5", "黑方", true);
+    const nestedTree: ManualTreeNode[] = [{
+      move: red1,
+      children: [{
+        move: black1,
+        children: [
+          { move: red2, children: [] },
+          {
+            move: variationStart,
+            children: [{
+              move: variationReply,
+              children: [
+                { move: variationContinue, children: [] },
+                { move: nestedVariation, children: [{ move: nestedContinue, children: [] }] },
+              ],
+            }],
+          },
+        ],
+      }],
+    }];
+
+    const model = buildManualBranchTreeModel(nestedTree, [red1, black1, variationStart, variationReply], "variation-reply", {
+      collapsed: new Set(),
+      expanded: new Set(["variation-reply"]),
+      qualityByMoveId: new Map(),
+      formatScore: () => "",
+    });
+
+    expect(model.rows.find((row) => row.nodeId === "variation-start")?.depth).toBe(1);
+    expect(model.rows.find((row) => row.nodeId === "variation-reply")?.depth).toBe(1);
+    expect(model.rows.find((row) => row.nodeId === "variation-continue")?.depth).toBe(1);
+    expect(model.rows.find((row) => row.nodeId === "nested-variation")?.depth).toBe(2);
+    expect(model.rows.find((row) => row.nodeId === "nested-continue")?.depth).toBe(2);
+  });
+
   it("builds branch comparison from existing tree only", () => {
     const comparison = buildBranchComparisonModel("b1", "v1", tree, {
       qualityByMoveId: new Map(),

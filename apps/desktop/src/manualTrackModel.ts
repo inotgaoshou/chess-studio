@@ -272,10 +272,10 @@ export function buildManualBranchTreeModel(
     }
 
     if (mainChild) {
-      const keepsMainTrunk = node.move.isMainline && depth === 0 && mainChild.move.isMainline;
-      const nextDepth = keepsMainTrunk ? 0 : depth + 1;
-      const nextAncestorContinues = keepsMainTrunk ? [] : ancestorContinues.slice();
-      walk(mainChild, nextDepth, ply + 1, 0, 1, nextAncestorContinues);
+      // A line only moves right when it leaves its parent's main continuation.
+      // Continuing either the root line or an already-indented variation keeps
+      // its lane, so long variations remain readable instead of drifting right.
+      walk(mainChild, depth, ply + 1, 0, 1, ancestorContinues.slice());
     }
   }
 

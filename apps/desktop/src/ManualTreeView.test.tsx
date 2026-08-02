@@ -60,6 +60,34 @@ describe("ManualTreeView", () => {
     expect(screen.getByText("当前局面")).toBeTruthy();
   });
 
+  it("keeps continuations vertical and indents only actual variations", () => {
+    const root = move("root", "炮二平五");
+    const reply = move("reply", "马8进7");
+    const continuation = move("continuation", "马二进三");
+    const alternate = move("alternate", "车8进6", false);
+    const alternateReply = move("alternate-reply", "炮二平五");
+    renderTree({
+      nodes: [{
+        move: root,
+        children: [{
+          move: reply,
+          children: [
+            { move: continuation, children: [] },
+            { move: alternate, children: [{ move: alternateReply, children: [] }] },
+          ],
+        }],
+      }],
+      activePath: new Set(["root", "reply", "alternate", "alternate-reply"]),
+      currentNode: "alternate-reply",
+    });
+
+    expect(screen.getByTestId("tree-node-root").getAttribute("data-depth")).toBe("0");
+    expect(screen.getByTestId("tree-node-reply").getAttribute("data-depth")).toBe("0");
+    expect(screen.getByTestId("tree-node-continuation").getAttribute("data-depth")).toBe("0");
+    expect(screen.getByTestId("tree-node-alternate").getAttribute("data-depth")).toBe("1");
+    expect(screen.getByTestId("tree-node-alternate-reply").getAttribute("data-depth")).toBe("1");
+  });
+
   it("delegates collapsing and edit actions to the owning workspace", () => {
     const { toggle, remove } = renderTree({ editing: true });
     fireEvent.click(screen.getAllByTitle("收起后续分支")[0]);

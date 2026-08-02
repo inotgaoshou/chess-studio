@@ -75,8 +75,8 @@ const COMPACT_PANEL_RETURN_EVENT = "compact-panel-return";
 const BOARD_NAVIGATED_EVENT = "board-navigated";
 const ENGINE_ANALYSIS_SNAPSHOT_KEY = "xiangqi:engine-analysis-snapshot";
 const ENGINE_ANALYSIS_CHANNEL = "xiangqi:engine-analysis";
-const COMPACT_ENGINE_LINE_MIN_MOVES = 5;
-const COMPACT_ENGINE_LINE_MAX_MOVES = 10;
+const COMPACT_ENGINE_LINE_MIN_MOVES = 2;
+const COMPACT_ENGINE_LINE_MAX_MOVES = CANDIDATE_PREVIEW_HALF_MOVES;
 const DEFAULT_BRANCH_ARROW_COLOR = "#2f80ed";
 const startingFen = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1";
 type EngineAnalysisGroup = { fen: string; name: string; lines: AnalysisLine[]; error?: string };
@@ -937,6 +937,7 @@ export default function App() {
         timeText: line.timeMs != null ? `${(line.timeMs / 1000).toFixed(1)}s` : "--",
         npsText: formatNps(line.nps),
         hfText: formatHashfull(line.hashfull),
+        lineLengthText: `${lineMoves.length}/${lineMoveLimit} 着`,
         lineText: lineMoves.length ? lineMoves.join(" ") : "暂无推荐着法",
         disabled: analysisIsStale,
         stale: analysisIsStale,

@@ -200,9 +200,15 @@ function BranchTreeRow({ row, editing, onNavigate, onMakeMainline, onRemove, onT
     data-current-node={row.active ? "true" : undefined}
     data-depth={row.depth}
   >
-    <span className="manual-branch-tree-turn" title={`第 ${row.fullmove} 回合，第 ${row.ply + 1} 个半回合`}>
+    <button
+      type="button"
+      className="manual-branch-tree-turn"
+      onClick={() => onNavigate(row.nodeId)}
+      title={`跳转到第 ${row.fullmove} 回合，第 ${row.ply + 1} 个半回合`}
+      aria-label={`跳转到第 ${row.fullmove} 回合，第 ${row.ply + 1} 个半回合：${row.label}`}
+    >
       {row.move.movedBy === "红方" ? `${row.fullmove}.` : "…"}
-    </span>
+    </button>
     <span className="manual-branch-tree-gutter" aria-hidden="true" style={{ "--depth": row.depth } as CSSProperties}>
       {Array.from({ length: row.depth }, (_, index) => <i key={index} className={row.ancestorContinues[index] ? "continues" : ""}/>)}
       <em className={row.isLastSibling ? "last" : "mid"}/>

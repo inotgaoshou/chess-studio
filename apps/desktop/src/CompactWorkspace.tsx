@@ -31,6 +31,7 @@ export type CompactEngineAnalysisRow = {
   timeText: string;
   npsText: string;
   hfText: string;
+  lineLengthText?: string;
   lineText: string;
   disabled?: boolean;
   stale?: boolean;
@@ -88,6 +89,7 @@ export function CompactEngineAnalysisList({ busy, rows, onPlayMove }: EngineList
             <small>时:{row.timeText}</small>
             <small>NPS:{row.npsText}</small>
             <small>HF:{row.hfText}</small>
+            {row.lineLengthText && <small>后续:{row.lineLengthText}</small>}
             {row.sourceText && <small className="compact-engine-source">{row.sourceText}</small>}
           </span>
           <span className="compact-engine-line">{row.lineText}</span>

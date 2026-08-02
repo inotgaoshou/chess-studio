@@ -64,6 +64,14 @@ describe("ManualTrackView", () => {
     expect(onViewModeChange).toHaveBeenCalledWith("tree");
   });
 
+  it("navigates to a node when its move number is clicked", () => {
+    const { onNavigate } = renderTrack();
+
+    fireEvent.click(screen.getByRole("button", { name: "跳转到第 1 回合，第 2 个半回合：马8进7" }));
+
+    expect(onNavigate).toHaveBeenCalledWith("b1");
+  });
+
   it("opens a branch comparison from the branch preview", () => {
     renderTrack();
 
