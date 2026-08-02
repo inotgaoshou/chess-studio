@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { webDatabase, type SyncOperation, type WebGameRecord } from "./indexedDb";
-import { BUILTIN_ENGINE_PATH } from "./types";
+import { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH } from "./types";
 import type { AnalysisLine, AnalysisOptions, BoardState, ChessPlatform, CloudBookCandidate, DesktopPreferencesDto, EngineMoveResult, EnginePlayOptions, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, ExportFormat, GameReportDatasetDto, GameReportOptionsDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, PreviewLineStep, ReplayExportScope, SubscriptionDto, SyncAccountDto, SyncResult, TrainingTaskDto } from "./types";
 
 type WebGameInstance = {
@@ -16,6 +16,13 @@ type WebGameInstance = {
   setMainline(nodeId: string): string;
   deleteNode(nodeId: string): string;
   applyOperation(kind: string, payloadJson: string): string;
+};
+type WebManualFile = {
+  format: "xiangqi-assistant";
+  version: 1;
+  title: string;
+  note: string;
+  snapshot: string;
 };
 type WebCoreModule = {
   default(): Promise<unknown>;
@@ -39,6 +46,49 @@ type WireSyncOperation = Omit<SyncOperation, "kind"> & {
   game_id?: string;
   created_at?: string;
 };
+
+const webManualFileExtension = "xqjson";
+const webManualMimeType = "application/vnd.xiangqi-assistant+json";
+
+function downloadWebManual(filename: string, contents: string) {
+  const blob = new Blob([contents], { type: webManualMimeType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function selectWebManualFile(): Promise<File | undefined> {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = `.${webManualFileExtension},application/json`;
+    input.addEventListener("change", () => resolve(input.files?.[0]), { once: true });
+    input.addEventListener("cancel", () => resolve(undefined), { once: true });
+    input.click();
+  });
+}
+
+function safeManualFilename(title: string) {
+  const normalized = title.replace(/[\\/:*?"<>|\x00-\x1f]/g, "_").trim().slice(0, 80);
+  return `${normalized || "未命名棋谱"}.${webManualFileExtension}`;
+}
+
+function parseWebManualFile(contents: string): WebManualFile {
+  const value = JSON.parse(contents) as Partial<WebManualFile>;
+  if (value.format !== "xiangqi-assistant" || value.version !== 1 || typeof value.snapshot !== "string") {
+    throw new Error("不是可打开的象棋研习棋谱文件");
+  }
+  return {
+    format: "xiangqi-assistant",
+    version: 1,
+    title: typeof value.title === "string" && value.title.trim() ? value.title : "导入棋谱",
+    note: typeof value.note === "string" ? value.note : "",
+    snapshot: value.snapshot,
+  };
+}
 
 function normalizeSyncOperation(value: WireSyncOperation): SyncOperation | undefined {
   const opId = value.opId ?? value.op_id;
@@ -71,8 +121,8 @@ class DesktopPlatform implements ChessPlatform {
     const path = await open({
       multiple: false,
       directory: false,
-      defaultPath: currentPath && currentPath !== BUILTIN_ENGINE_PATH ? currentPath : undefined,
-      title: "选择 Pikafish 可执行文件",
+      defaultPath: currentPath && currentPath !== BUILTIN_ENGINE_PATH && currentPath !== BUILTIN_FAIRY_ENGINE_PATH ? currentPath : undefined,
+      title: "选择 UCI/UCCI 象棋引擎可执行文件",
     });
     return typeof path === "string" ? path : undefined;
   }
@@ -114,12 +164,30 @@ class DesktopPlatform implements ChessPlatform {
     if (!path) return undefined;
     return invoke<string>("export_document_file", { path, format });
   }
+  async exportManualPdf(title: string) {
+    const safeTitle = title.replace(/[\\/:*?"<>|\x00-\x1f]/g, "_").trim().slice(0, 80) || "未命名棋谱";
+    const path = await save({ defaultPath: `${safeTitle}-棋谱.pdf`, filters: [{ name: "PDF 棋谱", extensions: ["pdf"] }] });
+    if (!path) return undefined;
+    return invoke<string>("export_manual_pdf", { path });
+  }
   async exportReplayGif(title: string, scope: ReplayExportScope) {
     const safeTitle = title.replace(/[\\/:*?"<>|\x00-\x1f]/g, "_").trim().slice(0, 80) || "未命名棋谱";
     const suffix = scope === "currentSelection" ? "当前分支回放" : "完整主线回放";
     const path = await save({ defaultPath: `${safeTitle}-${suffix}.gif`, filters: [{ name: "GIF 动态棋谱", extensions: ["gif"] }] });
     if (!path) return undefined;
     return invoke<string>("export_replay_gif", { path, scope });
+  }
+  async exportMindMapSvg(title: string, svg: string) {
+    const safeTitle = title.replace(/[\\/:*?"<>|\x00-\x1f]/g, "_").trim().slice(0, 80) || "未命名棋谱";
+    const path = await save({ defaultPath: `${safeTitle}-变招图.svg`, filters: [{ name: "SVG 变招图", extensions: ["svg"] }] });
+    if (!path) return undefined;
+    return invoke<string>("export_mind_map_svg", { path, svg });
+  }
+  async exportTextFile(title: string, contents: string) {
+    const safeTitle = title.replace(/[\\/:*?"<>|\x00-\x1f]/g, "_").trim().slice(0, 80) || "未命名棋谱";
+    const path = await save({ defaultPath: `${safeTitle}.txt`, filters: [{ name: "文本文件", extensions: ["txt"] }] });
+    if (!path) return undefined;
+    return invoke<string>("export_text_file", { path, contents });
   }
   async pasteDocument() { return invoke<Partial<BoardState>>("import_text", { text: await readText() }); }
   updateGameMetadata(title: string, note: string) { return invoke<Partial<BoardState>>("update_game_metadata", { title, note }); }
@@ -132,6 +200,9 @@ class DesktopPlatform implements ChessPlatform {
   analyze(options: AnalysisOptions) {
     return invoke<AnalysisLine[]>("analyze_position", {
       enginePath: options.enginePath,
+      engineId: options.engineId ?? null,
+      engineName: options.engineName ?? null,
+      analysisSessionId: options.analysisSessionId ?? null,
       fen: options.fen,
       searchMode: options.searchMode,
       searchValue: options.searchValue,
@@ -251,14 +322,72 @@ class WebPlatform implements ChessPlatform {
   async loginSyncAccount(): Promise<SyncAccountDto> { throw new Error("Web 端账号菜单不在本阶段开放"); }
   async logoutSyncAccount(): Promise<SyncAccountDto> { throw new Error("Web 端账号菜单不在本阶段开放"); }
   async unbindSyncAccount(): Promise<SyncAccountDto> { throw new Error("Web 端账号菜单不在本阶段开放"); }
-  async openDocument(): Promise<Partial<BoardState> | undefined> { throw new Error("Web 端暂不支持原生文件对话框"); }
+  async openDocument(): Promise<Partial<BoardState> | undefined> {
+    const file = await selectWebManualFile();
+    if (!file) return undefined;
+    const document = parseWebManualFile(await file.text());
+    const module = await this.core();
+    this.game = module.WebGame.importJson(document.snapshot);
+    this.gameId = crypto.randomUUID();
+    const state = this.state();
+    await webDatabase.saveGame({
+      id: this.gameId,
+      title: document.title,
+      note: document.note,
+      snapshot: this.requireGame().exportJson(),
+      fen: state.fen,
+      updatedAt: new Date().toISOString(),
+    }, true);
+    await this.enqueue("create_game", this.gameId, {
+      title: document.title,
+      fen: state.fen,
+      rootId: this.requireGame().rootId(),
+    });
+    return this.scoredState(state);
+  }
   async importXqbOpeningBook(): Promise<Partial<BoardState> | undefined> { throw new Error("Web 端暂不支持本地 XQB 开局库"); }
-  async saveDocument(): Promise<string | undefined> { throw new Error("Web 端暂不支持原生文件保存"); }
+  async saveDocument(): Promise<string | undefined> {
+    const record = await webDatabase.game(this.gameId);
+    const title = record?.title ?? "未命名棋谱";
+    const filename = safeManualFilename(title);
+    const document: WebManualFile = {
+      format: "xiangqi-assistant",
+      version: 1,
+      title,
+      note: record?.note ?? "",
+      snapshot: this.requireGame().exportJson(),
+    };
+    downloadWebManual(filename, JSON.stringify(document, null, 2));
+    return filename;
+  }
   copyPosition(fen: string) { return navigator.clipboard.writeText(fen); }
   async copyGame() { throw new Error("Web 端棋谱文本导出将在后续版本开放"); }
   async copyExport() { throw new Error("Web 端暂不支持桌面棋谱导出"); }
   async exportManualFile(_format: ExportFormat, _title: string): Promise<string | undefined> { throw new Error("Web 端暂不支持桌面棋谱文件导出"); }
+  async exportManualPdf(): Promise<string | undefined> { throw new Error("Web 端暂不支持桌面棋谱 PDF 导出"); }
   async exportReplayGif(_title: string, _scope: ReplayExportScope): Promise<string | undefined> { throw new Error("Web 端暂不支持桌面动态图导出"); }
+  async exportMindMapSvg(title: string, svg: string): Promise<string | undefined> {
+    const safeTitle = title.replace(/[\\/:*?"<>|\x00-\x1f]/g, "_").trim().slice(0, 80) || "未命名棋谱";
+    const blob = new Blob([svg], { type: "image/svg+xml" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${safeTitle}-变招图.svg`;
+    link.click();
+    URL.revokeObjectURL(url);
+    return link.download;
+  }
+  async exportTextFile(title: string, contents: string): Promise<string | undefined> {
+    const safeTitle = title.replace(/[\\/:*?"<>|\x00-\x1f]/g, "_").trim().slice(0, 80) || "未命名棋谱";
+    const blob = new Blob([contents], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${safeTitle}.txt`;
+    link.click();
+    URL.revokeObjectURL(url);
+    return link.download;
+  }
   async pasteDocument(): Promise<Partial<BoardState>> { throw new Error("Web 端棋谱粘贴将在后续版本开放"); }
   async updateGameMetadata(): Promise<Partial<BoardState>> { throw new Error("Web 端棋局元数据编辑将在后续版本开放"); }
   async reorderBranches(): Promise<Partial<BoardState>> { throw new Error("Web 端变招排序将在后续版本开放"); }
@@ -528,5 +657,5 @@ class WebPlatform implements ChessPlatform {
 
 const tauriAvailable = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 export const chessPlatform: ChessPlatform = tauriAvailable ? new DesktopPlatform() : new WebPlatform();
-export { BUILTIN_ENGINE_PATH } from "./types";
-export type { AnalysisLine, AnalysisOptions, BoardState, BranchCoachInsightDto, ChessPlatform, CloudBookCandidate, DesktopPreferencesDto, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, EngineRuntimeState, ExportFormat, GameReportDatasetDto, GameReportOptionsDto, GameReportPositionDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, LegacySkinId, MoveCoachInsightDto, MoveItem, OpeningBookHitDto, Piece, PreviewLineStep, QualityGrade, ReplayExportScope, ReportPhase, ReportSidePresentationDto, Side, SkinFolder, SkinId, SubscriptionDto, SyncAccountDto, SyncResult, TrainingTaskDto, WorkspaceLayoutMode } from "./types";
+export { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH } from "./types";
+export type { AnalysisLine, AnalysisOptions, BoardState, BranchCoachInsightDto, ChessPlatform, CloudBookCandidate, DesktopPreferencesDto, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, EngineRuntimeState, ExportFormat, GameReportDatasetDto, GameReportOptionsDto, GameReportPositionDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, LegacySkinId, ManualTreeNode, ManualViewMode, MoveCoachInsightDto, MoveItem, OpeningBookHitDto, Piece, PreviewLineStep, QualityGrade, ReplayExportScope, ReportPhase, ReportSidePresentationDto, Side, SkinFolder, SkinId, SubscriptionDto, SyncAccountDto, SyncResult, TrainingTaskDto, WorkspaceLayoutMode } from "./types";

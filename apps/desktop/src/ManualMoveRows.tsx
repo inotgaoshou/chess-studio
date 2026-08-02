@@ -7,6 +7,7 @@ type MoveQuality = { score?: number; grade?: QualityGrade };
 type Props = {
   history: MoveItem[];
   continuation: MoveItem[];
+  siblingBranches?: MoveItem[];
   currentNode?: string;
   qualityByMoveId: ReadonlyMap<string, MoveQuality>;
   activeMoveRef?: Ref<HTMLButtonElement>;
@@ -14,11 +15,12 @@ type Props = {
   onNavigate(nodeId: string): void;
 };
 
-function MoveRow({ move, number, current, continuation, quality, activeMoveRef, formatScore, onNavigate }: {
+function MoveRow({ move, number, current, continuation, branchLabel, quality, activeMoveRef, formatScore, onNavigate }: {
   move: MoveItem;
   number: number;
   current: boolean;
   continuation: boolean;
+  branchLabel?: string;
   quality?: MoveQuality;
   activeMoveRef?: Ref<HTMLButtonElement>;
   formatScore(move: MoveItem): string;
@@ -26,7 +28,7 @@ function MoveRow({ move, number, current, continuation, quality, activeMoveRef, 
 }) {
   return <button
     ref={current ? activeMoveRef : undefined}
-    className={`move-table-row ${continuation ? "continuation" : ""} ${quality?.grade ? `grade-${quality.grade}` : ""} ${current ? "active" : ""}`}
+    className={`move-table-row ${continuation ? "continuation" : ""} ${branchLabel ? "branch" : ""} ${quality?.grade ? `grade-${quality.grade}` : ""} ${current ? "active" : ""}`}
     aria-current={current ? "step" : undefined}
     role="row"
     title={`${continuation ? "后续保留 · " : ""}${move.movedBy} · ICCS ${move.iccs}${quality?.score != null ? ` · 质量 ${quality.score} 分 ${quality.grade}` : ""}`}
@@ -38,15 +40,19 @@ function MoveRow({ move, number, current, continuation, quality, activeMoveRef, 
       <strong>{move.notation}</strong>
       {!continuation && quality?.grade && <em className={`move-quality-mini grade-${quality.grade}`}>{quality.grade}</em>}
       {move.comment && <MessageSquare className="comment-marker" size={11}/>}
-      <small className={current ? "current-marker" : undefined}>{current ? "当前" : continuation ? "后续保留" : move.isMainline ? "主线" : ""}</small>
+      <small className={current ? "current-marker" : undefined}>{branchLabel ? `${branchLabel}${current ? " · 当前" : ""}` : current ? "当前" : continuation ? "后续保留" : move.isMainline ? "主线" : ""}</small>
     </span>
     <span role="cell" className={move.mate != null ? "mate-score" : ""}>{quality?.score != null ? `${quality.score}分` : formatScore(move)}</span>
   </button>;
 }
 
-export function ManualMoveRows({ history, continuation, currentNode, qualityByMoveId, activeMoveRef, formatScore, onNavigate }: Props) {
+export function ManualMoveRows({ history, continuation, siblingBranches = [], currentNode, qualityByMoveId, activeMoveRef, formatScore, onNavigate }: Props) {
+  const currentMove = history.at(-1);
+  const hasSiblingBranches = !!currentMove && siblingBranches.length > 1 && siblingBranches.some((move) => move.id === currentMove.id);
+  const visibleHistory = hasSiblingBranches ? history.slice(0, -1) : history;
+  let variationIndex = 0;
   return <>
-    {history.map((move, index) => <MoveRow
+    {visibleHistory.map((move, index) => <MoveRow
       activeMoveRef={activeMoveRef}
       continuation={false}
       current={currentNode === move.id}
@@ -57,6 +63,21 @@ export function ManualMoveRows({ history, continuation, currentNode, qualityByMo
       onNavigate={onNavigate}
       quality={qualityByMoveId.get(move.id)}
     />)}
+    {hasSiblingBranches && siblingBranches.map((move) => {
+      const branchLabel = move.isMainline ? "主线" : `分支 ${++variationIndex}`;
+      return <MoveRow
+        activeMoveRef={currentNode === move.id ? activeMoveRef : undefined}
+        branchLabel={branchLabel}
+        continuation={false}
+        current={currentNode === move.id}
+        formatScore={formatScore}
+        key={`branch-${move.id}`}
+        move={move}
+        number={history.length}
+        onNavigate={onNavigate}
+        quality={qualityByMoveId.get(move.id)}
+      />;
+    })}
     {continuation.map((move, index) => <MoveRow
       continuation
       current={false}

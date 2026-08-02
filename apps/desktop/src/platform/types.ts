@@ -13,6 +13,10 @@ export type MoveItem = {
   comment: string;
   isMainline: boolean;
 };
+export type ManualTreeNode = {
+  move: MoveItem;
+  children: ManualTreeNode[];
+};
 export type BoardState = {
   fen: string;
   rootSideToMove: Side;
@@ -24,6 +28,8 @@ export type BoardState = {
   history: MoveItem[];
   continuation: MoveItem[];
   branches: MoveItem[];
+  siblingBranches?: MoveItem[];
+  manualTree?: ManualTreeNode[];
   currentNode?: string;
   title: string;
   note: string;
@@ -75,6 +81,9 @@ export type PreviewLineStep = {
 };
 export type AnalysisOptions = {
   enginePath: string;
+  engineId?: string;
+  engineName?: string;
+  analysisSessionId?: number;
   fen: string;
   searchMode: "time" | "depth" | "nodes" | "infinite";
   searchValue: number;
@@ -204,7 +213,9 @@ export type GameReportPresentationDto = {
 };
 export type SyncResult = { uploaded: number; downloaded: number; cursor: number };
 export const BUILTIN_ENGINE_PATH = "builtin:pikafish";
+export const BUILTIN_FAIRY_ENGINE_PATH = "builtin:fairy-stockfish";
 export type WorkspaceLayoutMode = "studio" | "compact";
+export type ManualViewMode = "track" | "tree";
 export type SkinFolder = "default" | "hongmu" | "jingdian" | "xinghe";
 export type LegacySkinId = "original" | "classic" | "neon" | "jade" | "imperial";
 export type SkinId = SkinFolder | LegacySkinId;
@@ -222,8 +233,11 @@ export type DesktopPreferencesDto = {
   libraryCollapsed: boolean;
   candidateRailCollapsed: boolean;
   analysisPanelCollapsed: boolean;
+  evaluationCollapsed: boolean;
+  branchArrowColor: string;
   workspacePanel: "moves" | "analysis" | "trend" | "summary" | "report";
   layoutMode: WorkspaceLayoutMode;
+  manualViewMode: ManualViewMode;
   colorTheme: "light" | "dark";
   boardSkin: SkinId;
   pieceSkin: SkinId;
@@ -231,6 +245,9 @@ export type DesktopPreferencesDto = {
   xqbBookPaths?: string[];
   disabledXqbBookPaths?: string[];
   activeEngineId?: string;
+  analysisEngineMode: "single" | "parallel";
+  parallelEngineIds: string[];
+  parallelEnginePaths?: string[];
   cloudBookEnabled?: boolean;
   cloudBookUrl?: string;
   serverUrl: string;
@@ -271,6 +288,7 @@ export type ReplayExportScope = "currentSelection" | "mainline";
 export type EngineRuntimeEvent =
   | { type: "state"; state: EngineRuntimeState }
   | { type: "info"; fen: string; line: AnalysisLine }
+  | { type: "analysisInfo"; engineId?: string; engineName?: string; analysisSessionId?: number; fen: string; line: AnalysisLine }
   | { type: "bestmove"; fen: string; best: string; ponder?: string }
   | { type: "error"; message: string };
 
@@ -302,7 +320,10 @@ export interface ChessPlatform {
   copyGame(mainlineOnly?: boolean): Promise<void>;
   copyExport(format: ExportFormat): Promise<void>;
   exportManualFile(format: ExportFormat, title: string): Promise<string | undefined>;
+  exportManualPdf(title: string): Promise<string | undefined>;
   exportReplayGif(title: string, scope: ReplayExportScope): Promise<string | undefined>;
+  exportMindMapSvg(title: string, svg: string): Promise<string | undefined>;
+  exportTextFile(title: string, contents: string): Promise<string | undefined>;
   pasteDocument(): Promise<Partial<BoardState>>;
   updateGameMetadata(title: string, note: string): Promise<Partial<BoardState>>;
   reorderBranches(nodeIds: string[]): Promise<Partial<BoardState>>;

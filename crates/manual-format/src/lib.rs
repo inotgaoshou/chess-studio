@@ -211,7 +211,11 @@ pub fn export_chinese_text(document: &ManualDocument) -> Result<String, FormatEr
         output.push('\n');
     }
     if !metadata.red.trim().is_empty() || !metadata.black.trim().is_empty() {
-        output.push_str(&format!("红方：{}  黑方：{}\n", nonempty(&metadata.red, "-"), nonempty(&metadata.black, "-")));
+        output.push_str(&format!(
+            "红方：{}  黑方：{}\n",
+            nonempty(&metadata.red, "-"),
+            nonempty(&metadata.black, "-")
+        ));
     }
     if !document.note.trim().is_empty() {
         output.push_str(&format!("{{{}}}\n", sanitize_comment(&document.note)));
@@ -219,7 +223,10 @@ pub fn export_chinese_text(document: &ManualDocument) -> Result<String, FormatEr
     let board = Board::from_fen(&document.starting_fen)
         .map_err(|error| FormatError::InvalidFen(error.to_string()))?;
     let fields: Vec<_> = document.starting_fen.split_whitespace().collect();
-    let fullmove = fields.get(5).and_then(|value| value.parse::<usize>().ok()).unwrap_or(1);
+    let fullmove = fields
+        .get(5)
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(1);
     let ply = (fullmove.saturating_sub(1) * 2) + usize::from(board.side_to_move() == Color::Black);
     emit_chinese_position(&mut output, document, &board, document.tree.root_id(), ply)?;
     output.push_str(nonempty(&metadata.result, "*"));
@@ -236,23 +243,37 @@ pub fn export_dhtmlxq(document: &ManualDocument) -> Result<String, FormatError> 
     let mut parent = document.tree.root_id();
     let mut moves = String::new();
     let mut length = 0usize;
-    while let Some(node) = document.tree.branches(parent).map_err(manual_error)?
+    while let Some(node) = document
+        .tree
+        .branches(parent)
+        .map_err(manual_error)?
         .into_iter()
         .find(|node| node.is_mainline)
-        .or_else(|| document.tree.branches(parent).ok().and_then(|branches| branches.into_iter().next()))
+        .or_else(|| {
+            document
+                .tree
+                .branches(parent)
+                .ok()
+                .and_then(|branches| branches.into_iter().next())
+        })
     {
         // DhtmlXQ stores file plus the rank measured from Red's home side.
         moves.push_str(&dhtml_square(node.mv.from));
         moves.push_str(&dhtml_square(node.mv.to));
-        board = board.apply_move(node.mv).map_err(|_error| FormatError::InvalidMove {
-            token: node.mv.to_iccs(),
-            ply: length,
-        })?;
+        board = board
+            .apply_move(node.mv)
+            .map_err(|_error| FormatError::InvalidMove {
+                token: node.mv.to_iccs(),
+                ply: length,
+            })?;
         parent = node.id;
         length += 1;
     }
     let metadata = &document.metadata;
-    let binit = dhtml_binit(&Board::from_fen(&document.starting_fen).map_err(|error| FormatError::InvalidFen(error.to_string()))?);
+    let binit = dhtml_binit(
+        &Board::from_fen(&document.starting_fen)
+            .map_err(|error| FormatError::InvalidFen(error.to_string()))?,
+    );
     let result = match metadata.result.as_str() {
         "1-0" => "红胜",
         "0-1" => "黑胜",
@@ -269,30 +290,65 @@ pub fn export_dhtmlxq(document: &ManualDocument) -> Result<String, FormatError> 
     ))
 }
 
-fn emit_chinese_position(output: &mut String, document: &ManualDocument, board: &Board, parent_id: Uuid, ply: usize) -> Result<(), FormatError> {
+fn emit_chinese_position(
+    output: &mut String,
+    document: &ManualDocument,
+    board: &Board,
+    parent_id: Uuid,
+    ply: usize,
+) -> Result<(), FormatError> {
     let branches = document.tree.branches(parent_id).map_err(manual_error)?;
-    let Some(chosen) = branches.iter().find(|node| node.is_mainline).or_else(|| branches.first()).copied() else {
+    let Some(chosen) = branches
+        .iter()
+        .find(|node| node.is_mainline)
+        .or_else(|| branches.first())
+        .copied()
+    else {
         return Ok(());
     };
     emit_chinese_branch(output, document, board, parent_id, chosen.id, ply, true)
 }
 
-fn emit_chinese_branch(output: &mut String, document: &ManualDocument, board: &Board, parent_id: Uuid, chosen_id: Uuid, ply: usize, include_siblings: bool) -> Result<(), FormatError> {
+fn emit_chinese_branch(
+    output: &mut String,
+    document: &ManualDocument,
+    board: &Board,
+    parent_id: Uuid,
+    chosen_id: Uuid,
+    ply: usize,
+    include_siblings: bool,
+) -> Result<(), FormatError> {
     let chosen = document.tree.node(chosen_id).map_err(manual_error)?;
     output.push_str(&format_move_number(ply));
-    output.push_str(&board.chinese_move_notation(chosen.mv).map_err(|_error| FormatError::InvalidMove { token: chosen.mv.to_iccs(), ply })?);
+    output.push_str(&board.chinese_move_notation(chosen.mv).map_err(|_error| {
+        FormatError::InvalidMove {
+            token: chosen.mv.to_iccs(),
+            ply,
+        }
+    })?);
     output.push(' ');
     if !chosen.comment.trim().is_empty() {
         output.push_str(&format!("{{{}}} ", sanitize_comment(&chosen.comment)));
     }
     if include_siblings {
-        for sibling in document.tree.branches(parent_id).map_err(manual_error)?.into_iter().filter(|node| node.id != chosen_id) {
+        for sibling in document
+            .tree
+            .branches(parent_id)
+            .map_err(manual_error)?
+            .into_iter()
+            .filter(|node| node.id != chosen_id)
+        {
             output.push('(');
             emit_chinese_branch(output, document, board, parent_id, sibling.id, ply, false)?;
             output.push_str(") ");
         }
     }
-    let next = board.apply_move(chosen.mv).map_err(|_error| FormatError::InvalidMove { token: chosen.mv.to_iccs(), ply })?;
+    let next = board
+        .apply_move(chosen.mv)
+        .map_err(|_error| FormatError::InvalidMove {
+            token: chosen.mv.to_iccs(),
+            ply,
+        })?;
     emit_chinese_position(output, document, &next, chosen.id, ply + 1)
 }
 
@@ -305,13 +361,26 @@ fn dhtml_binit(board: &Board) -> String {
     // Dongping's initial-position field lists black pieces from right to left and red
     // pieces from left to right; each coordinate is file plus red-side rank.
     for color in [Color::Black, Color::Red] {
-        let mut squares: Vec<_> = (0..10).flat_map(|row| (0..9).map(move |col| xiangqi_core::Square { row, col }))
-            .filter(|square| board.piece_at(*square).is_some_and(|piece| piece.color == color))
+        let mut squares: Vec<_> = (0..10)
+            .flat_map(|row| (0..9).map(move |col| xiangqi_core::Square { row, col }))
+            .filter(|square| {
+                board
+                    .piece_at(*square)
+                    .is_some_and(|piece| piece.color == color)
+            })
             .collect();
         squares.sort_by_key(|square| {
             (
-                if color == Color::Black { square.row } else { 9 - square.row },
-                if color == Color::Black { 8 - square.col } else { square.col },
+                if color == Color::Black {
+                    square.row
+                } else {
+                    9 - square.row
+                },
+                if color == Color::Black {
+                    8 - square.col
+                } else {
+                    square.col
+                },
             )
         });
         for square in squares {
@@ -822,7 +891,8 @@ mod tests {
     #[test]
     fn chinese_text_export_uses_notation_comments_and_variations() {
         let document = import_pgn(
-            "[Title \"中文导出\"]\n\n{局面说明} 1. h2e2 {主线} (1. b2e2 {变招}) 1... h9g7 *".as_bytes(),
+            "[Title \"中文导出\"]\n\n{局面说明} 1. h2e2 {主线} (1. b2e2 {变招}) 1... h9g7 *"
+                .as_bytes(),
         )
         .unwrap();
         let text = export_chinese_text(&document).unwrap();

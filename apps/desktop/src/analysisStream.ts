@@ -11,6 +11,12 @@ export type AnalysisHistoryBuffer = {
   lines: AnalysisLine[];
 };
 
+export type AnalysisSessionSnapshot = {
+  revision: number;
+  boardRevision: number;
+  fen: string;
+};
+
 export const ENGINE_ANALYSIS_HISTORY_LIMIT = 10;
 
 export function beginAnalysisStream(fen: string): AnalysisStreamBuffer {
@@ -19,6 +25,17 @@ export function beginAnalysisStream(fen: string): AnalysisStreamBuffer {
 
 export function beginAnalysisHistory(fen: string): AnalysisHistoryBuffer {
   return { fen, lines: [] };
+}
+
+export function isAnalysisSessionCurrent(
+  snapshot: AnalysisSessionSnapshot,
+  currentRevision: number,
+  currentBoardRevision: number,
+  currentFen: string,
+) {
+  return snapshot.revision === currentRevision
+    && snapshot.boardRevision === currentBoardRevision
+    && snapshot.fen === currentFen;
 }
 
 export function completeAnalysisStream(fen: string, lines: AnalysisLine[]): AnalysisStreamBuffer {

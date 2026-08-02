@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calculateGameReport, coachProfile, moveGradeStandards, moveQualityFeedback, moveQualityScore, moveReports, positionEvaluation, pvMoveRows, qualityGradeForScore, redAnalysisScoreText, reportMovePhase, trendPoints, trendTurningPoints } from "./analysisView";
+import { calculateGameReport, coachProfile, evaluationRedShare, moveGradeStandards, moveQualityFeedback, moveQualityScore, moveReports, positionEvaluation, pvMoveRows, qualityGradeForScore, redAnalysisScoreText, reportMovePhase, trendPoints, trendTurningPoints } from "./analysisView";
 import type { AnalysisLine, BoardState, GameReportDatasetDto, MoveItem } from "./platform";
 
 function dataset(positions: GameReportDatasetDto["positions"]): GameReportDatasetDto {
@@ -283,6 +283,31 @@ describe("positionEvaluation", () => {
       mateSide: "黑方",
       mateIn: 3,
     });
+  });
+
+  it("uses the documented 50/100/200/500/1000 material scale for position labels", () => {
+    const labels = [
+      [50, "局面均衡"],
+      [51, "红方微优"],
+      [100, "红方约多一兵"],
+      [200, "红方约多一过河兵"],
+      [500, "红方约多一马或炮"],
+      [1000, "红方约多一车"],
+      [-200, "黑方约多一过河兵"],
+    ] as const;
+
+    for (const [scoreCp, label] of labels) {
+      expect(positionEvaluation(board("红方"), [{ multipv: 1, scoreCp, pv: [] }])?.label).toBe(label);
+    }
+  });
+
+  it("maps ordinary cp scores to a proportional red/black share instead of a full bar", () => {
+    expect(evaluationRedShare(0)).toBe(50);
+    expect(evaluationRedShare(143)).toBeCloseTo(58.9375);
+    expect(evaluationRedShare(143)).toBeLessThan(60);
+    expect(evaluationRedShare(-143)).toBeCloseTo(41.0625);
+    expect(evaluationRedShare(1000)).toBe(95);
+    expect(evaluationRedShare(-1000)).toBe(5);
   });
 
   it("shows the winner when the rules already confirm checkmate without engine analysis", () => {

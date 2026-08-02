@@ -7,15 +7,15 @@ afterEach(cleanup);
 
 const preferences: DesktopPreferencesDto = {
   enginePath: "", threads: 2, hashMb: 256, multipv: 3, candidateLineMoves: 6, searchMode: "time", searchValue: 1500,
-  moveTimeMs: 5000, ponder: false, autoAnalyze: true, boardSkin: "default", pieceSkin: "default",
+  moveTimeMs: 2000, ponder: false, autoAnalyze: true, boardSkin: "default", pieceSkin: "default",
   colorTheme: "dark", activeEngineId: undefined, libraryCollapsed: true, candidateRailCollapsed: false,
-  analysisPanelCollapsed: false, workspacePanel: "moves", layoutMode: "studio", reportDepth: 18, serverUrl: "http://127.0.0.1:8080",
+  analysisPanelCollapsed: false, evaluationCollapsed: true, branchArrowColor: "#2f80ed", analysisEngineMode: "single", parallelEngineIds: [], workspacePanel: "moves", layoutMode: "studio", manualViewMode: "track", reportDepth: 18, serverUrl: "http://127.0.0.1:8080",
 };
 
-function renderShop(signedIn = false) {
+function renderShop(signedIn = false, overrides: Partial<DesktopPreferencesDto> = {}) {
   const onPreview = vi.fn();
   const onEquip = vi.fn();
-  render(<SkinShopDialog preferences={preferences} signedIn={signedIn} onClose={vi.fn()} onPreview={onPreview} onEquip={onEquip}/>);
+  render(<SkinShopDialog preferences={{ ...preferences, ...overrides }} signedIn={signedIn} onClose={vi.fn()} onPreview={onPreview} onEquip={onEquip}/>);
   return { onPreview, onEquip };
 }
 
@@ -62,6 +62,17 @@ describe("SkinShopDialog", () => {
     fireEvent.pointerLeave(card);
     expect(onPreview).toHaveBeenNthCalledWith(1, { boardSkin: "hongmu", pieceSkin: "default" });
     expect(onPreview).toHaveBeenLastCalledWith();
+  });
+
+  it("uses the complete default skin instead of retaining the current piece skin", () => {
+    const { onPreview, onEquip } = renderShop(false, { boardSkin: "hongmu", pieceSkin: "hongmu" });
+    const defaultBoard = screen.getByText("默认棋盘").closest("article")!;
+
+    fireEvent.pointerEnter(defaultBoard);
+    fireEvent.click(defaultBoard.querySelector("button")!);
+
+    expect(onPreview).toHaveBeenLastCalledWith({ boardSkin: "default", pieceSkin: "default" });
+    expect(onEquip).toHaveBeenCalledWith({ boardSkin: "default", pieceSkin: "default" });
   });
 
 });

@@ -22,4 +22,20 @@ describe("default skin styles", () => {
 
     expect(getComputedStyle(preview).filter).toBe("none");
   });
+
+  it("keeps the equipped default board on its authored asset and colors", () => {
+    const shell = document.createElement("div");
+    shell.className = "app-shell board-skin-default";
+    const board = document.createElement("div");
+    board.className = "board";
+    const boardArt = document.createElement("div");
+    boardArt.className = "board-art";
+    board.append(boardArt);
+    shell.append(board);
+    document.body.append(shell);
+
+    expect(getComputedStyle(boardArt).filter).toBe("none");
+    expect(getComputedStyle(boardArt).mixBlendMode).toBe("normal");
+    expect(getComputedStyle(boardArt).opacity).toBe("1");
+  });
 });

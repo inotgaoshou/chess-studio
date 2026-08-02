@@ -26,10 +26,11 @@
 ```bash
 pnpm install
 PIKAFISH_PATH=/absolute/path/to/pikafish-apple-silicon \
+FAIRY_STOCKFISH_PATH=/absolute/path/to/fairy-stockfish \
   pnpm --filter xiangqi-desktop-ui tauri dev
 ```
 
-桌面端会自动查找 `PIKAFISH_PATH`、TCHESS macOS 安装目录、应用资源目录及系统 `PATH` 中的 Pikafish。也可以从“引擎 -> 引擎设置”选择可执行文件；保存前会完成 UCI/UCCI 握手。`pikafish.nnue` 应放在可执行文件同目录。默认参数为 2 线程、256 MB Hash 和 MultiPV 3。
+桌面端会自动查找 `PIKAFISH_PATH`、`FAIRY_STOCKFISH_PATH`、TCHESS macOS 安装目录、应用资源目录及系统 `PATH` 中的 Pikafish / Fairy-Stockfish。也可以从“引擎 -> 引擎设置”选择可执行文件；保存前会完成 UCI/UCCI 握手。`.nnue` 必须和对应引擎放在同一目录：Pikafish 使用自己的 `pikafish.nnue`；Fairy-Stockfish XQ 官方发布版通常已内置 NNUE，截图里的 `.nnue` 主要用于复现源码构建，不需要额外下载。若你明确使用 Fairy 自己的 Xiangqi NNUE，也只能放在 Fairy 引擎目录，不能混放或复用 Pikafish 的网络。应用会按引擎档案只选择同目录内匹配的 NNUE，并通过 `EvalFile` 传给该引擎；没有外置 NNUE 时则使用引擎内置配置。默认参数为 2 线程、256 MB Hash 和 MultiPV 3。
 
 本地引擎路径示例为 `/path/to/Pikafish.2026-01-02/MacOS/pikafish-apple-silicon`。对应 `pikafish.nnue` 必须位于 `MacOS` 目录中，或以软链接指向发布包根目录的同名文件。
 
@@ -81,7 +82,28 @@ SIGN_AND_NOTARIZE=0 \
 
 产物位于 `target/release/bundle/`。默认会读取 `PIKAFISH_RELEASE_DIR` 指向的 Pikafish 发布目录；未设置时使用项目相邻目录的 `../Pikafish.2026-01-02`。该目录中的 Apple Silicon Pikafish 与 `pikafish.nnue` 会被内置到 macOS 安装包。
 
-GitHub Release 跨平台打包通过 `.github/workflows/release.yml` 完成。推送版本标签即可触发草稿 Release：
+可选内置 Fairy-Stockfish。Pikafish 与 Fairy-Stockfish 永远使用不同资源目录：
+
+```text
+apps/desktop/src-tauri/resources/pikafish/
+apps/desktop/src-tauri/resources/fairy-stockfish/
+```
+
+Windows/macOS 发布包建议内置 Fairy-Stockfish；Linux 包不强制内置，用户可以在“引擎设置”里选择外部引擎。Windows 会从 Fairy 官方 Release 下载 `largeboard_x86-64.exe`；macOS 官方 Release 暂无 macOS 二进制，打包时需要提供 `FAIRY_ENGINE_SOURCE` / `FAIRY_STOCKFISH_MACOS_URL`，或允许脚本从源码构建：
+
+```bash
+FAIRY_STOCKFISH_RELEASE_DIR=/absolute/path/to/Fairy-Stockfish \
+./scripts/prepare-fairy-stockfish-resource.sh
+
+EMBED_FAIRY_STOCKFISH=1 \
+BUILD_FAIRY_STOCKFISH_FROM_SOURCE=1 \
+SIGN_AND_NOTARIZE=0 \
+./scripts/build-macos-release.sh
+```
+
+Fairy-Stockfish 可执行文件会复制为 `apps/desktop/src-tauri/resources/fairy-stockfish/fairy-stockfish`。Fairy 自己的 Xiangqi `.nnue` 是可选文件：有就放在同一个 `fairy-stockfish` 目录并在分析前自动配置为 `EvalFile`，没有则使用 Fairy XQ 二进制内置的网络。脚本会拒绝把 `pikafish.nnue` 当作 Fairy 网络打包。分发二进制和 NNUE 时必须随附并遵守 Fairy-Stockfish / NNUE 的许可证及 GPL 对应源码义务。
+
+GitHub Release 打包通过 `.github/workflows/release.yml` 完成；当前先只构建 Windows x64，macOS 和 Linux 暂不在 GitHub Actions 打包，等签名、公证和跨平台资源策略稳定后再启用。推送版本标签即可触发草稿 Release：
 
 ```bash
 git tag v1.0.0
@@ -90,10 +112,8 @@ git push origin v1.0.0
 
 GitHub Actions 会尝试构建：
 
-- macOS Apple Silicon：`.dmg`，内置 Pikafish Apple Silicon
-- macOS Intel：`.dmg`，当前官方 Pikafish 包未提供 Intel macOS 引擎，分析需手动配置外部引擎
-- Windows x64：安装包，内置 Pikafish SSE4.1/POPCNT
-- Linux x64：AppImage/deb/rpm 等 Tauri 产物，内置 Pikafish SSE4.1/POPCNT
+- Windows x64：安装包，内置 Pikafish SSE4.1/POPCNT 和 Fairy-Stockfish largeboard x64
+- macOS / Linux：本轮 GitHub Release 暂不打包，后续需要时再启用
 
 如果要让 macOS 包正式签名和公证，需要在 GitHub 仓库 `Settings -> Secrets and variables -> Actions` 中配置：
 

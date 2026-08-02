@@ -1,13 +1,14 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
-mod credential_store;
 mod cloud_opening_book;
+mod credential_store;
 mod gif_export;
+mod manual_pdf;
 mod opening_book;
 mod pdf_report;
 mod xqb_opening_book;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -20,7 +21,8 @@ use chrono::Utc;
 use credential_store::{SharedCredentialStore, SystemCredentialStore, TOKEN_KEY};
 use engine_protocol::{EngineControl, EngineEvent, EngineSession, Protocol, SearchLimit};
 use local_store::{
-    AnalysisSummary, DesktopPreferences, EngineProfile, ImportedGame, LocalGame, LocalStore, SyncAccountBinding, TrainingTask,
+    AnalysisSummary, DesktopPreferences, EngineProfile, ImportedGame, LocalGame, LocalStore,
+    SyncAccountBinding, TrainingTask,
 };
 use manual_format::{
     ManualDocument, ManualFormat, ManualMetadata, detect_format, export_chinese_text,
@@ -38,6 +40,7 @@ use xiangqi_core::{Board, Color, GameStatus, PieceKind, STARTING_FEN, Square};
 use xiangqi_manual::{ManualTree, MoveNode};
 
 const BUILTIN_ENGINE_PATH: &str = "builtin:pikafish";
+const BUILTIN_FAIRY_ENGINE_PATH: &str = "builtin:fairy-stockfish";
 
 struct AppModel {
     board: Board,
@@ -59,7 +62,7 @@ struct DesktopState {
     model: Mutex<AppModel>,
     credentials: SharedCredentialStore,
     session_token: Mutex<Option<String>>,
-    engine: tokio::sync::Mutex<Option<EngineControl>>,
+    engine: tokio::sync::Mutex<HashMap<String, EngineControl>>,
     report_engine: tokio::sync::Mutex<Option<EngineControl>>,
     report_commit: tokio::sync::Mutex<()>,
     play_session: tokio::sync::Mutex<Option<EngineRuntime>>,
@@ -152,6 +155,13 @@ enum EngineRuntimeEvent {
         state: &'static str,
     },
     Info {
+        fen: String,
+        line: AnalysisLine,
+    },
+    AnalysisInfo {
+        engine_id: Option<String>,
+        engine_name: Option<String>,
+        analysis_session_id: Option<u64>,
         fen: String,
         line: AnalysisLine,
     },
@@ -254,6 +264,8 @@ struct BoardDto {
     history: Vec<MoveDto>,
     continuation: Vec<MoveDto>,
     branches: Vec<MoveDto>,
+    sibling_branches: Vec<MoveDto>,
+    manual_tree: Vec<ManualTreeNodeDto>,
     current_node: Option<Uuid>,
     title: String,
     note: String,
@@ -262,6 +274,14 @@ struct BoardDto {
     playable: bool,
     #[serde(default)]
     xqb_candidates: Vec<xqb_opening_book::XqbCandidateDto>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ManualTreeNodeDto {
+    #[serde(rename = "move")]
+    move_: MoveDto,
+    children: Vec<ManualTreeNodeDto>,
 }
 
 #[derive(Serialize)]
@@ -390,7 +410,15 @@ struct TrainingTaskDto {
 
 impl From<TrainingTask> for TrainingTaskDto {
     fn from(task: TrainingTask) -> Self {
-        Self { id: task.id, game_id: task.game_id, node_id: task.node_id, title: task.title, detail: task.detail, completed_at: task.completed_at, created_at: task.created_at }
+        Self {
+            id: task.id,
+            game_id: task.game_id,
+            node_id: task.node_id,
+            title: task.title,
+            detail: task.detail,
+            completed_at: task.completed_at,
+            created_at: task.created_at,
+        }
     }
 }
 
@@ -603,14 +631,30 @@ fn open_document(path: String, state: State<'_, DesktopState>) -> Result<BoardDt
 }
 
 #[tauri::command]
-fn import_xqb_opening_book(path: String, state: State<'_, DesktopState>) -> Result<BoardDto, String> {
+fn import_xqb_opening_book(
+    path: String,
+    state: State<'_, DesktopState>,
+) -> Result<BoardDto, String> {
     let target = PathBuf::from(&path);
     xqb_opening_book::validate(&target)?;
-    let mut model = state.model.lock().map_err(|_| "state lock poisoned".to_owned())?;
-    let mut preferences = model.store.desktop_preferences().map_err(|error| error.to_string())?;
-    if !preferences.xqb_book_paths.iter().any(|existing| existing == &path) {
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    let mut preferences = model
+        .store
+        .desktop_preferences()
+        .map_err(|error| error.to_string())?;
+    if !preferences
+        .xqb_book_paths
+        .iter()
+        .any(|existing| existing == &path)
+    {
         preferences.xqb_book_paths.push(path);
-        model.store.save_desktop_preferences(&preferences).map_err(|error| error.to_string())?;
+        model
+            .store
+            .save_desktop_preferences(&preferences)
+            .map_err(|error| error.to_string())?;
     }
     board_dto(&model)
 }
@@ -646,7 +690,10 @@ fn export_text(mainline_only: bool, state: State<'_, DesktopState>) -> Result<St
 }
 
 #[tauri::command]
-fn export_document_text(format: ExportFormat, state: State<'_, DesktopState>) -> Result<String, String> {
+fn export_document_text(
+    format: ExportFormat,
+    state: State<'_, DesktopState>,
+) -> Result<String, String> {
     let model = state
         .model
         .lock()
@@ -655,7 +702,11 @@ fn export_document_text(format: ExportFormat, state: State<'_, DesktopState>) ->
 }
 
 #[tauri::command]
-fn export_document_file(path: String, format: ExportFormat, state: State<'_, DesktopState>) -> Result<String, String> {
+fn export_document_file(
+    path: String,
+    format: ExportFormat,
+    state: State<'_, DesktopState>,
+) -> Result<String, String> {
     let contents = {
         let model = state
             .model
@@ -694,6 +745,46 @@ fn export_replay_gif(
     };
     gif_export::export_replay_gif(&target, &document, current_node, scope)?;
     Ok(target.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn export_mind_map_svg(path: String, svg: String) -> Result<String, String> {
+    let target = PathBuf::from(path);
+    if target.extension().and_then(|extension| extension.to_str()) != Some("svg") {
+        return Err("变招图必须使用 .svg 扩展名".into());
+    }
+    if !svg.trim_start().starts_with("<?xml") || !svg.contains("<svg") {
+        return Err("变招图内容不是有效 SVG".into());
+    }
+    std::fs::write(&target, svg).map_err(|error| format!("导出变招图失败：{error}"))?;
+    Ok(target.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn export_text_file(path: String, contents: String) -> Result<String, String> {
+    let target = PathBuf::from(path);
+    if target.extension().and_then(|extension| extension.to_str()) != Some("txt") {
+        return Err("文本文件必须使用 .txt 扩展名".into());
+    }
+    std::fs::write(&target, contents).map_err(|error| format!("导出文本失败：{error}"))?;
+    Ok(target.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn export_manual_pdf(path: String, state: State<'_, DesktopState>) -> Result<String, String> {
+    let target = PathBuf::from(path);
+    if target.extension().and_then(|extension| extension.to_str()) != Some("pdf") {
+        return Err("棋谱 PDF 必须使用 .pdf 扩展名".into());
+    }
+    let document = {
+        let model = state
+            .model
+            .lock()
+            .map_err(|_| "state lock poisoned".to_owned())?;
+        document_from_model(&model)
+    };
+    let saved = manual_pdf::write_manual_pdf(&target, &document)?;
+    Ok(saved.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
@@ -786,7 +877,7 @@ fn reorder_branches(
 }
 
 #[tauri::command]
-fn navigate_to(node_id: Option<Uuid>, state: State<'_, DesktopState>) -> Result<BoardDto, String> {
+fn navigate_to(node_id: Option<Uuid>, state: State<'_, DesktopState>, app: tauri::AppHandle) -> Result<BoardDto, String> {
     let mut model = state
         .model
         .lock()
@@ -798,7 +889,9 @@ fn navigate_to(node_id: Option<Uuid>, state: State<'_, DesktopState>) -> Result<
         .store
         .set_current_node(game_id, node_id)
         .map_err(|error| error.to_string())?;
-    board_dto(&model)
+    let board = board_dto(&model)?;
+    let _ = app.emit("board-navigated", &board);
+    Ok(board)
 }
 
 #[tauri::command]
@@ -891,7 +984,11 @@ fn delete_node(node_id: Uuid, state: State<'_, DesktopState>) -> Result<BoardDto
         model.current_node
     };
     let next_board = if affects_current_line {
-        Some(board_at(&model.starting_fen, &next_tree, next_current_node)?)
+        Some(board_at(
+            &model.starting_fen,
+            &next_tree,
+            next_current_node,
+        )?)
     } else {
         None
     };
@@ -917,6 +1014,9 @@ fn delete_node(node_id: Uuid, state: State<'_, DesktopState>) -> Result<BoardDto
 #[tauri::command]
 async fn analyze_position(
     engine_path: String,
+    engine_id: Option<String>,
+    engine_name: Option<String>,
+    analysis_session_id: Option<u64>,
     fen: String,
     search_mode: String,
     search_value: u64,
@@ -975,49 +1075,23 @@ async fn analyze_position(
             }
         }
     }
-    if state.engine.lock().await.is_some() {
-        return Err("an engine search is already running".into());
-    }
     let resolved_engine_path = resolve_engine_path(&app, &engine_path)?;
     let resolved_engine_path_text = resolved_engine_path.to_string_lossy().into_owned();
-    let mut slot = state.play_session.lock().await;
-    if slot
-        .as_ref()
-        .is_some_and(|runtime| runtime.path != resolved_engine_path_text)
-    {
-        if let Some(runtime) = slot.take() {
-            let _ = runtime.session.close().await;
-        }
-    }
-    if slot.is_none() {
-        let session = EngineSession::launch(&resolved_engine_path, Duration::from_secs(2))
-            .await
-            .map_err(|error| error.to_string())?;
-        *slot = Some(EngineRuntime {
-            path: resolved_engine_path_text.clone(),
-            session,
-            pondering_fen: None,
-            state: EngineRuntimeState::Idle,
-        });
-    }
-    let runtime = slot.as_mut().expect("engine runtime was initialized");
-    if runtime.pondering_fen.take().is_some() {
-        runtime
-            .session
-            .stop()
-            .await
-            .map_err(|error| error.to_string())?;
-        loop {
-            match runtime.session.next_event().await {
-                Ok(EngineEvent::BestMove { .. }) => break,
-                Ok(_) => {}
-                Err(error) => return Err(error.to_string()),
-            }
-        }
-    }
+    // Analysis sessions are intentionally short-lived and independent so multiple
+    // configured engines can search the same position concurrently.
+    let session = EngineSession::launch(&resolved_engine_path, Duration::from_secs(2))
+        .await
+        .map_err(|error| error.to_string())?;
+    let mut runtime = EngineRuntime {
+        path: resolved_engine_path_text.clone(),
+        session,
+        pondering_fen: None,
+        state: EngineRuntimeState::Idle,
+    };
     let protocol = runtime.session.protocol();
     let threads = threads.clamp(1, 64);
     let hash_mb = hash_mb.clamp(16, 4096);
+    configure_engine_nnue(&mut runtime.session, &resolved_engine_path).await?;
     runtime
         .session
         .configure("Threads", &threads.to_string())
@@ -1039,7 +1113,7 @@ async fn analyze_position(
         .await
         .map_err(|error| error.to_string())?;
     runtime.state = EngineRuntimeState::Analyzing;
-    *state.engine.lock().await = Some(runtime.session.control());
+    state.engine.lock().await.insert(resolved_engine_path_text.clone(), runtime.session.control());
     emit_engine_state(&app, runtime.state);
     let started = Instant::now();
     let mut lines = BTreeMap::new();
@@ -1061,13 +1135,13 @@ async fn analyze_position(
                     pv: info.pv,
                 };
                 if state.analysis_generation.load(Ordering::SeqCst) == analysis_generation {
-                    emit_engine_event(
-                        &app,
-                        EngineRuntimeEvent::Info {
-                            fen: fen.clone(),
-                            line: line.clone(),
-                        },
-                    );
+                    emit_engine_event(&app, EngineRuntimeEvent::AnalysisInfo {
+                        engine_id: engine_id.clone(),
+                        engine_name: engine_name.clone(),
+                        analysis_session_id,
+                        fen: fen.clone(),
+                        line: line.clone(),
+                    });
                 }
                 lines.insert(line.multipv, line);
             }
@@ -1091,7 +1165,7 @@ async fn analyze_position(
             _ => {}
         }
     }
-    *state.engine.lock().await = None;
+    state.engine.lock().await.remove(&resolved_engine_path_text);
     if let Some(error) = read_error {
         runtime.state = EngineRuntimeState::Faulted;
         emit_engine_state(&app, runtime.state);
@@ -1103,16 +1177,12 @@ async fn analyze_position(
                 },
             );
         }
-        let failed = slot.take();
-        drop(slot);
-        if let Some(failed) = failed {
-            let _ = failed.session.close().await;
-        }
+        let _ = runtime.session.close().await;
         return Err(error);
     }
     runtime.state = EngineRuntimeState::Idle;
     emit_engine_state(&app, runtime.state);
-    drop(slot);
+    let _ = runtime.session.close().await;
     let lines: Vec<_> = lines.into_values().collect();
     let elapsed_ms = started.elapsed().as_millis() as u64;
     let mut model = state
@@ -1180,7 +1250,7 @@ async fn engine_play_move(
         }
         (model.board.to_fen(), model.game_id, model.current_node)
     };
-    if state.engine.lock().await.is_some() {
+    if !state.engine.lock().await.is_empty() {
         return Err("引擎正在执行其他搜索，请先停止".into());
     }
     let resolved_engine_path = resolve_engine_path(&app, &engine_path)?;
@@ -1232,6 +1302,7 @@ async fn engine_play_move(
         }
     }
     if !ponder_hit {
+        configure_engine_nnue(&mut play.session, &resolved_engine_path).await?;
         play.session
             .configure("Threads", &threads.clamp(1, 64).to_string())
             .await
@@ -1260,7 +1331,7 @@ async fn engine_play_move(
             .map_err(|error| error.to_string())?;
     }
     play.state = EngineRuntimeState::Thinking;
-    *state.engine.lock().await = Some(play.session.control());
+    state.engine.lock().await.insert(resolved_engine_path_text.clone(), play.session.control());
     emit_engine_state(&app, play.state);
     let (best_move, ponder_move) = loop {
         match play.session.next_event().await {
@@ -1292,7 +1363,7 @@ async fn engine_play_move(
             }
             Ok(_) => {}
             Err(error) => {
-                *state.engine.lock().await = None;
+                state.engine.lock().await.remove(&resolved_engine_path_text);
                 if state.play_generation.load(Ordering::SeqCst) != play_generation {
                     play.state = EngineRuntimeState::Stopping;
                     slot.take();
@@ -1311,7 +1382,7 @@ async fn engine_play_move(
             }
         }
     };
-    *state.engine.lock().await = None;
+    state.engine.lock().await.remove(&resolved_engine_path_text);
     let predicted_fen = if ponder {
         ponder_move.as_deref().and_then(|predicted| {
             let board = Board::from_fen(&fen).ok()?;
@@ -1377,7 +1448,7 @@ async fn stop_engine_play(
 ) -> Result<bool, String> {
     state.play_generation.fetch_add(1, Ordering::SeqCst);
     emit_engine_state(&app, EngineRuntimeState::Stopping);
-    if let Some(control) = state.engine.lock().await.clone() {
+    for control in state.engine.lock().await.values().cloned().collect::<Vec<_>>() {
         let _ = control.stop().await;
     }
     let mut slot = state.play_session.lock().await;
@@ -1389,7 +1460,7 @@ async fn stop_engine_play(
         return Ok(false);
     }
     if let Some(play) = slot.take() {
-        *state.engine.lock().await = None;
+        state.engine.lock().await.clear();
         play.session
             .close()
             .await
@@ -1403,7 +1474,7 @@ async fn stop_engine_play(
 
 #[tauri::command]
 async fn move_now(state: State<'_, DesktopState>) -> Result<bool, String> {
-    let control = state.engine.lock().await.clone();
+    let control = state.engine.lock().await.values().next().cloned();
     if let Some(control) = control {
         control.stop().await.map_err(|error| error.to_string())?;
         Ok(true)
@@ -1417,9 +1488,15 @@ fn detect_pikafish(app: tauri::AppHandle) -> Option<String> {
     if bundled_pikafish_path(&app).is_some() {
         return Some(BUILTIN_ENGINE_PATH.into());
     }
+    if bundled_fairy_stockfish_path(&app).is_some() {
+        return Some(BUILTIN_FAIRY_ENGINE_PATH.into());
+    }
 
     let mut candidates = Vec::new();
     if let Some(path) = std::env::var_os("PIKAFISH_PATH") {
+        candidates.push(PathBuf::from(path));
+    }
+    if let Some(path) = std::env::var_os("FAIRY_STOCKFISH_PATH") {
         candidates.push(PathBuf::from(path));
     }
 
@@ -1441,6 +1518,8 @@ fn detect_pikafish(app: tauri::AppHandle) -> Option<String> {
         for directory in std::env::split_paths(&paths) {
             candidates.push(directory.join("pikafish"));
             candidates.push(directory.join("pikafish.exe"));
+            candidates.push(directory.join("fairy-stockfish"));
+            candidates.push(directory.join("fairy-stockfish.exe"));
         }
     }
 
@@ -1459,7 +1538,9 @@ async fn open_compact_floating_panel(app: tauri::AppHandle, panel: String) -> Re
         _ => return Err("未知的浮动面板".into()),
     };
     if let Some(window) = app.get_webview_window(label) {
-        window.set_always_on_top(true).map_err(|error| error.to_string())?;
+        window
+            .set_always_on_top(true)
+            .map_err(|error| error.to_string())?;
         window.show().map_err(|error| error.to_string())?;
         window.set_focus().map_err(|error| error.to_string())?;
         return Ok(false);
@@ -1491,8 +1572,11 @@ fn return_compact_floating_panel(app: tauri::AppHandle, panel: String) -> Result
         _ => return Err("未知的浮动面板".into()),
     };
 
-    app.emit("compact-panel-return", serde_json::json!({ "panel": panel }))
-        .map_err(|error| error.to_string())?;
+    app.emit(
+        "compact-panel-return",
+        serde_json::json!({ "panel": panel }),
+    )
+    .map_err(|error| error.to_string())?;
 
     if let Some(main_window) = app.get_webview_window("main") {
         let _ = main_window.show();
@@ -1520,6 +1604,23 @@ fn bundled_pikafish_path(app: &tauri::AppHandle) -> Option<PathBuf> {
     candidates.into_iter().find(|candidate| candidate.is_file())
 }
 
+fn bundled_fairy_stockfish_path(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    // `resource_dir` points to the bundle only. During `tauri dev`, the engine
+    // remains in the source resource directory, so include that location too.
+    candidates.extend(fairy_stockfish_candidates(Path::new(env!("CARGO_MANIFEST_DIR")).join("resources").as_path()));
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        candidates.extend(fairy_stockfish_candidates(&resource_dir));
+    }
+    if let Ok(executable) = std::env::current_exe() {
+        if let Some(parent) = executable.parent() {
+            candidates.extend(fairy_stockfish_candidates(parent));
+            candidates.extend(fairy_stockfish_candidates(&parent.join("../Resources")));
+        }
+    }
+    candidates.into_iter().find(|candidate| candidate.is_file())
+}
+
 fn pikafish_candidates(base: &Path) -> Vec<PathBuf> {
     [
         "pikafish",
@@ -1535,21 +1636,154 @@ fn pikafish_candidates(base: &Path) -> Vec<PathBuf> {
     .collect()
 }
 
+fn fairy_stockfish_candidates(base: &Path) -> Vec<PathBuf> {
+    [
+        "fairy-stockfish",
+        "fairy-stockfish.exe",
+        "fairy-stockfish/fairy-stockfish",
+        "fairy-stockfish/fairy-stockfish.exe",
+        "resources/fairy-stockfish/fairy-stockfish",
+        "resources/fairy-stockfish/fairy-stockfish.exe",
+    ]
+    .into_iter()
+    .map(|relative| base.join(relative))
+    .collect()
+}
+
 fn resolve_engine_path(app: &tauri::AppHandle, value: &str) -> Result<PathBuf, String> {
     let trimmed = value.trim();
     if trimmed == BUILTIN_ENGINE_PATH {
         return bundled_pikafish_path(app)
-            .or_else(|| std::env::var_os("PIKAFISH_PATH").map(PathBuf::from).filter(|path| path.is_file()))
-            .ok_or_else(|| "安装包内未找到内置 Pikafish；开发模式请设置 PIKAFISH_PATH，或手动选择外部引擎".to_owned());
+            .or_else(|| {
+                std::env::var_os("PIKAFISH_PATH")
+                    .map(PathBuf::from)
+                    .filter(|path| path.is_file())
+            })
+            .ok_or_else(|| {
+                "安装包内未找到内置 Pikafish；开发模式请设置 PIKAFISH_PATH，或手动选择外部引擎"
+                    .to_owned()
+            });
+    }
+    if trimmed == BUILTIN_FAIRY_ENGINE_PATH {
+        return bundled_fairy_stockfish_path(app)
+            .or_else(|| std::env::var_os("FAIRY_STOCKFISH_PATH").map(PathBuf::from).filter(|path| path.is_file()))
+            .ok_or_else(|| "安装包内未找到内置 Fairy-Stockfish；开发模式请设置 FAIRY_STOCKFISH_PATH，或手动选择外部引擎".to_owned());
     }
     if trimmed.is_empty() {
-        return Err("请先选择 Pikafish 引擎".into());
+        return Err("请先选择 UCI/UCCI 象棋引擎".into());
     }
     let path = PathBuf::from(trimmed);
     if !path.is_file() {
         return Err("引擎可执行文件不存在".into());
     }
     Ok(path)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EngineFamily {
+    Pikafish,
+    FairyStockfish,
+    Unknown,
+}
+
+fn engine_family(engine_path: &Path) -> EngineFamily {
+    let executable_name = engine_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if executable_name.contains("fairy-stockfish") || executable_name.contains("fairystockfish") {
+        return EngineFamily::FairyStockfish;
+    }
+    if executable_name.contains("pikafish") {
+        return EngineFamily::Pikafish;
+    }
+
+    for component in engine_path.components().rev().skip(1) {
+        let component = component.as_os_str().to_string_lossy().to_ascii_lowercase();
+        if component.contains("fairy-stockfish") || component.contains("fairystockfish") {
+            return EngineFamily::FairyStockfish;
+        }
+        if component.contains("pikafish") {
+            return EngineFamily::Pikafish;
+        }
+    }
+
+    EngineFamily::Unknown
+}
+
+fn nnue_matches_engine_family(file_name: &str, family: EngineFamily) -> bool {
+    match family {
+        EngineFamily::Pikafish => !file_name.contains("fairy"),
+        EngineFamily::FairyStockfish => !file_name.contains("pikafish"),
+        EngineFamily::Unknown => true,
+    }
+}
+
+fn preferred_nnue_path(engine_path: &Path) -> Option<PathBuf> {
+    let parent = engine_path.parent()?;
+    let family = engine_family(engine_path);
+    let mut nnue_files = std::fs::read_dir(parent)
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("nnue"))
+        })
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| nnue_matches_engine_family(&name.to_ascii_lowercase(), family))
+                .unwrap_or(false)
+        })
+        .collect::<Vec<_>>();
+    nnue_files.sort_by(|left, right| {
+        let left_name = left
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let right_name = right
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        nnue_priority(&left_name)
+            .cmp(&nnue_priority(&right_name))
+            .then_with(|| left_name.cmp(&right_name))
+    });
+    nnue_files.into_iter().next()
+}
+
+fn nnue_priority(file_name: &str) -> u8 {
+    if file_name.starts_with("xiangqi")
+        || file_name.contains("-xiangqi")
+        || file_name.contains("_xiangqi")
+    {
+        0
+    } else if file_name.contains("fairy") {
+        1
+    } else if file_name.contains("pikafish") {
+        2
+    } else {
+        3
+    }
+}
+
+async fn configure_engine_nnue(
+    session: &mut EngineSession,
+    engine_path: &Path,
+) -> Result<Option<PathBuf>, String> {
+    let Some(nnue_path) = preferred_nnue_path(engine_path) else {
+        return Ok(None);
+    };
+    session
+        .configure("EvalFile", &nnue_path.to_string_lossy())
+        .await
+        .map_err(|error| format!("设置 NNUE EvalFile 失败：{error}"))?;
+    Ok(Some(nnue_path))
 }
 
 fn report_line_nodes(
@@ -1653,21 +1887,7 @@ fn report_engine_fingerprint(engine_path: &Path) -> Result<String, String> {
     hasher.update(b"engine\0");
     update_fingerprint(&mut hasher, engine_path)?;
 
-    let mut nnue_files = engine_path
-        .parent()
-        .and_then(|parent| std::fs::read_dir(parent).ok())
-        .into_iter()
-        .flatten()
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.extension()
-                .and_then(|extension| extension.to_str())
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("nnue"))
-        })
-        .collect::<Vec<_>>();
-    nnue_files.sort();
-    for path in nnue_files {
+    if let Some(path) = preferred_nnue_path(engine_path) {
         hasher.update(b"nnue\0");
         if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
             hasher.update(name.as_bytes());
@@ -1795,7 +2015,7 @@ fn report_estimated_remaining_ms(
 async fn wait_for_engine_idle(state: &DesktopState, duration: Duration) -> bool {
     let deadline = tokio::time::Instant::now() + duration;
     loop {
-        if state.engine.lock().await.is_none() {
+        if state.engine.lock().await.is_empty() {
             return true;
         }
         if tokio::time::Instant::now() >= deadline {
@@ -1814,10 +2034,12 @@ async fn stop_analysis(
     if discard_result {
         state.analysis_generation.fetch_add(1, Ordering::SeqCst);
     }
-    let control = state.engine.lock().await.clone();
-    if let Some(control) = control {
+    let controls = state.engine.lock().await.values().cloned().collect::<Vec<_>>();
+    if !controls.is_empty() {
         emit_engine_state(&app, EngineRuntimeState::Stopping);
-        control.stop().await.map_err(|error| error.to_string())?;
+        for control in controls {
+            control.stop().await.map_err(|error| error.to_string())?;
+        }
         Ok(true)
     } else {
         Ok(false)
@@ -1963,6 +2185,7 @@ async fn generate_game_report_inner(
         let mut session = EngineSession::launch(&resolved_engine_path, Duration::from_secs(5))
             .await
             .map_err(|error| format!("引擎握手失败：{error}"))?;
+        configure_engine_nnue(&mut session, &resolved_engine_path).await?;
         session
             .configure("Threads", &threads.to_string())
             .await
@@ -2335,6 +2558,11 @@ fn validate_server_url(value: &str) -> Result<(), String> {
 fn normalize_desktop_preferences(preferences: &mut DesktopPreferences) {
     preferences.board_skin = normalize_skin_id(&preferences.board_skin);
     preferences.piece_skin = normalize_skin_id(&preferences.piece_skin);
+    preferences.parallel_engine_paths.retain(|path| {
+        matches!(path.as_str(), BUILTIN_ENGINE_PATH | BUILTIN_FAIRY_ENGINE_PATH)
+    });
+    preferences.parallel_engine_paths.sort();
+    preferences.parallel_engine_paths.dedup();
 }
 
 fn normalize_skin_id(value: &str) -> String {
@@ -2357,11 +2585,26 @@ fn validate_preferences(preferences: &DesktopPreferences) -> Result<(), String> 
     if !matches!(preferences.layout_mode.as_str(), "studio" | "compact") {
         return Err("不支持的工作台布局".into());
     }
-    if !matches!(preferences.board_skin.as_str(), "default" | "hongmu" | "jingdian" | "xinghe") {
+    if !matches!(preferences.manual_view_mode.as_str(), "track" | "tree") {
+        return Err("不支持的棋谱显示方式".into());
+    }
+    if !matches!(
+        preferences.board_skin.as_str(),
+        "default" | "hongmu" | "jingdian" | "xinghe"
+    ) {
         return Err("不支持的棋盘皮肤".into());
     }
-    if !matches!(preferences.piece_skin.as_str(), "default" | "hongmu" | "jingdian" | "xinghe") {
+    if !matches!(
+        preferences.piece_skin.as_str(),
+        "default" | "hongmu" | "jingdian" | "xinghe"
+    ) {
         return Err("不支持的棋子皮肤".into());
+    }
+    if !matches!(
+        preferences.branch_arrow_color.as_str(),
+        "#2f80ed" | "#f2c94c" | "#27ae60" | "#9b51e0" | "#eb5757"
+    ) {
+        return Err("不支持的分支箭头颜色".into());
     }
     if !(1..=64).contains(&preferences.threads) {
         return Err("线程数必须在 1 到 64 之间".into());
@@ -2387,6 +2630,9 @@ fn validate_preferences(preferences: &DesktopPreferences) -> Result<(), String> 
     ) {
         return Err("不支持的搜索模式".into());
     }
+    if !matches!(preferences.analysis_engine_mode.as_str(), "single" | "parallel") {
+        return Err("不支持的多引擎分析模式".into());
+    }
     let limit_valid = match preferences.search_mode.as_str() {
         "time" => (100..=30_000).contains(&preferences.search_value),
         "depth" => (1..=100).contains(&preferences.search_value),
@@ -2397,8 +2643,8 @@ fn validate_preferences(preferences: &DesktopPreferences) -> Result<(), String> 
     if !limit_valid {
         return Err("搜索限制超出允许范围".into());
     }
-    let cloud_url = reqwest::Url::parse(&preferences.cloud_book_url)
-        .map_err(|_| "云库地址格式不正确")?;
+    let cloud_url =
+        reqwest::Url::parse(&preferences.cloud_book_url).map_err(|_| "云库地址格式不正确")?;
     if cloud_url.scheme() != "https" {
         return Err("云库地址必须使用 HTTPS".into());
     }
@@ -2429,20 +2675,38 @@ fn validate_skin_access(
 
 #[tauri::command]
 fn get_desktop_preferences(state: State<'_, DesktopState>) -> Result<DesktopPreferences, String> {
-    let mut model = state.model.lock().map_err(|_| "state lock poisoned".to_owned())?;
-    let mut preferences = model.store.desktop_preferences().map_err(|error| error.to_string())?;
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    let mut preferences = model
+        .store
+        .desktop_preferences()
+        .map_err(|error| error.to_string())?;
     let before_normalize = preferences.clone();
     normalize_desktop_preferences(&mut preferences);
     if preferences != before_normalize {
-        model.store.save_desktop_preferences(&preferences).map_err(|error| error.to_string())?;
+        model
+            .store
+            .save_desktop_preferences(&preferences)
+            .map_err(|error| error.to_string())?;
     }
     // Preserve older installations that only stored enginePath before profiles existed.
     if preferences.active_engine_id.is_none() && !preferences.engine_path.trim().is_empty() {
-        let name = preferences.engine_path.rsplit(['/', '\\']).next().unwrap_or("本地引擎");
-        let id = model.store.save_engine_profile(name, &preferences.engine_path, "uci")
+        let name = preferences
+            .engine_path
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or("本地引擎");
+        let id = model
+            .store
+            .save_engine_profile(name, &preferences.engine_path, "uci")
             .map_err(|error| error.to_string())?;
         preferences.active_engine_id = Some(id);
-        model.store.save_desktop_preferences(&preferences).map_err(|error| error.to_string())?;
+        model
+            .store
+            .save_desktop_preferences(&preferences)
+            .map_err(|error| error.to_string())?;
     }
     Ok(preferences)
 }
@@ -2487,10 +2751,10 @@ async fn probe_engine(path: String, app: tauri::AppHandle) -> Result<EngineProbe
         .await
         .map_err(|error| format!("引擎握手失败：{error}"))?;
     Ok(EngineProbeDto {
-        path: if path.trim() == BUILTIN_ENGINE_PATH {
-            BUILTIN_ENGINE_PATH.into()
-        } else {
-            resolved_path.to_string_lossy().into_owned()
+        path: match path.trim() {
+            BUILTIN_ENGINE_PATH => BUILTIN_ENGINE_PATH.into(),
+            BUILTIN_FAIRY_ENGINE_PATH => BUILTIN_FAIRY_ENGINE_PATH.into(),
+            _ => resolved_path.to_string_lossy().into_owned(),
         },
         protocol: protocol_name(session.protocol()),
     })
@@ -2508,9 +2772,17 @@ fn engine_profile_dto(profile: EngineProfile, active_engine_id: Option<Uuid>) ->
 
 #[tauri::command]
 fn list_engine_profiles(state: State<'_, DesktopState>) -> Result<Vec<EngineProfileDto>, String> {
-    let model = state.model.lock().map_err(|_| "state lock poisoned".to_owned())?;
-    let preferences = model.store.desktop_preferences().map_err(|error| error.to_string())?;
-    model.store.list_engine_profiles()
+    let model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    let preferences = model
+        .store
+        .desktop_preferences()
+        .map_err(|error| error.to_string())?;
+    model
+        .store
+        .list_engine_profiles()
         .map_err(|error| error.to_string())?
         .into_iter()
         .map(|profile| Ok(engine_profile_dto(profile, preferences.active_engine_id)))
@@ -2525,106 +2797,242 @@ async fn register_engine_profile(
     state: State<'_, DesktopState>,
 ) -> Result<EngineProfileDto, String> {
     let probe = probe_engine(path, app).await?;
-    let mut model = state.model.lock().map_err(|_| "state lock poisoned".to_owned())?;
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
     let display_name = if name.trim().is_empty() {
-        probe.path.rsplit(['/', '\\']).next().unwrap_or("本地引擎").to_owned()
-    } else { name.trim().to_owned() };
-    let id = model.store.save_engine_profile(&display_name, &probe.path, probe.protocol)
+        probe
+            .path
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or("本地引擎")
+            .to_owned()
+    } else {
+        name.trim().to_owned()
+    };
+    let id = model
+        .store
+        .save_engine_profile(&display_name, &probe.path, probe.protocol)
         .map_err(|error| error.to_string())?;
-    let mut preferences = model.store.desktop_preferences().map_err(|error| error.to_string())?;
+    let mut preferences = model
+        .store
+        .desktop_preferences()
+        .map_err(|error| error.to_string())?;
     preferences.active_engine_id = Some(id);
     preferences.engine_path = probe.path.clone();
-    model.store.save_desktop_preferences(&preferences).map_err(|error| error.to_string())?;
-    Ok(EngineProfileDto { id, name: display_name, executable_path: probe.path, protocol: probe.protocol.into(), active: true })
+    model
+        .store
+        .save_desktop_preferences(&preferences)
+        .map_err(|error| error.to_string())?;
+    Ok(EngineProfileDto {
+        id,
+        name: display_name,
+        executable_path: probe.path,
+        protocol: probe.protocol.into(),
+        active: true,
+    })
 }
 
 #[tauri::command]
-fn set_active_engine_profile(id: Uuid, state: State<'_, DesktopState>) -> Result<DesktopPreferences, String> {
-    let mut model = state.model.lock().map_err(|_| "state lock poisoned".to_owned())?;
-    let profile = model.store.list_engine_profiles().map_err(|error| error.to_string())?
-        .into_iter().find(|profile| profile.id == id).ok_or("引擎档案不存在")?;
-    let mut preferences = model.store.desktop_preferences().map_err(|error| error.to_string())?;
+fn set_active_engine_profile(
+    id: Uuid,
+    state: State<'_, DesktopState>,
+) -> Result<DesktopPreferences, String> {
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    let profile = model
+        .store
+        .list_engine_profiles()
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .find(|profile| profile.id == id)
+        .ok_or("引擎档案不存在")?;
+    let mut preferences = model
+        .store
+        .desktop_preferences()
+        .map_err(|error| error.to_string())?;
     preferences.active_engine_id = Some(id);
     preferences.engine_path = profile.executable_path;
-    model.store.save_desktop_preferences(&preferences).map_err(|error| error.to_string())?;
+    model
+        .store
+        .save_desktop_preferences(&preferences)
+        .map_err(|error| error.to_string())?;
     Ok(preferences)
 }
 
 #[tauri::command]
-fn delete_engine_profile(id: Uuid, state: State<'_, DesktopState>) -> Result<DesktopPreferences, String> {
-    let mut model = state.model.lock().map_err(|_| "state lock poisoned".to_owned())?;
-    let mut preferences = model.store.desktop_preferences().map_err(|error| error.to_string())?;
-    model.store.delete_engine_profile(id).map_err(|error| error.to_string())?;
+fn delete_engine_profile(
+    id: Uuid,
+    state: State<'_, DesktopState>,
+) -> Result<DesktopPreferences, String> {
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    let mut preferences = model
+        .store
+        .desktop_preferences()
+        .map_err(|error| error.to_string())?;
+    model
+        .store
+        .delete_engine_profile(id)
+        .map_err(|error| error.to_string())?;
     if preferences.active_engine_id == Some(id) {
         preferences.active_engine_id = None;
-        preferences.engine_path.clear();
-        model.store.save_desktop_preferences(&preferences).map_err(|error| error.to_string())?;
+        // Removing an external active profile must leave the workspace with a
+        // usable engine, rather than an empty path that ignores later analysis.
+        preferences.engine_path = BUILTIN_ENGINE_PATH.into();
+        model
+            .store
+            .save_desktop_preferences(&preferences)
+            .map_err(|error| error.to_string())?;
     }
     Ok(preferences)
 }
 
 #[tauri::command]
-async fn query_cloud_opening_book(fen: String, state: State<'_, DesktopState>) -> Result<Vec<cloud_opening_book::CloudBookCandidateDto>, String> {
+async fn query_cloud_opening_book(
+    fen: String,
+    state: State<'_, DesktopState>,
+) -> Result<Vec<cloud_opening_book::CloudBookCandidateDto>, String> {
     let (enabled, url) = {
-        let model = state.model.lock().map_err(|_| "state lock poisoned".to_owned())?;
-        let preferences = model.store.desktop_preferences().map_err(|error| error.to_string())?;
+        let model = state
+            .model
+            .lock()
+            .map_err(|_| "state lock poisoned".to_owned())?;
+        let preferences = model
+            .store
+            .desktop_preferences()
+            .map_err(|error| error.to_string())?;
         (preferences.cloud_book_enabled, preferences.cloud_book_url)
     };
-    if !enabled { return Ok(Vec::new()); }
+    if !enabled {
+        return Ok(Vec::new());
+    }
     let key = format!("{url}\n{fen}");
-    if let Some(mut cached) = state.cloud_book_cache.lock().map_err(|_| "cache lock poisoned".to_owned())?.get(&key).cloned() {
-        for candidate in &mut cached { candidate.cached = true; }
+    if let Some(mut cached) = state
+        .cloud_book_cache
+        .lock()
+        .map_err(|_| "cache lock poisoned".to_owned())?
+        .get(&key)
+        .cloned()
+    {
+        for candidate in &mut cached {
+            candidate.cached = true;
+        }
         return Ok(cached);
     }
     let candidates = cloud_opening_book::query(&url, &fen).await?;
-    state.cloud_book_cache.lock().map_err(|_| "cache lock poisoned".to_owned())?.insert(key, candidates.clone());
+    state
+        .cloud_book_cache
+        .lock()
+        .map_err(|_| "cache lock poisoned".to_owned())?
+        .insert(key, candidates.clone());
     Ok(candidates)
 }
 
 #[tauri::command]
 fn list_coach_reports(state: State<'_, DesktopState>) -> Result<Vec<GameReportDatasetDto>, String> {
-    let model = state.model.lock().map_err(|_| "state lock poisoned".to_owned())?;
-    Ok(model.store.load_latest_game_reports().map_err(|error| error.to_string())?
-        .into_iter().filter_map(|stored| serde_json::from_str::<GameReportDatasetDto>(&stored.dataset_json).ok())
+    let model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    Ok(model
+        .store
+        .load_latest_game_reports()
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .filter_map(|stored| {
+            serde_json::from_str::<GameReportDatasetDto>(&stored.dataset_json).ok()
+        })
         .filter(|report| !report.stale)
         .collect())
 }
 
 #[tauri::command]
 fn list_training_tasks(state: State<'_, DesktopState>) -> Result<Vec<TrainingTaskDto>, String> {
-    let model = state.model.lock().map_err(|_| "state lock poisoned".to_owned())?;
-    model.store.list_training_tasks().map_err(|error| error.to_string()).map(|tasks| tasks.into_iter().map(Into::into).collect())
+    let model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    model
+        .store
+        .list_training_tasks()
+        .map_err(|error| error.to_string())
+        .map(|tasks| tasks.into_iter().map(Into::into).collect())
 }
 
 #[tauri::command]
 fn generate_training_tasks(state: State<'_, DesktopState>) -> Result<Vec<TrainingTaskDto>, String> {
-    let mut model = state.model.lock().map_err(|_| "state lock poisoned".to_owned())?;
-    let Some(stored) = model.store.load_latest_game_report(model.game_id).map_err(|error| error.to_string())? else {
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    let Some(stored) = model
+        .store
+        .load_latest_game_report(model.game_id)
+        .map_err(|error| error.to_string())?
+    else {
         return Err("请先生成一份整局复盘报告".into());
     };
-    let report: GameReportDatasetDto = serde_json::from_str(&stored.dataset_json).map_err(|_| "本地复盘报告无效".to_owned())?;
+    let report: GameReportDatasetDto =
+        serde_json::from_str(&stored.dataset_json).map_err(|_| "本地复盘报告无效".to_owned())?;
     for (index, position) in report.positions.iter().enumerate().skip(1) {
-        let Some(moved) = position.move_.as_ref() else { continue; };
-        let (Some(before), Some(after)) = (report.positions[index - 1].score_cp, position.score_cp) else { continue; };
-        let loss = if moved.moved_by == "红方" { before - after } else { after - before };
-        if loss < 150 { continue; }
+        let Some(moved) = position.move_.as_ref() else {
+            continue;
+        };
+        let (Some(before), Some(after)) = (report.positions[index - 1].score_cp, position.score_cp)
+        else {
+            continue;
+        };
+        let loss = if moved.moved_by == "红方" {
+            before - after
+        } else {
+            after - before
+        };
+        if loss < 150 {
+            continue;
+        }
         let move_number = (position.ply + 1) / 2;
-        let best = position.best_notation.as_deref().unwrap_or("重新寻找更稳健的着法");
-        model.store.upsert_training_task(
-            report.game_id,
-            &report.line_signature,
-            moved.node_id,
-            &format!("复盘第 {move_number} 手：{}", moved.notation),
-            &format!("本着评价变化约 {loss} 分。先自行计算，再比较推荐着法：{best}"),
-        ).map_err(|error| error.to_string())?;
+        let best = position
+            .best_notation
+            .as_deref()
+            .unwrap_or("重新寻找更稳健的着法");
+        model
+            .store
+            .upsert_training_task(
+                report.game_id,
+                &report.line_signature,
+                moved.node_id,
+                &format!("复盘第 {move_number} 手：{}", moved.notation),
+                &format!("本着评价变化约 {loss} 分。先自行计算，再比较推荐着法：{best}"),
+            )
+            .map_err(|error| error.to_string())?;
     }
-    model.store.list_training_tasks().map_err(|error| error.to_string()).map(|tasks| tasks.into_iter().map(Into::into).collect())
+    model
+        .store
+        .list_training_tasks()
+        .map_err(|error| error.to_string())
+        .map(|tasks| tasks.into_iter().map(Into::into).collect())
 }
 
 #[tauri::command]
-fn complete_training_task(task_id: Uuid, completed: bool, state: State<'_, DesktopState>) -> Result<(), String> {
-    let mut model = state.model.lock().map_err(|_| "state lock poisoned".to_owned())?;
-    model.store.complete_training_task(task_id, completed).map_err(|error| error.to_string())
+fn complete_training_task(
+    task_id: Uuid,
+    completed: bool,
+    state: State<'_, DesktopState>,
+) -> Result<(), String> {
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    model
+        .store
+        .complete_training_task(task_id, completed)
+        .map_err(|error| error.to_string())
 }
 
 fn sync_account_dto(state: &DesktopState) -> Result<SyncAccountDto, String> {
@@ -2714,24 +3122,40 @@ async fn subscription_request(
     validate_server_url(&server_url)?;
     let token = active_sync_token(state)?.ok_or("请先登录同步账号")?;
     let client = reqwest::Client::new();
-    let url = format!("{}/api/v1/subscription{endpoint}", server_url.trim_end_matches('/'));
+    let url = format!(
+        "{}/api/v1/subscription{endpoint}",
+        server_url.trim_end_matches('/')
+    );
     let request = if let Some(code) = code {
-        client.post(url).bearer_auth(token).json(&serde_json::json!({ "code": code }))
+        client
+            .post(url)
+            .bearer_auth(token)
+            .json(&serde_json::json!({ "code": code }))
     } else {
         client.get(url).bearer_auth(token)
     };
-    let response = request.send().await.map_err(|error| format!("订阅服务不可用：{error}"))?;
+    let response = request
+        .send()
+        .await
+        .map_err(|error| format!("订阅服务不可用：{error}"))?;
     let status = response.status();
     if !status.is_success() {
         let message = response
             .json::<serde_json::Value>()
             .await
             .ok()
-            .and_then(|body| body.get("error").and_then(|value| value.as_str()).map(str::to_owned))
+            .and_then(|body| {
+                body.get("error")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_owned)
+            })
             .unwrap_or_else(|| format!("订阅服务返回错误 {status}"));
         return Err(message);
     }
-    response.json().await.map_err(|_| "订阅服务返回了无效数据".into())
+    response
+        .json()
+        .await
+        .map_err(|_| "订阅服务返回了无效数据".into())
 }
 
 #[tauri::command]
@@ -2846,15 +3270,17 @@ async fn request_auth(
             .json::<serde_json::Value>()
             .await
             .ok()
-            .and_then(|body| body.get("error").and_then(|value| value.as_str()).map(str::to_owned));
+            .and_then(|body| {
+                body.get("error")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_owned)
+            });
         let duplicate_email = status.as_u16() == 409
-            || error_message
-                .as_deref()
-                .is_some_and(|message| {
-                    message.contains("email already registered")
-                        || message.contains("duplicate")
-                        || message.contains("Duplicate entry")
-                });
+            || error_message.as_deref().is_some_and(|message| {
+                message.contains("email already registered")
+                    || message.contains("duplicate")
+                    || message.contains("Duplicate entry")
+            });
         return Err(match status.as_u16() {
             401 => "邮箱或密码不正确".into(),
             _ if duplicate_email => "该邮箱已经注册，请直接登录".into(),
@@ -3102,6 +3528,26 @@ fn board_pieces(board: &Board) -> Vec<PieceDto> {
     pieces
 }
 
+fn manual_tree_dto(
+    tree: &ManualTree,
+    parent_id: Uuid,
+    board: &Board,
+    analysis: &HashMap<Uuid, AnalysisSummary>,
+) -> Result<Vec<ManualTreeNodeDto>, String> {
+    tree.branches(parent_id)
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .map(|node| {
+            let move_ = move_dto(node, board, analysis.get(&node.id))?;
+            let next_board = board.apply_move(node.mv).map_err(|error| error.to_string())?;
+            Ok(ManualTreeNodeDto {
+                move_,
+                children: manual_tree_dto(tree, node.id, &next_board, analysis)?,
+            })
+        })
+        .collect()
+}
+
 fn board_dto(model: &AppModel) -> Result<BoardDto, String> {
     let analysis = model
         .store
@@ -3112,6 +3558,7 @@ fn board_dto(model: &AppModel) -> Result<BoardDto, String> {
         .load_latest_analysis_summary(model.game_id, None)
         .map_err(|error| error.to_string())?;
     let root_board = Board::from_fen(&model.starting_fen).map_err(|error| error.to_string())?;
+    let manual_tree = manual_tree_dto(&model.tree, model.tree.root_id(), &root_board, &analysis)?;
     let pieces = board_pieces(&model.board);
     let mut history = Vec::new();
     if let Some(node) = model.current_node {
@@ -3141,11 +3588,7 @@ fn board_dto(model: &AppModel) -> Result<BoardDto, String> {
         let Some(node) = next else {
             break;
         };
-        continuation.push(move_dto(
-            node,
-            &continuation_board,
-            analysis.get(&node.id),
-        )?);
+        continuation.push(move_dto(node, &continuation_board, analysis.get(&node.id))?);
         continuation_board = continuation_board
             .apply_move(node.mv)
             .map_err(|error| error.to_string())?;
@@ -3158,10 +3601,38 @@ fn board_dto(model: &AppModel) -> Result<BoardDto, String> {
         .into_iter()
         .map(|node| move_dto(node, &model.board, analysis.get(&node.id)))
         .collect::<Result<Vec<_>, _>>()?;
-    let preferences = model.store.desktop_preferences().map_err(|error| error.to_string())?;
+    let sibling_branches = if let Some(current_node) = model.current_node {
+        let parent_id = model
+            .tree
+            .node(current_node)
+            .map_err(|error| error.to_string())?
+            .parent_id;
+        let parent_board = board_at(
+            &model.starting_fen,
+            &model.tree,
+            (parent_id != model.tree.root_id()).then_some(parent_id),
+        )?;
+        model
+            .tree
+            .branches(parent_id)
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .map(|node| move_dto(node, &parent_board, analysis.get(&node.id)))
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        Vec::new()
+    };
+    let preferences = model
+        .store
+        .desktop_preferences()
+        .map_err(|error| error.to_string())?;
     let mut xqb_candidates = Vec::new();
     for path in preferences.xqb_book_paths {
-        if preferences.disabled_xqb_book_paths.iter().any(|disabled| disabled == &path) {
+        if preferences
+            .disabled_xqb_book_paths
+            .iter()
+            .any(|disabled| disabled == &path)
+        {
             continue;
         }
         match xqb_opening_book::query(Path::new(&path), &model.board) {
@@ -3184,6 +3655,8 @@ fn board_dto(model: &AppModel) -> Result<BoardDto, String> {
         history,
         continuation,
         branches,
+        sibling_branches,
+        manual_tree,
         current_node: model.current_node,
         title: model.metadata.title.clone(),
         note: model.note.clone(),
@@ -3621,7 +4094,7 @@ fn main() {
                 }),
                 credentials: Arc::new(SystemCredentialStore),
                 session_token: Mutex::new(None),
-                engine: tokio::sync::Mutex::new(None),
+                engine: tokio::sync::Mutex::new(HashMap::new()),
                 report_engine: tokio::sync::Mutex::new(None),
                 report_commit: tokio::sync::Mutex::new(()),
                 play_session: tokio::sync::Mutex::new(None),
@@ -3649,6 +4122,9 @@ fn main() {
             export_document_text,
             export_document_file,
             export_replay_gif,
+            export_mind_map_svg,
+            export_text_file,
+            export_manual_pdf,
             save_document,
             update_game_metadata,
             reorder_branches,
@@ -3809,9 +4285,15 @@ mod tests {
 
         let dto = board_dto(&model).unwrap();
 
-        assert_eq!(dto.history.iter().map(|item| item.id).collect::<Vec<_>>(), vec![first]);
         assert_eq!(
-            dto.continuation.iter().map(|item| item.id).collect::<Vec<_>>(),
+            dto.history.iter().map(|item| item.id).collect::<Vec<_>>(),
+            vec![first]
+        );
+        assert_eq!(
+            dto.continuation
+                .iter()
+                .map(|item| item.id)
+                .collect::<Vec<_>>(),
             vec![second, third]
         );
         assert_eq!(dto.continuation[0].notation, "马8进7");
@@ -3966,6 +4448,64 @@ mod tests {
         std::fs::write(&engine, b"engine-two").unwrap();
         let third = report_engine_fingerprint(&engine).unwrap();
         assert_ne!(second, third);
+    }
+
+    #[test]
+    fn bundled_fairy_stockfish_candidates_cover_resource_layouts() {
+        let base = PathBuf::from("/app/Resources");
+        let candidates = fairy_stockfish_candidates(&base);
+        assert!(candidates.contains(&base.join("fairy-stockfish/fairy-stockfish")));
+        assert!(candidates.contains(&base.join("resources/fairy-stockfish/fairy-stockfish")));
+        assert!(candidates.contains(&base.join("fairy-stockfish/fairy-stockfish.exe")));
+    }
+
+    #[test]
+    fn bundled_fairy_stockfish_candidates_cover_the_development_resource_directory() {
+        let resource_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources");
+        let candidates = fairy_stockfish_candidates(&resource_dir);
+        assert!(candidates.contains(&resource_dir.join("fairy-stockfish/fairy-stockfish")));
+    }
+
+    #[test]
+    fn preferred_nnue_path_favors_xiangqi_networks() {
+        let directory = tempfile::tempdir().unwrap();
+        let engine = directory.path().join("fairy-stockfish");
+        let generic = directory.path().join("z-generic.nnue");
+        let fairy = directory.path().join("fairy.nnue");
+        let xiangqi = directory.path().join("xiangqi-2024.nnue");
+        std::fs::write(&engine, b"engine").unwrap();
+        std::fs::write(&generic, b"generic").unwrap();
+        std::fs::write(&fairy, b"fairy").unwrap();
+        std::fs::write(&xiangqi, b"xiangqi").unwrap();
+
+        assert_eq!(preferred_nnue_path(&engine).unwrap(), xiangqi);
+    }
+
+    #[test]
+    fn preferred_nnue_path_keeps_fairy_and_pikafish_networks_separate() {
+        let directory = tempfile::tempdir().unwrap();
+        let pikafish = directory.path().join("pikafish");
+        let fairy = directory.path().join("fairy-stockfish");
+        let pikafish_nnue = directory.path().join("pikafish.nnue");
+        let fairy_nnue = directory.path().join("fairy-xiangqi.nnue");
+        std::fs::write(&pikafish, b"pikafish").unwrap();
+        std::fs::write(&fairy, b"fairy").unwrap();
+        std::fs::write(&pikafish_nnue, b"pikafish-network").unwrap();
+        std::fs::write(&fairy_nnue, b"fairy-network").unwrap();
+
+        assert_eq!(preferred_nnue_path(&pikafish).unwrap(), pikafish_nnue);
+        assert_eq!(preferred_nnue_path(&fairy).unwrap(), fairy_nnue);
+    }
+
+    #[test]
+    fn preferred_nnue_path_never_uses_pikafish_network_for_fairy() {
+        let directory = tempfile::tempdir().unwrap();
+        let fairy = directory.path().join("fairy-stockfish");
+        let pikafish_nnue = directory.path().join("pikafish.nnue");
+        std::fs::write(&fairy, b"fairy").unwrap();
+        std::fs::write(&pikafish_nnue, b"pikafish-network").unwrap();
+
+        assert_eq!(preferred_nnue_path(&fairy), None);
     }
 
     #[tokio::test]

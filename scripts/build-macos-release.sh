@@ -6,10 +6,14 @@ cd "$ROOT_DIR"
 
 PNPM_BIN="${PNPM_BIN:-pnpm}"
 EMBED_PIKAFISH="${EMBED_PIKAFISH:-1}"
+EMBED_FAIRY_STOCKFISH="${EMBED_FAIRY_STOCKFISH:-1}"
 SIGN_AND_NOTARIZE="${SIGN_AND_NOTARIZE:-1}"
 PIKAFISH_RELEASE_DIR="${PIKAFISH_RELEASE_DIR:-$ROOT_DIR/../Pikafish.2026-01-02}"
 PIKAFISH_RESOURCE_DIR="apps/desktop/src-tauri/resources/pikafish"
-TAURI_RESOURCE_CONFIG='{"bundle":{"resources":["resources/fonts/OFL.txt","resources/pikafish"]}}'
+FAIRY_STOCKFISH_RELEASE_DIR="${FAIRY_STOCKFISH_RELEASE_DIR:-$ROOT_DIR/../Fairy-Stockfish}"
+FAIRY_STOCKFISH_RESOURCE_DIR="apps/desktop/src-tauri/resources/fairy-stockfish"
+BUILD_FAIRY_STOCKFISH_FROM_SOURCE="${BUILD_FAIRY_STOCKFISH_FROM_SOURCE:-1}"
+TAURI_RESOURCE_CONFIG='{"bundle":{"resources":["resources/fonts/OFL.txt","resources/pikafish","resources/fairy-stockfish"]}}'
 
 if [[ "$EMBED_PIKAFISH" == "1" ]]; then
   if [[ ! -x "$PIKAFISH_RELEASE_DIR/MacOS/pikafish-apple-silicon" ]]; then
@@ -31,6 +35,12 @@ if [[ "$EMBED_PIKAFISH" == "1" ]]; then
   xattr -dr com.apple.quarantine "$PIKAFISH_RESOURCE_DIR" 2>/dev/null || true
 fi
 
+if [[ "$EMBED_FAIRY_STOCKFISH" == "1" ]]; then
+  FAIRY_STOCKFISH_RELEASE_DIR="$FAIRY_STOCKFISH_RELEASE_DIR" \
+  BUILD_FAIRY_STOCKFISH_FROM_SOURCE="$BUILD_FAIRY_STOCKFISH_FROM_SOURCE" \
+  ./scripts/prepare-fairy-stockfish-resource.sh macos-arm64
+fi
+
 if [[ "$SIGN_AND_NOTARIZE" == "1" ]]; then
   : "${APPLE_SIGNING_IDENTITY:?Set APPLE_SIGNING_IDENTITY to your Developer ID Application identity.}"
   if [[ -z "${APPLE_API_ISSUER:-}" || -z "${APPLE_API_KEY:-}" || -z "${APPLE_API_KEY_PATH:-}" ]]; then
@@ -50,6 +60,11 @@ if [[ "$SIGN_AND_NOTARIZE" == "1" ]]; then
     echo "Signing embedded Pikafish engine: $PIKAFISH_RESOURCE_DIR/pikafish"
     codesign --force --timestamp --options runtime --sign "$APPLE_SIGNING_IDENTITY" "$PIKAFISH_RESOURCE_DIR/pikafish"
     codesign --verify --strict --verbose=2 "$PIKAFISH_RESOURCE_DIR/pikafish"
+  fi
+  if [[ -x "$FAIRY_STOCKFISH_RESOURCE_DIR/fairy-stockfish" ]]; then
+    echo "Signing embedded Fairy-Stockfish engine: $FAIRY_STOCKFISH_RESOURCE_DIR/fairy-stockfish"
+    codesign --force --timestamp --options runtime --sign "$APPLE_SIGNING_IDENTITY" "$FAIRY_STOCKFISH_RESOURCE_DIR/fairy-stockfish"
+    codesign --verify --strict --verbose=2 "$FAIRY_STOCKFISH_RESOURCE_DIR/fairy-stockfish"
   fi
 fi
 

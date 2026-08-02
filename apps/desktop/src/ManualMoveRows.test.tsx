@@ -28,4 +28,25 @@ describe("ManualMoveRows", () => {
     fireEvent.click(screen.getByText("马8进7"));
     expect(onNavigate).toHaveBeenCalledWith("two");
   });
+
+  it("splits sibling moves into a mainline and numbered variations", () => {
+    const onNavigate = vi.fn();
+    render(<div role="table"><ManualMoveRows
+      history={[move("one", "炮二平五", "红方"), move("main", "车8进6", "黑方")]}
+      continuation={[]}
+      currentNode="variation"
+      siblingBranches={[
+        move("main", "车8进6", "黑方"),
+        { ...move("variation", "车8平6", "黑方"), isMainline: false },
+      ]}
+      qualityByMoveId={new Map()}
+      formatScore={() => ""}
+      onNavigate={onNavigate}
+    /></div>);
+
+    expect(screen.getAllByText("主线").length).toBeGreaterThan(1);
+    expect(screen.getByText("分支 1 · 当前")).toBeTruthy();
+    fireEvent.click(screen.getByText("车8进6"));
+    expect(onNavigate).toHaveBeenCalledWith("main");
+  });
 });

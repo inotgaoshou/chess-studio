@@ -68,10 +68,16 @@ pub struct DesktopPreferences {
     pub candidate_rail_collapsed: bool,
     #[serde(default)]
     pub analysis_panel_collapsed: bool,
+    #[serde(default = "default_evaluation_collapsed")]
+    pub evaluation_collapsed: bool,
+    #[serde(default = "default_branch_arrow_color")]
+    pub branch_arrow_color: String,
     #[serde(default = "default_workspace_panel")]
     pub workspace_panel: String,
     #[serde(default = "default_layout_mode")]
     pub layout_mode: String,
+    #[serde(default = "default_manual_view_mode")]
+    pub manual_view_mode: String,
     #[serde(default = "default_color_theme")]
     pub color_theme: String,
     #[serde(default = "default_board_skin")]
@@ -87,6 +93,13 @@ pub struct DesktopPreferences {
     pub disabled_xqb_book_paths: Vec<String>,
     #[serde(default)]
     pub active_engine_id: Option<Uuid>,
+    #[serde(default = "default_analysis_engine_mode")]
+    pub analysis_engine_mode: String,
+    #[serde(default)]
+    pub parallel_engine_ids: Vec<Uuid>,
+    /// Built-in engines use stable markers rather than user-created profile IDs.
+    #[serde(default)]
+    pub parallel_engine_paths: Vec<String>,
     #[serde(default = "default_cloud_book_enabled")]
     pub cloud_book_enabled: bool,
     #[serde(default = "default_cloud_book_url")]
@@ -98,12 +111,28 @@ fn default_color_theme() -> String {
     "dark".into()
 }
 
+fn default_evaluation_collapsed() -> bool {
+    true
+}
+
+fn default_branch_arrow_color() -> String {
+    "#2f80ed".into()
+}
+
+fn default_analysis_engine_mode() -> String {
+    "single".into()
+}
+
 fn default_workspace_panel() -> String {
     "moves".into()
 }
 
 fn default_layout_mode() -> String {
     "compact".into()
+}
+
+fn default_manual_view_mode() -> String {
+    "track".into()
 }
 
 fn default_board_skin() -> String {
@@ -136,18 +165,21 @@ impl Default for DesktopPreferences {
             engine_path: String::new(),
             threads: 2,
             hash_mb: 256,
-            multipv: 1,
+            multipv: 3,
             candidate_line_moves: default_candidate_line_moves(),
             search_mode: "infinite".into(),
             search_value: 1500,
-            move_time_ms: 5000,
+            move_time_ms: 2000,
             ponder: false,
             auto_analyze: true,
             library_collapsed: true,
             candidate_rail_collapsed: false,
             analysis_panel_collapsed: false,
+            evaluation_collapsed: default_evaluation_collapsed(),
+            branch_arrow_color: default_branch_arrow_color(),
             workspace_panel: default_workspace_panel(),
             layout_mode: default_layout_mode(),
+            manual_view_mode: default_manual_view_mode(),
             color_theme: default_color_theme(),
             board_skin: default_board_skin(),
             piece_skin: default_piece_skin(),
@@ -155,6 +187,9 @@ impl Default for DesktopPreferences {
             xqb_book_paths: Vec::new(),
             disabled_xqb_book_paths: Vec::new(),
             active_engine_id: None,
+            analysis_engine_mode: default_analysis_engine_mode(),
+            parallel_engine_ids: Vec::new(),
+            parallel_engine_paths: Vec::new(),
             cloud_book_enabled: default_cloud_book_enabled(),
             cloud_book_url: default_cloud_book_url(),
             server_url: "http://127.0.0.1:8080".into(),
@@ -701,8 +736,10 @@ impl LocalStore {
     }
 
     pub fn delete_engine_profile(&mut self, id: Uuid) -> Result<(), StoreError> {
-        self.connection
-            .execute("DELETE FROM engine_profiles WHERE id = ?1", [id.to_string()])?;
+        self.connection.execute(
+            "DELETE FROM engine_profiles WHERE id = ?1",
+            [id.to_string()],
+        )?;
         Ok(())
     }
 
@@ -922,16 +959,19 @@ impl LocalStore {
                ON latest.latest_rowid = r.rowid
              ORDER BY r.created_at DESC, r.rowid DESC",
         )?;
-        statement.query_map([], |row| {
-            Ok(StoredGameReport {
-                game_id: parse_row_uuid(&row.get::<_, String>(0)?, 0)?,
-                line_signature: row.get(1)?,
-                engine_fingerprint: row.get(2)?,
-                config_hash: row.get(3)?,
-                dataset_json: row.get(4)?,
-                generated_at: row.get(5)?,
-            })
-        })?.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+        statement
+            .query_map([], |row| {
+                Ok(StoredGameReport {
+                    game_id: parse_row_uuid(&row.get::<_, String>(0)?, 0)?,
+                    line_signature: row.get(1)?,
+                    engine_fingerprint: row.get(2)?,
+                    config_hash: row.get(3)?,
+                    dataset_json: row.get(4)?,
+                    generated_at: row.get(5)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(Into::into)
     }
 
     pub fn upsert_training_task(
@@ -960,24 +1000,34 @@ impl LocalStore {
             "SELECT id, game_id, report_signature, node_id, title, detail, completed_at, created_at
              FROM training_tasks ORDER BY completed_at IS NOT NULL, created_at DESC",
         )?;
-        statement.query_map([], |row| {
-            Ok(TrainingTask {
-                id: parse_row_uuid(&row.get::<_, String>(0)?, 0)?,
-                game_id: parse_row_uuid(&row.get::<_, String>(1)?, 1)?,
-                report_signature: row.get(2)?,
-                node_id: parse_row_uuid(&row.get::<_, String>(3)?, 3)?,
-                title: row.get(4)?,
-                detail: row.get(5)?,
-                completed_at: row.get(6)?,
-                created_at: row.get(7)?,
-            })
-        })?.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+        statement
+            .query_map([], |row| {
+                Ok(TrainingTask {
+                    id: parse_row_uuid(&row.get::<_, String>(0)?, 0)?,
+                    game_id: parse_row_uuid(&row.get::<_, String>(1)?, 1)?,
+                    report_signature: row.get(2)?,
+                    node_id: parse_row_uuid(&row.get::<_, String>(3)?, 3)?,
+                    title: row.get(4)?,
+                    detail: row.get(5)?,
+                    completed_at: row.get(6)?,
+                    created_at: row.get(7)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(Into::into)
     }
 
-    pub fn complete_training_task(&mut self, task_id: Uuid, completed: bool) -> Result<(), StoreError> {
+    pub fn complete_training_task(
+        &mut self,
+        task_id: Uuid,
+        completed: bool,
+    ) -> Result<(), StoreError> {
         self.connection.execute(
             "UPDATE training_tasks SET completed_at = ?2 WHERE id = ?1",
-            params![task_id.to_string(), completed.then(|| chrono::Utc::now().to_rfc3339())],
+            params![
+                task_id.to_string(),
+                completed.then(|| chrono::Utc::now().to_rfc3339())
+            ],
         )?;
         Ok(())
     }
@@ -2174,8 +2224,11 @@ mod tests {
             library_collapsed: true,
             candidate_rail_collapsed: true,
             analysis_panel_collapsed: true,
+            evaluation_collapsed: true,
+            branch_arrow_color: "#9b51e0".into(),
             workspace_panel: "summary".into(),
             layout_mode: "compact".into(),
+            manual_view_mode: "track".into(),
             color_theme: "light".into(),
             board_skin: "hongmu".into(),
             piece_skin: "hongmu".into(),
@@ -2183,6 +2236,9 @@ mod tests {
             xqb_book_paths: vec!["/books/example.xqb".into()],
             disabled_xqb_book_paths: Vec::new(),
             active_engine_id: None,
+            analysis_engine_mode: "single".into(),
+            parallel_engine_ids: Vec::new(),
+            parallel_engine_paths: Vec::new(),
             cloud_book_enabled: true,
             cloud_book_url: "https://book.example.com/query".into(),
             server_url: "https://sync.example.com".into(),
@@ -2207,20 +2263,29 @@ mod tests {
         assert!(!preferences.analysis_panel_collapsed);
         assert_eq!(preferences.workspace_panel, "moves");
         assert_eq!(preferences.layout_mode, "compact");
+        assert_eq!(preferences.manual_view_mode, "track");
         assert_eq!(preferences.color_theme, "dark");
+        assert_eq!(preferences.branch_arrow_color, "#2f80ed");
         assert_eq!(preferences.report_depth, 20);
         assert_eq!(preferences.candidate_line_moves, 6);
         assert!(preferences.xqb_book_paths.is_empty());
         assert!(preferences.cloud_book_enabled);
-        assert_eq!(preferences.cloud_book_url, "https://www.chessdb.cn/chessdb.php");
+        assert_eq!(
+            preferences.cloud_book_url,
+            "https://www.chessdb.cn/chessdb.php"
+        );
     }
 
     #[test]
     fn engine_profiles_are_upserted_listed_and_deleted() {
         let mut store = LocalStore::open_in_memory().unwrap();
-        let id = store.save_engine_profile("Pikafish", "/engines/pikafish", "uci").unwrap();
+        let id = store
+            .save_engine_profile("Pikafish", "/engines/pikafish", "uci")
+            .unwrap();
         assert_eq!(store.list_engine_profiles().unwrap()[0].id, id);
-        let same = store.save_engine_profile("Pikafish 2", "/engines/pikafish", "ucci").unwrap();
+        let same = store
+            .save_engine_profile("Pikafish 2", "/engines/pikafish", "ucci")
+            .unwrap();
         assert_eq!(same, id);
         let profiles = store.list_engine_profiles().unwrap();
         assert_eq!(profiles[0].name, "Pikafish 2");
@@ -2278,15 +2343,33 @@ mod tests {
         let mut store = LocalStore::open_in_memory().unwrap();
         let game_id = Uuid::new_v4();
         let node_id = Uuid::new_v4();
-        store.upsert_training_task(game_id, "report-1", node_id, "复盘第 12 手", "重新寻找最佳着法").unwrap();
-        store.upsert_training_task(game_id, "report-1", node_id, "复盘第 12 手", "比较候选着法").unwrap();
+        store
+            .upsert_training_task(
+                game_id,
+                "report-1",
+                node_id,
+                "复盘第 12 手",
+                "重新寻找最佳着法",
+            )
+            .unwrap();
+        store
+            .upsert_training_task(game_id, "report-1", node_id, "复盘第 12 手", "比较候选着法")
+            .unwrap();
         let tasks = store.list_training_tasks().unwrap();
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].detail, "比较候选着法");
         store.complete_training_task(tasks[0].id, true).unwrap();
-        assert!(store.list_training_tasks().unwrap()[0].completed_at.is_some());
+        assert!(
+            store.list_training_tasks().unwrap()[0]
+                .completed_at
+                .is_some()
+        );
         store.complete_training_task(tasks[0].id, false).unwrap();
-        assert!(store.list_training_tasks().unwrap()[0].completed_at.is_none());
+        assert!(
+            store.list_training_tasks().unwrap()[0]
+                .completed_at
+                .is_none()
+        );
     }
 
     #[test]

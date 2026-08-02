@@ -134,6 +134,13 @@ export function CompactReferencePanels({
       : bookError
         ? bookError
         : `${bookRows.length} 条${cloudEnabled ? "" : " · 云库关闭"}`;
+  const bookRowTitle = (row: CompactBookRow) => [
+    row.notation,
+    `分数 ${row.scoreText}`,
+    row.winRateText && `胜率 ${row.winRateText}`,
+    row.source,
+    row.detail,
+  ].filter(Boolean).join(" · ");
 
   if (collapsed) {
     return <div className="compact-reference-stack collapsed" aria-label="云库已收起">
@@ -159,10 +166,10 @@ export function CompactReferencePanels({
         <small>{cloudEnabled ? "当前版本使用 ChessDB 云库，本地库和自动出步入口暂不展示" : "云库已关闭"}</small>
       </div>
       <div className="compact-data-table compact-book-table" role="group" aria-label="开局库候选">
-        <div className="compact-data-head"><span>着法</span><span>分数</span><span>胜率</span><span>来源</span></div>
+        <div className="compact-data-head"><span>着法</span><span>胜率</span><span>分数</span><span>来源</span></div>
         <div className="compact-data-body">
-          {bookRows.map((row) => <button type="button" key={row.id} onClick={() => onPlayBookMove(row.iccs)} title={row.detail || row.source}>
-            <strong>{row.notation}</strong><span>{row.scoreText}</span><span>{row.winRateText}</span><small>{row.source}</small>
+          {bookRows.map((row) => <button type="button" key={row.id} onClick={() => onPlayBookMove(row.iccs)} title={bookRowTitle(row)}>
+            <strong>{row.notation}</strong><span className="book-win-rate">{row.winRateText}</span><span className="book-score">{row.scoreText}</span><small>{row.source}</small>
           </button>)}
           {!bookLoading && bookRows.length === 0 && <div className="compact-table-empty"><BookOpen size={20}/><span>{bookError ? "云库暂时不可用" : cloudEnabled ? "当前局面暂无云库着法" : "ChessDB 云库未启用"}</span></div>}
         </div>
@@ -216,10 +223,10 @@ export function CompactReferencePanels({
           <div><small>最佳着</small><strong>{topCloudRow?.notation ?? "--"}</strong></div>
         </div>
         <div className="compact-data-table compact-cloud-stat-table" role="group" aria-label="云库统计候选">
-          <div className="compact-data-head"><span>着法</span><span>分数</span><span>胜率</span><span>来源</span></div>
+          <div className="compact-data-head"><span>着法</span><span>胜率</span><span>分数</span><span>来源</span></div>
           <div className="compact-data-body">
             {sourceRows.slice(0, 8).map((row) => <button type="button" key={`stat-${row.id}`} onClick={() => onPlayBookMove(row.iccs)} title={row.detail || row.source}>
-              <strong>{row.notation}</strong><span>{row.scoreText}</span><span>{row.winRateText}</span><small>{row.source}</small>
+              <strong>{row.notation}</strong><span className="book-win-rate">{row.winRateText}</span><span className="book-score">{row.scoreText}</span><small>{row.source}</small>
             </button>)}
             {sourceRows.length === 0 && <div className="compact-table-empty"><Database size={20}/><span>{cloudEnabled ? "暂无云库统计" : "ChessDB 云库未启用"}</span></div>}
           </div>

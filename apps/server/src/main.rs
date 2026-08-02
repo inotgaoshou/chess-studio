@@ -177,11 +177,7 @@ impl IntoResponse for ApiError {
             Self::Database(error) if cfg!(debug_assertions) => format!("database error: {error}"),
             _ => self.to_string(),
         };
-        (
-            status,
-            Json(serde_json::json!({ "error": message })),
-        )
-            .into_response()
+        (status, Json(serde_json::json!({ "error": message }))).into_response()
     }
 }
 
@@ -308,7 +304,9 @@ async fn register(
         .await;
     match result {
         Ok(_) => {
-            if let Err(error) = record_product_event_for_pool(&state.pool, user_id, "registered").await {
+            if let Err(error) =
+                record_product_event_for_pool(&state.pool, user_id, "registered").await
+            {
                 tracing::warn!(%error, "failed to record registration event");
             }
             Ok(Json(AuthResponse {
@@ -447,7 +445,16 @@ async fn redeem_code(
     let hash = redemption_code_hash(&code);
     let now = Utc::now();
     let mut transaction = state.pool.begin().await?;
-    type CodeRow = (String, String, u32, u32, u32, u32, chrono::DateTime<Utc>, chrono::DateTime<Utc>);
+    type CodeRow = (
+        String,
+        String,
+        u32,
+        u32,
+        u32,
+        u32,
+        chrono::DateTime<Utc>,
+        chrono::DateTime<Utc>,
+    );
     let code_row: Option<CodeRow> = sqlx::query_as(
         "SELECT id, plan, duration_days, cloud_analysis_quota, redemption_count, max_redemptions, starts_at, expires_at
          FROM redemption_codes WHERE code_hash = ? AND revoked_at IS NULL FOR UPDATE",
@@ -455,18 +462,29 @@ async fn redeem_code(
     .bind(hash)
     .fetch_optional(&mut *transaction)
     .await?;
-    let (code_id, plan, duration_days, quota, redemption_count, max_redemptions, starts_at, expires_at) =
-        code_row.ok_or_else(|| ApiError::Invalid("redemption code is unavailable".into()))?;
+    let (
+        code_id,
+        plan,
+        duration_days,
+        quota,
+        redemption_count,
+        max_redemptions,
+        starts_at,
+        expires_at,
+    ) = code_row.ok_or_else(|| ApiError::Invalid("redemption code is unavailable".into()))?;
     if now < starts_at || now >= expires_at || redemption_count >= max_redemptions {
         return Err(ApiError::Invalid("redemption code is unavailable".into()));
     }
-    let redeemed = sqlx::query("INSERT IGNORE INTO code_redemptions (code_id, user_id) VALUES (?, ?)")
-        .bind(&code_id)
-        .bind(user_id.to_string())
-        .execute(&mut *transaction)
-        .await?;
+    let redeemed =
+        sqlx::query("INSERT IGNORE INTO code_redemptions (code_id, user_id) VALUES (?, ?)")
+            .bind(&code_id)
+            .bind(user_id.to_string())
+            .execute(&mut *transaction)
+            .await?;
     if redeemed.rows_affected() == 0 {
-        return Err(ApiError::Conflict("this code has already been redeemed".into()));
+        return Err(ApiError::Conflict(
+            "this code has already been redeemed".into(),
+        ));
     }
     sqlx::query("UPDATE redemption_codes SET redemption_count = redemption_count + 1 WHERE id = ?")
         .bind(&code_id)
@@ -510,7 +528,15 @@ fn redemption_code_hash(code: &str) -> String {
 }
 
 async fn load_subscription(pool: &MySqlPool, user_id: Uuid) -> Result<SubscriptionDto, ApiError> {
-    type EntitlementRow = (String, String, String, chrono::DateTime<Utc>, chrono::DateTime<Utc>, u32, u32);
+    type EntitlementRow = (
+        String,
+        String,
+        String,
+        chrono::DateTime<Utc>,
+        chrono::DateTime<Utc>,
+        u32,
+        u32,
+    );
     let row: Option<EntitlementRow> = sqlx::query_as(
         "SELECT plan, status, source, starts_at, expires_at, cloud_analysis_quota, cloud_analysis_used
          FROM subscription_entitlements WHERE user_id = ?",
@@ -520,10 +546,28 @@ async fn load_subscription(pool: &MySqlPool, user_id: Uuid) -> Result<Subscripti
     .await?;
     let now = Utc::now();
     Ok(match row {
-        Some((plan, status, source, starts_at, expires_at, quota, used)) if status == "active" && expires_at > now => SubscriptionDto {
-            plan, status, source, starts_at, expires_at, cloud_analysis_quota: quota, cloud_analysis_used: used,
+        Some((plan, status, source, starts_at, expires_at, quota, used))
+            if status == "active" && expires_at > now =>
+        {
+            SubscriptionDto {
+                plan,
+                status,
+                source,
+                starts_at,
+                expires_at,
+                cloud_analysis_quota: quota,
+                cloud_analysis_used: used,
+            }
+        }
+        _ => SubscriptionDto {
+            plan: "free".into(),
+            status: "inactive".into(),
+            source: "none".into(),
+            starts_at: now,
+            expires_at: now,
+            cloud_analysis_quota: 0,
+            cloud_analysis_used: 0,
         },
-        _ => SubscriptionDto { plan: "free".into(), status: "inactive".into(), source: "none".into(), starts_at: now, expires_at: now, cloud_analysis_quota: 0, cloud_analysis_used: 0 },
     })
 }
 
@@ -613,7 +657,9 @@ async fn analyze(
     drop(permit);
     match result {
         Ok(Ok(response)) => {
-            if let Err(error) = record_product_event_for_pool(&state.pool, user_id, "cloud_analysis_consumed").await {
+            if let Err(error) =
+                record_product_event_for_pool(&state.pool, user_id, "cloud_analysis_consumed").await
+            {
                 tracing::warn!(%error, "failed to record cloud analysis event");
             }
             Ok(Json(response))
@@ -880,16 +926,20 @@ mod tests {
             })
             .is_err()
         );
-        assert!(validate_credentials(&Credentials {
-            email: "user@example.com".into(),
-            password: "1234567".into(),
-        })
-        .is_err());
-        assert!(validate_credentials(&Credentials {
-            email: "user@example.com".into(),
-            password: "12345678".into(),
-        })
-        .is_ok());
+        assert!(
+            validate_credentials(&Credentials {
+                email: "user@example.com".into(),
+                password: "1234567".into(),
+            })
+            .is_err()
+        );
+        assert!(
+            validate_credentials(&Credentials {
+                email: "user@example.com".into(),
+                password: "12345678".into(),
+            })
+            .is_ok()
+        );
     }
 
     #[test]

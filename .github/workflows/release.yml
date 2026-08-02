@@ -10,11 +10,6 @@ on:
         description: "Release tag, for example v1.0.0"
         required: true
         default: "v1.0.0"
-      include_macos:
-        description: "Build macOS packages and upload them to this release"
-        required: false
-        type: boolean
-        default: false
 
 concurrency:
   group: release-${{ github.event.inputs.tag || github.ref_name }}
@@ -26,34 +21,10 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   PIKAFISH_VERSION: "2026-01-02"
-  TAURI_RESOURCE_CONFIG: '{"bundle":{"resources":["resources/fonts/OFL.txt","resources/pikafish"]}}'
+  FAIRY_STOCKFISH_TAG: "fairy_sf_14_0_1_xq"
+  TAURI_RESOURCE_CONFIG: '{"bundle":{"resources":["resources/fonts/OFL.txt","resources/pikafish","resources/fairy-stockfish"]}}'
 
 jobs:
-  validate-macos-signing:
-    name: Validate macOS signing
-    runs-on: ubuntu-latest
-    outputs:
-      configured: ${{ steps.signing.outputs.configured }}
-    steps:
-      - name: Verify signing and notarization secrets
-        id: signing
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          missing=0
-          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
-            if [ -z "${!name}" ]; then
-              echo "::warning title=Missing macOS release secret::${name} is required only for notarized macOS DMG builds."
-              missing=1
-            fi
-          done
-          echo "configured=$([ "$missing" -eq 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-
   select_build_platforms:
     name: Select release platforms
     runs-on: ubuntu-latest
@@ -61,19 +32,12 @@ jobs:
       matrix: ${{ steps.targets.outputs.matrix }}
     steps:
       - id: targets
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          INCLUDE_MACOS: ${{ inputs.include_macos }}
         run: |
-          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$INCLUDE_MACOS" == "true" ]]; then
-            matrix='{"include":[{"name":"macOS Apple Silicon","platform":"macos-arm64","os":"macos-14","rust_target":"aarch64-apple-darwin","tauri_args":"--target aarch64-apple-darwin"},{"name":"macOS Intel","platform":"macos-x64","os":"macos-13","rust_target":"x86_64-apple-darwin","tauri_args":"--target x86_64-apple-darwin"},{"name":"Windows x64","platform":"windows-x64","os":"windows-latest","rust_target":"x86_64-pc-windows-msvc","tauri_args":"--target x86_64-pc-windows-msvc"},{"name":"Linux x64","platform":"linux-x64","os":"ubuntu-22.04","rust_target":"x86_64-unknown-linux-gnu","tauri_args":"--target x86_64-unknown-linux-gnu"}]}'
-          else
-            matrix='{"include":[{"name":"Windows x64","platform":"windows-x64","os":"windows-latest","rust_target":"x86_64-pc-windows-msvc","tauri_args":"--target x86_64-pc-windows-msvc"},{"name":"Linux x64","platform":"linux-x64","os":"ubuntu-22.04","rust_target":"x86_64-unknown-linux-gnu","tauri_args":"--target x86_64-unknown-linux-gnu"}]}'
-          fi
+          matrix='{"include":[{"name":"Windows x64","platform":"windows-x64","os":"windows-latest","rust_target":"x86_64-pc-windows-msvc","tauri_args":"--target x86_64-pc-windows-msvc"}]}'
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
   build:
-    needs: [validate-macos-signing, select_build_platforms]
+    needs: [select_build_platforms]
     name: ${{ matrix.name }}
     strategy:
       fail-fast: false
@@ -85,24 +49,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            libssl-dev \
-            p7zip-full
-
-      - name: Install macOS 7z
-        if: runner.os == 'macOS'
-        run: brew install p7zip
-
       - name: Install Windows 7z
-        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           choco install 7zip -y --no-progress
@@ -135,29 +82,19 @@ jobs:
           workspaces: |
             . -> target
 
-      - name: Import Apple Developer ID certificate
-        if: runner.os == 'macOS'
-        shell: bash
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-        run: scripts/import-apple-certificate.sh
-
-      - name: Verify Apple signing identity
-        if: runner.os == 'macOS'
-        shell: bash
-        env:
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-        run: |
-          security find-identity -v -p codesigning
-          security find-identity -v -p codesigning | grep -F "$APPLE_SIGNING_IDENTITY"
-
       - name: Prepare embedded Pikafish
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: scripts/prepare-pikafish-resource.sh ${{ matrix.platform }}
+
+      - name: Prepare embedded Fairy-Stockfish
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FAIRY_STOCKFISH_TAG: ${{ env.FAIRY_STOCKFISH_TAG }}
+        run: |
+          scripts/prepare-fairy-stockfish-resource.sh ${{ matrix.platform }}
 
       - name: Build and upload release asset
         uses: tauri-apps/tauri-action@v0
@@ -165,12 +102,6 @@ jobs:
           # Repository settings may restrict the default GITHUB_TOKEN to read-only.
           # RELEASE_TOKEN is an optional fine-grained PAT with Contents: Read and write.
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           # The Tauri config and its pnpm build script live in this workspace package.
           # Without this, tauri-action runs `pnpm build` from the repository root.
@@ -182,18 +113,13 @@ jobs:
             ## 更新说明
 
             - 桌面端中国象棋打谱、变例、SQLite 自动保存
-            - 本地 Pikafish 分析、MultiPV 候选线和私教推演
+            - 本地 Pikafish / 外部 UCI/UCCI 引擎分析、MultiPV 候选线和私教推演
             - 整局复盘报告、局势图、质量评分和 PDF 导出
 
             ## 包说明
 
-            - macOS Apple Silicon：内置 Pikafish Apple Silicon
-            - macOS Intel：当前官方 Pikafish 包未提供 Intel macOS 引擎，应用可安装，分析需手动配置外部引擎
-            - Windows x64 / Linux x64：内置 Pikafish SSE4.1/POPCNT 通用 x64 引擎
+            - macOS：本轮 GitHub Release 暂不打包，后续完成 Developer ID 签名/公证后再启用
+            - Windows x64：内置 Pikafish SSE4.1/POPCNT 通用 x64 引擎；内置 Fairy-Stockfish largeboard x64 引擎
+            - Linux x64：本轮 GitHub Release 暂不打包，后续需要时再启用
           releaseDraft: true
           prerelease: false
-
-      - name: Verify notarized macOS artifacts
-        if: runner.os == 'macOS'
-        shell: bash
-        run: scripts/verify-macos-release.sh

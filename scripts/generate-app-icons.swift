@@ -31,8 +31,8 @@ func drawIcon(size: Int) -> NSImage {
     NSColor.clear.setFill()
     rect.fill()
 
-    let pieceRect = rect.insetBy(dx: CGFloat(size) * 0.085, dy: CGFloat(size) * 0.085)
-    let shadowRect = pieceRect.offsetBy(dx: 0, dy: -CGFloat(size) * 0.035)
+    let pieceRect = rect.insetBy(dx: CGFloat(size) * 0.03, dy: CGFloat(size) * 0.03)
+    let shadowRect = pieceRect.offsetBy(dx: 0, dy: -CGFloat(size) * 0.025)
     NSColor.black.withAlphaComponent(0.24).setFill()
     NSBezierPath(ovalIn: shadowRect).fill()
 
@@ -76,7 +76,7 @@ func drawIcon(size: Int) -> NSImage {
         NSColor.white.withAlphaComponent(0.02),
     ])?.draw(in: NSBezierPath(ovalIn: highlightRect), angle: 90)
 
-    let fontSize = CGFloat(size) * 0.48
+    let fontSize = CGFloat(size) * 0.52
     let font = NSFont(name: "Kaiti SC", size: fontSize)
         ?? NSFont(name: "Songti SC", size: fontSize)
         ?? NSFont.systemFont(ofSize: fontSize, weight: .heavy)
@@ -91,10 +91,10 @@ func drawIcon(size: Int) -> NSImage {
     ]
     let text = "帅" as NSString
     let textRect = NSRect(
-        x: CGFloat(size) * 0.22,
-        y: CGFloat(size) * 0.255,
-        width: CGFloat(size) * 0.56,
-        height: CGFloat(size) * 0.56
+        x: CGFloat(size) * 0.19,
+        y: CGFloat(size) * 0.22,
+        width: CGFloat(size) * 0.62,
+        height: CGFloat(size) * 0.62
     )
     text.draw(in: textRect, withAttributes: attributes)
 
@@ -127,4 +127,13 @@ let iconsetSizes: [(String, Int)] = [
 ]
 for (name, size) in iconsetSizes {
     try savePng(icon, size: size, to: iconset.appendingPathComponent(name))
+}
+
+let iconutil = Process()
+iconutil.executableURL = URL(fileURLWithPath: "/usr/bin/iconutil")
+iconutil.arguments = ["-c", "icns", iconset.path, "-o", tauriIconDir.appendingPathComponent("icon.icns").path]
+try iconutil.run()
+iconutil.waitUntilExit()
+if iconutil.terminationStatus != 0 {
+    throw NSError(domain: "icon", code: Int(iconutil.terminationStatus), userInfo: [NSLocalizedDescriptionKey: "iconutil failed"])
 }

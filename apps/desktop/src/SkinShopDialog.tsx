@@ -5,8 +5,9 @@ import { normalizeSkinId, skinAssetFolder, skinCatalogFor } from "./skinAccess";
 
 type Skin = DesktopPreferencesDto["boardSkin"];
 type SkinTab = "board" | "piece";
+type SkinPatch = Pick<DesktopPreferencesDto, "boardSkin" | "pieceSkin">;
 
-export function SkinShopDialog({ preferences, signedIn, onClose, onPreview, onEquip }: { preferences: DesktopPreferencesDto; signedIn: boolean; onClose(): void; onPreview(patch?: Pick<DesktopPreferencesDto, "boardSkin" | "pieceSkin">): void; onEquip(patch: Pick<DesktopPreferencesDto, "boardSkin" | "pieceSkin">): void }) {
+export function SkinShopDialog({ preferences, signedIn, onClose, onPreview, onEquip }: { preferences: DesktopPreferencesDto; signedIn: boolean; onClose(): void; onPreview(patch?: SkinPatch): void; onEquip(patch: SkinPatch): void }) {
   const [tab, setTab] = useState<SkinTab>("board");
   const [memberSkin, setMemberSkin] = useState(false);
   const isBoard = tab === "board";
@@ -14,14 +15,16 @@ export function SkinShopDialog({ preferences, signedIn, onClose, onPreview, onEq
   const currentBoardSkin = normalizeSkinId(preferences.boardSkin);
   const currentPieceSkin = normalizeSkinId(preferences.pieceSkin);
   const items = skinCatalogFor(isBoard ? "board" : "piece").filter((skin) => memberSkin ? skin.memberOnly : !skin.memberOnly);
-  const patchFor = (skin: Skin) => isBoard
-    ? { boardSkin: skin, pieceSkin: currentPieceSkin }
+  const patchFor = (skin: Skin): SkinPatch => isBoard
+    ? skin === "default"
+      ? { boardSkin: "default", pieceSkin: "default" }
+      : { boardSkin: skin, pieceSkin: currentPieceSkin }
     : { boardSkin: currentBoardSkin, pieceSkin: skin };
   const cards = items.map(({ folder, title, detail }) => {
     const active = isBoard ? currentBoardSkin === folder : currentPieceSkin === folder;
-    const previewPieceSkin = isBoard ? currentPieceSkin : folder;
     const skin = folder as Skin;
     const patch = patchFor(skin);
+    const previewPieceSkin = isBoard ? patch.pieceSkin : skin;
     return <article className="skin-shop-card" key={skin} onPointerEnter={() => onPreview(patch)} onPointerLeave={() => onPreview()}><div className={`skin-preview board-skin-${isBoard ? skin : currentBoardSkin} piece-skin-${previewPieceSkin}`}><div/>{isBoard ? <span>楚河</span> : <img src={`/skins/${skinAssetFolder(previewPieceSkin)}/rk.png`} alt="棋子预览"/>}</div><strong>{title}</strong><small>{detail}</small><button className={active ? "active" : ""} disabled={active} onClick={() => onEquip(patch)}>{active ? "使用中" : "使用"}</button></article>;
   });
   return <div className="skin-shop-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>

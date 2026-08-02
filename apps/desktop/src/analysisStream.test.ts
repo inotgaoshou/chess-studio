@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { beginAnalysisStream, completeAnalysisStream, updateAnalysisHistory, updateAnalysisStream } from "./analysisStream";
+import { beginAnalysisStream, completeAnalysisStream, isAnalysisSessionCurrent, updateAnalysisHistory, updateAnalysisStream } from "./analysisStream";
 
 describe("analysis stream buffering", () => {
   it("keeps the previous candidate cards visible until every MultiPV rank arrives", () => {
@@ -78,5 +78,14 @@ describe("analysis stream buffering", () => {
 
     expect(fourth.lines.map((line) => line.depth)).toEqual([42, 41, 40]);
     expect(duplicate.lines.map((line) => line.depth)).toEqual([41, 40]);
+  });
+
+  it("rejects analysis work from an older session, board revision, or FEN", () => {
+    const snapshot = { revision: 7, boardRevision: 12, fen: "current-fen" };
+
+    expect(isAnalysisSessionCurrent(snapshot, 7, 12, "current-fen")).toBe(true);
+    expect(isAnalysisSessionCurrent(snapshot, 8, 12, "current-fen")).toBe(false);
+    expect(isAnalysisSessionCurrent(snapshot, 7, 13, "current-fen")).toBe(false);
+    expect(isAnalysisSessionCurrent(snapshot, 7, 12, "other-fen")).toBe(false);
   });
 });

@@ -85,7 +85,17 @@ struct BoardDto {
     history: Vec<MoveDto>,
     continuation: Vec<MoveDto>,
     branches: Vec<MoveDto>,
+    sibling_branches: Vec<MoveDto>,
+    manual_tree: Vec<ManualTreeNodeDto>,
     current_node: Option<Uuid>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ManualTreeNodeDto {
+    #[serde(rename = "move")]
+    move_: MoveDto,
+    children: Vec<ManualTreeNodeDto>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -346,6 +356,25 @@ fn move_dto(node: &MoveNode, board: &Board) -> Result<MoveDto, String> {
     })
 }
 
+fn manual_tree_dto(
+    tree: &ManualTree,
+    parent_id: Uuid,
+    board: &Board,
+) -> Result<Vec<ManualTreeNodeDto>, String> {
+    tree.branches(parent_id)
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .map(|node| {
+            let move_ = move_dto(node, board)?;
+            let next_board = board.apply_move(node.mv).map_err(|error| error.to_string())?;
+            Ok(ManualTreeNodeDto {
+                move_,
+                children: manual_tree_dto(tree, node.id, &next_board)?,
+            })
+        })
+        .collect()
+}
+
 fn board_dto(game: &WebGame) -> Result<BoardDto, String> {
     let mut pieces = Vec::new();
     for row in 0..10 {
@@ -379,6 +408,8 @@ fn board_dto(game: &WebGame) -> Result<BoardDto, String> {
         }
     }
     let mut history = Vec::new();
+    let root_board = Board::from_fen(&game.starting_fen).map_err(|error| error.to_string())?;
+    let manual_tree = manual_tree_dto(&game.tree, game.tree.root_id(), &root_board)?;
     if let Some(node) = game.current_node {
         let mut board = Board::from_fen(&game.starting_fen).map_err(|error| error.to_string())?;
         for node in game
@@ -419,6 +450,26 @@ fn board_dto(game: &WebGame) -> Result<BoardDto, String> {
         .into_iter()
         .map(|node| move_dto(node, &game.board))
         .collect::<Result<Vec<_>, _>>()?;
+    let sibling_branches = if let Some(current_node) = game.current_node {
+        let parent_id = game
+            .tree
+            .node(current_node)
+            .map_err(|error| error.to_string())?
+            .parent_id;
+        let parent_board = board_at(
+            &game.starting_fen,
+            &game.tree,
+            (parent_id != game.tree.root_id()).then_some(parent_id),
+        )?;
+        game.tree
+            .branches(parent_id)
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .map(|node| move_dto(node, &parent_board))
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        Vec::new()
+    };
     Ok(BoardDto {
         fen: game.board.to_fen(),
         side_to_move: if game.board.side_to_move() == Color::Red {
@@ -435,6 +486,8 @@ fn board_dto(game: &WebGame) -> Result<BoardDto, String> {
         history,
         continuation,
         branches,
+        sibling_branches,
+        manual_tree,
         current_node: game.current_node,
     })
 }
@@ -456,6 +509,7 @@ mod tests {
         let state: serde_json::Value =
             serde_json::from_str(&restored.state_json().unwrap()).unwrap();
         assert_eq!(state["history"].as_array().unwrap().len(), 1);
+        assert_eq!(state["manualTree"].as_array().unwrap().len(), 2);
         assert_eq!(
             restored
                 .tree

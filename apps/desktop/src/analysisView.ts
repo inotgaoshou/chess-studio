@@ -309,12 +309,18 @@ function scoreText(scoreCp: number) {
 
 function evaluationLabel(scoreCp: number) {
   const magnitude = Math.abs(scoreCp);
-  if (magnitude < 30) return "局面均衡";
+  // Use the same material-scale guide presented in the trend view.
+  if (magnitude <= 50) return "局面均衡";
   const side = scoreCp > 0 ? "红方" : "黑方";
-  if (magnitude < 90) return `${side}微优`;
-  if (magnitude < 200) return `${side}优势`;
-  if (magnitude < 400) return `${side}明显优势`;
-  return `${side}胜势`;
+  if (magnitude < 100) return `${side}微优`;
+  if (magnitude < 200) return `${side}约多一兵`;
+  if (magnitude < 500) return `${side}约多一过河兵`;
+  if (magnitude < 1000) return `${side}约多一马或炮`;
+  return `${side}约多一车`;
+}
+
+export function evaluationRedShare(scoreCp: number) {
+  return Math.max(5, Math.min(95, 50 + scoreCp / 16));
 }
 
 export function pvMoveRows(line: AnalysisLine, sideToMove: Side, fen: string): PvMoveRow[] {
@@ -380,7 +386,7 @@ export function positionEvaluation(board: BoardState, analysis: AnalysisLine[]):
     detail: primary
       ? `深度 ${primary.depth ?? "-"} · ${primary.nps ? `${(primary.nps / 1_000_000).toFixed(1)}M` : "-"} NPS · ${((primary.timeMs ?? 0) / 1000).toFixed(1)}s`
       : "已保存节点分数",
-    redShare: Math.max(5, Math.min(95, 50 + boundedScore / 16)),
+    redShare: evaluationRedShare(boundedScore),
     mateSide,
     mateIn: checkmateWinner ? 0 : currentMate == null ? undefined : Math.abs(currentMate),
     isCheckmate: Boolean(checkmateWinner),

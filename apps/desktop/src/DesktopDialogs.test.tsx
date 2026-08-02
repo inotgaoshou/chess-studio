@@ -2,7 +2,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DesktopDialogs } from "./DesktopDialogs";
-import { BUILTIN_ENGINE_PATH, type DesktopPreferencesDto, type SyncAccountDto } from "./platform";
+import { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH, type DesktopPreferencesDto, type SyncAccountDto } from "./platform";
 
 const preferences: DesktopPreferencesDto = {
   enginePath: "/opt/pikafish",
@@ -12,14 +12,19 @@ const preferences: DesktopPreferencesDto = {
   candidateLineMoves: 6,
   searchMode: "time",
   searchValue: 1500,
-  moveTimeMs: 5000,
+  moveTimeMs: 2000,
   ponder: false,
   autoAnalyze: true,
   libraryCollapsed: false,
   candidateRailCollapsed: false,
   analysisPanelCollapsed: false,
+  evaluationCollapsed: true,
+  branchArrowColor: "#2f80ed",
+  analysisEngineMode: "single",
+  parallelEngineIds: [],
   workspacePanel: "moves",
   layoutMode: "studio",
+  manualViewMode: "track",
   colorTheme: "dark",
   boardSkin: "default",
   pieceSkin: "default",
@@ -70,14 +75,29 @@ describe("DesktopDialogs", () => {
 
   it("uses a stable built-in engine marker instead of showing an install-specific path", async () => {
     const { props, user } = renderDialog("engine", {
-      preferences: { ...preferences, enginePath: BUILTIN_ENGINE_PATH },
+      preferences: { ...preferences, enginePath: BUILTIN_ENGINE_PATH, activeEngineId: "old-external-profile" },
     });
 
     expect((screen.getByLabelText("引擎可执行文件") as HTMLInputElement).value).toBe("内置 Pikafish（随应用安装，推荐）");
     expect(screen.getByText(/不依赖本机绝对路径/)).toBeTruthy();
 
+    await user.click(screen.getByRole("button", { name: /内置 Pikafish当前默认|内置 Pikafish随 App 安装/ }));
     await user.click(screen.getByRole("button", { name: "检测并保存" }));
-    expect(props.onSaveEngine).toHaveBeenCalledWith(expect.objectContaining({ enginePath: BUILTIN_ENGINE_PATH }));
+    expect(props.onSaveEngine).toHaveBeenCalledWith(expect.objectContaining({ enginePath: BUILTIN_ENGINE_PATH, activeEngineId: undefined }), "内置 Pikafish");
+  });
+
+  it("can select the bundled Fairy-Stockfish marker", async () => {
+    const { props, user } = renderDialog("engine", {
+      preferences: { ...preferences, enginePath: BUILTIN_ENGINE_PATH },
+    });
+
+    await user.click(screen.getByRole("button", { name: /内置 Fairy-Stockfish/ }));
+
+    expect((screen.getByLabelText("引擎可执行文件") as HTMLInputElement).value).toBe("内置 Fairy-Stockfish（随应用安装，可选）");
+    expect(screen.getByText(/自动设置 EvalFile/)).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "检测并保存" }));
+    expect(props.onSaveEngine).toHaveBeenCalledWith(expect.objectContaining({ enginePath: BUILTIN_FAIRY_ENGINE_PATH }), "内置 Fairy-Stockfish");
   });
 
   it("shows a file picker error instead of failing silently", async () => {
@@ -99,6 +119,55 @@ describe("DesktopDialogs", () => {
     await user.type(screen.getByLabelText("后续走法（半回合）"), "12");
     await user.click(screen.getByRole("button", { name: "检测并保存" }));
     expect(props.onSaveEngine).toHaveBeenCalledWith(expect.objectContaining({ enginePath: "/opt/pikafish", multipv: 4, candidateLineMoves: 12 }));
+  });
+
+  it("normalizes engine setting ranges before saving", async () => {
+    const { props, user } = renderDialog("engine");
+    await user.clear(screen.getByLabelText("MultiPV"));
+    await user.type(screen.getByLabelText("MultiPV"), "16");
+
+    await user.click(screen.getByRole("button", { name: "检测并保存" }));
+
+    expect(props.onSaveEngine).toHaveBeenCalledWith(expect.objectContaining({ multipv: 10 }));
+    expect((screen.getByLabelText("MultiPV") as HTMLInputElement).value).toBe("10");
+  });
+
+  it("adds Fairy and Cyclone style engines through named presets", async () => {
+    const enginePath = "/Applications/Fairy-Stockfish/fairy-stockfish";
+    const saveEngine = vi.fn(async () => undefined);
+    const { user } = renderDialog("engine", {
+      preferences: { ...preferences, enginePath: "" },
+      onChooseEngine: vi.fn(async () => enginePath),
+      onSaveEngine: saveEngine,
+    });
+
+    await user.click(screen.getByRole("button", { name: "导入 Fairy-Stockfish" }));
+    expect((screen.getByLabelText("引擎可执行文件") as HTMLInputElement).value).toBe(enginePath);
+    expect((screen.getByLabelText("引擎档案名称") as HTMLInputElement).value).toBe("Fairy-Stockfish");
+
+    await user.click(screen.getByRole("button", { name: "检测并保存" }));
+    expect(saveEngine).toHaveBeenCalledWith(expect.objectContaining({ enginePath }), "Fairy-Stockfish");
+  });
+
+  it("switches and deletes saved engine profiles from the engine dialog", async () => {
+    const selectEngine = vi.fn(async () => ({ ...preferences, enginePath: "/engines/cyclone", activeEngineId: "engine-2" }));
+    const deleteEngine = vi.fn(async () => ({ ...preferences, enginePath: BUILTIN_ENGINE_PATH, activeEngineId: undefined }));
+    const { user } = renderDialog("engine", {
+      preferences: { ...preferences, activeEngineId: "engine-1" },
+      engineProfiles: [
+        { id: "engine-1", name: "Fairy-Stockfish", executablePath: "/engines/fairy", protocol: "uci", active: true },
+        { id: "engine-2", name: "象棋旋风", executablePath: "/engines/cyclone", protocol: "ucci", active: false },
+      ],
+      onSelectEngineProfile: selectEngine,
+      onDeleteEngineProfile: deleteEngine,
+    });
+
+    await user.click(screen.getAllByRole("button", { name: /象棋旋风/ })[1]);
+    expect(selectEngine).toHaveBeenCalledWith("engine-2");
+    expect((screen.getByLabelText("引擎可执行文件") as HTMLInputElement).value).toBe("/engines/cyclone");
+
+    await user.click(screen.getByRole("button", { name: "删除 象棋旋风 档案" }));
+    expect(deleteEngine).toHaveBeenCalledWith("engine-2");
   });
 
   it("keeps an engine save failure beside the save controls", async () => {
@@ -133,15 +202,16 @@ describe("DesktopDialogs", () => {
     expect((await screen.findByRole("status")).textContent).toBe("引擎检测成功，设置已保存");
   });
 
-  it("shows a retained account skin accurately while signed out", () => {
+  it("keeps appearance controls out of the engine dialog", () => {
     renderDialog("engine", {
       preferences: { ...preferences, boardSkin: "jingdian", pieceSkin: "jingdian" },
       account: { ...account, status: "signedOut" },
     });
 
-    expect((screen.getByLabelText("棋盘皮肤") as HTMLSelectElement).value).toBe("jingdian");
-    expect((screen.getByLabelText("棋子皮肤") as HTMLSelectElement).value).toBe("jingdian");
-    expect(screen.getAllByText("经典雅致（未登录，登录后恢复）")).toHaveLength(2);
+    expect(screen.queryByLabelText("棋盘皮肤")).toBeNull();
+    expect(screen.queryByLabelText("棋子皮肤")).toBeNull();
+    expect(screen.queryByText("后台思考")).toBeNull();
+    expect(screen.queryByText("每步自动分析")).toBeNull();
   });
 
   it("clears the password immediately after an authentication attempt", async () => {

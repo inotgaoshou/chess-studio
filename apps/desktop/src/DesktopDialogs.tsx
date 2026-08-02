@@ -1,8 +1,7 @@
-import { useEffect, useRef, useState } from "react";
-import { FolderOpen, LogIn, Save, Settings2, UserPlus, X } from "lucide-react";
-import { BUILTIN_ENGINE_PATH, type DesktopPreferencesDto, type SubscriptionDto, type SyncAccountDto, type TrainingTaskDto } from "./platform";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { FolderOpen, LogIn, Save, Settings2, Trash2, UserPlus, X } from "lucide-react";
+import { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH, type DesktopPreferencesDto, type EngineProfileDto, type SubscriptionDto, type SyncAccountDto, type TrainingTaskDto } from "./platform";
 import { MAX_CANDIDATE_LINE_MOVES, MIN_CANDIDATE_LINE_MOVES } from "./candidatePreview";
-import { normalizeSkinId, skinCatalogFor } from "./skinAccess";
 
 export type DesktopDialog = "engine" | "syncSettings" | "register" | "login" | "subscription" | "training" | "unbind" | null;
 
@@ -12,10 +11,13 @@ type Props = {
   account: SyncAccountDto;
   subscription?: SubscriptionDto;
   trainingTasks: TrainingTaskDto[];
+  engineProfiles?: EngineProfileDto[];
   busy: boolean;
   onClose(): void;
   onChooseEngine(currentPath: string): Promise<string | undefined>;
-  onSaveEngine(preferences: DesktopPreferencesDto): Promise<void>;
+  onSaveEngine(preferences: DesktopPreferencesDto, profileName?: string): Promise<void>;
+  onSelectEngineProfile?(id: string): Promise<DesktopPreferencesDto>;
+  onDeleteEngineProfile?(id: string): Promise<DesktopPreferencesDto>;
   onSaveSync(serverUrl: string): Promise<void>;
   onUnbindSync(): Promise<void>;
   onAuthenticate(mode: "register" | "login", email: string, password: string): Promise<void>;
@@ -24,8 +26,56 @@ type Props = {
   onCompleteTraining(taskId: string, completed: boolean): Promise<void>;
 };
 
+const enginePresetNames = ["Pikafish", "Fairy-Stockfish", "象棋旋风", "象眼 EleEye"] as const;
+const branchArrowColors = [
+  ["#2f80ed", "天蓝（推荐）"],
+  ["#f2c94c", "金黄"],
+  ["#27ae60", "绿色"],
+  ["#9b51e0", "紫色"],
+  ["#eb5757", "红色"],
+] as const;
+
+function clampInteger(value: number, min: number, max: number) {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+function sanitizeEnginePreferences(preferences: DesktopPreferencesDto): DesktopPreferencesDto {
+  return {
+    ...preferences,
+    threads: clampInteger(preferences.threads, 1, 64),
+    hashMb: clampInteger(preferences.hashMb, 16, 4096),
+    multipv: clampInteger(preferences.multipv, 1, 10),
+    candidateLineMoves: clampInteger(preferences.candidateLineMoves, MIN_CANDIDATE_LINE_MOVES, MAX_CANDIDATE_LINE_MOVES),
+    searchValue: preferences.searchMode === "infinite"
+      ? preferences.searchValue
+      : clampInteger(
+        preferences.searchValue,
+        preferences.searchMode === "depth" ? 1 : preferences.searchMode === "nodes" ? 1000 : 100,
+        preferences.searchMode === "depth" ? 100 : preferences.searchMode === "nodes" ? 100000000 : 30000,
+    ),
+    reportDepth: clampInteger(preferences.reportDepth, 8, 40),
+    moveTimeMs: clampInteger(preferences.moveTimeMs, 100, 30000),
+    branchArrowColor: branchArrowColors.some(([value]) => value === preferences.branchArrowColor) ? preferences.branchArrowColor : "#2f80ed",
+  };
+}
+
 function engineInputValue(path: string) {
-  return path === BUILTIN_ENGINE_PATH ? "内置 Pikafish（随应用安装，推荐）" : path;
+  if (path === BUILTIN_ENGINE_PATH) return "内置 Pikafish（随应用安装，推荐）";
+  if (path === BUILTIN_FAIRY_ENGINE_PATH) return "内置 Fairy-Stockfish（随应用安装，可选）";
+  return path;
+}
+
+function protocolLabel(protocol: EngineProfileDto["protocol"]) {
+  return protocol === "ucci" ? "UCCI" : "UCI";
+}
+
+function fileNameFromPath(path: string) {
+  return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
+}
+
+function branchArrowColorLabel(value: string) {
+  return branchArrowColors.find(([color]) => color === value)?.[1] ?? "天蓝（推荐）";
 }
 
 function authenticationErrorMessage(error: unknown) {
@@ -35,14 +85,7 @@ function authenticationErrorMessage(error: unknown) {
     : message;
 }
 
-function skinSelectOptions(scope: "board" | "piece", account: SyncAccountDto, selected: DesktopPreferencesDto["boardSkin"]) {
-  const normalizedSelected = normalizeSkinId(selected);
-  return skinCatalogFor(scope)
-    .filter((skin) => !skin.memberOnly || account.status === "signedIn" || normalizedSelected === skin.folder)
-    .map((skin) => <option key={skin.folder} value={skin.folder} disabled={skin.memberOnly && account.status !== "signedIn"}>{skin.memberOnly && account.status !== "signedIn" ? `${skin.title}（未登录，登录后恢复）` : skin.title}</option>);
-}
-
-export function DesktopDialogs({ dialog, preferences, account, subscription, trainingTasks, busy, onClose, onChooseEngine, onSaveEngine, onSaveSync, onUnbindSync, onAuthenticate, onRedeemSubscription, onGenerateTraining, onCompleteTraining }: Props) {
+export function DesktopDialogs({ dialog, preferences, account, subscription, trainingTasks, engineProfiles = [], busy, onClose, onChooseEngine, onSaveEngine, onSelectEngineProfile, onDeleteEngineProfile, onSaveSync, onUnbindSync, onAuthenticate, onRedeemSubscription, onGenerateTraining, onCompleteTraining }: Props) {
   const [draft, setDraft] = useState(preferences);
   const [email, setEmail] = useState(account.email ?? "");
   const [password, setPassword] = useState("");
@@ -53,7 +96,13 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
   const [enginePickerError, setEnginePickerError] = useState("");
   const [engineSaveError, setEngineSaveError] = useState("");
   const [engineSaveSuccess, setEngineSaveSuccess] = useState("");
+  const [engineProfileName, setEngineProfileName] = useState("");
   const initializedDialog = useRef<DesktopDialog>(null);
+  const branchArrowColor = branchArrowColors.some(([value]) => value === draft.branchArrowColor) ? draft.branchArrowColor : "#2f80ed";
+  const builtInEngines = [
+    { path: BUILTIN_ENGINE_PATH, name: "内置 Pikafish", detail: "随 App 安装，推荐日常拆棋" },
+    { path: BUILTIN_FAIRY_ENGINE_PATH, name: "内置 Fairy-Stockfish", detail: "支持 Xiangqi 变体；同目录 .nnue 自动作为 EvalFile" },
+  ];
 
   useEffect(() => {
     if (!dialog) {
@@ -74,6 +123,7 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
     setEnginePickerError("");
     setEngineSaveError("");
     setEngineSaveSuccess("");
+    setEngineProfileName("");
   }, [account.email, dialog, preferences]);
 
   if (!dialog) return null;
@@ -94,17 +144,76 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
     }
   }
 
-  async function chooseEngine() {
+  async function chooseEngine(profileName?: string) {
     setEnginePickerBusy(true);
     setEnginePickerError("");
     setEngineSaveError("");
     setEngineSaveSuccess("");
     try {
       const path = await onChooseEngine(draft.enginePath.trim());
-      if (path) setDraft((current) => ({ ...current, enginePath: path }));
+      if (path) {
+        setDraft((current) => ({ ...current, enginePath: path, activeEngineId: undefined }));
+        setEngineProfileName(profileName ?? fileNameFromPath(path));
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setEnginePickerError(`选择引擎文件失败：${message}`);
+    } finally {
+      setEnginePickerBusy(false);
+    }
+  }
+
+  async function selectEngineProfile(profile: EngineProfileDto) {
+    setEnginePickerBusy(true);
+    setEnginePickerError("");
+    setEngineSaveError("");
+    setEngineSaveSuccess("");
+    try {
+      if (onSelectEngineProfile) {
+        const saved = await onSelectEngineProfile(profile.id);
+        setDraft((current) => ({
+          ...current,
+          enginePath: saved.enginePath,
+          activeEngineId: saved.activeEngineId,
+          parallelEngineIds: current.parallelEngineIds.filter((id) => id !== profile.id),
+          parallelEnginePaths: (current.parallelEnginePaths ?? []).filter((path) => path !== saved.enginePath),
+        }));
+      } else {
+        setDraft((current) => ({
+          ...current,
+          enginePath: profile.executablePath,
+          activeEngineId: profile.id,
+          parallelEngineIds: current.parallelEngineIds.filter((id) => id !== profile.id),
+          parallelEnginePaths: (current.parallelEnginePaths ?? []).filter((path) => path !== profile.executablePath),
+        }));
+      }
+      setEngineProfileName(profile.name);
+      setEngineSaveSuccess(`${profile.name} 已设为主引擎；箭头、总评、人机和报告会使用它`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setEnginePickerError(`切换引擎失败：${message}`);
+    } finally {
+      setEnginePickerBusy(false);
+    }
+  }
+
+  async function deleteEngineProfile(profile: EngineProfileDto) {
+    if (!onDeleteEngineProfile) return;
+    setEnginePickerBusy(true);
+    setEnginePickerError("");
+    setEngineSaveError("");
+    setEngineSaveSuccess("");
+    try {
+      const saved = await onDeleteEngineProfile(profile.id);
+      setDraft((current) => ({
+        ...current,
+        enginePath: saved.enginePath,
+        activeEngineId: saved.activeEngineId,
+      }));
+      setEngineSaveSuccess(`已删除 ${profile.name} 档案；不会删除本机引擎文件`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setEnginePickerError(`删除引擎档案失败：${message}`);
     } finally {
       setEnginePickerBusy(false);
     }
@@ -114,7 +223,10 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
     setEngineSaveError("");
     setEngineSaveSuccess("");
     try {
-      await onSaveEngine(draft);
+      const sanitized = sanitizeEnginePreferences(draft);
+      setDraft(sanitized);
+      if (engineProfileName.trim()) await onSaveEngine(sanitized, engineProfileName.trim());
+      else await onSaveEngine(sanitized);
       setEngineSaveSuccess("引擎检测成功，设置已保存");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -147,15 +259,58 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
 
   return (
     <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) close(); }}>
-      <section className="settings-dialog" role="dialog" aria-modal="true" aria-label={dialog === "engine" ? "引擎设置" : dialog === "syncSettings" ? "同步设置" : dialog === "subscription" ? "Pro 权益" : dialog === "training" ? "训练任务" : dialog === "unbind" ? "解除账号绑定" : dialog === "register" ? "注册同步账号" : "登录同步账号"}>
+      <section className={`settings-dialog ${dialog === "engine" ? "engine-settings-dialog" : ""}`} role="dialog" aria-modal="true" aria-label={dialog === "engine" ? "引擎设置" : dialog === "syncSettings" ? "同步设置" : dialog === "subscription" ? "Pro 权益" : dialog === "training" ? "训练任务" : dialog === "unbind" ? "解除账号绑定" : dialog === "register" ? "注册同步账号" : "登录同步账号"}>
         <header>
           <div>{dialog === "register" ? <UserPlus size={17}/> : dialog === "login" ? <LogIn size={17}/> : <Settings2 size={17}/>}<strong>{dialog === "engine" ? "引擎设置" : dialog === "syncSettings" ? "同步设置" : dialog === "subscription" ? "Pro 权益" : dialog === "training" ? "训练任务" : dialog === "unbind" ? "解除账号绑定" : dialog === "register" ? "注册同步账号" : "登录同步账号"}</strong></div>
           <button className="tool-button" title="关闭" disabled={busy} onClick={close}><X size={16}/></button>
         </header>
 
         {dialog === "engine" && <div className="dialog-form engine-settings-form">
-          <label className="full"><span>引擎可执行文件</span><div className="dialog-input-action"><input value={engineInputValue(draft.enginePath)} readOnly={draft.enginePath === BUILTIN_ENGINE_PATH} placeholder="留空后可选择外部 Pikafish" onChange={(event) => { setEnginePickerError(""); setEngineSaveError(""); setEngineSaveSuccess(""); setDraft({ ...draft, enginePath: event.target.value }); }}/><button type="button" title="使用安装包内置 Pikafish" disabled={busy || enginePickerBusy} onClick={() => { setEnginePickerError(""); setEngineSaveError(""); setEngineSaveSuccess(""); setDraft({ ...draft, enginePath: BUILTIN_ENGINE_PATH }); }}>内置</button><button type="button" title="选择外部引擎文件" disabled={busy || enginePickerBusy} onClick={() => void chooseEngine()}><FolderOpen size={15}/></button></div></label>
+          <label className="full"><span>引擎可执行文件</span><div className="dialog-input-action"><input value={engineInputValue(draft.enginePath)} readOnly={draft.enginePath === BUILTIN_ENGINE_PATH || draft.enginePath === BUILTIN_FAIRY_ENGINE_PATH} placeholder="选择 Pikafish / Fairy / 象眼 / 旋风等 UCI 或 UCCI 引擎" onChange={(event) => { setEnginePickerError(""); setEngineSaveError(""); setEngineSaveSuccess(""); setEngineProfileName(fileNameFromPath(event.target.value)); setDraft({ ...draft, enginePath: event.target.value, activeEngineId: undefined }); }}/><button type="button" title="使用安装包内置 Pikafish" disabled={busy || enginePickerBusy} onClick={() => { setEnginePickerError(""); setEngineSaveError(""); setEngineSaveSuccess(""); setEngineProfileName("内置 Pikafish"); setDraft({ ...draft, enginePath: BUILTIN_ENGINE_PATH, activeEngineId: draft.enginePath === BUILTIN_ENGINE_PATH ? draft.activeEngineId : undefined }); }}>内置</button><button type="button" title="选择外部引擎文件" disabled={busy || enginePickerBusy} onClick={() => void chooseEngine()}><FolderOpen size={15}/></button></div></label>
+          <label className="full"><span>引擎档案名称</span><input value={engineProfileName} placeholder="例如 Fairy-Stockfish、象棋旋风、象眼 EleEye" onChange={(event) => setEngineProfileName(event.target.value)}/></label>
           {draft.enginePath === BUILTIN_ENGINE_PATH && <p className="dialog-hint full">当前使用安装包内置 Pikafish。正式安装后会从 App 资源目录自动定位，不依赖本机绝对路径。</p>}
+          {draft.enginePath === BUILTIN_FAIRY_ENGINE_PATH && <p className="dialog-hint full">当前使用安装包内置 Fairy-Stockfish。若同目录包含 Xiangqi `.nnue`，分析、人机和报告会自动设置 EvalFile。</p>}
+          <div className="engine-profile-manager full" aria-label="多引擎档案">
+            <header>
+              <div><strong>分析引擎角色</strong><small>先确定 1 个主引擎，再选择需要同时计算的对比引擎</small></div>
+              <button type="button" disabled={busy || enginePickerBusy} onClick={() => void chooseEngine()}><FolderOpen size={13}/>新增外部引擎</button>
+            </header>
+            <div className="engine-analysis-mode" role="group" aria-label="分析引擎模式">
+              <button type="button" className={draft.analysisEngineMode === "single" ? "active" : ""} onClick={() => setDraft((current) => ({ ...current, analysisEngineMode: "single" }))}>仅主引擎</button>
+              <button type="button" className={draft.analysisEngineMode === "parallel" ? "active" : ""} onClick={() => setDraft((current) => ({ ...current, analysisEngineMode: "parallel" }))}>主引擎 + 对比</button>
+              <small>{draft.analysisEngineMode === "parallel" ? `主引擎 + ${draft.parallelEngineIds.length + (draft.parallelEnginePaths?.length ?? 0)} 个对比引擎；勾选“作为对比”后保存生效` : "仅使用标有“主引擎”的一项进行分析"}</small>
+            </div>
+            <div className="engine-preset-grid" aria-label="常用引擎预设">
+              {enginePresetNames.map((name) => <button type="button" key={name} disabled={busy || enginePickerBusy} onClick={() => void chooseEngine(name)} title={`选择 ${name} 的外部可执行文件`}>导入 {name}</button>)}
+            </div>
+            <div className="engine-profile-list">
+              <div className="engine-profile-list-title"><strong>主引擎候选</strong><small>点击任意一项设为主引擎；内置引擎随应用提供，不是可删除档案</small></div>
+              {builtInEngines.map(({ path, name, detail }) => {
+                const active = draft.enginePath === path;
+                const selectedForComparison = (draft.parallelEnginePaths ?? []).includes(path);
+                return <div className={`engine-profile-row saved builtin ${draft.analysisEngineMode === "parallel" && !active ? "has-compare" : ""} ${active ? "active" : ""}`} key={path}>
+                  {draft.analysisEngineMode === "parallel" && !active && <label className="engine-profile-compare" title={`将 ${name} 作为对比引擎，不改变主引擎`}><input type="checkbox" checked={selectedForComparison} onChange={(event) => setDraft((current) => ({ ...current, parallelEnginePaths: event.target.checked ? [...new Set([...(current.parallelEnginePaths ?? []), path])] : (current.parallelEnginePaths ?? []).filter((value) => value !== path) }))}/><span>作为对比</span></label>}
+                  <button type="button" title={`设 ${name} 为主引擎`} disabled={busy || enginePickerBusy} onClick={() => { setEnginePickerError(""); setEngineSaveError(""); setEngineSaveSuccess(`${name} 已设为主引擎；内置引擎不可删除`); setEngineProfileName(name); setDraft((current) => ({ ...current, enginePath: path, activeEngineId: undefined, parallelEnginePaths: (current.parallelEnginePaths ?? []).filter((value) => value !== path) })); }}>
+                    <span><strong>{name}</strong><small>{active ? "当前默认：箭头、总评、人机和报告均使用它" : `${detail} · 点击设为主引擎`}</small></span>
+                    <em>{active ? "主引擎" : "内置 · 不可删除"}</em>
+                  </button>
+                </div>;
+              })}
+              {engineProfiles.length > 0 && <div className="engine-profile-list-title external"><strong>外部引擎档案</strong><small>可设为主引擎，也可加入并行对比；删除只移除档案，不删除本机文件</small></div>}
+              {engineProfiles.map((profile) => {
+                const active = draft.activeEngineId === profile.id || draft.enginePath === profile.executablePath;
+                return <div className={`engine-profile-row saved ${draft.analysisEngineMode === "parallel" && !active ? "has-compare" : ""} ${active ? "active" : ""}`} key={profile.id}>
+                  {draft.analysisEngineMode === "parallel" && !active && <label className="engine-profile-compare" title={`将 ${profile.name} 作为对比引擎，不改变主引擎`}><input type="checkbox" checked={draft.parallelEngineIds.includes(profile.id)} onChange={(event) => setDraft((current) => ({ ...current, parallelEngineIds: event.target.checked ? [...new Set([...current.parallelEngineIds, profile.id])] : current.parallelEngineIds.filter((id) => id !== profile.id) }))}/><span>作为对比</span></label>}
+                  <button type="button" title={`设 ${profile.name} 为主引擎`} disabled={busy || enginePickerBusy} onClick={() => void selectEngineProfile(profile)}>
+                    <span><strong>{profile.name}</strong><small>{active ? "当前默认：箭头、总评、人机和报告均使用它" : `${profile.executablePath} · 点击设为主引擎`}</small></span>
+                    <em>{active ? "主引擎" : protocolLabel(profile.protocol)}</em>
+                  </button>
+                  <button type="button" className="danger" title={`删除 ${profile.name} 档案`} aria-label={`删除 ${profile.name} 档案`} disabled={busy || enginePickerBusy} onClick={() => void deleteEngineProfile(profile)}><Trash2 size={12}/></button>
+                </div>;
+              })}
+              {engineProfiles.length === 0 && <p>还没有外部引擎档案。选择外部引擎后点“检测并保存”，会自动加入这里。</p>}
+            </div>
+          </div>
           {enginePickerError && <p className="dialog-warning full" role="alert">{enginePickerError}</p>}
           <label><span>线程</span><input type="number" min={1} max={64} value={draft.threads} onChange={(event) => setDraft({ ...draft, threads: Number(event.target.value) })}/></label>
           <label><span>Hash (MB)</span><input type="number" min={16} max={4096} step={16} value={draft.hashMb} onChange={(event) => setDraft({ ...draft, hashMb: Number(event.target.value) })}/></label>
@@ -164,11 +319,18 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
           <label><span>搜索模式</span><select value={draft.searchMode} onChange={(event) => setDraft({ ...draft, searchMode: event.target.value as DesktopPreferencesDto["searchMode"] })}><option value="time">固定时间</option><option value="depth">固定深度</option><option value="nodes">固定节点</option><option value="infinite">持续分析</option></select></label>
           <label><span>搜索限制</span><input type="number" disabled={draft.searchMode === "infinite"} min={draft.searchMode === "depth" ? 1 : draft.searchMode === "nodes" ? 1000 : 100} max={draft.searchMode === "depth" ? 100 : draft.searchMode === "nodes" ? 100000000 : 30000} value={draft.searchValue} onChange={(event) => setDraft({ ...draft, searchValue: Number(event.target.value) })}/></label>
           <label><span>整局复盘深度</span><input type="number" min={8} max={40} value={draft.reportDepth} onChange={(event) => setDraft({ ...draft, reportDepth: Number(event.target.value) })}/></label>
+          <label className="branch-arrow-color-field"><span>分支箭头颜色</span><div className="branch-arrow-color-control">
+            <select value={branchArrowColor} onChange={(event) => setDraft({ ...draft, branchArrowColor: event.target.value })}>{branchArrowColors.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+            <div className="branch-arrow-preview" style={{ "--branch-arrow-preview-color": branchArrowColor } as CSSProperties} aria-label={`当前分支箭头颜色预览：${branchArrowColorLabel(branchArrowColor)}`}>
+              <svg viewBox="0 0 126 38" aria-hidden="true">
+                <defs><marker id="branch-arrow-preview-head" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M 0 0 L 12 6 L 0 12 z"/></marker></defs>
+                <line x1="14" y1="24" x2="86" y2="13" markerEnd="url(#branch-arrow-preview-head)"/>
+                <circle cx="45" cy="19" r="12"/><text x="45" y="19">1</text>
+              </svg>
+              <small>悬停显示：1 马8进7</small>
+            </div>
+          </div></label>
           <label><span>每步时间 (ms)</span><input type="number" min={100} max={30000} step={100} value={draft.moveTimeMs} onChange={(event) => setDraft({ ...draft, moveTimeMs: Number(event.target.value) })}/></label>
-          <label className="check-row"><input type="checkbox" checked={draft.ponder} onChange={(event) => setDraft({ ...draft, ponder: event.target.checked })}/><span>后台思考</span></label>
-          <label className="check-row"><input type="checkbox" checked={draft.autoAnalyze} onChange={(event) => setDraft({ ...draft, autoAnalyze: event.target.checked })}/><span>每步自动分析</span></label>
-          <label><span>棋盘皮肤</span><select value={normalizeSkinId(draft.boardSkin)} onChange={(event) => setDraft({ ...draft, boardSkin: event.target.value as DesktopPreferencesDto["boardSkin"] })}>{skinSelectOptions("board", account, draft.boardSkin)}</select></label>
-          <label><span>棋子皮肤</span><select value={normalizeSkinId(draft.pieceSkin)} onChange={(event) => setDraft({ ...draft, pieceSkin: event.target.value as DesktopPreferencesDto["pieceSkin"] })}>{skinSelectOptions("piece", account, draft.pieceSkin)}</select></label>
           <label className="check-row"><input type="checkbox" checked={draft.cloudBookEnabled ?? false} onChange={(event) => setDraft({ ...draft, cloudBookEnabled: event.target.checked })}/><span>启用 ChessDB 云开局库</span></label>
           <label className="full"><span>云库地址</span><input value={draft.cloudBookUrl ?? "https://www.chessdb.cn/chessdb.php"} onChange={(event) => setDraft({ ...draft, cloudBookUrl: event.target.value })}/></label>
           <p className="dialog-hint full">开启后会向该地址发送当前 FEN，仅用于查询候选着法；网络不可用不会影响本地棋谱和引擎。</p>
