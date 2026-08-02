@@ -438,6 +438,7 @@ export default function App() {
     engine: { x: 0, y: 0 },
     manual: { x: 0, y: 0 },
   });
+  const [compactEngineSize, setCompactEngineSize] = useState<{ width: number; height: number }>();
   const [compactManualWidth, setCompactManualWidth] = useState<number>();
   const [compactActiveWindow, setCompactActiveWindow] = useState<"engine" | "manual">("engine");
   const floatingPanel = useMemo<"engine" | "manual" | "cloud" | null>(() => {
@@ -482,6 +483,7 @@ export default function App() {
   const preferenceSaveQueue = useRef<Promise<void>>(Promise.resolve());
   const compactWindowDragRef = useRef<{ key: "engine" | "manual"; startX: number; startY: number; startPosition: { x: number; y: number }; bounds: { minX: number; maxX: number; minY: number; maxY: number }; moved: boolean } | undefined>(undefined);
   const compactManualResizeRef = useRef<{ startX: number; startWidth: number; maxWidth: number; detached: boolean; startPosition: { x: number; y: number } } | undefined>(undefined);
+  const compactEngineResizeRef = useRef<{ startX: number; startY: number; startWidth: number; startHeight: number; maxWidth: number; maxHeight: number } | undefined>(undefined);
   const engineDivergenceDragRef = useRef<{ offsetX: number; offsetY: number } | undefined>(undefined);
   const wasCompactLayoutRef = useRef(false);
   const cloudBookDragRef = useRef<{ offsetX: number; offsetY: number } | undefined>(undefined);
@@ -2784,6 +2786,45 @@ export default function App() {
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   }
 
+  function startCompactEngineResize(event: PointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) return;
+    const panel = event.currentTarget.closest<HTMLElement>(".compact-engine-window");
+    if (!panel) return;
+    const bounds = panel.getBoundingClientRect();
+    compactEngineResizeRef.current = {
+      startX: event.clientX,
+      startY: event.clientY,
+      startWidth: bounds.width,
+      startHeight: bounds.height,
+      maxWidth: Math.max(280, window.innerWidth - 24),
+      maxHeight: Math.max(240, window.innerHeight - bounds.top - 12),
+    };
+    setCompactActiveWindow("engine");
+    document.body.classList.add("compact-engine-resizing");
+    window.addEventListener("pointermove", moveCompactEngineResize);
+    window.addEventListener("pointerup", stopCompactEngineResize, { once: true });
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.stopPropagation();
+    event.preventDefault();
+  }
+
+  function moveCompactEngineResize(event: globalThis.PointerEvent) {
+    const resize = compactEngineResizeRef.current;
+    if (!resize) return;
+    setCompactEngineSize({
+      width: Math.max(280, Math.min(resize.maxWidth, resize.startWidth + resize.startX - event.clientX)),
+      height: Math.max(220, Math.min(resize.maxHeight, resize.startHeight + event.clientY - resize.startY)),
+    });
+    event.preventDefault();
+  }
+
+  function stopCompactEngineResize() {
+    compactEngineResizeRef.current = undefined;
+    document.body.classList.remove("compact-engine-resizing");
+    window.removeEventListener("pointermove", moveCompactEngineResize);
+    window.removeEventListener("pointerup", stopCompactEngineResize);
+  }
+
   function startCompactManualResize(event: PointerEvent<HTMLDivElement>) {
     if (event.button !== 0) return;
     const panel = event.currentTarget.closest<HTMLElement>(".compact-manual-panel");
@@ -3008,7 +3049,10 @@ export default function App() {
       return <section className={compactDockClass.trim()} aria-label="简洁布局可拖动面板">
         <article
           className={`compact-floating-panel compact-engine-window ${compactEngineCollapsed ? "collapsed" : ""} ${compactDetachedPanels.engine ? "detached" : ""} ${compactActiveWindow === "engine" ? "active" : ""}`}
-          style={{ transform: `translate(${enginePosition.x}px, ${enginePosition.y}px)` } as CSSProperties}
+          style={{
+            transform: `translate(${enginePosition.x}px, ${enginePosition.y}px)`,
+            ...(compactEngineCollapsed || !compactEngineSize ? {} : { width: compactEngineSize.width, height: compactEngineSize.height }),
+          } as CSSProperties}
           onPointerDown={() => setCompactActiveWindow("engine")}
         >
           <div className="section-title compact-drag-handle" onPointerDown={(event) => startCompactWindowDrag("engine", event)} onPointerUp={stopCompactWindowDrag}>
@@ -3034,6 +3078,7 @@ export default function App() {
                 onPreview={(line, engine) => void previewCandidateLine(line, analysisFen ?? board.fen, engine)}
               />
             </div>
+            <div className="compact-engine-resize-handle" title="拖动调整引擎分析宽度和高度" aria-label="调整引擎分析宽度和高度" onPointerDown={startCompactEngineResize}/>
           </>}
         </article>
 

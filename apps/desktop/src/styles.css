@@ -5005,7 +5005,7 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
     right: calc(clamp(230px, 19vw, 310px) + 24px);
     left: auto;
     width: min(344px, calc(100vw - 48px));
-    height: min(540px, calc(100dvh - 112px));
+    height: min(380px, calc(100dvh - 112px));
     display: grid;
     grid-template-rows: 30px minmax(0, 1fr);
     border-color: #9fc8e6;
@@ -5018,11 +5018,12 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
     right: calc(clamp(230px, 19vw, 310px) + 24px);
     left: auto;
     width: min(344px, calc(100vw - 48px));
-    height: min(540px, calc(100dvh - 112px));
+    height: min(380px, calc(100dvh - 112px));
   }
   .workspace.layout-compact .compact-engine-window .analysis-lines {
     min-height: 0;
     overflow: auto;
+    padding-bottom: 12px;
   }
   .workspace.layout-compact .compact-engine-window.collapsed {
     top: 92px;
@@ -5052,6 +5053,42 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
     height: 30px;
     margin: auto;
     border-radius: 50%;
+  }
+  .workspace.layout-compact .compact-engine-resize-handle {
+    position: absolute;
+    z-index: 4;
+    left: -7px;
+    bottom: -7px;
+    width: 18px;
+    height: 18px;
+    border: 1px solid #9fc8e6;
+    border-radius: 6px 0 6px 0;
+    background: linear-gradient(135deg, #ffffff, #dff1ff);
+    cursor: nesw-resize;
+    touch-action: none;
+    box-shadow: 0 4px 12px rgba(56, 97, 132, .18);
+  }
+  .workspace.layout-compact .compact-engine-resize-handle::before,
+  .workspace.layout-compact .compact-engine-resize-handle::after {
+    position: absolute;
+    left: 5px;
+    width: 8px;
+    border-top: 2px solid #5e9dcb;
+    border-radius: 999px;
+    content: "";
+    transform: rotate(135deg);
+  }
+  .workspace.layout-compact .compact-engine-resize-handle::before { top: 6px; }
+  .workspace.layout-compact .compact-engine-resize-handle::after { top: 10px; }
+  .workspace.layout-compact .compact-engine-resize-handle:hover,
+  body.compact-engine-resizing .workspace.layout-compact .compact-engine-resize-handle {
+    border-color: #2a97dd;
+    background: linear-gradient(135deg, #ffffff, #cfeaff);
+  }
+  body.compact-engine-resizing,
+  body.compact-engine-resizing * {
+    cursor: nesw-resize !important;
+    user-select: none;
   }
   .workspace.layout-compact .compact-manual-panel .playback-controls {
     min-height: 30px;
