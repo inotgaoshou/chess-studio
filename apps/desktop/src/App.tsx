@@ -2970,6 +2970,13 @@ export default function App() {
           onRemove={(nodeId) => void removeNode(nodeId)}
           onExportLine={(contents) => exportCurrentLineText(contents)}
           onViewModeChange={setManualViewMode}
+          previewBranch={candidatePreview ? {
+            activeStep: candidatePreview.step,
+            firstMove: candidatePreview.firstMove,
+            rank: candidatePreview.rank,
+            sourceEngineName: candidatePreview.sourceEngineName,
+            steps: candidatePreview.steps,
+          } : undefined}
           qualityByMoveId={reportByMoveId}
           viewMode={desktopPreferences.manualViewMode ?? "track"}
         />}

@@ -1,6 +1,6 @@
-import { ChevronDown, ChevronRight, Copy, Download, GitBranch, ListStart, MessageSquare, Trash2, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Copy, Download, GitBranch, ListStart, MessageSquare, Sparkles, Trash2, X } from "lucide-react";
 import type { CSSProperties } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   buildBranchComparisonModel,
@@ -10,7 +10,7 @@ import {
   type ManualViewMode,
   type MoveQuality,
 } from "./manualTrackModel";
-import type { ManualTreeNode, MoveItem } from "./platform";
+import type { ManualTreeNode, MoveItem, PreviewLineStep } from "./platform";
 
 type Props = {
   nodes: ManualTreeNode[];
@@ -25,6 +25,15 @@ type Props = {
   onMakeMainline(nodeId: string): void;
   onRemove(nodeId: string): void;
   onExportLine?(contents: string): Promise<string | undefined>;
+  previewBranch?: ManualPreviewBranch;
+};
+
+export type ManualPreviewBranch = {
+  sourceEngineName: string;
+  rank: number;
+  firstMove: string;
+  activeStep: number;
+  steps: PreviewLineStep[];
 };
 
 type ManualLineScoreOptions = {
@@ -235,7 +244,41 @@ function BranchTreeRow({ row, editing, onNavigate, onMakeMainline, onRemove, onT
   </div>;
 }
 
-export function ManualTrackView({ nodes, history, currentNode, viewMode, editing, qualityByMoveId, formatScore, onNavigate, onViewModeChange, onMakeMainline, onRemove, onExportLine }: Props) {
+function PreviewBranch({ preview }: { preview: ManualPreviewBranch }) {
+  const visibleSteps = preview.steps.slice(0, 10);
+  return <section className="manual-preview-branch" aria-label="AI 推荐虚线预测分支" data-current-node="true">
+    <header>
+      <span><Sparkles size={12}/>虚线预测</span>
+      <strong>{preview.sourceEngineName} · 候选{preview.rank}</strong>
+      <em>未保存</em>
+    </header>
+    <div className="manual-preview-branch-root">
+      <span className="manual-preview-current-dot" aria-hidden="true"/>
+      <b>当前局面</b>
+      <small>点击引擎「预览」生成；只显示在棋谱树，不写入 SQLite</small>
+    </div>
+    <div className="manual-preview-branch-line">
+      <span className="manual-preview-fork" aria-hidden="true">└──</span>
+      <div className="manual-preview-ai-label">
+        <strong>AI推荐</strong>
+        <small>首着 {preview.firstMove}</small>
+      </div>
+    </div>
+    <ol className="manual-preview-branch-steps">
+      {visibleSteps.map((step, index) => <li
+        className={index === preview.activeStep ? "active" : ""}
+        key={`${step.notation}-${index}`}
+      >
+        <span className={`manual-preview-side-dot ${step.movedBy === "红方" ? "red" : "black"}`} aria-hidden="true"/>
+        <b>{index + 1}.</b>
+        <strong>{step.notation}</strong>
+        <small>{step.movedBy.replace("方", "")} · {step.status}</small>
+      </li>)}
+    </ol>
+  </section>;
+}
+
+export function ManualTrackView({ nodes, history, currentNode, viewMode, editing, qualityByMoveId, formatScore, onNavigate, onViewModeChange, onMakeMainline, onRemove, onExportLine, previewBranch }: Props) {
   const [expandedForks, setExpandedForks] = useState<Set<string>>(() => new Set());
   const [collapsedForks, setCollapsedForks] = useState<Set<string>>(() => new Set());
   const [comparison, setComparison] = useState<{ forkNodeId: string; branchId: string }>();
@@ -251,13 +294,14 @@ export function ManualTrackView({ nodes, history, currentNode, viewMode, editing
   const comparisonModel = comparison
     ? buildBranchComparisonModel(comparison.forkNodeId, comparison.branchId, nodes, { formatScore, qualityByMoveId })
     : undefined;
+  const hasActiveRow = model.rows.some((row) => row.active);
 
   useEffect(() => {
-    const target = listRef.current?.querySelector<HTMLElement>('[data-current-node="true"]');
+    const target = listRef.current?.querySelector<HTMLElement>(previewBranch ? ".manual-preview-branch" : '[data-current-node="true"]');
     if (target && typeof target.scrollIntoView === "function") {
       target.scrollIntoView({ block: "center", inline: "nearest" });
     }
-  }, [currentNode, model.rows.length]);
+  }, [currentNode, model.rows.length, previewBranch?.activeStep, previewBranch?.steps.length]);
 
   function toggleFork(nodeId: string, expanded: boolean) {
     setExpandedForks((current) => {
@@ -308,17 +352,23 @@ export function ManualTrackView({ nodes, history, currentNode, viewMode, editing
     </div>
     <div className="manual-branch-tree-list" role="tree" aria-label="高级分支树棋谱" ref={listRef}>
       {model.rows.length === 0
-        ? <div className="manual-track-empty">暂无棋谱，走棋后会显示主线和分支树。</div>
-        : model.rows.map((row) => <BranchTreeRow
-          key={row.key}
-          editing={editing}
-          row={row}
-          onCompare={compareOrExpand}
-          onMakeMainline={onMakeMainline}
-          onNavigate={onNavigate}
-          onRemove={onRemove}
-          onToggleFork={toggleFork}
-        />)}
+        ? <>
+          <div className="manual-track-empty">暂无棋谱，走棋后会显示主线和分支树。</div>
+          {previewBranch && <PreviewBranch preview={previewBranch}/>}
+        </>
+        : model.rows.map((row) => <Fragment key={row.key}>
+          <BranchTreeRow
+            editing={editing}
+            row={row}
+            onCompare={compareOrExpand}
+            onMakeMainline={onMakeMainline}
+            onNavigate={onNavigate}
+            onRemove={onRemove}
+            onToggleFork={toggleFork}
+          />
+          {previewBranch && row.active && <PreviewBranch preview={previewBranch}/>}
+        </Fragment>)}
+      {previewBranch && model.rows.length > 0 && !hasActiveRow && <PreviewBranch preview={previewBranch}/>}
     </div>
     {model.current && <footer className="manual-track-current">
       <strong>当前：{model.current.move.notation}</strong>

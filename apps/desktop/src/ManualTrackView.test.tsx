@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ManualTrackView } from "./ManualTrackView";
-import type { ManualTreeNode, MoveItem, Side } from "./platform";
+import type { ManualTreeNode, MoveItem, PreviewLineStep, Side } from "./platform";
 
 afterEach(cleanup);
 
@@ -9,7 +9,19 @@ function move(id: string, notation: string, movedBy: Side, isMainline = true): M
   return { id, notation, movedBy, iccs: "a0a1", from: { row: 9, col: 0 }, to: { row: 8, col: 0 }, comment: "", isMainline };
 }
 
-function renderTrack(options: { onExportLine?: (contents: string) => Promise<string | undefined> } = {}) {
+function previewStep(notation: string, movedBy: Side): PreviewLineStep {
+  return {
+    fen: "preview fen",
+    from: { row: 9, col: 1 },
+    movedBy,
+    notation,
+    pieces: [],
+    status: "正常",
+    to: { row: 7, col: 2 },
+  };
+}
+
+function renderTrack(options: { onExportLine?: (contents: string) => Promise<string | undefined>; previewBranch?: Parameters<typeof ManualTrackView>[0]["previewBranch"] } = {}) {
   const red = move("r1", "马八进七", "红方");
   const black = move("b1", "马8进7", "黑方");
   const main = move("r2", "车九平八", "红方");
@@ -28,6 +40,7 @@ function renderTrack(options: { onExportLine?: (contents: string) => Promise<str
     onRemove={vi.fn()}
     onExportLine={options.onExportLine}
     onViewModeChange={onViewModeChange}
+    previewBranch={options.previewBranch}
     qualityByMoveId={new Map([["b1", { score: 88, grade: "优" }]])}
     viewMode="track"
   />);
@@ -88,5 +101,24 @@ describe("ManualTrackView", () => {
     await waitFor(() => expect(onExportLine).toHaveBeenCalledTimes(1));
     expect(onExportLine.mock.calls[0][0]).toContain("马八进七（+0.23）");
     expect(onExportLine.mock.calls[0][0]).toContain("马8进7（优88分）");
+  });
+
+  it("renders candidate preview as a virtual dashed AI branch without navigation", () => {
+    const { onNavigate } = renderTrack({
+      previewBranch: {
+        activeStep: 1,
+        firstMove: "马八进七",
+        rank: 1,
+        sourceEngineName: "Pikafish",
+        steps: [previewStep("马八进七", "红方"), previewStep("炮2平3", "黑方")],
+      },
+    });
+
+    expect(screen.getByRole("region", { name: "AI 推荐虚线预测分支" })).toBeTruthy();
+    expect(screen.getByText("虚线预测")).toBeTruthy();
+    expect(screen.getByText("AI推荐")).toBeTruthy();
+    expect(screen.getByText("未保存")).toBeTruthy();
+    expect(screen.getByText("炮2平3")).toBeTruthy();
+    expect(onNavigate).not.toHaveBeenCalled();
   });
 });

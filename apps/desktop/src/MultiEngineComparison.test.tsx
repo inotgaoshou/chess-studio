@@ -54,11 +54,14 @@ describe("MultiEngineComparison", () => {
       { id: "fairy", name: "Fairy", primary: false, lines: [{ multipv: 1, pv: ["h2h9", "b9b8"], notation: ["炮八平五", "马2进3"], scoreCp: 22, depth: 18 }] },
     ]}/>);
 
+    expect(screen.getByText("引擎分析")).toBeTruthy();
+    expect(screen.getByText("推荐")).toBeTruthy();
     expect(screen.getByText("次")).toBeTruthy();
     expect(screen.getByText("Fairy")).toBeTruthy();
-    expect(screen.getByText((_, element) => element?.textContent === "首着 炮八平五")).toBeTruthy();
-    expect(screen.getByText((_, element) => element?.textContent === "红方视角 +22 · 深度 18")).toBeTruthy();
-    expect(screen.getByText((_, element) => element?.textContent === "主变 炮八平五 马2进3")).toBeTruthy();
+    expect(screen.getByText("引擎首着有分歧")).toBeTruthy();
+    expect(screen.getByText("+22")).toBeTruthy();
+    expect(screen.getAllByText("炮八平五").length).toBeGreaterThan(0);
+    expect(screen.getByText("变化详情")).toBeTruthy();
   });
 
   it("collapses to a compact summary and can expand again", async () => {

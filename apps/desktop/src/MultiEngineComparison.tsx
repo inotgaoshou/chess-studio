@@ -35,6 +35,30 @@ function lineText(line: AnalysisLine) {
   return moves.length ? moves.join(" ") : "暂无推荐着法";
 }
 
+function lineMoves(line?: AnalysisLine) {
+  if (!line) return [];
+  return line.notation?.length ? line.notation : line.pv;
+}
+
+function formatNps(value?: number) {
+  if (!value) return "--";
+  return value >= 1_000_000 ? `${(value / 1_000_000).toFixed(1)}M` : `${Math.round(value / 1000)}K`;
+}
+
+function formatTime(value?: number) {
+  if (value == null) return "--";
+  return `${(value / 1000).toFixed(1)}s`;
+}
+
+function compactConsensus(groups: EngineComparisonGroup[]) {
+  const available = groups.map((group) => group.lines.find((line) => line.multipv === 1)).filter((line): line is AnalysisLine => !!line?.pv[0]);
+  if (available.length === 0) return "等待引擎返回";
+  if (available.length < groups.length) return "部分引擎计算中";
+  const firstMoves = new Set(available.map((line) => line.pv[0]));
+  if (firstMoves.size === 1) return groups.length === 2 ? "两个引擎一致" : `${available.length} 个引擎一致`;
+  return "引擎首着有分歧";
+}
+
 function redScoreCp(line: AnalysisLine, sideToMove: Side) {
   if (line.scoreCp == null || line.mate != null) return undefined;
   return line.scoreCp * (sideToMove === "红方" ? 1 : -1);
@@ -99,27 +123,43 @@ export function MultiEngineComparison({ busy, collapsed = false, compact = false
   }
 
   if (compact) {
+    const firstLines = groups.map((engine) => ({ engine, line: engine.lines.find((candidate) => candidate.multipv === 1) }));
+    const bestLine = primary.lines.find((candidate) => candidate.multipv === 1) ?? firstLines.find((item) => item.line)?.line;
+    const bestMove = bestLine?.notation?.[0] ?? bestLine?.pv[0] ?? "--";
+    const maxDepth = Math.max(0, ...firstLines.map((item) => item.line?.depth ?? 0));
+    const maxTime = Math.max(0, ...firstLines.map((item) => item.line?.timeMs ?? 0));
+    const maxNps = Math.max(0, ...firstLines.map((item) => item.line?.nps ?? 0));
+    const detailMoves = lineMoves(bestLine).slice(0, 5);
     return <section className="multi-engine-comparison compact" aria-label="多引擎走法对照">
       <header>
         <div>
-          <strong>多引擎对照</strong>
-          <small>主引擎用于箭头/总评；对比引擎只作参考</small>
+          <strong>引擎分析</strong>
+          <small>深{maxDepth || "--"} · 时间 {maxTime ? formatTime(maxTime) : "--"} · NPS {maxNps ? formatNps(maxNps) : "--"}</small>
         </div>
         {headerActions}
       </header>
-      <div className="compact-engine-compare-table">
-        {groups.map((engine, engineIndex) => {
-          const line = engine.lines.find((candidate) => candidate.multipv === 1);
+      <section className="compact-engine-recommendation">
+        <small>推荐</small>
+        <strong>⭐ {bestMove}</strong>
+        <span className={summary.includes("分歧") ? "divergent" : summary.includes("一致") ? "agreed" : "pending"}>{compactConsensus(groups)}</span>
+      </section>
+      <div className="compact-engine-card-grid">
+        {firstLines.map(({ engine, line }, engineIndex) => {
           const lineLabel = line?.notation?.[0] ?? line?.pv[0] ?? "--";
-          return <article className={`compact-engine-compare-row ${engine.primary ? "primary" : ""} engine-${engineIndex % 4}`} key={engine.id}>
-            <header><span>{engine.primary ? "主" : "次"}</span><strong title={engine.name}>{engine.name}</strong></header>
+          return <article className={`compact-engine-mini-card ${engine.primary ? "primary" : ""} engine-${engineIndex % 4}`} key={engine.id}>
+            <header><strong title={engine.name}>{engine.name}</strong><span>{engine.primary ? "主" : "次"}</span></header>
             {engine.error
               ? <em className="error">{engine.error}</em>
               : !line
                 ? <em>{busy ? "计算中" : "暂无候选"}</em>
                 : <>
-                  <div className="compact-engine-compare-metrics"><b>首着 {lineLabel}</b><small>红方视角 {redAnalysisScoreText(line, sideToMove)} · 深度 {line.depth ?? "--"}</small></div>
-                  <p title={lineText(line)}>主变 {lineText(line)}</p>
+                  <b className="compact-engine-score">{redAnalysisScoreText(line, sideToMove)}</b>
+                  <small>深{line.depth ?? "--"} · {formatTime(line.timeMs)} · {formatNps(line.nps)}</small>
+                  <strong className="compact-engine-first-move">{lineLabel}</strong>
+                  <details>
+                    <summary>主线</summary>
+                    <p title={lineText(line)}>{lineText(line)}</p>
+                  </details>
                   <footer>
                     <button type="button" disabled={disabled || line.pv.length === 0} onClick={() => onPreview(line, engine)}><Eye size={12}/>预览</button>
                     <button type="button" disabled={disabled || line.pv.length === 0} onClick={() => onPlay(line, engine)}><Play size={11}/>采用</button>
@@ -128,6 +168,12 @@ export function MultiEngineComparison({ busy, collapsed = false, compact = false
           </article>;
         })}
       </div>
+      <section className="compact-engine-variation-detail">
+        <strong>变化详情</strong>
+        {detailMoves.length > 0
+          ? <ol>{detailMoves.map((move, index) => <li key={`${move}-${index}`}><span>{index + 1}.</span>{move}</li>)}</ol>
+          : <p>{busy ? "正在等待主线返回" : "暂无变化详情"}</p>}
+      </section>
     </section>;
   }
 
