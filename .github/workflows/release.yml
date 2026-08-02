@@ -17,6 +17,7 @@ on:
         type: choice
         options:
           - windows
+          - macos
           - all
 
 concurrency:
@@ -43,6 +44,8 @@ jobs:
         run: |
           if [ "${{ github.event.inputs.platform || 'windows' }}" = "all" ]; then
             matrix='{"include":[{"name":"Windows x64","platform":"windows-x64","os":"windows-latest","rust_target":"x86_64-pc-windows-msvc","tauri_args":"--target x86_64-pc-windows-msvc","build_fairy_from_source":"0"},{"name":"macOS Apple Silicon","platform":"macos-arm64","os":"macos-latest","rust_target":"aarch64-apple-darwin","tauri_args":"--target aarch64-apple-darwin","build_fairy_from_source":"1"}]}'
+          elif [ "${{ github.event.inputs.platform }}" = "macos" ]; then
+            matrix='{"include":[{"name":"macOS Apple Silicon","platform":"macos-arm64","os":"macos-latest","rust_target":"aarch64-apple-darwin","tauri_args":"--target aarch64-apple-darwin","build_fairy_from_source":"1"}]}'
           else
             matrix='{"include":[{"name":"Windows x64","platform":"windows-x64","os":"windows-latest","rust_target":"x86_64-pc-windows-msvc","tauri_args":"--target x86_64-pc-windows-msvc","build_fairy_from_source":"0"}]}'
           fi
