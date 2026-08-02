@@ -36,7 +36,7 @@ use sync_protocol::{
 };
 use tauri::{Emitter, Manager, State};
 use uuid::Uuid;
-use xiangqi_core::{Board, Color, GameStatus, PieceKind, STARTING_FEN, Square};
+use xiangqi_core::{Board, Color, GameStatus, Move, PieceKind, STARTING_FEN, Square};
 use xiangqi_manual::{ManualTree, MoveNode};
 
 const BUILTIN_ENGINE_PATH: &str = "builtin:pikafish";
@@ -877,7 +877,11 @@ fn reorder_branches(
 }
 
 #[tauri::command]
-fn navigate_to(node_id: Option<Uuid>, state: State<'_, DesktopState>, app: tauri::AppHandle) -> Result<BoardDto, String> {
+fn navigate_to(
+    node_id: Option<Uuid>,
+    state: State<'_, DesktopState>,
+    app: tauri::AppHandle,
+) -> Result<BoardDto, String> {
     let mut model = state
         .model
         .lock()
@@ -1077,6 +1081,7 @@ async fn analyze_position(
     }
     let resolved_engine_path = resolve_engine_path(&app, &engine_path)?;
     let resolved_engine_path_text = resolved_engine_path.to_string_lossy().into_owned();
+    let resolved_engine_family = engine_family(&resolved_engine_path);
     // Analysis sessions are intentionally short-lived and independent so multiple
     // configured engines can search the same position concurrently.
     let session = EngineSession::launch(&resolved_engine_path, Duration::from_secs(2))
@@ -1109,11 +1114,21 @@ async fn analyze_position(
         .map_err(|error| error.to_string())?;
     runtime
         .session
-        .search(&fen, &[], limit, &search_moves, false)
+        .search(
+            &fen,
+            &[],
+            limit,
+            &engine_search_moves_for_family(&search_moves, resolved_engine_family),
+            false,
+        )
         .await
         .map_err(|error| error.to_string())?;
     runtime.state = EngineRuntimeState::Analyzing;
-    state.engine.lock().await.insert(resolved_engine_path_text.clone(), runtime.session.control());
+    state
+        .engine
+        .lock()
+        .await
+        .insert(resolved_engine_path_text.clone(), runtime.session.control());
     emit_engine_state(&app, runtime.state);
     let started = Instant::now();
     let mut lines = BTreeMap::new();
@@ -1121,31 +1136,32 @@ async fn analyze_position(
     loop {
         match runtime.session.next_event().await {
             Ok(EngineEvent::Info(info)) if !info.pv.is_empty() => {
-                let line = AnalysisLine {
-                    depth: info.depth,
-                    score_cp: info.score_cp,
-                    mate: info.mate,
-                    nps: info.nps,
-                    time_ms: info.time_ms,
-                    hashfull: info.hashfull,
-                    multipv: info.multipv,
-                    notation: analysis_board
-                        .chinese_pv_notation(&info.pv)
-                        .unwrap_or_default(),
-                    pv: info.pv,
-                };
+                let line =
+                    analysis_line_from_engine_info(&analysis_board, info, resolved_engine_family);
                 if state.analysis_generation.load(Ordering::SeqCst) == analysis_generation {
-                    emit_engine_event(&app, EngineRuntimeEvent::AnalysisInfo {
-                        engine_id: engine_id.clone(),
-                        engine_name: engine_name.clone(),
-                        analysis_session_id,
-                        fen: fen.clone(),
-                        line: line.clone(),
-                    });
+                    emit_engine_event(
+                        &app,
+                        EngineRuntimeEvent::AnalysisInfo {
+                            engine_id: engine_id.clone(),
+                            engine_name: engine_name.clone(),
+                            analysis_session_id,
+                            fen: fen.clone(),
+                            line: line.clone(),
+                        },
+                    );
                 }
                 lines.insert(line.multipv, line);
             }
             Ok(EngineEvent::BestMove { best, ponder }) => {
+                let best =
+                    normalize_engine_move_for_board(&analysis_board, &best, resolved_engine_family)
+                        .unwrap_or(best);
+                let ponder = ponder.and_then(|value| {
+                    let best_move = Move::from_iccs(&best).ok()?;
+                    let board = analysis_board.apply_move(best_move).ok()?;
+                    normalize_engine_move_for_board(&board, &value, resolved_engine_family)
+                        .or(Some(value))
+                });
                 if state.analysis_generation.load(Ordering::SeqCst) == analysis_generation {
                     emit_engine_event(
                         &app,
@@ -1255,6 +1271,7 @@ async fn engine_play_move(
     }
     let resolved_engine_path = resolve_engine_path(&app, &engine_path)?;
     let resolved_engine_path_text = resolved_engine_path.to_string_lossy().into_owned();
+    let resolved_engine_family = engine_family(&resolved_engine_path);
     let mut slot = state.play_session.lock().await;
     if slot
         .as_ref()
@@ -1331,7 +1348,11 @@ async fn engine_play_move(
             .map_err(|error| error.to_string())?;
     }
     play.state = EngineRuntimeState::Thinking;
-    state.engine.lock().await.insert(resolved_engine_path_text.clone(), play.session.control());
+    state
+        .engine
+        .lock()
+        .await
+        .insert(resolved_engine_path_text.clone(), play.session.control());
     emit_engine_state(&app, play.state);
     let (best_move, ponder_move) = loop {
         match play.session.next_event().await {
@@ -1347,17 +1368,7 @@ async fn engine_play_move(
                     &app,
                     EngineRuntimeEvent::Info {
                         fen: fen.clone(),
-                        line: AnalysisLine {
-                            depth: info.depth,
-                            score_cp: info.score_cp,
-                            mate: info.mate,
-                            nps: info.nps,
-                            time_ms: info.time_ms,
-                            hashfull: info.hashfull,
-                            multipv: info.multipv,
-                            notation: board.chinese_pv_notation(&info.pv).unwrap_or_default(),
-                            pv: info.pv,
-                        },
+                        line: analysis_line_from_engine_info(&board, info, resolved_engine_family),
                     },
                 );
             }
@@ -1383,12 +1394,27 @@ async fn engine_play_move(
         }
     };
     state.engine.lock().await.remove(&resolved_engine_path_text);
+    let board_before_best = Board::from_fen(&fen).map_err(|error| error.to_string())?;
+    let best_move =
+        normalize_engine_move_for_board(&board_before_best, &best_move, resolved_engine_family)
+            .unwrap_or(best_move);
+    let board_after_best = Move::from_iccs(&best_move)
+        .ok()
+        .and_then(|mv| board_before_best.apply_move(mv).ok());
+    let ponder_move = ponder_move.and_then(|predicted| {
+        board_after_best
+            .as_ref()
+            .and_then(|board| {
+                normalize_engine_move_for_board(board, &predicted, resolved_engine_family)
+            })
+            .or(Some(predicted))
+    });
     let predicted_fen = if ponder {
         ponder_move.as_deref().and_then(|predicted| {
-            let board = Board::from_fen(&fen).ok()?;
-            let best = xiangqi_core::Move::from_iccs(&best_move).ok()?;
+            let board = board_before_best.clone();
+            let best = Move::from_iccs(&best_move).ok()?;
             let board = board.apply_move(best).ok()?;
-            let predicted = xiangqi_core::Move::from_iccs(predicted).ok()?;
+            let predicted = Move::from_iccs(predicted).ok()?;
             board.apply_move(predicted).ok().map(|board| board.to_fen())
         })
     } else {
@@ -1448,7 +1474,14 @@ async fn stop_engine_play(
 ) -> Result<bool, String> {
     state.play_generation.fetch_add(1, Ordering::SeqCst);
     emit_engine_state(&app, EngineRuntimeState::Stopping);
-    for control in state.engine.lock().await.values().cloned().collect::<Vec<_>>() {
+    for control in state
+        .engine
+        .lock()
+        .await
+        .values()
+        .cloned()
+        .collect::<Vec<_>>()
+    {
         let _ = control.stop().await;
     }
     let mut slot = state.play_session.lock().await;
@@ -1802,6 +1835,145 @@ fn engine_variant_option(engine_path: &Path) -> Option<&'static str> {
     }
 }
 
+fn fairy_rank_to_internal(rank: &str) -> Option<u8> {
+    let rank = rank.parse::<u8>().ok()?;
+    (1..=10).contains(&rank).then_some(rank - 1)
+}
+
+fn split_fairy_square_pair(value: &str) -> Option<(char, &str, char, &str)> {
+    let mut chars = value.char_indices();
+    let (_, from_file) = chars.next()?;
+    if !matches!(from_file, 'a'..='i') {
+        return None;
+    }
+    let from_rank_start = from_file.len_utf8();
+    let (to_file_index, to_file) =
+        value[from_rank_start..]
+            .char_indices()
+            .find_map(|(offset, character)| {
+                matches!(character, 'a'..='i').then_some((from_rank_start + offset, character))
+            })?;
+    let to_rank_start = to_file_index + to_file.len_utf8();
+    let from_rank = &value[from_rank_start..to_file_index];
+    let to_rank = &value[to_rank_start..];
+    if from_rank.is_empty() || to_rank.is_empty() {
+        return None;
+    }
+    Some((from_file, from_rank, to_file, to_rank))
+}
+
+fn fairy_xiangqi_to_internal_iccs(value: &str) -> Option<String> {
+    let (from_file, from_rank, to_file, to_rank) = split_fairy_square_pair(value)?;
+    let from_rank = fairy_rank_to_internal(from_rank)?;
+    let to_rank = fairy_rank_to_internal(to_rank)?;
+    Some(format!("{from_file}{from_rank}{to_file}{to_rank}"))
+}
+
+fn internal_iccs_to_fairy_xiangqi(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    if bytes.len() != 4
+        || !matches!(bytes[0], b'a'..=b'i')
+        || !matches!(bytes[2], b'a'..=b'i')
+        || !matches!(bytes[1], b'0'..=b'9')
+        || !matches!(bytes[3], b'0'..=b'9')
+    {
+        return None;
+    }
+    let from_rank = bytes[1] - b'0' + 1;
+    let to_rank = bytes[3] - b'0' + 1;
+    Some(format!(
+        "{}{}{}{}",
+        bytes[0] as char, from_rank, bytes[2] as char, to_rank
+    ))
+}
+
+fn normalize_engine_move_for_board(
+    board: &Board,
+    value: &str,
+    family: EngineFamily,
+) -> Option<String> {
+    let mut candidates = Vec::new();
+    if family == EngineFamily::FairyStockfish {
+        if let Some(converted) = fairy_xiangqi_to_internal_iccs(value) {
+            candidates.push(converted);
+        }
+    }
+    candidates.push(value.to_owned());
+
+    candidates.into_iter().find(|candidate| {
+        Move::from_iccs(candidate)
+            .ok()
+            .is_some_and(|mv| board.apply_move(mv).is_ok())
+    })
+}
+
+fn normalize_engine_pv_for_board(
+    board: &Board,
+    pv: &[String],
+    family: EngineFamily,
+) -> Vec<String> {
+    let mut current = board.clone();
+    let mut normalized = Vec::with_capacity(pv.len());
+    for raw in pv {
+        let Some(candidate) = normalize_engine_move_for_board(&current, raw, family) else {
+            normalized.push(raw.clone());
+            break;
+        };
+        let Ok(mv) = Move::from_iccs(&candidate) else {
+            normalized.push(raw.clone());
+            break;
+        };
+        let Ok(next) = current.apply_move(mv) else {
+            normalized.push(raw.clone());
+            break;
+        };
+        normalized.push(candidate);
+        current = next;
+    }
+    normalized
+}
+
+fn normalize_pv_and_notation_with_fairy_fallback(
+    board: &Board,
+    pv: &[String],
+) -> (Vec<String>, Vec<String>) {
+    if let Ok(notation) = board.chinese_pv_notation(pv) {
+        return (pv.to_vec(), notation);
+    }
+    let normalized = normalize_engine_pv_for_board(board, pv, EngineFamily::FairyStockfish);
+    let notation = board.chinese_pv_notation(&normalized).unwrap_or_default();
+    (normalized, notation)
+}
+
+fn engine_search_moves_for_family(search_moves: &[String], family: EngineFamily) -> Vec<String> {
+    if family != EngineFamily::FairyStockfish {
+        return search_moves.to_vec();
+    }
+    search_moves
+        .iter()
+        .map(|value| internal_iccs_to_fairy_xiangqi(value).unwrap_or_else(|| value.clone()))
+        .collect()
+}
+
+fn analysis_line_from_engine_info(
+    board: &Board,
+    info: engine_protocol::EngineInfo,
+    family: EngineFamily,
+) -> AnalysisLine {
+    let pv = normalize_engine_pv_for_board(board, &info.pv, family);
+    AnalysisLine {
+        depth: info.depth,
+        score_cp: info.score_cp,
+        mate: info.mate,
+        nps: info.nps,
+        time_ms: info.time_ms,
+        hashfull: info.hashfull,
+        multipv: info.multipv,
+        notation: board.chinese_pv_notation(&pv).unwrap_or_default(),
+        pv,
+    }
+}
+
 async fn configure_engine_for_xiangqi(
     session: &mut EngineSession,
     engine_path: &Path,
@@ -2016,21 +2188,19 @@ fn apply_report_line_to_position(
     cached: bool,
 ) -> Result<(), String> {
     let position_board = Board::from_fen(&position.fen).map_err(|error| error.to_string())?;
-    let notation = if line.pv.is_empty() {
-        Vec::new()
+    let (pv, notation) = if line.pv.is_empty() {
+        (Vec::new(), Vec::new())
     } else if line.notation.is_empty() {
-        position_board
-            .chinese_pv_notation(&line.pv)
-            .unwrap_or_default()
+        normalize_pv_and_notation_with_fairy_fallback(&position_board, &line.pv)
     } else {
-        line.notation.clone()
+        (line.pv.clone(), line.notation.clone())
     };
     position.score_cp = line.score_cp;
     position.mate = line.mate;
     position.depth = line.depth;
     position.elapsed_ms = line.time_ms;
     position.cached = cached;
-    position.best_iccs = line.pv.first().cloned();
+    position.best_iccs = pv.first().cloned();
     position.best_notation = notation.first().cloned();
     position.pv_notation = notation.into_iter().take(12).collect();
     Ok(())
@@ -2071,7 +2241,13 @@ async fn stop_analysis(
     if discard_result {
         state.analysis_generation.fetch_add(1, Ordering::SeqCst);
     }
-    let controls = state.engine.lock().await.values().cloned().collect::<Vec<_>>();
+    let controls = state
+        .engine
+        .lock()
+        .await
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
     if !controls.is_empty() {
         emit_engine_state(&app, EngineRuntimeState::Stopping);
         for control in controls {
@@ -2099,10 +2275,10 @@ fn get_saved_analysis(state: State<'_, DesktopState>) -> Result<Vec<AnalysisLine
         .map(Option::unwrap_or_default)?;
     for line in &mut lines {
         if line.notation.is_empty() {
-            line.notation = model
-                .board
-                .chinese_pv_notation(&line.pv)
-                .unwrap_or_default();
+            let (pv, notation) =
+                normalize_pv_and_notation_with_fairy_fallback(&model.board, &line.pv);
+            line.pv = pv;
+            line.notation = notation;
         }
     }
     Ok(lines)
@@ -2119,6 +2295,7 @@ async fn generate_game_report_inner(
 ) -> Result<GameReportDatasetDto, String> {
     let resolved_engine_path = resolve_engine_path(app, &engine_path)?;
     let resolved_engine_path_text = resolved_engine_path.to_string_lossy().into_owned();
+    let resolved_engine_family = engine_family(&resolved_engine_path);
     let engine_fingerprint = report_engine_fingerprint(&resolved_engine_path)?;
     let report_depth = report_depth.clamp(8, 40);
     let limit = SearchLimit::Depth(report_depth);
@@ -2297,23 +2474,11 @@ async fn generate_game_report_inner(
                             );
                             let position_board = Board::from_fen(&position.fen)
                                 .map_err(|error| error.to_string())?;
-                            primary = Some(AnalysisLine {
-                                depth: info.depth,
-                                score_cp: info.score_cp,
-                                mate: info.mate,
-                                nps: info.nps,
-                                time_ms: info.time_ms,
-                                hashfull: info.hashfull,
-                                multipv: 1,
-                                notation: if info.pv.is_empty() {
-                                    Vec::new()
-                                } else {
-                                    position_board
-                                        .chinese_pv_notation(&info.pv)
-                                        .unwrap_or_default()
-                                },
-                                pv: info.pv,
-                            });
+                            primary = Some(analysis_line_from_engine_info(
+                                &position_board,
+                                info,
+                                resolved_engine_family,
+                            ));
                         }
                         Ok(EngineEvent::BestMove { .. }) => break,
                         Ok(_) => {}
@@ -2596,7 +2761,10 @@ fn normalize_desktop_preferences(preferences: &mut DesktopPreferences) {
     preferences.board_skin = normalize_skin_id(&preferences.board_skin);
     preferences.piece_skin = normalize_skin_id(&preferences.piece_skin);
     preferences.parallel_engine_paths.retain(|path| {
-        matches!(path.as_str(), BUILTIN_ENGINE_PATH | BUILTIN_FAIRY_ENGINE_PATH)
+        matches!(
+            path.as_str(),
+            BUILTIN_ENGINE_PATH | BUILTIN_FAIRY_ENGINE_PATH
+        )
     });
     preferences.parallel_engine_paths.sort();
     preferences.parallel_engine_paths.dedup();
@@ -2667,7 +2835,10 @@ fn validate_preferences(preferences: &DesktopPreferences) -> Result<(), String> 
     ) {
         return Err("不支持的搜索模式".into());
     }
-    if !matches!(preferences.analysis_engine_mode.as_str(), "single" | "parallel") {
+    if !matches!(
+        preferences.analysis_engine_mode.as_str(),
+        "single" | "parallel"
+    ) {
         return Err("不支持的多引擎分析模式".into());
     }
     let limit_valid = match preferences.search_mode.as_str() {
@@ -3582,7 +3753,9 @@ fn manual_tree_dto(
         .into_iter()
         .map(|node| {
             let move_ = move_dto(node, board, analysis.get(&node.id))?;
-            let next_board = board.apply_move(node.mv).map_err(|error| error.to_string())?;
+            let next_board = board
+                .apply_move(node.mv)
+                .map_err(|error| error.to_string())?;
             Ok(ManualTreeNodeDto {
                 move_,
                 children: manual_tree_dto(tree, node.id, &next_board, analysis)?,
@@ -4507,6 +4680,45 @@ mod tests {
             report_engine_fingerprint(&pikafish).unwrap(),
             report_engine_fingerprint(&fairy).unwrap()
         );
+    }
+
+    #[test]
+    fn fairy_stockfish_xiangqi_coordinates_are_normalized_to_internal_iccs() {
+        assert_eq!(
+            fairy_xiangqi_to_internal_iccs("b1c3").as_deref(),
+            Some("b0c2")
+        );
+        assert_eq!(
+            fairy_xiangqi_to_internal_iccs("a10a9").as_deref(),
+            Some("a9a8")
+        );
+        assert_eq!(
+            internal_iccs_to_fairy_xiangqi("b0c2").as_deref(),
+            Some("b1c3")
+        );
+        assert_eq!(
+            internal_iccs_to_fairy_xiangqi("a9a8").as_deref(),
+            Some("a10a9")
+        );
+    }
+
+    #[test]
+    fn fairy_stockfish_analysis_line_uses_chinese_notation_and_internal_pv() {
+        let board = Board::from_fen(STARTING_FEN).unwrap();
+        let line = analysis_line_from_engine_info(
+            &board,
+            engine_protocol::EngineInfo {
+                depth: Some(18),
+                score_cp: Some(80),
+                multipv: 1,
+                pv: vec!["b1c3".into(), "h10g8".into()],
+                ..Default::default()
+            },
+            EngineFamily::FairyStockfish,
+        );
+
+        assert_eq!(line.pv, ["b0c2", "h9g7"]);
+        assert_eq!(line.notation, ["马八进七", "马8进7"]);
     }
 
     #[test]
