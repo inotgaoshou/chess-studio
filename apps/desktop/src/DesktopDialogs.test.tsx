@@ -103,6 +103,24 @@ describe("DesktopDialogs", () => {
     }));
   });
 
+  it("counts only effective comparison engines in the parallel summary", () => {
+    renderDialog("engine", {
+      preferences: {
+        ...preferences,
+        enginePath: "/engines/main",
+        activeEngineId: "engine-2",
+        analysisEngineMode: "parallel",
+        parallelEngineIds: ["deleted-profile", "engine-2"],
+        parallelEnginePaths: [BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH],
+      },
+      engineProfiles: [
+        { id: "engine-2", name: "当前主引擎", executablePath: "/engines/main", protocol: "ucci", active: true },
+      ],
+    });
+
+    expect(screen.getByText("当前共 3 个引擎：1 个主引擎 + 2 个对比引擎；勾选“作为对比”后保存生效")).toBeTruthy();
+  });
+
   it("shows a file picker error instead of failing silently", async () => {
     const { user } = renderDialog("engine", {
       preferences: { ...preferences, enginePath: "" },

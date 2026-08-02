@@ -51,7 +51,7 @@ describe("MultiEngineComparison", () => {
   it("shows comparison engine moves and metrics in compact mode", () => {
     render(<MultiEngineComparison {...props} compact groups={[
       { id: "pika", name: "内置 Pikafish", primary: true, lines: [{ multipv: 1, pv: ["b2b9"], notation: ["炮二平五"], scoreCp: 16, depth: 20 }] },
-      { id: "fairy", name: "Fairy", primary: false, lines: [{ multipv: 1, pv: ["h2h9", "b9b8"], notation: ["炮八平五", "马2进3"], scoreCp: 22, depth: 18 }] },
+      { id: "fairy", name: "Fairy", primary: false, lines: [{ multipv: 1, pv: ["h2h9", "b9b8", "a3a4", "h7h6", "b0b1", "h9h8", "c3c4", "g6g5", "b1b2"], notation: ["炮八平五", "马2进3", "兵三进一", "卒8进1", "马二进三", "车9平8", "兵七进一", "卒7进1", "马三进四"], scoreCp: 22, depth: 18 }] },
     ]}/>);
 
     expect(screen.getByText("引擎分析")).toBeTruthy();
@@ -61,6 +61,8 @@ describe("MultiEngineComparison", () => {
     expect(screen.getByText("引擎首着有分歧")).toBeTruthy();
     expect(screen.getByText("+22")).toBeTruthy();
     expect(screen.getAllByText("炮八平五").length).toBeGreaterThan(0);
+    expect(screen.getByText("炮八平五 马2进3 兵三进一 卒8进1 马二进三 车9平8 兵七进一 卒7进1", { exact: true })).toBeTruthy();
+    expect(screen.getByText("展开完整变化")).toBeTruthy();
     expect(screen.getByText("变化详情")).toBeTruthy();
   });
 

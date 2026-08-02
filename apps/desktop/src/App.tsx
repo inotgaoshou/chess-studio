@@ -1431,7 +1431,9 @@ export default function App() {
           activeStep: 0,
           engineNames,
           firstMove: primaryMember.line.notation?.[0] ?? firstIccs,
-          label: members.length > 1 ? `AI推荐 · ${members.length}个引擎一致` : `AI推荐 · ${primaryMember.engine.name}`,
+          label: members.length > 1
+            ? `AI推荐 · ${members.length}个引擎一致${members.some((member) => member.engine.primary) ? `（主 + ${members.length - 1}对比）` : ""}`
+            : `AI推荐 · ${primaryMember.engine.name}`,
           merged: members.length > 1,
           rank: branches.length + 1,
           scoreTexts,

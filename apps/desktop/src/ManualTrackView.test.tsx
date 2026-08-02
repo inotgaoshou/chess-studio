@@ -134,7 +134,7 @@ describe("ManualTrackView", () => {
           activeStep: 0,
           engineNames: ["Pikafish", "Fairy"],
           firstMove: "马八进七",
-          label: "AI推荐 · 2个引擎一致",
+          label: "AI推荐 · 2个引擎一致（主 + 1对比）",
           merged: true,
           rank: 1,
           scoreTexts: ["Pikafish +39 深22", "Fairy +41 深19"],
@@ -153,7 +153,7 @@ describe("ManualTrackView", () => {
     });
 
     expect(screen.getByText("AI推荐 · 2 条引擎分支")).toBeTruthy();
-    expect(screen.getByText("AI推荐 · 2个引擎一致")).toBeTruthy();
+    expect(screen.getByText("AI推荐 · 2个引擎一致（主 + 1对比）")).toBeTruthy();
     expect(screen.getByText("AI推荐 · Cyclone")).toBeTruthy();
     expect(screen.getByText(/Pikafish \+39 深22/)).toBeTruthy();
     expect(onNavigate).not.toHaveBeenCalled();

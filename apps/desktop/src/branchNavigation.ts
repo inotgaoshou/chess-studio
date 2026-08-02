@@ -15,7 +15,10 @@ function preferredTreeChild(nodes: ManualTreeNode[]) {
 
 export function hasUpcomingBranchPoint(nodes: ManualTreeNode[], currentNode?: string) {
   const current = currentNode ? findManualTreeNode(nodes, currentNode) : undefined;
-  let next = preferredTreeChild(current ? current.children : nodes);
+  const currentChoices = current ? current.children : nodes;
+  if (currentChoices.length > 1) return true;
+
+  let next = preferredTreeChild(currentChoices);
   while (next) {
     const candidates = next.children;
     if (candidates.length > 1) return true;

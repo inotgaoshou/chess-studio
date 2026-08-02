@@ -40,14 +40,17 @@ describe("branch navigation", () => {
     expect(hasUpcomingBranchPoint(tree, "branch-point")).toBe(true);
   });
 
-  it("does not treat the current node's own alternatives as an upcoming branch point", () => {
+  it("keeps 下变 available when the selected child immediately reaches another branch point", () => {
     const tree = [
-      node("current", "卒3进1", true, [
-        node("main-next", "车九进一", true),
-        node("same-point-var", "车九平八", false),
+      node("parent", "卒3进1", true, [
+        node("main-branch", "车九进一", true),
+        node("selected-child", "车九平八", false, [
+          node("nested-main", "马8进7", true),
+          node("nested-variation", "炮2平5", false),
+        ]),
       ]),
     ];
 
-    expect(hasUpcomingBranchPoint(tree, "current")).toBe(false);
+    expect(hasUpcomingBranchPoint(tree, "selected-child")).toBe(true);
   });
 });

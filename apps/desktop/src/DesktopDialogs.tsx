@@ -103,6 +103,14 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
     { path: BUILTIN_ENGINE_PATH, name: "内置 Pikafish", detail: "随 App 安装，推荐日常拆棋" },
     { path: BUILTIN_FAIRY_ENGINE_PATH, name: "内置 Fairy-Stockfish", detail: "独立资源目录，强制 Xiangqi 变体，适合对比参考" },
   ];
+  const comparisonEngineCount = new Set([
+    ...engineProfiles
+      .filter((profile) => profile.id !== draft.activeEngineId && profile.executablePath !== draft.enginePath && draft.parallelEngineIds.includes(profile.id))
+      .map((profile) => `profile:${profile.id}`),
+    ...(draft.parallelEnginePaths ?? [])
+      .filter((path) => path !== draft.enginePath)
+      .map((path) => `path:${path}`),
+  ]).size;
 
   useEffect(() => {
     if (!dialog) {
@@ -277,7 +285,7 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
             <div className="engine-analysis-mode" role="group" aria-label="分析引擎模式">
               <button type="button" className={draft.analysisEngineMode === "single" ? "active" : ""} onClick={() => setDraft((current) => ({ ...current, analysisEngineMode: "single" }))}>仅主引擎</button>
               <button type="button" className={draft.analysisEngineMode === "parallel" ? "active" : ""} onClick={() => setDraft((current) => ({ ...current, analysisEngineMode: "parallel" }))}>主引擎 + 对比</button>
-              <small>{draft.analysisEngineMode === "parallel" ? `主引擎 + ${draft.parallelEngineIds.length + (draft.parallelEnginePaths?.length ?? 0)} 个对比引擎；勾选“作为对比”后保存生效` : "仅使用标有“主引擎”的一项进行分析"}</small>
+              <small>{draft.analysisEngineMode === "parallel" ? `当前共 ${comparisonEngineCount + 1} 个引擎：1 个主引擎 + ${comparisonEngineCount} 个对比引擎；勾选“作为对比”后保存生效` : "仅使用标有“主引擎”的一项进行分析"}</small>
             </div>
             <div className="engine-preset-grid" aria-label="常用引擎预设">
               {enginePresetNames.map((name) => <button type="button" key={name} disabled={busy || enginePickerBusy} onClick={() => void chooseEngine(name)} title={`选择 ${name} 的外部可执行文件`}>导入 {name}</button>)}

@@ -136,7 +136,8 @@ export function MultiEngineComparison({ busy, collapsed = false, compact = false
     const maxDepth = Math.max(0, ...firstLines.map((item) => item.line?.depth ?? 0));
     const maxTime = Math.max(0, ...firstLines.map((item) => item.line?.timeMs ?? 0));
     const maxNps = Math.max(0, ...firstLines.map((item) => item.line?.nps ?? 0));
-    const detailMoves = lineMoves(bestLine).slice(0, 5);
+    const compactVisibleMoveCount = 8;
+    const detailMoves = lineMoves(bestLine).slice(0, compactVisibleMoveCount);
     return <section className="multi-engine-comparison compact" aria-label="多引擎走法对照">
       <header>
         <div>
@@ -153,6 +154,9 @@ export function MultiEngineComparison({ busy, collapsed = false, compact = false
       <div className="compact-engine-card-grid">
         {firstLines.map(({ engine, line }, engineIndex) => {
           const lineLabel = line?.notation?.[0] ?? line?.pv[0] ?? "--";
+          const moves = lineMoves(line);
+          const compactMoves = moves.slice(0, compactVisibleMoveCount);
+          const hasMoreMoves = moves.length > compactMoves.length;
           return <article className={`compact-engine-mini-card ${engine.primary ? "primary" : ""} engine-${engineIndex % 4}`} key={engine.id}>
             <header><strong title={engine.name}>{engine.name}</strong><span>{engine.primary ? "主" : "次"}</span></header>
             {engine.error
@@ -163,10 +167,14 @@ export function MultiEngineComparison({ busy, collapsed = false, compact = false
                   <b className="compact-engine-score">{redAnalysisScoreText(line, sideToMove)}</b>
                   <small>深{line.depth ?? "--"} · {formatTime(line.timeMs)} · {formatNps(line.nps)}</small>
                   <strong className="compact-engine-first-move">{lineLabel}</strong>
-                  <details>
-                    <summary>主线</summary>
+                  <div className="compact-engine-mainline">
+                    <span>主线 · 共 {moves.length} 步</span>
+                    <p title={lineText(line)}>{compactMoves.join(" ")}</p>
+                  </div>
+                  {hasMoreMoves && <details className="compact-engine-full-line">
+                    <summary>展开完整变化</summary>
                     <p title={lineText(line)}>{lineText(line)}</p>
-                  </details>
+                  </details>}
                   <footer>
                     <button type="button" disabled={disabled || line.pv.length === 0} onClick={() => onPreview(line, engine)}><Eye size={12}/>预览</button>
                     <button type="button" disabled={disabled || line.pv.length === 0} onClick={() => onPlay(line, engine)}><Play size={11}/>采用</button>
