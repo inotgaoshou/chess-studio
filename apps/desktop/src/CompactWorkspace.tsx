@@ -25,6 +25,7 @@ export type CompactEngineAnalysisRow = {
   id: string;
   iccs?: string;
   rank: number;
+  sourceText?: string;
   depthText: string;
   scoreText: string;
   timeText: string;
@@ -87,6 +88,7 @@ export function CompactEngineAnalysisList({ busy, rows, onPlayMove }: EngineList
             <small>时:{row.timeText}</small>
             <small>NPS:{row.npsText}</small>
             <small>HF:{row.hfText}</small>
+            {row.sourceText && <small className="compact-engine-source">{row.sourceText}</small>}
           </span>
           <span className="compact-engine-line">{row.lineText}</span>
         </span>

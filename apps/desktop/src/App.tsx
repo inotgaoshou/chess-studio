@@ -896,23 +896,41 @@ export default function App() {
     [candidateSideToMove, engineComparisonGroups],
   );
   const compactEngineRows: CompactEngineAnalysisRow[] = useMemo(() => {
-    const primaryEngineLines = currentEngineAnalyses[primaryAnalysisEngineRef.current]?.lines ?? [];
-    const displayLines = analysisHistory.length > 0
-      ? analysisHistory
-      : orderedAnalysis.length > 0
-        ? orderedAnalysis
-        : primaryEngineLines.slice().sort((left, right) => left.multipv - right.multipv);
-    const showAsHistory = analysisHistory.length > 0;
+    const primaryEngineId = primaryAnalysisEngineRef.current;
+    const lineItems = [
+      ...analysisHistory.map((line) => ({ line, sourceId: primaryEngineId, sourceText: "主引擎" })),
+      ...Object.entries(currentEngineAnalyses).flatMap(([sourceId, group]) => group.lines.map((line) => ({
+        line,
+        sourceId,
+        sourceText: sourceId === primaryEngineId ? "主引擎" : group.name,
+      }))),
+      ...(Object.keys(currentEngineAnalyses).length === 0 ? orderedAnalysis.map((line) => ({ line, sourceId: primaryEngineId, sourceText: "主引擎" })) : []),
+    ];
+    const seen = new Set<string>();
+    const displayItems = lineItems.filter(({ line, sourceId }) => {
+      const key = [
+        sourceId,
+        line.multipv,
+        line.depth ?? "",
+        line.scoreCp ?? "",
+        line.mate ?? "",
+        line.pv.join(" "),
+      ].join("|");
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
     const lineMoveLimit = Math.max(
       COMPACT_ENGINE_LINE_MIN_MOVES,
       Math.min(COMPACT_ENGINE_LINE_MAX_MOVES, Math.trunc(desktopPreferences.candidateLineMoves) || DEFAULT_CANDIDATE_LINE_MOVES),
     );
-    return displayLines.slice(0, ENGINE_ANALYSIS_HISTORY_LIMIT).map((line, index) => {
+    return displayItems.slice(0, ENGINE_ANALYSIS_HISTORY_LIMIT).map(({ line, sourceId, sourceText }, index) => {
       const lineMoves = (line.notation?.length ? line.notation : line.pv).slice(0, lineMoveLimit);
       return {
-        id: `engine-${line.multipv}-${line.depth ?? "d"}-${line.timeMs ?? index}-${line.pv.join("-")}`,
+        id: `engine-${sourceId}-${line.multipv}-${line.depth ?? "d"}-${line.timeMs ?? index}-${line.pv.join("-")}`,
         iccs: line.pv[0],
-        rank: showAsHistory ? index + 1 : line.multipv,
+        rank: index + 1,
+        sourceText,
         depthText: `${line.depth ?? "--"}`,
         scoreText: redAnalysisScoreText(line, candidateSideToMove),
         timeText: line.timeMs != null ? `${(line.timeMs / 1000).toFixed(1)}s` : "--",

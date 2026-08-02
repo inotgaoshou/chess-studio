@@ -960,7 +960,7 @@ button:disabled { cursor: default; opacity: .45; }
 }
 .floating-panel-shell .compact-engine-analysis-row {
   width: 100%;
-  min-height: 44px;
+  min-height: 38px;
   padding: 3px 6px;
   border: 0;
   border-bottom: 1px solid #edf3f9;
@@ -991,9 +991,9 @@ button:disabled { cursor: default; opacity: .45; }
   display: flex;
   align-items: center;
   flex-wrap: nowrap;
-  gap: 4px;
+  gap: 3px 5px;
   color: #ed4040;
-  overflow: hidden;
+  overflow: visible;
   white-space: nowrap;
   font-size: 9.6px;
   line-height: 1.1;
@@ -1007,12 +1007,15 @@ button:disabled { cursor: default; opacity: .45; }
   font-size: 9.4px;
   font-weight: 800;
 }
+.floating-panel-shell .compact-engine-metrics .compact-engine-source {
+  color: #60788e;
+}
 .floating-panel-shell .compact-engine-line {
   min-width: 0;
   overflow: hidden;
   color: #3f5266;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   font: 500 10.5px/1.15 KaiTi, STKaiti, "PingFang SC", serif;
 }
@@ -5564,7 +5567,7 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
   }
   .workspace.layout-compact .compact-engine-analysis-row {
     width: 100%;
-    min-height: 44px;
+    min-height: 38px;
     padding: 3px 6px;
     border: 0;
     border-bottom: 1px solid #edf3f9;
@@ -5599,9 +5602,9 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
     display: flex;
     align-items: center;
     flex-wrap: nowrap;
-    gap: 4px;
+    gap: 3px 5px;
     color: #ed4040;
-    overflow: hidden;
+    overflow: visible;
     white-space: nowrap;
     font-size: 9.6px;
     line-height: 1.1;
@@ -5615,12 +5618,15 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
     font-size: 9.4px;
     font-weight: 800;
   }
+  .workspace.layout-compact .compact-engine-metrics .compact-engine-source {
+    color: #60788e;
+  }
   .workspace.layout-compact .compact-engine-line {
     min-width: 0;
     overflow: hidden;
     color: #3f5266;
     display: -webkit-box;
-    -webkit-line-clamp: 2;
+    -webkit-line-clamp: 3;
     -webkit-box-orient: vertical;
     font: 500 10.5px/1.15 KaiTi, STKaiti, "PingFang SC", serif;
   }
