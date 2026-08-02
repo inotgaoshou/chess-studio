@@ -950,15 +950,13 @@ export default function App() {
     to: boardPoint(move.to, reversed),
   })) : [], [branchArrowColor, directBranchChoices, hasVisibleBranchChoices, reversed]);
   const boardArrows = useMemo(() => {
+    // Preview already highlights its simulated move with the 1/2 squares.
+    // Keeping analysis or branch arrows would describe the real position and
+    // make the temporary board state ambiguous.
+    if (candidatePreview) return [];
     if (branchArrows.length > 0) return branchArrows;
-    if (!candidatePreview || !previewStep) return analysisArrows;
-    return [{
-      rank: candidatePreview.rank,
-      color: candidatePreview.color,
-      from: boardPoint(previewStep.from, reversed),
-      to: boardPoint(previewStep.to, reversed),
-    }];
-  }, [analysisArrows, branchArrows, candidatePreview, previewStep, reversed]);
+    return analysisArrows;
+  }, [analysisArrows, branchArrows, candidatePreview]);
 
   function resetAnalysisHistory(fen?: string, lines: AnalysisLine[] = []) {
     analysisHistoryRef.current = fen ? { fen, lines: lines.slice(0, ENGINE_ANALYSIS_HISTORY_LIMIT) } : undefined;
