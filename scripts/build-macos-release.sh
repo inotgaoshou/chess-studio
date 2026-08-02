@@ -129,4 +129,4 @@ fi
 
 echo "Done:"
 echo "  target/release/bundle/macos/Xiangqi Studio.app"
-echo "  target/release/bundle/dmg/Xiangqi Studio_0.1.0_aarch64.dmg"
+find target/release/bundle/dmg -maxdepth 1 -name 'Xiangqi Studio_*.dmg' -print 2>/dev/null || true
