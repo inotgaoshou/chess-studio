@@ -62,7 +62,7 @@ import { SkinShopDialog } from "./SkinShopDialog";
 import { CANDIDATE_PREVIEW_HALF_MOVES, DEFAULT_CANDIDATE_LINE_MOVES } from "./candidatePreview";
 import { AutosaveOperationQueue, autosaveLabel, type AutosaveState } from "./autosave";
 import { ManualTreeView } from "./ManualTreeView";
-import { ManualLineDialog, ManualTrackView } from "./ManualTrackView";
+import { ManualLineDialog, ManualTrackView, type ManualPreviewBranch } from "./ManualTrackView";
 import type { ManualViewMode } from "./manualTrackModel";
 import { CandidatePreviewSteps } from "./CandidatePreviewSteps";
 import { ENGINE_ANALYSIS_HISTORY_LIMIT, beginAnalysisHistory, beginAnalysisStream, completeAnalysisStream, isAnalysisSessionCurrent, updateAnalysisHistory, updateAnalysisStream, type AnalysisHistoryBuffer, type AnalysisStreamBuffer } from "./analysisStream";
@@ -404,6 +404,7 @@ export default function App() {
   const [analysisHelpOpen, setAnalysisHelpOpen] = useState(false);
   const [trendCursorIndex, setTrendCursorIndex] = useState<number | undefined>();
   const [candidatePreview, setCandidatePreview] = useState<CandidatePreviewState>();
+  const [candidatePreviewBranches, setCandidatePreviewBranches] = useState<ManualPreviewBranch[]>([]);
   const [syncAccount, setSyncAccount] = useState(defaultSyncAccount);
   const [subscription, setSubscription] = useState<SubscriptionDto>();
   const [desktopDialog, setDesktopDialog] = useState<DesktopDialog>(null);
@@ -1324,7 +1325,7 @@ export default function App() {
       return;
     }
     setAnalysisArrowFen(undefined);
-    setCandidatePreview(undefined);
+    clearCandidatePreviews();
     try {
       await cancelGameReportForStructureChange();
       if (chessPlatform.kind === "desktop") {
@@ -1367,6 +1368,7 @@ export default function App() {
         return;
       }
       setSelected(null);
+      setCandidatePreviewBranches([]);
       setCandidatePreview({
         rank: line.multipv,
         color: analysisArrowColors[line.multipv - 1] ?? analysisArrowColors[0],
@@ -1382,9 +1384,72 @@ export default function App() {
       });
       setNotice(`已载入 ${source?.name ?? currentEngineLabel} 候选 ${line.multipv} 推演：从第 1 步开始，手动点击“下一步”查看后续`);
     } catch (error) {
-      setCandidatePreview(undefined);
+      clearCandidatePreviews();
       setNotice(friendlyError(error));
     }
+  }
+
+  async function previewEngineBranches(expectedFen: string) {
+    stopPlayback();
+    if (boardRef.current.fen !== expectedFen) {
+      setNotice("引擎分支已过期，请重新分析后再查看");
+      return;
+    }
+    const candidates = engineComparisonGroups
+      .map((engine) => ({ engine, line: engine.lines.find((candidate) => candidate.multipv === 1) }))
+      .filter((item): item is { engine: EngineComparisonGroup; line: AnalysisLine } => !!item.line?.pv[0]);
+    if (candidates.length === 0) {
+      setNotice("当前没有可显示的引擎分支，请先完成分析");
+      return;
+    }
+    const grouped = new Map<string, Array<{ engine: EngineComparisonGroup; line: AnalysisLine }>>();
+    for (const candidate of candidates) {
+      const firstMove = candidate.line.pv[0];
+      grouped.set(firstMove, [...(grouped.get(firstMove) ?? []), candidate]);
+    }
+    const branches: ManualPreviewBranch[] = [];
+    let skipped = 0;
+    for (const [firstIccs, members] of grouped) {
+      const primaryMember = members.find((member) => member.engine.primary) ?? members[0];
+      const pv = primaryMember.line.pv.slice(0, CANDIDATE_PREVIEW_HALF_MOVES);
+      try {
+        const steps = await chessPlatform.previewLine(expectedFen, pv);
+        if (boardRef.current.fen !== expectedFen) {
+          setNotice("引擎分支生成后局面已变化，请重新分析");
+          return;
+        }
+        if (steps.length === 0) {
+          skipped += members.length;
+          continue;
+        }
+        const engineNames = members.map((member) => member.engine.name);
+        const scoreTexts = members.map((member) => {
+          const depth = member.line.depth != null ? `深${member.line.depth}` : "深--";
+          return `${member.engine.name} ${redAnalysisScoreText(member.line, candidateSideToMove)} ${depth}`;
+        });
+        branches.push({
+          activeStep: 0,
+          engineNames,
+          firstMove: primaryMember.line.notation?.[0] ?? firstIccs,
+          label: members.length > 1 ? `AI推荐 · ${members.length}个引擎一致` : `AI推荐 · ${primaryMember.engine.name}`,
+          merged: members.length > 1,
+          rank: branches.length + 1,
+          scoreTexts,
+          sourceEngineName: primaryMember.engine.name,
+          steps,
+        });
+      } catch {
+        skipped += members.length;
+      }
+    }
+    if (branches.length === 0) {
+      setNotice(skipped > 0 ? "所有引擎分支都无法合法预览，请重新分析或检查引擎线路" : "当前没有可显示的引擎分支");
+      return;
+    }
+    setSelected(null);
+    setCandidatePreview(undefined);
+    setCandidatePreviewBranches(branches);
+    setNotice(`已显示 ${branches.length} 条 AI 虚线分支${skipped ? `，跳过 ${skipped} 条不可用线路` : ""}；只预览，不保存`);
   }
 
   function stepCandidatePreview(delta: number) {
@@ -1403,8 +1468,13 @@ export default function App() {
   }
 
   function exitCandidatePreview() {
-    setCandidatePreview(undefined);
+    clearCandidatePreviews();
     setNotice("已退出候选推演预览，棋盘回到真实当前局面");
+  }
+
+  function clearCandidatePreviews() {
+    setCandidatePreview(undefined);
+    setCandidatePreviewBranches([]);
   }
 
   async function selectSquare(row: number, col: number) {
@@ -1878,7 +1948,7 @@ export default function App() {
     analysisHistoryRef.current = beginAnalysisHistory(analyzedFen);
     setAnalysisHistory([]);
     setEngineAnalyses(Object.fromEntries(analysisTargets.map((target) => [target.id, { fen: analyzedFen, name: target.name, lines: [] }])));
-    setCandidatePreview(undefined);
+    clearCandidatePreviews();
     if (!automatic) {
       analysisHintsEnabledRef.current = true;
       setAnalysisHintsEnabled(true);
@@ -1971,7 +2041,7 @@ export default function App() {
       }
       setAnalysisArrowFen(undefined);
     }
-    setCandidatePreview(undefined);
+    clearCandidatePreviews();
     setBoard(next);
     setFenInput(next.fen);
   }
@@ -1993,7 +2063,7 @@ export default function App() {
     setAnalysisFen(undefined);
     setAnalysisSideToMove(undefined);
     setAnalysisArrowFen(undefined);
-    setCandidatePreview(undefined);
+    clearCandidatePreviews();
     setPonderMove(undefined);
   }
 
@@ -2272,6 +2342,12 @@ export default function App() {
     const originalNode = boardRef.current.currentNode;
     const token = startPlayback();
     let state = boardRef.current;
+    if (state.branches.length > 1) {
+      setIsPlaying(false);
+      selectWorkspacePanel("moves");
+      setNotice(`当前已到分支点，共 ${state.branches.length} 个变招可选`);
+      return;
+    }
     let next = preferredContinuation(state);
     while (next) {
       const navigated = await navigateTo(next.id, token);
@@ -2741,6 +2817,7 @@ export default function App() {
           onDragEnd={stopEngineDivergenceDrag}
           onPlay={(line, engine) => void playIccsMove(line.pv[0], analysisFen ?? board.fen, engine.primary ? undefined : engine.name)}
           onPreview={(line, engine) => void previewCandidateLine(line, analysisFen ?? board.fen, engine)}
+          onPreviewBranches={() => void previewEngineBranches(analysisFen ?? board.fen)}
         />
     </aside>;
   }
@@ -3029,13 +3106,13 @@ export default function App() {
           onRemove={(nodeId) => void removeNode(nodeId)}
           onExportLine={(contents) => exportCurrentLineText(contents)}
           onViewModeChange={setManualViewMode}
-          previewBranch={candidatePreview ? {
+          previewBranches={candidatePreview ? [{
             activeStep: candidatePreview.step,
             firstMove: candidatePreview.firstMove,
             rank: candidatePreview.rank,
             sourceEngineName: candidatePreview.sourceEngineName,
             steps: candidatePreview.steps,
-          } : undefined}
+          }] : candidatePreviewBranches}
           qualityByMoveId={reportByMoveId}
           viewMode={desktopPreferences.manualViewMode ?? "track"}
         />}
@@ -3094,6 +3171,7 @@ export default function App() {
                 sideToMove={candidateSideToMove}
                 onPlay={(line, engine) => void playIccsMove(line.pv[0], analysisFen ?? board.fen, engine.primary ? undefined : engine.name)}
                 onPreview={(line, engine) => void previewCandidateLine(line, analysisFen ?? board.fen, engine)}
+                onPreviewBranches={() => void previewEngineBranches(analysisFen ?? board.fen)}
               />
             </div>
             <div className="compact-engine-resize-handle" title="拖动调整引擎分析宽度和高度" aria-label="调整引擎分析宽度和高度" onPointerDown={startCompactEngineResize}/>
@@ -3178,6 +3256,7 @@ export default function App() {
           sideToMove={candidateSideToMove}
           onPlay={(line, engine) => void playIccsMove(line.pv[0], analysisFen ?? board.fen, engine.primary ? undefined : engine.name)}
           onPreview={(line, engine) => void previewCandidateLine(line, analysisFen ?? board.fen, engine)}
+          onPreviewBranches={() => void previewEngineBranches(analysisFen ?? board.fen)}
         />}
       </div>
       {!compactLayout && board.xqbCandidates?.length ? <section className="xqb-candidates" aria-label="XQB 开局库候选">
@@ -3294,6 +3373,7 @@ export default function App() {
                 sideToMove={candidateSideToMove}
                 onPlay={(line, engine) => void playIccsMove(line.pv[0], analysisFen ?? board.fen, engine.primary ? undefined : engine.name)}
                 onPreview={(line, engine) => void previewCandidateLine(line, analysisFen ?? board.fen, engine)}
+                onPreviewBranches={() => void previewEngineBranches(analysisFen ?? board.fen)}
               />
             </div>
             <p className="floating-panel-note">这是系统独立窗口，可拖到主窗口外；候选落子仍会经过棋规校验。</p>

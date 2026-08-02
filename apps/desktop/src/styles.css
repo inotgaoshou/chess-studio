@@ -2448,6 +2448,8 @@ button:disabled { cursor: default; opacity: .45; }
 .manual-preview-current-dot { position: relative; z-index: 1; width: 10px; height: 10px; justify-self: center; border: 2px solid var(--surface-1); border-radius: 50%; background: #42b878; box-shadow: 0 0 0 2px color-mix(in srgb, #42b878 28%, transparent); }
 .manual-preview-branch-root b { color: var(--text-primary); font-size: 11px; }
 .manual-preview-branch-root small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); font-size: 9px; }
+.manual-preview-branch-group { display: grid; gap: 1px; }
+.manual-preview-branch-group + .manual-preview-branch-group { margin-top: 5px; padding-top: 5px; border-top: 1px dashed color-mix(in srgb, #d7a34b 34%, transparent); }
 .manual-preview-fork { position: relative; z-index: 1; color: #d7a34b; font: 900 11px ui-monospace, SFMono-Regular, monospace; }
 .manual-preview-ai-label { min-width: 0; display: flex; align-items: baseline; gap: 6px; }
 .manual-preview-ai-label strong { color: #d7a34b; font-size: 11px; }
@@ -3742,6 +3744,9 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 .multi-engine-header-actions { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: flex-end; gap: 4px; }
 .multi-engine-tool { height: 23px; display: inline-flex; align-items: center; justify-content: center; gap: 3px; padding: 0 7px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-1); color: var(--text-secondary); font-size: 10px; font-weight: 900; }
 .multi-engine-tool:hover { border-color: var(--accent); color: var(--text-primary); background: var(--surface-hover); }
+.multi-engine-tool.branch { border-color: color-mix(in srgb, #2f80ed 48%, var(--border)); color: #2f80ed; }
+.multi-engine-tool:disabled { opacity: .45; cursor: not-allowed; }
+.multi-engine-tool:disabled:hover { border-color: var(--border); background: var(--surface-1); color: var(--text-secondary); }
 .multi-engine-tool em { font-style: normal; }
 .multi-engine-comparison.collapsed { gap: 0; padding-block: 6px; }
 .multi-engine-comparison.collapsed > header small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -5028,7 +5033,7 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
     right: calc(clamp(230px, 19vw, 310px) + 24px);
     left: auto;
     width: min(344px, calc(100vw - 48px));
-    height: min(380px, calc(100dvh - 112px));
+    height: min(720px, calc(100dvh - 112px));
     display: grid;
     grid-template-rows: 30px minmax(0, 1fr);
     border-color: #9fc8e6;
@@ -5041,7 +5046,7 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
     right: calc(clamp(230px, 19vw, 310px) + 24px);
     left: auto;
     width: min(344px, calc(100vw - 48px));
-    height: min(380px, calc(100dvh - 112px));
+    height: min(720px, calc(100dvh - 112px));
   }
   .workspace.layout-compact .compact-engine-window .analysis-lines {
     min-height: 0;
@@ -5062,13 +5067,14 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
     top: 92px;
     right: 12px;
     width: 44px;
-    height: 112px;
+    height: 132px;
     transform: none !important;
     border-radius: 999px;
     grid-template-rows: 1fr;
     box-shadow: 0 10px 28px rgba(56, 97, 132, .2);
   }
   .workspace.layout-compact .compact-engine-window.collapsed .section-title {
+    position: relative;
     min-height: 0;
     height: 100%;
     padding: 6px 4px;
@@ -5076,15 +5082,29 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
     justify-content: center;
     gap: 5px;
   }
-  .workspace.layout-compact .compact-engine-window.collapsed .section-title strong,
+  .workspace.layout-compact .compact-engine-window.collapsed .section-title strong {
+    position: absolute;
+    top: 47px;
+    left: 50%;
+    display: block;
+    transform: translateX(-50%);
+    color: #113b6c;
+    font-size: 12px;
+    font-weight: 900;
+    line-height: 1;
+    white-space: nowrap;
+  }
   .workspace.layout-compact .compact-engine-window.collapsed .section-title span,
   .workspace.layout-compact .compact-engine-window.collapsed .compact-window-popout {
     display: none;
   }
   .workspace.layout-compact .compact-engine-window.collapsed .compact-window-toggle {
+    position: absolute;
+    top: 8px;
+    left: 7px;
     width: 30px;
     height: 30px;
-    margin: auto;
+    margin: 0;
     border-radius: 50%;
   }
   .workspace.layout-compact .compact-engine-resize-handle {

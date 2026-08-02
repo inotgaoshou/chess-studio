@@ -11,6 +11,7 @@ import {
   type MoveQuality,
 } from "./manualTrackModel";
 import type { ManualTreeNode, MoveItem, PreviewLineStep } from "./platform";
+import { CANDIDATE_PREVIEW_HALF_MOVES } from "./candidatePreview";
 
 type Props = {
   nodes: ManualTreeNode[];
@@ -26,10 +27,15 @@ type Props = {
   onRemove(nodeId: string): void;
   onExportLine?(contents: string): Promise<string | undefined>;
   previewBranch?: ManualPreviewBranch;
+  previewBranches?: ManualPreviewBranch[];
 };
 
 export type ManualPreviewBranch = {
-  sourceEngineName: string;
+  sourceEngineName?: string;
+  engineNames?: string[];
+  scoreTexts?: string[];
+  merged?: boolean;
+  label?: string;
   rank: number;
   firstMove: string;
   activeStep: number;
@@ -244,41 +250,50 @@ function BranchTreeRow({ row, editing, onNavigate, onMakeMainline, onRemove, onT
   </div>;
 }
 
-function PreviewBranch({ preview }: { preview: ManualPreviewBranch }) {
-  const visibleSteps = preview.steps.slice(0, 10);
+function PreviewBranches({ previews }: { previews: ManualPreviewBranch[] }) {
+  if (previews.length === 0) return null;
   return <section className="manual-preview-branch" aria-label="AI 推荐虚线预测分支" data-current-node="true">
     <header>
       <span><Sparkles size={12}/>虚线预测</span>
-      <strong>{preview.sourceEngineName} · 候选{preview.rank}</strong>
+      <strong>{previews.length > 1 ? `AI推荐 · ${previews.length} 条引擎分支` : previews[0].label ?? `${previews[0].sourceEngineName ?? previews[0].engineNames?.join(" / ") ?? "AI"} · 候选${previews[0].rank}`}</strong>
       <em>未保存</em>
     </header>
     <div className="manual-preview-branch-root">
       <span className="manual-preview-current-dot" aria-hidden="true"/>
       <b>当前局面</b>
-      <small>点击引擎「预览」生成；只显示在棋谱树，不写入 SQLite</small>
+      <small>只显示在棋谱树，不写入 SQLite，不生成真实变招</small>
     </div>
-    <div className="manual-preview-branch-line">
-      <span className="manual-preview-fork" aria-hidden="true">└──</span>
-      <div className="manual-preview-ai-label">
-        <strong>AI推荐</strong>
-        <small>首着 {preview.firstMove}</small>
+    {previews.map((preview, previewIndex) => {
+      const visibleSteps = preview.steps.slice(0, CANDIDATE_PREVIEW_HALF_MOVES);
+      const label = preview.label ?? (preview.merged
+        ? `AI推荐 · ${preview.engineNames?.length ?? 1}个引擎一致`
+        : `AI推荐 · ${preview.sourceEngineName ?? preview.engineNames?.join(" / ") ?? "AI"}`);
+      const scoreSummary = preview.scoreTexts?.length ? preview.scoreTexts.join(" · ") : undefined;
+      return <div className="manual-preview-branch-group" key={`${label}-${preview.firstMove}-${previewIndex}`}>
+        <div className="manual-preview-branch-line">
+          <span className="manual-preview-fork" aria-hidden="true">{previewIndex === previews.length - 1 ? "└──" : "├──"}</span>
+          <div className="manual-preview-ai-label">
+            <strong>{label}</strong>
+            <small>{scoreSummary ? `首着 ${preview.firstMove} · ${scoreSummary}` : `首着 ${preview.firstMove}`}</small>
+          </div>
+        </div>
+        <ol className="manual-preview-branch-steps">
+          {visibleSteps.map((step, index) => <li
+            className={index === preview.activeStep ? "active" : ""}
+            key={`${step.notation}-${index}`}
+          >
+            <span className={`manual-preview-side-dot ${step.movedBy === "红方" ? "red" : "black"}`} aria-hidden="true"/>
+            <b>{index + 1}.</b>
+            <strong>{step.notation}</strong>
+            <small>{step.movedBy.replace("方", "")} · {step.status}</small>
+          </li>)}
+        </ol>
       </div>
-    </div>
-    <ol className="manual-preview-branch-steps">
-      {visibleSteps.map((step, index) => <li
-        className={index === preview.activeStep ? "active" : ""}
-        key={`${step.notation}-${index}`}
-      >
-        <span className={`manual-preview-side-dot ${step.movedBy === "红方" ? "red" : "black"}`} aria-hidden="true"/>
-        <b>{index + 1}.</b>
-        <strong>{step.notation}</strong>
-        <small>{step.movedBy.replace("方", "")} · {step.status}</small>
-      </li>)}
-    </ol>
+    })}
   </section>;
 }
 
-export function ManualTrackView({ nodes, history, currentNode, viewMode, editing, qualityByMoveId, formatScore, onNavigate, onViewModeChange, onMakeMainline, onRemove, onExportLine, previewBranch }: Props) {
+export function ManualTrackView({ nodes, history, currentNode, viewMode, editing, qualityByMoveId, formatScore, onNavigate, onViewModeChange, onMakeMainline, onRemove, onExportLine, previewBranch, previewBranches }: Props) {
   const [expandedForks, setExpandedForks] = useState<Set<string>>(() => new Set());
   const [collapsedForks, setCollapsedForks] = useState<Set<string>>(() => new Set());
   const [comparison, setComparison] = useState<{ forkNodeId: string; branchId: string }>();
@@ -294,14 +309,16 @@ export function ManualTrackView({ nodes, history, currentNode, viewMode, editing
   const comparisonModel = comparison
     ? buildBranchComparisonModel(comparison.forkNodeId, comparison.branchId, nodes, { formatScore, qualityByMoveId })
     : undefined;
+  const activePreviewBranches = previewBranches ?? (previewBranch ? [previewBranch] : []);
+  const activePreviewKey = activePreviewBranches.map((preview) => `${preview.label ?? preview.sourceEngineName ?? ""}:${preview.activeStep}:${preview.steps.length}`).join("|");
   const hasActiveRow = model.rows.some((row) => row.active);
 
   useEffect(() => {
-    const target = listRef.current?.querySelector<HTMLElement>(previewBranch ? ".manual-preview-branch" : '[data-current-node="true"]');
+    const target = listRef.current?.querySelector<HTMLElement>(activePreviewBranches.length > 0 ? ".manual-preview-branch" : '[data-current-node="true"]');
     if (target && typeof target.scrollIntoView === "function") {
       target.scrollIntoView({ block: "center", inline: "nearest" });
     }
-  }, [currentNode, model.rows.length, previewBranch?.activeStep, previewBranch?.steps.length]);
+  }, [activePreviewBranches.length, activePreviewKey, currentNode, model.rows.length]);
 
   function toggleFork(nodeId: string, expanded: boolean) {
     setExpandedForks((current) => {
@@ -354,7 +371,7 @@ export function ManualTrackView({ nodes, history, currentNode, viewMode, editing
       {model.rows.length === 0
         ? <>
           <div className="manual-track-empty">暂无棋谱，走棋后会显示主线和分支树。</div>
-          {previewBranch && <PreviewBranch preview={previewBranch}/>}
+          {activePreviewBranches.length > 0 && <PreviewBranches previews={activePreviewBranches}/>}
         </>
         : model.rows.map((row) => <Fragment key={row.key}>
           <BranchTreeRow
@@ -366,9 +383,9 @@ export function ManualTrackView({ nodes, history, currentNode, viewMode, editing
             onRemove={onRemove}
             onToggleFork={toggleFork}
           />
-          {previewBranch && row.active && <PreviewBranch preview={previewBranch}/>}
+          {activePreviewBranches.length > 0 && row.active && <PreviewBranches previews={activePreviewBranches}/>}
         </Fragment>)}
-      {previewBranch && model.rows.length > 0 && !hasActiveRow && <PreviewBranch preview={previewBranch}/>}
+      {activePreviewBranches.length > 0 && model.rows.length > 0 && !hasActiveRow && <PreviewBranches previews={activePreviewBranches}/>}
     </div>
     {model.current && <footer className="manual-track-current">
       <strong>当前：{model.current.move.notation}</strong>

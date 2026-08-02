@@ -1,6 +1,6 @@
 import type { PointerEvent } from "react";
 import type { AnalysisLine, Side } from "./platform";
-import { ChevronDown, ChevronRight, Eye, Maximize2, Play } from "lucide-react";
+import { ChevronDown, ChevronRight, Eye, GitBranch, Maximize2, Play } from "lucide-react";
 import { redAnalysisScoreText } from "./analysisView";
 
 export type EngineComparisonGroup = {
@@ -28,6 +28,7 @@ type Props = {
   onPopOut?(): void;
   onPlay(line: AnalysisLine, engine: EngineComparisonGroup): void;
   onPreview(line: AnalysisLine, engine: EngineComparisonGroup): void;
+  onPreviewBranches?(): void;
 };
 
 function lineText(line: AnalysisLine) {
@@ -89,8 +90,12 @@ export function hasEngineDivergence(groups: EngineComparisonGroup[], sideToMove:
     .some((rank) => agreementLabel(groups, rank, sideToMove).includes("分歧"));
 }
 
-export function MultiEngineComparison({ busy, collapsed = false, compact = false, disabled = false, divergencesOnly = false, fen, groups, sideToMove, onCollapsedChange, onClose, onDragEnd, onDragMove, onDragStart, onPopOut, onPlay, onPreview }: Props) {
-  if (groups.length < 2) return null;
+function hasPreviewablePrimaryLines(groups: EngineComparisonGroup[]) {
+  return groups.some((group) => group.lines.some((line) => line.multipv === 1 && line.pv.length > 0));
+}
+
+export function MultiEngineComparison({ busy, collapsed = false, compact = false, disabled = false, divergencesOnly = false, fen, groups, sideToMove, onCollapsedChange, onClose, onDragEnd, onDragMove, onDragStart, onPopOut, onPlay, onPreview, onPreviewBranches }: Props) {
+  if (groups.length === 0 || (groups.length < 2 && !onPreviewBranches)) return null;
   const primary = groups.find((group) => group.primary) ?? groups[0];
   const firstRankState = agreementLabel(groups, 1, sideToMove);
   const maxRank = Math.max(1, ...groups.map((group) => Math.max(0, ...group.lines.map((line) => line.multipv))));
@@ -104,8 +109,10 @@ export function MultiEngineComparison({ busy, collapsed = false, compact = false
       ? "部分引擎尚未返回"
       : firstRankState;
   const statusClass = summary.includes("分歧") ? "divergent" : summary.includes("一致") ? "agreed" : "pending";
+  const previewBranchesDisabled = disabled || !hasPreviewablePrimaryLines(groups);
   const headerActions = <div className="multi-engine-header-actions">
     <span className={statusClass}>{summary}</span>
+    {onPreviewBranches && <button type="button" className="multi-engine-tool branch" title="在棋谱树当前节点下显示多引擎 AI 虚线分支" aria-label="显示引擎分支" disabled={previewBranchesDisabled} onClick={onPreviewBranches}><GitBranch size={12}/><em>分支</em></button>}
     {onPopOut && divergentRanks.length > 0 && <button type="button" className="multi-engine-tool" title="单独弹出存在分歧的候选" aria-label="弹出引擎分歧" onClick={onPopOut}><Maximize2 size={12}/><em>分歧</em></button>}
     {onCollapsedChange && <button type="button" className="multi-engine-tool" title={collapsed ? "展开多引擎对照" : "收起多引擎对照"} aria-label={collapsed ? "展开多引擎对照" : "收起多引擎对照"} onClick={() => onCollapsedChange(!collapsed)}>{collapsed ? <ChevronRight size={13}/> : <ChevronDown size={13}/>}<em>{collapsed ? "展开" : "收起"}</em></button>}
   </div>;
@@ -188,7 +195,10 @@ export function MultiEngineComparison({ busy, collapsed = false, compact = false
         <strong>{divergencesOnly ? "引擎分歧" : "多引擎对照"}</strong>
         <small>{divergencesOnly ? `仅显示 ${visibleRanks.length} 个首着不同的候选` : groups.map((group) => `${group.name}${group.primary ? "（主）" : ""}`).join(" · ")}</small>
       </div>
-      {onClose ? <div className="multi-engine-header-actions"><button type="button" className="multi-engine-tool" title="关闭引擎分歧" aria-label="关闭引擎分歧" onClick={onClose}>关闭</button></div> : headerActions}
+      {onClose ? <div className="multi-engine-header-actions">
+        {onPreviewBranches && <button type="button" className="multi-engine-tool branch" title="在棋谱树当前节点下显示多引擎 AI 虚线分支" aria-label="显示引擎分支" disabled={previewBranchesDisabled} onClick={onPreviewBranches}><GitBranch size={12}/><em>分支</em></button>}
+        <button type="button" className="multi-engine-tool" title="关闭引擎分歧" aria-label="关闭引擎分歧" onClick={onClose}>关闭</button>
+      </div> : headerActions}
     </header>
     {!compact && <p className="multi-engine-note">分数已统一为红方视角；不同引擎评分尺度不同，仅用于观察方向与分歧，不自动判定优劣。</p>}
     <div className="multi-engine-rows">

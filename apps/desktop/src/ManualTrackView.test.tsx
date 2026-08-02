@@ -21,7 +21,11 @@ function previewStep(notation: string, movedBy: Side): PreviewLineStep {
   };
 }
 
-function renderTrack(options: { onExportLine?: (contents: string) => Promise<string | undefined>; previewBranch?: Parameters<typeof ManualTrackView>[0]["previewBranch"] } = {}) {
+function renderTrack(options: {
+  onExportLine?: (contents: string) => Promise<string | undefined>;
+  previewBranch?: Parameters<typeof ManualTrackView>[0]["previewBranch"];
+  previewBranches?: Parameters<typeof ManualTrackView>[0]["previewBranches"];
+} = {}) {
   const red = move("r1", "马八进七", "红方");
   const black = move("b1", "马8进7", "黑方");
   const main = move("r2", "车九平八", "红方");
@@ -41,6 +45,7 @@ function renderTrack(options: { onExportLine?: (contents: string) => Promise<str
     onExportLine={options.onExportLine}
     onViewModeChange={onViewModeChange}
     previewBranch={options.previewBranch}
+    previewBranches={options.previewBranches}
     qualityByMoveId={new Map([["b1", { score: 88, grade: "优" }]])}
     viewMode="track"
   />);
@@ -116,9 +121,41 @@ describe("ManualTrackView", () => {
 
     expect(screen.getByRole("region", { name: "AI 推荐虚线预测分支" })).toBeTruthy();
     expect(screen.getByText("虚线预测")).toBeTruthy();
-    expect(screen.getByText("AI推荐")).toBeTruthy();
+    expect(screen.getByText("AI推荐 · Pikafish")).toBeTruthy();
     expect(screen.getByText("未保存")).toBeTruthy();
     expect(screen.getByText("炮2平3")).toBeTruthy();
+    expect(onNavigate).not.toHaveBeenCalled();
+  });
+
+  it("renders multiple engine preview branches and merged agreement labels without navigation", () => {
+    const { onNavigate } = renderTrack({
+      previewBranches: [
+        {
+          activeStep: 0,
+          engineNames: ["Pikafish", "Fairy"],
+          firstMove: "马八进七",
+          label: "AI推荐 · 2个引擎一致",
+          merged: true,
+          rank: 1,
+          scoreTexts: ["Pikafish +39 深22", "Fairy +41 深19"],
+          steps: [previewStep("马八进七", "红方"), previewStep("炮2平3", "黑方")],
+        },
+        {
+          activeStep: 0,
+          engineNames: ["Cyclone"],
+          firstMove: "炮二平五",
+          label: "AI推荐 · Cyclone",
+          rank: 2,
+          scoreTexts: ["Cyclone +28 深18"],
+          steps: [previewStep("炮二平五", "红方")],
+        },
+      ],
+    });
+
+    expect(screen.getByText("AI推荐 · 2 条引擎分支")).toBeTruthy();
+    expect(screen.getByText("AI推荐 · 2个引擎一致")).toBeTruthy();
+    expect(screen.getByText("AI推荐 · Cyclone")).toBeTruthy();
+    expect(screen.getByText(/Pikafish \+39 深22/)).toBeTruthy();
     expect(onNavigate).not.toHaveBeenCalled();
   });
 });

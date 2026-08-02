@@ -119,4 +119,28 @@ describe("MultiEngineComparison", () => {
     fireEvent.pointerDown(header!, { button: 0 });
     expect(onDragStart).toHaveBeenCalledOnce();
   });
+
+  it("exposes an engine branch preview action for virtual tree branches", async () => {
+    const user = userEvent.setup();
+    const onPreviewBranches = vi.fn();
+    render(<MultiEngineComparison {...props} onPreviewBranches={onPreviewBranches} groups={[
+      { id: "pika", name: "Pikafish", primary: true, lines: [{ multipv: 1, pv: ["b2b9"], notation: ["炮二平五"] }] },
+      { id: "fairy", name: "Fairy", primary: false, lines: [{ multipv: 1, pv: ["b2b9"], notation: ["炮二平五"] }] },
+    ]}/>);
+
+    await user.click(screen.getByRole("button", { name: "显示引擎分支" }));
+    expect(onPreviewBranches).toHaveBeenCalledOnce();
+  });
+
+  it("can show the engine branch action even when only one engine is available", async () => {
+    const user = userEvent.setup();
+    const onPreviewBranches = vi.fn();
+    render(<MultiEngineComparison {...props} onPreviewBranches={onPreviewBranches} groups={[
+      { id: "pika", name: "Pikafish", primary: true, lines: [{ multipv: 1, pv: ["b2b9"], notation: ["炮二平五"] }] },
+    ]}/>);
+
+    expect(screen.getByText("Pikafish")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "显示引擎分支" }));
+    expect(onPreviewBranches).toHaveBeenCalledOnce();
+  });
 });
