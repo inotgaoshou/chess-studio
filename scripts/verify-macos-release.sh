@@ -18,18 +18,23 @@ if [[ ! -d "$APP_PATH" ]]; then
   exit 1
 fi
 
-echo "Verifying app code signature: $APP_PATH"
-codesign --verify --deep --strict --verbose=4 "$APP_PATH"
-
-echo "Inspecting app signing identity:"
-codesign -dv --verbose=4 "$APP_PATH" 2>&1 | sed -n '/Authority=/p;/TeamIdentifier=/p;/Runtime Version=/p'
-
 if [[ "$REQUIRE_GATEKEEPER" == "1" ]]; then
+  echo "Verifying app code signature: $APP_PATH"
+  codesign --verify --deep --strict --verbose=4 "$APP_PATH"
+
+  echo "Inspecting app signing identity:"
+  codesign -dv --verbose=4 "$APP_PATH" 2>&1 | sed -n '/Authority=/p;/TeamIdentifier=/p;/Runtime Version=/p'
+
   echo "Checking app with Gatekeeper:"
   spctl -a -vvv -t exec "$APP_PATH"
+else
+  echo "Skipping code-signature and Gatekeeper checks for unsigned local build."
 fi
 
-mapfile -t DMG_FILES < <(find "$DMG_DIR" -maxdepth 1 -type f -name '*.dmg' | sort)
+DMG_FILES=()
+while IFS= read -r dmg; do
+  DMG_FILES+=("$dmg")
+done < <(find "$DMG_DIR" -maxdepth 1 -type f -name '*.dmg' | sort)
 if [[ "${#DMG_FILES[@]}" -eq 0 ]]; then
   echo "No DMG files found in $DMG_DIR." >&2
   exit 1

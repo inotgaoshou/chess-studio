@@ -814,6 +814,9 @@ export default function App() {
     : boardEvaluationScore == null || Math.abs(boardEvaluationScore) <= 50
       ? "均势"
       : boardEvaluationScore > 0 ? "红优" : "黑优";
+  const boardEvaluationBalanced = boardRailEvaluation?.mateSide == null
+    && boardEvaluationScore != null
+    && Math.abs(boardEvaluationScore) <= 50;
   const boardEvaluationRedShare = boardEvaluationScore == null
     ? 50
     : boardRailEvaluation?.mateSide === "红方"
@@ -950,13 +953,18 @@ export default function App() {
     to: boardPoint(move.to, reversed),
   })) : [], [branchArrowColor, directBranchChoices, hasVisibleBranchChoices, reversed]);
   const boardArrows = useMemo(() => {
-    // Preview already highlights its simulated move with the 1/2 squares.
-    // Keeping analysis or branch arrows would describe the real position and
-    // make the temporary board state ambiguous.
-    if (candidatePreview) return [];
+    // In preview, only draw the simulated move. The other arrows belong to
+    // the real board position and would make the temporary position ambiguous.
+    if (candidatePreview && previewStep) return [{
+      rank: candidatePreview.rank,
+      color: candidatePreview.color,
+      label: previewStep.notation,
+      from: boardPoint(previewStep.from, reversed),
+      to: boardPoint(previewStep.to, reversed),
+    }];
     if (branchArrows.length > 0) return branchArrows;
     return analysisArrows;
-  }, [analysisArrows, branchArrows, candidatePreview]);
+  }, [analysisArrows, branchArrows, candidatePreview, previewStep, reversed]);
 
   function resetAnalysisHistory(fen?: string, lines: AnalysisLine[] = []) {
     analysisHistoryRef.current = fen ? { fen, lines: lines.slice(0, ENGINE_ANALYSIS_HISTORY_LIMIT) } : undefined;
@@ -3497,7 +3505,9 @@ export default function App() {
                 <span style={{ height: `${boardEvaluationRedShare}%` } as CSSProperties}/>
               </div>
               <div className="board-eval-label">
-                <strong>{boardEvaluationSide}</strong>
+                {boardEvaluationBalanced
+                  ? <strong className="board-eval-balance-label"><i className="red">红</i><em>均势</em><i className="black">黑</i></strong>
+                  : <strong>{boardEvaluationSide}</strong>}
                 <span>{boardRailEvaluation?.scoreText ?? "--"}</span>
               </div>
             </aside>

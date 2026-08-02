@@ -1911,6 +1911,20 @@ button:disabled { cursor: default; opacity: .45; }
 }
 .board-eval-label strong { color: var(--text-primary, #eef4f0); font-size: 12px; line-height: 16px; }
 .board-eval-label span { color: var(--red-soft, #f09a93); font: 800 12px/16px ui-monospace, SFMono-Regular, monospace; font-variant-numeric: tabular-nums; }
+.board-eval-label .board-eval-balance-label {
+  width: 100%;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  white-space: nowrap;
+}
+.board-eval-balance-label i,
+.board-eval-balance-label em { font-size: 11px; font-style: normal; line-height: 16px; }
+.board-eval-balance-label .red { color: var(--red-soft, #f09a93); }
+.board-eval-balance-label .black { color: var(--black-side, #77bde7); }
+.board-eval-balance-label em { color: var(--text-muted, #79847e); }
 .board-eval-rail.black .board-eval-label span { color: var(--black-side, #77bde7); }
 .board-eval-rail.balanced .board-eval-label span,
 .board-eval-rail.pending .board-eval-label span { color: var(--text-muted, #79847e); }
