@@ -144,7 +144,7 @@ fn default_piece_skin() -> String {
 }
 
 fn default_report_depth() -> u32 {
-    20
+    26
 }
 
 fn default_candidate_line_moves() -> u32 {

@@ -73,11 +73,28 @@ import { buildMindMapSvg } from "./mindMapExport";
 
 const COMPACT_PANEL_RETURN_EVENT = "compact-panel-return";
 const BOARD_NAVIGATED_EVENT = "board-navigated";
+const ENGINE_ANALYSIS_SNAPSHOT_KEY = "xiangqi:engine-analysis-snapshot";
+const ENGINE_ANALYSIS_CHANNEL = "xiangqi:engine-analysis";
 const COMPACT_ENGINE_LINE_MIN_MOVES = 5;
 const COMPACT_ENGINE_LINE_MAX_MOVES = 10;
 const DEFAULT_BRANCH_ARROW_COLOR = "#2f80ed";
 const startingFen = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1";
 type EngineAnalysisGroup = { fen: string; name: string; lines: AnalysisLine[]; error?: string };
+type EngineAnalysisSnapshot = { fen: string; primaryEngineId: string; groups: Record<string, EngineAnalysisGroup> };
+
+function readEngineAnalysisSnapshot(): EngineAnalysisSnapshot | undefined {
+  try {
+    const value = JSON.parse(localStorage.getItem(ENGINE_ANALYSIS_SNAPSHOT_KEY) ?? "null") as Partial<EngineAnalysisSnapshot> | null;
+    if (!value || typeof value.fen !== "string" || typeof value.primaryEngineId !== "string" || !value.groups || typeof value.groups !== "object") return undefined;
+    const groups = Object.fromEntries(Object.entries(value.groups).flatMap(([id, group]) => {
+      if (!group || typeof group.fen !== "string" || typeof group.name !== "string" || !Array.isArray(group.lines)) return [];
+      return [[id, { fen: group.fen, name: group.name, lines: group.lines, error: group.error }]];
+    }));
+    return { fen: value.fen, primaryEngineId: value.primaryEngineId, groups };
+  } catch {
+    return undefined;
+  }
+}
 const backRankKinds = ["rook", "horse", "elephant", "advisor", "king", "advisor", "elephant", "horse", "rook"];
 const initialPieces: Piece[] = [
   ..."车马象士将士象马车".split("").map((label, col) => ({ row: 0, col, color: "black" as const, kind: backRankKinds[col], label })),
@@ -145,7 +162,7 @@ const defaultDesktopPreferences: DesktopPreferencesDto = {
   colorTheme: "dark",
   boardSkin: "default",
   pieceSkin: "default",
-  reportDepth: 20,
+  reportDepth: 26,
   cloudBookEnabled: true,
   cloudBookUrl: "https://www.chessdb.cn/chessdb.php",
   analysisEngineMode: "single",
@@ -543,6 +560,27 @@ export default function App() {
   }, [floatingPanel]);
 
   useEffect(() => {
+    if (floatingPanel !== "engine" || chessPlatform.kind !== "desktop") return;
+    const applySnapshot = (snapshot?: EngineAnalysisSnapshot) => {
+      if (!snapshot || snapshot.fen !== boardRef.current.fen) return;
+      primaryAnalysisEngineRef.current = snapshot.primaryEngineId;
+      setEngineAnalyses(snapshot.groups);
+    };
+    const syncFromStorage = () => applySnapshot(readEngineAnalysisSnapshot());
+    const channel = typeof BroadcastChannel === "undefined" ? undefined : new BroadcastChannel(ENGINE_ANALYSIS_CHANNEL);
+    channel?.addEventListener("message", (event: MessageEvent<EngineAnalysisSnapshot>) => applySnapshot(event.data));
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === ENGINE_ANALYSIS_SNAPSHOT_KEY) syncFromStorage();
+    };
+    syncFromStorage();
+    window.addEventListener("storage", onStorage);
+    return () => {
+      channel?.close();
+      window.removeEventListener("storage", onStorage);
+    };
+  }, [floatingPanel, board.fen]);
+
+  useEffect(() => {
     if (floatingPanel || chessPlatform.kind !== "desktop") return;
     let disposed = false;
     let cleanup: (() => void) | undefined;
@@ -830,6 +868,24 @@ export default function App() {
   const candidateSideToMove = analysisSideToMove ?? board.sideToMove;
   const currentEngineAnalyses = useMemo(() => Object.fromEntries(Object.entries(engineAnalyses)
     .filter(([, group]) => group.fen === board.fen)), [board.fen, engineAnalyses]);
+  useEffect(() => {
+    if (floatingPanel || chessPlatform.kind !== "desktop") return;
+    const snapshot: EngineAnalysisSnapshot = {
+      fen: board.fen,
+      primaryEngineId: primaryAnalysisEngineRef.current,
+      groups: currentEngineAnalyses,
+    };
+    try {
+      localStorage.setItem(ENGINE_ANALYSIS_SNAPSHOT_KEY, JSON.stringify(snapshot));
+      if (typeof BroadcastChannel !== "undefined") {
+        const channel = new BroadcastChannel(ENGINE_ANALYSIS_CHANNEL);
+        channel.postMessage(snapshot);
+        channel.close();
+      }
+    } catch {
+      // The primary window still works when storage is unavailable.
+    }
+  }, [board.fen, chessPlatform.kind, currentEngineAnalyses, floatingPanel]);
   const engineComparisonGroups = useMemo<EngineComparisonGroup[]>(() => Object.entries(currentEngineAnalyses)
     .map(([id, group]) => ({ id, ...group, primary: id === primaryAnalysisEngineRef.current }))
     .sort((left, right) => Number(right.primary) - Number(left.primary) || left.name.localeCompare(right.name)), [engineAnalyses]);

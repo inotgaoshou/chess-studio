@@ -4,6 +4,7 @@ set -euo pipefail
 TARGET_PLATFORM="${1:?Usage: prepare-pikafish-resource.sh <macos-arm64|macos-x64|linux-x64|windows-x64>}"
 PIKAFISH_VERSION="${PIKAFISH_VERSION:-2026-01-02}"
 PIKAFISH_TAG="${PIKAFISH_TAG:-Pikafish-${PIKAFISH_VERSION}}"
+PIKAFISH_ENGINE_SOURCE="${PIKAFISH_ENGINE_SOURCE:-}"
 RESOURCE_DIR="apps/desktop/src-tauri/resources/pikafish"
 TEMP_ROOT="${RUNNER_TEMP:-/tmp}"
 if command -v cygpath >/dev/null 2>&1; then
@@ -55,20 +56,24 @@ mkdir -p "$RESOURCE_DIR"
 
 case "$TARGET_PLATFORM" in
   macos-arm64)
-    ENGINE_SOURCE="$SOURCE_ROOT/MacOS/pikafish-apple-silicon"
+    ENGINE_SOURCE="${PIKAFISH_ENGINE_SOURCE:-$SOURCE_ROOT/MacOS/pikafish-apple-silicon}"
     ENGINE_TARGET="$RESOURCE_DIR/pikafish"
     ;;
   macos-x64)
-    echo "Pikafish ${PIKAFISH_VERSION} release does not include a generic Intel macOS engine; packaging app without embedded engine." >&2
-    ENGINE_SOURCE=""
-    ENGINE_TARGET=""
+    if [[ -z "$PIKAFISH_ENGINE_SOURCE" ]]; then
+      echo "Pikafish ${PIKAFISH_VERSION} release does not include a generic Intel macOS engine." >&2
+      echo "Set PIKAFISH_ENGINE_SOURCE=/absolute/path/to/macos-x64-pikafish to build a macOS x64 package with an embedded engine." >&2
+      exit 1
+    fi
+    ENGINE_SOURCE="$PIKAFISH_ENGINE_SOURCE"
+    ENGINE_TARGET="$RESOURCE_DIR/pikafish"
     ;;
   linux-x64)
-    ENGINE_SOURCE="$SOURCE_ROOT/Linux/pikafish-sse41-popcnt"
+    ENGINE_SOURCE="${PIKAFISH_ENGINE_SOURCE:-$SOURCE_ROOT/Linux/pikafish-sse41-popcnt}"
     ENGINE_TARGET="$RESOURCE_DIR/pikafish"
     ;;
   windows-x64)
-    ENGINE_SOURCE="$SOURCE_ROOT/Windows/pikafish-sse41-popcnt.exe"
+    ENGINE_SOURCE="${PIKAFISH_ENGINE_SOURCE:-$SOURCE_ROOT/Windows/pikafish-sse41-popcnt.exe}"
     ENGINE_TARGET="$RESOURCE_DIR/pikafish.exe"
     ;;
   *)
@@ -77,19 +82,17 @@ case "$TARGET_PLATFORM" in
     ;;
 esac
 
-if [[ -n "$ENGINE_SOURCE" ]]; then
-  if [[ ! -f "$ENGINE_SOURCE" ]]; then
-    echo "Missing engine executable: $ENGINE_SOURCE" >&2
-    exit 1
-  fi
-  cp "$ENGINE_SOURCE" "$ENGINE_TARGET"
-  chmod +x "$ENGINE_TARGET" 2>/dev/null || true
+if [[ ! -f "$ENGINE_SOURCE" ]]; then
+  echo "Missing Pikafish executable for $TARGET_PLATFORM: $ENGINE_SOURCE" >&2
+  exit 1
+fi
+cp "$ENGINE_SOURCE" "$ENGINE_TARGET"
+chmod +x "$ENGINE_TARGET" 2>/dev/null || true
 
-  if [[ "$TARGET_PLATFORM" == macos-* && -n "${APPLE_SIGNING_IDENTITY:-}" ]]; then
-    echo "Signing embedded Pikafish engine: $ENGINE_TARGET"
-    codesign --force --timestamp --options runtime --sign "$APPLE_SIGNING_IDENTITY" "$ENGINE_TARGET"
-    codesign --verify --strict --verbose=2 "$ENGINE_TARGET"
-  fi
+if [[ "$TARGET_PLATFORM" == macos-* && -n "${APPLE_SIGNING_IDENTITY:-}" ]]; then
+  echo "Signing embedded Pikafish engine: $ENGINE_TARGET"
+  codesign --force --timestamp --options runtime --sign "$APPLE_SIGNING_IDENTITY" "$ENGINE_TARGET"
+  codesign --verify --strict --verbose=2 "$ENGINE_TARGET"
 fi
 
 cp "$NNUE_PATH" "$RESOURCE_DIR/pikafish.nnue"

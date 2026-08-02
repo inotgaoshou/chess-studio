@@ -3,6 +3,9 @@ set -euo pipefail
 
 FAIRY_STOCKFISH_TAG="${FAIRY_STOCKFISH_TAG:-fairy_sf_14_0_1_xq}"
 FAIRY_STOCKFISH_RELEASE_DIR="${FAIRY_STOCKFISH_RELEASE_DIR:-}"
+FAIRY_XIANGQI_NNUE_NAME="xiangqi-c07e94a5c7cb.nnue"
+FAIRY_XIANGQI_NNUE_URL="${FAIRY_XIANGQI_NNUE_URL:-https://raw.githubusercontent.com/fairy-stockfish/Fairy-Stockfish-NNUE/master/${FAIRY_XIANGQI_NNUE_NAME}}"
+FAIRY_XIANGQI_NNUE_SHA256="c07e94a5c7cbeae443ed79a8fa412875d833a7f8e04333815e39729c59d52e11"
 ARGUMENT="${1:-}"
 if [[ -n "$ARGUMENT" && -d "$ARGUMENT" ]]; then
   FAIRY_STOCKFISH_RELEASE_DIR="${FAIRY_STOCKFISH_RELEASE_DIR:-$ARGUMENT}"
@@ -28,17 +31,52 @@ prepare_resource_dir() {
   mkdir -p "$RESOURCE_DIR"
 }
 
-copy_optional_nnue() {
+sha256_file() {
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  elif command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    echo "A SHA-256 utility (shasum or sha256sum) is required to verify Fairy NNUE." >&2
+    exit 1
+  fi
+}
+
+download_official_xiangqi_nnue() {
+  local destination="$WORK_DIR/$FAIRY_XIANGQI_NNUE_NAME"
+  mkdir -p "$WORK_DIR"
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "curl is required to download the official Fairy-Stockfish Xiangqi NNUE." >&2
+    exit 1
+  fi
+  if ! curl -L --fail --silent --show-error "$FAIRY_XIANGQI_NNUE_URL" -o "$destination"; then
+    echo "Failed to download Fairy Xiangqi NNUE from $FAIRY_XIANGQI_NNUE_URL" >&2
+    exit 1
+  fi
+  if [[ ! -f "$destination" ]]; then
+    echo "Fairy Xiangqi NNUE download did not create $destination" >&2
+    exit 1
+  fi
+  local actual_sha256
+  actual_sha256="$(sha256_file "$destination")"
+  if [[ "$actual_sha256" != "$FAIRY_XIANGQI_NNUE_SHA256" ]]; then
+    echo "Fairy Xiangqi NNUE checksum mismatch: expected $FAIRY_XIANGQI_NNUE_SHA256, got $actual_sha256" >&2
+    exit 1
+  fi
+  printf '%s\n' "$destination"
+}
+
+copy_fairy_nnue() {
   local nnue_source="${FAIRY_NNUE_SOURCE:-}"
   if [[ -z "$nnue_source" && -n "$FAIRY_STOCKFISH_RELEASE_DIR" ]]; then
-    nnue_source="$(find "$FAIRY_STOCKFISH_RELEASE_DIR" -type f -name '*.nnue' ! -iname '*pikafish*' -print -quit 2>/dev/null || true)"
+    nnue_source="$(find "$FAIRY_STOCKFISH_RELEASE_DIR" -type f -name "$FAIRY_XIANGQI_NNUE_NAME" -print -quit 2>/dev/null || true)"
   fi
   if [[ -n "$nnue_source" && ! -f "$nnue_source" ]]; then
     echo "Fairy-Stockfish NNUE file does not exist: $nnue_source" >&2
     exit 1
   fi
   if [[ -z "$nnue_source" ]]; then
-    return 0
+    nnue_source="$(download_official_xiangqi_nnue)"
   fi
 
   local nnue_basename
@@ -49,6 +87,15 @@ copy_optional_nnue() {
     exit 1
   fi
   cp "$nnue_source" "$RESOURCE_DIR/$nnue_basename"
+
+  if [[ "$nnue_basename" == "$FAIRY_XIANGQI_NNUE_NAME" ]]; then
+    local actual_sha256
+    actual_sha256="$(sha256_file "$RESOURCE_DIR/$nnue_basename")"
+    if [[ "$actual_sha256" != "$FAIRY_XIANGQI_NNUE_SHA256" ]]; then
+      echo "Bundled Fairy Xiangqi NNUE checksum mismatch: $actual_sha256" >&2
+      exit 1
+    fi
+  fi
 }
 
 copy_optional_notices() {
@@ -162,7 +209,7 @@ case "$TARGET_PLATFORM" in
     else
       download_github_asset 'fairy-stockfish-largeboard_x86-64.exe' 'fairy-stockfish.exe'
     fi
-    copy_optional_nnue
+    copy_fairy_nnue
     ;;
   macos-arm64)
     engine_source="${FAIRY_ENGINE_SOURCE:-}"
@@ -178,7 +225,7 @@ case "$TARGET_PLATFORM" in
         exit 1
       }
     fi
-    copy_optional_nnue
+    copy_fairy_nnue
     ;;
   macos-x64)
     engine_source="${FAIRY_ENGINE_SOURCE:-}"
@@ -194,7 +241,7 @@ case "$TARGET_PLATFORM" in
         exit 1
       }
     fi
-    copy_optional_nnue
+    copy_fairy_nnue
     ;;
   local)
     if [[ -z "$FAIRY_STOCKFISH_RELEASE_DIR" && -z "${FAIRY_ENGINE_SOURCE:-}" ]]; then
@@ -220,7 +267,7 @@ case "$TARGET_PLATFORM" in
     else
       cp "$engine_source" "$RESOURCE_DIR/fairy-stockfish"
     fi
-    copy_optional_nnue
+    copy_fairy_nnue
     ;;
   *)
     echo "Unknown target platform: $TARGET_PLATFORM" >&2

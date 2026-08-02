@@ -7,12 +7,13 @@ cd "$ROOT_DIR"
 PNPM_BIN="${PNPM_BIN:-pnpm}"
 EMBED_PIKAFISH="${EMBED_PIKAFISH:-1}"
 EMBED_FAIRY_STOCKFISH="${EMBED_FAIRY_STOCKFISH:-1}"
+BUILD_FAIRY_STOCKFISH_FROM_SOURCE="${BUILD_FAIRY_STOCKFISH_FROM_SOURCE:-1}"
 SIGN_AND_NOTARIZE="${SIGN_AND_NOTARIZE:-1}"
 PIKAFISH_RELEASE_DIR="${PIKAFISH_RELEASE_DIR:-$ROOT_DIR/../Pikafish.2026-01-02}"
+FAIRY_STOCKFISH_RELEASE_DIR="${FAIRY_STOCKFISH_RELEASE_DIR:-$ROOT_DIR/apps/desktop/src-tauri/resources/fairy-stockfish}"
 PIKAFISH_RESOURCE_DIR="apps/desktop/src-tauri/resources/pikafish"
-FAIRY_STOCKFISH_RELEASE_DIR="${FAIRY_STOCKFISH_RELEASE_DIR:-$ROOT_DIR/../Fairy-Stockfish}"
-FAIRY_STOCKFISH_RESOURCE_DIR="apps/desktop/src-tauri/resources/fairy-stockfish"
-BUILD_FAIRY_STOCKFISH_FROM_SOURCE="${BUILD_FAIRY_STOCKFISH_FROM_SOURCE:-1}"
+FAIRY_STOCKFISH_RESOURCE_DIR="$ROOT_DIR/apps/desktop/src-tauri/resources/fairy-stockfish"
+FAIRY_XIANGQI_NNUE_NAME="xiangqi-c07e94a5c7cb.nnue"
 TAURI_RESOURCE_CONFIG='{"bundle":{"resources":["resources/fonts/OFL.txt","resources/pikafish","resources/fairy-stockfish"]}}'
 
 if [[ "$EMBED_PIKAFISH" == "1" ]]; then
@@ -36,9 +37,52 @@ if [[ "$EMBED_PIKAFISH" == "1" ]]; then
 fi
 
 if [[ "$EMBED_FAIRY_STOCKFISH" == "1" ]]; then
-  FAIRY_STOCKFISH_RELEASE_DIR="$FAIRY_STOCKFISH_RELEASE_DIR" \
-  BUILD_FAIRY_STOCKFISH_FROM_SOURCE="$BUILD_FAIRY_STOCKFISH_FROM_SOURCE" \
-  ./scripts/prepare-fairy-stockfish-resource.sh macos-arm64
+  mkdir -p "$FAIRY_STOCKFISH_RESOURCE_DIR"
+  if [[ ! -x "$FAIRY_STOCKFISH_RESOURCE_DIR/fairy-stockfish" || ! -f "$FAIRY_STOCKFISH_RESOURCE_DIR/$FAIRY_XIANGQI_NNUE_NAME" ]]; then
+    PREPARE_RELEASE_DIR="$FAIRY_STOCKFISH_RELEASE_DIR"
+    if [[ "$PREPARE_RELEASE_DIR" == "$FAIRY_STOCKFISH_RESOURCE_DIR" ]]; then
+      PREPARE_RELEASE_DIR=""
+    fi
+    FAIRY_STOCKFISH_RELEASE_DIR="$PREPARE_RELEASE_DIR" \
+      BUILD_FAIRY_STOCKFISH_FROM_SOURCE="$BUILD_FAIRY_STOCKFISH_FROM_SOURCE" \
+      ./scripts/prepare-fairy-stockfish-resource.sh macos-arm64
+  fi
+  FAIRY_NNUE_SOURCE="$FAIRY_STOCKFISH_RELEASE_DIR/$FAIRY_XIANGQI_NNUE_NAME"
+  if [[ "$FAIRY_STOCKFISH_RELEASE_DIR" == "$FAIRY_STOCKFISH_RESOURCE_DIR" ]]; then
+    FAIRY_NNUE_SOURCE="$FAIRY_STOCKFISH_RESOURCE_DIR/$FAIRY_XIANGQI_NNUE_NAME"
+  fi
+  if [[ ! -f "$FAIRY_NNUE_SOURCE" ]]; then
+    echo "Missing Fairy Xiangqi NNUE: $FAIRY_NNUE_SOURCE" >&2
+    echo "Run ./scripts/prepare-fairy-stockfish-resource.sh macos-arm64 first." >&2
+    exit 1
+  fi
+  FAIRY_SOURCE=""
+  for candidate in \
+    "$FAIRY_STOCKFISH_RELEASE_DIR/fairy-stockfish" \
+    "$FAIRY_STOCKFISH_RELEASE_DIR/fairy-stockfish.exe" \
+    "${FAIRY_STOCKFISH_PATH:-}"; do
+    if [[ -n "$candidate" && -x "$candidate" ]]; then
+      FAIRY_SOURCE="$candidate"
+      break
+    fi
+  done
+  if [[ -n "$FAIRY_SOURCE" ]]; then
+    if [[ "$FAIRY_SOURCE" != "$FAIRY_STOCKFISH_RESOURCE_DIR/fairy-stockfish" ]]; then
+      cp "$FAIRY_SOURCE" "$FAIRY_STOCKFISH_RESOURCE_DIR/fairy-stockfish"
+    fi
+    if [[ "$FAIRY_NNUE_SOURCE" != "$FAIRY_STOCKFISH_RESOURCE_DIR/$FAIRY_XIANGQI_NNUE_NAME" ]]; then
+      cp "$FAIRY_NNUE_SOURCE" "$FAIRY_STOCKFISH_RESOURCE_DIR/$FAIRY_XIANGQI_NNUE_NAME"
+    fi
+    chmod +x "$FAIRY_STOCKFISH_RESOURCE_DIR/fairy-stockfish"
+    xattr -dr com.apple.quarantine "$FAIRY_STOCKFISH_RESOURCE_DIR" 2>/dev/null || true
+  else
+    echo "Missing Fairy-Stockfish executable; set FAIRY_STOCKFISH_RELEASE_DIR or FAIRY_STOCKFISH_PATH to embed it." >&2
+    exit 1
+  fi
+fi
+
+if [[ "$EMBED_PIKAFISH" == "1" && "$EMBED_FAIRY_STOCKFISH" == "1" ]]; then
+  ./scripts/verify-embedded-engine-resources.sh macos-arm64
 fi
 
 if [[ "$SIGN_AND_NOTARIZE" == "1" ]]; then

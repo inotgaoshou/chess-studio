@@ -167,7 +167,7 @@ export function GameReportView({ report, currentNode, disabled = false, onNaviga
         <p><strong>官着：</strong>开局阶段的人类经典布局着法，本应用只标记名称与来源，不改变 Pikafish 质量分。</p>
         <p><strong>质量分：</strong>该着相对引擎评价造成的局面损失折算为 0-100 分；与首选分差在 50cp 以内视为计算误差，按 100 分处理。综合分是一方所有有效着法质量分的平均值。</p>
         <p><strong>100分：</strong>表示在当前分析深度下几乎没有局面损失，可视为本应用定义的“特级大师级准确度”，不代表官方棋力认证。</p>
-        <p><strong>复盘档位：</strong>深度 20 可作为强大师参考；实际效果受 Pikafish 版本、NNUE、线程和机器性能影响。</p>
+        <p><strong>复盘档位：</strong>深度 26 可作为更稳健的强大师参考；实际效果受 Pikafish 版本、NNUE、线程和机器性能影响。</p>
         <p>{report.disclaimer}</p>
       </div>
     </section>

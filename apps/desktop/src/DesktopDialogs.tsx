@@ -62,7 +62,7 @@ function sanitizeEnginePreferences(preferences: DesktopPreferencesDto): DesktopP
 
 function engineInputValue(path: string) {
   if (path === BUILTIN_ENGINE_PATH) return "内置 Pikafish（随应用安装，推荐）";
-  if (path === BUILTIN_FAIRY_ENGINE_PATH) return "内置 Fairy-Stockfish（随应用安装，可选）";
+  if (path === BUILTIN_FAIRY_ENGINE_PATH) return "内置 Fairy-Stockfish（象棋模式，对比参考）";
   return path;
 }
 
@@ -101,7 +101,7 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
   const branchArrowColor = branchArrowColors.some(([value]) => value === draft.branchArrowColor) ? draft.branchArrowColor : "#2f80ed";
   const builtInEngines = [
     { path: BUILTIN_ENGINE_PATH, name: "内置 Pikafish", detail: "随 App 安装，推荐日常拆棋" },
-    { path: BUILTIN_FAIRY_ENGINE_PATH, name: "内置 Fairy-Stockfish", detail: "支持 Xiangqi 变体；同目录 .nnue 自动作为 EvalFile" },
+    { path: BUILTIN_FAIRY_ENGINE_PATH, name: "内置 Fairy-Stockfish", detail: "独立资源目录，强制 Xiangqi 变体，适合对比参考" },
   ];
 
   useEffect(() => {
@@ -268,8 +268,7 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
         {dialog === "engine" && <div className="dialog-form engine-settings-form">
           <label className="full"><span>引擎可执行文件</span><div className="dialog-input-action"><input value={engineInputValue(draft.enginePath)} readOnly={draft.enginePath === BUILTIN_ENGINE_PATH || draft.enginePath === BUILTIN_FAIRY_ENGINE_PATH} placeholder="选择 Pikafish / Fairy / 象眼 / 旋风等 UCI 或 UCCI 引擎" onChange={(event) => { setEnginePickerError(""); setEngineSaveError(""); setEngineSaveSuccess(""); setEngineProfileName(fileNameFromPath(event.target.value)); setDraft({ ...draft, enginePath: event.target.value, activeEngineId: undefined }); }}/><button type="button" title="使用安装包内置 Pikafish" disabled={busy || enginePickerBusy} onClick={() => { setEnginePickerError(""); setEngineSaveError(""); setEngineSaveSuccess(""); setEngineProfileName("内置 Pikafish"); setDraft({ ...draft, enginePath: BUILTIN_ENGINE_PATH, activeEngineId: draft.enginePath === BUILTIN_ENGINE_PATH ? draft.activeEngineId : undefined }); }}>内置</button><button type="button" title="选择外部引擎文件" disabled={busy || enginePickerBusy} onClick={() => void chooseEngine()}><FolderOpen size={15}/></button></div></label>
           <label className="full"><span>引擎档案名称</span><input value={engineProfileName} placeholder="例如 Fairy-Stockfish、象棋旋风、象眼 EleEye" onChange={(event) => setEngineProfileName(event.target.value)}/></label>
-          {draft.enginePath === BUILTIN_ENGINE_PATH && <p className="dialog-hint full">当前使用安装包内置 Pikafish。正式安装后会从 App 资源目录自动定位，不依赖本机绝对路径。</p>}
-          {draft.enginePath === BUILTIN_FAIRY_ENGINE_PATH && <p className="dialog-hint full">当前使用安装包内置 Fairy-Stockfish。若同目录包含 Xiangqi `.nnue`，分析、人机和报告会自动设置 EvalFile。</p>}
+          {(draft.enginePath === BUILTIN_ENGINE_PATH || draft.enginePath === BUILTIN_FAIRY_ENGINE_PATH) && <p className="dialog-hint full">当前使用安装包内置引擎。正式安装后会从 App 资源目录自动定位，不依赖本机绝对路径；Fairy-Stockfish 会自动设置为中国象棋 Xiangqi 模式。</p>}
           <div className="engine-profile-manager full" aria-label="多引擎档案">
             <header>
               <div><strong>分析引擎角色</strong><small>先确定 1 个主引擎，再选择需要同时计算的对比引擎</small></div>

@@ -30,7 +30,7 @@ const preferences: DesktopPreferencesDto = {
   workspacePanel: "moves",
   layoutMode: "studio",
   manualViewMode: "track",
-  reportDepth: 20,
+  reportDepth: 26,
   serverUrl: "http://127.0.0.1:8080",
 };
 

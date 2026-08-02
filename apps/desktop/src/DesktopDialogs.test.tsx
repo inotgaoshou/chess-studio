@@ -28,7 +28,7 @@ const preferences: DesktopPreferencesDto = {
   colorTheme: "dark",
   boardSkin: "default",
   pieceSkin: "default",
-  reportDepth: 20,
+  reportDepth: 26,
   serverUrl: "http://127.0.0.1:8080",
 };
 const account: SyncAccountDto = { serverUrl: preferences.serverUrl, status: "unbound" };
@@ -86,18 +86,21 @@ describe("DesktopDialogs", () => {
     expect(props.onSaveEngine).toHaveBeenCalledWith(expect.objectContaining({ enginePath: BUILTIN_ENGINE_PATH, activeEngineId: undefined }), "内置 Pikafish");
   });
 
-  it("can select the bundled Fairy-Stockfish marker", async () => {
+  it("offers built-in Fairy-Stockfish as a Xiangqi comparison engine", async () => {
     const { props, user } = renderDialog("engine", {
-      preferences: { ...preferences, enginePath: BUILTIN_ENGINE_PATH },
+      preferences: { ...preferences, enginePath: BUILTIN_ENGINE_PATH, analysisEngineMode: "parallel" },
     });
 
-    await user.click(screen.getByRole("button", { name: /内置 Fairy-Stockfish/ }));
-
-    expect((screen.getByLabelText("引擎可执行文件") as HTMLInputElement).value).toBe("内置 Fairy-Stockfish（随应用安装，可选）");
-    expect(screen.getByText(/自动设置 EvalFile/)).toBeTruthy();
-
+    expect(screen.getByText("独立资源目录，强制 Xiangqi 变体，适合对比参考 · 点击设为主引擎")).toBeTruthy();
+    const compareControl = screen.getByTitle("将 内置 Fairy-Stockfish 作为对比引擎，不改变主引擎").querySelector("input");
+    expect(compareControl).toBeTruthy();
+    await user.click(compareControl!);
     await user.click(screen.getByRole("button", { name: "检测并保存" }));
-    expect(props.onSaveEngine).toHaveBeenCalledWith(expect.objectContaining({ enginePath: BUILTIN_FAIRY_ENGINE_PATH }), "内置 Fairy-Stockfish");
+
+    expect(props.onSaveEngine).toHaveBeenCalledWith(expect.objectContaining({
+      enginePath: BUILTIN_ENGINE_PATH,
+      parallelEnginePaths: [BUILTIN_FAIRY_ENGINE_PATH],
+    }));
   });
 
   it("shows a file picker error instead of failing silently", async () => {

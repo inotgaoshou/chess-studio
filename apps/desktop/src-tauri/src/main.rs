@@ -1091,7 +1091,7 @@ async fn analyze_position(
     let protocol = runtime.session.protocol();
     let threads = threads.clamp(1, 64);
     let hash_mb = hash_mb.clamp(16, 4096);
-    configure_engine_nnue(&mut runtime.session, &resolved_engine_path).await?;
+    configure_engine_for_xiangqi(&mut runtime.session, &resolved_engine_path).await?;
     runtime
         .session
         .configure("Threads", &threads.to_string())
@@ -1302,7 +1302,7 @@ async fn engine_play_move(
         }
     }
     if !ponder_hit {
-        configure_engine_nnue(&mut play.session, &resolved_engine_path).await?;
+        configure_engine_for_xiangqi(&mut play.session, &resolved_engine_path).await?;
         play.session
             .configure("Threads", &threads.clamp(1, 64).to_string())
             .await
@@ -1491,7 +1491,6 @@ fn detect_pikafish(app: tauri::AppHandle) -> Option<String> {
     if bundled_fairy_stockfish_path(&app).is_some() {
         return Some(BUILTIN_FAIRY_ENGINE_PATH.into());
     }
-
     let mut candidates = Vec::new();
     if let Some(path) = std::env::var_os("PIKAFISH_PATH") {
         candidates.push(PathBuf::from(path));
@@ -1606,9 +1605,12 @@ fn bundled_pikafish_path(app: &tauri::AppHandle) -> Option<PathBuf> {
 
 fn bundled_fairy_stockfish_path(app: &tauri::AppHandle) -> Option<PathBuf> {
     let mut candidates = Vec::new();
-    // `resource_dir` points to the bundle only. During `tauri dev`, the engine
-    // remains in the source resource directory, so include that location too.
-    candidates.extend(fairy_stockfish_candidates(Path::new(env!("CARGO_MANIFEST_DIR")).join("resources").as_path()));
+    // During `tauri dev`, resources stay in the source resource directory.
+    candidates.extend(fairy_stockfish_candidates(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("resources")
+            .as_path(),
+    ));
     if let Ok(resource_dir) = app.path().resource_dir() {
         candidates.extend(fairy_stockfish_candidates(&resource_dir));
     }
@@ -1666,8 +1668,15 @@ fn resolve_engine_path(app: &tauri::AppHandle, value: &str) -> Result<PathBuf, S
     }
     if trimmed == BUILTIN_FAIRY_ENGINE_PATH {
         return bundled_fairy_stockfish_path(app)
-            .or_else(|| std::env::var_os("FAIRY_STOCKFISH_PATH").map(PathBuf::from).filter(|path| path.is_file()))
-            .ok_or_else(|| "安装包内未找到内置 Fairy-Stockfish；开发模式请设置 FAIRY_STOCKFISH_PATH，或手动选择外部引擎".to_owned());
+            .or_else(|| {
+                std::env::var_os("FAIRY_STOCKFISH_PATH")
+                    .map(PathBuf::from)
+                    .filter(|path| path.is_file())
+            })
+            .ok_or_else(|| {
+                "安装包内未找到内置 Fairy-Stockfish；开发模式请设置 FAIRY_STOCKFISH_PATH，或手动选择外部引擎"
+                    .to_owned()
+            });
     }
     if trimmed.is_empty() {
         return Err("请先选择 UCI/UCCI 象棋引擎".into());
@@ -1786,6 +1795,28 @@ async fn configure_engine_nnue(
     Ok(Some(nnue_path))
 }
 
+fn engine_variant_option(engine_path: &Path) -> Option<&'static str> {
+    match engine_family(engine_path) {
+        EngineFamily::FairyStockfish => Some("xiangqi"),
+        EngineFamily::Pikafish | EngineFamily::Unknown => None,
+    }
+}
+
+async fn configure_engine_for_xiangqi(
+    session: &mut EngineSession,
+    engine_path: &Path,
+) -> Result<Option<PathBuf>, String> {
+    if session.protocol() == Protocol::Uci {
+        if let Some(variant) = engine_variant_option(engine_path) {
+            session
+                .configure("UCI_Variant", variant)
+                .await
+                .map_err(|error| format!("设置 Fairy-Stockfish 象棋变体失败：{error}"))?;
+        }
+    }
+    configure_engine_nnue(session, engine_path).await
+}
+
 fn report_line_nodes(
     tree: &ManualTree,
     current_node: Option<Uuid>,
@@ -1886,6 +1917,12 @@ fn report_engine_fingerprint(engine_path: &Path) -> Result<String, String> {
     let mut hasher = Sha256::new();
     hasher.update(b"engine\0");
     update_fingerprint(&mut hasher, engine_path)?;
+
+    if let Some(variant) = engine_variant_option(engine_path) {
+        hasher.update(b"variant\0");
+        hasher.update(variant.as_bytes());
+        hasher.update(b"\0");
+    }
 
     if let Some(path) = preferred_nnue_path(engine_path) {
         hasher.update(b"nnue\0");
@@ -2185,7 +2222,7 @@ async fn generate_game_report_inner(
         let mut session = EngineSession::launch(&resolved_engine_path, Duration::from_secs(5))
             .await
             .map_err(|error| format!("引擎握手失败：{error}"))?;
-        configure_engine_nnue(&mut session, &resolved_engine_path).await?;
+        configure_engine_for_xiangqi(&mut session, &resolved_engine_path).await?;
         session
             .configure("Threads", &threads.to_string())
             .await
@@ -2692,7 +2729,13 @@ fn get_desktop_preferences(state: State<'_, DesktopState>) -> Result<DesktopPref
             .map_err(|error| error.to_string())?;
     }
     // Preserve older installations that only stored enginePath before profiles existed.
-    if preferences.active_engine_id.is_none() && !preferences.engine_path.trim().is_empty() {
+    if preferences.active_engine_id.is_none()
+        && !preferences.engine_path.trim().is_empty()
+        && !matches!(
+            preferences.engine_path.as_str(),
+            BUILTIN_ENGINE_PATH | BUILTIN_FAIRY_ENGINE_PATH
+        )
+    {
         let name = preferences
             .engine_path
             .rsplit(['/', '\\'])
@@ -4448,6 +4491,22 @@ mod tests {
         std::fs::write(&engine, b"engine-two").unwrap();
         let third = report_engine_fingerprint(&engine).unwrap();
         assert_ne!(second, third);
+    }
+
+    #[test]
+    fn fairy_stockfish_uses_xiangqi_variant_and_distinct_report_cache() {
+        let directory = tempfile::tempdir().unwrap();
+        let pikafish = directory.path().join("pikafish");
+        let fairy = directory.path().join("fairy-stockfish");
+        std::fs::write(&pikafish, b"same-engine-binary").unwrap();
+        std::fs::write(&fairy, b"same-engine-binary").unwrap();
+
+        assert_eq!(engine_variant_option(&fairy), Some("xiangqi"));
+        assert_eq!(engine_variant_option(&pikafish), None);
+        assert_ne!(
+            report_engine_fingerprint(&pikafish).unwrap(),
+            report_engine_fingerprint(&fairy).unwrap()
+        );
     }
 
     #[test]
