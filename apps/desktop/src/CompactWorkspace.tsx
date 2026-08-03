@@ -69,7 +69,7 @@ export function CompactEngineAnalysisList({ busy, rows, onPlayMove }: EngineList
   return <div className="compact-engine-analysis-list" role="table" aria-label="简洁布局引擎分析">
     <div className="compact-engine-analysis-head" role="row">
       <span role="columnheader">记录</span>
-      <span role="columnheader">最近10条 · 深/分/时/NPS/HF · 后续走法</span>
+      <span role="columnheader">最近10条记录 · 深/分/时/NPS/HF · 后续PV(半回合)</span>
     </div>
     <div className="compact-engine-analysis-body" role="rowgroup">
       {rows.map((row) => <button

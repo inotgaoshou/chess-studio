@@ -1038,7 +1038,7 @@ export default function App() {
         timeText: line.timeMs != null ? `${(line.timeMs / 1000).toFixed(1)}s` : "--",
         npsText: formatNps(line.nps),
         hfText: formatHashfull(line.hashfull),
-        lineLengthText: `${lineMoves.length}/${lineMoveLimit} 着`,
+        lineLengthText: `${lineMoves.length}/${lineMoveLimit}半回合`,
         lineText: lineMoves.length ? lineMoves.join(" ") : "暂无推荐着法",
         disabled: analysisIsStale,
         stale: analysisIsStale,
