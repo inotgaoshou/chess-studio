@@ -1133,16 +1133,31 @@ export default function App() {
   }, [analysisBusy, analysisIsStale, board.branches.length, board.currentNode, board.fen, board.history, board.pieces, board.sideToMove, board.siblingBranches?.length, currentEngineLabel, gameReport?.positions, primaryAnalysis, reportPositionByNode, theoryLibrary?.cards]);
   const selectedAnalysisEngines = useMemo(() => {
     const activeProfile = engineProfiles.find((profile) => profile.id === desktopPreferences.activeEngineId || profile.executablePath === enginePath);
-    const primary = { id: activeProfile?.id ?? "primary", name: activeProfile?.name ?? currentEngineLabel, path: enginePath, primary: true };
+    const primary = {
+      id: activeProfile?.id ?? "primary",
+      name: activeProfile?.name ?? currentEngineLabel,
+      displayName: currentEngineVersionLabel,
+      path: enginePath,
+      primary: true,
+      title: currentEngineTitle,
+      nnueLabel: currentNnueHashLabel ? `NNUE ${currentNnueHashLabel}` : currentNnueLabel,
+    };
     const selected = desktopPreferences.analysisEngineMode === "parallel"
       ? [
         ...engineProfiles.filter((profile) => desktopPreferences.parallelEngineIds.includes(profile.id))
-          .map((profile) => ({ id: profile.id, name: profile.name, path: profile.executablePath, primary: false })),
-        ...(desktopPreferences.parallelEnginePaths ?? []).map((path) => ({ id: `builtin:${path}`, name: engineDisplayName(path), path, primary: false })),
+          .map((profile) => ({ id: profile.id, name: profile.name, displayName: profile.name, path: profile.executablePath, primary: false, title: `${profile.name}\n路径：${profile.executablePath}`, nnueLabel: undefined })),
+        ...(desktopPreferences.parallelEnginePaths ?? []).map((path) => {
+          const name = engineDisplayName(path);
+          return { id: `builtin:${path}`, name, displayName: name, path, primary: false, title: `${name}\n路径：${path}`, nnueLabel: undefined };
+        }),
       ]
       : [];
     return [primary, ...selected.filter((engine) => engine.id !== primary.id && engine.path !== primary.path)];
-  }, [currentEngineLabel, desktopPreferences.activeEngineId, desktopPreferences.analysisEngineMode, desktopPreferences.parallelEngineIds, desktopPreferences.parallelEnginePaths, enginePath, engineProfiles]);
+  }, [currentEngineLabel, currentEngineTitle, currentEngineVersionLabel, currentNnueHashLabel, currentNnueLabel, desktopPreferences.activeEngineId, desktopPreferences.analysisEngineMode, desktopPreferences.parallelEngineIds, desktopPreferences.parallelEnginePaths, enginePath, engineProfiles]);
+  const engineChipTitle = selectedAnalysisEngines.map((engine, index) => {
+    const role = engine.primary ? "主引擎" : `对比引擎 ${index}`;
+    return [engine.primary ? currentEngineTitle : `${role}：${engine.displayName}`, !engine.primary && engine.path ? `路径：${engine.path}` : "", engine.nnueLabel ?? ""].filter(Boolean).join("\n");
+  }).join("\n\n");
   const analysisArrows = useMemo(() => {
     const arrowLimit = Math.max(1, Math.min(analysisArrowColors.length, Math.trunc(desktopPreferences.multipv) || multipv || 1));
     return analysisArrowFen === board.fen && analysisFen === board.fen ? orderedAnalysis.slice(0, arrowLimit)
@@ -3332,7 +3347,7 @@ export default function App() {
           <header className="compact-drag-handle" onPointerDown={(event) => startCompactWindowDrag("manual", event)} onPointerUp={stopCompactWindowDrag}>
             <button className="compact-window-toggle compact-window-toggle-leading" title={compactManualCollapsed ? "展开并停靠棋谱" : "收起棋谱"} aria-label={compactManualCollapsed ? "展开并停靠棋谱" : "收起棋谱"} onPointerDown={(event) => event.stopPropagation()} onClick={() => toggleCompactPanelCollapsed("manual")}>{compactManualCollapsed ? <ChevronDown size={16}/> : <X size={15}/>}</button>
             <span><ClipboardList size={14}/><strong>棋谱</strong></span>
-            <small title={`当前主引擎：${currentEngineLabel}`}>{compactManualCollapsed ? "已收起 · 点展开回到停靠区" : compactDetachedPanels.manual ? `主引擎：${currentEngineLabel} · 浮动中 · ${board.history.length} 着` : `主引擎：${currentEngineLabel} · ${board.history.length} 着${board.continuation.length ? ` · 后续 ${board.continuation.length} 着` : ""}`}</small>
+            <small title={currentEngineTitle}>{compactManualCollapsed ? "已收起 · 点展开回到停靠区" : compactDetachedPanels.manual ? `主引擎：${currentEngineVersionLabel} · 浮动中 · ${board.history.length} 着` : `主引擎：${currentEngineVersionLabel} · ${board.history.length} 着${board.continuation.length ? ` · 后续 ${board.continuation.length} 着` : ""}`}</small>
           </header>
           {!compactManualCollapsed && <>
             {playbackControls("compact-playback")}
@@ -3485,7 +3500,7 @@ export default function App() {
       <div className={`floating-panel-shell theme-${effectiveColorTheme} board-skin-${displayedBoardSkin} piece-skin-${displayedPieceSkin} floating-panel-${floatingPanel}`}>
         <header className="floating-panel-titlebar">
           <span>{floatingPanel === "engine" ? <Activity size={16}/> : floatingPanel === "cloud" ? <Database size={16}/> : <ClipboardList size={16}/>}<strong>{floatingPanel === "engine" ? "引擎分析" : floatingPanel === "cloud" ? "云库 / 评估信息" : "棋谱"}</strong></span>
-          <small>{floatingPanel === "engine" ? (analysisBusy ? `${currentEngineLabel} 正在计算…` : analysisIsStale ? "旧候选保留中" : "系统独立窗口") : floatingPanel === "cloud" ? (cloudBookLoading ? "查询中…" : cloudBookError ?? `${compactBookRows.length} 条候选`) : `主引擎：${currentEngineLabel} · ${board.history.length} 着${board.continuation.length ? ` · 后续 ${board.continuation.length} 着` : ""}`}</small>
+          <small>{floatingPanel === "engine" ? (analysisBusy ? `${currentEngineVersionLabel} 正在计算…` : analysisIsStale ? "旧候选保留中" : "系统独立窗口") : floatingPanel === "cloud" ? (cloudBookLoading ? "查询中…" : cloudBookError ?? `${compactBookRows.length} 条候选`) : `主引擎：${currentEngineVersionLabel} · ${board.history.length} 着${board.continuation.length ? ` · 后续 ${board.continuation.length} 着` : ""}`}</small>
           <button className="floating-panel-return" type="button" title="关闭浮窗并回到主窗口停靠显示" onClick={() => void returnFloatingPanelToMain()}><ChevronLeft size={15}/>回主窗口</button>
         </header>
         {floatingPanel === "engine" ? (
@@ -3619,13 +3634,13 @@ export default function App() {
           }}
           execute={executeMenuCommand}
         />}
-        <button className="engine-chip engine-chip-group" type="button" title="当前用于分析的引擎；点击进入引擎设置" onClick={() => chessPlatform.kind === "desktop" ? setDesktopDialog("engine") : selectWorkspacePanel("analysis")}>
+        <button className="engine-chip engine-chip-group" type="button" title={engineChipTitle || "当前用于分析的引擎；点击进入引擎设置"} onClick={() => chessPlatform.kind === "desktop" ? setDesktopDialog("engine") : selectWorkspacePanel("analysis")}>
           <Activity size={13}/>
           <span className="engine-chip-mode">{selectedAnalysisEngines.length > 1 ? "并行" : "单引擎"}</span>
           <span className="engine-chip-list">{selectedAnalysisEngines.map((engine, index) => {
             const result = engineAnalyses[engine.id];
             const status = result?.error ? "失败" : analysisBusy ? result?.lines.length ? "返回中" : "计算中" : engine.primary ? (enginePath ? engineRuntimeLabel[engineRuntimeState] : "未检测") : result?.lines.length ? "完成" : "待分析";
-            return <span className={`engine-chip-entry ${engine.primary ? "primary" : "comparison"}`} key={engine.id}><b>{engine.primary ? "主" : `对比${index}`}</b><strong>{engine.name}</strong><small>{status}</small></span>;
+            return <span className={`engine-chip-entry ${engine.primary ? "primary" : "comparison"}`} title={engine.title} key={engine.id}><b>{engine.primary ? "主" : `对比${index}`}</b><strong>{engine.displayName}</strong><small>{status}</small>{engine.nnueLabel && <em>{engine.nnueLabel}</em>}</span>;
           })}</span>
         </button>
       </nav>
@@ -3972,9 +3987,9 @@ export default function App() {
                   <button className={engineSide === "black" ? "active black" : ""} onClick={() => toggleEngineSide("black")}><Bot size={12}/>执黑</button>
                 </div>
                 <label><span>每步</span><input type="number" min={100} max={30000} step={100} value={moveTimeMs} onChange={(event) => setMoveTimeMs(Number(event.target.value))}/><small>ms</small></label>
-                <button className="move-now" title={engineStarting ? `${currentEngineLabel} 正在启动` : engineThinking ? "停止搜索并立即落子" : `等待 ${currentEngineLabel} 思考`} disabled={!engineThinking} onClick={() => void moveNow()}><Zap size={12}/>立即</button>
+                <button className="move-now" title={engineStarting ? `${currentEngineVersionLabel} 正在启动` : engineThinking ? "停止搜索并立即落子" : `等待 ${currentEngineVersionLabel} 思考`} disabled={!engineThinking} onClick={() => void moveNow()}><Zap size={12}/>立即</button>
               </div>
-              {engineSide !== "none" && <div className="engine-play-status"><span className={engineThinking ? "thinking" : engineStarting ? "starting" : ""}/><strong>人机对弈</strong><small>{currentEngineLabel} 执{engineSide === "red" ? "红" : "黑"}{engineStarting ? " · 启动中" : engineThinking ? " · 思考中" : ponderMove ? ` · 预测 ${ponderMove}` : " · 等待行棋"}</small></div>}
+              {engineSide !== "none" && <div className="engine-play-status"><span className={engineThinking ? "thinking" : engineStarting ? "starting" : ""}/><strong>人机对弈</strong><small>{currentEngineVersionLabel} 执{engineSide === "red" ? "红" : "黑"}{engineStarting ? " · 启动中" : engineThinking ? " · 思考中" : ponderMove ? ` · 预测 ${ponderMove}` : " · 等待行棋"}</small></div>}
               <button className="engine-config-summary" title={currentEngineTitle} onClick={() => setDesktopDialog("engine")}>
                 <Settings2 size={14}/><span>{currentEngineVersionLabel}</span><small>{threads} 线程 · Hash {hashMb} MB · MultiPV {multipv}{currentEngineHashLabel ? ` · 引擎 ${currentEngineHashLabel}` : ""}{currentNnueLabel ? ` · ${currentNnueLabel}` : ""}{currentNnueHashLabel ? ` · ${currentNnueHashLabel}` : ""}</small>
               </button>
