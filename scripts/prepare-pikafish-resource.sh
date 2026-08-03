@@ -2,9 +2,12 @@
 set -euo pipefail
 
 TARGET_PLATFORM="${1:?Usage: prepare-pikafish-resource.sh <macos-arm64|macos-x64|linux-x64|windows-x64>}"
-PIKAFISH_VERSION="${PIKAFISH_VERSION:-2026-01-02}"
-PIKAFISH_TAG="${PIKAFISH_TAG:-Pikafish-${PIKAFISH_VERSION}}"
+PIKAFISH_VERSION="${PIKAFISH_VERSION:-latest}"
+PIKAFISH_TAG="${PIKAFISH_TAG:-}"
 PIKAFISH_ENGINE_SOURCE="${PIKAFISH_ENGINE_SOURCE:-}"
+PIKAFISH_NNUE_SOURCE="${PIKAFISH_NNUE_SOURCE:-}"
+PIKAFISH_NNUE_URL="${PIKAFISH_NNUE_URL:-}"
+PIKAFISH_METADATA_DIR="${PIKAFISH_METADATA_DIR:-}"
 RESOURCE_DIR="apps/desktop/src-tauri/resources/pikafish"
 TEMP_ROOT="${RUNNER_TEMP:-/tmp}"
 if command -v cygpath >/dev/null 2>&1; then
@@ -17,63 +20,119 @@ EXTRACT_DIR="$WORK_DIR/extract"
 rm -rf "$WORK_DIR"
 mkdir -p "$ARCHIVE_DIR" "$EXTRACT_DIR" "$RESOURCE_DIR"
 
-if ! command -v gh >/dev/null 2>&1; then
-  echo "GitHub CLI 'gh' is required to download Pikafish release assets." >&2
+find_by_name() {
+  local root="$1"
+  local name="$2"
+  if [[ -z "$root" || ! -d "$root" ]]; then
+    return 0
+  fi
+  find "$root" -type f -name "$name" -print -quit 2>/dev/null || true
+}
+
+first_existing() {
+  local candidate
+  for candidate in "$@"; do
+    if [[ -n "$candidate" && -f "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+SOURCE_ROOT="$PIKAFISH_METADATA_DIR"
+if [[ -z "$PIKAFISH_ENGINE_SOURCE" || -z "$PIKAFISH_NNUE_SOURCE" || -z "$SOURCE_ROOT" ]]; then
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "GitHub CLI 'gh' is required to download Pikafish release assets." >&2
+    exit 1
+  fi
+  if ! command -v 7z >/dev/null 2>&1; then
+    echo "7z is required to extract Pikafish release assets." >&2
+    exit 1
+  fi
+
+  if [[ -z "$PIKAFISH_TAG" ]]; then
+    if [[ "$PIKAFISH_VERSION" == "latest" ]]; then
+      PIKAFISH_TAG="$(gh release view --repo official-pikafish/Pikafish --json tagName --jq '.tagName')"
+    else
+      PIKAFISH_TAG="Pikafish-${PIKAFISH_VERSION}"
+    fi
+  fi
+  echo "Using Pikafish release tag: $PIKAFISH_TAG"
+
+  gh release download "$PIKAFISH_TAG" \
+    --repo official-pikafish/Pikafish \
+    --pattern '*.7z' \
+    --pattern '*.zip' \
+    --dir "$ARCHIVE_DIR" \
+    --clobber
+
+  ARCHIVE_PATH="$(find "$ARCHIVE_DIR" \( -name '*.7z' -o -name '*.zip' \) -type f | head -n 1)"
+  if [[ -z "$ARCHIVE_PATH" ]]; then
+    echo "No Pikafish archive asset found for ${PIKAFISH_TAG}." >&2
+    exit 1
+  fi
+
+  SEVEN_ZIP_EXTRACT_DIR="$EXTRACT_DIR"
+  if command -v cygpath >/dev/null 2>&1; then
+    SEVEN_ZIP_EXTRACT_DIR="$(cygpath --windows "$EXTRACT_DIR")"
+  fi
+  7z x "$ARCHIVE_PATH" -o"$SEVEN_ZIP_EXTRACT_DIR" -y >/dev/null
+  SOURCE_ROOT="${SOURCE_ROOT:-$EXTRACT_DIR}"
+fi
+
+if [[ -z "$PIKAFISH_NNUE_SOURCE" && -n "$PIKAFISH_NNUE_URL" ]]; then
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "curl is required to download PIKAFISH_NNUE_URL." >&2
+    exit 1
+  fi
+  PIKAFISH_NNUE_SOURCE="$WORK_DIR/pikafish.nnue"
+  curl -L --fail --silent --show-error "$PIKAFISH_NNUE_URL" -o "$PIKAFISH_NNUE_SOURCE"
+fi
+
+if [[ -z "$PIKAFISH_NNUE_SOURCE" ]]; then
+  PIKAFISH_NNUE_SOURCE="$(find_by_name "$SOURCE_ROOT" 'pikafish.nnue')"
+fi
+if [[ -z "$PIKAFISH_NNUE_SOURCE" || ! -f "$PIKAFISH_NNUE_SOURCE" ]]; then
+  echo "Cannot find pikafish.nnue. Set PIKAFISH_NNUE_SOURCE=/absolute/path/to/pikafish.nnue or PIKAFISH_NNUE_URL=https://..." >&2
   exit 1
 fi
-if ! command -v 7z >/dev/null 2>&1; then
-  echo "7z is required to extract Pikafish release assets." >&2
-  exit 1
-fi
 
-gh release download "$PIKAFISH_TAG" \
-  --repo official-pikafish/Pikafish \
-  --pattern '*.7z' \
-  --dir "$ARCHIVE_DIR" \
-  --clobber
-
-ARCHIVE_PATH="$(find "$ARCHIVE_DIR" -name '*.7z' -type f | head -n 1)"
-if [[ -z "$ARCHIVE_PATH" ]]; then
-  echo "No Pikafish .7z asset found for ${PIKAFISH_TAG}." >&2
-  exit 1
-fi
-
-SEVEN_ZIP_EXTRACT_DIR="$EXTRACT_DIR"
-if command -v cygpath >/dev/null 2>&1; then
-  SEVEN_ZIP_EXTRACT_DIR="$(cygpath --windows "$EXTRACT_DIR")"
-fi
-7z x "$ARCHIVE_PATH" -o"$SEVEN_ZIP_EXTRACT_DIR" -y >/dev/null
-
-NNUE_PATH="$(find "$EXTRACT_DIR" -type f -name 'pikafish.nnue' -print -quit)"
-if [[ -z "$NNUE_PATH" ]]; then
-  echo "Cannot find pikafish.nnue after extraction in $EXTRACT_DIR." >&2
-  exit 1
-fi
-SOURCE_ROOT="$(dirname "$NNUE_PATH")"
-
-rm -rf "$RESOURCE_DIR"
 mkdir -p "$RESOURCE_DIR"
 
 case "$TARGET_PLATFORM" in
   macos-arm64)
-    ENGINE_SOURCE="${PIKAFISH_ENGINE_SOURCE:-$SOURCE_ROOT/MacOS/pikafish-apple-silicon}"
+    ENGINE_SOURCE="${PIKAFISH_ENGINE_SOURCE:-}"
+    if [[ -z "$ENGINE_SOURCE" ]]; then
+      ENGINE_SOURCE="$(first_existing \
+        "$(find_by_name "$SOURCE_ROOT" 'pikafish-apple-silicon')" \
+        "$(find_by_name "$SOURCE_ROOT" 'Pikafish-MacOS-universal')" || true)"
+    fi
     ENGINE_TARGET="$RESOURCE_DIR/pikafish"
     ;;
   macos-x64)
-    if [[ -z "$PIKAFISH_ENGINE_SOURCE" ]]; then
-      echo "Pikafish ${PIKAFISH_VERSION} release does not include a generic Intel macOS engine." >&2
-      echo "Set PIKAFISH_ENGINE_SOURCE=/absolute/path/to/macos-x64-pikafish to build a macOS x64 package with an embedded engine." >&2
-      exit 1
+    ENGINE_SOURCE="${PIKAFISH_ENGINE_SOURCE:-}"
+    if [[ -z "$ENGINE_SOURCE" ]]; then
+      ENGINE_SOURCE="$(first_existing "$(find_by_name "$SOURCE_ROOT" 'Pikafish-MacOS-universal')" || true)"
     fi
-    ENGINE_SOURCE="$PIKAFISH_ENGINE_SOURCE"
     ENGINE_TARGET="$RESOURCE_DIR/pikafish"
     ;;
   linux-x64)
-    ENGINE_SOURCE="${PIKAFISH_ENGINE_SOURCE:-$SOURCE_ROOT/Linux/pikafish-sse41-popcnt}"
+    ENGINE_SOURCE="${PIKAFISH_ENGINE_SOURCE:-}"
+    if [[ -z "$ENGINE_SOURCE" ]]; then
+      ENGINE_SOURCE="$(first_existing \
+        "$(find_by_name "$SOURCE_ROOT" 'pikafish-sse41-popcnt')" \
+        "$(find_by_name "$SOURCE_ROOT" 'Pikafish-Linux-x86-64-universal')" || true)"
+    fi
     ENGINE_TARGET="$RESOURCE_DIR/pikafish"
     ;;
   windows-x64)
-    ENGINE_SOURCE="${PIKAFISH_ENGINE_SOURCE:-$SOURCE_ROOT/Windows/pikafish-sse41-popcnt.exe}"
+    ENGINE_SOURCE="${PIKAFISH_ENGINE_SOURCE:-}"
+    if [[ -z "$ENGINE_SOURCE" ]]; then
+      ENGINE_SOURCE="$(first_existing \
+        "$(find_by_name "$SOURCE_ROOT" 'pikafish-sse41-popcnt.exe')" \
+        "$(find_by_name "$SOURCE_ROOT" 'Pikafish-Windows-x86-64-universal.exe')" || true)"
+    fi
     ENGINE_TARGET="$RESOURCE_DIR/pikafish.exe"
     ;;
   *)
@@ -95,10 +154,20 @@ if [[ "$TARGET_PLATFORM" == macos-* && -n "${APPLE_SIGNING_IDENTITY:-}" ]]; then
   codesign --verify --strict --verbose=2 "$ENGINE_TARGET"
 fi
 
-cp "$NNUE_PATH" "$RESOURCE_DIR/pikafish.nnue"
+cp "$PIKAFISH_NNUE_SOURCE" "$RESOURCE_DIR/pikafish.nnue"
 
-cp "$SOURCE_ROOT/Copying.txt" "$RESOURCE_DIR/Copying.txt"
-cp "$SOURCE_ROOT/NNUE-License.md" "$RESOURCE_DIR/NNUE-License.md"
-cp "$SOURCE_ROOT/README.md" "$RESOURCE_DIR/Pikafish-README.md"
+COPYING_SOURCE="$(first_existing "$(find_by_name "$SOURCE_ROOT" 'Copying.txt')" "$(find_by_name "$SOURCE_ROOT" 'COPYING')" "$(find_by_name "$SOURCE_ROOT" 'LICENSE')" || true)"
+NNUE_LICENSE_SOURCE="$(find_by_name "$SOURCE_ROOT" 'NNUE-License.md')"
+README_SOURCE="$(find_by_name "$SOURCE_ROOT" 'README.md')"
+
+if [[ -n "$COPYING_SOURCE" ]]; then
+  cp "$COPYING_SOURCE" "$RESOURCE_DIR/Copying.txt"
+fi
+if [[ -n "$NNUE_LICENSE_SOURCE" ]]; then
+  cp "$NNUE_LICENSE_SOURCE" "$RESOURCE_DIR/NNUE-License.md"
+fi
+if [[ -n "$README_SOURCE" ]]; then
+  cp "$README_SOURCE" "$RESOURCE_DIR/Pikafish-README.md"
+fi
 
 find "$RESOURCE_DIR" -maxdepth 1 -type f -print

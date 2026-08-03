@@ -13,7 +13,7 @@ on:
       platform:
         description: "Build platform"
         required: true
-        default: "windows"
+        default: "all"
         type: choice
         options:
           - windows
@@ -29,7 +29,6 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  PIKAFISH_VERSION: "2026-01-02"
   FAIRY_STOCKFISH_TAG: "fairy_sf_14_0_1_xq"
   TAURI_RESOURCE_CONFIG: '{"bundle":{"resources":["resources/fonts/OFL.txt","resources/pikafish","resources/fairy-stockfish"]}}'
 
@@ -42,7 +41,7 @@ jobs:
     steps:
       - id: targets
         run: |
-          if [ "${{ github.event.inputs.platform || 'windows' }}" = "all" ]; then
+          if [ "${{ github.event.inputs.platform || 'all' }}" = "all" ]; then
             matrix='{"include":[{"name":"Windows x64","platform":"windows-x64","os":"windows-latest","rust_target":"x86_64-pc-windows-msvc","tauri_args":"--target x86_64-pc-windows-msvc","build_fairy_from_source":"0"},{"name":"macOS Apple Silicon","platform":"macos-arm64","os":"macos-latest","rust_target":"aarch64-apple-darwin","tauri_args":"--target aarch64-apple-darwin","build_fairy_from_source":"1"}]}'
           elif [ "${{ github.event.inputs.platform }}" = "macos" ]; then
             matrix='{"include":[{"name":"macOS Apple Silicon","platform":"macos-arm64","os":"macos-latest","rust_target":"aarch64-apple-darwin","tauri_args":"--target aarch64-apple-darwin","build_fairy_from_source":"1"}]}'
@@ -101,12 +100,6 @@ jobs:
         with:
           workspaces: |
             . -> target
-
-      - name: Prepare embedded Pikafish
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: scripts/prepare-pikafish-resource.sh ${{ matrix.platform }}
 
       - name: Prepare embedded Fairy-Stockfish
         shell: bash

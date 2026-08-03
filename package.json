@@ -1,5 +1,11 @@
 {
   "name": "xiangqi-assistant-workspace",
   "private": true,
-  "packageManager": "pnpm@11.9.0"
+  "packageManager": "pnpm@11.9.0",
+  "scripts": {
+    "release:macos": "SIGN_AND_NOTARIZE=0 ./scripts/build-macos-release.sh",
+    "release:macos:latest-pikafish": "PIKAFISH_ENGINE_SOURCE=../Pikafish-20260726/Pikafish-MacOS-universal PIKAFISH_NNUE_SOURCE=../pikafish.nnue PIKAFISH_METADATA_DIR=../Pikafish-20260726 SIGN_AND_NOTARIZE=0 ./scripts/build-macos-release.sh",
+    "prepare:windows:latest-pikafish": "PIKAFISH_ENGINE_SOURCE=../Pikafish-20260726/Pikafish-Windows-x86-64-universal.exe PIKAFISH_NNUE_SOURCE=../pikafish.nnue PIKAFISH_METADATA_DIR=../Pikafish-20260726 ./scripts/prepare-pikafish-resource.sh windows-x64",
+    "release:macos:signed": "./scripts/build-macos-release.sh"
+  }
 }

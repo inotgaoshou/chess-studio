@@ -74,10 +74,24 @@ XQF、CBR 已接入统一格式检测入口，但解析器需要真实样例验�
 本地 macOS Apple Silicon 内置 Pikafish / Fairy-Stockfish 打包：
 
 ```bash
-PNPM_BIN=pnpm \
-SIGN_AND_NOTARIZE=0 \
-./scripts/build-macos-release.sh
+pnpm release:macos
 ```
+
+需要正式签名和公证时使用 `pnpm release:macos:signed`，并提前配置 Apple 证书与公证环境变量。
+
+如果要使用项目相邻目录中的新版 Pikafish 与 NNUE，可以运行：
+
+```bash
+pnpm release:macos:latest-pikafish
+```
+
+Windows x64 的 GitHub Release 构建会直接使用仓库中提交的 `apps/desktop/src-tauri/resources/pikafish/pikafish.exe` 和 `pikafish.nnue`。本地只想刷新 Windows 资源时可以运行：
+
+```bash
+pnpm prepare:windows:latest-pikafish
+```
+
+Pikafish 引擎和 `pikafish.nnue` 会提交到 `apps/desktop/src-tauri/resources/pikafish/`，GitHub Release 构建直接使用仓库中的资源。后续更新时覆盖该目录中的 `pikafish`、`pikafish.exe` 和 `pikafish.nnue` 后提交即可。`scripts/prepare-pikafish-resource.sh` 仍保留为本地更新资源的辅助脚本，必要时可通过 `PIKAFISH_NNUE_SOURCE` 或 `PIKAFISH_NNUE_URL` 指定权重来源。
 
 产物位于 `target/release/bundle/`。默认会读取 `PIKAFISH_RELEASE_DIR` 指向的 Pikafish 发布目录；未设置时使用项目相邻目录的 `../Pikafish.2026-01-02`。该目录中的 Apple Silicon Pikafish 与 `pikafish.nnue` 会被内置到 macOS 安装包。Fairy-Stockfish 使用 Apple Silicon 可执行文件与其独立的官方中国象棋网络 `xiangqi-c07e94a5c7cb.nnue`；两者均会进入 `resources/fairy-stockfish/`。资源不存在时，macOS 构建脚本会构建 Fairy 源码；资源准备脚本会从 [Fairy-Stockfish-NNUE](https://github.com/fairy-stockfish/Fairy-Stockfish-NNUE) 的官方源下载并校验该文件。运行时强制使用 `UCI_Variant=xiangqi` 和 Fairy 目录中的该网络，绝不复用 `pikafish.nnue`。Windows x64 发布物同样携带各自的 Fairy 可执行文件和这份 NNUE。
 

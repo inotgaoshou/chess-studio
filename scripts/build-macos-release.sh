@@ -10,6 +10,9 @@ EMBED_FAIRY_STOCKFISH="${EMBED_FAIRY_STOCKFISH:-1}"
 BUILD_FAIRY_STOCKFISH_FROM_SOURCE="${BUILD_FAIRY_STOCKFISH_FROM_SOURCE:-1}"
 SIGN_AND_NOTARIZE="${SIGN_AND_NOTARIZE:-1}"
 PIKAFISH_RELEASE_DIR="${PIKAFISH_RELEASE_DIR:-$ROOT_DIR/../Pikafish.2026-01-02}"
+PIKAFISH_ENGINE_SOURCE="${PIKAFISH_ENGINE_SOURCE:-}"
+PIKAFISH_NNUE_SOURCE="${PIKAFISH_NNUE_SOURCE:-}"
+PIKAFISH_METADATA_DIR="${PIKAFISH_METADATA_DIR:-}"
 FAIRY_STOCKFISH_RELEASE_DIR="${FAIRY_STOCKFISH_RELEASE_DIR:-$ROOT_DIR/apps/desktop/src-tauri/resources/fairy-stockfish}"
 PIKAFISH_RESOURCE_DIR="apps/desktop/src-tauri/resources/pikafish"
 FAIRY_STOCKFISH_RESOURCE_DIR="$ROOT_DIR/apps/desktop/src-tauri/resources/fairy-stockfish"
@@ -17,22 +20,46 @@ FAIRY_XIANGQI_NNUE_NAME="xiangqi-c07e94a5c7cb.nnue"
 TAURI_RESOURCE_CONFIG='{"bundle":{"resources":["resources/fonts/OFL.txt","resources/pikafish","resources/fairy-stockfish"]}}'
 
 if [[ "$EMBED_PIKAFISH" == "1" ]]; then
-  if [[ ! -x "$PIKAFISH_RELEASE_DIR/MacOS/pikafish-apple-silicon" ]]; then
-    echo "Missing Pikafish executable: $PIKAFISH_RELEASE_DIR/MacOS/pikafish-apple-silicon" >&2
-    exit 1
-  fi
-  if [[ ! -f "$PIKAFISH_RELEASE_DIR/pikafish.nnue" ]]; then
-    echo "Missing Pikafish NNUE: $PIKAFISH_RELEASE_DIR/pikafish.nnue" >&2
-    exit 1
+  PIKAFISH_RESOURCE_ENGINE="$PIKAFISH_RESOURCE_DIR/pikafish"
+  PIKAFISH_RESOURCE_NNUE="$PIKAFISH_RESOURCE_DIR/pikafish.nnue"
+
+  if [[ -z "$PIKAFISH_ENGINE_SOURCE" && -z "$PIKAFISH_NNUE_SOURCE" && -f "$PIKAFISH_RESOURCE_ENGINE" && -f "$PIKAFISH_RESOURCE_NNUE" ]]; then
+    echo "Using committed Pikafish resources from $PIKAFISH_RESOURCE_DIR"
+  else
+    if [[ -z "$PIKAFISH_ENGINE_SOURCE" ]]; then
+      PIKAFISH_ENGINE_SOURCE="$PIKAFISH_RELEASE_DIR/MacOS/pikafish-apple-silicon"
+    fi
+    if [[ -z "$PIKAFISH_NNUE_SOURCE" ]]; then
+      PIKAFISH_NNUE_SOURCE="$PIKAFISH_RELEASE_DIR/pikafish.nnue"
+    fi
+    if [[ -z "$PIKAFISH_METADATA_DIR" ]]; then
+      PIKAFISH_METADATA_DIR="$PIKAFISH_RELEASE_DIR"
+    fi
+
+    if [[ ! -f "$PIKAFISH_ENGINE_SOURCE" ]]; then
+      echo "Missing Pikafish executable: $PIKAFISH_ENGINE_SOURCE" >&2
+      exit 1
+    fi
+    if [[ ! -f "$PIKAFISH_NNUE_SOURCE" ]]; then
+      echo "Missing Pikafish NNUE: $PIKAFISH_NNUE_SOURCE" >&2
+      exit 1
+    fi
+
+    mkdir -p "$PIKAFISH_RESOURCE_DIR"
+    cp "$PIKAFISH_ENGINE_SOURCE" "$PIKAFISH_RESOURCE_ENGINE"
+    cp "$PIKAFISH_NNUE_SOURCE" "$PIKAFISH_RESOURCE_NNUE"
+    if [[ -f "$PIKAFISH_METADATA_DIR/Copying.txt" ]]; then
+      cp "$PIKAFISH_METADATA_DIR/Copying.txt" "$PIKAFISH_RESOURCE_DIR/Copying.txt"
+    fi
+    if [[ -f "$PIKAFISH_METADATA_DIR/NNUE-License.md" ]]; then
+      cp "$PIKAFISH_METADATA_DIR/NNUE-License.md" "$PIKAFISH_RESOURCE_DIR/NNUE-License.md"
+    fi
+    if [[ -f "$PIKAFISH_METADATA_DIR/README.md" ]]; then
+      cp "$PIKAFISH_METADATA_DIR/README.md" "$PIKAFISH_RESOURCE_DIR/Pikafish-README.md"
+    fi
   fi
 
-  mkdir -p "$PIKAFISH_RESOURCE_DIR"
-  cp "$PIKAFISH_RELEASE_DIR/MacOS/pikafish-apple-silicon" "$PIKAFISH_RESOURCE_DIR/pikafish"
-  cp "$PIKAFISH_RELEASE_DIR/pikafish.nnue" "$PIKAFISH_RESOURCE_DIR/pikafish.nnue"
-  cp "$PIKAFISH_RELEASE_DIR/Copying.txt" "$PIKAFISH_RESOURCE_DIR/Copying.txt"
-  cp "$PIKAFISH_RELEASE_DIR/NNUE-License.md" "$PIKAFISH_RESOURCE_DIR/NNUE-License.md"
-  cp "$PIKAFISH_RELEASE_DIR/README.md" "$PIKAFISH_RESOURCE_DIR/Pikafish-README.md"
-  chmod +x "$PIKAFISH_RESOURCE_DIR/pikafish"
+  chmod +x "$PIKAFISH_RESOURCE_ENGINE"
   xattr -dr com.apple.quarantine "$PIKAFISH_RESOURCE_DIR" 2>/dev/null || true
 fi
 

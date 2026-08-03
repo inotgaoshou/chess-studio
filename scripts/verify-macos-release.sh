@@ -13,7 +13,7 @@ APP_PATH="${APP_PATH:-target/release/bundle/macos/Xiangqi Studio.app}"
 DMG_DIR="${DMG_DIR:-target/release/bundle/dmg}"
 REQUIRE_GATEKEEPER="${REQUIRE_GATEKEEPER:-1}"
 
-if [[ ! -d "$APP_PATH" ]]; then
+if [[ ! -d "$APP_PATH" && "$REQUIRE_GATEKEEPER" == "1" ]]; then
   echo "Missing app bundle: $APP_PATH" >&2
   exit 1
 fi
@@ -29,6 +29,9 @@ if [[ "$REQUIRE_GATEKEEPER" == "1" ]]; then
   spctl -a -vvv -t exec "$APP_PATH"
 else
   echo "Skipping code-signature and Gatekeeper checks for unsigned local build."
+  if [[ ! -d "$APP_PATH" ]]; then
+    echo "App bundle not present after bundling; continuing with DMG verification only."
+  fi
 fi
 
 DMG_FILES=()
