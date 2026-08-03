@@ -180,7 +180,7 @@ describe("CandidateLine", () => {
 
     expect(screen.getByLabelText("候选 1 后续走法").textContent).toContain("车9平8");
     expect(screen.getByText("私教讲解 / 10回合表")).toBeTruthy();
-    expect(screen.getByText("当前深度仅返回 6/20 个半回合")).toBeTruthy();
+    expect(screen.getByText("当前深度仅返回 6/20 个半回合（最多10回合）")).toBeTruthy();
     expect(screen.getByLabelText("候选线路 1 私教讲解").textContent).toContain("主候选");
     expect(view.container.querySelector('[role="table"]')?.getAttribute("aria-label")).toBe("候选线路 1 10回合推演");
   });

@@ -144,11 +144,11 @@ fn default_piece_skin() -> String {
 }
 
 fn default_report_depth() -> u32 {
-    26
+    30
 }
 
 fn default_candidate_line_moves() -> u32 {
-    6
+    20
 }
 
 fn default_cloud_book_url() -> String {
@@ -167,8 +167,8 @@ impl Default for DesktopPreferences {
             hash_mb: 256,
             multipv: 3,
             candidate_line_moves: default_candidate_line_moves(),
-            search_mode: "infinite".into(),
-            search_value: 1500,
+            search_mode: "depth".into(),
+            search_value: 30,
             move_time_ms: 2000,
             ponder: false,
             auto_analyze: true,
@@ -311,10 +311,22 @@ impl LocalStore {
             "SELECT id, phase, course_name, title, source_path, fingerprint, transcription_status, duration_ms, scanned_at
              FROM theory_lessons ORDER BY phase, title",
         )?;
-        statement.query_map([], |row| Ok(TheoryLesson {
-            id: row.get(0)?, phase: row.get(1)?, course_name: row.get(2)?, title: row.get(3)?, source_path: row.get(4)?,
-            fingerprint: row.get(5)?, transcription_status: row.get(6)?, duration_ms: row.get(7)?, scanned_at: row.get(8)?,
-        }))?.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+        statement
+            .query_map([], |row| {
+                Ok(TheoryLesson {
+                    id: row.get(0)?,
+                    phase: row.get(1)?,
+                    course_name: row.get(2)?,
+                    title: row.get(3)?,
+                    source_path: row.get(4)?,
+                    fingerprint: row.get(5)?,
+                    transcription_status: row.get(6)?,
+                    duration_ms: row.get(7)?,
+                    scanned_at: row.get(8)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(Into::into)
     }
 
     pub fn theory_cards(&self) -> Result<Vec<TheoryCard>, StoreError> {
@@ -322,10 +334,24 @@ impl LocalStore {
             "SELECT c.id, c.lesson_id, l.phase, c.title, c.summary, c.applies_when, c.risk, c.timecode, c.review_status, l.course_name, l.title
              FROM theory_cards c JOIN theory_lessons l ON l.id=c.lesson_id ORDER BY c.review_status, l.phase, l.title",
         )?;
-        statement.query_map([], |row| Ok(TheoryCard {
-            id: row.get(0)?, lesson_id: row.get(1)?, phase: row.get(2)?, title: row.get(3)?, summary: row.get(4)?, applies_when: row.get(5)?,
-            risk: row.get(6)?, timecode: row.get(7)?, review_status: row.get(8)?, course_name: row.get(9)?, lesson_title: row.get(10)?,
-        }))?.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+        statement
+            .query_map([], |row| {
+                Ok(TheoryCard {
+                    id: row.get(0)?,
+                    lesson_id: row.get(1)?,
+                    phase: row.get(2)?,
+                    title: row.get(3)?,
+                    summary: row.get(4)?,
+                    applies_when: row.get(5)?,
+                    risk: row.get(6)?,
+                    timecode: row.get(7)?,
+                    review_status: row.get(8)?,
+                    course_name: row.get(9)?,
+                    lesson_title: row.get(10)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(Into::into)
     }
 
     pub fn create_theory_card(
@@ -343,9 +369,10 @@ impl LocalStore {
             params![lesson_id, title, summary, applies_when, risk, timecode],
         )?;
         let id = self.connection.last_insert_rowid();
-        self.theory_cards()?.into_iter().find(|card| card.id == id).ok_or_else(|| {
-            StoreError::Sql(rusqlite::Error::QueryReturnedNoRows)
-        })
+        self.theory_cards()?
+            .into_iter()
+            .find(|card| card.id == id)
+            .ok_or_else(|| StoreError::Sql(rusqlite::Error::QueryReturnedNoRows))
     }
 
     pub fn review_theory_card(&mut self, card: &TheoryCard) -> Result<(), StoreError> {
@@ -2381,8 +2408,8 @@ mod tests {
         assert_eq!(preferences.manual_view_mode, "track");
         assert_eq!(preferences.color_theme, "dark");
         assert_eq!(preferences.branch_arrow_color, "#2f80ed");
-        assert_eq!(preferences.report_depth, 20);
-        assert_eq!(preferences.candidate_line_moves, 6);
+        assert_eq!(preferences.report_depth, 30);
+        assert_eq!(preferences.candidate_line_moves, 20);
         assert!(preferences.xqb_book_paths.is_empty());
         assert!(preferences.cloud_book_enabled);
         assert_eq!(

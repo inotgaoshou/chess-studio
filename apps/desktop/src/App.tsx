@@ -149,8 +149,8 @@ const defaultDesktopPreferences: DesktopPreferencesDto = {
   hashMb: 256,
   multipv: 3,
   candidateLineMoves: DEFAULT_CANDIDATE_LINE_MOVES,
-  searchMode: "infinite",
-  searchValue: 1500,
+  searchMode: "depth",
+  searchValue: 30,
   moveTimeMs: 2000,
   ponder: false,
   autoAnalyze: true,
@@ -165,7 +165,7 @@ const defaultDesktopPreferences: DesktopPreferencesDto = {
   colorTheme: "dark",
   boardSkin: "default",
   pieceSkin: "default",
-  reportDepth: 26,
+  reportDepth: 30,
   cloudBookEnabled: true,
   cloudBookUrl: "https://www.chessdb.cn/chessdb.php",
   analysisEngineMode: "single",
@@ -177,6 +177,18 @@ const defaultSyncAccount: SyncAccountDto = {
   serverUrl: defaultDesktopPreferences.serverUrl,
   status: "unbound",
 };
+
+function migrateDesktopPreferences(preferences: DesktopPreferencesDto): DesktopPreferencesDto {
+  const migratedSearchDefaults = (preferences.searchMode === "time" || preferences.searchMode === "infinite") && preferences.searchValue === 1500
+    ? { searchMode: "depth" as const, searchValue: 30 }
+    : {};
+  return {
+    ...preferences,
+    ...migratedSearchDefaults,
+    candidateLineMoves: preferences.candidateLineMoves === 6 ? DEFAULT_CANDIDATE_LINE_MOVES : preferences.candidateLineMoves,
+    reportDepth: preferences.reportDepth === 26 ? 30 : preferences.reportDepth,
+  };
+}
 
 function engineDisplayName(path: string) {
   if (path === BUILTIN_ENGINE_PATH) return "内置 Pikafish";
@@ -1078,6 +1090,11 @@ export default function App() {
     faulted: "故障",
   };
   const currentEngineLabel = chessPlatform.kind === "web" ? "云端 Pikafish" : engineDisplayName(enginePath);
+  const currentEngineVersionLabel = chessPlatform.kind === "web" ? currentEngineLabel : engineProbeDisplayName(currentEngineLabel, engineProbe);
+  const currentNnueLabel = chessPlatform.kind === "web" ? undefined : nnueProbeLabel(engineProbe);
+  const currentEngineTitle = chessPlatform.kind === "web" ? "云端 Pikafish" : engineProbeTitle(currentEngineLabel, enginePath || "未配置引擎", engineProbe);
+  const currentEngineHashLabel = shortHash(engineProbe?.engineSha256);
+  const currentNnueHashLabel = shortHash(engineProbe?.nnueSha256);
   const strategyInsight = useMemo(() => {
     const reportPosition = board.currentNode ? reportPositionByNode.get(board.currentNode)?.position : gameReport?.positions.at(-1);
     return buildStrategyInsight({
@@ -1156,15 +1173,9 @@ export default function App() {
     to: boardPoint(move.to, reversed),
   })) : [], [branchArrowColor, directBranchChoices, hasVisibleBranchChoices, reversed]);
   const boardArrows = useMemo(() => {
-    // In preview, only draw the simulated move. The other arrows belong to
-    // the real board position and would make the temporary position ambiguous.
-    if (candidatePreview && previewStep) return [{
-      rank: candidatePreview.rank,
-      color: candidatePreview.color,
-      label: previewStep.notation,
-      from: boardPoint(previewStep.from, reversed),
-      to: boardPoint(previewStep.to, reversed),
-    }];
+    // Preview already marks the simulated from/to squares. Hide route arrows
+    // so old analysis lines never look like they are attached to the preview.
+    if (candidatePreview && previewStep) return [];
     if (branchArrows.length > 0) return branchArrows;
     return analysisArrows;
   }, [analysisArrows, branchArrows, candidatePreview, previewStep, reversed]);
@@ -1175,32 +1186,33 @@ export default function App() {
   }
 
   function applyDesktopPreferences(preferences: DesktopPreferencesDto) {
+    const migrated = migrateDesktopPreferences(preferences);
     const normalized = {
-      ...preferences,
-      manualViewMode: preferences.manualViewMode === "tree" ? "tree" as ManualViewMode : "track" as ManualViewMode,
-      boardSkin: normalizeSkinId(preferences.boardSkin),
-      pieceSkin: normalizeSkinId(preferences.pieceSkin),
+      ...migrated,
+      manualViewMode: migrated.manualViewMode === "tree" ? "tree" as ManualViewMode : "track" as ManualViewMode,
+      boardSkin: normalizeSkinId(migrated.boardSkin),
+      pieceSkin: normalizeSkinId(migrated.pieceSkin),
     };
     desktopPreferencesRef.current = normalized;
     persistedPreferencesRef.current = normalized;
     multipvRef.current = normalized.multipv;
     setDesktopPreferences(normalized);
-    setEnginePath(preferences.enginePath);
-    setThreads(preferences.threads);
-    setHashMb(preferences.hashMb);
-    setMultipv(preferences.multipv);
-    setSearchMode(preferences.searchMode);
-    setSearchValue(preferences.searchValue);
-    setMoveTimeMs(preferences.moveTimeMs);
-    setPonderEnabled(preferences.ponder);
-    setAutoAnalyze(preferences.autoAnalyze);
-    setLibraryCollapsed(preferences.libraryCollapsed);
-    setCandidateRailCollapsed(preferences.candidateRailCollapsed);
-    setAnalysisPanelCollapsed(preferences.analysisPanelCollapsed);
-    setFloatingEvaluationCollapsed(preferences.evaluationCollapsed);
-    setWorkspacePanel(preferences.workspacePanel);
-    setColorTheme(preferences.colorTheme);
-    setServerUrl(preferences.serverUrl);
+    setEnginePath(normalized.enginePath);
+    setThreads(normalized.threads);
+    setHashMb(normalized.hashMb);
+    setMultipv(normalized.multipv);
+    setSearchMode(normalized.searchMode);
+    setSearchValue(normalized.searchValue);
+    setMoveTimeMs(normalized.moveTimeMs);
+    setPonderEnabled(normalized.ponder);
+    setAutoAnalyze(normalized.autoAnalyze);
+    setLibraryCollapsed(normalized.libraryCollapsed);
+    setCandidateRailCollapsed(normalized.candidateRailCollapsed);
+    setAnalysisPanelCollapsed(normalized.analysisPanelCollapsed);
+    setFloatingEvaluationCollapsed(normalized.evaluationCollapsed);
+    setWorkspacePanel(normalized.workspacePanel);
+    setColorTheme(normalized.colorTheme);
+    setServerUrl(normalized.serverUrl);
   }
 
   function saveDesktopPreferencePatch(patch: Partial<DesktopPreferencesDto>) {
@@ -2090,8 +2102,8 @@ export default function App() {
     setAnalysisBusy(true);
     if (!automatic) selectWorkspacePanel("analysis");
     setNotice(automatic ? `${analysisTargets.length} 个引擎正在自动分析…` : `${analysisTargets.length} 个引擎正在计算…`);
-    const effectiveMode = automatic && searchMode === "infinite" ? "time" : searchMode;
-    const effectiveValue = automatic && searchMode === "infinite" ? 1500 : searchValue;
+    const effectiveMode = automatic && searchMode === "infinite" ? "depth" : searchMode;
+    const effectiveValue = automatic && searchMode === "infinite" ? 30 : searchValue;
     try {
       const completed = await Promise.allSettled(analysisTargets.map((target) => chessPlatform.analyze({
         enginePath: target.path,
@@ -2606,19 +2618,22 @@ export default function App() {
         const builtInEngine = preferences.enginePath === BUILTIN_ENGINE_PATH || preferences.enginePath === BUILTIN_FAIRY_ENGINE_PATH;
         if (builtInEngine) {
           const probe = await chessPlatform.probeEngine(preferences.enginePath);
+          setEngineProbe(probe);
           activeEngineId = undefined;
           enginePath = probe.path;
-          handshakeMessage = `${probe.protocol.toUpperCase()} 内置引擎握手成功`;
+          handshakeMessage = `${probe.protocol.toUpperCase()} ${probe.engineVersion ?? "内置引擎"} 握手成功`;
         } else {
           const profile = await chessPlatform.registerEngineProfile(profileName?.trim() || engineDisplayName(preferences.enginePath), preferences.enginePath);
+          setEngineProbe(undefined);
           activeEngineId = profile.id;
           enginePath = profile.executablePath;
           handshakeMessage = `${profile.protocol.toUpperCase()} 引擎握手成功`;
         }
       } else {
         const probe = await chessPlatform.probeEngine(preferences.enginePath);
+        setEngineProbe(probe);
         enginePath = probe.path;
-        handshakeMessage = `${probe.protocol.toUpperCase()} 引擎握手成功`;
+        handshakeMessage = `${probe.protocol.toUpperCase()} ${probe.engineVersion ?? "引擎"} 握手成功`;
       }
       const saved = await saveDesktopPreferencePatch({
         enginePath,
@@ -3342,10 +3357,10 @@ export default function App() {
       </div>
       {compactLayout && <div className="compact-engine-strip" aria-label="简洁布局引擎状态">
         <span className={analysisBusy ? "running" : ""}><Activity size={14}/><strong>引擎：</strong></span>
-        <div className="compact-engine-config" title={chessPlatform.kind === "web" ? "云端 Pikafish" : enginePath || "未配置引擎"}>
-          <button type="button" onClick={() => chessPlatform.kind === "desktop" ? setDesktopDialog("engine") : selectWorkspacePanel("analysis")}>{currentEngineLabel}</button>
-          <small>{threads}</small>
-          <small>{hashMb}</small>
+        <div className="compact-engine-config" title={currentEngineTitle}>
+          <button type="button" onClick={() => chessPlatform.kind === "desktop" ? setDesktopDialog("engine") : selectWorkspacePanel("analysis")}>{currentEngineVersionLabel}</button>
+          <small title={`${threads} 线程 · Hash ${hashMb} MB`}>{threads}T/{hashMb}M</small>
+          <small title={currentNnueLabel ?? `MultiPV ${multipv}`}>{currentNnueHashLabel ? `NNUE ${currentNnueHashLabel}` : currentNnueLabel ? "NNUE" : `PV ${multipv}`}</small>
           <i aria-hidden="true"/>
         </div>
         <button type="button" title="引擎设置" aria-label="引擎设置" onClick={() => chessPlatform.kind === "desktop" ? setDesktopDialog("engine") : selectWorkspacePanel("analysis")}><Settings2 size={14}/></button>
@@ -3477,10 +3492,10 @@ export default function App() {
           <section className="floating-panel-body floating-engine-body">
             <div className="compact-engine-strip" aria-label="浮动窗口引擎状态">
               <span className={analysisBusy ? "running" : ""}><Activity size={14}/><strong>引擎：</strong></span>
-              <div className="compact-engine-config" title={chessPlatform.kind === "web" ? "云端 Pikafish" : enginePath || "未配置引擎"}>
-                <button type="button" onClick={() => chessPlatform.kind === "desktop" ? setDesktopDialog("engine") : selectWorkspacePanel("analysis")}>{currentEngineLabel}</button>
-                <small>{threads}</small>
-                <small>{hashMb}</small>
+              <div className="compact-engine-config" title={currentEngineTitle}>
+                <button type="button" onClick={() => chessPlatform.kind === "desktop" ? setDesktopDialog("engine") : selectWorkspacePanel("analysis")}>{currentEngineVersionLabel}</button>
+                <small title={`${threads} 线程 · Hash ${hashMb} MB`}>{threads}T/{hashMb}M</small>
+                <small title={currentNnueLabel ?? `MultiPV ${multipv}`}>{currentNnueHashLabel ? `NNUE ${currentNnueHashLabel}` : currentNnueLabel ? "NNUE" : `PV ${multipv}`}</small>
                 <i aria-hidden="true"/>
               </div>
               <button type="button" title="引擎设置" aria-label="引擎设置" onClick={() => chessPlatform.kind === "desktop" ? setDesktopDialog("engine") : selectWorkspacePanel("analysis")}><Settings2 size={14}/></button>
@@ -3785,7 +3800,7 @@ export default function App() {
                   </button>
                 );
               })}
-              {boardArrows.length > 0 && (
+              {!candidatePreview && boardArrows.length > 0 && (
                 <>
                   <svg className="analysis-arrow-lines" viewBox="0 0 1120 1240" aria-hidden="true">
                   <defs>
@@ -3941,7 +3956,7 @@ export default function App() {
           {workspacePanel === "analysis" && <div id="workspace-panel-analysis" className="workspace-content analysis-workspace" role="tabpanel" aria-labelledby="workspace-tab-analysis">
           <section className="engine-control">
             <div className="engine-heading">
-              <div><Activity size={16}/><strong>{currentEngineLabel}</strong></div>
+              <div title={currentEngineTitle}><Activity size={16}/><strong>{currentEngineVersionLabel}</strong></div>
               <div className="engine-heading-actions">
                 <label className="auto-analysis-toggle" title="每次落子或切换棋谱节点后自动分析">
                   <input type="checkbox" checked={autoAnalyze} onChange={(event) => setAutoAnalyze(event.target.checked)}/>
@@ -3960,8 +3975,8 @@ export default function App() {
                 <button className="move-now" title={engineStarting ? `${currentEngineLabel} 正在启动` : engineThinking ? "停止搜索并立即落子" : `等待 ${currentEngineLabel} 思考`} disabled={!engineThinking} onClick={() => void moveNow()}><Zap size={12}/>立即</button>
               </div>
               {engineSide !== "none" && <div className="engine-play-status"><span className={engineThinking ? "thinking" : engineStarting ? "starting" : ""}/><strong>人机对弈</strong><small>{currentEngineLabel} 执{engineSide === "red" ? "红" : "黑"}{engineStarting ? " · 启动中" : engineThinking ? " · 思考中" : ponderMove ? ` · 预测 ${ponderMove}` : " · 等待行棋"}</small></div>}
-              <button className="engine-config-summary" onClick={() => setDesktopDialog("engine")}>
-                <Settings2 size={14}/><span>{currentEngineLabel}</span><small>{threads} 线程 · Hash {hashMb} MB · MultiPV {multipv}</small>
+              <button className="engine-config-summary" title={currentEngineTitle} onClick={() => setDesktopDialog("engine")}>
+                <Settings2 size={14}/><span>{currentEngineVersionLabel}</span><small>{threads} 线程 · Hash {hashMb} MB · MultiPV {multipv}{currentEngineHashLabel ? ` · 引擎 ${currentEngineHashLabel}` : ""}{currentNnueLabel ? ` · ${currentNnueLabel}` : ""}{currentNnueHashLabel ? ` · ${currentNnueHashLabel}` : ""}</small>
               </button>
               {engineProfiles.length > 0 && <div className="engine-profile-select"><label><span>当前引擎</span><select value={desktopPreferences.activeEngineId ?? ""} onChange={(event) => void selectEngineProfile(event.target.value)}><option value="" disabled>选择已添加的引擎</option>{engineProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.protocol.toUpperCase()}</option>)}</select></label><button title="删除当前引擎档案" onClick={() => void removeEngineProfile()}><Trash2 size={13}/></button></div>}
             </>}

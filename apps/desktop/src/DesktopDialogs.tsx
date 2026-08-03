@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { FolderOpen, LogIn, Save, Settings2, Trash2, UserPlus, X } from "lucide-react";
 import { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH, type DesktopPreferencesDto, type EngineProfileDto, type SubscriptionDto, type SyncAccountDto, type TrainingTaskDto } from "./platform";
-import { MAX_CANDIDATE_LINE_MOVES, MIN_CANDIDATE_LINE_MOVES } from "./candidatePreview";
+import { DEFAULT_CANDIDATE_LINE_MOVES, MAX_CANDIDATE_LINE_MOVES, MIN_CANDIDATE_LINE_MOVES } from "./candidatePreview";
 
 export type DesktopDialog = "engine" | "syncSettings" | "register" | "login" | "subscription" | "training" | "unbind" | null;
 
@@ -41,23 +41,36 @@ function clampInteger(value: number, min: number, max: number) {
 }
 
 function sanitizeEnginePreferences(preferences: DesktopPreferencesDto): DesktopPreferencesDto {
-  return {
+  const migratedSearchDefaults = matchesLegacySearchDefaults(preferences)
+    ? { searchMode: "depth" as const, searchValue: 30 }
+    : {};
+  const migrated = {
     ...preferences,
-    threads: clampInteger(preferences.threads, 1, 64),
-    hashMb: clampInteger(preferences.hashMb, 16, 4096),
-    multipv: clampInteger(preferences.multipv, 1, 10),
-    candidateLineMoves: clampInteger(preferences.candidateLineMoves, MIN_CANDIDATE_LINE_MOVES, MAX_CANDIDATE_LINE_MOVES),
-    searchValue: preferences.searchMode === "infinite"
-      ? preferences.searchValue
-      : clampInteger(
-        preferences.searchValue,
-        preferences.searchMode === "depth" ? 1 : preferences.searchMode === "nodes" ? 1000 : 100,
-        preferences.searchMode === "depth" ? 100 : preferences.searchMode === "nodes" ? 100000000 : 30000,
-    ),
-    reportDepth: clampInteger(preferences.reportDepth, 8, 40),
-    moveTimeMs: clampInteger(preferences.moveTimeMs, 100, 30000),
-    branchArrowColor: branchArrowColors.some(([value]) => value === preferences.branchArrowColor) ? preferences.branchArrowColor : "#2f80ed",
+    ...migratedSearchDefaults,
+    candidateLineMoves: preferences.candidateLineMoves === 6 ? DEFAULT_CANDIDATE_LINE_MOVES : preferences.candidateLineMoves,
+    reportDepth: preferences.reportDepth === 26 ? 30 : preferences.reportDepth,
   };
+  return {
+    ...migrated,
+    threads: clampInteger(migrated.threads, 1, 64),
+    hashMb: clampInteger(migrated.hashMb, 16, 4096),
+    multipv: clampInteger(migrated.multipv, 1, 10),
+    candidateLineMoves: clampInteger(migrated.candidateLineMoves, MIN_CANDIDATE_LINE_MOVES, MAX_CANDIDATE_LINE_MOVES),
+    searchValue: migrated.searchMode === "infinite"
+      ? migrated.searchValue
+      : clampInteger(
+        migrated.searchValue,
+        migrated.searchMode === "depth" ? 1 : migrated.searchMode === "nodes" ? 1000 : 100,
+        migrated.searchMode === "depth" ? 100 : migrated.searchMode === "nodes" ? 100000000 : 30000,
+    ),
+    reportDepth: clampInteger(migrated.reportDepth, 8, 40),
+    moveTimeMs: clampInteger(migrated.moveTimeMs, 100, 30000),
+    branchArrowColor: branchArrowColors.some(([value]) => value === migrated.branchArrowColor) ? migrated.branchArrowColor : "#2f80ed",
+  };
+}
+
+function matchesLegacySearchDefaults(preferences: DesktopPreferencesDto) {
+  return (preferences.searchMode === "time" || preferences.searchMode === "infinite") && preferences.searchValue === 1500;
 }
 
 function engineInputValue(path: string) {
@@ -86,7 +99,7 @@ function authenticationErrorMessage(error: unknown) {
 }
 
 export function DesktopDialogs({ dialog, preferences, account, subscription, trainingTasks, engineProfiles = [], busy, onClose, onChooseEngine, onSaveEngine, onSelectEngineProfile, onDeleteEngineProfile, onSaveSync, onUnbindSync, onAuthenticate, onRedeemSubscription, onGenerateTraining, onCompleteTraining }: Props) {
-  const [draft, setDraft] = useState(preferences);
+  const [draft, setDraft] = useState(() => sanitizeEnginePreferences(preferences));
   const [email, setEmail] = useState(account.email ?? "");
   const [password, setPassword] = useState("");
   const [redemptionCode, setRedemptionCode] = useState("");
@@ -121,7 +134,7 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
     }
     if (initializedDialog.current === dialog) return;
     initializedDialog.current = dialog;
-    setDraft(preferences);
+    setDraft(sanitizeEnginePreferences(preferences));
     setEmail(account.email ?? "");
     setPassword("");
     setRedemptionCode("");
@@ -322,7 +335,7 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
           <label><span>线程</span><input type="number" min={1} max={64} value={draft.threads} onChange={(event) => setDraft({ ...draft, threads: Number(event.target.value) })}/></label>
           <label><span>Hash (MB)</span><input type="number" min={16} max={4096} step={16} value={draft.hashMb} onChange={(event) => setDraft({ ...draft, hashMb: Number(event.target.value) })}/></label>
           <label><span>MultiPV</span><input type="number" min={1} max={10} value={draft.multipv} onChange={(event) => setDraft({ ...draft, multipv: Number(event.target.value) })}/></label>
-          <label><span>后续走法（半回合）</span><input type="number" min={MIN_CANDIDATE_LINE_MOVES} max={MAX_CANDIDATE_LINE_MOVES} value={draft.candidateLineMoves} onChange={(event) => setDraft({ ...draft, candidateLineMoves: Number(event.target.value) })}/></label>
+          <label><span>后续走法（10回合=20半回合）</span><input type="number" min={MIN_CANDIDATE_LINE_MOVES} max={MAX_CANDIDATE_LINE_MOVES} value={draft.candidateLineMoves} onChange={(event) => setDraft({ ...draft, candidateLineMoves: Number(event.target.value) })}/></label>
           <label><span>搜索模式</span><select value={draft.searchMode} onChange={(event) => setDraft({ ...draft, searchMode: event.target.value as DesktopPreferencesDto["searchMode"] })}><option value="time">固定时间</option><option value="depth">固定深度</option><option value="nodes">固定节点</option><option value="infinite">持续分析</option></select></label>
           <label><span>搜索限制</span><input type="number" disabled={draft.searchMode === "infinite"} min={draft.searchMode === "depth" ? 1 : draft.searchMode === "nodes" ? 1000 : 100} max={draft.searchMode === "depth" ? 100 : draft.searchMode === "nodes" ? 100000000 : 30000} value={draft.searchValue} onChange={(event) => setDraft({ ...draft, searchValue: Number(event.target.value) })}/></label>
           <label><span>整局复盘深度</span><input type="number" min={8} max={40} value={draft.reportDepth} onChange={(event) => setDraft({ ...draft, reportDepth: Number(event.target.value) })}/></label>

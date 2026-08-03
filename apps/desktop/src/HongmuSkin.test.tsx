@@ -11,9 +11,9 @@ const preferences: DesktopPreferencesDto = {
   threads: 2,
   hashMb: 256,
   multipv: 3,
-  candidateLineMoves: 6,
-  searchMode: "time",
-  searchValue: 1500,
+  candidateLineMoves: 20,
+  searchMode: "depth",
+  searchValue: 30,
   moveTimeMs: 2000,
   ponder: false,
   autoAnalyze: true,
@@ -30,7 +30,7 @@ const preferences: DesktopPreferencesDto = {
   workspacePanel: "moves",
   layoutMode: "studio",
   manualViewMode: "track",
-  reportDepth: 26,
+  reportDepth: 30,
   serverUrl: "http://127.0.0.1:8080",
 };
 

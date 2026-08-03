@@ -9,9 +9,9 @@ const preferences: DesktopPreferencesDto = {
   threads: 2,
   hashMb: 256,
   multipv: 3,
-  candidateLineMoves: 6,
-  searchMode: "time",
-  searchValue: 1500,
+  candidateLineMoves: 20,
+  searchMode: "depth",
+  searchValue: 30,
   moveTimeMs: 2000,
   ponder: false,
   autoAnalyze: true,
@@ -28,7 +28,7 @@ const preferences: DesktopPreferencesDto = {
   colorTheme: "dark",
   boardSkin: "default",
   pieceSkin: "default",
-  reportDepth: 26,
+  reportDepth: 30,
   serverUrl: "http://127.0.0.1:8080",
 };
 const account: SyncAccountDto = { serverUrl: preferences.serverUrl, status: "unbound" };
@@ -136,8 +136,8 @@ describe("DesktopDialogs", () => {
     const { props, user } = renderDialog("engine");
     await user.clear(screen.getByLabelText("MultiPV"));
     await user.type(screen.getByLabelText("MultiPV"), "4");
-    await user.clear(screen.getByLabelText("后续走法（半回合）"));
-    await user.type(screen.getByLabelText("后续走法（半回合）"), "12");
+    await user.clear(screen.getByLabelText("后续走法（10回合=20半回合）"));
+    await user.type(screen.getByLabelText("后续走法（10回合=20半回合）"), "12");
     await user.click(screen.getByRole("button", { name: "检测并保存" }));
     expect(props.onSaveEngine).toHaveBeenCalledWith(expect.objectContaining({ enginePath: "/opt/pikafish", multipv: 4, candidateLineMoves: 12 }));
   });
@@ -151,6 +151,23 @@ describe("DesktopDialogs", () => {
 
     expect(props.onSaveEngine).toHaveBeenCalledWith(expect.objectContaining({ multipv: 10 }));
     expect((screen.getByLabelText("MultiPV") as HTMLInputElement).value).toBe("10");
+  });
+
+  it("migrates legacy engine defaults when the settings dialog opens", () => {
+    renderDialog("engine", {
+      preferences: {
+        ...preferences,
+        candidateLineMoves: 6,
+        searchMode: "infinite",
+        searchValue: 1500,
+        reportDepth: 26,
+      },
+    });
+
+    expect((screen.getByLabelText("搜索模式") as HTMLSelectElement).value).toBe("depth");
+    expect((screen.getByLabelText("搜索限制") as HTMLInputElement).value).toBe("30");
+    expect((screen.getByLabelText("整局复盘深度") as HTMLInputElement).value).toBe("30");
+    expect((screen.getByLabelText("后续走法（10回合=20半回合）") as HTMLInputElement).value).toBe("20");
   });
 
   it("adds Fairy and Cyclone style engines through named presets", async () => {
