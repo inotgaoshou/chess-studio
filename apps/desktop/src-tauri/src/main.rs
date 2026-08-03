@@ -9,7 +9,7 @@ mod pdf_report;
 mod xqb_opening_book;
 
 use std::collections::{BTreeMap, HashMap};
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -22,7 +22,7 @@ use credential_store::{SharedCredentialStore, SystemCredentialStore, TOKEN_KEY};
 use engine_protocol::{EngineControl, EngineEvent, EngineSession, Protocol, SearchLimit};
 use local_store::{
     AnalysisSummary, DesktopPreferences, EngineProfile, ImportedGame, LocalGame, LocalStore,
-    SyncAccountBinding, TrainingTask,
+    SyncAccountBinding, TheoryCard, TheoryLesson, TrainingTask,
 };
 use manual_format::{
     ManualDocument, ManualFormat, ManualMetadata, detect_format, export_chinese_text,
@@ -35,12 +35,27 @@ use sync_protocol::{
     ReorderBranchesPayload, SetMainlinePayload, UpdateCommentPayload, UpdateGameMetadataPayload,
 };
 use tauri::{Emitter, Manager, State};
+use tokio::process::Command;
+use tokio::time::timeout;
 use uuid::Uuid;
 use xiangqi_core::{Board, Color, GameStatus, Move, PieceKind, STARTING_FEN, Square};
 use xiangqi_manual::{ManualTree, MoveNode};
 
 const BUILTIN_ENGINE_PATH: &str = "builtin:pikafish";
 const BUILTIN_FAIRY_ENGINE_PATH: &str = "builtin:fairy-stockfish";
+const THEORY_COURSE_ROOTS: [(&str, &str, &str); 3] = [
+    ("opening", "赵鑫鑫布局棋理48讲", "/Users/chenyubin/Desktop/象棋学习/01赵鑫鑫布局棋理48讲"),
+    ("middle", "赵鑫鑫中局棋理48讲", "/Users/chenyubin/Desktop/象棋学习/02赵鑫鑫中局棋理48讲"),
+    ("endgame", "赵鑫鑫残局棋理48讲", "/Users/chenyubin/Desktop/象棋学习/03赵鑫鑫残局棋理48讲"),
+];
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TheoryLibraryDto {
+    lessons: Vec<TheoryLesson>,
+    cards: Vec<TheoryCard>,
+    downloading_files: usize,
+}
 
 struct AppModel {
     board: Board,
@@ -106,6 +121,12 @@ struct AuthResponse {
 struct EngineProbeDto {
     path: String,
     protocol: &'static str,
+    engine_version: Option<String>,
+    engine_sha256: Option<String>,
+    nnue_file: Option<String>,
+    nnue_version: Option<String>,
+    nnue_sha256: Option<String>,
+    fingerprint: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -2085,6 +2106,12 @@ fn update_fingerprint(hasher: &mut Sha256, path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn file_sha256(path: &Path) -> Result<String, String> {
+    let mut hasher = Sha256::new();
+    update_fingerprint(&mut hasher, path)?;
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
 fn report_engine_fingerprint(engine_path: &Path) -> Result<String, String> {
     let mut hasher = Sha256::new();
     hasher.update(b"engine\0");
@@ -2105,6 +2132,44 @@ fn report_engine_fingerprint(engine_path: &Path) -> Result<String, String> {
         update_fingerprint(&mut hasher, &path)?;
     }
     Ok(format!("sha256:{:x}", hasher.finalize()))
+}
+
+async fn probe_pikafish_runtime_metadata(
+    engine_path: &Path,
+) -> (Option<String>, Option<String>) {
+    if engine_family(engine_path) != EngineFamily::Pikafish {
+        return (None, None);
+    }
+    let mut command = Command::new(engine_path);
+    command
+        .arg("bench")
+        .arg("1")
+        .current_dir(engine_path.parent().unwrap_or_else(|| Path::new(".")));
+    #[cfg(windows)]
+    command.as_std_mut().creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+
+    let Ok(output) = timeout(Duration::from_secs(8), command.output()).await else {
+        return (None, None);
+    };
+    let Ok(output) = output else {
+        return (None, None);
+    };
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let engine_version = stdout
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("Pikafish "))
+        .map(ToOwned::to_owned);
+    let nnue_version = stdout
+        .lines()
+        .map(str::trim)
+        .find_map(|line| {
+            let metadata = line.strip_prefix("info string NNUE evaluation using ")?;
+            metadata
+                .split_once(' ')
+                .map(|(_, version)| version.trim().to_owned())
+        });
+    (engine_version, nnue_version)
 }
 
 fn report_side(board: &Board) -> String {
@@ -2964,13 +3029,32 @@ async fn probe_engine(path: String, app: tauri::AppHandle) -> Result<EngineProbe
     let session = EngineSession::launch(&resolved_path, Duration::from_secs(5))
         .await
         .map_err(|error| format!("引擎握手失败：{error}"))?;
+    let protocol = protocol_name(session.protocol());
+    let _ = session.close().await;
+    let nnue_path = preferred_nnue_path(&resolved_path);
+    let nnue_file = nnue_path
+        .as_deref()
+        .and_then(|path| path.file_name())
+        .and_then(|name| name.to_str())
+        .map(ToOwned::to_owned);
+    let nnue_sha256 = nnue_path
+        .as_deref()
+        .map(file_sha256)
+        .transpose()?;
+    let (engine_version, nnue_version) = probe_pikafish_runtime_metadata(&resolved_path).await;
     Ok(EngineProbeDto {
         path: match path.trim() {
             BUILTIN_ENGINE_PATH => BUILTIN_ENGINE_PATH.into(),
             BUILTIN_FAIRY_ENGINE_PATH => BUILTIN_FAIRY_ENGINE_PATH.into(),
             _ => resolved_path.to_string_lossy().into_owned(),
         },
-        protocol: protocol_name(session.protocol()),
+        protocol,
+        engine_version,
+        engine_sha256: Some(file_sha256(&resolved_path)?),
+        nnue_file,
+        nnue_version,
+        nnue_sha256,
+        fingerprint: report_engine_fingerprint(&resolved_path).ok(),
     })
 }
 
@@ -4191,6 +4275,101 @@ fn next_operation(
     }
 }
 
+fn collect_theory_videos(directory: &Path, files: &mut Vec<PathBuf>, downloading: &mut usize) -> Result<(), String> {
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format!("读取课程目录失败：{error}")),
+    };
+    for entry in entries {
+        let path = entry.map_err(|error| format!("读取课程文件失败：{error}"))?.path();
+        if path.is_dir() {
+            collect_theory_videos(&path, files, downloading)?;
+        } else if path.extension().and_then(|value| value.to_str()) == Some("mp4") {
+            files.push(path);
+        } else if path.to_string_lossy().ends_with(".baiduyun.p.downloading") {
+            *downloading += 1;
+        }
+    }
+    Ok(())
+}
+
+fn theory_fingerprint(path: &Path) -> Result<String, String> {
+    let metadata = fs::metadata(path).map_err(|error| format!("读取课程文件信息失败：{error}"))?;
+    let modified = metadata.modified().ok()
+        .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|value| value.as_secs()).unwrap_or_default();
+    Ok(format!("{}:{modified}", metadata.len()))
+}
+
+fn theory_library_dto(store: &LocalStore, downloading_files: usize) -> Result<TheoryLibraryDto, String> {
+    Ok(TheoryLibraryDto {
+        lessons: store.theory_lessons().map_err(|error| error.to_string())?,
+        cards: store.theory_cards().map_err(|error| error.to_string())?,
+        downloading_files,
+    })
+}
+
+#[tauri::command]
+fn scan_theory_library(state: State<'_, DesktopState>) -> Result<TheoryLibraryDto, String> {
+    let mut discovered = Vec::new();
+    let mut downloading_files = 0;
+    for (phase, course_name, root) in THEORY_COURSE_ROOTS {
+        let root_path = Path::new(root);
+        let mut videos = Vec::new();
+        collect_theory_videos(root_path, &mut videos, &mut downloading_files)?;
+        for path in videos {
+            let title = path.file_stem().and_then(|value| value.to_str()).unwrap_or("未命名课程").to_owned();
+            discovered.push((phase, course_name, path, title));
+        }
+    }
+    let mut model = state.model.lock().map_err(|_| "state lock poisoned".to_owned())?;
+    for (phase, course_name, path, title) in discovered {
+        let source_path = path.to_string_lossy().into_owned();
+        let fingerprint = theory_fingerprint(&path)?;
+        model.store.upsert_theory_lesson(phase, course_name, &title, &source_path, &fingerprint)
+            .map_err(|error| error.to_string())?;
+    }
+    theory_library_dto(&model.store, downloading_files)
+}
+
+#[tauri::command]
+fn get_theory_library(state: State<'_, DesktopState>) -> Result<TheoryLibraryDto, String> {
+    let model = state.model.lock().map_err(|_| "state lock poisoned".to_owned())?;
+    theory_library_dto(&model.store, 0)
+}
+
+#[tauri::command]
+fn review_theory_card(card: TheoryCard, state: State<'_, DesktopState>) -> Result<TheoryCard, String> {
+    if !matches!(card.review_status.as_str(), "pending" | "approved" | "rejected") {
+        return Err("无效的原则卡审核状态".into());
+    }
+    if card.title.trim().is_empty() || card.summary.trim().is_empty() || card.applies_when.trim().is_empty() || card.risk.trim().is_empty() {
+        return Err("原则卡需要标题、短摘要、适用条件和风险说明".into());
+    }
+    let mut model = state.model.lock().map_err(|_| "state lock poisoned".to_owned())?;
+    model.store.review_theory_card(&card).map_err(|error| error.to_string())?;
+    Ok(card)
+}
+
+#[tauri::command]
+fn create_theory_card(
+    lesson_id: i64,
+    title: String,
+    summary: String,
+    applies_when: String,
+    risk: String,
+    timecode: Option<String>,
+    state: State<'_, DesktopState>,
+) -> Result<TheoryCard, String> {
+    if title.trim().is_empty() || summary.trim().is_empty() || applies_when.trim().is_empty() || risk.trim().is_empty() {
+        return Err("原则卡需要标题、短摘要、适用条件和风险说明".into());
+    }
+    let mut model = state.model.lock().map_err(|_| "state lock poisoned".to_owned())?;
+    model.store.create_theory_card(lesson_id, &title, &summary, &applies_when, &risk, timecode.as_deref())
+        .map_err(|error| error.to_string())
+}
+
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
@@ -4373,6 +4552,10 @@ fn main() {
             list_training_tasks,
             generate_training_tasks,
             complete_training_task,
+            scan_theory_library,
+            get_theory_library,
+            review_theory_card,
+            create_theory_card,
             get_sync_account,
             get_subscription,
             redeem_subscription_code,

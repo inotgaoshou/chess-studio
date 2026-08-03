@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ManualTrackView } from "./ManualTrackView";
 import type { ManualTreeNode, MoveItem, PreviewLineStep, Side } from "./platform";
+import { buildStrategyInsight } from "./strategyInsights";
 
 afterEach(cleanup);
 
@@ -25,6 +26,7 @@ function renderTrack(options: {
   onExportLine?: (contents: string) => Promise<string | undefined>;
   previewBranch?: Parameters<typeof ManualTrackView>[0]["previewBranch"];
   previewBranches?: Parameters<typeof ManualTrackView>[0]["previewBranches"];
+  strategyInsight?: Parameters<typeof ManualTrackView>[0]["strategyInsight"];
 } = {}) {
   const red = move("r1", "马八进七", "红方");
   const black = move("b1", "马8进7", "黑方");
@@ -46,6 +48,7 @@ function renderTrack(options: {
     onViewModeChange={onViewModeChange}
     previewBranch={options.previewBranch}
     previewBranches={options.previewBranches}
+    strategyInsight={options.strategyInsight}
     qualityByMoveId={new Map([["b1", { score: 88, grade: "优" }]])}
     viewMode="track"
   />);
@@ -102,6 +105,54 @@ describe("ManualTrackView", () => {
     expect(within(dialog).getByText("+0.23")).toBeTruthy();
     expect(within(dialog).getByText("马8进7")).toBeTruthy();
     expect(within(dialog).getByText("优88分")).toBeTruthy();
+  });
+
+  it("shows a directly viewable chess record image", () => {
+    renderTrack();
+
+    fireEvent.click(screen.getByRole("button", { name: "完整棋谱" }));
+    fireEvent.click(screen.getByRole("button", { name: "棋谱图" }));
+
+    expect(screen.getByRole("img", { name: "当前局面完整棋谱图片" }).getAttribute("src")).toContain("data:image/svg+xml");
+    expect(screen.getByRole("button", { name: "下载图片" })).toBeTruthy();
+  });
+
+  it("shows opening logic and includes it in the exported text", async () => {
+    const onExportLine = vi.fn().mockResolvedValue("/tmp/当前局面棋谱.txt");
+    renderTrack({ onExportLine });
+
+    fireEvent.click(screen.getByRole("button", { name: "完整棋谱" }));
+    fireEvent.click(screen.getByRole("button", { name: "思路" }));
+    expect(screen.getByRole("region", { name: "开局思路" })).toBeTruthy();
+    expect(screen.getByText("以子力展开和中心控制为先")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "下载" }));
+
+    await waitFor(() => expect(onExportLine).toHaveBeenCalledTimes(1));
+    expect(onExportLine.mock.calls[0][0]).toContain("开局思路（根据走法自动归纳，非引擎结论）");
+    expect(onExportLine.mock.calls[0][0]).toContain("底层逻辑：");
+  });
+
+  it("shows facts, theory, plan, and engine evidence in the three-stage insight", async () => {
+    const onExportLine = vi.fn().mockResolvedValue("/tmp/当前局面棋谱.txt");
+    const strategyInsight = buildStrategyInsight({
+      sideToMove: "红方", ply: 8, phase: "opening", pieces: [], history: ["炮二平五"],
+      analysis: { multipv: 1, depth: 16, scoreCp: 20, notation: ["马二进三", "马8进7"], pv: ["b0c2", "b9c7"] }, engineName: "Pikafish",
+    });
+    renderTrack({ onExportLine, strategyInsight });
+
+    fireEvent.click(screen.getByRole("button", { name: "完整棋谱" }));
+    fireEvent.click(screen.getByRole("button", { name: "思路" }));
+    expect(screen.getByRole("region", { name: "三阶段思路分析" })).toBeTruthy();
+    expect(screen.getByText("局面事实")).toBeTruthy();
+    expect(screen.getByText("棋理依据")).toBeTruthy();
+    expect(screen.getByText(/引擎验证 · 引擎支持/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "残局" }));
+    expect(screen.getByText("残局计划模板")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "下载" }));
+
+    await waitFor(() => expect(onExportLine).toHaveBeenCalledTimes(1));
+    expect(onExportLine.mock.calls[0][0]).toContain("赵鑫鑫开局总论");
+    expect(onExportLine.mock.calls[0][0]).toContain("PV：马二进三 马8进7");
   });
 
   it("exports the current line with per-move scores", async () => {

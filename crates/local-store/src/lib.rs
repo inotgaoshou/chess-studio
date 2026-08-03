@@ -246,6 +246,36 @@ pub struct EngineProfile {
     pub protocol: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TheoryLesson {
+    pub id: i64,
+    pub phase: String,
+    pub course_name: String,
+    pub title: String,
+    pub source_path: String,
+    pub fingerprint: String,
+    pub transcription_status: String,
+    pub duration_ms: Option<u64>,
+    pub scanned_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TheoryCard {
+    pub id: i64,
+    pub lesson_id: i64,
+    pub phase: String,
+    pub title: String,
+    pub summary: String,
+    pub applies_when: String,
+    pub risk: String,
+    pub timecode: Option<String>,
+    pub review_status: String,
+    pub course_name: String,
+    pub lesson_title: String,
+}
+
 impl LocalStore {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
         let connection = Connection::open(path)?;
@@ -254,6 +284,76 @@ impl LocalStore {
 
     pub fn open_in_memory() -> Result<Self, StoreError> {
         Self::initialize(Connection::open_in_memory()?)
+    }
+
+    pub fn upsert_theory_lesson(
+        &mut self,
+        phase: &str,
+        course_name: &str,
+        title: &str,
+        source_path: &str,
+        fingerprint: &str,
+    ) -> Result<(), StoreError> {
+        self.connection.execute(
+            "INSERT INTO theory_lessons (phase, course_name, title, source_path, fingerprint, transcription_status, scanned_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'queued', datetime('now'))
+             ON CONFLICT(source_path) DO UPDATE SET
+               phase=excluded.phase, course_name=excluded.course_name, title=excluded.title,
+               transcription_status=CASE WHEN theory_lessons.fingerprint != excluded.fingerprint THEN 'queued' ELSE theory_lessons.transcription_status END,
+               fingerprint=excluded.fingerprint, scanned_at=excluded.scanned_at",
+            params![phase, course_name, title, source_path, fingerprint],
+        )?;
+        Ok(())
+    }
+
+    pub fn theory_lessons(&self) -> Result<Vec<TheoryLesson>, StoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, phase, course_name, title, source_path, fingerprint, transcription_status, duration_ms, scanned_at
+             FROM theory_lessons ORDER BY phase, title",
+        )?;
+        statement.query_map([], |row| Ok(TheoryLesson {
+            id: row.get(0)?, phase: row.get(1)?, course_name: row.get(2)?, title: row.get(3)?, source_path: row.get(4)?,
+            fingerprint: row.get(5)?, transcription_status: row.get(6)?, duration_ms: row.get(7)?, scanned_at: row.get(8)?,
+        }))?.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn theory_cards(&self) -> Result<Vec<TheoryCard>, StoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT c.id, c.lesson_id, l.phase, c.title, c.summary, c.applies_when, c.risk, c.timecode, c.review_status, l.course_name, l.title
+             FROM theory_cards c JOIN theory_lessons l ON l.id=c.lesson_id ORDER BY c.review_status, l.phase, l.title",
+        )?;
+        statement.query_map([], |row| Ok(TheoryCard {
+            id: row.get(0)?, lesson_id: row.get(1)?, phase: row.get(2)?, title: row.get(3)?, summary: row.get(4)?, applies_when: row.get(5)?,
+            risk: row.get(6)?, timecode: row.get(7)?, review_status: row.get(8)?, course_name: row.get(9)?, lesson_title: row.get(10)?,
+        }))?.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn create_theory_card(
+        &mut self,
+        lesson_id: i64,
+        title: &str,
+        summary: &str,
+        applies_when: &str,
+        risk: &str,
+        timecode: Option<&str>,
+    ) -> Result<TheoryCard, StoreError> {
+        self.connection.execute(
+            "INSERT INTO theory_cards (lesson_id, title, summary, applies_when, risk, timecode, review_status)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending')",
+            params![lesson_id, title, summary, applies_when, risk, timecode],
+        )?;
+        let id = self.connection.last_insert_rowid();
+        self.theory_cards()?.into_iter().find(|card| card.id == id).ok_or_else(|| {
+            StoreError::Sql(rusqlite::Error::QueryReturnedNoRows)
+        })
+    }
+
+    pub fn review_theory_card(&mut self, card: &TheoryCard) -> Result<(), StoreError> {
+        self.connection.execute(
+            "UPDATE theory_cards SET title=?2, summary=?3, applies_when=?4, risk=?5, timecode=?6, review_status=?7 WHERE id=?1",
+            params![card.id, card.title, card.summary, card.applies_when, card.risk, card.timecode, card.review_status],
+        )?;
+        Ok(())
     }
 
     pub fn desktop_preferences(&self) -> Result<DesktopPreferences, StoreError> {
@@ -1220,6 +1320,21 @@ impl LocalStore {
                completed_at TEXT, created_at TEXT NOT NULL,
                UNIQUE(game_id, report_signature, node_id)
              );
+             CREATE TABLE IF NOT EXISTS theory_lessons (
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               phase TEXT NOT NULL, course_name TEXT NOT NULL, title TEXT NOT NULL,
+               source_path TEXT NOT NULL UNIQUE, fingerprint TEXT NOT NULL,
+               transcription_status TEXT NOT NULL DEFAULT 'queued', duration_ms INTEGER,
+               scanned_at TEXT NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS idx_theory_lessons_phase ON theory_lessons(phase, transcription_status);
+             CREATE TABLE IF NOT EXISTS theory_cards (
+               id INTEGER PRIMARY KEY AUTOINCREMENT, lesson_id INTEGER NOT NULL,
+               title TEXT NOT NULL, summary TEXT NOT NULL, applies_when TEXT NOT NULL,
+               risk TEXT NOT NULL, timecode TEXT, review_status TEXT NOT NULL DEFAULT 'pending',
+               FOREIGN KEY(lesson_id) REFERENCES theory_lessons(id) ON DELETE CASCADE
+             );
+             CREATE INDEX IF NOT EXISTS idx_theory_cards_review ON theory_cards(review_status, lesson_id);
              UPDATE operations
              SET payload = json_set(
                payload,

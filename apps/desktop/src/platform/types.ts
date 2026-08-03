@@ -235,7 +235,7 @@ export type DesktopPreferencesDto = {
   analysisPanelCollapsed: boolean;
   evaluationCollapsed: boolean;
   branchArrowColor: string;
-  workspacePanel: "moves" | "analysis" | "trend" | "summary" | "report";
+  workspacePanel: "moves" | "analysis" | "trend" | "summary" | "report" | "theory";
   layoutMode: WorkspaceLayoutMode;
   manualViewMode: ManualViewMode;
   colorTheme: "light" | "dark";
@@ -277,7 +277,42 @@ export type TrainingTaskDto = {
   completedAt?: string;
   createdAt: string;
 };
-export type EngineProbeDto = { path: string; protocol: "uci" | "ucci" };
+export type TheoryPhase = "opening" | "middle" | "endgame";
+export type TheoryLessonDto = {
+  id: number;
+  phase: TheoryPhase;
+  courseName: string;
+  title: string;
+  sourcePath: string;
+  fingerprint: string;
+  transcriptionStatus: "queued" | "processing" | "complete" | "failed";
+  durationMs?: number;
+  scannedAt: string;
+};
+export type TheoryCardDto = {
+  id: number;
+  lessonId: number;
+  phase: TheoryPhase;
+  title: string;
+  summary: string;
+  appliesWhen: string;
+  risk: string;
+  timecode?: string;
+  reviewStatus: "pending" | "approved" | "rejected";
+  courseName: string;
+  lessonTitle: string;
+};
+export type TheoryLibraryDto = { lessons: TheoryLessonDto[]; cards: TheoryCardDto[]; downloadingFiles: number };
+export type EngineProbeDto = {
+  path: string;
+  protocol: "uci" | "ucci";
+  engineVersion?: string;
+  engineSha256?: string;
+  nnueFile?: string;
+  nnueVersion?: string;
+  nnueSha256?: string;
+  fingerprint?: string;
+};
 export type EngineProfileDto = { id: string; name: string; executablePath: string; protocol: "uci" | "ucci"; active: boolean };
 export type GameSummary = { id: string; title: string; fen: string; updatedAt: string; current: boolean };
 export type EnginePlayOptions = { enginePath: string; moveTimeMs: number; threads: number; hashMb: number; ponder: boolean };
@@ -310,6 +345,10 @@ export interface ChessPlatform {
   listCoachReports(): Promise<GameReportDatasetDto[]>;
   listTrainingTasks(): Promise<TrainingTaskDto[]>;
   generateTrainingTasks(): Promise<TrainingTaskDto[]>;
+  scanTheoryLibrary(): Promise<TheoryLibraryDto>;
+  getTheoryLibrary(): Promise<TheoryLibraryDto>;
+  reviewTheoryCard(card: TheoryCardDto): Promise<TheoryCardDto>;
+  createTheoryCard(card: Pick<TheoryCardDto, "lessonId" | "title" | "summary" | "appliesWhen" | "risk" | "timecode">): Promise<TheoryCardDto>;
   completeTrainingTask(taskId: string, completed: boolean): Promise<void>;
   playMove(iccs: string): Promise<Partial<BoardState>>;
   newGame(fen: string, title?: string, note?: string): Promise<Partial<BoardState>>;

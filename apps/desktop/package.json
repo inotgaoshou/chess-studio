@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "wasm:build": "wasm-pack build ../../crates/web-core --target web --out-dir ../../apps/desktop/public/wasm --out-name xiangqi_web_core",
+    "theory:distill": "node ../../tools/theory-distill.mjs",
     "dev": "vite --port 1420",
     "build": "tsc && vite build",
     "test": "vitest run",

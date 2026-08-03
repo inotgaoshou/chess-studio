@@ -4,7 +4,7 @@ import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { webDatabase, type SyncOperation, type WebGameRecord } from "./indexedDb";
 import { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH } from "./types";
-import type { AnalysisLine, AnalysisOptions, BoardState, ChessPlatform, CloudBookCandidate, DesktopPreferencesDto, EngineMoveResult, EnginePlayOptions, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, ExportFormat, GameReportDatasetDto, GameReportOptionsDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, PreviewLineStep, ReplayExportScope, SubscriptionDto, SyncAccountDto, SyncResult, TrainingTaskDto } from "./types";
+import type { AnalysisLine, AnalysisOptions, BoardState, ChessPlatform, CloudBookCandidate, DesktopPreferencesDto, EngineMoveResult, EnginePlayOptions, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, ExportFormat, GameReportDatasetDto, GameReportOptionsDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, PreviewLineStep, ReplayExportScope, SubscriptionDto, SyncAccountDto, SyncResult, TheoryCardDto, TheoryLibraryDto, TrainingTaskDto } from "./types";
 
 type WebGameInstance = {
   stateJson(): string;
@@ -135,6 +135,10 @@ class DesktopPlatform implements ChessPlatform {
   listCoachReports() { return invoke<GameReportDatasetDto[]>("list_coach_reports"); }
   listTrainingTasks() { return invoke<TrainingTaskDto[]>("list_training_tasks"); }
   generateTrainingTasks() { return invoke<TrainingTaskDto[]>("generate_training_tasks"); }
+  scanTheoryLibrary() { return invoke<TheoryLibraryDto>("scan_theory_library"); }
+  getTheoryLibrary() { return invoke<TheoryLibraryDto>("get_theory_library"); }
+  reviewTheoryCard(card: TheoryCardDto) { return invoke<TheoryCardDto>("review_theory_card", { card }); }
+  createTheoryCard(card: Pick<TheoryCardDto, "lessonId" | "title" | "summary" | "appliesWhen" | "risk" | "timecode">) { return invoke<TheoryCardDto>("create_theory_card", { ...card }); }
   completeTrainingTask(taskId: string, completed: boolean) { return invoke<void>("complete_training_task", { taskId, completed }); }
   playMove(iccs: string) { return invoke<Partial<BoardState>>("play_move", { iccs }); }
   newGame(fen: string, title?: string, note?: string) { return invoke<Partial<BoardState>>("new_game", { fen, title, note }); }
@@ -398,6 +402,10 @@ class WebPlatform implements ChessPlatform {
   async generateGameReport(): Promise<GameReportDatasetDto> { throw new Error("Web 端不支持本地整局分析报告"); }
   async listTrainingTasks(): Promise<TrainingTaskDto[]> { throw new Error("Web 端暂不支持训练任务"); }
   async generateTrainingTasks(): Promise<TrainingTaskDto[]> { throw new Error("Web 端暂不支持训练任务"); }
+  async scanTheoryLibrary(): Promise<TheoryLibraryDto> { throw new Error("Web 端暂不支持本地棋理库"); }
+  async getTheoryLibrary(): Promise<TheoryLibraryDto> { throw new Error("Web 端暂不支持本地棋理库"); }
+  async reviewTheoryCard(_card: TheoryCardDto): Promise<TheoryCardDto> { throw new Error("Web 端暂不支持本地棋理库"); }
+  async createTheoryCard(_card: Pick<TheoryCardDto, "lessonId" | "title" | "summary" | "appliesWhen" | "risk" | "timecode">): Promise<TheoryCardDto> { throw new Error("Web 端暂不支持本地棋理库"); }
   async completeTrainingTask(): Promise<void> { throw new Error("Web 端暂不支持训练任务"); }
   async cancelGameReport() { return false; }
   async getGameReport(): Promise<GameReportDatasetDto | undefined> { throw new Error("Web 端不支持本地整局分析报告"); }
@@ -658,4 +666,4 @@ class WebPlatform implements ChessPlatform {
 const tauriAvailable = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 export const chessPlatform: ChessPlatform = tauriAvailable ? new DesktopPlatform() : new WebPlatform();
 export { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH } from "./types";
-export type { AnalysisLine, AnalysisOptions, BoardState, BranchCoachInsightDto, ChessPlatform, CloudBookCandidate, DesktopPreferencesDto, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, EngineRuntimeState, ExportFormat, GameReportDatasetDto, GameReportOptionsDto, GameReportPositionDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, LegacySkinId, ManualTreeNode, ManualViewMode, MoveCoachInsightDto, MoveItem, OpeningBookHitDto, Piece, PreviewLineStep, QualityGrade, ReplayExportScope, ReportPhase, ReportSidePresentationDto, Side, SkinFolder, SkinId, SubscriptionDto, SyncAccountDto, SyncResult, TrainingTaskDto, WorkspaceLayoutMode } from "./types";
+export type { AnalysisLine, AnalysisOptions, BoardState, BranchCoachInsightDto, ChessPlatform, CloudBookCandidate, DesktopPreferencesDto, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, EngineRuntimeState, ExportFormat, GameReportDatasetDto, GameReportOptionsDto, GameReportPositionDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, LegacySkinId, ManualTreeNode, ManualViewMode, MoveCoachInsightDto, MoveItem, OpeningBookHitDto, Piece, PreviewLineStep, QualityGrade, ReplayExportScope, ReportPhase, ReportSidePresentationDto, Side, SkinFolder, SkinId, SubscriptionDto, SyncAccountDto, SyncResult, TheoryCardDto, TheoryLessonDto, TheoryLibraryDto, TheoryPhase, TrainingTaskDto, WorkspaceLayoutMode } from "./types";

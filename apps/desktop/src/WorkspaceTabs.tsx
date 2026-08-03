@@ -1,7 +1,7 @@
 import type { KeyboardEvent } from "react";
 import { Activity, BarChart3, BookOpen, ClipboardList } from "lucide-react";
 
-export const workspacePanels = ["moves", "analysis", "trend", "summary", "report"] as const;
+export const workspacePanels = ["moves", "analysis", "trend", "summary", "report", "theory"] as const;
 export type WorkspacePanel = typeof workspacePanels[number];
 
 const tabs = [
@@ -10,6 +10,7 @@ const tabs = [
   ["trend", "局势图", BarChart3],
   ["summary", "摘要", ClipboardList],
   ["report", "报告", ClipboardList],
+  ["theory", "棋理库", BookOpen],
 ] as const;
 
 type Props = { active: WorkspacePanel; onChange(panel: WorkspacePanel): void };

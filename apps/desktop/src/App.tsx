@@ -42,7 +42,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH, chessPlatform, type AnalysisLine, type BoardState, type CloudBookCandidate, type EngineProfileDto, type EngineRuntimeState, type ExportFormat, type GameReportDatasetDto, type GameReportProgressDto, type GameSummary, type MoveItem, type Piece, type PreviewLineStep, type ReplayExportScope, type TrainingTaskDto } from "./platform";
+import { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH, chessPlatform, type AnalysisLine, type BoardState, type CloudBookCandidate, type EngineProbeDto, type EngineProfileDto, type EngineRuntimeState, type ExportFormat, type GameReportDatasetDto, type GameReportProgressDto, type GameSummary, type MoveItem, type Piece, type PreviewLineStep, type ReplayExportScope, type TheoryLibraryDto, type TrainingTaskDto } from "./platform";
 import { evaluationRedShare, moveQualityFeedback, moveReports, positionEvaluation, redAnalysisScoreText, trendChart, trendPoints, trendTurningPoints } from "./analysisView";
 import { CandidateLine } from "./CandidateLine";
 import { hasEngineDivergence, MultiEngineComparison, type EngineComparisonGroup } from "./MultiEngineComparison";
@@ -69,6 +69,9 @@ import { ENGINE_ANALYSIS_HISTORY_LIMIT, beginAnalysisHistory, beginAnalysisStrea
 import { ACCOUNT_SKINS, normalizeSkinId, requiresSignInForSkinPatch, skinAssetFolder } from "./skinAccess";
 import { hasUpcomingBranchPoint } from "./branchNavigation";
 import { buildMindMapSvg } from "./mindMapExport";
+import { buildStrategyInsight } from "./strategyInsights";
+import { TheoryLibraryView } from "./TheoryLibraryView";
+import { bundledTheoryKnowledge } from "./theoryKnowledge.generated";
 
 
 const COMPACT_PANEL_RETURN_EVENT = "compact-panel-return";
@@ -179,6 +182,30 @@ function engineDisplayName(path: string) {
   if (path === BUILTIN_ENGINE_PATH) return "内置 Pikafish";
   if (path === BUILTIN_FAIRY_ENGINE_PATH) return "内置 Fairy-Stockfish";
   return path ? path.split(/[\\/]/).at(-1) ?? path : "选择引擎";
+}
+
+function shortHash(hash?: string) {
+  return hash ? hash.replace(/^sha256:/, "").slice(0, 12) : undefined;
+}
+
+function engineProbeDisplayName(fallbackName: string, probe?: EngineProbeDto) {
+  return probe?.engineVersion ?? fallbackName;
+}
+
+function nnueProbeLabel(probe?: EngineProbeDto) {
+  if (!probe?.nnueFile) return undefined;
+  return `NNUE ${probe.nnueFile}${probe.nnueVersion ? ` ${probe.nnueVersion}` : ""}`;
+}
+
+function engineProbeTitle(fallbackName: string, path: string, probe?: EngineProbeDto) {
+  const lines = [`当前主引擎：${engineProbeDisplayName(fallbackName, probe)}`];
+  if (path) lines.push(`路径：${path}`);
+  if (probe?.engineSha256) lines.push(`引擎 SHA256：${probe.engineSha256}`);
+  const nnue = nnueProbeLabel(probe);
+  if (nnue) lines.push(nnue);
+  if (probe?.nnueSha256) lines.push(`NNUE SHA256：${probe.nnueSha256}`);
+  if (probe?.fingerprint) lines.push(`资源指纹：${probe.fingerprint}`);
+  return lines.join("\n");
 }
 
 function externalEngineProfiles(profiles: EngineProfileDto[]) {
@@ -407,7 +434,11 @@ export default function App() {
   const [candidatePreviewBranches, setCandidatePreviewBranches] = useState<ManualPreviewBranch[]>([]);
   const [syncAccount, setSyncAccount] = useState(defaultSyncAccount);
   const [subscription, setSubscription] = useState<SubscriptionDto>();
+  const [theoryLibrary, setTheoryLibrary] = useState<TheoryLibraryDto>();
+  const [theoryLibraryBusy, setTheoryLibraryBusy] = useState(false);
+  const [theoryLibraryError, setTheoryLibraryError] = useState<string>();
   const [desktopDialog, setDesktopDialog] = useState<DesktopDialog>(null);
+  const [engineProbe, setEngineProbe] = useState<EngineProbeDto>();
   const [engineProfiles, setEngineProfiles] = useState<EngineProfileDto[]>([]);
   const [cloudCandidates, setCloudCandidates] = useState<CloudBookCandidate[]>([]);
   const [cloudBookError, setCloudBookError] = useState<string>();
@@ -520,6 +551,7 @@ export default function App() {
         setAutosave({ status: "saved" });
         void loadSavedAnalysis(state.fen ?? startingFen);
         if (chessPlatform.kind === "desktop") void loadGameReport();
+        if (chessPlatform.kind === "desktop") void chessPlatform.getTheoryLibrary().then(setTheoryLibrary).catch(() => undefined);
         void refreshGames();
         if (chessPlatform.kind === "web") setNotice("离线棋谱已就绪");
       })
@@ -546,6 +578,45 @@ export default function App() {
       void chessPlatform.listEngineProfiles().then((profiles) => setEngineProfiles(externalEngineProfiles(profiles))).catch(() => undefined);
     }
   }, []);
+
+  async function scanTheoryLibrary() {
+    if (chessPlatform.kind !== "desktop" || theoryLibraryBusy) return;
+    setTheoryLibraryBusy(true);
+    setTheoryLibraryError(undefined);
+    try {
+      const library = await chessPlatform.scanTheoryLibrary();
+      setTheoryLibrary(library);
+      setNotice(`已索引 ${library.lessons.length} 节课程；${library.downloadingFiles} 个文件仍在下载中`);
+    } catch (error) {
+      const message = friendlyError(error);
+      setTheoryLibraryError(message);
+      setNotice(message);
+    } finally {
+      setTheoryLibraryBusy(false);
+    }
+  }
+
+  async function createTheoryCard(card: Parameters<typeof chessPlatform.createTheoryCard>[0]) {
+    if (chessPlatform.kind !== "desktop") return;
+    try {
+      await chessPlatform.createTheoryCard(card);
+      setTheoryLibrary(await chessPlatform.getTheoryLibrary());
+      setNotice("候选原则卡已加入待审核列表");
+    } catch (error) {
+      setTheoryLibraryError(friendlyError(error));
+    }
+  }
+
+  async function reviewTheoryCard(card: Parameters<typeof chessPlatform.reviewTheoryCard>[0]) {
+    if (chessPlatform.kind !== "desktop") return;
+    try {
+      await chessPlatform.reviewTheoryCard(card);
+      setTheoryLibrary(await chessPlatform.getTheoryLibrary());
+      setNotice(card.reviewStatus === "approved" ? "原则卡已确认，后续棋谱分析会使用它" : "原则卡已拒绝");
+    } catch (error) {
+      setTheoryLibraryError(friendlyError(error));
+    }
+  }
 
   useEffect(() => {
     if (!floatingPanel || chessPlatform.kind !== "desktop") return;
@@ -634,6 +705,24 @@ export default function App() {
       cleanup?.();
     };
   }, []);
+
+  useEffect(() => {
+    if (chessPlatform.kind !== "desktop" || !enginePath) {
+      setEngineProbe(undefined);
+      return;
+    }
+    let cancelled = false;
+    void chessPlatform.probeEngine(enginePath)
+      .then((probe) => {
+        if (!cancelled) setEngineProbe(probe);
+      })
+      .catch(() => {
+        if (!cancelled) setEngineProbe(undefined);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [enginePath]);
 
   useEffect(() => {
     if (chessPlatform.kind !== "desktop" || !desktopPreferences.cloudBookEnabled) {
@@ -989,6 +1078,42 @@ export default function App() {
     faulted: "故障",
   };
   const currentEngineLabel = chessPlatform.kind === "web" ? "云端 Pikafish" : engineDisplayName(enginePath);
+  const strategyInsight = useMemo(() => {
+    const reportPosition = board.currentNode ? reportPositionByNode.get(board.currentNode)?.position : gameReport?.positions.at(-1);
+    return buildStrategyInsight({
+      sideToMove: board.sideToMove,
+      ply: board.history.length,
+      pieces: board.pieces,
+      history: board.history.map((move) => move.notation),
+      phase: reportPosition?.phase,
+      currentBranchCount: board.branches.length || board.siblingBranches?.length,
+      openingName: reportPosition?.opening?.name,
+      analysis: analysisIsStale ? undefined : primaryAnalysis,
+      analysisBusy,
+      analysisStale: analysisIsStale,
+      engineName: currentEngineLabel,
+      courseCards: [
+        ...bundledTheoryKnowledge.cards.map((card) => ({
+          id: `bundled-${card.id}`,
+          phase: card.phase,
+          title: card.title,
+          summary: card.summary,
+          appliesWhen: card.appliesWhen,
+          risk: card.risk,
+          source: { label: "赵鑫鑫课程" as const, course: card.courseName, episode: card.lessonTitle, timecode: card.timecode, review: "已确认" as const },
+        })),
+        ...(theoryLibrary?.cards ?? []).filter((card) => card.reviewStatus === "approved").map((card) => ({
+        id: `course-${card.id}`,
+        phase: card.phase,
+        title: card.title,
+        summary: card.summary,
+        appliesWhen: card.appliesWhen,
+        risk: card.risk,
+        source: { label: "赵鑫鑫课程" as const, course: card.courseName, episode: card.lessonTitle, timecode: card.timecode, review: "已确认" as const },
+        })),
+      ],
+    });
+  }, [analysisBusy, analysisIsStale, board.branches.length, board.currentNode, board.fen, board.history, board.pieces, board.sideToMove, board.siblingBranches?.length, currentEngineLabel, gameReport?.positions, primaryAnalysis, reportPositionByNode, theoryLibrary?.cards]);
   const selectedAnalysisEngines = useMemo(() => {
     const activeProfile = engineProfiles.find((profile) => profile.id === desktopPreferences.activeEngineId || profile.executablePath === enginePath);
     const primary = { id: activeProfile?.id ?? "primary", name: activeProfile?.name ?? currentEngineLabel, path: enginePath, primary: true };
@@ -3117,6 +3242,7 @@ export default function App() {
             steps: candidatePreview.steps,
           }] : candidatePreviewBranches}
           qualityByMoveId={reportByMoveId}
+          strategyInsight={strategyInsight}
           viewMode={desktopPreferences.manualViewMode ?? "track"}
         />}
     </div>;
@@ -3881,6 +4007,9 @@ export default function App() {
                 </div>
               )}
             </div></div>}
+            {workspacePanel === "theory" && <div id="workspace-panel-theory" className="review-empty-or-content" role="tabpanel" aria-labelledby="workspace-tab-theory">
+              <TheoryLibraryView library={theoryLibrary} busy={theoryLibraryBusy} error={theoryLibraryError} onScan={() => void scanTheoryLibrary()} onCreateCard={(card) => void createTheoryCard(card)} onReviewCard={(card) => void reviewTheoryCard(card)}/>
+            </div>}
             {workspacePanel === "trend" && <div id="workspace-panel-trend" className="review-empty-or-content trend-review" role="tabpanel" aria-labelledby="workspace-tab-trend">
               {evaluationTrend.length === 0
                 ? <div className="empty-review"><BarChart3 size={24}/><strong>暂无局势曲线</strong><span>分析棋谱节点后，这里会按红方视角显示历史分数</span></div>
@@ -4047,6 +4176,7 @@ export default function App() {
         onClose={() => setManualLineDialogOpen(false)}
         onExportLine={(contents) => exportCurrentLineText(contents)}
         qualityByMoveId={reportByMoveId}
+        strategyInsight={strategyInsight}
       />}
       {engineDivergenceDialog()}
       {analysisHelpOpen && (

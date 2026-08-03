@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, Copy, Download, GitBranch, ListStart, MessageSquare, Sparkles, Trash2, X } from "lucide-react";
+import { BookOpen, ChevronDown, ChevronRight, Copy, Download, GitBranch, Image as ImageIcon, ListStart, MessageSquare, Sparkles, Trash2, X } from "lucide-react";
 import type { CSSProperties } from "react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -12,6 +12,7 @@ import {
 } from "./manualTrackModel";
 import type { ManualTreeNode, MoveItem, PreviewLineStep } from "./platform";
 import { CANDIDATE_PREVIEW_HALF_MOVES } from "./candidatePreview";
+import { formatStrategyInsightText, type StrategyInsight } from "./strategyInsights";
 
 type Props = {
   nodes: ManualTreeNode[];
@@ -26,6 +27,7 @@ type Props = {
   onMakeMainline(nodeId: string): void;
   onRemove(nodeId: string): void;
   onExportLine?(contents: string): Promise<string | undefined>;
+  strategyInsight?: StrategyInsight;
   previewBranch?: ManualPreviewBranch;
   previewBranches?: ManualPreviewBranch[];
 };
@@ -59,6 +61,14 @@ type ManualLineRow = {
   black?: ManualLineMove;
 };
 
+export type OpeningPlan = {
+  title: string;
+  core: string;
+  principles: string[];
+  risks: string[];
+  advice: string;
+};
+
 function scoreForLineMove(move: MoveItem, options: ManualLineScoreOptions) {
   const quality = options.qualityByMoveId?.get(move.id);
   if (quality?.score != null) return `${quality.grade ?? ""}${quality.score}分`;
@@ -88,34 +98,115 @@ export function formatHistoryLine(history: MoveItem[], options: ManualLineScoreO
   return buildHistoryLineRows(history, options).map((row) => `${row.turn}. ${formatLineMoveText(row.red)}${row.black ? `  ${formatLineMoveText(row.black)}` : ""}`.trim());
 }
 
+/** A readable opening outline derived from recorded moves, never an engine verdict. */
+export function buildOpeningPlan(history: MoveItem[]): OpeningPlan {
+  const redMoves = history.filter((move) => move.movedBy === "红方").map((move) => move.notation);
+  const blackMoves = history.filter((move) => move.movedBy === "黑方").map((move) => move.notation);
+  const hasCentralCannon = redMoves.includes("炮二平五");
+  const hasCounterCannon = blackMoves.includes("炮8平5");
+  const hasDoubleHorse = redMoves.includes("马二进三") && redMoves.includes("马八进七");
+  const pawnMoves = redMoves.filter((move) => move.startsWith("兵"));
+  const hasSpacePawns = pawnMoves.some((move) => move.startsWith("兵三")) || pawnMoves.some((move) => move.startsWith("兵七"));
+  const hasActiveBlackRook = blackMoves.some((move) => move === "车4进7" || move === "车1平6" || /^车[14].*进[5-9]/.test(move));
+
+  if (hasCentralCannon && hasCounterCannon) {
+    return {
+      title: hasDoubleHorse ? "中炮对中炮，抢先展开的主动布局" : "中炮对中炮，以中路为骨架的对攻布局",
+      core: "先用中炮控制中线，再完成车马炮展开；兵线前推不是单独抢兵，而是为车马炮打开进攻线路并争取先手。",
+      principles: [
+        hasDoubleHorse ? "双马先出，优先解决子力协调，再决定从中路还是兵线突破。" : "先补足马、车的出动，让中炮的控制力有后续子力支援。",
+        hasSpacePawns ? "三兵、七兵前进，目的是限制对方马位并形成可供车马进入的空间。" : "兵线暂未形成突破点，应避免只靠中炮单兵深入。",
+        "理想联动是中炮牵制中路，车二参与横向或纵向施压，马负责前哨与战术点。",
+      ],
+      risks: [
+        hasActiveBlackRook ? "黑方双车已有活跃反击路线，红方若只继续推兵，后方和底线可能先承受压力。" : "对攻局中不能只看自己的展开，要持续留意黑方车马对中路和底线的反击。",
+        "空间优势必须转化为子力进入；没有车马炮跟进的兵线前推，会留下兵根和王翼空隙。",
+      ],
+      advice: "下一阶段遵循“先接住对方反击，再组织联动突破”：优先让车二参加中路或七路争夺，确认黑车的侵入路线被限制后，再用炮五、马和兵线制造连续先手。",
+    };
+  }
+
+  return {
+    title: "以子力展开和中心控制为先",
+    core: "开局的底层逻辑是先完成子力协调、控制中心，再把空间优势转化为可持续的进攻线路。",
+    principles: [
+      "优先让马、车、炮各有合理位置，避免单一子力过早深入。",
+      "兵线前进用于限制对方子力和打开线路，需要车马炮跟进才会形成真实攻势。",
+      "进攻前先确认己方将帅安全和对方的反击子力。",
+    ],
+    risks: ["没有形成子力联动前，持续抢攻容易给对方留下先手反击。"],
+    advice: "继续记录几回合后可结合当前分支和引擎主变，进一步判断最合适的突破一路。",
+  };
+}
+
 function downloadManualLineText(filename: string, text: string) {
   const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+  downloadManualLineBlob(filename, blob);
+  return filename;
+}
+
+function downloadManualLineBlob(filename: string, blob: Blob) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
   link.download = filename;
   link.click();
   URL.revokeObjectURL(url);
-  return filename;
 }
 
-export function ManualLineDialog({ history, currentLabel, qualityByMoveId, formatScore, onClose, onExportLine }: {
+function escapeSvgText(value: string) {
+  return value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[character] ?? character);
+}
+
+export function buildManualLineImageSvg(rows: ManualLineRow[], currentLabel: string | undefined, moveCount: number, strategy?: StrategyInsight) {
+  const width = 1400;
+  const headerHeight = 128;
+  const rowHeight = 88;
+  const insightHeight = strategy ? 102 : 0;
+  const height = headerHeight + Math.max(1, rows.length) * rowHeight + insightHeight + 30;
+  const moveCell = (item: ManualLineMove | undefined, side: "red" | "black", x: number) => {
+    if (!item) return `<text x="${x}" y="50" class="empty">--</text>`;
+    const score = escapeSvgText(item.score || "暂无评分");
+    return `<circle cx="${x}" cy="43" r="20" class="side ${side}"/><text x="${x}" y="49" text-anchor="middle" class="side-label">${side === "red" ? "红" : "黑"}</text><text x="${x + 42}" y="49" class="move">${escapeSvgText(item.move.notation)}</text><rect x="${x + 176}" y="23" width="104" height="40" rx="20" class="score-pill"/><text x="${x + 228}" y="49" text-anchor="middle" class="score">${score}</text>`;
+  };
+  const body = rows.length === 0
+    ? `<text x="${width / 2}" y="${headerHeight + 54}" text-anchor="middle" class="empty">当前还在开始局面，暂无历史着法。</text>`
+    : rows.map((row, index) => {
+      const y = headerHeight + index * rowHeight;
+      return `<g transform="translate(24 ${y})"><rect width="1352" height="72" rx="12" class="row"/><text x="24" y="45" class="turn">${row.turn}.</text>${moveCell(row.red, "red", 108)}${moveCell(row.black, "black", 726)}</g>`;
+    }).join("");
+  const insight = strategy ? `<g transform="translate(24 ${headerHeight + Math.max(1, rows.length) * rowHeight + 4})"><rect width="1352" height="82" rx="12" class="insight"/><text x="20" y="28" class="insight-title">${escapeSvgText(`${strategy.phaseLabel}思路 · ${strategy.compact.principleTitle}`)}</text><text x="20" y="53" class="insight-text">${escapeSvgText(strategy.compact.conclusion)}</text><text x="20" y="74" class="insight-risk">风险：${escapeSvgText(strategy.compact.risk)}</text></g>` : "";
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><style>.canvas{fill:#f6fbff}.header{fill:#f1f9ff}.title{fill:#193f62;font:700 30px 'PingFang SC','Microsoft YaHei',sans-serif}.subtitle{fill:#6f8ca3;font:500 20px 'PingFang SC','Microsoft YaHei',sans-serif}.row{fill:#f8fcff;stroke:#d6e5f2;stroke-width:2}.turn{fill:#6b89a2;font:700 22px 'PingFang SC','Microsoft YaHei',sans-serif}.move{fill:#193f62;font:700 25px 'PingFang SC','Microsoft YaHei',sans-serif}.side-label{fill:#fff;font:700 18px 'PingFang SC','Microsoft YaHei',sans-serif}.side.red{fill:#e4514d}.side.black{fill:#3269a7}.score-pill{fill:#ecfaef;stroke:#62bb86;stroke-width:2}.score{fill:#24834f;font:700 19px 'PingFang SC','Microsoft YaHei',sans-serif}.empty{fill:#94a9ba;font:500 22px 'PingFang SC','Microsoft YaHei',sans-serif}.insight{fill:#f1fbf5;stroke:#b9dfc9;stroke-width:2}.insight-title{fill:#24724a;font:700 19px 'PingFang SC','Microsoft YaHei',sans-serif}.insight-text{fill:#39566f;font:500 16px 'PingFang SC','Microsoft YaHei',sans-serif}.insight-risk{fill:#8b5d26;font:500 15px 'PingFang SC','Microsoft YaHei',sans-serif}</style><rect class="canvas" width="100%" height="100%"/><rect class="header" width="100%" height="${headerHeight}"/><text x="36" y="52" class="title">从开始到当前局面</text><text x="36" y="90" class="subtitle">${escapeSvgText(currentLabel ? `当前：${currentLabel} · 第 ${moveCount} 着` : `共 ${moveCount} 着`)}</text>${body}${insight}</svg>`;
+}
+
+export function ManualLineDialog({ history, currentLabel, qualityByMoveId, formatScore, strategyInsight, onClose, onExportLine }: {
   history: MoveItem[];
   currentLabel?: string;
   qualityByMoveId?: ReadonlyMap<string, MoveQuality>;
   formatScore?: (move: MoveItem) => string;
+  strategyInsight?: StrategyInsight;
   onClose(): void;
   onExportLine?(contents: string): Promise<string | undefined>;
 }) {
   const [exporting, setExporting] = useState(false);
+  const [activeView, setActiveView] = useState<"moves" | "image" | "plan">("moves");
+  const [planView, setPlanView] = useState<"overview" | "opening" | "middle" | "endgame" | "evidence">("overview");
   const rows = buildHistoryLineRows(history, { qualityByMoveId, formatScore });
   const lines = formatHistoryLine(history, { qualityByMoveId, formatScore });
+  const openingPlan = useMemo(() => buildOpeningPlan(history), [history]);
   const text = [
     "从开始到当前局面",
     currentLabel ? `当前：${currentLabel} · 第 ${history.length} 着` : `共 ${history.length} 着`,
     "",
     ...lines,
+    "",
+    strategyInsight ? formatStrategyInsightText(strategyInsight) : [
+      "开局思路（根据走法自动归纳，非引擎结论）", openingPlan.title, `底层逻辑：${openingPlan.core}`,
+      ...openingPlan.principles.map((item) => `- ${item}`), "风险：", ...openingPlan.risks.map((item) => `- ${item}`), `建议：${openingPlan.advice}`,
+    ].join("\n"),
   ].join("\n").trim();
+  const imageSvg = useMemo(() => buildManualLineImageSvg(rows, currentLabel, history.length, strategyInsight), [currentLabel, history.length, rows, strategyInsight]);
+  const imageUrl = useMemo(() => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(imageSvg)}`, [imageSvg]);
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
@@ -139,18 +230,38 @@ export function ManualLineDialog({ history, currentLabel, qualityByMoveId, forma
       setExporting(false);
     }
   }
+  function downloadImage() {
+    if (!rows.length || typeof document === "undefined") return;
+    downloadManualLineBlob("当前局面完整棋谱.svg", new Blob([imageSvg], { type: "image/svg+xml;charset=utf-8" }));
+  }
   const dialog = <div className="manual-line-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="manual-line-dialog" role="dialog" aria-modal="true" aria-label="当前局面完整棋谱">
       <header>
         <div><strong>从开始到当前局面</strong><small>{currentLabel ? `当前：${currentLabel} · 第 ${history.length} 着` : `共 ${history.length} 着`}</small></div>
         <nav>
           <button type="button" disabled={!text} onClick={() => void copy()}><Copy size={14}/>复制</button>
-          <button type="button" className="manual-line-download" title="下载当前棋谱文本" disabled={!text || exporting} onClick={() => void exportText()}><Download size={14}/>{exporting ? "下载中" : "下载"}</button>
+          <button type="button" className={activeView === "moves" ? "active" : ""} onClick={() => setActiveView("moves")}>走法</button>
+          <button type="button" className={activeView === "plan" ? "active" : ""} onClick={() => setActiveView("plan")}><BookOpen size={14}/>思路</button>
+          <button type="button" className={activeView === "image" ? "active" : ""} disabled={!rows.length} onClick={() => setActiveView("image")}><ImageIcon size={14}/>棋谱图</button>
+          <button type="button" className="manual-line-download" title={activeView === "image" ? "下载当前棋谱图片" : "下载当前棋谱文本（含开局思路）"} disabled={activeView === "image" ? !rows.length : !text || exporting} onClick={() => activeView === "image" ? downloadImage() : void exportText()}><Download size={14}/>{activeView === "image" ? "下载图片" : exporting ? "下载中" : "下载"}</button>
           <button type="button" className="manual-line-close" onClick={onClose} aria-label="关闭完整棋谱"><X size={15}/>关闭</button>
         </nav>
       </header>
       <div className="manual-line-dialog-body">
-        {rows.length === 0
+        {activeView === "image"
+          ? <figure className="manual-line-image-preview"><img src={imageUrl} alt="当前局面完整棋谱图片"/><figcaption>图片包含当前线路及每步评分，可直接下载分享。</figcaption></figure>
+          : activeView === "plan"
+            ? strategyInsight ? <section className="manual-strategy-insight" aria-label="三阶段思路分析">
+              <nav className="manual-strategy-tabs" aria-label="思路查看范围">
+                {(["overview", "opening", "middle", "endgame", "evidence"] as const).map((view) => <button key={view} type="button" className={planView === view ? "active" : ""} onClick={() => setPlanView(view)}>{({ overview: "总览", opening: "开局", middle: "中局", endgame: "残局", evidence: "依据" } as const)[view]}</button>)}
+              </nav>
+              {planView !== "evidence" && planView !== "overview" && <p className="manual-strategy-phase-note">{planView === strategyInsight.phase ? `当前处于${strategyInsight.phaseLabel}，已置顶显示。` : `当前不处于${({ opening: "开局", middle: "中局", endgame: "残局" } as const)[planView]}，以下是该阶段的学习与判断条件。`}</p>}
+              {(planView === "overview" || planView === "evidence") && <div className="manual-strategy-block"><b>局面事实</b><ul>{strategyInsight.facts.map((fact) => <li key={fact}>{fact}</li>)}</ul></div>}
+              {(planView === "overview" || planView === "evidence") && <div className="manual-strategy-block"><b>棋理依据</b>{strategyInsight.principles.map((card) => <article key={card.id}><strong>{card.title}</strong><small>{card.source.label} · {card.source.course ? `${card.source.course} · ${card.source.episode ?? ""}${card.source.timecode ? ` · ${card.source.timecode}` : ""}` : card.source.review}</small><p>{card.summary}</p><em>适用：{card.appliesWhen}</em><em>风险：{card.risk}</em></article>)}</div>}
+              {planView !== "overview" && planView !== "evidence" && <><div className="manual-strategy-block"><b>棋理依据</b>{strategyInsight.stageGuides[planView].principles.map((card) => <article key={card.id}><strong>{card.title}</strong><small>{card.source.label} · {card.source.course ? `${card.source.course} · ${card.source.episode ?? ""}${card.source.timecode ? ` · ${card.source.timecode}` : ""}` : card.source.review}</small><p>{card.summary}</p><em>适用：{card.appliesWhen}</em><em>风险：{card.risk}</em></article>)}</div><div className="manual-strategy-block plan"><b>{({ opening: "开局", middle: "中局", endgame: "残局" } as const)[planView]}计划模板</b><p><strong>目标：</strong>{strategyInsight.stageGuides[planView].goal}</p><p><strong>防范：</strong>{strategyInsight.stageGuides[planView].guard}</p><p><strong>验证：</strong>{strategyInsight.stageGuides[planView].verify}</p></div></>}
+              {(planView === "overview" || planView === "evidence") && <><div className="manual-strategy-block plan"><b>计划结论</b><p><strong>目标：</strong>{strategyInsight.plan.goal}</p><p><strong>防范：</strong>{strategyInsight.plan.guard}</p><p><strong>验证：</strong>{strategyInsight.plan.verify}</p></div><div className={`manual-strategy-engine ${strategyInsight.engine.status}`}><b>引擎验证 · {strategyInsight.engine.label}</b><p>{strategyInsight.engine.text}</p>{strategyInsight.engine.depth != null && <small>深度 {strategyInsight.engine.depth}{strategyInsight.engine.scoreText ? ` · 分数 ${strategyInsight.engine.scoreText}` : ""}</small>}{strategyInsight.engine.pv.length > 0 && <code>PV：{strategyInsight.engine.pv.join(" ")}</code>}</div></>}
+            </section> : <section className="manual-opening-plan" aria-label="开局思路"><header><small>根据当前棋谱自动归纳</small><strong>{openingPlan.title}</strong></header><div className="manual-opening-plan-core"><b>底层逻辑</b><p>{openingPlan.core}</p></div><div><b>执行路径</b><ol>{openingPlan.principles.map((item) => <li key={item}>{item}</li>)}</ol></div><div><b>需要防范</b><ul>{openingPlan.risks.map((item) => <li key={item}>{item}</li>)}</ul></div><footer><b>下一步建议</b><p>{openingPlan.advice}</p></footer></section>
+          : rows.length === 0
           ? <p>当前还在开始局面，暂无历史着法。</p>
           : <ol>
             {rows.map((row) => <li key={row.turn} className="manual-line-row">
@@ -299,7 +410,7 @@ function PreviewBranches({ previews }: { previews: ManualPreviewBranch[] }) {
   </section>;
 }
 
-export function ManualTrackView({ nodes, history, currentNode, viewMode, editing, qualityByMoveId, formatScore, onNavigate, onViewModeChange, onMakeMainline, onRemove, onExportLine, previewBranch, previewBranches }: Props) {
+export function ManualTrackView({ nodes, history, currentNode, viewMode, editing, qualityByMoveId, formatScore, onNavigate, onViewModeChange, onMakeMainline, onRemove, onExportLine, strategyInsight, previewBranch, previewBranches }: Props) {
   const [expandedForks, setExpandedForks] = useState<Set<string>>(() => new Set());
   const [collapsedForks, setCollapsedForks] = useState<Set<string>>(() => new Set());
   const [comparison, setComparison] = useState<{ forkNodeId: string; branchId: string }>();
@@ -414,6 +525,7 @@ export function ManualTrackView({ nodes, history, currentNode, viewMode, editing
       onClose={() => setLineDialogOpen(false)}
       onExportLine={onExportLine}
       qualityByMoveId={qualityByMoveId}
+      strategyInsight={strategyInsight}
     />}
   </div>;
 }

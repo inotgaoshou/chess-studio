@@ -11,9 +11,9 @@ function Harness() {
 }
 
 describe("WorkspaceTabs", () => {
-  it("shows the five stable workspace pages and switches by click", () => {
+  it("shows the six stable workspace pages and switches by click", () => {
     render(<Harness/>);
-    expect(screen.getAllByRole("tab")).toHaveLength(5);
+    expect(screen.getAllByRole("tab")).toHaveLength(6);
     fireEvent.click(screen.getByRole("tab", { name: "报告" }));
     expect(screen.getByRole("tab", { name: "报告" }).getAttribute("aria-selected")).toBe("true");
     expect(screen.getByRole("tab", { name: "棋谱" }).getAttribute("aria-selected")).toBe("false");
@@ -24,8 +24,8 @@ describe("WorkspaceTabs", () => {
     fireEvent.keyDown(screen.getByRole("tab", { name: "棋谱" }), { key: "ArrowRight" });
     expect(screen.getByRole("tab", { name: "分析" }).getAttribute("aria-selected")).toBe("true");
     fireEvent.keyDown(screen.getByRole("tab", { name: "分析" }), { key: "End" });
-    expect(screen.getByRole("tab", { name: "报告" }).getAttribute("aria-selected")).toBe("true");
-    fireEvent.keyDown(screen.getByRole("tab", { name: "报告" }), { key: "Home" });
+    expect(screen.getByRole("tab", { name: "棋理库" }).getAttribute("aria-selected")).toBe("true");
+    fireEvent.keyDown(screen.getByRole("tab", { name: "棋理库" }), { key: "Home" });
     expect(screen.getByRole("tab", { name: "棋谱" }).getAttribute("aria-selected")).toBe("true");
   });
 });

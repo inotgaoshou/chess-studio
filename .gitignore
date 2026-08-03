@@ -1,5 +1,6 @@
 .DS_Store
 .local/
+.theory-work/
 .env
 .codegraph/
 target/
