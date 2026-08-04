@@ -104,6 +104,8 @@ pub struct DesktopPreferences {
     pub cloud_book_enabled: bool,
     #[serde(default = "default_cloud_book_url")]
     pub cloud_book_url: String,
+    #[serde(default = "default_rule_mode")]
+    pub rule_mode: String,
     pub server_url: String,
 }
 
@@ -121,6 +123,10 @@ fn default_branch_arrow_color() -> String {
 
 fn default_analysis_engine_mode() -> String {
     "single".into()
+}
+
+fn default_rule_mode() -> String {
+    "domestic2020".into()
 }
 
 fn default_workspace_panel() -> String {
@@ -192,6 +198,7 @@ impl Default for DesktopPreferences {
             parallel_engine_paths: Vec::new(),
             cloud_book_enabled: default_cloud_book_enabled(),
             cloud_book_url: default_cloud_book_url(),
+            rule_mode: default_rule_mode(),
             server_url: "http://127.0.0.1:8080".into(),
         }
     }
@@ -274,6 +281,17 @@ pub struct TheoryCard {
     pub review_status: String,
     pub course_name: String,
     pub lesson_title: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StudySession {
+    pub id: Uuid,
+    pub game_id: Uuid,
+    pub node_id: Option<Uuid>,
+    pub reflection: String,
+    pub tags: Vec<String>,
+    pub created_at: String,
 }
 
 impl LocalStore {
@@ -381,6 +399,72 @@ impl LocalStore {
             params![card.id, card.title, card.summary, card.applies_when, card.risk, card.timecode, card.review_status],
         )?;
         Ok(())
+    }
+
+    pub fn save_study_session(
+        &mut self,
+        game_id: Uuid,
+        node_id: Option<Uuid>,
+        reflection: &str,
+        tags: &[String],
+    ) -> Result<StudySession, StoreError> {
+        let session = StudySession {
+            id: Uuid::new_v4(),
+            game_id,
+            node_id,
+            reflection: reflection.to_owned(),
+            tags: tags.to_vec(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+        };
+        self.connection.execute(
+            "INSERT INTO study_sessions (id, game_id, node_id, reflection, tags_json, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                session.id.to_string(),
+                session.game_id.to_string(),
+                session.node_id.map(|id| id.to_string()),
+                session.reflection,
+                serde_json::to_string(&session.tags)?,
+                session.created_at,
+            ],
+        )?;
+        Ok(session)
+    }
+
+    pub fn study_sessions(&self, game_id: Uuid) -> Result<Vec<StudySession>, StoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, game_id, node_id, reflection, tags_json, created_at
+             FROM study_sessions WHERE game_id = ?1 ORDER BY created_at DESC, rowid DESC",
+        )?;
+        statement
+            .query_map([game_id.to_string()], |row| {
+                let id: String = row.get(0)?;
+                let game_id: String = row.get(1)?;
+                let node_id: Option<String> = row.get(2)?;
+                let tags_json: String = row.get(4)?;
+                Ok((
+                    id,
+                    game_id,
+                    node_id,
+                    row.get::<_, String>(3)?,
+                    tags_json,
+                    row.get::<_, String>(5)?,
+                ))
+            })?
+            .map(|row| {
+                let (id, game_id, node_id, reflection, tags_json, created_at) = row?;
+                Ok(StudySession {
+                    id: Uuid::parse_str(&id).map_err(json_error)?,
+                    game_id: Uuid::parse_str(&game_id).map_err(json_error)?,
+                    node_id: node_id
+                        .map(|value| Uuid::parse_str(&value).map_err(json_error))
+                        .transpose()?,
+                    reflection,
+                    tags: serde_json::from_str(&tags_json)?,
+                    created_at,
+                })
+            })
+            .collect::<Result<Vec<_>, StoreError>>()
     }
 
     pub fn desktop_preferences(&self) -> Result<DesktopPreferences, StoreError> {
@@ -1362,6 +1446,11 @@ impl LocalStore {
                FOREIGN KEY(lesson_id) REFERENCES theory_lessons(id) ON DELETE CASCADE
              );
              CREATE INDEX IF NOT EXISTS idx_theory_cards_review ON theory_cards(review_status, lesson_id);
+             CREATE TABLE IF NOT EXISTS study_sessions (
+               id TEXT PRIMARY KEY, game_id TEXT NOT NULL, node_id TEXT,
+               reflection TEXT NOT NULL, tags_json TEXT NOT NULL, created_at TEXT NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS idx_study_sessions_game ON study_sessions(game_id, created_at DESC);
              UPDATE operations
              SET payload = json_set(
                payload,
@@ -2346,6 +2435,27 @@ mod tests {
         assert_eq!(value["event"], "联赛");
         assert_eq!(value["red"], "甲");
         assert_eq!(value["result"], "1-0");
+    }
+
+    #[test]
+    fn study_sessions_preserve_node_reflection_and_tags() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let game_id = Uuid::new_v4();
+        let node_id = Uuid::new_v4();
+
+        let saved = store
+            .save_study_session(
+                game_id,
+                Some(node_id),
+                "漏算了对方反击，需要比较补防和兑子。",
+                &["候选着".into(), "反击".into()],
+            )
+            .unwrap();
+
+        let sessions = store.study_sessions(game_id).unwrap();
+        assert_eq!(sessions, vec![saved]);
+        assert_eq!(sessions[0].node_id, Some(node_id));
+        assert_eq!(sessions[0].tags, vec!["候选着", "反击"]);
     }
 
     #[test]

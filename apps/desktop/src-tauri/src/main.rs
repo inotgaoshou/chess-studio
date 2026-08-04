@@ -23,7 +23,7 @@ use credential_store::{SharedCredentialStore, SystemCredentialStore, TOKEN_KEY};
 use engine_protocol::{EngineControl, EngineEvent, EngineSession, Protocol, SearchLimit};
 use local_store::{
     AnalysisSummary, DesktopPreferences, EngineProfile, ImportedGame, LocalGame, LocalStore,
-    SyncAccountBinding, TheoryCard, TheoryLesson, TrainingTask,
+    StudySession, SyncAccountBinding, TheoryCard, TheoryLesson, TrainingTask,
 };
 use manual_format::{
     ManualDocument, ManualFormat, ManualMetadata, detect_format, export_chinese_text,
@@ -40,11 +40,17 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::time::timeout;
 use uuid::Uuid;
-use xiangqi_core::{Board, Color, GameStatus, Move, PieceKind, STARTING_FEN, Square};
+use xiangqi_core::{
+    Board, Color, DomesticRuleState, GameStatus, Move, PieceKind, RuleMode, RuleVerdict,
+    STARTING_FEN, Square,
+};
 use xiangqi_manual::{ManualTree, MoveNode};
 
 const BUILTIN_ENGINE_PATH: &str = "builtin:pikafish";
 const BUILTIN_FAIRY_ENGINE_PATH: &str = "builtin:fairy-stockfish";
+const PIKAFISH_260720_NNUE_SHA256: &str =
+    "sha256:3cd15292bf8c979884262f57fc723959fc0dea43b4d8d544f88db5ceb2479e24";
+const PIKAFISH_260720_NNUE_LABEL: &str = "权重260720";
 const THEORY_COURSE_ROOTS: [(&str, &str, &str); 3] = [
     (
         "opening",
@@ -151,6 +157,60 @@ struct EngineProfileDto {
     executable_path: String,
     protocol: String,
     active: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EngineArenaPlayerDto {
+    name: String,
+    engine_path: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EngineArenaOptionsDto {
+    player_a: EngineArenaPlayerDto,
+    player_b: EngineArenaPlayerDto,
+    games: u32,
+    move_time_ms: u64,
+    threads: u32,
+    hash_mb: u32,
+    max_plies: u32,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EngineArenaGameDto {
+    index: u32,
+    red: String,
+    black: String,
+    result: String,
+    winner: Option<String>,
+    reason: String,
+    plies: u32,
+    moves: Vec<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EngineArenaScoreDto {
+    name: String,
+    wins: u32,
+    draws: u32,
+    losses: u32,
+    points: f32,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EngineArenaResultDto {
+    player_a: EngineArenaScoreDto,
+    player_b: EngineArenaScoreDto,
+    games: Vec<EngineArenaGameDto>,
+    move_time_ms: u64,
+    max_plies: u32,
+    rule_name: &'static str,
+    summary: String,
 }
 
 struct EngineRuntime {
@@ -294,7 +354,10 @@ struct BoardDto {
     root_score_cp: Option<i32>,
     root_mate: Option<i32>,
     side_to_move: &'static str,
-    status: &'static str,
+    status: String,
+    rule_name: &'static str,
+    rule_verdict: &'static str,
+    rule_reason: String,
     pieces: Vec<PieceDto>,
     history: Vec<MoveDto>,
     continuation: Vec<MoveDto>,
@@ -1471,6 +1534,23 @@ async fn engine_play_move(
         }
         commit_move(&mut model, &best_move)?
     };
+    let rule_blocks_play = matches!(
+        board.rule_verdict,
+        "checkmate"
+            | "stalemate"
+            | "drawByNaturalLimit"
+            | "pendingRepetition"
+            | "pendingAsianRepetition"
+            | "lossByPerpetualCheck"
+            | "lossByPerpetualChase"
+            | "drawByRepetitionMvp"
+    );
+    let ponder_move = if rule_blocks_play { None } else { ponder_move };
+    let predicted_fen = if rule_blocks_play {
+        None
+    } else {
+        predicted_fen
+    };
     emit_engine_event(
         &app,
         EngineRuntimeEvent::Bestmove {
@@ -2024,6 +2104,288 @@ async fn configure_engine_for_xiangqi(
     configure_engine_nnue(session, engine_path).await
 }
 
+async fn next_arena_bestmove(
+    session: &mut EngineSession,
+    engine_path: &Path,
+    board: &Board,
+    move_time_ms: u64,
+) -> Result<String, String> {
+    let family = engine_family(engine_path);
+    session
+        .search(
+            &board.to_fen(),
+            &[],
+            SearchLimit::MoveTime(move_time_ms.clamp(100, 30_000)),
+            &[],
+            false,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    let search = async {
+        loop {
+            match session
+                .next_event()
+                .await
+                .map_err(|error| error.to_string())?
+            {
+                EngineEvent::BestMove { best, .. } => {
+                    let best = normalize_engine_move_for_board(board, &best, family)
+                        .ok_or_else(|| format!("引擎返回非法着法：{best}"))?;
+                    return Ok(best);
+                }
+                _ => {}
+            }
+        }
+    };
+    timeout(
+        Duration::from_millis(move_time_ms.clamp(100, 30_000) + 5_000),
+        search,
+    )
+    .await
+    .map_err(|_| "引擎搜索超时".to_owned())?
+}
+
+async fn launch_arena_engine(
+    app: &tauri::AppHandle,
+    player: &EngineArenaPlayerDto,
+    threads: u32,
+    hash_mb: u32,
+) -> Result<(PathBuf, EngineSession), String> {
+    let path = resolve_engine_path(app, &player.engine_path)?;
+    let mut session = EngineSession::launch(&path, Duration::from_secs(3))
+        .await
+        .map_err(|error| format!("{} 启动失败：{error}", player.name))?;
+    configure_engine_for_xiangqi(&mut session, &path).await?;
+    session
+        .configure("Threads", &threads.clamp(1, 64).to_string())
+        .await
+        .map_err(|error| format!("{} 设置线程失败：{error}", player.name))?;
+    session
+        .configure("Hash", &hash_mb.clamp(16, 4096).to_string())
+        .await
+        .map_err(|error| format!("{} 设置 Hash 失败：{error}", player.name))?;
+    session
+        .configure("MultiPV", "1")
+        .await
+        .map_err(|error| format!("{} 设置 MultiPV 失败：{error}", player.name))?;
+    Ok((path, session))
+}
+
+fn arena_score(name: &str, games: &[EngineArenaGameDto]) -> EngineArenaScoreDto {
+    let mut wins = 0;
+    let mut draws = 0;
+    let mut losses = 0;
+    for game in games {
+        match game.winner.as_deref() {
+            Some(winner) if winner == name => wins += 1,
+            Some(_) => losses += 1,
+            None => draws += 1,
+        }
+    }
+    EngineArenaScoreDto {
+        name: name.to_owned(),
+        wins,
+        draws,
+        losses,
+        points: wins as f32 + draws as f32 * 0.5,
+    }
+}
+
+fn arena_rule_outcome(
+    verdict: RuleVerdict,
+    mode: RuleMode,
+    red: &EngineArenaPlayerDto,
+    black: &EngineArenaPlayerDto,
+) -> Option<(String, Option<String>, String)> {
+    let loser = match verdict {
+        RuleVerdict::Checkmate { loser }
+        | RuleVerdict::Stalemate { loser }
+        | RuleVerdict::LossByPerpetualCheck { loser }
+        | RuleVerdict::LossByPerpetualChase { loser } => Some(loser),
+        RuleVerdict::DrawByNaturalLimit => {
+            return Some(("1/2-1/2".into(), None, rule_reason(verdict, mode)));
+        }
+        RuleVerdict::PendingRepetition => {
+            return Some((
+                "1/2-1/2".into(),
+                None,
+                rule_reason(RuleVerdict::DrawByRepetitionMvp, mode),
+            ));
+        }
+        RuleVerdict::PendingAsianRepetition => {
+            return Some((
+                "1/2-1/2".into(),
+                None,
+                "亚洲规则复杂待判，MVP 按和棋计".into(),
+            ));
+        }
+        RuleVerdict::DrawByRepetitionMvp => {
+            return Some(("1/2-1/2".into(), None, rule_reason(verdict, mode)));
+        }
+        RuleVerdict::Ongoing | RuleVerdict::Check => None,
+    }?;
+    let (result, winner) = match loser {
+        Color::Red => ("0-1".to_owned(), black.name.clone()),
+        Color::Black => ("1-0".to_owned(), red.name.clone()),
+    };
+    Some((result, Some(winner), rule_reason(verdict, mode)))
+}
+
+async fn run_arena_game(
+    app: &tauri::AppHandle,
+    options: &EngineArenaOptionsDto,
+    rule_mode: RuleMode,
+    index: u32,
+    swap_sides: bool,
+) -> Result<EngineArenaGameDto, String> {
+    let red = if swap_sides {
+        &options.player_b
+    } else {
+        &options.player_a
+    };
+    let black = if swap_sides {
+        &options.player_a
+    } else {
+        &options.player_b
+    };
+    let (red_path, mut red_session) =
+        launch_arena_engine(app, red, options.threads, options.hash_mb).await?;
+    let (black_path, mut black_session) =
+        launch_arena_engine(app, black, options.threads, options.hash_mb).await?;
+    let mut board = Board::from_fen(STARTING_FEN).map_err(|error| error.to_string())?;
+    let mut rule_state = DomesticRuleState::new(&board);
+    let mut moves = Vec::new();
+    let mut result = "1/2-1/2".to_owned();
+    let mut winner = None;
+    let mut reason = "达到半回合上限，按和棋计".to_owned();
+
+    for ply in 0..options.max_plies.clamp(20, 240) {
+        let red_turn = ply % 2 == 0;
+        let current_name = if red_turn { &red.name } else { &black.name };
+        let current_path = if red_turn { &red_path } else { &black_path };
+        let current_session = if red_turn {
+            &mut red_session
+        } else {
+            &mut black_session
+        };
+        let best =
+            match next_arena_bestmove(current_session, current_path, &board, options.move_time_ms)
+                .await
+            {
+                Ok(best) => best,
+                Err(error) => {
+                    let opponent = if red_turn { &black.name } else { &red.name };
+                    result = if red_turn { "0-1" } else { "1-0" }.to_owned();
+                    winner = Some(opponent.clone());
+                    reason = format!("{current_name} 搜索失败：{error}");
+                    break;
+                }
+            };
+        let notation = board
+            .chinese_pv_notation(std::slice::from_ref(&best))
+            .ok()
+            .and_then(|items| items.into_iter().next())
+            .unwrap_or_else(|| best.clone());
+        let mv = Move::from_iccs(&best).map_err(|error| error.to_string())?;
+        let before = board.clone();
+        board = match board.apply_move(mv) {
+            Ok(next) => next,
+            Err(_) => {
+                let opponent = if red_turn { &black.name } else { &red.name };
+                result = if red_turn { "0-1" } else { "1-0" }.to_owned();
+                winner = Some(opponent.clone());
+                reason = format!("{current_name} 返回非法着法 {best}");
+                break;
+            }
+        };
+        moves.push(format!(
+            "{}{}",
+            if red_turn { "红 " } else { "黑 " },
+            notation
+        ));
+        rule_state
+            .record_applied_move(&before, mv, &board)
+            .map_err(|error| error.to_string())?;
+        let verdict = rule_state.evaluate_with_mode(&board, rule_mode);
+        if let Some(outcome) = arena_rule_outcome(verdict, rule_mode, red, black) {
+            result = outcome.0;
+            winner = outcome.1;
+            reason = outcome.2;
+            break;
+        }
+    }
+
+    let _ = red_session.close().await;
+    let _ = black_session.close().await;
+    Ok(EngineArenaGameDto {
+        index,
+        red: red.name.clone(),
+        black: black.name.clone(),
+        result,
+        winner,
+        reason,
+        plies: moves.len() as u32,
+        moves,
+    })
+}
+
+#[tauri::command]
+async fn run_engine_arena(
+    options: EngineArenaOptionsDto,
+    app: tauri::AppHandle,
+    state: State<'_, DesktopState>,
+) -> Result<EngineArenaResultDto, String> {
+    if state.report_running.load(Ordering::SeqCst) {
+        return Err("整局报告正在生成，请先取消报告分析".into());
+    }
+    if !state.engine.lock().await.is_empty() {
+        return Err("引擎正在执行其他搜索，请先停止".into());
+    }
+    if options.player_a.engine_path == options.player_b.engine_path {
+        return Err("擂台需要选择两个不同的引擎".into());
+    }
+    let rule_mode = {
+        let model = state
+            .model
+            .lock()
+            .map_err(|_| "state lock poisoned".to_owned())?;
+        let preferences = model
+            .store
+            .desktop_preferences()
+            .map_err(|error| error.to_string())?;
+        rule_mode_from_code(&preferences.rule_mode)
+    };
+    let games_to_play = options.games.clamp(2, 20);
+    let mut games = Vec::with_capacity(games_to_play as usize);
+    for index in 0..games_to_play {
+        games.push(run_arena_game(&app, &options, rule_mode, index + 1, index % 2 == 1).await?);
+    }
+    let player_a = arena_score(&options.player_a.name, &games);
+    let player_b = arena_score(&options.player_b.name, &games);
+    let summary = if player_a.points > player_b.points {
+        format!(
+            "{} 暂时领先，{} - {}",
+            player_a.name, player_a.points, player_b.points
+        )
+    } else if player_b.points > player_a.points {
+        format!(
+            "{} 暂时领先，{} - {}",
+            player_b.name, player_b.points, player_a.points
+        )
+    } else {
+        format!("双方暂时打平，{} - {}", player_a.points, player_b.points)
+    };
+    Ok(EngineArenaResultDto {
+        player_a,
+        player_b,
+        games,
+        move_time_ms: options.move_time_ms.clamp(100, 30_000),
+        max_plies: options.max_plies.clamp(20, 240),
+        rule_name: rule_mode.name(),
+        summary,
+    })
+}
+
 fn report_line_nodes(
     tree: &ManualTree,
     current_node: Option<Uuid>,
@@ -2213,6 +2575,21 @@ fn parse_pikafish_nnue_metadata_line(line: &str) -> Option<String> {
     metadata
         .split_once(' ')
         .map(|(_, version)| version.trim().to_owned())
+}
+
+fn decorate_known_pikafish_nnue_version(
+    nnue_sha256: Option<&str>,
+    runtime_version: Option<String>,
+) -> Option<String> {
+    match (nnue_sha256, runtime_version) {
+        (Some(PIKAFISH_260720_NNUE_SHA256), Some(version))
+            if !version.contains(PIKAFISH_260720_NNUE_LABEL) =>
+        {
+            Some(format!("{PIKAFISH_260720_NNUE_LABEL} · {version}"))
+        }
+        (Some(PIKAFISH_260720_NNUE_SHA256), None) => Some(PIKAFISH_260720_NNUE_LABEL.to_owned()),
+        (_, version) => version,
+    }
 }
 
 fn report_side(board: &Board) -> String {
@@ -2855,6 +3232,17 @@ fn protocol_name(protocol: Protocol) -> &'static str {
     }
 }
 
+fn rule_mode_from_code(value: &str) -> RuleMode {
+    match value {
+        "asianAxf" => RuleMode::AsianAxf,
+        _ => RuleMode::Domestic2020,
+    }
+}
+
+fn normalize_rule_mode(value: &str) -> String {
+    rule_mode_from_code(value).code().into()
+}
+
 fn validate_server_url(value: &str) -> Result<(), String> {
     let url = reqwest::Url::parse(value.trim()).map_err(|_| "同步服务地址格式不正确")?;
     let host = url.host_str().ok_or("同步服务地址缺少主机名")?;
@@ -2888,6 +3276,7 @@ fn normalize_desktop_preferences(preferences: &mut DesktopPreferences) {
     });
     preferences.parallel_engine_paths.sort();
     preferences.parallel_engine_paths.dedup();
+    preferences.rule_mode = normalize_rule_mode(&preferences.rule_mode);
 }
 
 fn normalize_skin_id(value: &str) -> String {
@@ -2912,6 +3301,9 @@ fn validate_preferences(preferences: &DesktopPreferences) -> Result<(), String> 
     }
     if !matches!(preferences.manual_view_mode.as_str(), "track" | "tree") {
         return Err("不支持的棋谱显示方式".into());
+    }
+    if !matches!(preferences.rule_mode.as_str(), "domestic2020" | "asianAxf") {
+        return Err("不支持的棋规模式".into());
     }
     if !matches!(
         preferences.board_skin.as_str(),
@@ -3094,6 +3486,7 @@ async fn probe_engine(path: String, app: tauri::AppHandle) -> Result<EngineProbe
         .map(ToOwned::to_owned);
     let nnue_sha256 = nnue_path.as_deref().map(file_sha256).transpose()?;
     let (engine_version, nnue_version) = probe_pikafish_runtime_metadata(&resolved_path).await;
+    let nnue_version = decorate_known_pikafish_nnue_version(nnue_sha256.as_deref(), nnue_version);
     Ok(EngineProbeDto {
         path: match path.trim() {
             BUILTIN_ENGINE_PATH => BUILTIN_ENGINE_PATH.into(),
@@ -3382,6 +3775,49 @@ fn complete_training_task(
     model
         .store
         .complete_training_task(task_id, completed)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn list_study_sessions(state: State<'_, DesktopState>) -> Result<Vec<StudySession>, String> {
+    let model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    model
+        .store
+        .study_sessions(model.game_id)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn save_study_session(
+    reflection: String,
+    tags: Vec<String>,
+    state: State<'_, DesktopState>,
+) -> Result<StudySession, String> {
+    let reflection = reflection.trim();
+    if reflection.is_empty() {
+        return Err("请先写下本局要核验的问题或复盘结论".into());
+    }
+    if reflection.chars().count() > 2_000 {
+        return Err("训练总结最多 2000 字".into());
+    }
+    let tags = tags
+        .into_iter()
+        .map(|tag| tag.trim().to_owned())
+        .filter(|tag| !tag.is_empty())
+        .take(8)
+        .collect::<Vec<_>>();
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    let game_id = model.game_id;
+    let node_id = model.current_node;
+    model
+        .store
+        .save_study_session(game_id, node_id, reflection, &tags)
         .map_err(|error| error.to_string())
 }
 
@@ -3840,6 +4276,75 @@ fn game_status_label(status: GameStatus) -> &'static str {
         GameStatus::Ongoing => "进行中",
         GameStatus::Check => "将军",
         GameStatus::Checkmate => "将死",
+        GameStatus::Stalemate => "困毙",
+    }
+}
+
+fn rule_verdict_code(verdict: RuleVerdict) -> &'static str {
+    match verdict {
+        RuleVerdict::Ongoing => "ongoing",
+        RuleVerdict::Check => "check",
+        RuleVerdict::Checkmate { .. } => "checkmate",
+        RuleVerdict::Stalemate { .. } => "stalemate",
+        RuleVerdict::DrawByNaturalLimit => "drawByNaturalLimit",
+        RuleVerdict::PendingRepetition => "pendingRepetition",
+        RuleVerdict::PendingAsianRepetition => "pendingAsianRepetition",
+        RuleVerdict::LossByPerpetualCheck { .. } => "lossByPerpetualCheck",
+        RuleVerdict::LossByPerpetualChase { .. } => "lossByPerpetualChase",
+        RuleVerdict::DrawByRepetitionMvp => "drawByRepetitionMvp",
+    }
+}
+
+fn rule_status_label(verdict: RuleVerdict) -> String {
+    match verdict {
+        RuleVerdict::Ongoing => "进行中".into(),
+        RuleVerdict::Check => "将军".into(),
+        RuleVerdict::Checkmate { .. } => "将死".into(),
+        RuleVerdict::Stalemate { .. } => "困毙".into(),
+        RuleVerdict::DrawByNaturalLimit => "自然限着和棋".into(),
+        RuleVerdict::PendingRepetition => "待判局面：建议变着".into(),
+        RuleVerdict::PendingAsianRepetition => "亚洲规则复杂待判".into(),
+        RuleVerdict::LossByPerpetualCheck { loser } => {
+            format!("{}长将判负", side_label(loser))
+        }
+        RuleVerdict::LossByPerpetualChase { loser } => {
+            format!("{}长捉判负", side_label(loser))
+        }
+        RuleVerdict::DrawByRepetitionMvp => "重复待判和棋".into(),
+    }
+}
+
+fn rule_reason(verdict: RuleVerdict, mode: RuleMode) -> String {
+    match verdict {
+        RuleVerdict::Ongoing => format!("{}：对局进行中", mode.name()),
+        RuleVerdict::Check => format!("{}：当前为将军局面", mode.name()),
+        RuleVerdict::Checkmate { loser } => {
+            format!("{}被将死，按{}判负", side_label(loser), mode.name())
+        }
+        RuleVerdict::Stalemate { loser } => {
+            format!("{}无合法着法，被困毙判负", side_label(loser))
+        }
+        RuleVerdict::DrawByNaturalLimit => "连续60回合未吃子，按自然限着判和".into(),
+        RuleVerdict::PendingRepetition => {
+            "重复局面达到三次，进入待判局面；MVP 暂不细分长杀/长捉，建议变着".into()
+        }
+        RuleVerdict::PendingAsianRepetition => {
+            "亚洲规则复杂重复待判；MVP 暂不细分有根/假根/联合捉子".into()
+        }
+        RuleVerdict::LossByPerpetualCheck { loser } => {
+            format!("{}单方长将，按{}判负", side_label(loser), mode.name())
+        }
+        RuleVerdict::LossByPerpetualChase { loser } => {
+            format!(
+                "{}稳定长捉同一无保护子，按{}判负",
+                side_label(loser),
+                mode.name()
+            )
+        }
+        RuleVerdict::DrawByRepetitionMvp => match mode {
+            RuleMode::Domestic2020 => "重复待判局面；擂台 MVP 未细分长杀/长捉，按和棋计".into(),
+            RuleMode::AsianAxf => "重复局面双方不变，按亚洲规则 MVP 判和".into(),
+        },
     }
 }
 
@@ -3910,9 +4415,15 @@ fn board_dto(model: &AppModel) -> Result<BoardDto, String> {
         .load_latest_analysis_summary(model.game_id, None)
         .map_err(|error| error.to_string())?;
     let root_board = Board::from_fen(&model.starting_fen).map_err(|error| error.to_string())?;
+    let preferences = model
+        .store
+        .desktop_preferences()
+        .map_err(|error| error.to_string())?;
+    let rule_mode = rule_mode_from_code(&preferences.rule_mode);
     let manual_tree = manual_tree_dto(&model.tree, model.tree.root_id(), &root_board, &analysis)?;
     let pieces = board_pieces(&model.board);
     let mut history = Vec::new();
+    let mut rule_state = DomesticRuleState::new(&root_board);
     if let Some(node) = model.current_node {
         let mut board = Board::from_fen(&model.starting_fen).map_err(|error| error.to_string())?;
         for node in model
@@ -3921,11 +4432,20 @@ fn board_dto(model: &AppModel) -> Result<BoardDto, String> {
             .map_err(|error| error.to_string())?
         {
             history.push(move_dto(node, &board, analysis.get(&node.id))?);
-            board = board
+            let next = board
                 .apply_move(node.mv)
                 .map_err(|error| error.to_string())?;
+            rule_state
+                .record_applied_move(&board, node.mv, &next)
+                .map_err(|error| error.to_string())?;
+            board = next;
         }
     }
+    let rule_verdict = if model.playable {
+        rule_state.evaluate_with_mode(&model.board, rule_mode)
+    } else {
+        RuleVerdict::Ongoing
+    };
     let branch_parent = model.current_node.unwrap_or_else(|| model.tree.root_id());
     let mut continuation = Vec::new();
     let mut continuation_parent = branch_parent;
@@ -3974,10 +4494,6 @@ fn board_dto(model: &AppModel) -> Result<BoardDto, String> {
     } else {
         Vec::new()
     };
-    let preferences = model
-        .store
-        .desktop_preferences()
-        .map_err(|error| error.to_string())?;
     let mut xqb_candidates = Vec::new();
     for path in preferences.xqb_book_paths {
         if preferences
@@ -3999,10 +4515,13 @@ fn board_dto(model: &AppModel) -> Result<BoardDto, String> {
         root_mate: root_analysis.as_ref().and_then(|summary| summary.mate),
         side_to_move: side_label(model.board.side_to_move()),
         status: if model.playable {
-            game_status_label(model.board.status())
+            rule_status_label(rule_verdict)
         } else {
-            "不可对弈"
+            "不可对弈".into()
         },
+        rule_name: rule_mode.name(),
+        rule_verdict: rule_verdict_code(rule_verdict),
+        rule_reason: rule_reason(rule_verdict, rule_mode),
         pieces,
         history,
         continuation,
@@ -4639,6 +5158,7 @@ fn main() {
             open_compact_floating_panel,
             return_compact_floating_panel,
             analyze_position,
+            run_engine_arena,
             engine_play_move,
             move_now,
             stop_engine_play,
@@ -4660,6 +5180,8 @@ fn main() {
             list_training_tasks,
             generate_training_tasks,
             complete_training_task,
+            list_study_sessions,
+            save_study_session,
             scan_theory_library,
             get_theory_library,
             review_theory_card,
@@ -4759,6 +5281,74 @@ mod tests {
         assert_eq!(dto.source_path.as_deref(), Some("/tmp/study.pgn"));
         assert_eq!(dto.source_format.as_deref(), Some("pgn"));
         assert!(dto.playable);
+        assert_eq!(dto.rule_name, xiangqi_core::DOMESTIC_RULE_NAME);
+        assert_eq!(dto.rule_verdict, "ongoing");
+        assert!(dto.rule_reason.contains("2020版导向"));
+    }
+
+    #[test]
+    fn arena_rule_outcome_maps_domestic_rule_verdicts() {
+        let red = EngineArenaPlayerDto {
+            name: "红引擎".into(),
+            engine_path: BUILTIN_ENGINE_PATH.into(),
+        };
+        let black = EngineArenaPlayerDto {
+            name: "黑引擎".into(),
+            engine_path: BUILTIN_FAIRY_ENGINE_PATH.into(),
+        };
+
+        assert_eq!(
+            arena_rule_outcome(
+                RuleVerdict::LossByPerpetualCheck { loser: Color::Red },
+                RuleMode::Domestic2020,
+                &red,
+                &black
+            ),
+            Some((
+                "0-1".into(),
+                Some("黑引擎".into()),
+                "红方单方长将，按国内中国象棋规则（2020版导向）判负".into()
+            ))
+        );
+        assert_eq!(
+            arena_rule_outcome(
+                RuleVerdict::PendingRepetition,
+                RuleMode::Domestic2020,
+                &red,
+                &black
+            ),
+            Some((
+                "1/2-1/2".into(),
+                None,
+                "重复待判局面；擂台 MVP 未细分长杀/长捉，按和棋计".into()
+            ))
+        );
+        assert_eq!(
+            arena_rule_outcome(
+                RuleVerdict::DrawByRepetitionMvp,
+                RuleMode::AsianAxf,
+                &red,
+                &black
+            ),
+            Some((
+                "1/2-1/2".into(),
+                None,
+                "重复局面双方不变，按亚洲规则 MVP 判和".into()
+            ))
+        );
+        assert_eq!(
+            arena_rule_outcome(
+                RuleVerdict::PendingAsianRepetition,
+                RuleMode::AsianAxf,
+                &red,
+                &black
+            ),
+            Some((
+                "1/2-1/2".into(),
+                None,
+                "亚洲规则复杂待判，MVP 按和棋计".into()
+            ))
+        );
     }
 
     #[test]
@@ -4973,6 +5563,14 @@ mod tests {
             .as_deref(),
             Some("(64MiB, (62083, 1024, 32, 32, 1))")
         );
+        assert_eq!(
+            decorate_known_pikafish_nnue_version(
+                Some(PIKAFISH_260720_NNUE_SHA256),
+                Some("(64MiB, (62083, 1024, 32, 32, 1))".into())
+            )
+            .as_deref(),
+            Some("权重260720 · (64MiB, (62083, 1024, 32, 32, 1))")
+        );
     }
 
     #[test]
@@ -5178,6 +5776,12 @@ mod tests {
         assert_eq!(
             validate_preferences(&preferences).unwrap_err(),
             "后续走法必须在 2 到 20 个半回合之间"
+        );
+        let mut preferences = DesktopPreferences::default();
+        preferences.rule_mode = "tiantian".into();
+        assert_eq!(
+            validate_preferences(&preferences).unwrap_err(),
+            "不支持的棋规模式"
         );
     }
 

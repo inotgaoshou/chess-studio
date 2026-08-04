@@ -42,7 +42,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH, chessPlatform, type AnalysisLine, type BoardState, type CloudBookCandidate, type EngineProbeDto, type EngineProfileDto, type EngineRuntimeState, type ExportFormat, type GameReportDatasetDto, type GameReportProgressDto, type GameSummary, type MoveItem, type Piece, type PreviewLineStep, type ReplayExportScope, type TheoryLibraryDto, type TrainingTaskDto } from "./platform";
+import { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH, chessPlatform, type AnalysisLine, type BoardState, type CloudBookCandidate, type EngineArenaResultDto, type EngineProbeDto, type EngineProfileDto, type EngineRuntimeState, type ExportFormat, type GameReportDatasetDto, type GameReportProgressDto, type GameSummary, type MoveItem, type Piece, type PreviewLineStep, type ReplayExportScope, type StudySessionDto, type TheoryLibraryDto, type TrainingTaskDto } from "./platform";
 import { evaluationRedShare, moveQualityFeedback, moveReports, positionEvaluation, redAnalysisScoreText, trendChart, trendPoints, trendTurningPoints } from "./analysisView";
 import { CandidateLine } from "./CandidateLine";
 import { hasEngineDivergence, MultiEngineComparison, type EngineComparisonGroup } from "./MultiEngineComparison";
@@ -114,6 +114,9 @@ const fallback: BoardState = {
   rootSideToMove: "红方",
   sideToMove: "红方",
   status: "进行中",
+  ruleName: "国内中国象棋规则（2020版导向）",
+  ruleVerdict: "ongoing",
+  ruleReason: "国内中国象棋规则（2020版导向）：对局进行中",
   pieces: initialPieces,
   history: [],
   continuation: [],
@@ -122,6 +125,22 @@ const fallback: BoardState = {
   note: "",
   playable: true,
 };
+
+const ruleModeLabels: Record<DesktopPreferencesDto["ruleMode"], string> = {
+  domestic2020: "国内中国象棋规则（2020版导向）",
+  asianAxf: "亚洲象棋规则（AXF导向）",
+};
+const defaultRuleMode: DesktopPreferencesDto["ruleMode"] = "domestic2020";
+const engineBlockingRuleVerdicts = new Set([
+  "checkmate",
+  "stalemate",
+  "drawByNaturalLimit",
+  "pendingRepetition",
+  "pendingAsianRepetition",
+  "lossByPerpetualCheck",
+  "lossByPerpetualChase",
+  "drawByRepetitionMvp",
+]);
 const pieceCode: Record<string, string> = {
   rook: "r",
   horse: "n",
@@ -171,6 +190,7 @@ const defaultDesktopPreferences: DesktopPreferencesDto = {
   analysisEngineMode: "single",
   parallelEngineIds: [],
   parallelEnginePaths: [],
+  ruleMode: defaultRuleMode,
   serverUrl: "http://127.0.0.1:8080",
 };
 const defaultSyncAccount: SyncAccountDto = {
@@ -187,7 +207,12 @@ function migrateDesktopPreferences(preferences: DesktopPreferencesDto): DesktopP
     ...migratedSearchDefaults,
     candidateLineMoves: preferences.candidateLineMoves === 6 ? DEFAULT_CANDIDATE_LINE_MOVES : preferences.candidateLineMoves,
     reportDepth: preferences.reportDepth === 26 ? 30 : preferences.reportDepth,
+    ruleMode: preferences.ruleMode === "asianAxf" ? "asianAxf" : defaultRuleMode,
   };
+}
+
+function ruleModeLabel(ruleMode?: DesktopPreferencesDto["ruleMode"]) {
+  return ruleModeLabels[ruleMode ?? defaultRuleMode] ?? ruleModeLabels[defaultRuleMode];
 }
 
 function engineDisplayName(path: string) {
@@ -493,6 +518,9 @@ export default function App() {
   const [coachReports, setCoachReports] = useState<GameReportDatasetDto[]>([]);
   const [coachProfileOpen, setCoachProfileOpen] = useState(false);
   const [trainingTasks, setTrainingTasks] = useState<TrainingTaskDto[]>([]);
+  const [studySessions, setStudySessions] = useState<StudySessionDto[]>([]);
+  const [engineArenaBusy, setEngineArenaBusy] = useState(false);
+  const [engineArenaResult, setEngineArenaResult] = useState<EngineArenaResultDto>();
   const [dialogBusy, setDialogBusy] = useState(false);
   const [online, setOnline] = useState(typeof navigator === "undefined" ? true : navigator.onLine);
   const normalizedBoardSkin = normalizeSkinId(desktopPreferences.boardSkin);
@@ -564,6 +592,7 @@ export default function App() {
         void loadSavedAnalysis(state.fen ?? startingFen);
         if (chessPlatform.kind === "desktop") void loadGameReport();
         if (chessPlatform.kind === "desktop") void chessPlatform.getTheoryLibrary().then(setTheoryLibrary).catch(() => undefined);
+        if (chessPlatform.kind === "desktop") void chessPlatform.listStudySessions().then(setStudySessions).catch(() => undefined);
         void refreshGames();
         if (chessPlatform.kind === "web") setNotice("离线棋谱已就绪");
       })
@@ -899,7 +928,7 @@ export default function App() {
   const lastMove = board.history.at(-1);
   const evaluation = useMemo(() => positionEvaluation(board, analysis), [analysis, board]);
   const analysisIsStale = analysis.length > 0 && analysisFen !== board.fen;
-  const boardRailEvaluation = useMemo(() => positionEvaluation(board, analysisBusy || analysisIsStale ? [] : analysis), [analysis, analysisBusy, analysisIsStale, board]);
+  const boardRailEvaluation = useMemo(() => positionEvaluation(board, analysisIsStale ? [] : analysis), [analysis, analysisIsStale, board]);
   const evaluationTrend = useMemo(() => trendPoints(evaluation?.samples ?? [], board.history.length), [board.history.length, evaluation]);
   const trendSegments = useMemo(() => evaluationTrend.slice(1).flatMap((point, index) => {
     const previous = evaluationTrend[index];
@@ -1097,6 +1126,7 @@ export default function App() {
   const currentNnueHashLabel = shortHash(engineProbe?.nnueSha256);
   const strategyInsight = useMemo(() => {
     const reportPosition = board.currentNode ? reportPositionByNode.get(board.currentNode)?.position : gameReport?.positions.at(-1);
+    const studyTags = (studySessions.find((session) => session.nodeId === board.currentNode) ?? studySessions[0])?.tags;
     return buildStrategyInsight({
       sideToMove: board.sideToMove,
       ply: board.history.length,
@@ -1109,6 +1139,7 @@ export default function App() {
       analysisBusy,
       analysisStale: analysisIsStale,
       engineName: currentEngineLabel,
+      studyTags,
       courseCards: [
         ...bundledTheoryKnowledge.cards.map((card) => ({
           id: `bundled-${card.id}`,
@@ -1130,7 +1161,7 @@ export default function App() {
         })),
       ],
     });
-  }, [analysisBusy, analysisIsStale, board.branches.length, board.currentNode, board.fen, board.history, board.pieces, board.sideToMove, board.siblingBranches?.length, currentEngineLabel, gameReport?.positions, primaryAnalysis, reportPositionByNode, theoryLibrary?.cards]);
+  }, [analysisBusy, analysisIsStale, board.branches.length, board.currentNode, board.fen, board.history, board.pieces, board.sideToMove, board.siblingBranches?.length, currentEngineLabel, gameReport?.positions, primaryAnalysis, reportPositionByNode, studySessions, theoryLibrary?.cards]);
   const selectedAnalysisEngines = useMemo(() => {
     const activeProfile = engineProfiles.find((profile) => profile.id === desktopPreferences.activeEngineId || profile.executablePath === enginePath);
     const primary = {
@@ -1140,7 +1171,7 @@ export default function App() {
       path: enginePath,
       primary: true,
       title: currentEngineTitle,
-      nnueLabel: currentNnueHashLabel ? `NNUE ${currentNnueHashLabel}` : currentNnueLabel,
+      nnueLabel: currentNnueLabel ?? (currentNnueHashLabel ? `NNUE ${currentNnueHashLabel}` : undefined),
     };
     const selected = desktopPreferences.analysisEngineMode === "parallel"
       ? [
@@ -1158,6 +1189,46 @@ export default function App() {
     const role = engine.primary ? "主引擎" : `对比引擎 ${index}`;
     return [engine.primary ? currentEngineTitle : `${role}：${engine.displayName}`, !engine.primary && engine.path ? `路径：${engine.path}` : "", engine.nnueLabel ?? ""].filter(Boolean).join("\n");
   }).join("\n\n");
+
+  async function runEngineArena() {
+    if (chessPlatform.kind !== "desktop") {
+      setNotice("Web 版不运行本地引擎擂台");
+      return;
+    }
+    if (analysisBusy || engineThinking || reportBusy) {
+      setNotice("请先停止当前分析、报告或人机对弈，再启动擂台");
+      return;
+    }
+    const primary = selectedAnalysisEngines.find((engine) => engine.primary);
+    const comparison = selectedAnalysisEngines.find((engine) => !engine.primary && engine.path)
+      ?? { name: "内置 Fairy-Stockfish", displayName: "内置 Fairy-Stockfish", path: BUILTIN_FAIRY_ENGINE_PATH };
+    const playerAPath = primary?.path || enginePath || BUILTIN_ENGINE_PATH;
+    const playerBPath = comparison.path;
+    if (playerAPath === playerBPath) {
+      setNotice("擂台需要两个不同引擎，请先在引擎设置里添加对比引擎");
+      return;
+    }
+    setEngineArenaBusy(true);
+    setNotice(`引擎擂台开始：2盘快测，红黑互换，采用${ruleModeLabel(desktopPreferencesRef.current.ruleMode)}`);
+    try {
+      const result = await chessPlatform.runEngineArena({
+        playerA: { name: primary?.displayName ?? currentEngineVersionLabel, enginePath: playerAPath },
+        playerB: { name: comparison.displayName ?? comparison.name, enginePath: playerBPath },
+        games: 2,
+        moveTimeMs: 300,
+        threads,
+        hashMb,
+        maxPlies: 80,
+      });
+      setEngineArenaResult(result);
+      setNotice(`引擎擂台完成：${result.summary}`);
+    } catch (error) {
+      setNotice(friendlyError(error));
+    } finally {
+      setEngineArenaBusy(false);
+    }
+  }
+
   const analysisArrows = useMemo(() => {
     const arrowLimit = Math.max(1, Math.min(analysisArrowColors.length, Math.trunc(desktopPreferences.multipv) || multipv || 1));
     return analysisArrowFen === board.fen && analysisFen === board.fen ? orderedAnalysis.slice(0, arrowLimit)
@@ -1490,8 +1561,16 @@ export default function App() {
       }
       applyBoard(next);
       await loadGameReport();
-      setNotice(`已记录 ${next.history.at(-1)?.notation ?? iccs}${sourceEngineName ? ` · ${sourceEngineName} 建议` : ""}`);
-      await requestEngineMove(next);
+      const ruleBlocked = next.ruleVerdict && engineBlockingRuleVerdicts.has(next.ruleVerdict);
+      setNotice(ruleBlocked
+        ? `${next.ruleReason ?? next.status} · 人机对弈已暂停`
+        : `已记录 ${next.history.at(-1)?.notation ?? iccs}${sourceEngineName ? ` · ${sourceEngineName} 建议` : ""}`);
+      if (ruleBlocked) {
+        setEngineSide("none");
+        await chessPlatform.stopEnginePlay().catch(() => undefined);
+      } else {
+        await requestEngineMove(next);
+      }
     } catch (error) {
       setNotice(friendlyError(error));
     }
@@ -1951,6 +2030,12 @@ export default function App() {
 
   async function requestEngineMove(state = boardRef.current, side = engineSide) {
     if (chessPlatform.kind !== "desktop" || side === "none" || !isEngineTurn(state, side) || engineStarting || engineThinking || reportBusy) return;
+    if (state.ruleVerdict && engineBlockingRuleVerdicts.has(state.ruleVerdict)) {
+      setNotice(`${state.ruleReason ?? state.status} · 人机对弈已暂停`);
+      setEngineSide("none");
+      await chessPlatform.stopEnginePlay().catch(() => undefined);
+      return;
+    }
     if (!ensureBoardChangeAllowed()) return;
     if (!enginePath.trim()) {
       setNotice("未找到可用引擎，无法开始人机对弈");
@@ -1973,7 +2058,13 @@ export default function App() {
       applyBoard(result.board);
       await loadGameReport();
       setPonderMove(result.ponder);
-      setNotice(`${currentEngineLabel} 已走 ${result.board.history.at(-1)?.notation ?? "一着"}${result.ponder ? ` · 预测 ${result.ponder}` : ""}`);
+      if (result.board.ruleVerdict && engineBlockingRuleVerdicts.has(result.board.ruleVerdict)) {
+        setEngineSide("none");
+        setPonderMove(undefined);
+        setNotice(`${currentEngineLabel} 已走 ${result.board.history.at(-1)?.notation ?? "一着"} · ${result.board.ruleReason ?? result.board.status}`);
+      } else {
+        setNotice(`${currentEngineLabel} 已走 ${result.board.history.at(-1)?.notation ?? "一着"}${result.ponder ? ` · 预测 ${result.ponder}` : ""}`);
+      }
     } catch (error) {
       setNotice(friendlyError(error));
       setEngineSide("none");
@@ -2850,6 +2941,27 @@ export default function App() {
     }
   }
 
+  async function saveStudySession(reflection: string, tags: string[]) {
+    if (chessPlatform.kind !== "desktop") return;
+    setDialogBusy(true);
+    try {
+      const session = await chessPlatform.saveStudySession(reflection, tags);
+      setStudySessions((sessions) => [session, ...sessions]);
+      setNotice("训练总结已保存；现在可用 Pikafish 核验当前节点");
+    } catch (error) {
+      const message = friendlyError(error);
+      setNotice(message);
+      throw new Error(message);
+    } finally {
+      setDialogBusy(false);
+    }
+  }
+
+  async function analyzeStudySession() {
+    setDesktopDialog(null);
+    await runAnalysis();
+  }
+
   async function executeMenuCommand(command: MenuCommand) {
     switch (command) {
       case "newGame": await createGame(startingFen); break;
@@ -2870,6 +2982,7 @@ export default function App() {
       case "moveNow": await moveNow(); break;
       case "analyze": analysisHintsEnabled ? await stopAnalysis() : await runAnalysis(); break;
       case "stopAnalysis": await stopAnalysis(); break;
+      case "engineArena": await runEngineArena(); break;
       case "engineSettings": setDesktopDialog("engine"); break;
       case "coachProfile": await openCoachProfile(); break;
       case "trainingTasks":
@@ -3574,6 +3687,7 @@ export default function App() {
           account={syncAccount}
           subscription={subscription}
           trainingTasks={trainingTasks}
+          studySessions={studySessions}
           engineProfiles={engineProfiles}
           busy={dialogBusy}
           onClose={() => setDesktopDialog(null)}
@@ -3586,6 +3700,8 @@ export default function App() {
           onAuthenticate={authenticateSync}
           onRedeemSubscription={redeemSubscriptionCode}
           onGenerateTraining={generateTrainingTasks}
+          onSaveStudy={saveStudySession}
+          onAnalyzeStudy={analyzeStudySession}
           onCompleteTraining={completeTrainingTask}
         />}
       </div>
@@ -3651,6 +3767,7 @@ export default function App() {
         account={syncAccount}
         subscription={subscription}
         trainingTasks={trainingTasks}
+        studySessions={studySessions}
         engineProfiles={engineProfiles}
         busy={dialogBusy}
         onClose={() => setDesktopDialog(null)}
@@ -3663,6 +3780,8 @@ export default function App() {
         onAuthenticate={authenticateSync}
         onRedeemSubscription={redeemSubscriptionCode}
         onGenerateTraining={generateTrainingTasks}
+        onSaveStudy={saveStudySession}
+        onAnalyzeStudy={analyzeStudySession}
         onCompleteTraining={completeTrainingTask}
       />}
       {coachProfileOpen && <CoachProfileView reports={coachReports} onClose={() => setCoachProfileOpen(false)}/>}
@@ -3906,7 +4025,7 @@ export default function App() {
             {(candidatePreview && previewStep || lastMove) && <span className="status-separator" />}
             <span className={`turn-dot ${board.sideToMove === "红方" ? "red" : "black"}`} />
             <strong>{candidatePreview && previewStep ? "手动推演中" : `${board.sideToMove}行棋`}</strong>
-            <span>{candidatePreview && previewStep ? `真实棋谱未改变 · 点“下一步”继续` : board.status}</span>
+            <span>{candidatePreview && previewStep ? `真实棋谱未改变 · 点“下一步”继续` : board.ruleReason ?? board.status}</span>
             <span className="status-spacer" />
             <span className="board-meta">节点 {board.history.length}</span>
             <span className="board-meta">{reversed ? "黑方视角" : "红方视角"}</span>
@@ -3991,8 +4110,29 @@ export default function App() {
               </div>
               {engineSide !== "none" && <div className="engine-play-status"><span className={engineThinking ? "thinking" : engineStarting ? "starting" : ""}/><strong>人机对弈</strong><small>{currentEngineVersionLabel} 执{engineSide === "red" ? "红" : "黑"}{engineStarting ? " · 启动中" : engineThinking ? " · 思考中" : ponderMove ? ` · 预测 ${ponderMove}` : " · 等待行棋"}</small></div>}
               <button className="engine-config-summary" title={currentEngineTitle} onClick={() => setDesktopDialog("engine")}>
-                <Settings2 size={14}/><span>{currentEngineVersionLabel}</span><small>{threads} 线程 · Hash {hashMb} MB · MultiPV {multipv}{currentEngineHashLabel ? ` · 引擎 ${currentEngineHashLabel}` : ""}{currentNnueLabel ? ` · ${currentNnueLabel}` : ""}{currentNnueHashLabel ? ` · ${currentNnueHashLabel}` : ""}</small>
+                <Settings2 size={14}/><span>{currentEngineVersionLabel}</span><small>{threads} 线程 · Hash {hashMb} MB · MultiPV {multipv} · {ruleModeLabel(desktopPreferences.ruleMode)}{currentEngineHashLabel ? ` · 引擎 ${currentEngineHashLabel}` : ""}{currentNnueLabel ? ` · ${currentNnueLabel}` : ""}{currentNnueHashLabel ? ` · ${currentNnueHashLabel}` : ""}</small>
               </button>
+              <section className="engine-arena-card" aria-label="引擎擂台">
+                <header>
+                  <div><strong>引擎擂台</strong><small>2盘快测 · 红黑互换 · 每步300ms · {engineArenaResult?.ruleName ?? ruleModeLabel(desktopPreferences.ruleMode)}</small></div>
+                  <button type="button" disabled={engineArenaBusy || analysisBusy || engineThinking || reportBusy} onClick={() => void runEngineArena()}><Bot size={13}/>{engineArenaBusy ? "对局中…" : "开始擂台"}</button>
+                </header>
+                {engineArenaResult
+                  ? <div className="engine-arena-result">
+                      <p>{engineArenaResult.summary}<small>小样本只看趋势，正式棋力建议 100+ 盘。</small></p>
+                      <div className="engine-arena-score">
+                        {[engineArenaResult.playerA, engineArenaResult.playerB].map((score) => <span key={score.name}><b>{score.name}</b><em>{score.points.toFixed(1)} 分</em><small>{score.wins}胜 {score.draws}和 {score.losses}负</small></span>)}
+                      </div>
+                      <ol>
+                        {engineArenaResult.games.map((game) => <li key={game.index}>
+                          <strong>第{game.index}盘 {game.result}</strong>
+                          <span>红：{game.red} · 黑：{game.black}</span>
+                          <small>{game.reason} · {game.plies}半回合{game.moves.length ? ` · 末尾 ${game.moves.slice(-4).join(" ")}` : ""}</small>
+                        </li>)}
+                      </ol>
+                    </div>
+                  : <p className="engine-arena-empty">默认让当前主引擎对内置 Fairy-Stockfish；如果启用了对比引擎，则优先挑战第一个对比引擎。Fairy 只是外部对比引擎，裁决统一由应用内棋规模块处理。</p>}
+              </section>
               {engineProfiles.length > 0 && <div className="engine-profile-select"><label><span>当前引擎</span><select value={desktopPreferences.activeEngineId ?? ""} onChange={(event) => void selectEngineProfile(event.target.value)}><option value="" disabled>选择已添加的引擎</option>{engineProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.protocol.toUpperCase()}</option>)}</select></label><button title="删除当前引擎档案" onClick={() => void removeEngineProfile()}><Trash2 size={13}/></button></div>}
             </>}
             {chessPlatform.kind === "web" && <div className="web-engine-source"><span>{serverUrl}</span><strong>MultiPV {multipv}</strong></div>}

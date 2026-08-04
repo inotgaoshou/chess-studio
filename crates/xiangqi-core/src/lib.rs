@@ -3,6 +3,9 @@ use thiserror::Error;
 
 pub const STARTING_FEN: &str =
     "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1";
+pub const DOMESTIC_RULE_NAME: &str = "国内中国象棋规则（2020版导向）";
+pub const ASIAN_RULE_NAME: &str = "亚洲象棋规则（AXF导向）";
+pub const NATURAL_LIMIT_PLIES: u32 = 120;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Color {
@@ -61,6 +64,73 @@ pub enum GameStatus {
     Ongoing,
     Check,
     Checkmate,
+    Stalemate,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RuleMode {
+    Domestic2020,
+    AsianAxf,
+}
+
+impl RuleMode {
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::Domestic2020 => "domestic2020",
+            Self::AsianAxf => "asianAxf",
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Domestic2020 => DOMESTIC_RULE_NAME,
+            Self::AsianAxf => ASIAN_RULE_NAME,
+        }
+    }
+}
+
+impl Default for RuleMode {
+    fn default() -> Self {
+        Self::Domestic2020
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RuleVerdict {
+    Ongoing,
+    Check,
+    Checkmate { loser: Color },
+    Stalemate { loser: Color },
+    DrawByNaturalLimit,
+    PendingRepetition,
+    PendingAsianRepetition,
+    LossByPerpetualCheck { loser: Color },
+    LossByPerpetualChase { loser: Color },
+    DrawByRepetitionMvp,
+}
+
+impl RuleVerdict {
+    pub fn is_terminal(self) -> bool {
+        !matches!(self, Self::Ongoing | Self::Check | Self::PendingRepetition)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuleMoveRecord {
+    pub mover: Color,
+    pub captured: bool,
+    pub gives_check: bool,
+    pub position_key: String,
+    #[serde(default)]
+    pub chase_targets: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DomesticRuleState {
+    positions: Vec<String>,
+    moves: Vec<RuleMoveRecord>,
+    capture_free_plies: u32,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -195,6 +265,18 @@ impl Board {
 
     pub fn side_to_move(&self) -> Color {
         self.side_to_move
+    }
+
+    pub fn rule_position_key(&self) -> String {
+        self.to_fen()
+            .split_whitespace()
+            .take(2)
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    pub fn would_capture(&self, mv: Move) -> bool {
+        self.piece_at(mv.to).is_some()
     }
 
     pub fn piece_at(&self, square: Square) -> Option<Piece> {
@@ -340,10 +422,13 @@ impl Board {
 
     pub fn status(&self) -> GameStatus {
         let in_check = self.is_in_check(self.side_to_move);
-        if in_check && self.legal_moves().is_empty() {
+        let legal_moves = self.legal_moves();
+        if in_check && legal_moves.is_empty() {
             GameStatus::Checkmate
         } else if in_check {
             GameStatus::Check
+        } else if legal_moves.is_empty() {
+            GameStatus::Stalemate
         } else {
             GameStatus::Ongoing
         }
@@ -487,6 +572,234 @@ impl Board {
         }
         count
     }
+
+    fn unprotected_targets_attacked_by(&self, attacker: Color) -> Vec<String> {
+        let mut targets = Vec::new();
+        for target_index in 0..90 {
+            let target_square = square_from_index(target_index);
+            let Some(target_piece) = self.squares[target_index] else {
+                continue;
+            };
+            if target_piece.color == attacker || target_piece.kind == PieceKind::King {
+                continue;
+            }
+            let attacked = (0..90).any(|attacker_index| {
+                let from = square_from_index(attacker_index);
+                self.squares[attacker_index].is_some_and(|piece| {
+                    piece.color == attacker
+                        && self.attacks(
+                            Move {
+                                from,
+                                to: target_square,
+                            },
+                            piece,
+                        )
+                })
+            });
+            if attacked && !self.is_defended(target_square, target_piece.color) {
+                targets.push(piece_target_key(target_piece, target_square));
+            }
+        }
+        targets.sort();
+        targets.dedup();
+        targets
+    }
+
+    fn is_defended(&self, target: Square, defender: Color) -> bool {
+        (0..90).any(|defender_index| {
+            let from = square_from_index(defender_index);
+            from != target
+                && self.squares[defender_index].is_some_and(|piece| {
+                    piece.color == defender && self.attacks(Move { from, to: target }, piece)
+                })
+        })
+    }
+}
+
+impl DomesticRuleState {
+    pub fn new(initial: &Board) -> Self {
+        Self {
+            positions: vec![initial.rule_position_key()],
+            moves: Vec::new(),
+            capture_free_plies: 0,
+        }
+    }
+
+    pub fn from_fen_and_moves(fen: &str, moves: &[Move]) -> Result<(Self, Board), ChessError> {
+        let mut board = Board::from_fen(fen)?;
+        let mut state = Self::new(&board);
+        for mv in moves {
+            let next = board.apply_move(*mv)?;
+            state.record_applied_move(&board, *mv, &next)?;
+            board = next;
+        }
+        Ok((state, board))
+    }
+
+    pub fn record_applied_move(
+        &mut self,
+        before: &Board,
+        mv: Move,
+        after: &Board,
+    ) -> Result<(), ChessError> {
+        let piece = before.piece_at(mv.from).ok_or(ChessError::IllegalMove)?;
+        if piece.color != before.side_to_move {
+            return Err(ChessError::IllegalMove);
+        }
+        let captured = before.would_capture(mv);
+        let expected = before.apply_move(mv)?;
+        if expected != *after {
+            return Err(ChessError::IllegalMove);
+        }
+        self.capture_free_plies = if captured {
+            0
+        } else {
+            self.capture_free_plies + 1
+        };
+        self.positions.push(after.rule_position_key());
+        self.moves.push(RuleMoveRecord {
+            mover: piece.color,
+            captured,
+            gives_check: after.is_in_check(after.side_to_move()),
+            position_key: after.rule_position_key(),
+            chase_targets: after.unprotected_targets_attacked_by(piece.color),
+        });
+        Ok(())
+    }
+
+    pub fn evaluate(&self, board: &Board) -> RuleVerdict {
+        self.evaluate_with_mode(board, RuleMode::Domestic2020)
+    }
+
+    pub fn evaluate_with_mode(&self, board: &Board, mode: RuleMode) -> RuleVerdict {
+        match board.status() {
+            GameStatus::Checkmate => {
+                return RuleVerdict::Checkmate {
+                    loser: board.side_to_move(),
+                };
+            }
+            GameStatus::Stalemate => {
+                return RuleVerdict::Stalemate {
+                    loser: board.side_to_move(),
+                };
+            }
+            GameStatus::Check => {}
+            GameStatus::Ongoing => {}
+        }
+        if self.capture_free_plies >= NATURAL_LIMIT_PLIES {
+            return RuleVerdict::DrawByNaturalLimit;
+        }
+        if self.current_repetition_count() >= 3 {
+            if let Some(loser) = self.perpetual_check_loser() {
+                return RuleVerdict::LossByPerpetualCheck { loser };
+            }
+            if mode == RuleMode::AsianAxf {
+                if let Some(loser) = self.perpetual_chase_loser() {
+                    return RuleVerdict::LossByPerpetualChase { loser };
+                }
+                if self.has_complex_chase_cycle() {
+                    return RuleVerdict::PendingAsianRepetition;
+                }
+                return RuleVerdict::DrawByRepetitionMvp;
+            }
+            return RuleVerdict::PendingRepetition;
+        }
+        if board.status() == GameStatus::Check {
+            RuleVerdict::Check
+        } else {
+            RuleVerdict::Ongoing
+        }
+    }
+
+    pub fn capture_free_plies(&self) -> u32 {
+        self.capture_free_plies
+    }
+
+    pub fn current_repetition_count(&self) -> usize {
+        let Some(current) = self.positions.last() else {
+            return 0;
+        };
+        self.positions
+            .iter()
+            .filter(|position| *position == current)
+            .count()
+    }
+
+    fn current_cycle_records(&self) -> Option<&[RuleMoveRecord]> {
+        let current = self.positions.last()?;
+        let previous = self
+            .positions
+            .iter()
+            .enumerate()
+            .rev()
+            .skip(1)
+            .find_map(|(index, position)| (position == current).then_some(index))?;
+        Some(&self.moves[previous..])
+    }
+
+    fn perpetual_check_loser(&self) -> Option<Color> {
+        let cycle = self.current_cycle_records()?;
+        if cycle.is_empty() || cycle.iter().any(|record| record.captured) {
+            return None;
+        }
+        [Color::Red, Color::Black].into_iter().find(|color| {
+            let own: Vec<_> = cycle
+                .iter()
+                .filter(|record| record.mover == *color)
+                .collect();
+            !own.is_empty()
+                && own.iter().all(|record| record.gives_check)
+                && cycle
+                    .iter()
+                    .filter(|record| record.mover == color.opposite())
+                    .all(|record| !record.gives_check)
+        })
+    }
+
+    fn perpetual_chase_loser(&self) -> Option<Color> {
+        let cycle = self.current_cycle_records()?;
+        if cycle.is_empty() || cycle.iter().any(|record| record.captured) {
+            return None;
+        }
+        [Color::Red, Color::Black].into_iter().find(|color| {
+            let own: Vec<_> = cycle
+                .iter()
+                .filter(|record| record.mover == *color)
+                .collect();
+            let other: Vec<_> = cycle
+                .iter()
+                .filter(|record| record.mover == color.opposite())
+                .collect();
+            if own.is_empty()
+                || other.is_empty()
+                || own.iter().any(|record| record.gives_check)
+                || other
+                    .iter()
+                    .any(|record| record.gives_check || !record.chase_targets.is_empty())
+            {
+                return false;
+            }
+            let Some(first_target) = own
+                .iter()
+                .find_map(|record| single_chase_target(record).map(str::to_owned))
+            else {
+                return false;
+            };
+            own.iter()
+                .all(|record| single_chase_target(record) == Some(first_target.as_str()))
+        })
+    }
+
+    fn has_complex_chase_cycle(&self) -> bool {
+        self.current_cycle_records().is_some_and(|cycle| {
+            cycle.iter().all(|record| !record.gives_check)
+                && cycle.iter().any(|record| !record.chase_targets.is_empty())
+        })
+    }
+}
+
+fn single_chase_target(record: &RuleMoveRecord) -> Option<&str> {
+    (record.chase_targets.len() == 1).then(|| record.chase_targets[0].as_str())
 }
 
 fn index(square: Square) -> usize {
@@ -541,6 +854,19 @@ fn symbol_from_piece(piece: Piece) -> char {
     } else {
         symbol
     }
+}
+
+fn piece_target_key(piece: Piece, square: Square) -> String {
+    format!(
+        "{}{}{}{}",
+        if piece.color == Color::Red { 'R' } else { 'B' },
+        symbol_from_piece(Piece {
+            color: Color::Black,
+            kind: piece.kind,
+        }),
+        square.row,
+        square.col
+    )
 }
 
 fn chinese_piece_name(piece: Piece) -> &'static str {
@@ -662,6 +988,321 @@ mod tests {
         );
     }
 
+    #[test]
+    fn rule_state_reports_checkmate_loser() {
+        let board = Board::from_fen("4k4/3RRR3/9/9/9/9/9/9/9/4K4 b - - 0 1").unwrap();
+        let state = DomesticRuleState::new(&board);
+
+        assert_eq!(
+            state.evaluate(&board),
+            RuleVerdict::Checkmate {
+                loser: Color::Black
+            }
+        );
+    }
+
+    #[test]
+    fn rule_state_reports_natural_limit_after_120_capture_free_plies() {
+        let board = Board::from_fen(STARTING_FEN).unwrap();
+        let mut state = DomesticRuleState::new(&board);
+        state.capture_free_plies = NATURAL_LIMIT_PLIES;
+
+        assert_eq!(state.evaluate(&board), RuleVerdict::DrawByNaturalLimit);
+    }
+
+    #[test]
+    fn rule_state_resets_natural_limit_when_a_move_captures() {
+        let board = Board::from_fen("4k4/9/9/9/r3p4/R8/9/9/9/4K4 b - - 119 1").unwrap();
+        let mv = Move::from_iccs("a5a4").unwrap();
+        let next = board.apply_move(mv).unwrap();
+        let mut state = DomesticRuleState::new(&board);
+        state.capture_free_plies = NATURAL_LIMIT_PLIES - 1;
+
+        state.record_applied_move(&board, mv, &next).unwrap();
+
+        assert_eq!(state.capture_free_plies(), 0);
+        assert_eq!(state.evaluate(&next), RuleVerdict::Ongoing);
+    }
+
+    #[test]
+    fn rule_state_marks_third_repeated_position_as_pending() {
+        let board = Board::from_fen(STARTING_FEN).unwrap();
+        let key = board.rule_position_key();
+        let mut state = DomesticRuleState::new(&board);
+        state.positions = vec![
+            key.clone(),
+            "after-red".into(),
+            key.clone(),
+            "after-red".into(),
+            key,
+        ];
+        state.moves = vec![
+            RuleMoveRecord {
+                mover: Color::Red,
+                captured: false,
+                gives_check: false,
+                position_key: "after-red".into(),
+                chase_targets: Vec::new(),
+            },
+            RuleMoveRecord {
+                mover: Color::Black,
+                captured: false,
+                gives_check: false,
+                position_key: board.rule_position_key(),
+                chase_targets: Vec::new(),
+            },
+            RuleMoveRecord {
+                mover: Color::Red,
+                captured: false,
+                gives_check: false,
+                position_key: "after-red".into(),
+                chase_targets: Vec::new(),
+            },
+            RuleMoveRecord {
+                mover: Color::Black,
+                captured: false,
+                gives_check: false,
+                position_key: board.rule_position_key(),
+                chase_targets: Vec::new(),
+            },
+        ];
+
+        assert_eq!(state.current_repetition_count(), 3);
+        assert_eq!(state.evaluate(&board), RuleVerdict::PendingRepetition);
+        assert_eq!(
+            state.evaluate_with_mode(&board, RuleMode::AsianAxf),
+            RuleVerdict::DrawByRepetitionMvp
+        );
+    }
+
+    #[test]
+    fn rule_state_marks_single_side_perpetual_check_as_loss() {
+        let board = Board::from_fen(STARTING_FEN).unwrap();
+        let key = board.rule_position_key();
+        let mut state = DomesticRuleState::new(&board);
+        state.positions = vec![
+            key.clone(),
+            "black-to-move-in-check".into(),
+            key.clone(),
+            "black-to-move-in-check".into(),
+            key,
+        ];
+        state.moves = vec![
+            RuleMoveRecord {
+                mover: Color::Red,
+                captured: false,
+                gives_check: true,
+                position_key: "black-to-move-in-check".into(),
+                chase_targets: Vec::new(),
+            },
+            RuleMoveRecord {
+                mover: Color::Black,
+                captured: false,
+                gives_check: false,
+                position_key: board.rule_position_key(),
+                chase_targets: Vec::new(),
+            },
+            RuleMoveRecord {
+                mover: Color::Red,
+                captured: false,
+                gives_check: true,
+                position_key: "black-to-move-in-check".into(),
+                chase_targets: Vec::new(),
+            },
+            RuleMoveRecord {
+                mover: Color::Black,
+                captured: false,
+                gives_check: false,
+                position_key: board.rule_position_key(),
+                chase_targets: Vec::new(),
+            },
+        ];
+
+        assert_eq!(
+            state.evaluate(&board),
+            RuleVerdict::LossByPerpetualCheck { loser: Color::Red }
+        );
+    }
+
+    #[test]
+    fn asian_rule_marks_mechanical_perpetual_chase_as_loss() {
+        let board = Board::from_fen(STARTING_FEN).unwrap();
+        let key = board.rule_position_key();
+        let mut state = DomesticRuleState::new(&board);
+        state.positions = vec![
+            key.clone(),
+            "black-to-move-chased".into(),
+            key.clone(),
+            "black-to-move-chased".into(),
+            key,
+        ];
+        state.moves = vec![
+            RuleMoveRecord {
+                mover: Color::Red,
+                captured: false,
+                gives_check: false,
+                position_key: "black-to-move-chased".into(),
+                chase_targets: vec!["Bn22".into()],
+            },
+            RuleMoveRecord {
+                mover: Color::Black,
+                captured: false,
+                gives_check: false,
+                position_key: board.rule_position_key(),
+                chase_targets: Vec::new(),
+            },
+            RuleMoveRecord {
+                mover: Color::Red,
+                captured: false,
+                gives_check: false,
+                position_key: "black-to-move-chased".into(),
+                chase_targets: vec!["Bn22".into()],
+            },
+            RuleMoveRecord {
+                mover: Color::Black,
+                captured: false,
+                gives_check: false,
+                position_key: board.rule_position_key(),
+                chase_targets: Vec::new(),
+            },
+        ];
+
+        assert_eq!(
+            state.evaluate_with_mode(&board, RuleMode::AsianAxf),
+            RuleVerdict::LossByPerpetualChase { loser: Color::Red }
+        );
+        assert_eq!(state.evaluate(&board), RuleVerdict::PendingRepetition);
+    }
+
+    #[test]
+    fn asian_rule_keeps_complex_chase_repetition_pending() {
+        let board = Board::from_fen(STARTING_FEN).unwrap();
+        let key = board.rule_position_key();
+        let mut state = DomesticRuleState::new(&board);
+        state.positions = vec![
+            key.clone(),
+            "black-to-move-chased".into(),
+            key.clone(),
+            "black-to-move-chased".into(),
+            key,
+        ];
+        state.moves = vec![
+            RuleMoveRecord {
+                mover: Color::Red,
+                captured: false,
+                gives_check: false,
+                position_key: "black-to-move-chased".into(),
+                chase_targets: vec!["Bn22".into()],
+            },
+            RuleMoveRecord {
+                mover: Color::Black,
+                captured: false,
+                gives_check: false,
+                position_key: board.rule_position_key(),
+                chase_targets: Vec::new(),
+            },
+            RuleMoveRecord {
+                mover: Color::Red,
+                captured: false,
+                gives_check: false,
+                position_key: "black-to-move-chased".into(),
+                chase_targets: vec!["Bn22".into(), "Bc27".into()],
+            },
+            RuleMoveRecord {
+                mover: Color::Black,
+                captured: false,
+                gives_check: false,
+                position_key: board.rule_position_key(),
+                chase_targets: Vec::new(),
+            },
+        ];
+
+        assert_eq!(
+            state.evaluate_with_mode(&board, RuleMode::AsianAxf),
+            RuleVerdict::PendingAsianRepetition
+        );
+    }
+
+    #[test]
+    fn asian_rule_draws_mixed_check_and_chase_repetition() {
+        let board = Board::from_fen(STARTING_FEN).unwrap();
+        let key = board.rule_position_key();
+        let mut state = DomesticRuleState::new(&board);
+        state.positions = vec![
+            key.clone(),
+            "after-red-check".into(),
+            "after-black-reply-one".into(),
+            "after-red-chase".into(),
+            key.clone(),
+            "after-red-check".into(),
+            "after-black-reply-one".into(),
+            "after-red-chase".into(),
+            key,
+        ];
+        state.moves = vec![
+            RuleMoveRecord {
+                mover: Color::Red,
+                captured: false,
+                gives_check: true,
+                position_key: "after-red-check".into(),
+                chase_targets: Vec::new(),
+            },
+            RuleMoveRecord {
+                mover: Color::Black,
+                captured: false,
+                gives_check: false,
+                position_key: "after-black-reply-one".into(),
+                chase_targets: Vec::new(),
+            },
+            RuleMoveRecord {
+                mover: Color::Red,
+                captured: false,
+                gives_check: false,
+                position_key: "after-red-chase".into(),
+                chase_targets: vec!["Bn22".into()],
+            },
+            RuleMoveRecord {
+                mover: Color::Black,
+                captured: false,
+                gives_check: false,
+                position_key: board.rule_position_key(),
+                chase_targets: Vec::new(),
+            },
+            RuleMoveRecord {
+                mover: Color::Red,
+                captured: false,
+                gives_check: true,
+                position_key: "after-red-check".into(),
+                chase_targets: Vec::new(),
+            },
+            RuleMoveRecord {
+                mover: Color::Black,
+                captured: false,
+                gives_check: false,
+                position_key: "after-black-reply-one".into(),
+                chase_targets: Vec::new(),
+            },
+            RuleMoveRecord {
+                mover: Color::Red,
+                captured: false,
+                gives_check: false,
+                position_key: "after-red-chase".into(),
+                chase_targets: vec!["Bn22".into()],
+            },
+            RuleMoveRecord {
+                mover: Color::Black,
+                captured: false,
+                gives_check: false,
+                position_key: board.rule_position_key(),
+                chase_targets: Vec::new(),
+            },
+        ];
+
+        assert_eq!(
+            state.evaluate_with_mode(&board, RuleMode::AsianAxf),
+            RuleVerdict::DrawByRepetitionMvp
+        );
+    }
     #[test]
     fn disambiguates_same_file_rooks_from_the_movers_perspective() {
         let board = Board::from_fen("4k4/9/9/9/4P4/R8/9/R8/9/4K4 w - - 0 1").unwrap();

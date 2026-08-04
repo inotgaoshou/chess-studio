@@ -24,6 +24,9 @@ export type BoardState = {
   rootMate?: number;
   sideToMove: Side;
   status: string;
+  ruleName?: string;
+  ruleVerdict?: string;
+  ruleReason?: string;
   pieces: Piece[];
   history: MoveItem[];
   continuation: MoveItem[];
@@ -216,6 +219,7 @@ export const BUILTIN_ENGINE_PATH = "builtin:pikafish";
 export const BUILTIN_FAIRY_ENGINE_PATH = "builtin:fairy-stockfish";
 export type WorkspaceLayoutMode = "studio" | "compact";
 export type ManualViewMode = "track" | "tree";
+export type RuleMode = "domestic2020" | "asianAxf";
 export type SkinFolder = "default" | "hongmu" | "jingdian" | "xinghe";
 export type LegacySkinId = "original" | "classic" | "neon" | "jade" | "imperial";
 export type SkinId = SkinFolder | LegacySkinId;
@@ -250,6 +254,7 @@ export type DesktopPreferencesDto = {
   parallelEnginePaths?: string[];
   cloudBookEnabled?: boolean;
   cloudBookUrl?: string;
+  ruleMode: RuleMode;
   serverUrl: string;
 };
 export type SyncAccountDto = {
@@ -275,6 +280,14 @@ export type TrainingTaskDto = {
   title: string;
   detail: string;
   completedAt?: string;
+  createdAt: string;
+};
+export type StudySessionDto = {
+  id: string;
+  gameId: string;
+  nodeId?: string;
+  reflection: string;
+  tags: string[];
   createdAt: string;
 };
 export type TheoryPhase = "opening" | "middle" | "endgame";
@@ -314,6 +327,36 @@ export type EngineProbeDto = {
   fingerprint?: string;
 };
 export type EngineProfileDto = { id: string; name: string; executablePath: string; protocol: "uci" | "ucci"; active: boolean };
+export type EngineArenaPlayerDto = { name: string; enginePath: string };
+export type EngineArenaOptionsDto = {
+  playerA: EngineArenaPlayerDto;
+  playerB: EngineArenaPlayerDto;
+  games: number;
+  moveTimeMs: number;
+  threads: number;
+  hashMb: number;
+  maxPlies: number;
+};
+export type EngineArenaGameDto = {
+  index: number;
+  red: string;
+  black: string;
+  result: string;
+  winner?: string;
+  reason: string;
+  plies: number;
+  moves: string[];
+};
+export type EngineArenaScoreDto = { name: string; wins: number; draws: number; losses: number; points: number };
+export type EngineArenaResultDto = {
+  playerA: EngineArenaScoreDto;
+  playerB: EngineArenaScoreDto;
+  games: EngineArenaGameDto[];
+  moveTimeMs: number;
+  maxPlies: number;
+  ruleName: string;
+  summary: string;
+};
 export type GameSummary = { id: string; title: string; fen: string; updatedAt: string; current: boolean };
 export type EnginePlayOptions = { enginePath: string; moveTimeMs: number; threads: number; hashMb: number; ponder: boolean };
 export type EngineMoveResult = { board: BoardState; ponder?: string };
@@ -345,6 +388,8 @@ export interface ChessPlatform {
   listCoachReports(): Promise<GameReportDatasetDto[]>;
   listTrainingTasks(): Promise<TrainingTaskDto[]>;
   generateTrainingTasks(): Promise<TrainingTaskDto[]>;
+  listStudySessions(): Promise<StudySessionDto[]>;
+  saveStudySession(reflection: string, tags: string[]): Promise<StudySessionDto>;
   scanTheoryLibrary(): Promise<TheoryLibraryDto>;
   getTheoryLibrary(): Promise<TheoryLibraryDto>;
   reviewTheoryCard(card: TheoryCardDto): Promise<TheoryCardDto>;
@@ -372,6 +417,7 @@ export interface ChessPlatform {
   deleteNode(nodeId: string): Promise<Partial<BoardState>>;
   previewLine(fen: string, pv: string[]): Promise<PreviewLineStep[]>;
   analyze(options: AnalysisOptions): Promise<AnalysisLine[]>;
+  runEngineArena(options: EngineArenaOptionsDto): Promise<EngineArenaResultDto>;
   playEngineMove(options: EnginePlayOptions): Promise<EngineMoveResult>;
   moveNow(): Promise<boolean>;
   stopEnginePlay(): Promise<boolean>;

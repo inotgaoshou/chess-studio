@@ -29,6 +29,7 @@ const preferences: DesktopPreferencesDto = {
   boardSkin: "default",
   pieceSkin: "default",
   reportDepth: 30,
+  ruleMode: "domestic2020",
   serverUrl: "http://127.0.0.1:8080",
 };
 const account: SyncAccountDto = { serverUrl: preferences.serverUrl, status: "unbound" };
@@ -41,6 +42,7 @@ function renderDialog(dialog: "engine" | "syncSettings" | "register" | "login" |
     preferences,
     account,
     trainingTasks: [],
+    studySessions: [],
     busy: false,
     onClose: vi.fn(),
     onChooseEngine: vi.fn(async () => undefined),
@@ -50,6 +52,8 @@ function renderDialog(dialog: "engine" | "syncSettings" | "register" | "login" |
     onAuthenticate: vi.fn(async () => undefined),
     onRedeemSubscription: vi.fn(async () => undefined),
     onGenerateTraining: vi.fn(async () => undefined),
+    onSaveStudy: vi.fn(async () => undefined),
+    onAnalyzeStudy: vi.fn(async () => undefined),
     onCompleteTraining: vi.fn(async () => undefined),
     ...overrides,
   };
@@ -91,7 +95,7 @@ describe("DesktopDialogs", () => {
       preferences: { ...preferences, enginePath: BUILTIN_ENGINE_PATH, analysisEngineMode: "parallel" },
     });
 
-    expect(screen.getByText("独立资源目录，强制 Xiangqi 变体，适合对比参考 · 点击设为主引擎")).toBeTruthy();
+    expect(screen.getByText("独立资源目录，只作为外部对比引擎；裁决由应用内棋规模块处理 · 点击设为主引擎")).toBeTruthy();
     const compareControl = screen.getByTitle("将 内置 Fairy-Stockfish 作为对比引擎，不改变主引擎").querySelector("input");
     expect(compareControl).toBeTruthy();
     await user.click(compareControl!);
@@ -168,6 +172,18 @@ describe("DesktopDialogs", () => {
     expect((screen.getByLabelText("搜索限制") as HTMLInputElement).value).toBe("30");
     expect((screen.getByLabelText("整局复盘深度") as HTMLInputElement).value).toBe("30");
     expect((screen.getByLabelText("后续走法（10回合=20半回合）") as HTMLInputElement).value).toBe("20");
+  });
+
+  it("saves the selected rule mode from the engine dialog", async () => {
+    const saveEngine = vi.fn(async () => undefined);
+    const { user } = renderDialog("engine", { onSaveEngine: saveEngine });
+
+    await user.selectOptions(screen.getByLabelText("棋规模式"), "asianAxf");
+    expect(screen.getByText(/亚洲象棋规则（AXF导向）/)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "检测并保存" }));
+
+    const calls = saveEngine.mock.calls as unknown as Array<[DesktopPreferencesDto]>;
+    expect(calls[0]?.[0]).toEqual(expect.objectContaining({ ruleMode: "asianAxf" }));
   });
 
   it("adds Fairy and Cyclone style engines through named presets", async () => {

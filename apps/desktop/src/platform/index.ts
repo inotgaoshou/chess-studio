@@ -4,7 +4,7 @@ import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { webDatabase, type SyncOperation, type WebGameRecord } from "./indexedDb";
 import { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH } from "./types";
-import type { AnalysisLine, AnalysisOptions, BoardState, ChessPlatform, CloudBookCandidate, DesktopPreferencesDto, EngineMoveResult, EnginePlayOptions, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, ExportFormat, GameReportDatasetDto, GameReportOptionsDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, PreviewLineStep, ReplayExportScope, SubscriptionDto, SyncAccountDto, SyncResult, TheoryCardDto, TheoryLibraryDto, TrainingTaskDto } from "./types";
+import type { AnalysisLine, AnalysisOptions, BoardState, ChessPlatform, CloudBookCandidate, DesktopPreferencesDto, EngineArenaOptionsDto, EngineArenaResultDto, EngineMoveResult, EnginePlayOptions, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, ExportFormat, GameReportDatasetDto, GameReportOptionsDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, PreviewLineStep, ReplayExportScope, StudySessionDto, SubscriptionDto, SyncAccountDto, SyncResult, TheoryCardDto, TheoryLibraryDto, TrainingTaskDto } from "./types";
 
 type WebGameInstance = {
   stateJson(): string;
@@ -135,6 +135,8 @@ class DesktopPlatform implements ChessPlatform {
   listCoachReports() { return invoke<GameReportDatasetDto[]>("list_coach_reports"); }
   listTrainingTasks() { return invoke<TrainingTaskDto[]>("list_training_tasks"); }
   generateTrainingTasks() { return invoke<TrainingTaskDto[]>("generate_training_tasks"); }
+  listStudySessions() { return invoke<StudySessionDto[]>("list_study_sessions"); }
+  saveStudySession(reflection: string, tags: string[]) { return invoke<StudySessionDto>("save_study_session", { reflection, tags }); }
   scanTheoryLibrary() { return invoke<TheoryLibraryDto>("scan_theory_library"); }
   getTheoryLibrary() { return invoke<TheoryLibraryDto>("get_theory_library"); }
   reviewTheoryCard(card: TheoryCardDto) { return invoke<TheoryCardDto>("review_theory_card", { card }); }
@@ -218,6 +220,7 @@ class DesktopPlatform implements ChessPlatform {
     });
   }
   stopAnalysis(discardResult = false) { return invoke<boolean>("stop_analysis", { discardResult }); }
+  runEngineArena(options: EngineArenaOptionsDto) { return invoke<EngineArenaResultDto>("run_engine_arena", { options }); }
   playEngineMove(options: EnginePlayOptions) { return invoke<EngineMoveResult>("engine_play_move", options); }
   moveNow() { return invoke<boolean>("move_now"); }
   stopEnginePlay() { return invoke<boolean>("stop_engine_play"); }
@@ -395,6 +398,7 @@ class WebPlatform implements ChessPlatform {
   async pasteDocument(): Promise<Partial<BoardState>> { throw new Error("Web 端棋谱粘贴将在后续版本开放"); }
   async updateGameMetadata(): Promise<Partial<BoardState>> { throw new Error("Web 端棋局元数据编辑将在后续版本开放"); }
   async reorderBranches(): Promise<Partial<BoardState>> { throw new Error("Web 端变招排序将在后续版本开放"); }
+  async runEngineArena(): Promise<EngineArenaResultDto> { throw new Error("Web 端不运行本地引擎擂台"); }
   async playEngineMove(): Promise<EngineMoveResult> { throw new Error("Web 端不运行本地引擎对弈"); }
   async moveNow() { return false; }
   async stopEnginePlay() { return false; }
@@ -402,6 +406,8 @@ class WebPlatform implements ChessPlatform {
   async generateGameReport(): Promise<GameReportDatasetDto> { throw new Error("Web 端不支持本地整局分析报告"); }
   async listTrainingTasks(): Promise<TrainingTaskDto[]> { throw new Error("Web 端暂不支持训练任务"); }
   async generateTrainingTasks(): Promise<TrainingTaskDto[]> { throw new Error("Web 端暂不支持训练任务"); }
+  async listStudySessions(): Promise<StudySessionDto[]> { throw new Error("Web 端暂不支持训练总结"); }
+  async saveStudySession(): Promise<StudySessionDto> { throw new Error("Web 端暂不支持训练总结"); }
   async scanTheoryLibrary(): Promise<TheoryLibraryDto> { throw new Error("Web 端暂不支持本地棋理库"); }
   async getTheoryLibrary(): Promise<TheoryLibraryDto> { throw new Error("Web 端暂不支持本地棋理库"); }
   async reviewTheoryCard(_card: TheoryCardDto): Promise<TheoryCardDto> { throw new Error("Web 端暂不支持本地棋理库"); }
@@ -666,4 +672,4 @@ class WebPlatform implements ChessPlatform {
 const tauriAvailable = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 export const chessPlatform: ChessPlatform = tauriAvailable ? new DesktopPlatform() : new WebPlatform();
 export { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH } from "./types";
-export type { AnalysisLine, AnalysisOptions, BoardState, BranchCoachInsightDto, ChessPlatform, CloudBookCandidate, DesktopPreferencesDto, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, EngineRuntimeState, ExportFormat, GameReportDatasetDto, GameReportOptionsDto, GameReportPositionDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, LegacySkinId, ManualTreeNode, ManualViewMode, MoveCoachInsightDto, MoveItem, OpeningBookHitDto, Piece, PreviewLineStep, QualityGrade, ReplayExportScope, ReportPhase, ReportSidePresentationDto, Side, SkinFolder, SkinId, SubscriptionDto, SyncAccountDto, SyncResult, TheoryCardDto, TheoryLessonDto, TheoryLibraryDto, TheoryPhase, TrainingTaskDto, WorkspaceLayoutMode } from "./types";
+export type { AnalysisLine, AnalysisOptions, BoardState, BranchCoachInsightDto, ChessPlatform, CloudBookCandidate, DesktopPreferencesDto, EngineArenaGameDto, EngineArenaOptionsDto, EngineArenaResultDto, EngineArenaScoreDto, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, EngineRuntimeState, ExportFormat, GameReportDatasetDto, GameReportOptionsDto, GameReportPositionDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, LegacySkinId, ManualTreeNode, ManualViewMode, MoveCoachInsightDto, MoveItem, OpeningBookHitDto, Piece, PreviewLineStep, QualityGrade, ReplayExportScope, ReportPhase, ReportSidePresentationDto, RuleMode, Side, SkinFolder, SkinId, StudySessionDto, SubscriptionDto, SyncAccountDto, SyncResult, TheoryCardDto, TheoryLessonDto, TheoryLibraryDto, TheoryPhase, TrainingTaskDto, WorkspaceLayoutMode } from "./types";

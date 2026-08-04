@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { FolderOpen, LogIn, Save, Settings2, Trash2, UserPlus, X } from "lucide-react";
-import { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH, type DesktopPreferencesDto, type EngineProfileDto, type SubscriptionDto, type SyncAccountDto, type TrainingTaskDto } from "./platform";
+import { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH, type DesktopPreferencesDto, type EngineProfileDto, type StudySessionDto, type SubscriptionDto, type SyncAccountDto, type TrainingTaskDto } from "./platform";
 import { DEFAULT_CANDIDATE_LINE_MOVES, MAX_CANDIDATE_LINE_MOVES, MIN_CANDIDATE_LINE_MOVES } from "./candidatePreview";
 
 export type DesktopDialog = "engine" | "syncSettings" | "register" | "login" | "subscription" | "training" | "unbind" | null;
@@ -11,6 +11,7 @@ type Props = {
   account: SyncAccountDto;
   subscription?: SubscriptionDto;
   trainingTasks: TrainingTaskDto[];
+  studySessions: StudySessionDto[];
   engineProfiles?: EngineProfileDto[];
   busy: boolean;
   onClose(): void;
@@ -23,6 +24,8 @@ type Props = {
   onAuthenticate(mode: "register" | "login", email: string, password: string): Promise<void>;
   onRedeemSubscription(code: string): Promise<void>;
   onGenerateTraining(): Promise<void>;
+  onSaveStudy(reflection: string, tags: string[]): Promise<void>;
+  onAnalyzeStudy(): Promise<void>;
   onCompleteTraining(taskId: string, completed: boolean): Promise<void>;
 };
 
@@ -34,6 +37,10 @@ const branchArrowColors = [
   ["#9b51e0", "紫色"],
   ["#eb5757", "红色"],
 ] as const;
+const ruleModeOptions: Array<{ value: DesktopPreferencesDto["ruleMode"]; label: string; detail: string }> = [
+  { value: "domestic2020", label: "国内规则", detail: "国内中国象棋规则（2020版导向），复杂长杀/长捉先待判" },
+  { value: "asianAxf", label: "亚洲规则", detail: "亚洲象棋规则（AXF导向），重复局面更偏自动判和" },
+];
 
 function clampInteger(value: number, min: number, max: number) {
   if (!Number.isFinite(value)) return min;
@@ -66,6 +73,7 @@ function sanitizeEnginePreferences(preferences: DesktopPreferencesDto): DesktopP
     reportDepth: clampInteger(migrated.reportDepth, 8, 40),
     moveTimeMs: clampInteger(migrated.moveTimeMs, 100, 30000),
     branchArrowColor: branchArrowColors.some(([value]) => value === migrated.branchArrowColor) ? migrated.branchArrowColor : "#2f80ed",
+    ruleMode: migrated.ruleMode === "asianAxf" ? "asianAxf" : "domestic2020",
   };
 }
 
@@ -75,7 +83,7 @@ function matchesLegacySearchDefaults(preferences: DesktopPreferencesDto) {
 
 function engineInputValue(path: string) {
   if (path === BUILTIN_ENGINE_PATH) return "内置 Pikafish（随应用安装，推荐）";
-  if (path === BUILTIN_FAIRY_ENGINE_PATH) return "内置 Fairy-Stockfish（象棋模式，对比参考）";
+  if (path === BUILTIN_FAIRY_ENGINE_PATH) return "内置 Fairy-Stockfish（外部对比参考）";
   return path;
 }
 
@@ -98,11 +106,13 @@ function authenticationErrorMessage(error: unknown) {
     : message;
 }
 
-export function DesktopDialogs({ dialog, preferences, account, subscription, trainingTasks, engineProfiles = [], busy, onClose, onChooseEngine, onSaveEngine, onSelectEngineProfile, onDeleteEngineProfile, onSaveSync, onUnbindSync, onAuthenticate, onRedeemSubscription, onGenerateTraining, onCompleteTraining }: Props) {
+export function DesktopDialogs({ dialog, preferences, account, subscription, trainingTasks, studySessions, engineProfiles = [], busy, onClose, onChooseEngine, onSaveEngine, onSelectEngineProfile, onDeleteEngineProfile, onSaveSync, onUnbindSync, onAuthenticate, onRedeemSubscription, onGenerateTraining, onSaveStudy, onAnalyzeStudy, onCompleteTraining }: Props) {
   const [draft, setDraft] = useState(() => sanitizeEnginePreferences(preferences));
   const [email, setEmail] = useState(account.email ?? "");
   const [password, setPassword] = useState("");
   const [redemptionCode, setRedemptionCode] = useState("");
+  const [studyReflection, setStudyReflection] = useState("");
+  const [studyTags, setStudyTags] = useState("");
   const [unbindConfirmation, setUnbindConfirmation] = useState("");
   const [unbindCompleted, setUnbindCompleted] = useState(false);
   const [enginePickerBusy, setEnginePickerBusy] = useState(false);
@@ -112,9 +122,10 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
   const [engineProfileName, setEngineProfileName] = useState("");
   const initializedDialog = useRef<DesktopDialog>(null);
   const branchArrowColor = branchArrowColors.some(([value]) => value === draft.branchArrowColor) ? draft.branchArrowColor : "#2f80ed";
+  const currentRuleLabel = ruleModeOptions.find((option) => option.value === draft.ruleMode)?.detail ?? ruleModeOptions[0].detail;
   const builtInEngines = [
     { path: BUILTIN_ENGINE_PATH, name: "内置 Pikafish", detail: "随 App 安装，推荐日常拆棋" },
-    { path: BUILTIN_FAIRY_ENGINE_PATH, name: "内置 Fairy-Stockfish", detail: "独立资源目录，强制 Xiangqi 变体，适合对比参考" },
+    { path: BUILTIN_FAIRY_ENGINE_PATH, name: "内置 Fairy-Stockfish", detail: "独立资源目录，只作为外部对比引擎；裁决由应用内棋规模块处理" },
   ];
   const comparisonEngineCount = new Set([
     ...engineProfiles
@@ -289,7 +300,7 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
         {dialog === "engine" && <div className="dialog-form engine-settings-form">
           <label className="full"><span>引擎可执行文件</span><div className="dialog-input-action"><input value={engineInputValue(draft.enginePath)} readOnly={draft.enginePath === BUILTIN_ENGINE_PATH || draft.enginePath === BUILTIN_FAIRY_ENGINE_PATH} placeholder="选择 Pikafish / Fairy / 象眼 / 旋风等 UCI 或 UCCI 引擎" onChange={(event) => { setEnginePickerError(""); setEngineSaveError(""); setEngineSaveSuccess(""); setEngineProfileName(fileNameFromPath(event.target.value)); setDraft({ ...draft, enginePath: event.target.value, activeEngineId: undefined }); }}/><button type="button" title="使用安装包内置 Pikafish" disabled={busy || enginePickerBusy} onClick={() => { setEnginePickerError(""); setEngineSaveError(""); setEngineSaveSuccess(""); setEngineProfileName("内置 Pikafish"); setDraft({ ...draft, enginePath: BUILTIN_ENGINE_PATH, activeEngineId: draft.enginePath === BUILTIN_ENGINE_PATH ? draft.activeEngineId : undefined }); }}>内置</button><button type="button" title="选择外部引擎文件" disabled={busy || enginePickerBusy} onClick={() => void chooseEngine()}><FolderOpen size={15}/></button></div></label>
           <label className="full"><span>引擎档案名称</span><input value={engineProfileName} placeholder="例如 Fairy-Stockfish、象棋旋风、象眼 EleEye" onChange={(event) => setEngineProfileName(event.target.value)}/></label>
-          {(draft.enginePath === BUILTIN_ENGINE_PATH || draft.enginePath === BUILTIN_FAIRY_ENGINE_PATH) && <p className="dialog-hint full">当前使用安装包内置引擎。正式安装后会从 App 资源目录自动定位，不依赖本机绝对路径；Fairy-Stockfish 会自动设置为中国象棋 Xiangqi 模式。</p>}
+          {(draft.enginePath === BUILTIN_ENGINE_PATH || draft.enginePath === BUILTIN_FAIRY_ENGINE_PATH) && <p className="dialog-hint full">当前使用安装包内置引擎。正式安装后会从 App 资源目录自动定位，不依赖本机绝对路径；本地对弈与擂台按“{currentRuleLabel}”处理，Fairy-Stockfish 只作为外部对比引擎。</p>}
           <div className="engine-profile-manager full" aria-label="多引擎档案">
             <header>
               <div><strong>分析引擎角色</strong><small>先确定 1 个主引擎，再选择需要同时计算的对比引擎</small></div>
@@ -339,6 +350,8 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
           <label><span>搜索模式</span><select value={draft.searchMode} onChange={(event) => setDraft({ ...draft, searchMode: event.target.value as DesktopPreferencesDto["searchMode"] })}><option value="time">固定时间</option><option value="depth">固定深度</option><option value="nodes">固定节点</option><option value="infinite">持续分析</option></select></label>
           <label><span>搜索限制</span><input type="number" disabled={draft.searchMode === "infinite"} min={draft.searchMode === "depth" ? 1 : draft.searchMode === "nodes" ? 1000 : 100} max={draft.searchMode === "depth" ? 100 : draft.searchMode === "nodes" ? 100000000 : 30000} value={draft.searchValue} onChange={(event) => setDraft({ ...draft, searchValue: Number(event.target.value) })}/></label>
           <label><span>整局复盘深度</span><input type="number" min={8} max={40} value={draft.reportDepth} onChange={(event) => setDraft({ ...draft, reportDepth: Number(event.target.value) })}/></label>
+          <label><span>棋规模式</span><select value={draft.ruleMode ?? "domestic2020"} onChange={(event) => setDraft({ ...draft, ruleMode: event.target.value as DesktopPreferencesDto["ruleMode"] })}>{ruleModeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+          <p className="dialog-hint full">当前棋规：{currentRuleLabel}。天天象棋式 6/12/18、5 次重复、400 步阈值暂作为后续独立模式参考。</p>
           <label className="branch-arrow-color-field"><span>分支箭头颜色</span><div className="branch-arrow-color-control">
             <select value={branchArrowColor} onChange={(event) => setDraft({ ...draft, branchArrowColor: event.target.value })}>{branchArrowColors.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
             <div className="branch-arrow-preview" style={{ "--branch-arrow-preview-color": branchArrowColor } as CSSProperties} aria-label={`当前分支箭头颜色预览：${branchArrowColorLabel(branchArrowColor)}`}>
@@ -377,10 +390,14 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
         </div>}
 
         {dialog === "training" && <div className="dialog-form account-form">
-          <p className="dialog-hint">从当前整局报告的明显失误生成任务。任务只保存在本机，不会上传棋谱正文。</p>
+          <p className="dialog-hint">总结会绑定当前棋局和当前节点。保存后用本地 Pikafish 核验该局面；课程建议只使用已确认的原则卡。</p>
+          <label className="full"><span>本局训练总结</span><textarea value={studyReflection} placeholder="例如：第18回合只考虑抢攻，漏算了对方平炮后的反击；请核验应补防、兑子还是继续进攻。" onChange={(event) => setStudyReflection(event.target.value)}/></label>
+          <label className="full"><span>训练标签（逗号分隔）</span><input value={studyTags} placeholder="候选着, 反击, 防守" onChange={(event) => setStudyTags(event.target.value)}/></label>
+          <button className="theory-card-create" type="button" disabled={busy || !studyReflection.trim()} onClick={() => void onSaveStudy(studyReflection, studyTags.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean)).then(() => { setStudyReflection(""); setStudyTags(""); })}>保存总结</button>
+          {studySessions.length > 0 && <div className="full dialog-book-list">{studySessions.slice(0, 3).map((session) => <div key={session.id}><strong>{session.nodeId ? "当前节点复盘" : "整局复盘"}</strong><small>{session.reflection}{session.tags.length ? ` · ${session.tags.join(" / ")}` : ""}</small></div>)}</div>}
           {trainingTasks.length === 0 ? <p className="dialog-hint">还没有训练任务。先生成整局报告，再创建任务。</p> : <div className="full dialog-book-list">{trainingTasks.map((task) => <label className="check-row" key={task.id}><input type="checkbox" checked={!!task.completedAt} disabled={busy} onChange={(event) => void onCompleteTraining(task.id, event.target.checked)}/><span><strong>{task.title}</strong><small>{task.detail}</small></span></label>)}</div>}
           {enginePickerError && <p className="dialog-warning full" role="alert">{enginePickerError}</p>}
-          <footer><button onClick={close} disabled={busy}>关闭</button><button className="primary" disabled={busy} onClick={() => void onGenerateTraining()}>{busy ? "生成中…" : "从报告生成任务"}</button></footer>
+          <footer><button onClick={close} disabled={busy}>关闭</button><button disabled={busy || !studyReflection.trim()} onClick={() => void onSaveStudy(studyReflection, studyTags.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean)).then(() => { setStudyReflection(""); setStudyTags(""); })}>保存总结</button><button className="primary" disabled={busy} onClick={() => void onAnalyzeStudy()}>{busy ? "分析中…" : "引擎核验当前局面"}</button><button className="primary" disabled={busy} onClick={() => void onGenerateTraining()}>从报告生成任务</button></footer>
         </div>}
 
         {dialog === "unbind" && !unbindCompleted && <div className="dialog-form account-form">

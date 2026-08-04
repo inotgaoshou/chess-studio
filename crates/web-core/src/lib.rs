@@ -366,7 +366,9 @@ fn manual_tree_dto(
         .into_iter()
         .map(|node| {
             let move_ = move_dto(node, board)?;
-            let next_board = board.apply_move(node.mv).map_err(|error| error.to_string())?;
+            let next_board = board
+                .apply_move(node.mv)
+                .map_err(|error| error.to_string())?;
             Ok(ManualTreeNodeDto {
                 move_,
                 children: manual_tree_dto(tree, node.id, &next_board)?,
@@ -481,6 +483,7 @@ fn board_dto(game: &WebGame) -> Result<BoardDto, String> {
             GameStatus::Ongoing => "进行中",
             GameStatus::Check => "将军",
             GameStatus::Checkmate => "将死",
+            GameStatus::Stalemate => "困毙",
         },
         pieces,
         history,

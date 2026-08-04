@@ -31,6 +31,7 @@ const preferences: DesktopPreferencesDto = {
   layoutMode: "studio",
   manualViewMode: "track",
   reportDepth: 30,
+  ruleMode: "domestic2020",
   serverUrl: "http://127.0.0.1:8080",
 };
 
