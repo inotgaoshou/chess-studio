@@ -2251,6 +2251,7 @@ export default function App() {
     }
     setAnalysisArrowFen(analysisHintsEnabledRef.current ? analyzedFen : undefined);
     setAnalysisBusy(true);
+    if (!automatic && searchMode === "infinite") collapseCompactStudyPanels();
     if (!automatic) selectWorkspacePanel("analysis");
     setNotice(automatic ? `${analysisTargets.length} 个引擎正在自动分析…` : `${analysisTargets.length} 个引擎正在计算…`);
     const effectiveMode = automatic && searchMode === "infinite" ? "depth" : searchMode;
@@ -3082,6 +3083,16 @@ export default function App() {
     } catch (error) {
       setNotice(friendlyError(error));
     }
+  }
+
+  function collapseCompactStudyPanels() {
+    if (desktopPreferencesRef.current.layoutMode !== "compact") return;
+    setCompactEngineCollapsed(true);
+    setCompactManualCollapsed(true);
+    setCompactDetachedPanels({ engine: false, manual: false });
+    setCompactWindowPositions({ engine: { x: 0, y: 0 }, manual: { x: 0, y: 0 } });
+    setCompactManualWidth(undefined);
+    setCompactActiveWindow("engine");
   }
 
   function openEngineDivergence() {
@@ -4483,6 +4494,7 @@ export default function App() {
               linkStableFrames: request.stableFrames,
             });
             const result = await chessPlatform.startLinkSession(request);
+            collapseCompactStudyPanels();
             if (request.source === "windowLink") await openCompactFloatingPanel("link");
             setNotice(result.reason ?? "连线会话已启动，请提交并确认识别局面");
             return result;
