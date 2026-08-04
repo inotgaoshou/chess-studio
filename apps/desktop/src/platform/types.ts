@@ -255,6 +255,12 @@ export type DesktopPreferencesDto = {
   cloudBookEnabled?: boolean;
   cloudBookUrl?: string;
   ruleMode: RuleMode;
+  linkCaptureSource?: CaptureSource;
+  linkRecognitionMode?: RecognitionMode;
+  linkMode?: LinkMode;
+  linkStableFrames?: number;
+  linkConfidenceThreshold?: number;
+  linkAnimationConfirmation?: boolean;
   serverUrl: string;
 };
 export type SyncAccountDto = {
@@ -361,6 +367,13 @@ export type GameSummary = { id: string; title: string; fen: string; updatedAt: s
 export type EnginePlayOptions = { enginePath: string; moveTimeMs: number; threads: number; hashMb: number; ponder: boolean };
 export type EngineMoveResult = { board: BoardState; ponder?: string };
 export type EngineRuntimeState = "idle" | "analyzing" | "thinking" | "pondering" | "stopping" | "faulted";
+export type CaptureSource = "windowLink" | "desktopDetect" | "imageImport" | "cameraBoard";
+export type RecognitionMode = "yoloBoard" | "perspectiveGrid";
+export type LinkMode = "spectate" | "confirmPlay" | "autoPlay";
+export type LinkSessionState = "stopped" | "detectingCorners" | "rectifyingBoard" | "classifyingSquares" | "calibrating" | "needsManualCorrection" | "waitingStableFrames" | "tracking" | "paused";
+export type StartLinkSessionRequest = { source: CaptureSource; recognitionMode: RecognitionMode; mode: LinkMode; stableFrames: number };
+export type LinkObservation = { state: LinkSessionState; accepted: boolean; moveIccs?: string; reason?: string; board?: BoardState; capturePreviewAvailable?: boolean };
+export type LinkSessionStatus = { source: CaptureSource; mode: LinkMode; state: LinkSessionState; reason?: string };
 export type ExportFormat = "pgn" | "chinese" | "dhtmlxq";
 export type ReplayExportScope = "currentSelection" | "mainline";
 export type EngineRuntimeEvent =
@@ -396,6 +409,14 @@ export interface ChessPlatform {
   createTheoryCard(card: Pick<TheoryCardDto, "lessonId" | "title" | "summary" | "appliesWhen" | "risk" | "timecode">): Promise<TheoryCardDto>;
   completeTrainingTask(taskId: string, completed: boolean): Promise<void>;
   playMove(iccs: string): Promise<Partial<BoardState>>;
+  startLinkSession(request: StartLinkSessionRequest): Promise<LinkObservation>;
+  stopLinkSession(): Promise<LinkObservation>;
+  getLinkSessionStatus(): Promise<LinkSessionStatus>;
+  pauseLinkSession(): Promise<LinkSessionStatus>;
+  recalibrateLinkSession(): Promise<LinkSessionStatus>;
+  getLinkCapturePreview(): Promise<string | undefined>;
+  submitLinkPosition(fen: string): Promise<LinkObservation>;
+  importRecognizedPosition(fen: string, title?: string): Promise<Partial<BoardState>>;
   newGame(fen: string, title?: string, note?: string): Promise<Partial<BoardState>>;
   openDocument(): Promise<Partial<BoardState> | undefined>;
   importXqbOpeningBook(): Promise<Partial<BoardState> | undefined>;
@@ -429,8 +450,8 @@ export interface ChessPlatform {
   exportGameReportPdf(report: GameReportPresentationDto): Promise<string | undefined>;
   subscribeGameReportProgress(listener: (progress: GameReportProgressDto) => void): Promise<() => void>;
   loadSavedAnalysis(fen: string): Promise<AnalysisLine[]>;
-  openCompactFloatingPanel(panel: "engine" | "manual" | "cloud"): Promise<boolean>;
-  returnCompactFloatingPanel(panel: "engine" | "manual" | "cloud"): Promise<boolean>;
+  openCompactFloatingPanel(panel: "engine" | "manual" | "cloud" | "link"): Promise<boolean>;
+  returnCompactFloatingPanel(panel: "engine" | "manual" | "cloud" | "link"): Promise<boolean>;
   getSyncAccount(): Promise<SyncAccountDto>;
   getSubscription(): Promise<SubscriptionDto>;
   redeemSubscriptionCode(code: string): Promise<SubscriptionDto>;

@@ -2,11 +2,11 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use lopdf::{Document, Object, text_string};
+use manual_format::ManualDocument;
 use printpdf::{
     Color, FontId, Mm, Op, ParsedFont, PdfDocument, PdfPage, PdfSaveOptions, Point, Pt, Rgb,
     TextItem,
 };
-use manual_format::ManualDocument;
 use xiangqi_core::{Board, Color as XiangqiColor};
 
 const FONT: &[u8] = include_bytes!("../resources/fonts/NotoSansSC-VF.ttf");
@@ -155,7 +155,10 @@ fn sanitize_pdf_filename(value: &str) -> String {
         .chars()
         .map(|character| {
             if character.is_control()
-                || matches!(character, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
+                || matches!(
+                    character,
+                    '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|'
+                )
             {
                 '_'
             } else {
@@ -255,7 +258,13 @@ fn mainline_rows(document: &ManualDocument) -> Result<Vec<String>, String> {
         } else {
             format!("    注：{}", node.comment.trim())
         };
-        rows.push(format!("{}  {}{}{}", move_number_label(ply), notation, branch_hint, comment));
+        rows.push(format!(
+            "{}  {}{}{}",
+            move_number_label(ply),
+            notation,
+            branch_hint,
+            comment
+        ));
         board = board
             .apply_move(node.mv)
             .map_err(|error| format!("棋谱着法不合法：{error}"))?;
@@ -400,7 +409,11 @@ fn render_manual_pdf(document: &ManualDocument) -> Result<Vec<u8>, String> {
     let font = ParsedFont::from_bytes(FONT, 0, &mut warnings)
         .ok_or_else(|| "无法解析内嵌中文字体".to_owned())?;
     let title = document.metadata.title.trim();
-    let title = if title.is_empty() { "未命名棋谱" } else { title };
+    let title = if title.is_empty() {
+        "未命名棋谱"
+    } else {
+        title
+    };
     let mut pdf = PdfDocument::new(&format!("{title}棋谱"));
     let font_id = pdf.add_font(&font);
     let mut layout = ManualPdfLayout::new(font_id);
@@ -409,8 +422,16 @@ fn render_manual_pdf(document: &ManualDocument) -> Result<Vec<u8>, String> {
     if !document.metadata.red.trim().is_empty() || !document.metadata.black.trim().is_empty() {
         layout.subtitle(&format!(
             "红方：{}    黑方：{}",
-            if document.metadata.red.trim().is_empty() { "-" } else { document.metadata.red.trim() },
-            if document.metadata.black.trim().is_empty() { "-" } else { document.metadata.black.trim() },
+            if document.metadata.red.trim().is_empty() {
+                "-"
+            } else {
+                document.metadata.red.trim()
+            },
+            if document.metadata.black.trim().is_empty() {
+                "-"
+            } else {
+                document.metadata.black.trim()
+            },
         ));
     }
     if !document.note.trim().is_empty() {
@@ -439,7 +460,12 @@ fn render_manual_pdf(document: &ManualDocument) -> Result<Vec<u8>, String> {
         }
     }
     layout.section("说明");
-    layout.line("这是棋谱 PDF，不是思维导图。变招按分支文字列表展示，便于手机和微信打开查看。", 0.0, 9.0, rgb(116, 126, 135));
+    layout.line(
+        "这是棋谱 PDF，不是思维导图。变招按分支文字列表展示，便于手机和微信打开查看。",
+        0.0,
+        9.0,
+        rgb(116, 126, 135),
+    );
     layout.finish_page();
     let pages = layout
         .pages
@@ -510,7 +536,11 @@ mod tests {
             .unwrap();
         document
             .tree
-            .add_move(first, xiangqi_core::Move::from_iccs("b9c7").unwrap(), "变招选择")
+            .add_move(
+                first,
+                xiangqi_core::Move::from_iccs("b9c7").unwrap(),
+                "变招选择",
+            )
             .unwrap();
 
         let mainline = mainline_rows(&document).unwrap();

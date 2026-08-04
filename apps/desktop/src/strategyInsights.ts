@@ -45,6 +45,7 @@ export type StrategyInsightInput = {
   analysisStale?: boolean;
   engineName?: string;
   courseCards?: TheoryPrincipleCard[];
+  studyTags?: string[];
 };
 
 const labels: Record<ReportPhase, string> = { opening: "开局", middle: "中局", endgame: "残局" };
@@ -79,6 +80,16 @@ function materialOf(pieces: Piece[]) {
 function phaseCards(phase: ReportPhase) {
   return THEORY_PRINCIPLE_CARDS.filter((card) => card.phase === "all" || card.phase === phase)
     .filter((card) => card.id !== "zhao-learning-endgame-first");
+}
+
+function prioritizeStudyCards(cards: TheoryPrincipleCard[], tags: string[]) {
+  const normalizedTags = tags.map((tag) => tag.trim().toLocaleLowerCase()).filter(Boolean);
+  if (normalizedTags.length === 0) return cards;
+  const matches = (card: TheoryPrincipleCard) => {
+    const haystack = `${card.title} ${card.summary} ${card.appliesWhen} ${card.risk}`.toLocaleLowerCase();
+    return normalizedTags.some((tag) => haystack.includes(tag));
+  };
+  return cards.slice().sort((left, right) => Number(matches(right)) - Number(matches(left)));
 }
 
 function phasePlan(phase: ReportPhase, side: Side) {
@@ -148,7 +159,10 @@ export function buildStrategyInsight(input: StrategyInsightInput): StrategyInsig
     input.currentBranchCount && input.currentBranchCount > 1 ? `当前节点有 ${input.currentBranchCount} 条后续变化，应比较各分支对反击条件的处理。` : "当前分支没有并列后续，计划仍需用候选线核验。",
   ];
   const engine = engineValidation(input);
-  const cards = [...(input.courseCards ?? []).filter((card) => card.phase === phase || card.phase === "all"), ...phaseCards(phase)];
+  const cards = prioritizeStudyCards(
+    [...(input.courseCards ?? []).filter((card) => card.phase === phase || card.phase === "all"), ...phaseCards(phase)],
+    input.studyTags ?? [],
+  );
   return {
     phase,
     phaseLabel: labels[phase],

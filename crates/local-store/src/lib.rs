@@ -106,6 +106,18 @@ pub struct DesktopPreferences {
     pub cloud_book_url: String,
     #[serde(default = "default_rule_mode")]
     pub rule_mode: String,
+    #[serde(default = "default_link_capture_source")]
+    pub link_capture_source: String,
+    #[serde(default = "default_link_recognition_mode")]
+    pub link_recognition_mode: String,
+    #[serde(default = "default_link_mode")]
+    pub link_mode: String,
+    #[serde(default = "default_link_stable_frames")]
+    pub link_stable_frames: u8,
+    #[serde(default = "default_link_confidence_threshold")]
+    pub link_confidence_threshold: u8,
+    #[serde(default = "default_link_animation_confirmation")]
+    pub link_animation_confirmation: bool,
     pub server_url: String,
 }
 
@@ -127,6 +139,25 @@ fn default_analysis_engine_mode() -> String {
 
 fn default_rule_mode() -> String {
     "domestic2020".into()
+}
+
+fn default_link_capture_source() -> String {
+    "imageImport".into()
+}
+fn default_link_recognition_mode() -> String {
+    "perspectiveGrid".into()
+}
+fn default_link_mode() -> String {
+    "spectate".into()
+}
+fn default_link_stable_frames() -> u8 {
+    2
+}
+fn default_link_confidence_threshold() -> u8 {
+    70
+}
+fn default_link_animation_confirmation() -> bool {
+    true
 }
 
 fn default_workspace_panel() -> String {
@@ -199,6 +230,12 @@ impl Default for DesktopPreferences {
             cloud_book_enabled: default_cloud_book_enabled(),
             cloud_book_url: default_cloud_book_url(),
             rule_mode: default_rule_mode(),
+            link_capture_source: default_link_capture_source(),
+            link_recognition_mode: default_link_recognition_mode(),
+            link_mode: default_link_mode(),
+            link_stable_frames: default_link_stable_frames(),
+            link_confidence_threshold: default_link_confidence_threshold(),
+            link_animation_confirmation: default_link_animation_confirmation(),
             server_url: "http://127.0.0.1:8080".into(),
         }
     }
@@ -2493,6 +2530,13 @@ mod tests {
             parallel_engine_paths: Vec::new(),
             cloud_book_enabled: true,
             cloud_book_url: "https://book.example.com/query".into(),
+            rule_mode: "domestic2020".into(),
+            link_capture_source: "windowLink".into(),
+            link_recognition_mode: "yoloBoard".into(),
+            link_mode: "spectate".into(),
+            link_stable_frames: 2,
+            link_confidence_threshold: 70,
+            link_animation_confirmation: true,
             server_url: "https://sync.example.com".into(),
         };
         {

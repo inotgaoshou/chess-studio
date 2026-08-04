@@ -3,6 +3,7 @@
 mod cloud_opening_book;
 mod credential_store;
 mod gif_export;
+mod link_vision;
 mod manual_pdf;
 mod opening_book;
 mod pdf_report;
@@ -13,14 +14,20 @@ use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::process::Command as ProcessCommand;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::time::Instant;
 
 use chrono::Utc;
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use credential_store::{SharedCredentialStore, SystemCredentialStore, TOKEN_KEY};
 use engine_protocol::{EngineControl, EngineEvent, EngineSession, Protocol, SearchLimit};
+use link_core::{
+    CapturePolicy, CaptureSource, LinkMode, LinkSessionState, RecognitionMode, ReconcileDecision,
+    StabilityGate,
+};
 use local_store::{
     AnalysisSummary, DesktopPreferences, EngineProfile, ImportedGame, LocalGame, LocalStore,
     StudySession, SyncAccountBinding, TheoryCard, TheoryLesson, TrainingTask,
@@ -106,6 +113,31 @@ struct DesktopState {
     report_generation: AtomicU64,
     report_running: AtomicBool,
     cloud_book_cache: Mutex<BTreeMap<String, Vec<cloud_opening_book::CloudBookCandidateDto>>>,
+    link_session: Mutex<LinkSession>,
+}
+
+struct LinkSession {
+    source: CaptureSource,
+    recognition_mode: RecognitionMode,
+    mode: LinkMode,
+    state: LinkSessionState,
+    gate: StabilityGate,
+    reason: Option<String>,
+    capture_preview: Option<String>,
+}
+
+impl Default for LinkSession {
+    fn default() -> Self {
+        Self {
+            source: CaptureSource::ImageImport,
+            recognition_mode: RecognitionMode::PerspectiveGrid,
+            mode: LinkMode::Spectate,
+            state: LinkSessionState::Stopped,
+            gate: StabilityGate::new(1),
+            reason: None,
+            capture_preview: None,
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -533,6 +565,330 @@ struct SyncResult {
 struct EngineMoveDto {
     board: BoardDto,
     ponder: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StartLinkSessionRequest {
+    source: CaptureSource,
+    recognition_mode: RecognitionMode,
+    mode: LinkMode,
+    stable_frames: u8,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LinkObservationDto {
+    state: LinkSessionState,
+    accepted: bool,
+    move_iccs: Option<String>,
+    reason: Option<String>,
+    board: Option<BoardDto>,
+    capture_preview_available: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LinkSessionStatusDto {
+    source: CaptureSource,
+    mode: LinkMode,
+    state: LinkSessionState,
+    reason: Option<String>,
+}
+
+#[tauri::command]
+fn start_link_session(
+    request: StartLinkSessionRequest,
+    state: State<'_, DesktopState>,
+) -> Result<LinkObservationDto, String> {
+    let policy = CapturePolicy::for_source(request.source);
+    if request.recognition_mode != policy.recognition_mode {
+        return Err("当前采集来源必须使用对应的识别模式".into());
+    }
+    if !policy.allows_external_click && !matches!(request.mode, LinkMode::Spectate) {
+        return Err("截图、照片和实体棋盘仅支持识别、跟盘与分析，不能控制第三方窗口".into());
+    }
+    let capture_preview = if matches!(request.source, CaptureSource::WindowLink) {
+        capture_window_link_preview()?
+    } else {
+        None
+    };
+    if matches!(request.source, CaptureSource::WindowLink) && capture_preview.is_none() {
+        return Err("未完成棋盘框选；请在系统选框中拖出第三方网页或客户端的棋盘区域".into());
+    }
+    let mut session = state
+        .link_session
+        .lock()
+        .map_err(|_| "link session lock poisoned".to_owned())?;
+    session.source = request.source;
+    session.recognition_mode = request.recognition_mode;
+    session.mode = request.mode;
+    session.capture_preview = capture_preview;
+    session.reason =
+        if matches!(request.source, CaptureSource::WindowLink) && !link_model_is_configured() {
+            Some("棋盘区域已框选；识别模型尚未配置，当前只能显示预览并手动提交校正局面".into())
+        } else {
+            None
+        };
+    session.state = match request.source {
+        CaptureSource::ImageImport | CaptureSource::CameraBoard => {
+            LinkSessionState::DetectingCorners
+        }
+        CaptureSource::WindowLink if !link_model_is_configured() => LinkSessionState::Calibrating,
+        CaptureSource::WindowLink | CaptureSource::DesktopDetect => {
+            LinkSessionState::ClassifyingSquares
+        }
+    };
+    // A caller may ask for more confirmation, but never less than the source-safe default.
+    session.gate = StabilityGate::new(request.stable_frames.max(policy.stable_frames));
+    Ok(LinkObservationDto {
+        state: session.state,
+        accepted: false,
+        move_iccs: None,
+        reason: session.reason.clone(),
+        board: None,
+        capture_preview_available: session.capture_preview.is_some(),
+    })
+}
+
+#[tauri::command]
+fn stop_link_session(state: State<'_, DesktopState>) -> Result<LinkObservationDto, String> {
+    let mut session = state
+        .link_session
+        .lock()
+        .map_err(|_| "link session lock poisoned".to_owned())?;
+    session.state = LinkSessionState::Stopped;
+    session.gate.reset();
+    session.reason = None;
+    session.capture_preview = None;
+    Ok(LinkObservationDto {
+        state: session.state,
+        accepted: false,
+        move_iccs: None,
+        reason: None,
+        board: None,
+        capture_preview_available: false,
+    })
+}
+
+#[tauri::command]
+fn get_link_session_status(state: State<'_, DesktopState>) -> Result<LinkSessionStatusDto, String> {
+    let session = state
+        .link_session
+        .lock()
+        .map_err(|_| "link session lock poisoned".to_owned())?;
+    Ok(LinkSessionStatusDto {
+        source: session.source,
+        mode: session.mode,
+        state: session.state,
+        reason: session.reason.clone(),
+    })
+}
+
+#[tauri::command]
+fn pause_link_session(state: State<'_, DesktopState>) -> Result<LinkSessionStatusDto, String> {
+    let mut session = state
+        .link_session
+        .lock()
+        .map_err(|_| "link session lock poisoned".to_owned())?;
+    if !matches!(session.state, LinkSessionState::Stopped) {
+        session.state = LinkSessionState::Paused;
+        session.reason = Some("连线已暂停，未写入任何新着法".into());
+    }
+    Ok(LinkSessionStatusDto {
+        source: session.source,
+        mode: session.mode,
+        state: session.state,
+        reason: session.reason.clone(),
+    })
+}
+
+#[tauri::command]
+fn recalibrate_link_session(
+    state: State<'_, DesktopState>,
+) -> Result<LinkSessionStatusDto, String> {
+    let source = state
+        .link_session
+        .lock()
+        .map_err(|_| "link session lock poisoned".to_owned())?
+        .source;
+    if matches!(source, CaptureSource::WindowLink) {
+        let preview = capture_window_link_preview()?;
+        let Some(preview) = preview else {
+            return Err("未完成棋盘框选；请在系统选框中拖出第三方网页或客户端的棋盘区域".into());
+        };
+        let mut session = state
+            .link_session
+            .lock()
+            .map_err(|_| "link session lock poisoned".to_owned())?;
+        session.gate.reset();
+        session.capture_preview = Some(preview);
+        session.state = LinkSessionState::Calibrating;
+        session.reason = Some("棋盘区域已重新框选；等待本机识别模型处理".into());
+        return Ok(LinkSessionStatusDto {
+            source: session.source,
+            mode: session.mode,
+            state: session.state,
+            reason: session.reason.clone(),
+        });
+    }
+    let mut session = state
+        .link_session
+        .lock()
+        .map_err(|_| "link session lock poisoned".to_owned())?;
+    if matches!(session.state, LinkSessionState::Stopped) {
+        return Err("请先启动连线会话".into());
+    }
+    session.gate.reset();
+    session.state = LinkSessionState::Calibrating;
+    session.reason = Some("请重新框选第三方窗口中的棋盘区域".into());
+    Ok(LinkSessionStatusDto {
+        source: session.source,
+        mode: session.mode,
+        state: session.state,
+        reason: session.reason.clone(),
+    })
+}
+
+#[tauri::command]
+fn get_link_capture_preview(state: State<'_, DesktopState>) -> Result<Option<String>, String> {
+    Ok(state
+        .link_session
+        .lock()
+        .map_err(|_| "link session lock poisoned".to_owned())?
+        .capture_preview
+        .clone())
+}
+
+fn capture_window_link_preview() -> Result<Option<String>, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let directory = tempfile::tempdir().map_err(|error| error.to_string())?;
+        let output_path = directory.path().join("xiangqi-link-selection.png");
+        let output = ProcessCommand::new("/usr/sbin/screencapture")
+            .args(["-i", "-x", "-o"])
+            .arg(&output_path)
+            .output()
+            .map_err(|error| format!("无法启动 macOS 框选截图：{error}"))?;
+        if !output.status.success() || !output_path.is_file() {
+            return Ok(None);
+        }
+        let bytes = fs::read(&output_path).map_err(|error| error.to_string())?;
+        if bytes.len() > 8 * 1024 * 1024 {
+            return Err("框选图片过大，请只选择棋盘区域后重试".into());
+        }
+        Ok(Some(format!("data:image/png;base64,{}", BASE64.encode(bytes))))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("当前平台尚未接入系统框选；请先使用截图/照片导入".into())
+    }
+}
+
+fn link_model_is_configured() -> bool {
+    let manifest = include_str!("../resources/link-vision/MODEL-MANIFEST.json");
+    manifest.contains("\"status\": \"enabled\"")
+}
+
+/// The vision adapter submits a corrected FEN only after image recognition. This command is
+/// deliberately independent from capture/model implementations so all inputs share one guard.
+#[tauri::command]
+fn submit_link_position(
+    fen: String,
+    state: State<'_, DesktopState>,
+) -> Result<LinkObservationDto, String> {
+    let mut session = state
+        .link_session
+        .lock()
+        .map_err(|_| "link session lock poisoned".to_owned())?;
+    if matches!(session.state, LinkSessionState::Stopped) {
+        return Err("请先启动连线会话".into());
+    }
+    let stable = match session.gate.observe(&fen) {
+        Ok(value) => value,
+        Err(error) => {
+            session.state = LinkSessionState::NeedsManualCorrection;
+            return Ok(LinkObservationDto {
+                state: session.state,
+                accepted: false,
+                move_iccs: None,
+                reason: Some(error.to_string()),
+                board: None,
+                capture_preview_available: session.capture_preview.is_some(),
+            });
+        }
+    };
+    if !stable {
+        session.state = LinkSessionState::WaitingStableFrames;
+        return Ok(LinkObservationDto {
+            state: session.state,
+            accepted: false,
+            move_iccs: None,
+            reason: Some("等待连续稳定识别帧".into()),
+            board: None,
+            capture_preview_available: session.capture_preview.is_some(),
+        });
+    }
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    match link_core::reconcile_position(&model.board, &fen) {
+        ReconcileDecision::Unchanged => {
+            session.state = LinkSessionState::Tracking;
+            Ok(LinkObservationDto {
+                state: session.state,
+                accepted: false,
+                move_iccs: None,
+                reason: None,
+                board: None,
+                capture_preview_available: session.capture_preview.is_some(),
+            })
+        }
+        ReconcileDecision::ApplyMove(mv) => {
+            let iccs = mv.to_iccs();
+            let board = commit_move(&mut model, &iccs)?;
+            session.state = LinkSessionState::Tracking;
+            Ok(LinkObservationDto {
+                state: session.state,
+                accepted: true,
+                move_iccs: Some(iccs),
+                reason: None,
+                board: Some(board),
+                capture_preview_available: session.capture_preview.is_some(),
+            })
+        }
+        ReconcileDecision::NeedsManualCorrection { reason } => {
+            session.state = LinkSessionState::NeedsManualCorrection;
+            Ok(LinkObservationDto {
+                state: session.state,
+                accepted: false,
+                move_iccs: None,
+                reason: Some(reason),
+                board: None,
+                capture_preview_available: session.capture_preview.is_some(),
+            })
+        }
+    }
+}
+
+#[tauri::command]
+fn import_recognized_position(
+    fen: String,
+    title: Option<String>,
+    state: State<'_, DesktopState>,
+) -> Result<BoardDto, String> {
+    let board = Board::from_fen(&fen).map_err(|error| format!("识别局面格式无效：{error}"))?;
+    link_core::validate_board(&board).map_err(|reason| format!("识别局面需要校正：{reason}"))?;
+    let mut document = ManualDocument::new(fen).map_err(|error| error.to_string())?;
+    document.metadata.title = title.unwrap_or_else(|| "识别导入棋局".into());
+    document.note = "由图片/照片识别导入，请在开始分析前确认局面。".into();
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    install_document(&mut model, document, None, Some("recognized".into()))?;
+    board_dto(&model)
 }
 
 #[tauri::command]
@@ -1682,6 +2038,7 @@ async fn open_compact_floating_panel(app: tauri::AppHandle, panel: String) -> Re
         "engine" => ("compact-engine", "引擎分析", 430.0, 520.0),
         "manual" => ("compact-manual", "棋谱", 430.0, 580.0),
         "cloud" => ("compact-cloud", "云库 / 评估信息", 520.0, 640.0),
+        "link" => ("compact-link", "连线提示", 400.0, 680.0),
         _ => return Err("未知的浮动面板".into()),
     };
     if let Some(window) = app.get_webview_window(label) {
@@ -1716,6 +2073,7 @@ fn return_compact_floating_panel(app: tauri::AppHandle, panel: String) -> Result
         "engine" => "compact-engine",
         "manual" => "compact-manual",
         "cloud" => "compact-cloud",
+        "link" => "compact-link",
         _ => return Err("未知的浮动面板".into()),
     };
 
@@ -3304,6 +3662,30 @@ fn validate_preferences(preferences: &DesktopPreferences) -> Result<(), String> 
     }
     if !matches!(preferences.rule_mode.as_str(), "domestic2020" | "asianAxf") {
         return Err("不支持的棋规模式".into());
+    }
+    if !matches!(
+        preferences.link_capture_source.as_str(),
+        "windowLink" | "desktopDetect" | "imageImport" | "cameraBoard"
+    ) {
+        return Err("不支持的连线局面来源".into());
+    }
+    if !matches!(
+        preferences.link_recognition_mode.as_str(),
+        "yoloBoard" | "perspectiveGrid"
+    ) {
+        return Err("不支持的连线识别模式".into());
+    }
+    if !matches!(
+        preferences.link_mode.as_str(),
+        "spectate" | "confirmPlay" | "autoPlay"
+    ) {
+        return Err("不支持的连线模式".into());
+    }
+    if !(1..=5).contains(&preferences.link_stable_frames) {
+        return Err("连线稳定帧必须在 1 到 5 之间".into());
+    }
+    if !(10..=100).contains(&preferences.link_confidence_threshold) {
+        return Err("连线识别置信度必须在 10% 到 100% 之间".into());
     }
     if !matches!(
         preferences.board_skin.as_str(),
@@ -5125,6 +5507,7 @@ fn main() {
                 report_generation: AtomicU64::new(0),
                 report_running: AtomicBool::new(false),
                 cloud_book_cache: Mutex::new(BTreeMap::new()),
+                link_session: Mutex::new(LinkSession::default()),
             });
             Ok(())
         })
@@ -5132,6 +5515,14 @@ fn main() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .invoke_handler(tauri::generate_handler![
             get_state,
+            start_link_session,
+            stop_link_session,
+            get_link_session_status,
+            pause_link_session,
+            recalibrate_link_session,
+            get_link_capture_preview,
+            submit_link_position,
+            import_recognized_position,
             list_games,
             open_game,
             play_move,

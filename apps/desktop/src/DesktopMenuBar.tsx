@@ -37,11 +37,13 @@ export type MenuCommand =
   | "copyMainline"
   | "pasteTextManual"
   | "nextBranch"
+  | "linkSession"
   | "engineRed"
   | "engineBlack"
   | "moveNow"
   | "analyze"
   | "stopAnalysis"
+  | "engineArena"
   | "engineSettings"
   | "coachProfile"
   | "trainingTasks"
@@ -68,7 +70,7 @@ export type MenuBarStatus = {
   syncLastResult?: string;
 };
 
-type DesktopMenu = "game" | "position" | "manual" | "engine" | "sync";
+type DesktopMenu = "game" | "position" | "manual" | "engine" | "link" | "sync";
 
 type MenuItemProps = {
   children: ReactNode;
@@ -131,7 +133,7 @@ export function DesktopMenuBar({
 
   function handleKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
     const target = event.target as HTMLElement;
-    const menus: DesktopMenu[] = ["game", "position", "manual", "engine", "sync"];
+    const menus: DesktopMenu[] = ["game", "position", "manual", "engine", "link", "sync"];
     const summaryMenu = target.dataset.menu as DesktopMenu | undefined;
     if (summaryMenu && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
       event.preventDefault();
@@ -218,9 +220,16 @@ export function DesktopMenuBar({
           <MenuItem command="engineBlack" execute={execute} close={close} disabled={blackUnavailable} title={blackUnavailable ? engineUnavailableReason ?? "Pikafish 正在思考，不能切换执方" : undefined} className={status.engineSide === "black" ? "active" : ""}><Bot size={14}/>引擎执黑</MenuItem>
           <MenuItem command="moveNow" execute={execute} close={close} disabled={!status.engineThinking} title={!status.engineThinking ? "引擎当前没有正在思考的着法" : undefined}><Zap size={14}/>立即出招</MenuItem>
           <MenuItem command={status.analysisBusy ? "stopAnalysis" : "analyze"} execute={execute} close={close} disabled={!canAnalyze} title={!canAnalyze ? "当前状态不能启动分析" : undefined}>{status.analysisBusy ? <Square size={14}/> : <Zap size={14}/>} {status.analysisBusy ? "停止分析" : "分析当前局面"}</MenuItem>
+          <MenuItem command="engineArena" execute={execute} close={close} disabled={status.analysisBusy || status.engineThinking} title={status.analysisBusy || status.engineThinking ? "请先停止当前引擎任务" : "让两个引擎自动对局并统计胜负"}><Bot size={14}/>引擎擂台</MenuItem>
           <MenuItem command="engineSettings" execute={execute} close={close}><Settings2 size={14}/>引擎设置</MenuItem>
           <MenuItem command="coachProfile" execute={execute} close={close}><BarChart3 size={14}/>AI 私教档案</MenuItem>
           <MenuItem command="trainingTasks" execute={execute} close={close}><ClipboardList size={14}/>训练任务</MenuItem>
+        </div>}
+      </details>
+      <details open={openMenu === "link"}>
+        {summary("link", "连线")}
+        {openMenu === "link" && <div className="menu-popup">
+          <MenuItem command="linkSession" execute={execute} close={close}><Link size={14}/>识别与连线</MenuItem>
         </div>}
       </details>
       <details open={openMenu === "sync"}>

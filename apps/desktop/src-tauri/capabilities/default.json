@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Desktop chess document and clipboard permissions",
-  "windows": ["main", "compact-engine", "compact-manual", "compact-cloud"],
+  "windows": ["main", "compact-engine", "compact-manual", "compact-cloud", "compact-link"],
   "permissions": [
     "core:default",
     "core:window:allow-destroy",

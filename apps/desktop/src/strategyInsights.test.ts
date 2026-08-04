@@ -54,4 +54,17 @@ describe("buildStrategyInsight", () => {
     expect(insight.engine.status).toBe("conflicted");
     expect(insight.engine.text).toContain("防守候选");
   });
+
+  it("prioritizes confirmed course cards that match the latest training tags", () => {
+    const insight = buildStrategyInsight({
+      sideToMove: "红方", ply: 32, phase: "middle", pieces, history: [], studyTags: ["反击"],
+      courseCards: [{
+        id: "course-counterplay", phase: "middle", title: "先看反击", summary: "进攻前检查对手反击。",
+        appliesWhen: "局面准备强攻时。", risk: "忽略反击会丢先手。",
+        source: { label: "赵鑫鑫课程", review: "已确认" },
+      }],
+    });
+
+    expect(insight.principles[0]?.title).toBe("先看反击");
+  });
 });

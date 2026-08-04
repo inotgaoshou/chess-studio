@@ -52,7 +52,7 @@ import { GameReportDialog, GameReportView } from "./GameReportView";
 import { buildGameReportPresentation } from "./gameReport";
 import { candidateCoachInsights, currentCoachAdvice, moveThoughtHint } from "./coachInsights";
 import { MobileToolbar, type MobileToolbarCommand } from "./MobileToolbar";
-import type { DesktopPreferencesDto, SubscriptionDto, SyncAccountDto } from "./platform";
+import type { DesktopPreferencesDto, LinkSessionStatus, SubscriptionDto, SyncAccountDto } from "./platform";
 import { applyColorTheme, initialColorTheme, type ColorTheme } from "./theme";
 import { WorkspaceTabs, type WorkspacePanel } from "./WorkspaceTabs";
 import { WorkspaceLayoutSwitch } from "./WorkspaceLayoutSwitch";
@@ -71,6 +71,8 @@ import { hasUpcomingBranchPoint } from "./branchNavigation";
 import { buildMindMapSvg } from "./mindMapExport";
 import { buildStrategyInsight } from "./strategyInsights";
 import { TheoryLibraryView } from "./TheoryLibraryView";
+import { LinkSessionDialog } from "./LinkSessionDialog";
+import { LinkMiniBoard, type LinkMiniArrow } from "./LinkMiniBoard";
 import { bundledTheoryKnowledge } from "./theoryKnowledge.generated";
 
 
@@ -84,6 +86,11 @@ const DEFAULT_BRANCH_ARROW_COLOR = "#2f80ed";
 const startingFen = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1";
 type EngineAnalysisGroup = { fen: string; name: string; lines: AnalysisLine[]; error?: string };
 type EngineAnalysisSnapshot = { fen: string; primaryEngineId: string; groups: Record<string, EngineAnalysisGroup> };
+type FloatingPanel = "engine" | "manual" | "cloud" | "link";
+
+function linkSessionStateLabel(state: LinkSessionStatus["state"]) {
+  return ({ stopped: "已停止", detectingCorners: "检测棋盘", rectifyingBoard: "校正棋盘", classifyingSquares: "识别棋子", calibrating: "等待框选", needsManualCorrection: "需要校正", waitingStableFrames: "等待稳定帧", tracking: "观战跟盘中", paused: "已暂停" } as const)[state];
+}
 
 function readEngineAnalysisSnapshot(): EngineAnalysisSnapshot | undefined {
   try {
@@ -191,6 +198,12 @@ const defaultDesktopPreferences: DesktopPreferencesDto = {
   parallelEngineIds: [],
   parallelEnginePaths: [],
   ruleMode: defaultRuleMode,
+  linkCaptureSource: "imageImport",
+  linkRecognitionMode: "perspectiveGrid",
+  linkMode: "spectate",
+  linkStableFrames: 2,
+  linkConfidenceThreshold: 70,
+  linkAnimationConfirmation: true,
   serverUrl: "http://127.0.0.1:8080",
 };
 const defaultSyncAccount: SyncAccountDto = {
@@ -439,6 +452,7 @@ export default function App() {
   const [analysisPanelCollapsed, setAnalysisPanelCollapsed] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [positionEditorOpen, setPositionEditorOpen] = useState(false);
+  const [linkSessionOpen, setLinkSessionOpen] = useState(false);
   const [editorPieces, setEditorPieces] = useState<Piece[]>(initialPieces);
   const [editorPiece, setEditorPiece] = useState<Piece | null>(editorPalette[0]);
   const [editorSide, setEditorSide] = useState<"red" | "black">("red");
@@ -510,10 +524,13 @@ export default function App() {
   const [compactEngineSize, setCompactEngineSize] = useState<{ width: number; height: number }>();
   const [compactManualWidth, setCompactManualWidth] = useState<number>();
   const [compactActiveWindow, setCompactActiveWindow] = useState<"engine" | "manual">("engine");
-  const floatingPanel = useMemo<"engine" | "manual" | "cloud" | null>(() => {
+  const [linkSessionStatus, setLinkSessionStatus] = useState<LinkSessionStatus>({ source: "windowLink", mode: "spectate", state: "stopped" });
+  const [linkCapturePreview, setLinkCapturePreview] = useState<string>();
+  const [linkMiniBoardSize, setLinkMiniBoardSize] = useState<"off" | "small" | "large">("large");
+  const floatingPanel = useMemo<FloatingPanel | null>(() => {
     if (typeof window === "undefined") return null;
     const panel = new URLSearchParams(window.location.search).get("floatingPanel");
-    return panel === "engine" || panel === "manual" || panel === "cloud" ? panel : null;
+    return panel === "engine" || panel === "manual" || panel === "cloud" || panel === "link" ? panel : null;
   }, []);
   const [coachReports, setCoachReports] = useState<GameReportDatasetDto[]>([]);
   const [coachProfileOpen, setCoachProfileOpen] = useState(false);
@@ -673,6 +690,23 @@ export default function App() {
     }, 900);
     return () => window.clearInterval(timer);
   }, [floatingPanel]);
+
+  useEffect(() => {
+    if (floatingPanel !== "link" || chessPlatform.kind !== "desktop") return;
+    let disposed = false;
+    const refresh = () => {
+      void chessPlatform.getLinkSessionStatus().then((status) => {
+        if (!disposed) setLinkSessionStatus(status);
+      }).catch(() => undefined);
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 750);
+    return () => { disposed = true; window.clearInterval(timer); };
+  }, [floatingPanel]);
+  useEffect(() => {
+    if (floatingPanel !== "link" || chessPlatform.kind !== "desktop") return;
+    void chessPlatform.getLinkCapturePreview().then(setLinkCapturePreview).catch(() => setLinkCapturePreview(undefined));
+  }, [floatingPanel, linkSessionStatus.state]);
 
   useEffect(() => {
     if (floatingPanel !== "engine" || chessPlatform.kind !== "desktop") return;
@@ -1245,6 +1279,17 @@ export default function App() {
       }];
     }) : [];
   }, [analysisArrowFen, analysisFen, board.fen, desktopPreferences.multipv, multipv, orderedAnalysis, reversed]);
+  const linkMiniArrows = useMemo<LinkMiniArrow[]>(() => (
+    analysisArrowFen === board.fen && analysisFen === board.fen
+      ? orderedAnalysis.slice(0, 3).flatMap((line) => {
+        const firstMove = line.pv[0];
+        const from = firstMove ? squareFromIccs(firstMove.slice(0, 2)) : null;
+        const to = firstMove ? squareFromIccs(firstMove.slice(2, 4)) : null;
+        return from && to ? [{ rank: line.multipv, color: analysisArrowColors[line.multipv - 1] ?? analysisArrowColors[0], from, to }] : [];
+      })
+      : []
+  ), [analysisArrowFen, analysisFen, board.fen, orderedAnalysis]);
+  const linkHasObservedPosition = linkSessionStatus.state === "tracking" || linkSessionStatus.state === "paused";
   const activeTreePath = useMemo(() => new Set(board.history.map((move) => move.id)), [board.history]);
   const directBranchChoices = board.branches.length > 1 ? board.branches : [];
   const branchChoices = directBranchChoices;
@@ -2977,6 +3022,7 @@ export default function App() {
       case "copyFullManual": await copyGame(); break;
       case "copyMainline": await copyGame(true); break;
       case "nextBranch": await goToNextBranchPoint(); break;
+      case "linkSession": setLinkSessionOpen(true); break;
       case "engineRed": toggleEngineSide("red"); break;
       case "engineBlack": toggleEngineSide("black"); break;
       case "moveNow": await moveNow(); break;
@@ -3014,7 +3060,7 @@ export default function App() {
     }
   }
 
-  async function openCompactFloatingPanel(panel: "engine" | "manual" | "cloud") {
+  async function openCompactFloatingPanel(panel: FloatingPanel) {
     if (chessPlatform.kind !== "desktop") return;
     try {
       const created = await chessPlatform.openCompactFloatingPanel(panel);
@@ -3027,11 +3073,11 @@ export default function App() {
         setCompactPoppedOutPanels((panels) => ({ ...panels, manual: true }));
         setCompactDetachedPanels((panels) => ({ ...panels, manual: false }));
       }
-      else {
+      else if (panel === "cloud") {
         setCompactPoppedOutPanels((panels) => ({ ...panels, cloud: true }));
         setCloudBookCollapsed(true);
       }
-      const label = panel === "engine" ? "引擎分析" : panel === "manual" ? "棋谱" : "云库/评估信息";
+      const label = panel === "engine" ? "引擎分析" : panel === "manual" ? "棋谱" : panel === "cloud" ? "云库/评估信息" : "连线提示";
       setNotice(created ? `${label}已弹出为独立窗口，可拖到工作台外` : `${label}窗口已置前`);
     } catch (error) {
       setNotice(friendlyError(error));
@@ -3612,8 +3658,8 @@ export default function App() {
     return (
       <div className={`floating-panel-shell theme-${effectiveColorTheme} board-skin-${displayedBoardSkin} piece-skin-${displayedPieceSkin} floating-panel-${floatingPanel}`}>
         <header className="floating-panel-titlebar">
-          <span>{floatingPanel === "engine" ? <Activity size={16}/> : floatingPanel === "cloud" ? <Database size={16}/> : <ClipboardList size={16}/>}<strong>{floatingPanel === "engine" ? "引擎分析" : floatingPanel === "cloud" ? "云库 / 评估信息" : "棋谱"}</strong></span>
-          <small>{floatingPanel === "engine" ? (analysisBusy ? `${currentEngineVersionLabel} 正在计算…` : analysisIsStale ? "旧候选保留中" : "系统独立窗口") : floatingPanel === "cloud" ? (cloudBookLoading ? "查询中…" : cloudBookError ?? `${compactBookRows.length} 条候选`) : `主引擎：${currentEngineVersionLabel} · ${board.history.length} 着${board.continuation.length ? ` · 后续 ${board.continuation.length} 着` : ""}`}</small>
+          <span>{floatingPanel === "engine" ? <Activity size={16}/> : floatingPanel === "cloud" ? <Database size={16}/> : floatingPanel === "link" ? <Link size={16}/> : <ClipboardList size={16}/>}<strong>{floatingPanel === "engine" ? "引擎分析" : floatingPanel === "cloud" ? "云库 / 评估信息" : floatingPanel === "link" ? "连线提示" : "棋谱"}</strong></span>
+          <small>{floatingPanel === "engine" ? (analysisBusy ? `${currentEngineVersionLabel} 正在计算…` : analysisIsStale ? "旧候选保留中" : "系统独立窗口") : floatingPanel === "cloud" ? (cloudBookLoading ? "查询中…" : cloudBookError ?? `${compactBookRows.length} 条候选`) : floatingPanel === "link" ? `${linkSessionStateLabel(linkSessionStatus.state)} · ${board.sideToMove}` : `主引擎：${currentEngineVersionLabel} · ${board.history.length} 着${board.continuation.length ? ` · 后续 ${board.continuation.length} 着` : ""}`}</small>
           <button className="floating-panel-return" type="button" title="关闭浮窗并回到主窗口停靠显示" onClick={() => void returnFloatingPanelToMain()}><ChevronLeft size={15}/>回主窗口</button>
         </header>
         {floatingPanel === "engine" ? (
@@ -3671,6 +3717,26 @@ export default function App() {
               onPlayEvaluationMove={(iccs) => void playIccsMove(iccs, analysisFen ?? board.fen)}
             />
             <p className="floating-panel-note">这是系统独立窗口，可拖到主窗口外；主窗口走棋后这里会自动刷新。</p>
+          </section>
+        ) : floatingPanel === "link" ? (
+          <section className="floating-panel-body floating-link-body">
+            <div className={`link-float-status ${linkSessionStatus.state}`}><span>{linkSessionStateLabel(linkSessionStatus.state)}</span><strong>{board.sideToMove}行棋</strong><small>{linkSessionStatus.reason ?? "窗口连线将同步经过稳定帧与棋规校验的着法"}</small></div>
+            <div className="link-float-evaluation"><span>局面评估</span><strong>{evaluation?.scoreText ?? "--"}</strong><small>{evaluation?.label ?? "等待引擎分析"}</small></div>
+            <section className={`link-mini-section ${linkMiniBoardSize}`}>
+              <header><strong>局面与候选</strong><div className="link-mini-size" aria-label="迷你棋盘大小"><button type="button" className={linkMiniBoardSize === "off" ? "active" : ""} onClick={() => setLinkMiniBoardSize("off")}>隐藏</button><button type="button" className={linkMiniBoardSize === "small" ? "active" : ""} onClick={() => setLinkMiniBoardSize("small")}>小</button><button type="button" className={linkMiniBoardSize === "large" ? "active" : ""} onClick={() => setLinkMiniBoardSize("large")}>大</button></div></header>
+              {linkMiniBoardSize !== "off" && (linkHasObservedPosition
+                ? <LinkMiniBoard pieces={board.pieces} arrows={linkMiniArrows} reversed={reversed} pieceAsset={(piece) => pieceAsset(piece, displayedPieceSkin)}/>
+                : linkCapturePreview ? <img className="link-capture-preview" src={linkCapturePreview} alt="已框选的第三方棋盘区域"/>
+                : <div className="link-mini-empty">等待稳定识别局面后显示棋盘与候选箭头</div>)}
+              <small>{linkHasObservedPosition && linkMiniArrows.length ? "1/2/3 对应前三条候选线路的首着" : linkHasObservedPosition ? "等待当前局面的引擎候选线路" : linkCapturePreview ? "已框选的外部棋盘预览，等待模型识别" : "当前不使用主窗口棋盘作为连线识别结果"}</small>
+            </section>
+            <div className="link-float-candidates"><header><strong>候选线路</strong><small>中文 MultiPV</small></header>{compactEngineRows.length || analysisBusy ? <CompactEngineAnalysisList busy={analysisBusy} rows={compactEngineRows.slice(0, 3)} onPlayMove={() => undefined}/> : <p>识别并同步局面后，在此显示前三条引擎候选线。</p>}</div>
+            <div className="link-float-actions">
+              <button type="button" disabled={linkSessionStatus.state === "stopped"} onClick={() => void chessPlatform.pauseLinkSession().then(setLinkSessionStatus).catch((error) => setNotice(friendlyError(error)))}><Pause size={14}/>暂停</button>
+              <button type="button" disabled={linkSessionStatus.state === "stopped"} onClick={() => void chessPlatform.recalibrateLinkSession().then((status) => { setLinkSessionStatus(status); return chessPlatform.getLinkCapturePreview(); }).then(setLinkCapturePreview).catch((error) => setNotice(friendlyError(error)))}><RefreshCw size={14}/>重新框选</button>
+              <button type="button" className="stop" disabled={linkSessionStatus.state === "stopped"} onClick={() => void chessPlatform.stopLinkSession().then(() => chessPlatform.getLinkSessionStatus()).then(setLinkSessionStatus).catch((error) => setNotice(friendlyError(error)))}><Square size={13}/>停止</button>
+            </div>
+            <p className="floating-panel-note">观战模式不会向第三方窗口点击。本机外部学习模型不随应用打包或上传；未接入可审计模型前，连线只保留提示与手动局面校正。</p>
           </section>
         ) : (
           <section className="floating-panel-body floating-manual-body">
@@ -4406,6 +4472,47 @@ export default function App() {
           </section>
         </div>
       )}
+      {linkSessionOpen && <LinkSessionDialog
+        onClose={() => setLinkSessionOpen(false)}
+        onStart={async (request) => {
+          try {
+            await saveDesktopPreferencePatch({
+              linkCaptureSource: request.source,
+              linkRecognitionMode: request.recognitionMode,
+              linkMode: request.mode,
+              linkStableFrames: request.stableFrames,
+            });
+            const result = await chessPlatform.startLinkSession(request);
+            if (request.source === "windowLink") await openCompactFloatingPanel("link");
+            setNotice(result.reason ?? "连线会话已启动，请提交并确认识别局面");
+            return result;
+          } catch (error) {
+            const message = friendlyError(error);
+            setNotice(message);
+            throw new Error(message);
+          }
+        }}
+        onStop={async () => {
+          const result = await chessPlatform.stopLinkSession();
+          setNotice("连线已停止");
+          return result;
+        }}
+        onSubmit={async (fen) => {
+          const result = await chessPlatform.submitLinkPosition(fen);
+          if (result.board) applyBoard(result.board);
+          setNotice(result.accepted ? `已同步外部走子 ${result.moveIccs}` : result.reason ?? "局面已确认");
+          return result;
+        }}
+        onImport={async (fen, title) => {
+          try {
+            applyBoard(await chessPlatform.importRecognizedPosition(fen, title));
+            setLinkSessionOpen(false);
+            setNotice("识别局面已导入为新棋局，请确认后开始分析");
+          } catch (error) {
+            setNotice(friendlyError(error));
+          }
+        }}
+      />}
       <nav className="mobile-nav" aria-label="移动端导航">
         <button className={mobilePanel === "board" ? "active" : ""} onClick={() => setMobilePanel("board")}><LayoutGrid size={19}/><span>棋盘</span></button>
         <button className={mobilePanel === "library" ? "active" : ""} onClick={() => setMobilePanel("library")}><BookOpen size={19}/><span>棋谱</span></button>
