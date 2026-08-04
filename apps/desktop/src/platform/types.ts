@@ -371,9 +371,10 @@ export type CaptureSource = "windowLink" | "desktopDetect" | "imageImport" | "ca
 export type RecognitionMode = "yoloBoard" | "perspectiveGrid";
 export type LinkMode = "spectate" | "confirmPlay" | "autoPlay";
 export type LinkSessionState = "stopped" | "detectingCorners" | "rectifyingBoard" | "classifyingSquares" | "calibrating" | "needsManualCorrection" | "waitingStableFrames" | "tracking" | "paused";
-export type StartLinkSessionRequest = { source: CaptureSource; recognitionMode: RecognitionMode; mode: LinkMode; stableFrames: number };
+export type LinkAutoSide = "red" | "black";
+export type StartLinkSessionRequest = { source: CaptureSource; recognitionMode: RecognitionMode; mode: LinkMode; stableFrames: number; autoSide?: LinkAutoSide };
 export type LinkObservation = { state: LinkSessionState; accepted: boolean; moveIccs?: string; reason?: string; board?: BoardState; capturePreviewAvailable?: boolean };
-export type LinkSessionStatus = { source: CaptureSource; mode: LinkMode; state: LinkSessionState; reason?: string };
+export type LinkSessionStatus = { source: CaptureSource; mode: LinkMode; state: LinkSessionState; reason?: string; frameRate: number; confidence?: number; stableFrames: number; requiredStableFrames: number; latestFen?: string; lastMove?: string; autoSide?: LinkAutoSide; captureRunning: boolean };
 export type ExportFormat = "pgn" | "chinese" | "dhtmlxq";
 export type ReplayExportScope = "currentSelection" | "mainline";
 export type EngineRuntimeEvent =
@@ -409,6 +410,7 @@ export interface ChessPlatform {
   createTheoryCard(card: Pick<TheoryCardDto, "lessonId" | "title" | "summary" | "appliesWhen" | "risk" | "timecode">): Promise<TheoryCardDto>;
   completeTrainingTask(taskId: string, completed: boolean): Promise<void>;
   playMove(iccs: string): Promise<Partial<BoardState>>;
+  prepareLinkSelectionWindow(): Promise<void>;
   startLinkSession(request: StartLinkSessionRequest): Promise<LinkObservation>;
   stopLinkSession(): Promise<LinkObservation>;
   getLinkSessionStatus(): Promise<LinkSessionStatus>;
@@ -416,6 +418,7 @@ export interface ChessPlatform {
   recalibrateLinkSession(): Promise<LinkSessionStatus>;
   getLinkCapturePreview(): Promise<string | undefined>;
   submitLinkPosition(fen: string): Promise<LinkObservation>;
+  confirmLinkEngineMove(iccs: string): Promise<boolean>;
   importRecognizedPosition(fen: string, title?: string): Promise<Partial<BoardState>>;
   newGame(fen: string, title?: string, note?: string): Promise<Partial<BoardState>>;
   openDocument(): Promise<Partial<BoardState> | undefined>;

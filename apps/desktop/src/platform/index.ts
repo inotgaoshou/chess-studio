@@ -143,6 +143,7 @@ class DesktopPlatform implements ChessPlatform {
   createTheoryCard(card: Pick<TheoryCardDto, "lessonId" | "title" | "summary" | "appliesWhen" | "risk" | "timecode">) { return invoke<TheoryCardDto>("create_theory_card", { ...card }); }
   completeTrainingTask(taskId: string, completed: boolean) { return invoke<void>("complete_training_task", { taskId, completed }); }
   playMove(iccs: string) { return invoke<Partial<BoardState>>("play_move", { iccs }); }
+  prepareLinkSelectionWindow() { return invoke<void>("prepare_link_selection_window"); }
   startLinkSession(request: StartLinkSessionRequest) { return invoke<LinkObservation>("start_link_session", { request }); }
   stopLinkSession() { return invoke<LinkObservation>("stop_link_session"); }
   getLinkSessionStatus() { return invoke<LinkSessionStatus>("get_link_session_status"); }
@@ -150,6 +151,7 @@ class DesktopPlatform implements ChessPlatform {
   recalibrateLinkSession() { return invoke<LinkSessionStatus>("recalibrate_link_session"); }
   getLinkCapturePreview() { return invoke<string | undefined>("get_link_capture_preview"); }
   submitLinkPosition(fen: string) { return invoke<LinkObservation>("submit_link_position", { fen }); }
+  confirmLinkEngineMove(iccs: string) { return invoke<boolean>("confirm_link_engine_move", { iccs }); }
   importRecognizedPosition(fen: string, title?: string) { return invoke<Partial<BoardState>>("import_recognized_position", { fen, title }); }
   newGame(fen: string, title?: string, note?: string) { return invoke<Partial<BoardState>>("new_game", { fen, title, note }); }
   async openDocument() {
@@ -444,10 +446,12 @@ class WebPlatform implements ChessPlatform {
     return this.scoredState(state);
   }
   async startLinkSession(): Promise<LinkObservation> { throw new Error("Web 端暂不支持桌面连线"); }
+  async prepareLinkSelectionWindow(): Promise<void> {}
   async stopLinkSession(): Promise<LinkObservation> { throw new Error("Web 端暂不支持桌面连线"); }
   async getLinkSessionStatus(): Promise<LinkSessionStatus> { throw new Error("Web 端暂不支持桌面连线"); }
   async pauseLinkSession(): Promise<LinkSessionStatus> { throw new Error("Web 端暂不支持桌面连线"); }
   async recalibrateLinkSession(): Promise<LinkSessionStatus> { throw new Error("Web 端暂不支持桌面连线"); }
+  async confirmLinkEngineMove(): Promise<boolean> { throw new Error("Web 端暂不支持桌面连线"); }
   async getLinkCapturePreview(): Promise<string | undefined> { throw new Error("Web 端暂不支持桌面连线"); }
   async submitLinkPosition(): Promise<LinkObservation> { throw new Error("Web 端暂不支持桌面连线"); }
   async importRecognizedPosition(): Promise<Partial<BoardState>> { throw new Error("Web 端暂不支持桌面连线"); }
@@ -688,4 +692,4 @@ class WebPlatform implements ChessPlatform {
 const tauriAvailable = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 export const chessPlatform: ChessPlatform = tauriAvailable ? new DesktopPlatform() : new WebPlatform();
 export { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH } from "./types";
-export type { AnalysisLine, AnalysisOptions, BoardState, BranchCoachInsightDto, CaptureSource, ChessPlatform, CloudBookCandidate, DesktopPreferencesDto, EngineArenaGameDto, EngineArenaOptionsDto, EngineArenaResultDto, EngineArenaScoreDto, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, EngineRuntimeState, ExportFormat, GameReportDatasetDto, GameReportOptionsDto, GameReportPositionDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, LegacySkinId, LinkMode, LinkObservation, LinkSessionState, LinkSessionStatus, ManualTreeNode, ManualViewMode, MoveCoachInsightDto, MoveItem, OpeningBookHitDto, Piece, PreviewLineStep, QualityGrade, RecognitionMode, ReplayExportScope, ReportPhase, ReportSidePresentationDto, RuleMode, Side, SkinFolder, SkinId, StartLinkSessionRequest, StudySessionDto, SubscriptionDto, SyncAccountDto, SyncResult, TheoryCardDto, TheoryLessonDto, TheoryLibraryDto, TheoryPhase, TrainingTaskDto, WorkspaceLayoutMode } from "./types";
+export type { AnalysisLine, AnalysisOptions, BoardState, BranchCoachInsightDto, CaptureSource, ChessPlatform, CloudBookCandidate, DesktopPreferencesDto, EngineArenaGameDto, EngineArenaOptionsDto, EngineArenaResultDto, EngineArenaScoreDto, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, EngineRuntimeState, ExportFormat, GameReportDatasetDto, GameReportOptionsDto, GameReportPositionDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, LegacySkinId, LinkAutoSide, LinkMode, LinkObservation, LinkSessionState, LinkSessionStatus, ManualTreeNode, ManualViewMode, MoveCoachInsightDto, MoveItem, OpeningBookHitDto, Piece, PreviewLineStep, QualityGrade, RecognitionMode, ReplayExportScope, ReportPhase, ReportSidePresentationDto, RuleMode, Side, SkinFolder, SkinId, StartLinkSessionRequest, StudySessionDto, SubscriptionDto, SyncAccountDto, SyncResult, TheoryCardDto, TheoryLessonDto, TheoryLibraryDto, TheoryPhase, TrainingTaskDto, WorkspaceLayoutMode } from "./types";

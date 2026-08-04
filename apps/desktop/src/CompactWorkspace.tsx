@@ -9,6 +9,12 @@ export type CompactBookRow = {
   winRateText: string;
   source: string;
   detail?: string;
+  sampleCount?: number;
+  distribution?: {
+    redWin: number;
+    draw: number;
+    blackWin: number;
+  };
 };
 
 export type CompactEvaluationRow = {
@@ -124,10 +130,9 @@ export function CompactReferencePanels({
   onPlayBookMove,
   onPlayEvaluationMove,
 }: Props) {
-  const [evaluationTab, setEvaluationTab] = useState<"position" | "cloud">("position");
+  const [evaluationTab, setEvaluationTab] = useState<"position" | "book">("position");
   const blackShare = redShare == null ? undefined : 100 - redShare;
-  const cloudRows = bookRows.filter((row) => row.source === "ChessDB");
-  const sourceRows = cloudRows;
+  const sourceRows = bookRows;
   const cloudScores = sourceRows.map((row) => Number(row.scoreText.replace(/[+%]/g, ""))).filter(Number.isFinite);
   const cloudWinRates = sourceRows.map((row) => Number(row.winRateText.replace("%", ""))).filter(Number.isFinite);
   const topCloudRow = sourceRows[0];
@@ -166,14 +171,19 @@ export function CompactReferencePanels({
         <button type="button" title="开局库与引擎设置" aria-label="开局库与引擎设置" onClick={onOpenSettings}><Settings2 size={14}/></button>
       </header>
       <div className="compact-source-status" aria-label="开局库状态">
-        <span className={cloudEnabled && !bookError ? "ready" : ""}><Database size={12}/>ChessDB</span>
-        <small>{cloudEnabled ? "当前版本使用 ChessDB 云库，本地库和自动出步入口暂不展示" : "云库已关闭"}</small>
+        <span className={cloudEnabled && !bookError ? "ready" : ""}><Database size={12}/>云库</span>
+        <span className={bookRows.some((row) => row.distribution) ? "ready" : ""}><BookOpen size={12}/>本地 XQB</span>
+        <small>{bookRows.some((row) => row.distribution) ? "本地库显示胜/和/负和样本量；云库只显示其提供的胜率" : cloudEnabled ? "云库仅提供胜率时不展示胜和负拆分" : "云库已关闭"}</small>
       </div>
       <div className="compact-data-table compact-book-table" role="group" aria-label="开局库候选">
-        <div className="compact-data-head"><span>着法</span><span>胜率</span><span>分数</span><span>来源</span></div>
+        <div className="compact-data-head"><span>着法</span><span>胜/和/负</span><span>样本</span><span>来源</span></div>
         <div className="compact-data-body">
           {bookRows.map((row) => <button type="button" key={row.id} onClick={() => onPlayBookMove(row.iccs)} title={bookRowTitle(row)}>
-            <strong>{row.notation}</strong><span className="book-win-rate">{row.winRateText}</span><span className="book-score">{row.scoreText}</span><small>{row.source}</small>
+            <strong>{row.notation}</strong>
+            {row.distribution ? <span className="book-distribution" aria-label={`胜 ${row.distribution.redWin}% ，和 ${row.distribution.draw}% ，负 ${row.distribution.blackWin}%`}>
+              <i className="red" style={{ width: `${row.distribution.redWin}%` }}>{row.distribution.redWin}%</i><i className="draw" style={{ width: `${row.distribution.draw}%` }}>{row.distribution.draw}%</i><i className="black" style={{ width: `${row.distribution.blackWin}%` }}>{row.distribution.blackWin}%</i>
+            </span> : <span className="book-win-rate">胜率 {row.winRateText}</span>}
+            <span className="book-samples">{row.sampleCount?.toLocaleString() ?? "--"}</span><small>{row.source}</small>
           </button>)}
           {!bookLoading && bookRows.length === 0 && <div className="compact-table-empty"><BookOpen size={20}/><span>{bookError ? "云库暂时不可用" : cloudEnabled ? "当前局面暂无云库着法" : "ChessDB 云库未启用"}</span></div>}
         </div>
@@ -209,7 +219,7 @@ export function CompactReferencePanels({
       <div className="compact-overview-balance" aria-label={redShare == null ? "等待局势分析" : `红方占比 ${redShare.toFixed(0)}%`}><i style={{ width: `${redShare ?? 50}%` }}/></div>
       <div className="compact-evaluation-tabs" aria-label="评估视图">
         <button type="button" className={evaluationTab === "position" ? "active" : ""} onClick={() => setEvaluationTab("position")}>当前局面</button>
-        <button type="button" className={evaluationTab === "cloud" ? "active" : ""} onClick={() => setEvaluationTab("cloud")}>云库统计</button>
+        <button type="button" className={evaluationTab === "book" ? "active" : ""} onClick={() => setEvaluationTab("book")}>开局库统计</button>
       </div>
       {evaluationTab === "position" ? <div className="compact-data-table compact-evaluation-table" role="group" aria-label="候选着法评估">
         <div className="compact-data-head"><span>着法</span><span>分数</span><span>深度</span><span>操作</span></div>
@@ -219,20 +229,22 @@ export function CompactReferencePanels({
           </button>)}
           {evaluationRows.length === 0 && <div className="compact-table-empty"><Activity size={20}/><span>分析后显示候选评估</span></div>}
         </div>
-      </div> : <div className="compact-cloud-stat-view" role="group" aria-label="云库统计">
+      </div> : <div className="compact-cloud-stat-view" role="group" aria-label="开局库统计">
         <div className="compact-cloud-stat-grid">
-          <div><small>云库候选</small><strong>{sourceRows.length}</strong></div>
+          <div><small>开局库候选</small><strong>{sourceRows.length}</strong></div>
           <div><small>最高分</small><strong>{bestCloudScore == null ? "--" : bestCloudScore > 0 ? `+${bestCloudScore}` : `${bestCloudScore}`}</strong></div>
           <div><small>平均胜率</small><strong>{averageCloudWinRate == null ? "--" : `${averageCloudWinRate.toFixed(0)}%`}</strong></div>
           <div><small>最佳着</small><strong>{topCloudRow?.notation ?? "--"}</strong></div>
         </div>
-        <div className="compact-data-table compact-cloud-stat-table" role="group" aria-label="云库统计候选">
-          <div className="compact-data-head"><span>着法</span><span>胜率</span><span>分数</span><span>来源</span></div>
+        <div className="compact-data-table compact-cloud-stat-table" role="group" aria-label="开局库统计候选">
+          <div className="compact-data-head"><span>着法</span><span>胜/和/负</span><span>样本</span><span>来源</span></div>
           <div className="compact-data-body">
             {sourceRows.slice(0, 8).map((row) => <button type="button" key={`stat-${row.id}`} onClick={() => onPlayBookMove(row.iccs)} title={row.detail || row.source}>
-              <strong>{row.notation}</strong><span className="book-win-rate">{row.winRateText}</span><span className="book-score">{row.scoreText}</span><small>{row.source}</small>
+              <strong>{row.notation}</strong>
+              {row.distribution ? <span className="book-distribution" aria-label={`胜 ${row.distribution.redWin}% ，和 ${row.distribution.draw}% ，负 ${row.distribution.blackWin}%`}><i className="red" style={{ width: `${row.distribution.redWin}%` }}/><i className="draw" style={{ width: `${row.distribution.draw}%` }}/><i className="black" style={{ width: `${row.distribution.blackWin}%` }}/></span> : <span className="book-win-rate">胜率 {row.winRateText}</span>}
+              <span className="book-samples">{row.sampleCount?.toLocaleString() ?? "--"}</span><small>{row.source}</small>
             </button>)}
-            {sourceRows.length === 0 && <div className="compact-table-empty"><Database size={20}/><span>{cloudEnabled ? "暂无云库统计" : "ChessDB 云库未启用"}</span></div>}
+            {sourceRows.length === 0 && <div className="compact-table-empty"><Database size={20}/><span>{cloudEnabled ? "暂无开局库统计" : "ChessDB 云库未启用"}</span></div>}
           </div>
         </div>
       </div>}

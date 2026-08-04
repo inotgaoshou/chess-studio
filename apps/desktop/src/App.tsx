@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
+import { flushSync } from "react-dom";
 import { listen } from "@tauri-apps/api/event";
 import {
   Activity,
@@ -524,7 +525,7 @@ export default function App() {
   const [compactEngineSize, setCompactEngineSize] = useState<{ width: number; height: number }>();
   const [compactManualWidth, setCompactManualWidth] = useState<number>();
   const [compactActiveWindow, setCompactActiveWindow] = useState<"engine" | "manual">("engine");
-  const [linkSessionStatus, setLinkSessionStatus] = useState<LinkSessionStatus>({ source: "windowLink", mode: "spectate", state: "stopped" });
+  const [linkSessionStatus, setLinkSessionStatus] = useState<LinkSessionStatus>({ source: "windowLink", mode: "spectate", state: "stopped", frameRate: 0, stableFrames: 0, requiredStableFrames: 2, captureRunning: false });
   const [linkCapturePreview, setLinkCapturePreview] = useState<string>();
   const [linkMiniBoardSize, setLinkMiniBoardSize] = useState<"off" | "small" | "large">("large");
   const floatingPanel = useMemo<FloatingPanel | null>(() => {
@@ -559,6 +560,7 @@ export default function App() {
   const analysisFenRef = useRef<string | undefined>(undefined);
   const analysisStreamRef = useRef<AnalysisStreamBuffer | undefined>(undefined);
   const analysisHistoryRef = useRef<AnalysisHistoryBuffer | undefined>(undefined);
+  const linkAutoMoveRef = useRef<string | undefined>(undefined);
   const primaryAnalysisEngineRef = useRef<string>("primary");
   const multipvRef = useRef(multipv);
   const analysisBusyRef = useRef(false);
@@ -1108,17 +1110,41 @@ export default function App() {
       };
     });
   }, [analysisHistory, analysisIsStale, candidateSideToMove, currentEngineAnalyses, desktopPreferences.candidateLineMoves, orderedAnalysis]);
+  useEffect(() => {
+    if (chessPlatform.kind !== "desktop" || linkSessionStatus.mode !== "autoPlay" || linkSessionStatus.state !== "tracking") return;
+    const expectedSide = linkSessionStatus.autoSide === "red" ? "红方" : "黑方";
+    const move = compactEngineRows[0]?.iccs;
+    const key = `${board.fen}:${move ?? ""}`;
+    if (!move || board.sideToMove !== expectedSide || linkAutoMoveRef.current === key) return;
+    linkAutoMoveRef.current = key;
+    void chessPlatform.confirmLinkEngineMove(move).then(() => setNotice(`自动对战已执行候选着法 ${move}，等待外部局面确认`)).catch((error) => setNotice(friendlyError(error)));
+  }, [board.fen, board.sideToMove, chessPlatform, compactEngineRows, linkSessionStatus.autoSide, linkSessionStatus.mode, linkSessionStatus.state]);
   const compactBookRows: CompactBookRow[] = useMemo(() => [
+    ...(board.xqbCandidates ?? []).map((candidate) => {
+      const sampleCount = candidate.win + candidate.draw + candidate.loss;
+      const percent = (value: number) => sampleCount > 0 ? Math.round(value * 100 / sampleCount) : 0;
+      return {
+        id: `xqb-${candidate.source}-${candidate.iccs}`,
+        iccs: candidate.iccs,
+        notation: candidate.notation,
+        scoreText: candidate.score > 0 ? `+${candidate.score}` : `${candidate.score}`,
+        winRateText: candidate.winRate == null ? "--" : `${candidate.winRate.toFixed(1)}%`,
+        source: candidate.source,
+        detail: candidate.memo,
+        sampleCount,
+        distribution: sampleCount > 0 ? { redWin: percent(candidate.win), draw: percent(candidate.draw), blackWin: percent(candidate.loss) } : undefined,
+      };
+    }),
     ...cloudCandidates.map((candidate) => ({
       id: `cloud-${candidate.iccs}`,
       iccs: candidate.iccs,
       notation: candidate.notation,
       scoreText: candidate.score > 0 ? `+${candidate.score}` : `${candidate.score}`,
       winRateText: candidate.winRate == null ? "--" : `${candidate.winRate.toFixed(0)}%`,
-      source: "ChessDB",
+      source: "ChessDB 云库",
       detail: candidate.memo,
     })),
-  ], [cloudCandidates]);
+  ], [board.xqbCandidates, cloudCandidates]);
   const compactEvaluationRows: CompactEvaluationRow[] = useMemo(() => orderedAnalysis.map((line) => ({
     id: `pv-${line.multipv}`,
     iccs: line.pv[0],
@@ -2251,7 +2277,7 @@ export default function App() {
     }
     setAnalysisArrowFen(analysisHintsEnabledRef.current ? analyzedFen : undefined);
     setAnalysisBusy(true);
-    if (!automatic && searchMode === "infinite") collapseCompactStudyPanels();
+    if (!automatic && searchMode === "infinite") await collapseCompactStudyPanels();
     if (!automatic) selectWorkspacePanel("analysis");
     setNotice(automatic ? `${analysisTargets.length} 个引擎正在自动分析…` : `${analysisTargets.length} 个引擎正在计算…`);
     const effectiveMode = automatic && searchMode === "infinite" ? "depth" : searchMode;
@@ -3023,7 +3049,7 @@ export default function App() {
       case "copyFullManual": await copyGame(); break;
       case "copyMainline": await copyGame(true); break;
       case "nextBranch": await goToNextBranchPoint(); break;
-      case "linkSession": setLinkSessionOpen(true); break;
+      case "linkSession": await openLinkSessionDialog(); break;
       case "engineRed": toggleEngineSide("red"); break;
       case "engineBlack": toggleEngineSide("black"); break;
       case "moveNow": await moveNow(); break;
@@ -3085,10 +3111,22 @@ export default function App() {
     }
   }
 
-  function collapseCompactStudyPanels() {
+  async function openLinkSessionDialog() {
+    await collapseCompactStudyPanels();
+    setLinkSessionOpen(true);
+  }
+
+  async function collapseCompactStudyPanels() {
+    if (chessPlatform.kind === "desktop") {
+      await Promise.allSettled([
+        compactPoppedOutPanels.engine ? chessPlatform.returnCompactFloatingPanel("engine") : Promise.resolve(false),
+        compactPoppedOutPanels.manual ? chessPlatform.returnCompactFloatingPanel("manual") : Promise.resolve(false),
+      ]);
+    }
     if (desktopPreferencesRef.current.layoutMode !== "compact") return;
     setCompactEngineCollapsed(true);
     setCompactManualCollapsed(true);
+    setCompactPoppedOutPanels((panels) => ({ ...panels, engine: false, manual: false }));
     setCompactDetachedPanels({ engine: false, manual: false });
     setCompactWindowPositions({ engine: { x: 0, y: 0 }, manual: { x: 0, y: 0 } });
     setCompactManualWidth(undefined);
@@ -3588,11 +3626,17 @@ export default function App() {
           onPreviewBranches={() => void previewEngineBranches(analysisFen ?? board.fen)}
         />}
       </div>
-      {!compactLayout && board.xqbCandidates?.length ? <section className="xqb-candidates" aria-label="XQB 开局库候选">
-        <header><BookOpen size={14}/><strong>大师开局库</strong><span>{board.xqbCandidates.length} 个候选</span></header>
-        {board.xqbCandidates.map((candidate) => <button key={`${candidate.source}-${candidate.iccs}`} onClick={() => void playIccsMove(candidate.iccs)} title={candidate.memo || candidate.source}>
-          <strong>{candidate.notation}</strong><span>{candidate.score > 0 ? `+${candidate.score}` : candidate.score}</span><small>{candidate.winRate == null ? "暂无对局" : `胜率 ${candidate.winRate.toFixed(1)}%`} · {candidate.source}</small>
-        </button>)}
+      {!compactLayout && board.xqbCandidates?.length ? <section className="xqb-candidates" aria-label="本地大师开局库候选">
+        <header><BookOpen size={14}/><strong>本地大师开局库</strong><span>{board.xqbCandidates.length} 个候选</span></header>
+        {board.xqbCandidates.map((candidate) => {
+          const total = candidate.win + candidate.draw + candidate.loss;
+          const percent = (value: number) => total > 0 ? Math.round(value * 100 / total) : 0;
+          return <button key={`${candidate.source}-${candidate.iccs}`} onClick={() => void playIccsMove(candidate.iccs)} title={candidate.memo || candidate.source}>
+            <strong>{candidate.notation}</strong><span>{candidate.score > 0 ? `+${candidate.score}` : candidate.score}</span>
+            {total > 0 ? <span className="xqb-distribution" aria-label={`胜 ${percent(candidate.win)}% ，和 ${percent(candidate.draw)}% ，负 ${percent(candidate.loss)}%`}><i className="red" style={{ width: `${percent(candidate.win)}%` }}>{percent(candidate.win)}%</i><i className="draw" style={{ width: `${percent(candidate.draw)}%` }}>{percent(candidate.draw)}%</i><i className="black" style={{ width: `${percent(candidate.loss)}%` }}>{percent(candidate.loss)}%</i></span> : <small>暂无对局统计</small>}
+            <small>{total.toLocaleString()} 局 · {candidate.source}</small>
+          </button>;
+        })}
       </section> : null}
       {compactLayout && <section className={`compact-manual-panel ${compactManualCollapsed ? "collapsed" : ""}`} aria-label="简洁布局棋谱">
         <header>
@@ -3731,7 +3775,7 @@ export default function App() {
           </section>
         ) : floatingPanel === "link" ? (
           <section className="floating-panel-body floating-link-body">
-            <div className={`link-float-status ${linkSessionStatus.state}`}><span>{linkSessionStateLabel(linkSessionStatus.state)}</span><strong>{board.sideToMove}行棋</strong><small>{linkSessionStatus.reason ?? "窗口连线将同步经过稳定帧与棋规校验的着法"}</small></div>
+            <div className={`link-float-status ${linkSessionStatus.state}`}><span>{linkSessionStateLabel(linkSessionStatus.state)}</span><strong>{board.sideToMove}行棋</strong><small>{linkSessionStatus.reason ?? "窗口连线将同步经过稳定帧与棋规校验的着法"}</small><small>{linkSessionStatus.captureRunning ? `${linkSessionStatus.frameRate.toFixed(1)} FPS · ${linkSessionStatus.confidence == null ? "等待置信度" : `置信度 ${(linkSessionStatus.confidence * 100).toFixed(0)}%`} · 稳定 ${linkSessionStatus.stableFrames}/${linkSessionStatus.requiredStableFrames}` : "采集未运行"}</small>{linkSessionStatus.lastMove && <small>最近同步：{linkSessionStatus.lastMove}</small>}</div>
             <div className="link-float-evaluation"><span>局面评估</span><strong>{evaluation?.scoreText ?? "--"}</strong><small>{evaluation?.label ?? "等待引擎分析"}</small></div>
             <section className={`link-mini-section ${linkMiniBoardSize}`}>
               <header><strong>局面与候选</strong><div className="link-mini-size" aria-label="迷你棋盘大小"><button type="button" className={linkMiniBoardSize === "off" ? "active" : ""} onClick={() => setLinkMiniBoardSize("off")}>隐藏</button><button type="button" className={linkMiniBoardSize === "small" ? "active" : ""} onClick={() => setLinkMiniBoardSize("small")}>小</button><button type="button" className={linkMiniBoardSize === "large" ? "active" : ""} onClick={() => setLinkMiniBoardSize("large")}>大</button></div></header>
@@ -3743,11 +3787,12 @@ export default function App() {
             </section>
             <div className="link-float-candidates"><header><strong>候选线路</strong><small>中文 MultiPV</small></header>{compactEngineRows.length || analysisBusy ? <CompactEngineAnalysisList busy={analysisBusy} rows={compactEngineRows.slice(0, 3)} onPlayMove={() => undefined}/> : <p>识别并同步局面后，在此显示前三条引擎候选线。</p>}</div>
             <div className="link-float-actions">
+              {linkSessionStatus.mode === "confirmPlay" && <button type="button" disabled={linkSessionStatus.state !== "tracking" || !compactEngineRows[0]?.iccs} onClick={() => { const move = compactEngineRows[0]?.iccs; if (move) void chessPlatform.confirmLinkEngineMove(move).then(() => setNotice(`已确认引擎建议 ${move}，等待外部局面确认`)).catch((error) => setNotice(friendlyError(error))); }}><Play size={14}/>确认走子</button>}
               <button type="button" disabled={linkSessionStatus.state === "stopped"} onClick={() => void chessPlatform.pauseLinkSession().then(setLinkSessionStatus).catch((error) => setNotice(friendlyError(error)))}><Pause size={14}/>暂停</button>
               <button type="button" disabled={linkSessionStatus.state === "stopped"} onClick={() => void chessPlatform.recalibrateLinkSession().then((status) => { setLinkSessionStatus(status); return chessPlatform.getLinkCapturePreview(); }).then(setLinkCapturePreview).catch((error) => setNotice(friendlyError(error)))}><RefreshCw size={14}/>重新框选</button>
               <button type="button" className="stop" disabled={linkSessionStatus.state === "stopped"} onClick={() => void chessPlatform.stopLinkSession().then(() => chessPlatform.getLinkSessionStatus()).then(setLinkSessionStatus).catch((error) => setNotice(friendlyError(error)))}><Square size={13}/>停止</button>
             </div>
-            <p className="floating-panel-note">观战模式不会向第三方窗口点击。本机外部学习模型不随应用打包或上传；未接入可审计模型前，连线只保留提示与手动局面校正。</p>
+            <p className="floating-panel-note">模型在本机持续识别可见棋盘，不保存截图。确认走子和自动对战只会在稳定局面、有效引擎结果及明确授权下执行。</p>
           </section>
         ) : (
           <section className="floating-panel-body floating-manual-body">
@@ -4382,30 +4427,32 @@ export default function App() {
       {skinShopOpen && (
         <SkinShopDialog preferences={desktopPreferences} signedIn={syncAccount.status === "signedIn"} onClose={() => { setSkinHoverPreview(undefined); setSkinShopOpen(false); }} onPreview={setSkinHoverPreview} onEquip={(patch) => void updateBoardSkin(patch)}/>
       )}
-      {chessPlatform.kind === "desktop" && desktopPreferences.layoutMode !== "compact" && desktopPreferences.cloudBookEnabled && cloudBookVisible && <aside
+      {chessPlatform.kind === "desktop" && desktopPreferences.layoutMode !== "compact" && (desktopPreferences.cloudBookEnabled || !!board.xqbCandidates?.length) && cloudBookVisible && <aside
         className={`cloud-book-float ${cloudBookCollapsed ? "collapsed" : ""}`}
-        aria-label="ChessDB 云开局库"
+        aria-label="开局库候选"
         style={{ ...(cloudBookPosition ? { ...cloudBookPosition, right: "auto", bottom: "auto" } : {}), height: cloudBookCollapsed ? undefined : cloudBookHeight } as CSSProperties}
       >
         <div className="cloud-book-float-header" onPointerDown={startCloudBookDrag} onPointerMove={moveCloudBookDrag} onPointerUp={stopCloudBookDrag}>
-          <span><GripVertical size={15}/><BookOpen size={15}/><strong>云库 · ChessDB</strong></span>
-          <small>{cloudBookLoading ? "查询中…" : cloudBookError ?? `${cloudCandidates.length} 个候选`}</small>
+          <span><GripVertical size={15}/><BookOpen size={15}/><strong>开局库候选</strong></span>
+          <small>{cloudBookLoading ? "查询中…" : cloudBookError ?? `${compactBookRows.length} 个候选`}</small>
           <button type="button" title="上一步" aria-label="上一步" disabled={!board.currentNode} onPointerDown={(event) => event.stopPropagation()} onClick={() => void goPrevious()}><ChevronLeft size={16}/></button>
           <button type="button" title="下一步" aria-label="下一步" disabled={!preferredContinuation(board)} onPointerDown={(event) => event.stopPropagation()} onClick={() => void goNext()}><ChevronRight size={16}/></button>
           <button type="button" title={cloudBookCollapsed ? "展开云库" : "折叠云库"} aria-label={cloudBookCollapsed ? "展开云库" : "折叠云库"} onPointerDown={(event) => event.stopPropagation()} onClick={() => setCloudBookCollapsed((collapsed) => !collapsed)}><ChevronDown size={16}/></button>
           <button type="button" title="关闭云库面板" aria-label="关闭云库面板" onPointerDown={(event) => event.stopPropagation()} onClick={() => setCloudBookVisible(false)}><X size={16}/></button>
         </div>
         {!cloudBookCollapsed && <div className="xqb-candidates cloud-book-candidate-list">
-          {cloudCandidates.map((candidate) => <button key={candidate.iccs} onClick={() => void playIccsMove(candidate.iccs)} title={candidate.memo || candidate.source}>
-            <strong>{candidate.notation}</strong><span>{candidate.score > 0 ? `+${candidate.score}` : candidate.score}</span><small>{candidate.winRate == null ? "云库候选" : `胜率 ${candidate.winRate.toFixed(1)}%`}{candidate.memo ? ` · ${candidate.memo}` : ""}</small>
+          {compactBookRows.map((candidate) => <button key={candidate.id} onClick={() => void playIccsMove(candidate.iccs)} title={candidate.detail || candidate.source}>
+            <strong>{candidate.notation}</strong><span>{candidate.scoreText}</span>
+            {candidate.distribution ? <span className="xqb-distribution" aria-label={`胜 ${candidate.distribution.redWin}% ，和 ${candidate.distribution.draw}% ，负 ${candidate.distribution.blackWin}%`}><i className="red" style={{ width: `${candidate.distribution.redWin}%` }}>{candidate.distribution.redWin}%</i><i className="draw" style={{ width: `${candidate.distribution.draw}%` }}>{candidate.distribution.draw}%</i><i className="black" style={{ width: `${candidate.distribution.blackWin}%` }}>{candidate.distribution.blackWin}%</i></span> : <small>{candidate.winRateText === "--" ? "云库候选" : `胜率 ${candidate.winRateText}`}</small>}
+            <small>{candidate.sampleCount?.toLocaleString() ?? "云库"}{candidate.detail ? ` · ${candidate.detail}` : ` · ${candidate.source}`}</small>
           </button>)}
-          {!cloudBookLoading && cloudCandidates.length === 0 && <p className="cloud-book-status">{cloudBookError ? "本局面暂时无法从云库读取候选" : "当前局面暂无云库候选"}</p>}
+          {!cloudBookLoading && compactBookRows.length === 0 && <p className="cloud-book-status">{cloudBookError ? "本局面暂时无法从云库读取候选" : "当前局面暂无开局库候选"}</p>}
         </div>}
         {!cloudBookCollapsed && (
           <div className="cloud-book-resize-handle" title="上下拖动调整云库面板高度" onPointerDown={startCloudBookResize} onPointerMove={moveCloudBookResize} onPointerUp={stopCloudBookResize}/>
         )}
       </aside>}
-      {chessPlatform.kind === "desktop" && desktopPreferences.layoutMode !== "compact" && desktopPreferences.cloudBookEnabled && !cloudBookVisible && <button className="cloud-book-reopen" title="打开云库面板" onClick={() => setCloudBookVisible(true)}><BookOpen size={15}/>打开云库</button>}
+      {chessPlatform.kind === "desktop" && desktopPreferences.layoutMode !== "compact" && (desktopPreferences.cloudBookEnabled || !!board.xqbCandidates?.length) && !cloudBookVisible && <button className="cloud-book-reopen" title="打开开局库面板" onClick={() => setCloudBookVisible(true)}><BookOpen size={15}/>打开开局库</button>}
       {reportDialogOpen && reportPresentation && <GameReportDialog
         report={reportPresentation}
         currentNode={board.currentNode}
@@ -4493,9 +4540,18 @@ export default function App() {
               linkMode: request.mode,
               linkStableFrames: request.stableFrames,
             });
+            if (request.source === "windowLink") {
+              flushSync(() => setLinkSessionOpen(false));
+            }
+            await collapseCompactStudyPanels();
+            if (request.source === "windowLink") {
+              await openCompactFloatingPanel("link");
+              await chessPlatform.prepareLinkSelectionWindow();
+            }
             const result = await chessPlatform.startLinkSession(request);
-            collapseCompactStudyPanels();
-            if (request.source === "windowLink") await openCompactFloatingPanel("link");
+            analysisHintsEnabledRef.current = true;
+            setAnalysisHintsEnabled(true);
+            if (!analysisBusyRef.current) window.setTimeout(() => void runAnalysis(true), 0);
             setNotice(result.reason ?? "连线会话已启动，请提交并确认识别局面");
             return result;
           } catch (error) {

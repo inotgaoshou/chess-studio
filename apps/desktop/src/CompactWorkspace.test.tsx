@@ -45,16 +45,26 @@ describe("CompactReferencePanels", () => {
     expect(screen.getByText("0 条 · 云库关闭")).toBeTruthy();
   });
 
-  it("hides not-yet-implemented local book and auto move status entries", () => {
+  it("shows local book win/draw/loss distribution and sample count without inventing cloud details", () => {
     render(<CompactReferencePanels
       {...common}
       cloudEnabled={false}
-      bookRows={[{ id: "xqb-h2e2", iccs: "h2e2", notation: "马二进三", scoreText: "+12", winRateText: "54%", source: "本地 XQB" }]}
+      bookRows={[{
+        id: "xqb-h2e2",
+        iccs: "h2e2",
+        notation: "马二进三",
+        scoreText: "+12",
+        winRateText: "54%",
+        source: "本地 XQB",
+        sampleCount: 71368,
+        distribution: { redWin: 36, draw: 32, blackWin: 32 },
+      }]}
     />);
 
     expect(screen.getByText("1 条 · 云库关闭")).toBeTruthy();
-    expect(screen.queryByText("本地库")).toBeNull();
-    expect(screen.queryByText("自动出步")).toBeNull();
+    expect(screen.getAllByText("本地 XQB").length).toBeGreaterThan(0);
+    expect(screen.getByLabelText("胜 36% ，和 32% ，负 32%")).toBeTruthy();
+    expect(screen.getByText("71,368")).toBeTruthy();
   });
 
   it("shows cloud statistics as a real switchable evaluation view", () => {
@@ -66,8 +76,8 @@ describe("CompactReferencePanels", () => {
       ]}
     />);
 
-    fireEvent.click(screen.getByRole("button", { name: "云库统计" }));
-    expect(screen.getByText("云库候选")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "开局库统计" }));
+    expect(screen.getByText("开局库候选")).toBeTruthy();
     expect(screen.getByText("最高分")).toBeTruthy();
     expect(screen.getAllByText("+32").length).toBeGreaterThan(0);
     expect(screen.getByText("55%")).toBeTruthy();
