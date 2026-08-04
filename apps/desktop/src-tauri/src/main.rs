@@ -625,6 +625,11 @@ struct LinkSessionStatusDto {
     capture_running: bool,
 }
 
+struct LinkCapturePreview {
+    data_uri: String,
+    png: Vec<u8>,
+}
+
 #[tauri::command]
 fn prepare_link_selection_window(app: tauri::AppHandle) -> Result<(), String> {
     prepare_window_link_selection(&app);
@@ -665,6 +670,7 @@ fn start_link_session(
     if matches!(request.source, CaptureSource::WindowLink) && capture_preview.is_none() {
         return Err("未完成棋盘框选；请在系统选框中拖出第三方网页或客户端的棋盘区域".into());
     }
+    let initial_frame = capture_preview.as_ref().map(|preview| preview.png.clone());
     let mut session = state
         .link_session
         .lock()
@@ -672,8 +678,8 @@ fn start_link_session(
     session.source = request.source;
     session.recognition_mode = request.recognition_mode;
     session.mode = request.mode;
-    session.capture_preview = capture_preview;
-    session.reason = None;
+    session.capture_preview = capture_preview.map(|preview| preview.data_uri);
+    session.reason = Some("已框选棋盘区域，正在识别并同步局面…".into());
     session.state = match request.source {
         CaptureSource::ImageImport | CaptureSource::CameraBoard => {
             LinkSessionState::DetectingCorners
@@ -695,7 +701,7 @@ fn start_link_session(
     session.board_bounds = None;
     drop(session);
     if matches!(request.source, CaptureSource::WindowLink) {
-        start_window_link_capture(app)?;
+        start_window_link_capture(app, initial_frame)?;
     }
     let session = state.link_session.lock().map_err(|_| "link session lock poisoned".to_owned())?;
     Ok(LinkObservationDto {
@@ -798,17 +804,18 @@ fn recalibrate_link_session(
             restore_link_hint_window(&app);
             return Err("未完成棋盘框选；请在系统选框中拖出第三方网页或客户端的棋盘区域".into());
         };
+        let initial_frame = preview.png.clone();
         let mut session = state
             .link_session
             .lock()
             .map_err(|_| "link session lock poisoned".to_owned())?;
         session.gate.reset();
-        session.capture_preview = Some(preview);
+        session.capture_preview = Some(preview.data_uri);
         session.state = LinkSessionState::Calibrating;
         session.capture_running = true;
-        session.reason = Some("棋盘区域已重新框选；等待本机识别模型处理".into());
+        session.reason = Some("棋盘区域已重新框选，正在识别并同步局面…".into());
         drop(session);
-        start_window_link_capture(app.clone())?;
+        start_window_link_capture(app.clone(), Some(initial_frame))?;
         restore_link_hint_window(&app);
         let session = state.link_session.lock().map_err(|_| "link session lock poisoned".to_owned())?;
         return Ok(LinkSessionStatusDto {
@@ -848,7 +855,7 @@ fn get_link_capture_preview(state: State<'_, DesktopState>) -> Result<Option<Str
         .clone())
 }
 
-fn capture_window_link_preview() -> Result<Option<String>, String> {
+fn capture_window_link_preview() -> Result<Option<LinkCapturePreview>, String> {
     #[cfg(target_os = "macos")]
     {
         let directory = tempfile::tempdir().map_err(|error| error.to_string())?;
@@ -865,7 +872,10 @@ fn capture_window_link_preview() -> Result<Option<String>, String> {
         if bytes.len() > 8 * 1024 * 1024 {
             return Err("框选图片过大，请只选择棋盘区域后重试".into());
         }
-        Ok(Some(format!("data:image/png;base64,{}", BASE64.encode(bytes))))
+        Ok(Some(LinkCapturePreview {
+            data_uri: format!("data:image/png;base64,{}", BASE64.encode(&bytes)),
+            png: bytes,
+        }))
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -910,7 +920,7 @@ fn validate_link_model(path: &Path) -> Result<(), String> {
     if actual == EXPECTED { Ok(()) } else { Err("YOLO11 模型哈希校验失败，已拒绝启动连线识别".into()) }
 }
 
-fn start_window_link_capture(app: tauri::AppHandle) -> Result<(), String> {
+fn start_window_link_capture(app: tauri::AppHandle, initial_frame: Option<Vec<u8>>) -> Result<(), String> {
     let path = link_model_path(&app)?;
     validate_link_model(&path)?;
     std::thread::spawn(move || {
@@ -918,6 +928,9 @@ fn start_window_link_capture(app: tauri::AppHandle) -> Result<(), String> {
             Ok(detector) => detector,
             Err(error) => { set_link_capture_error(&app, error); return; }
         };
+        if let Some(frame) = initial_frame {
+            process_link_capture_frame(&app, &mut detector, &frame, false, "框选预览");
+        }
         let mut previous = Instant::now();
         loop {
             let should_run = app.state::<DesktopState>().link_session.lock().map(|session| session.capture_running && !matches!(session.state, LinkSessionState::Stopped)).unwrap_or(false);
@@ -925,18 +938,7 @@ fn start_window_link_capture(app: tauri::AppHandle) -> Result<(), String> {
             let started = Instant::now();
             match capture_primary_display() {
                 Ok(frame) => {
-                    let board = match app.state::<DesktopState>().model.lock() { Ok(model) => model.board.clone(), Err(_) => { set_link_capture_error(&app, "棋谱状态暂时不可用".into()); break; } };
-                    match detector.detect_png(&frame).and_then(|detections| {
-                        if let Some(bounds) = link_vision::board_bounds(&detections) { if let Ok(mut session) = app.state::<DesktopState>().link_session.lock() { session.board_bounds = Some(bounds); } }
-                        link_vision::recognition_from_detections(&detections, &board)
-                    }) {
-                        Ok(recognition) => {
-                            if let Ok(mut session) = app.state::<DesktopState>().link_session.lock() { session.board_orientation = recognition.orientation; }
-                            let fen = recognition.fen.clone();
-                            if let Err(error) = observe_link_recognition(&app, fen, recognition.confidence) { set_link_capture_error(&app, error); }
-                        }
-                        Err(error) => set_link_capture_waiting(&app, error),
-                    }
+                    process_link_capture_frame(&app, &mut detector, &frame, true, "屏幕采集");
                 }
                 Err(error) => set_link_capture_error(&app, error),
             }
@@ -947,6 +949,46 @@ fn start_window_link_capture(app: tauri::AppHandle) -> Result<(), String> {
         }
     });
     Ok(())
+}
+
+fn process_link_capture_frame(
+    app: &tauri::AppHandle,
+    detector: &mut link_vision::Yolo11Detector,
+    frame: &[u8],
+    update_bounds: bool,
+    source_label: &str,
+) {
+    let board = match app.state::<DesktopState>().model.lock() {
+        Ok(model) => model.board.clone(),
+        Err(_) => {
+            set_link_capture_error(app, "棋谱状态暂时不可用".into());
+            return;
+        }
+    };
+    match detector.detect_png(frame).and_then(|detections| {
+        if update_bounds {
+            if let Some(bounds) = link_vision::board_bounds(&detections) {
+                if let Ok(mut session) = app.state::<DesktopState>().link_session.lock() {
+                    session.board_bounds = Some(bounds);
+                }
+            }
+        }
+        link_vision::recognition_from_detections(&detections, &board)
+    }) {
+        Ok(recognition) => {
+            if let Ok(mut session) = app.state::<DesktopState>().link_session.lock() {
+                session.board_orientation = recognition.orientation;
+                if source_label == "框选预览" {
+                    session.reason = Some("框选预览已识别，等待稳定帧同步与引擎分析…".into());
+                }
+            }
+            let fen = recognition.fen.clone();
+            if let Err(error) = observe_link_recognition(app, fen, recognition.confidence) {
+                set_link_capture_error(app, error);
+            }
+        }
+        Err(error) => set_link_capture_waiting(app, format!("{source_label}未识别到可同步棋盘：{error}")),
+    }
 }
 
 fn capture_primary_display() -> Result<Vec<u8>, String> {
@@ -2289,14 +2331,20 @@ fn detect_pikafish(app: tauri::AppHandle) -> Option<String> {
 
 #[tauri::command]
 async fn open_compact_floating_panel(app: tauri::AppHandle, panel: String) -> Result<bool, String> {
-    let (label, title, width, height, min_width, min_height) = match panel.as_str() {
-        "engine" => ("compact-engine", "引擎分析", 430.0, 520.0, 360.0, 320.0),
-        "manual" => ("compact-manual", "棋谱", 430.0, 580.0, 360.0, 320.0),
-        "cloud" => ("compact-cloud", "云库 / 评估信息", 520.0, 640.0, 360.0, 320.0),
-        "link" => ("compact-link", "连线控制", 520.0, 260.0, 360.0, 200.0),
+    let (label, title, width, height, min_width, min_height, position) = match panel.as_str() {
+        "engine" => ("compact-engine", "引擎分析", 430.0, 520.0, 360.0, 320.0, None),
+        "manual" => ("compact-manual", "棋谱", 430.0, 580.0, 360.0, 320.0, None),
+        "cloud" => ("compact-cloud", "云库 / 评估信息", 520.0, 640.0, 360.0, 320.0, None),
+        "link" => ("compact-link", "连线控制", 480.0, 280.0, 360.0, 220.0, Some((24.0, 96.0))),
         _ => return Err("未知的浮动面板".into()),
     };
     if let Some(window) = app.get_webview_window(label) {
+        if panel == "link" {
+            let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(width, height)));
+            if let Some((x, y)) = position {
+                let _ = window.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(x, y)));
+            }
+        }
         window
             .set_always_on_top(true)
             .map_err(|error| error.to_string())?;
@@ -2305,7 +2353,7 @@ async fn open_compact_floating_panel(app: tauri::AppHandle, panel: String) -> Re
         return Ok(false);
     }
 
-    tauri::WebviewWindowBuilder::new(
+    let mut builder = tauri::WebviewWindowBuilder::new(
         &app,
         label,
         tauri::WebviewUrl::App(format!("index.html?floatingPanel={panel}").into()),
@@ -2315,7 +2363,11 @@ async fn open_compact_floating_panel(app: tauri::AppHandle, panel: String) -> Re
     .min_inner_size(min_width, min_height)
     .resizable(true)
     .decorations(true)
-    .always_on_top(true)
+    .always_on_top(true);
+    if let Some((x, y)) = position {
+        builder = builder.position(x, y);
+    }
+    builder
     .build()
     .map_err(|error| error.to_string())?;
 

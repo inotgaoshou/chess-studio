@@ -3775,6 +3775,13 @@ export default function App() {
           </section>
         ) : floatingPanel === "link" ? (
           <section className="floating-panel-body floating-link-body">
+            <div className="link-control-card">
+              <div>
+                <strong>{linkSessionStatus.state === "stopped" ? "请切换到网页棋盘并框选" : linkSessionStateLabel(linkSessionStatus.state)}</strong>
+                <small>{linkSessionStatus.reason ?? "框选后会自动识别棋盘、同步局面，并触发引擎分析。"}</small>
+              </div>
+              <span>{linkSessionStatus.captureRunning ? `${linkSessionStatus.frameRate.toFixed(1)} FPS` : "等待框选"}</span>
+            </div>
             <div className={`link-float-status ${linkSessionStatus.state}`}><span>{linkSessionStateLabel(linkSessionStatus.state)}</span><strong>{board.sideToMove}行棋</strong><small>{linkSessionStatus.reason ?? "窗口连线将同步经过稳定帧与棋规校验的着法"}</small><small>{linkSessionStatus.captureRunning ? `${linkSessionStatus.frameRate.toFixed(1)} FPS · ${linkSessionStatus.confidence == null ? "等待置信度" : `置信度 ${(linkSessionStatus.confidence * 100).toFixed(0)}%`} · 稳定 ${linkSessionStatus.stableFrames}/${linkSessionStatus.requiredStableFrames}` : "采集未运行"}</small>{linkSessionStatus.lastMove && <small>最近同步：{linkSessionStatus.lastMove}</small>}</div>
             <div className="link-float-evaluation"><span>局面评估</span><strong>{evaluation?.scoreText ?? "--"}</strong><small>{evaluation?.label ?? "等待引擎分析"}</small></div>
             <section className={`link-mini-section ${linkMiniBoardSize}`}>
@@ -3954,6 +3961,11 @@ export default function App() {
           </section>}
         </div>
         <button className="tool-button" title={themeToggleTitle} aria-label={themeToggleTitle} onClick={() => void toggleColorTheme()}>{effectiveColorTheme === "dark" ? <Moon size={16}/> : <Sun size={16}/>}</button>
+        {chessPlatform.kind === "desktop" && <button
+          className={`mode-tool link-session-shortcut ${linkSessionStatus.state !== "stopped" ? "active" : ""}`}
+          title={linkSessionStatus.state === "stopped" ? "打开识别与连线，启动连线识别" : `连线中：${linkSessionStateLabel(linkSessionStatus.state)}，点击查看设置`}
+          onClick={() => void openLinkSessionDialog()}
+        ><Link size={15}/>连线</button>}
       </div>
 
       <main className={`workspace layout-${desktopPreferences.layoutMode} ${libraryCollapsed ? "library-collapsed" : ""} ${candidateRailCollapsed ? "candidate-rail-collapsed" : ""} ${analysisPanelCollapsed ? "analysis-panel-collapsed" : ""} ${compactDockMinimized ? "compact-dock-minimized" : ""} ${compactHasSystemPopout ? "compact-system-popout" : ""} ${desktopPreferences.layoutMode === "compact" && cloudBookCollapsed ? "compact-cloud-collapsed" : ""}`}>
@@ -4546,6 +4558,7 @@ export default function App() {
             await collapseCompactStudyPanels();
             if (request.source === "windowLink") {
               await openCompactFloatingPanel("link");
+              await new Promise((resolve) => window.setTimeout(resolve, 250));
               await chessPlatform.prepareLinkSelectionWindow();
             }
             const result = await chessPlatform.startLinkSession(request);
