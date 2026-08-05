@@ -2485,7 +2485,7 @@ button:disabled { cursor: default; opacity: .45; }
 .manual-view-switch { flex: 0 0 auto; display: inline-flex; padding: 2px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-1); }
 .manual-view-switch button { height: 20px; padding: 0 8px; border: 0; border-radius: 999px; background: transparent; color: var(--text-muted); font-size: 10.5px; font-weight: 800; }
 .manual-view-switch button.active { background: var(--accent); color: #102119; }
-.manual-engine-branch-action { flex: 0 0 auto; height: 25px; display: inline-flex; align-items: center; gap: 4px; padding: 0 9px; border: 1px solid color-mix(in srgb, #2f80ed 46%, var(--border)); border-radius: 999px; background: color-mix(in srgb, #2f80ed 9%, var(--surface-1)); color: #2f80ed; font-size: 10.5px; font-weight: 900; }
+.manual-engine-branch-action { flex: 0 0 auto; height: 23px; display: inline-flex; align-items: center; gap: 3px; padding: 0 7px; border: 1px solid color-mix(in srgb, #2f80ed 42%, var(--border)); border-radius: 999px; background: color-mix(in srgb, #2f80ed 7%, var(--surface-1)); color: #2f80ed; font-size: 10.5px; font-weight: 900; }
 .manual-engine-branch-action:hover:not(:disabled),
 .manual-engine-branch-action.active { border-color: #2f80ed; background: color-mix(in srgb, #2f80ed 18%, var(--surface-1)); color: var(--text-primary); }
 .manual-engine-branch-action:disabled { opacity: .45; cursor: not-allowed; }

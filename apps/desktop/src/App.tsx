@@ -184,7 +184,7 @@ export function effectiveBoardReversedForLink(status: LinkSessionStatus, boardFe
 
 export function engineBranchActionPresentation(active: boolean, disabled: boolean, stale: boolean) {
   return {
-    label: active ? "取消分支" : "引擎分支",
+    label: active ? "取消" : "分支",
     ariaLabel: active ? "取消引擎分支预览" : "显示引擎分支",
     title: active
       ? "取消当前 AI 虚线分支预览"
@@ -2104,8 +2104,8 @@ export default function App() {
       setNotice("当前研究局面不可对弈，请先修正局面");
       return;
     }
-    const stoppedEngineForManualMove = options.stopEngineFirst && (engineThinking || engineStarting || isEngineTurn(board));
-    if (engineThinking || engineStarting || isEngineTurn(board)) {
+    const stoppedEngineForManualMove = options.stopEngineFirst && (engineSide !== "none" || engineThinking || engineStarting);
+    if (engineThinking || engineStarting || isEngineTurn(board) || stoppedEngineForManualMove) {
       if (!options.stopEngineFirst) {
         setNotice(engineStarting ? `${currentEngineLabel} 正在启动` : engineThinking ? `${currentEngineLabel} 正在思考` : `当前轮到 ${currentEngineLabel} 行棋`);
         return;
@@ -4026,7 +4026,6 @@ export default function App() {
       {desktopPreferences.manualViewMode === "tree"
         ? <div className="manual-tree-shell">
           <header className="manual-track-toolbar">
-            <button className={`manual-track-root ${!board.currentNode ? "active" : ""}`} type="button" onClick={() => void navigateTo()}><GitBranch size={12}/>开始局面</button>
             <div className="manual-view-switch" role="tablist" aria-label="棋谱显示方式">
               <button type="button" onClick={() => setManualViewMode("track")}>分支树</button>
               <button type="button" className="active" onClick={() => setManualViewMode("tree")}>传统树</button>

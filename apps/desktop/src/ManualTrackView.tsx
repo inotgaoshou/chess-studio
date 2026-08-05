@@ -1,4 +1,4 @@
-import { BookOpen, ChevronDown, ChevronRight, Copy, Download, GitBranch, Image as ImageIcon, ListStart, MessageSquare, Sparkles, Trash2, X } from "lucide-react";
+import { BookOpen, ChevronDown, ChevronRight, Copy, Download, Image as ImageIcon, ListStart, MessageSquare, Sparkles, Trash2, X } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -486,7 +486,6 @@ export function ManualTrackView({ nodes, history, currentNode, viewMode, editing
 
   return <div className="manual-track-view manual-branch-tree-view" aria-label="分支树棋谱">
     <header className="manual-track-toolbar">
-      <button className={`manual-track-root ${!currentNode ? "active" : ""}`} type="button" onClick={() => onNavigate()}><GitBranch size={12}/>开始局面</button>
       <div className="manual-view-switch" role="tablist" aria-label="棋谱显示方式">
         <button type="button" className={viewMode === "track" ? "active" : ""} onClick={() => onViewModeChange("track")}>分支树</button>
         <button type="button" className={viewMode === "tree" ? "active" : ""} onClick={() => onViewModeChange("tree")}>传统树</button>
