@@ -67,4 +67,24 @@ describe("buildStrategyInsight", () => {
 
     expect(insight.principles[0]?.title).toBe("先看反击");
   });
+
+  it("demotes cards that were marked inaccurate or need recheck", () => {
+    const insight = buildStrategyInsight({
+      sideToMove: "红方", ply: 32, phase: "middle", pieces, history: [], studyTags: ["反击"],
+      courseCards: [
+        {
+          id: "bad-counterplay", phase: "middle", title: "反击卡但常误配", summary: "进攻前检查对手反击。",
+          appliesWhen: "局面准备强攻时。", risk: "忽略反击会丢先手。", matchPenalty: 4, needsRecheck: true,
+          source: { label: "赵鑫鑫棋理三部曲", book: "赵鑫鑫中局棋理48讲", pageStart: 20, review: "已确认" },
+        },
+        {
+          id: "good-counterplay", phase: "middle", title: "反击核验", summary: "进攻前检查对手反击。",
+          appliesWhen: "局面准备强攻时。", risk: "忽略反击会丢先手。",
+          source: { label: "赵鑫鑫课程", review: "已确认" },
+        },
+      ],
+    });
+
+    expect(insight.principles[0]?.title).toBe("反击核验");
+  });
 });

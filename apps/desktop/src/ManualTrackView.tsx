@@ -1,5 +1,5 @@
 import { BookOpen, ChevronDown, ChevronRight, Copy, Download, GitBranch, Image as ImageIcon, ListStart, MessageSquare, Sparkles, Trash2, X } from "lucide-react";
-import type { CSSProperties } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -12,7 +12,7 @@ import {
 } from "./manualTrackModel";
 import type { ManualTreeNode, MoveItem, PreviewLineStep } from "./platform";
 import { CANDIDATE_PREVIEW_HALF_MOVES } from "./candidatePreview";
-import { formatStrategyInsightText, type StrategyInsight } from "./strategyInsights";
+import { formatStrategyInsightText, type StrategyInsight, type TheoryPrincipleCard } from "./strategyInsights";
 
 type Props = {
   nodes: ManualTreeNode[];
@@ -27,6 +27,7 @@ type Props = {
   onMakeMainline(nodeId: string): void;
   onRemove(nodeId: string): void;
   onExportLine?(contents: string): Promise<string | undefined>;
+  toolbarExtra?: ReactNode;
   strategyInsight?: StrategyInsight;
   previewBranch?: ManualPreviewBranch;
   previewBranches?: ManualPreviewBranch[];
@@ -43,6 +44,17 @@ export type ManualPreviewBranch = {
   activeStep: number;
   steps: PreviewLineStep[];
 };
+
+function theorySourceLabel(card: TheoryPrincipleCard) {
+  if (card.source.course) {
+    return `${card.source.label} · ${card.source.course} · ${card.source.episode ?? ""}${card.source.timecode ? ` · ${card.source.timecode}` : ""}`;
+  }
+  if (card.source.book) {
+    const pages = card.source.pageStart ? ` · p.${card.source.pageStart}${card.source.pageEnd && card.source.pageEnd !== card.source.pageStart ? `-${card.source.pageEnd}` : ""}` : "";
+    return `${card.source.label} · ${card.source.book}${pages}`;
+  }
+  return `${card.source.label} · ${card.source.review}`;
+}
 
 type ManualLineScoreOptions = {
   qualityByMoveId?: ReadonlyMap<string, MoveQuality>;
@@ -257,8 +269,8 @@ export function ManualLineDialog({ history, currentLabel, qualityByMoveId, forma
               </nav>
               {planView !== "evidence" && planView !== "overview" && <p className="manual-strategy-phase-note">{planView === strategyInsight.phase ? `当前处于${strategyInsight.phaseLabel}，已置顶显示。` : `当前不处于${({ opening: "开局", middle: "中局", endgame: "残局" } as const)[planView]}，以下是该阶段的学习与判断条件。`}</p>}
               {(planView === "overview" || planView === "evidence") && <div className="manual-strategy-block"><b>局面事实</b><ul>{strategyInsight.facts.map((fact) => <li key={fact}>{fact}</li>)}</ul></div>}
-              {(planView === "overview" || planView === "evidence") && <div className="manual-strategy-block"><b>棋理依据</b>{strategyInsight.principles.map((card) => <article key={card.id}><strong>{card.title}</strong><small>{card.source.label} · {card.source.course ? `${card.source.course} · ${card.source.episode ?? ""}${card.source.timecode ? ` · ${card.source.timecode}` : ""}` : card.source.review}</small><p>{card.summary}</p><em>适用：{card.appliesWhen}</em><em>风险：{card.risk}</em></article>)}</div>}
-              {planView !== "overview" && planView !== "evidence" && <><div className="manual-strategy-block"><b>棋理依据</b>{strategyInsight.stageGuides[planView].principles.map((card) => <article key={card.id}><strong>{card.title}</strong><small>{card.source.label} · {card.source.course ? `${card.source.course} · ${card.source.episode ?? ""}${card.source.timecode ? ` · ${card.source.timecode}` : ""}` : card.source.review}</small><p>{card.summary}</p><em>适用：{card.appliesWhen}</em><em>风险：{card.risk}</em></article>)}</div><div className="manual-strategy-block plan"><b>{({ opening: "开局", middle: "中局", endgame: "残局" } as const)[planView]}计划模板</b><p><strong>目标：</strong>{strategyInsight.stageGuides[planView].goal}</p><p><strong>防范：</strong>{strategyInsight.stageGuides[planView].guard}</p><p><strong>验证：</strong>{strategyInsight.stageGuides[planView].verify}</p></div></>}
+              {(planView === "overview" || planView === "evidence") && <div className="manual-strategy-block"><b>棋理依据</b>{strategyInsight.principles.map((card) => <article key={card.id}><strong>{card.title}</strong><small>{theorySourceLabel(card)}</small><p>{card.summary}</p><em>适用：{card.appliesWhen}</em><em>风险：{card.risk}</em></article>)}</div>}
+              {planView !== "overview" && planView !== "evidence" && <><div className="manual-strategy-block"><b>棋理依据</b>{strategyInsight.stageGuides[planView].principles.map((card) => <article key={card.id}><strong>{card.title}</strong><small>{theorySourceLabel(card)}</small><p>{card.summary}</p><em>适用：{card.appliesWhen}</em><em>风险：{card.risk}</em></article>)}</div><div className="manual-strategy-block plan"><b>{({ opening: "开局", middle: "中局", endgame: "残局" } as const)[planView]}计划模板</b><p><strong>目标：</strong>{strategyInsight.stageGuides[planView].goal}</p><p><strong>防范：</strong>{strategyInsight.stageGuides[planView].guard}</p><p><strong>验证：</strong>{strategyInsight.stageGuides[planView].verify}</p></div></>}
               {(planView === "overview" || planView === "evidence") && <><div className="manual-strategy-block plan"><b>计划结论</b><p><strong>目标：</strong>{strategyInsight.plan.goal}</p><p><strong>防范：</strong>{strategyInsight.plan.guard}</p><p><strong>验证：</strong>{strategyInsight.plan.verify}</p></div><div className={`manual-strategy-engine ${strategyInsight.engine.status}`}><b>引擎验证 · {strategyInsight.engine.label}</b><p>{strategyInsight.engine.text}</p>{strategyInsight.engine.depth != null && <small>深度 {strategyInsight.engine.depth}{strategyInsight.engine.scoreText ? ` · 分数 ${strategyInsight.engine.scoreText}` : ""}</small>}{strategyInsight.engine.pv.length > 0 && <code>PV：{strategyInsight.engine.pv.join(" ")}</code>}</div></>}
             </section> : <section className="manual-opening-plan" aria-label="开局思路"><header><small>根据当前棋谱自动归纳</small><strong>{openingPlan.title}</strong></header><div className="manual-opening-plan-core"><b>底层逻辑</b><p>{openingPlan.core}</p></div><div><b>执行路径</b><ol>{openingPlan.principles.map((item) => <li key={item}>{item}</li>)}</ol></div><div><b>需要防范</b><ul>{openingPlan.risks.map((item) => <li key={item}>{item}</li>)}</ul></div><footer><b>下一步建议</b><p>{openingPlan.advice}</p></footer></section>
           : rows.length === 0
@@ -410,7 +422,7 @@ function PreviewBranches({ previews }: { previews: ManualPreviewBranch[] }) {
   </section>;
 }
 
-export function ManualTrackView({ nodes, history, currentNode, viewMode, editing, qualityByMoveId, formatScore, onNavigate, onViewModeChange, onMakeMainline, onRemove, onExportLine, strategyInsight, previewBranch, previewBranches }: Props) {
+export function ManualTrackView({ nodes, history, currentNode, viewMode, editing, qualityByMoveId, formatScore, onNavigate, onViewModeChange, onMakeMainline, onRemove, onExportLine, toolbarExtra, strategyInsight, previewBranch, previewBranches }: Props) {
   const [expandedForks, setExpandedForks] = useState<Set<string>>(() => new Set());
   const [collapsedForks, setCollapsedForks] = useState<Set<string>>(() => new Set());
   const [comparison, setComparison] = useState<{ forkNodeId: string; branchId: string }>();
@@ -479,6 +491,7 @@ export function ManualTrackView({ nodes, history, currentNode, viewMode, editing
         <button type="button" className={viewMode === "track" ? "active" : ""} onClick={() => onViewModeChange("track")}>分支树</button>
         <button type="button" className={viewMode === "tree" ? "active" : ""} onClick={() => onViewModeChange("tree")}>传统树</button>
       </div>
+      {toolbarExtra}
       <span className="manual-branch-score-caption">评分：红方视角</span>
     </header>
     <div className="manual-track-breadcrumb" title={model.breadcrumb.join(" › ")}>

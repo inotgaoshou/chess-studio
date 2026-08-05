@@ -220,7 +220,7 @@ export const BUILTIN_FAIRY_ENGINE_PATH = "builtin:fairy-stockfish";
 export type WorkspaceLayoutMode = "studio" | "compact";
 export type ManualViewMode = "track" | "tree";
 export type RuleMode = "domestic2020" | "asianAxf";
-export type SkinFolder = "default" | "hongmu" | "jingdian" | "xinghe";
+export type SkinFolder = "default" | "hongmu" | "jingdian" | "xinghe" | "qingxin-zhuyun";
 export type LegacySkinId = "original" | "classic" | "neon" | "jade" | "imperial";
 export type SkinId = SkinFolder | LegacySkinId;
 export type DesktopPreferencesDto = {
@@ -285,6 +285,9 @@ export type TrainingTaskDto = {
   nodeId: string;
   title: string;
   detail: string;
+  phase?: ReportPhase | "复盘";
+  tags?: string[];
+  sourceCardId?: number;
   completedAt?: string;
   createdAt: string;
 };
@@ -320,8 +323,36 @@ export type TheoryCardDto = {
   reviewStatus: "pending" | "approved" | "rejected";
   courseName: string;
   lessonTitle: string;
+  sourceBook?: string;
+  sourcePageStart?: number;
+  sourcePageEnd?: number;
+  tags: string[];
+  engineCorrelations: string[];
+  origin: "bundled" | "user" | "imported" | string;
+  version: number;
+  userModified: boolean;
+  matchPenalty: number;
+  needsRecheck: boolean;
 };
 export type TheoryLibraryDto = { lessons: TheoryLessonDto[]; cards: TheoryCardDto[]; downloadingFiles: number };
+export type TheoryCardFeedbackDto = {
+  id: string;
+  matchId?: string;
+  cardId: number;
+  cardVersion: number;
+  verdict: "correct" | "incorrect" | "needs_revision";
+  note: string;
+  createdAt: string;
+};
+export type WeaknessStatDto = {
+  phase: ReportPhase | "复盘" | string;
+  tag: string;
+  occurrences: number;
+  completedTasks: number;
+  openTasks: number;
+  reviewCards: TheoryCardDto[];
+};
+export type TrainingSummaryDto = { weakSpots: WeaknessStatDto[] };
 export type EngineProbeDto = {
   path: string;
   protocol: "uci" | "ucci";
@@ -374,7 +405,8 @@ export type LinkSessionState = "stopped" | "detectingCorners" | "rectifyingBoard
 export type LinkAutoSide = "red" | "black";
 export type StartLinkSessionRequest = { source: CaptureSource; recognitionMode: RecognitionMode; mode: LinkMode; stableFrames: number; autoSide?: LinkAutoSide };
 export type LinkObservation = { state: LinkSessionState; accepted: boolean; moveIccs?: string; reason?: string; board?: BoardState; capturePreviewAvailable?: boolean };
-export type LinkSessionStatus = { source: CaptureSource; mode: LinkMode; state: LinkSessionState; reason?: string; frameRate: number; confidence?: number; stableFrames: number; requiredStableFrames: number; latestFen?: string; lastMove?: string; autoSide?: LinkAutoSide; captureRunning: boolean };
+export type BoardOrientation = "redAtBottom" | "blackAtBottom";
+export type LinkSessionStatus = { source: CaptureSource; mode: LinkMode; state: LinkSessionState; reason?: string; phase?: string; lastError?: string; startedAt?: string; lastHeartbeatAt?: string; recognitionAttempts?: number; lastDetectionSummary?: string; capturePreviewKind?: string; frameRate: number; confidence?: number; confidenceThreshold?: number; stableFrames: number; requiredStableFrames: number; latestFen?: string; lastMove?: string; autoSide?: LinkAutoSide; boardOrientation?: BoardOrientation; captureRunning: boolean };
 export type ExportFormat = "pgn" | "chinese" | "dhtmlxq";
 export type ReplayExportScope = "currentSelection" | "mainline";
 export type EngineRuntimeEvent =
@@ -402,12 +434,14 @@ export interface ChessPlatform {
   listCoachReports(): Promise<GameReportDatasetDto[]>;
   listTrainingTasks(): Promise<TrainingTaskDto[]>;
   generateTrainingTasks(): Promise<TrainingTaskDto[]>;
+  getTrainingSummary(): Promise<TrainingSummaryDto>;
   listStudySessions(): Promise<StudySessionDto[]>;
   saveStudySession(reflection: string, tags: string[]): Promise<StudySessionDto>;
   scanTheoryLibrary(): Promise<TheoryLibraryDto>;
   getTheoryLibrary(): Promise<TheoryLibraryDto>;
   reviewTheoryCard(card: TheoryCardDto): Promise<TheoryCardDto>;
   createTheoryCard(card: Pick<TheoryCardDto, "lessonId" | "title" | "summary" | "appliesWhen" | "risk" | "timecode">): Promise<TheoryCardDto>;
+  saveTheoryFeedback(feedback: Pick<TheoryCardFeedbackDto, "matchId" | "cardId" | "cardVersion" | "verdict" | "note">): Promise<TheoryCardFeedbackDto>;
   completeTrainingTask(taskId: string, completed: boolean): Promise<void>;
   playMove(iccs: string): Promise<Partial<BoardState>>;
   prepareLinkSelectionWindow(): Promise<void>;
@@ -417,6 +451,7 @@ export interface ChessPlatform {
   pauseLinkSession(): Promise<LinkSessionStatus>;
   recalibrateLinkSession(): Promise<LinkSessionStatus>;
   getLinkCapturePreview(): Promise<string | undefined>;
+  recognizeLinkImageFile(source: CaptureSource): Promise<LinkObservation | undefined>;
   submitLinkPosition(fen: string): Promise<LinkObservation>;
   confirmLinkEngineMove(iccs: string): Promise<boolean>;
   importRecognizedPosition(fen: string, title?: string): Promise<Partial<BoardState>>;

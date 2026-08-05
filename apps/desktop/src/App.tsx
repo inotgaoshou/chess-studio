@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
 import { flushSync } from "react-dom";
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
   Activity,
@@ -43,7 +44,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH, chessPlatform, type AnalysisLine, type BoardState, type CloudBookCandidate, type EngineArenaResultDto, type EngineProbeDto, type EngineProfileDto, type EngineRuntimeState, type ExportFormat, type GameReportDatasetDto, type GameReportProgressDto, type GameSummary, type MoveItem, type Piece, type PreviewLineStep, type ReplayExportScope, type StudySessionDto, type TheoryLibraryDto, type TrainingTaskDto } from "./platform";
+import { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH, chessPlatform, type AnalysisLine, type BoardState, type CloudBookCandidate, type EngineArenaResultDto, type EngineProbeDto, type EngineProfileDto, type EngineRuntimeState, type ExportFormat, type GameReportDatasetDto, type GameReportProgressDto, type GameSummary, type MoveItem, type Piece, type PreviewLineStep, type ReplayExportScope, type StudySessionDto, type TheoryLibraryDto, type TrainingSummaryDto, type TrainingTaskDto } from "./platform";
 import { evaluationRedShare, moveQualityFeedback, moveReports, positionEvaluation, redAnalysisScoreText, trendChart, trendPoints, trendTurningPoints } from "./analysisView";
 import { CandidateLine } from "./CandidateLine";
 import { hasEngineDivergence, MultiEngineComparison, type EngineComparisonGroup } from "./MultiEngineComparison";
@@ -79,6 +80,7 @@ import { bundledTheoryKnowledge } from "./theoryKnowledge.generated";
 
 const COMPACT_PANEL_RETURN_EVENT = "compact-panel-return";
 const BOARD_NAVIGATED_EVENT = "board-navigated";
+const LINK_SESSION_UPDATED_EVENT = "link-session-updated";
 const ENGINE_ANALYSIS_SNAPSHOT_KEY = "xiangqi:engine-analysis-snapshot";
 const ENGINE_ANALYSIS_CHANNEL = "xiangqi:engine-analysis";
 const COMPACT_ENGINE_LINE_MIN_MOVES = 2;
@@ -86,11 +88,180 @@ const COMPACT_ENGINE_LINE_MAX_MOVES = CANDIDATE_PREVIEW_HALF_MOVES;
 const DEFAULT_BRANCH_ARROW_COLOR = "#2f80ed";
 const startingFen = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1";
 type EngineAnalysisGroup = { fen: string; name: string; lines: AnalysisLine[]; error?: string };
-type EngineAnalysisSnapshot = { fen: string; primaryEngineId: string; groups: Record<string, EngineAnalysisGroup> };
+type EngineAnalysisSnapshot = { fen: string; primaryEngineId: string; groups: Record<string, EngineAnalysisGroup>; busy?: boolean };
 type FloatingPanel = "engine" | "manual" | "cloud" | "link";
 
-function linkSessionStateLabel(state: LinkSessionStatus["state"]) {
+export function linkSessionStateLabel(state: LinkSessionStatus["state"]) {
   return ({ stopped: "已停止", detectingCorners: "检测棋盘", rectifyingBoard: "校正棋盘", classifyingSquares: "识别棋子", calibrating: "等待框选", needsManualCorrection: "需要校正", waitingStableFrames: "等待稳定帧", tracking: "观战跟盘中", paused: "已暂停" } as const)[state];
+}
+
+export function linkAnalysisStatusText(status: LinkSessionStatus, analysisBusy: boolean, analysisIsStale: boolean, analysisCount: number, sideToMove?: string, firstMove?: string) {
+  if (status.lastError) return status.lastError;
+  if (status.state === "tracking") {
+    if (status.mode === "autoPlay") {
+      const autoSideText = status.autoSide === "red" ? "红方" : status.autoSide === "black" ? "黑方" : undefined;
+      if (analysisBusy) return `局面已同步，引擎正在分析；自动方：${autoSideText ?? "未设置"}`;
+      if (analysisIsStale) return "局面已同步，候选已过期，等待引擎刷新后再自动走子";
+      if (!firstMove || analysisCount <= 0) return "局面已同步，暂无引擎候选，暂不自动走子";
+      if (autoSideText && sideToMove && sideToMove !== autoSideText) return `局面已同步，当前${sideToMove}行棋；设置为${autoSideText}自动执棋`;
+      return `自动对战就绪：将执行第一候选 ${firstMove}`;
+    }
+    if (status.mode === "confirmPlay") {
+      if (analysisBusy) return "局面已同步，引擎正在分析，稍后可确认走子";
+      if (analysisIsStale) return "局面已同步，等待引擎刷新候选后再确认";
+      if (analysisCount > 0 && firstMove) return `局面已同步，可确认第一候选 ${firstMove}`;
+    }
+    if (analysisBusy) return "局面已同步，引擎正在分析…";
+    if (analysisIsStale) return "局面已同步，等待引擎刷新候选";
+    if (analysisCount > 0) return "局面已同步，引擎候选已更新";
+    return "局面已同步，等待引擎分析";
+  }
+  if (status.state === "waitingStableFrames") {
+    return `识别到局面，等待稳定帧 ${status.stableFrames}/${status.requiredStableFrames}`;
+  }
+  if (status.state === "needsManualCorrection") {
+    return status.lastError ?? status.reason ?? "识别不到完整棋盘，请重新框选当前棋盘";
+  }
+  if (status.lastDetectionSummary && status.reason) return `${status.reason}（${status.lastDetectionSummary}）`;
+  if (status.captureRunning && status.frameRate <= 0) {
+    return status.reason ?? "采集线程刚启动，等待第一帧识别结果";
+  }
+  return status.reason ?? "框选后会自动识别棋盘、同步局面，并触发引擎分析。";
+}
+
+export function linkPhaseLabel(status: LinkSessionStatus) {
+  const phase = status.phase;
+  const phaseLabels = {
+    starting: "启动中",
+    selecting_region: "等待框选",
+    region_selection_cancelled: "已取消",
+    region_selection_error: "框选异常",
+    recalibrating: "重框选",
+    preview_ready: "预览就绪",
+    load_model: "加载模型",
+    preview_inference: "识别预览",
+    model_inference: "模型推理",
+    image_inference: "识别图片",
+    screen_capture: "采集屏幕",
+    waiting_recognition: "待识别",
+    waiting_stable_frames: "稳定中",
+    recognized: "已识别",
+    tracking: "跟盘中",
+    move_synced: "走子已同步",
+    position_jump_synced: "跳转已同步",
+    low_confidence: "低置信度",
+    invalid_recognition: "识别异常",
+    needs_manual_correction: "需校正",
+    timeout: "超时",
+    error: "异常",
+  } as Record<string, string>;
+  if (!status.captureRunning) {
+    if (status.state === "tracking") return "已同步";
+    if (status.state === "needsManualCorrection") return "需校正";
+    if (status.source === "desktopDetect") return "等待扫描";
+    if (status.source === "imageImport" || status.source === "cameraBoard") return "等待选图";
+    return "等待框选";
+  }
+  if (phase === "move_synced" || phase === "position_jump_synced") {
+    return phaseLabels[phase];
+  }
+  if (status.frameRate > 0) return `${status.frameRate.toFixed(1)} FPS`;
+  return phaseLabels[phase ?? ""] ?? "首帧中";
+}
+
+export function effectiveBoardReversedForLink(status: LinkSessionStatus, boardFen: string, fallbackReversed: boolean) {
+  const syncedToCurrentBoard = (status.state === "tracking" || status.state === "paused") && status.latestFen === boardFen;
+  if (!syncedToCurrentBoard) return fallbackReversed;
+  return status.boardOrientation === "blackAtBottom";
+}
+
+type LinkRegionRect = { x: number; y: number; width: number; height: number };
+
+function LinkRegionSelector() {
+  const [start, setStart] = useState<{ x: number; y: number }>();
+  const [current, setCurrent] = useState<{ x: number; y: number }>();
+  const [background, setBackground] = useState<string>();
+  const [error, setError] = useState<string>();
+  const rect = useMemo<LinkRegionRect | undefined>(() => {
+    if (!start || !current) return undefined;
+    const x = Math.min(start.x, current.x);
+    const y = Math.min(start.y, current.y);
+    return {
+      x,
+      y,
+      width: Math.abs(start.x - current.x),
+      height: Math.abs(start.y - current.y),
+    };
+  }, [current, start]);
+
+  const cancel = () => {
+    void invoke("cancel_link_region_selection").catch(() => undefined);
+  };
+  const complete = (selection: LinkRegionRect) => {
+    if (selection.width < 80 || selection.height < 80) {
+      setError("区域太小了，请拖出完整棋盘。");
+      return;
+    }
+    void invoke("complete_link_region_selection", { selection }).catch((reason) => {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    });
+  };
+
+  useEffect(() => {
+    void invoke<string | undefined>("get_link_region_selection_background")
+      .then(setBackground)
+      .catch(() => setBackground(undefined));
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") cancel();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  function point(event: PointerEvent<HTMLDivElement>) {
+    return { x: event.clientX, y: event.clientY };
+  }
+
+  return (
+    <div
+      className="link-region-selector"
+      role="application"
+      aria-label="框选第三方棋盘区域"
+      onPointerDown={(event) => {
+        event.currentTarget.setPointerCapture(event.pointerId);
+        const next = point(event);
+        setError(undefined);
+        setStart(next);
+        setCurrent(next);
+      }}
+      onPointerMove={(event) => {
+        if (!start || event.buttons === 0) return;
+        setCurrent(point(event));
+      }}
+      onPointerUp={(event) => {
+        if (!start) return;
+        const end = point(event);
+        const selection = {
+          x: Math.min(start.x, end.x),
+          y: Math.min(start.y, end.y),
+          width: Math.abs(start.x - end.x),
+          height: Math.abs(start.y - end.y),
+        };
+        setStart(undefined);
+        setCurrent(undefined);
+        complete(selection);
+      }}
+    >
+      {background && <img className="link-region-background" src={background} alt="当前桌面快照" draggable={false}/>}
+      <div className="link-region-toolbar">
+        <strong>拖动框选网页棋盘</strong>
+        <span>只选棋盘主体，别把本应用浮窗/主棋盘框进去；Esc 取消。</span>
+        {error && <em>{error}</em>}
+        <button type="button" onClick={(event) => { event.stopPropagation(); cancel(); }}>取消</button>
+      </div>
+      {rect && <div className="link-region-rect" style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }} />}
+    </div>
+  );
 }
 
 function readEngineAnalysisSnapshot(): EngineAnalysisSnapshot | undefined {
@@ -101,7 +272,7 @@ function readEngineAnalysisSnapshot(): EngineAnalysisSnapshot | undefined {
       if (!group || typeof group.fen !== "string" || typeof group.name !== "string" || !Array.isArray(group.lines)) return [];
       return [[id, { fen: group.fen, name: group.name, lines: group.lines, error: group.error }]];
     }));
-    return { fen: value.fen, primaryEngineId: value.primaryEngineId, groups };
+    return { fen: value.fen, primaryEngineId: value.primaryEngineId, groups, busy: value.busy === true };
   } catch {
     return undefined;
   }
@@ -199,11 +370,11 @@ const defaultDesktopPreferences: DesktopPreferencesDto = {
   parallelEngineIds: [],
   parallelEnginePaths: [],
   ruleMode: defaultRuleMode,
-  linkCaptureSource: "imageImport",
-  linkRecognitionMode: "perspectiveGrid",
+  linkCaptureSource: "windowLink",
+  linkRecognitionMode: "yoloBoard",
   linkMode: "spectate",
   linkStableFrames: 2,
-  linkConfidenceThreshold: 70,
+  linkConfidenceThreshold: 55,
   linkAnimationConfirmation: true,
   serverUrl: "http://127.0.0.1:8080",
 };
@@ -216,9 +387,14 @@ function migrateDesktopPreferences(preferences: DesktopPreferencesDto): DesktopP
   const migratedSearchDefaults = (preferences.searchMode === "time" || preferences.searchMode === "infinite") && preferences.searchValue === 1500
     ? { searchMode: "depth" as const, searchValue: 30 }
     : {};
+  const enginePath = preferences.enginePath === BUILTIN_FAIRY_ENGINE_PATH ? BUILTIN_ENGINE_PATH : preferences.enginePath;
+  const linkConfidenceThreshold = preferences.linkConfidenceThreshold === 70 ? 55 : preferences.linkConfidenceThreshold;
   return {
     ...preferences,
     ...migratedSearchDefaults,
+    enginePath,
+    parallelEnginePaths: (preferences.parallelEnginePaths ?? []).filter((path) => path !== BUILTIN_FAIRY_ENGINE_PATH),
+    linkConfidenceThreshold,
     candidateLineMoves: preferences.candidateLineMoves === 6 ? DEFAULT_CANDIDATE_LINE_MOVES : preferences.candidateLineMoves,
     reportDepth: preferences.reportDepth === 26 ? 30 : preferences.reportDepth,
     ruleMode: preferences.ruleMode === "asianAxf" ? "asianAxf" : defaultRuleMode,
@@ -231,7 +407,7 @@ function ruleModeLabel(ruleMode?: DesktopPreferencesDto["ruleMode"]) {
 
 function engineDisplayName(path: string) {
   if (path === BUILTIN_ENGINE_PATH) return "内置 Pikafish";
-  if (path === BUILTIN_FAIRY_ENGINE_PATH) return "内置 Fairy-Stockfish";
+  if (path === BUILTIN_FAIRY_ENGINE_PATH) return "内置 Fairy-Stockfish 已移除";
   return path ? path.split(/[\\/]/).at(-1) ?? path : "选择引擎";
 }
 
@@ -420,6 +596,10 @@ function previewStepAdvice(preview: CandidatePreviewState, step: PreviewLineStep
 }
 
 export default function App() {
+  if (typeof window !== "undefined" && new URLSearchParams(window.location.search).has("linkRegionSelector")) {
+    return <LinkRegionSelector/>;
+  }
+
   const [board, setBoard] = useState<BoardState>(fallback);
   const [selected, setSelected] = useState<{ row: number; col: number } | null>(null);
   const [reversed, setReversed] = useState(false);
@@ -503,7 +683,6 @@ export default function App() {
   const [compactEngineCollapsed, setCompactEngineCollapsed] = useState(false);
   const [compactManualCollapsed, setCompactManualCollapsed] = useState(false);
   const [multiEngineComparisonCollapsed, setMultiEngineComparisonCollapsed] = useState(false);
-  const [floatingMultiEngineComparisonCollapsed, setFloatingMultiEngineComparisonCollapsed] = useState(false);
   const [engineDivergenceOpen, setEngineDivergenceOpen] = useState(false);
   const [engineDivergencePosition, setEngineDivergencePosition] = useState<{ left: number; top: number }>();
   const [branchEditing, setBranchEditing] = useState(false);
@@ -527,7 +706,7 @@ export default function App() {
   const [compactActiveWindow, setCompactActiveWindow] = useState<"engine" | "manual">("engine");
   const [linkSessionStatus, setLinkSessionStatus] = useState<LinkSessionStatus>({ source: "windowLink", mode: "spectate", state: "stopped", frameRate: 0, stableFrames: 0, requiredStableFrames: 2, captureRunning: false });
   const [linkCapturePreview, setLinkCapturePreview] = useState<string>();
-  const [linkMiniBoardSize, setLinkMiniBoardSize] = useState<"off" | "small" | "large">("large");
+  const [linkMiniBoardSize, setLinkMiniBoardSize] = useState<"off" | "small" | "large">("small");
   const floatingPanel = useMemo<FloatingPanel | null>(() => {
     if (typeof window === "undefined") return null;
     const panel = new URLSearchParams(window.location.search).get("floatingPanel");
@@ -536,6 +715,7 @@ export default function App() {
   const [coachReports, setCoachReports] = useState<GameReportDatasetDto[]>([]);
   const [coachProfileOpen, setCoachProfileOpen] = useState(false);
   const [trainingTasks, setTrainingTasks] = useState<TrainingTaskDto[]>([]);
+  const [trainingSummary, setTrainingSummary] = useState<TrainingSummaryDto>();
   const [studySessions, setStudySessions] = useState<StudySessionDto[]>([]);
   const [engineArenaBusy, setEngineArenaBusy] = useState(false);
   const [engineArenaResult, setEngineArenaResult] = useState<EngineArenaResultDto>();
@@ -626,7 +806,7 @@ export default function App() {
               const detected = { ...desktopPreferencesRef.current, enginePath: path };
               desktopPreferencesRef.current = detected;
               setDesktopPreferences(detected);
-              setNotice(path === BUILTIN_ENGINE_PATH ? "已识别安装包内置 Pikafish，请在引擎设置中保存" : path === BUILTIN_FAIRY_ENGINE_PATH ? "已识别安装包内置 Fairy-Stockfish，请在引擎设置中保存" : "已自动识别本机引擎，请在引擎设置中保存");
+              setNotice(path === BUILTIN_ENGINE_PATH ? "已识别安装包内置 Pikafish，请在引擎设置中保存" : "已自动识别本机引擎，请在引擎设置中保存");
             }
           }).catch(() => undefined);
         }
@@ -678,6 +858,22 @@ export default function App() {
     }
   }
 
+  async function saveTheoryFeedback(card: NonNullable<TheoryLibraryDto["cards"][number]>, verdict: "correct" | "incorrect" | "needs_revision") {
+    if (chessPlatform.kind !== "desktop") return;
+    try {
+      await chessPlatform.saveTheoryFeedback({
+        cardId: card.id,
+        cardVersion: card.version,
+        verdict,
+        note: verdict === "correct" ? "人工确认匹配准确" : verdict === "incorrect" ? "人工标记匹配不准" : "人工标记需要修订",
+      });
+      setTheoryLibrary(await chessPlatform.getTheoryLibrary());
+      setNotice(verdict === "correct" ? "已记录：这张原则卡匹配准确" : "已记录反馈；这张卡后续会降低推荐优先级并标记复核");
+    } catch (error) {
+      setTheoryLibraryError(friendlyError(error));
+    }
+  }
+
   useEffect(() => {
     if (!floatingPanel || chessPlatform.kind !== "desktop") return;
     const timer = window.setInterval(() => {
@@ -696,26 +892,59 @@ export default function App() {
   useEffect(() => {
     if (floatingPanel !== "link" || chessPlatform.kind !== "desktop") return;
     let disposed = false;
+    const cleanups: Array<() => void> = [];
     const refresh = () => {
       void chessPlatform.getLinkSessionStatus().then((status) => {
         if (!disposed) setLinkSessionStatus(status);
       }).catch(() => undefined);
     };
     refresh();
+    void listen(LINK_SESSION_UPDATED_EVENT, refresh).then((unlisten) => {
+      if (disposed) unlisten();
+      else cleanups.push(unlisten);
+    }).catch(() => undefined);
+    void listen(BOARD_NAVIGATED_EVENT, refresh).then((unlisten) => {
+      if (disposed) unlisten();
+      else cleanups.push(unlisten);
+    }).catch(() => undefined);
     const timer = window.setInterval(refresh, 750);
-    return () => { disposed = true; window.clearInterval(timer); };
+    return () => { disposed = true; cleanups.forEach((cleanup) => cleanup()); window.clearInterval(timer); };
   }, [floatingPanel]);
   useEffect(() => {
     if (floatingPanel !== "link" || chessPlatform.kind !== "desktop") return;
     void chessPlatform.getLinkCapturePreview().then(setLinkCapturePreview).catch(() => setLinkCapturePreview(undefined));
-  }, [floatingPanel, linkSessionStatus.state]);
+  }, [floatingPanel, linkSessionStatus.capturePreviewKind, linkSessionStatus.lastHeartbeatAt, linkSessionStatus.phase, linkSessionStatus.state]);
 
   useEffect(() => {
-    if (floatingPanel !== "engine" || chessPlatform.kind !== "desktop") return;
+    if (!floatingPanel || chessPlatform.kind !== "desktop") return;
     const applySnapshot = (snapshot?: EngineAnalysisSnapshot) => {
-      if (!snapshot || snapshot.fen !== boardRef.current.fen) return;
+      if (!snapshot || snapshot.fen !== boardRef.current.fen) {
+        primaryAnalysisEngineRef.current = "primary";
+        setEngineAnalyses({});
+        analysisFenRef.current = undefined;
+        setAnalysisFen(undefined);
+        setAnalysis([]);
+        analysisHistoryRef.current = undefined;
+        setAnalysisHistory([]);
+        analysisBusyRef.current = false;
+        setAnalysisBusy(false);
+        return;
+      }
       primaryAnalysisEngineRef.current = snapshot.primaryEngineId;
       setEngineAnalyses(snapshot.groups);
+      const primaryLines = snapshot.groups[snapshot.primaryEngineId]?.lines
+        ?? Object.values(snapshot.groups)[0]?.lines
+        ?? [];
+      analysisFenRef.current = snapshot.fen;
+      setAnalysisFen(snapshot.fen);
+      setAnalysisSideToMove(boardRef.current.sideToMove);
+      setAnalysis(primaryLines);
+      analysisHistoryRef.current = primaryLines.length
+        ? { fen: snapshot.fen, lines: primaryLines.slice(0, ENGINE_ANALYSIS_HISTORY_LIMIT) }
+        : undefined;
+      setAnalysisHistory(primaryLines.slice(0, ENGINE_ANALYSIS_HISTORY_LIMIT));
+      analysisBusyRef.current = snapshot.busy === true;
+      setAnalysisBusy(snapshot.busy === true);
     };
     const syncFromStorage = () => applySnapshot(readEngineAnalysisSnapshot());
     const channel = typeof BroadcastChannel === "undefined" ? undefined : new BroadcastChannel(ENGINE_ANALYSIS_CHANNEL);
@@ -962,9 +1191,10 @@ export default function App() {
   const editorPieceMap = useMemo(() => new Map(editorPieces.map((piece) => [`${piece.row}-${piece.col}`, piece])), [editorPieces]);
   const cells = useMemo(() => Array.from({ length: 90 }, (_, index) => ({ row: Math.floor(index / 9), col: index % 9 })), []);
   const lastMove = board.history.at(-1);
-  const evaluation = useMemo(() => positionEvaluation(board, analysis), [analysis, board]);
   const analysisIsStale = analysis.length > 0 && analysisFen !== board.fen;
-  const boardRailEvaluation = useMemo(() => positionEvaluation(board, analysisIsStale ? [] : analysis), [analysis, analysisIsStale, board]);
+  const currentAnalysis = useMemo(() => analysisIsStale ? [] : analysis, [analysis, analysisIsStale]);
+  const evaluation = useMemo(() => positionEvaluation(board, currentAnalysis), [board, currentAnalysis]);
+  const boardRailEvaluation = useMemo(() => positionEvaluation(board, currentAnalysis), [board, currentAnalysis]);
   const evaluationTrend = useMemo(() => trendPoints(evaluation?.samples ?? [], board.history.length), [board.history.length, evaluation]);
   const trendSegments = useMemo(() => evaluationTrend.slice(1).flatMap((point, index) => {
     const previous = evaluationTrend[index];
@@ -1032,7 +1262,7 @@ export default function App() {
         ? 5
         : evaluationRedShare(boardEvaluationScore);
   const reportPresentation = useMemo(() => gameReport ? buildGameReportPresentation(board.title, gameReport) : undefined, [board.title, gameReport]);
-  const orderedAnalysis = useMemo(() => analysis.slice().sort((left, right) => left.multipv - right.multipv), [analysis]);
+  const orderedAnalysis = useMemo(() => currentAnalysis.slice().sort((left, right) => left.multipv - right.multipv), [currentAnalysis]);
   const primaryAnalysis = orderedAnalysis[0];
   const candidateSideToMove = analysisSideToMove ?? board.sideToMove;
   const currentEngineAnalyses = useMemo(() => Object.fromEntries(Object.entries(engineAnalyses)
@@ -1043,6 +1273,7 @@ export default function App() {
       fen: board.fen,
       primaryEngineId: primaryAnalysisEngineRef.current,
       groups: currentEngineAnalyses,
+      busy: analysisBusy,
     };
     try {
       localStorage.setItem(ENGINE_ANALYSIS_SNAPSHOT_KEY, JSON.stringify(snapshot));
@@ -1054,10 +1285,10 @@ export default function App() {
     } catch {
       // The primary window still works when storage is unavailable.
     }
-  }, [board.fen, chessPlatform.kind, currentEngineAnalyses, floatingPanel]);
+  }, [analysisBusy, board.fen, chessPlatform.kind, currentEngineAnalyses, floatingPanel]);
   const engineComparisonGroups = useMemo<EngineComparisonGroup[]>(() => Object.entries(currentEngineAnalyses)
     .map(([id, group]) => ({ id, ...group, primary: id === primaryAnalysisEngineRef.current }))
-    .sort((left, right) => Number(right.primary) - Number(left.primary) || left.name.localeCompare(right.name)), [engineAnalyses]);
+    .sort((left, right) => Number(right.primary) - Number(left.primary) || left.name.localeCompare(right.name)), [currentEngineAnalyses]);
   const engineDivergenceAvailable = useMemo(
     () => hasEngineDivergence(engineComparisonGroups, candidateSideToMove),
     [candidateSideToMove, engineComparisonGroups],
@@ -1065,7 +1296,7 @@ export default function App() {
   const compactEngineRows: CompactEngineAnalysisRow[] = useMemo(() => {
     const primaryEngineId = primaryAnalysisEngineRef.current;
     const lineItems = [
-      ...analysisHistory.map((line) => ({ line, sourceId: primaryEngineId, sourceText: "主引擎" })),
+      ...(analysisIsStale ? [] : analysisHistory.map((line) => ({ line, sourceId: primaryEngineId, sourceText: "主引擎" }))),
       ...Object.entries(currentEngineAnalyses).flatMap(([sourceId, group]) => group.lines.map((line) => ({
         line,
         sourceId,
@@ -1119,6 +1350,14 @@ export default function App() {
     linkAutoMoveRef.current = key;
     void chessPlatform.confirmLinkEngineMove(move).then(() => setNotice(`自动对战已执行候选着法 ${move}，等待外部局面确认`)).catch((error) => setNotice(friendlyError(error)));
   }, [board.fen, board.sideToMove, chessPlatform, compactEngineRows, linkSessionStatus.autoSide, linkSessionStatus.mode, linkSessionStatus.state]);
+  useEffect(() => {
+    if (chessPlatform.kind !== "desktop" || linkSessionStatus.state !== "tracking") return;
+    if (!enginePath.trim() || !board.playable || reportBusy || engineSide !== "none" || engineThinking) return;
+    if (analysisBusyRef.current) return;
+    if (analysisFen === board.fen && analysis.length > 0) return;
+    const timer = window.setTimeout(() => void runAnalysis(true), 120);
+    return () => window.clearTimeout(timer);
+  }, [analysis.length, analysisFen, board.fen, board.playable, chessPlatform, enginePath, engineSide, engineThinking, linkSessionStatus.state, reportBusy]);
   const compactBookRows: CompactBookRow[] = useMemo(() => [
     ...(board.xqbCandidates ?? []).map((candidate) => {
       const sampleCount = candidate.win + candidate.draw + candidate.loss;
@@ -1217,7 +1456,23 @@ export default function App() {
         summary: card.summary,
         appliesWhen: card.appliesWhen,
         risk: card.risk,
-        source: { label: "赵鑫鑫课程" as const, course: card.courseName, episode: card.lessonTitle, timecode: card.timecode, review: "已确认" as const },
+        tags: card.tags,
+        engineCorrelations: card.engineCorrelations,
+        matchPenalty: card.matchPenalty,
+        needsRecheck: card.needsRecheck,
+        source: card.sourceBook ? {
+          label: "赵鑫鑫棋理三部曲" as const,
+          book: card.sourceBook,
+          pageStart: card.sourcePageStart,
+          pageEnd: card.sourcePageEnd,
+          review: "已确认" as const,
+        } : {
+          label: "赵鑫鑫课程" as const,
+          course: card.courseName,
+          episode: card.lessonTitle,
+          timecode: card.timecode,
+          review: "已确认" as const,
+        },
         })),
       ],
     });
@@ -1260,8 +1515,11 @@ export default function App() {
       return;
     }
     const primary = selectedAnalysisEngines.find((engine) => engine.primary);
-    const comparison = selectedAnalysisEngines.find((engine) => !engine.primary && engine.path)
-      ?? { name: "内置 Fairy-Stockfish", displayName: "内置 Fairy-Stockfish", path: BUILTIN_FAIRY_ENGINE_PATH };
+    const comparison = selectedAnalysisEngines.find((engine) => !engine.primary && engine.path);
+    if (!comparison?.path) {
+      setNotice("擂台需要两个不同引擎，请先在引擎设置里添加外部对比引擎");
+      return;
+    }
     const playerAPath = primary?.path || enginePath || BUILTIN_ENGINE_PATH;
     const playerBPath = comparison.path;
     if (playerAPath === playerBPath) {
@@ -1289,6 +1547,11 @@ export default function App() {
     }
   }
 
+  const linkHasObservedPosition = (linkSessionStatus.state === "tracking" || linkSessionStatus.state === "paused")
+    && linkSessionStatus.latestFen === board.fen;
+  const boardDisplayReversed = effectiveBoardReversedForLink(linkSessionStatus, board.fen, reversed);
+  const boardPerspectiveLabel = boardDisplayReversed ? "黑方视角" : "红方视角";
+
   const analysisArrows = useMemo(() => {
     const arrowLimit = Math.max(1, Math.min(analysisArrowColors.length, Math.trunc(desktopPreferences.multipv) || multipv || 1));
     return analysisArrowFen === board.fen && analysisFen === board.fen ? orderedAnalysis.slice(0, arrowLimit)
@@ -1300,13 +1563,13 @@ export default function App() {
       return [{
         rank: line.multipv,
         color: analysisArrowColors[line.multipv - 1] ?? analysisArrowColors[0],
-        from: boardPoint(from, reversed),
-        to: boardPoint(to, reversed),
+        from: boardPoint(from, boardDisplayReversed),
+        to: boardPoint(to, boardDisplayReversed),
       }];
     }) : [];
-  }, [analysisArrowFen, analysisFen, board.fen, desktopPreferences.multipv, multipv, orderedAnalysis, reversed]);
+  }, [analysisArrowFen, analysisFen, board.fen, boardDisplayReversed, desktopPreferences.multipv, multipv, orderedAnalysis]);
   const linkMiniArrows = useMemo<LinkMiniArrow[]>(() => (
-    analysisArrowFen === board.fen && analysisFen === board.fen
+    analysisFen === board.fen
       ? orderedAnalysis.slice(0, 3).flatMap((line) => {
         const firstMove = line.pv[0];
         const from = firstMove ? squareFromIccs(firstMove.slice(0, 2)) : null;
@@ -1314,8 +1577,8 @@ export default function App() {
         return from && to ? [{ rank: line.multipv, color: analysisArrowColors[line.multipv - 1] ?? analysisArrowColors[0], from, to }] : [];
       })
       : []
-  ), [analysisArrowFen, analysisFen, board.fen, orderedAnalysis]);
-  const linkHasObservedPosition = linkSessionStatus.state === "tracking" || linkSessionStatus.state === "paused";
+  ), [analysisFen, board.fen, orderedAnalysis]);
+  const linkMiniBoardReversed = boardDisplayReversed;
   const activeTreePath = useMemo(() => new Set(board.history.map((move) => move.id)), [board.history]);
   const directBranchChoices = board.branches.length > 1 ? board.branches : [];
   const branchChoices = directBranchChoices;
@@ -1326,16 +1589,16 @@ export default function App() {
     rank: index + 1,
     color: branchArrowColor,
     label: move.notation,
-    from: boardPoint(move.from, reversed),
-    to: boardPoint(move.to, reversed),
-  })) : [], [branchArrowColor, directBranchChoices, hasVisibleBranchChoices, reversed]);
+    from: boardPoint(move.from, boardDisplayReversed),
+    to: boardPoint(move.to, boardDisplayReversed),
+  })) : [], [boardDisplayReversed, branchArrowColor, directBranchChoices, hasVisibleBranchChoices]);
   const boardArrows = useMemo(() => {
     // Preview already marks the simulated from/to squares. Hide route arrows
     // so old analysis lines never look like they are attached to the preview.
     if (candidatePreview && previewStep) return [];
     if (branchArrows.length > 0) return branchArrows;
     return analysisArrows;
-  }, [analysisArrows, branchArrows, candidatePreview, previewStep, reversed]);
+  }, [analysisArrows, branchArrows, candidatePreview, previewStep]);
 
   function resetAnalysisHistory(fen?: string, lines: AnalysisLine[] = []) {
     analysisHistoryRef.current = fen ? { fen, lines: lines.slice(0, ENGINE_ANALYSIS_HISTORY_LIMIT) } : undefined;
@@ -2793,7 +3056,7 @@ export default function App() {
       }
 
       if (engineChanged) {
-        const builtInEngine = preferences.enginePath === BUILTIN_ENGINE_PATH || preferences.enginePath === BUILTIN_FAIRY_ENGINE_PATH;
+        const builtInEngine = preferences.enginePath === BUILTIN_ENGINE_PATH;
         if (builtInEngine) {
           const probe = await chessPlatform.probeEngine(preferences.enginePath);
           setEngineProbe(probe);
@@ -2818,7 +3081,7 @@ export default function App() {
         activeEngineId,
         analysisEngineMode: preferences.analysisEngineMode,
         parallelEngineIds: preferences.parallelEngineIds,
-        parallelEnginePaths: preferences.parallelEnginePaths ?? [],
+        parallelEnginePaths: (preferences.parallelEnginePaths ?? []).filter((path) => path !== BUILTIN_FAIRY_ENGINE_PATH),
         threads: preferences.threads,
         hashMb: preferences.hashMb,
         multipv: preferences.multipv,
@@ -2990,12 +3253,14 @@ export default function App() {
   async function loadTrainingTasks() {
     if (chessPlatform.kind !== "desktop") return;
     setTrainingTasks(await chessPlatform.listTrainingTasks());
+    setTrainingSummary(await chessPlatform.getTrainingSummary());
   }
 
   async function generateTrainingTasks() {
     setDialogBusy(true);
     try {
       setTrainingTasks(await chessPlatform.generateTrainingTasks());
+      setTrainingSummary(await chessPlatform.getTrainingSummary());
       setNotice("训练任务已从当前报告生成");
     } catch (error) {
       setNotice(friendlyError(error));
@@ -3008,6 +3273,7 @@ export default function App() {
     try {
       await chessPlatform.completeTrainingTask(taskId, completed);
       setTrainingTasks((tasks) => tasks.map((task) => task.id === taskId ? { ...task, completedAt: completed ? new Date().toISOString() : undefined } : task));
+      setTrainingSummary(await chessPlatform.getTrainingSummary());
     } catch (error) {
       setNotice(friendlyError(error));
     }
@@ -3019,6 +3285,7 @@ export default function App() {
     try {
       const session = await chessPlatform.saveStudySession(reflection, tags);
       setStudySessions((sessions) => [session, ...sessions]);
+      setTrainingSummary(await chessPlatform.getTrainingSummary());
       setNotice("训练总结已保存；现在可用 Pikafish 核验当前节点");
     } catch (error) {
       const message = friendlyError(error);
@@ -3183,7 +3450,6 @@ export default function App() {
           onDragEnd={stopEngineDivergenceDrag}
           onPlay={(line, engine) => void playIccsMove(line.pv[0], analysisFen ?? board.fen, engine.primary ? undefined : engine.name)}
           onPreview={(line, engine) => void previewCandidateLine(line, analysisFen ?? board.fen, engine)}
-          onPreviewBranches={() => void previewEngineBranches(analysisFen ?? board.fen)}
         />
     </aside>;
   }
@@ -3374,6 +3640,23 @@ export default function App() {
     </div>;
   }
 
+  function engineBranchPreviewAction() {
+    const disabled = analysisIsStale || !orderedAnalysis.some((line) => line.pv.length > 0);
+    const title = analysisIsStale
+      ? "当前引擎分支已过期，请重新分析后再显示"
+      : disabled
+        ? "当前没有可显示的引擎分支，请先完成分析"
+        : "在棋谱树当前节点下显示 AI 虚线分支";
+    return <button
+      type="button"
+      className={`manual-engine-branch-action ${candidatePreviewBranches.length ? "active" : ""}`}
+      title={title}
+      aria-label="显示引擎分支"
+      disabled={disabled}
+      onClick={() => void previewEngineBranches(analysisFen ?? board.fen)}
+    ><GitFork size={13}/><span>引擎分支</span></button>;
+  }
+
   function branchMapControls() {
     if (!hasVisibleBranchChoices) return null;
     return <section className={`branch-map-controls ${branchEditing ? "editing" : ""}`} aria-label="当前分支选择">
@@ -3445,6 +3728,7 @@ export default function App() {
               <button type="button" onClick={() => setManualViewMode("track")}>分支树</button>
               <button type="button" className="active" onClick={() => setManualViewMode("tree")}>传统树</button>
             </div>
+            {engineBranchPreviewAction()}
           </header>
           <div className="move-table" role="table" aria-label={label}>
             <div className="move-table-head" role="row"><span role="columnheader">序号</span><span role="columnheader">着法</span><span role="columnheader">分数</span></div>
@@ -3471,6 +3755,7 @@ export default function App() {
           onNavigate={(nodeId) => void navigateTo(nodeId)}
           onRemove={(nodeId) => void removeNode(nodeId)}
           onExportLine={(contents) => exportCurrentLineText(contents)}
+          toolbarExtra={engineBranchPreviewAction()}
           onViewModeChange={setManualViewMode}
           previewBranches={candidatePreview ? [{
             activeStep: candidatePreview.step,
@@ -3493,7 +3778,7 @@ export default function App() {
       "candidate-dock",
       className,
       compactLayout ? "compact-floating-stack" : "",
-      compactLayout && compactEngineCollapsed ? "compact-engine-collapsed" : "",
+      compactLayout && compactEngineCollapsed && !compactPoppedOutPanels.engine ? "compact-engine-collapsed" : "",
       compactLayout && compactManualCollapsed ? "compact-manual-collapsed" : "",
       compactLayout && compactDetachedPanels.engine ? "compact-engine-detached" : "",
       compactLayout && compactDetachedPanels.manual ? "compact-manual-detached" : "",
@@ -3509,7 +3794,7 @@ export default function App() {
         }),
       };
       return <section className={compactDockClass.trim()} aria-label="简洁布局可拖动面板">
-        <article
+        {!compactPoppedOutPanels.engine && <article
           className={`compact-floating-panel compact-engine-window ${compactEngineCollapsed ? "collapsed" : ""} ${compactDetachedPanels.engine ? "detached" : ""} ${compactActiveWindow === "engine" ? "active" : ""}`}
           style={{
             transform: `translate(${enginePosition.x}px, ${enginePosition.y}px)`,
@@ -3538,12 +3823,11 @@ export default function App() {
                 sideToMove={candidateSideToMove}
                 onPlay={(line, engine) => void playIccsMove(line.pv[0], analysisFen ?? board.fen, engine.primary ? undefined : engine.name)}
                 onPreview={(line, engine) => void previewCandidateLine(line, analysisFen ?? board.fen, engine)}
-                onPreviewBranches={() => void previewEngineBranches(analysisFen ?? board.fen)}
               />
             </div>
             <div className="compact-engine-resize-handle" title="拖动调整引擎分析宽度和高度" aria-label="调整引擎分析宽度和高度" onPointerDown={startCompactEngineResize}/>
           </>}
-        </article>
+        </article>}
 
         <article
           className={`compact-floating-panel compact-manual-panel ${compactManualCollapsed ? "collapsed" : ""} ${compactDetachedPanels.manual ? "detached" : ""} ${compactActiveWindow === "manual" ? "active" : ""}`}
@@ -3623,7 +3907,6 @@ export default function App() {
           sideToMove={candidateSideToMove}
           onPlay={(line, engine) => void playIccsMove(line.pv[0], analysisFen ?? board.fen, engine.primary ? undefined : engine.name)}
           onPreview={(line, engine) => void previewCandidateLine(line, analysisFen ?? board.fen, engine)}
-          onPreviewBranches={() => void previewEngineBranches(analysisFen ?? board.fen)}
         />}
       </div>
       {!compactLayout && board.xqbCandidates?.length ? <section className="xqb-candidates" aria-label="本地大师开局库候选">
@@ -3734,22 +4017,8 @@ export default function App() {
             </div>
             <div className="analysis-lines">
               <CompactEngineAnalysisList busy={analysisBusy} rows={compactEngineRows} onPlayMove={(iccs) => void playIccsMove(iccs, analysisFen ?? board.fen)}/>
-              <MultiEngineComparison
-                busy={analysisBusy}
-                collapsed={floatingMultiEngineComparisonCollapsed}
-                compact
-                disabled={analysisIsStale}
-                fen={analysisFen ?? board.fen}
-                groups={engineComparisonGroups}
-                onCollapsedChange={setFloatingMultiEngineComparisonCollapsed}
-                onPopOut={openEngineDivergence}
-                sideToMove={candidateSideToMove}
-                onPlay={(line, engine) => void playIccsMove(line.pv[0], analysisFen ?? board.fen, engine.primary ? undefined : engine.name)}
-                onPreview={(line, engine) => void previewCandidateLine(line, analysisFen ?? board.fen, engine)}
-                onPreviewBranches={() => void previewEngineBranches(analysisFen ?? board.fen)}
-              />
             </div>
-            <p className="floating-panel-note">这是系统独立窗口，可拖到主窗口外；候选落子仍会经过棋规校验。</p>
+            <p className="floating-panel-note">这是系统独立窗口，只保留最近 10 条引擎记录；多引擎分歧可从主窗口棋谱工具进入。</p>
           </section>
         ) : floatingPanel === "cloud" ? (
           <section className="floating-panel-body floating-cloud-body">
@@ -3778,25 +4047,32 @@ export default function App() {
             <div className="link-control-card">
               <div>
                 <strong>{linkSessionStatus.state === "stopped" ? "请切换到网页棋盘并框选" : linkSessionStateLabel(linkSessionStatus.state)}</strong>
-                <small>{linkSessionStatus.reason ?? "框选后会自动识别棋盘、同步局面，并触发引擎分析。"}</small>
+                <small>{linkAnalysisStatusText(linkSessionStatus, analysisBusy, analysisIsStale, compactEngineRows.length, board.sideToMove, compactEngineRows[0]?.iccs)}</small>
               </div>
-              <span>{linkSessionStatus.captureRunning ? `${linkSessionStatus.frameRate.toFixed(1)} FPS` : "等待框选"}</span>
+              <span>{linkPhaseLabel(linkSessionStatus)}</span>
             </div>
-            <div className={`link-float-status ${linkSessionStatus.state}`}><span>{linkSessionStateLabel(linkSessionStatus.state)}</span><strong>{board.sideToMove}行棋</strong><small>{linkSessionStatus.reason ?? "窗口连线将同步经过稳定帧与棋规校验的着法"}</small><small>{linkSessionStatus.captureRunning ? `${linkSessionStatus.frameRate.toFixed(1)} FPS · ${linkSessionStatus.confidence == null ? "等待置信度" : `置信度 ${(linkSessionStatus.confidence * 100).toFixed(0)}%`} · 稳定 ${linkSessionStatus.stableFrames}/${linkSessionStatus.requiredStableFrames}` : "采集未运行"}</small>{linkSessionStatus.lastMove && <small>最近同步：{linkSessionStatus.lastMove}</small>}</div>
+            <div className={`link-float-status ${linkSessionStatus.state}`}><span>{linkSessionStateLabel(linkSessionStatus.state)}</span><strong>{board.sideToMove}行棋</strong><small>{linkSessionStatus.lastError ?? linkSessionStatus.reason ?? "窗口连线将同步经过稳定帧与棋规校验的着法"}</small>{linkSessionStatus.lastDetectionSummary && <small>{linkSessionStatus.lastDetectionSummary}</small>}<small>{linkSessionStatus.captureRunning ? `${linkPhaseLabel(linkSessionStatus)} · ${linkSessionStatus.confidence == null ? "等待置信度" : `置信度 ${(linkSessionStatus.confidence * 100).toFixed(0)}%`} · 稳定 ${linkSessionStatus.stableFrames}/${linkSessionStatus.requiredStableFrames} · 尝试 ${linkSessionStatus.recognitionAttempts ?? 0}` : `${linkPhaseLabel(linkSessionStatus)} · ${linkSessionStatus.confidence == null ? "等待置信度" : `置信度 ${(linkSessionStatus.confidence * 100).toFixed(0)}%`} · 尝试 ${linkSessionStatus.recognitionAttempts ?? 0}`}</small>{linkSessionStatus.lastMove && <small>最近同步：{linkSessionStatus.lastMove}</small>}</div>
             <div className="link-float-evaluation"><span>局面评估</span><strong>{evaluation?.scoreText ?? "--"}</strong><small>{evaluation?.label ?? "等待引擎分析"}</small></div>
             <section className={`link-mini-section ${linkMiniBoardSize}`}>
-              <header><strong>局面与候选</strong><div className="link-mini-size" aria-label="迷你棋盘大小"><button type="button" className={linkMiniBoardSize === "off" ? "active" : ""} onClick={() => setLinkMiniBoardSize("off")}>隐藏</button><button type="button" className={linkMiniBoardSize === "small" ? "active" : ""} onClick={() => setLinkMiniBoardSize("small")}>小</button><button type="button" className={linkMiniBoardSize === "large" ? "active" : ""} onClick={() => setLinkMiniBoardSize("large")}>大</button></div></header>
+              <header><strong>{linkHasObservedPosition ? "已同步棋盘" : linkSessionStatus.capturePreviewKind ?? "实时识别预览"}</strong><div className="link-mini-size" aria-label="棋盘预览大小"><button type="button" className={linkMiniBoardSize === "off" ? "active" : ""} onClick={() => setLinkMiniBoardSize("off")}>隐藏</button><button type="button" className={linkMiniBoardSize === "small" ? "active" : ""} onClick={() => setLinkMiniBoardSize("small")}>小</button><button type="button" className={linkMiniBoardSize === "large" ? "active" : ""} onClick={() => setLinkMiniBoardSize("large")}>大</button></div></header>
               {linkMiniBoardSize !== "off" && (linkHasObservedPosition
-                ? <LinkMiniBoard pieces={board.pieces} arrows={linkMiniArrows} reversed={reversed} pieceAsset={(piece) => pieceAsset(piece, displayedPieceSkin)}/>
-                : linkCapturePreview ? <img className="link-capture-preview" src={linkCapturePreview} alt="已框选的第三方棋盘区域"/>
-                : <div className="link-mini-empty">等待稳定识别局面后显示棋盘与候选箭头</div>)}
-              <small>{linkHasObservedPosition && linkMiniArrows.length ? "1/2/3 对应前三条候选线路的首着" : linkHasObservedPosition ? "等待当前局面的引擎候选线路" : linkCapturePreview ? "已框选的外部棋盘预览，等待模型识别" : "当前不使用主窗口棋盘作为连线识别结果"}</small>
+                ? <LinkMiniBoard pieces={board.pieces} arrows={linkMiniArrows} lastMove={lastMove} reversed={linkMiniBoardReversed} pieceAsset={(piece) => pieceAsset(piece, displayedPieceSkin)}/>
+                : linkCapturePreview ? <img className="link-capture-preview" src={linkCapturePreview} alt={linkSessionStatus.capturePreviewKind ?? "实时识别预览"}/>
+                : <div className="link-mini-empty">等待框选区域的实时截图；未同步前不会显示旧棋盘和旧箭头。</div>)}
+              <small>{linkHasObservedPosition && linkMiniArrows.length ? "1/2/3 对应前三条候选线路的首着" : linkHasObservedPosition ? linkAnalysisStatusText(linkSessionStatus, analysisBusy, analysisIsStale, compactEngineRows.length, board.sideToMove, compactEngineRows[0]?.iccs) : linkCapturePreview ? `识别未通过，主棋盘未更新：${linkSessionStatus.lastError ?? linkSessionStatus.reason ?? "等待模型返回合法局面"}` : "当前不使用主窗口棋盘作为连线识别结果"}</small>
             </section>
-            <div className="link-float-candidates"><header><strong>候选线路</strong><small>中文 MultiPV</small></header>{compactEngineRows.length || analysisBusy ? <CompactEngineAnalysisList busy={analysisBusy} rows={compactEngineRows.slice(0, 3)} onPlayMove={() => undefined}/> : <p>识别并同步局面后，在此显示前三条引擎候选线。</p>}</div>
+            <div className="link-float-candidates">
+              <header><strong>候选线路</strong><small>中文 MultiPV</small></header>
+              {analysisIsStale
+                ? <p>网页局面已变化，旧候选已隐藏，等待当前局面重新分析。</p>
+                : compactEngineRows.length || analysisBusy
+                  ? <CompactEngineAnalysisList busy={analysisBusy} rows={compactEngineRows.slice(0, 3)} onPlayMove={() => undefined}/>
+                  : <p>{linkHasObservedPosition ? "当前局面已同步，等待引擎返回候选线路。" : "识别并同步局面后，在此显示前三条引擎候选线。"}</p>}
+            </div>
             <div className="link-float-actions">
-              {linkSessionStatus.mode === "confirmPlay" && <button type="button" disabled={linkSessionStatus.state !== "tracking" || !compactEngineRows[0]?.iccs} onClick={() => { const move = compactEngineRows[0]?.iccs; if (move) void chessPlatform.confirmLinkEngineMove(move).then(() => setNotice(`已确认引擎建议 ${move}，等待外部局面确认`)).catch((error) => setNotice(friendlyError(error))); }}><Play size={14}/>确认走子</button>}
+              {linkSessionStatus.mode === "confirmPlay" && <button type="button" disabled={linkSessionStatus.state !== "tracking" || analysisIsStale || !compactEngineRows[0]?.iccs} onClick={() => { const move = compactEngineRows[0]?.iccs; if (move) void chessPlatform.confirmLinkEngineMove(move).then(() => setNotice(`已确认引擎建议 ${move}，等待外部局面确认`)).catch((error) => setNotice(friendlyError(error))); }}><Play size={14}/>确认走子</button>}
               <button type="button" disabled={linkSessionStatus.state === "stopped"} onClick={() => void chessPlatform.pauseLinkSession().then(setLinkSessionStatus).catch((error) => setNotice(friendlyError(error)))}><Pause size={14}/>暂停</button>
-              <button type="button" disabled={linkSessionStatus.state === "stopped"} onClick={() => void chessPlatform.recalibrateLinkSession().then((status) => { setLinkSessionStatus(status); return chessPlatform.getLinkCapturePreview(); }).then(setLinkCapturePreview).catch((error) => setNotice(friendlyError(error)))}><RefreshCw size={14}/>重新框选</button>
+              <button type="button" disabled={linkSessionStatus.state === "stopped"} onClick={() => void chessPlatform.recalibrateLinkSession().then((status) => { setLinkSessionStatus(status); return chessPlatform.getLinkCapturePreview(); }).then(setLinkCapturePreview).catch((error) => setNotice(friendlyError(error)))}><RefreshCw size={14}/>{linkSessionStatus.source === "desktopDetect" ? "重新扫描" : linkSessionStatus.source === "imageImport" || linkSessionStatus.source === "cameraBoard" ? "重新选图" : "重新框选"}</button>
               <button type="button" className="stop" disabled={linkSessionStatus.state === "stopped"} onClick={() => void chessPlatform.stopLinkSession().then(() => chessPlatform.getLinkSessionStatus()).then(setLinkSessionStatus).catch((error) => setNotice(friendlyError(error)))}><Square size={13}/>停止</button>
             </div>
             <p className="floating-panel-note">模型在本机持续识别可见棋盘，不保存截图。确认走子和自动对战只会在稳定局面、有效引擎结果及明确授权下执行。</p>
@@ -3816,6 +4092,7 @@ export default function App() {
           account={syncAccount}
           subscription={subscription}
           trainingTasks={trainingTasks}
+          trainingSummary={trainingSummary}
           studySessions={studySessions}
           engineProfiles={engineProfiles}
           busy={dialogBusy}
@@ -3896,6 +4173,7 @@ export default function App() {
         account={syncAccount}
         subscription={subscription}
         trainingTasks={trainingTasks}
+        trainingSummary={trainingSummary}
         studySessions={studySessions}
         engineProfiles={engineProfiles}
         busy={dialogBusy}
@@ -4018,7 +4296,7 @@ export default function App() {
 
         <section className={`board-section ${mobilePanel === "board" ? "mobile-visible" : ""}`}>
           <div className="board-main-stack">
-          {desktopPreferences.layoutMode === "compact" && <div className="compact-board-heading"><span><LayoutGrid size={15}/><strong>棋盘</strong></span><small>{board.sideToMove}行棋 · {reversed ? "黑方视角" : "红方视角"}</small></div>}
+          {desktopPreferences.layoutMode === "compact" && <div className="compact-board-heading"><span><LayoutGrid size={15}/><strong>棋盘</strong></span><small>{board.sideToMove}行棋 · {boardPerspectiveLabel}</small></div>}
           <div className="board-stage">
             <div className="board-stage-inner">
             <aside className="board-quality-rail" aria-label="当前着法质量">
@@ -4032,8 +4310,8 @@ export default function App() {
               <div className="board-art" />
               {cells.map(({ row, col }) => {
                 const piece = pieceMap.get(`${row}-${col}`);
-                const visualRow = reversed ? 9 - row : row;
-                const visualCol = reversed ? 8 - col : col;
+                const visualRow = boardDisplayReversed ? 9 - row : row;
+                const visualCol = boardDisplayReversed ? 8 - col : col;
                 const isSelected = selected?.row === row && selected?.col === col;
                 const markerMove = displayedLastMove ?? lastMove;
                 const isLastFrom = markerMove?.from.row === row && markerMove.from.col === col;
@@ -4055,7 +4333,7 @@ export default function App() {
                       <img src={pieceAsset(piece, displayedPieceSkin)} alt="" draggable={false} />
                       <span className="board-piece-label" aria-hidden="true">{piece.label}</span>
                     </>}
-                    {isSelected && <img className="selection-mask" src={displayedBoardSkin === "xinghe" || displayedBoardSkin === "hongmu" ? `/skins/${displayedBoardSkin}/mask2.png` : "/skins/default/mask2.png"} alt="" />}
+                    {isSelected && <img className="selection-mask" src={`/skins/${displayedBoardSkin}/mask2.png`} alt="" />}
                     {!candidatePreview && isLastTo && board.currentNode === lastMove?.id && overviewReport?.grade && overviewReport.score != null && (
                       <span
                         className={`board-move-grade grade-${overviewReport.grade}`}
@@ -4162,7 +4440,7 @@ export default function App() {
             <span>{candidatePreview && previewStep ? `真实棋谱未改变 · 点“下一步”继续` : board.ruleReason ?? board.status}</span>
             <span className="status-spacer" />
             <span className="board-meta">节点 {board.history.length}</span>
-            <span className="board-meta">{reversed ? "黑方视角" : "红方视角"}</span>
+            <span className="board-meta">{boardPerspectiveLabel}</span>
           </div>
           {playbackControls("mobile-playback")}
           <div className={`engine-livebar ${primaryAnalysis ? "has-analysis" : "empty"}`}>
@@ -4265,7 +4543,7 @@ export default function App() {
                         </li>)}
                       </ol>
                     </div>
-                  : <p className="engine-arena-empty">默认让当前主引擎对内置 Fairy-Stockfish；如果启用了对比引擎，则优先挑战第一个对比引擎。Fairy 只是外部对比引擎，裁决统一由应用内棋规模块处理。</p>}
+                  : <p className="engine-arena-empty">引擎擂台需要两个不同引擎。请在引擎设置中添加外部对比引擎；Fairy-Stockfish 可手动导入，裁决统一由应用内棋规模块处理。</p>}
               </section>
               {engineProfiles.length > 0 && <div className="engine-profile-select"><label><span>当前引擎</span><select value={desktopPreferences.activeEngineId ?? ""} onChange={(event) => void selectEngineProfile(event.target.value)}><option value="" disabled>选择已添加的引擎</option>{engineProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.protocol.toUpperCase()}</option>)}</select></label><button title="删除当前引擎档案" onClick={() => void removeEngineProfile()}><Trash2 size={13}/></button></div>}
             </>}
@@ -4312,7 +4590,7 @@ export default function App() {
               )}
             </div></div>}
             {workspacePanel === "theory" && <div id="workspace-panel-theory" className="review-empty-or-content" role="tabpanel" aria-labelledby="workspace-tab-theory">
-              <TheoryLibraryView library={theoryLibrary} busy={theoryLibraryBusy} error={theoryLibraryError} onScan={() => void scanTheoryLibrary()} onCreateCard={(card) => void createTheoryCard(card)} onReviewCard={(card) => void reviewTheoryCard(card)}/>
+              <TheoryLibraryView library={theoryLibrary} busy={theoryLibraryBusy} error={theoryLibraryError} onScan={() => void scanTheoryLibrary()} onCreateCard={(card) => void createTheoryCard(card)} onReviewCard={(card) => void reviewTheoryCard(card)} onFeedbackCard={(card, verdict) => void saveTheoryFeedback(card, verdict)}/>
             </div>}
             {workspacePanel === "trend" && <div id="workspace-panel-trend" className="review-empty-or-content trend-review" role="tabpanel" aria-labelledby="workspace-tab-trend">
               {evaluationTrend.length === 0
@@ -4552,14 +4830,13 @@ export default function App() {
               linkMode: request.mode,
               linkStableFrames: request.stableFrames,
             });
-            if (request.source === "windowLink") {
+            if (request.source === "windowLink" || request.source === "desktopDetect") {
               flushSync(() => setLinkSessionOpen(false));
             }
             await collapseCompactStudyPanels();
-            if (request.source === "windowLink") {
-              await openCompactFloatingPanel("link");
-              await new Promise((resolve) => window.setTimeout(resolve, 250));
-              await chessPlatform.prepareLinkSelectionWindow();
+            if (request.source === "windowLink" || request.source === "desktopDetect") {
+              const created = await chessPlatform.openCompactFloatingPanel("link");
+              setNotice(created ? "连线提示已打开，正在准备框选棋盘区域…" : "连线提示窗口已置前，正在准备框选棋盘区域…");
             }
             const result = await chessPlatform.startLinkSession(request);
             analysisHintsEnabledRef.current = true;
@@ -4591,6 +4868,24 @@ export default function App() {
             setNotice("识别局面已导入为新棋局，请确认后开始分析");
           } catch (error) {
             setNotice(friendlyError(error));
+          }
+        }}
+        onRecognizeImage={async (source) => {
+          try {
+            const result = await chessPlatform.recognizeLinkImageFile(source);
+            if (!result) return undefined;
+            if (result.board) applyBoard(result.board);
+            const preview = await chessPlatform.getLinkCapturePreview().catch(() => undefined);
+            setLinkCapturePreview(preview);
+            analysisHintsEnabledRef.current = true;
+            setAnalysisHintsEnabled(true);
+            if (!analysisBusyRef.current) window.setTimeout(() => void runAnalysis(true), 0);
+            setNotice(result.reason ?? "图片局面已识别并同步");
+            return result;
+          } catch (error) {
+            const message = friendlyError(error);
+            setNotice(message);
+            throw new Error(message);
           }
         }}
       />}

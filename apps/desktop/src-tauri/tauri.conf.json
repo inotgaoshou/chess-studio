@@ -24,7 +24,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": ["resources/fonts/OFL.txt", "resources/pikafish", "resources/fairy-stockfish", "resources/link-vision"],
+    "resources": ["resources/fonts/OFL.txt", "resources/pikafish", "resources/link-vision"],
     "windows": {
       "nsis": {
         "installMode": "both",

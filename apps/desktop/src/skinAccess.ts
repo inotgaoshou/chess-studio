@@ -12,6 +12,7 @@ export type SkinCatalogItem = {
 export const SKIN_CATALOG: SkinCatalogItem[] = [
   { folder: "default", title: "默认", boardDetail: "默认棋盘文件夹", pieceDetail: "默认棋子文件夹" },
   { folder: "hongmu", title: "红木鎏金", boardDetail: "深色红木与金色棋线", pieceDetail: "金色立体红黑棋子" },
+  { folder: "qingxin-zhuyun", title: "清新竹韵", boardDetail: "竹纹浅色棋盘与清爽绿意", pieceDetail: "清新竹韵红黑棋子" },
   { folder: "jingdian", title: "经典雅致", boardDetail: "传统棋盘与经典棋子", pieceDetail: "传统棋盘与经典棋子", memberOnly: true },
   { folder: "xinghe", title: "霓虹星河", boardDetail: "赛博星空与蓝紫棋线", pieceDetail: "赛博蓝光与红蓝棋子", memberOnly: true },
 ];

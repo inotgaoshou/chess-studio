@@ -90,20 +90,26 @@ describe("DesktopDialogs", () => {
     expect(props.onSaveEngine).toHaveBeenCalledWith(expect.objectContaining({ enginePath: BUILTIN_ENGINE_PATH, activeEngineId: undefined }), "内置 Pikafish");
   });
 
-  it("offers built-in Fairy-Stockfish as a Xiangqi comparison engine", async () => {
-    const { props, user } = renderDialog("engine", {
+  it("does not offer bundled Fairy-Stockfish as a built-in comparison engine", () => {
+    renderDialog("engine", {
       preferences: { ...preferences, enginePath: BUILTIN_ENGINE_PATH, analysisEngineMode: "parallel" },
     });
 
-    expect(screen.getByText("独立资源目录，只作为外部对比引擎；裁决由应用内棋规模块处理 · 点击设为主引擎")).toBeTruthy();
-    const compareControl = screen.getByTitle("将 内置 Fairy-Stockfish 作为对比引擎，不改变主引擎").querySelector("input");
-    expect(compareControl).toBeTruthy();
-    await user.click(compareControl!);
-    await user.click(screen.getByRole("button", { name: "检测并保存" }));
+    expect(screen.queryByText("内置 Fairy-Stockfish")).toBeNull();
+    expect(screen.queryByTitle("将 内置 Fairy-Stockfish 作为对比引擎，不改变主引擎")).toBeNull();
+    expect(screen.getByText(/Fairy-Stockfish 可作为外部引擎手动导入/)).toBeTruthy();
+  });
 
+  it("migrates legacy bundled Fairy preferences back to bundled Pikafish", async () => {
+    const { props, user } = renderDialog("engine", {
+      preferences: { ...preferences, enginePath: BUILTIN_FAIRY_ENGINE_PATH, parallelEnginePaths: [BUILTIN_FAIRY_ENGINE_PATH] },
+    });
+
+    expect((screen.getByLabelText("引擎可执行文件") as HTMLInputElement).value).toBe("内置 Pikafish（随应用安装，推荐）");
+    await user.click(screen.getByRole("button", { name: "检测并保存" }));
     expect(props.onSaveEngine).toHaveBeenCalledWith(expect.objectContaining({
       enginePath: BUILTIN_ENGINE_PATH,
-      parallelEnginePaths: [BUILTIN_FAIRY_ENGINE_PATH],
+      parallelEnginePaths: [],
     }));
   });
 
@@ -122,7 +128,7 @@ describe("DesktopDialogs", () => {
       ],
     });
 
-    expect(screen.getByText("当前共 3 个引擎：1 个主引擎 + 2 个对比引擎；勾选“作为对比”后保存生效")).toBeTruthy();
+    expect(screen.getByText("当前共 2 个引擎：1 个主引擎 + 1 个对比引擎；勾选“作为对比”后保存生效")).toBeTruthy();
   });
 
   it("shows a file picker error instead of failing silently", async () => {

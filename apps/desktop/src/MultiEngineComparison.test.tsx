@@ -54,7 +54,7 @@ describe("MultiEngineComparison", () => {
       { id: "fairy", name: "Fairy", primary: false, lines: [{ multipv: 1, pv: ["h2h9", "b9b8", "a3a4", "h7h6", "b0b1", "h9h8", "c3c4", "g6g5", "b1b2"], notation: ["炮八平五", "马2进3", "兵三进一", "卒8进1", "马二进三", "车9平8", "兵七进一", "卒7进1", "马三进四"], scoreCp: 22, depth: 18 }] },
     ]}/>);
 
-    expect(screen.getByText("引擎分析")).toBeTruthy();
+    expect(screen.getByText("多引擎对照")).toBeTruthy();
     expect(screen.getByText("推荐")).toBeTruthy();
     expect(screen.getByText("次")).toBeTruthy();
     expect(screen.getByText("Fairy")).toBeTruthy();

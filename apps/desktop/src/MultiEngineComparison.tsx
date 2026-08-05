@@ -141,7 +141,7 @@ export function MultiEngineComparison({ busy, collapsed = false, compact = false
     return <section className="multi-engine-comparison compact" aria-label="多引擎走法对照">
       <header>
         <div>
-          <strong>引擎分析</strong>
+          <strong>多引擎对照</strong>
           <small>深{maxDepth || "--"} · 时间 {maxTime ? formatTime(maxTime) : "--"} · NPS {maxNps ? formatNps(maxNps) : "--"}</small>
         </div>
         {headerActions}

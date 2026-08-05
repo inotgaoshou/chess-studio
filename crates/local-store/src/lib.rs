@@ -142,10 +142,10 @@ fn default_rule_mode() -> String {
 }
 
 fn default_link_capture_source() -> String {
-    "imageImport".into()
+    "windowLink".into()
 }
 fn default_link_recognition_mode() -> String {
-    "perspectiveGrid".into()
+    "yoloBoard".into()
 }
 fn default_link_mode() -> String {
     "spectate".into()
@@ -154,7 +154,7 @@ fn default_link_stable_frames() -> u8 {
     2
 }
 fn default_link_confidence_threshold() -> u8 {
-    70
+    55
 }
 fn default_link_animation_confirmation() -> bool {
     true
@@ -277,6 +277,9 @@ pub struct TrainingTask {
     pub node_id: Uuid,
     pub title: String,
     pub detail: String,
+    pub phase: Option<String>,
+    pub tags: Vec<String>,
+    pub source_card_id: Option<i64>,
     pub completed_at: Option<String>,
     pub created_at: String,
 }
@@ -318,6 +321,16 @@ pub struct TheoryCard {
     pub review_status: String,
     pub course_name: String,
     pub lesson_title: String,
+    pub source_book: Option<String>,
+    pub source_page_start: Option<i64>,
+    pub source_page_end: Option<i64>,
+    pub tags: Vec<String>,
+    pub engine_correlations: Vec<String>,
+    pub origin: String,
+    pub version: i64,
+    pub user_modified: bool,
+    pub match_penalty: i64,
+    pub needs_recheck: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -329,6 +342,45 @@ pub struct StudySession {
     pub reflection: String,
     pub tags: Vec<String>,
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TheoryCardMatch {
+    pub id: Uuid,
+    pub game_id: Uuid,
+    pub report_signature: String,
+    pub node_id: Uuid,
+    pub card_id: i64,
+    pub card_version: i64,
+    pub engine_signal: String,
+    pub matched_tags: Vec<String>,
+    pub verdict: String,
+    pub note: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TheoryCardFeedback {
+    pub id: Uuid,
+    pub match_id: Option<Uuid>,
+    pub card_id: i64,
+    pub card_version: i64,
+    pub verdict: String,
+    pub note: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WeaknessStat {
+    pub phase: String,
+    pub tag: String,
+    pub occurrences: u32,
+    pub completed_tasks: u32,
+    pub open_tasks: u32,
+    pub review_cards: Vec<TheoryCard>,
 }
 
 impl LocalStore {
@@ -386,11 +438,15 @@ impl LocalStore {
 
     pub fn theory_cards(&self) -> Result<Vec<TheoryCard>, StoreError> {
         let mut statement = self.connection.prepare(
-            "SELECT c.id, c.lesson_id, l.phase, c.title, c.summary, c.applies_when, c.risk, c.timecode, c.review_status, l.course_name, l.title
+            "SELECT c.id, c.lesson_id, l.phase, c.title, c.summary, c.applies_when, c.risk, c.timecode, c.review_status, l.course_name, l.title,
+                    c.source_book, c.source_page_start, c.source_page_end, c.tags_json, c.engine_correlations_json,
+                    c.origin, c.version, c.user_modified, c.match_penalty, c.needs_recheck
              FROM theory_cards c JOIN theory_lessons l ON l.id=c.lesson_id ORDER BY c.review_status, l.phase, l.title",
         )?;
         statement
             .query_map([], |row| {
+                let tags_json: String = row.get(14)?;
+                let engine_correlations_json: String = row.get(15)?;
                 Ok(TheoryCard {
                     id: row.get(0)?,
                     lesson_id: row.get(1)?,
@@ -403,6 +459,17 @@ impl LocalStore {
                     review_status: row.get(8)?,
                     course_name: row.get(9)?,
                     lesson_title: row.get(10)?,
+                    source_book: row.get(11)?,
+                    source_page_start: row.get(12)?,
+                    source_page_end: row.get(13)?,
+                    tags: serde_json::from_str(&tags_json).unwrap_or_default(),
+                    engine_correlations: serde_json::from_str(&engine_correlations_json)
+                        .unwrap_or_default(),
+                    origin: row.get(16)?,
+                    version: row.get(17)?,
+                    user_modified: row.get::<_, i64>(18)? != 0,
+                    match_penalty: row.get(19)?,
+                    needs_recheck: row.get::<_, i64>(20)? != 0,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()
@@ -419,8 +486,8 @@ impl LocalStore {
         timecode: Option<&str>,
     ) -> Result<TheoryCard, StoreError> {
         self.connection.execute(
-            "INSERT INTO theory_cards (lesson_id, title, summary, applies_when, risk, timecode, review_status)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending')",
+            "INSERT INTO theory_cards (lesson_id, title, summary, applies_when, risk, timecode, review_status, origin, version, user_modified)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending', 'user', 1, 1)",
             params![lesson_id, title, summary, applies_when, risk, timecode],
         )?;
         let id = self.connection.last_insert_rowid();
@@ -432,10 +499,133 @@ impl LocalStore {
 
     pub fn review_theory_card(&mut self, card: &TheoryCard) -> Result<(), StoreError> {
         self.connection.execute(
-            "UPDATE theory_cards SET title=?2, summary=?3, applies_when=?4, risk=?5, timecode=?6, review_status=?7 WHERE id=?1",
-            params![card.id, card.title, card.summary, card.applies_when, card.risk, card.timecode, card.review_status],
+            "UPDATE theory_cards SET title=?2, summary=?3, applies_when=?4, risk=?5, timecode=?6, review_status=?7,
+                    source_book=?8, source_page_start=?9, source_page_end=?10, tags_json=?11, engine_correlations_json=?12,
+                    origin=?13, version=version + 1, user_modified=1, needs_recheck=?14
+             WHERE id=?1",
+            params![
+                card.id,
+                card.title,
+                card.summary,
+                card.applies_when,
+                card.risk,
+                card.timecode,
+                card.review_status,
+                card.source_book,
+                card.source_page_start,
+                card.source_page_end,
+                serde_json::to_string(&card.tags)?,
+                serde_json::to_string(&card.engine_correlations)?,
+                card.origin,
+                card.needs_recheck as i32,
+            ],
         )?;
         Ok(())
+    }
+
+    pub fn record_theory_card_match(
+        &mut self,
+        game_id: Uuid,
+        report_signature: &str,
+        node_id: Uuid,
+        card_id: i64,
+        card_version: i64,
+        engine_signal: &str,
+        matched_tags: &[String],
+        note: &str,
+    ) -> Result<TheoryCardMatch, StoreError> {
+        let record = TheoryCardMatch {
+            id: Uuid::new_v4(),
+            game_id,
+            report_signature: report_signature.to_owned(),
+            node_id,
+            card_id,
+            card_version,
+            engine_signal: engine_signal.to_owned(),
+            matched_tags: matched_tags.to_vec(),
+            verdict: "unreviewed".into(),
+            note: note.to_owned(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+        };
+        self.connection.execute(
+            "INSERT INTO theory_card_matches
+             (id, game_id, report_signature, node_id, card_id, card_version, engine_signal, matched_tags_json, verdict, note, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                record.id.to_string(),
+                record.game_id.to_string(),
+                record.report_signature,
+                record.node_id.to_string(),
+                record.card_id,
+                record.card_version,
+                record.engine_signal,
+                serde_json::to_string(&record.matched_tags)?,
+                record.verdict,
+                record.note,
+                record.created_at,
+            ],
+        )?;
+        Ok(record)
+    }
+
+    pub fn save_theory_card_feedback(
+        &mut self,
+        match_id: Option<Uuid>,
+        card_id: i64,
+        card_version: i64,
+        verdict: &str,
+        note: &str,
+    ) -> Result<TheoryCardFeedback, StoreError> {
+        let feedback = TheoryCardFeedback {
+            id: Uuid::new_v4(),
+            match_id,
+            card_id,
+            card_version,
+            verdict: verdict.to_owned(),
+            note: note.to_owned(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+        };
+        self.connection.execute(
+            "INSERT INTO theory_card_feedback (id, match_id, card_id, card_version, verdict, note, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                feedback.id.to_string(),
+                feedback.match_id.map(|id| id.to_string()),
+                feedback.card_id,
+                feedback.card_version,
+                feedback.verdict,
+                feedback.note,
+                feedback.created_at,
+            ],
+        )?;
+        if let Some(match_id) = feedback.match_id {
+            self.connection.execute(
+                "UPDATE theory_card_matches SET verdict=?2, note=?3 WHERE id=?1",
+                params![match_id.to_string(), feedback.verdict, feedback.note],
+            )?;
+        }
+        match verdict {
+            "incorrect" => {
+                self.connection.execute(
+                    "UPDATE theory_cards SET match_penalty = match_penalty + 2, needs_recheck = 1 WHERE id = ?1",
+                    params![card_id],
+                )?;
+            }
+            "needs_revision" => {
+                self.connection.execute(
+                    "UPDATE theory_cards SET match_penalty = match_penalty + 1, needs_recheck = 1 WHERE id = ?1",
+                    params![card_id],
+                )?;
+            }
+            "correct" => {
+                self.connection.execute(
+                    "UPDATE theory_cards SET match_penalty = max(match_penalty - 1, 0) WHERE id = ?1",
+                    params![card_id],
+                )?;
+            }
+            _ => {}
+        }
+        Ok(feedback)
     }
 
     pub fn save_study_session(
@@ -475,6 +665,42 @@ impl LocalStore {
         )?;
         statement
             .query_map([game_id.to_string()], |row| {
+                let id: String = row.get(0)?;
+                let game_id: String = row.get(1)?;
+                let node_id: Option<String> = row.get(2)?;
+                let tags_json: String = row.get(4)?;
+                Ok((
+                    id,
+                    game_id,
+                    node_id,
+                    row.get::<_, String>(3)?,
+                    tags_json,
+                    row.get::<_, String>(5)?,
+                ))
+            })?
+            .map(|row| {
+                let (id, game_id, node_id, reflection, tags_json, created_at) = row?;
+                Ok(StudySession {
+                    id: Uuid::parse_str(&id).map_err(json_error)?,
+                    game_id: Uuid::parse_str(&game_id).map_err(json_error)?,
+                    node_id: node_id
+                        .map(|value| Uuid::parse_str(&value).map_err(json_error))
+                        .transpose()?,
+                    reflection,
+                    tags: serde_json::from_str(&tags_json)?,
+                    created_at,
+                })
+            })
+            .collect::<Result<Vec<_>, StoreError>>()
+    }
+
+    fn all_study_sessions(&self) -> Result<Vec<StudySession>, StoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, game_id, node_id, reflection, tags_json, created_at
+             FROM study_sessions ORDER BY created_at DESC, rowid DESC",
+        )?;
+        statement
+            .query_map([], |row| {
                 let id: String = row.get(0)?;
                 let game_id: String = row.get(1)?;
                 let node_id: Option<String> = row.get(2)?;
@@ -1243,13 +1469,47 @@ impl LocalStore {
         Ok(())
     }
 
+    pub fn upsert_training_task_with_context(
+        &mut self,
+        game_id: Uuid,
+        report_signature: &str,
+        node_id: Uuid,
+        title: &str,
+        detail: &str,
+        phase: Option<&str>,
+        tags: &[String],
+        source_card_id: Option<i64>,
+    ) -> Result<(), StoreError> {
+        self.connection.execute(
+            "INSERT INTO training_tasks (id, game_id, report_signature, node_id, title, detail, phase, tags_json, source_card_id, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+             ON CONFLICT(game_id, report_signature, node_id)
+             DO UPDATE SET title=excluded.title, detail=excluded.detail, phase=excluded.phase,
+                           tags_json=excluded.tags_json, source_card_id=excluded.source_card_id",
+            params![
+                Uuid::new_v4().to_string(),
+                game_id.to_string(),
+                report_signature,
+                node_id.to_string(),
+                title,
+                detail,
+                phase,
+                serde_json::to_string(tags)?,
+                source_card_id,
+                chrono::Utc::now().to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
     pub fn list_training_tasks(&self) -> Result<Vec<TrainingTask>, StoreError> {
         let mut statement = self.connection.prepare(
-            "SELECT id, game_id, report_signature, node_id, title, detail, completed_at, created_at
+            "SELECT id, game_id, report_signature, node_id, title, detail, phase, tags_json, source_card_id, completed_at, created_at
              FROM training_tasks ORDER BY completed_at IS NOT NULL, created_at DESC",
         )?;
         statement
             .query_map([], |row| {
+                let tags_json: String = row.get(7)?;
                 Ok(TrainingTask {
                     id: parse_row_uuid(&row.get::<_, String>(0)?, 0)?,
                     game_id: parse_row_uuid(&row.get::<_, String>(1)?, 1)?,
@@ -1257,8 +1517,11 @@ impl LocalStore {
                     node_id: parse_row_uuid(&row.get::<_, String>(3)?, 3)?,
                     title: row.get(4)?,
                     detail: row.get(5)?,
-                    completed_at: row.get(6)?,
-                    created_at: row.get(7)?,
+                    phase: row.get(6)?,
+                    tags: serde_json::from_str(&tags_json).unwrap_or_default(),
+                    source_card_id: row.get(8)?,
+                    completed_at: row.get(9)?,
+                    created_at: row.get(10)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()
@@ -1278,6 +1541,73 @@ impl LocalStore {
             ],
         )?;
         Ok(())
+    }
+
+    pub fn weakness_stats(&self, limit: usize) -> Result<Vec<WeaknessStat>, StoreError> {
+        let cards = self.theory_cards()?;
+        let mut card_by_id = HashMap::new();
+        for card in cards {
+            card_by_id.insert(card.id, card);
+        }
+        let mut stats: HashMap<(String, String), (u32, u32, u32, Vec<i64>)> = HashMap::new();
+        for session in self.all_study_sessions()? {
+            for tag in session.tags {
+                let key = ("复盘".to_owned(), tag);
+                stats.entry(key).or_default().0 += 1;
+            }
+        }
+        for task in self.list_training_tasks()? {
+            let phase = task.phase.clone().unwrap_or_else(|| "复盘".into());
+            for tag in task.tags {
+                let entry = stats.entry((phase.clone(), tag)).or_default();
+                entry.0 += 1;
+                if task.completed_at.is_some() {
+                    entry.1 += 1;
+                } else {
+                    entry.2 += 1;
+                }
+                if let Some(card_id) = task.source_card_id {
+                    entry.3.push(card_id);
+                }
+            }
+        }
+        let mut result = stats
+            .into_iter()
+            .map(
+                |((phase, tag), (occurrences, completed_tasks, open_tasks, card_ids))| {
+                    let mut review_cards = Vec::new();
+                    for card_id in card_ids {
+                        if review_cards
+                            .iter()
+                            .any(|card: &TheoryCard| card.id == card_id)
+                        {
+                            continue;
+                        }
+                        if let Some(card) = card_by_id.get(&card_id) {
+                            review_cards.push(card.clone());
+                        }
+                    }
+                    WeaknessStat {
+                        phase,
+                        tag,
+                        occurrences,
+                        completed_tasks,
+                        open_tasks,
+                        review_cards,
+                    }
+                },
+            )
+            .collect::<Vec<_>>();
+        result.sort_by(|left, right| {
+            right
+                .open_tasks
+                .cmp(&left.open_tasks)
+                .then(right.occurrences.cmp(&left.occurrences))
+                .then(left.phase.cmp(&right.phase))
+                .then(left.tag.cmp(&right.tag))
+        });
+        result.truncate(limit);
+        Ok(result)
     }
 
     pub fn apply_remote_operation(
@@ -1465,6 +1795,7 @@ impl LocalStore {
              CREATE TABLE IF NOT EXISTS training_tasks (
                id TEXT PRIMARY KEY, game_id TEXT NOT NULL, report_signature TEXT NOT NULL,
                node_id TEXT NOT NULL, title TEXT NOT NULL, detail TEXT NOT NULL,
+               phase TEXT, tags_json TEXT NOT NULL DEFAULT '[]', source_card_id INTEGER,
                completed_at TEXT, created_at TEXT NOT NULL,
                UNIQUE(game_id, report_signature, node_id)
              );
@@ -1480,9 +1811,30 @@ impl LocalStore {
                id INTEGER PRIMARY KEY AUTOINCREMENT, lesson_id INTEGER NOT NULL,
                title TEXT NOT NULL, summary TEXT NOT NULL, applies_when TEXT NOT NULL,
                risk TEXT NOT NULL, timecode TEXT, review_status TEXT NOT NULL DEFAULT 'pending',
+               source_book TEXT, source_page_start INTEGER, source_page_end INTEGER,
+               tags_json TEXT NOT NULL DEFAULT '[]', engine_correlations_json TEXT NOT NULL DEFAULT '[]',
+               origin TEXT NOT NULL DEFAULT 'user', version INTEGER NOT NULL DEFAULT 1,
+               user_modified INTEGER NOT NULL DEFAULT 0, match_penalty INTEGER NOT NULL DEFAULT 0,
+               needs_recheck INTEGER NOT NULL DEFAULT 0,
                FOREIGN KEY(lesson_id) REFERENCES theory_lessons(id) ON DELETE CASCADE
              );
              CREATE INDEX IF NOT EXISTS idx_theory_cards_review ON theory_cards(review_status, lesson_id);
+             CREATE TABLE IF NOT EXISTS theory_card_matches (
+               id TEXT PRIMARY KEY, game_id TEXT NOT NULL, report_signature TEXT NOT NULL,
+               node_id TEXT NOT NULL, card_id INTEGER NOT NULL, card_version INTEGER NOT NULL,
+               engine_signal TEXT NOT NULL, matched_tags_json TEXT NOT NULL DEFAULT '[]',
+               verdict TEXT NOT NULL DEFAULT 'unreviewed', note TEXT NOT NULL DEFAULT '',
+               created_at TEXT NOT NULL,
+               FOREIGN KEY(card_id) REFERENCES theory_cards(id)
+             );
+             CREATE INDEX IF NOT EXISTS idx_theory_card_matches_node ON theory_card_matches(game_id, node_id, created_at DESC);
+             CREATE TABLE IF NOT EXISTS theory_card_feedback (
+               id TEXT PRIMARY KEY, match_id TEXT, card_id INTEGER NOT NULL, card_version INTEGER NOT NULL,
+               verdict TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
+               FOREIGN KEY(match_id) REFERENCES theory_card_matches(id),
+               FOREIGN KEY(card_id) REFERENCES theory_cards(id)
+             );
+             CREATE INDEX IF NOT EXISTS idx_theory_card_feedback_card ON theory_card_feedback(card_id, created_at DESC);
              CREATE TABLE IF NOT EXISTS study_sessions (
                id TEXT PRIMARY KEY, game_id TEXT NOT NULL, node_id TEXT,
                reflection TEXT NOT NULL, tags_json TEXT NOT NULL, created_at TEXT NOT NULL
@@ -1502,6 +1854,59 @@ impl LocalStore {
         ensure_game_column(&connection, "source_format", "TEXT")?;
         ensure_game_column(&connection, "playable", "INTEGER NOT NULL DEFAULT 1")?;
         ensure_game_column(&connection, "metadata_json", "TEXT NOT NULL DEFAULT '{}'")?;
+        ensure_column(&connection, "training_tasks", "phase", "TEXT")?;
+        ensure_column(
+            &connection,
+            "training_tasks",
+            "tags_json",
+            "TEXT NOT NULL DEFAULT '[]'",
+        )?;
+        ensure_column(&connection, "training_tasks", "source_card_id", "INTEGER")?;
+        ensure_column(&connection, "theory_cards", "source_book", "TEXT")?;
+        ensure_column(&connection, "theory_cards", "source_page_start", "INTEGER")?;
+        ensure_column(&connection, "theory_cards", "source_page_end", "INTEGER")?;
+        ensure_column(
+            &connection,
+            "theory_cards",
+            "tags_json",
+            "TEXT NOT NULL DEFAULT '[]'",
+        )?;
+        ensure_column(
+            &connection,
+            "theory_cards",
+            "engine_correlations_json",
+            "TEXT NOT NULL DEFAULT '[]'",
+        )?;
+        ensure_column(
+            &connection,
+            "theory_cards",
+            "origin",
+            "TEXT NOT NULL DEFAULT 'user'",
+        )?;
+        ensure_column(
+            &connection,
+            "theory_cards",
+            "version",
+            "INTEGER NOT NULL DEFAULT 1",
+        )?;
+        ensure_column(
+            &connection,
+            "theory_cards",
+            "user_modified",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
+        ensure_column(
+            &connection,
+            "theory_cards",
+            "match_penalty",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
+        ensure_column(
+            &connection,
+            "theory_cards",
+            "needs_recheck",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
         Ok(Self { connection })
     }
 }
@@ -1763,13 +2168,22 @@ fn ensure_game_column(
     column: &str,
     definition: &str,
 ) -> Result<(), StoreError> {
-    let mut statement = connection.prepare("PRAGMA table_info(games)")?;
+    ensure_column(connection, "games", column, definition)
+}
+
+fn ensure_column(
+    connection: &Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> Result<(), StoreError> {
+    let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
     let names = statement
         .query_map([], |row| row.get::<_, String>(1))?
         .collect::<Result<Vec<_>, _>>()?;
     if !names.iter().any(|name| name == column) {
         connection.execute(
-            &format!("ALTER TABLE games ADD COLUMN {column} {definition}"),
+            &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
             [],
         )?;
     }
@@ -2666,6 +3080,109 @@ mod tests {
                 .completed_at
                 .is_none()
         );
+    }
+
+    #[test]
+    fn theory_feedback_penalizes_incorrect_matches_and_preserves_card_versions() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        store
+            .upsert_theory_lesson(
+                "middle",
+                "赵鑫鑫中局棋理48讲",
+                "缺相怕炮",
+                "/books/middle.pdf#p20",
+                "fingerprint",
+            )
+            .unwrap();
+        let lesson_id = store.theory_lessons().unwrap()[0].id;
+        let mut card = store
+            .create_theory_card(
+                lesson_id,
+                "缺相怕炮",
+                "缺相时要警惕炮路牵制和底线压缩。",
+                "中局出现缺相、炮路可压缩将门时。",
+                "若只看子力数量，容易漏掉困毙或牵制。",
+                None,
+            )
+            .unwrap();
+        card.review_status = "approved".into();
+        card.tags = vec!["牵制".into(), "底线".into()];
+        card.engine_correlations = vec!["pin_or_restraint".into()];
+        card.source_book = Some("赵鑫鑫中局棋理48讲".into());
+        card.source_page_start = Some(20);
+        card.source_page_end = Some(21);
+        store.review_theory_card(&card).unwrap();
+        let approved = store.theory_cards().unwrap()[0].clone();
+        assert_eq!(approved.version, 2);
+        assert!(approved.user_modified);
+
+        let match_record = store
+            .record_theory_card_match(
+                Uuid::new_v4(),
+                "report-1",
+                Uuid::new_v4(),
+                approved.id,
+                approved.version,
+                "pin_or_restraint",
+                &approved.tags,
+                "第 18 手疑似牵制漏算",
+            )
+            .unwrap();
+        store
+            .save_theory_card_feedback(
+                Some(match_record.id),
+                approved.id,
+                approved.version,
+                "incorrect",
+                "这个局面不是缺相怕炮",
+            )
+            .unwrap();
+        let penalized = store.theory_cards().unwrap()[0].clone();
+        assert_eq!(penalized.match_penalty, 2);
+        assert!(penalized.needs_recheck);
+    }
+
+    #[test]
+    fn weakness_stats_include_study_tags_and_contextual_training_tasks() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let game_id = Uuid::new_v4();
+        let node_id = Uuid::new_v4();
+        store
+            .save_study_session(
+                game_id,
+                Some(node_id),
+                "中局漏算反击。",
+                &["候选着".into(), "反击".into()],
+            )
+            .unwrap();
+        store
+            .upsert_training_task_with_context(
+                game_id,
+                "report-1",
+                node_id,
+                "复盘第 12 手",
+                "重算候选着",
+                Some("middle"),
+                &["候选着".into()],
+                None,
+            )
+            .unwrap();
+        let stats = store.weakness_stats(8).unwrap();
+        assert!(stats.iter().any(|stat| stat.tag == "候选着"));
+        let middle = stats
+            .iter()
+            .find(|stat| stat.phase == "middle" && stat.tag == "候选着")
+            .unwrap();
+        assert_eq!(middle.open_tasks, 1);
+        store
+            .complete_training_task(store.list_training_tasks().unwrap()[0].id, true)
+            .unwrap();
+        let stats = store.weakness_stats(8).unwrap();
+        let middle = stats
+            .iter()
+            .find(|stat| stat.phase == "middle" && stat.tag == "候选着")
+            .unwrap();
+        assert_eq!(middle.completed_tasks, 1);
     }
 
     #[test]

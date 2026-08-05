@@ -2,10 +2,13 @@ import { reportMovePhase } from "./analysisView";
 import type { AnalysisLine, Piece, ReportPhase, Side } from "./platform";
 
 export type TheorySource = {
-  label: "赵鑫鑫开局总论" | "赵鑫鑫课程" | "通用棋理";
+  label: "赵鑫鑫开局总论" | "赵鑫鑫课程" | "赵鑫鑫棋理三部曲" | "通用棋理";
   course?: string;
   episode?: string;
   timecode?: string;
+  book?: string;
+  pageStart?: number;
+  pageEnd?: number;
   review: "已确认";
 };
 
@@ -16,6 +19,10 @@ export type TheoryPrincipleCard = {
   summary: string;
   appliesWhen: string;
   risk: string;
+  tags?: string[];
+  engineCorrelations?: string[];
+  matchPenalty?: number;
+  needsRecheck?: boolean;
   source: TheorySource;
 };
 
@@ -84,12 +91,13 @@ function phaseCards(phase: ReportPhase) {
 
 function prioritizeStudyCards(cards: TheoryPrincipleCard[], tags: string[]) {
   const normalizedTags = tags.map((tag) => tag.trim().toLocaleLowerCase()).filter(Boolean);
-  if (normalizedTags.length === 0) return cards;
-  const matches = (card: TheoryPrincipleCard) => {
-    const haystack = `${card.title} ${card.summary} ${card.appliesWhen} ${card.risk}`.toLocaleLowerCase();
-    return normalizedTags.some((tag) => haystack.includes(tag));
+  const score = (card: TheoryPrincipleCard) => {
+    const haystack = `${card.title} ${card.summary} ${card.appliesWhen} ${card.risk} ${(card.tags ?? []).join(" ")}`.toLocaleLowerCase();
+    const tagHits = normalizedTags.filter((tag) => haystack.includes(tag)).length;
+    const penalty = card.matchPenalty ?? 0;
+    return tagHits * 10 - penalty * 3 - (card.needsRecheck ? 4 : 0);
   };
-  return cards.slice().sort((left, right) => Number(matches(right)) - Number(matches(left)));
+  return cards.slice().sort((left, right) => score(right) - score(left));
 }
 
 function phasePlan(phase: ReportPhase, side: Side) {
@@ -179,7 +187,7 @@ export function formatStrategyInsightText(insight: StrategyInsight) {
   return [
     `三阶段思路分析 · 当前${insight.phaseLabel}`,
     "", "局面事实", ...insight.facts.map((fact) => `- ${fact}`),
-    "", "棋理依据", ...insight.principles.map((card) => `- ${card.title}［${card.source.label}${card.source.course ? ` · ${card.source.course} · ${card.source.episode ?? ""}${card.source.timecode ? ` · ${card.source.timecode}` : ""}` : ` · ${card.source.review}`}］：${card.summary}\n  适用：${card.appliesWhen}\n  风险：${card.risk}`),
+    "", "棋理依据", ...insight.principles.map((card) => `- ${card.title}［${card.source.label}${card.source.course ? ` · ${card.source.course} · ${card.source.episode ?? ""}${card.source.timecode ? ` · ${card.source.timecode}` : ""}` : card.source.book ? ` · ${card.source.book}${card.source.pageStart ? ` · p.${card.source.pageStart}${card.source.pageEnd && card.source.pageEnd !== card.source.pageStart ? `-${card.source.pageEnd}` : ""}` : ""}` : ` · ${card.source.review}`}］：${card.summary}\n  适用：${card.appliesWhen}\n  风险：${card.risk}`),
     "", "计划结论", `- 目标：${insight.plan.goal}`, `- 防范：${insight.plan.guard}`, `- 验证：${insight.plan.verify}`,
     "", `引擎验证［${insight.engine.label}］`, insight.engine.text,
     insight.engine.depth != null ? `深度：${insight.engine.depth}` : "",
