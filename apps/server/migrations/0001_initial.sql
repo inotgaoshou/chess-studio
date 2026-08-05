@@ -89,3 +89,140 @@ CREATE TABLE IF NOT EXISTS product_events (
   INDEX idx_product_events_name_time (event_name, occurred_at),
   CONSTRAINT fk_product_events_user FOREIGN KEY (user_id) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='产品运营事件';
+
+CREATE TABLE IF NOT EXISTS master_players (
+  id CHAR(36) PRIMARY KEY COMMENT '大师 UUID',
+  name VARCHAR(80) NOT NULL COMMENT '棋手名，如赵鑫鑫',
+  normalized_name VARCHAR(80) NOT NULL COMMENT '规范化姓名，用于检索',
+  source_site VARCHAR(64) NOT NULL COMMENT '来源站点，如 gdchess.com',
+  source_player_id VARCHAR(64) NOT NULL COMMENT '来源棋手 ID，如广象网 0074',
+  profile_url VARCHAR(512) NOT NULL COMMENT '来源棋手页',
+  country_region VARCHAR(80) NULL COMMENT '地区/单位，可选',
+  title_label VARCHAR(40) NULL COMMENT '称号，如特级大师',
+  created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  UNIQUE KEY uk_master_source_player (source_site, source_player_id),
+  KEY idx_master_name (normalized_name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='公开大师棋手索引';
+
+CREATE TABLE IF NOT EXISTS master_games (
+  id CHAR(36) PRIMARY KEY COMMENT '棋谱 UUID',
+  master_player_id CHAR(36) NOT NULL COMMENT '关联大师',
+  source_site VARCHAR(64) NOT NULL COMMENT '主来源站点',
+  source_url VARCHAR(512) NOT NULL COMMENT '主来源 URL',
+  title VARCHAR(255) NOT NULL COMMENT '棋谱标题',
+  red_player VARCHAR(80) NOT NULL COMMENT '红方',
+  black_player VARCHAR(80) NOT NULL COMMENT '黑方',
+  event_name VARCHAR(255) NULL COMMENT '赛事',
+  round_name VARCHAR(80) NULL COMMENT '轮次',
+  game_date DATE NULL COMMENT '比赛日期',
+  result VARCHAR(16) NOT NULL DEFAULT '*' COMMENT '1-0/0-1/1/2-1/2/*',
+  opening VARCHAR(255) NULL COMMENT '开局名称',
+  move_count INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '半回合数',
+  moves_json JSON NOT NULL COMMENT 'ICCS 着法数组',
+  raw_notation_type VARCHAR(40) NOT NULL COMMENT 'MOVE_STR/DhtmlXQ/PGN等',
+  fingerprint CHAR(64) NOT NULL COMMENT '去重指纹',
+  license_note VARCHAR(512) NOT NULL COMMENT '来源许可说明',
+  crawl_status VARCHAR(40) NOT NULL DEFAULT 'parsed',
+  created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  UNIQUE KEY uk_master_game_fingerprint (fingerprint),
+  KEY idx_master_games_player_date (master_player_id, game_date),
+  KEY idx_master_games_players (red_player, black_player),
+  KEY idx_master_games_event (event_name),
+  CONSTRAINT fk_master_games_player FOREIGN KEY (master_player_id) REFERENCES master_players(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='公开大师棋谱主表';
+
+CREATE TABLE IF NOT EXISTS master_game_sources (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  game_id CHAR(36) NOT NULL,
+  source_site VARCHAR(64) NOT NULL,
+  source_url VARCHAR(512) NOT NULL,
+  source_title VARCHAR(255) NULL,
+  raw_notation_type VARCHAR(40) NULL,
+  first_seen_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  last_seen_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  UNIQUE KEY uk_master_game_source_url (source_url),
+  KEY idx_master_game_sources_game (game_id),
+  CONSTRAINT fk_master_game_sources_game FOREIGN KEY (game_id) REFERENCES master_games(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='同一棋谱的多个公开来源';
+
+CREATE TABLE IF NOT EXISTS master_game_moves (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  game_id CHAR(36) NOT NULL,
+  ply INT UNSIGNED NOT NULL COMMENT '半回合序号，从1开始',
+  move_no INT UNSIGNED NOT NULL COMMENT '回合数',
+  side_to_move VARCHAR(8) NOT NULL COMMENT 'red/black',
+  move_iccs CHAR(4) NOT NULL COMMENT 'ICCS着法，如c3c4',
+  before_fen VARCHAR(255) NOT NULL COMMENT '走子前FEN',
+  after_fen VARCHAR(255) NULL COMMENT '走子后FEN',
+  piece CHAR(1) NULL COMMENT '移动子力',
+  captured CHAR(1) NULL COMMENT '被吃子力',
+  phase VARCHAR(16) NOT NULL COMMENT 'opening/middle/endgame',
+  created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  UNIQUE KEY uk_master_game_ply (game_id, ply),
+  KEY idx_master_moves_fen (before_fen),
+  KEY idx_master_moves_move (move_iccs),
+  KEY idx_master_moves_phase (phase),
+  CONSTRAINT fk_master_moves_game FOREIGN KEY (game_id) REFERENCES master_games(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='公开大师棋谱逐步展开表';
+
+CREATE TABLE IF NOT EXISTS master_position_samples (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  master_player_id CHAR(36) NOT NULL,
+  game_id CHAR(36) NOT NULL,
+  ply INT UNSIGNED NOT NULL,
+  master_side VARCHAR(8) NOT NULL COMMENT 'red/black',
+  phase VARCHAR(16) NOT NULL,
+  before_fen VARCHAR(255) NOT NULL,
+  played_move CHAR(4) NOT NULL,
+  engine_analysis_id BIGINT UNSIGNED NULL COMMENT '后续可关联Pikafish分析',
+  created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  UNIQUE KEY uk_master_sample (master_player_id, game_id, ply),
+  KEY idx_master_samples_fen (before_fen),
+  KEY idx_master_samples_player_phase (master_player_id, phase),
+  KEY idx_master_samples_game_ply (game_id, ply),
+  CONSTRAINT fk_master_samples_player FOREIGN KEY (master_player_id) REFERENCES master_players(id),
+  CONSTRAINT fk_master_samples_game FOREIGN KEY (game_id) REFERENCES master_games(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='大师实际选择着法训练样本';
+
+CREATE TABLE IF NOT EXISTS master_position_analysis (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  sample_id BIGINT UNSIGNED NOT NULL,
+  engine_name VARCHAR(80) NOT NULL DEFAULT 'Pikafish',
+  engine_fingerprint VARCHAR(255) NOT NULL,
+  depth INT UNSIGNED NULL,
+  multipv INT UNSIGNED NOT NULL,
+  candidates_json JSON NOT NULL COMMENT 'MultiPV候选、评分、PV',
+  played_move_rank INT UNSIGNED NULL COMMENT '实战着在MultiPV中的排名',
+  played_move_in_topn TINYINT(1) NOT NULL DEFAULT 0,
+  best_move CHAR(4) NULL,
+  best_score_cp INT NULL,
+  analyzed_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  UNIQUE KEY uk_master_analysis_config (sample_id, engine_fingerprint, depth, multipv),
+  KEY idx_master_analysis_best_move (best_move),
+  CONSTRAINT fk_master_analysis_sample FOREIGN KEY (sample_id) REFERENCES master_position_samples(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='大师实战局面Pikafish分析';
+
+CREATE TABLE IF NOT EXISTS user_master_game_favorites (
+  user_id CHAR(36) NOT NULL,
+  master_game_id CHAR(36) NOT NULL,
+  note TEXT NULL,
+  created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (user_id, master_game_id),
+  CONSTRAINT fk_umgf_user FOREIGN KEY (user_id) REFERENCES users(id),
+  CONSTRAINT fk_umgf_game FOREIGN KEY (master_game_id) REFERENCES master_games(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户收藏的大师棋谱';
+
+CREATE TABLE IF NOT EXISTS user_master_training_refs (
+  id CHAR(36) PRIMARY KEY,
+  user_id CHAR(36) NOT NULL,
+  sample_id BIGINT UNSIGNED NOT NULL,
+  training_task_id CHAR(36) NULL,
+  note TEXT NULL,
+  created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  KEY idx_umtr_user (user_id, created_at),
+  KEY idx_umtr_sample (sample_id),
+  CONSTRAINT fk_umtr_user FOREIGN KEY (user_id) REFERENCES users(id),
+  CONSTRAINT fk_umtr_sample FOREIGN KEY (sample_id) REFERENCES master_position_samples(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户训练任务引用的大师局面';

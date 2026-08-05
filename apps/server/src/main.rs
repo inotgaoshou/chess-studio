@@ -978,6 +978,54 @@ mod tests {
         assert!(allowed_origin("https://chess.example.com/path").is_err());
     }
 
+    #[test]
+    fn master_public_library_schema_is_created_on_startup() {
+        let schema = include_str!("../migrations/0001_initial.sql");
+        for table in [
+            "master_players",
+            "master_games",
+            "master_game_sources",
+            "master_game_moves",
+            "master_position_samples",
+            "master_position_analysis",
+            "user_master_game_favorites",
+            "user_master_training_refs",
+        ] {
+            assert!(
+                schema.contains(&format!("CREATE TABLE IF NOT EXISTS {table}")),
+                "missing table {table}"
+            );
+        }
+        for key in [
+            "UNIQUE KEY uk_master_source_player (source_site, source_player_id)",
+            "UNIQUE KEY uk_master_game_fingerprint (fingerprint)",
+            "UNIQUE KEY uk_master_game_source_url (source_url)",
+            "UNIQUE KEY uk_master_game_ply (game_id, ply)",
+            "UNIQUE KEY uk_master_sample (master_player_id, game_id, ply)",
+            "UNIQUE KEY uk_master_analysis_config (sample_id, engine_fingerprint, depth, multipv)",
+            "PRIMARY KEY (user_id, master_game_id)",
+        ] {
+            assert!(schema.contains(key), "missing schema key {key}");
+        }
+        for foreign_key in [
+            "CONSTRAINT fk_master_games_player",
+            "CONSTRAINT fk_master_game_sources_game",
+            "CONSTRAINT fk_master_moves_game",
+            "CONSTRAINT fk_master_samples_player",
+            "CONSTRAINT fk_master_samples_game",
+            "CONSTRAINT fk_master_analysis_sample",
+            "CONSTRAINT fk_umgf_user",
+            "CONSTRAINT fk_umgf_game",
+            "CONSTRAINT fk_umtr_user",
+            "CONSTRAINT fk_umtr_sample",
+        ] {
+            assert!(
+                schema.contains(foreign_key),
+                "missing foreign key {foreign_key}"
+            );
+        }
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn analysis_collects_multi_pv_from_a_uci_engine() {
