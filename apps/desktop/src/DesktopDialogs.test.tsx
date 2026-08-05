@@ -8,8 +8,8 @@ const preferences: DesktopPreferencesDto = {
   enginePath: "/opt/pikafish",
   threads: 2,
   hashMb: 256,
-  multipv: 3,
-  candidateLineMoves: 20,
+  multipv: 5,
+  candidateLineMoves: 16,
   searchMode: "depth",
   searchValue: 30,
   moveTimeMs: 2000,
@@ -144,23 +144,23 @@ describe("DesktopDialogs", () => {
 
   it("submits engine settings through the persistent settings callback", async () => {
     const { props, user } = renderDialog("engine");
-    await user.clear(screen.getByLabelText("MultiPV"));
-    await user.type(screen.getByLabelText("MultiPV"), "4");
-    await user.clear(screen.getByLabelText("后续走法（10回合=20半回合）"));
-    await user.type(screen.getByLabelText("后续走法（10回合=20半回合）"), "12");
+    await user.clear(screen.getByLabelText("候选走法（3-5种）"));
+    await user.type(screen.getByLabelText("候选走法（3-5种）"), "4");
+    await user.clear(screen.getByLabelText("每种后续（5-8回合）"));
+    await user.type(screen.getByLabelText("每种后续（5-8回合）"), "6");
     await user.click(screen.getByRole("button", { name: "检测并保存" }));
     expect(props.onSaveEngine).toHaveBeenCalledWith(expect.objectContaining({ enginePath: "/opt/pikafish", multipv: 4, candidateLineMoves: 12 }));
   });
 
   it("normalizes engine setting ranges before saving", async () => {
     const { props, user } = renderDialog("engine");
-    await user.clear(screen.getByLabelText("MultiPV"));
-    await user.type(screen.getByLabelText("MultiPV"), "16");
+    await user.clear(screen.getByLabelText("候选走法（3-5种）"));
+    await user.type(screen.getByLabelText("候选走法（3-5种）"), "16");
 
     await user.click(screen.getByRole("button", { name: "检测并保存" }));
 
-    expect(props.onSaveEngine).toHaveBeenCalledWith(expect.objectContaining({ multipv: 10 }));
-    expect((screen.getByLabelText("MultiPV") as HTMLInputElement).value).toBe("10");
+    expect(props.onSaveEngine).toHaveBeenCalledWith(expect.objectContaining({ multipv: 5 }));
+    expect((screen.getByLabelText("候选走法（3-5种）") as HTMLInputElement).value).toBe("5");
   });
 
   it("migrates legacy engine defaults when the settings dialog opens", () => {
@@ -177,7 +177,7 @@ describe("DesktopDialogs", () => {
     expect((screen.getByLabelText("搜索模式") as HTMLSelectElement).value).toBe("depth");
     expect((screen.getByLabelText("搜索限制") as HTMLInputElement).value).toBe("30");
     expect((screen.getByLabelText("整局复盘深度") as HTMLInputElement).value).toBe("30");
-    expect((screen.getByLabelText("后续走法（10回合=20半回合）") as HTMLInputElement).value).toBe("20");
+    expect((screen.getByLabelText("每种后续（5-8回合）") as HTMLInputElement).value).toBe("8");
   });
 
   it("saves the selected rule mode from the engine dialog", async () => {

@@ -61,7 +61,7 @@ import { WorkspaceLayoutSwitch } from "./WorkspaceLayoutSwitch";
 import { CompactEngineAnalysisList, CompactReferencePanels, type CompactBookRow, type CompactEngineAnalysisRow, type CompactEvaluationRow } from "./CompactWorkspace";
 import { CoachProfileView } from "./CoachProfileView";
 import { SkinShopDialog } from "./SkinShopDialog";
-import { CANDIDATE_PREVIEW_HALF_MOVES, DEFAULT_CANDIDATE_LINE_MOVES } from "./candidatePreview";
+import { CANDIDATE_PREVIEW_HALF_MOVES, DEFAULT_CANDIDATE_LINE_MOVES, DEFAULT_ENGINE_CANDIDATES, MAX_ENGINE_CANDIDATES, MIN_CANDIDATE_LINE_MOVES, MIN_ENGINE_CANDIDATES, halfMovesToRoundText } from "./candidatePreview";
 import { AutosaveOperationQueue, autosaveLabel, type AutosaveState } from "./autosave";
 import { ManualTreeView } from "./ManualTreeView";
 import { ManualLineDialog, ManualTrackView, type ManualPreviewBranch } from "./ManualTrackView";
@@ -83,7 +83,7 @@ const BOARD_NAVIGATED_EVENT = "board-navigated";
 const LINK_SESSION_UPDATED_EVENT = "link-session-updated";
 const ENGINE_ANALYSIS_SNAPSHOT_KEY = "xiangqi:engine-analysis-snapshot";
 const ENGINE_ANALYSIS_CHANNEL = "xiangqi:engine-analysis";
-const COMPACT_ENGINE_LINE_MIN_MOVES = 2;
+const COMPACT_ENGINE_LINE_MIN_MOVES = MIN_CANDIDATE_LINE_MOVES;
 const COMPACT_ENGINE_LINE_MAX_MOVES = CANDIDATE_PREVIEW_HALF_MOVES;
 const DEFAULT_BRANCH_ARROW_COLOR = "#2f80ed";
 const startingFen = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1";
@@ -173,6 +173,20 @@ export function effectiveBoardReversedForLink(status: LinkSessionStatus, boardFe
   const syncedToCurrentBoard = (status.state === "tracking" || status.state === "paused") && status.latestFen === boardFen;
   if (!syncedToCurrentBoard) return fallbackReversed;
   return status.boardOrientation === "blackAtBottom";
+}
+
+export function engineBranchActionPresentation(active: boolean, disabled: boolean, stale: boolean) {
+  return {
+    label: active ? "取消分支" : "引擎分支",
+    ariaLabel: active ? "取消引擎分支预览" : "显示引擎分支",
+    title: active
+      ? "取消当前 AI 虚线分支预览"
+      : stale
+        ? "当前引擎分支已过期，请重新分析后再显示"
+        : disabled
+          ? "当前没有可显示的引擎分支，请先完成分析"
+          : "在棋谱树当前节点下显示 AI 虚线分支",
+  };
 }
 
 type LinkRegionRect = { x: number; y: number; width: number; height: number };
@@ -345,7 +359,7 @@ const defaultDesktopPreferences: DesktopPreferencesDto = {
   enginePath: "",
   threads: 2,
   hashMb: 256,
-  multipv: 3,
+  multipv: DEFAULT_ENGINE_CANDIDATES,
   candidateLineMoves: DEFAULT_CANDIDATE_LINE_MOVES,
   searchMode: "depth",
   searchValue: 30,
@@ -389,13 +403,20 @@ function migrateDesktopPreferences(preferences: DesktopPreferencesDto): DesktopP
     : {};
   const enginePath = preferences.enginePath === BUILTIN_FAIRY_ENGINE_PATH ? BUILTIN_ENGINE_PATH : preferences.enginePath;
   const linkConfidenceThreshold = preferences.linkConfidenceThreshold === 70 ? 55 : preferences.linkConfidenceThreshold;
+  const multipv = preferences.multipv < MIN_ENGINE_CANDIDATES || preferences.multipv > MAX_ENGINE_CANDIDATES
+    ? DEFAULT_ENGINE_CANDIDATES
+    : preferences.multipv;
+  const candidateLineMoves = preferences.candidateLineMoves === 6 || preferences.candidateLineMoves < MIN_CANDIDATE_LINE_MOVES || preferences.candidateLineMoves > DEFAULT_CANDIDATE_LINE_MOVES
+    ? DEFAULT_CANDIDATE_LINE_MOVES
+    : preferences.candidateLineMoves;
   return {
     ...preferences,
     ...migratedSearchDefaults,
     enginePath,
+    multipv,
     parallelEnginePaths: (preferences.parallelEnginePaths ?? []).filter((path) => path !== BUILTIN_FAIRY_ENGINE_PATH),
     linkConfidenceThreshold,
-    candidateLineMoves: preferences.candidateLineMoves === 6 ? DEFAULT_CANDIDATE_LINE_MOVES : preferences.candidateLineMoves,
+    candidateLineMoves,
     reportDepth: preferences.reportDepth === 26 ? 30 : preferences.reportDepth,
     ruleMode: preferences.ruleMode === "asianAxf" ? "asianAxf" : defaultRuleMode,
   };
@@ -1296,24 +1317,17 @@ export default function App() {
   const compactEngineRows: CompactEngineAnalysisRow[] = useMemo(() => {
     const primaryEngineId = primaryAnalysisEngineRef.current;
     const lineItems = [
-      ...(analysisIsStale ? [] : analysisHistory.map((line) => ({ line, sourceId: primaryEngineId, sourceText: "主引擎" }))),
+      ...(analysisIsStale ? [] : orderedAnalysis.map((line) => ({ line, sourceId: primaryEngineId, sourceText: "主引擎" }))),
       ...Object.entries(currentEngineAnalyses).flatMap(([sourceId, group]) => group.lines.map((line) => ({
         line,
         sourceId,
         sourceText: sourceId === primaryEngineId ? "主引擎" : group.name,
       }))),
-      ...(Object.keys(currentEngineAnalyses).length === 0 ? orderedAnalysis.map((line) => ({ line, sourceId: primaryEngineId, sourceText: "主引擎" })) : []),
+      ...(analysisIsStale ? [] : analysisHistory.map((line) => ({ line, sourceId: primaryEngineId, sourceText: "主引擎" }))),
     ];
     const seen = new Set<string>();
     const displayItems = lineItems.filter(({ line, sourceId }) => {
-      const key = [
-        sourceId,
-        line.multipv,
-        line.depth ?? "",
-        line.scoreCp ?? "",
-        line.mate ?? "",
-        line.pv.join(" "),
-      ].join("|");
+      const key = [sourceId, line.multipv].join("|");
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
@@ -1322,7 +1336,11 @@ export default function App() {
       COMPACT_ENGINE_LINE_MIN_MOVES,
       Math.min(COMPACT_ENGINE_LINE_MAX_MOVES, Math.trunc(desktopPreferences.candidateLineMoves) || DEFAULT_CANDIDATE_LINE_MOVES),
     );
-    return displayItems.slice(0, ENGINE_ANALYSIS_HISTORY_LIMIT).map(({ line, sourceId, sourceText }, index) => {
+    const visibleCandidateLimit = Math.max(MIN_ENGINE_CANDIDATES, Math.min(MAX_ENGINE_CANDIDATES, Math.trunc(desktopPreferences.multipv) || DEFAULT_ENGINE_CANDIDATES));
+    return displayItems
+      .filter(({ line }) => line.multipv >= 1 && line.multipv <= visibleCandidateLimit)
+      .slice(0, visibleCandidateLimit)
+      .map(({ line, sourceId, sourceText }, index) => {
       const lineMoves = (line.notation?.length ? line.notation : line.pv).slice(0, lineMoveLimit);
       return {
         id: `engine-${sourceId}-${line.multipv}-${line.depth ?? "d"}-${line.timeMs ?? index}-${line.pv.join("-")}`,
@@ -1334,13 +1352,13 @@ export default function App() {
         timeText: line.timeMs != null ? `${(line.timeMs / 1000).toFixed(1)}s` : "--",
         npsText: formatNps(line.nps),
         hfText: formatHashfull(line.hashfull),
-        lineLengthText: `${lineMoves.length}/${lineMoveLimit}半回合`,
+        lineLengthText: `${halfMovesToRoundText(lineMoves.length)}/${halfMovesToRoundText(lineMoveLimit)}回合`,
         lineText: lineMoves.length ? lineMoves.join(" ") : "暂无推荐着法",
         disabled: analysisIsStale,
         stale: analysisIsStale,
       };
-    });
-  }, [analysisHistory, analysisIsStale, candidateSideToMove, currentEngineAnalyses, desktopPreferences.candidateLineMoves, orderedAnalysis]);
+      });
+  }, [analysisHistory, analysisIsStale, candidateSideToMove, currentEngineAnalyses, desktopPreferences.candidateLineMoves, desktopPreferences.multipv, orderedAnalysis]);
   useEffect(() => {
     if (chessPlatform.kind !== "desktop" || linkSessionStatus.mode !== "autoPlay" || linkSessionStatus.state !== "tracking") return;
     const expectedSide = linkSessionStatus.autoSide === "red" ? "红方" : "黑方";
@@ -2040,6 +2058,11 @@ export default function App() {
     setNotice("已退出候选推演预览，棋盘回到真实当前局面");
   }
 
+  function cancelEnginePreviewBranches() {
+    setCandidatePreviewBranches([]);
+    setNotice("已取消引擎虚线分支预览");
+  }
+
   function clearCandidatePreviews() {
     setCandidatePreview(undefined);
     setCandidatePreviewBranches([]);
@@ -2513,7 +2536,7 @@ export default function App() {
     const latestPreferences = desktopPreferencesRef.current;
     const effectiveThreads = Math.min(64, Math.max(1, latestPreferences.threads || threads));
     const effectiveHashMb = Math.min(4096, Math.max(16, latestPreferences.hashMb || hashMb));
-    const effectiveMultipv = Math.min(10, Math.max(1, latestPreferences.multipv || multipvRef.current || multipv));
+    const effectiveMultipv = Math.min(MAX_ENGINE_CANDIDATES, Math.max(MIN_ENGINE_CANDIDATES, latestPreferences.multipv || multipvRef.current || multipv));
     const activeProfile = engineProfiles.find((profile) => profile.id === latestPreferences.activeEngineId || profile.executablePath === enginePath);
     const primaryTarget = { id: activeProfile?.id ?? "primary", name: activeProfile?.name ?? engineDisplayName(enginePath), path: enginePath };
     const parallelTargets = latestPreferences.analysisEngineMode === "parallel"
@@ -3641,20 +3664,23 @@ export default function App() {
   }
 
   function engineBranchPreviewAction() {
-    const disabled = analysisIsStale || !orderedAnalysis.some((line) => line.pv.length > 0);
-    const title = analysisIsStale
-      ? "当前引擎分支已过期，请重新分析后再显示"
-      : disabled
-        ? "当前没有可显示的引擎分支，请先完成分析"
-        : "在棋谱树当前节点下显示 AI 虚线分支";
+    const active = candidatePreviewBranches.length > 0;
+    const disabled = !active && (analysisIsStale || !orderedAnalysis.some((line) => line.pv.length > 0));
+    const presentation = engineBranchActionPresentation(active, disabled, analysisIsStale);
     return <button
       type="button"
-      className={`manual-engine-branch-action ${candidatePreviewBranches.length ? "active" : ""}`}
-      title={title}
-      aria-label="显示引擎分支"
+      className={`manual-engine-branch-action ${active ? "active" : ""}`}
+      title={presentation.title}
+      aria-label={presentation.ariaLabel}
       disabled={disabled}
-      onClick={() => void previewEngineBranches(analysisFen ?? board.fen)}
-    ><GitFork size={13}/><span>引擎分支</span></button>;
+      onClick={() => {
+        if (active) {
+          cancelEnginePreviewBranches();
+          return;
+        }
+        void previewEngineBranches(analysisFen ?? board.fen);
+      }}
+    >{active ? <X size={13}/> : <GitFork size={13}/>}<span>{presentation.label}</span></button>;
   }
 
   function branchMapControls() {

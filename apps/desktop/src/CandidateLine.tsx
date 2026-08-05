@@ -111,7 +111,7 @@ export function CandidateLine({ color, fen, line, coach, scoreText, sideToMove, 
       </div>
     </div>
     {coach && <details className="pv-coach-details">
-      <summary><ChevronDown size={13}/>私教讲解 / 10回合表</summary>
+      <summary><ChevronDown size={13}/>私教讲解 / 8回合表</summary>
       <section className="pv-coach" aria-label={`候选线路 ${line.multipv} 私教讲解`}>
         <div className="pv-coach-grid">
           <div><small>思路</small><span>{coach.intent}</span></div>
@@ -120,7 +120,7 @@ export function CandidateLine({ color, fen, line, coach, scoreText, sideToMove, 
         </div>
         {coachRows.length === 0
           ? <p>当前深度暂未返回可推演线路。</p>
-          : <div className="pv-table pv-coach-table" role="table" aria-label={`候选线路 ${line.multipv} 10回合推演`}>
+          : <div className="pv-table pv-coach-table" role="table" aria-label={`候选线路 ${line.multipv} 8回合推演`}>
             <div className="pv-table-head" role="row"><span>回合</span><span>红方</span><span>黑方</span></div>
             {coachRows.map((row, rowIndex) => <div className="pv-move-row" role="row" key={`${line.multipv}-coach-${row.number}-${rowIndex}`}>
               <span>{row.number}</span>

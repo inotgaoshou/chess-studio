@@ -75,7 +75,7 @@ export function CompactEngineAnalysisList({ busy, rows, onPlayMove }: EngineList
   return <div className="compact-engine-analysis-list" role="table" aria-label="简洁布局引擎分析">
     <div className="compact-engine-analysis-head" role="row">
       <span role="columnheader">记录</span>
-      <span role="columnheader">最近10条记录 · 深/分/时/NPS/HF · 后续PV(半回合)</span>
+      <span role="columnheader">当前3-5条候选 · 深/分/时/NPS/HF · 后续PV(回合)</span>
     </div>
     <div className="compact-engine-analysis-body" role="rowgroup">
       {rows.map((row) => <button
@@ -103,7 +103,7 @@ export function CompactEngineAnalysisList({ busy, rows, onPlayMove }: EngineList
       </button>)}
       {rows.length === 0 && <div className="compact-engine-empty">
         <Activity size={22}/><strong>{busy ? "AI 正在计算…" : "等待引擎分析"}</strong>
-        <span>{busy ? "收到搜索记录后在这里显示最近 10 条深度、分数、时间、NPS 和推荐着法" : "点击上方“分析”后显示截图式引擎列表"}</span>
+        <span>{busy ? "收到搜索结果后在这里显示 3-5 条候选走法、评分和后续 PV" : "点击上方“分析”后显示截图式引擎列表"}</span>
       </div>}
     </div>
   </div>;

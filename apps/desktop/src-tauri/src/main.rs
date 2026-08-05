@@ -5464,7 +5464,13 @@ fn normalize_desktop_preferences(preferences: &mut DesktopPreferences) {
         preferences.search_value = 30;
     }
     if preferences.candidate_line_moves == 6 {
-        preferences.candidate_line_moves = 20;
+        preferences.candidate_line_moves = 16;
+    }
+    if preferences.candidate_line_moves < 10 || preferences.candidate_line_moves > 16 {
+        preferences.candidate_line_moves = 16;
+    }
+    if !(3..=5).contains(&preferences.multipv) {
+        preferences.multipv = 5;
     }
     if preferences.report_depth == 26 {
         preferences.report_depth = 30;
@@ -5561,11 +5567,11 @@ fn validate_preferences(preferences: &DesktopPreferences) -> Result<(), String> 
     if !(16..=4096).contains(&preferences.hash_mb) {
         return Err("Hash 必须在 16 到 4096 MB 之间".into());
     }
-    if !(1..=10).contains(&preferences.multipv) {
-        return Err("MultiPV 必须在 1 到 10 之间".into());
+    if !(3..=5).contains(&preferences.multipv) {
+        return Err("候选走法必须在 3 到 5 种之间".into());
     }
-    if !(2..=20).contains(&preferences.candidate_line_moves) {
-        return Err("后续走法必须在 2 到 20 个半回合之间".into());
+    if !(10..=16).contains(&preferences.candidate_line_moves) {
+        return Err("每种后续必须在 5 到 8 个回合之间".into());
     }
     if !(100..=30_000).contains(&preferences.move_time_ms) {
         return Err("每步时间必须在 100 到 30000 毫秒之间".into());
@@ -5980,7 +5986,9 @@ fn generate_training_tasks(state: State<'_, DesktopState>) -> Result<Vec<Trainin
             .as_deref()
             .unwrap_or("重新寻找更稳健的着法");
         let tags = training_tags_for_position(position, loss);
-        let source_card = best_matching_theory_card(&approved_cards, &position.phase, &tags);
+        let engine_signal = engine_signal_for_position(position, &tags, loss);
+        let source_card =
+            best_matching_theory_card(&approved_cards, &position.phase, &tags, engine_signal);
         model
             .store
             .upsert_training_task_with_context(
@@ -6005,7 +6013,7 @@ fn generate_training_tasks(state: State<'_, DesktopState>) -> Result<Vec<Trainin
                 moved.node_id,
                 card.id,
                 card.version,
-                tags.first().map(String::as_str).unwrap_or("复盘"),
+                engine_signal,
                 &tags,
                 &format!("复盘第 {move_number} 手自动命中：{}", moved.notation),
             );
@@ -6022,15 +6030,17 @@ fn best_matching_theory_card<'a>(
     cards: &'a [TheoryCard],
     phase: &str,
     tags: &[String],
+    engine_signal: &str,
 ) -> Option<&'a TheoryCard> {
     let normalized_tags = tags
         .iter()
         .map(|tag| tag.trim().to_lowercase())
         .filter(|tag| !tag.is_empty())
         .collect::<Vec<_>>();
+    let normalized_signal = engine_signal.trim().to_lowercase();
     cards
         .iter()
-        .filter(|card| card.phase == phase && !card.needs_recheck)
+        .filter(|card| (card.phase == phase || card.phase == "all") && !card.needs_recheck)
         .filter_map(|card| {
             let haystack = format!(
                 "{} {} {} {} {}",
@@ -6045,11 +6055,45 @@ fn best_matching_theory_card<'a>(
                 .iter()
                 .filter(|tag| haystack.contains(tag.as_str()))
                 .count() as i64;
-            let score = hits * 10 - card.match_penalty * 3;
+            let correlation_hits = card
+                .engine_correlations
+                .iter()
+                .filter(|correlation| correlation.trim().to_lowercase() == normalized_signal)
+                .count() as i64;
+            let score = hits * 10 + correlation_hits * 14 - card.match_penalty * 3;
             (score > 0).then_some((score, card))
         })
         .max_by_key(|(score, _)| *score)
         .map(|(_, card)| card)
+}
+
+fn engine_signal_for_position(
+    position: &GameReportPositionDto,
+    tags: &[String],
+    loss: i32,
+) -> &'static str {
+    if position.mate.is_some() {
+        return "missed_tactic";
+    }
+    if tags.iter().any(|tag| tag.contains("兑子")) {
+        return "exchange_miscalculation";
+    }
+    if tags.iter().any(|tag| tag.contains("理论胜和")) {
+        return "endgame_theoretical_win_draw";
+    }
+    if tags.iter().any(|tag| tag.contains("脱离体系")) {
+        return "opening_deviation";
+    }
+    if tags.iter().any(|tag| tag.contains("子力协调")) {
+        return "development_lag";
+    }
+    if loss >= 300 || tags.iter().any(|tag| tag.contains("战术漏算")) {
+        return "missed_tactic";
+    }
+    if tags.iter().any(|tag| tag.contains("候选着")) {
+        return "missed_candidate";
+    }
+    "plan_without_counterplay_check"
 }
 
 fn phase_label(phase: &str) -> &'static str {
@@ -8488,10 +8532,10 @@ mod tests {
             "不支持的工作台布局"
         );
         let mut preferences = DesktopPreferences::default();
-        preferences.candidate_line_moves = 21;
+        preferences.candidate_line_moves = 18;
         assert_eq!(
             validate_preferences(&preferences).unwrap_err(),
-            "后续走法必须在 2 到 20 个半回合之间"
+            "每种后续必须在 5 到 8 个回合之间"
         );
         let mut preferences = DesktopPreferences::default();
         preferences.rule_mode = "tiantian".into();

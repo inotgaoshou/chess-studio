@@ -106,7 +106,7 @@ describe("CompactEngineAnalysisList", () => {
         timeText: "13.8s",
         npsText: "4504K",
         hfText: "21%",
-        lineLengthText: "3/20半回合",
+        lineLengthText: "1.5/8回合",
         lineText: "马八进七 炮9平7 车三平四",
       }]}
       onPlayMove={onPlayMove}
@@ -116,7 +116,7 @@ describe("CompactEngineAnalysisList", () => {
     expect(screen.getByText("分:+31")).toBeTruthy();
     expect(screen.getByText("NPS:4504K")).toBeTruthy();
     expect(screen.getByText("HF:21%")).toBeTruthy();
-    expect(screen.getByText("后续:3/20半回合")).toBeTruthy();
+    expect(screen.getByText("后续:1.5/8回合")).toBeTruthy();
     expect(screen.queryByText(/私教讲解/)).toBeNull();
     expect(screen.queryByText(/完整 PV/)).toBeNull();
 

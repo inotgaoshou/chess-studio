@@ -65,26 +65,26 @@ describe("CandidateLine", () => {
       fen="position-fen"
       line={{ multipv: 1, depth: 8, pv: ["h2e2"], notation: ["炮二平五"] }}
       sideToMove="红方"
-      visibleMoveCount={6}
+      visibleMoveCount={10}
       onPlay={vi.fn()}
       onPreview={vi.fn()}
     />);
 
-    expect(container.querySelectorAll(".pv-continuation-moves > *")).toHaveLength(6);
-    expect(container.querySelectorAll(".placeholder-slot")).toHaveLength(5);
+    expect(container.querySelectorAll(".pv-continuation-moves > *")).toHaveLength(10);
+    expect(container.querySelectorAll(".placeholder-slot")).toHaveLength(9);
 
     rerender(<CandidateLine
       color="#53b848"
       fen="position-fen"
       line={{ multipv: 1, depth: 12, pv: ["h2e2", "h9g7", "h0g2"], notation: ["炮二平五", "马8进7", "马二进三"] }}
       sideToMove="红方"
-      visibleMoveCount={6}
+      visibleMoveCount={10}
       onPlay={vi.fn()}
       onPreview={vi.fn()}
     />);
 
-    expect(container.querySelectorAll(".pv-continuation-moves > *")).toHaveLength(6);
-    expect(container.querySelectorAll(".placeholder-slot")).toHaveLength(3);
+    expect(container.querySelectorAll(".pv-continuation-moves > *")).toHaveLength(10);
+    expect(container.querySelectorAll(".placeholder-slot")).toHaveLength(7);
   });
 
   it("executes the first ICCS move against the analyzed position", () => {
@@ -179,10 +179,10 @@ describe("CandidateLine", () => {
     />);
 
     expect(screen.getByLabelText("候选 1 后续走法").textContent).toContain("车9平8");
-    expect(screen.getByText("私教讲解 / 10回合表")).toBeTruthy();
-    expect(screen.getByText("当前深度仅返回 6/20 个半回合（最多10回合）")).toBeTruthy();
+    expect(screen.getByText("私教讲解 / 8回合表")).toBeTruthy();
+    expect(screen.getByText("当前深度仅返回 3/8 回合")).toBeTruthy();
     expect(screen.getByLabelText("候选线路 1 私教讲解").textContent).toContain("主候选");
-    expect(view.container.querySelector('[role="table"]')?.getAttribute("aria-label")).toBe("候选线路 1 10回合推演");
+    expect(view.container.querySelector('[role="table"]')?.getAttribute("aria-label")).toBe("候选线路 1 8回合推演");
   });
 
   it("shows the current preview move and the following textual moves beside the board", () => {
@@ -235,7 +235,7 @@ describe("CandidateLine", () => {
       onPreview={vi.fn()}
     />);
 
-    const firstRow = screen.getByRole("table", { name: "候选线路 2 10回合推演" }).querySelectorAll(".pv-move-row")[0];
+    const firstRow = screen.getByRole("table", { name: "候选线路 2 8回合推演" }).querySelectorAll(".pv-move-row")[0];
     expect(firstRow.textContent).toBe("12马8进7");
   });
 
@@ -258,15 +258,15 @@ describe("CandidateLine", () => {
         usesIccs: false,
       }}
       sideToMove="红方"
-      visibleMoveCount={4}
+      visibleMoveCount={10}
       onPlay={() => undefined}
       onPreview={() => undefined}
     />);
 
     const quick = screen.getByLabelText("候选 1 后续走法");
-    expect(quick.querySelectorAll(".pv-continuation-moves > span")).toHaveLength(4);
-    expect(quick.textContent).toContain("先看 4 步");
-    expect(quick.textContent).toContain("着法4");
-    expect(quick.textContent).not.toContain("着法5");
+    expect(quick.querySelectorAll(".pv-continuation-moves > span")).toHaveLength(10);
+    expect(quick.textContent).toContain("先看 10 步");
+    expect(quick.textContent).toContain("着法10");
+    expect(quick.textContent).not.toContain("着法11");
   });
 });

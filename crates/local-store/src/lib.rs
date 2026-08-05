@@ -185,7 +185,7 @@ fn default_report_depth() -> u32 {
 }
 
 fn default_candidate_line_moves() -> u32 {
-    20
+    16
 }
 
 fn default_cloud_book_url() -> String {
@@ -202,7 +202,7 @@ impl Default for DesktopPreferences {
             engine_path: String::new(),
             threads: 2,
             hash_mb: 256,
-            multipv: 3,
+            multipv: 5,
             candidate_line_moves: default_candidate_line_moves(),
             search_mode: "depth".into(),
             search_value: 30,
@@ -311,6 +311,7 @@ pub struct TheoryLesson {
 #[serde(rename_all = "camelCase")]
 pub struct TheoryCard {
     pub id: i64,
+    pub external_id: Option<String>,
     pub lesson_id: i64,
     pub phase: String,
     pub title: String,
@@ -383,6 +384,26 @@ pub struct WeaknessStat {
     pub review_cards: Vec<TheoryCard>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportedTheoryCard {
+    pub external_id: String,
+    pub phase: String,
+    pub course_name: String,
+    pub lesson_title: String,
+    pub source_path: String,
+    pub fingerprint: String,
+    pub title: String,
+    pub summary: String,
+    pub applies_when: String,
+    pub risk: String,
+    pub review_status: String,
+    pub source_book: Option<String>,
+    pub source_page_start: Option<i64>,
+    pub source_page_end: Option<i64>,
+    pub tags: Vec<String>,
+    pub engine_correlations: Vec<String>,
+}
+
 impl LocalStore {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
         let connection = Connection::open(path)?;
@@ -438,42 +459,137 @@ impl LocalStore {
 
     pub fn theory_cards(&self) -> Result<Vec<TheoryCard>, StoreError> {
         let mut statement = self.connection.prepare(
-            "SELECT c.id, c.lesson_id, l.phase, c.title, c.summary, c.applies_when, c.risk, c.timecode, c.review_status, l.course_name, l.title,
+            "SELECT c.id, c.external_id, c.lesson_id, l.phase, c.title, c.summary, c.applies_when, c.risk, c.timecode, c.review_status, l.course_name, l.title,
                     c.source_book, c.source_page_start, c.source_page_end, c.tags_json, c.engine_correlations_json,
                     c.origin, c.version, c.user_modified, c.match_penalty, c.needs_recheck
              FROM theory_cards c JOIN theory_lessons l ON l.id=c.lesson_id ORDER BY c.review_status, l.phase, l.title",
         )?;
         statement
             .query_map([], |row| {
-                let tags_json: String = row.get(14)?;
-                let engine_correlations_json: String = row.get(15)?;
+                let tags_json: String = row.get(15)?;
+                let engine_correlations_json: String = row.get(16)?;
                 Ok(TheoryCard {
                     id: row.get(0)?,
-                    lesson_id: row.get(1)?,
-                    phase: row.get(2)?,
-                    title: row.get(3)?,
-                    summary: row.get(4)?,
-                    applies_when: row.get(5)?,
-                    risk: row.get(6)?,
-                    timecode: row.get(7)?,
-                    review_status: row.get(8)?,
-                    course_name: row.get(9)?,
-                    lesson_title: row.get(10)?,
-                    source_book: row.get(11)?,
-                    source_page_start: row.get(12)?,
-                    source_page_end: row.get(13)?,
+                    external_id: row.get(1)?,
+                    lesson_id: row.get(2)?,
+                    phase: row.get(3)?,
+                    title: row.get(4)?,
+                    summary: row.get(5)?,
+                    applies_when: row.get(6)?,
+                    risk: row.get(7)?,
+                    timecode: row.get(8)?,
+                    review_status: row.get(9)?,
+                    course_name: row.get(10)?,
+                    lesson_title: row.get(11)?,
+                    source_book: row.get(12)?,
+                    source_page_start: row.get(13)?,
+                    source_page_end: row.get(14)?,
                     tags: serde_json::from_str(&tags_json).unwrap_or_default(),
                     engine_correlations: serde_json::from_str(&engine_correlations_json)
                         .unwrap_or_default(),
-                    origin: row.get(16)?,
-                    version: row.get(17)?,
-                    user_modified: row.get::<_, i64>(18)? != 0,
-                    match_penalty: row.get(19)?,
-                    needs_recheck: row.get::<_, i64>(20)? != 0,
+                    origin: row.get(17)?,
+                    version: row.get(18)?,
+                    user_modified: row.get::<_, i64>(19)? != 0,
+                    match_penalty: row.get(20)?,
+                    needs_recheck: row.get::<_, i64>(21)? != 0,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()
             .map_err(Into::into)
+    }
+
+    pub fn upsert_imported_theory_card(
+        &mut self,
+        card: &ImportedTheoryCard,
+    ) -> Result<TheoryCard, StoreError> {
+        self.upsert_theory_lesson(
+            &card.phase,
+            &card.course_name,
+            &card.lesson_title,
+            &card.source_path,
+            &card.fingerprint,
+        )?;
+        let lesson_id: i64 = self.connection.query_row(
+            "SELECT id FROM theory_lessons WHERE source_path = ?1",
+            [&card.source_path],
+            |row| row.get(0),
+        )?;
+        let tags_json = serde_json::to_string(&card.tags)?;
+        let engine_correlations_json = serde_json::to_string(&card.engine_correlations)?;
+        let existing = self
+            .theory_cards()?
+            .into_iter()
+            .find(|existing| existing.external_id.as_deref() == Some(card.external_id.as_str()));
+        if let Some(existing) = existing {
+            let unchanged = existing.lesson_id == lesson_id
+                && existing.title == card.title
+                && existing.summary == card.summary
+                && existing.applies_when == card.applies_when
+                && existing.risk == card.risk
+                && existing.review_status == card.review_status
+                && existing.source_book == card.source_book
+                && existing.source_page_start == card.source_page_start
+                && existing.source_page_end == card.source_page_end
+                && existing.tags == card.tags
+                && existing.engine_correlations == card.engine_correlations
+                && existing.origin == "imported";
+            if unchanged {
+                return Ok(existing);
+            }
+            self.connection.execute(
+                "UPDATE theory_cards
+                 SET lesson_id=?2, title=?3, summary=?4, applies_when=?5, risk=?6,
+                     review_status=?7, source_book=?8, source_page_start=?9, source_page_end=?10,
+                     tags_json=?11, engine_correlations_json=?12, origin='imported',
+                     version=version + 1, user_modified=0, needs_recheck=0
+                 WHERE id=?1",
+                params![
+                    existing.id,
+                    lesson_id,
+                    card.title,
+                    card.summary,
+                    card.applies_when,
+                    card.risk,
+                    card.review_status,
+                    card.source_book,
+                    card.source_page_start,
+                    card.source_page_end,
+                    tags_json,
+                    engine_correlations_json,
+                ],
+            )?;
+            return self
+                .theory_cards()?
+                .into_iter()
+                .find(|updated| updated.id == existing.id)
+                .ok_or_else(|| StoreError::Sql(rusqlite::Error::QueryReturnedNoRows));
+        }
+        self.connection.execute(
+            "INSERT INTO theory_cards
+             (external_id, lesson_id, title, summary, applies_when, risk, review_status,
+              source_book, source_page_start, source_page_end, tags_json, engine_correlations_json,
+              origin, version, user_modified)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'imported', 1, 0)",
+            params![
+                card.external_id,
+                lesson_id,
+                card.title,
+                card.summary,
+                card.applies_when,
+                card.risk,
+                card.review_status,
+                card.source_book,
+                card.source_page_start,
+                card.source_page_end,
+                tags_json,
+                engine_correlations_json,
+            ],
+        )?;
+        let id = self.connection.last_insert_rowid();
+        self.theory_cards()?
+            .into_iter()
+            .find(|inserted| inserted.id == id)
+            .ok_or_else(|| StoreError::Sql(rusqlite::Error::QueryReturnedNoRows))
     }
 
     pub fn create_theory_card(
@@ -1808,7 +1924,7 @@ impl LocalStore {
              );
              CREATE INDEX IF NOT EXISTS idx_theory_lessons_phase ON theory_lessons(phase, transcription_status);
              CREATE TABLE IF NOT EXISTS theory_cards (
-               id INTEGER PRIMARY KEY AUTOINCREMENT, lesson_id INTEGER NOT NULL,
+               id INTEGER PRIMARY KEY AUTOINCREMENT, external_id TEXT, lesson_id INTEGER NOT NULL,
                title TEXT NOT NULL, summary TEXT NOT NULL, applies_when TEXT NOT NULL,
                risk TEXT NOT NULL, timecode TEXT, review_status TEXT NOT NULL DEFAULT 'pending',
                source_book TEXT, source_page_start INTEGER, source_page_end INTEGER,
@@ -1819,6 +1935,7 @@ impl LocalStore {
                FOREIGN KEY(lesson_id) REFERENCES theory_lessons(id) ON DELETE CASCADE
              );
              CREATE INDEX IF NOT EXISTS idx_theory_cards_review ON theory_cards(review_status, lesson_id);
+             CREATE UNIQUE INDEX IF NOT EXISTS idx_theory_cards_external_id ON theory_cards(external_id) WHERE external_id IS NOT NULL;
              CREATE TABLE IF NOT EXISTS theory_card_matches (
                id TEXT PRIMARY KEY, game_id TEXT NOT NULL, report_signature TEXT NOT NULL,
                node_id TEXT NOT NULL, card_id INTEGER NOT NULL, card_version INTEGER NOT NULL,
@@ -1862,6 +1979,11 @@ impl LocalStore {
             "TEXT NOT NULL DEFAULT '[]'",
         )?;
         ensure_column(&connection, "training_tasks", "source_card_id", "INTEGER")?;
+        ensure_column(&connection, "theory_cards", "external_id", "TEXT")?;
+        connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_theory_cards_external_id ON theory_cards(external_id) WHERE external_id IS NOT NULL",
+            [],
+        )?;
         ensure_column(&connection, "theory_cards", "source_book", "TEXT")?;
         ensure_column(&connection, "theory_cards", "source_page_start", "INTEGER")?;
         ensure_column(&connection, "theory_cards", "source_page_end", "INTEGER")?;
@@ -2977,7 +3099,7 @@ mod tests {
         assert_eq!(preferences.color_theme, "dark");
         assert_eq!(preferences.branch_arrow_color, "#2f80ed");
         assert_eq!(preferences.report_depth, 30);
-        assert_eq!(preferences.candidate_line_moves, 20);
+        assert_eq!(preferences.candidate_line_moves, 16);
         assert!(preferences.xqb_book_paths.is_empty());
         assert!(preferences.cloud_book_enabled);
         assert_eq!(

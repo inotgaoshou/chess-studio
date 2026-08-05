@@ -313,6 +313,7 @@ export type TheoryLessonDto = {
 };
 export type TheoryCardDto = {
   id: number;
+  externalId?: string;
   lessonId: number;
   phase: TheoryPhase;
   title: string;
