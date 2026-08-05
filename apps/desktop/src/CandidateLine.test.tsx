@@ -207,6 +207,7 @@ describe("CandidateLine", () => {
 
     expect(screen.getByText("当前与后续")).toBeTruthy();
     expect(screen.getByText("2/3")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "取消预览候选 1" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "第 2 步，黑方，马8进7" }).getAttribute("aria-current")).toBe("step");
     expect(screen.getByRole("button", { name: "第 3 步，红方，马二进三" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "第 3 步，红方，马二进三" }));

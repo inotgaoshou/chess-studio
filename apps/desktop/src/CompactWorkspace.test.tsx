@@ -93,7 +93,7 @@ describe("CompactReferencePanels", () => {
 });
 
 describe("CompactEngineAnalysisList", () => {
-  it("shows compact TCHESS-style engine metrics without coach or PV detail blocks", () => {
+  it("shows direct recommendation rows without noisy metric blocks", () => {
     const onPlayMove = vi.fn();
     render(<CompactEngineAnalysisList
       busy={false}
@@ -112,15 +112,54 @@ describe("CompactEngineAnalysisList", () => {
       onPlayMove={onPlayMove}
     />);
 
-    expect(screen.getByText("深:44")).toBeTruthy();
-    expect(screen.getByText("分:+31")).toBeTruthy();
-    expect(screen.getByText("NPS:4504K")).toBeTruthy();
-    expect(screen.getByText("HF:21%")).toBeTruthy();
-    expect(screen.getByText("后续:1.5/8回合")).toBeTruthy();
+    expect(screen.getByText("1. 马八进七")).toBeTruthy();
+    expect(screen.getByText("分 +31")).toBeTruthy();
+    expect(screen.getByText("深 44")).toBeTruthy();
+    expect(screen.getByText("1.5/8回合")).toBeTruthy();
+    expect(screen.getByText("后续：炮9平7 车三平四")).toBeTruthy();
+    expect(screen.queryByText("NPS:4504K")).toBeNull();
+    expect(screen.queryByText("HF:21%")).toBeNull();
     expect(screen.queryByText(/私教讲解/)).toBeNull();
     expect(screen.queryByText(/完整 PV/)).toBeNull();
 
     fireEvent.click(screen.getByRole("row", { name: /马八进七/ }));
-    expect(onPlayMove).toHaveBeenCalledWith("h2e2");
+    expect(onPlayMove).toHaveBeenCalledWith("h2e2", expect.objectContaining({ id: "pv-1" }));
+  });
+
+  it("shows preview and adopt actions on each engine candidate row", () => {
+    const onPreview = vi.fn();
+    const onAdopt = vi.fn();
+    render(<CompactEngineAnalysisList
+      busy={false}
+      rows={[{
+        id: "pv-1",
+        iccs: "h2e2",
+        analyzedFen: "position-fen",
+        line: { depth: 30, scoreCp: 23, multipv: 1, notation: ["炮二平五", "马8进7"], pv: ["h2e2", "h9g7"] },
+        source: { id: "primary", name: "Pikafish", primary: true },
+        rank: 1,
+        previewActive: true,
+        depthText: "30",
+        scoreText: "+23",
+        timeText: "35.1s",
+        npsText: "7.0M",
+        hfText: "83%",
+        lineLengthText: "1/8回合",
+        lineText: "炮二平五 马8进7",
+      }]}
+      onPlayMove={vi.fn()}
+      onPreview={onPreview}
+      onAdopt={onAdopt}
+    />);
+
+    expect(screen.getByRole("row", { name: /炮二平五/ }).className).toContain("preview-active");
+    fireEvent.click(screen.getByRole("row", { name: /炮二平五/ }));
+    expect(onPreview).toHaveBeenCalledWith(expect.objectContaining({ id: "pv-1", analyzedFen: "position-fen" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "取消预览候选 1" }));
+    expect(onPreview).toHaveBeenCalledTimes(2);
+
+    fireEvent.click(screen.getByRole("button", { name: "采用候选 1" }));
+    expect(onAdopt).toHaveBeenCalledWith(expect.objectContaining({ id: "pv-1", iccs: "h2e2" }));
   });
 });

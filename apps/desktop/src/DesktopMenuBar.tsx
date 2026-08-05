@@ -61,6 +61,7 @@ export type MenuBarStatus = {
   isPlaying: boolean;
   analysisBusy: boolean;
   engineThinking: boolean;
+  engineMoveNowAvailable: boolean;
   engineConfigured: boolean;
   engineSide: "none" | "red" | "black";
   hasContinuation: boolean;
@@ -218,7 +219,7 @@ export function DesktopMenuBar({
         {openMenu === "engine" && <div className="menu-popup">
           <MenuItem command="engineRed" execute={execute} close={close} disabled={redUnavailable} title={redUnavailable ? engineUnavailableReason ?? "Pikafish 正在思考，不能切换执方" : undefined} className={status.engineSide === "red" ? "active" : ""}><Bot size={14}/>引擎执红</MenuItem>
           <MenuItem command="engineBlack" execute={execute} close={close} disabled={blackUnavailable} title={blackUnavailable ? engineUnavailableReason ?? "Pikafish 正在思考，不能切换执方" : undefined} className={status.engineSide === "black" ? "active" : ""}><Bot size={14}/>引擎执黑</MenuItem>
-          <MenuItem command="moveNow" execute={execute} close={close} disabled={!status.engineThinking} title={!status.engineThinking ? "引擎当前没有正在思考的着法" : undefined}><Zap size={14}/>立即出招</MenuItem>
+          <MenuItem command="moveNow" execute={execute} close={close} disabled={!status.engineThinking && !status.engineMoveNowAvailable} title={!status.engineThinking && !status.engineMoveNowAvailable ? "请先选择引擎执方，并等待轮到引擎行棋" : status.engineThinking ? "停止搜索并立即落子" : "启动引擎立即出招"}><Zap size={14}/>立即出招</MenuItem>
           <MenuItem command={status.analysisBusy ? "stopAnalysis" : "analyze"} execute={execute} close={close} disabled={!canAnalyze} title={!canAnalyze ? "当前状态不能启动分析" : undefined}>{status.analysisBusy ? <Square size={14}/> : <Zap size={14}/>} {status.analysisBusy ? "停止分析" : "分析当前局面"}</MenuItem>
           <MenuItem command="engineArena" execute={execute} close={close} disabled={status.analysisBusy || status.engineThinking} title={status.analysisBusy || status.engineThinking ? "请先停止当前引擎任务" : "让两个引擎自动对局并统计胜负"}><Bot size={14}/>引擎擂台</MenuItem>
           <MenuItem command="engineSettings" execute={execute} close={close}><Settings2 size={14}/>引擎设置</MenuItem>

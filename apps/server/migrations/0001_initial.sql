@@ -147,6 +147,21 @@ CREATE TABLE IF NOT EXISTS master_game_sources (
   CONSTRAINT fk_master_game_sources_game FOREIGN KEY (game_id) REFERENCES master_games(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='同一棋谱的多个公开来源';
 
+CREATE TABLE IF NOT EXISTS master_game_player_refs (
+  master_player_id CHAR(36) NOT NULL COMMENT '关联大师',
+  game_id CHAR(36) NOT NULL COMMENT '关联棋谱',
+  side VARCHAR(8) NOT NULL COMMENT 'red/black',
+  source_site VARCHAR(64) NOT NULL COMMENT '来源站点',
+  source_player_id VARCHAR(64) NOT NULL COMMENT '来源棋手 ID',
+  created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (master_player_id, game_id),
+  KEY idx_master_game_player_refs_game (game_id),
+  KEY idx_master_game_player_refs_side (master_player_id, side),
+  CONSTRAINT fk_mgpr_player FOREIGN KEY (master_player_id) REFERENCES master_players(id),
+  CONSTRAINT fk_mgpr_game FOREIGN KEY (game_id) REFERENCES master_games(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='公开大师与棋谱的参与关系';
+
 CREATE TABLE IF NOT EXISTS master_game_moves (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
   game_id CHAR(36) NOT NULL,

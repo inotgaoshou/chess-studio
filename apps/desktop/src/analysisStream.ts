@@ -59,7 +59,11 @@ export function updateAnalysisStream(
     .every((rank) => lines.some((candidate) => candidate.multipv === rank));
   // A repeated rank means Pikafish started another depth cycle. This also
   // handles positions with fewer legal moves than the configured MultiPV.
-  const published = source.published || hasEveryRank || repeatedRank;
+  // Publish the first fresh line immediately as well. After an engine move the
+  // previous position's candidates are intentionally hidden; waiting for all
+  // MultiPV ranks made the floating panel look stuck at "AI 正在计算…" even
+  // though Pikafish had already returned rank 1.
+  const published = source.published || lines.length > 0 || hasEveryRank || repeatedRank;
   const buffer = { fen, lines, published };
   return { buffer, visible: published ? lines : undefined };
 }

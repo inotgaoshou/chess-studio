@@ -7,7 +7,6 @@ import {
   DEFAULT_ENGINE_CANDIDATES,
   MAX_CANDIDATE_LINE_MOVES,
   MAX_CANDIDATE_LINE_ROUNDS,
-  MAX_ENGINE_CANDIDATES,
   MIN_CANDIDATE_LINE_MOVES,
   MIN_CANDIDATE_LINE_ROUNDS,
   MIN_ENGINE_CANDIDATES,
@@ -58,12 +57,17 @@ function clampInteger(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, Math.round(value)));
 }
 
+function lowerBoundInteger(value: number, min: number, fallback = min) {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(min, Math.round(value));
+}
+
 function sanitizeEnginePreferences(preferences: DesktopPreferencesDto): DesktopPreferencesDto {
   const migratedSearchDefaults = matchesLegacySearchDefaults(preferences)
     ? { searchMode: "depth" as const, searchValue: 30 }
     : {};
   const enginePath = preferences.enginePath === BUILTIN_FAIRY_ENGINE_PATH ? BUILTIN_ENGINE_PATH : preferences.enginePath;
-  const multipv = preferences.multipv < MIN_ENGINE_CANDIDATES || preferences.multipv > MAX_ENGINE_CANDIDATES
+  const multipv = preferences.multipv < MIN_ENGINE_CANDIDATES
     ? DEFAULT_ENGINE_CANDIDATES
     : preferences.multipv;
   const candidateLineMoves = preferences.candidateLineMoves === 6 || preferences.candidateLineMoves < MIN_CANDIDATE_LINE_MOVES || preferences.candidateLineMoves > MAX_CANDIDATE_LINE_MOVES
@@ -83,7 +87,7 @@ function sanitizeEnginePreferences(preferences: DesktopPreferencesDto): DesktopP
     ...migrated,
     threads: clampInteger(migrated.threads, 1, 64),
     hashMb: clampInteger(migrated.hashMb, 16, 4096),
-    multipv: clampInteger(migrated.multipv, MIN_ENGINE_CANDIDATES, MAX_ENGINE_CANDIDATES),
+    multipv: lowerBoundInteger(migrated.multipv, MIN_ENGINE_CANDIDATES, DEFAULT_ENGINE_CANDIDATES),
     candidateLineMoves: clampInteger(migrated.candidateLineMoves, MIN_CANDIDATE_LINE_MOVES, MAX_CANDIDATE_LINE_MOVES),
     searchValue: migrated.searchMode === "infinite"
       ? migrated.searchValue
@@ -371,7 +375,7 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
           {enginePickerError && <p className="dialog-warning full" role="alert">{enginePickerError}</p>}
           <label><span>线程</span><input type="number" min={1} max={64} value={draft.threads} onChange={(event) => setDraft({ ...draft, threads: Number(event.target.value) })}/></label>
           <label><span>Hash (MB)</span><input type="number" min={16} max={4096} step={16} value={draft.hashMb} onChange={(event) => setDraft({ ...draft, hashMb: Number(event.target.value) })}/></label>
-          <label><span>候选走法（3-5种）</span><input type="number" min={MIN_ENGINE_CANDIDATES} max={MAX_ENGINE_CANDIDATES} value={draft.multipv} onChange={(event) => setDraft({ ...draft, multipv: Number(event.target.value) })}/></label>
+          <label><span>候选走法（默认2，不限上限）</span><input type="number" min={MIN_ENGINE_CANDIDATES} value={draft.multipv} onChange={(event) => setDraft({ ...draft, multipv: Number(event.target.value) })}/></label>
           <label><span>每种后续（5-8回合）</span><input type="number" min={MIN_CANDIDATE_LINE_ROUNDS} max={MAX_CANDIDATE_LINE_ROUNDS} value={candidateLineRoundsInputValue(draft.candidateLineMoves)} onChange={(event) => setDraft({ ...draft, candidateLineMoves: event.target.value === "" ? 0 : Number(event.target.value) * 2 })}/></label>
           <label><span>搜索模式</span><select value={draft.searchMode} onChange={(event) => setDraft({ ...draft, searchMode: event.target.value as DesktopPreferencesDto["searchMode"] })}><option value="time">固定时间</option><option value="depth">固定深度</option><option value="nodes">固定节点</option><option value="infinite">持续分析</option></select></label>
           <label><span>搜索限制</span><input type="number" disabled={draft.searchMode === "infinite"} min={draft.searchMode === "depth" ? 1 : draft.searchMode === "nodes" ? 1000 : 100} max={draft.searchMode === "depth" ? 100 : draft.searchMode === "nodes" ? 100000000 : 30000} value={draft.searchValue} onChange={(event) => setDraft({ ...draft, searchValue: Number(event.target.value) })}/></label>

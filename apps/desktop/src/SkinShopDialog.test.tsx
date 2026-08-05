@@ -6,8 +6,8 @@ import type { DesktopPreferencesDto } from "./platform";
 afterEach(cleanup);
 
 const preferences: DesktopPreferencesDto = {
-  enginePath: "", threads: 2, hashMb: 256, multipv: 5, candidateLineMoves: 16, searchMode: "depth", searchValue: 30,
-  moveTimeMs: 2000, ponder: false, autoAnalyze: true, boardSkin: "default", pieceSkin: "default",
+  enginePath: "", threads: 2, hashMb: 256, multipv: 2, candidateLineMoves: 16, searchMode: "depth", searchValue: 30,
+  moveTimeMs: 1000, ponder: false, autoAnalyze: true, boardSkin: "default", pieceSkin: "default",
   colorTheme: "dark", activeEngineId: undefined, libraryCollapsed: true, candidateRailCollapsed: false,
   analysisPanelCollapsed: false, evaluationCollapsed: true, branchArrowColor: "#2f80ed", analysisEngineMode: "single", parallelEngineIds: [], workspacePanel: "moves", layoutMode: "studio", manualViewMode: "track", reportDepth: 18, ruleMode: "domestic2020", serverUrl: "http://127.0.0.1:8080",
 };

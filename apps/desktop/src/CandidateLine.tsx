@@ -106,7 +106,7 @@ export function CandidateLine({ color, fen, line, coach, scoreText, sideToMove, 
         <p>{coachSummary}</p>
       </div>
       <div className="pv-actions">
-        <button type="button" disabled={disabled || !canPreview} className="pv-preview-button" aria-label={`预览候选 ${line.multipv}`} onClick={() => onPreview(line, fen)}><Eye size={14}/><span>预览</span></button>
+        <button type="button" disabled={disabled || !canPreview} className="pv-preview-button" aria-label={previewActive ? `取消预览候选 ${line.multipv}` : `预览候选 ${line.multipv}`} onClick={() => onPreview(line, fen)}><Eye size={14}/><span>{previewActive ? "取消" : "预览"}</span></button>
         {firstNotation && line.pv[0] && <button type="button" disabled={disabled} className="pv-play-button" aria-label={`走候选着法 ${firstNotation}`} onClick={() => onPlay(line.pv[0], fen)}><Play size={13}/><span>走棋</span></button>}
       </div>
     </div>

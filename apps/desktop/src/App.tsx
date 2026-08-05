@@ -61,7 +61,7 @@ import { WorkspaceLayoutSwitch } from "./WorkspaceLayoutSwitch";
 import { CompactEngineAnalysisList, CompactReferencePanels, type CompactBookRow, type CompactEngineAnalysisRow, type CompactEvaluationRow } from "./CompactWorkspace";
 import { CoachProfileView } from "./CoachProfileView";
 import { SkinShopDialog } from "./SkinShopDialog";
-import { CANDIDATE_PREVIEW_HALF_MOVES, DEFAULT_CANDIDATE_LINE_MOVES, DEFAULT_ENGINE_CANDIDATES, MAX_ENGINE_CANDIDATES, MIN_CANDIDATE_LINE_MOVES, MIN_ENGINE_CANDIDATES, halfMovesToRoundText } from "./candidatePreview";
+import { CANDIDATE_PREVIEW_HALF_MOVES, DEFAULT_CANDIDATE_LINE_MOVES, DEFAULT_ENGINE_CANDIDATES, MIN_CANDIDATE_LINE_MOVES, MIN_ENGINE_CANDIDATES, halfMovesToRoundText } from "./candidatePreview";
 import { AutosaveOperationQueue, autosaveLabel, type AutosaveState } from "./autosave";
 import { ManualTreeView } from "./ManualTreeView";
 import { ManualLineDialog, ManualTrackView, type ManualPreviewBranch } from "./ManualTrackView";
@@ -86,6 +86,13 @@ const ENGINE_ANALYSIS_CHANNEL = "xiangqi:engine-analysis";
 const COMPACT_ENGINE_LINE_MIN_MOVES = MIN_CANDIDATE_LINE_MOVES;
 const COMPACT_ENGINE_LINE_MAX_MOVES = CANDIDATE_PREVIEW_HALF_MOVES;
 const DEFAULT_BRANCH_ARROW_COLOR = "#2f80ed";
+const DEFAULT_ENGINE_MOVE_TIME_MS = 1000;
+const COMPACT_ENGINE_MIN_WIDTH = 280;
+const COMPACT_ENGINE_DEFAULT_WIDTH = 344;
+const COMPACT_ENGINE_MIN_HEIGHT = 220;
+const COMPACT_ENGINE_DEFAULT_HEIGHT = 410;
+const COMPACT_ENGINE_MAX_HEIGHT = 720;
+const LEGACY_ENGINE_DEFAULTS_MIGRATION_KEY = "xiangqi:migrated-engine-defaults-v4";
 const startingFen = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1";
 type EngineAnalysisGroup = { fen: string; name: string; lines: AnalysisLine[]; error?: string };
 type EngineAnalysisSnapshot = { fen: string; primaryEngineId: string; groups: Record<string, EngineAnalysisGroup>; busy?: boolean };
@@ -187,6 +194,64 @@ export function engineBranchActionPresentation(active: boolean, disabled: boolea
           ? "当前没有可显示的引擎分支，请先完成分析"
           : "在棋谱树当前节点下显示 AI 虚线分支",
   };
+}
+
+export function shouldRefreshAnalysisAfterMove(options: {
+  playable: boolean;
+  isPlaying: boolean;
+  reportBusy: boolean;
+  engineSide: "none" | "red" | "black";
+  engineThinking: boolean;
+  autoAnalyze: boolean;
+  analysisHintsEnabled: boolean;
+  platformKind: "desktop" | "web";
+  enginePath: string;
+  online: boolean;
+  token: string;
+}) {
+  if (!options.playable || options.isPlaying || options.reportBusy) return false;
+  if (options.engineSide !== "none" || options.engineThinking) return false;
+  if (!options.autoAnalyze && !options.analysisHintsEnabled) return false;
+  if (options.platformKind === "desktop") return options.enginePath.trim().length > 0;
+  return options.online && options.token.trim().length > 0;
+}
+
+export function shouldRestartAnalysisWhenNoCandidates(options: {
+  analysisBusy: boolean;
+  boardFen: string;
+  engineAnalyses: Record<string, Pick<EngineAnalysisGroup, "fen" | "lines">>;
+}) {
+  if (!options.analysisBusy) return false;
+  return !Object.values(options.engineAnalyses).some((group) =>
+    group.fen === options.boardFen && group.lines.some((line) => !!line.pv[0]),
+  );
+}
+
+export function selectAnalysisArrowLines(options: {
+  lines: AnalysisLine[];
+  analysisFen?: string;
+  boardFen: string;
+  analysisIsStale?: boolean;
+}) {
+  if (options.analysisFen !== options.boardFen) return [];
+  if (options.analysisIsStale) return [];
+  return options.lines
+    .filter((line) => line.multipv >= 1 && line.pv.length > 0);
+}
+
+export function canRequestEngineMoveNow(options: {
+  platformKind: "desktop" | "web";
+  playable: boolean;
+  reportBusy: boolean;
+  engineSide: "none" | "red" | "black";
+  engineStarting: boolean;
+  sideToMove: string;
+}) {
+  if (options.platformKind !== "desktop") return false;
+  if (!options.playable || options.reportBusy || options.engineStarting) return false;
+  if (options.engineSide === "none") return false;
+  return (options.engineSide === "red" && options.sideToMove === "红方")
+    || (options.engineSide === "black" && options.sideToMove === "黑方");
 }
 
 type LinkRegionRect = { x: number; y: number; width: number; height: number };
@@ -363,7 +428,7 @@ const defaultDesktopPreferences: DesktopPreferencesDto = {
   candidateLineMoves: DEFAULT_CANDIDATE_LINE_MOVES,
   searchMode: "depth",
   searchValue: 30,
-  moveTimeMs: 2000,
+  moveTimeMs: DEFAULT_ENGINE_MOVE_TIME_MS,
   ponder: false,
   autoAnalyze: true,
   libraryCollapsed: true,
@@ -403,7 +468,7 @@ function migrateDesktopPreferences(preferences: DesktopPreferencesDto): DesktopP
     : {};
   const enginePath = preferences.enginePath === BUILTIN_FAIRY_ENGINE_PATH ? BUILTIN_ENGINE_PATH : preferences.enginePath;
   const linkConfidenceThreshold = preferences.linkConfidenceThreshold === 70 ? 55 : preferences.linkConfidenceThreshold;
-  const multipv = preferences.multipv < MIN_ENGINE_CANDIDATES || preferences.multipv > MAX_ENGINE_CANDIDATES
+  const multipv = preferences.multipv < MIN_ENGINE_CANDIDATES
     ? DEFAULT_ENGINE_CANDIDATES
     : preferences.multipv;
   const candidateLineMoves = preferences.candidateLineMoves === 6 || preferences.candidateLineMoves < MIN_CANDIDATE_LINE_MOVES || preferences.candidateLineMoves > DEFAULT_CANDIDATE_LINE_MOVES
@@ -722,7 +787,10 @@ export default function App() {
     engine: { x: 0, y: 0 },
     manual: { x: 0, y: 0 },
   });
-  const [compactEngineSize, setCompactEngineSize] = useState<{ width: number; height: number }>();
+  const [compactEngineSize, setCompactEngineSize] = useState<{ width: number; height: number }>({
+    width: COMPACT_ENGINE_DEFAULT_WIDTH,
+    height: COMPACT_ENGINE_DEFAULT_HEIGHT,
+  });
   const [compactManualWidth, setCompactManualWidth] = useState<number>();
   const [compactActiveWindow, setCompactActiveWindow] = useState<"engine" | "manual">("engine");
   const [linkSessionStatus, setLinkSessionStatus] = useState<LinkSessionStatus>({ source: "windowLink", mode: "spectate", state: "stopped", frameRate: 0, stableFrames: 0, requiredStableFrames: 2, captureRunning: false });
@@ -761,6 +829,8 @@ export default function App() {
   const analysisFenRef = useRef<string | undefined>(undefined);
   const analysisStreamRef = useRef<AnalysisStreamBuffer | undefined>(undefined);
   const analysisHistoryRef = useRef<AnalysisHistoryBuffer | undefined>(undefined);
+  const engineAnalysesRef = useRef<Record<string, EngineAnalysisGroup>>({});
+  const analysisFirstCandidateWatchdogRef = useRef<string | undefined>(undefined);
   const linkAutoMoveRef = useRef<string | undefined>(undefined);
   const primaryAnalysisEngineRef = useRef<string>("primary");
   const multipvRef = useRef(multipv);
@@ -784,6 +854,29 @@ export default function App() {
     autosaveQueue.current = new AutosaveOperationQueue(setAutosave, friendlyError);
   }
   multipvRef.current = multipv;
+  const compactEngineMaxHeight = typeof window === "undefined"
+    ? COMPACT_ENGINE_MAX_HEIGHT
+    : Math.min(COMPACT_ENGINE_MAX_HEIGHT, Math.max(COMPACT_ENGINE_MIN_HEIGHT, window.innerHeight - 72));
+
+  function compactEnginePanelSize(size?: { width: number; height: number }) {
+    if (!size || compactEngineCollapsed) return undefined;
+    return {
+      width: Math.max(COMPACT_ENGINE_MIN_WIDTH, Math.min(COMPACT_ENGINE_DEFAULT_WIDTH, size.width)),
+      height: Math.max(COMPACT_ENGINE_MIN_HEIGHT, Math.min(compactEngineMaxHeight, size.height)),
+    };
+  }
+
+  useEffect(() => {
+    engineAnalysesRef.current = engineAnalyses;
+  }, [engineAnalyses]);
+
+  useEffect(() => {
+    setCompactEngineSize((size) => {
+      const clamped = compactEnginePanelSize(size);
+      if (!size || !clamped) return size;
+      return size.width === clamped.width && size.height === clamped.height ? size : clamped;
+    });
+  }, [compactEngineMaxHeight]);
 
   useEffect(() => {
     const compactLayout = desktopPreferences.layoutMode === "compact";
@@ -820,6 +913,7 @@ export default function App() {
     if (chessPlatform.kind === "desktop") {
       void chessPlatform.getDesktopPreferences().then((preferences) => {
         applyDesktopPreferences(preferences);
+        void migrateLegacyEngineDefaultsOnce(preferences);
         if (!preferences.enginePath) {
           void chessPlatform.detectEngine().then((path) => {
             if (path) {
@@ -944,6 +1038,7 @@ export default function App() {
         setEngineAnalyses({});
         analysisFenRef.current = undefined;
         setAnalysisFen(undefined);
+        setAnalysisArrowFen(undefined);
         setAnalysis([]);
         analysisHistoryRef.current = undefined;
         setAnalysisHistory([]);
@@ -959,6 +1054,7 @@ export default function App() {
       analysisFenRef.current = snapshot.fen;
       setAnalysisFen(snapshot.fen);
       setAnalysisSideToMove(boardRef.current.sideToMove);
+      setAnalysisArrowFen(analysisHintsEnabledRef.current ? snapshot.fen : undefined);
       setAnalysis(primaryLines);
       analysisHistoryRef.current = primaryLines.length
         ? { fen: snapshot.fen, lines: primaryLines.slice(0, ENGINE_ANALYSIS_HISTORY_LIMIT) }
@@ -1165,6 +1261,7 @@ export default function App() {
         analysisFenRef.current = event.fen;
         setAnalysisFen(event.fen);
         setAnalysisSideToMove(boardRef.current.sideToMove);
+        setAnalysisArrowFen(event.fen);
         setAnalysis(stream.visible);
       } else if (event.type === "bestmove") {
         if (event.fen !== boardRef.current.fen) return;
@@ -1191,9 +1288,8 @@ export default function App() {
     if (chessPlatform.kind === "desktop" && !enginePath.trim()) return;
     if (chessPlatform.kind === "web" && (!online || !token.trim())) return;
     if (analysisBusyRef.current) {
-      pendingAutoAnalysis.current = true;
-      setNotice("局面已更新，正在切换自动分析…");
-      void chessPlatform.stopAnalysis(true).catch(() => undefined);
+      void cancelRunningAnalysis("局面已更新，正在切换自动分析…", { keepHints: true })
+        .finally(() => window.setTimeout(() => setAutoRetry((value) => value + 1), 80));
       return;
     }
     const timer = window.setTimeout(() => void runAnalysis(true), 180);
@@ -1314,16 +1410,20 @@ export default function App() {
     () => hasEngineDivergence(engineComparisonGroups, candidateSideToMove),
     [candidateSideToMove, engineComparisonGroups],
   );
+  const primaryEngineDisplayName = chessPlatform.kind === "web" ? "云端 Pikafish" : engineDisplayName(enginePath);
   const compactEngineRows: CompactEngineAnalysisRow[] = useMemo(() => {
     const primaryEngineId = primaryAnalysisEngineRef.current;
+    const analyzedFen = analysisFen ?? board.fen;
     const lineItems = [
-      ...(analysisIsStale ? [] : orderedAnalysis.map((line) => ({ line, sourceId: primaryEngineId, sourceText: "主引擎" }))),
+      ...(analysisIsStale ? [] : orderedAnalysis.map((line) => ({ line, sourceId: primaryEngineId, sourceName: primaryEngineDisplayName, sourceText: "主引擎", primary: true }))),
       ...Object.entries(currentEngineAnalyses).flatMap(([sourceId, group]) => group.lines.map((line) => ({
         line,
         sourceId,
+        sourceName: group.name,
         sourceText: sourceId === primaryEngineId ? "主引擎" : group.name,
+        primary: sourceId === primaryEngineId,
       }))),
-      ...(analysisIsStale ? [] : analysisHistory.map((line) => ({ line, sourceId: primaryEngineId, sourceText: "主引擎" }))),
+      ...(analysisIsStale ? [] : analysisHistory.map((line) => ({ line, sourceId: primaryEngineId, sourceName: primaryEngineDisplayName, sourceText: "主引擎", primary: true }))),
     ];
     const seen = new Set<string>();
     const displayItems = lineItems.filter(({ line, sourceId }) => {
@@ -1336,15 +1436,18 @@ export default function App() {
       COMPACT_ENGINE_LINE_MIN_MOVES,
       Math.min(COMPACT_ENGINE_LINE_MAX_MOVES, Math.trunc(desktopPreferences.candidateLineMoves) || DEFAULT_CANDIDATE_LINE_MOVES),
     );
-    const visibleCandidateLimit = Math.max(MIN_ENGINE_CANDIDATES, Math.min(MAX_ENGINE_CANDIDATES, Math.trunc(desktopPreferences.multipv) || DEFAULT_ENGINE_CANDIDATES));
+    const visibleCandidateLimit = Math.max(MIN_ENGINE_CANDIDATES, Math.trunc(desktopPreferences.multipv) || DEFAULT_ENGINE_CANDIDATES);
     return displayItems
       .filter(({ line }) => line.multipv >= 1 && line.multipv <= visibleCandidateLimit)
       .slice(0, visibleCandidateLimit)
-      .map(({ line, sourceId, sourceText }, index) => {
+      .map(({ line, sourceId, sourceName, sourceText, primary }, index) => {
       const lineMoves = (line.notation?.length ? line.notation : line.pv).slice(0, lineMoveLimit);
       return {
         id: `engine-${sourceId}-${line.multipv}-${line.depth ?? "d"}-${line.timeMs ?? index}-${line.pv.join("-")}`,
         iccs: line.pv[0],
+        analyzedFen,
+        line,
+        source: { id: sourceId, name: sourceName, primary },
         rank: index + 1,
         sourceText,
         depthText: `${line.depth ?? "--"}`,
@@ -1354,11 +1457,12 @@ export default function App() {
         hfText: formatHashfull(line.hashfull),
         lineLengthText: `${halfMovesToRoundText(lineMoves.length)}/${halfMovesToRoundText(lineMoveLimit)}回合`,
         lineText: lineMoves.length ? lineMoves.join(" ") : "暂无推荐着法",
+        previewActive: candidatePreview?.sourceFen === analyzedFen && candidatePreview.sourceEngineId === sourceId && candidatePreview.rank === line.multipv,
         disabled: analysisIsStale,
         stale: analysisIsStale,
       };
       });
-  }, [analysisHistory, analysisIsStale, candidateSideToMove, currentEngineAnalyses, desktopPreferences.candidateLineMoves, desktopPreferences.multipv, orderedAnalysis]);
+  }, [analysisFen, analysisHistory, analysisIsStale, board.fen, candidatePreview, candidateSideToMove, currentEngineAnalyses, desktopPreferences.candidateLineMoves, desktopPreferences.multipv, orderedAnalysis, primaryEngineDisplayName]);
   useEffect(() => {
     if (chessPlatform.kind !== "desktop" || linkSessionStatus.mode !== "autoPlay" || linkSessionStatus.state !== "tracking") return;
     const expectedSide = linkSessionStatus.autoSide === "red" ? "红方" : "黑方";
@@ -1376,6 +1480,40 @@ export default function App() {
     const timer = window.setTimeout(() => void runAnalysis(true), 120);
     return () => window.clearTimeout(timer);
   }, [analysis.length, analysisFen, board.fen, board.playable, chessPlatform, enginePath, engineSide, engineThinking, linkSessionStatus.state, reportBusy]);
+
+  useEffect(() => {
+    if (!analysisBusy || !board.playable) return;
+    const watchedFen = board.fen;
+    const watchedRevision = analysisSessionRevision.current;
+    const timer = window.setTimeout(() => {
+      if (boardRef.current.fen !== watchedFen) return;
+      if (!shouldRestartAnalysisWhenNoCandidates({
+        analysisBusy: analysisBusyRef.current,
+        boardFen: watchedFen,
+        engineAnalyses: engineAnalysesRef.current,
+      })) return;
+      const key = `${watchedRevision}:${watchedFen}`;
+      if (analysisFirstCandidateWatchdogRef.current === key) {
+        setNotice("引擎仍未返回候选，请手动停止后重新分析或检查引擎路径");
+        return;
+      }
+      analysisFirstCandidateWatchdogRef.current = key;
+      pendingAutoAnalysis.current = false;
+      analysisSessionRevision.current += 1;
+      analysisLoadRevision.current += 1;
+      analysisBusyRef.current = false;
+      setAnalysisBusy(false);
+      setNotice("引擎首条候选超时，正在自动重启分析…");
+      void chessPlatform.stopAnalysis(true)
+        .catch(() => undefined)
+        .finally(() => {
+          window.setTimeout(() => {
+            if (boardRef.current.fen === watchedFen && !analysisBusyRef.current) void runAnalysis(true);
+          }, 250);
+        });
+    }, 3000);
+    return () => window.clearTimeout(timer);
+  }, [analysisBusy, board.fen, board.playable, chessPlatform]);
   const compactBookRows: CompactBookRow[] = useMemo(() => [
     ...(board.xqbCandidates ?? []).map((candidate) => {
       const sampleCount = candidate.win + candidate.draw + candidate.loss;
@@ -1571,28 +1709,31 @@ export default function App() {
   const boardPerspectiveLabel = boardDisplayReversed ? "黑方视角" : "红方视角";
 
   const analysisArrows = useMemo(() => {
-    const arrowLimit = Math.max(1, Math.min(analysisArrowColors.length, Math.trunc(desktopPreferences.multipv) || multipv || 1));
-    return analysisArrowFen === board.fen && analysisFen === board.fen ? orderedAnalysis.slice(0, arrowLimit)
-    .filter((line) => line.multipv >= 1 && line.multipv <= analysisArrowColors.length && line.pv.length > 0)
+    return selectAnalysisArrowLines({
+      lines: orderedAnalysis,
+      analysisFen,
+      boardFen: board.fen,
+      analysisIsStale,
+    })
     .flatMap((line) => {
       const from = squareFromIccs(line.pv[0].slice(0, 2));
       const to = squareFromIccs(line.pv[0].slice(2, 4));
       if (!from || !to) return [];
       return [{
         rank: line.multipv,
-        color: analysisArrowColors[line.multipv - 1] ?? analysisArrowColors[0],
+        color: analysisArrowColors[(line.multipv - 1) % analysisArrowColors.length] ?? analysisArrowColors[0],
         from: boardPoint(from, boardDisplayReversed),
         to: boardPoint(to, boardDisplayReversed),
       }];
-    }) : [];
-  }, [analysisArrowFen, analysisFen, board.fen, boardDisplayReversed, desktopPreferences.multipv, multipv, orderedAnalysis]);
+    });
+  }, [analysisFen, analysisIsStale, board.fen, boardDisplayReversed, orderedAnalysis]);
   const linkMiniArrows = useMemo<LinkMiniArrow[]>(() => (
     analysisFen === board.fen
       ? orderedAnalysis.slice(0, 3).flatMap((line) => {
         const firstMove = line.pv[0];
         const from = firstMove ? squareFromIccs(firstMove.slice(0, 2)) : null;
         const to = firstMove ? squareFromIccs(firstMove.slice(2, 4)) : null;
-        return from && to ? [{ rank: line.multipv, color: analysisArrowColors[line.multipv - 1] ?? analysisArrowColors[0], from, to }] : [];
+        return from && to ? [{ rank: line.multipv, color: analysisArrowColors[(line.multipv - 1) % analysisArrowColors.length] ?? analysisArrowColors[0], from, to }] : [];
       })
       : []
   ), [analysisFen, board.fen, orderedAnalysis]);
@@ -1651,6 +1792,26 @@ export default function App() {
     setWorkspacePanel(normalized.workspacePanel);
     setColorTheme(normalized.colorTheme);
     setServerUrl(normalized.serverUrl);
+  }
+
+  async function migrateLegacyEngineDefaultsOnce(preferences: DesktopPreferencesDto) {
+    if (chessPlatform.kind !== "desktop") return;
+    try {
+      if (localStorage.getItem(LEGACY_ENGINE_DEFAULTS_MIGRATION_KEY) === "done") return;
+      localStorage.setItem(LEGACY_ENGINE_DEFAULTS_MIGRATION_KEY, "done");
+    } catch {
+      return;
+    }
+    const patch: Partial<DesktopPreferencesDto> = {};
+    if (preferences.multipv === 5) patch.multipv = DEFAULT_ENGINE_CANDIDATES;
+    if (preferences.moveTimeMs === 2000 || preferences.moveTimeMs === 3000) patch.moveTimeMs = DEFAULT_ENGINE_MOVE_TIME_MS;
+    if (Object.keys(patch).length === 0) return;
+    try {
+      const saved = await saveDesktopPreferencePatch(patch);
+      applyDesktopPreferences(saved);
+    } catch {
+      // Non-critical: the settings dialog can still save these values manually.
+    }
   }
 
   function saveDesktopPreferencePatch(patch: Partial<DesktopPreferencesDto>) {
@@ -1885,7 +2046,54 @@ export default function App() {
     if (reportBusy) await cancelGameReport(false);
   }
 
-  async function playIccsMove(iccs: string, expectedFen?: string, sourceEngineName?: string) {
+  function ensureAnalysisHintsEnabled() {
+    analysisHintsEnabledRef.current = true;
+    setAnalysisHintsEnabled(true);
+  }
+
+  function scheduleAnalysisAfterMove(next: BoardState) {
+    if (!shouldRefreshAnalysisAfterMove({
+      playable: next.playable,
+      isPlaying,
+      reportBusy,
+      engineSide,
+      engineThinking,
+      autoAnalyze,
+      analysisHintsEnabled: analysisHintsEnabledRef.current,
+      platformKind: chessPlatform.kind,
+      enginePath,
+      online,
+      token,
+    })) return;
+    window.setTimeout(() => {
+      if (boardRef.current.fen !== next.fen || analysisBusyRef.current) return;
+      void runAnalysis(true);
+    }, 260);
+  }
+
+  async function cancelRunningAnalysis(reason?: string, options: { keepHints?: boolean; forceBackendStop?: boolean } = {}) {
+    const wasBusy = analysisBusyRef.current;
+    if (!wasBusy && !options.forceBackendStop) return;
+    pendingAutoAnalysis.current = false;
+    analysisSessionRevision.current += 1;
+    analysisLoadRevision.current += 1;
+    analysisFirstCandidateWatchdogRef.current = undefined;
+    analysisBusyRef.current = false;
+    setAnalysisBusy(false);
+    if (!options.keepHints) {
+      analysisHintsEnabledRef.current = false;
+      setAnalysisHintsEnabled(false);
+      setAnalysisArrowFen(undefined);
+    }
+    if (reason) setNotice(reason);
+    await chessPlatform.stopAnalysis(true).catch(() => undefined);
+  }
+
+  async function stopRunningAnalysisBeforeMove() {
+    await cancelRunningAnalysis("正在停止旧局面分析，准备切换到新局面…", { keepHints: true, forceBackendStop: true });
+  }
+
+  async function playIccsMove(iccs: string, expectedFen?: string, sourceEngineName?: string, options: { stopEngineFirst?: boolean } = {}) {
     stopPlayback();
     if (!ensureBoardChangeAllowed()) return;
     if (expectedFen && boardRef.current.fen !== expectedFen) {
@@ -1896,13 +2104,19 @@ export default function App() {
       setNotice("当前研究局面不可对弈，请先修正局面");
       return;
     }
-    if (engineThinking || isEngineTurn(board)) {
-      setNotice(engineThinking ? `${currentEngineLabel} 正在思考` : `当前轮到 ${currentEngineLabel} 行棋`);
-      return;
+    const stoppedEngineForManualMove = options.stopEngineFirst && (engineThinking || engineStarting || isEngineTurn(board));
+    if (engineThinking || engineStarting || isEngineTurn(board)) {
+      if (!options.stopEngineFirst) {
+        setNotice(engineStarting ? `${currentEngineLabel} 正在启动` : engineThinking ? `${currentEngineLabel} 正在思考` : `当前轮到 ${currentEngineLabel} 行棋`);
+        return;
+      }
+      await stopEnginePlay();
+      setNotice("已停止人机对弈，正在采用当前候选着…");
     }
     setAnalysisArrowFen(undefined);
     clearCandidatePreviews();
     try {
+      await stopRunningAnalysisBeforeMove();
       await cancelGameReportForStructureChange();
       if (chessPlatform.kind === "desktop") {
         await chessPlatform.previewLine(boardRef.current.fen, [iccs]);
@@ -1920,6 +2134,8 @@ export default function App() {
       if (ruleBlocked) {
         setEngineSide("none");
         await chessPlatform.stopEnginePlay().catch(() => undefined);
+      } else if (engineSide === "none" || stoppedEngineForManualMove) {
+        scheduleAnalysisAfterMove(next);
       } else {
         await requestEngineMove(next);
       }
@@ -1933,6 +2149,13 @@ export default function App() {
     stopPlayback();
     if (boardRef.current.fen !== expectedFen) {
       setNotice("候选线路已过期，请重新分析后再预览");
+      return;
+    }
+    const sourceEngineId = source?.id ?? primaryAnalysisEngineRef.current;
+    const sourceEngineName = source?.name ?? currentEngineLabel;
+    if (candidatePreview?.sourceFen === expectedFen && candidatePreview.sourceEngineId === sourceEngineId && candidatePreview.rank === line.multipv) {
+      clearCandidatePreviews();
+      setNotice(`已取消 ${sourceEngineName} 候选 ${line.multipv} 推演预览`);
       return;
     }
     const pv = line.pv.slice(0, CANDIDATE_PREVIEW_HALF_MOVES);
@@ -1955,9 +2178,9 @@ export default function App() {
       setCandidatePreviewBranches([]);
       setCandidatePreview({
         rank: line.multipv,
-        color: analysisArrowColors[line.multipv - 1] ?? analysisArrowColors[0],
-        sourceEngineId: source?.id ?? primaryAnalysisEngineRef.current,
-        sourceEngineName: source?.name ?? currentEngineLabel,
+        color: analysisArrowColors[(line.multipv - 1) % analysisArrowColors.length] ?? analysisArrowColors[0],
+        sourceEngineId,
+        sourceEngineName,
         sourceFen: expectedFen,
         firstMove: line.notation?.[0] ?? line.pv[0] ?? `候选 ${line.multipv}`,
         intent: coach?.intent ?? `候选 ${line.multipv}：观察这条线能否解决当前局面的主要矛盾。`,
@@ -1966,7 +2189,7 @@ export default function App() {
         steps,
         step: 0,
       });
-      setNotice(`已载入 ${source?.name ?? currentEngineLabel} 候选 ${line.multipv} 推演：从第 1 步开始，手动点击“下一步”查看后续`);
+      setNotice(`已载入 ${sourceEngineName} 候选 ${line.multipv} 推演：从第 1 步开始，手动点击“下一步”查看后续`);
     } catch (error) {
       clearCandidatePreviews();
       setNotice(friendlyError(error));
@@ -2367,11 +2590,13 @@ export default function App() {
     return (side === "red" && state.sideToMove === "红方") || (side === "black" && state.sideToMove === "黑方");
   }
 
-  function stopEnginePlay() {
+  async function stopEnginePlay() {
     setEngineSide("none");
+    setEngineStarting(false);
+    setEngineThinking(false);
     setPonderMove(undefined);
-    if (engineThinking) void chessPlatform.moveNow().catch(() => undefined);
-    void chessPlatform.stopEnginePlay().catch(() => undefined);
+    if (engineThinking) await chessPlatform.moveNow().catch(() => false);
+    await chessPlatform.stopEnginePlay().catch(() => false);
   }
 
   async function cancelAnalysisForDocumentChange() {
@@ -2386,7 +2611,26 @@ export default function App() {
   }
 
   async function requestEngineMove(state = boardRef.current, side = engineSide) {
-    if (chessPlatform.kind !== "desktop" || side === "none" || !isEngineTurn(state, side) || engineStarting || engineThinking || reportBusy) return;
+    if (chessPlatform.kind !== "desktop") {
+      setNotice("Web 版不运行本地引擎对弈");
+      return;
+    }
+    if (side === "none") {
+      setNotice("请先选择引擎执红或执黑");
+      return;
+    }
+    if (!isEngineTurn(state, side)) {
+      setNotice(`当前轮到${state.sideToMove}行棋，引擎设置为执${side === "red" ? "红" : "黑"}`);
+      return;
+    }
+    if (engineStarting || engineThinking) {
+      setNotice(engineStarting ? `${currentEngineLabel} 正在启动…` : `${currentEngineLabel} 正在思考…`);
+      return;
+    }
+    if (reportBusy) {
+      setNotice("整局报告生成期间不能开始人机对弈");
+      return;
+    }
     if (state.ruleVerdict && engineBlockingRuleVerdicts.has(state.ruleVerdict)) {
       setNotice(`${state.ruleReason ?? state.status} · 人机对弈已暂停`);
       setEngineSide("none");
@@ -2404,10 +2648,7 @@ export default function App() {
       setEngineSide("none");
       return;
     }
-    if (analysisBusyRef.current) {
-      pendingAutoAnalysis.current = false;
-      await chessPlatform.stopAnalysis(true).catch(() => undefined);
-    }
+    await stopRunningAnalysisBeforeMove();
     setEngineStarting(true);
     setNotice(`正在启动 ${currentEngineLabel}（执${side === "red" ? "红" : "黑"}）…`);
     try {
@@ -2447,7 +2688,7 @@ export default function App() {
       void stopEnginePlay();
       setNotice("人机对弈已停止");
     } else {
-      if (analysisBusyRef.current) void chessPlatform.stopAnalysis(true).catch(() => undefined);
+      if (analysisBusyRef.current) void cancelRunningAnalysis(undefined, { keepHints: true });
       window.setTimeout(() => void requestEngineMove(boardRef.current, next), 0);
     }
   }
@@ -2458,12 +2699,25 @@ export default function App() {
       return;
     }
     if (!engineThinking) {
-      if (engineSide === "none") {
-        setNotice("请先在局面分析中选择引擎执红或执黑");
-        return;
-      }
-      if (!isEngineTurn(boardRef.current)) {
-        setNotice(`当前轮到你行棋，${currentEngineLabel} 会在轮到它时自动思考`);
+      if (!canRequestEngineMoveNow({
+        platformKind: chessPlatform.kind,
+        playable: boardRef.current.playable,
+        reportBusy,
+        engineSide,
+        engineStarting,
+        sideToMove: boardRef.current.sideToMove,
+      })) {
+        if (engineSide === "none") {
+          setNotice("请先在局面分析中选择引擎执红或执黑");
+        } else if (!boardRef.current.playable) {
+          setNotice("当前研究局面不可对弈");
+        } else if (reportBusy) {
+          setNotice("整局报告生成期间不能开始人机对弈");
+        } else if (!isEngineTurn(boardRef.current)) {
+          setNotice(`当前轮到你行棋，${currentEngineLabel} 会在轮到它时自动思考`);
+        } else {
+          setNotice("当前状态不能立即出招");
+        }
         return;
       }
       setNotice(`正在启动 ${currentEngineLabel} 思考…`);
@@ -2479,17 +2733,31 @@ export default function App() {
   }
 
   async function playPrimaryAnalysisMove() {
-    if (engineSide !== "none" || engineThinking || engineStarting) {
-      setNotice("请先停止人机对弈，再采用分析候选着");
-      return;
-    }
     const firstMove = primaryAnalysis?.pv[0];
     const analyzedFen = analysisFen ?? boardRef.current.fen;
     if (!firstMove || analysisIsStale || analyzedFen !== boardRef.current.fen) {
       setNotice("当前没有可采用的第一候选，请完成当前局面分析");
       return;
     }
-    await playIccsMove(firstMove, analyzedFen);
+    ensureAnalysisHintsEnabled();
+    await playIccsMove(firstMove, analyzedFen, undefined, { stopEngineFirst: true });
+  }
+
+  async function playCompactEngineRow(row: CompactEngineAnalysisRow) {
+    if (!row.iccs) {
+      setNotice("当前候选没有可采用的首着");
+      return;
+    }
+    ensureAnalysisHintsEnabled();
+    await playIccsMove(row.iccs, row.analyzedFen ?? analysisFen ?? boardRef.current.fen, row.source?.primary ? undefined : row.source?.name, { stopEngineFirst: true });
+  }
+
+  async function previewCompactEngineRow(row: CompactEngineAnalysisRow) {
+    if (!row.line) {
+      setNotice("当前候选没有可预览的 PV 线路");
+      return;
+    }
+    await previewCandidateLine(row.line, row.analyzedFen ?? analysisFen ?? boardRef.current.fen, row.source);
   }
 
   async function runAnalysis(automatic = false, excludeMove?: string) {
@@ -2511,9 +2779,8 @@ export default function App() {
     }
     if (analysisBusyRef.current) {
       if (automatic) {
-        pendingAutoAnalysis.current = true;
-        setNotice("局面已更新，正在切换自动分析…");
-        await chessPlatform.stopAnalysis(true).catch(() => undefined);
+        await cancelRunningAnalysis("局面已更新，正在切换自动分析…", { keepHints: true });
+        window.setTimeout(() => setAutoRetry((value) => value + 1), 80);
       }
       return;
     }
@@ -2536,7 +2803,7 @@ export default function App() {
     const latestPreferences = desktopPreferencesRef.current;
     const effectiveThreads = Math.min(64, Math.max(1, latestPreferences.threads || threads));
     const effectiveHashMb = Math.min(4096, Math.max(16, latestPreferences.hashMb || hashMb));
-    const effectiveMultipv = Math.min(MAX_ENGINE_CANDIDATES, Math.max(MIN_ENGINE_CANDIDATES, latestPreferences.multipv || multipvRef.current || multipv));
+    const effectiveMultipv = Math.max(MIN_ENGINE_CANDIDATES, Math.trunc(latestPreferences.multipv || multipvRef.current || DEFAULT_ENGINE_CANDIDATES));
     const activeProfile = engineProfiles.find((profile) => profile.id === latestPreferences.activeEngineId || profile.executablePath === enginePath);
     const primaryTarget = { id: activeProfile?.id ?? "primary", name: activeProfile?.name ?? engineDisplayName(enginePath), path: enginePath };
     const parallelTargets = latestPreferences.analysisEngineMode === "parallel"
@@ -2547,9 +2814,14 @@ export default function App() {
       : [];
     const analysisTargets = [primaryTarget, ...parallelTargets.filter((target) => target.id !== primaryTarget.id && target.path !== primaryTarget.path)];
     primaryAnalysisEngineRef.current = primaryTarget.id;
+    analysisFirstCandidateWatchdogRef.current = undefined;
     analysisStreamRef.current = beginAnalysisStream(analyzedFen);
     analysisHistoryRef.current = beginAnalysisHistory(analyzedFen);
     setAnalysisHistory([]);
+    analysisFenRef.current = analyzedFen;
+    setAnalysisFen(analyzedFen);
+    setAnalysisSideToMove(currentBoard.sideToMove);
+    setAnalysis([]);
     setEngineAnalyses(Object.fromEntries(analysisTargets.map((target) => [target.id, { fen: analyzedFen, name: target.name, lines: [] }])));
     clearCandidatePreviews();
     if (!automatic) {
@@ -2600,6 +2872,11 @@ export default function App() {
       setAnalysisSideToMove(currentBoard.sideToMove);
       setAnalysis(analysisStreamRef.current.lines);
       applyBoard(await chessPlatform.initialize());
+      if (boardRef.current.fen === analyzedFen) {
+        analysisFenRef.current = analyzedFen;
+        setAnalysisFen(analyzedFen);
+        setAnalysisArrowFen(analysisHintsEnabledRef.current ? analyzedFen : undefined);
+      }
       const failures = completed.filter((outcome) => outcome.status === "rejected").length;
       setNotice(failures ? `${analysisTargets.length - failures} 个引擎完成，${failures} 个引擎失败` : `${analysisTargets.length} 个引擎分析完成并已保存`);
     } catch (error) {
@@ -2621,7 +2898,7 @@ export default function App() {
     setAnalysisHintsEnabled(false);
     setAnalysisArrowFen(undefined);
     try {
-      await chessPlatform.stopAnalysis();
+      await cancelRunningAnalysis(`正在停止 ${currentEngineLabel}`, { keepHints: false, forceBackendStop: true });
       setNotice(`正在停止 ${currentEngineLabel}`);
     } catch (error) {
       setNotice(friendlyError(error));
@@ -3546,8 +3823,8 @@ export default function App() {
       startY: event.clientY,
       startWidth: bounds.width,
       startHeight: bounds.height,
-      maxWidth: Math.max(280, window.innerWidth - 24),
-      maxHeight: Math.max(240, window.innerHeight - bounds.top - 12),
+      maxWidth: Math.max(COMPACT_ENGINE_MIN_WIDTH, Math.min(COMPACT_ENGINE_DEFAULT_WIDTH, window.innerWidth - 24)),
+      maxHeight: compactEngineMaxHeight,
     };
     setCompactActiveWindow("engine");
     document.body.classList.add("compact-engine-resizing");
@@ -3562,8 +3839,8 @@ export default function App() {
     const resize = compactEngineResizeRef.current;
     if (!resize) return;
     setCompactEngineSize({
-      width: Math.max(280, Math.min(resize.maxWidth, resize.startWidth + resize.startX - event.clientX)),
-      height: Math.max(220, Math.min(resize.maxHeight, resize.startHeight + event.clientY - resize.startY)),
+      width: Math.max(COMPACT_ENGINE_MIN_WIDTH, Math.min(resize.maxWidth, resize.startWidth + resize.startX - event.clientX)),
+      height: Math.max(COMPACT_ENGINE_MIN_HEIGHT, Math.min(resize.maxHeight, resize.startHeight + event.clientY - resize.startY)),
     });
     event.preventDefault();
   }
@@ -3819,12 +4096,13 @@ export default function App() {
           ...(compactDetachedPanels.manual ? {} : { left: "auto", right: "8px" }),
         }),
       };
+      const engineSize = compactEnginePanelSize(compactEngineSize);
       return <section className={compactDockClass.trim()} aria-label="简洁布局可拖动面板">
         {!compactPoppedOutPanels.engine && <article
           className={`compact-floating-panel compact-engine-window ${compactEngineCollapsed ? "collapsed" : ""} ${compactDetachedPanels.engine ? "detached" : ""} ${compactActiveWindow === "engine" ? "active" : ""}`}
           style={{
             transform: `translate(${enginePosition.x}px, ${enginePosition.y}px)`,
-            ...(compactEngineCollapsed || !compactEngineSize ? {} : { width: compactEngineSize.width, height: compactEngineSize.height }),
+            ...(engineSize ? { width: engineSize.width, height: engineSize.height } : {}),
           } as CSSProperties}
           onPointerDown={() => setCompactActiveWindow("engine")}
         >
@@ -3836,19 +4114,12 @@ export default function App() {
           </div>
           {!compactEngineCollapsed && <>
             <div className="analysis-lines">
-              <CompactEngineAnalysisList busy={analysisBusy} rows={compactEngineRows} onPlayMove={(iccs) => void playIccsMove(iccs, analysisFen ?? board.fen)}/>
-              <MultiEngineComparison
+              <CompactEngineAnalysisList
                 busy={analysisBusy}
-                collapsed={multiEngineComparisonCollapsed}
-                compact
-                disabled={analysisIsStale}
-                fen={analysisFen ?? board.fen}
-                groups={engineComparisonGroups}
-                onCollapsedChange={setMultiEngineComparisonCollapsed}
-                onPopOut={openEngineDivergence}
-                sideToMove={candidateSideToMove}
-                onPlay={(line, engine) => void playIccsMove(line.pv[0], analysisFen ?? board.fen, engine.primary ? undefined : engine.name)}
-                onPreview={(line, engine) => void previewCandidateLine(line, analysisFen ?? board.fen, engine)}
+                rows={compactEngineRows}
+                onPlayMove={(_, row) => row && void playCompactEngineRow(row)}
+                onPreview={(row) => void previewCompactEngineRow(row)}
+                onAdopt={(row) => void playCompactEngineRow(row)}
               />
             </div>
             <div className="compact-engine-resize-handle" title="拖动调整引擎分析宽度和高度" aria-label="调整引擎分析宽度和高度" onPointerDown={startCompactEngineResize}/>
@@ -3903,7 +4174,13 @@ export default function App() {
       </div>}
       <div className="analysis-lines">
         {compactLayout
-          ? <CompactEngineAnalysisList busy={analysisBusy} rows={compactEngineRows} onPlayMove={(iccs) => void playIccsMove(iccs, analysisFen ?? board.fen)}/>
+          ? <CompactEngineAnalysisList
+            busy={analysisBusy}
+            rows={compactEngineRows}
+            onPlayMove={(_, row) => row && void playCompactEngineRow(row)}
+            onPreview={(row) => void previewCompactEngineRow(row)}
+            onAdopt={(row) => void playCompactEngineRow(row)}
+          />
           : analysis.length === 0
             ? <div className="empty-analysis"><Activity size={24}/><strong>等待分析</strong><span>启动当前引擎后在这里显示候选推演</span></div>
             : orderedAnalysis.map((line) => <CandidateLine
@@ -4042,7 +4319,13 @@ export default function App() {
                 : <button type="button" disabled={!board.playable || isPlaying} onClick={() => void runAnalysis()}><Play size={13}/>分析</button>}
             </div>
             <div className="analysis-lines">
-              <CompactEngineAnalysisList busy={analysisBusy} rows={compactEngineRows} onPlayMove={(iccs) => void playIccsMove(iccs, analysisFen ?? board.fen)}/>
+              <CompactEngineAnalysisList
+                busy={analysisBusy}
+                rows={compactEngineRows}
+                onPlayMove={(_, row) => row && void playCompactEngineRow(row)}
+                onPreview={(row) => void previewCompactEngineRow(row)}
+                onAdopt={(row) => void playCompactEngineRow(row)}
+              />
             </div>
             <p className="floating-panel-note">这是系统独立窗口，只保留最近 10 条引擎记录；多引擎分歧可从主窗口棋谱工具进入。</p>
           </section>
@@ -4148,6 +4431,27 @@ export default function App() {
   const themeToggleTitle = desktopPreferences.layoutMode === "compact"
     ? "简洁模式固定浅色主题"
     : "专业模式固定暗黑主题";
+  const engineMoveNowAvailable = canRequestEngineMoveNow({
+    platformKind: chessPlatform.kind,
+    playable: board.playable,
+    reportBusy,
+    engineSide,
+    engineStarting,
+    sideToMove: board.sideToMove,
+  });
+  const engineMoveNowTitle = engineStarting
+    ? `${currentEngineVersionLabel} 正在启动`
+    : engineThinking
+      ? "停止搜索并立即落子"
+      : engineMoveNowAvailable
+        ? `轮到 ${currentEngineVersionLabel}，点击立即出招`
+        : engineSide === "none"
+          ? "请先选择引擎执红或执黑"
+          : !board.playable
+            ? "当前研究局面不可对弈"
+            : reportBusy
+              ? "整局报告生成期间不能开始人机对弈"
+              : `等待轮到 ${currentEngineVersionLabel}`;
 
   return (
     <div className={`app-shell ${chessPlatform.kind}-shell theme-${effectiveColorTheme} layout-${desktopPreferences.layoutMode} board-skin-${displayedBoardSkin} piece-skin-${displayedPieceSkin}`}>
@@ -4172,6 +4476,7 @@ export default function App() {
             isPlaying,
             analysisBusy,
             engineThinking,
+            engineMoveNowAvailable,
             engineConfigured: !!enginePath.trim(),
             engineSide,
             hasContinuation: !!preferredContinuation(board),
@@ -4251,7 +4556,7 @@ export default function App() {
           onClick={() => void (analysisHintsEnabled ? stopAnalysis() : runAnalysis())}
           disabled={!analysisHintsEnabled && (!board.playable || isPlaying)}
         ><Zap size={15}/>{analysisHintsEnabled ? "停止分析" : "分析"}</button>
-        <button className="mode-tool move-now-tool" title={analysisIsStale ? "候选线路已过期，请等待当前局面重新分析" : primaryAnalysis?.pv[0] ? "采用当前第一候选着" : "请先完成当前局面分析"} disabled={chessPlatform.kind !== "desktop" || !primaryAnalysis?.pv[0] || analysisIsStale || engineSide !== "none" || engineStarting || engineThinking} onClick={() => void playPrimaryAnalysisMove()}><Zap size={15}/>引擎出招</button>
+        <button className="mode-tool move-now-tool" title={analysisIsStale ? "候选线路已过期，请等待当前局面重新分析" : primaryAnalysis?.pv[0] ? (engineSide !== "none" || engineStarting || engineThinking ? "停止人机搜索并采用当前第一候选着" : "采用当前第一候选着") : "请先完成当前局面分析"} disabled={chessPlatform.kind !== "desktop" || !primaryAnalysis?.pv[0] || analysisIsStale} onClick={() => void playPrimaryAnalysisMove()}><Zap size={15}/>引擎出招</button>
         <button className="tool-button" title="引擎设置" onClick={() => setDesktopDialog("engine")}><Settings2 size={16}/></button>
         <div className="skin-menu">
           <button className={`tool-button ${skinMenuOpen ? "active" : ""}`} title="棋盘皮肤" aria-label="棋盘皮肤" aria-expanded={skinMenuOpen} onClick={() => setSkinMenuOpen((open) => !open)}><Palette size={16}/></button>
@@ -4544,9 +4849,9 @@ export default function App() {
                   <button className={engineSide === "black" ? "active black" : ""} onClick={() => toggleEngineSide("black")}><Bot size={12}/>执黑</button>
                 </div>
                 <label><span>每步</span><input type="number" min={100} max={30000} step={100} value={moveTimeMs} onChange={(event) => setMoveTimeMs(Number(event.target.value))}/><small>ms</small></label>
-                <button className="move-now" title={engineStarting ? `${currentEngineVersionLabel} 正在启动` : engineThinking ? "停止搜索并立即落子" : `等待 ${currentEngineVersionLabel} 思考`} disabled={!engineThinking} onClick={() => void moveNow()}><Zap size={12}/>立即</button>
+                <button className="move-now" title={engineMoveNowTitle} disabled={!engineThinking && !engineMoveNowAvailable} onClick={() => void moveNow()}><Zap size={12}/>立即</button>
               </div>
-              {engineSide !== "none" && <div className="engine-play-status"><span className={engineThinking ? "thinking" : engineStarting ? "starting" : ""}/><strong>人机对弈</strong><small>{currentEngineVersionLabel} 执{engineSide === "red" ? "红" : "黑"}{engineStarting ? " · 启动中" : engineThinking ? " · 思考中" : ponderMove ? ` · 预测 ${ponderMove}` : " · 等待行棋"}</small></div>}
+              {engineSide !== "none" && <div className="engine-play-status"><span className={engineThinking ? "thinking" : engineStarting ? "starting" : ""}/><strong>人机对弈</strong><small>{currentEngineVersionLabel} 执{engineSide === "red" ? "红" : "黑"}{engineStarting ? " · 启动中" : engineThinking ? " · 思考中" : ponderMove ? ` · 预测 ${ponderMove}` : engineMoveNowAvailable ? " · 轮到引擎，可立即出招" : " · 等待你走"}</small></div>}
               <button className="engine-config-summary" title={currentEngineTitle} onClick={() => setDesktopDialog("engine")}>
                 <Settings2 size={14}/><span>{currentEngineVersionLabel}</span><small>{threads} 线程 · Hash {hashMb} MB · MultiPV {multipv} · {ruleModeLabel(desktopPreferences.ruleMode)}{currentEngineHashLabel ? ` · 引擎 ${currentEngineHashLabel}` : ""}{currentNnueLabel ? ` · ${currentNnueLabel}` : ""}{currentNnueHashLabel ? ` · ${currentNnueHashLabel}` : ""}</small>
               </button>

@@ -3366,7 +3366,7 @@ async fn analyze_position(
         "infinite" => SearchLimit::Infinite,
         _ => return Err("unsupported search mode".into()),
     };
-    let multipv = multipv.clamp(1, 10);
+    let multipv = multipv.max(1);
     let mut search_moves = search_moves
         .into_iter()
         .take(90)
@@ -3578,8 +3578,20 @@ async fn engine_play_move(
         }
         (model.board.to_fen(), model.game_id, model.current_node)
     };
-    if !state.engine.lock().await.is_empty() {
-        return Err("引擎正在执行其他搜索，请先停止".into());
+    let stale_controls = state
+        .engine
+        .lock()
+        .await
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    if !stale_controls.is_empty() {
+        emit_engine_state(&app, EngineRuntimeState::Stopping);
+        for control in stale_controls {
+            let _ = control.stop().await;
+        }
+        state.engine.lock().await.clear();
+        emit_engine_state(&app, EngineRuntimeState::Idle);
     }
     let resolved_engine_path = resolve_engine_path(&app, &engine_path)?;
     let resolved_engine_path_text = resolved_engine_path.to_string_lossy().into_owned();
@@ -3589,6 +3601,16 @@ async fn engine_play_move(
         .as_ref()
         .is_some_and(|play| play.path != resolved_engine_path_text)
     {
+        if let Some(play) = slot.take() {
+            let _ = play.session.close().await;
+        }
+    }
+    if slot.as_ref().is_some_and(|play| {
+        !matches!(
+            play.state,
+            EngineRuntimeState::Idle | EngineRuntimeState::Pondering
+        )
+    }) {
         if let Some(play) = slot.take() {
             let _ = play.session.close().await;
         }
@@ -3893,10 +3915,10 @@ async fn open_compact_floating_panel(app: tauri::AppHandle, panel: String) -> Re
         "engine" => (
             "compact-engine",
             "引擎分析",
-            430.0,
-            560.0,
-            360.0,
-            320.0,
+            420.0,
+            460.0,
+            340.0,
+            260.0,
             None,
         ),
         "manual" => ("compact-manual", "棋谱", 430.0, 580.0, 360.0, 320.0, None),
@@ -4941,6 +4963,8 @@ async fn stop_analysis(
         for control in controls {
             control.stop().await.map_err(|error| error.to_string())?;
         }
+        state.engine.lock().await.clear();
+        emit_engine_state(&app, EngineRuntimeState::Idle);
         Ok(true)
     } else {
         Ok(false)
@@ -5469,8 +5493,8 @@ fn normalize_desktop_preferences(preferences: &mut DesktopPreferences) {
     if preferences.candidate_line_moves < 10 || preferences.candidate_line_moves > 16 {
         preferences.candidate_line_moves = 16;
     }
-    if !(3..=5).contains(&preferences.multipv) {
-        preferences.multipv = 5;
+    if preferences.multipv < 1 {
+        preferences.multipv = 2;
     }
     if preferences.report_depth == 26 {
         preferences.report_depth = 30;
@@ -5567,8 +5591,8 @@ fn validate_preferences(preferences: &DesktopPreferences) -> Result<(), String> 
     if !(16..=4096).contains(&preferences.hash_mb) {
         return Err("Hash 必须在 16 到 4096 MB 之间".into());
     }
-    if !(3..=5).contains(&preferences.multipv) {
-        return Err("候选走法必须在 3 到 5 种之间".into());
+    if preferences.multipv < 1 {
+        return Err("候选走法必须至少为 1 种".into());
     }
     if !(10..=16).contains(&preferences.candidate_line_moves) {
         return Err("每种后续必须在 5 到 8 个回合之间".into());

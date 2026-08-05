@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Activity, BookOpen, ChevronLeft, ChevronRight, Database, Maximize2, Settings2, TrendingUp } from "lucide-react";
+import { Activity, BookOpen, ChevronLeft, ChevronRight, Database, Eye, Maximize2, Play, Settings2, TrendingUp } from "lucide-react";
+import type { AnalysisLine } from "./platform";
 
 export type CompactBookRow = {
   id: string;
@@ -30,6 +31,13 @@ export type CompactEvaluationRow = {
 export type CompactEngineAnalysisRow = {
   id: string;
   iccs?: string;
+  analyzedFen?: string;
+  line?: AnalysisLine;
+  source?: {
+    id: string;
+    name: string;
+    primary?: boolean;
+  };
   rank: number;
   sourceText?: string;
   depthText: string;
@@ -39,6 +47,7 @@ export type CompactEngineAnalysisRow = {
   hfText: string;
   lineLengthText?: string;
   lineText: string;
+  previewActive?: boolean;
   disabled?: boolean;
   stale?: boolean;
 };
@@ -68,42 +77,71 @@ type Props = {
 type EngineListProps = {
   busy: boolean;
   rows: CompactEngineAnalysisRow[];
-  onPlayMove(iccs: string): void;
+  onPlayMove(iccs: string, row?: CompactEngineAnalysisRow): void;
+  onPreview?(row: CompactEngineAnalysisRow): void;
+  onAdopt?(row: CompactEngineAnalysisRow): void;
 };
 
-export function CompactEngineAnalysisList({ busy, rows, onPlayMove }: EngineListProps) {
+export function CompactEngineAnalysisList({ busy, rows, onPlayMove, onPreview, onAdopt }: EngineListProps) {
   return <div className="compact-engine-analysis-list" role="table" aria-label="简洁布局引擎分析">
     <div className="compact-engine-analysis-head" role="row">
       <span role="columnheader">记录</span>
-      <span role="columnheader">当前3-5条候选 · 深/分/时/NPS/HF · 后续PV(回合)</span>
+      <span role="columnheader">候选走法 · 深/分/时/NPS/HF · 后续PV(回合)</span>
     </div>
     <div className="compact-engine-analysis-body" role="rowgroup">
-      {rows.map((row) => <button
-        type="button"
-        role="row"
-        key={row.id}
-        disabled={row.disabled || !row.iccs}
-        className={`compact-engine-analysis-row ${row.stale ? "stale" : ""}`}
-        title={row.iccs ? `点击走 ${row.lineText.split(/\s+/)[0] ?? row.iccs}` : row.lineText}
-        onClick={() => row.iccs && onPlayMove(row.iccs)}
-      >
-        <span role="cell" className="compact-engine-rank">{row.rank}</span>
-        <span role="cell" className="compact-engine-detail">
-          <span className="compact-engine-metrics">
-            <strong>深:{row.depthText}</strong>
-            <strong>分:{row.scoreText}</strong>
-            <small>时:{row.timeText}</small>
-            <small>NPS:{row.npsText}</small>
-            <small>HF:{row.hfText}</small>
-            {row.lineLengthText && <small>后续:{row.lineLengthText}</small>}
-            {row.sourceText && <small className="compact-engine-source">{row.sourceText}</small>}
+      {rows.map((row) => {
+        const disabled = row.disabled || !row.iccs;
+        const canPreview = !!onPreview && !!row.line?.pv.length && !row.disabled;
+        const canAdopt = !!row.iccs && !row.disabled;
+        const hasActions = !!onPreview || !!onAdopt;
+        const moves = row.lineText.trim().split(/\s+/).filter(Boolean);
+        const primaryMove = moves[0] ?? row.iccs ?? "暂无着法";
+        const continuation = moves.slice(1).join(" ");
+        const playTitle = row.iccs
+          ? `推荐 ${row.rank}：${primaryMove} · 分 ${row.scoreText} · 深 ${row.depthText} · 用时 ${row.timeText} · NPS ${row.npsText} · HF ${row.hfText}${continuation ? ` · 后续 ${continuation}` : ""}`
+          : row.lineText;
+        const activateRow = () => {
+          if (disabled) return;
+          if (onPreview && canPreview) {
+            onPreview(row);
+            return;
+          }
+          if (row.iccs) onPlayMove(row.iccs, row);
+        };
+        return <div
+          role="row"
+          key={row.id}
+          aria-disabled={disabled}
+          tabIndex={disabled ? -1 : 0}
+          className={`compact-engine-analysis-row ${row.stale ? "stale" : ""} ${row.previewActive ? "preview-active" : ""} ${disabled ? "disabled" : ""} ${hasActions ? "has-actions" : ""}`}
+          title={playTitle}
+          onClick={activateRow}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" && event.key !== " ") return;
+            event.preventDefault();
+            activateRow();
+          }}
+        >
+          <span role="cell" className="compact-engine-rank">{row.rank}</span>
+          <span role="cell" className="compact-engine-detail">
+            <span className="compact-engine-metrics">
+              <strong className="compact-engine-primary-move">{row.rank}. {primaryMove}</strong>
+              <strong className="compact-engine-score">分 {row.scoreText}</strong>
+              <small>深 {row.depthText}</small>
+              {row.lineLengthText && <small>{row.lineLengthText}</small>}
+              {row.sourceText && <small className="compact-engine-source">{row.sourceText}</small>}
+            </span>
+            <span className="compact-engine-line">{continuation ? `后续：${continuation}` : "后续：等待引擎返回更多变化"}</span>
           </span>
-          <span className="compact-engine-line">{row.lineText}</span>
-        </span>
-      </button>)}
+          {hasActions && <span role="cell" className="compact-engine-row-actions" onClick={(event) => event.stopPropagation()}>
+            {onPreview && <button type="button" disabled={!canPreview} className="compact-engine-row-action preview" aria-label={row.previewActive ? `取消预览候选 ${row.rank}` : `预览候选 ${row.rank}`} title={row.previewActive ? "取消这条候选推演预览" : "预览这条后续推演"} onClick={() => onPreview(row)}><Eye size={12}/><span>{row.previewActive ? "取消" : "预览"}</span></button>}
+            <button type="button" disabled={!canAdopt} className="compact-engine-row-action adopt" aria-label={`采用候选 ${row.rank}`} title="采用这条候选首着" onClick={() => onAdopt ? onAdopt(row) : row.iccs && onPlayMove(row.iccs, row)}><Play size={11}/><span>采用</span></button>
+          </span>}
+        </div>;
+      })}
       {rows.length === 0 && <div className="compact-engine-empty">
         <Activity size={22}/><strong>{busy ? "AI 正在计算…" : "等待引擎分析"}</strong>
-        <span>{busy ? "收到搜索结果后在这里显示 3-5 条候选走法、评分和后续 PV" : "点击上方“分析”后显示截图式引擎列表"}</span>
+        <span>{busy ? "收到搜索结果后在这里按设置数量显示候选走法、评分和后续 PV" : "点击上方“分析”后显示截图式引擎列表"}</span>
       </div>}
     </div>
   </div>;

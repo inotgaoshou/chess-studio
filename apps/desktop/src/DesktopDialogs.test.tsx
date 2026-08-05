@@ -8,11 +8,11 @@ const preferences: DesktopPreferencesDto = {
   enginePath: "/opt/pikafish",
   threads: 2,
   hashMb: 256,
-  multipv: 5,
+  multipv: 2,
   candidateLineMoves: 16,
   searchMode: "depth",
   searchValue: 30,
-  moveTimeMs: 2000,
+  moveTimeMs: 1000,
   ponder: false,
   autoAnalyze: true,
   libraryCollapsed: false,
@@ -144,8 +144,8 @@ describe("DesktopDialogs", () => {
 
   it("submits engine settings through the persistent settings callback", async () => {
     const { props, user } = renderDialog("engine");
-    await user.clear(screen.getByLabelText("候选走法（3-5种）"));
-    await user.type(screen.getByLabelText("候选走法（3-5种）"), "4");
+    await user.clear(screen.getByLabelText("候选走法（默认2，不限上限）"));
+    await user.type(screen.getByLabelText("候选走法（默认2，不限上限）"), "4");
     await user.clear(screen.getByLabelText("每种后续（5-8回合）"));
     await user.type(screen.getByLabelText("每种后续（5-8回合）"), "6");
     await user.click(screen.getByRole("button", { name: "检测并保存" }));
@@ -154,13 +154,13 @@ describe("DesktopDialogs", () => {
 
   it("normalizes engine setting ranges before saving", async () => {
     const { props, user } = renderDialog("engine");
-    await user.clear(screen.getByLabelText("候选走法（3-5种）"));
-    await user.type(screen.getByLabelText("候选走法（3-5种）"), "16");
+    await user.clear(screen.getByLabelText("候选走法（默认2，不限上限）"));
+    await user.type(screen.getByLabelText("候选走法（默认2，不限上限）"), "16");
 
     await user.click(screen.getByRole("button", { name: "检测并保存" }));
 
-    expect(props.onSaveEngine).toHaveBeenCalledWith(expect.objectContaining({ multipv: 5 }));
-    expect((screen.getByLabelText("候选走法（3-5种）") as HTMLInputElement).value).toBe("5");
+    expect(props.onSaveEngine).toHaveBeenCalledWith(expect.objectContaining({ multipv: 16 }));
+    expect((screen.getByLabelText("候选走法（默认2，不限上限）") as HTMLInputElement).value).toBe("16");
   });
 
   it("migrates legacy engine defaults when the settings dialog opens", () => {

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { beginAnalysisStream, completeAnalysisStream, isAnalysisSessionCurrent, updateAnalysisHistory, updateAnalysisStream } from "./analysisStream";
 
 describe("analysis stream buffering", () => {
-  it("keeps the previous candidate cards visible until every MultiPV rank arrives", () => {
+  it("publishes fresh candidate cards as soon as the first MultiPV rank arrives", () => {
     const first = updateAnalysisStream(beginAnalysisStream("next-fen"), "next-fen", {
       multipv: 1,
       depth: 8,
@@ -19,8 +19,8 @@ describe("analysis stream buffering", () => {
       pv: ["h0g2"],
     }, 3);
 
-    expect(first.visible).toBeUndefined();
-    expect(second.visible).toBeUndefined();
+    expect(first.visible?.map((line) => line.multipv)).toEqual([1]);
+    expect(second.visible?.map((line) => line.multipv)).toEqual([1, 2]);
     expect(third.visible?.map((line) => line.multipv)).toEqual([1, 2, 3]);
   });
 
@@ -50,7 +50,7 @@ describe("analysis stream buffering", () => {
       pv: ["h9g7"],
     }, 2);
 
-    expect(update.visible).toBeUndefined();
+    expect(update.visible).toEqual([expect.objectContaining({ multipv: 1 })]);
     expect(update.buffer.lines).toHaveLength(1);
   });
 
@@ -66,7 +66,7 @@ describe("analysis stream buffering", () => {
       pv: ["e0e1"],
     }, 4);
 
-    expect(first.visible).toBeUndefined();
+    expect(first.visible).toEqual([expect.objectContaining({ multipv: 1, depth: 8 })]);
     expect(nextDepth.visible).toEqual([expect.objectContaining({ multipv: 1, depth: 9 })]);
   });
 

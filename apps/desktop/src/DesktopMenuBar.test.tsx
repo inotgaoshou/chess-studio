@@ -8,6 +8,7 @@ const readyStatus: MenuBarStatus = {
   isPlaying: false,
   analysisBusy: false,
   engineThinking: false,
+  engineMoveNowAvailable: false,
   engineConfigured: true,
   engineSide: "none",
   hasContinuation: true,
@@ -78,6 +79,13 @@ describe("DesktopMenuBar", () => {
     await user.click(engineBlack);
     await user.click(engineRed);
     expect(commands).toEqual(["engineRed"]);
+  });
+
+  it("lets move now start an engine move when it is already the engine side turn", async () => {
+    const { commands, user } = setup({ ...readyStatus, engineSide: "red", engineMoveNowAvailable: true });
+    await user.click(screen.getByText("人机对弈", { selector: "summary" }));
+    await user.click(screen.getByRole("button", { name: "立即出招" }));
+    expect(commands).toEqual(["moveNow"]);
   });
 
   it("exposes account commands and the current sync identity", async () => {

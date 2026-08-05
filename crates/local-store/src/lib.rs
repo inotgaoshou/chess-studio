@@ -202,11 +202,11 @@ impl Default for DesktopPreferences {
             engine_path: String::new(),
             threads: 2,
             hash_mb: 256,
-            multipv: 5,
+            multipv: 2,
             candidate_line_moves: default_candidate_line_moves(),
             search_mode: "depth".into(),
             search_value: 30,
-            move_time_ms: 2000,
+            move_time_ms: 1000,
             ponder: false,
             auto_analyze: true,
             library_collapsed: true,
@@ -1932,10 +1932,9 @@ impl LocalStore {
                origin TEXT NOT NULL DEFAULT 'user', version INTEGER NOT NULL DEFAULT 1,
                user_modified INTEGER NOT NULL DEFAULT 0, match_penalty INTEGER NOT NULL DEFAULT 0,
                needs_recheck INTEGER NOT NULL DEFAULT 0,
-               FOREIGN KEY(lesson_id) REFERENCES theory_lessons(id) ON DELETE CASCADE
+             FOREIGN KEY(lesson_id) REFERENCES theory_lessons(id) ON DELETE CASCADE
              );
              CREATE INDEX IF NOT EXISTS idx_theory_cards_review ON theory_cards(review_status, lesson_id);
-             CREATE UNIQUE INDEX IF NOT EXISTS idx_theory_cards_external_id ON theory_cards(external_id) WHERE external_id IS NOT NULL;
              CREATE TABLE IF NOT EXISTS theory_card_matches (
                id TEXT PRIMARY KEY, game_id TEXT NOT NULL, report_signature TEXT NOT NULL,
                node_id TEXT NOT NULL, card_id INTEGER NOT NULL, card_version INTEGER NOT NULL,
@@ -1981,7 +1980,7 @@ impl LocalStore {
         ensure_column(&connection, "training_tasks", "source_card_id", "INTEGER")?;
         ensure_column(&connection, "theory_cards", "external_id", "TEXT")?;
         connection.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_theory_cards_external_id ON theory_cards(external_id) WHERE external_id IS NOT NULL",
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_theory_cards_external_id_unique ON theory_cards(external_id)",
             [],
         )?;
         ensure_column(&connection, "theory_cards", "source_book", "TEXT")?;
@@ -2464,6 +2463,48 @@ mod tests {
         assert_eq!(store.pending_operations(10).unwrap(), vec![op.clone()]);
         store.mark_uploaded(&[op.op_id]).unwrap();
         assert!(store.pending_operations(10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn migration_adds_theory_card_external_id_before_creating_unique_index() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE theory_cards (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   lesson_id INTEGER NOT NULL,
+                   title TEXT NOT NULL,
+                   summary TEXT NOT NULL,
+                   applies_when TEXT NOT NULL,
+                   risk TEXT NOT NULL,
+                   timecode TEXT,
+                   review_status TEXT NOT NULL DEFAULT 'pending'
+                 );",
+            )
+            .unwrap();
+
+        let store = LocalStore::initialize(connection).unwrap();
+        let columns = store
+            .connection
+            .prepare("PRAGMA table_info(theory_cards)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(columns.iter().any(|column| column == "external_id"));
+
+        let indexes = store
+            .connection
+            .prepare("PRAGMA index_list(theory_cards)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(indexes
+            .iter()
+            .any(|index| index == "idx_theory_cards_external_id_unique"));
     }
 
     #[test]
@@ -3262,6 +3303,45 @@ mod tests {
         let penalized = store.theory_cards().unwrap()[0].clone();
         assert_eq!(penalized.match_penalty, 2);
         assert!(penalized.needs_recheck);
+    }
+
+    #[test]
+    fn imported_theory_cards_are_upserted_by_external_id() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let mut card = ImportedTheoryCard {
+            external_id: "qili-demand-middle-test".into(),
+            phase: "middle".into(),
+            course_name: "赵鑫鑫棋理三部曲".into(),
+            lesson_title: "线路控制".into(),
+            source_path: "qili-pdf:middle:线路控制:p20-21".into(),
+            fingerprint: "qili-demand-middle-test:p20-21".into(),
+            title: "先控线路再攻".into(),
+            summary: "中局先确认车路或肋道控制，再组织局部以多打少。".into(),
+            applies_when: "中局关键着亏分且候选线显示线路争夺时。".into(),
+            risk: "子力未到位就强攻，容易被对手抢先反击。".into(),
+            review_status: "approved".into(),
+            source_book: Some("赵鑫鑫中局棋理48讲".into()),
+            source_page_start: Some(20),
+            source_page_end: Some(21),
+            tags: vec!["中局".into(), "线路控制".into(), "候选着".into()],
+            engine_correlations: vec!["line_control".into(), "missed_candidate".into()],
+        };
+        let inserted = store.upsert_imported_theory_card(&card).unwrap();
+        assert_eq!(inserted.external_id.as_deref(), Some("qili-demand-middle-test"));
+        assert_eq!(inserted.review_status, "approved");
+        assert_eq!(inserted.version, 1);
+
+        let repeated = store.upsert_imported_theory_card(&card).unwrap();
+        assert_eq!(repeated.id, inserted.id);
+        assert_eq!(repeated.version, 1);
+        assert_eq!(store.theory_cards().unwrap().len(), 1);
+
+        card.summary = "中局先确认关键线路控制，再通过候选着比较组织局部以多打少。".into();
+        let updated = store.upsert_imported_theory_card(&card).unwrap();
+        assert_eq!(updated.id, inserted.id);
+        assert_eq!(updated.version, 2);
+        assert_eq!(updated.origin, "imported");
+        assert!(!updated.user_modified);
     }
 
     #[test]
