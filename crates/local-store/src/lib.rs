@@ -23,6 +23,17 @@ pub struct LocalGame {
     pub playable: bool,
     pub updated_at: String,
     pub metadata_json: String,
+    pub library_folder: Option<String>,
+    pub favorite: bool,
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryFolder {
+    pub name: String,
+    pub system: bool,
+    pub game_count: u32,
 }
 
 pub struct ImportedGame<'a> {
@@ -91,6 +102,15 @@ pub struct DesktopPreferences {
     pub xqb_book_paths: Vec<String>,
     #[serde(default)]
     pub disabled_xqb_book_paths: Vec<String>,
+    /// Paths to local ElephantEye BOOK.DAT files selected for personal study.
+    #[serde(default)]
+    pub eleeye_book_paths: Vec<String>,
+    #[serde(default)]
+    pub disabled_eleeye_book_paths: Vec<String>,
+    #[serde(default = "default_builtin_opening_book_enabled")]
+    pub builtin_opening_book_enabled: bool,
+    #[serde(default = "default_active_builtin_opening_book_id")]
+    pub active_builtin_opening_book_id: String,
     #[serde(default)]
     pub active_engine_id: Option<Uuid>,
     #[serde(default = "default_analysis_engine_mode")]
@@ -181,7 +201,7 @@ fn default_piece_skin() -> String {
 }
 
 fn default_report_depth() -> u32 {
-    30
+    24
 }
 
 fn default_candidate_line_moves() -> u32 {
@@ -196,6 +216,14 @@ fn default_cloud_book_enabled() -> bool {
     true
 }
 
+fn default_builtin_opening_book_enabled() -> bool {
+    true
+}
+
+fn default_active_builtin_opening_book_id() -> String {
+    "learning-top3".into()
+}
+
 impl Default for DesktopPreferences {
     fn default() -> Self {
         Self {
@@ -205,10 +233,10 @@ impl Default for DesktopPreferences {
             multipv: 2,
             candidate_line_moves: default_candidate_line_moves(),
             search_mode: "depth".into(),
-            search_value: 30,
+            search_value: 24,
             move_time_ms: 1000,
             ponder: false,
-            auto_analyze: true,
+            auto_analyze: false,
             library_collapsed: true,
             candidate_rail_collapsed: false,
             analysis_panel_collapsed: false,
@@ -223,6 +251,10 @@ impl Default for DesktopPreferences {
             report_depth: default_report_depth(),
             xqb_book_paths: Vec::new(),
             disabled_xqb_book_paths: Vec::new(),
+            eleeye_book_paths: Vec::new(),
+            disabled_eleeye_book_paths: Vec::new(),
+            builtin_opening_book_enabled: default_builtin_opening_book_enabled(),
+            active_builtin_opening_book_id: default_active_builtin_opening_book_id(),
             active_engine_id: None,
             analysis_engine_mode: default_analysis_engine_mode(),
             parallel_engine_ids: Vec::new(),
@@ -270,6 +302,108 @@ pub struct StoredGameReport {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct MasterStyleProfile {
+    pub id: String,
+    pub player_name: String,
+    pub normalized_name: String,
+    pub version: String,
+    pub sample_count: i64,
+    pub generated_at: String,
+    pub profile_json: String,
+    pub imported_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MasterStyleSample {
+    pub id: String,
+    pub profile_id: String,
+    pub player_name: String,
+    pub source_game_id: String,
+    pub source_title: String,
+    pub event_name: Option<String>,
+    pub game_date: Option<String>,
+    pub ply: i64,
+    pub phase: String,
+    pub before_fen: String,
+    pub played_move: String,
+    pub played_move_rank: Option<i64>,
+    pub played_move_in_topn: bool,
+    pub best_move: Option<String>,
+    pub best_score_cp: Option<i64>,
+    pub candidates_json: String,
+    pub source_json: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MasterStyleTheoryCardRef {
+    pub id: i64,
+    pub title: String,
+    pub summary: String,
+    pub source_book: Option<String>,
+    pub source_page_start: Option<i64>,
+    pub source_page_end: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MasterStyleHint {
+    pub sample_id: String,
+    pub profile_id: String,
+    pub player_name: String,
+    pub confidence: String,
+    pub reason: String,
+    pub source_title: String,
+    pub event_name: Option<String>,
+    pub game_date: Option<String>,
+    pub ply: i64,
+    pub phase: String,
+    pub before_fen: String,
+    pub played_move: String,
+    pub played_move_rank: Option<i64>,
+    pub played_move_in_topn: bool,
+    pub best_move: Option<String>,
+    pub best_score_cp: Option<i64>,
+    pub theory_cards: Vec<MasterStyleTheoryCardRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportedMasterStyleProfile {
+    pub id: String,
+    pub player_name: String,
+    pub normalized_name: String,
+    pub version: String,
+    pub sample_count: i64,
+    pub generated_at: String,
+    pub profile_json: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportedMasterStyleSample {
+    pub id: String,
+    pub profile_id: String,
+    pub player_name: String,
+    pub source_game_id: String,
+    pub source_title: String,
+    pub event_name: Option<String>,
+    pub game_date: Option<String>,
+    pub ply: i64,
+    pub phase: String,
+    pub before_fen: String,
+    pub played_move: String,
+    pub played_move_rank: Option<i64>,
+    pub played_move_in_topn: bool,
+    pub best_move: Option<String>,
+    pub best_score_cp: Option<i64>,
+    pub candidates_json: String,
+    pub source_json: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TrainingTask {
     pub id: Uuid,
     pub game_id: Uuid,
@@ -280,8 +414,46 @@ pub struct TrainingTask {
     pub phase: Option<String>,
     pub tags: Vec<String>,
     pub source_card_id: Option<i64>,
+    pub task_type: String,
     pub completed_at: Option<String>,
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FlyknifePlan {
+    pub id: Uuid,
+    pub title: String,
+    pub side: String,
+    pub starting_fen: String,
+    pub template_id: Option<String>,
+    pub template_name: String,
+    pub lure_move: String,
+    pub knife_move: String,
+    pub mainline: Vec<String>,
+    pub best_defense: Vec<String>,
+    pub score_cp: Option<i64>,
+    pub mate: Option<i64>,
+    pub risk: String,
+    pub source_game_id: Option<Uuid>,
+    pub source_node_id: Option<Uuid>,
+    pub note: String,
+    pub annotations: Vec<FlyknifeStepAnnotation>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FlyknifeStepAnnotation {
+    pub role: String,
+    pub iccs: String,
+    pub notation: String,
+    pub side: String,
+    pub fen: Option<String>,
+    pub score_cp: Option<i64>,
+    pub swing_cp: Option<i64>,
+    pub intent: String,
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -405,6 +577,54 @@ pub struct ImportedTheoryCard {
 }
 
 impl LocalStore {
+    pub fn flyknife_plans(&self) -> Result<Vec<FlyknifePlan>, StoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, title, side, starting_fen, template_id, template_name, lure_move, knife_move, mainline_json, best_defense_json, score_cp, mate, risk, source_game_id, source_node_id, note, annotations_json, created_at FROM flyknife_plans ORDER BY created_at DESC",
+        )?;
+        statement
+            .query_map([], |row| {
+                Ok(FlyknifePlan {
+                    id: Uuid::parse_str(&row.get::<_, String>(0)?)
+                        .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                    title: row.get(1)?,
+                    side: row.get(2)?,
+                    starting_fen: row.get(3)?,
+                    template_id: row.get(4)?,
+                    template_name: row.get(5)?,
+                    lure_move: row.get(6)?,
+                    knife_move: row.get(7)?,
+                    mainline: serde_json::from_str(&row.get::<_, String>(8)?).unwrap_or_default(),
+                    best_defense: serde_json::from_str(&row.get::<_, String>(9)?)
+                        .unwrap_or_default(),
+                    score_cp: row.get(10)?,
+                    mate: row.get(11)?,
+                    risk: row.get(12)?,
+                    source_game_id: row
+                        .get::<_, Option<String>>(13)?
+                        .and_then(|value| Uuid::parse_str(&value).ok()),
+                    source_node_id: row
+                        .get::<_, Option<String>>(14)?
+                        .and_then(|value| Uuid::parse_str(&value).ok()),
+                    note: row.get(15)?,
+                    annotations: serde_json::from_str(&row.get::<_, String>(16)?)
+                        .unwrap_or_default(),
+                    created_at: row.get(17)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(StoreError::from)
+    }
+
+    pub fn save_flyknife_plan(&mut self, plan: &FlyknifePlan) -> Result<(), StoreError> {
+        self.connection.execute("INSERT OR REPLACE INTO flyknife_plans (id, title, side, starting_fen, template_id, template_name, lure_move, knife_move, mainline_json, best_defense_json, score_cp, mate, risk, source_game_id, source_node_id, note, annotations_json, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)", params![plan.id.to_string(), plan.title, plan.side, plan.starting_fen, plan.template_id, plan.template_name, plan.lure_move, plan.knife_move, serde_json::to_string(&plan.mainline)?, serde_json::to_string(&plan.best_defense)?, plan.score_cp, plan.mate, plan.risk, plan.source_game_id.map(|id| id.to_string()), plan.source_node_id.map(|id| id.to_string()), plan.note, serde_json::to_string(&plan.annotations)?, plan.created_at])?;
+        Ok(())
+    }
+
+    pub fn delete_flyknife_plan(&mut self, id: Uuid) -> Result<(), StoreError> {
+        self.connection
+            .execute("DELETE FROM flyknife_plans WHERE id=?1", [id.to_string()])?;
+        Ok(())
+    }
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
         let connection = Connection::open(path)?;
         Self::initialize(connection)
@@ -496,6 +716,267 @@ impl LocalStore {
             })?
             .collect::<Result<Vec<_>, _>>()
             .map_err(Into::into)
+    }
+
+    pub fn upsert_master_style_profile(
+        &mut self,
+        profile: &ImportedMasterStyleProfile,
+        samples: &[ImportedMasterStyleSample],
+    ) -> Result<MasterStyleProfile, StoreError> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let sample_count = if profile.sample_count > 0 {
+            profile.sample_count
+        } else {
+            samples.len() as i64
+        };
+        let tx = self.connection.transaction()?;
+        tx.execute(
+            "INSERT INTO master_style_profiles
+             (id, player_name, normalized_name, version, sample_count, generated_at, profile_json, imported_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(id) DO UPDATE SET
+               player_name=excluded.player_name,
+               normalized_name=excluded.normalized_name,
+               version=excluded.version,
+               sample_count=excluded.sample_count,
+               generated_at=excluded.generated_at,
+               profile_json=excluded.profile_json,
+               imported_at=excluded.imported_at",
+            params![
+                profile.id,
+                profile.player_name,
+                profile.normalized_name,
+                profile.version,
+                sample_count,
+                profile.generated_at,
+                profile.profile_json,
+                now,
+            ],
+        )?;
+        for sample in samples {
+            tx.execute(
+                "INSERT INTO master_style_samples
+                 (id, profile_id, player_name, source_game_id, source_title, event_name, game_date,
+                  ply, phase, before_fen, played_move, played_move_rank, played_move_in_topn,
+                  best_move, best_score_cp, candidates_json, source_json, imported_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+                 ON CONFLICT(id) DO UPDATE SET
+                   profile_id=excluded.profile_id,
+                   player_name=excluded.player_name,
+                   source_game_id=excluded.source_game_id,
+                   source_title=excluded.source_title,
+                   event_name=excluded.event_name,
+                   game_date=excluded.game_date,
+                   ply=excluded.ply,
+                   phase=excluded.phase,
+                   before_fen=excluded.before_fen,
+                   played_move=excluded.played_move,
+                   played_move_rank=excluded.played_move_rank,
+                   played_move_in_topn=excluded.played_move_in_topn,
+                   best_move=excluded.best_move,
+                   best_score_cp=excluded.best_score_cp,
+                   candidates_json=excluded.candidates_json,
+                   source_json=excluded.source_json,
+                   imported_at=excluded.imported_at",
+                params![
+                    sample.id,
+                    sample.profile_id,
+                    sample.player_name,
+                    sample.source_game_id,
+                    sample.source_title,
+                    sample.event_name,
+                    sample.game_date,
+                    sample.ply,
+                    sample.phase,
+                    sample.before_fen,
+                    sample.played_move,
+                    sample.played_move_rank,
+                    sample.played_move_in_topn as i32,
+                    sample.best_move,
+                    sample.best_score_cp,
+                    sample.candidates_json,
+                    sample.source_json,
+                    now,
+                ],
+            )?;
+        }
+        tx.commit()?;
+        self.list_master_style_profiles()?
+            .into_iter()
+            .find(|stored| stored.id == profile.id)
+            .ok_or_else(|| StoreError::Sql(rusqlite::Error::QueryReturnedNoRows))
+    }
+
+    pub fn list_master_style_profiles(&self) -> Result<Vec<MasterStyleProfile>, StoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, player_name, normalized_name, version, sample_count, generated_at, profile_json, imported_at
+             FROM master_style_profiles
+             ORDER BY imported_at DESC, player_name ASC",
+        )?;
+        statement
+            .query_map([], |row| {
+                Ok(MasterStyleProfile {
+                    id: row.get(0)?,
+                    player_name: row.get(1)?,
+                    normalized_name: row.get(2)?,
+                    version: row.get(3)?,
+                    sample_count: row.get(4)?,
+                    generated_at: row.get(5)?,
+                    profile_json: row.get(6)?,
+                    imported_at: row.get(7)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(Into::into)
+    }
+
+    fn approved_theory_refs_for_phase(
+        &self,
+        phase: &str,
+        limit: usize,
+    ) -> Result<Vec<MasterStyleTheoryCardRef>, StoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT c.id, c.title, c.summary, c.source_book, c.source_page_start, c.source_page_end
+             FROM theory_cards c
+             JOIN theory_lessons l ON l.id = c.lesson_id
+             WHERE c.review_status = 'approved'
+               AND l.phase = ?1
+             ORDER BY c.match_penalty ASC, c.needs_recheck ASC, c.version DESC, c.id ASC
+             LIMIT ?2",
+        )?;
+        statement
+            .query_map(params![phase, limit as i64], |row| {
+                Ok(MasterStyleTheoryCardRef {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    summary: row.get(2)?,
+                    source_book: row.get(3)?,
+                    source_page_start: row.get(4)?,
+                    source_page_end: row.get(5)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(Into::into)
+    }
+
+    pub fn match_master_style_hints(
+        &self,
+        fen: &str,
+        phase: &str,
+        best_iccs: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<MasterStyleHint>, StoreError> {
+        let limit = limit.max(1).min(8);
+        let exact_rows = self.master_style_hint_rows(
+            "WHERE s.before_fen = ?1",
+            params![fen, limit as i64],
+            limit,
+        )?;
+        let rows = if exact_rows.is_empty() {
+            if let Some(best_iccs) = best_iccs.filter(|value| !value.trim().is_empty()) {
+                self.master_style_hint_rows(
+                    "WHERE s.phase = ?1 AND s.played_move = ?2",
+                    params![phase, best_iccs, limit as i64],
+                    limit,
+                )?
+            } else {
+                Vec::new()
+            }
+        } else {
+            exact_rows
+        };
+        let theory_cards = self.approved_theory_refs_for_phase(phase, 2)?;
+        Ok(rows
+            .into_iter()
+            .map(|mut hint| {
+                hint.theory_cards = theory_cards.clone();
+                hint
+            })
+            .collect())
+    }
+
+    fn master_style_hint_rows<P>(
+        &self,
+        where_clause: &str,
+        params: P,
+        limit: usize,
+    ) -> Result<Vec<MasterStyleHint>, StoreError>
+    where
+        P: rusqlite::Params,
+    {
+        let sql =
+            format!(
+            "SELECT s.id, s.profile_id, s.player_name, s.source_title, s.event_name, s.game_date,
+                    s.ply, s.phase, s.before_fen, s.played_move, s.played_move_rank,
+                    s.played_move_in_topn, s.best_move, s.best_score_cp,
+                    CASE WHEN s.before_fen = ?1 THEN 'exact' ELSE 'similar' END AS confidence
+             FROM master_style_samples s
+             {where_clause}
+             ORDER BY
+               CASE WHEN s.played_move_rank IS NULL THEN 99 ELSE s.played_move_rank END ASC,
+               s.game_date DESC,
+               s.ply ASC
+             LIMIT ?{}",
+            if where_clause.contains("?2") { "3" } else { "2" }
+        );
+        let mut statement = self.connection.prepare(&sql)?;
+        statement
+            .query_map(params, |row| {
+                let confidence: String = row.get(14)?;
+                let played_move_rank: Option<i64> = row.get(10)?;
+                Ok(MasterStyleHint {
+                    sample_id: row.get(0)?,
+                    profile_id: row.get(1)?,
+                    player_name: row.get(2)?,
+                    confidence: confidence.clone(),
+                    reason: if confidence == "exact" {
+                        "完全相同 FEN 的公开棋谱实战参考".into()
+                    } else {
+                        "同阶段且赵鑫鑫公开实战着与当前 Pikafish 推荐着相同的低置信度参考".into()
+                    },
+                    source_title: row.get(3)?,
+                    event_name: row.get(4)?,
+                    game_date: row.get(5)?,
+                    ply: row.get(6)?,
+                    phase: row.get(7)?,
+                    before_fen: row.get(8)?,
+                    played_move: row.get(9)?,
+                    played_move_rank,
+                    played_move_in_topn: row.get::<_, i64>(11)? != 0,
+                    best_move: row.get(12)?,
+                    best_score_cp: row.get(13)?,
+                    theory_cards: Vec::new(),
+                })
+            })?
+            .take(limit)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(Into::into)
+    }
+
+    pub fn record_master_style_match(
+        &mut self,
+        game_id: Uuid,
+        report_signature: &str,
+        node_id: Uuid,
+        hint: &MasterStyleHint,
+    ) -> Result<(), StoreError> {
+        self.connection.execute(
+            "INSERT OR IGNORE INTO master_style_matches
+             (id, game_id, report_signature, node_id, profile_id, sample_id, confidence, reason, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                Uuid::new_v4().to_string(),
+                game_id.to_string(),
+                report_signature,
+                node_id.to_string(),
+                hint.profile_id,
+                hint.sample_id,
+                hint.confidence,
+                hint.reason,
+                chrono::Utc::now().to_rfc3339(),
+            ],
+        )?;
+        Ok(())
     }
 
     pub fn upsert_imported_theory_card(
@@ -1162,6 +1643,100 @@ impl LocalStore {
         Ok(())
     }
 
+    pub fn library_folders(&self) -> Result<Vec<LibraryFolder>, StoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT folders.name, folders.system, COUNT(games.id)
+             FROM library_folders folders
+             LEFT JOIN games ON games.library_folder = folders.name AND games.deleted_at IS NULL
+             GROUP BY folders.name, folders.system ORDER BY folders.system DESC, folders.name COLLATE NOCASE",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok(LibraryFolder {
+                name: row.get(0)?,
+                system: row.get(1)?,
+                game_count: row.get::<_, i64>(2)? as u32,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn create_library_folder(&mut self, name: &str) -> Result<(), StoreError> {
+        self.connection.execute(
+            "INSERT OR IGNORE INTO library_folders (name, system) VALUES (?1, 0)",
+            [name],
+        )?;
+        Ok(())
+    }
+
+    pub fn rename_library_folder(&mut self, previous: &str, next: &str) -> Result<(), StoreError> {
+        let transaction = self.connection.transaction()?;
+        let system: Option<bool> = transaction
+            .query_row(
+                "SELECT system FROM library_folders WHERE name=?1",
+                [previous],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if system != Some(false) {
+            return Err(StoreError::Sql(rusqlite::Error::InvalidQuery));
+        }
+        transaction.execute(
+            "UPDATE library_folders SET name=?1 WHERE name=?2",
+            params![next, previous],
+        )?;
+        transaction.execute(
+            "UPDATE games SET library_folder=?1 WHERE library_folder=?2",
+            params![next, previous],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn delete_library_folder(&mut self, name: &str) -> Result<(), StoreError> {
+        let transaction = self.connection.transaction()?;
+        let system: Option<bool> = transaction
+            .query_row(
+                "SELECT system FROM library_folders WHERE name=?1",
+                [name],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if system != Some(false) {
+            return Err(StoreError::Sql(rusqlite::Error::InvalidQuery));
+        }
+        transaction.execute(
+            "UPDATE games SET library_folder=NULL WHERE library_folder=?1",
+            [name],
+        )?;
+        transaction.execute("DELETE FROM library_folders WHERE name=?1", [name])?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn update_game_library_with_operation(
+        &mut self,
+        game_id: Uuid,
+        folder: Option<&str>,
+        favorite: bool,
+        tags: &[String],
+        operation: &Operation,
+    ) -> Result<(), StoreError> {
+        let transaction = self.connection.transaction()?;
+        if let Some(folder) = folder {
+            transaction.execute(
+                "INSERT OR IGNORE INTO library_folders (name, system) VALUES (?1, 0)",
+                [folder],
+            )?;
+        }
+        transaction.execute(
+            "UPDATE games SET library_folder=?1, favorite=?2, tags_json=?3, updated_at=?4 WHERE id=?5",
+            params![folder, favorite as i32, serde_json::to_string(tags)?, operation.created_at.to_rfc3339(), game_id.to_string()],
+        )?;
+        insert_operation(&transaction, operation, false)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
     pub fn reorder_branches_with_operation(
         &mut self,
         game_id: Uuid,
@@ -1595,13 +2170,15 @@ impl LocalStore {
         phase: Option<&str>,
         tags: &[String],
         source_card_id: Option<i64>,
+        task_type: &str,
     ) -> Result<(), StoreError> {
         self.connection.execute(
-            "INSERT INTO training_tasks (id, game_id, report_signature, node_id, title, detail, phase, tags_json, source_card_id, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            "INSERT INTO training_tasks (id, game_id, report_signature, node_id, title, detail, phase, tags_json, source_card_id, task_type, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
              ON CONFLICT(game_id, report_signature, node_id)
              DO UPDATE SET title=excluded.title, detail=excluded.detail, phase=excluded.phase,
-                           tags_json=excluded.tags_json, source_card_id=excluded.source_card_id",
+                           tags_json=excluded.tags_json, source_card_id=excluded.source_card_id,
+                           task_type=excluded.task_type",
             params![
                 Uuid::new_v4().to_string(),
                 game_id.to_string(),
@@ -1612,6 +2189,7 @@ impl LocalStore {
                 phase,
                 serde_json::to_string(tags)?,
                 source_card_id,
+                task_type,
                 chrono::Utc::now().to_rfc3339(),
             ],
         )?;
@@ -1620,7 +2198,7 @@ impl LocalStore {
 
     pub fn list_training_tasks(&self) -> Result<Vec<TrainingTask>, StoreError> {
         let mut statement = self.connection.prepare(
-            "SELECT id, game_id, report_signature, node_id, title, detail, phase, tags_json, source_card_id, completed_at, created_at
+            "SELECT id, game_id, report_signature, node_id, title, detail, phase, tags_json, source_card_id, task_type, completed_at, created_at
              FROM training_tasks ORDER BY completed_at IS NOT NULL, created_at DESC",
         )?;
         statement
@@ -1636,8 +2214,9 @@ impl LocalStore {
                     phase: row.get(6)?,
                     tags: serde_json::from_str(&tags_json).unwrap_or_default(),
                     source_card_id: row.get(8)?,
-                    completed_at: row.get(9)?,
-                    created_at: row.get(10)?,
+                    task_type: row.get(9)?,
+                    completed_at: row.get(10)?,
+                    created_at: row.get(11)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()
@@ -1781,7 +2360,7 @@ impl LocalStore {
     pub fn load_games(&self) -> Result<Vec<LocalGame>, StoreError> {
         let mut statement = self.connection.prepare(
             "SELECT id, title, starting_fen, root_id, current_node_id, note,
-                    source_path, source_format, playable, updated_at, metadata_json
+                    source_path, source_format, playable, updated_at, metadata_json, library_folder, favorite, tags_json
              FROM games WHERE deleted_at IS NULL ORDER BY updated_at DESC",
         )?;
         let rows = statement.query_map([], local_game_from_row)?;
@@ -1797,7 +2376,7 @@ impl LocalStore {
         params: [String; N],
     ) -> Result<Option<LocalGame>, StoreError> {
         let sql = format!(
-            "SELECT id, title, starting_fen, root_id, current_node_id, note, source_path, source_format, playable, updated_at, metadata_json FROM games {clause}"
+            "SELECT id, title, starting_fen, root_id, current_node_id, note, source_path, source_format, playable, updated_at, metadata_json, library_folder, favorite, tags_json FROM games {clause}"
         );
         let row = self
             .connection
@@ -1828,6 +2407,14 @@ impl LocalStore {
             params![key, value],
         )?;
         Ok(())
+    }
+
+    pub fn local_state_value(&self, key: &str) -> Result<Option<String>, StoreError> {
+        self.sync_value(key)
+    }
+
+    pub fn set_local_state_value(&mut self, key: &str, value: &str) -> Result<(), StoreError> {
+        self.set_sync_value(key, value)
     }
 
     pub fn load_move_nodes(&self, game_id: Uuid) -> Result<Vec<MoveNode>, StoreError> {
@@ -1872,6 +2459,9 @@ impl LocalStore {
                note TEXT NOT NULL DEFAULT '', source_path TEXT, source_format TEXT,
                playable INTEGER NOT NULL DEFAULT 1, metadata_json TEXT NOT NULL DEFAULT '{}'
              );
+             CREATE TABLE IF NOT EXISTS library_folders (
+               name TEXT PRIMARY KEY, system INTEGER NOT NULL DEFAULT 0
+             );
              CREATE TABLE IF NOT EXISTS move_nodes (
                id TEXT PRIMARY KEY, game_id TEXT NOT NULL, parent_id TEXT,
                move_iccs TEXT NOT NULL, cn_move TEXT, comment TEXT NOT NULL DEFAULT '',
@@ -1912,6 +2502,7 @@ impl LocalStore {
                id TEXT PRIMARY KEY, game_id TEXT NOT NULL, report_signature TEXT NOT NULL,
                node_id TEXT NOT NULL, title TEXT NOT NULL, detail TEXT NOT NULL,
                phase TEXT, tags_json TEXT NOT NULL DEFAULT '[]', source_card_id INTEGER,
+               task_type TEXT NOT NULL DEFAULT 'critical',
                completed_at TEXT, created_at TEXT NOT NULL,
                UNIQUE(game_id, report_signature, node_id)
              );
@@ -1951,11 +2542,51 @@ impl LocalStore {
                FOREIGN KEY(card_id) REFERENCES theory_cards(id)
              );
              CREATE INDEX IF NOT EXISTS idx_theory_card_feedback_card ON theory_card_feedback(card_id, created_at DESC);
+             CREATE TABLE IF NOT EXISTS master_style_profiles (
+               id TEXT PRIMARY KEY, player_name TEXT NOT NULL, normalized_name TEXT NOT NULL,
+               version TEXT NOT NULL, sample_count INTEGER NOT NULL DEFAULT 0,
+               generated_at TEXT NOT NULL, profile_json TEXT NOT NULL, imported_at TEXT NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS idx_master_style_profiles_name ON master_style_profiles(normalized_name, imported_at DESC);
+             CREATE TABLE IF NOT EXISTS master_style_samples (
+               id TEXT PRIMARY KEY, profile_id TEXT NOT NULL, player_name TEXT NOT NULL,
+               source_game_id TEXT NOT NULL, source_title TEXT NOT NULL,
+               event_name TEXT, game_date TEXT, ply INTEGER NOT NULL,
+               phase TEXT NOT NULL, before_fen TEXT NOT NULL, played_move TEXT NOT NULL,
+               played_move_rank INTEGER, played_move_in_topn INTEGER NOT NULL DEFAULT 0,
+               best_move TEXT, best_score_cp INTEGER,
+               candidates_json TEXT NOT NULL DEFAULT '[]', source_json TEXT NOT NULL DEFAULT '{}',
+               imported_at TEXT NOT NULL,
+               FOREIGN KEY(profile_id) REFERENCES master_style_profiles(id) ON DELETE CASCADE
+             );
+             CREATE INDEX IF NOT EXISTS idx_master_style_samples_fen ON master_style_samples(before_fen, profile_id);
+             CREATE INDEX IF NOT EXISTS idx_master_style_samples_phase_move ON master_style_samples(phase, played_move, profile_id);
+             CREATE TABLE IF NOT EXISTS master_style_matches (
+               id TEXT PRIMARY KEY, game_id TEXT NOT NULL, report_signature TEXT NOT NULL,
+               node_id TEXT NOT NULL, profile_id TEXT NOT NULL, sample_id TEXT NOT NULL,
+               confidence TEXT NOT NULL, reason TEXT NOT NULL, verdict TEXT NOT NULL DEFAULT 'unreviewed',
+               note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
+               UNIQUE(game_id, report_signature, node_id, profile_id, sample_id),
+               FOREIGN KEY(profile_id) REFERENCES master_style_profiles(id),
+               FOREIGN KEY(sample_id) REFERENCES master_style_samples(id)
+             );
+             CREATE INDEX IF NOT EXISTS idx_master_style_matches_node ON master_style_matches(game_id, node_id, created_at DESC);
              CREATE TABLE IF NOT EXISTS study_sessions (
                id TEXT PRIMARY KEY, game_id TEXT NOT NULL, node_id TEXT,
                reflection TEXT NOT NULL, tags_json TEXT NOT NULL, created_at TEXT NOT NULL
              );
              CREATE INDEX IF NOT EXISTS idx_study_sessions_game ON study_sessions(game_id, created_at DESC);
+             CREATE TABLE IF NOT EXISTS flyknife_plans (
+               id TEXT PRIMARY KEY, title TEXT NOT NULL, side TEXT NOT NULL,
+               starting_fen TEXT NOT NULL, template_id TEXT, template_name TEXT NOT NULL,
+               lure_move TEXT NOT NULL, knife_move TEXT NOT NULL,
+               mainline_json TEXT NOT NULL, best_defense_json TEXT NOT NULL,
+               score_cp INTEGER, mate INTEGER, risk TEXT NOT NULL,
+               source_game_id TEXT, source_node_id TEXT, note TEXT NOT NULL DEFAULT '',
+               annotations_json TEXT NOT NULL DEFAULT '[]',
+               created_at TEXT NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS idx_flyknife_plans_side ON flyknife_plans(side, created_at DESC);
              UPDATE operations
              SET payload = json_set(
                payload,
@@ -1970,6 +2601,19 @@ impl LocalStore {
         ensure_game_column(&connection, "source_format", "TEXT")?;
         ensure_game_column(&connection, "playable", "INTEGER NOT NULL DEFAULT 1")?;
         ensure_game_column(&connection, "metadata_json", "TEXT NOT NULL DEFAULT '{}'")?;
+        ensure_game_column(&connection, "library_folder", "TEXT")?;
+        ensure_game_column(&connection, "favorite", "INTEGER NOT NULL DEFAULT 0")?;
+        ensure_game_column(&connection, "tags_json", "TEXT NOT NULL DEFAULT '[]'")?;
+        ensure_column(
+            &connection,
+            "flyknife_plans",
+            "annotations_json",
+            "TEXT NOT NULL DEFAULT '[]'",
+        )?;
+        connection.execute_batch(
+            "INSERT OR IGNORE INTO library_folders (name, system) VALUES
+             ('比赛复盘', 1), ('开局研究', 1), ('飞刀方案', 1), ('训练题', 1);",
+        )?;
         ensure_column(&connection, "training_tasks", "phase", "TEXT")?;
         ensure_column(
             &connection,
@@ -1978,6 +2622,12 @@ impl LocalStore {
             "TEXT NOT NULL DEFAULT '[]'",
         )?;
         ensure_column(&connection, "training_tasks", "source_card_id", "INTEGER")?;
+        ensure_column(
+            &connection,
+            "training_tasks",
+            "task_type",
+            "TEXT NOT NULL DEFAULT 'critical'",
+        )?;
         ensure_column(&connection, "theory_cards", "external_id", "TEXT")?;
         connection.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_theory_cards_external_id_unique ON theory_cards(external_id)",
@@ -2028,6 +2678,56 @@ impl LocalStore {
             "needs_recheck",
             "INTEGER NOT NULL DEFAULT 0",
         )?;
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS master_style_profiles (
+               id TEXT PRIMARY KEY, player_name TEXT NOT NULL, normalized_name TEXT NOT NULL,
+               version TEXT NOT NULL, sample_count INTEGER NOT NULL DEFAULT 0,
+               generated_at TEXT NOT NULL, profile_json TEXT NOT NULL, imported_at TEXT NOT NULL
+             )",
+            [],
+        )?;
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_master_style_profiles_name ON master_style_profiles(normalized_name, imported_at DESC)",
+            [],
+        )?;
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS master_style_samples (
+               id TEXT PRIMARY KEY, profile_id TEXT NOT NULL, player_name TEXT NOT NULL,
+               source_game_id TEXT NOT NULL, source_title TEXT NOT NULL,
+               event_name TEXT, game_date TEXT, ply INTEGER NOT NULL,
+               phase TEXT NOT NULL, before_fen TEXT NOT NULL, played_move TEXT NOT NULL,
+               played_move_rank INTEGER, played_move_in_topn INTEGER NOT NULL DEFAULT 0,
+               best_move TEXT, best_score_cp INTEGER,
+               candidates_json TEXT NOT NULL DEFAULT '[]', source_json TEXT NOT NULL DEFAULT '{}',
+               imported_at TEXT NOT NULL,
+               FOREIGN KEY(profile_id) REFERENCES master_style_profiles(id) ON DELETE CASCADE
+             )",
+            [],
+        )?;
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_master_style_samples_fen ON master_style_samples(before_fen, profile_id)",
+            [],
+        )?;
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_master_style_samples_phase_move ON master_style_samples(phase, played_move, profile_id)",
+            [],
+        )?;
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS master_style_matches (
+               id TEXT PRIMARY KEY, game_id TEXT NOT NULL, report_signature TEXT NOT NULL,
+               node_id TEXT NOT NULL, profile_id TEXT NOT NULL, sample_id TEXT NOT NULL,
+               confidence TEXT NOT NULL, reason TEXT NOT NULL, verdict TEXT NOT NULL DEFAULT 'unreviewed',
+               note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
+               UNIQUE(game_id, report_signature, node_id, profile_id, sample_id),
+               FOREIGN KEY(profile_id) REFERENCES master_style_profiles(id),
+               FOREIGN KEY(sample_id) REFERENCES master_style_samples(id)
+             )",
+            [],
+        )?;
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_master_style_matches_node ON master_style_matches(game_id, node_id, created_at DESC)",
+            [],
+        )?;
         Ok(Self { connection })
     }
 }
@@ -2068,6 +2768,9 @@ type LocalGameRow = (
     bool,
     String,
     String,
+    Option<String>,
+    bool,
+    String,
 );
 
 fn local_game_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalGameRow> {
@@ -2083,6 +2786,9 @@ fn local_game_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalGameRow
         row.get(8)?,
         row.get(9)?,
         row.get(10)?,
+        row.get(11)?,
+        row.get(12)?,
+        row.get(13)?,
     ))
 }
 
@@ -2099,6 +2805,9 @@ fn parse_local_game(
         playable,
         updated_at,
         metadata_json,
+        library_folder,
+        favorite,
+        tags_json,
     ): LocalGameRow,
 ) -> Result<LocalGame, StoreError> {
     Ok(LocalGame {
@@ -2115,6 +2824,9 @@ fn parse_local_game(
         playable,
         updated_at,
         metadata_json,
+        library_folder,
+        favorite,
+        tags: serde_json::from_str(&tags_json).unwrap_or_default(),
     })
 }
 
@@ -2202,15 +2914,36 @@ fn project_operation(connection: &Connection, operation: &Operation) -> Result<(
         OperationKind::UpdateGameMetadata => {
             let payload: UpdateGameMetadataPayload =
                 serde_json::from_value(operation.payload.clone())?;
+            let library_folder = payload
+                .library_folder
+                .as_deref()
+                .map(str::trim)
+                .filter(|folder| !folder.is_empty());
+            let replace_library_folder = payload.library_folder.is_some();
+            if let Some(folder) = library_folder {
+                connection.execute(
+                    "INSERT OR IGNORE INTO library_folders (name, system) VALUES (?1, 0)",
+                    [folder],
+                )?;
+            }
             let metadata_json =
                 metadata_json_with_payload(connection, operation.game_id, &payload)?;
             connection.execute(
                 "UPDATE games SET title = ?1, note = ?2, metadata_json = ?3,
-                 updated_at = ?4 WHERE id = ?5",
+                 library_folder = CASE WHEN ?4 THEN ?5 ELSE library_folder END,
+                 favorite = COALESCE(?6, favorite), tags_json = COALESCE(?7, tags_json),
+                 updated_at = ?8 WHERE id = ?9",
                 params![
                     payload.title,
                     payload.note,
                     metadata_json,
+                    replace_library_folder,
+                    library_folder,
+                    payload.favorite.map(|value| value as i32),
+                    payload
+                        .tags
+                        .map(|tags| serde_json::to_string(&tags))
+                        .transpose()?,
                     operation.created_at.to_rfc3339(),
                     operation.game_id.to_string()
                 ],
@@ -2466,6 +3199,111 @@ mod tests {
     }
 
     #[test]
+    fn library_folder_favorite_and_tags_survive_and_folder_delete_uncategorizes() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let game_id = Uuid::new_v4();
+        store
+            .save_game_with_operation(
+                game_id,
+                "赛后复盘",
+                "fen",
+                Uuid::new_v4(),
+                &operation(game_id),
+            )
+            .unwrap();
+        store.create_library_folder("省赛").unwrap();
+        let mut update = operation(game_id);
+        update.kind = OperationKind::UpdateGameMetadata;
+        update.payload = serde_json::to_value(UpdateGameMetadataPayload {
+            title: "赛后复盘".into(),
+            note: String::new(),
+            library_folder: Some("省赛".into()),
+            favorite: Some(true),
+            tags: Some(vec!["中炮".into(), "失误".into()]),
+            ..UpdateGameMetadataPayload::default()
+        })
+        .unwrap();
+        store
+            .update_game_library_with_operation(
+                game_id,
+                Some("省赛"),
+                true,
+                &["中炮".into(), "失误".into()],
+                &update,
+            )
+            .unwrap();
+        let game = store.load_game(game_id).unwrap().unwrap();
+        assert_eq!(game.library_folder.as_deref(), Some("省赛"));
+        assert!(game.favorite);
+        assert_eq!(game.tags, vec!["中炮", "失误"]);
+        store.rename_library_folder("省赛", "市赛").unwrap();
+        assert_eq!(
+            store
+                .load_game(game_id)
+                .unwrap()
+                .unwrap()
+                .library_folder
+                .as_deref(),
+            Some("市赛")
+        );
+        store.delete_library_folder("市赛").unwrap();
+        assert_eq!(
+            store.load_game(game_id).unwrap().unwrap().library_folder,
+            None
+        );
+        assert!(
+            store
+                .library_folders()
+                .unwrap()
+                .iter()
+                .any(|folder| folder.name == "比赛复盘" && folder.system)
+        );
+        assert!(store.rename_library_folder("比赛复盘", "其他").is_err());
+        assert!(store.delete_library_folder("不存在").is_err());
+    }
+
+    #[test]
+    fn flyknife_plans_survive_listing_and_deletion() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let plan = FlyknifePlan {
+            id: Uuid::new_v4(),
+            title: "中炮飞刀".into(),
+            side: "red".into(),
+            starting_fen: "fen".into(),
+            template_id: Some("zhongpao".into()),
+            template_name: "中炮".into(),
+            lure_move: "h9g7".into(),
+            knife_move: "b2c4".into(),
+            mainline: vec!["h9g7".into(), "b2c4".into()],
+            best_defense: vec![],
+            score_cp: Some(120),
+            mate: None,
+            risk: "实战可用".into(),
+            source_game_id: None,
+            source_node_id: None,
+            note: String::new(),
+            annotations: vec![FlyknifeStepAnnotation {
+                role: "knife".into(),
+                iccs: "b2c4".into(),
+                notation: "炮二平五".into(),
+                side: "红方".into(),
+                fen: Some("fen-after".into()),
+                score_cp: Some(120),
+                swing_cp: Some(110),
+                intent: "关键反击。".into(),
+                note: Some("用户确认：先抢中路。".into()),
+            }],
+            created_at: Utc::now().to_rfc3339(),
+        };
+        store.save_flyknife_plan(&plan).unwrap();
+        let saved = store.flyknife_plans().unwrap().remove(0);
+        assert_eq!(saved.id, plan.id);
+        assert_eq!(saved.annotations, plan.annotations);
+        store.delete_flyknife_plan(plan.id).unwrap();
+        assert!(store.flyknife_plans().unwrap().is_empty());
+    }
+
+    #[test]
     fn migration_adds_theory_card_external_id_before_creating_unique_index() {
         let connection = Connection::open_in_memory().unwrap();
         connection
@@ -2502,9 +3340,11 @@ mod tests {
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        assert!(indexes
-            .iter()
-            .any(|index| index == "idx_theory_cards_external_id_unique"));
+        assert!(
+            indexes
+                .iter()
+                .any(|index| index == "idx_theory_cards_external_id_unique")
+        );
     }
 
     #[test]
@@ -3036,6 +3876,9 @@ mod tests {
             event: Some("联赛".into()),
             red: Some("甲".into()),
             result: Some("1-0".into()),
+            library_folder: Some("线上联赛".into()),
+            favorite: Some(true),
+            tags: Some(vec!["中炮".into(), "复盘".into()]),
             ..UpdateGameMetadataPayload::default()
         })
         .unwrap();
@@ -3049,6 +3892,39 @@ mod tests {
         assert_eq!(value["event"], "联赛");
         assert_eq!(value["red"], "甲");
         assert_eq!(value["result"], "1-0");
+        assert_eq!(game.library_folder.as_deref(), Some("线上联赛"));
+        assert!(game.favorite);
+        assert_eq!(game.tags, vec!["中炮", "复盘"]);
+        assert!(
+            store
+                .library_folders()
+                .unwrap()
+                .iter()
+                .any(|folder| folder.name == "线上联赛")
+        );
+
+        metadata.payload = serde_json::to_value(UpdateGameMetadataPayload {
+            title: "New".into(),
+            note: "remote".into(),
+            library_folder: Some(String::new()),
+            favorite: Some(true),
+            tags: Some(vec!["中炮".into(), "复盘".into()]),
+            ..UpdateGameMetadataPayload::default()
+        })
+        .unwrap();
+        metadata.op_id = Uuid::new_v4();
+        store.apply_remote_operation(&metadata, 3).unwrap();
+        assert_eq!(
+            store.load_game(game_id).unwrap().unwrap().library_folder,
+            None
+        );
+        assert!(
+            !store
+                .library_folders()
+                .unwrap()
+                .iter()
+                .any(|folder| folder.name.is_empty())
+        );
     }
 
     #[test]
@@ -3101,6 +3977,10 @@ mod tests {
             report_depth: 24,
             xqb_book_paths: vec!["/books/example.xqb".into()],
             disabled_xqb_book_paths: Vec::new(),
+            eleeye_book_paths: vec!["/books/BOOK.DAT".into()],
+            disabled_eleeye_book_paths: Vec::new(),
+            builtin_opening_book_enabled: true,
+            active_builtin_opening_book_id: "learning-top3".into(),
             active_engine_id: None,
             analysis_engine_mode: "single".into(),
             parallel_engine_ids: Vec::new(),
@@ -3139,9 +4019,11 @@ mod tests {
         assert_eq!(preferences.manual_view_mode, "track");
         assert_eq!(preferences.color_theme, "dark");
         assert_eq!(preferences.branch_arrow_color, "#2f80ed");
-        assert_eq!(preferences.report_depth, 30);
+        assert_eq!(preferences.report_depth, 24);
         assert_eq!(preferences.candidate_line_moves, 16);
         assert!(preferences.xqb_book_paths.is_empty());
+        assert!(preferences.builtin_opening_book_enabled);
+        assert_eq!(preferences.active_builtin_opening_book_id, "learning-top3");
         assert!(preferences.cloud_book_enabled);
         assert_eq!(
             preferences.cloud_book_url,
@@ -3327,7 +4209,10 @@ mod tests {
             engine_correlations: vec!["line_control".into(), "missed_candidate".into()],
         };
         let inserted = store.upsert_imported_theory_card(&card).unwrap();
-        assert_eq!(inserted.external_id.as_deref(), Some("qili-demand-middle-test"));
+        assert_eq!(
+            inserted.external_id.as_deref(),
+            Some("qili-demand-middle-test")
+        );
         assert_eq!(inserted.review_status, "approved");
         assert_eq!(inserted.version, 1);
 
@@ -3342,6 +4227,77 @@ mod tests {
         assert_eq!(updated.version, 2);
         assert_eq!(updated.origin, "imported");
         assert!(!updated.user_modified);
+    }
+
+    #[test]
+    fn master_style_profiles_import_and_match_exact_fen_with_approved_cards() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        store
+            .upsert_imported_theory_card(&ImportedTheoryCard {
+                external_id: "qili-style-opening-test".into(),
+                phase: "opening".into(),
+                course_name: "赵鑫鑫布局棋理48讲".into(),
+                lesson_title: "先出动强子".into(),
+                source_path: "qili/opening/001".into(),
+                fingerprint: "card-fp".into(),
+                title: "布局阶段先协调强子".into(),
+                summary: "开局应优先让车马炮形成可持续配合。".into(),
+                applies_when: "布局阶段出现候选着选择时。".into(),
+                risk: "不能脱离具体战术强行套用。".into(),
+                review_status: "approved".into(),
+                source_book: Some("赵鑫鑫布局棋理".into()),
+                source_page_start: Some(12),
+                source_page_end: Some(13),
+                tags: vec!["opening".into()],
+                engine_correlations: vec!["candidate".into()],
+            })
+            .unwrap();
+        let profile = ImportedMasterStyleProfile {
+            id: "zhao-style".into(),
+            player_name: "赵鑫鑫".into(),
+            normalized_name: "赵鑫鑫".into(),
+            version: "master-style-training-v1".into(),
+            sample_count: 1,
+            generated_at: "2026-08-06T00:00:00Z".into(),
+            profile_json: "{}".into(),
+        };
+        let sample = ImportedMasterStyleSample {
+            id: "sample-1".into(),
+            profile_id: "zhao-style".into(),
+            player_name: "赵鑫鑫".into(),
+            source_game_id: "game-1".into(),
+            source_title: "赵鑫鑫 先胜 某棋手".into(),
+            event_name: Some("测试赛事".into()),
+            game_date: Some("2026-01-01".into()),
+            ply: 12,
+            phase: "opening".into(),
+            before_fen: "fen-a".into(),
+            played_move: "h2e2".into(),
+            played_move_rank: Some(1),
+            played_move_in_topn: true,
+            best_move: Some("h2e2".into()),
+            best_score_cp: Some(36),
+            candidates_json: "[]".into(),
+            source_json: "{}".into(),
+        };
+        store
+            .upsert_master_style_profile(&profile, &[sample])
+            .unwrap();
+
+        let hints = store
+            .match_master_style_hints("fen-a", "opening", Some("h2e2"), 3)
+            .unwrap();
+        assert_eq!(hints.len(), 1);
+        assert_eq!(hints[0].confidence, "exact");
+        assert_eq!(hints[0].player_name, "赵鑫鑫");
+        assert_eq!(hints[0].theory_cards.len(), 1);
+        assert_eq!(hints[0].theory_cards[0].title, "布局阶段先协调强子");
+
+        let similar = store
+            .match_master_style_hints("fen-b", "opening", Some("h2e2"), 3)
+            .unwrap();
+        assert_eq!(similar.len(), 1);
+        assert_eq!(similar[0].confidence, "similar");
     }
 
     #[test]
@@ -3367,6 +4323,7 @@ mod tests {
                 Some("middle"),
                 &["候选着".into()],
                 None,
+                "critical",
             )
             .unwrap();
         let stats = store.weakness_stats(8).unwrap();

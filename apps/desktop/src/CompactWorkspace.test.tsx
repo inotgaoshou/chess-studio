@@ -8,7 +8,7 @@ describe("CompactReferencePanels", () => {
   const common = {
     cloudEnabled: true,
     bookLoading: false,
-    bookRows: [{ id: "cloud-h2e2", iccs: "h2e2", notation: "马二进三", scoreText: "+18", winRateText: "52%", source: "ChessDB" }],
+    bookRows: [{ id: "cloud-h2e2", iccs: "h2e2", notation: "马二进三", scoreText: "红优 +18", winRateText: "52%", source: "ChessDB", advantageText: "首选" }],
     evaluationRows: [{ id: "pv-1", iccs: "h2e2", notation: "马二进三", scoreText: "+20", depthText: "20", role: "首选" }],
     evaluationLabel: "红方稍优",
     evaluationScore: "+20",
@@ -53,7 +53,7 @@ describe("CompactReferencePanels", () => {
         id: "xqb-h2e2",
         iccs: "h2e2",
         notation: "马二进三",
-        scoreText: "+12",
+        scoreText: "红优 +12",
         winRateText: "54%",
         source: "本地 XQB",
         sampleCount: 71368,
@@ -65,21 +65,23 @@ describe("CompactReferencePanels", () => {
     expect(screen.getAllByText("本地 XQB").length).toBeGreaterThan(0);
     expect(screen.getByLabelText("胜 36% ，和 32% ，负 32%")).toBeTruthy();
     expect(screen.getByText("71,368")).toBeTruthy();
+    expect(screen.getByText("红优 +12")).toBeTruthy();
   });
 
   it("shows cloud statistics as a real switchable evaluation view", () => {
     render(<CompactReferencePanels
       {...common}
       bookRows={[
-        { id: "cloud-h2e2", iccs: "h2e2", notation: "马二进三", scoreText: "+18", winRateText: "52%", source: "ChessDB" },
-        { id: "cloud-b2e2", iccs: "b2e2", notation: "炮八平五", scoreText: "+32", winRateText: "57%", source: "ChessDB" },
+        { id: "cloud-h2e2", iccs: "h2e2", notation: "马二进三", scoreText: "红优 +18", winRateText: "52%", source: "ChessDB", advantageText: "差 14" },
+        { id: "cloud-b2e2", iccs: "b2e2", notation: "炮八平五", scoreText: "红优 +32", winRateText: "57%", source: "ChessDB", advantageText: "首选" },
       ]}
     />);
 
     fireEvent.click(screen.getByRole("button", { name: "开局库统计" }));
     expect(screen.getByText("开局库候选")).toBeTruthy();
     expect(screen.getByText("最高分")).toBeTruthy();
-    expect(screen.getAllByText("+32").length).toBeGreaterThan(0);
+    expect(screen.getByTitle(/炮八平五/).textContent).toContain("红优 +32");
+    expect(screen.getByTitle(/马二进三/).textContent).toContain("差 14");
     expect(screen.getByText("55%")).toBeTruthy();
   });
 

@@ -8,6 +8,7 @@ import {
   Copy,
   FolderOpen,
   GitFork,
+  Info,
   LayoutGrid,
   Link,
   ListStart,
@@ -27,6 +28,7 @@ export type MenuCommand =
   | "newGame"
   | "openDocument"
   | "importXqbOpeningBook"
+  | "importEleeyeOpeningBook"
   | "saveDocument"
   | "saveDocumentAs"
   | "editPosition"
@@ -36,6 +38,8 @@ export type MenuCommand =
   | "copyFullManual"
   | "copyMainline"
   | "pasteTextManual"
+  | "masterLibrary"
+  | "flyknifeLab"
   | "nextBranch"
   | "linkSession"
   | "engineRed"
@@ -52,7 +56,8 @@ export type MenuCommand =
   | "syncNow"
   | "syncSettings"
   | "subscription"
-  | "syncLogout";
+  | "syncLogout"
+  | "about";
 
 export type SyncAccountStatus = "unbound" | "signedOut" | "signedIn" | "expired";
 
@@ -61,6 +66,7 @@ export type MenuBarStatus = {
   isPlaying: boolean;
   analysisBusy: boolean;
   engineThinking: boolean;
+  engineArenaBusy?: boolean;
   engineMoveNowAvailable: boolean;
   engineConfigured: boolean;
   engineSide: "none" | "red" | "black";
@@ -71,7 +77,7 @@ export type MenuBarStatus = {
   syncLastResult?: string;
 };
 
-type DesktopMenu = "game" | "position" | "manual" | "engine" | "link" | "sync";
+type DesktopMenu = "game" | "position" | "manual" | "engine" | "link" | "sync" | "help";
 
 type MenuItemProps = {
   children: ReactNode;
@@ -101,9 +107,11 @@ function MenuItem({ children, command, disabled, title, className, execute, clos
 
 export function DesktopMenuBar({
   status,
+  appVersion,
   execute,
 }: {
   status: MenuBarStatus;
+  appVersion?: string;
   execute(command: MenuCommand): void | Promise<void>;
 }) {
   const [openMenu, setOpenMenu] = useState<DesktopMenu | null>(null);
@@ -134,7 +142,7 @@ export function DesktopMenuBar({
 
   function handleKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
     const target = event.target as HTMLElement;
-    const menus: DesktopMenu[] = ["game", "position", "manual", "engine", "link", "sync"];
+    const menus: DesktopMenu[] = ["game", "position", "manual", "engine", "link", "sync", "help"];
     const summaryMenu = target.dataset.menu as DesktopMenu | undefined;
     if (summaryMenu && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
       event.preventDefault();
@@ -192,6 +200,7 @@ export function DesktopMenuBar({
           <MenuItem command="newGame" execute={execute} close={close}><Plus size={14}/>新建棋局</MenuItem>
           <MenuItem command="openDocument" execute={execute} close={close}><FolderOpen size={14}/>打开棋谱</MenuItem>
           <MenuItem command="importXqbOpeningBook" execute={execute} close={close}><BookOpen size={14}/>导入 XQB 开局库</MenuItem>
+          <MenuItem command="importEleeyeOpeningBook" execute={execute} close={close}><BookOpen size={14}/>导入 ElephantEye 开局库</MenuItem>
           <MenuItem command="saveDocument" execute={execute} close={close}><Save size={14}/>保存棋谱</MenuItem>
           <MenuItem command="saveDocumentAs" execute={execute} close={close}><Save size={14}/>另存为 PGN</MenuItem>
         </div>}
@@ -211,6 +220,8 @@ export function DesktopMenuBar({
           <MenuItem command="copyFullManual" execute={execute} close={close}><Copy size={14}/>复制完整棋谱</MenuItem>
           <MenuItem command="copyMainline" execute={execute} close={close}><ClipboardList size={14}/>复制当前主线</MenuItem>
           <MenuItem command="pasteTextManual" execute={execute} close={close}><ClipboardPaste size={14}/>粘贴文本棋谱</MenuItem>
+          <MenuItem command="masterLibrary" execute={execute} close={close} disabled={status.syncStatus !== "signedIn"} title={status.syncStatus !== "signedIn" ? "请先登录同步账号" : undefined}><BookOpen size={14}/>大师棋谱</MenuItem>
+          <MenuItem command="flyknifeLab" execute={execute} close={close}><Zap size={14}/>飞刀入库 / 设计</MenuItem>
           <MenuItem command="nextBranch" execute={execute} close={close} disabled={!status.hasContinuation} title={!status.hasContinuation ? "当前节点没有后续着法" : undefined}><GitFork size={14}/>跳到下个分支点</MenuItem>
         </div>}
       </details>
@@ -221,7 +232,7 @@ export function DesktopMenuBar({
           <MenuItem command="engineBlack" execute={execute} close={close} disabled={blackUnavailable} title={blackUnavailable ? engineUnavailableReason ?? "Pikafish 正在思考，不能切换执方" : undefined} className={status.engineSide === "black" ? "active" : ""}><Bot size={14}/>引擎执黑</MenuItem>
           <MenuItem command="moveNow" execute={execute} close={close} disabled={!status.engineThinking && !status.engineMoveNowAvailable} title={!status.engineThinking && !status.engineMoveNowAvailable ? "请先选择引擎执方，并等待轮到引擎行棋" : status.engineThinking ? "停止搜索并立即落子" : "启动引擎立即出招"}><Zap size={14}/>立即出招</MenuItem>
           <MenuItem command={status.analysisBusy ? "stopAnalysis" : "analyze"} execute={execute} close={close} disabled={!canAnalyze} title={!canAnalyze ? "当前状态不能启动分析" : undefined}>{status.analysisBusy ? <Square size={14}/> : <Zap size={14}/>} {status.analysisBusy ? "停止分析" : "分析当前局面"}</MenuItem>
-          <MenuItem command="engineArena" execute={execute} close={close} disabled={status.analysisBusy || status.engineThinking} title={status.analysisBusy || status.engineThinking ? "请先停止当前引擎任务" : "让两个引擎自动对局并统计胜负"}><Bot size={14}/>引擎擂台</MenuItem>
+          <MenuItem command="engineArena" execute={execute} close={close} disabled={status.engineArenaBusy || status.analysisBusy || status.engineThinking} title={status.engineArenaBusy ? "引擎擂台正在运行中" : status.analysisBusy || status.engineThinking ? "请先停止当前引擎任务" : "让两个引擎自动对局并统计胜负"}><Bot size={14}/>{status.engineArenaBusy ? "擂台运行中" : "引擎擂台"}</MenuItem>
           <MenuItem command="engineSettings" execute={execute} close={close}><Settings2 size={14}/>引擎设置</MenuItem>
           <MenuItem command="coachProfile" execute={execute} close={close}><BarChart3 size={14}/>AI 私教档案</MenuItem>
           <MenuItem command="trainingTasks" execute={execute} close={close}><ClipboardList size={14}/>训练任务</MenuItem>
@@ -243,6 +254,12 @@ export function DesktopMenuBar({
           <MenuItem command="subscription" execute={execute} close={close} disabled={status.syncStatus !== "signedIn"} title={status.syncStatus !== "signedIn" ? "请先登录同步账号" : undefined}><BarChart3 size={14}/>Pro 权益</MenuItem>
           <MenuItem command="syncSettings" execute={execute} close={close}><Settings2 size={14}/>同步设置</MenuItem>
           <MenuItem command="syncLogout" execute={execute} close={close} disabled={status.syncStatus === "unbound" || status.syncStatus === "signedOut"} title={status.syncStatus === "unbound" ? "本地棋谱库尚未绑定账号" : status.syncStatus === "signedOut" ? "当前已经退出登录" : undefined}><LogOut size={14}/>退出登录</MenuItem>
+        </div>}
+      </details>
+      <details open={openMenu === "help"}>
+        {summary("help", "帮助")}
+        {openMenu === "help" && <div className="menu-popup">
+          <MenuItem command="about" execute={execute} close={close} title="查看软件版本、构建时间和运行平台"><Info size={14}/>关于棋研{appVersion ? ` · v${appVersion}` : ""}</MenuItem>
         </div>}
       </details>
     </div>

@@ -235,6 +235,7 @@ mod tests {
                 best_notation: None,
                 pv_notation: Vec::new(),
                 opening: None,
+                master_style_hints: Vec::new(),
                 move_: None,
             },
             GameReportPositionDto {
@@ -252,6 +253,7 @@ mod tests {
                 best_notation: None,
                 pv_notation: Vec::new(),
                 opening: None,
+                master_style_hints: Vec::new(),
                 move_: Some(crate::GameReportMoveDto {
                     node_id: uuid::Uuid::new_v4(),
                     iccs: "h2e2".into(),
@@ -274,6 +276,7 @@ mod tests {
                 best_notation: None,
                 pv_notation: Vec::new(),
                 opening: None,
+                master_style_hints: Vec::new(),
                 move_: Some(crate::GameReportMoveDto {
                     node_id: uuid::Uuid::new_v4(),
                     iccs: "h9g7".into(),

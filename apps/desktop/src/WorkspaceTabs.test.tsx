@@ -17,6 +17,7 @@ describe("WorkspaceTabs", () => {
     fireEvent.click(screen.getByRole("tab", { name: "报告" }));
     expect(screen.getByRole("tab", { name: "报告" }).getAttribute("aria-selected")).toBe("true");
     expect(screen.getByRole("tab", { name: "棋谱" }).getAttribute("aria-selected")).toBe("false");
+    expect(screen.getByRole("tab", { name: "重试" })).toBeTruthy();
   });
 
   it("supports arrow, home and end keyboard navigation", () => {

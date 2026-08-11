@@ -46,6 +46,7 @@ export type GameReportMove = {
   bestIccs?: string;
   bestNotation?: string;
   pvNotation?: string[];
+  masterStyleHints?: GameReportDatasetDto["positions"][number]["masterStyleHints"];
 };
 export type SideReport = {
   overall?: number;
@@ -204,6 +205,7 @@ export function calculateGameReport(dataset: GameReportDatasetDto): GameReport {
       bestIccs: before.bestIccs,
       bestNotation: before.bestNotation,
       pvNotation: before.pvNotation,
+      masterStyleHints: before.masterStyleHints,
     });
   }
   return { red: sideReport(moves, "红方"), black: sideReport(moves, "黑方"), moves };

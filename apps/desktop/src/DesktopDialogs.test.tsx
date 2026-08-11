@@ -1,7 +1,7 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DesktopDialogs } from "./DesktopDialogs";
+import { DesktopDialogs, engineDifficultyFromPreferences, engineDifficultyToDepth } from "./DesktopDialogs";
 import { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH, type DesktopPreferencesDto, type SyncAccountDto } from "./platform";
 
 const preferences: DesktopPreferencesDto = {
@@ -11,10 +11,10 @@ const preferences: DesktopPreferencesDto = {
   multipv: 2,
   candidateLineMoves: 16,
   searchMode: "depth",
-  searchValue: 30,
+  searchValue: 24,
   moveTimeMs: 1000,
   ponder: false,
-  autoAnalyze: true,
+  autoAnalyze: false,
   libraryCollapsed: false,
   candidateRailCollapsed: false,
   analysisPanelCollapsed: false,
@@ -28,7 +28,9 @@ const preferences: DesktopPreferencesDto = {
   colorTheme: "dark",
   boardSkin: "default",
   pieceSkin: "default",
-  reportDepth: 30,
+  reportDepth: 24,
+  builtinOpeningBookEnabled: true,
+  activeBuiltinOpeningBookId: "learning-top3",
   ruleMode: "domestic2020",
   serverUrl: "http://127.0.0.1:8080",
 };
@@ -152,6 +154,43 @@ describe("DesktopDialogs", () => {
     expect(props.onSaveEngine).toHaveBeenCalledWith(expect.objectContaining({ enginePath: "/opt/pikafish", multipv: 4, candidateLineMoves: 12 }));
   });
 
+  it("maps the quick difficulty level to fixed depth settings", async () => {
+    expect(engineDifficultyFromPreferences({ searchMode: "depth", searchValue: 24 })).toBe(20);
+    expect(engineDifficultyToDepth(20)).toBe(24);
+    expect(engineDifficultyToDepth(1)).toBe(8);
+
+    const { props, user } = renderDialog("engine", {
+      preferences: { ...preferences, searchMode: "depth", searchValue: 23, reportDepth: 23 },
+    });
+
+    await user.click(screen.getByRole("button", { name: "提高难度等级" }));
+    expect((screen.getByLabelText("搜索限制") as HTMLInputElement).value).toBe("24");
+    await user.click(screen.getByRole("button", { name: "检测并保存" }));
+
+    expect(props.onSaveEngine).toHaveBeenCalledWith(expect.objectContaining({
+      searchMode: "depth",
+      searchValue: 24,
+      reportDepth: 24,
+    }));
+  });
+
+  it("saves quick thread hash and ponder controls through the existing engine preferences", async () => {
+    const { props, user } = renderDialog("engine", {
+      preferences: { ...preferences, threads: 2, hashMb: 256, ponder: false },
+    });
+
+    await user.click(screen.getByRole("button", { name: "增加线程数" }));
+    await user.click(screen.getByRole("button", { name: "减少哈希值" }));
+    await user.click(screen.getByRole("switch", { name: /后台思考/ }));
+    await user.click(screen.getByRole("button", { name: "检测并保存" }));
+
+    expect(props.onSaveEngine).toHaveBeenCalledWith(expect.objectContaining({
+      threads: 3,
+      hashMb: 240,
+      ponder: true,
+    }));
+  });
+
   it("normalizes engine setting ranges before saving", async () => {
     const { props, user } = renderDialog("engine");
     await user.clear(screen.getByLabelText("候选走法（默认2，不限上限）"));
@@ -175,9 +214,26 @@ describe("DesktopDialogs", () => {
     });
 
     expect((screen.getByLabelText("搜索模式") as HTMLSelectElement).value).toBe("depth");
-    expect((screen.getByLabelText("搜索限制") as HTMLInputElement).value).toBe("30");
-    expect((screen.getByLabelText("整局复盘深度") as HTMLInputElement).value).toBe("30");
+    expect((screen.getByLabelText("搜索限制") as HTMLInputElement).value).toBe("24");
+    expect((screen.getByLabelText("整局复盘深度") as HTMLInputElement).value).toBe("24");
     expect((screen.getByLabelText("每种后续（5-8回合）") as HTMLInputElement).value).toBe("8");
+  });
+
+  it("migrates the old fixed depth 30 defaults to depth 24 without changing custom depth", () => {
+    const { unmount } = renderDialog("engine", {
+      preferences: { ...preferences, searchMode: "depth", searchValue: 30, reportDepth: 30 },
+    });
+
+    expect((screen.getByLabelText("搜索限制") as HTMLInputElement).value).toBe("24");
+    expect((screen.getByLabelText("整局复盘深度") as HTMLInputElement).value).toBe("24");
+    unmount();
+
+    renderDialog("engine", {
+      preferences: { ...preferences, searchMode: "depth", searchValue: 22, reportDepth: 22 },
+    });
+
+    expect((screen.getByLabelText("搜索限制") as HTMLInputElement).value).toBe("22");
+    expect((screen.getByLabelText("整局复盘深度") as HTMLInputElement).value).toBe("22");
   });
 
   it("saves the selected rule mode from the engine dialog", async () => {
@@ -185,11 +241,40 @@ describe("DesktopDialogs", () => {
     const { user } = renderDialog("engine", { onSaveEngine: saveEngine });
 
     await user.selectOptions(screen.getByLabelText("棋规模式"), "asianAxf");
-    expect(screen.getByText(/亚洲象棋规则（AXF导向）/)).toBeTruthy();
+    expect(screen.getAllByText(/亚洲象棋规则（AXF导向）/).length).toBeGreaterThan(0);
     await user.click(screen.getByRole("button", { name: "检测并保存" }));
 
     const calls = saveEngine.mock.calls as unknown as Array<[DesktopPreferencesDto]>;
     expect(calls[0]?.[0]).toEqual(expect.objectContaining({ ruleMode: "asianAxf" }));
+  });
+
+  it("shows bundled opening books and saves the selected built-in book", async () => {
+    const saveEngine = vi.fn(async () => undefined);
+    const { user } = renderDialog("engine", {
+      onSaveEngine: saveEngine,
+      builtinOpeningBookManifest: {
+        version: "test",
+        defaultBookId: "learning-top3",
+        internalUseOnly: true,
+        vkeyVerification: { status: "unverified", note: "test" },
+        books: [
+          { id: "learning-top3", name: "学习精选 Top3", shortName: "学习精选", kind: "learning", fileName: "02_learning_top3.pfBook", description: "", rowCount: 2148653, positionCount: 2120232, maxCandidatesPerPosition: 3, sha256: "sha", default: true },
+          { id: "complete-compatible", name: "完整兼容库", shortName: "完整库", kind: "complete", fileName: "01_complete_compatible.pfBook", description: "", rowCount: 2149843, positionCount: 2120232, maxCandidatesPerPosition: 32, sha256: "sha", default: false },
+          { id: "obk-observation", name: "obk 独有观察库", shortName: "观察库", kind: "observation", fileName: "04_obk_unique_observation.pfBook", description: "", rowCount: 68036, positionCount: 67269, maxCandidatesPerPosition: 19, sha256: "sha", default: false },
+        ],
+      },
+    });
+
+    expect(screen.getByText("内嵌学习开局库")).toBeTruthy();
+    expect(screen.getByText("vkey 未验证，仅可选择库，暂不显示推荐。")).toBeTruthy();
+    await user.selectOptions(screen.getByLabelText("当前库"), "complete-compatible");
+    await user.click(screen.getByRole("button", { name: "检测并保存" }));
+
+    const calls = saveEngine.mock.calls as unknown as Array<[DesktopPreferencesDto]>;
+    expect(calls[0]?.[0]).toEqual(expect.objectContaining({
+      builtinOpeningBookEnabled: true,
+      activeBuiltinOpeningBookId: "complete-compatible",
+    }));
   });
 
   it("adds Fairy and Cyclone style engines through named presets", async () => {
@@ -270,7 +355,6 @@ describe("DesktopDialogs", () => {
 
     expect(screen.queryByLabelText("棋盘皮肤")).toBeNull();
     expect(screen.queryByLabelText("棋子皮肤")).toBeNull();
-    expect(screen.queryByText("后台思考")).toBeNull();
     expect(screen.queryByText("每步自动分析")).toBeNull();
   });
 
@@ -356,7 +440,7 @@ describe("DesktopDialogs", () => {
   it("marks a locally persisted training task complete", async () => {
     const complete = vi.fn(async () => undefined);
     const { user } = renderDialog("training", {
-      trainingTasks: [{ id: "task-1", gameId: "game-1", nodeId: "node-1", title: "复盘第 12 手", detail: "比较候选着法", createdAt: "2026-01-01T00:00:00Z" }],
+      trainingTasks: [{ id: "task-1", gameId: "game-1", nodeId: "node-1", title: "复盘第 12 手", detail: "比较候选着法", taskType: "critical", createdAt: "2026-01-01T00:00:00Z" }],
       onCompleteTraining: complete,
     });
     await user.click(screen.getByRole("checkbox"));

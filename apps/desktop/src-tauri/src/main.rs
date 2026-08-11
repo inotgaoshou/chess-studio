@@ -2,11 +2,13 @@
 
 mod cloud_opening_book;
 mod credential_store;
+mod eleeye_opening_book;
 mod gif_export;
 mod link_vision;
 mod manual_pdf;
 mod opening_book;
 mod pdf_report;
+mod pfbook_opening_book;
 mod xqb_opening_book;
 
 use std::collections::{BTreeMap, HashMap};
@@ -29,9 +31,10 @@ use link_core::{
     ReconcileDecision, StabilityGate,
 };
 use local_store::{
-    AnalysisSummary, DesktopPreferences, EngineProfile, ImportedGame, LocalGame, LocalStore,
-    StudySession, SyncAccountBinding, TheoryCard, TheoryCardFeedback, TheoryLesson, TrainingTask,
-    WeaknessStat,
+    AnalysisSummary, DesktopPreferences, EngineProfile, FlyknifePlan, FlyknifeStepAnnotation,
+    ImportedGame, ImportedMasterStyleProfile, ImportedMasterStyleSample, LibraryFolder, LocalGame,
+    LocalStore, MasterStyleHint, MasterStyleProfile, StudySession, SyncAccountBinding, TheoryCard,
+    TheoryCardFeedback, TheoryLesson, TrainingTask, WeaknessStat,
 };
 use manual_format::{
     ManualDocument, ManualFormat, ManualMetadata, detect_format, export_chinese_text,
@@ -150,10 +153,12 @@ struct LinkSession {
     stable_frames: u8,
     latest_fen: Option<String>,
     last_move: Option<String>,
+    last_move_detail: Option<LinkMoveDetailDto>,
     initial_position_seen: bool,
     auto_side: Option<Color>,
     capture_running: bool,
     board_bounds: Option<(f32, f32, f32, f32)>,
+    piece_click_centers: Vec<LinkPieceClickCenter>,
     target_region: Option<LinkCaptureRegion>,
     board_orientation: link_core::BoardOrientation,
     capture_generation: u64,
@@ -163,6 +168,10 @@ struct LinkSession {
     last_error: Option<String>,
     recognition_attempts: u64,
     last_detection_summary: Option<String>,
+    turn_indicator: Option<String>,
+    manual_turn_override: Option<Color>,
+    pending_external_move: Option<String>,
+    pending_expected_fen: Option<String>,
 }
 
 impl Default for LinkSession {
@@ -182,10 +191,12 @@ impl Default for LinkSession {
             stable_frames: 0,
             latest_fen: None,
             last_move: None,
+            last_move_detail: None,
             initial_position_seen: false,
             auto_side: None,
             capture_running: false,
             board_bounds: None,
+            piece_click_centers: Vec::new(),
             target_region: None,
             board_orientation: link_core::BoardOrientation::RedAtBottom,
             capture_generation: 0,
@@ -195,8 +206,20 @@ impl Default for LinkSession {
             last_error: None,
             recognition_attempts: 0,
             last_detection_summary: None,
+            turn_indicator: None,
+            manual_turn_override: None,
+            pending_external_move: None,
+            pending_expected_fen: None,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct LinkPieceClickCenter {
+    square: Square,
+    x: f32,
+    y: f32,
+    confidence: f32,
 }
 
 #[derive(Serialize)]
@@ -207,6 +230,49 @@ struct SyncAccountDto {
     email: Option<String>,
     status: &'static str,
     last_sync_result: Option<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MasterPlayerDto {
+    id: String,
+    name: String,
+    source_site: String,
+    source_player_id: String,
+    profile_url: String,
+    game_count: u64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MasterGameSummaryDto {
+    id: String,
+    title: String,
+    red_player: String,
+    black_player: String,
+    master_side: Option<String>,
+    event_name: Option<String>,
+    game_date: Option<String>,
+    result: String,
+    move_count: u64,
+    source_url: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MasterGameDetailDto {
+    id: String,
+    title: String,
+    red_player: String,
+    black_player: String,
+    master_side: Option<String>,
+    event_name: Option<String>,
+    game_date: Option<String>,
+    result: String,
+    move_count: u64,
+    source_url: String,
+    moves: Vec<String>,
+    pgn: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -384,10 +450,20 @@ struct PieceDto {
     label: &'static str,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Copy, Serialize)]
 struct SquareDto {
     row: u8,
     col: u8,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LinkMoveDetailDto {
+    iccs: String,
+    notation: String,
+    moved_by: &'static str,
+    from: SquareDto,
+    to: SquareDto,
 }
 
 #[derive(Serialize)]
@@ -487,12 +563,40 @@ struct PreviewLineStepDto {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct AppInfoDto {
+    version: &'static str,
+    build_timestamp: u64,
+    platform: String,
+}
+
+#[tauri::command]
+fn get_app_info() -> AppInfoDto {
+    AppInfoDto {
+        version: env!("CARGO_PKG_VERSION"),
+        build_timestamp: env!("XIANGQI_BUILD_TIMESTAMP").parse().unwrap_or_default(),
+        platform: format!("{} · {}", std::env::consts::OS, std::env::consts::ARCH),
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct GameSummaryDto {
     id: Uuid,
     title: String,
     fen: String,
     updated_at: String,
     current: bool,
+    library_folder: Option<String>,
+    favorite: bool,
+    tags: Vec<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LibraryFolderDto {
+    name: String,
+    system: bool,
+    game_count: u32,
 }
 
 #[derive(Clone, serde::Deserialize, Serialize)]
@@ -551,8 +655,33 @@ struct GameReportPositionDto {
     pv_notation: Vec<String>,
     #[serde(default)]
     opening: Option<OpeningBookHitDto>,
+    #[serde(default)]
+    master_style_hints: Vec<MasterStyleHint>,
     #[serde(rename = "move")]
     move_: Option<GameReportMoveDto>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportMasterStyleProfileRequest {
+    profile_path: Option<String>,
+    samples_path: Option<String>,
+    analysis_path: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MasterStyleImportResultDto {
+    profiles: Vec<MasterStyleProfile>,
+    imported_samples: usize,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MasterStyleSeedManifest {
+    seed_id: String,
+    #[serde(default)]
+    players: Vec<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -596,6 +725,7 @@ struct TrainingTaskDto {
     phase: Option<String>,
     tags: Vec<String>,
     source_card_id: Option<i64>,
+    task_type: String,
     completed_at: Option<String>,
     created_at: String,
 }
@@ -611,8 +741,164 @@ impl From<TrainingTask> for TrainingTaskDto {
             phase: task.phase,
             tags: task.tags,
             source_card_id: task.source_card_id,
+            task_type: task.task_type,
             completed_at: task.completed_at,
             created_at: task.created_at,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TrainingGenerationResultDto {
+    tasks: Vec<TrainingTaskDto>,
+    critical_count: usize,
+    reinforcement_count: usize,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FlyknifeTemplateDto {
+    id: &'static str,
+    name: &'static str,
+    moves: Vec<String>,
+    fen: String,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct FlyknifeTopicDto {
+    id: &'static str,
+    title: &'static str,
+    opening: &'static str,
+    category: &'static str,
+    source: &'static str,
+    move_count: usize,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct FlyknifePlanDto {
+    id: Option<Uuid>,
+    title: String,
+    side: String,
+    starting_fen: String,
+    template_id: Option<String>,
+    template_name: String,
+    lure_move: String,
+    knife_move: String,
+    mainline: Vec<String>,
+    best_defense: Vec<String>,
+    score_cp: Option<i64>,
+    mate: Option<i64>,
+    risk: String,
+    source_game_id: Option<Uuid>,
+    source_node_id: Option<Uuid>,
+    note: String,
+    #[serde(default)]
+    annotations: Vec<FlyknifeStepAnnotationDto>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct FlyknifeStepAnnotationDto {
+    role: String,
+    iccs: String,
+    notation: String,
+    side: String,
+    fen: Option<String>,
+    score_cp: Option<i64>,
+    swing_cp: Option<i64>,
+    intent: String,
+    note: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GenerateFlyknifeRequest {
+    starting_fen: String,
+    side: String,
+    setup_move: Option<String>,
+    lure_move: String,
+    engine_path: String,
+    threads: u32,
+    hash_mb: u32,
+    search_mode: String,
+    search_value: u64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FlyknifeCandidateDto {
+    setup_move: Option<String>,
+    setup_notation: Option<String>,
+    lure_move: String,
+    lure_notation: Option<String>,
+    knife_move: String,
+    mainline: Vec<String>,
+    notation: Vec<String>,
+    best_defense: Vec<String>,
+    best_defense_notation: Vec<String>,
+    score_cp: Option<i64>,
+    baseline_score_cp: Option<i64>,
+    swing_cp: Option<i64>,
+    mate: Option<i64>,
+    risk: String,
+    annotations: Vec<FlyknifeStepAnnotationDto>,
+}
+
+impl From<FlyknifePlan> for FlyknifePlanDto {
+    fn from(plan: FlyknifePlan) -> Self {
+        Self {
+            id: Some(plan.id),
+            title: plan.title,
+            side: plan.side,
+            starting_fen: plan.starting_fen,
+            template_id: plan.template_id,
+            template_name: plan.template_name,
+            lure_move: plan.lure_move,
+            knife_move: plan.knife_move,
+            mainline: plan.mainline,
+            best_defense: plan.best_defense,
+            score_cp: plan.score_cp,
+            mate: plan.mate,
+            risk: plan.risk,
+            source_game_id: plan.source_game_id,
+            source_node_id: plan.source_node_id,
+            note: plan.note,
+            annotations: plan.annotations.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<FlyknifeStepAnnotation> for FlyknifeStepAnnotationDto {
+    fn from(value: FlyknifeStepAnnotation) -> Self {
+        Self {
+            role: value.role,
+            iccs: value.iccs,
+            notation: value.notation,
+            side: value.side,
+            fen: value.fen,
+            score_cp: value.score_cp,
+            swing_cp: value.swing_cp,
+            intent: value.intent,
+            note: value.note,
+        }
+    }
+}
+
+impl From<FlyknifeStepAnnotationDto> for FlyknifeStepAnnotation {
+    fn from(value: FlyknifeStepAnnotationDto) -> Self {
+        Self {
+            role: value.role,
+            iccs: value.iccs,
+            notation: value.notation,
+            side: value.side,
+            fen: value.fen,
+            score_cp: value.score_cp,
+            swing_cp: value.swing_cp,
+            intent: value.intent,
+            note: value.note,
         }
     }
 }
@@ -682,6 +968,9 @@ struct LinkSessionStatusDto {
     last_heartbeat_at: Option<String>,
     recognition_attempts: u64,
     last_detection_summary: Option<String>,
+    turn_indicator: Option<String>,
+    manual_turn_override: Option<String>,
+    pending_external_move: Option<String>,
     capture_preview_kind: Option<String>,
     frame_rate: f32,
     confidence: Option<f32>,
@@ -690,6 +979,8 @@ struct LinkSessionStatusDto {
     required_stable_frames: u8,
     latest_fen: Option<String>,
     last_move: Option<String>,
+    last_move_detail: Option<LinkMoveDetailDto>,
+    initial_position_seen: bool,
     auto_side: Option<String>,
     board_orientation: BoardOrientation,
     capture_running: bool,
@@ -725,6 +1016,9 @@ fn link_status_dto(session: &LinkSession) -> LinkSessionStatusDto {
             .map(|value| value.to_rfc3339()),
         recognition_attempts: session.recognition_attempts,
         last_detection_summary: session.last_detection_summary.clone(),
+        turn_indicator: session.turn_indicator.clone(),
+        manual_turn_override: session.manual_turn_override.map(color_name),
+        pending_external_move: session.pending_external_move.clone(),
         capture_preview_kind: session.capture_preview_kind.clone(),
         frame_rate: session.frame_rate,
         confidence: session.confidence,
@@ -733,6 +1027,8 @@ fn link_status_dto(session: &LinkSession) -> LinkSessionStatusDto {
         required_stable_frames: session.gate.required_frames(),
         latest_fen: session.latest_fen.clone(),
         last_move: session.last_move.clone(),
+        last_move_detail: session.last_move_detail.clone(),
+        initial_position_seen: session.initial_position_seen,
         auto_side: session.auto_side.map(color_name),
         board_orientation: session.board_orientation,
         capture_running: session.capture_running,
@@ -847,6 +1143,10 @@ fn initialize_link_session_for_request(
     session.last_heartbeat_at = None;
     session.recognition_attempts = 0;
     session.last_detection_summary = None;
+    session.turn_indicator = None;
+    session.manual_turn_override = None;
+    session.pending_external_move = None;
+    session.pending_expected_fen = None;
     session.state = match request.source {
         CaptureSource::ImageImport | CaptureSource::CameraBoard => {
             LinkSessionState::DetectingCorners
@@ -862,6 +1162,7 @@ fn initialize_link_session_for_request(
     session.frame_rate = 0.0;
     session.latest_fen = None;
     session.last_move = None;
+    session.last_move_detail = None;
     session.initial_position_seen = false;
     session.auto_side = match request.auto_side.as_deref() {
         Some("red") => Some(Color::Red),
@@ -870,6 +1171,7 @@ fn initialize_link_session_for_request(
     };
     session.capture_running = matches!(request.source, CaptureSource::DesktopDetect);
     session.board_bounds = None;
+    session.piece_click_centers.clear();
     session.target_region = None;
     session.board_orientation = BoardOrientation::RedAtBottom;
     session.capture_generation = generation;
@@ -1035,6 +1337,10 @@ fn start_window_link_selection_worker(
                                 session.last_heartbeat_at = None;
                                 session.recognition_attempts = 0;
                                 session.last_detection_summary = None;
+                                session.turn_indicator = None;
+                                session.manual_turn_override = None;
+                                session.pending_external_move = None;
+                                session.pending_expected_fen = None;
                                 session.latest_fen = None;
                                 session.confidence = None;
                                 session.confidence_threshold = confidence_threshold;
@@ -1133,6 +1439,12 @@ fn stop_link_session(
     session.last_heartbeat_at = None;
     session.recognition_attempts = 0;
     session.last_detection_summary = None;
+    session.turn_indicator = None;
+    session.manual_turn_override = None;
+    session.pending_external_move = None;
+    session.pending_expected_fen = None;
+    session.board_bounds = None;
+    session.piece_click_centers.clear();
     session.target_region = None;
     if let Some(main_window) = app.get_webview_window("main") {
         let _ = main_window.show();
@@ -1252,6 +1564,10 @@ fn recalibrate_link_session(
         session.last_heartbeat_at = None;
         session.recognition_attempts = 0;
         session.last_detection_summary = None;
+        session.turn_indicator = None;
+        session.manual_turn_override = None;
+        session.pending_external_move = None;
+        session.pending_expected_fen = None;
         session.latest_fen = None;
         session.confidence = None;
         session.confidence_threshold = confidence_threshold;
@@ -1342,6 +1658,10 @@ fn recognize_link_image_file(
         session.last_heartbeat_at = Some(Utc::now());
         session.recognition_attempts = 0;
         session.last_detection_summary = None;
+        session.turn_indicator = None;
+        session.manual_turn_override = None;
+        session.pending_external_move = None;
+        session.pending_expected_fen = None;
         session.state = LinkSessionState::ClassifyingSquares;
         session.gate = StabilityGate::new(1);
         session.stable_frames = 0;
@@ -1350,10 +1670,12 @@ fn recognize_link_image_file(
         session.frame_rate = 0.0;
         session.latest_fen = None;
         session.last_move = None;
+        session.last_move_detail = None;
         session.initial_position_seen = false;
         session.auto_side = None;
         session.capture_running = false;
         session.board_bounds = None;
+        session.piece_click_centers.clear();
         session.target_region = None;
         session.capture_generation = generation;
     }
@@ -1393,9 +1715,37 @@ fn recognize_link_image_file(
             });
         }
     };
+    let turn_indicator =
+        link_vision::detect_turn_indicator_from_png(&bytes, &detections, recognition.orientation)
+            .unwrap_or(None);
+    let manual_turn_override = state.link_session.lock().ok().and_then(|session| {
+        (session.capture_generation == generation)
+            .then_some(session.manual_turn_override)
+            .flatten()
+    });
+    let recognition = if manual_turn_override.is_some() {
+        link_vision::recognition_with_side_to_move(recognition, board.side_to_move())
+    } else if let Some(side) = turn_indicator.as_ref().map(|indicator| indicator.side) {
+        link_vision::recognition_with_side_to_move(recognition, side)
+    } else {
+        recognition
+    };
     if let Ok(mut session) = state.link_session.lock() {
         if session.capture_generation == generation {
             session.board_orientation = recognition.orientation;
+            if let Some(bounds) = link_vision::board_bounds(&detections) {
+                session.piece_click_centers = link_piece_click_centers(
+                    &detections,
+                    bounds,
+                    recognition.orientation,
+                    None,
+                    None,
+                );
+            }
+            session.turn_indicator = Some(link_turn_indicator_message(
+                manual_turn_override,
+                turn_indicator.as_ref(),
+            ));
             session.phase = Some("recognized".into());
             session.reason = Some("图片局面已识别，正在同步并触发引擎分析…".into());
         }
@@ -1646,12 +1996,6 @@ fn restore_link_hint_window(app: &tauri::AppHandle) {
     }
 }
 
-fn show_link_hint_window_without_focus(app: &tauri::AppHandle) {
-    if let Some(link_window) = app.get_webview_window("compact-link") {
-        let _ = link_window.show();
-    }
-}
-
 fn restore_link_window_or_main(app: &tauri::AppHandle) {
     if let Some(link_window) = app.get_webview_window("compact-link") {
         let _ = link_window.show();
@@ -1721,15 +2065,50 @@ fn link_region_from_screen_rect(
 fn expand_link_capture_region(region: LinkCaptureRegion) -> LinkCaptureRegion {
     let width = region.width.max(1) as f64;
     let height = region.height.max(1) as f64;
-    let margin_x = (width * 0.45).max(96.0);
+    let margin_left = (width * 0.22).max(72.0);
+    // 天天象棋横屏界面的轮走提示在棋盘右侧玩家头像处；用户只框棋盘时，
+    // 持续采集帧需要向右多留一段空间，才能读到绿色头像高亮。
+    let margin_right = (width * 0.85).max(220.0);
     let margin_y = (height * 0.45).max(96.0);
     link_region_from_screen_rect(
         region,
-        region.x as f64 - margin_x,
+        region.x as f64 - margin_left,
         region.y as f64 - margin_y,
-        width + margin_x * 2.0,
+        width + margin_left + margin_right,
         height + margin_y * 2.0,
     )
+}
+
+fn link_capture_guard_region(region: LinkCaptureRegion) -> LinkCaptureRegion {
+    let width = region.width.max(1) as f64;
+    let height = region.height.max(1) as f64;
+    // Guard only the real board body. The actual capture area is intentionally
+    // wider/taller so 天天象棋 side avatars can be read, but touching that
+    // expanded margin should not freeze live board sync after the user drags
+    // the floating link panel.
+    let inset_x = (width * 0.06).min(28.0);
+    let inset_y = (height * 0.06).min(28.0);
+    link_region_from_screen_rect(
+        region,
+        region.x as f64 + inset_x,
+        region.y as f64 + inset_y,
+        (width - inset_x * 2.0).max(16.0),
+        (height - inset_y * 2.0).max(16.0),
+    )
+}
+
+fn select_link_capture_frame_region(
+    tracking_region: Option<LinkCaptureRegion>,
+    expanded_region_overlaps_floating_panel: bool,
+) -> Option<LinkCaptureRegion> {
+    let Some(region) = tracking_region else {
+        return None;
+    };
+    if expanded_region_overlaps_floating_panel {
+        Some(region)
+    } else {
+        Some(expand_link_capture_region(region))
+    }
 }
 
 fn link_region_around_board_bounds(
@@ -1843,7 +2222,7 @@ fn relocate_link_hint_window_away_from_region(app: &tauri::AppHandle, region: Li
     let _ = window.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(x, y)));
 }
 
-fn hide_link_hint_window_if_overlapping(
+fn link_hint_window_overlaps_region(
     app: &tauri::AppHandle,
     region: Option<LinkCaptureRegion>,
 ) -> bool {
@@ -1856,7 +2235,6 @@ fn hide_link_hint_window_if_overlapping(
     if !link_window_intersects_region(&window, region) {
         return false;
     }
-    let _ = window.hide();
     true
 }
 
@@ -1865,6 +2243,28 @@ fn color_name(color: Color) -> String {
         Color::Red => "red".into(),
         Color::Black => "black".into(),
     }
+}
+
+fn link_move_detail(board: &Board, mv: Move) -> Result<LinkMoveDetailDto, String> {
+    let moved_by = board
+        .piece_at(mv.from)
+        .ok_or_else(|| "move source is empty".to_owned())?
+        .color;
+    Ok(LinkMoveDetailDto {
+        iccs: mv.to_iccs(),
+        notation: board
+            .chinese_move_notation(mv)
+            .map_err(|error| error.to_string())?,
+        moved_by: side_label(moved_by),
+        from: SquareDto {
+            row: mv.from.row,
+            col: mv.from.col,
+        },
+        to: SquareDto {
+            row: mv.to.row,
+            col: mv.to.col,
+        },
+    })
 }
 
 fn link_model_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -1998,15 +2398,42 @@ fn start_window_link_capture(
                         &app,
                         generation,
                         "screen_capture",
-                        "正在跟踪框选区域附近的棋盘；移动窗口后会自动小范围重定位…",
+                        "正在跟踪框选区域附近的棋盘；若网页棋盘位置变化，请重新框选。",
                     );
-                    let frame_region = tracking_region.map(expand_link_capture_region);
-                    if let Some(region) = frame_region {
-                        relocate_link_hint_window_away_from_region(&app, region);
+                    let guard_region = tracking_region.map(link_capture_guard_region);
+                    if link_hint_window_overlaps_region(&app, guard_region) {
+                        set_link_capture_waiting(
+                            &app,
+                            generation,
+                            "连线浮窗挡住棋盘主体，已暂停本帧截图；拖离棋盘后会自动继续。".into(),
+                        );
+                        if let Ok(mut session) = app.state::<DesktopState>().link_session.lock() {
+                            if session.capture_generation == generation {
+                                session.frame_rate = 0.0;
+                                session.last_heartbeat_at = Some(Utc::now());
+                            }
+                        }
+                        emit_link_session_updated(&app);
+                        std::thread::sleep(Duration::from_millis(333));
+                        continue;
+                    }
+                    let expanded_region = tracking_region.map(expand_link_capture_region);
+                    let expanded_region_overlaps_floating_panel =
+                        link_hint_window_overlaps_region(&app, expanded_region);
+                    let frame_region = select_link_capture_frame_region(
+                        tracking_region,
+                        expanded_region_overlaps_floating_panel,
+                    );
+                    if expanded_region_overlaps_floating_panel {
+                        set_link_capture_progress(
+                            &app,
+                            generation,
+                            "screen_capture",
+                            "连线浮窗靠近扩展识别区，已自动改为只采集棋盘主体以保持同步。",
+                        );
                     }
                     match capture_display_frame_for_link(&app, frame_region) {
                         Ok(frame) => {
-                            set_link_capture_preview(&app, generation, &frame, "实时识别");
                             if let Some(next_region) = process_link_capture_frame(
                                 &app,
                                 generation,
@@ -2088,9 +2515,13 @@ fn process_link_capture_frame(
         }
     };
     set_link_capture_detection_summary(app, generation, source_label, &detections);
+    let board_bounds = link_vision::board_bounds(&detections);
+    if let Some(bounds) = board_bounds {
+        set_link_capture_board_preview(app, generation, frame, bounds, source_label);
+    }
+    let frame_dimensions = capture_region.and_then(|_| png_dimensions(frame).ok());
     let next_region = if update_bounds {
-        link_vision::board_bounds(&detections).and_then(|bounds| {
-            let frame_dimensions = capture_region.and_then(|_| png_dimensions(frame).ok());
+        board_bounds.and_then(|bounds| {
             let screen_bounds = if let Some(region) = capture_region {
                 map_capture_bounds_to_screen(bounds, region, frame_dimensions)
             } else {
@@ -2113,11 +2544,47 @@ fn process_link_capture_frame(
     };
     match link_vision::recognition_from_detections(&detections, &board) {
         Ok(recognition) => {
+            let turn_indicator = link_vision::detect_turn_indicator_from_png(
+                frame,
+                &detections,
+                recognition.orientation,
+            )
+            .unwrap_or(None);
+            let manual_turn_override = app
+                .state::<DesktopState>()
+                .link_session
+                .lock()
+                .ok()
+                .and_then(|session| {
+                    (session.capture_generation == generation)
+                        .then_some(session.manual_turn_override)
+                        .flatten()
+                });
+            let recognition = if manual_turn_override.is_some() {
+                link_vision::recognition_with_side_to_move(recognition, board.side_to_move())
+            } else if let Some(side) = turn_indicator.as_ref().map(|indicator| indicator.side) {
+                link_vision::recognition_with_side_to_move(recognition, side)
+            } else {
+                recognition
+            };
             if let Ok(mut session) = app.state::<DesktopState>().link_session.lock() {
                 if session.capture_generation != generation {
                     return next_region;
                 }
                 session.board_orientation = recognition.orientation;
+                if let Some(bounds) = board_bounds {
+                    session.piece_click_centers = link_piece_click_centers(
+                        &detections,
+                        bounds,
+                        recognition.orientation,
+                        capture_region,
+                        frame_dimensions,
+                    );
+                }
+                session.turn_indicator = Some(link_turn_indicator_message(
+                    manual_turn_override,
+                    turn_indicator.as_ref(),
+                ));
                 session.phase = Some("recognized".into());
                 if source_label == "框选预览" {
                     session.reason = Some("框选预览已识别，等待稳定帧同步与引擎分析…".into());
@@ -2142,6 +2609,39 @@ fn process_link_capture_frame(
 fn png_dimensions(bytes: &[u8]) -> Result<(u32, u32), String> {
     let image = image::load_from_memory(bytes).map_err(|error| error.to_string())?;
     Ok((image.width(), image.height()))
+}
+
+fn crop_png_by_bounds(
+    frame: &[u8],
+    bounds: (f32, f32, f32, f32),
+    margin_ratio: f32,
+) -> Result<Vec<u8>, String> {
+    let source = image::load_from_memory(frame).map_err(|error| error.to_string())?;
+    let image_width = source.width();
+    let image_height = source.height();
+    if image_width == 0 || image_height == 0 {
+        return Err("截图尺寸异常，无法生成棋盘预览".into());
+    }
+    let (x, y, width, height) = bounds;
+    let margin_x = (width * margin_ratio).max(4.0);
+    let margin_y = (height * margin_ratio).max(4.0);
+    let left = (x - margin_x).floor().clamp(0.0, image_width as f32) as u32;
+    let top = (y - margin_y).floor().clamp(0.0, image_height as f32) as u32;
+    let right = (x + width + margin_x).ceil().clamp(0.0, image_width as f32) as u32;
+    let bottom = (y + height + margin_y)
+        .ceil()
+        .clamp(0.0, image_height as f32) as u32;
+    let crop_width = right.saturating_sub(left);
+    let crop_height = bottom.saturating_sub(top);
+    if crop_width < 16 || crop_height < 16 {
+        return Err("棋盘预览裁剪后过小".into());
+    }
+    let cropped = source.crop_imm(left, top, crop_width, crop_height);
+    let mut output = Cursor::new(Vec::new());
+    cropped
+        .write_to(&mut output, image::ImageFormat::Png)
+        .map_err(|error| error.to_string())?;
+    Ok(output.into_inner())
 }
 
 fn link_region_crop_rect(
@@ -2203,6 +2703,83 @@ fn map_capture_bounds_to_screen(
     )
 }
 
+fn map_capture_point_to_screen(
+    point: (f32, f32),
+    region: Option<LinkCaptureRegion>,
+    frame_dimensions: Option<(u32, u32)>,
+) -> (f32, f32) {
+    let Some(region) = region else {
+        return point;
+    };
+    let (frame_width, frame_height) =
+        frame_dimensions.unwrap_or((region.width.max(1) as u32, region.height.max(1) as u32));
+    let scale_x = (frame_width as f32 / region.width.max(1) as f32).max(0.01);
+    let scale_y = (frame_height as f32 / region.height.max(1) as f32).max(0.01);
+    (
+        region.x as f32 + point.0 / scale_x,
+        region.y as f32 + point.1 / scale_y,
+    )
+}
+
+fn link_piece_click_centers(
+    detections: &[link_vision::Detection],
+    board_bounds: (f32, f32, f32, f32),
+    orientation: BoardOrientation,
+    capture_region: Option<LinkCaptureRegion>,
+    frame_dimensions: Option<(u32, u32)>,
+) -> Vec<LinkPieceClickCenter> {
+    let (board_left, board_top, board_width, board_height) = board_bounds;
+    let board_right = board_left + board_width;
+    let board_bottom = board_top + board_height;
+    let cell_width = (board_width / 8.0).max(1.0);
+    let cell_height = (board_height / 9.0).max(1.0);
+    let margin_x = cell_width * 0.45;
+    let margin_y = cell_height * 0.45;
+    let mut by_square: HashMap<Square, LinkPieceClickCenter> = HashMap::new();
+    for detection in detections.iter().filter(|item| item.label != '0') {
+        if detection.center_x < board_left - margin_x
+            || detection.center_x > board_right + margin_x
+            || detection.center_y < board_top - margin_y
+            || detection.center_y > board_bottom + margin_y
+        {
+            continue;
+        }
+        let visual_col = ((detection.center_x - board_left) / cell_width).round() as i32;
+        let visual_row = ((detection.center_y - board_top) / cell_height).round() as i32;
+        if !(0..9).contains(&visual_col) || !(0..10).contains(&visual_row) {
+            continue;
+        }
+        let square = match orientation {
+            BoardOrientation::RedAtBottom => Square {
+                row: visual_row as u8,
+                col: visual_col as u8,
+            },
+            BoardOrientation::BlackAtBottom => Square {
+                row: 9 - visual_row as u8,
+                col: 8 - visual_col as u8,
+            },
+        };
+        let (x, y) = map_capture_point_to_screen(
+            (detection.center_x, detection.center_y),
+            capture_region,
+            frame_dimensions,
+        );
+        let center = LinkPieceClickCenter {
+            square,
+            x,
+            y,
+            confidence: detection.confidence,
+        };
+        if by_square
+            .get(&square)
+            .is_none_or(|existing| existing.confidence < center.confidence)
+        {
+            by_square.insert(square, center);
+        }
+    }
+    by_square.into_values().collect()
+}
+
 fn capture_display_frame(region: Option<LinkCaptureRegion>) -> Result<Vec<u8>, String> {
     #[cfg(target_os = "macos")]
     {
@@ -2232,18 +2809,10 @@ fn capture_display_frame(region: Option<LinkCaptureRegion>) -> Result<Vec<u8>, S
 }
 
 fn capture_display_frame_for_link(
-    app: &tauri::AppHandle,
+    _app: &tauri::AppHandle,
     region: Option<LinkCaptureRegion>,
 ) -> Result<Vec<u8>, String> {
-    let hidden_link_window = hide_link_hint_window_if_overlapping(app, region);
-    if hidden_link_window {
-        std::thread::sleep(Duration::from_millis(80));
-    }
-    let result = capture_display_frame(region);
-    if hidden_link_window {
-        show_link_hint_window_without_focus(app);
-    }
-    result
+    capture_display_frame(region)
 }
 
 #[cfg(target_os = "macos")]
@@ -2286,6 +2855,26 @@ fn set_link_capture_preview(
     emit_link_session_updated(app);
 }
 
+fn set_link_capture_board_preview(
+    app: &tauri::AppHandle,
+    generation: u64,
+    frame: &[u8],
+    bounds: (f32, f32, f32, f32),
+    source_label: &str,
+) {
+    let preview = crop_png_by_bounds(frame, bounds, 0.04).unwrap_or_else(|_| frame.to_vec());
+    set_link_capture_preview(
+        app,
+        generation,
+        &preview,
+        if source_label == "框选预览" {
+            "框选棋盘预览"
+        } else {
+            "实时棋盘预览"
+        },
+    );
+}
+
 fn set_link_capture_detection_summary(
     app: &tauri::AppHandle,
     generation: u64,
@@ -2311,6 +2900,24 @@ fn set_link_capture_detection_summary(
         }
     }
     emit_link_session_updated(app);
+}
+
+fn link_turn_indicator_message(
+    manual_turn_override: Option<Color>,
+    turn_indicator: Option<&link_vision::TurnIndicator>,
+) -> String {
+    if manual_turn_override.is_some() {
+        return match turn_indicator {
+            Some(indicator) => format!(
+                "轮走校正：手动模式已开启，使用当前棋盘轮走方（自动识别：{}，已忽略）",
+                indicator.detail
+            ),
+            None => "轮走校正：手动模式已开启，使用当前棋盘轮走方（未识别到平台头像高亮）".into(),
+        };
+    }
+    turn_indicator
+        .map(|indicator| indicator.detail.clone())
+        .unwrap_or_else(|| "轮走识别：未识别到平台头像高亮，沿用当前轮走方".into())
 }
 
 fn set_link_capture_waiting(app: &tauri::AppHandle, generation: u64, reason: String) {
@@ -2379,12 +2986,58 @@ fn submit_link_position(
     observe_link_recognition_inner(&state, fen, None, None)
 }
 
+#[tauri::command]
+fn set_link_side_to_move(
+    side: String,
+    state: State<'_, DesktopState>,
+    app: tauri::AppHandle,
+) -> Result<BoardDto, String> {
+    let side = match side.as_str() {
+        "red" => Color::Red,
+        "black" => Color::Black,
+        _ => return Err("未知行棋方".into()),
+    };
+    let board = {
+        let mut model = state
+            .model
+            .lock()
+            .map_err(|_| "state lock poisoned".to_owned())?;
+        model.board = model.board.with_side_to_move(side);
+        if model.current_node.is_none() {
+            model.starting_fen = model.board.to_fen();
+        }
+        board_dto(&model)?
+    };
+    {
+        let mut session = state
+            .link_session
+            .lock()
+            .map_err(|_| "link session lock poisoned".to_owned())?;
+        session.latest_fen = Some(board.fen.clone());
+        session.reason = Some(format!("已手动校正为{}行棋", side_label(side)));
+        session.manual_turn_override = Some(side);
+        session.turn_indicator = Some(format!(
+            "轮走校正：手动锁定{}行棋，自动头像识别暂不覆盖",
+            side_label(side)
+        ));
+        session.phase = Some("turn_corrected".into());
+        session.last_error = None;
+    }
+    let _ = app.emit("board-navigated", &board);
+    emit_link_session_updated(&app);
+    Ok(board)
+}
+
 /// Executes a reviewed engine move only against the currently stable visible board. The move is
 /// intentionally not committed here: the normal recognition/reconciliation path must observe the
 /// expected position before SQLite is changed.
 #[tauri::command]
-fn confirm_link_engine_move(iccs: String, state: State<'_, DesktopState>) -> Result<bool, String> {
-    let (bounds, orientation, mode, latest_fen, auto_side) = {
+fn confirm_link_engine_move(
+    iccs: String,
+    app: tauri::AppHandle,
+    state: State<'_, DesktopState>,
+) -> Result<bool, String> {
+    let (bounds, orientation, piece_click_centers, mode, latest_fen, auto_side) = {
         let session = state
             .link_session
             .lock()
@@ -2395,6 +3048,7 @@ fn confirm_link_engine_move(iccs: String, state: State<'_, DesktopState>) -> Res
         (
             session.board_bounds.ok_or("未获得棋盘坐标，请重新框选")?,
             session.board_orientation,
+            session.piece_click_centers.clone(),
             session.mode,
             session.latest_fen.clone(),
             session.auto_side,
@@ -2414,63 +3068,165 @@ fn confirm_link_engine_move(iccs: String, state: State<'_, DesktopState>) -> Res
         return Err("当前回合不属于设置的自动执棋方".into());
     }
     let mv = Move::from_iccs(&iccs).map_err(|error| error.to_string())?;
+    let move_notation = model
+        .board
+        .chinese_move_notation(mv)
+        .unwrap_or_else(|_| iccs.clone());
+    let move_display = if move_notation == iccs {
+        iccs.clone()
+    } else {
+        format!("{move_notation}（{iccs}）")
+    };
     let expected = model
         .board
         .apply_move(mv)
         .map_err(|_| "引擎建议已过期或不是当前局面的合法着法".to_string())?;
     drop(model);
-    click_external_move(bounds, orientation, mv)?;
+    let detected_from = piece_click_centers
+        .iter()
+        .filter(|center| center.square == mv.from)
+        .max_by(|left, right| left.confidence.total_cmp(&right.confidence))
+        .copied();
+    let click_target = matches!(mode, LinkMode::AutoPlay);
+    let click_points = click_external_move(bounds, orientation, mv, detected_from, click_target)?;
     let mut session = state
         .link_session
         .lock()
         .map_err(|_| "link session lock poisoned".to_owned())?;
-    session.reason = Some(format!(
-        "已执行 {iccs}，等待识别确认预期局面 {}",
-        expected.to_fen()
-    ));
+    let ((from_x, from_y), (to_x, to_y)) = click_points;
+    let click_basis = if detected_from.is_some() {
+        "按识别到的棋子中心"
+    } else {
+        "按棋盘网格估算"
+    };
+    session.reason = Some(if click_target {
+        format!(
+            "已按箭头1自动执行 {move_display}：{}点击起点({from_x:.0},{from_y:.0})，再点击目标({to_x:.0},{to_y:.0})；等待识别确认预期局面 {}",
+            click_basis,
+            expected.to_fen()
+        )
+    } else {
+        format!(
+            "已按箭头1选中起点 {move_display}：{}点击({from_x:.0},{from_y:.0})；请在网页棋盘确认目标({to_x:.0},{to_y:.0})，完成后等待同步 {}",
+            click_basis,
+            expected.to_fen()
+        )
+    });
+    session.pending_external_move = Some(iccs);
+    session.pending_expected_fen = Some(expected.to_fen());
+    session.phase = Some("pending_external_move".into());
     session.gate.reset();
     session.stable_frames = 0;
+    drop(session);
+    emit_link_session_updated(&app);
     Ok(true)
+}
+
+fn link_move_click_points(
+    bounds: (f32, f32, f32, f32),
+    orientation: link_core::BoardOrientation,
+    mv: Move,
+) -> ((f32, f32), (f32, f32)) {
+    let (left, top, width, height) = bounds;
+    let point = |square: Square| -> (f32, f32) {
+        let (row, col) = match orientation {
+            link_core::BoardOrientation::RedAtBottom => (square.row, square.col),
+            link_core::BoardOrientation::BlackAtBottom => (9 - square.row, 8 - square.col),
+        };
+        (
+            left + col as f32 * width / 8.0,
+            top + row as f32 * height / 9.0,
+        )
+    };
+    (point(mv.from), point(mv.to))
+}
+
+fn link_move_click_points_for_click(
+    bounds: (f32, f32, f32, f32),
+    orientation: link_core::BoardOrientation,
+    mv: Move,
+    detected_from: Option<LinkPieceClickCenter>,
+) -> ((f32, f32), (f32, f32)) {
+    let mut click_points = link_move_click_points(bounds, orientation, mv);
+    if let Some(center) = detected_from {
+        click_points.0 = (center.x, center.y);
+    }
+    click_points
 }
 
 fn click_external_move(
     bounds: (f32, f32, f32, f32),
     orientation: link_core::BoardOrientation,
     mv: Move,
-) -> Result<(), String> {
+    detected_from: Option<LinkPieceClickCenter>,
+    click_target: bool,
+) -> Result<((f32, f32), (f32, f32)), String> {
+    let click_points = link_move_click_points_for_click(bounds, orientation, mv, detected_from);
     #[cfg(target_os = "macos")]
     {
-        let (left, top, width, height) = bounds;
-        let point = |square: Square| -> (f32, f32) {
-            let (row, col) = match orientation {
-                link_core::BoardOrientation::RedAtBottom => (square.row, square.col),
-                link_core::BoardOrientation::BlackAtBottom => (9 - square.row, 8 - square.col),
-            };
-            (
-                left + col as f32 * width / 8.0,
-                top + row as f32 * height / 9.0,
-            )
-        };
-        let (from_x, from_y) = point(mv.from);
-        let (to_x, to_y) = point(mv.to);
-        let script = format!(
-            "tell application \"System Events\" to click at {{{from_x:.0}, {from_y:.0}}}\ndelay 0.12\ntell application \"System Events\" to click at {{{to_x:.0}, {to_y:.0}}}"
-        );
+        let ((from_x, from_y), (to_x, to_y)) = click_points;
+        let script = macos_link_click_script(from_x, from_y, to_x, to_y, click_target);
         let output = ProcessCommand::new("/usr/bin/osascript")
             .args(["-e", &script])
             .output()
             .map_err(|error| format!("无法请求 macOS 辅助功能点击：{error}"))?;
         if output.status.success() {
-            Ok(())
+            Ok(click_points)
         } else {
             Err("外部点击被 macOS 拒绝。请在 系统设置 > 隐私与安全性 > 辅助功能 中允许 Xiangqi Studio，完全退出并重新打开应用。本地测试包覆盖安装后若仍提示，通常是 adhoc 签名变化导致旧授权不再匹配。".into())
         }
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = (bounds, orientation, mv);
+        let _ = (bounds, orientation, mv, click_points, click_target);
         Err("当前平台尚未接入外部鼠标点击".into())
     }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_link_click_script(
+    from_x: f32,
+    from_y: f32,
+    to_x: f32,
+    to_y: f32,
+    click_target: bool,
+) -> String {
+    let target_click = if click_target {
+        format!("\ndelay 0.26\nclick at {{{to_x:.0}, {to_y:.0}}}")
+    } else {
+        String::new()
+    };
+    format!(
+        r#"set targetX to {from_x:.0}
+set targetY to {from_y:.0}
+tell application "System Events"
+  set activatedTarget to false
+  repeat with proc in application processes
+    if activatedTarget then exit repeat
+    try
+      if (name of proc is not "Xiangqi Studio") then
+        repeat with win in windows of proc
+          if activatedTarget then exit repeat
+          try
+            set winPosition to position of win
+            set winSize to size of win
+            set winX to item 1 of winPosition
+            set winY to item 2 of winPosition
+            set winW to item 1 of winSize
+            set winH to item 2 of winSize
+            if targetX >= winX and targetX <= (winX + winW) and targetY >= winY and targetY <= (winY + winH) then
+              set frontmost of proc to true
+              set activatedTarget to true
+            end if
+          end try
+        end repeat
+      end if
+    end try
+  end repeat
+  delay 0.12
+  click at {{{from_x:.0}, {from_y:.0}}}{target_click}
+end tell"#
+    )
 }
 
 fn observe_link_recognition(
@@ -2537,6 +3293,7 @@ fn observe_link_recognition_inner(
             session.last_error = None;
             session.latest_fen = None;
             session.last_move = None;
+            session.last_move_detail = None;
             session.gate.reset();
             session.stable_frames = 0;
             return Ok(LinkObservationDto {
@@ -2560,6 +3317,7 @@ fn observe_link_recognition_inner(
             session.last_error = session.reason.clone();
             session.latest_fen = None;
             session.last_move = None;
+            session.last_move_detail = None;
             session.gate.reset();
             session.stable_frames = 0;
             return Ok(LinkObservationDto {
@@ -2583,6 +3341,7 @@ fn observe_link_recognition_inner(
         session.last_error = session.reason.clone();
         session.latest_fen = None;
         session.last_move = None;
+        session.last_move_detail = None;
         session.gate.reset();
         session.stable_frames = 0;
         return Ok(LinkObservationDto {
@@ -2594,6 +3353,7 @@ fn observe_link_recognition_inner(
             capture_preview_available: session.capture_preview.is_some(),
         });
     }
+    let recognized_side_to_move = recognized_board.side_to_move();
     let stable = match session.gate.observe(&fen) {
         Ok(value) => value,
         Err(error) => {
@@ -2603,6 +3363,7 @@ fn observe_link_recognition_inner(
             session.last_error = session.reason.clone();
             session.latest_fen = None;
             session.last_move = None;
+            session.last_move_detail = None;
             return Ok(LinkObservationDto {
                 state: session.state,
                 accepted: false,
@@ -2634,28 +3395,90 @@ fn observe_link_recognition_inner(
         .map_err(|_| "state lock poisoned".to_owned())?;
     match link_core::reconcile_position(&model.board, &fen) {
         ReconcileDecision::Unchanged => {
+            let side_changed = model.board.side_to_move() != recognized_side_to_move;
+            if side_changed && session.pending_external_move.is_some() {
+                let pending_move_display = session
+                    .pending_external_move
+                    .as_deref()
+                    .map(|value| {
+                        Move::from_iccs(value)
+                            .ok()
+                            .and_then(|mv| model.board.chinese_move_notation(mv).ok())
+                            .filter(|notation| notation != value)
+                            .map(|notation| format!("{notation}（{value}）"))
+                            .unwrap_or_else(|| value.to_owned())
+                    })
+                    .unwrap_or_default();
+                session.state = LinkSessionState::Tracking;
+                session.initial_position_seen = true;
+                session.stable_frames = session.gate.matching_frames();
+                session.latest_fen = Some(model.board.to_fen());
+                session.phase = Some("pending_external_move".into());
+                session.reason = Some(format!(
+                    "已点击箭头1{}，等待网页棋盘完成走子；暂不采用识别到的{}行棋闪烁",
+                    if pending_move_display.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" {pending_move_display}")
+                    },
+                    side_label(recognized_side_to_move)
+                ));
+                return Ok(LinkObservationDto {
+                    state: session.state,
+                    accepted: false,
+                    move_iccs: None,
+                    reason: session.reason.clone(),
+                    board: None,
+                    capture_preview_available: session.capture_preview.is_some(),
+                });
+            }
+            if side_changed {
+                model.board = model.board.with_side_to_move(recognized_side_to_move);
+                if model.current_node.is_none() {
+                    model.starting_fen = model.board.to_fen();
+                }
+            }
+            let board = if side_changed {
+                Some(board_dto(&model)?)
+            } else {
+                None
+            };
             session.state = LinkSessionState::Tracking;
             session.initial_position_seen = true;
             session.stable_frames = session.gate.matching_frames();
+            session.latest_fen = Some(model.board.to_fen());
             session.phase = Some("tracking".into());
-            session.reason = Some("局面已同步，正在跟踪外部棋盘变化".into());
+            session.reason = Some(if side_changed {
+                format!(
+                    "局面已同步，识别到{}行棋",
+                    side_label(recognized_side_to_move)
+                )
+            } else {
+                "局面已同步，正在跟踪外部棋盘变化".into()
+            });
             Ok(LinkObservationDto {
                 state: session.state,
-                accepted: false,
+                accepted: side_changed,
                 move_iccs: None,
                 reason: session.reason.clone(),
-                board: None,
+                board,
                 capture_preview_available: session.capture_preview.is_some(),
             })
         }
         ReconcileDecision::ApplyMove(mv) => {
             let iccs = mv.to_iccs();
+            let last_move_detail = link_move_detail(&model.board, mv)?;
+            let last_move_display = format!("{}（{}）", last_move_detail.notation, iccs);
             let board = commit_move(&mut model, &iccs)?;
+            session.pending_external_move = None;
+            session.pending_expected_fen = None;
             session.state = LinkSessionState::Tracking;
             session.initial_position_seen = true;
             session.last_move = Some(iccs.clone());
+            session.last_move_detail = Some(last_move_detail);
+            session.latest_fen = Some(board.fen.clone());
             session.phase = Some("move_synced".into());
-            session.reason = Some(format!("已同步外部走子 {iccs}"));
+            session.reason = Some(format!("已同步外部走子 {last_move_display}"));
             Ok(LinkObservationDto {
                 state: session.state,
                 accepted: true,
@@ -2690,6 +3513,7 @@ fn observe_link_recognition_inner(
                 session.state = LinkSessionState::Tracking;
                 session.initial_position_seen = true;
                 session.last_move = None;
+                session.last_move_detail = None;
                 session.last_error = None;
                 session.phase = Some(if should_sync_as_position_jump {
                     "position_jump_synced".into()
@@ -2716,6 +3540,7 @@ fn observe_link_recognition_inner(
             session.last_error = session.reason.clone();
             session.latest_fen = None;
             session.last_move = None;
+            session.last_move_detail = None;
             session.gate.reset();
             session.stable_frames = 0;
             Ok(LinkObservationDto {
@@ -2775,8 +3600,185 @@ fn list_games(state: State<'_, DesktopState>) -> Result<Vec<GameSummaryDto>, Str
             fen: game.starting_fen,
             updated_at: game.updated_at,
             current: game.id == model.game_id,
+            library_folder: game.library_folder,
+            favorite: game.favorite,
+            tags: game.tags,
         })
         .collect())
+}
+
+impl From<LibraryFolder> for LibraryFolderDto {
+    fn from(folder: LibraryFolder) -> Self {
+        Self {
+            name: folder.name,
+            system: folder.system,
+            game_count: folder.game_count,
+        }
+    }
+}
+
+#[tauri::command]
+fn list_library_folders(state: State<'_, DesktopState>) -> Result<Vec<LibraryFolderDto>, String> {
+    state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?
+        .store
+        .library_folders()
+        .map(|folders| folders.into_iter().map(Into::into).collect())
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn create_library_folder(name: String, state: State<'_, DesktopState>) -> Result<(), String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("文件夹名称不能为空".into());
+    }
+    state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?
+        .store
+        .create_library_folder(name)
+        .map_err(|_| "无法创建文件夹".into())
+}
+
+#[tauri::command]
+fn rename_library_folder(
+    previous: String,
+    next: String,
+    state: State<'_, DesktopState>,
+) -> Result<(), String> {
+    let next = next.trim();
+    if next.is_empty() {
+        return Err("文件夹名称不能为空".into());
+    }
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    let affected = model
+        .store
+        .load_games()
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .filter(|game| game.library_folder.as_deref() == Some(previous.as_str()))
+        .collect::<Vec<_>>();
+    model
+        .store
+        .rename_library_folder(&previous, next)
+        .map_err(|_| "系统文件夹不能重命名，或文件夹不存在".to_owned())?;
+    for game in affected {
+        let payload = library_metadata_payload(&game, Some(next.to_owned()));
+        let operation = next_operation_for_game(
+            &mut model,
+            game.id,
+            OperationKind::UpdateGameMetadata,
+            serde_json::to_value(payload).map_err(|error| error.to_string())?,
+        );
+        model
+            .store
+            .update_game_library_with_operation(
+                game.id,
+                Some(next),
+                game.favorite,
+                &game.tags,
+                &operation,
+            )
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn delete_library_folder(name: String, state: State<'_, DesktopState>) -> Result<(), String> {
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    let affected = model
+        .store
+        .load_games()
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .filter(|game| game.library_folder.as_deref() == Some(name.as_str()))
+        .collect::<Vec<_>>();
+    model
+        .store
+        .delete_library_folder(&name)
+        .map_err(|_| "系统文件夹不能删除，或文件夹不存在".to_owned())?;
+    for game in affected {
+        let payload = library_metadata_payload(&game, None);
+        let operation = next_operation_for_game(
+            &mut model,
+            game.id,
+            OperationKind::UpdateGameMetadata,
+            serde_json::to_value(payload).map_err(|error| error.to_string())?,
+        );
+        model
+            .store
+            .update_game_library_with_operation(
+                game.id,
+                None,
+                game.favorite,
+                &game.tags,
+                &operation,
+            )
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn update_game_library(
+    folder: Option<String>,
+    favorite: bool,
+    tags: Vec<String>,
+    state: State<'_, DesktopState>,
+) -> Result<BoardDto, String> {
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    let folder = folder
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| value.trim().to_owned());
+    let tags: Vec<String> = tags
+        .into_iter()
+        .map(|tag| tag.trim().to_owned())
+        .filter(|tag| !tag.is_empty())
+        .fold(Vec::new(), |mut tags, tag| {
+            if !tags.contains(&tag) {
+                tags.push(tag);
+            }
+            tags
+        });
+    let game_id = model.game_id;
+    let payload = UpdateGameMetadataPayload {
+        title: model.metadata.title.clone(),
+        note: model.note.clone(),
+        event: Some(model.metadata.event.clone()),
+        site: Some(model.metadata.site.clone()),
+        date: Some(model.metadata.date.clone()),
+        red: Some(model.metadata.red.clone()),
+        black: Some(model.metadata.black.clone()),
+        result: Some(model.metadata.result.clone()),
+        library_folder: Some(folder.clone().unwrap_or_default()),
+        favorite: Some(favorite),
+        tags: Some(tags.clone()),
+    };
+    let operation = next_operation(
+        &mut model,
+        game_id,
+        OperationKind::UpdateGameMetadata,
+        serde_json::to_value(payload).map_err(|error| error.to_string())?,
+    );
+    model
+        .store
+        .update_game_library_with_operation(game_id, folder.as_deref(), favorite, &tags, &operation)
+        .map_err(|error| error.to_string())?;
+    board_dto(&model)
 }
 
 #[tauri::command]
@@ -2920,6 +3922,30 @@ fn new_game(
         .lock()
         .map_err(|_| "state lock poisoned".to_owned())?;
     install_document(&mut model, document, None, None)?;
+    let game_id = model.game_id;
+    let payload = UpdateGameMetadataPayload {
+        title: model.metadata.title.clone(),
+        note: model.note.clone(),
+        event: Some(model.metadata.event.clone()),
+        site: Some(model.metadata.site.clone()),
+        date: Some(model.metadata.date.clone()),
+        red: Some(model.metadata.red.clone()),
+        black: Some(model.metadata.black.clone()),
+        result: Some(model.metadata.result.clone()),
+        library_folder: Some("比赛复盘".into()),
+        favorite: Some(false),
+        tags: Some(Vec::new()),
+    };
+    let operation = next_operation(
+        &mut model,
+        game_id,
+        OperationKind::UpdateGameMetadata,
+        serde_json::to_value(payload).map_err(|error| error.to_string())?,
+    );
+    model
+        .store
+        .update_game_library_with_operation(game_id, Some("比赛复盘"), false, &[], &operation)
+        .map_err(|error| error.to_string())?;
     board_dto(&model)
 }
 
@@ -2963,6 +3989,35 @@ fn import_xqb_opening_book(
         .any(|existing| existing == &path)
     {
         preferences.xqb_book_paths.push(path);
+        model
+            .store
+            .save_desktop_preferences(&preferences)
+            .map_err(|error| error.to_string())?;
+    }
+    board_dto(&model)
+}
+
+#[tauri::command]
+fn import_eleeye_opening_book(
+    path: String,
+    state: State<'_, DesktopState>,
+) -> Result<BoardDto, String> {
+    let target = PathBuf::from(&path);
+    eleeye_opening_book::validate(&target)?;
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    let mut preferences = model
+        .store
+        .desktop_preferences()
+        .map_err(|error| error.to_string())?;
+    if !preferences
+        .eleeye_book_paths
+        .iter()
+        .any(|existing| existing == &path)
+    {
+        preferences.eleeye_book_paths.push(path);
         model
             .store
             .save_desktop_preferences(&preferences)
@@ -3075,8 +4130,11 @@ fn export_mind_map_svg(path: String, svg: String) -> Result<String, String> {
 #[tauri::command]
 fn export_text_file(path: String, contents: String) -> Result<String, String> {
     let target = PathBuf::from(path);
-    if target.extension().and_then(|extension| extension.to_str()) != Some("txt") {
-        return Err("文本文件必须使用 .txt 扩展名".into());
+    if !matches!(
+        target.extension().and_then(|extension| extension.to_str()),
+        Some("txt" | "pgn")
+    ) {
+        return Err("文本导出文件必须使用 .txt 或 .pgn 扩展名".into());
     }
     std::fs::write(&target, contents).map_err(|error| format!("导出文本失败：{error}"))?;
     Ok(target.to_string_lossy().into_owned())
@@ -3349,15 +4407,12 @@ async fn analyze_position(
     }
     let analysis_generation = state.analysis_generation.load(Ordering::SeqCst);
     let analysis_board = Board::from_fen(&fen).map_err(|error| error.to_string())?;
-    let (analysis_game_id, analysis_node_id) = {
+    let analysis_target = {
         let model = state
             .model
             .lock()
             .map_err(|_| "state lock poisoned".to_owned())?;
-        if model.board.to_fen() != fen {
-            return Err("analysis FEN does not match the current position".into());
-        }
-        (model.game_id, model.current_node)
+        (model.board.to_fen() == fen).then_some((model.game_id, model.current_node))
     };
     let limit = match search_mode.as_str() {
         "time" => SearchLimit::MoveTime(search_value.clamp(100, 30_000)),
@@ -3537,20 +4592,22 @@ async fn analyze_position(
         search_moves.join(",")
     );
     let primary = lines.first();
-    model
-        .store
-        .save_analysis(
-            analysis_game_id,
-            analysis_node_id,
-            &resolved_engine_path_text,
-            &config_hash,
-            lines.iter().filter_map(|line| line.depth).max(),
-            primary.and_then(|line| line.score_cp),
-            primary.and_then(|line| line.mate),
-            &serde_json::to_string(&lines).map_err(|error| error.to_string())?,
-            elapsed_ms,
-        )
-        .map_err(|error| error.to_string())?;
+    if let Some((analysis_game_id, analysis_node_id)) = analysis_target {
+        model
+            .store
+            .save_analysis(
+                analysis_game_id,
+                analysis_node_id,
+                &resolved_engine_path_text,
+                &config_hash,
+                lines.iter().filter_map(|line| line.depth).max(),
+                primary.and_then(|line| line.score_cp),
+                primary.and_then(|line| line.mate),
+                &serde_json::to_string(&lines).map_err(|error| error.to_string())?,
+                elapsed_ms,
+            )
+            .map_err(|error| error.to_string())?;
+    }
     Ok(lines)
 }
 
@@ -3934,24 +4991,25 @@ async fn open_compact_floating_panel(app: tauri::AppHandle, panel: String) -> Re
         "link" => (
             "compact-link",
             "连线控制",
-            320.0,
-            560.0,
-            280.0,
-            380.0,
+            340.0,
+            620.0,
+            270.0,
+            340.0,
             Some((16.0, 88.0)),
         ),
         _ => return Err("未知的浮动面板".into()),
     };
     if let Some(window) = app.get_webview_window(label) {
-        if panel == "link" {
-            let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(width, height)));
-            if let Some((x, y)) = position {
-                let _ = window
-                    .set_position(tauri::Position::Logical(tauri::LogicalPosition::new(x, y)));
-            }
-        }
         window
             .set_always_on_top(true)
+            .map_err(|error| error.to_string())?;
+        window
+            .set_resizable(true)
+            .map_err(|error| error.to_string())?;
+        window
+            .set_min_size(Some(tauri::Size::Logical(tauri::LogicalSize::new(
+                min_width, min_height,
+            ))))
             .map_err(|error| error.to_string())?;
         window.show().map_err(|error| error.to_string())?;
         window.set_focus().map_err(|error| error.to_string())?;
@@ -4847,6 +5905,7 @@ fn report_positions(model: &AppModel) -> Result<(String, Vec<GameReportPositionD
         best_notation: None,
         pv_notation: Vec::new(),
         opening: None,
+        master_style_hints: Vec::new(),
         move_: None,
     }];
     for (index, node) in nodes.iter().enumerate() {
@@ -4877,6 +5936,7 @@ fn report_positions(model: &AppModel) -> Result<(String, Vec<GameReportPositionD
             best_notation: None,
             pv_notation: Vec::new(),
             opening: None,
+            master_style_hints: Vec::new(),
             move_: Some(GameReportMoveDto {
                 node_id: node.id,
                 iccs: node.mv.to_iccs(),
@@ -5297,6 +6357,38 @@ async fn generate_game_report_inner(
             });
         profile_result?;
     }
+    {
+        let mut model = state
+            .model
+            .lock()
+            .map_err(|_| "state lock poisoned".to_owned())?;
+        for index in 0..positions.len() {
+            let best_iccs = positions[index].best_iccs.as_deref();
+            let hints = model
+                .store
+                .match_master_style_hints(
+                    &positions[index].fen,
+                    &positions[index].phase,
+                    best_iccs,
+                    3,
+                )
+                .map_err(|error| error.to_string())?;
+            if !hints.is_empty() {
+                if let Some(node_id) = positions
+                    .get(index + 1)
+                    .and_then(|position| position.move_.as_ref().map(|move_| move_.node_id))
+                {
+                    for hint in &hints {
+                        model
+                            .store
+                            .record_master_style_match(game_id, &line_signature, node_id, hint)
+                            .map_err(|error| error.to_string())?;
+                    }
+                }
+                positions[index].master_style_hints = hints;
+            }
+        }
+    }
 
     let _commit = state.report_commit.lock().await;
     if state.report_generation.load(Ordering::SeqCst) != generation {
@@ -5440,6 +6532,19 @@ fn get_game_report(state: State<'_, DesktopState>) -> Result<Option<GameReportDa
         serde_json::from_str(&stored.dataset_json).map_err(|error| error.to_string())?;
     dataset.stale = dataset.line_signature != current_signature;
     opening_book::annotate_positions(&model.starting_fen, &mut dataset.positions)?;
+    for position in &mut dataset.positions {
+        if position.master_style_hints.is_empty() {
+            position.master_style_hints = model
+                .store
+                .match_master_style_hints(
+                    &position.fen,
+                    &position.phase,
+                    position.best_iccs.as_deref(),
+                    3,
+                )
+                .map_err(|error| error.to_string())?;
+        }
+    }
     Ok(Some(dataset))
 }
 
@@ -5457,6 +6562,341 @@ fn protocol_name(protocol: Protocol) -> &'static str {
         Protocol::Uci => "uci",
         Protocol::Ucci => "ucci",
     }
+}
+
+fn repo_root_from_manifest() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")))
+}
+
+fn default_master_style_dir() -> PathBuf {
+    repo_root_from_manifest()
+        .join(".theory-work")
+        .join("master-style")
+}
+
+fn master_style_seed_candidates(base: &Path) -> Vec<PathBuf> {
+    ["master-style", "resources/master-style"]
+        .into_iter()
+        .map(|relative| base.join(relative))
+        .collect()
+}
+
+fn bundled_master_style_seed_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    candidates.extend(master_style_seed_candidates(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("resources")
+            .as_path(),
+    ));
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        candidates.extend(master_style_seed_candidates(&resource_dir));
+    }
+    if let Ok(executable) = std::env::current_exe() {
+        if let Some(parent) = executable.parent() {
+            candidates.extend(master_style_seed_candidates(parent));
+            candidates.extend(master_style_seed_candidates(&parent.join("../Resources")));
+        }
+    }
+    candidates
+        .into_iter()
+        .find(|candidate| candidate.join("seed-manifest.json").is_file())
+}
+
+fn read_jsonl_values(path: &Path) -> Result<Vec<serde_json::Value>, String> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    fs::read_to_string(path)
+        .map_err(|error| format!("读取 {} 失败：{error}", path.display()))?
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            serde_json::from_str(line)
+                .map_err(|error| format!("解析 {} 失败：{error}", path.display()))
+        })
+        .collect()
+}
+
+fn json_string(value: &serde_json::Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
+fn json_i64(value: &serde_json::Value, key: &str) -> Option<i64> {
+    value.get(key).and_then(serde_json::Value::as_i64)
+}
+
+fn json_bool(value: &serde_json::Value, key: &str) -> bool {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn normalized_player_name(value: &str) -> String {
+    value.split_whitespace().collect::<String>()
+}
+
+fn stable_master_style_id(parts: &[&str]) -> String {
+    let mut hasher = Sha256::new();
+    for part in parts {
+        hasher.update(part.as_bytes());
+        hasher.update(b"|");
+    }
+    format!("{:x}", hasher.finalize())[..24].to_owned()
+}
+
+fn master_style_analysis_by_sample_id(
+    path: &Path,
+) -> Result<HashMap<String, serde_json::Value>, String> {
+    Ok(read_jsonl_values(path)?
+        .into_iter()
+        .filter_map(|value| {
+            let sample_id = json_string(&value, "sampleId")
+                .or_else(|| json_i64(&value, "sampleId").map(|id| id.to_string()))?;
+            Some((sample_id, value))
+        })
+        .collect())
+}
+
+fn imported_master_style_profiles_from_files(
+    profile_path: &Path,
+    samples_path: &Path,
+    analysis_path: &Path,
+) -> Result<Vec<(ImportedMasterStyleProfile, Vec<ImportedMasterStyleSample>)>, String> {
+    let profile_text = fs::read_to_string(profile_path)
+        .map_err(|error| format!("读取 {} 失败：{error}", profile_path.display()))?;
+    let profile_values: Vec<serde_json::Value> = serde_json::from_str(&profile_text)
+        .map_err(|error| format!("解析 {} 失败：{error}", profile_path.display()))?;
+    let analysis_by_sample_id = master_style_analysis_by_sample_id(analysis_path)?;
+    let samples = read_jsonl_values(samples_path)?;
+    let mut grouped: HashMap<String, Vec<ImportedMasterStyleSample>> = HashMap::new();
+    for sample in samples {
+        let player_name = json_string(&sample, "playerName").unwrap_or_else(|| "赵鑫鑫".into());
+        let normalized = normalized_player_name(&player_name);
+        let profile_id = profile_values
+            .iter()
+            .find(|profile| {
+                json_string(profile, "normalizedName").as_deref() == Some(normalized.as_str())
+                    || json_string(profile, "playerName").as_deref() == Some(player_name.as_str())
+            })
+            .and_then(|profile| {
+                json_string(profile, "profileId").or_else(|| json_string(profile, "id"))
+            })
+            .unwrap_or_else(|| stable_master_style_id(&["master-style-profile", &normalized]));
+        let raw_sample_id = json_string(&sample, "sampleId")
+            .or_else(|| json_i64(&sample, "sampleId").map(|id| id.to_string()))
+            .unwrap_or_else(|| {
+                stable_master_style_id(&[
+                    &profile_id,
+                    json_string(&sample, "gameId").as_deref().unwrap_or(""),
+                    &json_i64(&sample, "ply").unwrap_or_default().to_string(),
+                ])
+            });
+        let analysis = analysis_by_sample_id.get(&raw_sample_id);
+        let candidates = analysis
+            .and_then(|value| value.get("candidates"))
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
+        let merged_source = serde_json::json!({
+            "sample": sample,
+            "analysis": analysis,
+            "licenseNote": "公开棋谱结构化样本，仅用于本地学习与风格启发，不包含原始网页 HTML。"
+        });
+        let imported = ImportedMasterStyleSample {
+            id: stable_master_style_id(&["master-style-sample", &profile_id, &raw_sample_id]),
+            profile_id: profile_id.clone(),
+            player_name,
+            source_game_id: json_string(&merged_source["sample"], "gameId").unwrap_or_default(),
+            source_title: json_string(&merged_source["sample"], "title")
+                .unwrap_or_else(|| "赵鑫鑫公开棋谱".into()),
+            event_name: json_string(&merged_source["sample"], "eventName"),
+            game_date: json_string(&merged_source["sample"], "gameDate"),
+            ply: json_i64(&merged_source["sample"], "ply").unwrap_or_default(),
+            phase: json_string(&merged_source["sample"], "phase")
+                .unwrap_or_else(|| "middle".into()),
+            before_fen: json_string(&merged_source["sample"], "beforeFen").unwrap_or_default(),
+            played_move: json_string(&merged_source["sample"], "playedMove").unwrap_or_default(),
+            played_move_rank: analysis.and_then(|value| json_i64(value, "playedMoveRank")),
+            played_move_in_topn: analysis
+                .map(|value| json_bool(value, "playedMoveInTopN"))
+                .unwrap_or(false),
+            best_move: analysis.and_then(|value| json_string(value, "bestMove")),
+            best_score_cp: analysis.and_then(|value| json_i64(value, "bestScoreCp")),
+            candidates_json: serde_json::to_string(&candidates)
+                .map_err(|error| error.to_string())?,
+            source_json: serde_json::to_string(&merged_source)
+                .map_err(|error| error.to_string())?,
+        };
+        if imported.before_fen.is_empty() || imported.played_move.is_empty() {
+            continue;
+        }
+        grouped.entry(profile_id).or_default().push(imported);
+    }
+    Ok(profile_values
+        .into_iter()
+        .filter_map(|profile| {
+            let player_name = json_string(&profile, "playerName")?;
+            let normalized = json_string(&profile, "normalizedName")
+                .unwrap_or_else(|| normalized_player_name(&player_name));
+            let profile_id = json_string(&profile, "profileId")
+                .or_else(|| json_string(&profile, "id"))
+                .unwrap_or_else(|| stable_master_style_id(&["master-style-profile", &normalized]));
+            let samples = grouped.remove(&profile_id).unwrap_or_default();
+            Some((
+                ImportedMasterStyleProfile {
+                    id: profile_id,
+                    player_name,
+                    normalized_name: normalized,
+                    version: "master-style-training-v1".into(),
+                    sample_count: json_i64(&profile, "sampledTrainingRows")
+                        .unwrap_or(samples.len() as i64),
+                    generated_at: json_string(&profile, "generatedAt")
+                        .unwrap_or_else(|| Utc::now().to_rfc3339()),
+                    profile_json: serde_json::to_string(&profile).unwrap_or_else(|_| "{}".into()),
+                },
+                samples,
+            ))
+        })
+        .collect())
+}
+
+fn ensure_builtin_master_style_seed(
+    app: &tauri::AppHandle,
+    store: &mut LocalStore,
+) -> Result<(), String> {
+    const SEED_STATE_KEY: &str = "builtin_master_style_seed_id";
+    let Some(seed_dir) = bundled_master_style_seed_dir(app) else {
+        return Ok(());
+    };
+    let manifest_path = seed_dir.join("seed-manifest.json");
+    let manifest_text = fs::read_to_string(&manifest_path)
+        .map_err(|error| format!("读取 {} 失败：{error}", manifest_path.display()))?;
+    let manifest: MasterStyleSeedManifest = serde_json::from_str(&manifest_text)
+        .map_err(|error| format!("解析 {} 失败：{error}", manifest_path.display()))?;
+    let seed_id = manifest.seed_id.trim();
+    if seed_id.is_empty() {
+        return Err(format!("{} 缺少 seedId", manifest_path.display()));
+    }
+    if store
+        .local_state_value(SEED_STATE_KEY)
+        .map_err(|error| error.to_string())?
+        .as_deref()
+        == Some(seed_id)
+    {
+        return Ok(());
+    }
+
+    let imports = imported_master_style_profiles_from_files(
+        &seed_dir.join("master-style-profiles.json"),
+        &seed_dir.join("master-style-samples.jsonl"),
+        &seed_dir.join("master-style-analysis.jsonl"),
+    )?;
+    let allowed_players = manifest
+        .players
+        .iter()
+        .map(|player| normalized_player_name(player))
+        .collect::<std::collections::HashSet<_>>();
+    for (profile, samples) in imports {
+        if !allowed_players.is_empty() && !allowed_players.contains(&profile.normalized_name) {
+            continue;
+        }
+        store
+            .upsert_master_style_profile(&profile, &samples)
+            .map_err(|error| error.to_string())?;
+    }
+    store
+        .set_local_state_value(SEED_STATE_KEY, seed_id)
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn import_master_style_profile(
+    request: Option<ImportMasterStyleProfileRequest>,
+    state: State<'_, DesktopState>,
+) -> Result<MasterStyleImportResultDto, String> {
+    let base = default_master_style_dir();
+    let request = request.unwrap_or(ImportMasterStyleProfileRequest {
+        profile_path: None,
+        samples_path: None,
+        analysis_path: None,
+    });
+    let profile_path = request
+        .profile_path
+        .map(PathBuf::from)
+        .unwrap_or_else(|| base.join("master-style-profiles.json"));
+    let samples_path = request
+        .samples_path
+        .map(PathBuf::from)
+        .unwrap_or_else(|| base.join("master-style-samples.jsonl"));
+    let analysis_path = request
+        .analysis_path
+        .map(PathBuf::from)
+        .unwrap_or_else(|| base.join("master-style-analysis.jsonl"));
+    let imports =
+        imported_master_style_profiles_from_files(&profile_path, &samples_path, &analysis_path)?;
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    let mut profiles = Vec::new();
+    let mut imported_samples = 0;
+    for (profile, samples) in imports {
+        imported_samples += samples.len();
+        profiles.push(
+            model
+                .store
+                .upsert_master_style_profile(&profile, &samples)
+                .map_err(|error| error.to_string())?,
+        );
+    }
+    Ok(MasterStyleImportResultDto {
+        profiles,
+        imported_samples,
+    })
+}
+
+#[tauri::command]
+fn list_master_style_profiles(
+    state: State<'_, DesktopState>,
+) -> Result<Vec<MasterStyleProfile>, String> {
+    let model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    model
+        .store
+        .list_master_style_profiles()
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn match_master_style_hints(
+    fen: String,
+    phase: String,
+    best_iccs: Option<String>,
+    limit: Option<usize>,
+    state: State<'_, DesktopState>,
+) -> Result<Vec<MasterStyleHint>, String> {
+    let model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    model
+        .store
+        .match_master_style_hints(&fen, &phase, best_iccs.as_deref(), limit.unwrap_or(3))
+        .map_err(|error| error.to_string())
 }
 
 fn rule_mode_from_code(value: &str) -> RuleMode {
@@ -5481,11 +6921,21 @@ fn validate_server_url(value: &str) -> Result<(), String> {
 }
 
 fn normalize_desktop_preferences(preferences: &mut DesktopPreferences) {
+    let legacy_analysis_defaults =
+        (matches!(preferences.search_mode.as_str(), "time" | "infinite")
+            && preferences.search_value == 1500)
+            || (preferences.search_mode == "depth"
+                && (preferences.search_value == 30 || preferences.search_value == 26));
     if matches!(preferences.search_mode.as_str(), "time" | "infinite")
         && preferences.search_value == 1500
     {
         preferences.search_mode = "depth".into();
-        preferences.search_value = 30;
+        preferences.search_value = 24;
+    }
+    if preferences.search_mode == "depth"
+        && (preferences.search_value == 30 || preferences.search_value == 26)
+    {
+        preferences.search_value = 24;
     }
     if preferences.candidate_line_moves == 6 {
         preferences.candidate_line_moves = 16;
@@ -5496,8 +6946,11 @@ fn normalize_desktop_preferences(preferences: &mut DesktopPreferences) {
     if preferences.multipv < 1 {
         preferences.multipv = 2;
     }
-    if preferences.report_depth == 26 {
-        preferences.report_depth = 30;
+    if preferences.report_depth == 30 || preferences.report_depth == 26 {
+        preferences.report_depth = 24;
+    }
+    if legacy_analysis_defaults && preferences.auto_analyze {
+        preferences.auto_analyze = false;
     }
     preferences.link_confidence_threshold = (effective_link_confidence_threshold(
         preferences.link_confidence_threshold,
@@ -5515,6 +6968,8 @@ fn normalize_desktop_preferences(preferences: &mut DesktopPreferences) {
     preferences.parallel_engine_paths.sort();
     preferences.parallel_engine_paths.dedup();
     preferences.rule_mode = normalize_rule_mode(&preferences.rule_mode);
+    preferences.active_builtin_opening_book_id =
+        pfbook_opening_book::normalize_book_id(&preferences.active_builtin_opening_book_id);
 }
 
 fn normalize_skin_id(value: &str) -> String {
@@ -5614,6 +7069,9 @@ fn validate_preferences(preferences: &DesktopPreferences) -> Result<(), String> 
         "single" | "parallel"
     ) {
         return Err("不支持的多引擎分析模式".into());
+    }
+    if !pfbook_opening_book::is_known_book_id(&preferences.active_builtin_opening_book_id) {
+        return Err("不支持的内嵌开局库".into());
     }
     let limit_valid = match preferences.search_mode.as_str() {
         "time" => (100..=30_000).contains(&preferences.search_value),
@@ -5727,6 +7185,12 @@ fn save_desktop_preferences(
         .save_desktop_preferences(&preferences)
         .map_err(|error| error.to_string())?;
     Ok(preferences)
+}
+
+#[tauri::command]
+fn list_builtin_opening_books() -> Result<pfbook_opening_book::BuiltinOpeningBookManifestDto, String>
+{
+    pfbook_opening_book::manifest()
 }
 
 #[tauri::command]
@@ -5935,6 +7399,868 @@ async fn query_cloud_opening_book(
     Ok(candidates)
 }
 
+fn flyknife_templates() -> Vec<FlyknifeTemplateDto> {
+    const ITEMS: [(&str, &str, &[&str]); 10] = [
+        (
+            "zhongpao-pingfeng",
+            "中炮对屏风马",
+            &["h2e2", "h9g7", "b2c4", "b7c7"],
+        ),
+        ("zhongpao-zhongpao", "中炮对中炮", &["h2e2", "h7e7"]),
+        ("xianren-zu-di-pao", "仙人指路对卒底炮", &["a3a4", "b7b3"]),
+        ("xianren-fei-xiang", "仙人指路对飞象", &["a3a4", "c9e7"]),
+        ("fei-xiang-juzhong", "飞相局", &["c0e2", "h9g7"]),
+        ("guogongpao", "过宫炮", &["b2e2", "h9g7"]),
+        ("shunshou-pao", "顺手炮", &["h2e2", "h7e7"]),
+        ("lie-shou-pao", "列手炮", &["h2e2", "b7e7"]),
+        ("dan-ti-ma", "单提马", &["b0c2", "h9g7"]),
+        ("bian-ma", "边马局", &["b0a2", "h9g7"]),
+    ];
+    ITEMS
+        .into_iter()
+        .filter_map(|(id, name, moves)| {
+            let board = moves
+                .iter()
+                .try_fold(Board::from_fen(STARTING_FEN).ok()?, |board, iccs| {
+                    board.apply_iccs(iccs).ok()
+                })?;
+            Some(FlyknifeTemplateDto {
+                id,
+                name,
+                moves: moves.iter().map(|item| (*item).into()).collect(),
+                fen: board.to_fen(),
+            })
+        })
+        .collect()
+}
+
+const FLYKNIFE_TOPICS: [(&str, &str, &str, &str, &str, &str, usize); 12] = [
+    (
+        "xianren-zudi-pao-1",
+        "34仙人指路对卒底炮（一）",
+        "仙人指路对卒底炮",
+        "布局陷阱",
+        "https://www.xiangqiqipu.com/Category/View-6535.html",
+        "01-34仙人指路对卒底炮-一.pgn",
+        12,
+    ),
+    (
+        "xianren-zudi-pao-2",
+        "35仙人指路对卒底炮（二）",
+        "仙人指路对卒底炮",
+        "布局陷阱",
+        "https://xiangqiqipu.com/Category/View-6534.html",
+        "02-35仙人指路对卒底炮-二.pgn",
+        9,
+    ),
+    (
+        "ma-ru-gui-xin",
+        "02马入归心，化凶为吉",
+        "中炮类战术",
+        "布局陷阱",
+        "https://mp.xiangqiqipu.com/Category/View-6497.html",
+        "03-02马入归心-化凶为吉.pgn",
+        32,
+    ),
+    (
+        "zhang-wang-yi-dai",
+        "21张网以待，中计败北",
+        "中炮类战术",
+        "布局陷阱",
+        "https://xiangqiqipu.com/Category/View-6457.html",
+        "04-21张网以待-中计败北.pgn",
+        26,
+    ),
+    (
+        "xianshou-pingfeng-vs-zhongpao",
+        "02先手屏风马对中炮局",
+        "屏风马对中炮",
+        "布局陷阱",
+        "https://www.xiangqiqipu.com/Category/View-6571.html",
+        "05-02先手屏风马对中炮局.pgn",
+        18,
+    ),
+    (
+        "pingfeng-po-guoheche",
+        "15屏风马破中炮过河车",
+        "屏风马破过河车",
+        "布局陷阱",
+        "https://xiangqiqipu.com/Category/View-6558.html",
+        "06-15屏风马破中炮过河车.pgn",
+        16,
+    ),
+    (
+        "shunpao-qima-fengsuo",
+        "27顺炮弃马破单边封锁局",
+        "顺炮弃马",
+        "布局陷阱",
+        "https://www.xiangqiqipu.com/Category/View-6546.html",
+        "07-27顺炮弃马破单边封锁局.pgn",
+        31,
+    ),
+    (
+        "zhongpao-guoheche-pingfeng",
+        "03中炮过河车对屏风马局",
+        "中炮过河车对屏风马",
+        "布局陷阱",
+        "https://www.xiangqiqipu.com/Category/View-6570.html",
+        "08-03中炮过河车对屏风马局.pgn",
+        12,
+    ),
+    (
+        "xianren-qizu",
+        "31仙人指路对弃卒局",
+        "仙人指路对弃卒",
+        "布局陷阱",
+        "https://mp.xiangqiqipu.com/Category/View-6538.html",
+        "09-31仙人指路对弃卒局.pgn",
+        16,
+    ),
+    (
+        "zhongpao-shuangpao-guohe",
+        "24中炮对屏风马双炮过河",
+        "中炮对屏风马",
+        "布局陷阱",
+        "https://www.xiangqiqipu.com/Category/View-6549.html",
+        "10-24中炮对屏风马双炮过河.pgn",
+        16,
+    ),
+    (
+        "zuoma-panhe",
+        "25中炮过河车对屏风马左马盘河",
+        "中炮过河车对屏风马",
+        "布局陷阱",
+        "https://www.xiangqiqipu.com/Category/View-6548.html",
+        "11-25中炮过河车对屏风马左马盘河.pgn",
+        10,
+    ),
+    (
+        "shunpao-hengche-shijiaopao",
+        "42顺炮横车攻先补士角炮局",
+        "顺炮横车",
+        "布局陷阱",
+        "https://source.xiangqiqipu.com/Category/View-6527.html",
+        "12-42顺炮横车攻先补士角炮局.pgn",
+        21,
+    ),
+];
+
+fn flyknife_topics() -> Vec<FlyknifeTopicDto> {
+    FLYKNIFE_TOPICS
+        .iter()
+        .map(
+            |(id, title, opening, category, source, _filename, move_count)| FlyknifeTopicDto {
+                id: *id,
+                title: *title,
+                opening: *opening,
+                category: *category,
+                source: *source,
+                move_count: *move_count,
+            },
+        )
+        .collect()
+}
+
+fn flyknife_topic_file_name(id: &str) -> Option<&'static str> {
+    FLYKNIFE_TOPICS
+        .iter()
+        .find(|(topic_id, ..)| *topic_id == id)
+        .map(|(_, _, _, _, _, filename, _)| *filename)
+}
+
+fn flyknife_topic_candidates(resource_dir: &Path, filename: &str) -> Vec<PathBuf> {
+    vec![
+        resource_dir
+            .join("resources/flyknife-library/single-pgn")
+            .join(filename),
+        resource_dir
+            .join("flyknife-library/single-pgn")
+            .join(filename),
+    ]
+}
+
+fn resolve_flyknife_topic_path(app: &tauri::AppHandle, filename: &str) -> Option<PathBuf> {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mut candidates = vec![
+        manifest_dir
+            .join("resources/flyknife-library/single-pgn")
+            .join(filename),
+    ];
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        candidates.extend(flyknife_topic_candidates(&resource_dir, filename));
+    }
+    candidates.into_iter().find(|path| path.is_file())
+}
+
+#[tauri::command]
+fn list_flyknife_topics() -> Vec<FlyknifeTopicDto> {
+    flyknife_topics()
+}
+
+#[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err("只能打开 http 或 https 来源地址".into());
+    }
+    #[cfg(target_os = "macos")]
+    let status = ProcessCommand::new("open").arg(&url).status();
+    #[cfg(target_os = "windows")]
+    let status = ProcessCommand::new("cmd")
+        .args(["/C", "start", "", &url])
+        .status();
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    let status = ProcessCommand::new("xdg-open").arg(&url).status();
+    status
+        .map_err(|error| format!("无法调用系统浏览器：{error}"))?
+        .success()
+        .then_some(())
+        .ok_or_else(|| "系统浏览器未能打开该来源".into())
+}
+
+#[tauri::command]
+fn open_flyknife_topic(
+    id: String,
+    app: tauri::AppHandle,
+    state: State<'_, DesktopState>,
+) -> Result<BoardDto, String> {
+    let filename = flyknife_topic_file_name(&id).ok_or("飞刀专题不存在")?;
+    let path = resolve_flyknife_topic_path(&app, filename)
+        .ok_or_else(|| format!("飞刀专题资源不存在：{filename}"))?;
+    let bytes = std::fs::read(&path).map_err(|error| format!("读取飞刀专题失败：{error}"))?;
+    let document =
+        import_document(&bytes, Some(ManualFormat::Pgn)).map_err(|error| error.to_string())?;
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    install_document(
+        &mut model,
+        document,
+        Some(path.to_string_lossy().into_owned()),
+        Some("flyknife-topic".into()),
+    )?;
+    board_dto(&model)
+}
+
+fn normalize_chinese_move_text(value: &str) -> String {
+    value
+        .trim()
+        .chars()
+        .filter_map(|character| match character {
+            ' ' | '\t' | '\n' | '\r' | '-' | '－' => None,
+            '０' => Some('0'),
+            '１' => Some('1'),
+            '２' => Some('2'),
+            '３' => Some('3'),
+            '４' => Some('4'),
+            '５' => Some('5'),
+            '６' => Some('6'),
+            '７' => Some('7'),
+            '８' => Some('8'),
+            '９' => Some('9'),
+            character => Some(character),
+        })
+        .collect()
+}
+
+fn resolve_flyknife_lure(board: &Board, value: &str) -> Result<String, String> {
+    let input = value.trim();
+    if board.apply_iccs(input).is_ok() {
+        return Ok(input.to_owned());
+    }
+    let expected = normalize_chinese_move_text(input);
+    let matches: Vec<_> = board
+        .legal_moves()
+        .into_iter()
+        .filter(|mv| {
+            board
+                .chinese_move_notation(*mv)
+                .map(|notation| normalize_chinese_move_text(&notation) == expected)
+                .unwrap_or(false)
+        })
+        .collect();
+    match matches.as_slice() {
+        [mv] => Ok(mv.to_iccs()),
+        [] => Err(format!("“{input}”不是当前局面的合法中文着法")),
+        _ => Err(format!("“{input}”存在歧义，请从候选着法中选择")),
+    }
+}
+
+fn chinese_color_name(color: Color) -> &'static str {
+    match color {
+        Color::Red => "红方",
+        Color::Black => "黑方",
+    }
+}
+
+fn prepare_flyknife_position(
+    before: &Board,
+    requested: Color,
+    setup_value: &str,
+    lure_value: &str,
+) -> Result<(String, String, Board, Board), String> {
+    let input_setup = setup_value.trim();
+    let input_lure = lure_value.trim();
+    if !input_setup.is_empty() {
+        if before.side_to_move() != requested {
+            return Err(format!(
+                "当前局面轮到{}行棋；不能由{}先设局",
+                chinese_color_name(before.side_to_move()),
+                chinese_color_name(requested)
+            ));
+        }
+        if input_lure.is_empty() {
+            return Err("设局飞刀需要填写对手的常见应手".into());
+        }
+        let setup_move = resolve_flyknife_lure(before, input_setup)?;
+        let after_setup = before
+            .apply_iccs(&setup_move)
+            .map_err(|_| "预埋第一手不是起始局面的合法着法".to_string())?;
+        let lure_move = resolve_flyknife_lure(&after_setup, input_lure)?;
+        let after_lure = after_setup
+            .apply_iccs(&lure_move)
+            .map_err(|_| "对手应手不是预埋局面的合法着法".to_string())?;
+        if after_lure.side_to_move() != requested {
+            return Err("对手应手后未轮到设局方出刀，请检查着法顺序".into());
+        }
+        return Ok((setup_move, lure_move, after_setup, after_lure));
+    }
+    if input_lure.is_empty() {
+        if before.side_to_move() != requested {
+            return Err(format!(
+                "当前局面轮到{}行棋；若要让{}出刀，请先填写一手对手诱导着法",
+                chinese_color_name(before.side_to_move()),
+                chinese_color_name(requested)
+            ));
+        }
+        return Ok((String::new(), String::new(), before.clone(), before.clone()));
+    }
+    let lure_move = resolve_flyknife_lure(before, input_lure)?;
+    let after_lure = before
+        .apply_iccs(&lure_move)
+        .map_err(|_| "诱导着法不是起始局面的合法着法".to_string())?;
+    if after_lure.side_to_move() != requested {
+        return Err(format!(
+            "诱导着后轮到{}行棋，不是{}出刀；请调整出刀方或换一手诱导着",
+            chinese_color_name(after_lure.side_to_move()),
+            chinese_color_name(requested)
+        ));
+    }
+    Ok((String::new(), lure_move, before.clone(), after_lure))
+}
+
+fn flyknife_best_defense_notation(
+    starting_fen: &str,
+    mainline: &[String],
+    knife_move: &str,
+    best_defense: &[String],
+) -> Vec<String> {
+    let Some(knife_index) = mainline
+        .iter()
+        .position(|move_text| move_text == knife_move)
+    else {
+        return Vec::new();
+    };
+    let mut board = match Board::from_fen(starting_fen) {
+        Ok(board) => board,
+        Err(_) => return Vec::new(),
+    };
+    for move_text in &mainline[..=knife_index] {
+        match board.apply_iccs(move_text) {
+            Ok(next) => board = next,
+            Err(_) => return Vec::new(),
+        }
+    }
+    board.chinese_pv_notation(best_defense).unwrap_or_default()
+}
+
+fn flyknife_step_annotations(
+    starting_fen: &str,
+    attacker: Color,
+    setup_move: Option<&str>,
+    lure_move: &str,
+    knife_move: &str,
+    mainline: &[String],
+    best_defense: &[String],
+    score_cp: Option<i64>,
+    swing_cp: Option<i64>,
+) -> Vec<FlyknifeStepAnnotationDto> {
+    let mut board = match Board::from_fen(starting_fen) {
+        Ok(board) => board,
+        Err(_) => return Vec::new(),
+    };
+    let setup = setup_move.filter(|value| !value.is_empty());
+    let defense = best_defense.first().map(String::as_str);
+    let knife_index = mainline.iter().position(|value| value == knife_move);
+    let attacker_label = if attacker == Color::Red {
+        "红方"
+    } else {
+        "黑方"
+    };
+    let defender_label = if attacker == Color::Red {
+        "黑方"
+    } else {
+        "红方"
+    };
+
+    mainline.iter().enumerate().filter_map(|(index, move_text)| {
+        let mover = if board.side_to_move() == Color::Red { "红方" } else { "黑方" };
+        let notation = board
+            .chinese_pv_notation(std::slice::from_ref(move_text))
+            .ok()
+            .and_then(|items| items.into_iter().next())
+            .unwrap_or_else(|| move_text.clone());
+        let role = if setup == Some(move_text.as_str()) {
+            Some("setup")
+        } else if !lure_move.is_empty() && move_text == lure_move {
+            Some("lure")
+        } else if move_text == knife_move {
+            Some("knife")
+        } else if defense == Some(move_text.as_str()) && knife_index.is_some_and(|knife| index > knife) {
+            Some("bestDefense")
+        } else {
+            None
+        };
+        let next = board.apply_iccs(move_text).ok()?;
+        board = next;
+        let role = role?;
+        let intent = match role {
+            "setup" => format!("{attacker_label}先走“{notation}”完成设局，等待对方出现预定应手；这一步本身不等于已经得分。"),
+            "lure" => format!("{defender_label}走“{notation}”后，中刀条件成立，轮到{attacker_label}执行预先验证的反击。"),
+            "knife" => match score_cp {
+                Some(score) if score >= 100 => format!("{attacker_label}以“{notation}”出刀。引擎验证此处形成明显主动，出刀后为 {:+.2} 分。", score as f64 / 100.0),
+                Some(score) => format!("{attacker_label}以“{notation}”反击；当前为 {:+.2} 分，属于研究候选，仍需核对最佳防守。", score as f64 / 100.0),
+                None => format!("{attacker_label}以“{notation}”反击；分值尚未稳定，需继续提高引擎深度确认。"),
+            },
+            "bestDefense" => format!("{defender_label}以“{notation}”进行较强防守。这不是中刀线，而是检验该方案风险与可行性的参考应对。"),
+            _ => String::new(),
+        };
+        Some(FlyknifeStepAnnotationDto {
+            role: role.into(), iccs: move_text.clone(), notation, side: mover.into(), fen: Some(board.to_fen()),
+            score_cp: (role == "knife").then_some(score_cp).flatten(),
+            swing_cp: (role == "knife").then_some(swing_cp).flatten(),
+            intent, note: None,
+        })
+    }).collect()
+}
+
+#[tauri::command]
+async fn generate_flyknife_candidates(
+    request: GenerateFlyknifeRequest,
+    app: tauri::AppHandle,
+    state: State<'_, DesktopState>,
+) -> Result<Vec<FlyknifeCandidateDto>, String> {
+    let before = Board::from_fen(&request.starting_fen).map_err(|error| error.to_string())?;
+    let requested = match request.side.as_str() {
+        "red" => Color::Red,
+        "black" => Color::Black,
+        _ => return Err("飞刀执方必须为红方或黑方".into()),
+    };
+    let (setup_move, lure_move, before_lure, after_lure) = prepare_flyknife_position(
+        &before,
+        requested,
+        request.setup_move.as_deref().unwrap_or_default(),
+        &request.lure_move,
+    )?;
+    let setup_notation = if setup_move.is_empty() {
+        None
+    } else {
+        before
+            .chinese_pv_notation(std::slice::from_ref(&setup_move))
+            .ok()
+            .and_then(|items| items.into_iter().next())
+    };
+    let lure_notation = if lure_move.is_empty() {
+        None
+    } else {
+        let lure_position = if setup_move.is_empty() {
+            before.clone()
+        } else {
+            before
+                .apply_iccs(&setup_move)
+                .map_err(|error| error.to_string())?
+        };
+        lure_position
+            .chinese_pv_notation(std::slice::from_ref(&lure_move))
+            .ok()
+            .and_then(|items| items.into_iter().next())
+    };
+    // The cloud book tells us whether an opponent reply is common. The engine alone
+    // establishes whether that reply actually loses ground for the attacking side.
+    let baseline_score_cp = if lure_move.is_empty() {
+        None
+    } else {
+        let baseline = analyze_position(
+            request.engine_path.clone(),
+            None,
+            Some("飞刀条件基准".into()),
+            None,
+            before_lure.to_fen(),
+            request.search_mode.clone(),
+            request.search_value,
+            request.threads,
+            request.hash_mb,
+            1,
+            Vec::new(),
+            None,
+            app.clone(),
+            state.clone(),
+        )
+        .await?;
+        // At this point it is the defender's turn. Convert the UCI score to the
+        // requested attacker's perspective so both numbers can be compared directly.
+        baseline
+            .first()
+            .and_then(|line| line.score_cp)
+            .map(|score| -i64::from(score))
+    };
+    let lines = analyze_position(
+        request.engine_path,
+        None,
+        Some("飞刀验证".into()),
+        None,
+        after_lure.to_fen(),
+        request.search_mode,
+        request.search_value,
+        request.threads,
+        request.hash_mb,
+        3,
+        Vec::new(),
+        None,
+        app,
+        state,
+    )
+    .await?;
+    let mut unique = std::collections::BTreeSet::new();
+    Ok(lines
+        .into_iter()
+        .filter_map(|line| {
+            let knife_move = line.pv.first()?.clone();
+            if !unique.insert(knife_move.clone()) {
+                return None;
+            }
+            let score = line.score_cp;
+            let score_cp = score.map(i64::from);
+            let swing_cp = score_cp
+                .zip(baseline_score_cp)
+                .map(|(after, before)| after - before);
+            // UCI/Pikafish scores are from the side-to-move perspective. After the lure that
+            // side is the requested attacker, regardless of whether it is red or black.
+            let favorable =
+                score.is_some_and(|value| value >= 100) || line.mate.is_some_and(|value| value > 0);
+            let best_defense: Vec<String> = line.pv.iter().skip(1).take(4).cloned().collect();
+            let notation = after_lure.chinese_pv_notation(&line.pv).unwrap_or_default();
+            let best_defense_notation = after_lure
+                .apply_iccs(&knife_move)
+                .and_then(|board| board.chinese_pv_notation(&best_defense))
+                .unwrap_or_default();
+            let full_line = (!setup_move.is_empty())
+                .then(|| setup_move.clone())
+                .into_iter()
+                .chain((!lure_move.is_empty()).then(|| lure_move.clone()))
+                .chain(line.pv.iter().cloned())
+                .collect::<Vec<_>>();
+            let annotations = flyknife_step_annotations(
+                &request.starting_fen,
+                requested,
+                (!setup_move.is_empty()).then_some(setup_move.as_str()),
+                &lure_move,
+                &knife_move,
+                &full_line,
+                &best_defense,
+                score_cp,
+                swing_cp,
+            );
+            Some(FlyknifeCandidateDto {
+                setup_move: (!setup_move.is_empty()).then(|| setup_move.clone()),
+                setup_notation: setup_notation.clone(),
+                lure_move: lure_move.clone(),
+                lure_notation: lure_notation.clone(),
+                knife_move,
+                mainline: line.pv,
+                notation,
+                best_defense,
+                best_defense_notation,
+                score_cp,
+                baseline_score_cp,
+                swing_cp,
+                mate: line.mate.map(i64::from),
+                risk: if lure_move.is_empty() {
+                    if favorable {
+                        "局面强招：当前轮可取得明显主动；这不是预埋飞刀。".into()
+                    } else {
+                        "局面候选：引擎未确认明显优势，适合继续研究。".into()
+                    }
+                } else if favorable {
+                    "实战可用：对常见应手形成主动攻势；已附引擎主变中的最佳防守。".into()
+                } else {
+                    "反击候选：引擎未确认明显优势，适合练习和人工复核。".into()
+                },
+                annotations,
+            })
+        })
+        .take(3)
+        .collect())
+}
+
+#[tauri::command]
+fn list_flyknife_templates() -> Vec<FlyknifeTemplateDto> {
+    flyknife_templates()
+}
+
+#[tauri::command]
+fn list_flyknife_plans(state: State<'_, DesktopState>) -> Result<Vec<FlyknifePlanDto>, String> {
+    state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?
+        .store
+        .flyknife_plans()
+        .map(|plans| plans.into_iter().map(Into::into).collect())
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn save_flyknife_plan(
+    plan: FlyknifePlanDto,
+    state: State<'_, DesktopState>,
+) -> Result<FlyknifePlanDto, String> {
+    if !matches!(plan.side.as_str(), "red" | "black") {
+        return Err("飞刀执方必须为红方或黑方".into());
+    }
+    let mut board = Board::from_fen(&plan.starting_fen).map_err(|error| error.to_string())?;
+    let is_starting_position = plan.mainline.is_empty()
+        && plan.lure_move.trim().is_empty()
+        && plan.knife_move.trim().is_empty();
+    let line = if is_starting_position {
+        Vec::new()
+    } else if plan.mainline.is_empty() {
+        vec![plan.lure_move.clone(), plan.knife_move.clone()]
+    } else {
+        plan.mainline.clone()
+    };
+    for iccs in &line {
+        board = board
+            .apply_iccs(iccs)
+            .map_err(|_| format!("飞刀主线包含非法着法：{iccs}"))?;
+    }
+    let id = plan.id.unwrap_or_else(Uuid::new_v4);
+    let annotations = if plan.annotations.is_empty() {
+        let attacker = if plan.side == "red" {
+            Color::Red
+        } else {
+            Color::Black
+        };
+        flyknife_step_annotations(
+            &plan.starting_fen,
+            attacker,
+            None,
+            &plan.lure_move,
+            &plan.knife_move,
+            &line,
+            &plan.best_defense,
+            plan.score_cp,
+            None,
+        )
+        .into_iter()
+        .map(Into::into)
+        .collect()
+    } else {
+        plan.annotations.into_iter().map(Into::into).collect()
+    };
+    let mut stored = FlyknifePlan {
+        id,
+        title: plan.title.trim().to_owned(),
+        side: plan.side.clone(),
+        starting_fen: plan.starting_fen.clone(),
+        template_id: plan.template_id.clone(),
+        template_name: plan.template_name.trim().to_owned(),
+        lure_move: plan.lure_move.clone(),
+        knife_move: plan.knife_move.clone(),
+        mainline: line,
+        best_defense: plan.best_defense.clone(),
+        score_cp: plan.score_cp,
+        mate: plan.mate,
+        risk: plan.risk.clone(),
+        source_game_id: None,
+        source_node_id: None,
+        note: plan.note.clone(),
+        annotations,
+        created_at: Utc::now().to_rfc3339(),
+    };
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    let source_matches_current = model.board.to_fen() == stored.starting_fen;
+    if source_matches_current && !stored.mainline.is_empty() {
+        stored.source_game_id = Some(model.game_id);
+        stored.source_node_id = model.current_node;
+    }
+    model
+        .store
+        .save_flyknife_plan(&stored)
+        .map_err(|error| error.to_string())?;
+    if source_matches_current {
+        let original_board = model.board.clone();
+        let original_node = model.current_node;
+        let mut first_node = None;
+        let mut committed_nodes = Vec::new();
+        for iccs in &stored.mainline {
+            let _ = commit_move(&mut model, iccs)?;
+            if first_node.is_none() {
+                first_node = model.current_node;
+            }
+            if let Some(node_id) = model.current_node {
+                committed_nodes.push((node_id, iccs.clone()));
+            }
+        }
+        if first_node.is_some() {
+            let notation = Board::from_fen(&stored.starting_fen)
+                .and_then(|board| board.chinese_pv_notation(&stored.mainline))
+                .unwrap_or_else(|_| stored.mainline.clone());
+            let best_defense = flyknife_best_defense_notation(
+                &stored.starting_fen,
+                &stored.mainline,
+                &stored.knife_move,
+                &stored.best_defense,
+            );
+            let summary = format!(
+                "飞刀方案：{}\n执方：{}\n诱导：{}\n主变：{}\n最佳防守：{}\n风险：{}\n{}",
+                stored.title,
+                if stored.side == "red" {
+                    "红方"
+                } else {
+                    "黑方"
+                },
+                stored.lure_move,
+                notation.join(" "),
+                if best_defense.is_empty() {
+                    "引擎未给出后续".into()
+                } else {
+                    best_defense.join(" ")
+                },
+                stored.risk,
+                stored.note,
+            );
+            for (index, (comment_node_id, iccs)) in committed_nodes.iter().enumerate() {
+                let annotation = stored.annotations.iter().find(|item| item.iccs == *iccs);
+                let annotation_block = annotation.map(|item| {
+                    format!(
+                        "【飞刀标注】\n阶段：{}\n意图：{}\n分值：{}{}\n【/飞刀标注】",
+                        item.role,
+                        item.note
+                            .as_deref()
+                            .filter(|note| !note.trim().is_empty())
+                            .unwrap_or(&item.intent),
+                        item.score_cp
+                            .map(|score| format!("{:+.2} 分", score as f64 / 100.0))
+                            .unwrap_or_else(|| "待确认".into()),
+                        item.swing_cp
+                            .map(|swing| format!(" · 变化 {:+.2} 分", swing as f64 / 100.0))
+                            .unwrap_or_default(),
+                    )
+                });
+                let comment = [
+                    if index == 0 {
+                        Some(summary.clone())
+                    } else {
+                        None
+                    },
+                    annotation_block,
+                ]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join("\n");
+                let mut tree = model.tree.clone();
+                tree.update_comment(*comment_node_id, comment.clone())
+                    .map_err(|error| error.to_string())?;
+                let operation = next_operation(
+                    &mut model,
+                    *comment_node_id,
+                    OperationKind::UpdateComment,
+                    serde_json::to_value(UpdateCommentPayload {
+                        node_id: *comment_node_id,
+                        comment: comment.clone(),
+                    })
+                    .map_err(|error| error.to_string())?,
+                );
+                model
+                    .store
+                    .update_comment_with_operation(*comment_node_id, &comment, &operation)
+                    .map_err(|error| error.to_string())?;
+                model.tree = tree;
+            }
+        }
+        model.board = original_board;
+        model.current_node = original_node;
+        let game_id = model.game_id;
+        model
+            .store
+            .set_current_node(game_id, original_node)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(stored.into())
+}
+
+#[tauri::command]
+fn delete_flyknife_plan(id: Uuid, state: State<'_, DesktopState>) -> Result<(), String> {
+    state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?
+        .store
+        .delete_flyknife_plan(id)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn open_flyknife_practice(id: Uuid, state: State<'_, DesktopState>) -> Result<BoardDto, String> {
+    let plan = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?
+        .store
+        .flyknife_plans()
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .find(|plan| plan.id == id)
+        .ok_or("飞刀方案不存在")?;
+    let mut document =
+        ManualDocument::new(plan.starting_fen.clone()).map_err(|error| error.to_string())?;
+    let best_defense = flyknife_best_defense_notation(
+        &plan.starting_fen,
+        &plan.mainline,
+        &plan.knife_move,
+        &plan.best_defense,
+    );
+    document.metadata.title = format!("飞刀练习 · {}", plan.title);
+    document.note = format!(
+        "飞刀练习\n执方：{}\n诱导：{}\n出刀：{}\n最佳防守：{}\n风险：{}\n{}",
+        if plan.side == "red" {
+            "红方"
+        } else {
+            "黑方"
+        },
+        plan.lure_move,
+        plan.knife_move,
+        if best_defense.is_empty() {
+            "引擎未给出后续".into()
+        } else {
+            best_defense.join(" ")
+        },
+        plan.risk,
+        plan.note
+    );
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    install_document(&mut model, document, None, Some("flyknife-practice".into()))?;
+    board_dto(&model)
+}
+
 #[tauri::command]
 fn list_coach_reports(state: State<'_, DesktopState>) -> Result<Vec<GameReportDatasetDto>, String> {
     let model = state
@@ -5966,21 +8292,29 @@ fn list_training_tasks(state: State<'_, DesktopState>) -> Result<Vec<TrainingTas
         .map(|tasks| tasks.into_iter().map(Into::into).collect())
 }
 
+const TRAINING_TASK_LOSS_THRESHOLD_CP: i32 = 80;
+
 #[tauri::command]
-fn generate_training_tasks(state: State<'_, DesktopState>) -> Result<Vec<TrainingTaskDto>, String> {
+fn generate_training_tasks(
+    state: State<'_, DesktopState>,
+) -> Result<TrainingGenerationResultDto, String> {
     let mut model = state
         .model
         .lock()
         .map_err(|_| "state lock poisoned".to_owned())?;
+    let current_signature = report_line_signature(&model.tree, model.current_node)?;
     let Some(stored) = model
         .store
-        .load_latest_game_report(model.game_id)
+        .load_game_report(model.game_id, &current_signature)
         .map_err(|error| error.to_string())?
     else {
         return Err("请先生成一份整局复盘报告".into());
     };
     let report: GameReportDatasetDto =
         serde_json::from_str(&stored.dataset_json).map_err(|_| "本地复盘报告无效".to_owned())?;
+    if report.game_id != model.game_id || report.line_signature != current_signature {
+        return Err("棋谱线路已变化，请重新生成整局报告后再创建训练".into());
+    }
     let approved_cards = model
         .store
         .theory_cards()
@@ -5988,6 +8322,7 @@ fn generate_training_tasks(state: State<'_, DesktopState>) -> Result<Vec<Trainin
         .into_iter()
         .filter(|card| card.review_status == "approved")
         .collect::<Vec<_>>();
+    let mut candidates = Vec::new();
     for (index, position) in report.positions.iter().enumerate().skip(1) {
         let Some(moved) = position.move_.as_ref() else {
             continue;
@@ -6001,14 +8336,44 @@ fn generate_training_tasks(state: State<'_, DesktopState>) -> Result<Vec<Trainin
         } else {
             after - before
         };
-        if loss < 150 {
+        if loss < 30 {
             continue;
         }
+        candidates.push((index, loss));
+    }
+
+    let critical = candidates
+        .iter()
+        .copied()
+        .filter(|(_, loss)| *loss >= TRAINING_TASK_LOSS_THRESHOLD_CP)
+        .collect::<Vec<_>>();
+    let reinforcement = if critical.is_empty() {
+        let mut rows = candidates
+            .iter()
+            .copied()
+            .filter(|(_, loss)| *loss < TRAINING_TASK_LOSS_THRESHOLD_CP)
+            .collect::<Vec<_>>();
+        rows.sort_by(|left, right| right.1.cmp(&left.1));
+        rows.into_iter().take(3).collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    for (index, loss) in critical.iter().chain(reinforcement.iter()).copied() {
+        let position = &report.positions[index];
+        let moved = position
+            .move_
+            .as_ref()
+            .expect("training candidate has move");
         let move_number = (position.ply + 1) / 2;
         let best = position
             .best_notation
             .as_deref()
             .unwrap_or("重新寻找更稳健的着法");
+        let task_type = if loss >= TRAINING_TASK_LOSS_THRESHOLD_CP {
+            "critical"
+        } else {
+            "reinforcement"
+        };
         let tags = training_tags_for_position(position, loss);
         let engine_signal = engine_signal_for_position(position, &tags, loss);
         let source_card =
@@ -6019,15 +8384,24 @@ fn generate_training_tasks(state: State<'_, DesktopState>) -> Result<Vec<Trainin
                 report.game_id,
                 &report.line_signature,
                 moved.node_id,
-                &format!("复盘第 {move_number} 手：{}", moved.notation),
                 &format!(
-                    "本着评价变化约 {loss} 分。先按{}阶段重算候选，再比较推荐着法：{best}。标签：{}",
+                    "{}第 {move_number} 手：{}",
+                    if task_type == "critical" {
+                        "关键复练"
+                    } else {
+                        "巩固复练"
+                    },
+                    moved.notation
+                ),
+                &format!(
+                    "本着评价变化约 {loss}cp。先按{}阶段重算候选，再比较推荐着法：{best}。标签：{}",
                     phase_label(&position.phase),
                     tags.join(" / ")
                 ),
                 Some(&position.phase),
                 &tags,
                 source_card.map(|card| card.id),
+                task_type,
             )
             .map_err(|error| error.to_string())?;
         if let Some(card) = source_card {
@@ -6043,11 +8417,19 @@ fn generate_training_tasks(state: State<'_, DesktopState>) -> Result<Vec<Trainin
             );
         }
     }
-    model
+    let tasks = model
         .store
         .list_training_tasks()
-        .map_err(|error| error.to_string())
-        .map(|tasks| tasks.into_iter().map(Into::into).collect())
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .filter(|task| task.game_id == model.game_id && task.report_signature == current_signature)
+        .map(Into::into)
+        .collect();
+    Ok(TrainingGenerationResultDto {
+        tasks,
+        critical_count: critical.len(),
+        reinforcement_count: reinforcement.len(),
+    })
 }
 
 fn best_matching_theory_card<'a>(
@@ -6075,20 +8457,31 @@ fn best_matching_theory_card<'a>(
                 card.tags.join(" ")
             )
             .to_lowercase();
-            let hits = normalized_tags
+            let tag_score = normalized_tags
                 .iter()
                 .filter(|tag| haystack.contains(tag.as_str()))
-                .count() as i64;
+                .map(|tag| theory_tag_weight(tag))
+                .sum::<i64>();
             let correlation_hits = card
                 .engine_correlations
                 .iter()
                 .filter(|correlation| correlation.trim().to_lowercase() == normalized_signal)
                 .count() as i64;
-            let score = hits * 10 + correlation_hits * 14 - card.match_penalty * 3;
+            let score = tag_score + correlation_hits * 12 - card.match_penalty * 3;
             (score > 0).then_some((score, card))
         })
         .max_by_key(|(score, _)| *score)
         .map(|(_, card)| card)
+}
+
+fn theory_tag_weight(tag: &str) -> i64 {
+    match tag {
+        "开局" | "中局" | "残局" | "复盘" | "推荐着对比" => 1,
+        "脱离体系" | "战略方向" | "子力协调" | "候选着" | "计算" | "理论胜和" | "兑子" => {
+            5
+        }
+        _ => 14,
+    }
 }
 
 fn engine_signal_for_position(
@@ -6147,9 +8540,44 @@ fn training_tags_for_position(position: &GameReportPositionDto, loss: i32) -> Ve
     if position.best_notation.is_some() {
         tags.push("推荐着对比".into());
     }
+    add_notation_tags(position, &mut tags);
     tags.sort();
     tags.dedup();
     tags
+}
+
+fn add_notation_tags(position: &GameReportPositionDto, tags: &mut Vec<String>) {
+    let text = position
+        .move_
+        .as_ref()
+        .map(|move_| move_.notation.as_str())
+        .unwrap_or_default();
+    let mut add = |tag: &str| tags.push(tag.to_owned());
+    if text.contains('车') {
+        add("出车选择");
+        add("线路控制");
+    }
+    if text.contains('马') {
+        add("活马");
+    }
+    if text.contains('炮') {
+        add("炮位");
+        add("炮路");
+    }
+    if text.contains('兵') || text.contains('卒') {
+        add("兵卒出动");
+        add("兵卒效率");
+    }
+    if text.contains('仕') || text.contains('士') {
+        add("补士");
+        add("将位");
+    }
+    if text.contains("肋") {
+        add("肋道");
+    }
+    if text.contains('兑') {
+        add("兑子");
+    }
 }
 
 #[tauri::command]
@@ -6376,6 +8804,176 @@ async fn subscription_request(
         .json()
         .await
         .map_err(|_| "订阅服务返回了无效数据".into())
+}
+
+async fn master_library_get<T>(
+    state: &DesktopState,
+    path: &str,
+    query: &[(&str, String)],
+) -> Result<T, String>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let server_url = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?
+        .store
+        .desktop_preferences()
+        .map_err(|error| error.to_string())?
+        .server_url;
+    validate_server_url(&server_url)?;
+    let token = active_sync_token(state)?.ok_or("请先登录同步账号后查看大师棋谱")?;
+    let mut url = reqwest::Url::parse(&format!("{}{}", server_url.trim_end_matches('/'), path))
+        .map_err(|_| "大师棋谱服务地址格式不正确".to_owned())?;
+    {
+        let mut pairs = url.query_pairs_mut();
+        for (name, value) in query {
+            if !value.trim().is_empty() {
+                pairs.append_pair(name, value);
+            }
+        }
+    }
+    let response = reqwest::Client::new()
+        .get(url)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|error| format!("大师棋谱服务不可用：{error}"))?;
+    let status = response.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED {
+        clear_sync_token(state)?;
+        state
+            .model
+            .lock()
+            .map_err(|_| "state lock poisoned".to_owned())?
+            .store
+            .set_sync_token_expired(true)
+            .map_err(|error| error.to_string())?;
+        return Err("登录已过期，请重新登录后查看大师棋谱".into());
+    }
+    if !status.is_success() {
+        let message = response
+            .json::<serde_json::Value>()
+            .await
+            .ok()
+            .and_then(|body| {
+                body.get("error")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_owned)
+            })
+            .unwrap_or_else(|| format!("大师棋谱服务返回错误 {status}"));
+        return Err(message);
+    }
+    response
+        .json()
+        .await
+        .map_err(|_| "大师棋谱服务返回了无效数据".into())
+}
+
+#[tauri::command]
+async fn list_master_players(
+    query: Option<String>,
+    limit: Option<u32>,
+    offset: Option<u32>,
+    state: State<'_, DesktopState>,
+) -> Result<Vec<MasterPlayerDto>, String> {
+    let mut params = vec![
+        ("limit", limit.unwrap_or(50).clamp(1, 100).to_string()),
+        ("offset", offset.unwrap_or(0).min(10_000).to_string()),
+    ];
+    if let Some(query) = query {
+        params.push(("query", query));
+    }
+    master_library_get(&state, "/api/v1/master/players", &params).await
+}
+
+#[tauri::command]
+async fn list_master_games(
+    player_id: String,
+    query: Option<String>,
+    limit: Option<u32>,
+    offset: Option<u32>,
+    state: State<'_, DesktopState>,
+) -> Result<Vec<MasterGameSummaryDto>, String> {
+    let player_id = player_id.trim();
+    if player_id.is_empty() {
+        return Err("请选择大师".into());
+    }
+    let mut params = vec![
+        ("limit", limit.unwrap_or(20).clamp(1, 100).to_string()),
+        ("offset", offset.unwrap_or(0).min(10_000).to_string()),
+    ];
+    if let Some(query) = query {
+        params.push(("query", query));
+    }
+    master_library_get(
+        &state,
+        &format!("/api/v1/master/players/{player_id}/games"),
+        &params,
+    )
+    .await
+}
+
+#[tauri::command]
+async fn open_master_game(
+    game_id: String,
+    state: State<'_, DesktopState>,
+) -> Result<BoardDto, String> {
+    let game_id = game_id.trim();
+    if game_id.is_empty() {
+        return Err("请选择棋谱".into());
+    }
+    let detail: MasterGameDetailDto =
+        master_library_get(&state, &format!("/api/v1/master/games/{game_id}"), &[]).await?;
+    let mut document = import_document(detail.pgn.as_bytes(), Some(ManualFormat::Pgn))
+        .map_err(|error| format!("大师棋谱解析失败：{error}"))?;
+    document.metadata.title = detail.title.clone();
+    document.metadata.event = detail
+        .event_name
+        .clone()
+        .unwrap_or_else(|| "公开大师棋谱".into());
+    document.metadata.date = detail.game_date.clone().unwrap_or_default();
+    document.metadata.red = detail.red_player.clone();
+    document.metadata.black = detail.black_player.clone();
+    document.metadata.result = detail.result.clone();
+    document.metadata.site = detail.source_url.clone();
+    let mut note_lines = vec![
+        format!("红方：{}", detail.red_player),
+        format!("黑方：{}", detail.black_player),
+        format!(
+            "比赛：{}",
+            detail
+                .event_name
+                .clone()
+                .unwrap_or_else(|| "赛事未知".into())
+        ),
+        format!(
+            "日期：{}",
+            detail
+                .game_date
+                .clone()
+                .unwrap_or_else(|| "日期未知".into())
+        ),
+        format!("结果：{}", detail.result),
+        format!("手数：{}", detail.move_count),
+        "用途：本地学习、拆棋和 Pikafish 分析。".into(),
+    ];
+    if !document.note.trim().is_empty() {
+        note_lines.push(format!("原谱备注：{}", document.note.trim()));
+    }
+    document.note = note_lines.join("\n");
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    install_document(
+        &mut model,
+        document,
+        Some(detail.source_url),
+        Some("server-master-pgn".into()),
+    )?;
+    board_dto(&model)
 }
 
 #[tauri::command]
@@ -6942,6 +9540,28 @@ fn board_dto(model: &AppModel) -> Result<BoardDto, String> {
             Err(error) => eprintln!("忽略不可用的 XQB 开局库 {path}: {error}"),
         }
     }
+    for path in preferences.eleeye_book_paths {
+        if preferences
+            .disabled_eleeye_book_paths
+            .iter()
+            .any(|disabled| disabled == &path)
+        {
+            continue;
+        }
+        match eleeye_opening_book::query(Path::new(&path), &model.board) {
+            Ok(mut candidates) => xqb_candidates.append(&mut candidates),
+            Err(error) => eprintln!("忽略不可用的 ElephantEye 开局库 {path}: {error}"),
+        }
+    }
+    if preferences.builtin_opening_book_enabled {
+        match pfbook_opening_book::query_builtin_book(
+            &preferences.active_builtin_opening_book_id,
+            &model.board,
+        ) {
+            Ok(mut candidates) => xqb_candidates.append(&mut candidates),
+            Err(error) => eprintln!("忽略不可用的内嵌 pfBook 开局库：{error}"),
+        }
+    }
     Ok(BoardDto {
         fen: model.board.to_fen(),
         root_side_to_move: side_label(root_board.side_to_move()),
@@ -6982,6 +9602,23 @@ fn metadata_payload(metadata: &ManualMetadata, note: &str) -> UpdateGameMetadata
         red: Some(metadata.red.clone()),
         black: Some(metadata.black.clone()),
         result: Some(metadata.result.clone()),
+        library_folder: None,
+        favorite: None,
+        tags: None,
+    }
+}
+
+fn library_metadata_payload(
+    game: &local_store::LocalGame,
+    folder: Option<String>,
+) -> UpdateGameMetadataPayload {
+    UpdateGameMetadataPayload {
+        title: game.title.clone(),
+        note: game.note.clone(),
+        library_folder: Some(folder.unwrap_or_default()),
+        favorite: Some(game.favorite),
+        tags: Some(game.tags.clone()),
+        ..UpdateGameMetadataPayload::default()
     }
 }
 
@@ -7280,6 +9917,25 @@ fn next_operation(
     }
 }
 
+fn next_operation_for_game(
+    model: &mut AppModel,
+    game_id: Uuid,
+    kind: OperationKind,
+    payload: serde_json::Value,
+) -> Operation {
+    model.lamport += 1;
+    Operation {
+        op_id: Uuid::new_v4(),
+        device_id: model.device_id,
+        entity_id: game_id,
+        game_id,
+        kind,
+        payload,
+        lamport: model.lamport,
+        created_at: Utc::now(),
+    }
+}
+
 fn collect_theory_videos(
     directory: &Path,
     files: &mut Vec<PathBuf>,
@@ -7437,6 +10093,8 @@ fn main() {
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
             let mut store = LocalStore::open(data_dir.join("xiangqi.sqlite3"))?;
+            ensure_builtin_master_style_seed(app.handle(), &mut store)
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
             let device_id = store.device_id()?;
             let mut lamport = store.max_lamport()?;
             let (
@@ -7569,6 +10227,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .invoke_handler(tauri::generate_handler![
+            get_app_info,
             get_state,
             prepare_link_selection_window,
             complete_link_region_selection,
@@ -7582,15 +10241,22 @@ fn main() {
             get_link_capture_preview,
             recognize_link_image_file,
             submit_link_position,
+            set_link_side_to_move,
             confirm_link_engine_move,
             import_recognized_position,
             list_games,
+            list_library_folders,
+            create_library_folder,
+            rename_library_folder,
+            delete_library_folder,
+            update_game_library,
             open_game,
             play_move,
             preview_line,
             new_game,
             open_document,
             import_xqb_opening_book,
+            import_eleeye_opening_book,
             import_text,
             export_text,
             export_document_text,
@@ -7620,14 +10286,27 @@ fn main() {
             cancel_game_report,
             get_game_report,
             export_game_report_pdf,
+            import_master_style_profile,
+            list_master_style_profiles,
+            match_master_style_hints,
             get_desktop_preferences,
             save_desktop_preferences,
+            list_builtin_opening_books,
             probe_engine,
             list_engine_profiles,
             register_engine_profile,
             set_active_engine_profile,
             delete_engine_profile,
             query_cloud_opening_book,
+            list_flyknife_templates,
+            list_flyknife_topics,
+            open_external_url,
+            open_flyknife_topic,
+            generate_flyknife_candidates,
+            list_flyknife_plans,
+            save_flyknife_plan,
+            delete_flyknife_plan,
+            open_flyknife_practice,
             list_coach_reports,
             list_training_tasks,
             generate_training_tasks,
@@ -7643,6 +10322,9 @@ fn main() {
             get_sync_account,
             get_subscription,
             redeem_subscription_code,
+            list_master_players,
+            list_master_games,
+            open_master_game,
             register_sync_account,
             login_sync_account,
             logout_sync_account,
@@ -7688,16 +10370,44 @@ mod tests {
     }
 
     fn desktop_state_for_link_tests() -> DesktopState {
+        let game_id = Uuid::new_v4();
+        let device_id = Uuid::new_v4();
+        let tree = ManualTree::new();
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let create_operation = Operation {
+            op_id: Uuid::new_v4(),
+            device_id,
+            entity_id: game_id,
+            game_id,
+            kind: OperationKind::CreateGame,
+            payload: serde_json::to_value(CreateGamePayload {
+                title: "连线测试".into(),
+                fen: STARTING_FEN.into(),
+                root_id: tree.root_id(),
+            })
+            .unwrap(),
+            lamport: 1,
+            created_at: Utc::now(),
+        };
+        store
+            .save_game_with_operation(
+                game_id,
+                "连线测试",
+                STARTING_FEN,
+                tree.root_id(),
+                &create_operation,
+            )
+            .unwrap();
         DesktopState {
             model: Mutex::new(AppModel {
                 board: Board::from_fen(STARTING_FEN).unwrap(),
                 starting_fen: STARTING_FEN.into(),
-                tree: ManualTree::new(),
+                tree,
                 current_node: None,
-                game_id: Uuid::new_v4(),
-                device_id: Uuid::new_v4(),
-                lamport: 0,
-                store: LocalStore::open_in_memory().unwrap(),
+                game_id,
+                device_id,
+                lamport: 1,
+                store,
                 metadata: ManualMetadata::default(),
                 note: String::new(),
                 source_path: None,
@@ -7766,6 +10476,7 @@ mod tests {
     #[test]
     fn window_link_start_initializes_non_blocking_selection_state() {
         let mut session = LinkSession::default();
+        session.manual_turn_override = Some(Color::Black);
         let request = StartLinkSessionRequest {
             source: CaptureSource::WindowLink,
             recognition_mode: RecognitionMode::YoloBoard,
@@ -7782,7 +10493,58 @@ mod tests {
         assert!(!session.capture_running);
         assert_eq!(session.capture_generation, 12);
         assert_eq!(session.gate.required_frames(), 2);
+        assert_eq!(session.manual_turn_override, None);
         assert!(session.reason.as_deref().unwrap().contains("等待框选"));
+    }
+
+    #[test]
+    fn manual_turn_override_is_exposed_and_takes_precedence_over_auto_indicator() {
+        let auto = link_vision::TurnIndicator {
+            side: Color::Red,
+            slot: link_vision::TurnIndicatorSlot::RightPlayer,
+            confidence: 0.9,
+            detail: "轮走识别：右侧头像高亮 → 红方行棋".into(),
+        };
+
+        let message = link_turn_indicator_message(Some(Color::Black), Some(&auto));
+
+        assert!(message.contains("手动模式已开启"));
+        assert!(message.contains("已忽略"));
+        assert!(message.contains("右侧头像高亮"));
+
+        let mut session = LinkSession::default();
+        session.manual_turn_override = Some(Color::Black);
+        session.turn_indicator = Some(message);
+        let dto = link_status_dto(&session);
+
+        assert_eq!(dto.manual_turn_override.as_deref(), Some("black"));
+        assert!(dto.turn_indicator.as_deref().unwrap().contains("手动模式"));
+    }
+
+    #[test]
+    fn link_board_preview_crops_detected_board_instead_of_full_capture() {
+        let mut image = image::RgbaImage::new(300, 200);
+        for y in 0..200 {
+            for x in 0..300 {
+                let color = if x < 90 {
+                    image::Rgba([210, 210, 210, 255])
+                } else {
+                    image::Rgba([180, 130, 70, 255])
+                };
+                image.put_pixel(x, y, color);
+            }
+        }
+        let mut source = Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(image)
+            .write_to(&mut source, image::ImageFormat::Png)
+            .unwrap();
+
+        let cropped =
+            crop_png_by_bounds(source.get_ref(), (100.0, 40.0, 120.0, 120.0), 0.0).unwrap();
+        let cropped = image::load_from_memory(&cropped).unwrap().to_rgba8();
+
+        assert_eq!((cropped.width(), cropped.height()), (128, 128));
+        assert_eq!(cropped.get_pixel(0, 0), &image::Rgba([180, 130, 70, 255]));
     }
 
     #[test]
@@ -7852,6 +10614,61 @@ mod tests {
     }
 
     #[test]
+    fn link_floating_panel_overlap_guard_ignores_expanded_capture_margin() {
+        let region = LinkCaptureRegion {
+            x: 300,
+            y: 220,
+            width: 360,
+            height: 360,
+            selection_x: 300.0,
+            selection_y: 220.0,
+            selection_width: 360.0,
+            selection_height: 360.0,
+            selector_width: 1200.0,
+            selector_height: 900.0,
+        };
+
+        let expanded = expand_link_capture_region(region);
+        let guard = link_capture_guard_region(region);
+        let floating_panel_on_capture_margin =
+            (expanded.x as f64 + 8.0, region.y as f64 + 24.0, 56.0, 180.0);
+
+        assert!(rects_intersect(
+            floating_panel_on_capture_margin,
+            link_region_rect(expanded)
+        ));
+        assert!(!rects_intersect(
+            floating_panel_on_capture_margin,
+            link_region_rect(guard)
+        ));
+    }
+
+    #[test]
+    fn link_capture_uses_original_region_when_expanded_margin_is_polluted() {
+        let region = LinkCaptureRegion {
+            x: 300,
+            y: 220,
+            width: 360,
+            height: 360,
+            selection_x: 300.0,
+            selection_y: 220.0,
+            selection_width: 360.0,
+            selection_height: 360.0,
+            selector_width: 1200.0,
+            selector_height: 900.0,
+        };
+
+        assert_eq!(
+            select_link_capture_frame_region(Some(region), true),
+            Some(region)
+        );
+        assert_eq!(
+            select_link_capture_frame_region(Some(region), false),
+            Some(expand_link_capture_region(region))
+        );
+    }
+
+    #[test]
     fn window_link_recenters_tracking_region_from_detected_board_bounds() {
         let search_region = LinkCaptureRegion {
             x: 100,
@@ -7898,6 +10715,117 @@ mod tests {
     }
 
     #[test]
+    fn link_engine_click_points_follow_arrow_one_iccs_move() {
+        let mv = Move::from_iccs("b2c2").unwrap();
+        let bounds = (100.0, 200.0, 400.0, 450.0);
+
+        let points = link_move_click_points(bounds, link_core::BoardOrientation::RedAtBottom, mv);
+
+        assert_eq!(points.0, (150.0, 550.0));
+        assert_eq!(points.1, (200.0, 550.0));
+    }
+
+    #[test]
+    fn link_engine_click_points_flip_for_black_bottom_board() {
+        let mv = Move::from_iccs("b2c2").unwrap();
+        let bounds = (100.0, 200.0, 400.0, 450.0);
+
+        let points = link_move_click_points(bounds, link_core::BoardOrientation::BlackAtBottom, mv);
+
+        assert_eq!(points.0, (450.0, 300.0));
+        assert_eq!(points.1, (400.0, 300.0));
+    }
+
+    #[test]
+    fn link_engine_click_uses_detected_piece_center_for_start_square() {
+        let mv = Move::from_iccs("b2c2").unwrap();
+        let bounds = (100.0, 200.0, 400.0, 450.0);
+        let detected = LinkPieceClickCenter {
+            square: mv.from,
+            x: 153.0,
+            y: 556.0,
+            confidence: 0.91,
+        };
+
+        let points = link_move_click_points_for_click(
+            bounds,
+            link_core::BoardOrientation::RedAtBottom,
+            mv,
+            Some(detected),
+        );
+
+        assert_eq!(points.0, (153.0, 556.0));
+        assert_eq!(points.1, (200.0, 550.0));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn confirm_click_script_selects_only_the_start_piece() {
+        let script = macos_link_click_script(153.0, 556.0, 200.0, 550.0, false);
+
+        assert!(script.contains("click at {153, 556}"));
+        assert!(!script.contains("click at {200, 550}"));
+        assert!(script.contains("set frontmost of proc to true"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn auto_play_click_script_clicks_the_target_square() {
+        let script = macos_link_click_script(153.0, 556.0, 200.0, 550.0, true);
+
+        assert!(script.contains("click at {153, 556}"));
+        assert!(script.contains("click at {200, 550}"));
+    }
+
+    #[test]
+    fn link_piece_click_centers_map_retina_frame_to_screen_points() {
+        let region = LinkCaptureRegion {
+            x: 100,
+            y: 200,
+            width: 400,
+            height: 400,
+            selection_x: 100.0,
+            selection_y: 200.0,
+            selection_width: 400.0,
+            selection_height: 400.0,
+            selector_width: 1200.0,
+            selector_height: 900.0,
+        };
+        let board = link_vision::Detection {
+            label: '0',
+            confidence: 0.99,
+            alternatives: vec![('0', 0.99)],
+            center_x: 400.0,
+            center_y: 420.0,
+            width: 640.0,
+            height: 720.0,
+        };
+        let red_cannon = link_vision::Detection {
+            label: 'C',
+            confidence: 0.9,
+            alternatives: vec![('C', 0.9)],
+            center_x: 166.0,
+            center_y: 618.0,
+            width: 48.0,
+            height: 48.0,
+        };
+
+        let centers = link_piece_click_centers(
+            &[board.clone(), red_cannon],
+            link_vision::board_bounds(&[board]).unwrap(),
+            link_core::BoardOrientation::RedAtBottom,
+            Some(region),
+            Some((800, 800)),
+        );
+
+        let center = centers
+            .iter()
+            .find(|center| center.square == (Square { row: 7, col: 1 }))
+            .expect("red cannon center");
+        assert_eq!((center.x.round(), center.y.round()), (183.0, 509.0));
+    }
+
+    #[test]
     fn link_status_dto_exposes_capture_diagnostics() {
         let mut session = LinkSession::default();
         session.reason = Some("框选预览未识别到可同步棋盘".into());
@@ -7909,6 +10837,13 @@ mod tests {
         session.board_orientation = BoardOrientation::BlackAtBottom;
         session.last_detection_summary =
             Some("框选预览检测：棋盘框 1 个，棋子 20 个，平均置信度 82%".into());
+        session.last_move_detail = Some(LinkMoveDetailDto {
+            iccs: "h2e2".into(),
+            notation: "炮二平五".into(),
+            moved_by: "红方",
+            from: SquareDto { row: 7, col: 7 },
+            to: SquareDto { row: 7, col: 4 },
+        });
 
         let dto = link_status_dto(&session);
 
@@ -7916,6 +10851,7 @@ mod tests {
         assert_eq!(dto.last_error.as_deref(), Some("模型推理异常"));
         assert_eq!(dto.recognition_attempts, 2);
         assert_eq!(dto.board_orientation, BoardOrientation::BlackAtBottom);
+        assert_eq!(dto.last_move_detail.as_ref().unwrap().notation, "炮二平五");
         assert!(dto.started_at.is_some());
         assert!(dto.last_heartbeat_at.is_some());
         assert!(
@@ -7947,6 +10883,74 @@ mod tests {
         assert_eq!(session.state, LinkSessionState::Tracking);
         assert!(session.capture_running);
         assert_eq!(session.confidence, Some(0.61));
+    }
+
+    #[test]
+    fn window_link_apply_move_exposes_last_move_detail_for_mini_board() {
+        let state = desktop_state_for_link_tests();
+        let next_fen = Board::from_fen(STARTING_FEN)
+            .unwrap()
+            .apply_move(Move::from_iccs("h2e2").unwrap())
+            .unwrap()
+            .to_fen();
+        {
+            let mut session = state.link_session.lock().unwrap();
+            session.source = CaptureSource::WindowLink;
+            session.state = LinkSessionState::ClassifyingSquares;
+            session.capture_running = true;
+            session.initial_position_seen = true;
+            session.capture_generation = 6;
+            session.confidence_threshold = 0.55;
+        }
+
+        let observation =
+            observe_link_recognition_inner(&state, next_fen, Some(0.91), Some(6)).unwrap();
+        let session = state.link_session.lock().unwrap();
+        let detail = session.last_move_detail.as_ref().unwrap();
+
+        assert!(observation.accepted);
+        assert_eq!(session.phase.as_deref(), Some("move_synced"));
+        assert_eq!(session.last_move.as_deref(), Some("h2e2"));
+        assert_eq!(detail.iccs, "h2e2");
+        assert_eq!(detail.moved_by, "红方");
+        assert_eq!(detail.notation, "炮二平五");
+        assert_eq!((detail.from.row, detail.from.col), (7, 7));
+        assert_eq!((detail.to.row, detail.to.col), (7, 4));
+    }
+
+    #[test]
+    fn pending_confirmed_link_move_ignores_turn_indicator_flicker() {
+        let state = desktop_state_for_link_tests();
+        let flicker_fen = STARTING_FEN.replacen(" w ", " b ", 1);
+        {
+            let mut session = state.link_session.lock().unwrap();
+            session.source = CaptureSource::WindowLink;
+            session.mode = LinkMode::ConfirmPlay;
+            session.state = LinkSessionState::Tracking;
+            session.capture_running = true;
+            session.initial_position_seen = true;
+            session.capture_generation = 7;
+            session.pending_external_move = Some("g6g5".into());
+            session.pending_expected_fen = Some("expected".into());
+            session.confidence_threshold = 0.55;
+        }
+
+        let observation =
+            observe_link_recognition_inner(&state, flicker_fen, Some(0.91), Some(7)).unwrap();
+        let session = state.link_session.lock().unwrap();
+        let model = state.model.lock().unwrap();
+
+        assert!(!observation.accepted);
+        assert!(observation.board.is_none());
+        assert_eq!(session.pending_external_move.as_deref(), Some("g6g5"));
+        assert!(
+            session
+                .reason
+                .as_deref()
+                .unwrap()
+                .contains("等待网页棋盘完成走子")
+        );
+        assert!(model.board.to_fen().contains(" w "));
     }
 
     #[test]
@@ -7982,6 +10986,7 @@ mod tests {
         assert_eq!(model.board.to_fen(), jumped_fen);
         assert_eq!(session.latest_fen.as_deref(), Some(jumped_fen.as_str()));
         assert_eq!(session.phase.as_deref(), Some("position_jump_synced"));
+        assert!(session.last_move_detail.is_none());
         assert!(session.reason.as_deref().unwrap().contains("网页棋谱跳转"));
     }
 
@@ -8022,6 +11027,40 @@ mod tests {
         let candidates = link_vision_candidates(&resource_dir);
         assert!(candidates.contains(&resource_dir.join("link-vision/yolov11.onnx")));
         assert!(resource_dir.join("link-vision/yolov11.onnx").is_file());
+    }
+
+    #[test]
+    fn master_style_seed_candidates_cover_development_resource_layout() {
+        let resource_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources");
+        let candidates = master_style_seed_candidates(&resource_dir);
+        assert!(candidates.contains(&resource_dir.join("master-style")));
+        assert!(
+            resource_dir
+                .join("master-style/seed-manifest.json")
+                .is_file()
+        );
+    }
+
+    #[test]
+    fn bundled_master_style_seed_files_parse_into_four_profiles() {
+        let seed_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/master-style");
+        let imports = imported_master_style_profiles_from_files(
+            &seed_dir.join("master-style-profiles.json"),
+            &seed_dir.join("master-style-samples.jsonl"),
+            &seed_dir.join("master-style-analysis.jsonl"),
+        )
+        .unwrap();
+        let players = imports
+            .iter()
+            .map(|(profile, _)| profile.player_name.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        let sample_count: usize = imports.iter().map(|(_, samples)| samples.len()).sum();
+        assert_eq!(imports.len(), 4);
+        assert!(players.contains("赵鑫鑫"));
+        assert!(players.contains("许银川"));
+        assert!(players.contains("王天一"));
+        assert!(players.contains("郑惟桐"));
+        assert_eq!(sample_count, 12_000);
     }
 
     #[test]
@@ -8570,6 +11609,49 @@ mod tests {
     }
 
     #[test]
+    fn builtin_opening_book_preferences_validate_and_normalize() {
+        let mut preferences = DesktopPreferences::default();
+        preferences.active_builtin_opening_book_id = "complete-compatible".into();
+        assert!(validate_preferences(&preferences).is_ok());
+
+        preferences.active_builtin_opening_book_id = "unknown-book".into();
+        assert_eq!(
+            validate_preferences(&preferences).unwrap_err(),
+            "不支持的内嵌开局库"
+        );
+        normalize_desktop_preferences(&mut preferences);
+        assert_eq!(
+            preferences.active_builtin_opening_book_id,
+            pfbook_opening_book::DEFAULT_BUILTIN_OPENING_BOOK_ID
+        );
+        assert!(validate_preferences(&preferences).is_ok());
+    }
+
+    #[test]
+    fn desktop_preferences_migrate_old_depth_defaults_to_twenty_four() {
+        let mut preferences = DesktopPreferences::default();
+        preferences.search_mode = "depth".into();
+        preferences.search_value = 30;
+        preferences.report_depth = 30;
+        preferences.auto_analyze = true;
+
+        normalize_desktop_preferences(&mut preferences);
+
+        assert_eq!(preferences.search_mode, "depth");
+        assert_eq!(preferences.search_value, 24);
+        assert_eq!(preferences.report_depth, 24);
+        assert!(!preferences.auto_analyze);
+
+        let mut custom = DesktopPreferences::default();
+        custom.search_mode = "depth".into();
+        custom.search_value = 22;
+        custom.report_depth = 22;
+        normalize_desktop_preferences(&mut custom);
+        assert_eq!(custom.search_value, 22);
+        assert_eq!(custom.report_depth, 22);
+    }
+
+    #[test]
     fn desktop_preferences_remove_legacy_bundled_fairy_engine() {
         let mut preferences = DesktopPreferences::default();
         preferences.engine_path = BUILTIN_FAIRY_ENGINE_PATH.into();
@@ -8622,5 +11704,93 @@ mod tests {
 
         assert!(validate_preferences(&updated).is_ok());
         assert!(validate_skin_access(&current, &updated, false).is_ok());
+    }
+
+    #[test]
+    fn flyknife_templates_resolve_to_legal_positions() {
+        let templates = flyknife_templates();
+        assert!(templates.len() >= 8, "templates: {}", templates.len());
+        for template in templates {
+            assert!(Board::from_fen(&template.fen).is_ok(), "{}", template.name);
+        }
+    }
+
+    #[test]
+    fn flyknife_accepts_chinese_lure_notation() {
+        let board = Board::from_fen(STARTING_FEN).unwrap();
+        assert_eq!(resolve_flyknife_lure(&board, "炮二平五").unwrap(), "h2e2");
+        let after_red_cannon = board.apply_iccs("h2e2").unwrap();
+        assert_eq!(
+            resolve_flyknife_lure(&after_red_cannon, "马8进7").unwrap(),
+            "h9g7"
+        );
+        assert_eq!(
+            resolve_flyknife_lure(&after_red_cannon, "马８进７").unwrap(),
+            "h9g7"
+        );
+    }
+
+    #[test]
+    fn flyknife_best_defense_is_presented_as_chinese_notation() {
+        assert_eq!(
+            flyknife_best_defense_notation(
+                STARTING_FEN,
+                &["h2e2".into(), "h9g7".into(), "b0c2".into()],
+                "h9g7",
+                &["b0c2".into()],
+            ),
+            ["马八进七"]
+        );
+    }
+
+    #[test]
+    fn flyknife_can_analyze_current_position_without_lure_when_attacker_to_move() {
+        let board = Board::from_fen(STARTING_FEN).unwrap();
+        let (setup, lure, before_lure, prepared) =
+            prepare_flyknife_position(&board, Color::Red, "", "").unwrap();
+        assert_eq!(setup, "");
+        assert_eq!(lure, "");
+        assert_eq!(before_lure.to_fen(), STARTING_FEN);
+        assert_eq!(prepared.to_fen(), STARTING_FEN);
+        let error = prepare_flyknife_position(&board, Color::Black, "", "")
+            .expect_err("black cannot move directly from red-to-move starting position");
+        assert!(error.contains("请先填写一手对手诱导着法"), "{error}");
+        let (setup, lure, before_lure, prepared) =
+            prepare_flyknife_position(&board, Color::Black, "", "炮二平五").unwrap();
+        assert_eq!(setup, "");
+        assert_eq!(lure, "h2e2");
+        assert_eq!(before_lure.side_to_move(), Color::Red);
+        assert_eq!(prepared.side_to_move(), Color::Black);
+
+        let (setup, lure, before_lure, prepared) =
+            prepare_flyknife_position(&board, Color::Red, "炮二平五", "马8进7").unwrap();
+        assert_eq!(setup, "h2e2");
+        assert_eq!(lure, "h9g7");
+        assert_eq!(before_lure.side_to_move(), Color::Black);
+        assert_eq!(prepared.side_to_move(), Color::Red);
+    }
+
+    #[test]
+    fn flyknife_topics_list_bundled_starter_pack() {
+        let topics = flyknife_topics();
+        assert_eq!(topics.len(), 12);
+        assert!(topics.iter().any(|topic| topic.title.contains("仙人指路")));
+        assert_eq!(
+            flyknife_topic_file_name("pingfeng-po-guoheche"),
+            Some("06-15屏风马破中炮过河车.pgn")
+        );
+    }
+
+    #[test]
+    fn flyknife_topic_candidates_cover_packaged_resource_layout() {
+        let base = PathBuf::from("/Applications/Xiangqi Studio.app/Contents/Resources");
+        let candidates = flyknife_topic_candidates(&base, "01-34仙人指路对卒底炮-一.pgn");
+        assert!(candidates.contains(
+            &base.join("resources/flyknife-library/single-pgn/01-34仙人指路对卒底炮-一.pgn")
+        ));
+        assert!(
+            candidates
+                .contains(&base.join("flyknife-library/single-pgn/01-34仙人指路对卒底炮-一.pgn"))
+        );
     }
 }

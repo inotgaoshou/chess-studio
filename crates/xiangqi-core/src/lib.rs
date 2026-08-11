@@ -267,6 +267,12 @@ impl Board {
         self.side_to_move
     }
 
+    pub fn with_side_to_move(&self, side_to_move: Color) -> Self {
+        let mut board = self.clone();
+        board.side_to_move = side_to_move;
+        board
+    }
+
     pub fn rule_position_key(&self) -> String {
         self.to_fen()
             .split_whitespace()
@@ -929,6 +935,18 @@ mod tests {
         let board = Board::from_fen(STARTING_FEN).unwrap();
         assert_eq!(board.to_fen(), STARTING_FEN);
         assert_eq!(board.side_to_move(), Color::Red);
+    }
+
+    #[test]
+    fn changes_side_to_move_without_changing_piece_placement() {
+        let board = Board::from_fen(STARTING_FEN).unwrap();
+        let corrected = board.with_side_to_move(Color::Black);
+
+        assert_eq!(corrected.side_to_move(), Color::Black);
+        assert_eq!(
+            corrected.to_fen().split_whitespace().next(),
+            board.to_fen().split_whitespace().next()
+        );
     }
 
     #[test]

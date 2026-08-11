@@ -1,5 +1,5 @@
 import type { KeyboardEvent } from "react";
-import { Activity, BarChart3, BookOpen, ClipboardList } from "lucide-react";
+import { Activity, BarChart3, BookOpen, ClipboardList, RefreshCw } from "lucide-react";
 
 export const workspacePanels = ["moves", "analysis", "trend", "summary", "report", "theory"] as const;
 export type WorkspacePanel = typeof workspacePanels[number];
@@ -8,7 +8,7 @@ const tabs = [
   ["moves", "棋谱", BookOpen],
   ["analysis", "分析", Activity],
   ["trend", "局势图", BarChart3],
-  ["summary", "摘要", ClipboardList],
+  ["summary", "重试", RefreshCw],
   ["report", "报告", ClipboardList],
   ["theory", "棋理库", BookOpen],
 ] as const;

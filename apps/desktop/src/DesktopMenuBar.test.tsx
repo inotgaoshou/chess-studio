@@ -21,7 +21,7 @@ afterEach(cleanup);
 
 function setup(status: MenuBarStatus = readyStatus) {
   const commands: MenuCommand[] = [];
-  render(<DesktopMenuBar status={status} execute={(command) => { commands.push(command); }} />);
+  render(<DesktopMenuBar appVersion="1.2.0" status={status} execute={(command) => { commands.push(command); }} />);
   return { commands, user: userEvent.setup() };
 }
 
@@ -94,6 +94,15 @@ describe("DesktopMenuBar", () => {
     expect(screen.getByText("user@example.com")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "立即同步" }));
     expect(commands).toEqual(["syncNow"]);
+  });
+
+  it("shows the About command in a visible Help menu with the app version", async () => {
+    const { commands, user } = setup();
+
+    await user.click(screen.getByText("帮助", { selector: "summary" }));
+    await user.click(screen.getByRole("button", { name: "关于棋研 · v1.2.0" }));
+
+    expect(commands).toEqual(["about"]);
   });
 
   it("supports keyboard menu switching and item navigation", async () => {

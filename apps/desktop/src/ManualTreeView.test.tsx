@@ -49,6 +49,16 @@ describe("ManualTreeView", () => {
     expect(navigate).toHaveBeenCalledWith("variation");
   });
 
+  it("switches sibling variations through the dropdown without changing the tree", () => {
+    const { navigate } = renderTree();
+
+    fireEvent.change(screen.getByLabelText("变招选择"), { target: { value: "variation" } });
+
+    expect(navigate).toHaveBeenCalledWith("variation");
+    expect(screen.getByRole("option", { name: /A · 主线 · 马8进7/ })).toBeTruthy();
+    expect(screen.getByRole("option", { name: /B · 车8进6/ })).toBeTruthy();
+  });
+
   it("keeps the current path visible even when ancestors were collapsed before navigation", () => {
     renderTree({
       activePath: new Set(["main", "reply", "nested"]),
@@ -105,5 +115,15 @@ describe("ManualTreeView", () => {
 
     expect(screen.getByText("对比")).toBeTruthy();
     expect(screen.getByText("内置 Fairy-Stockfish")).toBeTruthy();
+  });
+
+  it("shows a distinct review marker for a marked move", () => {
+    const nodes: ManualTreeNode[] = [{
+      move: { ...move("marked", "炮八平五"), comment: "【复盘标记】\n需要复盘" },
+      children: [],
+    }];
+    renderTree({ nodes, activePath: new Set(["marked"]), currentNode: "marked" });
+
+    expect(screen.getByText("复盘")).toBeTruthy();
   });
 });

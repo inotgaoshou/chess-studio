@@ -9,7 +9,7 @@ use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use axum::{
     Json, Router,
     extract::DefaultBodyLimit,
-    extract::{Query, State},
+    extract::{Path as AxumPath, Query, State},
     http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, header},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -131,6 +131,56 @@ struct PullQuery {
     limit: Option<u32>,
 }
 
+#[derive(Debug, Deserialize)]
+struct MasterLibraryQuery {
+    query: Option<String>,
+    limit: Option<u32>,
+    offset: Option<u32>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MasterPlayerDto {
+    id: String,
+    name: String,
+    source_site: String,
+    source_player_id: String,
+    profile_url: String,
+    game_count: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MasterGameSummaryDto {
+    id: String,
+    title: String,
+    red_player: String,
+    black_player: String,
+    master_side: Option<String>,
+    event_name: Option<String>,
+    game_date: Option<String>,
+    result: String,
+    move_count: u64,
+    source_url: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MasterGameDetailDto {
+    id: String,
+    title: String,
+    red_player: String,
+    black_player: String,
+    master_side: Option<String>,
+    event_name: Option<String>,
+    game_date: Option<String>,
+    result: String,
+    move_count: u64,
+    source_url: String,
+    moves: Vec<String>,
+    pgn: String,
+}
+
 #[derive(Debug, thiserror::Error)]
 enum ApiError {
     #[error("unauthorized")]
@@ -229,6 +279,12 @@ fn router(state: AppState, cors: CorsLayer) -> Router {
         .route("/api/v1/subscription", get(subscription))
         .route("/api/v1/subscription/redeem", post(redeem_code))
         .route("/api/v1/analysis", post(analyze))
+        .route("/api/v1/master/players", get(list_master_players))
+        .route(
+            "/api/v1/master/players/{player_id}/games",
+            get(list_master_player_games),
+        )
+        .route("/api/v1/master/games/{game_id}", get(master_game_detail))
         .layer(DefaultBodyLimit::max(32 * 1024))
         .layer(TraceLayer::new_for_http())
         .layer(cors)
@@ -422,6 +478,269 @@ async fn pull(
         operations,
         cursor: next_cursor,
     }))
+}
+
+async fn list_master_players(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<MasterLibraryQuery>,
+) -> Result<Json<Vec<MasterPlayerDto>>, ApiError> {
+    authenticated_user(&headers, &state.jwt_secret)?;
+    let search = normalized_search_term(query.query.as_deref());
+    let like = sql_like_term(&search);
+    let limit = query.limit.unwrap_or(50).clamp(1, 100) as i64;
+    let offset = query.offset.unwrap_or(0).min(10_000) as i64;
+    type Row = (String, String, String, String, String, i64);
+    let rows: Vec<Row> = sqlx::query_as(
+        "SELECT p.id, p.name, p.source_site, p.source_player_id, p.profile_url,
+                CAST(COUNT(r.game_id) AS SIGNED) AS game_count
+         FROM master_players p
+         LEFT JOIN master_game_player_refs r ON r.master_player_id = p.id
+         WHERE (? = '' OR p.name LIKE ? OR p.normalized_name LIKE ? OR p.source_player_id LIKE ?)
+         GROUP BY p.id, p.name, p.source_site, p.source_player_id, p.profile_url
+         ORDER BY game_count DESC, p.name ASC
+         LIMIT ? OFFSET ?",
+    )
+    .bind(&search)
+    .bind(&like)
+    .bind(&like)
+    .bind(&like)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(&state.pool)
+    .await?;
+    Ok(Json(
+        rows.into_iter()
+            .map(
+                |(id, name, source_site, source_player_id, profile_url, game_count)| {
+                    MasterPlayerDto {
+                        id,
+                        name,
+                        source_site,
+                        source_player_id,
+                        profile_url,
+                        game_count: game_count.max(0) as u64,
+                    }
+                },
+            )
+            .collect(),
+    ))
+}
+
+async fn list_master_player_games(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(player_id): AxumPath<String>,
+    Query(query): Query<MasterLibraryQuery>,
+) -> Result<Json<Vec<MasterGameSummaryDto>>, ApiError> {
+    authenticated_user(&headers, &state.jwt_secret)?;
+    let search = normalized_search_term(query.query.as_deref());
+    let like = sql_like_term(&search);
+    let limit = query.limit.unwrap_or(50).clamp(1, 100) as i64;
+    let offset = query.offset.unwrap_or(0).min(10_000) as i64;
+    type Row = (
+        String,
+        String,
+        String,
+        String,
+        String,
+        Option<chrono::NaiveDate>,
+        Option<String>,
+        String,
+        i64,
+        String,
+    );
+    let rows: Vec<Row> = sqlx::query_as(
+        "SELECT g.id, g.title, g.red_player, g.black_player, r.side,
+                g.game_date, g.event_name, g.result,
+                CAST(g.move_count AS SIGNED) AS move_count, g.source_url
+         FROM master_game_player_refs r
+         INNER JOIN master_games g ON g.id = r.game_id
+         WHERE r.master_player_id = ?
+           AND (? = '' OR g.title LIKE ? OR g.red_player LIKE ? OR g.black_player LIKE ? OR g.event_name LIKE ?)
+         ORDER BY g.game_date DESC, g.created_at DESC, g.id DESC
+         LIMIT ? OFFSET ?",
+    )
+    .bind(player_id)
+    .bind(&search)
+    .bind(&like)
+    .bind(&like)
+    .bind(&like)
+    .bind(&like)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(&state.pool)
+    .await?;
+    Ok(Json(
+        rows.into_iter()
+            .map(
+                |(
+                    id,
+                    title,
+                    red_player,
+                    black_player,
+                    master_side,
+                    game_date,
+                    event_name,
+                    result,
+                    move_count,
+                    source_url,
+                )| MasterGameSummaryDto {
+                    id,
+                    title,
+                    red_player,
+                    black_player,
+                    master_side: Some(master_side),
+                    event_name,
+                    game_date: game_date.map(|value| value.to_string()),
+                    result,
+                    move_count: move_count.max(0) as u64,
+                    source_url,
+                },
+            )
+            .collect(),
+    ))
+}
+
+async fn master_game_detail(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(game_id): AxumPath<String>,
+) -> Result<Json<MasterGameDetailDto>, ApiError> {
+    authenticated_user(&headers, &state.jwt_secret)?;
+    type Row = (
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<chrono::NaiveDate>,
+        String,
+        i64,
+        String,
+        serde_json::Value,
+    );
+    let row: Option<Row> = sqlx::query_as(
+        "SELECT id, title, red_player, black_player, event_name, game_date, result,
+                CAST(move_count AS SIGNED) AS move_count, source_url, moves_json
+         FROM master_games
+         WHERE id = ?",
+    )
+    .bind(&game_id)
+    .fetch_optional(&state.pool)
+    .await?;
+    let (
+        id,
+        title,
+        red_player,
+        black_player,
+        event_name,
+        game_date,
+        result,
+        move_count,
+        source_url,
+        moves_json,
+    ) = row.ok_or_else(|| ApiError::Invalid("master game not found".into()))?;
+    let moves: Vec<String> = serde_json::from_value(moves_json)
+        .map_err(|_| ApiError::Invalid("master game has invalid move list".into()))?;
+    let game_date = game_date.map(|value| value.to_string());
+    let pgn = build_master_game_pgn(MasterGamePgn {
+        title: &title,
+        event_name: event_name.as_deref(),
+        site: &source_url,
+        game_date: game_date.as_deref(),
+        red_player: &red_player,
+        black_player: &black_player,
+        result: &result,
+        moves: &moves,
+    });
+    Ok(Json(MasterGameDetailDto {
+        id,
+        title,
+        red_player,
+        black_player,
+        master_side: None,
+        event_name,
+        game_date,
+        result,
+        move_count: move_count.max(0) as u64,
+        source_url,
+        moves,
+        pgn,
+    }))
+}
+
+fn normalized_search_term(value: Option<&str>) -> String {
+    value.unwrap_or_default().trim().chars().take(80).collect()
+}
+
+fn sql_like_term(value: &str) -> String {
+    let escaped = value
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    format!("%{escaped}%")
+}
+
+struct MasterGamePgn<'a> {
+    title: &'a str,
+    event_name: Option<&'a str>,
+    site: &'a str,
+    game_date: Option<&'a str>,
+    red_player: &'a str,
+    black_player: &'a str,
+    result: &'a str,
+    moves: &'a [String],
+}
+
+fn build_master_game_pgn(game: MasterGamePgn<'_>) -> String {
+    let result = nonempty(game.result, "*");
+    let date = game
+        .game_date
+        .map(|value| value.replace('-', "."))
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "????.??.??".into());
+    let mut output = String::new();
+    for (name, value) in [
+        ("Game", "Chinese Chess"),
+        ("Title", game.title),
+        (
+            "Event",
+            nonempty(game.event_name.unwrap_or_default(), "公开大师棋谱"),
+        ),
+        ("Site", game.site),
+        ("Date", &date),
+        ("Red", game.red_player),
+        ("Black", game.black_player),
+        ("Result", result),
+        ("Format", "ICCS"),
+    ] {
+        output.push_str(&format!("[{name} \"{}\"]\n", escape_pgn_tag(value)));
+    }
+    output.push('\n');
+    for (index, pair) in game.moves.chunks(2).enumerate() {
+        output.push_str(&format!("{}. {}", index + 1, pair[0]));
+        if let Some(black) = pair.get(1) {
+            output.push(' ');
+            output.push_str(black);
+        }
+        output.push(' ');
+    }
+    output.push_str(result);
+    output.push('\n');
+    output
+}
+
+fn nonempty<'a>(value: &'a str, fallback: &'a str) -> &'a str {
+    if value.trim().is_empty() {
+        fallback
+    } else {
+        value
+    }
+}
+
+fn escape_pgn_tag(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 async fn subscription(
@@ -1028,6 +1347,24 @@ mod tests {
                 "missing foreign key {foreign_key}"
             );
         }
+    }
+
+    #[test]
+    fn master_game_pgn_uses_iccs_tags_and_move_pairs() {
+        let pgn = build_master_game_pgn(MasterGamePgn {
+            title: "赵鑫鑫 先胜 王天一",
+            event_name: Some("测试赛"),
+            site: "http://www.gdchess.com/gview.asp?id=1",
+            game_date: Some("2026-08-05"),
+            red_player: "赵鑫鑫",
+            black_player: "王天一",
+            result: "1-0",
+            moves: &["c3c4".into(), "c6c5".into(), "h2e2".into()],
+        });
+        assert!(pgn.contains("[Format \"ICCS\"]"));
+        assert!(pgn.contains("[Date \"2026.08.05\"]"));
+        assert!(pgn.contains("[Red \"赵鑫鑫\"]"));
+        assert!(pgn.contains("1. c3c4 c6c5 2. h2e2 1-0"));
     }
 
     #[cfg(unix)]

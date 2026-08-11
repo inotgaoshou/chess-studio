@@ -63,6 +63,7 @@ export type ManualBranchTreeRow = {
   engineSource?: string;
   branchCount: number;
   branchPreview: BranchPreview[];
+  branchChoices: BranchPreview[];
   hiddenBranchCount: number;
   expanded: boolean;
   collapsed: boolean;
@@ -229,6 +230,12 @@ export function buildManualBranchTreeModel(
       score: scoreForMove(child.move, options),
       mainline: child.move.isMainline,
     }));
+    const branchChoices = node.children.map((child) => ({
+      nodeId: child.move.id,
+      notation: child.move.notation,
+      score: scoreForMove(child.move, options),
+      mainline: child.move.isMainline,
+    }));
     const expanded = branchChildren.length > 0 && shouldExpand(move.id, activePath, options);
     const collapsed = branchChildren.length > 0 && options.collapsed.has(move.id);
     return {
@@ -250,6 +257,7 @@ export function buildManualBranchTreeModel(
       engineSource: engineSource(move.comment),
       branchCount: branchChildren.length,
       branchPreview,
+      branchChoices,
       hiddenBranchCount: Math.max(0, branchChildren.length - previewLimit),
       expanded,
       collapsed,

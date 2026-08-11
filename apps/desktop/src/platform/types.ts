@@ -62,6 +62,25 @@ export type CloudBookCandidate = {
   source: string;
   cached: boolean;
 };
+export type FlyknifeSide = "red" | "black";
+export type FlyknifeStepRole = "setup" | "lure" | "knife" | "bestDefense";
+export type FlyknifeStepAnnotation = {
+  role: FlyknifeStepRole;
+  iccs: string;
+  notation: string;
+  side: Side;
+  fen?: string;
+  scoreCp?: number;
+  swingCp?: number;
+  intent: string;
+  note?: string;
+};
+export type AppInfoDto = { version: string; buildTimestamp: number; platform: string };
+export type FlyknifeTemplate = { id: string; name: string; moves: string[]; fen: string };
+export type FlyknifeTopic = { id: string; title: string; opening: string; category: string; source: string; moveCount: number };
+export type FlyknifePlan = { id?: string; title: string; side: FlyknifeSide; startingFen: string; templateId?: string; templateName: string; lureMove: string; knifeMove: string; mainline: string[]; bestDefense: string[]; scoreCp?: number; mate?: number; risk: string; sourceGameId?: string; sourceNodeId?: string; note: string; annotations?: FlyknifeStepAnnotation[] };
+export type FlyknifeCandidate = { setupMove?: string; setupNotation?: string; lureMove: string; lureNotation?: string; knifeMove: string; mainline: string[]; notation: string[]; bestDefense: string[]; bestDefenseNotation: string[]; scoreCp?: number; baselineScoreCp?: number; swingCp?: number; mate?: number; risk: string; annotations?: FlyknifeStepAnnotation[] };
+export type GenerateFlyknifeRequest = { startingFen: string; side: FlyknifeSide; setupMove?: string; lureMove: string; enginePath: string; threads: number; hashMb: number; searchMode: "time" | "depth" | "nodes"; searchValue: number };
 export type AnalysisLine = {
   depth?: number;
   scoreCp?: number;
@@ -117,7 +136,35 @@ export type GameReportPositionDto = {
   bestNotation?: string;
   pvNotation?: string[];
   opening?: OpeningBookHitDto;
+  masterStyleHints?: MasterStyleHintDto[];
   move?: GameReportMoveDto;
+};
+export type MasterStyleTheoryCardRefDto = {
+  id: number;
+  title: string;
+  summary: string;
+  sourceBook?: string;
+  sourcePageStart?: number;
+  sourcePageEnd?: number;
+};
+export type MasterStyleHintDto = {
+  sampleId: string;
+  profileId: string;
+  playerName: string;
+  confidence: "exact" | "similar" | string;
+  reason: string;
+  sourceTitle: string;
+  eventName?: string;
+  gameDate?: string;
+  ply: number;
+  phase: ReportPhase | string;
+  beforeFen: string;
+  playedMove: string;
+  playedMoveRank?: number;
+  playedMoveInTopn: boolean;
+  bestMove?: string;
+  bestScoreCp?: number;
+  theoryCards: MasterStyleTheoryCardRefDto[];
 };
 export type GameReportDatasetDto = {
   gameId: string;
@@ -194,6 +241,7 @@ export type ReportIssuePresentationDto = {
   bestIccs?: string;
   bestNotation?: string;
   pvNotation?: string[];
+  masterStyleHints?: MasterStyleHintDto[];
   coach: MoveCoachInsightDto;
 };
 export type GameReportPresentationDto = {
@@ -215,14 +263,52 @@ export type GameReportPresentationDto = {
   disclaimer: string;
 };
 export type SyncResult = { uploaded: number; downloaded: number; cursor: number };
+export type MasterStyleProfileDto = {
+  id: string;
+  playerName: string;
+  normalizedName: string;
+  version: string;
+  sampleCount: number;
+  generatedAt: string;
+  profileJson: string;
+  importedAt: string;
+};
+export type MasterStyleImportResultDto = { profiles: MasterStyleProfileDto[]; importedSamples: number };
 export const BUILTIN_ENGINE_PATH = "builtin:pikafish";
 export const BUILTIN_FAIRY_ENGINE_PATH = "builtin:fairy-stockfish";
+export const DEFAULT_BUILTIN_OPENING_BOOK_ID = "learning-top3";
 export type WorkspaceLayoutMode = "studio" | "compact";
 export type ManualViewMode = "track" | "tree";
 export type RuleMode = "domestic2020" | "asianAxf";
 export type SkinFolder = "default" | "hongmu" | "jingdian" | "xinghe" | "qingxin-zhuyun";
 export type LegacySkinId = "original" | "classic" | "neon" | "jade" | "imperial";
 export type SkinId = SkinFolder | LegacySkinId;
+export type BuiltinOpeningBookVerificationDto = {
+  status: "verified" | "unverified" | string;
+  note: string;
+  expectedStartingVkey?: number;
+  calculatedStartingVkey?: number;
+};
+export type BuiltinOpeningBookDto = {
+  id: string;
+  name: string;
+  shortName: string;
+  kind: "learning" | "complete" | "observation" | string;
+  fileName: string;
+  description: string;
+  rowCount: number;
+  positionCount: number;
+  maxCandidatesPerPosition: number;
+  sha256: string;
+  default: boolean;
+};
+export type BuiltinOpeningBookManifestDto = {
+  version: string;
+  defaultBookId: string;
+  internalUseOnly: boolean;
+  vkeyVerification: BuiltinOpeningBookVerificationDto;
+  books: BuiltinOpeningBookDto[];
+};
 export type DesktopPreferencesDto = {
   enginePath: string;
   threads: number;
@@ -248,6 +334,10 @@ export type DesktopPreferencesDto = {
   reportDepth: number;
   xqbBookPaths?: string[];
   disabledXqbBookPaths?: string[];
+  eleeyeBookPaths?: string[];
+  disabledEleeyeBookPaths?: string[];
+  builtinOpeningBookEnabled: boolean;
+  activeBuiltinOpeningBookId: string;
   activeEngineId?: string;
   analysisEngineMode: "single" | "parallel";
   parallelEngineIds: string[];
@@ -270,6 +360,34 @@ export type SyncAccountDto = {
   status: "unbound" | "signedOut" | "signedIn" | "expired";
   lastSyncResult?: string;
 };
+export type MasterPlayerDto = {
+  id: string;
+  name: string;
+  sourceSite: string;
+  sourcePlayerId: string;
+  profileUrl: string;
+  gameCount: number;
+};
+export type MasterGameSummaryDto = {
+  id: string;
+  title: string;
+  redPlayer: string;
+  blackPlayer: string;
+  masterSide?: "red" | "black" | string;
+  eventName?: string;
+  gameDate?: string;
+  result: string;
+  moveCount: number;
+  sourceUrl: string;
+};
+export type MasterGameDetailDto = MasterGameSummaryDto & {
+  moves: string[];
+  pgn: string;
+};
+export type MasterLibraryPageOptions = {
+  limit?: number;
+  offset?: number;
+};
 export type SubscriptionDto = {
   plan: "free" | "pro";
   status: "inactive" | "active";
@@ -288,8 +406,14 @@ export type TrainingTaskDto = {
   phase?: ReportPhase | "复盘";
   tags?: string[];
   sourceCardId?: number;
+  taskType: "critical" | "reinforcement";
   completedAt?: string;
   createdAt: string;
+};
+export type TrainingGenerationResultDto = {
+  tasks: TrainingTaskDto[];
+  criticalCount: number;
+  reinforcementCount: number;
 };
 export type StudySessionDto = {
   id: string;
@@ -395,7 +519,8 @@ export type EngineArenaResultDto = {
   ruleName: string;
   summary: string;
 };
-export type GameSummary = { id: string; title: string; fen: string; updatedAt: string; current: boolean };
+export type GameSummary = { id: string; title: string; fen: string; updatedAt: string; current: boolean; libraryFolder?: string; favorite: boolean; tags: string[] };
+export type LibraryFolder = { name: string; system: boolean; gameCount: number };
 export type EnginePlayOptions = { enginePath: string; moveTimeMs: number; threads: number; hashMb: number; ponder: boolean };
 export type EngineMoveResult = { board: BoardState; ponder?: string };
 export type EngineRuntimeState = "idle" | "analyzing" | "thinking" | "pondering" | "stopping" | "faulted";
@@ -407,7 +532,8 @@ export type LinkAutoSide = "red" | "black";
 export type StartLinkSessionRequest = { source: CaptureSource; recognitionMode: RecognitionMode; mode: LinkMode; stableFrames: number; autoSide?: LinkAutoSide };
 export type LinkObservation = { state: LinkSessionState; accepted: boolean; moveIccs?: string; reason?: string; board?: BoardState; capturePreviewAvailable?: boolean };
 export type BoardOrientation = "redAtBottom" | "blackAtBottom";
-export type LinkSessionStatus = { source: CaptureSource; mode: LinkMode; state: LinkSessionState; reason?: string; phase?: string; lastError?: string; startedAt?: string; lastHeartbeatAt?: string; recognitionAttempts?: number; lastDetectionSummary?: string; capturePreviewKind?: string; frameRate: number; confidence?: number; confidenceThreshold?: number; stableFrames: number; requiredStableFrames: number; latestFen?: string; lastMove?: string; autoSide?: LinkAutoSide; boardOrientation?: BoardOrientation; captureRunning: boolean };
+export type LinkMoveDetail = { iccs: string; notation: string; movedBy: Side; from: MoveSquare; to: MoveSquare };
+export type LinkSessionStatus = { source: CaptureSource; mode: LinkMode; state: LinkSessionState; reason?: string; phase?: string; lastError?: string; startedAt?: string; lastHeartbeatAt?: string; recognitionAttempts?: number; lastDetectionSummary?: string; turnIndicator?: string; manualTurnOverride?: LinkAutoSide; pendingExternalMove?: string; capturePreviewKind?: string; frameRate: number; confidence?: number; confidenceThreshold?: number; stableFrames: number; requiredStableFrames: number; latestFen?: string; lastMove?: string; lastMoveDetail?: LinkMoveDetail; initialPositionSeen?: boolean; autoSide?: LinkAutoSide; boardOrientation?: BoardOrientation; captureRunning: boolean };
 export type ExportFormat = "pgn" | "chinese" | "dhtmlxq";
 export type ReplayExportScope = "currentSelection" | "mainline";
 export type EngineRuntimeEvent =
@@ -420,11 +546,18 @@ export type EngineRuntimeEvent =
 export interface ChessPlatform {
   readonly kind: "desktop" | "web";
   initialize(): Promise<Partial<BoardState>>;
+  getAppInfo(): Promise<AppInfoDto>;
   listGames(): Promise<GameSummary[]>;
+  listLibraryFolders(): Promise<LibraryFolder[]>;
+  createLibraryFolder(name: string): Promise<void>;
+  renameLibraryFolder(previous: string, next: string): Promise<void>;
+  deleteLibraryFolder(name: string): Promise<void>;
+  updateGameLibrary(folder: string | undefined, favorite: boolean, tags: string[]): Promise<Partial<BoardState>>;
   openGame(gameId: string): Promise<Partial<BoardState>>;
   detectEngine(): Promise<string | null>;
   getDesktopPreferences(): Promise<DesktopPreferencesDto>;
   saveDesktopPreferences(preferences: DesktopPreferencesDto): Promise<DesktopPreferencesDto>;
+  listBuiltinOpeningBooks(): Promise<BuiltinOpeningBookManifestDto>;
   chooseEngineExecutable(currentPath?: string): Promise<string | undefined>;
   probeEngine(path: string): Promise<EngineProbeDto>;
   listEngineProfiles(): Promise<EngineProfileDto[]>;
@@ -432,9 +565,21 @@ export interface ChessPlatform {
   setActiveEngineProfile(id: string): Promise<DesktopPreferencesDto>;
   deleteEngineProfile(id: string): Promise<DesktopPreferencesDto>;
   queryCloudOpeningBook(fen: string): Promise<CloudBookCandidate[]>;
+  listFlyknifeTemplates(): Promise<FlyknifeTemplate[]>;
+  listFlyknifeTopics(): Promise<FlyknifeTopic[]>;
+  openExternalUrl(url: string): Promise<void>;
+  openFlyknifeTopic(id: string): Promise<Partial<BoardState>>;
+  generateFlyknifeCandidates(request: GenerateFlyknifeRequest): Promise<FlyknifeCandidate[]>;
+  listFlyknifePlans(): Promise<FlyknifePlan[]>;
+  saveFlyknifePlan(plan: FlyknifePlan): Promise<FlyknifePlan>;
+  deleteFlyknifePlan(id: string): Promise<void>;
+  openFlyknifePractice(id: string): Promise<Partial<BoardState>>;
   listCoachReports(): Promise<GameReportDatasetDto[]>;
+  listMasterPlayers(query?: string, options?: MasterLibraryPageOptions): Promise<MasterPlayerDto[]>;
+  listMasterGames(playerId: string, query?: string, options?: MasterLibraryPageOptions): Promise<MasterGameSummaryDto[]>;
+  openMasterGame(gameId: string): Promise<Partial<BoardState>>;
   listTrainingTasks(): Promise<TrainingTaskDto[]>;
-  generateTrainingTasks(): Promise<TrainingTaskDto[]>;
+  generateTrainingTasks(): Promise<TrainingGenerationResultDto>;
   getTrainingSummary(): Promise<TrainingSummaryDto>;
   listStudySessions(): Promise<StudySessionDto[]>;
   saveStudySession(reflection: string, tags: string[]): Promise<StudySessionDto>;
@@ -454,11 +599,13 @@ export interface ChessPlatform {
   getLinkCapturePreview(): Promise<string | undefined>;
   recognizeLinkImageFile(source: CaptureSource): Promise<LinkObservation | undefined>;
   submitLinkPosition(fen: string): Promise<LinkObservation>;
+  setLinkSideToMove(side: LinkAutoSide): Promise<Partial<BoardState>>;
   confirmLinkEngineMove(iccs: string): Promise<boolean>;
   importRecognizedPosition(fen: string, title?: string): Promise<Partial<BoardState>>;
   newGame(fen: string, title?: string, note?: string): Promise<Partial<BoardState>>;
   openDocument(): Promise<Partial<BoardState> | undefined>;
   importXqbOpeningBook(): Promise<Partial<BoardState> | undefined>;
+  importEleeyeOpeningBook(): Promise<Partial<BoardState> | undefined>;
   saveDocument(saveAs?: boolean): Promise<string | undefined>;
   copyPosition(fen: string): Promise<void>;
   copyGame(mainlineOnly?: boolean): Promise<void>;
@@ -467,7 +614,7 @@ export interface ChessPlatform {
   exportManualPdf(title: string): Promise<string | undefined>;
   exportReplayGif(title: string, scope: ReplayExportScope): Promise<string | undefined>;
   exportMindMapSvg(title: string, svg: string): Promise<string | undefined>;
-  exportTextFile(title: string, contents: string): Promise<string | undefined>;
+  exportTextFile(title: string, contents: string, extension?: "txt" | "pgn", label?: string): Promise<string | undefined>;
   pasteDocument(): Promise<Partial<BoardState>>;
   updateGameMetadata(title: string, note: string): Promise<Partial<BoardState>>;
   reorderBranches(nodeIds: string[]): Promise<Partial<BoardState>>;
@@ -488,6 +635,9 @@ export interface ChessPlatform {
   getGameReport(): Promise<GameReportDatasetDto | undefined>;
   exportGameReportPdf(report: GameReportPresentationDto): Promise<string | undefined>;
   subscribeGameReportProgress(listener: (progress: GameReportProgressDto) => void): Promise<() => void>;
+  importMasterStyleProfile(paths?: { profilePath?: string; samplesPath?: string; analysisPath?: string }): Promise<MasterStyleImportResultDto>;
+  listMasterStyleProfiles(): Promise<MasterStyleProfileDto[]>;
+  matchMasterStyleHints(fen: string, phase: string, bestIccs?: string, limit?: number): Promise<MasterStyleHintDto[]>;
   loadSavedAnalysis(fen: string): Promise<AnalysisLine[]>;
   openCompactFloatingPanel(panel: "engine" | "manual" | "cloud" | "link"): Promise<boolean>;
   returnCompactFloatingPanel(panel: "engine" | "manual" | "cloud" | "link"): Promise<boolean>;

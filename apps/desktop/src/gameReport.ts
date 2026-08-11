@@ -109,7 +109,7 @@ export function buildGameReportPresentation(title: string, dataset: GameReportDa
         ...move,
         coach: moveCoachInsight(move),
       }))
-      .map(({ nodeId, notation, movedBy, lossCp, score, grade, missedMate, redScoreCp, deltaCp, opening, bestIccs, bestNotation, pvNotation, coach }) => ({
+      .map(({ nodeId, notation, movedBy, lossCp, score, grade, missedMate, redScoreCp, deltaCp, opening, bestIccs, bestNotation, pvNotation, masterStyleHints, coach }) => ({
         nodeId,
         notation,
         movedBy,
@@ -123,6 +123,7 @@ export function buildGameReportPresentation(title: string, dataset: GameReportDa
         bestIccs,
         bestNotation,
         pvNotation,
+        masterStyleHints,
         coach,
       })),
     standards: moveGradeStandards,
@@ -133,6 +134,6 @@ export function buildGameReportPresentation(title: string, dataset: GameReportDa
       { scoreCp: 100, label: "约一兵/卒" },
       { scoreCp: 50, label: "50以内可忽略" },
     ],
-    disclaimer: "参考常见象棋复盘产品的信息层次与分档方式；评分由本应用基于 Pikafish 局面损失计算，不等同于天天象棋内部算法，实际强度受 Pikafish 版本、NNUE、线程和机器性能影响。",
+    disclaimer: "参考常见象棋复盘产品的信息层次与分档方式；评分由本应用基于 Pikafish 局面损失计算，不等同于天天象棋内部算法；赵鑫鑫内容仅为公开棋谱风格启发和本地已确认棋理卡参考，不冒充本人意见。",
   };
 }

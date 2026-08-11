@@ -17,7 +17,7 @@ FAIRY_STOCKFISH_RELEASE_DIR="${FAIRY_STOCKFISH_RELEASE_DIR:-$ROOT_DIR/apps/deskt
 PIKAFISH_RESOURCE_DIR="apps/desktop/src-tauri/resources/pikafish"
 FAIRY_STOCKFISH_RESOURCE_DIR="$ROOT_DIR/apps/desktop/src-tauri/resources/fairy-stockfish"
 FAIRY_XIANGQI_NNUE_NAME="xiangqi-c07e94a5c7cb.nnue"
-TAURI_RESOURCE_CONFIG='{"bundle":{"resources":["resources/fonts/OFL.txt","resources/pikafish","resources/fairy-stockfish"]}}'
+TAURI_RESOURCE_CONFIG='{"bundle":{"resources":["resources/fonts/OFL.txt","resources/pikafish","resources/fairy-stockfish","resources/link-vision","resources/master-style"]}}'
 
 if [[ "$EMBED_PIKAFISH" == "1" ]]; then
   PIKAFISH_RESOURCE_ENGINE="$PIKAFISH_RESOURCE_DIR/pikafish"

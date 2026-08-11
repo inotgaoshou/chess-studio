@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { FolderOpen, LogIn, Save, Settings2, Trash2, UserPlus, X } from "lucide-react";
-import { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH, type DesktopPreferencesDto, type EngineProfileDto, type StudySessionDto, type SubscriptionDto, type SyncAccountDto, type TrainingSummaryDto, type TrainingTaskDto } from "./platform";
+import { FolderOpen, LogIn, Minus, Plus, Save, Settings2, Trash2, UserPlus, X } from "lucide-react";
+import { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH, DEFAULT_BUILTIN_OPENING_BOOK_ID, type BuiltinOpeningBookManifestDto, type DesktopPreferencesDto, type EngineProfileDto, type StudySessionDto, type SubscriptionDto, type SyncAccountDto, type TrainingSummaryDto, type TrainingTaskDto } from "./platform";
 import {
   DEFAULT_CANDIDATE_LINE_MOVES,
   DEFAULT_CANDIDATE_LINE_ROUNDS,
@@ -23,6 +23,7 @@ type Props = {
   trainingSummary?: TrainingSummaryDto;
   studySessions: StudySessionDto[];
   engineProfiles?: EngineProfileDto[];
+  builtinOpeningBookManifest?: BuiltinOpeningBookManifestDto;
   busy: boolean;
   onClose(): void;
   onChooseEngine(currentPath: string): Promise<string | undefined>;
@@ -47,6 +48,11 @@ const branchArrowColors = [
   ["#9b51e0", "紫色"],
   ["#eb5757", "红色"],
 ] as const;
+const DEFAULT_ANALYSIS_DEPTH = 24;
+const DEFAULT_REPORT_DEPTH = 24;
+const MIN_ENGINE_DIFFICULTY = 1;
+const MAX_ENGINE_DIFFICULTY = 20;
+const difficultyDepthRange = { min: 8, max: DEFAULT_ANALYSIS_DEPTH };
 const ruleModeOptions: Array<{ value: DesktopPreferencesDto["ruleMode"]; label: string; detail: string }> = [
   { value: "domestic2020", label: "国内规则", detail: "国内中国象棋规则（2020版导向），复杂长杀/长捉先待判" },
   { value: "asianAxf", label: "亚洲规则", detail: "亚洲象棋规则（AXF导向），重复局面更偏自动判和" },
@@ -62,10 +68,49 @@ function lowerBoundInteger(value: number, min: number, fallback = min) {
   return Math.max(min, Math.round(value));
 }
 
+export function engineDifficultyToDepth(level: number) {
+  const difficulty = clampInteger(level, MIN_ENGINE_DIFFICULTY, MAX_ENGINE_DIFFICULTY);
+  const ratio = (difficulty - MIN_ENGINE_DIFFICULTY) / (MAX_ENGINE_DIFFICULTY - MIN_ENGINE_DIFFICULTY);
+  return clampInteger(
+    difficultyDepthRange.min + ratio * (difficultyDepthRange.max - difficultyDepthRange.min),
+    difficultyDepthRange.min,
+    difficultyDepthRange.max,
+  );
+}
+
+export function engineDifficultyFromPreferences(preferences: Pick<DesktopPreferencesDto, "searchMode" | "searchValue">) {
+  if (preferences.searchMode !== "depth") return MAX_ENGINE_DIFFICULTY;
+  const depth = clampInteger(preferences.searchValue, difficultyDepthRange.min, difficultyDepthRange.max);
+  const ratio = (depth - difficultyDepthRange.min) / (difficultyDepthRange.max - difficultyDepthRange.min);
+  return clampInteger(
+    MIN_ENGINE_DIFFICULTY + ratio * (MAX_ENGINE_DIFFICULTY - MIN_ENGINE_DIFFICULTY),
+    MIN_ENGINE_DIFFICULTY,
+    MAX_ENGINE_DIFFICULTY,
+  );
+}
+
+function applyEngineDifficulty(preferences: DesktopPreferencesDto, level: number): DesktopPreferencesDto {
+  const searchValue = engineDifficultyToDepth(level);
+  return {
+    ...preferences,
+    searchMode: "depth",
+    searchValue,
+    reportDepth: Math.min(DEFAULT_REPORT_DEPTH, searchValue),
+  };
+}
+
+function stepPreference(value: number, step: number, min: number, max: number) {
+  return clampInteger(value + step, min, max);
+}
+
 function sanitizeEnginePreferences(preferences: DesktopPreferencesDto): DesktopPreferencesDto {
+  const legacyAnalysisDefaults = matchesLegacySearchDefaults(preferences)
+    || (preferences.searchMode === "depth" && (preferences.searchValue === 30 || preferences.searchValue === 26));
   const migratedSearchDefaults = matchesLegacySearchDefaults(preferences)
-    ? { searchMode: "depth" as const, searchValue: 30 }
-    : {};
+    ? { searchMode: "depth" as const, searchValue: DEFAULT_ANALYSIS_DEPTH }
+    : preferences.searchMode === "depth" && (preferences.searchValue === 30 || preferences.searchValue === 26)
+      ? { searchMode: "depth" as const, searchValue: DEFAULT_ANALYSIS_DEPTH }
+      : {};
   const enginePath = preferences.enginePath === BUILTIN_FAIRY_ENGINE_PATH ? BUILTIN_ENGINE_PATH : preferences.enginePath;
   const multipv = preferences.multipv < MIN_ENGINE_CANDIDATES
     ? DEFAULT_ENGINE_CANDIDATES
@@ -76,12 +121,15 @@ function sanitizeEnginePreferences(preferences: DesktopPreferencesDto): DesktopP
   const migrated = {
     ...preferences,
     ...migratedSearchDefaults,
+    autoAnalyze: legacyAnalysisDefaults && preferences.autoAnalyze ? false : preferences.autoAnalyze,
     enginePath,
     multipv,
     parallelEnginePaths: (preferences.parallelEnginePaths ?? []).filter((path) => path !== BUILTIN_FAIRY_ENGINE_PATH),
     linkConfidenceThreshold: preferences.linkConfidenceThreshold === 70 ? 55 : preferences.linkConfidenceThreshold,
     candidateLineMoves,
-    reportDepth: preferences.reportDepth === 26 ? 30 : preferences.reportDepth,
+    reportDepth: preferences.reportDepth === 30 || preferences.reportDepth === 26 ? DEFAULT_REPORT_DEPTH : preferences.reportDepth,
+    builtinOpeningBookEnabled: preferences.builtinOpeningBookEnabled ?? true,
+    activeBuiltinOpeningBookId: preferences.activeBuiltinOpeningBookId || DEFAULT_BUILTIN_OPENING_BOOK_ID,
   };
   return {
     ...migrated,
@@ -137,7 +185,7 @@ function authenticationErrorMessage(error: unknown) {
     : message;
 }
 
-export function DesktopDialogs({ dialog, preferences, account, subscription, trainingTasks, trainingSummary, studySessions, engineProfiles = [], busy, onClose, onChooseEngine, onSaveEngine, onSelectEngineProfile, onDeleteEngineProfile, onSaveSync, onUnbindSync, onAuthenticate, onRedeemSubscription, onGenerateTraining, onSaveStudy, onAnalyzeStudy, onCompleteTraining }: Props) {
+export function DesktopDialogs({ dialog, preferences, account, subscription, trainingTasks, trainingSummary, studySessions, engineProfiles = [], builtinOpeningBookManifest, busy, onClose, onChooseEngine, onSaveEngine, onSelectEngineProfile, onDeleteEngineProfile, onSaveSync, onUnbindSync, onAuthenticate, onRedeemSubscription, onGenerateTraining, onSaveStudy, onAnalyzeStudy, onCompleteTraining }: Props) {
   const [draft, setDraft] = useState(() => sanitizeEnginePreferences(preferences));
   const [email, setEmail] = useState(account.email ?? "");
   const [password, setPassword] = useState("");
@@ -154,6 +202,8 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
   const initializedDialog = useRef<DesktopDialog>(null);
   const branchArrowColor = branchArrowColors.some(([value]) => value === draft.branchArrowColor) ? draft.branchArrowColor : "#2f80ed";
   const currentRuleLabel = ruleModeOptions.find((option) => option.value === draft.ruleMode)?.detail ?? ruleModeOptions[0].detail;
+  const engineDifficulty = engineDifficultyFromPreferences(draft);
+  const engineDifficultyDepth = engineDifficultyToDepth(engineDifficulty);
   const builtInEngines = [
     { path: BUILTIN_ENGINE_PATH, name: "内置 Pikafish", detail: "随 App 安装，推荐日常拆棋" },
   ];
@@ -165,6 +215,11 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
       .filter((path) => path !== draft.enginePath)
       .map((path) => `path:${path}`),
   ]).size;
+  const builtinOpeningBooks = builtinOpeningBookManifest?.books ?? [];
+  const activeBuiltinOpeningBookId = builtinOpeningBooks.some((book) => book.id === draft.activeBuiltinOpeningBookId)
+    ? draft.activeBuiltinOpeningBookId
+    : builtinOpeningBookManifest?.defaultBookId ?? DEFAULT_BUILTIN_OPENING_BOOK_ID;
+  const builtinOpeningBookVerified = builtinOpeningBookManifest?.vkeyVerification.status === "verified";
 
   useEffect(() => {
     if (!dialog) {
@@ -331,6 +386,42 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
           <label className="full"><span>引擎可执行文件</span><div className="dialog-input-action"><input value={engineInputValue(draft.enginePath)} readOnly={draft.enginePath === BUILTIN_ENGINE_PATH} placeholder="选择 Pikafish / Fairy / 象眼 / 旋风等 UCI 或 UCCI 引擎" onChange={(event) => { setEnginePickerError(""); setEngineSaveError(""); setEngineSaveSuccess(""); setEngineProfileName(fileNameFromPath(event.target.value)); setDraft({ ...draft, enginePath: event.target.value, activeEngineId: undefined }); }}/><button type="button" title="使用安装包内置 Pikafish" disabled={busy || enginePickerBusy} onClick={() => { setEnginePickerError(""); setEngineSaveError(""); setEngineSaveSuccess(""); setEngineProfileName("内置 Pikafish"); setDraft({ ...draft, enginePath: BUILTIN_ENGINE_PATH, activeEngineId: draft.enginePath === BUILTIN_ENGINE_PATH ? draft.activeEngineId : undefined }); }}>内置</button><button type="button" title="选择外部引擎文件" disabled={busy || enginePickerBusy} onClick={() => void chooseEngine()}><FolderOpen size={15}/></button></div></label>
           <label className="full"><span>引擎档案名称</span><input value={engineProfileName} placeholder="例如 Fairy-Stockfish、象棋旋风、象眼 EleEye" onChange={(event) => setEngineProfileName(event.target.value)}/></label>
           {draft.enginePath === BUILTIN_ENGINE_PATH && <p className="dialog-hint full">当前使用安装包内置 Pikafish。正式安装后会从 App 资源目录自动定位，不依赖本机绝对路径；本地对弈与擂台按“{currentRuleLabel}”处理。Fairy-Stockfish 可作为外部引擎手动导入。</p>}
+          <section className="engine-simple-settings full" aria-label="皮卡鱼引擎快捷设置">
+            <header>
+              <div><strong>皮卡鱼引擎</strong><small>快捷项会写入下方专业参数；棋规仍由应用内规则模块裁决</small></div>
+              <em>{draft.searchMode === "depth" ? `固定深度 ${draft.searchValue}` : draft.searchMode === "time" ? `固定时间 ${draft.searchValue}ms` : draft.searchMode === "nodes" ? `固定节点 ${draft.searchValue}` : "持续分析"}</em>
+            </header>
+            <div className="engine-quick-control">
+              <span>难度等级</span>
+              <button type="button" aria-label="降低难度等级" disabled={engineDifficulty <= MIN_ENGINE_DIFFICULTY} onClick={() => setDraft((current) => applyEngineDifficulty(current, engineDifficultyFromPreferences(current) - 1))}><Minus size={15}/></button>
+              <strong>{engineDifficulty}级</strong>
+              <button type="button" aria-label="提高难度等级" disabled={engineDifficulty >= MAX_ENGINE_DIFFICULTY} onClick={() => setDraft((current) => applyEngineDifficulty(current, engineDifficultyFromPreferences(current) + 1))}><Plus size={15}/></button>
+              <small>对应固定深度 {engineDifficultyDepth}</small>
+            </div>
+            <div className="engine-quick-control">
+              <span>线程数</span>
+              <button type="button" aria-label="减少线程数" disabled={draft.threads <= 1} onClick={() => setDraft((current) => ({ ...current, threads: stepPreference(current.threads, -1, 1, 64) }))}><Minus size={15}/></button>
+              <strong>{draft.threads}线程</strong>
+              <button type="button" aria-label="增加线程数" disabled={draft.threads >= 64} onClick={() => setDraft((current) => ({ ...current, threads: stepPreference(current.threads, 1, 1, 64) }))}><Plus size={15}/></button>
+              <small>连线建议 2-4，深算可更高</small>
+            </div>
+            <div className="engine-quick-control">
+              <span>哈希值</span>
+              <button type="button" aria-label="减少哈希值" disabled={draft.hashMb <= 16} onClick={() => setDraft((current) => ({ ...current, hashMb: stepPreference(current.hashMb, -16, 16, 4096) }))}><Minus size={15}/></button>
+              <strong>{draft.hashMb} MB</strong>
+              <button type="button" aria-label="增加哈希值" disabled={draft.hashMb >= 4096} onClick={() => setDraft((current) => ({ ...current, hashMb: stepPreference(current.hashMb, 16, 16, 4096) }))}><Plus size={15}/></button>
+              <small>普通分析默认 256 MB</small>
+            </div>
+            <label className="engine-ponder-switch">
+              <span><strong>后台思考</strong><small>人机对弈预测下一手；局面变化会取消旧思考</small></span>
+              <input type="checkbox" role="switch" checked={draft.ponder} onChange={(event) => setDraft({ ...draft, ponder: event.target.checked })}/>
+            </label>
+            <label className="engine-rule-quick">
+              <span>棋规</span>
+              <select value={draft.ruleMode ?? "domestic2020"} onChange={(event) => setDraft({ ...draft, ruleMode: event.target.value as DesktopPreferencesDto["ruleMode"] })}>{ruleModeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
+              <small>{currentRuleLabel}</small>
+            </label>
+          </section>
           <div className="engine-profile-manager full" aria-label="多引擎档案">
             <header>
               <div><strong>分析引擎角色</strong><small>先确定 1 个主引擎，再选择需要同时计算的对比引擎</small></div>
@@ -397,7 +488,14 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
           <label className="check-row"><input type="checkbox" checked={draft.cloudBookEnabled ?? false} onChange={(event) => setDraft({ ...draft, cloudBookEnabled: event.target.checked })}/><span>启用 ChessDB 云开局库</span></label>
           <label className="full"><span>云库地址</span><input value={draft.cloudBookUrl ?? "https://www.chessdb.cn/chessdb.php"} onChange={(event) => setDraft({ ...draft, cloudBookUrl: event.target.value })}/></label>
           <p className="dialog-hint full">开启后会向该地址发送当前 FEN，仅用于查询候选着法；网络不可用不会影响本地棋谱和引擎。</p>
-          {!!draft.xqbBookPaths?.length && <div className="full dialog-book-list"><span>本地大师开局库</span>{draft.xqbBookPaths.map((path) => <label className="check-row" key={path}><input type="checkbox" checked={!draft.disabledXqbBookPaths?.includes(path)} onChange={(event) => setDraft({ ...draft, disabledXqbBookPaths: event.target.checked ? (draft.disabledXqbBookPaths ?? []).filter((value) => value !== path) : [...(draft.disabledXqbBookPaths ?? []), path] })}/><span>{path.split(/[\\/]/).at(-1)}</span></label>)}</div>}
+          {!!builtinOpeningBooks.length && <div className="full dialog-book-list builtin-opening-book-list">
+            <span>内嵌学习开局库</span>
+            <label className="check-row"><input type="checkbox" checked={draft.builtinOpeningBookEnabled ?? true} onChange={(event) => setDraft({ ...draft, builtinOpeningBookEnabled: event.target.checked })}/><span>启用内嵌库候选</span></label>
+            <label className="dialog-select-row"><span>当前库</span><select value={activeBuiltinOpeningBookId} onChange={(event) => setDraft({ ...draft, activeBuiltinOpeningBookId: event.target.value })}>{builtinOpeningBooks.map((book) => <option key={book.id} value={book.id}>{book.name} · {book.maxCandidatesPerPosition} 候选</option>)}</select></label>
+            <p className={builtinOpeningBookVerified ? "dialog-hint" : "dialog-warning"}>{builtinOpeningBookVerified ? "vkey 已验证，可显示候选。" : "vkey 未验证，仅可选择库，暂不显示推荐。"}</p>
+          </div>}
+          {!!draft.xqbBookPaths?.length && <div className="full dialog-book-list"><span>本地 XQB 开局库</span>{draft.xqbBookPaths.map((path) => <label className="check-row" key={path}><input type="checkbox" checked={!draft.disabledXqbBookPaths?.includes(path)} onChange={(event) => setDraft({ ...draft, disabledXqbBookPaths: event.target.checked ? (draft.disabledXqbBookPaths ?? []).filter((value) => value !== path) : [...(draft.disabledXqbBookPaths ?? []), path] })}/><span>{path.split(/[\\/]/).at(-1)}</span></label>)}</div>}
+          {!!draft.eleeyeBookPaths?.length && <div className="full dialog-book-list"><span>ElephantEye 本地学习开局库</span>{draft.eleeyeBookPaths.map((path) => <label className="check-row" key={path}><input type="checkbox" checked={!draft.disabledEleeyeBookPaths?.includes(path)} onChange={(event) => setDraft({ ...draft, disabledEleeyeBookPaths: event.target.checked ? (draft.disabledEleeyeBookPaths ?? []).filter((value) => value !== path) : [...(draft.disabledEleeyeBookPaths ?? []), path] })}/><span>{path.split(/[\\/]/).at(-1)}</span></label>)}</div>}
           {engineSaveError && <p className="dialog-warning full engine-save-error" role="alert">{engineSaveError}</p>}
           {engineSaveSuccess && <p className="dialog-success full engine-save-success" role="status">{engineSaveSuccess}</p>}
           <footer><button onClick={close} disabled={busy || enginePickerBusy}>{engineSaveSuccess ? "关闭" : "取消"}</button><button className="primary" disabled={busy || enginePickerBusy || !draft.enginePath.trim()} onClick={() => void saveEngine()}><Save size={14}/>{busy ? "检测中…" : enginePickerBusy ? "选择中…" : "检测并保存"}</button></footer>

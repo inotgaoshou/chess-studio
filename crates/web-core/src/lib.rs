@@ -544,6 +544,13 @@ mod tests {
             serde_json::from_str(&game.play_move("h2e2").unwrap()).unwrap();
         let first_id = first["currentNode"].as_str().unwrap().to_owned();
         game.play_move("h9g7").unwrap();
+        let root_id = game.tree.root_id();
+        let branch_count_before_navigation = game.tree.branches(root_id).unwrap().len();
+        let child_count_before_navigation = game
+            .tree
+            .branches(Uuid::parse_str(&first_id).unwrap())
+            .unwrap()
+            .len();
 
         let state: serde_json::Value =
             serde_json::from_str(&game.navigate_to(Some(first_id)).unwrap()).unwrap();
@@ -551,6 +558,17 @@ mod tests {
         assert_eq!(state["history"].as_array().unwrap().len(), 1);
         assert_eq!(state["continuation"].as_array().unwrap().len(), 1);
         assert_eq!(state["continuation"][0]["notation"], "马8进7");
+        assert_eq!(
+            game.tree.branches(root_id).unwrap().len(),
+            branch_count_before_navigation
+        );
+        assert_eq!(
+            game.tree
+                .branches(Uuid::parse_str(state["currentNode"].as_str().unwrap()).unwrap())
+                .unwrap()
+                .len(),
+            child_count_before_navigation
+        );
     }
 
     #[test]

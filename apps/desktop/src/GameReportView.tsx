@@ -15,6 +15,14 @@ function signedPawnScore(scoreCp: number) {
   return score > 0 ? `+${score}` : `${score}`;
 }
 
+function styleRankText(rank?: number) {
+  return rank ? `MultiPV 第 ${rank}` : "未进入 MultiPV";
+}
+
+function styleSourceText(hint: NonNullable<GameReportPresentationDto["issues"][number]["masterStyleHints"]>[number]) {
+  return [hint.eventName, hint.gameDate, `第 ${hint.ply} 手`].filter(Boolean).join(" · ");
+}
+
 function ReportTrend({ report }: { report: GameReportPresentationDto }) {
   const geometry = useMemo(() => {
     if (report.trend.length === 0) return undefined;
@@ -148,12 +156,25 @@ export function GameReportView({ report, currentNode, disabled = false, onNaviga
             <span className="report-issue-score"><small>局面 {signedPawnScore(move.redScoreCp)} · 变化 {signedPawnScore(move.deltaCp)}{move.opening ? ` · 官着 ${move.opening.name}` : ""}</small><em>{move.movedBy}损失 {move.lossCp}cp · 质量 {move.score}分{move.bestNotation ? ` · ${recommendationLabel} ${move.bestNotation}` : ""}</em></span>
             <GradeBadge grade={move.grade} missedMate={move.missedMate}/>
           </button>
+          <button className="coach-study-action" disabled={disabled} title={`回到 ${move.notation} 之前推演`} onClick={() => onStudy(move.nodeId)}><GitFork size={13}/>推演</button>
           <div className="report-issue-coach">
             <p><strong>目的</strong>{move.coach.intent}</p>
             <p><strong>弱点</strong>{move.coach.weakness}</p>
             <p><strong>方案</strong>{move.coach.solution}</p>
           </div>
-          <button className="coach-study-action" disabled={disabled} title={`回到 ${move.notation} 之前推演`} onClick={() => onStudy(move.nodeId)}><GitFork size={13}/>推演</button>
+          {!!move.masterStyleHints?.length && <div className="report-issue-master-style">
+            <strong>赵鑫鑫风格启发</strong>
+            {move.masterStyleHints.slice(0, 2).map((hint) => <article key={hint.sampleId}>
+              <header>
+                <span>{hint.confidence === "exact" ? "相同局面" : "相似参考"}</span>
+                <em>{hint.playerName}公开棋谱曾走 {hint.playedMove} · {styleRankText(hint.playedMoveRank)}</em>
+              </header>
+              <p>{hint.reason}；{styleSourceText(hint) || hint.sourceTitle}</p>
+              {!!hint.theoryCards.length && <ul>
+                {hint.theoryCards.slice(0, 2).map((card) => <li key={card.id}>棋理依据：{card.title}{card.sourceBook ? `（${card.sourceBook}${card.sourcePageStart ? ` p.${card.sourcePageStart}` : ""}）` : ""}</li>)}
+              </ul>}
+            </article>)}
+          </div>}
         </div>)}
     </section>
     <section className="score-standards">
@@ -167,7 +188,7 @@ export function GameReportView({ report, currentNode, disabled = false, onNaviga
         <p><strong>官着：</strong>开局阶段的人类经典布局着法，本应用只标记名称与来源，不改变 Pikafish 质量分。</p>
         <p><strong>质量分：</strong>该着相对引擎评价造成的局面损失折算为 0-100 分；与首选分差在 50cp 以内视为计算误差，按 100 分处理。综合分是一方所有有效着法质量分的平均值。</p>
         <p><strong>100分：</strong>表示在当前分析深度下几乎没有局面损失，可视为本应用定义的“特级大师级准确度”，不代表官方棋力认证。</p>
-        <p><strong>复盘档位：</strong>深度 26 可作为更稳健的强大师参考；实际效果受 Pikafish 版本、NNUE、线程和机器性能影响。</p>
+        <p><strong>复盘档位：</strong>深度 24 可作为更稳健的强大师参考；实际效果受 Pikafish 版本、NNUE、线程和机器性能影响。</p>
         <p>{report.disclaimer}</p>
       </div>
     </section>

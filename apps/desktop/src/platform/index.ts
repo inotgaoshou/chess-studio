@@ -3,8 +3,8 @@ import { listen } from "@tauri-apps/api/event";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { webDatabase, type SyncOperation, type WebGameRecord } from "./indexedDb";
-import { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH } from "./types";
-import type { AnalysisLine, AnalysisOptions, BoardState, CaptureSource, ChessPlatform, CloudBookCandidate, DesktopPreferencesDto, EngineArenaOptionsDto, EngineArenaResultDto, EngineMoveResult, EnginePlayOptions, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, ExportFormat, GameReportDatasetDto, GameReportOptionsDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, LinkObservation, LinkSessionStatus, PreviewLineStep, ReplayExportScope, StartLinkSessionRequest, StudySessionDto, SubscriptionDto, SyncAccountDto, SyncResult, TheoryCardDto, TheoryCardFeedbackDto, TheoryLibraryDto, TrainingSummaryDto, TrainingTaskDto } from "./types";
+import { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH, DEFAULT_BUILTIN_OPENING_BOOK_ID } from "./types";
+import type { AnalysisLine, AnalysisOptions, AppInfoDto, BoardState, BuiltinOpeningBookManifestDto, CaptureSource, ChessPlatform, CloudBookCandidate, DesktopPreferencesDto, EngineArenaOptionsDto, EngineArenaResultDto, EngineMoveResult, EnginePlayOptions, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, ExportFormat, FlyknifeCandidate, FlyknifePlan, FlyknifeTemplate, FlyknifeTopic, GameReportDatasetDto, GameReportOptionsDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, GenerateFlyknifeRequest, LibraryFolder, LinkAutoSide, LinkObservation, LinkSessionStatus, MasterGameSummaryDto, MasterPlayerDto, MasterStyleHintDto, MasterStyleImportResultDto, MasterStyleProfileDto, PreviewLineStep, ReplayExportScope, StartLinkSessionRequest, StudySessionDto, SubscriptionDto, SyncAccountDto, SyncResult, TheoryCardDto, TheoryCardFeedbackDto, TheoryLibraryDto, TrainingGenerationResultDto, TrainingSummaryDto, TrainingTaskDto } from "./types";
 
 type WebGameInstance = {
   stateJson(): string;
@@ -109,14 +109,21 @@ function normalizeSyncOperation(value: WireSyncOperation): SyncOperation | undef
 
 class DesktopPlatform implements ChessPlatform {
   readonly kind = "desktop" as const;
+  getAppInfo() { return invoke<AppInfoDto>("get_app_info"); }
   initialize() { return invoke<Partial<BoardState>>("get_state"); }
   async listGames(): Promise<GameSummary[]> {
     return invoke<GameSummary[]>("list_games");
   }
+  listLibraryFolders() { return invoke<LibraryFolder[]>("list_library_folders"); }
+  createLibraryFolder(name: string) { return invoke<void>("create_library_folder", { name }); }
+  renameLibraryFolder(previous: string, next: string) { return invoke<void>("rename_library_folder", { previous, next }); }
+  deleteLibraryFolder(name: string) { return invoke<void>("delete_library_folder", { name }); }
+  updateGameLibrary(folder: string | undefined, favorite: boolean, tags: string[]) { return invoke<Partial<BoardState>>("update_game_library", { folder: folder ?? null, favorite, tags }); }
   openGame(gameId: string) { return invoke<Partial<BoardState>>("open_game", { gameId }); }
   detectEngine() { return invoke<string | null>("detect_pikafish"); }
   getDesktopPreferences() { return invoke<DesktopPreferencesDto>("get_desktop_preferences"); }
   saveDesktopPreferences(preferences: DesktopPreferencesDto) { return invoke<DesktopPreferencesDto>("save_desktop_preferences", { preferences }); }
+  listBuiltinOpeningBooks() { return invoke<BuiltinOpeningBookManifestDto>("list_builtin_opening_books"); }
   async chooseEngineExecutable(currentPath?: string) {
     const path = await open({
       multiple: false,
@@ -132,9 +139,25 @@ class DesktopPlatform implements ChessPlatform {
   setActiveEngineProfile(id: string) { return invoke<DesktopPreferencesDto>("set_active_engine_profile", { id }); }
   deleteEngineProfile(id: string) { return invoke<DesktopPreferencesDto>("delete_engine_profile", { id }); }
   queryCloudOpeningBook(fen: string) { return invoke<CloudBookCandidate[]>("query_cloud_opening_book", { fen }); }
+  listFlyknifeTemplates() { return invoke<FlyknifeTemplate[]>("list_flyknife_templates"); }
+  listFlyknifeTopics() { return invoke<FlyknifeTopic[]>("list_flyknife_topics"); }
+  openExternalUrl(url: string) { return invoke<void>("open_external_url", { url }); }
+  openFlyknifeTopic(id: string) { return invoke<Partial<BoardState>>("open_flyknife_topic", { id }); }
+  generateFlyknifeCandidates(request: GenerateFlyknifeRequest) { return invoke<FlyknifeCandidate[]>("generate_flyknife_candidates", { request }); }
+  listFlyknifePlans() { return invoke<FlyknifePlan[]>("list_flyknife_plans"); }
+  saveFlyknifePlan(plan: FlyknifePlan) { return invoke<FlyknifePlan>("save_flyknife_plan", { plan }); }
+  deleteFlyknifePlan(id: string) { return invoke<void>("delete_flyknife_plan", { id }); }
+  openFlyknifePractice(id: string) { return invoke<Partial<BoardState>>("open_flyknife_practice", { id }); }
   listCoachReports() { return invoke<GameReportDatasetDto[]>("list_coach_reports"); }
+  listMasterPlayers(query?: string, options?: { limit?: number; offset?: number }) {
+    return invoke<MasterPlayerDto[]>("list_master_players", { query: query ?? null, limit: options?.limit ?? null, offset: options?.offset ?? null });
+  }
+  listMasterGames(playerId: string, query?: string, options?: { limit?: number; offset?: number }) {
+    return invoke<MasterGameSummaryDto[]>("list_master_games", { playerId, query: query ?? null, limit: options?.limit ?? null, offset: options?.offset ?? null });
+  }
+  openMasterGame(gameId: string) { return invoke<Partial<BoardState>>("open_master_game", { gameId }); }
   listTrainingTasks() { return invoke<TrainingTaskDto[]>("list_training_tasks"); }
-  generateTrainingTasks() { return invoke<TrainingTaskDto[]>("generate_training_tasks"); }
+  generateTrainingTasks() { return invoke<TrainingGenerationResultDto>("generate_training_tasks"); }
   getTrainingSummary() { return invoke<TrainingSummaryDto>("get_training_summary"); }
   listStudySessions() { return invoke<StudySessionDto[]>("list_study_sessions"); }
   saveStudySession(reflection: string, tags: string[]) { return invoke<StudySessionDto>("save_study_session", { reflection, tags }); }
@@ -163,6 +186,7 @@ class DesktopPlatform implements ChessPlatform {
     return invoke<LinkObservation>("recognize_link_image_file", { path, source });
   }
   submitLinkPosition(fen: string) { return invoke<LinkObservation>("submit_link_position", { fen }); }
+  setLinkSideToMove(side: LinkAutoSide) { return invoke<Partial<BoardState>>("set_link_side_to_move", { side }); }
   confirmLinkEngineMove(iccs: string) { return invoke<boolean>("confirm_link_engine_move", { iccs }); }
   importRecognizedPosition(fen: string, title?: string) { return invoke<Partial<BoardState>>("import_recognized_position", { fen, title }); }
   newGame(fen: string, title?: string, note?: string) { return invoke<Partial<BoardState>>("new_game", { fen, title, note }); }
@@ -175,6 +199,11 @@ class DesktopPlatform implements ChessPlatform {
     const path = await open({ multiple: false, directory: false, filters: [{ name: "XQB 象棋开局库", extensions: ["xqb"] }] });
     if (!path || Array.isArray(path)) return undefined;
     return invoke<Partial<BoardState>>("import_xqb_opening_book", { path });
+  }
+  async importEleeyeOpeningBook() {
+    const path = await open({ multiple: false, directory: false, filters: [{ name: "ElephantEye 开局库", extensions: ["dat"] }] });
+    if (!path || Array.isArray(path)) return undefined;
+    return invoke<Partial<BoardState>>("import_eleeye_opening_book", { path });
   }
   async saveDocument(saveAs = false) {
     const path = saveAs ? await save({ defaultPath: "未命名.pgn", filters: [{ name: "PGN 棋谱", extensions: ["pgn"] }] }) : null;
@@ -211,9 +240,9 @@ class DesktopPlatform implements ChessPlatform {
     if (!path) return undefined;
     return invoke<string>("export_mind_map_svg", { path, svg });
   }
-  async exportTextFile(title: string, contents: string) {
+  async exportTextFile(title: string, contents: string, extension: "txt" | "pgn" = "txt", label = "文本文件") {
     const safeTitle = title.replace(/[\\/:*?"<>|\x00-\x1f]/g, "_").trim().slice(0, 80) || "未命名棋谱";
-    const path = await save({ defaultPath: `${safeTitle}.txt`, filters: [{ name: "文本文件", extensions: ["txt"] }] });
+    const path = await save({ defaultPath: `${safeTitle}.${extension}`, filters: [{ name: label, extensions: [extension] }] });
     if (!path) return undefined;
     return invoke<string>("export_text_file", { path, contents });
   }
@@ -269,6 +298,13 @@ class DesktopPlatform implements ChessPlatform {
   subscribeGameReportProgress(listener: (progress: GameReportProgressDto) => void) {
     return listen<GameReportProgressDto>("game-report-progress", (event) => listener(event.payload));
   }
+  importMasterStyleProfile(paths?: { profilePath?: string; samplesPath?: string; analysisPath?: string }) {
+    return invoke<MasterStyleImportResultDto>("import_master_style_profile", { request: paths ?? null });
+  }
+  listMasterStyleProfiles() { return invoke<MasterStyleProfileDto[]>("list_master_style_profiles"); }
+  matchMasterStyleHints(fen: string, phase: string, bestIccs?: string, limit?: number) {
+    return invoke<MasterStyleHintDto[]>("match_master_style_hints", { fen, phase, bestIccs: bestIccs ?? null, limit: limit ?? null });
+  }
   loadSavedAnalysis() { return invoke<AnalysisLine[]>("get_saved_analysis"); }
   openCompactFloatingPanel(panel: "engine" | "manual" | "cloud" | "link") { return invoke<boolean>("open_compact_floating_panel", { panel }); }
   returnCompactFloatingPanel(panel: "engine" | "manual" | "cloud" | "link") { return invoke<boolean>("return_compact_floating_panel", { panel }); }
@@ -311,6 +347,7 @@ class WebPlatform implements ChessPlatform {
     }
     return this.scoredState();
   }
+  async getAppInfo(): Promise<AppInfoDto> { return { version: "Web", buildTimestamp: 0, platform: "浏览器" }; }
 
   async listGames(): Promise<GameSummary[]> {
     const currentId = await webDatabase.meta("currentGameId");
@@ -320,8 +357,15 @@ class WebPlatform implements ChessPlatform {
       fen: game.fen,
       updatedAt: game.updatedAt,
       current: game.id === currentId,
+      favorite: false,
+      tags: [],
     }));
   }
+  async listLibraryFolders(): Promise<LibraryFolder[]> { return []; }
+  async createLibraryFolder(): Promise<void> { throw new Error("Web 端暂不支持棋谱文件夹"); }
+  async renameLibraryFolder(): Promise<void> { throw new Error("Web 端暂不支持棋谱文件夹"); }
+  async deleteLibraryFolder(): Promise<void> { throw new Error("Web 端暂不支持棋谱文件夹"); }
+  async updateGameLibrary(): Promise<Partial<BoardState>> { throw new Error("Web 端暂不支持棋谱归档"); }
 
   async openGame(gameId: string): Promise<Partial<BoardState>> {
     const record = await webDatabase.game(gameId);
@@ -336,6 +380,15 @@ class WebPlatform implements ChessPlatform {
   async detectEngine() { return null; }
   async getDesktopPreferences(): Promise<DesktopPreferencesDto> { throw new Error("Web 端不支持桌面偏好设置"); }
   async saveDesktopPreferences(): Promise<DesktopPreferencesDto> { throw new Error("Web 端不支持桌面偏好设置"); }
+  async listBuiltinOpeningBooks(): Promise<BuiltinOpeningBookManifestDto> {
+    return {
+      version: "web",
+      defaultBookId: DEFAULT_BUILTIN_OPENING_BOOK_ID,
+      internalUseOnly: true,
+      vkeyVerification: { status: "unverified", note: "Web 端不使用内嵌本地 pfBook。" },
+      books: [],
+    };
+  }
   async chooseEngineExecutable(): Promise<string | undefined> { throw new Error("Web 端不支持选择本地引擎"); }
   async probeEngine(): Promise<EngineProbeDto> { throw new Error("Web 端不运行本地引擎"); }
   async listEngineProfiles(): Promise<EngineProfileDto[]> { throw new Error("Web 端不管理本地引擎"); }
@@ -343,7 +396,19 @@ class WebPlatform implements ChessPlatform {
   async setActiveEngineProfile(): Promise<DesktopPreferencesDto> { throw new Error("Web 端不管理本地引擎"); }
   async deleteEngineProfile(): Promise<DesktopPreferencesDto> { throw new Error("Web 端不管理本地引擎"); }
   async queryCloudOpeningBook(): Promise<CloudBookCandidate[]> { return []; }
+  async listFlyknifeTemplates(): Promise<FlyknifeTemplate[]> { return []; }
+  async listFlyknifeTopics(): Promise<FlyknifeTopic[]> { return []; }
+  async openExternalUrl(url: string): Promise<void> { window.open(url, "_blank", "noopener,noreferrer"); }
+  async openFlyknifeTopic(): Promise<Partial<BoardState>> { throw new Error("Web 端暂不支持飞刀专题库"); }
+  async generateFlyknifeCandidates(): Promise<FlyknifeCandidate[]> { throw new Error("Web 端暂不支持飞刀生成"); }
+  async listFlyknifePlans(): Promise<FlyknifePlan[]> { return []; }
+  async saveFlyknifePlan(): Promise<FlyknifePlan> { throw new Error("Web 端暂不支持飞刀库"); }
+  async deleteFlyknifePlan(): Promise<void> { throw new Error("Web 端暂不支持飞刀库"); }
+  async openFlyknifePractice(): Promise<Partial<BoardState>> { throw new Error("Web 端暂不支持飞刀库"); }
   async listCoachReports(): Promise<GameReportDatasetDto[]> { return []; }
+  async listMasterPlayers(): Promise<MasterPlayerDto[]> { throw new Error("Web 端大师棋谱库暂未开放"); }
+  async listMasterGames(): Promise<MasterGameSummaryDto[]> { throw new Error("Web 端大师棋谱库暂未开放"); }
+  async openMasterGame(): Promise<Partial<BoardState>> { throw new Error("Web 端大师棋谱库暂未开放"); }
   async getSyncAccount(): Promise<SyncAccountDto> { throw new Error("Web 端账号菜单不在本阶段开放"); }
   async getSubscription(): Promise<SubscriptionDto> { throw new Error("Web 端订阅权益不在本阶段开放"); }
   async redeemSubscriptionCode(): Promise<SubscriptionDto> { throw new Error("Web 端订阅权益不在本阶段开放"); }
@@ -375,6 +440,7 @@ class WebPlatform implements ChessPlatform {
     return this.scoredState(state);
   }
   async importXqbOpeningBook(): Promise<Partial<BoardState> | undefined> { throw new Error("Web 端暂不支持本地 XQB 开局库"); }
+  async importEleeyeOpeningBook(): Promise<Partial<BoardState> | undefined> { throw new Error("Web 端暂不支持本地 ElephantEye 开局库"); }
   async saveDocument(): Promise<string | undefined> {
     const record = await webDatabase.game(this.gameId);
     const title = record?.title ?? "未命名棋谱";
@@ -406,13 +472,13 @@ class WebPlatform implements ChessPlatform {
     URL.revokeObjectURL(url);
     return link.download;
   }
-  async exportTextFile(title: string, contents: string): Promise<string | undefined> {
+  async exportTextFile(title: string, contents: string, extension: "txt" | "pgn" = "txt"): Promise<string | undefined> {
     const safeTitle = title.replace(/[\\/:*?"<>|\x00-\x1f]/g, "_").trim().slice(0, 80) || "未命名棋谱";
     const blob = new Blob([contents], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `${safeTitle}.txt`;
+    link.download = `${safeTitle}.${extension}`;
     link.click();
     URL.revokeObjectURL(url);
     return link.download;
@@ -427,7 +493,7 @@ class WebPlatform implements ChessPlatform {
   async subscribeEngineEvents() { return () => undefined; }
   async generateGameReport(): Promise<GameReportDatasetDto> { throw new Error("Web 端不支持本地整局分析报告"); }
   async listTrainingTasks(): Promise<TrainingTaskDto[]> { throw new Error("Web 端暂不支持训练任务"); }
-  async generateTrainingTasks(): Promise<TrainingTaskDto[]> { throw new Error("Web 端暂不支持训练任务"); }
+  async generateTrainingTasks(): Promise<TrainingGenerationResultDto> { throw new Error("Web 端暂不支持训练任务"); }
   async getTrainingSummary(): Promise<TrainingSummaryDto> { throw new Error("Web 端暂不支持训练总结"); }
   async listStudySessions(): Promise<StudySessionDto[]> { throw new Error("Web 端暂不支持训练总结"); }
   async saveStudySession(): Promise<StudySessionDto> { throw new Error("Web 端暂不支持训练总结"); }
@@ -441,6 +507,9 @@ class WebPlatform implements ChessPlatform {
   async getGameReport(): Promise<GameReportDatasetDto | undefined> { throw new Error("Web 端不支持本地整局分析报告"); }
   async exportGameReportPdf(): Promise<string | undefined> { throw new Error("Web 端不支持桌面 PDF 报告导出"); }
   async subscribeGameReportProgress() { return () => undefined; }
+  async importMasterStyleProfile(): Promise<MasterStyleImportResultDto> { throw new Error("Web 端暂不支持本地大师风格画像"); }
+  async listMasterStyleProfiles(): Promise<MasterStyleProfileDto[]> { return []; }
+  async matchMasterStyleHints(): Promise<MasterStyleHintDto[]> { return []; }
   async openCompactFloatingPanel(): Promise<boolean> { throw new Error("Web 端不支持系统级浮动窗口"); }
   async returnCompactFloatingPanel(): Promise<boolean> { return false; }
 
@@ -469,6 +538,7 @@ class WebPlatform implements ChessPlatform {
   async getLinkCapturePreview(): Promise<string | undefined> { throw new Error("Web 端暂不支持桌面连线"); }
   async recognizeLinkImageFile(): Promise<LinkObservation | undefined> { throw new Error("Web 端暂不支持桌面图片识别"); }
   async submitLinkPosition(): Promise<LinkObservation> { throw new Error("Web 端暂不支持桌面连线"); }
+  async setLinkSideToMove(): Promise<Partial<BoardState>> { throw new Error("Web 端暂不支持桌面连线"); }
   async importRecognizedPosition(): Promise<Partial<BoardState>> { throw new Error("Web 端暂不支持桌面连线"); }
 
   async newGame(fen: string, title?: string, note?: string): Promise<Partial<BoardState>> {
@@ -706,5 +776,5 @@ class WebPlatform implements ChessPlatform {
 
 const tauriAvailable = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 export const chessPlatform: ChessPlatform = tauriAvailable ? new DesktopPlatform() : new WebPlatform();
-export { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH } from "./types";
-export type { AnalysisLine, AnalysisOptions, BoardState, BranchCoachInsightDto, CaptureSource, ChessPlatform, CloudBookCandidate, DesktopPreferencesDto, EngineArenaGameDto, EngineArenaOptionsDto, EngineArenaResultDto, EngineArenaScoreDto, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, EngineRuntimeState, ExportFormat, GameReportDatasetDto, GameReportOptionsDto, GameReportPositionDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, LegacySkinId, LinkAutoSide, LinkMode, LinkObservation, LinkSessionState, LinkSessionStatus, ManualTreeNode, ManualViewMode, MoveCoachInsightDto, MoveItem, OpeningBookHitDto, Piece, PreviewLineStep, QualityGrade, RecognitionMode, ReplayExportScope, ReportPhase, ReportSidePresentationDto, RuleMode, Side, SkinFolder, SkinId, StartLinkSessionRequest, StudySessionDto, SubscriptionDto, SyncAccountDto, SyncResult, TheoryCardDto, TheoryCardFeedbackDto, TheoryLessonDto, TheoryLibraryDto, TheoryPhase, TrainingSummaryDto, TrainingTaskDto, WeaknessStatDto, WorkspaceLayoutMode } from "./types";
+export { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH, DEFAULT_BUILTIN_OPENING_BOOK_ID } from "./types";
+export type { AnalysisLine, AnalysisOptions, AppInfoDto, BoardState, BranchCoachInsightDto, BuiltinOpeningBookDto, BuiltinOpeningBookManifestDto, BuiltinOpeningBookVerificationDto, CaptureSource, ChessPlatform, CloudBookCandidate, DesktopPreferencesDto, EngineArenaGameDto, EngineArenaOptionsDto, EngineArenaResultDto, EngineArenaScoreDto, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, EngineRuntimeState, ExportFormat, FlyknifeCandidate, FlyknifePlan, FlyknifeSide, FlyknifeStepAnnotation, FlyknifeStepRole, FlyknifeTemplate, FlyknifeTopic, GenerateFlyknifeRequest, GameReportDatasetDto, GameReportOptionsDto, GameReportPositionDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, LegacySkinId, LibraryFolder, LinkAutoSide, LinkMode, LinkMoveDetail, LinkObservation, LinkSessionState, LinkSessionStatus, ManualTreeNode, ManualViewMode, MasterGameDetailDto, MasterGameSummaryDto, MasterPlayerDto, MasterStyleHintDto, MasterStyleImportResultDto, MasterStyleProfileDto, MasterStyleTheoryCardRefDto, MoveCoachInsightDto, MoveItem, OpeningBookHitDto, Piece, PreviewLineStep, QualityGrade, RecognitionMode, ReplayExportScope, ReportPhase, ReportSidePresentationDto, RuleMode, Side, SkinFolder, SkinId, StartLinkSessionRequest, StudySessionDto, SubscriptionDto, SyncAccountDto, SyncResult, TheoryCardDto, TheoryCardFeedbackDto, TheoryLessonDto, TheoryLibraryDto, TheoryPhase, TrainingGenerationResultDto, TrainingSummaryDto, TrainingTaskDto, WeaknessStatDto, WorkspaceLayoutMode, XqbCandidate } from "./types";

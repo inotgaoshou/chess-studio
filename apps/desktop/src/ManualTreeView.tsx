@@ -1,5 +1,7 @@
 import { Fragment, useEffect, useRef } from "react";
 import { ChevronDown, ChevronRight, GitBranch, ListStart, MessageSquare, Trash2 } from "lucide-react";
+import { BranchSelector } from "./BranchSelector";
+import { hasReviewMarker } from "./reviewMarker";
 import type { ManualTreeNode, MoveItem, QualityGrade } from "./platform";
 
 type MoveQuality = { score?: number; grade?: QualityGrade };
@@ -70,6 +72,7 @@ function TreeLine({ node, depth, props, siblings, siblingIndex }: {
           {quality?.grade && <em className={`move-quality-mini grade-${quality.grade}`}>{quality.grade}</em>}
           {source && <em className="manual-engine-source" title={`这步采用自对比引擎：${source}`}><span>对比</span>{source}</em>}
           {move.comment && <MessageSquare className="comment-marker" size={11}/>}
+          {hasReviewMarker(move.comment) && <em className="manual-review-marker">复盘</em>}
           {active && <em className="manual-current-node-badge">当前局面</em>}
           {hasChildren && <small>{node.children.length} 变</small>}
           <b>{quality?.score != null ? `${quality.score}分` : props.formatScore(move)}</b>
@@ -82,6 +85,20 @@ function TreeLine({ node, depth, props, siblings, siblingIndex }: {
         </span>}
       </div>
     </li>
+    {node.children.length > 1 && <li className="manual-tree-branch-selector-slot">
+      <BranchSelector
+        branches={node.children.map((child) => ({
+          id: child.move.id,
+          isMainline: child.move.isMainline,
+          notation: child.move.notation,
+          score: props.qualityByMoveId.get(child.move.id)?.score != null
+            ? `${props.qualityByMoveId.get(child.move.id)?.score}分`
+            : props.formatScore(child.move),
+        }))}
+        currentBranchId={node.children.find((child) => props.activePath.has(child.move.id))?.move.id}
+        onNavigate={props.onNavigate}
+      />
+    </li>}
     {expanded && variationChildren.length > 0 && <li className="manual-tree-branch-container">
       <TreeLevel nodes={variationChildren} depth={depth + 1} props={props} actionSiblings={node.children}/>
     </li>}
@@ -111,6 +128,21 @@ export function ManualTreeView(props: Props) {
     }
   }, [props.currentNode, props.nodes, props.collapsed, props.activePath]);
   return <div className="manual-tree-view" aria-label="树状棋谱" ref={viewRef}>
+    {props.nodes.length > 1 && <div className="manual-tree-root-selector">
+      <BranchSelector
+        branches={props.nodes.map((node) => ({
+          id: node.move.id,
+          isMainline: node.move.isMainline,
+          notation: node.move.notation,
+          score: props.qualityByMoveId.get(node.move.id)?.score != null
+            ? `${props.qualityByMoveId.get(node.move.id)?.score}分`
+            : props.formatScore(node.move),
+        }))}
+        currentBranchId={props.nodes.find((node) => props.activePath.has(node.move.id))?.move.id}
+        label="开局变招"
+        onNavigate={props.onNavigate}
+      />
+    </div>}
     <TreeLevel nodes={props.nodes} depth={0} props={props}/>
   </div>;
 }

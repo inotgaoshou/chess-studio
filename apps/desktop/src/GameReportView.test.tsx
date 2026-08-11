@@ -47,6 +47,25 @@ const report: GameReportPresentationDto = {
     missedMate: true,
     redScoreCp: -240,
     deltaCp: -500,
+    masterStyleHints: [{
+      sampleId: "sample-1",
+      profileId: "zhao-style",
+      playerName: "赵鑫鑫",
+      confidence: "exact",
+      reason: "完全相同 FEN 的公开棋谱实战参考",
+      sourceTitle: "赵鑫鑫 先胜 某棋手",
+      eventName: "测试赛事",
+      gameDate: "2026-01-01",
+      ply: 12,
+      phase: "opening",
+      beforeFen: "fen-a",
+      playedMove: "h2e2",
+      playedMoveRank: 1,
+      playedMoveInTopn: true,
+      bestMove: "h2e2",
+      bestScoreCp: 36,
+      theoryCards: [{ id: 1, title: "布局阶段先协调强子", summary: "开局应优先让车马炮形成配合。", sourceBook: "赵鑫鑫布局棋理", sourcePageStart: 12 }],
+    }],
     coach: {
       intent: "走前已有强制杀棋。",
       weakness: "本着后红方视角变化 -500。",
@@ -73,6 +92,9 @@ describe("GameReportDialog", () => {
     expect(screen.getByRole("dialog", { name: "测试棋局整局分析报告" })).toBeTruthy();
     expect(screen.getByText("线路已变化，此报告已过期")).toBeTruthy();
     expect(screen.getByText("私教建议与变招命名")).toBeTruthy();
+    expect(screen.getByText("赵鑫鑫风格启发")).toBeTruthy();
+    expect(screen.getByText(/赵鑫鑫公开棋谱曾走 h2e2/)).toBeTruthy();
+    expect(screen.getByText(/棋理依据：布局阶段先协调强子/)).toBeTruthy();
     expect(screen.getByText("中炮局-第1着-红方修正炮二平五")).toBeTruthy();
     expect(screen.getByRole("table", { name: "质量评分等级" }).textContent).toContain("优80-100 分");
     fireEvent.keyDown(document, { key: "Escape" });
