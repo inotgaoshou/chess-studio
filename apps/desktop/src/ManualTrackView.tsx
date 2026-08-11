@@ -1,4 +1,4 @@
-import { BookOpen, ChevronDown, ChevronRight, Copy, Download, Image as ImageIcon, ListStart, MessageSquare, Sparkles, Trash2, X } from "lucide-react";
+import { BookOpen, ChevronDown, ChevronRight, Copy, Download, Image as ImageIcon, ListStart, MessageSquare, Sparkles, Swords, Trash2, X } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -11,7 +11,7 @@ import {
   type MoveQuality,
 } from "./manualTrackModel";
 import { BranchSelector } from "./BranchSelector";
-import { hasReviewMarker } from "./reviewMarker";
+import { flyknifeMarker, hasReviewMarker } from "./reviewMarker";
 import type { ManualTreeNode, MoveItem, PreviewLineStep } from "./platform";
 import { CANDIDATE_PREVIEW_HALF_MOVES } from "./candidatePreview";
 import { formatStrategyInsightText, type StrategyInsight, type TheoryPrincipleCard } from "./strategyInsights";
@@ -394,6 +394,7 @@ function BranchTreeRow({ row, editing, onNavigate, onMakeMainline, onRemove, onT
   onCompare(forkNodeId: string, branchId: string): void;
   activePath: ReadonlySet<string>;
 }) {
+  const flyknife = flyknifeMarker(row.move.comment);
   const meta = [
     row.quality?.grade && row.quality.score != null ? `${row.quality.grade}${row.quality.score}` : undefined,
     !row.quality?.grade && row.score ? row.score : undefined,
@@ -451,7 +452,8 @@ function BranchTreeRow({ row, editing, onNavigate, onMakeMainline, onRemove, onT
           <strong>{row.label}</strong>
         </button>
         {row.quality?.grade && <em className={`move-quality-mini grade-${row.quality.grade}`}>{row.quality.grade}</em>}
-        {row.move.comment && <MessageSquare className="comment-marker" size={12}/>}
+        {row.move.comment && <MessageSquare className="comment-marker" size={12}/>} 
+        {flyknife && <em className="manual-flyknife-marker" title={flyknife.intent || `${flyknife.label}飞刀标注`}><Swords size={11}/>飞刀 · {flyknife.label}</em>}
         {row.active && <em className="manual-current-node-badge">当前局面</em>}
       </div>
       <div className="manual-branch-tree-meta">

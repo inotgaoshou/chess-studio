@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef } from "react";
 import { ChevronDown, ChevronRight, GitBranch, ListStart, MessageSquare, Trash2 } from "lucide-react";
 import { BranchSelector } from "./BranchSelector";
-import { hasReviewMarker } from "./reviewMarker";
+import { flyknifeMarker, hasReviewMarker } from "./reviewMarker";
 import type { ManualTreeNode, MoveItem, QualityGrade } from "./platform";
 
 type MoveQuality = { score?: number; grade?: QualityGrade };
@@ -49,6 +49,7 @@ function TreeLine({ node, depth, props, siblings, siblingIndex }: {
   const quality = props.qualityByMoveId.get(move.id);
   const label = branchLabel(siblings, siblingIndex);
   const source = engineSource(move.comment);
+  const flyknife = flyknifeMarker(move.comment);
   const active = move.id === props.currentNode;
   const mainChild = preferredChild(node.children);
   const variationChildren = node.children.filter((child) => child.move.id !== mainChild?.move.id);
@@ -71,8 +72,9 @@ function TreeLine({ node, depth, props, siblings, siblingIndex }: {
           <strong>{move.notation}</strong>
           {quality?.grade && <em className={`move-quality-mini grade-${quality.grade}`}>{quality.grade}</em>}
           {source && <em className="manual-engine-source" title={`这步采用自对比引擎：${source}`}><span>对比</span>{source}</em>}
-          {move.comment && <MessageSquare className="comment-marker" size={11}/>}
+          {move.comment && <MessageSquare className="comment-marker" size={11}/>} 
           {hasReviewMarker(move.comment) && <em className="manual-review-marker">复盘</em>}
+          {flyknife && <em className="manual-flyknife-marker" title={flyknife.intent || `${flyknife.label}飞刀标注`}>飞刀 · {flyknife.label}</em>}
           {active && <em className="manual-current-node-badge">当前局面</em>}
           {hasChildren && <small>{node.children.length} 变</small>}
           <b>{quality?.score != null ? `${quality.score}分` : props.formatScore(move)}</b>

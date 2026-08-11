@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { FolderOpen, LogIn, Minus, Plus, Save, Settings2, Trash2, UserPlus, X } from "lucide-react";
-import { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH, DEFAULT_BUILTIN_OPENING_BOOK_ID, type BuiltinOpeningBookManifestDto, type DesktopPreferencesDto, type EngineProfileDto, type StudySessionDto, type SubscriptionDto, type SyncAccountDto, type TrainingSummaryDto, type TrainingTaskDto } from "./platform";
+import { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH, DEFAULT_BUILTIN_OPENING_BOOK_ID, FALLBACK_BUILTIN_OPENING_BOOK_MANIFEST, type BuiltinOpeningBookManifestDto, type DesktopPreferencesDto, type EngineProfileDto, type StudySessionDto, type SubscriptionDto, type SyncAccountDto, type TrainingSummaryDto, type TrainingTaskDto } from "./platform";
 import {
   DEFAULT_CANDIDATE_LINE_MOVES,
   DEFAULT_CANDIDATE_LINE_ROUNDS,
@@ -215,11 +215,12 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
       .filter((path) => path !== draft.enginePath)
       .map((path) => `path:${path}`),
   ]).size;
-  const builtinOpeningBooks = builtinOpeningBookManifest?.books ?? [];
+  const effectiveBuiltinOpeningBookManifest = builtinOpeningBookManifest ?? FALLBACK_BUILTIN_OPENING_BOOK_MANIFEST;
+  const builtinOpeningBooks = effectiveBuiltinOpeningBookManifest.books;
   const activeBuiltinOpeningBookId = builtinOpeningBooks.some((book) => book.id === draft.activeBuiltinOpeningBookId)
     ? draft.activeBuiltinOpeningBookId
-    : builtinOpeningBookManifest?.defaultBookId ?? DEFAULT_BUILTIN_OPENING_BOOK_ID;
-  const builtinOpeningBookVerified = builtinOpeningBookManifest?.vkeyVerification.status === "verified";
+    : effectiveBuiltinOpeningBookManifest.defaultBookId ?? DEFAULT_BUILTIN_OPENING_BOOK_ID;
+  const builtinOpeningBookVerified = effectiveBuiltinOpeningBookManifest.vkeyVerification.status === "verified";
 
   useEffect(() => {
     if (!dialog) {

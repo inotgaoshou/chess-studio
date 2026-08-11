@@ -96,13 +96,18 @@ describe("DesktopMenuBar", () => {
     expect(commands).toEqual(["syncNow"]);
   });
 
-  it("shows the About command in a visible Help menu with the app version", async () => {
+  it("shows the manual and About commands in a visible Help menu", async () => {
     const { commands, user } = setup();
+
+    await user.click(screen.getByText("帮助", { selector: "summary" }));
+    await user.click(screen.getByRole("button", { name: "使用手册" }));
+
+    expect(commands).toEqual(["userManual"]);
 
     await user.click(screen.getByText("帮助", { selector: "summary" }));
     await user.click(screen.getByRole("button", { name: "关于棋研 · v1.2.0" }));
 
-    expect(commands).toEqual(["about"]);
+    expect(commands).toEqual(["userManual", "about"]);
   });
 
   it("supports keyboard menu switching and item navigation", async () => {

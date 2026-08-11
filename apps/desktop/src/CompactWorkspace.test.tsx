@@ -45,6 +45,68 @@ describe("CompactReferencePanels", () => {
     expect(screen.getByText("0 条 · 云库关闭")).toBeTruthy();
   });
 
+  it("shows enabled builtin opening book status without exposing unverified moves", () => {
+    render(<CompactReferencePanels
+      {...common}
+      cloudEnabled={false}
+      bookRows={[]}
+      builtinBookStatus={{
+        enabled: true,
+        verified: false,
+        name: "学习精选 Top3",
+        shortName: "学习精选",
+        maxCandidatesPerPosition: 3,
+        note: "FEN to pfBook vkey is not implemented yet; realtime pfBook candidates are hidden.",
+      }}
+    />);
+
+    expect(screen.getByText("内嵌库")).toBeTruthy();
+    expect(screen.getByText("0 条 · 内嵌库待验证")).toBeTruthy();
+    expect(screen.getAllByText("学习精选已启用，vkey 未验证，暂不显示推荐").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: /学习精选/ })).toBeNull();
+  });
+
+  it("runs Pikafish audit from the opening book header", () => {
+    const onAuditBookCandidates = vi.fn();
+    render(<CompactReferencePanels {...common} onAuditBookCandidates={onAuditBookCandidates}/>);
+    fireEvent.click(screen.getByRole("button", { name: "Pikafish 验证开局库候选" }));
+    expect(onAuditBookCandidates).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows Pikafish audit progress without hiding book candidates", () => {
+    render(<CompactReferencePanels
+      {...common}
+      onAuditBookCandidates={vi.fn()}
+      bookAuditState={{ status: "running", message: "Pikafish 正在验证 1/1 条 · 深度 18" }}
+    />);
+
+    expect(screen.getByText("Pikafish 正在验证 1/1 条 · 深度 18")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Pikafish 验证开局库候选" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getAllByRole("button", { name: /马二进三/ }).length).toBeGreaterThan(0);
+  });
+
+  it("renders Pikafish audit labels on matching opening book rows", () => {
+    render(<CompactReferencePanels
+      {...common}
+      bookAuditByMove={{
+        h2e2: {
+          status: "support",
+          label: "支持",
+          scoreGapCp: 26,
+          depth: 18,
+          bestMove: "h2e2",
+          pv: ["h2e2", "h9g7"],
+          note: "命中 Pikafish Top N，分差在 30cp 内。",
+        },
+      }}
+      bookAuditState={{ status: "done", message: "Pikafish 已验证 1/1 条 · 深度 18" }}
+    />);
+
+    expect(screen.getByText("Pikafish 已验证 1/1 条 · 深度 18")).toBeTruthy();
+    expect(screen.getByText("支持 · 差 26 · 红优 +18")).toBeTruthy();
+    expect(screen.getByTitle(/命中 Pikafish Top N/)).toBeTruthy();
+  });
+
   it("shows local book win/draw/loss distribution and sample count without inventing cloud details", () => {
     render(<CompactReferencePanels
       {...common}

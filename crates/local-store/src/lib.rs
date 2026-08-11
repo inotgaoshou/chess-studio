@@ -421,6 +421,93 @@ pub struct TrainingTask {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LearningProfile {
+    pub id: String,
+    pub child_name: String,
+    pub level: String,
+    pub age_group: String,
+    pub session_minutes: u32,
+    pub coach_mode: String,
+    pub cycle_weeks: u32,
+    pub personal_ratio: u32,
+    pub thematic_ratio: u32,
+    pub current_week: u32,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl LearningProfile {
+    pub fn u10_default() -> Self {
+        let now = chrono::Utc::now().to_rfc3339();
+        Self {
+            id: "default".into(),
+            child_name: "小棋手".into(),
+            level: "全国少年赛".into(),
+            age_group: "U10".into(),
+            session_minutes: 40,
+            coach_mode: "家长陪练".into(),
+            cycle_weeks: 12,
+            personal_ratio: 60,
+            thematic_ratio: 40,
+            current_week: 1,
+            created_at: now.clone(),
+            updated_at: now,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GuidedAnalysisSubmission {
+    pub threats: String,
+    pub forcing_moves: String,
+    pub worst_piece: String,
+    pub candidates: Vec<String>,
+    pub chosen_move: String,
+    pub predicted_line: Vec<String>,
+    pub confidence: u8,
+    pub elapsed_seconds: u32,
+    pub hints_used: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GuidedAnalysisSession {
+    pub id: Uuid,
+    pub game_id: Uuid,
+    pub problem_node_id: Option<Uuid>,
+    pub start_node_id: Option<Uuid>,
+    pub report_signature: String,
+    pub fen: String,
+    pub phase: String,
+    pub status: String,
+    pub answer_hidden: bool,
+    pub submission: Option<GuidedAnalysisSubmission>,
+    pub result_kind: Option<String>,
+    pub score: Option<u32>,
+    pub result_json: Option<String>,
+    pub started_at: String,
+    pub submitted_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrainingAttempt {
+    pub id: Uuid,
+    pub task_id: Uuid,
+    pub session_id: Option<Uuid>,
+    pub submission: GuidedAnalysisSubmission,
+    pub score: u32,
+    pub result_kind: String,
+    pub parent_note: String,
+    pub review_round: u32,
+    pub next_review_at: Option<String>,
+    pub mastered: bool,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FlyknifePlan {
     pub id: Uuid,
     pub title: String,
@@ -2238,6 +2325,254 @@ impl LocalStore {
         Ok(())
     }
 
+    pub fn learning_profile(&self) -> Result<LearningProfile, StoreError> {
+        let stored = self
+            .connection
+            .query_row(
+                "SELECT profile_json FROM learning_profiles WHERE id = 'default'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        Ok(stored
+            .as_deref()
+            .and_then(|json| serde_json::from_str(json).ok())
+            .unwrap_or_else(LearningProfile::u10_default))
+    }
+
+    pub fn save_learning_profile(
+        &mut self,
+        profile: &LearningProfile,
+    ) -> Result<LearningProfile, StoreError> {
+        let mut profile = profile.clone();
+        profile.id = "default".into();
+        profile.age_group = "U10".into();
+        profile.session_minutes = 40;
+        profile.cycle_weeks = 12;
+        profile.personal_ratio = 60;
+        profile.thematic_ratio = 40;
+        profile.current_week = profile.current_week.clamp(1, 12);
+        profile.updated_at = chrono::Utc::now().to_rfc3339();
+        if profile.created_at.is_empty() {
+            profile.created_at = profile.updated_at.clone();
+        }
+        self.connection.execute(
+            "INSERT INTO learning_profiles (id, profile_json, updated_at) VALUES ('default', ?1, ?2)
+             ON CONFLICT(id) DO UPDATE SET profile_json=excluded.profile_json, updated_at=excluded.updated_at",
+            params![serde_json::to_string(&profile)?, profile.updated_at],
+        )?;
+        Ok(profile)
+    }
+
+    pub fn start_guided_analysis(
+        &mut self,
+        game_id: Uuid,
+        problem_node_id: Option<Uuid>,
+        start_node_id: Option<Uuid>,
+        report_signature: &str,
+        fen: &str,
+        phase: &str,
+    ) -> Result<GuidedAnalysisSession, StoreError> {
+        self.connection.execute(
+            "UPDATE guided_analysis_sessions SET status='cancelled', answer_hidden=0
+             WHERE status='thinking'",
+            [],
+        )?;
+        let session = GuidedAnalysisSession {
+            id: Uuid::new_v4(),
+            game_id,
+            problem_node_id,
+            start_node_id,
+            report_signature: report_signature.into(),
+            fen: fen.into(),
+            phase: phase.into(),
+            status: "thinking".into(),
+            answer_hidden: true,
+            submission: None,
+            result_kind: None,
+            score: None,
+            result_json: None,
+            started_at: chrono::Utc::now().to_rfc3339(),
+            submitted_at: None,
+        };
+        self.connection.execute(
+            "INSERT INTO guided_analysis_sessions
+             (id, game_id, problem_node_id, start_node_id, report_signature, fen, phase, status,
+              answer_hidden, submission_json, result_kind, score, result_json, started_at, submitted_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1, NULL, NULL, NULL, NULL, ?9, NULL)",
+            params![
+                session.id.to_string(),
+                session.game_id.to_string(),
+                session.problem_node_id.map(|id| id.to_string()),
+                session.start_node_id.map(|id| id.to_string()),
+                session.report_signature,
+                session.fen,
+                session.phase,
+                session.status,
+                session.started_at,
+            ],
+        )?;
+        Ok(session)
+    }
+
+    pub fn submit_guided_analysis(
+        &mut self,
+        session_id: Uuid,
+        submission: &GuidedAnalysisSubmission,
+        result_kind: &str,
+        score: u32,
+        result_json: &str,
+    ) -> Result<GuidedAnalysisSession, StoreError> {
+        self.connection.execute(
+            "UPDATE guided_analysis_sessions
+             SET status='submitted', answer_hidden=0, submission_json=?2, result_kind=?3,
+                 score=?4, result_json=?5, submitted_at=?6
+             WHERE id=?1 AND status='thinking'",
+            params![
+                session_id.to_string(),
+                serde_json::to_string(submission)?,
+                result_kind,
+                score.clamp(0, 100),
+                result_json,
+                chrono::Utc::now().to_rfc3339(),
+            ],
+        )?;
+        self.guided_analysis_session(session_id)?
+            .ok_or_else(|| StoreError::Sql(rusqlite::Error::QueryReturnedNoRows))
+    }
+
+    pub fn cancel_guided_analysis(&mut self, session_id: Uuid) -> Result<(), StoreError> {
+        self.connection.execute(
+            "UPDATE guided_analysis_sessions SET status='cancelled', answer_hidden=0 WHERE id=?1",
+            [session_id.to_string()],
+        )?;
+        Ok(())
+    }
+
+    pub fn guided_analysis_session(
+        &self,
+        session_id: Uuid,
+    ) -> Result<Option<GuidedAnalysisSession>, StoreError> {
+        self.connection
+            .query_row(
+                "SELECT id, game_id, problem_node_id, start_node_id, report_signature, fen, phase,
+                        status, answer_hidden, submission_json, result_kind, score, result_json,
+                        started_at, submitted_at
+                 FROM guided_analysis_sessions WHERE id=?1",
+                [session_id.to_string()],
+                guided_session_from_row,
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn save_training_attempt(
+        &mut self,
+        task_id: Uuid,
+        session_id: Option<Uuid>,
+        submission: &GuidedAnalysisSubmission,
+        score: u32,
+        result_kind: &str,
+        parent_note: &str,
+    ) -> Result<TrainingAttempt, StoreError> {
+        let previous = self.training_attempts(Some(task_id))?;
+        let review_round = previous.len() as u32 + 1;
+        let score = score.clamp(0, 100);
+        let three_high_scores = previous
+            .iter()
+            .rev()
+            .take(2)
+            .all(|attempt| attempt.score >= 80)
+            && previous.len() >= 2
+            && score >= 80;
+        let two_hint_free = submission.hints_used == 0
+            && previous
+                .last()
+                .is_some_and(|attempt| attempt.submission.hints_used == 0);
+        let mastered = three_high_scores && two_hint_free;
+        let review_days = match review_round {
+            1 => 1,
+            2 => 3,
+            _ => 7,
+        };
+        let now = chrono::Utc::now();
+        let attempt = TrainingAttempt {
+            id: Uuid::new_v4(),
+            task_id,
+            session_id,
+            submission: submission.clone(),
+            score,
+            result_kind: result_kind.into(),
+            parent_note: parent_note.into(),
+            review_round,
+            next_review_at: (!mastered)
+                .then(|| (now + chrono::Duration::days(review_days)).to_rfc3339()),
+            mastered,
+            created_at: now.to_rfc3339(),
+        };
+        self.connection.execute(
+            "INSERT INTO training_attempts
+             (id, task_id, session_id, submission_json, score, result_kind, parent_note,
+              review_round, next_review_at, mastered, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                attempt.id.to_string(),
+                attempt.task_id.to_string(),
+                attempt.session_id.map(|id| id.to_string()),
+                serde_json::to_string(&attempt.submission)?,
+                attempt.score,
+                attempt.result_kind,
+                attempt.parent_note,
+                attempt.review_round,
+                attempt.next_review_at,
+                attempt.mastered as i32,
+                attempt.created_at,
+            ],
+        )?;
+        self.connection.execute(
+            "INSERT INTO training_review_schedule (task_id, next_review_at, review_round, mastered, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(task_id) DO UPDATE SET next_review_at=excluded.next_review_at,
+                review_round=excluded.review_round, mastered=excluded.mastered, updated_at=excluded.updated_at",
+            params![
+                task_id.to_string(),
+                attempt.next_review_at,
+                review_round,
+                mastered as i32,
+                attempt.created_at,
+            ],
+        )?;
+        Ok(attempt)
+    }
+
+    pub fn training_attempts(
+        &self,
+        task_id: Option<Uuid>,
+    ) -> Result<Vec<TrainingAttempt>, StoreError> {
+        let sql = if task_id.is_some() {
+            "SELECT id, task_id, session_id, submission_json, score, result_kind, parent_note,
+                    review_round, next_review_at, mastered, created_at
+             FROM training_attempts WHERE task_id=?1 ORDER BY created_at, rowid"
+        } else {
+            "SELECT id, task_id, session_id, submission_json, score, result_kind, parent_note,
+                    review_round, next_review_at, mastered, created_at
+             FROM training_attempts ORDER BY created_at, rowid"
+        };
+        let mut statement = self.connection.prepare(sql)?;
+        let mapper = |row: &rusqlite::Row<'_>| training_attempt_from_row(row);
+        if let Some(task_id) = task_id {
+            statement
+                .query_map([task_id.to_string()], mapper)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(Into::into)
+        } else {
+            statement
+                .query_map([], mapper)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(Into::into)
+        }
+    }
+
     pub fn weakness_stats(&self, limit: usize) -> Result<Vec<WeaknessStat>, StoreError> {
         let cards = self.theory_cards()?;
         let mut card_by_id = HashMap::new();
@@ -2728,6 +3063,32 @@ impl LocalStore {
             "CREATE INDEX IF NOT EXISTS idx_master_style_matches_node ON master_style_matches(game_id, node_id, created_at DESC)",
             [],
         )?;
+        connection.execute_batch(
+            "CREATE TABLE IF NOT EXISTS learning_profiles (
+               id TEXT PRIMARY KEY, profile_json TEXT NOT NULL, updated_at TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS guided_analysis_sessions (
+               id TEXT PRIMARY KEY, game_id TEXT NOT NULL, problem_node_id TEXT, start_node_id TEXT,
+               report_signature TEXT NOT NULL, fen TEXT NOT NULL, phase TEXT NOT NULL,
+               status TEXT NOT NULL, answer_hidden INTEGER NOT NULL DEFAULT 1,
+               submission_json TEXT, result_kind TEXT, score INTEGER, result_json TEXT,
+               started_at TEXT NOT NULL, submitted_at TEXT
+             );
+             CREATE INDEX IF NOT EXISTS idx_guided_sessions_game
+               ON guided_analysis_sessions(game_id, started_at DESC);
+             CREATE TABLE IF NOT EXISTS training_attempts (
+               id TEXT PRIMARY KEY, task_id TEXT NOT NULL, session_id TEXT,
+               submission_json TEXT NOT NULL, score INTEGER NOT NULL, result_kind TEXT NOT NULL,
+               parent_note TEXT NOT NULL DEFAULT '', review_round INTEGER NOT NULL,
+               next_review_at TEXT, mastered INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS idx_training_attempts_task
+               ON training_attempts(task_id, created_at);
+             CREATE TABLE IF NOT EXISTS training_review_schedule (
+               task_id TEXT PRIMARY KEY, next_review_at TEXT, review_round INTEGER NOT NULL DEFAULT 0,
+               mastered INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL
+             );",
+        )?;
         Ok(Self { connection })
     }
 }
@@ -3023,6 +3384,50 @@ fn ensure_game_column(
     definition: &str,
 ) -> Result<(), StoreError> {
     ensure_column(connection, "games", column, definition)
+}
+
+fn guided_session_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<GuidedAnalysisSession> {
+    let submission_json: Option<String> = row.get(9)?;
+    Ok(GuidedAnalysisSession {
+        id: parse_row_uuid(&row.get::<_, String>(0)?, 0)?,
+        game_id: parse_row_uuid(&row.get::<_, String>(1)?, 1)?,
+        problem_node_id: row
+            .get::<_, Option<String>>(2)?
+            .and_then(|value| Uuid::parse_str(&value).ok()),
+        start_node_id: row
+            .get::<_, Option<String>>(3)?
+            .and_then(|value| Uuid::parse_str(&value).ok()),
+        report_signature: row.get(4)?,
+        fen: row.get(5)?,
+        phase: row.get(6)?,
+        status: row.get(7)?,
+        answer_hidden: row.get::<_, i64>(8)? != 0,
+        submission: submission_json.and_then(|json| serde_json::from_str(&json).ok()),
+        result_kind: row.get(10)?,
+        score: row.get::<_, Option<u32>>(11)?,
+        result_json: row.get(12)?,
+        started_at: row.get(13)?,
+        submitted_at: row.get(14)?,
+    })
+}
+
+fn training_attempt_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TrainingAttempt> {
+    let submission_json: String = row.get(3)?;
+    Ok(TrainingAttempt {
+        id: parse_row_uuid(&row.get::<_, String>(0)?, 0)?,
+        task_id: parse_row_uuid(&row.get::<_, String>(1)?, 1)?,
+        session_id: row
+            .get::<_, Option<String>>(2)?
+            .and_then(|value| Uuid::parse_str(&value).ok()),
+        submission: serde_json::from_str(&submission_json).unwrap_or_default(),
+        score: row.get(4)?,
+        result_kind: row.get(5)?,
+        parent_note: row.get(6)?,
+        review_round: row.get(7)?,
+        next_review_at: row.get(8)?,
+        mastered: row.get::<_, i64>(9)? != 0,
+        created_at: row.get(10)?,
+    })
 }
 
 fn ensure_column(
@@ -4404,5 +4809,74 @@ mod tests {
         assert!(store.pending_operations(10).unwrap().is_empty());
         assert!(store.load_game(game_id).unwrap().is_none());
         assert_eq!(store.remote_cursor().unwrap(), 0);
+    }
+
+    #[test]
+    fn u10_profile_and_guided_attempts_survive_storage_round_trips() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let mut profile = LearningProfile::u10_default();
+        profile.child_name = "小明".into();
+        store.save_learning_profile(&profile).unwrap();
+        assert_eq!(store.learning_profile().unwrap().child_name, "小明");
+
+        let game_id = Uuid::new_v4();
+        let task_id = Uuid::new_v4();
+        let session = store
+            .start_guided_analysis(
+                game_id,
+                Some(Uuid::new_v4()),
+                None,
+                "report-signature",
+                "start-fen",
+                "middle",
+            )
+            .unwrap();
+        let submission = GuidedAnalysisSubmission {
+            threats: "对方可能将军".into(),
+            forcing_moves: "先看将军和吃子".into(),
+            worst_piece: "右马".into(),
+            candidates: vec!["h2e2".into(), "h0g2".into()],
+            chosen_move: "h2e2".into(),
+            predicted_line: vec!["h2e2".into(), "h9g7".into()],
+            confidence: 70,
+            elapsed_seconds: 180,
+            hints_used: 0,
+        };
+        store
+            .submit_guided_analysis(session.id, &submission, "direction", 84, "{}")
+            .unwrap();
+        let attempt = store
+            .save_training_attempt(task_id, Some(session.id), &submission, 84, "direction", "家长已陪练")
+            .unwrap();
+        assert_eq!(attempt.review_round, 1);
+        assert!(!attempt.mastered);
+        assert!(attempt.next_review_at.is_some());
+        assert_eq!(store.training_attempts(Some(task_id)).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn u10_mastery_requires_three_high_scores_and_two_hint_free_retests() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let task_id = Uuid::new_v4();
+        let mut submission = GuidedAnalysisSubmission::default();
+        submission.hints_used = 1;
+        let first = store
+            .save_training_attempt(task_id, None, &submission, 82, "direction", "")
+            .unwrap();
+        assert_eq!(first.review_round, 1);
+        assert!(!first.mastered);
+
+        submission.hints_used = 0;
+        let second = store
+            .save_training_attempt(task_id, None, &submission, 86, "correct", "")
+            .unwrap();
+        assert_eq!(second.review_round, 2);
+        assert!(!second.mastered);
+        let third = store
+            .save_training_attempt(task_id, None, &submission, 91, "correct", "")
+            .unwrap();
+        assert_eq!(third.review_round, 3);
+        assert!(third.mastered);
+        assert!(third.next_review_at.is_none());
     }
 }

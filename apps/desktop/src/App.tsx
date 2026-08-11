@@ -49,7 +49,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH, DEFAULT_BUILTIN_OPENING_BOOK_ID, chessPlatform, type AnalysisLine, type BoardState, type CloudBookCandidate, type EngineProbeDto, type EngineProfileDto, type EngineRuntimeState, type ExportFormat, type GameReportDatasetDto, type GameReportProgressDto, type GameSummary, type LibraryFolder, type MasterStyleProfileDto, type MoveItem, type Piece, type PreviewLineStep, type ReplayExportScope, type StudySessionDto, type TheoryLibraryDto, type TrainingGenerationResultDto, type TrainingSummaryDto, type TrainingTaskDto } from "./platform";
+import { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH, DEFAULT_BUILTIN_OPENING_BOOK_ID, FALLBACK_BUILTIN_OPENING_BOOK_MANIFEST, chessPlatform, type AnalysisLine, type BoardState, type CloudBookCandidate, type EngineProbeDto, type EngineProfileDto, type EngineRuntimeState, type ExportFormat, type GameReportDatasetDto, type GameReportProgressDto, type GameSummary, type LibraryFolder, type MasterStyleProfileDto, type MoveItem, type Piece, type PreviewLineStep, type ReplayExportScope, type StudySessionDto, type TheoryLibraryDto, type TrainingGenerationResultDto, type TrainingSummaryDto, type TrainingTaskDto } from "./platform";
 import { evaluationRedShare, moveQualityFeedback, moveReports, positionEvaluation, redAnalysisScoreText, trendChart, trendPoints, trendTurningPoints } from "./analysisView";
 import { CandidateLine } from "./CandidateLine";
 import { hasEngineDivergence, MultiEngineComparison, type EngineComparisonGroup } from "./MultiEngineComparison";
@@ -59,7 +59,7 @@ import { GameReportDialog, GameReportView } from "./GameReportView";
 import { buildGameReportPresentation } from "./gameReport";
 import { candidateCoachInsights, currentCoachAdvice, moveThoughtHint } from "./coachInsights";
 import { MobileToolbar, type MobileToolbarCommand } from "./MobileToolbar";
-import type { AnalysisOptions, AppInfoDto, BuiltinOpeningBookManifestDto, DesktopPreferencesDto, FlyknifePlan, LinkSessionStatus, SubscriptionDto, SyncAccountDto } from "./platform";
+import type { AnalysisOptions, AppInfoDto, BuiltinOpeningBookManifestDto, DailyTrainingPlan, DesktopPreferencesDto, FlyknifePlan, GuidedAnalysisStart, GuidedAnalysisSubmission, LearningProfile, LinkSessionStatus, OpeningRepertoire, SubscriptionDto, SyncAccountDto, WeeklyLearningReport } from "./platform";
 import { applyColorTheme, initialColorTheme, type ColorTheme } from "./theme";
 import { WorkspaceTabs, type WorkspacePanel } from "./WorkspaceTabs";
 import { WorkspaceLayoutSwitch } from "./WorkspaceLayoutSwitch";
@@ -74,6 +74,7 @@ import { hasReviewMarker, toggleReviewMarker } from "./reviewMarker";
 import type { ManualViewMode } from "./manualTrackModel";
 import { CandidatePreviewSteps } from "./CandidatePreviewSteps";
 import { ENGINE_ANALYSIS_HISTORY_LIMIT, beginAnalysisHistory, beginAnalysisStream, completeAnalysisStream, isAnalysisSessionCurrent, updateAnalysisHistory, updateAnalysisStream, type AnalysisHistoryBuffer, type AnalysisStreamBuffer } from "./analysisStream";
+import { auditResultText, classifyBookCandidateAudit, type BookCandidateAuditResult } from "./bookCandidateAudit";
 import { ACCOUNT_SKINS, normalizeSkinId, requiresSignInForSkinPatch, skinAssetFolder } from "./skinAccess";
 import { hasUpcomingBranchPoint } from "./branchNavigation";
 import { buildMindMapSvg } from "./mindMapExport";
@@ -85,6 +86,9 @@ import { FlyknifeDialog } from "./FlyknifeDialog";
 import { MasterLibraryDialog } from "./MasterLibraryDialog";
 import { bundledTheoryKnowledge } from "./theoryKnowledge.generated";
 import { ReviewWorkspace } from "./ReviewWorkspace";
+import { U10TrainingDialog } from "./U10TrainingDialog";
+import { UserManualDialog } from "./UserManualDialog";
+import userManualMarkdown from "../../../docs/USER_MANUAL.zh-CN.md?raw";
 
 
 const COMPACT_PANEL_RETURN_EVENT = "compact-panel-return";
@@ -105,10 +109,42 @@ const COMPACT_ENGINE_MIN_HEIGHT = 220;
 const COMPACT_ENGINE_DEFAULT_HEIGHT = 410;
 const COMPACT_ENGINE_MAX_HEIGHT = 720;
 const LEGACY_ENGINE_DEFAULTS_MIGRATION_KEY = "xiangqi:migrated-engine-defaults-v6";
+const ANALYSIS_PANEL_REOPEN_TOP_KEY = "xiangqi:analysis-panel-reopen-top";
+const ANALYSIS_PANEL_REOPEN_DEFAULT_TOP = 7;
+const ANALYSIS_PANEL_REOPEN_MIN_TOP = 7;
+const ANALYSIS_PANEL_REOPEN_HEIGHT = 132;
+const ANALYSIS_PANEL_REOPEN_DRAG_THRESHOLD = 6;
+const BOOK_CANDIDATE_AUDIT_LIMIT = 12;
+const BOOK_CANDIDATE_AUDIT_DEPTH = 18;
 const startingFen = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1";
 type EngineAnalysisGroup = { fen: string; name: string; lines: AnalysisLine[]; error?: string };
 type EngineAnalysisSnapshot = { fen: string; primaryEngineId: string; groups: Record<string, EngineAnalysisGroup>; busy?: boolean };
 type FloatingPanel = "engine" | "manual" | "cloud" | "link";
+type BookCandidateAuditRunState = {
+  status: "idle" | "running" | "done" | "error";
+  fen?: string;
+  message: string;
+  checked?: number;
+  total?: number;
+};
+
+export function clampAnalysisPanelReopenTop(top: number, viewportHeight: number, panelHeight = ANALYSIS_PANEL_REOPEN_HEIGHT) {
+  if (!Number.isFinite(top)) return ANALYSIS_PANEL_REOPEN_DEFAULT_TOP;
+  const maxTop = Math.max(ANALYSIS_PANEL_REOPEN_MIN_TOP, viewportHeight - panelHeight - 8);
+  return Math.round(Math.max(ANALYSIS_PANEL_REOPEN_MIN_TOP, Math.min(maxTop, top)));
+}
+
+function readAnalysisPanelReopenTop() {
+  if (typeof window === "undefined") return ANALYSIS_PANEL_REOPEN_DEFAULT_TOP;
+  try {
+    return clampAnalysisPanelReopenTop(
+      Number(localStorage.getItem(ANALYSIS_PANEL_REOPEN_TOP_KEY)),
+      window.innerHeight,
+    );
+  } catch {
+    return ANALYSIS_PANEL_REOPEN_DEFAULT_TOP;
+  }
+}
 
 export function linkMoveDisplayText(iccs?: string, notation?: string) {
   if (!iccs && !notation) return undefined;
@@ -407,6 +443,13 @@ export function analysisPassPlan(options: {
     quick: shouldRunQuickPass ? { searchMode: "time" as const, searchValue: QUICK_ANALYSIS_TIME_MS } : undefined,
     deep: { searchMode: configuredMode, searchValue: configuredValue },
   };
+}
+
+function analysisLimitText(mode: AnalysisOptions["searchMode"], value: number) {
+  if (mode === "depth") return `深度 ${value}`;
+  if (mode === "time") return `时间 ${(value / 1000).toFixed(1)}s`;
+  if (mode === "nodes") return `${value.toLocaleString()} 节点`;
+  return `深度 ${BOOK_CANDIDATE_AUDIT_DEPTH}`;
 }
 
 type LinkRegionRect = { x: number; y: number; width: number; height: number };
@@ -942,6 +985,7 @@ export default function App() {
   const [reviewModeOpen, setReviewModeOpen] = useState(false);
   const [candidateRailCollapsed, setCandidateRailCollapsed] = useState(false);
   const [analysisPanelCollapsed, setAnalysisPanelCollapsed] = useState(false);
+  const [analysisPanelReopenTop, setAnalysisPanelReopenTop] = useState(readAnalysisPanelReopenTop);
   const [isPlaying, setIsPlaying] = useState(false);
   const [positionEditorOpen, setPositionEditorOpen] = useState(false);
   const [linkSessionOpen, setLinkSessionOpen] = useState(false);
@@ -960,7 +1004,7 @@ export default function App() {
   const [ponderMove, setPonderMove] = useState<string | undefined>();
   const [engineRuntimeState, setEngineRuntimeState] = useState<EngineRuntimeState>("idle");
   const [desktopPreferences, setDesktopPreferences] = useState(defaultDesktopPreferences);
-  const [builtinOpeningBookManifest, setBuiltinOpeningBookManifest] = useState<BuiltinOpeningBookManifestDto>();
+  const [builtinOpeningBookManifest, setBuiltinOpeningBookManifest] = useState<BuiltinOpeningBookManifestDto>(FALLBACK_BUILTIN_OPENING_BOOK_MANIFEST);
   const [libraryCollapsed, setLibraryCollapsed] = useState(true);
   const [colorTheme, setColorTheme] = useState<ColorTheme>(() => initialColorTheme(chessPlatform.kind));
   const effectiveColorTheme: ColorTheme = desktopPreferences.layoutMode === "compact" ? "light" : "dark";
@@ -985,12 +1029,15 @@ export default function App() {
   const [theoryLibraryBusy, setTheoryLibraryBusy] = useState(false);
   const [theoryLibraryError, setTheoryLibraryError] = useState<string>();
   const [desktopDialog, setDesktopDialog] = useState<DesktopDialog>(null);
+  const [userManualOpen, setUserManualOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [appInfo, setAppInfo] = useState<AppInfoDto>();
   const [masterLibraryOpen, setMasterLibraryOpen] = useState(false);
   const [engineProbe, setEngineProbe] = useState<EngineProbeDto>();
   const [engineProfiles, setEngineProfiles] = useState<EngineProfileDto[]>([]);
   const [cloudCandidates, setCloudCandidates] = useState<CloudBookCandidate[]>([]);
+  const [bookCandidateAuditByMove, setBookCandidateAuditByMove] = useState<Record<string, BookCandidateAuditResult>>({});
+  const [bookCandidateAuditState, setBookCandidateAuditState] = useState<BookCandidateAuditRunState>({ status: "idle", message: "Pikafish 未验证" });
   const [cloudBookError, setCloudBookError] = useState<string>();
   const [cloudBookLoading, setCloudBookLoading] = useState(false);
   const [cloudBookVisible, setCloudBookVisible] = useState(false);
@@ -1043,6 +1090,13 @@ export default function App() {
   const [trainingGeneration, setTrainingGeneration] = useState<TrainingGenerationResultDto>();
   const [trainingSummary, setTrainingSummary] = useState<TrainingSummaryDto>();
   const [studySessions, setStudySessions] = useState<StudySessionDto[]>([]);
+  const [u10Start, setU10Start] = useState<GuidedAnalysisStart>();
+  const [u10Profile, setU10Profile] = useState<LearningProfile>();
+  const [u10DailyPlan, setU10DailyPlan] = useState<DailyTrainingPlan>();
+  const [u10WeeklyReport, setU10WeeklyReport] = useState<WeeklyLearningReport>();
+  const [u10Repertoire, setU10Repertoire] = useState<OpeningRepertoire>();
+  const [u10Busy, setU10Busy] = useState(false);
+  const [u10Error, setU10Error] = useState<string>();
   const [engineArenaBusy, setEngineArenaBusy] = useState(false);
   const [dialogBusy, setDialogBusy] = useState(false);
   const [online, setOnline] = useState(typeof navigator === "undefined" ? true : navigator.onLine);
@@ -1084,6 +1138,10 @@ export default function App() {
   const persistedPreferencesRef = useRef(defaultDesktopPreferences);
   const preferenceSaveQueue = useRef<Promise<void>>(Promise.resolve());
   const compactWindowDragRef = useRef<{ key: "engine" | "manual"; startX: number; startY: number; startPosition: { x: number; y: number }; bounds: { minX: number; maxX: number; minY: number; maxY: number }; moved: boolean } | undefined>(undefined);
+  const compactWindowSuppressClickRef = useRef<Record<"engine" | "manual", boolean>>({ engine: false, manual: false });
+  const bookCandidateAuditRevisionRef = useRef(0);
+  const analysisPanelReopenDragRef = useRef<{ startY: number; startTop: number; latestTop: number; moved: boolean } | undefined>(undefined);
+  const analysisPanelReopenSuppressClickRef = useRef(false);
   const compactManualResizeRef = useRef<{ startX: number; startWidth: number; maxWidth: number; detached: boolean; startPosition: { x: number; y: number } } | undefined>(undefined);
   const compactEngineResizeRef = useRef<{ startX: number; startY: number; startWidth: number; startHeight: number; maxWidth: number; maxHeight: number } | undefined>(undefined);
   const engineDivergenceDragRef = useRef<{ offsetX: number; offsetY: number } | undefined>(undefined);
@@ -1162,7 +1220,7 @@ export default function App() {
       .catch((error) => setNotice(friendlyError(error)));
     if (chessPlatform.kind === "desktop") {
       void chessPlatform.getAppInfo().then(setAppInfo).catch(() => undefined);
-      void chessPlatform.listBuiltinOpeningBooks().then(setBuiltinOpeningBookManifest).catch(() => undefined);
+      void chessPlatform.listBuiltinOpeningBooks().then(setBuiltinOpeningBookManifest).catch(() => setBuiltinOpeningBookManifest(FALLBACK_BUILTIN_OPENING_BOOK_MANIFEST));
       void chessPlatform.getDesktopPreferences().then((preferences) => {
         applyDesktopPreferences(preferences);
         void migrateLegacyEngineDefaultsOnce(preferences);
@@ -1902,6 +1960,26 @@ export default function App() {
       advantageText: formatOpeningBookGap(gap),
     }; }),
   ], [board.xqbCandidates, cloudCandidates]);
+  const activeBuiltinOpeningBook = useMemo(() => {
+    const books = builtinOpeningBookManifest.books;
+    return books.find((book) => book.id === desktopPreferences.activeBuiltinOpeningBookId)
+      ?? books.find((book) => book.id === builtinOpeningBookManifest.defaultBookId)
+      ?? books[0];
+  }, [builtinOpeningBookManifest, desktopPreferences.activeBuiltinOpeningBookId]);
+  const builtinOpeningBookReferenceStatus = activeBuiltinOpeningBook ? {
+    enabled: desktopPreferences.builtinOpeningBookEnabled ?? true,
+    verified: builtinOpeningBookManifest.vkeyVerification.status === "verified",
+    name: activeBuiltinOpeningBook.name,
+    shortName: activeBuiltinOpeningBook.shortName,
+    maxCandidatesPerPosition: activeBuiltinOpeningBook.maxCandidatesPerPosition,
+    note: builtinOpeningBookManifest.vkeyVerification.note,
+  } : undefined;
+  const activeBookCandidateAuditByMove = bookCandidateAuditState.fen === board.fen
+    ? bookCandidateAuditByMove
+    : {};
+  const activeBookCandidateAuditState = bookCandidateAuditState.fen === board.fen || bookCandidateAuditState.status === "running"
+    ? bookCandidateAuditState
+    : { status: "idle" as const, message: "Pikafish 未验证" };
   const compactEvaluationRows: CompactEvaluationRow[] = useMemo(() => orderedAnalysis.map((line) => ({
     id: `pv-${line.multipv}`,
     iccs: line.pv[0],
@@ -3279,6 +3357,107 @@ export default function App() {
     await previewCandidateLine(row.line, row.analyzedFen ?? analysisFen ?? boardRef.current.fen, row.source);
   }
 
+  async function auditBookCandidatesWithPikafish() {
+    const uniqueRows = compactBookRows.filter((row, index, rows) => rows.findIndex((item) => item.iccs === row.iccs) === index);
+    const rows = uniqueRows.slice(0, BOOK_CANDIDATE_AUDIT_LIMIT);
+    const fen = boardRef.current.fen;
+    const setAuditError = (message: string) => {
+      setBookCandidateAuditState({ status: "error", fen, message });
+      setNotice(message);
+    };
+    if (!boardRef.current.playable) {
+      setAuditError("当前局面不可分析，无法用 Pikafish 验证开局库候选");
+      return;
+    }
+    if (rows.length === 0) {
+      setAuditError("当前局面没有可验证的开局库候选");
+      return;
+    }
+    if (chessPlatform.kind !== "desktop") {
+      setAuditError("Pikafish 开局库验证仅支持桌面版");
+      return;
+    }
+    if (!enginePath.trim()) {
+      setAuditError("未配置 Pikafish，请先在引擎设置中选择可用引擎");
+      return;
+    }
+    if (analysisBusyRef.current) {
+      setAuditError("请先停止当前引擎分析，再验证开局库候选");
+      return;
+    }
+    if (reportBusy || engineSide !== "none" || engineThinking || isPlaying) {
+      setAuditError("当前引擎正被其他功能占用，暂不能验证开局库候选");
+      return;
+    }
+
+    const latestPreferences = desktopPreferencesRef.current;
+    const auditMode = latestPreferences.searchMode === "infinite" ? "depth" : latestPreferences.searchMode;
+    const auditValue = latestPreferences.searchMode === "infinite"
+      ? BOOK_CANDIDATE_AUDIT_DEPTH
+      : Math.max(1, latestPreferences.searchValue || searchValue || BOOK_CANDIDATE_AUDIT_DEPTH);
+    const auditLimit = analysisLimitText(auditMode, auditValue);
+    const effectiveThreads = Math.min(64, Math.max(1, latestPreferences.threads || threads));
+    const effectiveHashMb = Math.min(4096, Math.max(16, latestPreferences.hashMb || hashMb));
+    const moves = rows.map((row) => row.iccs);
+    const activeProfile = engineProfiles.find((profile) => profile.id === latestPreferences.activeEngineId || profile.executablePath === enginePath);
+    const engineName = activeProfile?.name ?? engineDisplayName(enginePath);
+    const revision = ++bookCandidateAuditRevisionRef.current;
+    const baseOptions = {
+      enginePath,
+      engineName: `${engineName} · 开局库验证`,
+      fen,
+      searchMode: auditMode,
+      searchValue: auditValue,
+      threads: effectiveThreads,
+      hashMb: effectiveHashMb,
+      serverUrl,
+      token,
+    };
+    setBookCandidateAuditByMove({});
+    setBookCandidateAuditState({
+      status: "running",
+      fen,
+      total: uniqueRows.length,
+      checked: rows.length,
+      message: `Pikafish 正在验证 ${rows.length}/${uniqueRows.length} 条 · ${auditLimit}`,
+    });
+    setNotice(`Pikafish 正在验证开局库候选：${rows.length}/${uniqueRows.length} 条`);
+    try {
+      const baselineLines = await chessPlatform.analyze({
+        ...baseOptions,
+        engineId: `book-audit-baseline-${revision}`,
+        analysisSessionId: 900_000_000 + revision * 2,
+        multipv: Math.min(BOOK_CANDIDATE_AUDIT_LIMIT, Math.max(3, rows.length)),
+      });
+      if (bookCandidateAuditRevisionRef.current !== revision || boardRef.current.fen !== fen) return;
+      const candidateLines = await chessPlatform.analyze({
+        ...baseOptions,
+        engineId: `book-audit-candidates-${revision}`,
+        analysisSessionId: 900_000_001 + revision * 2,
+        multipv: rows.length,
+        searchMoves: moves,
+      });
+      if (bookCandidateAuditRevisionRef.current !== revision || boardRef.current.fen !== fen) return;
+      const candidateLineByMove = new Map(candidateLines.map((line) => [line.pv[0], line]).filter((entry): entry is [string, AnalysisLine] => !!entry[0]));
+      const results = Object.fromEntries(rows.map((row) => [
+        row.iccs,
+        classifyBookCandidateAudit({
+          candidateMove: row.iccs,
+          baselineLines,
+          candidateLine: candidateLineByMove.get(row.iccs),
+        }),
+      ]));
+      const maxDepth = candidateLines.reduce((max, line) => Math.max(max, line.depth ?? 0), 0);
+      const doneMessage = `Pikafish 已验证 ${rows.length}/${uniqueRows.length} 条 · ${maxDepth ? `深度 ${maxDepth}` : auditLimit}`;
+      setBookCandidateAuditByMove(results);
+      setBookCandidateAuditState({ status: "done", fen, total: uniqueRows.length, checked: rows.length, message: doneMessage });
+      setNotice(doneMessage);
+    } catch (error) {
+      if (bookCandidateAuditRevisionRef.current !== revision) return;
+      setAuditError(`Pikafish 验证失败：${friendlyError(error)}`);
+    }
+  }
+
   async function runAnalysis(automatic = false, excludeMove?: string) {
     if (!boardRef.current.playable) {
       if (!automatic) setNotice("当前研究局面不可对弈，请先在局面编辑器中修正");
@@ -4249,6 +4428,130 @@ export default function App() {
     }
   }
 
+  async function startU10Analysis(nodeId?: string) {
+    if (chessPlatform.kind !== "desktop") {
+      setNotice("U10 引导拆棋需要在桌面版使用");
+      return;
+    }
+    if (!enginePath.trim()) {
+      setNotice("请先配置 Pikafish，再开始 U10 拆棋");
+      return;
+    }
+    setU10Busy(true);
+    setU10Error(undefined);
+    try {
+      const [start, profile, dailyPlan, weeklyReport, repertoire] = await Promise.all([
+        chessPlatform.startGuidedAnalysis(nodeId),
+        chessPlatform.getLearningProfile(),
+        chessPlatform.generateDailyTrainingPlan(),
+        chessPlatform.getWeeklyLearningReport(),
+        chessPlatform.inferOpeningRepertoire(),
+      ]);
+      setU10Start(start);
+      setU10Profile(profile);
+      setU10DailyPlan(dailyPlan);
+      setU10WeeklyReport(weeklyReport);
+      setU10Repertoire(repertoire);
+      setNotice("U10 拆棋已开始：提交前引擎答案保持隐藏");
+    } catch (error) {
+      setU10Error(friendlyError(error));
+      setNotice(friendlyError(error));
+    } finally {
+      setU10Busy(false);
+    }
+  }
+
+  async function submitU10Analysis(submission: GuidedAnalysisSubmission) {
+    if (!u10Start) throw new Error("拆棋会话尚未开始");
+    setU10Busy(true);
+    setU10Error(undefined);
+    try {
+      const lines = await chessPlatform.analyze({
+        enginePath,
+        fen: u10Start.session.fen,
+        searchMode: "depth",
+        searchValue: Math.min(22, Math.max(16, desktopPreferences.reportDepth)),
+        threads,
+        hashMb,
+        multipv: 3,
+        serverUrl,
+        token,
+      });
+      if (lines.length === 0) throw new Error("Pikafish 没有返回候选线路，请重试");
+      const task = trainingTasks.find((item) => item.gameId === u10Start.session.gameId && item.nodeId === u10Start.session.problemNodeId);
+      const submitted = await chessPlatform.submitGuidedAnalysis({
+        sessionId: u10Start.session.id,
+        submission,
+        lines,
+        taskId: task?.id,
+      });
+      setU10WeeklyReport(await chessPlatform.getWeeklyLearningReport());
+      setU10DailyPlan(await chessPlatform.generateDailyTrainingPlan());
+      return submitted;
+    } catch (error) {
+      const message = friendlyError(error);
+      setU10Error(message);
+      throw new Error(message);
+    } finally {
+      setU10Busy(false);
+    }
+  }
+
+  async function saveU10Profile(profile: LearningProfile) {
+    setU10Busy(true);
+    setU10Error(undefined);
+    try {
+      const saved = await chessPlatform.saveLearningProfile(profile);
+      setU10Profile(saved);
+      const [dailyPlan, repertoire] = await Promise.all([
+        chessPlatform.generateDailyTrainingPlan(),
+        chessPlatform.inferOpeningRepertoire(),
+      ]);
+      setU10DailyPlan(dailyPlan);
+      setU10Repertoire(repertoire);
+      setNotice("U10 学习档案已保存");
+    } catch (error) {
+      setU10Error(friendlyError(error));
+    } finally {
+      setU10Busy(false);
+    }
+  }
+
+  async function saveU10Variation(moves: string[]) {
+    if (!u10Start || moves.length === 0) return;
+    setU10Busy(true);
+    setU10Error(undefined);
+    try {
+      await stopEnginePlay();
+      await cancelRunningAnalysis(undefined, { forceBackendStop: true });
+      await cancelGameReportForStructureChange();
+      let next = normalizeBoardState(await chessPlatform.navigateTo(u10Start.session.startNodeId));
+      applyBoard(next);
+      for (const move of moves) {
+        await chessPlatform.previewLine(next.fen, [move]);
+        next = normalizeBoardState(await enqueueBoardOperation(() => chessPlatform.playMove(move)));
+        applyBoard(next);
+      }
+      if (next.currentNode) {
+        next = normalizeBoardState(await enqueueBoardOperation(() => chessPlatform.updateComment(next.currentNode!, "U10 拆棋变例：孩子独立预测线路")));
+        applyBoard(next);
+      }
+      setNotice("U10 临时线路已保存为普通变例；原主线未改变");
+    } catch (error) {
+      const message = friendlyError(error);
+      setU10Error(message);
+      throw new Error(message);
+    } finally {
+      setU10Busy(false);
+    }
+  }
+
+  function closeU10Analysis() {
+    setU10Start(undefined);
+    setU10Error(undefined);
+    void runAnalysis().catch(() => undefined);
+  }
+
   async function completeTrainingTask(taskId: string, completed: boolean) {
     try {
       await chessPlatform.completeTrainingTask(taskId, completed);
@@ -4330,6 +4633,7 @@ export default function App() {
       case "subscription": setDesktopDialog("subscription"); break;
       case "syncSettings": setDesktopDialog("syncSettings"); break;
       case "syncLogout": await logoutSync(); break;
+      case "userManual": setUserManualOpen(true); break;
       case "about":
         setAboutOpen(true);
         if (chessPlatform.kind === "desktop") {
@@ -4468,6 +4772,7 @@ export default function App() {
 
   function startCompactWindowDrag(key: "engine" | "manual", event: PointerEvent<HTMLElement>) {
     if (event.button !== 0) return;
+    const startedFromButton = !!(event.target as HTMLElement).closest("button");
     const windowPanel = event.currentTarget.closest<HTMLElement>(".compact-floating-panel");
     if (!windowPanel) return;
     const panelBounds = windowPanel.getBoundingClientRect();
@@ -4494,7 +4799,7 @@ export default function App() {
     window.addEventListener("pointermove", moveCompactWindowDragWindow);
     window.addEventListener("pointerup", stopCompactWindowDragWindow, { once: true });
     event.currentTarget.setPointerCapture(event.pointerId);
-    event.preventDefault();
+    if (!startedFromButton) event.preventDefault();
   }
 
   function moveCompactWindowDragWindow(event: globalThis.PointerEvent) {
@@ -4513,6 +4818,10 @@ export default function App() {
     const drag = compactWindowDragRef.current;
     if (drag?.moved) {
       setCompactDetachedPanels((panels) => ({ ...panels, [drag.key]: true }));
+      compactWindowSuppressClickRef.current[drag.key] = true;
+      window.setTimeout(() => {
+        compactWindowSuppressClickRef.current[drag.key] = false;
+      }, 0);
     }
     compactWindowDragRef.current = undefined;
     document.body.classList.remove("compact-panel-dragging");
@@ -4520,9 +4829,66 @@ export default function App() {
     window.removeEventListener("pointerup", stopCompactWindowDragWindow);
   }
 
+  function consumeCompactWindowDragClick(key: "engine" | "manual") {
+    if (!compactWindowSuppressClickRef.current[key]) return false;
+    compactWindowSuppressClickRef.current[key] = false;
+    return true;
+  }
+
   function stopCompactWindowDrag(event: PointerEvent<HTMLElement>) {
     stopCompactWindowDragWindow();
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  }
+
+  function startAnalysisPanelReopenDrag(event: PointerEvent<HTMLButtonElement>) {
+    if (event.button !== 0) return;
+    analysisPanelReopenDragRef.current = {
+      startY: event.clientY,
+      startTop: analysisPanelReopenTop,
+      latestTop: analysisPanelReopenTop,
+      moved: false,
+    };
+    document.body.classList.add("analysis-reopen-dragging");
+    window.addEventListener("pointermove", moveAnalysisPanelReopenDragWindow);
+    window.addEventListener("pointerup", stopAnalysisPanelReopenDragWindow, { once: true });
+  }
+
+  function moveAnalysisPanelReopenDragWindow(event: globalThis.PointerEvent) {
+    const drag = analysisPanelReopenDragRef.current;
+    if (!drag) return;
+    const deltaY = event.clientY - drag.startY;
+    if (Math.abs(deltaY) > ANALYSIS_PANEL_REOPEN_DRAG_THRESHOLD) drag.moved = true;
+    const nextTop = clampAnalysisPanelReopenTop(drag.startTop + deltaY, window.innerHeight);
+    drag.latestTop = nextTop;
+    setAnalysisPanelReopenTop(nextTop);
+    event.preventDefault();
+  }
+
+  function stopAnalysisPanelReopenDragWindow() {
+    const drag = analysisPanelReopenDragRef.current;
+    if (drag?.moved) {
+      analysisPanelReopenSuppressClickRef.current = true;
+      try {
+        localStorage.setItem(ANALYSIS_PANEL_REOPEN_TOP_KEY, String(drag.latestTop));
+      } catch {
+        // Best-effort UI preference.
+      }
+      window.setTimeout(() => {
+        analysisPanelReopenSuppressClickRef.current = false;
+      }, 0);
+    }
+    analysisPanelReopenDragRef.current = undefined;
+    document.body.classList.remove("analysis-reopen-dragging");
+    window.removeEventListener("pointermove", moveAnalysisPanelReopenDragWindow);
+    window.removeEventListener("pointerup", stopAnalysisPanelReopenDragWindow);
+  }
+
+  function reopenAnalysisPanel() {
+    if (analysisPanelReopenSuppressClickRef.current) {
+      analysisPanelReopenSuppressClickRef.current = false;
+      return;
+    }
+    void setAnalysisPanelVisibility(false);
   }
 
   function startCompactEngineResize(event: PointerEvent<HTMLDivElement>) {
@@ -4824,7 +5190,7 @@ export default function App() {
             <strong>引擎分析</strong>
             <span>{compactEngineCollapsed ? "已收起 · 点展开回到停靠区" : compactDetachedPanels.engine ? "浮动中 · 不占棋盘空间" : analysisIsStale ? "旧候选保留中 · 新局面正在更新" : "深度 / 分数 / 时间 / NPS / HF"}</span>
             {chessPlatform.kind === "desktop" && <button className="compact-window-toggle compact-window-popout" title="弹出为独立窗口，可拖到 App 外面" aria-label="弹出引擎分析独立窗口" onPointerDown={(event) => event.stopPropagation()} onClick={() => void openCompactFloatingPanel("engine")}><Maximize2 size={14}/><span>弹出</span></button>}
-            <button className="compact-window-toggle" title={compactEngineCollapsed ? "展开并停靠引擎分析" : "收起引擎分析"} aria-label={compactEngineCollapsed ? "展开并停靠引擎分析" : "收起引擎分析"} onPointerDown={(event) => event.stopPropagation()} onClick={() => toggleCompactPanelCollapsed("engine")}>{compactEngineCollapsed ? <ChevronDown size={16}/> : <X size={15}/>}</button>
+            <button type="button" className="compact-window-toggle" title={compactEngineCollapsed ? "展开并停靠引擎分析；按住可拖动位置" : "收起引擎分析"} aria-label={compactEngineCollapsed ? "展开并停靠引擎分析" : "收起引擎分析"} onPointerDown={(event) => { if (!compactEngineCollapsed) event.stopPropagation(); }} onClick={() => { if (consumeCompactWindowDragClick("engine")) return; toggleCompactPanelCollapsed("engine"); }}>{compactEngineCollapsed ? <ChevronDown size={16}/> : <X size={15}/>}</button>
           </div>
           {!compactEngineCollapsed && <>
             <div className="analysis-lines">
@@ -4848,7 +5214,7 @@ export default function App() {
         >
           {!compactManualCollapsed && <div className="compact-manual-width-resizer" title="左右拖动调整棋谱宽度" aria-label="调整棋谱宽度" onPointerDown={startCompactManualResize}/>}
           <header className="compact-drag-handle" onPointerDown={(event) => startCompactWindowDrag("manual", event)} onPointerUp={stopCompactWindowDrag}>
-            <button className="compact-window-toggle compact-window-toggle-leading" title={compactManualCollapsed ? "展开并停靠棋谱" : "收起棋谱"} aria-label={compactManualCollapsed ? "展开并停靠棋谱" : "收起棋谱"} onPointerDown={(event) => event.stopPropagation()} onClick={() => toggleCompactPanelCollapsed("manual")}>{compactManualCollapsed ? <ChevronDown size={16}/> : <X size={15}/>}</button>
+            <button type="button" className="compact-window-toggle compact-window-toggle-leading" title={compactManualCollapsed ? "展开并停靠棋谱；按住可拖动位置" : "收起棋谱"} aria-label={compactManualCollapsed ? "展开并停靠棋谱" : "收起棋谱"} onPointerDown={(event) => { if (!compactManualCollapsed) event.stopPropagation(); }} onClick={() => { if (consumeCompactWindowDragClick("manual")) return; toggleCompactPanelCollapsed("manual"); }}>{compactManualCollapsed ? <ChevronDown size={16}/> : <X size={15}/>}</button>
             <span><ClipboardList size={14}/><strong>棋谱</strong></span>
             <small title={currentEngineTitle}>{compactManualCollapsed ? "已收起 · 点展开回到停靠区" : compactDetachedPanels.manual ? `主引擎：${currentEngineVersionLabel} · 浮动中 · ${board.history.length} 着` : `主引擎：${currentEngineVersionLabel} · ${board.history.length} 着${board.continuation.length ? ` · 后续 ${board.continuation.length} 着` : ""}`}</small>
           </header>
@@ -4870,7 +5236,7 @@ export default function App() {
         <strong>{compactLayout ? "引擎分析" : "棋盘候选"}</strong>
         <span>{compactLayout ? compactEngineCollapsed ? "已收起 · 点击展开" : analysisIsStale ? "旧候选保留中 · 新局面正在更新" : "深度 / 分数 / 时间 / NPS / HF" : analysisIsStale ? "旧候选保留中 · 新局面正在更新" : `MultiPV ${multipv} · 点预览后手动下一步`}</span>
         {compactLayout
-          ? <button className="compact-window-toggle" title={compactEngineCollapsed ? "展开并停靠引擎分析" : "收起引擎分析"} aria-label={compactEngineCollapsed ? "展开并停靠引擎分析" : "收起引擎分析"} onClick={() => toggleCompactPanelCollapsed("engine")}>{compactEngineCollapsed ? <ChevronDown size={16}/> : <X size={15}/>}</button>
+          ? <button type="button" className="compact-window-toggle" title={compactEngineCollapsed ? "展开并停靠引擎分析" : "收起引擎分析"} aria-label={compactEngineCollapsed ? "展开并停靠引擎分析" : "收起引擎分析"} onClick={() => { if (consumeCompactWindowDragClick("engine")) return; toggleCompactPanelCollapsed("engine"); }}>{compactEngineCollapsed ? <ChevronDown size={16}/> : <X size={15}/>}</button>
           : <button className="panel-collapse-button" title="收起棋盘候选" aria-label="收起棋盘候选" onClick={() => void setCandidateRailVisibility(true)}><ChevronRight size={16}/></button>}
       </div>
       {compactLayout && <div className="compact-engine-strip" aria-label="简洁布局引擎状态">
@@ -5069,6 +5435,9 @@ export default function App() {
               bookLoading={cloudBookLoading}
               bookError={cloudBookError}
               bookRows={compactBookRows}
+              bookAuditByMove={activeBookCandidateAuditByMove}
+              bookAuditState={activeBookCandidateAuditState}
+              builtinBookStatus={builtinOpeningBookReferenceStatus}
               evaluationRows={compactEvaluationRows}
               evaluationLabel={evaluation?.label ?? "等待分析"}
               evaluationScore={evaluation?.scoreText ?? "--"}
@@ -5079,6 +5448,7 @@ export default function App() {
               evaluationCollapsed={floatingEvaluationCollapsed}
               onOpenSettings={() => chessPlatform.kind === "desktop" ? setDesktopDialog("engine") : setNotice("Web 版使用云端引擎，无本地引擎设置")}
               onToggleEvaluationCollapsed={() => void setEvaluationVisibility(!floatingEvaluationCollapsed)}
+              onAuditBookCandidates={() => void auditBookCandidatesWithPikafish()}
               onPlayBookMove={(iccs) => void playIccsMove(iccs)}
               onPlayEvaluationMove={(iccs) => void playIccsMove(iccs, analysisFen ?? board.fen)}
             />
@@ -5283,6 +5653,7 @@ export default function App() {
         onAnalyzeStudy={analyzeStudySession}
         onCompleteTraining={completeTrainingTask}
       />}
+      {userManualOpen && <UserManualDialog appVersion={appInfo?.version ?? "1.2.0"} markdown={userManualMarkdown} onClose={() => setUserManualOpen(false)}/>}
       {aboutOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setAboutOpen(false); }}>
         <section className="about-dialog" role="dialog" aria-modal="true" aria-labelledby="about-title">
           <header><span><Info size={18}/><strong id="about-title">关于棋研</strong></span><button className="tool-button" title="关闭" onClick={() => setAboutOpen(false)}><X size={16}/></button></header>
@@ -5298,6 +5669,21 @@ export default function App() {
           <footer><button onClick={() => setAboutOpen(false)}>关闭</button></footer>
         </section>
       </div>}
+      {u10Start && u10Profile && <U10TrainingDialog
+        start={u10Start}
+        profile={u10Profile}
+        dailyPlan={u10DailyPlan}
+        weeklyReport={u10WeeklyReport}
+        repertoire={u10Repertoire}
+        busy={u10Busy}
+        error={u10Error}
+        onClose={closeU10Analysis}
+        onCancel={(sessionId) => void chessPlatform.cancelGuidedAnalysis(sessionId)}
+        onPreview={(moves) => chessPlatform.previewLine(u10Start.session.fen, moves)}
+        onSubmit={submitU10Analysis}
+        onSaveProfile={saveU10Profile}
+        onSaveVariation={saveU10Variation}
+      />}
       {chessPlatform.kind === "desktop" && masterLibraryOpen && <MasterLibraryDialog
         account={syncAccount}
         listPlayers={(query, options) => chessPlatform.listMasterPlayers(query, options)}
@@ -5646,9 +6032,18 @@ export default function App() {
             onOpenTraining={() => setDesktopDialog("training")}
             onCompleteTraining={(taskId, completed) => void completeTrainingTask(taskId, completed)}
             onStudyIssue={(nodeId) => void startCoachStudy(nodeId)}
+            onStartU10={(nodeId) => void startU10Analysis(nodeId)}
           /> : <>
           {analysisPanelCollapsed && desktopPreferences.layoutMode !== "compact"
-            ? <button className="panel-collapse-button analysis-panel-reopen" title="展开局面分析" aria-label="展开局面分析" onClick={() => void setAnalysisPanelVisibility(false)}><ChevronLeft size={16}/></button>
+            ? <button
+                className="panel-collapse-button analysis-panel-reopen"
+                type="button"
+                title="拖动调整位置，点击展开局面分析"
+                aria-label="展开局面分析"
+                style={{ top: analysisPanelReopenTop } as CSSProperties}
+                onPointerDown={startAnalysisPanelReopenDrag}
+                onClick={reopenAnalysisPanel}
+              ><ChevronLeft size={16}/></button>
             : null}
           {(!analysisPanelCollapsed || desktopPreferences.layoutMode === "compact") && <>
             <CompactReferencePanels
@@ -5656,6 +6051,9 @@ export default function App() {
               bookLoading={cloudBookLoading}
               bookError={cloudBookError}
               bookRows={compactBookRows}
+              bookAuditByMove={activeBookCandidateAuditByMove}
+              bookAuditState={activeBookCandidateAuditState}
+              builtinBookStatus={builtinOpeningBookReferenceStatus}
               evaluationRows={compactEvaluationRows}
               evaluationLabel={evaluation?.label ?? "等待分析"}
               evaluationScore={evaluation?.scoreText ?? "--"}
@@ -5669,6 +6067,7 @@ export default function App() {
               onToggleCollapsed={() => setCloudBookCollapsed((collapsed) => !collapsed)}
               onToggleEvaluationCollapsed={() => void setEvaluationVisibility(!desktopPreferences.evaluationCollapsed)}
               onPopOut={chessPlatform.kind === "desktop" ? () => void openCompactFloatingPanel("cloud") : undefined}
+              onAuditBookCandidates={() => void auditBookCandidatesWithPikafish()}
               onPlayBookMove={(iccs) => void playIccsMove(iccs)}
               onPlayEvaluationMove={(iccs) => void playIccsMove(iccs, analysisFen ?? board.fen)}
             />
@@ -5906,7 +6305,7 @@ export default function App() {
       {skinShopOpen && (
         <SkinShopDialog preferences={desktopPreferences} signedIn={syncAccount.status === "signedIn"} onClose={() => { setSkinHoverPreview(undefined); setSkinShopOpen(false); }} onPreview={setSkinHoverPreview} onEquip={(patch) => void updateBoardSkin(patch)}/>
       )}
-      {chessPlatform.kind === "desktop" && desktopPreferences.layoutMode !== "compact" && (desktopPreferences.cloudBookEnabled || !!board.xqbCandidates?.length) && cloudBookVisible && <aside
+      {chessPlatform.kind === "desktop" && desktopPreferences.layoutMode !== "compact" && (desktopPreferences.cloudBookEnabled || !!board.xqbCandidates?.length || desktopPreferences.builtinOpeningBookEnabled) && cloudBookVisible && <aside
         className={`cloud-book-float ${cloudBookCollapsed ? "collapsed" : ""}`}
         aria-label="开局库候选"
         style={{ ...(cloudBookPosition ? { ...cloudBookPosition, right: "auto", bottom: "auto" } : {}), height: cloudBookCollapsed ? undefined : cloudBookHeight } as CSSProperties}
@@ -5914,24 +6313,30 @@ export default function App() {
         <div className="cloud-book-float-header" onPointerDown={startCloudBookDrag} onPointerMove={moveCloudBookDrag} onPointerUp={stopCloudBookDrag}>
           <span><GripVertical size={15}/><BookOpen size={15}/><strong>开局库候选</strong></span>
           <small>{cloudBookLoading ? "查询中…" : cloudBookError ?? `${compactBookRows.length} 个候选`}</small>
+          <button type="button" title="用 Pikafish 验证开局库候选" aria-label="Pikafish 验证开局库候选" disabled={activeBookCandidateAuditState.status === "running"} onPointerDown={(event) => event.stopPropagation()} onClick={() => void auditBookCandidatesWithPikafish()}><Activity size={16}/></button>
           <button type="button" title="上一步（只浏览，不删除棋谱）" aria-label="上一步（只浏览，不删除棋谱）" disabled={!board.currentNode} onPointerDown={(event) => event.stopPropagation()} onClick={() => void goPrevious()}><ChevronLeft size={16}/></button>
           <button type="button" title="下一步" aria-label="下一步" disabled={!preferredContinuation(board)} onPointerDown={(event) => event.stopPropagation()} onClick={() => void goNext()}><ChevronRight size={16}/></button>
           <button type="button" title={cloudBookCollapsed ? "展开云库" : "折叠云库"} aria-label={cloudBookCollapsed ? "展开云库" : "折叠云库"} onPointerDown={(event) => event.stopPropagation()} onClick={() => setCloudBookCollapsed((collapsed) => !collapsed)}><ChevronDown size={16}/></button>
           <button type="button" title="关闭云库面板" aria-label="关闭云库面板" onPointerDown={(event) => event.stopPropagation()} onClick={() => setCloudBookVisible(false)}><X size={16}/></button>
         </div>
         {!cloudBookCollapsed && <div className="xqb-candidates cloud-book-candidate-list">
-          {compactBookRows.map((candidate) => <button key={candidate.id} onClick={() => void playIccsMove(candidate.iccs)} title={[candidate.notation, candidate.scoreText, candidate.advantageText, candidate.winRateText === "--" ? undefined : `胜率 ${candidate.winRateText}`, candidate.detail, candidate.source].filter(Boolean).join(" · ")}>
-            <strong>{candidate.notation}</strong><span>{candidate.scoreText}</span>
+          {activeBookCandidateAuditState.status !== "idle" && <p className={`book-audit-status ${activeBookCandidateAuditState.status}`}>{activeBookCandidateAuditState.message}</p>}
+          {compactBookRows.map((candidate) => {
+            const audit = activeBookCandidateAuditByMove[candidate.iccs];
+            const auditText = auditResultText(audit);
+            return <button key={candidate.id} onClick={() => void playIccsMove(candidate.iccs)} title={[candidate.notation, candidate.scoreText, candidate.advantageText, audit?.note, candidate.winRateText === "--" ? undefined : `胜率 ${candidate.winRateText}`, candidate.detail, candidate.source].filter(Boolean).join(" · ")}>
+            <strong>{candidate.notation}</strong><span className={audit ? `cloud-book-audit book-audit-${audit.status}` : ""}>{auditText ?? candidate.scoreText}</span>
             {candidate.distribution ? <span className="xqb-distribution" aria-label={`胜 ${candidate.distribution.redWin}% ，和 ${candidate.distribution.draw}% ，负 ${candidate.distribution.blackWin}%`}><i className="red" style={{ width: `${candidate.distribution.redWin}%` }}>{candidate.distribution.redWin}%</i><i className="draw" style={{ width: `${candidate.distribution.draw}%` }}>{candidate.distribution.draw}%</i><i className="black" style={{ width: `${candidate.distribution.blackWin}%` }}>{candidate.distribution.blackWin}%</i></span> : <small>{candidate.winRateText === "--" ? "云库候选" : `胜率 ${candidate.winRateText}`}</small>}
-            <small>{candidate.advantageText ? `${candidate.advantageText} · ` : ""}{candidate.sampleCount?.toLocaleString() ?? "云库"}{candidate.detail ? ` · ${candidate.detail}` : ` · ${candidate.source}`}</small>
-          </button>)}
-          {!cloudBookLoading && compactBookRows.length === 0 && <p className="cloud-book-status">{cloudBookError ? "本局面暂时无法从云库读取候选" : "当前局面暂无开局库候选"}</p>}
+            <small>{auditText ? `${candidate.scoreText} · ` : ""}{candidate.advantageText ? `${candidate.advantageText} · ` : ""}{candidate.sampleCount?.toLocaleString() ?? "云库"}{candidate.detail ? ` · ${candidate.detail}` : ` · ${candidate.source}`}</small>
+          </button>;
+          })}
+          {!cloudBookLoading && compactBookRows.length === 0 && <p className="cloud-book-status">{cloudBookError ? "本局面暂时无法从云库读取候选" : activeBookCandidateAuditState.status === "error" ? activeBookCandidateAuditState.message : desktopPreferences.builtinOpeningBookEnabled ? "内嵌库待 vkey 验证，暂不显示推荐" : "当前局面暂无开局库候选"}</p>}
         </div>}
         {!cloudBookCollapsed && (
           <div className="cloud-book-resize-handle" title="上下拖动调整云库面板高度" onPointerDown={startCloudBookResize} onPointerMove={moveCloudBookResize} onPointerUp={stopCloudBookResize}/>
         )}
       </aside>}
-      {chessPlatform.kind === "desktop" && desktopPreferences.layoutMode !== "compact" && (desktopPreferences.cloudBookEnabled || !!board.xqbCandidates?.length) && !cloudBookVisible && <button className="cloud-book-reopen" title="打开开局库面板" onClick={() => setCloudBookVisible(true)}><BookOpen size={15}/>打开开局库</button>}
+      {chessPlatform.kind === "desktop" && desktopPreferences.layoutMode !== "compact" && (desktopPreferences.cloudBookEnabled || !!board.xqbCandidates?.length || desktopPreferences.builtinOpeningBookEnabled) && !cloudBookVisible && <button className="cloud-book-reopen" title="打开开局库面板" onClick={() => setCloudBookVisible(true)}><BookOpen size={15}/>打开开局库</button>}
       {reportDialogOpen && reportPresentation && <GameReportDialog
         report={reportPresentation}
         currentNode={board.currentNode}

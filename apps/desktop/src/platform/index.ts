@@ -3,8 +3,9 @@ import { listen } from "@tauri-apps/api/event";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { webDatabase, type SyncOperation, type WebGameRecord } from "./indexedDb";
-import { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH, DEFAULT_BUILTIN_OPENING_BOOK_ID } from "./types";
+import { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH, FALLBACK_BUILTIN_OPENING_BOOK_MANIFEST } from "./types";
 import type { AnalysisLine, AnalysisOptions, AppInfoDto, BoardState, BuiltinOpeningBookManifestDto, CaptureSource, ChessPlatform, CloudBookCandidate, DesktopPreferencesDto, EngineArenaOptionsDto, EngineArenaResultDto, EngineMoveResult, EnginePlayOptions, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, ExportFormat, FlyknifeCandidate, FlyknifePlan, FlyknifeTemplate, FlyknifeTopic, GameReportDatasetDto, GameReportOptionsDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, GenerateFlyknifeRequest, LibraryFolder, LinkAutoSide, LinkObservation, LinkSessionStatus, MasterGameSummaryDto, MasterPlayerDto, MasterStyleHintDto, MasterStyleImportResultDto, MasterStyleProfileDto, PreviewLineStep, ReplayExportScope, StartLinkSessionRequest, StudySessionDto, SubscriptionDto, SyncAccountDto, SyncResult, TheoryCardDto, TheoryCardFeedbackDto, TheoryLibraryDto, TrainingGenerationResultDto, TrainingSummaryDto, TrainingTaskDto } from "./types";
+import type { DailyTrainingPlan, GuidedAnalysisStart, GuidedAnalysisSubmission, GuidedAnalysisSubmissionResult, GuidedEngineLine, LearningProfile, OpeningRepertoire, WeeklyLearningReport } from "./types";
 
 type WebGameInstance = {
   stateJson(): string;
@@ -158,6 +159,14 @@ class DesktopPlatform implements ChessPlatform {
   openMasterGame(gameId: string) { return invoke<Partial<BoardState>>("open_master_game", { gameId }); }
   listTrainingTasks() { return invoke<TrainingTaskDto[]>("list_training_tasks"); }
   generateTrainingTasks() { return invoke<TrainingGenerationResultDto>("generate_training_tasks"); }
+  getLearningProfile() { return invoke<LearningProfile>("get_learning_profile"); }
+  saveLearningProfile(profile: LearningProfile) { return invoke<LearningProfile>("save_learning_profile", { profile }); }
+  startGuidedAnalysis(nodeId?: string) { return invoke<GuidedAnalysisStart>("start_guided_analysis", { nodeId: nodeId ?? null }); }
+  submitGuidedAnalysis(request: { sessionId: string; submission: GuidedAnalysisSubmission; lines: GuidedEngineLine[]; taskId?: string; parentNote?: string }) { return invoke<GuidedAnalysisSubmissionResult>("submit_guided_analysis", { request }); }
+  cancelGuidedAnalysis(sessionId: string) { return invoke<void>("cancel_guided_analysis", { sessionId }); }
+  generateDailyTrainingPlan() { return invoke<DailyTrainingPlan>("generate_daily_training_plan"); }
+  getWeeklyLearningReport() { return invoke<WeeklyLearningReport>("get_weekly_learning_report"); }
+  inferOpeningRepertoire() { return invoke<OpeningRepertoire>("infer_opening_repertoire_command"); }
   getTrainingSummary() { return invoke<TrainingSummaryDto>("get_training_summary"); }
   listStudySessions() { return invoke<StudySessionDto[]>("list_study_sessions"); }
   saveStudySession(reflection: string, tags: string[]) { return invoke<StudySessionDto>("save_study_session", { reflection, tags }); }
@@ -381,13 +390,7 @@ class WebPlatform implements ChessPlatform {
   async getDesktopPreferences(): Promise<DesktopPreferencesDto> { throw new Error("Web 端不支持桌面偏好设置"); }
   async saveDesktopPreferences(): Promise<DesktopPreferencesDto> { throw new Error("Web 端不支持桌面偏好设置"); }
   async listBuiltinOpeningBooks(): Promise<BuiltinOpeningBookManifestDto> {
-    return {
-      version: "web",
-      defaultBookId: DEFAULT_BUILTIN_OPENING_BOOK_ID,
-      internalUseOnly: true,
-      vkeyVerification: { status: "unverified", note: "Web 端不使用内嵌本地 pfBook。" },
-      books: [],
-    };
+    return FALLBACK_BUILTIN_OPENING_BOOK_MANIFEST;
   }
   async chooseEngineExecutable(): Promise<string | undefined> { throw new Error("Web 端不支持选择本地引擎"); }
   async probeEngine(): Promise<EngineProbeDto> { throw new Error("Web 端不运行本地引擎"); }
@@ -494,6 +497,14 @@ class WebPlatform implements ChessPlatform {
   async generateGameReport(): Promise<GameReportDatasetDto> { throw new Error("Web 端不支持本地整局分析报告"); }
   async listTrainingTasks(): Promise<TrainingTaskDto[]> { throw new Error("Web 端暂不支持训练任务"); }
   async generateTrainingTasks(): Promise<TrainingGenerationResultDto> { throw new Error("Web 端暂不支持训练任务"); }
+  async getLearningProfile(): Promise<LearningProfile> { throw new Error("Web 端暂不支持 U10 学习档案"); }
+  async saveLearningProfile(): Promise<LearningProfile> { throw new Error("Web 端暂不支持 U10 学习档案"); }
+  async startGuidedAnalysis(): Promise<GuidedAnalysisStart> { throw new Error("Web 端暂不支持 U10 拆棋"); }
+  async submitGuidedAnalysis(): Promise<GuidedAnalysisSubmissionResult> { throw new Error("Web 端暂不支持 U10 拆棋"); }
+  async cancelGuidedAnalysis(): Promise<void> { throw new Error("Web 端暂不支持 U10 拆棋"); }
+  async generateDailyTrainingPlan(): Promise<DailyTrainingPlan> { throw new Error("Web 端暂不支持 U10 训练计划"); }
+  async getWeeklyLearningReport(): Promise<WeeklyLearningReport> { throw new Error("Web 端暂不支持 U10 周报"); }
+  async inferOpeningRepertoire(): Promise<OpeningRepertoire> { throw new Error("Web 端暂不支持 U10 布局画像"); }
   async getTrainingSummary(): Promise<TrainingSummaryDto> { throw new Error("Web 端暂不支持训练总结"); }
   async listStudySessions(): Promise<StudySessionDto[]> { throw new Error("Web 端暂不支持训练总结"); }
   async saveStudySession(): Promise<StudySessionDto> { throw new Error("Web 端暂不支持训练总结"); }
@@ -776,5 +787,5 @@ class WebPlatform implements ChessPlatform {
 
 const tauriAvailable = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 export const chessPlatform: ChessPlatform = tauriAvailable ? new DesktopPlatform() : new WebPlatform();
-export { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH, DEFAULT_BUILTIN_OPENING_BOOK_ID } from "./types";
-export type { AnalysisLine, AnalysisOptions, AppInfoDto, BoardState, BranchCoachInsightDto, BuiltinOpeningBookDto, BuiltinOpeningBookManifestDto, BuiltinOpeningBookVerificationDto, CaptureSource, ChessPlatform, CloudBookCandidate, DesktopPreferencesDto, EngineArenaGameDto, EngineArenaOptionsDto, EngineArenaResultDto, EngineArenaScoreDto, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, EngineRuntimeState, ExportFormat, FlyknifeCandidate, FlyknifePlan, FlyknifeSide, FlyknifeStepAnnotation, FlyknifeStepRole, FlyknifeTemplate, FlyknifeTopic, GenerateFlyknifeRequest, GameReportDatasetDto, GameReportOptionsDto, GameReportPositionDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, LegacySkinId, LibraryFolder, LinkAutoSide, LinkMode, LinkMoveDetail, LinkObservation, LinkSessionState, LinkSessionStatus, ManualTreeNode, ManualViewMode, MasterGameDetailDto, MasterGameSummaryDto, MasterPlayerDto, MasterStyleHintDto, MasterStyleImportResultDto, MasterStyleProfileDto, MasterStyleTheoryCardRefDto, MoveCoachInsightDto, MoveItem, OpeningBookHitDto, Piece, PreviewLineStep, QualityGrade, RecognitionMode, ReplayExportScope, ReportPhase, ReportSidePresentationDto, RuleMode, Side, SkinFolder, SkinId, StartLinkSessionRequest, StudySessionDto, SubscriptionDto, SyncAccountDto, SyncResult, TheoryCardDto, TheoryCardFeedbackDto, TheoryLessonDto, TheoryLibraryDto, TheoryPhase, TrainingGenerationResultDto, TrainingSummaryDto, TrainingTaskDto, WeaknessStatDto, WorkspaceLayoutMode, XqbCandidate } from "./types";
+export { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH, DEFAULT_BUILTIN_OPENING_BOOK_ID, FALLBACK_BUILTIN_OPENING_BOOK_MANIFEST } from "./types";
+export type { AnalysisLine, AnalysisOptions, AppInfoDto, BoardState, BranchCoachInsightDto, BuiltinOpeningBookDto, BuiltinOpeningBookManifestDto, BuiltinOpeningBookVerificationDto, CaptureSource, ChessPlatform, CloudBookCandidate, DailyTrainingPlan, DesktopPreferencesDto, EngineArenaGameDto, EngineArenaOptionsDto, EngineArenaResultDto, EngineArenaScoreDto, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, EngineRuntimeState, ExportFormat, FlyknifeCandidate, FlyknifePlan, FlyknifeSide, FlyknifeStepAnnotation, FlyknifeStepRole, FlyknifeTemplate, FlyknifeTopic, GenerateFlyknifeRequest, GameReportDatasetDto, GameReportOptionsDto, GameReportPositionDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, GuidedAnalysisResult, GuidedAnalysisSession, GuidedAnalysisStart, GuidedAnalysisSubmission, GuidedAnalysisSubmissionResult, GuidedEngineLine, LearningProfile, LegacySkinId, LibraryFolder, LinkAutoSide, LinkMode, LinkMoveDetail, LinkObservation, LinkSessionState, LinkSessionStatus, ManualTreeNode, ManualViewMode, MasterGameDetailDto, MasterGameSummaryDto, MasterPlayerDto, MasterStyleHintDto, MasterStyleImportResultDto, MasterStyleProfileDto, MasterStyleTheoryCardRefDto, MoveCoachInsightDto, MoveItem, OpeningBookHitDto, OpeningRepertoire, Piece, PreviewLineStep, QualityGrade, RecognitionMode, ReplayExportScope, ReportPhase, ReportSidePresentationDto, RuleMode, Side, SkinFolder, SkinId, StartLinkSessionRequest, StudySessionDto, SubscriptionDto, SyncAccountDto, SyncResult, TheoryCardDto, TheoryCardFeedbackDto, TheoryLessonDto, TheoryLibraryDto, TheoryPhase, TrainingAttempt, TrainingGenerationResultDto, TrainingSummaryDto, TrainingTaskDto, WeaknessStatDto, WeeklyLearningReport, WorkspaceLayoutMode, XqbCandidate } from "./types";

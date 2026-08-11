@@ -309,6 +309,57 @@ export type BuiltinOpeningBookManifestDto = {
   vkeyVerification: BuiltinOpeningBookVerificationDto;
   books: BuiltinOpeningBookDto[];
 };
+export const FALLBACK_BUILTIN_OPENING_BOOK_MANIFEST: BuiltinOpeningBookManifestDto = {
+  version: "2026-08-11-study-v1",
+  defaultBookId: DEFAULT_BUILTIN_OPENING_BOOK_ID,
+  internalUseOnly: true,
+  vkeyVerification: {
+    status: "unverified",
+    note: "FEN to pfBook vkey is not verified yet; realtime pfBook candidates are hidden.",
+    expectedStartingVkey: 7101337512282506414,
+  },
+  books: [
+    {
+      id: "learning-top3",
+      name: "学习精选 Top3",
+      shortName: "学习精选",
+      kind: "learning",
+      fileName: "02_learning_top3.pfBook",
+      description: "每个局面最多保留 3 个候选，默认用于孩子复盘和背布局。",
+      rowCount: 2148653,
+      positionCount: 2120232,
+      maxCandidatesPerPosition: 3,
+      sha256: "9aa012a23970cc7347d9e38a8ccea68161d61c0715de177090680483bd0efe20",
+      default: true,
+    },
+    {
+      id: "complete-compatible",
+      name: "完整兼容库",
+      shortName: "完整库",
+      kind: "complete",
+      fileName: "01_complete_compatible.pfBook",
+      description: "覆盖优先，适合给软件或引擎加载，候选分支较多。",
+      rowCount: 2149843,
+      positionCount: 2120232,
+      maxCandidatesPerPosition: 32,
+      sha256: "8337fff4f7f815e56c509df58bd28458dcf3f8c8a5f4f4428013e6a1c2dca361",
+      default: false,
+    },
+    {
+      id: "obk-observation",
+      name: "obk 独有观察库",
+      shortName: "观察库",
+      kind: "observation",
+      fileName: "04_obk_unique_observation.pfBook",
+      description: "只含徐风依旧 obk 的独有安全补充，用于研究，不默认混入学习主线。",
+      rowCount: 68036,
+      positionCount: 67269,
+      maxCandidatesPerPosition: 19,
+      sha256: "2fc8e1108ea60773ccb504d213d2d43c4c3368ab6a515ffca845c9e76c43d06a",
+      default: false,
+    },
+  ],
+};
 export type DesktopPreferencesDto = {
   enginePath: string;
   threads: number;
@@ -414,6 +465,106 @@ export type TrainingGenerationResultDto = {
   tasks: TrainingTaskDto[];
   criticalCount: number;
   reinforcementCount: number;
+};
+export type LearningProfile = {
+  id: string;
+  childName: string;
+  level: string;
+  ageGroup: "U10" | string;
+  sessionMinutes: number;
+  coachMode: string;
+  cycleWeeks: number;
+  personalRatio: number;
+  thematicRatio: number;
+  currentWeek: number;
+  createdAt: string;
+  updatedAt: string;
+};
+export type GuidedAnalysisSubmission = {
+  threats: string;
+  forcingMoves: string;
+  worstPiece: string;
+  candidates: string[];
+  chosenMove: string;
+  predictedLine: string[];
+  confidence: number;
+  elapsedSeconds: number;
+  hintsUsed: number;
+};
+export type GuidedAnalysisSession = {
+  id: string;
+  gameId: string;
+  problemNodeId?: string;
+  startNodeId?: string;
+  reportSignature: string;
+  fen: string;
+  phase: ReportPhase | string;
+  status: "thinking" | "submitted" | "cancelled" | string;
+  answerHidden: boolean;
+  submission?: GuidedAnalysisSubmission;
+  resultKind?: string;
+  score?: number;
+  resultJson?: string;
+  startedAt: string;
+  submittedAt?: string;
+};
+export type GuidedEngineLine = Pick<AnalysisLine, "depth" | "scoreCp" | "mate" | "multipv" | "notation" | "pv">;
+export type GuidedAnalysisResult = {
+  sessionId: string;
+  resultKind: "correct" | "direction" | "missedCounterplay" | "principle" | string;
+  resultLabel: "计算正确" | "方向正确" | "漏算反击" | "原则问题" | string;
+  score: number;
+  chosenRank?: number;
+  missedCounterplay: boolean;
+  scoreCp?: number;
+  mate?: number;
+  lines: GuidedEngineLine[];
+  theorySignals: string[];
+  trainingAdvice: string;
+};
+export type TrainingAttempt = {
+  id: string;
+  taskId: string;
+  sessionId?: string;
+  submission: GuidedAnalysisSubmission;
+  score: number;
+  resultKind: string;
+  parentNote: string;
+  reviewRound: number;
+  nextReviewAt?: string;
+  mastered: boolean;
+  createdAt: string;
+};
+export type GuidedAnalysisStart = { session: GuidedAnalysisSession; board: BoardState };
+export type GuidedAnalysisSubmissionResult = { session: GuidedAnalysisSession; result: GuidedAnalysisResult; attempt?: TrainingAttempt };
+export type DailyTrainingPlan = {
+  date: string;
+  week: number;
+  phaseTitle: string;
+  totalMinutes: number;
+  personalRatio: number;
+  thematicRatio: number;
+  segments: Array<{ key: string; title: string; minutes: number; items: Array<{ taskId?: string; source: string; title: string; minutes: number; due: boolean }> }>;
+};
+export type WeeklyLearningReport = {
+  weekStart: string;
+  weekEnd: string;
+  attempts: number;
+  averageScore?: number;
+  hintFreeRate?: number;
+  averageSeconds?: number;
+  masteredTasks: number;
+  resultCounts: Record<string, number>;
+  weakTags: string[];
+  parentSummary: string;
+  nextFocus: string;
+};
+export type OpeningRepertoire = {
+  sampledGames: number;
+  red: Array<{ name: string; games: number }>;
+  black: Array<{ name: string; games: number }>;
+  enoughData: boolean;
+  note: string;
 };
 export type StudySessionDto = {
   id: string;
@@ -580,6 +731,14 @@ export interface ChessPlatform {
   openMasterGame(gameId: string): Promise<Partial<BoardState>>;
   listTrainingTasks(): Promise<TrainingTaskDto[]>;
   generateTrainingTasks(): Promise<TrainingGenerationResultDto>;
+  getLearningProfile(): Promise<LearningProfile>;
+  saveLearningProfile(profile: LearningProfile): Promise<LearningProfile>;
+  startGuidedAnalysis(nodeId?: string): Promise<GuidedAnalysisStart>;
+  submitGuidedAnalysis(request: { sessionId: string; submission: GuidedAnalysisSubmission; lines: GuidedEngineLine[]; taskId?: string; parentNote?: string }): Promise<GuidedAnalysisSubmissionResult>;
+  cancelGuidedAnalysis(sessionId: string): Promise<void>;
+  generateDailyTrainingPlan(): Promise<DailyTrainingPlan>;
+  getWeeklyLearningReport(): Promise<WeeklyLearningReport>;
+  inferOpeningRepertoire(): Promise<OpeningRepertoire>;
   getTrainingSummary(): Promise<TrainingSummaryDto>;
   listStudySessions(): Promise<StudySessionDto[]>;
   saveStudySession(reflection: string, tags: string[]): Promise<StudySessionDto>;

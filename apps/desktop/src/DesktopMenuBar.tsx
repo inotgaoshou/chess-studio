@@ -57,6 +57,7 @@ export type MenuCommand =
   | "syncSettings"
   | "subscription"
   | "syncLogout"
+  | "userManual"
   | "about";
 
 export type SyncAccountStatus = "unbound" | "signedOut" | "signedIn" | "expired";
@@ -259,6 +260,7 @@ export function DesktopMenuBar({
       <details open={openMenu === "help"}>
         {summary("help", "帮助")}
         {openMenu === "help" && <div className="menu-popup">
+          <MenuItem command="userManual" execute={execute} close={close} title="查看复盘、拆棋、棋理与开局训练方法"><BookOpen size={14}/>使用手册</MenuItem>
           <MenuItem command="about" execute={execute} close={close} title="查看软件版本、构建时间和运行平台"><Info size={14}/>关于棋研{appVersion ? ` · v${appVersion}` : ""}</MenuItem>
         </div>}
       </details>

@@ -9,6 +9,7 @@ mod manual_pdf;
 mod opening_book;
 mod pdf_report;
 mod pfbook_opening_book;
+mod u10_learning;
 mod xqb_opening_book;
 
 use std::collections::{BTreeMap, HashMap};
@@ -33,8 +34,9 @@ use link_core::{
 use local_store::{
     AnalysisSummary, DesktopPreferences, EngineProfile, FlyknifePlan, FlyknifeStepAnnotation,
     ImportedGame, ImportedMasterStyleProfile, ImportedMasterStyleSample, LibraryFolder, LocalGame,
-    LocalStore, MasterStyleHint, MasterStyleProfile, StudySession, SyncAccountBinding, TheoryCard,
-    TheoryCardFeedback, TheoryLesson, TrainingTask, WeaknessStat,
+    GuidedAnalysisSession, GuidedAnalysisSubmission, LearningProfile, LocalStore, MasterStyleHint,
+    MasterStyleProfile, StudySession, SyncAccountBinding, TheoryCard, TheoryCardFeedback,
+    TheoryLesson, TrainingAttempt, TrainingTask, WeaknessStat,
 };
 use manual_format::{
     ManualDocument, ManualFormat, ManualMetadata, detect_format, export_chinese_text,
@@ -56,6 +58,11 @@ use xiangqi_core::{
     STARTING_FEN, Square,
 };
 use xiangqi_manual::{ManualTree, MoveNode};
+use u10_learning::{
+    DailyTrainingPlanDto, GuidedAnalysisResultDto, GuidedEngineLine, OpeningRepertoireDto,
+    OpeningSample, WeeklyLearningReportDto, classify_submission, daily_plan,
+    infer_opening_repertoire, weekly_report,
+};
 
 const BUILTIN_ENGINE_PATH: &str = "builtin:pikafish";
 const BUILTIN_FAIRY_ENGINE_PATH: &str = "builtin:fairy-stockfish";
@@ -8279,6 +8286,332 @@ fn list_coach_reports(state: State<'_, DesktopState>) -> Result<Vec<GameReportDa
         .collect())
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SubmitGuidedAnalysisRequest {
+    session_id: Uuid,
+    submission: GuidedAnalysisSubmission,
+    lines: Vec<GuidedEngineLine>,
+    task_id: Option<Uuid>,
+    #[serde(default)]
+    parent_note: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GuidedAnalysisStartDto {
+    session: GuidedAnalysisSession,
+    board: BoardDto,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GuidedAnalysisSubmissionDto {
+    session: GuidedAnalysisSession,
+    result: GuidedAnalysisResultDto,
+    attempt: Option<TrainingAttempt>,
+}
+
+#[tauri::command]
+fn get_learning_profile(state: State<'_, DesktopState>) -> Result<LearningProfile, String> {
+    state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?
+        .store
+        .learning_profile()
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn save_learning_profile(
+    profile: LearningProfile,
+    state: State<'_, DesktopState>,
+) -> Result<LearningProfile, String> {
+    state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?
+        .store
+        .save_learning_profile(&profile)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn start_guided_analysis(
+    node_id: Option<Uuid>,
+    state: State<'_, DesktopState>,
+) -> Result<GuidedAnalysisStartDto, String> {
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    let problem_node_id = node_id.or(model.current_node);
+    let start_node_id = match problem_node_id {
+        Some(problem) => {
+            let parent = model
+                .tree
+                .node(problem)
+                .map_err(|error| error.to_string())?
+                .parent_id;
+            (parent != model.tree.root_id()).then_some(parent)
+        }
+        None => model.current_node,
+    };
+    let start_board = board_at(&model.starting_fen, &model.tree, start_node_id)?;
+    let signature = report_line_signature(&model.tree, model.current_node)?;
+    let ply = fen_starting_ply(&model.starting_fen)
+        + start_node_id
+            .and_then(|node| model.tree.active_line(node).ok().map(|line| line.len()))
+            .unwrap_or(0);
+    let phase = report_phase(ply, report_material(&start_board));
+    let game_id = model.game_id;
+    let session = model
+        .store
+        .start_guided_analysis(
+            game_id,
+            problem_node_id,
+            start_node_id,
+            &signature,
+            &start_board.to_fen(),
+            phase,
+        )
+        .map_err(|error| error.to_string())?;
+    let preview_model = AppModel {
+        board: start_board,
+        starting_fen: model.starting_fen.clone(),
+        tree: model.tree.clone(),
+        current_node: start_node_id,
+        game_id: model.game_id,
+        device_id: model.device_id,
+        lamport: model.lamport,
+        store: LocalStore::open_in_memory().map_err(|error| error.to_string())?,
+        metadata: model.metadata.clone(),
+        note: model.note.clone(),
+        source_path: model.source_path.clone(),
+        source_format: model.source_format.clone(),
+        playable: model.playable,
+    };
+    // The preview DTO is read-only. Its temporary in-memory store prevents this
+    // training position from becoming the current persisted manual.
+    let board = board_dto(&preview_model)?;
+    Ok(GuidedAnalysisStartDto { session, board })
+}
+
+#[tauri::command]
+fn submit_guided_analysis(
+    request: SubmitGuidedAnalysisRequest,
+    state: State<'_, DesktopState>,
+) -> Result<GuidedAnalysisSubmissionDto, String> {
+    if request.submission.chosen_move.trim().is_empty() {
+        return Err("请先在棋盘上选择首选着".into());
+    }
+    if request.submission.candidates.len() < 2 {
+        return Err("请先列出至少两个候选着".into());
+    }
+    if !(4..=8).contains(&request.submission.predicted_line.len()) {
+        return Err("预测线路需要 4–8 个半回合".into());
+    }
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    let session = model
+        .store
+        .guided_analysis_session(request.session_id)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "拆棋会话不存在".to_owned())?;
+    if session.status != "thinking" || !session.answer_hidden {
+        return Err("本次拆棋已经提交或取消".into());
+    }
+    if session.game_id != model.game_id
+        || session.report_signature != report_line_signature(&model.tree, model.current_node)?
+    {
+        return Err("棋谱已变化，请从当前问题局面重新开始 U10 拆棋".into());
+    }
+    let result = classify_submission(request.session_id, &request.submission, request.lines);
+    let result_json = serde_json::to_string(&result).map_err(|error| error.to_string())?;
+    let game_id = model.game_id;
+    let task_id = match (request.task_id, session.problem_node_id) {
+        (Some(task_id), _) => Some(task_id),
+        (None, Some(node_id)) => {
+            model
+                .store
+                .upsert_training_task_with_context(
+                    game_id,
+                    &session.report_signature,
+                    node_id,
+                    "U10 引导拆棋",
+                    "先独立判断威胁、强制着和候选着，再用 Pikafish 核对。",
+                    Some(&session.phase),
+                    &result.theory_signals,
+                    None,
+                    "reinforcement",
+                )
+                .map_err(|error| error.to_string())?;
+            model
+                .store
+                .list_training_tasks()
+                .map_err(|error| error.to_string())?
+                .into_iter()
+                .find(|task| {
+                    task.game_id == game_id
+                        && task.report_signature == session.report_signature
+                        && task.node_id == node_id
+                })
+                .map(|task| task.id)
+        }
+        (None, None) => None,
+    };
+    let session = model
+        .store
+        .submit_guided_analysis(
+            request.session_id,
+            &request.submission,
+            &result.result_kind,
+            result.score,
+            &result_json,
+        )
+        .map_err(|error| error.to_string())?;
+    let attempt = task_id
+        .map(|task_id| {
+            model.store.save_training_attempt(
+                task_id,
+                Some(request.session_id),
+                &request.submission,
+                result.score,
+                &result.result_kind,
+                &request.parent_note,
+            )
+        })
+        .transpose()
+        .map_err(|error| error.to_string())?;
+    Ok(GuidedAnalysisSubmissionDto {
+        session,
+        result,
+        attempt,
+    })
+}
+
+#[tauri::command]
+fn cancel_guided_analysis(
+    session_id: Uuid,
+    state: State<'_, DesktopState>,
+) -> Result<(), String> {
+    state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?
+        .store
+        .cancel_guided_analysis(session_id)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn generate_daily_training_plan(
+    state: State<'_, DesktopState>,
+) -> Result<DailyTrainingPlanDto, String> {
+    let model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    let profile = model
+        .store
+        .learning_profile()
+        .map_err(|error| error.to_string())?;
+    let tasks = model
+        .store
+        .list_training_tasks()
+        .map_err(|error| error.to_string())?;
+    let attempts = model
+        .store
+        .training_attempts(None)
+        .map_err(|error| error.to_string())?;
+    Ok(daily_plan(&profile, &tasks, &attempts, Utc::now()))
+}
+
+#[tauri::command]
+fn get_weekly_learning_report(
+    state: State<'_, DesktopState>,
+) -> Result<WeeklyLearningReportDto, String> {
+    let model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    let tasks = model
+        .store
+        .list_training_tasks()
+        .map_err(|error| error.to_string())?;
+    let attempts = model
+        .store
+        .training_attempts(None)
+        .map_err(|error| error.to_string())?;
+    Ok(weekly_report(&attempts, &tasks, Utc::now()))
+}
+
+#[tauri::command]
+fn infer_opening_repertoire_command(
+    state: State<'_, DesktopState>,
+) -> Result<OpeningRepertoireDto, String> {
+    let model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    let profile = model
+        .store
+        .learning_profile()
+        .map_err(|error| error.to_string())?;
+    let reports = model
+        .store
+        .load_latest_game_reports()
+        .map_err(|error| error.to_string())?;
+    let report_by_game = reports
+        .into_iter()
+        .filter_map(|stored| {
+            serde_json::from_str::<GameReportDatasetDto>(&stored.dataset_json)
+                .ok()
+                .map(|report| (stored.game_id, report))
+        })
+        .collect::<HashMap<_, _>>();
+    let samples = model
+        .store
+        .load_games()
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .filter(|game| game.library_folder.as_deref() == Some("比赛复盘"))
+        .filter_map(|game| {
+            let report = report_by_game.get(&game.id)?;
+            let opening_name = report
+                .positions
+                .iter()
+                .filter_map(|position| position.opening.as_ref())
+                .max_by_key(|opening| opening.ply)?
+                .name
+                .clone();
+            let metadata: serde_json::Value = serde_json::from_str(&game.metadata_json).ok()?;
+            let child = profile.child_name.trim();
+            let side = if !child.is_empty() && metadata["red"].as_str() == Some(child) {
+                "red"
+            } else if !child.is_empty() && metadata["black"].as_str() == Some(child) {
+                "black"
+            } else if game.tags.iter().any(|tag| tag == "红方" || tag == "先手") {
+                "red"
+            } else if game.tags.iter().any(|tag| tag == "黑方" || tag == "后手") {
+                "black"
+            } else {
+                return None;
+            };
+            Some(OpeningSample {
+                game_id: game.id,
+                side: side.into(),
+                opening_name,
+                updated_at: game.updated_at,
+            })
+        })
+        .collect();
+    Ok(infer_opening_repertoire(samples))
+}
+
 #[tauri::command]
 fn list_training_tasks(state: State<'_, DesktopState>) -> Result<Vec<TrainingTaskDto>, String> {
     let model = state
@@ -10308,6 +10641,14 @@ fn main() {
             delete_flyknife_plan,
             open_flyknife_practice,
             list_coach_reports,
+            get_learning_profile,
+            save_learning_profile,
+            start_guided_analysis,
+            submit_guided_analysis,
+            cancel_guided_analysis,
+            generate_daily_training_plan,
+            get_weekly_learning_report,
+            infer_opening_repertoire_command,
             list_training_tasks,
             generate_training_tasks,
             complete_training_task,

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Activity, BookOpen, ChevronLeft, ChevronRight, Database, Eye, Maximize2, Play, Settings2, TrendingUp } from "lucide-react";
+import { auditResultText, type BookCandidateAuditResult } from "./bookCandidateAudit";
 import type { AnalysisLine } from "./platform";
 
 export type CompactBookRow = {
@@ -63,6 +64,19 @@ type Props = {
   bookLoading: boolean;
   bookError?: string;
   bookRows: CompactBookRow[];
+  bookAuditByMove?: Record<string, BookCandidateAuditResult>;
+  bookAuditState?: {
+    status: "idle" | "running" | "done" | "error";
+    message: string;
+  };
+  builtinBookStatus?: {
+    enabled: boolean;
+    verified: boolean;
+    name: string;
+    shortName: string;
+    maxCandidatesPerPosition: number;
+    note?: string;
+  };
   evaluationRows: CompactEvaluationRow[];
   evaluationLabel: string;
   evaluationScore: string;
@@ -76,6 +90,7 @@ type Props = {
   onToggleCollapsed?(): void;
   onToggleEvaluationCollapsed?(): void;
   onPopOut?(): void;
+  onAuditBookCandidates?(): void;
   onPlayBookMove(iccs: string): void;
   onPlayEvaluationMove(iccs: string): void;
 };
@@ -158,6 +173,9 @@ export function CompactReferencePanels({
   bookLoading,
   bookError,
   bookRows,
+  bookAuditByMove,
+  bookAuditState,
+  builtinBookStatus,
   evaluationRows,
   evaluationLabel,
   evaluationScore,
@@ -171,12 +189,29 @@ export function CompactReferencePanels({
   onToggleCollapsed,
   onToggleEvaluationCollapsed,
   onPopOut,
+  onAuditBookCandidates,
   onPlayBookMove,
   onPlayEvaluationMove,
 }: Props) {
   const [evaluationTab, setEvaluationTab] = useState<"position" | "book">("position");
   const blackShare = redShare == null ? undefined : 100 - redShare;
   const sourceRows = bookRows;
+  const bookAuditVisible = !!bookAuditState && bookAuditState.status !== "idle";
+  const hasLocalBookRows = bookRows.some((row) => row.distribution);
+  const builtinBookEnabled = builtinBookStatus?.enabled === true;
+  const builtinBookVerified = builtinBookStatus?.verified === true;
+  const builtinBookLabel = builtinBookStatus?.shortName || "内嵌库";
+  const builtinBookStatusText = builtinBookStatus
+    ? builtinBookEnabled
+      ? builtinBookVerified
+        ? `${builtinBookLabel}已启用，可显示候选`
+        : `${builtinBookLabel}已启用，vkey 未验证，暂不显示推荐`
+      : `${builtinBookLabel}未启用`
+    : undefined;
+  const sourceStatusText = [
+    hasLocalBookRows ? "本地库显示胜/和/负、样本量和局面分" : cloudEnabled ? "云库显示胜率、局面分和相对首选差值" : "云库已关闭",
+    builtinBookEnabled ? builtinBookStatusText : undefined,
+  ].filter(Boolean).join(" · ");
   const cloudScores = sourceRows.map((row) => numericScore(row.scoreText)).filter((value): value is number => Number.isFinite(value));
   const cloudWinRates = sourceRows.map((row) => Number(row.winRateText.replace("%", ""))).filter(Number.isFinite);
   const topCloudRow = sourceRows[0];
@@ -186,11 +221,30 @@ export function CompactReferencePanels({
       ? "查询中"
       : bookError
         ? bookError
-        : `${bookRows.length} 条${cloudEnabled ? "" : " · 云库关闭"}`;
+        : bookRows.length > 0
+          ? `${bookRows.length} 条${cloudEnabled ? "" : " · 云库关闭"}`
+          : `${bookRows.length} 条${builtinBookEnabled ? ` · ${builtinBookVerified ? "内嵌库启用" : "内嵌库待验证"}` : cloudEnabled ? "" : " · 云库关闭"}`;
+  const emptyBookText = bookError
+    ? "云库暂时不可用"
+    : builtinBookEnabled && !builtinBookVerified
+      ? `${builtinBookLabel}已启用，vkey 未验证，暂不显示推荐`
+      : cloudEnabled
+        ? "当前局面暂无云库着法"
+        : builtinBookEnabled
+          ? `当前局面暂无${builtinBookLabel}着法`
+          : "ChessDB 云库未启用";
+  const emptyBookStatText = sourceRows.length === 0
+    ? builtinBookEnabled && !builtinBookVerified
+      ? `${builtinBookLabel}待 vkey 验证`
+      : cloudEnabled || builtinBookEnabled
+        ? "暂无开局库统计"
+        : "ChessDB 云库未启用"
+    : undefined;
   const bookRowTitle = (row: CompactBookRow) => [
     row.notation,
     `分数 ${row.scoreText}`,
     row.advantageText,
+    bookAuditByMove?.[row.iccs]?.note,
     row.winRateText && `胜率 ${row.winRateText}`,
     row.source,
     row.detail,
@@ -207,30 +261,40 @@ export function CompactReferencePanels({
   }
 
   return <div className={`compact-reference-stack ${evaluationCollapsed ? "evaluation-collapsed" : ""}`}>
-    <section className="compact-reference-panel compact-book-panel" aria-label="简洁布局开局库">
+    <section className={`compact-reference-panel compact-book-panel ${bookAuditVisible ? "has-book-audit" : ""}`} aria-label="简洁布局开局库">
       <header>
         <span><Database size={15}/><strong>云库（开局库）</strong></span>
         <small>{bookStatus}</small>
         {onPopOut && <button type="button" className="compact-reference-popout" title="弹出为独立窗口，可拖到 App 外面" aria-label="弹出云库独立窗口" onClick={onPopOut}><Maximize2 size={13}/><span>弹出</span></button>}
         {onToggleCollapsed && <button type="button" title="收起云库" aria-label="收起云库" onClick={onToggleCollapsed}><ChevronRight size={14}/></button>}
+        {onAuditBookCandidates && <button type="button" className="compact-reference-audit" title="用 Pikafish 验证当前开局库候选" aria-label="Pikafish 验证开局库候选" disabled={bookAuditState?.status === "running"} onClick={onAuditBookCandidates}><Activity size={13}/></button>}
         <button type="button" title="开局库与引擎设置" aria-label="开局库与引擎设置" onClick={onOpenSettings}><Settings2 size={14}/></button>
       </header>
       <div className="compact-source-status" aria-label="开局库状态">
         <span className={cloudEnabled && !bookError ? "ready" : ""}><Database size={12}/>云库</span>
-        <span className={bookRows.some((row) => row.distribution) ? "ready" : ""}><BookOpen size={12}/>本地 XQB</span>
-        <small>{bookRows.some((row) => row.distribution) ? "本地库显示胜/和/负、样本量和局面分" : cloudEnabled ? "云库显示胜率、局面分和相对首选差值" : "云库已关闭"}</small>
+        <span className={hasLocalBookRows ? "ready" : ""}><BookOpen size={12}/>本地 XQB</span>
+        {builtinBookEnabled && builtinBookStatus && <span
+          className={builtinBookEnabled ? "ready" : ""}
+          title={`${builtinBookStatus.name} · 每局面最多 ${builtinBookStatus.maxCandidatesPerPosition} 候选${builtinBookStatus.note ? ` · ${builtinBookStatus.note}` : ""}`}
+        ><BookOpen size={12}/>内嵌库</span>}
+        <small>{sourceStatusText}</small>
       </div>
+      {bookAuditVisible && <p className={`book-audit-status ${bookAuditState.status}`}>{bookAuditState.message}</p>}
       <div className="compact-data-table compact-book-table" role="group" aria-label="开局库候选">
         <div className="compact-data-head"><span>着法</span><span>胜/和/负</span><span>样本</span><span>分/差</span></div>
         <div className="compact-data-body">
-          {bookRows.map((row) => <button type="button" key={row.id} onClick={() => onPlayBookMove(row.iccs)} title={bookRowTitle(row)}>
+          {bookRows.map((row) => {
+            const audit = bookAuditByMove?.[row.iccs];
+            const auditText = auditResultText(audit);
+            return <button type="button" key={row.id} onClick={() => onPlayBookMove(row.iccs)} title={bookRowTitle(row)}>
             <strong>{row.notation}</strong>
             {row.distribution ? <span className="book-distribution" aria-label={`胜 ${row.distribution.redWin}% ，和 ${row.distribution.draw}% ，负 ${row.distribution.blackWin}%`}>
               <i className="red" style={{ width: `${row.distribution.redWin}%` }}>{row.distribution.redWin}%</i><i className="draw" style={{ width: `${row.distribution.draw}%` }}>{row.distribution.draw}%</i><i className="black" style={{ width: `${row.distribution.blackWin}%` }}>{row.distribution.blackWin}%</i>
             </span> : <span className="book-win-rate">胜率 {row.winRateText}</span>}
-            <span className="book-samples">{row.sampleCount?.toLocaleString() ?? "--"}</span><small className="book-advantage">{row.scoreText}{row.advantageText ? ` · ${row.advantageText}` : ""}</small>
-          </button>)}
-          {!bookLoading && bookRows.length === 0 && <div className="compact-table-empty"><BookOpen size={20}/><span>{bookError ? "云库暂时不可用" : cloudEnabled ? "当前局面暂无云库着法" : "ChessDB 云库未启用"}</span></div>}
+            <span className="book-samples">{row.sampleCount?.toLocaleString() ?? "--"}</span><small className={`book-advantage ${audit ? `book-audit-${audit.status}` : ""}`}>{auditText ? `${auditText} · ${row.scoreText}` : `${row.scoreText}${row.advantageText ? ` · ${row.advantageText}` : ""}`}</small>
+          </button>;
+          })}
+          {!bookLoading && bookRows.length === 0 && <div className="compact-table-empty"><BookOpen size={20}/><span>{emptyBookText}</span></div>}
         </div>
       </div>
     </section>
@@ -289,7 +353,7 @@ export function CompactReferencePanels({
               {row.distribution ? <span className="book-distribution" aria-label={`胜 ${row.distribution.redWin}% ，和 ${row.distribution.draw}% ，负 ${row.distribution.blackWin}%`}><i className="red" style={{ width: `${row.distribution.redWin}%` }}/><i className="draw" style={{ width: `${row.distribution.draw}%` }}/><i className="black" style={{ width: `${row.distribution.blackWin}%` }}/></span> : <span className="book-win-rate">胜率 {row.winRateText}</span>}
               <span className="book-samples">{row.sampleCount?.toLocaleString() ?? "--"}</span><small className="book-advantage">{row.scoreText}{row.advantageText ? ` · ${row.advantageText}` : ""}</small>
             </button>)}
-            {sourceRows.length === 0 && <div className="compact-table-empty"><Database size={20}/><span>{cloudEnabled ? "暂无开局库统计" : "ChessDB 云库未启用"}</span></div>}
+            {sourceRows.length === 0 && <div className="compact-table-empty"><Database size={20}/><span>{emptyBookStatText}</span></div>}
           </div>
         </div>
       </div>}
