@@ -276,6 +276,7 @@ class DesktopPlatform implements ChessPlatform {
   previewRecognizedLastMove(fen: string, iccs: string, movedBy: import("./types").Side) { return invoke<import("./types").RecognizedLastMovePreview>("preview_recognized_last_move", { fen, iccs, movedBy }); }
   previewScreenshotMarkedMove(fen: string) { return invoke<import("./types").RecognizedLastMovePreview | undefined>("preview_screenshot_marked_move", { fen }); }
   suggestRecognizedMove(fen: string) { return invoke<import("./types").RecognizedLastMovePreview | undefined>("suggest_recognized_move", { fen }); }
+  suggestRecognizedMoves(fen: string) { return invoke<import("./types").RecognizedLastMovePreview[]>("suggest_recognized_moves", { fen }); }
   analyze(options: AnalysisOptions) {
     return invoke<AnalysisLine[]>("analyze_position", {
       enginePath: options.enginePath,
@@ -620,6 +621,7 @@ class WebPlatform implements ChessPlatform {
   async previewRecognizedLastMove(): Promise<import("./types").RecognizedLastMovePreview> { throw new Error("Web 端暂不支持截图走子确认"); }
   async previewScreenshotMarkedMove(): Promise<import("./types").RecognizedLastMovePreview | undefined> { throw new Error("Web 端暂不支持截图走子确认"); }
   async suggestRecognizedMove(): Promise<import("./types").RecognizedLastMovePreview | undefined> { throw new Error("Web 端暂不支持截图走子确认"); }
+  async suggestRecognizedMoves(): Promise<import("./types").RecognizedLastMovePreview[]> { throw new Error("Web 端暂不支持截图走子确认"); }
 
   async analyze(options: AnalysisOptions): Promise<AnalysisLine[]> {
     if (!navigator.onLine) throw new Error("当前离线，可查看缓存分析，联网后才能启动 Pikafish");

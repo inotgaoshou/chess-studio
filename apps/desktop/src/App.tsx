@@ -1094,6 +1094,7 @@ export default function App() {
   const [trainingSummary, setTrainingSummary] = useState<TrainingSummaryDto>();
   const [studySessions, setStudySessions] = useState<StudySessionDto[]>([]);
   const [u10Start, setU10Start] = useState<GuidedAnalysisStart>();
+  const [u10InitialReversed, setU10InitialReversed] = useState(false);
   const [u10Profile, setU10Profile] = useState<LearningProfile>();
   const [u10DailyPlan, setU10DailyPlan] = useState<DailyTrainingPlan>();
   const [u10WeeklyReport, setU10WeeklyReport] = useState<WeeklyLearningReport>();
@@ -4462,7 +4463,7 @@ export default function App() {
     }
   }
 
-  async function startU10Analysis(nodeId?: string) {
+  async function startU10Analysis(nodeId?: string, initialReversed = reversed) {
     if (chessPlatform.kind !== "desktop") {
       setNotice("U10 引导拆棋需要在桌面版使用");
       return;
@@ -4482,6 +4483,7 @@ export default function App() {
         chessPlatform.inferOpeningRepertoire(),
       ]);
       setU10Start(start);
+      setU10InitialReversed(initialReversed);
       setU10Profile(profile);
       setU10DailyPlan(dailyPlan);
       setU10WeeklyReport(weeklyReport);
@@ -4713,9 +4715,22 @@ export default function App() {
   }
 
   async function openLinkSessionDialog(source: "windowLink" | "imageImport" = "windowLink") {
-    await collapseCompactStudyPanels();
+    // Review owns the insight panel. Collapsing the compact study panels here
+    // also mutates its shared layout state and leaves the review workspace
+    // visually empty after the recognition dialog closes.
+    if (!reviewModeOpen) await collapseCompactStudyPanels();
     setLinkSessionSource(source);
     setLinkSessionOpen(true);
+  }
+
+  function closeLinkSessionDialog() {
+    setLinkSessionOpen(false);
+    if (reviewModeOpen) {
+      // Keep the review workbench selected and restore its sole right-side
+      // workspace instead of restoring the normal research rails.
+      setAnalysisPanelCollapsed(false);
+      setMobilePanel("analysis");
+    }
   }
 
   async function openReviewMode() {
@@ -5703,7 +5718,7 @@ export default function App() {
         onSaveMirrorPreferences={saveMirrorPreferences}
         onRebuildMirrors={rebuildGameMirrors}
       />}
-      {userManualOpen && <UserManualDialog appVersion={appInfo?.version ?? "1.2.0"} markdown={userManualMarkdown} onClose={() => setUserManualOpen(false)}/>}
+      {userManualOpen && <UserManualDialog appVersion={appInfo?.version ?? "1.2.1"} markdown={userManualMarkdown} onClose={() => setUserManualOpen(false)}/>}
       {aboutOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setAboutOpen(false); }}>
         <section className="about-dialog" role="dialog" aria-modal="true" aria-labelledby="about-title">
           <header><span><Info size={18}/><strong id="about-title">关于棋研</strong></span><button className="tool-button" title="关闭" onClick={() => setAboutOpen(false)}><X size={16}/></button></header>
@@ -5731,6 +5746,7 @@ export default function App() {
         onCancel={(sessionId) => void chessPlatform.cancelGuidedAnalysis(sessionId)}
         onPreview={(moves) => chessPlatform.previewLine(u10Start.session.fen, moves)}
         onParseChineseLine={(notation) => chessPlatform.parseChineseLine(u10Start.session.fen, notation)}
+        initialReversed={u10InitialReversed}
         pieceAsset={(piece) => pieceAsset(piece, displayedPieceSkin)}
         boardAsset={`/skins/${skinAssetFolder(displayedBoardSkin)}/board.png`}
         onSubmit={submitU10Analysis}
@@ -6520,7 +6536,7 @@ export default function App() {
       )}
       {linkSessionOpen && <LinkSessionDialog
         initialSource={linkSessionSource}
-        onClose={() => setLinkSessionOpen(false)}
+        onClose={closeLinkSessionDialog}
         onStart={async (request) => {
           try {
             await saveDesktopPreferencePatch({
@@ -6563,7 +6579,7 @@ export default function App() {
         onImport={async (fen, title) => {
           try {
             applyBoard(await chessPlatform.importRecognizedPosition(fen, title));
-            setLinkSessionOpen(false);
+            closeLinkSessionDialog();
             setNotice("识别局面已导入为新棋局，请确认后开始分析");
           } catch (error) {
             setNotice(friendlyError(error));
@@ -6573,9 +6589,9 @@ export default function App() {
           try {
             const next = normalizeBoardState(await chessPlatform.importRecognizedPosition(fen, title));
             applyBoard(next);
-            setLinkSessionOpen(false);
+            closeLinkSessionDialog();
             setNotice("天天象棋截图局面已保存为独立练习棋谱，正在进入 U10 拆棋");
-            await startU10Analysis();
+            await startU10Analysis(undefined, linkSessionStatus.boardOrientation === "blackAtBottom");
           } catch (error) {
             setNotice(friendlyError(error));
           }
@@ -6600,11 +6616,12 @@ export default function App() {
         onPreviewMarkedMove={(fen, iccs, movedBy) => chessPlatform.previewRecognizedLastMove(fen, iccs, movedBy)}
         onPreviewScreenshotMarkedMove={(fen) => chessPlatform.previewScreenshotMarkedMove(fen)}
         onSuggestRecognizedMove={(fen) => chessPlatform.suggestRecognizedMove(fen)}
+        onSuggestRecognizedMoves={(fen) => chessPlatform.suggestRecognizedMoves(fen)}
         onConfirmMarkedMove={async (fen, iccs) => {
           try {
             const next = normalizeBoardState(await chessPlatform.confirmRecognizedMove(fen, iccs));
             applyBoard(next);
-            setLinkSessionOpen(false);
+            closeLinkSessionDialog();
             setNotice("已确认写入当前棋谱变例，原有后续棋谱已保留");
           } catch (error) {
             setNotice(friendlyError(error));

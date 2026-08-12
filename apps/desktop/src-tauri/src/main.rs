@@ -581,6 +581,10 @@ struct RecognizedLastMovePreviewDto {
     captured: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     marker_kind: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recognition_source: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recognition_confidence: Option<u32>,
 }
 
 #[derive(Serialize)]
@@ -1785,9 +1789,9 @@ fn recognize_link_image_file(
         recognition.orientation,
     )
     .unwrap_or(None);
-    if let Some(marker) = screenshot_move_marker {
-        if let Ok(marked_board) = Board::from_fen(&recognition.fen) {
-            if let Some(piece) = marked_board.piece_at(marker.to) {
+    if let Some(marker) = screenshot_move_marker.as_ref() {
+        if let (Some(to), Ok(marked_board)) = (marker.to, Board::from_fen(&recognition.fen)) {
+            if let Some(piece) = marked_board.piece_at(to) {
                 // The haloed piece has just arrived at the destination, so the
                 // screenshot position is now the opponent's turn.
                 recognition = link_vision::recognition_with_side_to_move(recognition, piece.color.opposite());
@@ -4310,6 +4314,8 @@ fn preview_recognized_last_move(
         side_to_move: side_label(after.side_to_move()),
         captured: false,
         marker_kind: Some("lastMove"),
+        recognition_source: Some("手工标记"),
+        recognition_confidence: None,
     })
 }
 
@@ -4319,29 +4325,44 @@ fn preview_recognized_last_move(
 /// non-capturing move. It remains a proposal until explicit confirmation.
 #[tauri::command]
 fn preview_screenshot_marked_move(
-    fen: String,
+    _fen: String,
     state: State<'_, DesktopState>,
 ) -> Result<Option<RecognizedLastMovePreviewDto>, String> {
-    let after = Board::from_fen(&fen).map_err(|error| error.to_string())?;
     let marker = state
         .link_session
         .lock()
         .map_err(|_| "link session lock poisoned".to_owned())?
         .screenshot_move_marker;
     let Some(marker) = marker else { return Ok(None); };
-    let mv = Move { from: marker.from, to: marker.to };
-    let Some(selected_piece) = after.piece_at(mv.to) else { return Ok(None); };
-    if after.piece_at(mv.from).is_some() { return Ok(None); }
-    let before = match after.undo_non_capture_move(mv, selected_piece.color) {
+    let (Some(from), Some(to)) = (marker.from, marker.to) else { return Ok(None); };
+    let model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    Ok(preview_screenshot_marker_from_current_board(&model.board, from, to, marker))
+}
+
+fn preview_screenshot_marker_from_current_board(
+    before: &Board,
+    from: Square,
+    to: Square,
+    marker: link_vision::ScreenshotMoveMarker,
+) -> Option<RecognizedLastMovePreviewDto> {
+    let mv = Move { from, to };
+    // The screenshot model can confuse a red/black horse on a tinted board.
+    // Its white source ring and destination glow only identify coordinates;
+    // resolve the piece, side and Chinese notation from the current document's
+    // legal position, never from the model-generated screenshot FEN.
+    if !before.legal_moves().into_iter().any(|candidate| candidate == mv) {
+        return None;
+    }
+    let after = match before.apply_move(mv) {
         Ok(value) => value,
-        Err(_) => return Ok(None),
+        Err(_) => return None,
     };
-    let notation = match before.chinese_move_notation(mv) {
-        Ok(value) => value,
-        Err(_) => return Ok(None),
-    };
-    let moved_by = side_label(selected_piece.color);
-    Ok(Some(RecognizedLastMovePreviewDto {
+    let notation = before.chinese_move_notation(mv).ok()?;
+    let moved_by = side_label(before.side_to_move());
+    Some(RecognizedLastMovePreviewDto {
         step: PreviewLineStepDto {
             fen: after.to_fen(),
             notation,
@@ -4356,7 +4377,9 @@ fn preview_screenshot_marked_move(
         side_to_move: side_label(after.side_to_move()),
         captured: false,
         marker_kind: Some("lastMove"),
-    }))
+        recognition_source: Some("截图白色标记"),
+        recognition_confidence: Some(marker.from_confidence.saturating_add(marker.to_confidence)),
+    })
 }
 
 fn position_placement_key(board: &Board) -> String {
@@ -4408,8 +4431,35 @@ fn suggest_recognized_move(
         after_fen: matched_after.to_fen(),
         side_to_move: side_label(matched_after.side_to_move()),
         captured: before.would_capture(mv),
-        marker_kind: Some("lastMove"),
+        marker_kind: Some("lastMove"), recognition_source: Some("当前棋谱差一步"), recognition_confidence: Some(100),
     }))
+}
+
+/// Ranks legal continuations with the screenshot's optional white source/destination marks.
+/// A candidate is still only a proposal and must be explicitly confirmed in the UI.
+#[tauri::command]
+fn suggest_recognized_moves(fen: String, state: State<'_, DesktopState>) -> Result<Vec<RecognizedLastMovePreviewDto>, String> {
+    let after = Board::from_fen(&fen).map_err(|error| error.to_string())?;
+    let model = state.model.lock().map_err(|_| "state lock poisoned".to_owned())?;
+    let before = &model.board;
+    let target = position_placement_key(&after);
+    let marker = state.link_session.lock().ok().and_then(|session| session.screenshot_move_marker);
+    let mut candidates = before.legal_moves().into_iter().filter_map(|mv| {
+        let next = before.apply_move(mv).ok()?;
+        let exact = position_placement_key(&next) == target;
+        let marker_score = marker.as_ref().map(|item| {
+            let from = item.from.map(|square| (square == mv.from) as u32 * item.from_confidence).unwrap_or_default();
+            let to = item.to.map(|square| (square == mv.to) as u32 * item.to_confidence).unwrap_or_default();
+            from.saturating_add(to)
+        }).unwrap_or_default();
+        (exact || marker_score > 0).then_some((mv, next, exact, marker_score))
+    }).collect::<Vec<_>>();
+    candidates.sort_by(|left, right| (right.2 as u32 * 10_000 + right.3).cmp(&(left.2 as u32 * 10_000 + left.3)));
+    candidates.truncate(3);
+    candidates.into_iter().map(|(mv, next, exact, confidence)| Ok(RecognizedLastMovePreviewDto {
+        step: PreviewLineStepDto { fen: next.to_fen(), notation: before.chinese_move_notation(mv).map_err(|error| error.to_string())?, moved_by: side_label(before.side_to_move()), from: SquareDto { row: mv.from.row, col: mv.from.col }, to: SquareDto { row: mv.to.row, col: mv.to.col }, pieces: board_pieces(&next), status: game_status_label(next.status()) },
+        before_fen: before.to_fen(), after_fen: next.to_fen(), side_to_move: side_label(next.side_to_move()), captured: before.would_capture(mv), marker_kind: Some("lastMove"), recognition_source: Some(if exact { "当前棋谱差一步" } else { "截图白色标记候选" }), recognition_confidence: Some(confidence),
+    })).collect()
 }
 
 #[derive(Serialize)]
@@ -11254,6 +11304,7 @@ fn main() {
             preview_recognized_last_move,
             preview_screenshot_marked_move,
             suggest_recognized_move,
+            suggest_recognized_moves,
             preview_line,
             parse_chinese_line,
             new_game,
@@ -11441,6 +11492,32 @@ mod tests {
             link_region_selection_background: Mutex::new(None),
             link_region_selection: (Mutex::new(None), Condvar::new()),
         }
+    }
+
+    #[test]
+    fn screenshot_marker_uses_the_current_document_piece_not_the_misclassified_screenshot_piece() {
+        // The supplied 天天象棋 screenshot is viewed from the black side. Its
+        // white ring marks the black horse's departure and the selected-piece
+        // glow its arrival. A screenshot model may label that horse as a cannon, but
+        // marker reconstruction must use the current document's legal board.
+        let before = Board::from_fen("4k4/9/9/9/9/1n2p4/9/9/9/4K4 b - - 0 1").unwrap();
+        let preview = preview_screenshot_marker_from_current_board(
+            &before,
+            Square { row: 5, col: 1 },
+            Square { row: 3, col: 2 },
+            link_vision::ScreenshotMoveMarker {
+                from: Some(Square { row: 5, col: 1 }),
+                to: Some(Square { row: 3, col: 2 }),
+                from_confidence: 162,
+                to_confidence: 467,
+            },
+        ).expect("a legal marker move");
+
+        assert_eq!(preview.step.notation, "马2退3");
+        assert_eq!(preview.step.moved_by, "黑方");
+        assert_eq!(preview.side_to_move, "红方");
+        assert_eq!(preview.step.from.row, 5);
+        assert_eq!(preview.step.to.row, 3);
     }
 
     #[test]

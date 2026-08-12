@@ -101,7 +101,7 @@ export type PreviewLineStep = {
   pieces: Piece[];
   status: string;
 };
-export type RecognizedLastMovePreview = PreviewLineStep & { beforeFen: string; afterFen: string; sideToMove: Side; captured: boolean; markerKind?: "lastMove" | "selectedMove" };
+export type RecognizedLastMovePreview = PreviewLineStep & { beforeFen: string; afterFen: string; sideToMove: Side; captured: boolean; markerKind?: "lastMove" | "selectedMove"; recognitionSource?: string; recognitionConfidence?: number };
 export type AnalysisOptions = {
   enginePath: string;
   engineId?: string;
@@ -797,6 +797,7 @@ export interface ChessPlatform {
   previewRecognizedLastMove(fen: string, iccs: string, movedBy: Side): Promise<RecognizedLastMovePreview>;
   previewScreenshotMarkedMove(fen: string): Promise<RecognizedLastMovePreview | undefined>;
   suggestRecognizedMove(fen: string): Promise<RecognizedLastMovePreview | undefined>;
+  suggestRecognizedMoves(fen: string): Promise<RecognizedLastMovePreview[]>;
   analyze(options: AnalysisOptions): Promise<AnalysisLine[]>;
   runEngineArena(options: EngineArenaOptionsDto): Promise<EngineArenaResultDto>;
   playEngineMove(options: EnginePlayOptions): Promise<EngineMoveResult>;
