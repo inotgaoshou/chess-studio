@@ -273,6 +273,29 @@ impl Board {
         board
     }
 
+    /// Reconstructs the position immediately before a verified non-capturing move.
+    /// Screenshot recognition cannot safely invent a captured piece, so captures must
+    /// be confirmed from two positions instead of being reverse-engineered here.
+    pub fn undo_non_capture_move(&self, mv: Move, mover: Color) -> Result<Self, ChessError> {
+        let piece = self.piece_at(mv.to).ok_or(ChessError::IllegalMove)?;
+        if piece.color != mover || self.piece_at(mv.from).is_some() {
+            return Err(ChessError::IllegalMove);
+        }
+        let mut before = self.clone();
+        before.squares[index(mv.from)] = Some(piece);
+        before.squares[index(mv.to)] = None;
+        before.side_to_move = mover;
+        before.halfmove = before.halfmove.saturating_sub(1);
+        if mover == Color::Black {
+            before.fullmove = before.fullmove.saturating_sub(1).max(1);
+        }
+        let after = before.apply_move(mv)?;
+        if after.squares != self.squares {
+            return Err(ChessError::IllegalMove);
+        }
+        Ok(before)
+    }
+
     pub fn rule_position_key(&self) -> String {
         self.to_fen()
             .split_whitespace()
@@ -947,6 +970,16 @@ mod tests {
             corrected.to_fen().split_whitespace().next(),
             board.to_fen().split_whitespace().next()
         );
+    }
+
+    #[test]
+    fn reverses_a_non_capturing_move_for_screenshot_last_move_marking() {
+        let before = Board::from_fen("3k5/9/9/9/9/9/9/9/9/R3K4 w - - 0 1").unwrap();
+        let mv = Move::from_iccs("a0a1").unwrap();
+        let after = before.apply_move(mv).unwrap();
+        let restored = after.undo_non_capture_move(mv, Color::Red).unwrap();
+        assert_eq!(restored.to_fen(), before.to_fen());
+        assert_eq!(after.side_to_move(), Color::Black);
     }
 
     #[test]

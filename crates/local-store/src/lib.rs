@@ -30,6 +30,16 @@ pub struct LocalGame {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct GameMirrorStatus {
+    pub game_id: Uuid,
+    pub path: Option<String>,
+    pub state: String,
+    pub updated_at: Option<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LibraryFolder {
     pub name: String,
     pub system: bool,
@@ -138,6 +148,10 @@ pub struct DesktopPreferences {
     pub link_confidence_threshold: u8,
     #[serde(default = "default_link_animation_confirmation")]
     pub link_animation_confirmation: bool,
+    #[serde(default = "default_game_mirror_enabled")]
+    pub game_mirror_enabled: bool,
+    #[serde(default)]
+    pub game_mirror_root: String,
     pub server_url: String,
 }
 
@@ -177,6 +191,9 @@ fn default_link_confidence_threshold() -> u8 {
     55
 }
 fn default_link_animation_confirmation() -> bool {
+    true
+}
+fn default_game_mirror_enabled() -> bool {
     true
 }
 
@@ -268,6 +285,8 @@ impl Default for DesktopPreferences {
             link_stable_frames: default_link_stable_frames(),
             link_confidence_threshold: default_link_confidence_threshold(),
             link_animation_confirmation: default_link_animation_confirmation(),
+            game_mirror_enabled: default_game_mirror_enabled(),
+            game_mirror_root: String::new(),
             server_url: "http://127.0.0.1:8080".into(),
         }
     }
@@ -2705,6 +2724,53 @@ impl LocalStore {
             .collect()
     }
 
+    pub fn game_mirror_status(
+        &self,
+        game_id: Uuid,
+    ) -> Result<Option<GameMirrorStatus>, StoreError> {
+        self.connection.query_row(
+            "SELECT game_id, path, state, updated_at, error FROM game_mirror_status WHERE game_id=?1",
+            [game_id.to_string()],
+            |row| Ok(GameMirrorStatus {
+                game_id: row.get::<_, String>(0)?.parse().map_err(|error| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error)))?,
+                path: row.get(1)?, state: row.get(2)?, updated_at: row.get(3)?, error: row.get(4)?,
+            }),
+        ).optional().map_err(Into::into)
+    }
+
+    pub fn game_mirror_statuses(&self) -> Result<Vec<GameMirrorStatus>, StoreError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT game_id, path, state, updated_at, error FROM game_mirror_status")?;
+        statement
+            .query_map([], |row| {
+                Ok(GameMirrorStatus {
+                    game_id: row.get::<_, String>(0)?.parse().map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            0,
+                            rusqlite::types::Type::Text,
+                            Box::new(error),
+                        )
+                    })?,
+                    path: row.get(1)?,
+                    state: row.get(2)?,
+                    updated_at: row.get(3)?,
+                    error: row.get(4)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(Into::into)
+    }
+
+    pub fn save_game_mirror_status(&mut self, status: &GameMirrorStatus) -> Result<(), StoreError> {
+        self.connection.execute(
+            "INSERT INTO game_mirror_status (game_id, path, state, updated_at, error) VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(game_id) DO UPDATE SET path=excluded.path, state=excluded.state, updated_at=excluded.updated_at, error=excluded.error",
+            params![status.game_id.to_string(), status.path, status.state, status.updated_at, status.error],
+        )?;
+        Ok(())
+    }
+
     fn load_game_where<const N: usize>(
         &self,
         clause: &str,
@@ -2922,6 +2988,10 @@ impl LocalStore {
                created_at TEXT NOT NULL
              );
              CREATE INDEX IF NOT EXISTS idx_flyknife_plans_side ON flyknife_plans(side, created_at DESC);
+             CREATE TABLE IF NOT EXISTS game_mirror_status (
+               game_id TEXT PRIMARY KEY, path TEXT, state TEXT NOT NULL,
+               updated_at TEXT, error TEXT
+             );
              UPDATE operations
              SET payload = json_set(
                payload,
@@ -4399,6 +4469,8 @@ mod tests {
             link_stable_frames: 2,
             link_confidence_threshold: 70,
             link_animation_confirmation: true,
+            game_mirror_enabled: true,
+            game_mirror_root: "/tmp/棋研棋谱".into(),
             server_url: "https://sync.example.com".into(),
         };
         {
@@ -4846,7 +4918,14 @@ mod tests {
             .submit_guided_analysis(session.id, &submission, "direction", 84, "{}")
             .unwrap();
         let attempt = store
-            .save_training_attempt(task_id, Some(session.id), &submission, 84, "direction", "家长已陪练")
+            .save_training_attempt(
+                task_id,
+                Some(session.id),
+                &submission,
+                84,
+                "direction",
+                "家长已陪练",
+            )
             .unwrap();
         assert_eq!(attempt.review_round, 1);
         assert!(!attempt.mastered);
@@ -4878,5 +4957,38 @@ mod tests {
         assert_eq!(third.review_round, 3);
         assert!(third.mastered);
         assert!(third.next_review_at.is_none());
+    }
+
+    #[test]
+    fn game_mirror_status_survives_reopen_and_updates_in_place() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("mirror.sqlite3");
+        let game_id = Uuid::new_v4();
+        {
+            let mut store = LocalStore::open(&path).unwrap();
+            store
+                .save_game_mirror_status(&GameMirrorStatus {
+                    game_id,
+                    path: Some("/tmp/棋研棋谱/2026/省赛/2026-08-12_省赛_小明_红方.pgn".into()),
+                    state: "synced".into(),
+                    updated_at: Some("2026-08-12T10:00:00Z".into()),
+                    error: None,
+                })
+                .unwrap();
+            store
+                .save_game_mirror_status(&GameMirrorStatus {
+                    game_id,
+                    path: Some("/tmp/棋研棋谱/2026/省赛/2026-08-13_省赛_小明_红方.pgn".into()),
+                    state: "failed".into(),
+                    updated_at: Some("2026-08-12T10:01:00Z".into()),
+                    error: Some("目录不可写".into()),
+                })
+                .unwrap();
+        }
+        let store = LocalStore::open(&path).unwrap();
+        let status = store.game_mirror_status(game_id).unwrap().unwrap();
+        assert_eq!(status.state, "failed");
+        assert_eq!(status.error.as_deref(), Some("目录不可写"));
+        assert_eq!(store.game_mirror_statuses().unwrap(), vec![status]);
     }
 }

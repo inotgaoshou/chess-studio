@@ -655,6 +655,8 @@ const defaultDesktopPreferences: DesktopPreferencesDto = {
   linkStableFrames: 2,
   linkConfidenceThreshold: 55,
   linkAnimationConfirmation: true,
+  gameMirrorEnabled: true,
+  gameMirrorRoot: "",
   serverUrl: "http://127.0.0.1:8080",
 };
 const defaultSyncAccount: SyncAccountDto = {
@@ -989,6 +991,7 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [positionEditorOpen, setPositionEditorOpen] = useState(false);
   const [linkSessionOpen, setLinkSessionOpen] = useState(false);
+  const [linkSessionSource, setLinkSessionSource] = useState<"windowLink" | "imageImport">("windowLink");
   const [flyknifeOpen, setFlyknifeOpen] = useState(false);
   const [flyknifePractice, setFlyknifePractice] = useState<FlyknifePractice>();
   const [editorPieces, setEditorPieces] = useState<Piece[]>(initialPieces);
@@ -3734,6 +3737,37 @@ export default function App() {
     }
   }
 
+  async function saveMirrorPreferences(enabled: boolean, root: string) {
+    try {
+      await saveDesktopPreferencePatch({ gameMirrorEnabled: enabled, gameMirrorRoot: root });
+      setNotice(enabled ? "棋谱镜像设置已保存" : "已暂停 Finder 自动镜像，应用内棋谱仍会自动保存");
+    } catch (error) { setNotice(friendlyError(error)); }
+  }
+
+  async function rebuildGameMirrors() {
+    try {
+      setDialogBusy(true);
+      const statuses = await chessPlatform.rebuildGameMirrors();
+      await refreshGames();
+      const failed = statuses.filter((status) => status.state === "failed").length;
+      setNotice(failed ? `镜像重建完成，${failed} 盘写入失败，请检查目录权限` : `已更新 ${statuses.filter((status) => status.state === "synced").length} 盘 Finder 镜像`);
+    } catch (error) { setNotice(friendlyError(error)); }
+    finally { setDialogBusy(false); }
+  }
+
+  async function updateCurrentMirror() {
+    try {
+      const status = await chessPlatform.updateGameMirror();
+      await refreshGames();
+      setNotice(status.state === "synced" ? "Finder 镜像已更新" : status.error ?? "当前棋谱暂不满足镜像条件");
+    } catch (error) { setNotice(friendlyError(error)); }
+  }
+
+  async function revealCurrentMirror() {
+    try { await chessPlatform.revealGameMirror(); }
+    catch (error) { setNotice(friendlyError(error)); }
+  }
+
   async function createLibraryFolder() {
     const name = window.prompt("文件夹名称")?.trim();
     if (!name) return;
@@ -4549,7 +4583,7 @@ export default function App() {
   function closeU10Analysis() {
     setU10Start(undefined);
     setU10Error(undefined);
-    void runAnalysis().catch(() => undefined);
+    void exitReviewMode();
   }
 
   async function completeTrainingTask(taskId: string, completed: boolean) {
@@ -4678,8 +4712,9 @@ export default function App() {
     }
   }
 
-  async function openLinkSessionDialog() {
+  async function openLinkSessionDialog(source: "windowLink" | "imageImport" = "windowLink") {
     await collapseCompactStudyPanels();
+    setLinkSessionSource(source);
     setLinkSessionOpen(true);
   }
 
@@ -4697,6 +4732,15 @@ export default function App() {
     setCompactPoppedOutPanels((panels) => ({ ...panels, engine: false }));
     setCompactDetachedPanels((panels) => ({ ...panels, engine: false }));
     setCompactWindowPositions((positions) => ({ ...positions, engine: { x: 0, y: 0 } }));
+  }
+
+  async function exitReviewMode() {
+    setReviewModeOpen(false);
+    // The review workbench suppresses the research rails. Re-run the normal
+    // position analysis after leaving it so the restored layout is immediately useful.
+    if (analysisHintsEnabledRef.current && !analysisBusyRef.current) {
+      await runAnalysis().catch(() => undefined);
+    }
   }
 
   async function collapseCompactStudyPanels() {
@@ -5539,6 +5583,9 @@ export default function App() {
           onSaveStudy={saveStudySession}
           onAnalyzeStudy={analyzeStudySession}
           onCompleteTraining={completeTrainingTask}
+          onChooseMirrorRoot={() => chessPlatform.chooseGameMirrorRoot()}
+          onSaveMirrorPreferences={saveMirrorPreferences}
+          onRebuildMirrors={rebuildGameMirrors}
         />}
         {chessPlatform.kind === "desktop" && masterLibraryOpen && <MasterLibraryDialog
           account={syncAccount}
@@ -5652,6 +5699,9 @@ export default function App() {
         onSaveStudy={saveStudySession}
         onAnalyzeStudy={analyzeStudySession}
         onCompleteTraining={completeTrainingTask}
+        onChooseMirrorRoot={() => chessPlatform.chooseGameMirrorRoot()}
+        onSaveMirrorPreferences={saveMirrorPreferences}
+        onRebuildMirrors={rebuildGameMirrors}
       />}
       {userManualOpen && <UserManualDialog appVersion={appInfo?.version ?? "1.2.0"} markdown={userManualMarkdown} onClose={() => setUserManualOpen(false)}/>}
       {aboutOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setAboutOpen(false); }}>
@@ -5680,6 +5730,9 @@ export default function App() {
         onClose={closeU10Analysis}
         onCancel={(sessionId) => void chessPlatform.cancelGuidedAnalysis(sessionId)}
         onPreview={(moves) => chessPlatform.previewLine(u10Start.session.fen, moves)}
+        onParseChineseLine={(notation) => chessPlatform.parseChineseLine(u10Start.session.fen, notation)}
+        pieceAsset={(piece) => pieceAsset(piece, displayedPieceSkin)}
+        boardAsset={`/skins/${skinAssetFolder(displayedBoardSkin)}/board.png`}
         onSubmit={submitU10Analysis}
         onSaveProfile={saveU10Profile}
         onSaveVariation={saveU10Variation}
@@ -5728,7 +5781,7 @@ export default function App() {
         <WorkspaceLayoutSwitch mode={desktopPreferences.layoutMode} onChange={(mode) => void setWorkspaceLayout(mode)}/>
         <div className="tool-divider" />
         <div className="workspace-mode-switch" role="group" aria-label="工作模式">
-          <button className={!reviewModeOpen ? "active" : ""} title="研究模式：实时分析、云库、传统树和变招编辑" aria-pressed={!reviewModeOpen} onClick={() => setReviewModeOpen(false)}><LayoutGrid size={15}/>研究模式</button>
+          <button className={!reviewModeOpen ? "active" : ""} title="研究模式：实时分析、云库、传统树和变招编辑" aria-pressed={!reviewModeOpen} onClick={() => void exitReviewMode()}><LayoutGrid size={15}/>研究模式</button>
           <button className={reviewModeOpen ? "active" : ""} title="整局复盘：报告、关键着法、飞刀和训练" aria-pressed={reviewModeOpen} onClick={() => void openReviewMode()}><ClipboardList size={15}/>整局复盘</button>
         </div>
         <button
@@ -5796,6 +5849,11 @@ export default function App() {
             <label>局面备注<textarea value={gameNote} onChange={(event) => setGameNote(event.target.value)} rows={3}/></label>
             <button onClick={() => void saveGameMetadata()}><Save size={13}/>保存信息</button>
             {chessPlatform.kind === "desktop" && <>
+              <div className={`mirror-status ${currentLibraryGame?.mirror?.state ?? "pending"}`}>
+                <span>Finder 镜像：{currentLibraryGame?.mirror?.state === "synced" ? "已镜像" : currentLibraryGame?.mirror?.state === "failed" ? "写入失败" : currentLibraryGame?.mirror?.state === "disabled" ? "已暂停" : "待创建"}</span>
+                {currentLibraryGame?.mirror?.error && <small title={currentLibraryGame.mirror.error}>{currentLibraryGame.mirror.error}</small>}
+              </div>
+              <div className="mirror-actions"><button title="立即更新当前棋谱的完整 PGN 镜像" onClick={() => void updateCurrentMirror()}>更新镜像</button><button title="在 Finder 中显示当前镜像文件" disabled={currentLibraryGame?.mirror?.state !== "synced"} onClick={() => void revealCurrentMirror()}>Finder 显示</button><button title="自动镜像目录设置" onClick={() => setDesktopDialog("mirrorSettings")}>镜像设置</button></div>
               <label>归档文件夹<select value={currentLibraryGame?.libraryFolder ?? ""} onChange={(event) => void saveCurrentLibrary(event.target.value || undefined)}><option value="">未分类</option>{libraryFolders.map((folder) => <option key={folder.name} value={folder.name}>{folder.name}</option>)}</select></label>
               <label>标签（逗号分隔）<input value={libraryTagsInput} onChange={(event) => setLibraryTagsInput(event.target.value)} onBlur={() => { const tags = libraryTagsInput.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean); void saveCurrentLibrary(currentLibraryGame?.libraryFolder, currentLibraryGame?.favorite, tags); }} /></label>
               <button className={currentLibraryGame?.favorite ? "active" : ""} onClick={() => void saveCurrentLibrary(currentLibraryGame?.libraryFolder, !(currentLibraryGame?.favorite ?? false))}><Heart size={13} fill={currentLibraryGame?.favorite ? "currentColor" : "none"}/>{currentLibraryGame?.favorite ? "已收藏" : "收藏棋谱"}</button>
@@ -5838,7 +5896,7 @@ export default function App() {
                 <button type="button" onClick={() => void openMasterManualPanel()}><BookOpen size={14}/>棋谱</button>
                 <button type="button" onClick={() => void openMasterAnalysisPanel()}><Activity size={14}/>分析</button>
                 <button type="button" onClick={() => void openAnalysisReportPanel()}><BarChart3 size={14}/>报告</button>
-                <button type="button" onClick={() => setReviewModeOpen(true)}><ClipboardList size={14}/>复盘</button>
+                <button type="button" onClick={() => void openReviewMode()}><ClipboardList size={14}/>复盘</button>
               </nav>
             </section> : <aside className="board-quality-rail" aria-label="当前着法质量">
               {overviewReport?.grade && overviewReport.score != null && (
@@ -6017,13 +6075,14 @@ export default function App() {
             trainingGeneration={trainingGeneration}
             analysisConfig={{ reportDepth: desktopPreferences.reportDepth, multipv, threads, hashMb }}
             playbackControls={playbackControls("review-playback")}
-            onClose={() => setReviewModeOpen(false)}
+            onClose={() => void exitReviewMode()}
             onNavigate={(nodeId) => void navigateTo(nodeId)}
             onGenerateReport={() => void generateGameReport()}
             onCancelReport={() => void cancelGameReport()}
             onExportReport={() => void exportGameReport()}
             onOpenReport={() => setReportDialogOpen(true)}
             onImport={() => void openDocument()}
+            onImportScreenshot={() => void openLinkSessionDialog("imageImport")}
             onPaste={() => void pasteDocument()}
             onManualRecord={() => void createGame(startingFen)}
             onSaveLibrary={(folder, favorite, tags) => saveCurrentLibrary(folder, favorite, tags)}
@@ -6460,6 +6519,7 @@ export default function App() {
         </div>
       )}
       {linkSessionOpen && <LinkSessionDialog
+        initialSource={linkSessionSource}
         onClose={() => setLinkSessionOpen(false)}
         onStart={async (request) => {
           try {
@@ -6509,11 +6569,21 @@ export default function App() {
             setNotice(friendlyError(error));
           }
         }}
+        onStartTraining={async (fen, title) => {
+          try {
+            const next = normalizeBoardState(await chessPlatform.importRecognizedPosition(fen, title));
+            applyBoard(next);
+            setLinkSessionOpen(false);
+            setNotice("天天象棋截图局面已保存为独立练习棋谱，正在进入 U10 拆棋");
+            await startU10Analysis();
+          } catch (error) {
+            setNotice(friendlyError(error));
+          }
+        }}
         onRecognizeImage={async (source) => {
           try {
             const result = await chessPlatform.recognizeLinkImageFile(source);
             if (!result) return undefined;
-            if (result.board) applyBoard(result.board);
             const preview = await chessPlatform.getLinkCapturePreview().catch(() => undefined);
             setLinkCapturePreview(preview);
             analysisHintsEnabledRef.current = true;
@@ -6527,6 +6597,22 @@ export default function App() {
             throw new Error(message);
           }
         }}
+        onPreviewMarkedMove={(fen, iccs, movedBy) => chessPlatform.previewRecognizedLastMove(fen, iccs, movedBy)}
+        onPreviewScreenshotMarkedMove={(fen) => chessPlatform.previewScreenshotMarkedMove(fen)}
+        onSuggestRecognizedMove={(fen) => chessPlatform.suggestRecognizedMove(fen)}
+        onConfirmMarkedMove={async (fen, iccs) => {
+          try {
+            const next = normalizeBoardState(await chessPlatform.confirmRecognizedMove(fen, iccs));
+            applyBoard(next);
+            setLinkSessionOpen(false);
+            setNotice("已确认写入当前棋谱变例，原有后续棋谱已保留");
+          } catch (error) {
+            setNotice(friendlyError(error));
+            throw error;
+          }
+        }}
+        pieceAsset={(piece) => pieceAsset(piece, displayedPieceSkin)}
+        boardAsset={`/skins/${skinAssetFolder(displayedBoardSkin)}/board.png`}
       />}
       {flyknifeOpen && <FlyknifeDialog
         currentFen={board.fen}

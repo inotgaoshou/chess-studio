@@ -33,10 +33,10 @@ use link_core::{
 };
 use local_store::{
     AnalysisSummary, DesktopPreferences, EngineProfile, FlyknifePlan, FlyknifeStepAnnotation,
-    ImportedGame, ImportedMasterStyleProfile, ImportedMasterStyleSample, LibraryFolder, LocalGame,
-    GuidedAnalysisSession, GuidedAnalysisSubmission, LearningProfile, LocalStore, MasterStyleHint,
-    MasterStyleProfile, StudySession, SyncAccountBinding, TheoryCard, TheoryCardFeedback,
-    TheoryLesson, TrainingAttempt, TrainingTask, WeaknessStat,
+    GameMirrorStatus, GuidedAnalysisSession, GuidedAnalysisSubmission, ImportedGame,
+    ImportedMasterStyleProfile, ImportedMasterStyleSample, LearningProfile, LibraryFolder,
+    LocalGame, LocalStore, MasterStyleHint, MasterStyleProfile, StudySession, SyncAccountBinding,
+    TheoryCard, TheoryCardFeedback, TheoryLesson, TrainingAttempt, TrainingTask, WeaknessStat,
 };
 use manual_format::{
     ManualDocument, ManualFormat, ManualMetadata, detect_format, export_chinese_text,
@@ -52,17 +52,17 @@ use tauri::{Emitter, Manager, State};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::time::timeout;
+use u10_learning::{
+    DailyTrainingPlanDto, GuidedAnalysisResultDto, GuidedEngineLine, OpeningRepertoireDto,
+    OpeningSample, WeeklyLearningReportDto, classify_submission, daily_plan,
+    infer_opening_repertoire, weekly_report,
+};
 use uuid::Uuid;
 use xiangqi_core::{
     Board, Color, DomesticRuleState, GameStatus, Move, PieceKind, RuleMode, RuleVerdict,
     STARTING_FEN, Square,
 };
 use xiangqi_manual::{ManualTree, MoveNode};
-use u10_learning::{
-    DailyTrainingPlanDto, GuidedAnalysisResultDto, GuidedEngineLine, OpeningRepertoireDto,
-    OpeningSample, WeeklyLearningReportDto, classify_submission, daily_plan,
-    infer_opening_repertoire, weekly_report,
-};
 
 const BUILTIN_ENGINE_PATH: &str = "builtin:pikafish";
 const BUILTIN_FAIRY_ENGINE_PATH: &str = "builtin:fairy-stockfish";
@@ -179,6 +179,7 @@ struct LinkSession {
     manual_turn_override: Option<Color>,
     pending_external_move: Option<String>,
     pending_expected_fen: Option<String>,
+    screenshot_move_marker: Option<link_vision::ScreenshotMoveMarker>,
 }
 
 impl Default for LinkSession {
@@ -217,6 +218,7 @@ impl Default for LinkSession {
             manual_turn_override: None,
             pending_external_move: None,
             pending_expected_fen: None,
+            screenshot_move_marker: None,
         }
     }
 }
@@ -570,6 +572,19 @@ struct PreviewLineStepDto {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct RecognizedLastMovePreviewDto {
+    #[serde(flatten)]
+    step: PreviewLineStepDto,
+    before_fen: String,
+    after_fen: String,
+    side_to_move: &'static str,
+    captured: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    marker_kind: Option<&'static str>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct AppInfoDto {
     version: &'static str,
     build_timestamp: u64,
@@ -596,6 +611,29 @@ struct GameSummaryDto {
     library_folder: Option<String>,
     favorite: bool,
     tags: Vec<String>,
+    mirror: Option<GameMirrorStatusDto>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GameMirrorStatusDto {
+    game_id: Uuid,
+    path: Option<String>,
+    state: String,
+    updated_at: Option<String>,
+    error: Option<String>,
+}
+
+impl From<GameMirrorStatus> for GameMirrorStatusDto {
+    fn from(status: GameMirrorStatus) -> Self {
+        Self {
+            game_id: status.game_id,
+            path: status.path,
+            state: status.state,
+            updated_at: status.updated_at,
+            error: status.error,
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -1154,6 +1192,7 @@ fn initialize_link_session_for_request(
     session.manual_turn_override = None;
     session.pending_external_move = None;
     session.pending_expected_fen = None;
+    session.screenshot_move_marker = None;
     session.state = match request.source {
         CaptureSource::ImageImport | CaptureSource::CameraBoard => {
             LinkSessionState::DetectingCorners
@@ -1450,6 +1489,7 @@ fn stop_link_session(
     session.manual_turn_override = None;
     session.pending_external_move = None;
     session.pending_expected_fen = None;
+    session.screenshot_move_marker = None;
     session.board_bounds = None;
     session.piece_click_centers.clear();
     session.target_region = None;
@@ -1575,6 +1615,8 @@ fn recalibrate_link_session(
         session.manual_turn_override = None;
         session.pending_external_move = None;
         session.pending_expected_fen = None;
+        session.screenshot_move_marker = None;
+        session.screenshot_move_marker = None;
         session.latest_fen = None;
         session.confidence = None;
         session.confidence_threshold = confidence_threshold;
@@ -1730,13 +1772,28 @@ fn recognize_link_image_file(
             .then_some(session.manual_turn_override)
             .flatten()
     });
-    let recognition = if manual_turn_override.is_some() {
+    let mut recognition = if manual_turn_override.is_some() {
         link_vision::recognition_with_side_to_move(recognition, board.side_to_move())
     } else if let Some(side) = turn_indicator.as_ref().map(|indicator| indicator.side) {
         link_vision::recognition_with_side_to_move(recognition, side)
     } else {
         recognition
     };
+    let screenshot_move_marker = link_vision::detect_screenshot_move_marker_from_png(
+        &bytes,
+        &detections,
+        recognition.orientation,
+    )
+    .unwrap_or(None);
+    if let Some(marker) = screenshot_move_marker {
+        if let Ok(marked_board) = Board::from_fen(&recognition.fen) {
+            if let Some(piece) = marked_board.piece_at(marker.to) {
+                // The haloed piece has just arrived at the destination, so the
+                // screenshot position is now the opponent's turn.
+                recognition = link_vision::recognition_with_side_to_move(recognition, piece.color.opposite());
+            }
+        }
+    }
     if let Ok(mut session) = state.link_session.lock() {
         if session.capture_generation == generation {
             session.board_orientation = recognition.orientation;
@@ -1753,19 +1810,34 @@ fn recognize_link_image_file(
                 manual_turn_override,
                 turn_indicator.as_ref(),
             ));
+            session.screenshot_move_marker = screenshot_move_marker;
             session.phase = Some("recognized".into());
             session.reason = Some("图片局面已识别，正在同步并触发引擎分析…".into());
         }
     }
-    let observation = observe_link_recognition_inner(
-        &state,
-        recognition.fen,
-        Some(recognition.confidence),
-        Some(generation),
-    )?;
-    if let Some(board) = &observation.board {
-        let _ = app.emit("board-navigated", board);
+    // A file import is evidence for a position, not an instruction to alter the
+    // current manual tree. The user must explicitly confirm a marked move first.
+    let recognized_board = Board::from_fen(&recognition.fen).map_err(|error| error.to_string())?;
+    let board = {
+        let model = state.model.lock().map_err(|_| "state lock poisoned".to_owned())?;
+        recognized_board_snapshot(&model, &recognized_board)?
+    };
+    if let Ok(mut session) = state.link_session.lock() {
+        if session.capture_generation == generation {
+            session.latest_fen = Some(recognition.fen);
+            session.state = LinkSessionState::Tracking;
+            session.phase = Some("awaiting_move_confirmation".into());
+            session.reason = Some("图片局面已识别；请标记红方或黑方走子并确认后写入棋谱".into());
+        }
     }
+    let observation = LinkObservationDto {
+        state: LinkSessionState::Tracking,
+        accepted: false,
+        move_iccs: None,
+        reason: Some("图片局面已识别；请标记红方或黑方走子并确认后写入棋谱".into()),
+        board: Some(board),
+        capture_preview_available: true,
+    };
     emit_link_session_updated(&app);
     Ok(observation)
 }
@@ -3601,17 +3673,387 @@ fn list_games(state: State<'_, DesktopState>) -> Result<Vec<GameSummaryDto>, Str
         .load_games()
         .map_err(|error| error.to_string())?
         .into_iter()
-        .map(|game| GameSummaryDto {
-            id: game.id,
-            title: game.title,
-            fen: game.starting_fen,
-            updated_at: game.updated_at,
-            current: game.id == model.game_id,
-            library_folder: game.library_folder,
-            favorite: game.favorite,
-            tags: game.tags,
+        .map(|game| {
+            let mirror = model
+                .store
+                .game_mirror_status(game.id)
+                .map_err(|error| error.to_string())?
+                .map(Into::into);
+            Ok(GameSummaryDto {
+                id: game.id,
+                title: game.title,
+                fen: game.starting_fen,
+                updated_at: game.updated_at,
+                current: game.id == model.game_id,
+                library_folder: game.library_folder,
+                favorite: game.favorite,
+                tags: game.tags,
+                mirror,
+            })
         })
-        .collect())
+        .collect::<Result<Vec<_>, String>>()?)
+}
+
+fn default_game_mirror_root() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("Documents")
+        .join("棋研棋谱")
+}
+
+fn configured_game_mirror_root(preferences: &DesktopPreferences) -> PathBuf {
+    let root = preferences.game_mirror_root.trim();
+    if root.is_empty() {
+        default_game_mirror_root()
+    } else {
+        PathBuf::from(root)
+    }
+}
+
+fn sanitize_mirror_segment(value: &str, fallback: &str) -> String {
+    let cleaned = value
+        .trim()
+        .chars()
+        .map(|character| match character {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '\0' => '_',
+            character if character.is_control() => '_',
+            character => character,
+        })
+        .collect::<String>();
+    let cleaned =
+        cleaned.trim_matches(|character: char| character == '.' || character.is_whitespace());
+    if cleaned.is_empty() {
+        fallback.into()
+    } else {
+        cleaned.chars().take(80).collect()
+    }
+}
+
+fn mirror_date(metadata: &ManualMetadata) -> String {
+    let date = metadata.date.trim();
+    if date.len() >= 4 && date.as_bytes()[..4].iter().all(u8::is_ascii_digit) {
+        date.replace(['.', '/', ' '], "-")
+    } else {
+        "未标日期".into()
+    }
+}
+
+fn mirror_year(metadata: &ManualMetadata) -> String {
+    let date = metadata.date.trim();
+    if date.len() >= 4 && date.as_bytes()[..4].iter().all(u8::is_ascii_digit) {
+        date[..4].into()
+    } else {
+        "未标日期".into()
+    }
+}
+
+fn mirror_opponent_and_side(metadata: &ManualMetadata) -> (String, String) {
+    match (metadata.red.trim(), metadata.black.trim()) {
+        ("", "") => ("未命名对手".into(), "未标执方".into()),
+        (red, "") => (sanitize_mirror_segment(red, "未命名对手"), "红方".into()),
+        ("", black) => (sanitize_mirror_segment(black, "未命名对手"), "黑方".into()),
+        (red, black) => (
+            sanitize_mirror_segment(&format!("{red}-vs-{black}"), "未命名对手"),
+            "红黑".into(),
+        ),
+    }
+}
+
+fn game_mirror_target(root: &Path, game_id: Uuid, metadata: &ManualMetadata) -> PathBuf {
+    let event = sanitize_mirror_segment(&metadata.event, "未命名赛事");
+    let (opponent, side) = mirror_opponent_and_side(metadata);
+    let base = format!("{}_{}_{}_{}", mirror_date(metadata), event, opponent, side);
+    let _ = game_id;
+    root.join(mirror_year(metadata))
+        .join(&event)
+        .join(format!("{base}.pgn"))
+}
+
+fn game_has_moves(tree: &ManualTree) -> bool {
+    tree.branches(tree.root_id())
+        .map(|nodes| !nodes.is_empty())
+        .unwrap_or(false)
+}
+
+fn mirror_status(
+    model: &mut AppModel,
+    state: &str,
+    path: Option<String>,
+    error: Option<String>,
+) -> Result<GameMirrorStatusDto, String> {
+    let status = GameMirrorStatus {
+        game_id: model.game_id,
+        path,
+        state: state.into(),
+        updated_at: Some(Utc::now().to_rfc3339()),
+        error,
+    };
+    model
+        .store
+        .save_game_mirror_status(&status)
+        .map_err(|error| error.to_string())?;
+    Ok(status.into())
+}
+
+fn save_game_mirror_status(
+    store: &mut LocalStore,
+    game_id: Uuid,
+    state: &str,
+    path: Option<String>,
+    error: Option<String>,
+) -> Result<(), String> {
+    store
+        .save_game_mirror_status(&GameMirrorStatus {
+            game_id,
+            path,
+            state: state.into(),
+            updated_at: Some(Utc::now().to_rfc3339()),
+            error,
+        })
+        .map_err(|error| error.to_string())
+}
+
+fn sync_current_game_mirror(model: &mut AppModel) -> Result<GameMirrorStatusDto, String> {
+    let preferences = model
+        .store
+        .desktop_preferences()
+        .map_err(|error| error.to_string())?;
+    if !preferences.game_mirror_enabled {
+        return mirror_status(model, "disabled", None, None);
+    }
+    if !game_has_moves(&model.tree) {
+        return mirror_status(model, "pending", None, None);
+    }
+    let current_game = model
+        .store
+        .load_game(model.game_id)
+        .map_err(|error| error.to_string())?
+        .ok_or("当前棋谱不存在")?;
+    if current_game.library_folder.is_none() {
+        if let Some(previous) = model
+            .store
+            .game_mirror_status(model.game_id)
+            .map_err(|error| error.to_string())?
+            .and_then(|status| status.path)
+        {
+            if Path::new(&previous).exists() {
+                fs::remove_file(&previous).map_err(|error| format!("无法移除旧镜像：{error}"))?;
+            }
+        }
+        return mirror_status(model, "pending", None, None);
+    }
+    let root = configured_game_mirror_root(&preferences);
+    let mut target = game_mirror_target(&root, model.game_id, &model.metadata);
+    let old = model
+        .store
+        .game_mirror_status(model.game_id)
+        .map_err(|error| error.to_string())?;
+    if target.exists()
+        && old
+            .as_ref()
+            .and_then(|status| status.path.as_ref())
+            .map(PathBuf::from)
+            .as_ref()
+            != Some(&target)
+    {
+        let suffix = model.game_id.simple().to_string();
+        let stem = target
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or("棋谱");
+        target.set_file_name(format!("{stem}_{}.pgn", &suffix[..8]));
+    }
+    let previous_path = old.as_ref().and_then(|status| status.path.clone());
+    let result = (|| -> Result<(), std::io::Error> {
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&target, export_pgn(&document_from_model(model)))?;
+        if let Some(previous) = previous_path.clone().map(PathBuf::from) {
+            if previous != target && previous.exists() {
+                fs::remove_file(previous)?;
+            }
+        }
+        Ok(())
+    })();
+    match result {
+        Ok(()) => mirror_status(
+            model,
+            "synced",
+            Some(target.to_string_lossy().into_owned()),
+            None,
+        ),
+        Err(error) => mirror_status(
+            model,
+            "failed",
+            previous_path,
+            Some(format!("外部镜像写入失败：{error}")),
+        ),
+    }
+}
+
+#[tauri::command]
+fn get_game_mirror_status(
+    game_id: Option<Uuid>,
+    state: State<'_, DesktopState>,
+) -> Result<Option<GameMirrorStatusDto>, String> {
+    let model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    model
+        .store
+        .game_mirror_status(game_id.unwrap_or(model.game_id))
+        .map(|status| status.map(Into::into))
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn update_game_mirror(state: State<'_, DesktopState>) -> Result<GameMirrorStatusDto, String> {
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    sync_current_game_mirror(&mut model)
+}
+
+#[tauri::command]
+fn rebuild_game_mirrors(
+    state: State<'_, DesktopState>,
+) -> Result<Vec<GameMirrorStatusDto>, String> {
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    let preferences = model
+        .store
+        .desktop_preferences()
+        .map_err(|error| error.to_string())?;
+    let games = model
+        .store
+        .load_games()
+        .map_err(|error| error.to_string())?;
+    let mut statuses = Vec::new();
+    for game in games {
+        if game.id == model.game_id {
+            statuses.push(sync_current_game_mirror(&mut model)?);
+            continue;
+        }
+        let previous = model
+            .store
+            .game_mirror_status(game.id)
+            .map_err(|error| error.to_string())?;
+        if !preferences.game_mirror_enabled {
+            save_game_mirror_status(&mut model.store, game.id, "disabled", None, None)?;
+        } else if game.library_folder.is_none() {
+            if let Some(path) = previous.as_ref().and_then(|status| status.path.as_ref()) {
+                if Path::new(path).exists() {
+                    fs::remove_file(path).map_err(|error| format!("无法移除旧镜像：{error}"))?;
+                }
+            }
+            save_game_mirror_status(&mut model.store, game.id, "pending", None, None)?;
+        } else {
+            let (_, tree) = restore_game(&model.store, &game)?;
+            if !game_has_moves(&tree) {
+                save_game_mirror_status(&mut model.store, game.id, "pending", None, None)?;
+            } else {
+                let metadata = serde_json::from_str::<ManualMetadata>(&game.metadata_json)
+                    .unwrap_or(ManualMetadata {
+                        title: game.title.clone(),
+                        result: "*".into(),
+                        ..ManualMetadata::default()
+                    });
+                let document = ManualDocument {
+                    metadata: metadata.clone(),
+                    starting_fen: game.starting_fen.clone(),
+                    note: game.note.clone(),
+                    tree,
+                    warnings: Vec::new(),
+                };
+                let mut target = game_mirror_target(
+                    &configured_game_mirror_root(&preferences),
+                    game.id,
+                    &metadata,
+                );
+                if target.exists()
+                    && previous
+                        .as_ref()
+                        .and_then(|status| status.path.as_ref())
+                        .map(PathBuf::from)
+                        .as_ref()
+                        != Some(&target)
+                {
+                    let suffix = game.id.simple().to_string();
+                    let stem = target
+                        .file_stem()
+                        .and_then(|value| value.to_str())
+                        .unwrap_or("棋谱");
+                    target.set_file_name(format!("{stem}_{}.pgn", &suffix[..8]));
+                }
+                let previous_path = previous.as_ref().and_then(|status| status.path.clone());
+                let result = (|| -> Result<(), std::io::Error> {
+                    if let Some(parent) = target.parent() {
+                        fs::create_dir_all(parent)?;
+                    }
+                    fs::write(&target, export_pgn(&document))?;
+                    if let Some(old_path) = previous_path.clone().map(PathBuf::from) {
+                        if old_path != target && old_path.exists() {
+                            fs::remove_file(old_path)?;
+                        }
+                    }
+                    Ok(())
+                })();
+                match result {
+                    Ok(()) => save_game_mirror_status(
+                        &mut model.store,
+                        game.id,
+                        "synced",
+                        Some(target.to_string_lossy().into_owned()),
+                        None,
+                    )?,
+                    Err(error) => save_game_mirror_status(
+                        &mut model.store,
+                        game.id,
+                        "failed",
+                        previous_path,
+                        Some(format!("外部镜像写入失败：{error}")),
+                    )?,
+                }
+            }
+        }
+        if let Some(status) = model
+            .store
+            .game_mirror_status(game.id)
+            .map_err(|error| error.to_string())?
+        {
+            statuses.push(status.into());
+        }
+    }
+    Ok(statuses)
+}
+
+#[tauri::command]
+fn reveal_game_mirror(state: State<'_, DesktopState>) -> Result<(), String> {
+    let model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    let status = model
+        .store
+        .game_mirror_status(model.game_id)
+        .map_err(|error| error.to_string())?
+        .ok_or("当前棋谱尚未创建 Finder 镜像")?;
+    let path = status.path.ok_or("当前棋谱尚未创建 Finder 镜像")?;
+    if !Path::new(&path).exists() {
+        return Err("镜像文件已在 Finder 中被删除，请先立即更新镜像".into());
+    }
+    ProcessCommand::new("open")
+        .arg("-R")
+        .arg(path)
+        .status()
+        .map_err(|error| format!("无法在 Finder 中显示：{error}"))?;
+    Ok(())
 }
 
 impl From<LibraryFolder> for LibraryFolderDto {
@@ -3785,6 +4227,7 @@ fn update_game_library(
         .store
         .update_game_library_with_operation(game_id, folder.as_deref(), favorite, &tags, &operation)
         .map_err(|error| error.to_string())?;
+    let _ = sync_current_game_mirror(&mut model);
     board_dto(&model)
 }
 
@@ -3813,8 +4256,193 @@ fn play_move(iccs: String, state: State<'_, DesktopState>) -> Result<BoardDto, S
 }
 
 #[tauri::command]
+fn confirm_recognized_move(fen: String, iccs: String, state: State<'_, DesktopState>) -> Result<BoardDto, String> {
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    if model.board.to_fen() != fen {
+        return Err("截图局面与当前棋谱节点不一致。请先跳转到对应局面，或将截图仅导入为独立练习局面".into());
+    }
+    commit_move(&mut model, &iccs)
+}
+
+#[tauri::command]
 fn preview_line(fen: String, pv: Vec<String>) -> Result<Vec<PreviewLineStepDto>, String> {
     preview_line_steps(&fen, &pv)
+}
+
+#[tauri::command]
+fn preview_recognized_last_move(
+    fen: String,
+    iccs: String,
+    moved_by: String,
+) -> Result<RecognizedLastMovePreviewDto, String> {
+    let after = Board::from_fen(&fen).map_err(|error| error.to_string())?;
+    let mover = match moved_by.as_str() {
+        "红方" => Color::Red,
+        "黑方" => Color::Black,
+        _ => return Err("请选择红方或黑方的上一着".into()),
+    };
+    if after.side_to_move() != mover.opposite() {
+        return Err(format!("截图显示当前轮到{}行棋，与{}刚走完不一致，请先校正行棋方", side_label(after.side_to_move()), side_label(mover)));
+    }
+    let mv = Move::from_iccs(&iccs).map_err(|error| error.to_string())?;
+    if after.piece_at(mv.to).is_none() {
+        return Err("终点没有识别到走后的棋子，请重新标记终点".into());
+    }
+    if after.piece_at(mv.from).is_some() {
+        return Err("起点在走后局面仍有棋子；上一着回溯目前只支持非吃子走法，请改用前后截图确认吃子".into());
+    }
+    let before = after
+        .undo_non_capture_move(mv, mover)
+        .map_err(|_| "这条起点到终点不能还原为合法的上一着，请检查红黑方与两个位置".to_owned())?;
+    let notation = before.chinese_move_notation(mv).map_err(|error| error.to_string())?;
+    Ok(RecognizedLastMovePreviewDto {
+        step: PreviewLineStepDto {
+            fen: after.to_fen(), notation, moved_by: side_label(mover),
+            from: SquareDto { row: mv.from.row, col: mv.from.col },
+            to: SquareDto { row: mv.to.row, col: mv.to.col },
+            pieces: board_pieces(&after), status: game_status_label(after.status()),
+        },
+        before_fen: before.to_fen(),
+        after_fen: after.to_fen(),
+        side_to_move: side_label(after.side_to_move()),
+        captured: false,
+        marker_kind: Some("lastMove"),
+    })
+}
+
+/// Validates the white target ring and selected-piece halo drawn by 天天象棋.
+/// In replay screenshots, the ring marks the vacated source and the white
+/// piece base marks the destination, so this reconstructs an already-played
+/// non-capturing move. It remains a proposal until explicit confirmation.
+#[tauri::command]
+fn preview_screenshot_marked_move(
+    fen: String,
+    state: State<'_, DesktopState>,
+) -> Result<Option<RecognizedLastMovePreviewDto>, String> {
+    let after = Board::from_fen(&fen).map_err(|error| error.to_string())?;
+    let marker = state
+        .link_session
+        .lock()
+        .map_err(|_| "link session lock poisoned".to_owned())?
+        .screenshot_move_marker;
+    let Some(marker) = marker else { return Ok(None); };
+    let mv = Move { from: marker.from, to: marker.to };
+    let Some(selected_piece) = after.piece_at(mv.to) else { return Ok(None); };
+    if after.piece_at(mv.from).is_some() { return Ok(None); }
+    let before = match after.undo_non_capture_move(mv, selected_piece.color) {
+        Ok(value) => value,
+        Err(_) => return Ok(None),
+    };
+    let notation = match before.chinese_move_notation(mv) {
+        Ok(value) => value,
+        Err(_) => return Ok(None),
+    };
+    let moved_by = side_label(selected_piece.color);
+    Ok(Some(RecognizedLastMovePreviewDto {
+        step: PreviewLineStepDto {
+            fen: after.to_fen(),
+            notation,
+            moved_by,
+            from: SquareDto { row: mv.from.row, col: mv.from.col },
+            to: SquareDto { row: mv.to.row, col: mv.to.col },
+            pieces: board_pieces(&after),
+            status: game_status_label(after.status()),
+        },
+        before_fen: before.to_fen(),
+        after_fen: after.to_fen(),
+        side_to_move: side_label(after.side_to_move()),
+        captured: false,
+        marker_kind: Some("lastMove"),
+    }))
+}
+
+fn position_placement_key(board: &Board) -> String {
+    board
+        .to_fen()
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// Matches an imported screenshot against the current tree node.  The image is
+/// never written into the tree here: only a unique, legal one-ply difference is
+/// offered to the user as a preview for confirmation.
+#[tauri::command]
+fn suggest_recognized_move(
+    fen: String,
+    state: State<'_, DesktopState>,
+) -> Result<Option<RecognizedLastMovePreviewDto>, String> {
+    let after = Board::from_fen(&fen).map_err(|error| error.to_string())?;
+    let model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    let before = &model.board;
+    let target = position_placement_key(&after);
+    let candidates: Vec<_> = before
+        .legal_moves()
+        .into_iter()
+        .filter_map(|mv| before.apply_move(mv).ok().filter(|next| position_placement_key(next) == target).map(|next| (mv, next)))
+        .collect();
+    if candidates.len() != 1 {
+        return Ok(None);
+    }
+    let (mv, matched_after) = candidates.into_iter().next().expect("one candidate");
+    let notation = before.chinese_move_notation(mv).map_err(|error| error.to_string())?;
+    let moved_by = side_label(before.side_to_move());
+    Ok(Some(RecognizedLastMovePreviewDto {
+        step: PreviewLineStepDto {
+            fen: matched_after.to_fen(),
+            notation,
+            moved_by,
+            from: SquareDto { row: mv.from.row, col: mv.from.col },
+            to: SquareDto { row: mv.to.row, col: mv.to.col },
+            pieces: board_pieces(&matched_after),
+            status: game_status_label(matched_after.status()),
+        },
+        before_fen: before.to_fen(),
+        after_fen: matched_after.to_fen(),
+        side_to_move: side_label(matched_after.side_to_move()),
+        captured: before.would_capture(mv),
+        marker_kind: Some("lastMove"),
+    }))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ChineseLineParseDto {
+    moves: Vec<String>,
+    steps: Vec<PreviewLineStepDto>,
+}
+
+#[tauri::command]
+fn parse_chinese_line(fen: String, notation: Vec<String>) -> Result<ChineseLineParseDto, String> {
+    let mut board = Board::from_fen(&fen).map_err(|error| error.to_string())?;
+    let mut moves = Vec::with_capacity(notation.len());
+    for (index, input) in notation.iter().enumerate() {
+        let expected = normalize_chinese_move_text(input);
+        if expected.is_empty() {
+            return Err(format!("第 {} 步中文着法为空", index + 1));
+        }
+        let matches = board
+            .legal_moves()
+            .into_iter()
+            .filter(|mv| board.chinese_move_notation(*mv).map(|value| normalize_chinese_move_text(&value) == expected).unwrap_or(false))
+            .collect::<Vec<_>>();
+        let mv = match matches.as_slice() {
+            [mv] => *mv,
+            [] => return Err(format!("第 {} 步“{}”不是当前局面的合法中文着法", index + 1, input.trim())),
+            _ => return Err(format!("第 {} 步“{}”存在歧义，请在棋盘上走出该步", index + 1, input.trim())),
+        };
+        moves.push(mv.to_iccs());
+        board = board.apply_move(mv).map_err(|error| format!("第 {} 步非法：{error}", index + 1))?;
+    }
+    let steps = preview_line_steps(&fen, &moves)?;
+    Ok(ChineseLineParseDto { moves, steps })
 }
 
 fn preview_line_steps(fen: &str, pv: &[String]) -> Result<Vec<PreviewLineStepDto>, String> {
@@ -3911,6 +4539,7 @@ fn commit_move(model: &mut AppModel, iccs: &str) -> Result<BoardDto, String> {
     model.tree = next_tree;
     model.current_node = Some(node_id);
     model.board = next;
+    let _ = sync_current_game_mirror(model);
     board_dto(model)
 }
 
@@ -4217,6 +4846,7 @@ fn update_game_metadata(
         .map_err(|error| error.to_string())?;
     model.metadata = metadata;
     model.note = note;
+    let _ = sync_current_game_mirror(&mut model);
     board_dto(&model)
 }
 
@@ -4250,6 +4880,7 @@ fn reorder_branches(
         .reorder_branches_with_operation(game_id, parent_id, &node_ids, &operation)
         .map_err(|error| error.to_string())?;
     model.tree = reordered_tree;
+    let _ = sync_current_game_mirror(&mut model);
     board_dto(&model)
 }
 
@@ -4306,6 +4937,7 @@ fn update_comment(
         .update_comment_with_operation(node_id, &comment, &operation)
         .map_err(|error| error.to_string())?;
     model.tree = next_tree;
+    let _ = sync_current_game_mirror(&mut model);
     board_dto(&model)
 }
 
@@ -4337,6 +4969,7 @@ fn set_mainline(node_id: Uuid, state: State<'_, DesktopState>) -> Result<BoardDt
         .set_mainline_with_operation(game_id, parent_id, node_id, &operation)
         .map_err(|error| error.to_string())?;
     model.tree = next_tree;
+    let _ = sync_current_game_mirror(&mut model);
     board_dto(&model)
 }
 
@@ -4389,6 +5022,7 @@ fn delete_node(node_id: Uuid, state: State<'_, DesktopState>) -> Result<BoardDto
     if let Some(board) = next_board {
         model.board = board;
     }
+    let _ = sync_current_game_mirror(&mut model);
     board_dto(&model)
 }
 
@@ -7656,15 +8290,21 @@ fn normalize_chinese_move_text(value: &str) -> String {
         .filter_map(|character| match character {
             ' ' | '\t' | '\n' | '\r' | '-' | '－' => None,
             '０' => Some('0'),
-            '１' => Some('1'),
-            '２' => Some('2'),
-            '３' => Some('3'),
-            '４' => Some('4'),
-            '５' => Some('5'),
-            '６' => Some('6'),
-            '７' => Some('7'),
-            '８' => Some('8'),
-            '９' => Some('9'),
+            '１' | '一' => Some('1'),
+            '２' | '二' => Some('2'),
+            '３' | '三' => Some('3'),
+            '４' | '四' => Some('4'),
+            '５' | '五' => Some('5'),
+            '６' | '六' => Some('6'),
+            '７' | '七' => Some('7'),
+            '８' | '八' => Some('8'),
+            '９' | '九' => Some('9'),
+            '車' => Some('车'),
+            '馬' => Some('马'),
+            '砲' => Some('炮'),
+            '帥' => Some('帅'),
+            '將' => Some('将'),
+            '進' => Some('进'),
             character => Some(character),
         })
         .collect()
@@ -8207,6 +8847,7 @@ fn save_flyknife_plan(
             .store
             .set_current_node(game_id, original_node)
             .map_err(|error| error.to_string())?;
+        let _ = sync_current_game_mirror(&mut model);
     }
     Ok(stored.into())
 }
@@ -8409,8 +9050,8 @@ fn submit_guided_analysis(
     if request.submission.candidates.len() < 2 {
         return Err("请先列出至少两个候选着".into());
     }
-    if !(4..=8).contains(&request.submission.predicted_line.len()) {
-        return Err("预测线路需要 4–8 个半回合".into());
+    if !(2..=8).contains(&request.submission.predicted_line.len()) {
+        return Err("请至少在棋盘上推演 2 个半回合，最多 8 个半回合".into());
     }
     let mut model = state
         .model
@@ -8494,10 +9135,7 @@ fn submit_guided_analysis(
 }
 
 #[tauri::command]
-fn cancel_guided_analysis(
-    session_id: Uuid,
-    state: State<'_, DesktopState>,
-) -> Result<(), String> {
+fn cancel_guided_analysis(session_id: Uuid, state: State<'_, DesktopState>) -> Result<(), String> {
     state
         .model
         .lock()
@@ -9925,6 +10563,29 @@ fn board_dto(model: &AppModel) -> Result<BoardDto, String> {
     })
 }
 
+fn recognized_board_snapshot(model: &AppModel, board: &Board) -> Result<BoardDto, String> {
+    let mut snapshot = board_dto(model)?;
+    snapshot.fen = board.to_fen();
+    snapshot.root_side_to_move = side_label(board.side_to_move());
+    snapshot.root_score_cp = None;
+    snapshot.root_mate = None;
+    snapshot.side_to_move = side_label(board.side_to_move());
+    snapshot.status = game_status_label(board.status()).into();
+    snapshot.rule_name = "截图待确认";
+    snapshot.rule_verdict = "ongoing";
+    snapshot.rule_reason = "识别局面尚未写入棋谱，请标记并确认走子".into();
+    snapshot.pieces = board_pieces(board);
+    snapshot.history.clear();
+    snapshot.continuation.clear();
+    snapshot.branches.clear();
+    snapshot.sibling_branches.clear();
+    snapshot.manual_tree.clear();
+    snapshot.current_node = None;
+    snapshot.playable = position_is_playable(board);
+    snapshot.xqb_candidates.clear();
+    Ok(snapshot)
+}
+
 fn metadata_payload(metadata: &ManualMetadata, note: &str) -> UpdateGameMetadataPayload {
     UpdateGameMetadataPayload {
         title: metadata.title.clone(),
@@ -10578,6 +11239,10 @@ fn main() {
             confirm_link_engine_move,
             import_recognized_position,
             list_games,
+            get_game_mirror_status,
+            update_game_mirror,
+            rebuild_game_mirrors,
+            reveal_game_mirror,
             list_library_folders,
             create_library_folder,
             rename_library_folder,
@@ -10585,7 +11250,12 @@ fn main() {
             update_game_library,
             open_game,
             play_move,
+            confirm_recognized_move,
+            preview_recognized_last_move,
+            preview_screenshot_marked_move,
+            suggest_recognized_move,
             preview_line,
+            parse_chinese_line,
             new_game,
             open_document,
             import_xqb_opening_book,
@@ -11605,6 +12275,30 @@ mod tests {
             .unwrap();
 
         assert!(error.contains("第 2 步非法"));
+    }
+
+    #[test]
+    fn chinese_line_parser_resolves_sequential_chinese_notation() {
+        let parsed = parse_chinese_line(
+            STARTING_FEN.into(),
+            vec!["炮二平五".into(), "马8进7".into()],
+        )
+        .unwrap();
+
+        assert_eq!(parsed.moves, vec!["h2e2", "h9g7"]);
+        assert_eq!(parsed.steps.len(), 2);
+        assert_eq!(parsed.steps[0].notation, "炮二平五");
+        assert_eq!(parsed.steps[1].notation, "马8进7");
+    }
+
+    #[test]
+    fn chinese_line_parser_reports_the_illegal_step_in_chinese() {
+        let error = parse_chinese_line(STARTING_FEN.into(), vec!["炮二平五".into(), "车九退十".into()])
+            .err()
+            .unwrap();
+
+        assert!(error.contains("第 2 步"));
+        assert!(error.contains("合法中文着法"));
     }
 
     #[test]

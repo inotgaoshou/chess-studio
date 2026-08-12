@@ -12,7 +12,7 @@ import {
   MIN_ENGINE_CANDIDATES,
 } from "./candidatePreview";
 
-export type DesktopDialog = "engine" | "syncSettings" | "register" | "login" | "subscription" | "training" | "unbind" | null;
+export type DesktopDialog = "engine" | "mirrorSettings" | "syncSettings" | "register" | "login" | "subscription" | "training" | "unbind" | null;
 
 type Props = {
   dialog: DesktopDialog;
@@ -38,6 +38,9 @@ type Props = {
   onSaveStudy(reflection: string, tags: string[]): Promise<void>;
   onAnalyzeStudy(): Promise<void>;
   onCompleteTraining(taskId: string, completed: boolean): Promise<void>;
+  onChooseMirrorRoot?(): Promise<string | undefined>;
+  onSaveMirrorPreferences?(enabled: boolean, root: string): Promise<void>;
+  onRebuildMirrors?(): Promise<void>;
 };
 
 const enginePresetNames = ["Pikafish", "Fairy-Stockfish", "象棋旋风", "象眼 EleEye"] as const;
@@ -185,7 +188,7 @@ function authenticationErrorMessage(error: unknown) {
     : message;
 }
 
-export function DesktopDialogs({ dialog, preferences, account, subscription, trainingTasks, trainingSummary, studySessions, engineProfiles = [], builtinOpeningBookManifest, busy, onClose, onChooseEngine, onSaveEngine, onSelectEngineProfile, onDeleteEngineProfile, onSaveSync, onUnbindSync, onAuthenticate, onRedeemSubscription, onGenerateTraining, onSaveStudy, onAnalyzeStudy, onCompleteTraining }: Props) {
+export function DesktopDialogs({ dialog, preferences, account, subscription, trainingTasks, trainingSummary, studySessions, engineProfiles = [], builtinOpeningBookManifest, busy, onClose, onChooseEngine, onSaveEngine, onSelectEngineProfile, onDeleteEngineProfile, onSaveSync, onUnbindSync, onAuthenticate, onRedeemSubscription, onGenerateTraining, onSaveStudy, onAnalyzeStudy, onCompleteTraining, onChooseMirrorRoot, onSaveMirrorPreferences, onRebuildMirrors }: Props) {
   const [draft, setDraft] = useState(() => sanitizeEnginePreferences(preferences));
   const [email, setEmail] = useState(account.email ?? "");
   const [password, setPassword] = useState("");
@@ -507,6 +510,18 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
           <label className="full"><span>同步服务地址</span><input disabled={!!account.userId} value={draft.serverUrl} onChange={(event) => setDraft({ ...draft, serverUrl: event.target.value })}/></label>
           {account.userId && <p className="dialog-warning">已绑定 {account.email}，服务地址已锁定。</p>}
           <footer><button onClick={close} disabled={busy}>取消</button><button className="primary" disabled={busy || !!account.userId} onClick={() => void onSaveSync(draft.serverUrl)}><Save size={14}/>保存</button></footer>
+        </div>}
+
+        {dialog === "mirrorSettings" && <div className="dialog-form account-form">
+          <p className="dialog-hint">SQLite 是唯一可编辑主库。归档后的完整 PGN 会单向镜像到 Finder，外部编辑过的 PGN 请按新棋局导入。</p>
+          <label className="check-row full"><input type="checkbox" checked={draft.gameMirrorEnabled ?? true} onChange={(event) => setDraft({ ...draft, gameMirrorEnabled: event.target.checked })}/><span><strong>自动镜像归档棋谱</strong><small>合法走子、评论、变例和飞刀标注会更新同一个 PGN；失败不会影响应用内保存。</small></span></label>
+          <label className="full"><span>Finder 根目录</span><input readOnly value={draft.gameMirrorRoot || "~/Documents/棋研棋谱（默认）"}/></label>
+          <div className="dialog-inline-actions full">
+            <button type="button" disabled={busy} onClick={() => void onChooseMirrorRoot?.().then((path) => { if (path) setDraft((current) => ({ ...current, gameMirrorRoot: path })); })}><FolderOpen size={13}/>选择目录</button>
+            <button type="button" disabled={busy} onClick={() => setDraft((current) => ({ ...current, gameMirrorRoot: "" }))}>恢复默认目录</button>
+          </div>
+          <p className="dialog-hint full">目录结构：年份 / 赛事 / 日期_赛事_对手_执方.pgn。首次归档时自动创建；同名不同棋局会追加短 ID，避免覆盖。</p>
+          <footer><button onClick={close} disabled={busy}>取消</button><button disabled={busy} onClick={() => void onRebuildMirrors?.()}>{busy ? "处理中…" : "重新生成全部"}</button><button className="primary" disabled={busy} onClick={() => void onSaveMirrorPreferences?.(draft.gameMirrorEnabled ?? true, draft.gameMirrorRoot ?? "") }><Save size={14}/>保存设置</button></footer>
         </div>}
 
         {dialog === "subscription" && <div className="dialog-form account-form">

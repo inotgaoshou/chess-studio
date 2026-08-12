@@ -101,6 +101,7 @@ export type PreviewLineStep = {
   pieces: Piece[];
   status: string;
 };
+export type RecognizedLastMovePreview = PreviewLineStep & { beforeFen: string; afterFen: string; sideToMove: Side; captured: boolean; markerKind?: "lastMove" | "selectedMove" };
 export type AnalysisOptions = {
   enginePath: string;
   engineId?: string;
@@ -402,8 +403,11 @@ export type DesktopPreferencesDto = {
   linkStableFrames?: number;
   linkConfidenceThreshold?: number;
   linkAnimationConfirmation?: boolean;
+  gameMirrorEnabled?: boolean;
+  gameMirrorRoot?: string;
   serverUrl: string;
 };
+export type GameMirrorStatus = { gameId: string; path?: string; state: "pending" | "synced" | "failed" | "disabled"; updatedAt?: string; error?: string };
 export type SyncAccountDto = {
   serverUrl: string;
   userId?: string;
@@ -537,6 +541,7 @@ export type TrainingAttempt = {
 };
 export type GuidedAnalysisStart = { session: GuidedAnalysisSession; board: BoardState };
 export type GuidedAnalysisSubmissionResult = { session: GuidedAnalysisSession; result: GuidedAnalysisResult; attempt?: TrainingAttempt };
+export type ChineseLineParseResult = { moves: string[]; steps: PreviewLineStep[] };
 export type DailyTrainingPlan = {
   date: string;
   week: number;
@@ -670,7 +675,7 @@ export type EngineArenaResultDto = {
   ruleName: string;
   summary: string;
 };
-export type GameSummary = { id: string; title: string; fen: string; updatedAt: string; current: boolean; libraryFolder?: string; favorite: boolean; tags: string[] };
+export type GameSummary = { id: string; title: string; fen: string; updatedAt: string; current: boolean; libraryFolder?: string; favorite: boolean; tags: string[]; mirror?: GameMirrorStatus };
 export type LibraryFolder = { name: string; system: boolean; gameCount: number };
 export type EnginePlayOptions = { enginePath: string; moveTimeMs: number; threads: number; hashMb: number; ponder: boolean };
 export type EngineMoveResult = { board: BoardState; ponder?: string };
@@ -704,6 +709,11 @@ export interface ChessPlatform {
   renameLibraryFolder(previous: string, next: string): Promise<void>;
   deleteLibraryFolder(name: string): Promise<void>;
   updateGameLibrary(folder: string | undefined, favorite: boolean, tags: string[]): Promise<Partial<BoardState>>;
+  getGameMirrorStatus(gameId?: string): Promise<GameMirrorStatus | undefined>;
+  updateGameMirror(): Promise<GameMirrorStatus>;
+  rebuildGameMirrors(): Promise<GameMirrorStatus[]>;
+  chooseGameMirrorRoot(): Promise<string | undefined>;
+  revealGameMirror(): Promise<void>;
   openGame(gameId: string): Promise<Partial<BoardState>>;
   detectEngine(): Promise<string | null>;
   getDesktopPreferences(): Promise<DesktopPreferencesDto>;
@@ -734,6 +744,7 @@ export interface ChessPlatform {
   getLearningProfile(): Promise<LearningProfile>;
   saveLearningProfile(profile: LearningProfile): Promise<LearningProfile>;
   startGuidedAnalysis(nodeId?: string): Promise<GuidedAnalysisStart>;
+  parseChineseLine(fen: string, notation: string[]): Promise<ChineseLineParseResult>;
   submitGuidedAnalysis(request: { sessionId: string; submission: GuidedAnalysisSubmission; lines: GuidedEngineLine[]; taskId?: string; parentNote?: string }): Promise<GuidedAnalysisSubmissionResult>;
   cancelGuidedAnalysis(sessionId: string): Promise<void>;
   generateDailyTrainingPlan(): Promise<DailyTrainingPlan>;
@@ -758,6 +769,7 @@ export interface ChessPlatform {
   getLinkCapturePreview(): Promise<string | undefined>;
   recognizeLinkImageFile(source: CaptureSource): Promise<LinkObservation | undefined>;
   submitLinkPosition(fen: string): Promise<LinkObservation>;
+  confirmRecognizedMove(fen: string, iccs: string): Promise<Partial<BoardState>>;
   setLinkSideToMove(side: LinkAutoSide): Promise<Partial<BoardState>>;
   confirmLinkEngineMove(iccs: string): Promise<boolean>;
   importRecognizedPosition(fen: string, title?: string): Promise<Partial<BoardState>>;
@@ -782,6 +794,9 @@ export interface ChessPlatform {
   setMainline(nodeId: string): Promise<Partial<BoardState>>;
   deleteNode(nodeId: string): Promise<Partial<BoardState>>;
   previewLine(fen: string, pv: string[]): Promise<PreviewLineStep[]>;
+  previewRecognizedLastMove(fen: string, iccs: string, movedBy: Side): Promise<RecognizedLastMovePreview>;
+  previewScreenshotMarkedMove(fen: string): Promise<RecognizedLastMovePreview | undefined>;
+  suggestRecognizedMove(fen: string): Promise<RecognizedLastMovePreview | undefined>;
   analyze(options: AnalysisOptions): Promise<AnalysisLine[]>;
   runEngineArena(options: EngineArenaOptionsDto): Promise<EngineArenaResultDto>;
   playEngineMove(options: EnginePlayOptions): Promise<EngineMoveResult>;
