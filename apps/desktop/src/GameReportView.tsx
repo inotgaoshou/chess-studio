@@ -161,6 +161,8 @@ export function GameReportView({ report, currentNode, disabled = false, onNaviga
             <p><strong>目的</strong>{move.coach.intent}</p>
             <p><strong>弱点</strong>{move.coach.weakness}</p>
             <p><strong>方案</strong>{move.coach.solution}</p>
+            {!!move.trainingTags?.length && <div className="report-issue-training-tags" aria-label={`${move.notation}训练法归因`}>{move.trainingTags.map((tag) => <span key={tag}>{tag}</span>)}</div>}
+            {move.reviewPrompt && <p><strong>复盘</strong>{move.reviewPrompt}</p>}
           </div>
           {!!move.masterStyleHints?.length && <div className="report-issue-master-style">
             <strong>赵鑫鑫风格启发</strong>

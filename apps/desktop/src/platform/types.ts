@@ -102,6 +102,14 @@ export type PreviewLineStep = {
   status: string;
 };
 export type RecognizedLastMovePreview = PreviewLineStep & { beforeFen: string; afterFen: string; sideToMove: Side; captured: boolean; markerKind?: "lastMove" | "selectedMove"; recognitionSource?: string; recognitionConfidence?: number };
+export type ScreenshotMoveResolution = {
+  status: "unique" | "ambiguous" | "noExactMatch";
+  candidates: RecognizedLastMovePreview[];
+  orientation: BoardOrientation;
+  currentPieces: Piece[];
+  currentSideToMove: Side;
+  reason?: string;
+};
 export type AnalysisOptions = {
   enginePath: string;
   engineId?: string;
@@ -243,6 +251,8 @@ export type ReportIssuePresentationDto = {
   bestNotation?: string;
   pvNotation?: string[];
   masterStyleHints?: MasterStyleHintDto[];
+  trainingTags?: string[];
+  reviewPrompt?: string;
   coach: MoveCoachInsightDto;
 };
 export type GameReportPresentationDto = {
@@ -549,7 +559,14 @@ export type DailyTrainingPlan = {
   totalMinutes: number;
   personalRatio: number;
   thematicRatio: number;
-  segments: Array<{ key: string; title: string; minutes: number; items: Array<{ taskId?: string; source: string; title: string; minutes: number; due: boolean }> }>;
+  segments: Array<{
+    key: string;
+    title: string;
+    minutes: number;
+    targetTags: string[];
+    completionHint: string;
+    items: Array<{ taskId?: string; source: string; title: string; minutes: number; due: boolean }>;
+  }>;
 };
 export type WeeklyLearningReport = {
   weekStart: string;
@@ -686,7 +703,7 @@ export type LinkMode = "spectate" | "confirmPlay" | "autoPlay";
 export type LinkSessionState = "stopped" | "detectingCorners" | "rectifyingBoard" | "classifyingSquares" | "calibrating" | "needsManualCorrection" | "waitingStableFrames" | "tracking" | "paused";
 export type LinkAutoSide = "red" | "black";
 export type StartLinkSessionRequest = { source: CaptureSource; recognitionMode: RecognitionMode; mode: LinkMode; stableFrames: number; autoSide?: LinkAutoSide };
-export type LinkObservation = { state: LinkSessionState; accepted: boolean; moveIccs?: string; reason?: string; board?: BoardState; capturePreviewAvailable?: boolean };
+export type LinkObservation = { state: LinkSessionState; accepted: boolean; moveIccs?: string; reason?: string; board?: BoardState; orientation?: BoardOrientation; capturePreviewAvailable?: boolean };
 export type BoardOrientation = "redAtBottom" | "blackAtBottom";
 export type LinkMoveDetail = { iccs: string; notation: string; movedBy: Side; from: MoveSquare; to: MoveSquare };
 export type LinkSessionStatus = { source: CaptureSource; mode: LinkMode; state: LinkSessionState; reason?: string; phase?: string; lastError?: string; startedAt?: string; lastHeartbeatAt?: string; recognitionAttempts?: number; lastDetectionSummary?: string; turnIndicator?: string; manualTurnOverride?: LinkAutoSide; pendingExternalMove?: string; capturePreviewKind?: string; frameRate: number; confidence?: number; confidenceThreshold?: number; stableFrames: number; requiredStableFrames: number; latestFen?: string; lastMove?: string; lastMoveDetail?: LinkMoveDetail; initialPositionSeen?: boolean; autoSide?: LinkAutoSide; boardOrientation?: BoardOrientation; captureRunning: boolean };
@@ -769,7 +786,7 @@ export interface ChessPlatform {
   getLinkCapturePreview(): Promise<string | undefined>;
   recognizeLinkImageFile(source: CaptureSource): Promise<LinkObservation | undefined>;
   submitLinkPosition(fen: string): Promise<LinkObservation>;
-  confirmRecognizedMove(fen: string, iccs: string): Promise<Partial<BoardState>>;
+  confirmRecognizedMove(iccs: string): Promise<Partial<BoardState>>;
   setLinkSideToMove(side: LinkAutoSide): Promise<Partial<BoardState>>;
   confirmLinkEngineMove(iccs: string): Promise<boolean>;
   importRecognizedPosition(fen: string, title?: string): Promise<Partial<BoardState>>;
@@ -794,10 +811,8 @@ export interface ChessPlatform {
   setMainline(nodeId: string): Promise<Partial<BoardState>>;
   deleteNode(nodeId: string): Promise<Partial<BoardState>>;
   previewLine(fen: string, pv: string[]): Promise<PreviewLineStep[]>;
-  previewRecognizedLastMove(fen: string, iccs: string, movedBy: Side): Promise<RecognizedLastMovePreview>;
-  previewScreenshotMarkedMove(fen: string): Promise<RecognizedLastMovePreview | undefined>;
-  suggestRecognizedMove(fen: string): Promise<RecognizedLastMovePreview | undefined>;
-  suggestRecognizedMoves(fen: string): Promise<RecognizedLastMovePreview[]>;
+  previewRecognizedMoveFromCurrent(iccs: string): Promise<RecognizedLastMovePreview>;
+  resolveScreenshotMove(): Promise<ScreenshotMoveResolution>;
   analyze(options: AnalysisOptions): Promise<AnalysisLine[]>;
   runEngineArena(options: EngineArenaOptionsDto): Promise<EngineArenaResultDto>;
   playEngineMove(options: EnginePlayOptions): Promise<EngineMoveResult>;

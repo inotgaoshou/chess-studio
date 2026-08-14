@@ -62,6 +62,7 @@ import { MobileToolbar, type MobileToolbarCommand } from "./MobileToolbar";
 import type { AnalysisOptions, AppInfoDto, BuiltinOpeningBookManifestDto, DailyTrainingPlan, DesktopPreferencesDto, FlyknifePlan, GuidedAnalysisStart, GuidedAnalysisSubmission, LearningProfile, LinkSessionStatus, OpeningRepertoire, SubscriptionDto, SyncAccountDto, WeeklyLearningReport } from "./platform";
 import { applyColorTheme, initialColorTheme, type ColorTheme } from "./theme";
 import { WorkspaceTabs, type WorkspacePanel } from "./WorkspaceTabs";
+import { WorkspaceModeSwitch, type WorkspaceMode } from "./WorkspaceModeSwitch";
 import { WorkspaceLayoutSwitch } from "./WorkspaceLayoutSwitch";
 import { CompactEngineAnalysisList, CompactReferencePanels, type CompactBookRow, type CompactEngineAnalysisRow, type CompactEvaluationRow } from "./CompactWorkspace";
 import { CoachProfileView } from "./CoachProfileView";
@@ -88,6 +89,7 @@ import { bundledTheoryKnowledge } from "./theoryKnowledge.generated";
 import { ReviewWorkspace } from "./ReviewWorkspace";
 import { U10TrainingDialog } from "./U10TrainingDialog";
 import { UserManualDialog } from "./UserManualDialog";
+import { boardCellStyle, boardIntersectionPoint } from "./boardGeometry";
 import userManualMarkdown from "../../../docs/USER_MANUAL.zh-CN.md?raw";
 
 
@@ -120,6 +122,15 @@ const startingFen = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR
 type EngineAnalysisGroup = { fen: string; name: string; lines: AnalysisLine[]; error?: string };
 type EngineAnalysisSnapshot = { fen: string; primaryEngineId: string; groups: Record<string, EngineAnalysisGroup>; busy?: boolean };
 type FloatingPanel = "engine" | "manual" | "cloud" | "link";
+type CompactStudyRailSnapshot = {
+  engineCollapsed: boolean;
+  manualCollapsed: boolean;
+  detachedPanels: Record<"engine" | "manual", boolean>;
+  poppedOutPanels: Record<"engine" | "manual" | "cloud", boolean>;
+  windowPositions: Record<"engine" | "manual", { x: number; y: number }>;
+  manualWidth?: number;
+  activeWindow: "engine" | "manual";
+};
 type BookCandidateAuditRunState = {
   status: "idle" | "running" | "done" | "error";
   fen?: string;
@@ -290,7 +301,7 @@ export function linkStatusRenderKey(status: LinkSessionStatus) {
 }
 
 export function effectiveBoardReversedForLink(status: LinkSessionStatus, boardFen: string, fallbackReversed: boolean) {
-  const syncedToCurrentBoard = (status.state === "tracking" || status.state === "paused") && status.latestFen === boardFen;
+  const syncedToCurrentBoard = ((status.state === "tracking" || status.state === "paused") || status.initialPositionSeen === true) && status.latestFen === boardFen;
   if (!syncedToCurrentBoard) return fallbackReversed;
   return status.boardOrientation === "blackAtBottom";
 }
@@ -791,12 +802,6 @@ function squareFromIccs(value: string) {
   return { row: 9 - Number(value[1]), col: value.charCodeAt(0) - 97 };
 }
 
-function boardPoint(square: { row: number; col: number }, reversed: boolean) {
-  const row = reversed ? 9 - square.row : square.row;
-  const col = reversed ? 8 - square.col : square.col;
-  return { x: 80 + col * 120, y: 80 + row * 120 };
-}
-
 function pieceAsset(piece: Piece, skin: DesktopPreferencesDto["pieceSkin"]) {
   const folder = skinAssetFolder(skin);
   return `/skins/${folder}/${piece.color === "red" ? "r" : "b"}${pieceCode[piece.kind] ?? "p"}.png`;
@@ -822,6 +827,34 @@ function piecesToFen(pieces: Piece[], side: "red" | "black") {
     return rank;
   });
   return `${ranks.join("/")} ${side === "red" ? "w" : "b"} - - 0 1`;
+}
+
+const linkMiniPieceKey = (piece: Pick<Piece, "row" | "col">) => `${piece.row}-${piece.col}`;
+const linkMiniSamePieceType = (left: Pick<Piece, "color" | "kind">, right: Pick<Piece, "color" | "kind">) => (
+  left.color === right.color && left.kind === right.kind
+);
+
+export function stableLinkMiniPiecesForMove(
+  previousPieces: Piece[],
+  currentPieces: Piece[],
+  move?: Pick<MoveItem, "from" | "to">,
+) {
+  if (!move || previousPieces.length === 0) return currentPieces;
+  const fromKey = linkMiniPieceKey(move.from);
+  const toKey = linkMiniPieceKey(move.to);
+  if (fromKey === toKey) return currentPieces;
+  const mover = previousPieces.find((piece) => linkMiniPieceKey(piece) === fromKey);
+  if (!mover) return currentPieces;
+  const previousTarget = previousPieces.find((piece) => linkMiniPieceKey(piece) === toKey);
+  if (previousTarget && previousTarget.color === mover.color) return currentPieces;
+  const recognizedMover = currentPieces.find((piece) => linkMiniPieceKey(piece) === toKey && linkMiniSamePieceType(piece, mover));
+  const movedPiece = recognizedMover ?? { ...mover, row: move.to.row, col: move.to.col };
+  return previousPieces.flatMap((piece) => {
+    const key = linkMiniPieceKey(piece);
+    if (key === fromKey) return [{ ...movedPiece, row: move.to.row, col: move.to.col }];
+    if (key === toKey) return [];
+    return [piece];
+  });
 }
 
 function formatNps(nps?: number) {
@@ -984,7 +1017,10 @@ export default function App() {
   const [autosave, setAutosave] = useState<AutosaveState>({ status: "draft" });
   const [mobilePanel, setMobilePanel] = useState<"board" | "library" | "analysis" | "settings">("board");
   const [workspacePanel, setWorkspacePanel] = useState<WorkspacePanel>("moves");
-  const [reviewModeOpen, setReviewModeOpen] = useState(false);
+  // Review is the default entry. Research and training reuse this same board and
+  // local game state, so switching modes never creates a second document copy.
+  const [reviewModeOpen, setReviewModeOpen] = useState(chessPlatform.kind === "desktop");
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("review");
   const [candidateRailCollapsed, setCandidateRailCollapsed] = useState(false);
   const [analysisPanelCollapsed, setAnalysisPanelCollapsed] = useState(false);
   const [analysisPanelReopenTop, setAnalysisPanelReopenTop] = useState(readAnalysisPanelReopenTop);
@@ -1035,6 +1071,11 @@ export default function App() {
   const [userManualOpen, setUserManualOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [appInfo, setAppInfo] = useState<AppInfoDto>();
+  const modeSelectionRef = useRef(0);
+  const linkPlatformSupported = chessPlatform.kind === "desktop" && (
+    appInfo?.platform.toLowerCase().includes("mac")
+    ?? (typeof navigator !== "undefined" && /mac/i.test(navigator.userAgent))
+  );
   const [masterLibraryOpen, setMasterLibraryOpen] = useState(false);
   const [engineProbe, setEngineProbe] = useState<EngineProbeDto>();
   const [engineProfiles, setEngineProfiles] = useState<EngineProfileDto[]>([]);
@@ -1077,6 +1118,7 @@ export default function App() {
   });
   const [compactManualWidth, setCompactManualWidth] = useState<number>();
   const [compactActiveWindow, setCompactActiveWindow] = useState<"engine" | "manual">("engine");
+  const screenshotCompactRailSnapshotRef = useRef<CompactStudyRailSnapshot | undefined>(undefined);
   const [linkSessionStatus, setLinkSessionStatus] = useState<LinkSessionStatus>({ source: "windowLink", mode: "spectate", state: "stopped", frameRate: 0, stableFrames: 0, requiredStableFrames: 2, captureRunning: false });
   const [linkCapturePreview, setLinkCapturePreview] = useState<string>();
   const [linkMiniBoardSize, setLinkMiniBoardSize] = useState<"off" | "small" | "large">("large");
@@ -2048,7 +2090,9 @@ export default function App() {
           summary: card.summary,
           appliesWhen: card.appliesWhen,
           risk: card.risk,
-          source: { label: "赵鑫鑫课程" as const, course: card.courseName, episode: card.lessonTitle, timecode: card.timecode, review: "已确认" as const },
+          source: card.courseName === "特级大师训练法"
+            ? { label: "方法论参考" as const, course: card.courseName, episode: card.lessonTitle, timecode: card.timecode, review: "已确认" as const }
+            : { label: "赵鑫鑫课程" as const, course: card.courseName, episode: card.lessonTitle, timecode: card.timecode, review: "已确认" as const },
         })),
         ...(theoryLibrary?.cards ?? []).filter((card) => card.reviewStatus === "approved").map((card) => ({
         id: `course-${card.id}`,
@@ -2061,7 +2105,12 @@ export default function App() {
         engineCorrelations: card.engineCorrelations,
         matchPenalty: card.matchPenalty,
         needsRecheck: card.needsRecheck,
-        source: card.sourceBook ? {
+        source: card.courseName === "特级大师训练法" ? {
+          label: "方法论参考" as const,
+          course: card.courseName,
+          episode: card.lessonTitle,
+          review: "已确认" as const,
+        } : card.sourceBook ? {
           label: "赵鑫鑫棋理三部曲" as const,
           book: card.sourceBook,
           pageStart: card.sourcePageStart,
@@ -2166,7 +2215,7 @@ export default function App() {
     }
   }
 
-  const linkHasObservedPosition = (linkSessionStatus.state === "tracking" || linkSessionStatus.state === "paused")
+  const linkHasObservedPosition = ((linkSessionStatus.state === "tracking" || linkSessionStatus.state === "paused") || linkSessionStatus.initialPositionSeen === true)
     && linkSessionStatus.latestFen === board.fen;
   const linkShouldShowMiniBoard = shouldShowLinkMiniBoard(linkSessionStatus, board.fen);
   const boardDisplayReversed = effectiveBoardReversedForLink(linkSessionStatus, board.fen, reversed);
@@ -2187,8 +2236,8 @@ export default function App() {
       return [{
         rank: line.multipv,
         color: analysisArrowColors[(line.multipv - 1) % analysisArrowColors.length] ?? analysisArrowColors[0],
-        from: boardPoint(from, boardDisplayReversed),
-        to: boardPoint(to, boardDisplayReversed),
+        from: boardIntersectionPoint(from, boardDisplayReversed),
+        to: boardIntersectionPoint(to, boardDisplayReversed),
       }];
     });
   }, [analysisArrowFen, analysisFen, analysisIsStale, board.fen, boardDisplayReversed, orderedAnalysis]);
@@ -2213,6 +2262,26 @@ export default function App() {
     linkSessionStatus.pendingExternalMove === linkConfirmMove ? linkConfirmMoveLabel : undefined,
   );
   const linkDisplayedLastMove = linkShouldShowMiniBoard ? linkSessionStatus.lastMoveDetail ?? lastMove : undefined;
+  const linkDisplayedLastMoveKey = linkDisplayedLastMove
+    ? `${linkDisplayedLastMove.from.row}-${linkDisplayedLastMove.from.col}:${linkDisplayedLastMove.to.row}-${linkDisplayedLastMove.to.col}:${board.fen}`
+    : undefined;
+  const linkMiniPieceState = useRef<{ fen?: string; moveKey?: string; pieces: Piece[] }>({ pieces: [] });
+  const linkMiniPieces = useMemo(() => {
+    const state = linkMiniPieceState.current;
+    if (!linkShouldShowMiniBoard) return state.pieces.length ? state.pieces : board.pieces;
+    if (!state.pieces.length || !linkDisplayedLastMove) {
+      const next = { fen: board.fen, moveKey: linkDisplayedLastMoveKey, pieces: board.pieces };
+      linkMiniPieceState.current = next;
+      return next.pieces;
+    }
+    if (state.fen === board.fen && state.moveKey === linkDisplayedLastMoveKey) {
+      return state.pieces;
+    }
+    const nextPieces = stableLinkMiniPiecesForMove(state.pieces, board.pieces, linkDisplayedLastMove);
+    const next = { fen: board.fen, moveKey: linkDisplayedLastMoveKey, pieces: nextPieces };
+    linkMiniPieceState.current = next;
+    return next.pieces;
+  }, [board.fen, board.pieces, linkDisplayedLastMove, linkDisplayedLastMoveKey, linkShouldShowMiniBoard]);
   const linkMiniBoardHint = linkMiniBoardHintText({
     observed: linkShouldShowMiniBoard,
     sideToMove: board.sideToMove,
@@ -2235,8 +2304,8 @@ export default function App() {
     rank: index + 1,
     color: branchArrowColor,
     label: move.notation,
-    from: boardPoint(move.from, boardDisplayReversed),
-    to: boardPoint(move.to, boardDisplayReversed),
+    from: boardIntersectionPoint(move.from, boardDisplayReversed),
+    to: boardIntersectionPoint(move.to, boardDisplayReversed),
   })) : [], [boardDisplayReversed, branchArrowColor, directBranchChoices, hasVisibleBranchChoices]);
   const boardArrows = useMemo(() => {
     // Preview already marks the simulated from/to squares. Hide route arrows
@@ -4585,7 +4654,15 @@ export default function App() {
   function closeU10Analysis() {
     setU10Start(undefined);
     setU10Error(undefined);
-    void exitReviewMode();
+    // U10 belongs to training. Returning to the review workbench keeps the
+    // current report and its task progress visible after the overlay closes.
+    setReviewModeOpen(true);
+    setWorkspaceMode("training");
+    setMobilePanel("board");
+    setAnalysisPanelCollapsed(false);
+    if (analysisHintsEnabledRef.current && !analysisBusyRef.current) {
+      void runAnalysis().catch(() => undefined);
+    }
   }
 
   async function completeTrainingTask(taskId: string, completed: boolean) {
@@ -4715,6 +4792,24 @@ export default function App() {
   }
 
   async function openLinkSessionDialog(source: "windowLink" | "imageImport" = "windowLink") {
+    screenshotCompactRailSnapshotRef.current = undefined;
+    // Screenshot recognition is a modal over the research workspace. Keep a
+    // full snapshot because collapseCompactStudyPanels also returns native
+    // engine/manual windows before the modal can cover the main workspace.
+    if (!reviewModeOpen && source === "imageImport") {
+      screenshotCompactRailSnapshotRef.current = {
+        engineCollapsed: compactEngineCollapsed,
+        manualCollapsed: compactManualCollapsed,
+        detachedPanels: { ...compactDetachedPanels },
+        poppedOutPanels: { ...compactPoppedOutPanels },
+        windowPositions: {
+          engine: { ...compactWindowPositions.engine },
+          manual: { ...compactWindowPositions.manual },
+        },
+        manualWidth: compactManualWidth,
+        activeWindow: compactActiveWindow,
+      };
+    }
     // Review owns the insight panel. Collapsing the compact study panels here
     // also mutates its shared layout state and leaves the review workspace
     // visually empty after the recognition dialog closes.
@@ -4723,18 +4818,66 @@ export default function App() {
     setLinkSessionOpen(true);
   }
 
-  function closeLinkSessionDialog() {
+  async function restoreScreenshotCompactStudyRails() {
+    const snapshot = screenshotCompactRailSnapshotRef.current;
+    screenshotCompactRailSnapshotRef.current = undefined;
+    if (!snapshot) return;
+
+    setCompactEngineCollapsed(snapshot.engineCollapsed);
+    setCompactManualCollapsed(snapshot.manualCollapsed);
+    setCompactDetachedPanels(snapshot.detachedPanels);
+    setCompactPoppedOutPanels(snapshot.poppedOutPanels);
+    setCompactWindowPositions(snapshot.windowPositions);
+    setCompactManualWidth(snapshot.manualWidth);
+    setCompactActiveWindow(snapshot.activeWindow);
+
+    if (chessPlatform.kind !== "desktop") return;
+    const panelsToRestore = (["engine", "manual"] as const).filter((panel) => snapshot.poppedOutPanels[panel]);
+    const restored = await Promise.allSettled(
+      panelsToRestore.map((panel) => chessPlatform.openCompactFloatingPanel(panel)),
+    );
+    const failedPanels = restored.flatMap((result, index) => result.status === "rejected" ? [panelsToRestore[index]] : []);
+    if (failedPanels.length > 0) {
+      if (failedPanels.includes("engine")) {
+        setCompactPoppedOutPanels((panels) => ({ ...panels, engine: false }));
+        setCompactEngineCollapsed(false);
+        setCompactDetachedPanels((panels) => ({ ...panels, engine: false }));
+      }
+      if (failedPanels.includes("manual")) {
+        setCompactPoppedOutPanels((panels) => ({ ...panels, manual: false }));
+        setCompactManualCollapsed(false);
+        setCompactDetachedPanels((panels) => ({ ...panels, manual: false }));
+      }
+      setNotice("部分研究面板未能恢复为独立窗口，已保留在主工作区");
+    }
+  }
+
+  function closeLinkSessionDialog(options: { cleanupFileSession?: boolean } = {}) {
     setLinkSessionOpen(false);
+    setLinkCapturePreview(undefined);
+    if (options.cleanupFileSession && chessPlatform.kind === "desktop") {
+      // File recognition leaves the backend session in Tracking after the
+      // picture has been parsed. Closing this modal must invalidate it; live
+      // window links have already dismissed this dialog before their floating
+      // controller starts, so they are unaffected.
+      void chessPlatform.stopLinkSession()
+        .then(() => chessPlatform.getLinkSessionStatus())
+        .then(setLinkSessionStatus)
+        .catch(() => undefined);
+    }
     if (reviewModeOpen) {
       // Keep the review workbench selected and restore its sole right-side
       // workspace instead of restoring the normal research rails.
       setAnalysisPanelCollapsed(false);
       setMobilePanel("analysis");
+    } else {
+      void restoreScreenshotCompactStudyRails();
     }
   }
 
-  async function openReviewMode() {
+  async function openReviewMode(mode: Extract<WorkspaceMode, "review" | "training"> = "review") {
     setReviewModeOpen(true);
+    setWorkspaceMode(mode);
     if (chessPlatform.kind !== "desktop") return;
     try {
       // Review has its own report and insight panels; an old compact engine popout
@@ -4751,10 +4894,31 @@ export default function App() {
 
   async function exitReviewMode() {
     setReviewModeOpen(false);
+    setWorkspaceMode("research");
     // The review workbench suppresses the research rails. Re-run the normal
     // position analysis after leaving it so the restored layout is immediately useful.
     if (analysisHintsEnabledRef.current && !analysisBusyRef.current) {
       await runAnalysis().catch(() => undefined);
+    }
+  }
+
+  async function selectWorkspaceMode(mode: WorkspaceMode) {
+    const selection = ++modeSelectionRef.current;
+    if (mode === "research") {
+      await exitReviewMode();
+      return;
+    }
+    await openReviewMode(mode);
+    if (selection !== modeSelectionRef.current) return;
+    if (mode === "training") {
+      if (subscription?.plan !== "pro" || subscription.status !== "active") {
+        setDesktopDialog("subscription");
+        setNotice("训练任务属于 Pro 内测权益，请先兑换 Pro；U10 拆棋仍可从有效报告进入");
+        return;
+      }
+      await loadTrainingTasks();
+      if (selection !== modeSelectionRef.current) return;
+      setDesktopDialog("training");
     }
   }
 
@@ -5543,7 +5707,7 @@ export default function App() {
             <section className={`link-mini-section ${linkMiniBoardSize}`}>
               <header><strong>{linkShouldShowMiniBoard ? (linkHasObservedPosition ? "已同步棋盘" : "同步中棋盘") : linkSessionStatus.capturePreviewKind ?? "实时识别预览"}{linkShouldShowMiniBoard && <em className={board.sideToMove === "黑方" ? "black" : "red"}>{board.sideToMove}走</em>}</strong><div className="link-mini-size" aria-label="棋盘预览大小"><button type="button" className={linkMiniBoardSize === "off" ? "active" : ""} onClick={() => setLinkMiniBoardSize("off")}>隐藏</button><button type="button" className={linkMiniBoardSize === "small" ? "active" : ""} onClick={() => setLinkMiniBoardSize("small")}>小</button><button type="button" className={linkMiniBoardSize === "large" ? "active" : ""} onClick={() => setLinkMiniBoardSize("large")}>大</button></div></header>
               {linkMiniBoardSize !== "off" && (linkShouldShowMiniBoard
-                ? <LinkMiniBoard pieces={board.pieces} arrows={linkMiniArrows} lastMove={linkDisplayedLastMove} sideToMove={board.sideToMove} reversed={linkMiniBoardReversed} pieceAsset={(piece) => pieceAsset(piece, displayedPieceSkin)}/>
+                ? <LinkMiniBoard pieces={linkMiniPieces} arrows={linkMiniArrows} lastMove={linkDisplayedLastMove} sideToMove={board.sideToMove} reversed={linkMiniBoardReversed} markerStyle="tiantian" pieceScale={1.16} markerScale={.72} arrowVisualScale={.78} pieceAsset={(piece) => pieceAsset(piece, displayedPieceSkin)} boardAsset={`/skins/${skinAssetFolder(displayedBoardSkin)}/board.png`}/>
                 : linkCapturePreview ? <img className="link-capture-preview" src={linkCapturePreview} alt={linkSessionStatus.capturePreviewKind ?? "实时识别预览"}/>
                 : <div className="link-mini-empty">等待框选区域的实时截图；未同步前不会显示旧棋盘和旧箭头。</div>)}
               <small>{linkMiniBoardHint}</small>
@@ -5662,6 +5826,7 @@ export default function App() {
       <nav className="menubar" aria-label="主菜单">
         {chessPlatform.kind === "desktop" && <DesktopMenuBar
           appVersion={appInfo?.version}
+          mode={workspaceMode}
           status={{
             playable: board.playable,
             isPlaying,
@@ -5676,6 +5841,7 @@ export default function App() {
             syncStatus: syncAccount.status,
             syncEmail: syncAccount.email,
             syncLastResult: syncAccount.lastSyncResult,
+            linkSupported: linkPlatformSupported,
           }}
           execute={executeMenuCommand}
         />}
@@ -5776,9 +5942,9 @@ export default function App() {
           <button className="tool-button" title="保存棋谱" onClick={() => void saveDocument()}><Save size={16}/></button>
           <button className="tool-button" title="翻转棋盘" onClick={() => setReversed((value) => !value)}><RotateCcw size={16}/></button>
           <button className="tool-button" title="返回根局面" onClick={() => void navigateTo()}><RefreshCw size={16}/></button>
-          {chessPlatform.kind === "desktop" && <button className="tool-button" title={syncAccount.status === "signedIn" ? "大师棋谱" : "登录后查看大师棋谱"} onClick={() => syncAccount.status === "signedIn" ? setMasterLibraryOpen(true) : setDesktopDialog(syncAccount.status === "unbound" ? "register" : "login")}><Database size={16}/></button>}
+          {chessPlatform.kind === "desktop" && workspaceMode === "research" && <button className="tool-button" title={syncAccount.status === "signedIn" ? "大师棋谱" : "登录后查看大师棋谱"} onClick={() => syncAccount.status === "signedIn" ? setMasterLibraryOpen(true) : setDesktopDialog(syncAccount.status === "unbound" ? "register" : "login")}><Database size={16}/></button>}
           {chessPlatform.kind === "desktop" && <button className="tool-button" title="AI 私教棋力档案" onClick={() => void openCoachProfile()}><BarChart3 size={16}/></button>}
-          {chessPlatform.kind === "desktop" && <button className="tool-button flyknife-tool-button" title="飞刀库 / 专题库" onClick={() => setFlyknifeOpen(true)}><Zap size={16}/><span>飞刀库</span></button>}
+          {chessPlatform.kind === "desktop" && workspaceMode === "research" && <button className="tool-button flyknife-tool-button" title="飞刀库 / 专题库" onClick={() => setFlyknifeOpen(true)}><Zap size={16}/><span>飞刀库</span></button>}
         </div>
         {chessPlatform.kind === "desktop" && <div className="export-menu">
           <button className={`tool-button ${exportMenuOpen ? "active" : ""}`} title="分享与导出" aria-label="分享与导出" aria-expanded={exportMenuOpen} onClick={() => setExportMenuOpen((open) => !open)}><Share2 size={16}/></button>
@@ -5796,10 +5962,14 @@ export default function App() {
         <div className="tool-divider" />
         <WorkspaceLayoutSwitch mode={desktopPreferences.layoutMode} onChange={(mode) => void setWorkspaceLayout(mode)}/>
         <div className="tool-divider" />
-        <div className="workspace-mode-switch" role="group" aria-label="工作模式">
-          <button className={!reviewModeOpen ? "active" : ""} title="研究模式：实时分析、云库、传统树和变招编辑" aria-pressed={!reviewModeOpen} onClick={() => void exitReviewMode()}><LayoutGrid size={15}/>研究模式</button>
-          <button className={reviewModeOpen ? "active" : ""} title="整局复盘：报告、关键着法、飞刀和训练" aria-pressed={reviewModeOpen} onClick={() => void openReviewMode()}><ClipboardList size={15}/>整局复盘</button>
-        </div>
+        <WorkspaceModeSwitch
+          active={workspaceMode}
+          platformKind={chessPlatform.kind}
+          engineReady={Boolean(engineProbe)}
+          syncSignedIn={syncAccount.status === "signedIn"}
+          linkSupported={linkPlatformSupported}
+          onChange={(mode) => void selectWorkspaceMode(mode)}
+        />
         <button
           className={`mode-tool ${analysisHintsEnabled ? "active" : ""}`}
           title={analysisHintsEnabled ? "停止自动分析并隐藏 MultiPV 提示" : "开启自动分析与 MultiPV 提示"}
@@ -5820,9 +5990,10 @@ export default function App() {
           </section>}
         </div>
         <button className="tool-button" title={themeToggleTitle} aria-label={themeToggleTitle} onClick={() => void toggleColorTheme()}>{effectiveColorTheme === "dark" ? <Moon size={16}/> : <Sun size={16}/>}</button>
-        {chessPlatform.kind === "desktop" && <button
+        {chessPlatform.kind === "desktop" && workspaceMode === "research" && <button
           className={`mode-tool link-session-shortcut ${linkSessionStatus.state !== "stopped" ? "active" : ""}`}
-          title={linkSessionStatus.state === "stopped" ? "打开识别与连线，启动连线识别" : `连线中：${linkSessionStateLabel(linkSessionStatus.state, linkSessionStatus.mode, linkSessionStatus.pendingExternalMove, linkPendingMoveDisplay)}，点击查看设置`}
+          disabled={!linkPlatformSupported}
+          title={!linkPlatformSupported ? "当前平台未接入持续屏幕采集和外部点击；可使用截图或照片导入" : linkSessionStatus.state === "stopped" ? "打开识别与连线，启动连线识别" : `连线中：${linkSessionStateLabel(linkSessionStatus.state, linkSessionStatus.mode, linkSessionStatus.pendingExternalMove, linkPendingMoveDisplay)}，点击查看设置`}
           onClick={() => void openLinkSessionDialog()}
         ><Link size={15}/>连线</button>}
       </div>
@@ -5925,15 +6096,14 @@ export default function App() {
               <div className="board-art" />
               {cells.map(({ row, col }) => {
                 const piece = pieceMap.get(`${row}-${col}`);
-                const visualRow = boardDisplayReversed ? 9 - row : row;
-                const visualCol = boardDisplayReversed ? 8 - col : col;
                 const isSelected = selected?.row === row && selected?.col === col;
                 const markerMove = displayedLastMove ?? lastMove;
                 const isLastFrom = markerMove?.from.row === row && markerMove.from.col === col;
                 const isLastTo = markerMove?.to.row === row && markerMove.to.col === col;
+                const cellStyle = boardCellStyle({ row, col }, boardDisplayReversed);
                 const style = {
-                  "--piece-left": `${((20 + visualCol * 120) / 1120) * 100}%`,
-                  "--piece-top": `${((20 + visualRow * 120) / 1240) * 100}%`,
+                  "--piece-left": cellStyle.left,
+                  "--piece-top": cellStyle.top,
                 } as CSSProperties;
                 return (
                   <button
@@ -6579,19 +6749,19 @@ export default function App() {
         onImport={async (fen, title) => {
           try {
             applyBoard(await chessPlatform.importRecognizedPosition(fen, title));
-            closeLinkSessionDialog();
+            closeLinkSessionDialog({ cleanupFileSession: true });
             setNotice("识别局面已导入为新棋局，请确认后开始分析");
           } catch (error) {
             setNotice(friendlyError(error));
           }
         }}
-        onStartTraining={async (fen, title) => {
+        onStartTraining={async (fen, title, initialReversed = false) => {
           try {
             const next = normalizeBoardState(await chessPlatform.importRecognizedPosition(fen, title));
             applyBoard(next);
-            closeLinkSessionDialog();
+            closeLinkSessionDialog({ cleanupFileSession: true });
             setNotice("天天象棋截图局面已保存为独立练习棋谱，正在进入 U10 拆棋");
-            await startU10Analysis(undefined, linkSessionStatus.boardOrientation === "blackAtBottom");
+            await startU10Analysis(undefined, initialReversed);
           } catch (error) {
             setNotice(friendlyError(error));
           }
@@ -6613,15 +6783,13 @@ export default function App() {
             throw new Error(message);
           }
         }}
-        onPreviewMarkedMove={(fen, iccs, movedBy) => chessPlatform.previewRecognizedLastMove(fen, iccs, movedBy)}
-        onPreviewScreenshotMarkedMove={(fen) => chessPlatform.previewScreenshotMarkedMove(fen)}
-        onSuggestRecognizedMove={(fen) => chessPlatform.suggestRecognizedMove(fen)}
-        onSuggestRecognizedMoves={(fen) => chessPlatform.suggestRecognizedMoves(fen)}
-        onConfirmMarkedMove={async (fen, iccs) => {
+        onPreviewMarkedMove={(iccs) => chessPlatform.previewRecognizedMoveFromCurrent(iccs)}
+        onResolveScreenshotMove={() => chessPlatform.resolveScreenshotMove()}
+        onConfirmMarkedMove={async (iccs) => {
           try {
-            const next = normalizeBoardState(await chessPlatform.confirmRecognizedMove(fen, iccs));
+            const next = normalizeBoardState(await chessPlatform.confirmRecognizedMove(iccs));
             applyBoard(next);
-            closeLinkSessionDialog();
+            closeLinkSessionDialog({ cleanupFileSession: true });
             setNotice("已确认写入当前棋谱变例，原有后续棋谱已保留");
           } catch (error) {
             setNotice(friendlyError(error));

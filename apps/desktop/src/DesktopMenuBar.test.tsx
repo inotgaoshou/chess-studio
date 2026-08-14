@@ -2,6 +2,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 import { DesktopMenuBar, type MenuBarStatus, type MenuCommand } from "./DesktopMenuBar";
+import type { WorkspaceMode } from "./WorkspaceModeSwitch";
 
 const readyStatus: MenuBarStatus = {
   playable: true,
@@ -15,13 +16,14 @@ const readyStatus: MenuBarStatus = {
   syncBusy: false,
   syncStatus: "signedIn",
   syncEmail: "user@example.com",
+  linkSupported: true,
 };
 
 afterEach(cleanup);
 
-function setup(status: MenuBarStatus = readyStatus) {
+function setup(status: MenuBarStatus = readyStatus, mode: WorkspaceMode = "research") {
   const commands: MenuCommand[] = [];
-  render(<DesktopMenuBar appVersion="1.2.0" status={status} execute={(command) => { commands.push(command); }} />);
+  render(<DesktopMenuBar appVersion="1.2.0" mode={mode} status={status} execute={(command) => { commands.push(command); }} />);
   return { commands, user: userEvent.setup() };
 }
 
@@ -108,6 +110,20 @@ describe("DesktopMenuBar", () => {
     await user.click(screen.getByRole("button", { name: "关于棋研 · v1.2.0" }));
 
     expect(commands).toEqual(["userManual", "about"]);
+  });
+
+  it("keeps research experiments out of review and training menus", () => {
+    setup(readyStatus, "review");
+    expect(screen.queryByText("研究实验", { selector: "summary" })).toBeNull();
+    expect(screen.getByText("棋谱", { selector: "summary" })).toBeTruthy();
+  });
+
+  it("marks continuous link capture unavailable on unsupported platforms", async () => {
+    const { user } = setup({ ...readyStatus, linkSupported: false });
+    await user.click(screen.getByText("研究实验", { selector: "summary" }));
+    const link = screen.getByRole("button", { name: "连线未接入 · 当前平台" }) as HTMLButtonElement;
+    expect(link.disabled).toBe(true);
+    expect(link.title).toContain("未接入");
   });
 
   it("supports keyboard menu switching and item navigation", async () => {

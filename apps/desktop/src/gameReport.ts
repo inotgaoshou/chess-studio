@@ -1,6 +1,7 @@
 import { calculateGameReport, coachProfile, moveGradeStandards, qualityGradeForScore } from "./analysisView";
 import { branchCoachInsights, moveCoachInsight } from "./coachInsights";
 import type { GameReportDatasetDto, GameReportPresentationDto, ReportPhase, ReportSidePresentationDto, Side } from "./platform";
+import { reportTrainingTagsForIssue, reviewPromptForTrainingTags } from "./trainingSystem";
 
 const phases: ReportPhase[] = ["opening", "middle", "endgame"];
 
@@ -107,9 +108,10 @@ export function buildGameReportPresentation(title: string, dataset: GameReportDa
       .filter((move) => move.grade === "差" || move.grade === "错" || move.missedMate)
       .map((move) => ({
         ...move,
+        trainingTags: reportTrainingTagsForIssue(move),
         coach: moveCoachInsight(move),
       }))
-      .map(({ nodeId, notation, movedBy, lossCp, score, grade, missedMate, redScoreCp, deltaCp, opening, bestIccs, bestNotation, pvNotation, masterStyleHints, coach }) => ({
+      .map(({ nodeId, notation, movedBy, lossCp, score, grade, missedMate, redScoreCp, deltaCp, opening, bestIccs, bestNotation, pvNotation, masterStyleHints, trainingTags, coach }) => ({
         nodeId,
         notation,
         movedBy,
@@ -124,6 +126,8 @@ export function buildGameReportPresentation(title: string, dataset: GameReportDa
         bestNotation,
         pvNotation,
         masterStyleHints,
+        trainingTags,
+        reviewPrompt: reviewPromptForTrainingTags(trainingTags),
         coach,
       })),
     standards: moveGradeStandards,

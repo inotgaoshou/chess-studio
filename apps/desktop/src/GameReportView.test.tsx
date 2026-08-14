@@ -63,9 +63,11 @@ const report: GameReportPresentationDto = {
       playedMoveRank: 1,
       playedMoveInTopn: true,
       bestMove: "h2e2",
-      bestScoreCp: 36,
+    bestScoreCp: 36,
       theoryCards: [{ id: 1, title: "布局阶段先协调强子", summary: "开局应优先让车马炮形成配合。", sourceBook: "赵鑫鑫布局棋理", sourcePageStart: 12 }],
     }],
+    trainingTags: ["专属布局", "战术漏算", "深度复盘"],
+    reviewPrompt: "复盘时先重扫双方将军、吃子、捉双，再核对主变。",
     coach: {
       intent: "走前已有强制杀棋。",
       weakness: "本着后红方视角变化 -500。",
@@ -95,6 +97,8 @@ describe("GameReportDialog", () => {
     expect(screen.getByText("赵鑫鑫风格启发")).toBeTruthy();
     expect(screen.getByText(/赵鑫鑫公开棋谱曾走 h2e2/)).toBeTruthy();
     expect(screen.getByText(/棋理依据：布局阶段先协调强子/)).toBeTruthy();
+    expect(screen.getByLabelText("炮二平五训练法归因").textContent).toContain("战术漏算");
+    expect(screen.getByText(/复盘时先重扫/)).toBeTruthy();
     expect(screen.getByText("中炮局-第1着-红方修正炮二平五")).toBeTruthy();
     expect(screen.getByRole("table", { name: "质量评分等级" }).textContent).toContain("优80-100 分");
     fireEvent.keyDown(document, { key: "Escape" });

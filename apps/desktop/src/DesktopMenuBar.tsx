@@ -23,6 +23,7 @@ import {
   UserPlus,
   Zap,
 } from "lucide-react";
+import type { WorkspaceMode } from "./WorkspaceModeSwitch";
 
 export type MenuCommand =
   | "newGame"
@@ -76,6 +77,7 @@ export type MenuBarStatus = {
   syncStatus: SyncAccountStatus;
   syncEmail?: string;
   syncLastResult?: string;
+  linkSupported: boolean;
 };
 
 type DesktopMenu = "game" | "position" | "manual" | "engine" | "link" | "sync" | "help";
@@ -109,10 +111,12 @@ function MenuItem({ children, command, disabled, title, className, execute, clos
 export function DesktopMenuBar({
   status,
   appVersion,
+  mode,
   execute,
 }: {
   status: MenuBarStatus;
   appVersion?: string;
+  mode: WorkspaceMode;
   execute(command: MenuCommand): void | Promise<void>;
 }) {
   const [openMenu, setOpenMenu] = useState<DesktopMenu | null>(null);
@@ -143,7 +147,9 @@ export function DesktopMenuBar({
 
   function handleKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
     const target = event.target as HTMLElement;
-    const menus: DesktopMenu[] = ["game", "position", "manual", "engine", "link", "sync", "help"];
+    const menus: DesktopMenu[] = mode === "research"
+      ? ["game", "position", "manual", "engine", "link", "sync", "help"]
+      : ["game", "position", "manual", "engine", "sync", "help"];
     const summaryMenu = target.dataset.menu as DesktopMenu | undefined;
     if (summaryMenu && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
       event.preventDefault();
@@ -221,8 +227,8 @@ export function DesktopMenuBar({
           <MenuItem command="copyFullManual" execute={execute} close={close}><Copy size={14}/>复制完整棋谱</MenuItem>
           <MenuItem command="copyMainline" execute={execute} close={close}><ClipboardList size={14}/>复制当前主线</MenuItem>
           <MenuItem command="pasteTextManual" execute={execute} close={close}><ClipboardPaste size={14}/>粘贴文本棋谱</MenuItem>
-          <MenuItem command="masterLibrary" execute={execute} close={close} disabled={status.syncStatus !== "signedIn"} title={status.syncStatus !== "signedIn" ? "请先登录同步账号" : undefined}><BookOpen size={14}/>大师棋谱</MenuItem>
-          <MenuItem command="flyknifeLab" execute={execute} close={close}><Zap size={14}/>飞刀入库 / 设计</MenuItem>
+          {mode === "research" && <MenuItem command="masterLibrary" execute={execute} close={close} disabled={status.syncStatus !== "signedIn"} title={status.syncStatus !== "signedIn" ? "请先登录同步账号" : undefined}><BookOpen size={14}/>大师棋谱</MenuItem>}
+          {mode === "research" && <MenuItem command="flyknifeLab" execute={execute} close={close}><Zap size={14}/>飞刀入库 / 设计</MenuItem>}
           <MenuItem command="nextBranch" execute={execute} close={close} disabled={!status.hasContinuation} title={!status.hasContinuation ? "当前节点没有后续着法" : undefined}><GitFork size={14}/>跳到下个分支点</MenuItem>
         </div>}
       </details>
@@ -239,12 +245,12 @@ export function DesktopMenuBar({
           <MenuItem command="trainingTasks" execute={execute} close={close}><ClipboardList size={14}/>训练任务</MenuItem>
         </div>}
       </details>
-      <details open={openMenu === "link"}>
-        {summary("link", "连线")}
+      {mode === "research" && <details open={openMenu === "link"}>
+        {summary("link", "研究实验")}
         {openMenu === "link" && <div className="menu-popup">
-          <MenuItem command="linkSession" execute={execute} close={close}><Link size={14}/>识别与连线</MenuItem>
+          <MenuItem command="linkSession" execute={execute} close={close} disabled={!status.linkSupported} title={status.linkSupported ? "实验功能：屏幕采集和外部点击当前仅支持 macOS" : "当前平台未接入持续屏幕采集和外部点击；可使用截图或照片导入"}><Link size={14}/>{status.linkSupported ? "识别与连线 · macOS 实验" : "连线未接入 · 当前平台"}</MenuItem>
         </div>}
-      </details>
+      </details>}
       <details open={openMenu === "sync"}>
         {summary("sync", "同步")}
         {openMenu === "sync" && <div className="menu-popup sync-menu-popup">

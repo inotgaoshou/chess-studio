@@ -2,7 +2,7 @@ import { reportMovePhase } from "./analysisView";
 import type { AnalysisLine, MasterStyleHintDto, Piece, ReportPhase, Side } from "./platform";
 
 export type TheorySource = {
-  label: "赵鑫鑫开局总论" | "赵鑫鑫课程" | "赵鑫鑫棋理三部曲" | "通用棋理";
+  label: "赵鑫鑫开局总论" | "赵鑫鑫课程" | "赵鑫鑫棋理三部曲" | "通用棋理" | "方法论参考";
   course?: string;
   episode?: string;
   timecode?: string;

@@ -52,6 +52,8 @@ describe("buildGameReportPresentation", () => {
         notation: "马8进7",
         score: 0,
         grade: "错",
+        trainingTags: expect.arrayContaining(["专属布局", "战术漏算", "深度复盘"]),
+        reviewPrompt: expect.stringContaining("将军"),
         masterStyleHints: expect.arrayContaining([expect.objectContaining({ playerName: "赵鑫鑫", confidence: "exact" })]),
         coach: expect.objectContaining({
           intent: expect.stringContaining("严重局面损失"),

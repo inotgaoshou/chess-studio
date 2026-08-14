@@ -34,9 +34,10 @@ use link_core::{
 use local_store::{
     AnalysisSummary, DesktopPreferences, EngineProfile, FlyknifePlan, FlyknifeStepAnnotation,
     GameMirrorStatus, GuidedAnalysisSession, GuidedAnalysisSubmission, ImportedGame,
-    ImportedMasterStyleProfile, ImportedMasterStyleSample, LearningProfile, LibraryFolder,
-    LocalGame, LocalStore, MasterStyleHint, MasterStyleProfile, StudySession, SyncAccountBinding,
-    TheoryCard, TheoryCardFeedback, TheoryLesson, TrainingAttempt, TrainingTask, WeaknessStat,
+    ImportedMasterStyleProfile, ImportedMasterStyleSample, ImportedTheoryCard, LearningProfile,
+    LibraryFolder, LocalGame, LocalStore, MasterStyleHint, MasterStyleProfile, StudySession,
+    SyncAccountBinding, TheoryCard, TheoryCardFeedback, TheoryLesson, TrainingAttempt,
+    TrainingTask, WeaknessStat,
 };
 use manual_format::{
     ManualDocument, ManualFormat, ManualMetadata, detect_format, export_chinese_text,
@@ -125,6 +126,10 @@ struct DesktopState {
     report_running: AtomicBool,
     cloud_book_cache: Mutex<BTreeMap<String, Vec<cloud_opening_book::CloudBookCandidateDto>>>,
     link_session: Mutex<LinkSession>,
+    /// Serializes screenshot invalidation, resolution and confirmation. The
+    /// capture generation is still checked, but this closes the interval where
+    /// a replacement image could begin after confirmation has read that value.
+    screenshot_resolution_guard: Mutex<()>,
     link_capture_generation: AtomicU64,
     link_region_selection_background: Mutex<Option<String>>,
     link_region_selection: (Mutex<Option<Result<LinkCaptureRegion, String>>>, Condvar),
@@ -158,6 +163,7 @@ struct LinkSession {
     confidence: Option<f32>,
     confidence_threshold: f32,
     stable_frames: u8,
+    required_stable_frames: u8,
     latest_fen: Option<String>,
     last_move: Option<String>,
     last_move_detail: Option<LinkMoveDetailDto>,
@@ -180,6 +186,46 @@ struct LinkSession {
     pending_external_move: Option<String>,
     pending_expected_fen: Option<String>,
     screenshot_move_marker: Option<link_vision::ScreenshotMoveMarker>,
+    /// The current manual-tree position from which the screenshot resolution
+    /// was produced. Confirmation must use this exact position; otherwise a
+    /// stale dialog could write a variation below a different node.
+    screenshot_resolution_before_fen: Option<String>,
+    /// Binds the resolution to one image-recognition run. Re-selecting an
+    /// image invalidates all candidates from the prior image.
+    screenshot_resolution_generation: Option<u64>,
+    /// Exact screenshot candidates and the manual recovery path have
+    /// different confirmation rules.  Keeping this on the session prevents a
+    /// caller from turning a failed YOLO comparison into an arbitrary tree
+    /// edit just by submitting a legal ICCS move.
+    screenshot_resolution_mode: Option<ScreenshotResolutionMode>,
+    /// FEN alone is not a tree identity: repetitions can reach the exact same
+    /// position below a different branch, or even another game. Keep the
+    /// document and parent node that produced a screenshot proposal so a stale
+    /// dialog cannot write below a look-alike position.
+    screenshot_resolution_game_id: Option<Uuid>,
+    /// `Some(None)` means the root node; `None` means no active resolution.
+    screenshot_resolution_current_node: Option<Option<Uuid>>,
+    /// Only a resolver candidate, or a legal manual preview produced by this
+    /// session, may be confirmed. This closes the last client-side path for
+    /// adding an arbitrary legal move while a screenshot dialog is open.
+    screenshot_resolution_allowed_moves: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScreenshotResolutionMode {
+    ExactPlacement,
+    ManualFallback,
+}
+
+#[derive(Debug, Clone)]
+struct ScreenshotResolutionBinding {
+    recognized_after_fen: Option<String>,
+    before_fen: String,
+    generation: u64,
+    mode: ScreenshotResolutionMode,
+    game_id: Uuid,
+    current_node: Option<Uuid>,
+    allowed_moves: Vec<String>,
 }
 
 impl Default for LinkSession {
@@ -197,6 +243,7 @@ impl Default for LinkSession {
             confidence: None,
             confidence_threshold: 0.55,
             stable_frames: 0,
+            required_stable_frames: 1,
             latest_fen: None,
             last_move: None,
             last_move_detail: None,
@@ -219,6 +266,12 @@ impl Default for LinkSession {
             pending_external_move: None,
             pending_expected_fen: None,
             screenshot_move_marker: None,
+            screenshot_resolution_before_fen: None,
+            screenshot_resolution_generation: None,
+            screenshot_resolution_mode: None,
+            screenshot_resolution_game_id: None,
+            screenshot_resolution_current_node: None,
+            screenshot_resolution_allowed_moves: Vec::new(),
         }
     }
 }
@@ -585,6 +638,26 @@ struct RecognizedLastMovePreviewDto {
     recognition_source: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     recognition_confidence: Option<u32>,
+}
+
+/// The only automatic screenshot-to-move result exposed to the UI.  The
+/// candidates are all legal moves from the current document whose *resulting
+/// piece placement* exactly matches the YOLO-recognized screenshot position.
+/// Screenshot rings are deliberately not a source of candidates; they only
+/// sort this already rule-validated set.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ScreenshotMoveResolutionDto {
+    /// `unique`, `ambiguous`, or `noExactMatch`.
+    status: &'static str,
+    candidates: Vec<RecognizedLastMovePreviewDto>,
+    orientation: BoardOrientation,
+    /// Manual fallback always starts from the current document, never from a
+    /// possibly mismatched screenshot board.
+    current_pieces: Vec<PieceDto>,
+    current_side_to_move: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1001,6 +1074,7 @@ struct LinkObservationDto {
     move_iccs: Option<String>,
     reason: Option<String>,
     board: Option<BoardDto>,
+    orientation: BoardOrientation,
     capture_preview_available: bool,
 }
 
@@ -1073,7 +1147,7 @@ fn link_status_dto(session: &LinkSession) -> LinkSessionStatusDto {
         confidence: session.confidence,
         confidence_threshold: session.confidence_threshold,
         stable_frames: session.stable_frames,
-        required_stable_frames: session.gate.required_frames(),
+        required_stable_frames: session.required_stable_frames,
         latest_fen: session.latest_fen.clone(),
         last_move: session.last_move.clone(),
         last_move_detail: session.last_move_detail.clone(),
@@ -1081,6 +1155,88 @@ fn link_status_dto(session: &LinkSession) -> LinkSessionStatusDto {
         auto_side: session.auto_side.map(color_name),
         board_orientation: session.board_orientation,
         capture_running: session.capture_running,
+    }
+}
+
+fn link_live_session_has_stable_position(session: &LinkSession) -> bool {
+    session.capture_running
+        && session.initial_position_seen
+        && matches!(
+            session.source,
+            CaptureSource::WindowLink | CaptureSource::DesktopDetect
+        )
+}
+
+fn should_apply_link_recognition_geometry(
+    session: &LinkSession,
+    orientation: BoardOrientation,
+) -> bool {
+    !link_live_session_has_stable_position(session) || session.board_orientation == orientation
+}
+
+fn reset_link_stability_progress(session: &mut LinkSession) {
+    session.stable_frames = 0;
+    session.required_stable_frames = session.gate.required_frames();
+}
+
+fn set_link_stability_progress(session: &mut LinkSession, frames: u8, required: u8) {
+    let required = required.max(1);
+    session.stable_frames = frames.min(required);
+    session.required_stable_frames = required;
+}
+
+fn mark_link_stability_accepted(session: &mut LinkSession) {
+    let required = session.gate.required_frames();
+    set_link_stability_progress(
+        session,
+        session.gate.matching_frames().max(required),
+        required,
+    );
+}
+
+fn clear_link_recognition_candidate(session: &mut LinkSession) {
+    if link_live_session_has_stable_position(session) {
+        return;
+    }
+    session.latest_fen = None;
+    session.last_move = None;
+    session.last_move_detail = None;
+}
+
+fn live_side_change_required_frames(session: &LinkSession) -> u8 {
+    if link_live_session_has_stable_position(session) {
+        session.gate.required_frames().max(4)
+    } else {
+        session.gate.required_frames()
+    }
+}
+
+fn live_position_jump_required_frames(session: &LinkSession) -> u8 {
+    if link_live_session_has_stable_position(session) {
+        session.gate.required_frames().max(5)
+    } else {
+        session.gate.required_frames()
+    }
+}
+
+fn wait_for_link_recognition_stability(
+    session: &mut LinkSession,
+    phase: &str,
+    reason: String,
+    required_frames: u8,
+) -> LinkObservationDto {
+    set_link_stability_progress(session, session.gate.matching_frames(), required_frames);
+    session.state = LinkSessionState::WaitingStableFrames;
+    session.phase = Some(phase.into());
+    session.reason = Some(reason);
+    LinkObservationDto {
+        state: session.state,
+        accepted: false,
+        move_iccs: None,
+        reason: session.reason.clone(),
+        board: None,
+        orientation: session.board_orientation,
+        capture_preview_available: session.capture_preview.is_some(),
     }
 }
 
@@ -1197,6 +1353,12 @@ fn initialize_link_session_for_request(
     session.pending_external_move = None;
     session.pending_expected_fen = None;
     session.screenshot_move_marker = None;
+    session.screenshot_resolution_before_fen = None;
+    session.screenshot_resolution_generation = None;
+    session.screenshot_resolution_mode = None;
+    session.screenshot_resolution_game_id = None;
+    session.screenshot_resolution_current_node = None;
+    session.screenshot_resolution_allowed_moves.clear();
     session.state = match request.source {
         CaptureSource::ImageImport | CaptureSource::CameraBoard => {
             LinkSessionState::DetectingCorners
@@ -1206,7 +1368,7 @@ fn initialize_link_session_for_request(
     };
     // A caller may ask for more confirmation, but never less than the source-safe default.
     session.gate = StabilityGate::new(request.stable_frames.max(policy.stable_frames));
-    session.stable_frames = 0;
+    reset_link_stability_progress(session);
     session.confidence = None;
     session.confidence_threshold = confidence_threshold;
     session.frame_rate = 0.0;
@@ -1247,9 +1409,13 @@ fn start_link_session(
     if !policy.allows_external_click && !matches!(request.mode, LinkMode::Spectate) {
         return Err("截图、照片和实体棋盘仅支持识别、跟盘与分析，不能控制第三方窗口".into());
     }
-    let generation = state.link_capture_generation.fetch_add(1, Ordering::SeqCst) + 1;
     let confidence_threshold = desktop_link_confidence_threshold(&state);
-    {
+    let generation = {
+        let _resolution_guard = state
+            .screenshot_resolution_guard
+            .lock()
+            .map_err(|_| "截图上一着解析锁已损坏".to_owned())?;
+        let generation = state.link_capture_generation.fetch_add(1, Ordering::SeqCst) + 1;
         let mut session = state
             .link_session
             .lock()
@@ -1261,7 +1427,8 @@ fn start_link_session(
             confidence_threshold,
             policy,
         );
-    }
+        generation
+    };
     emit_link_session_updated(&app);
 
     if matches!(request.source, CaptureSource::WindowLink) {
@@ -1288,6 +1455,7 @@ fn start_link_session(
             move_iccs: None,
             reason: session.reason.clone(),
             board: None,
+            orientation: session.board_orientation,
             capture_preview_available: session.capture_preview.is_some(),
         });
     }
@@ -1346,6 +1514,7 @@ fn start_link_session(
         move_iccs: None,
         reason: session.reason.clone(),
         board: None,
+        orientation: session.board_orientation,
         capture_preview_available: session.capture_preview.is_some(),
     })
 }
@@ -1395,7 +1564,7 @@ fn start_window_link_selection_worker(
                                 session.confidence = None;
                                 session.confidence_threshold = confidence_threshold;
                                 session.frame_rate = 0.0;
-                                session.stable_frames = 0;
+                                reset_link_stability_progress(&mut session);
                                 session.target_region = capture_region;
                             }
                         }
@@ -1470,6 +1639,10 @@ fn stop_link_session(
     state: State<'_, DesktopState>,
     app: tauri::AppHandle,
 ) -> Result<LinkObservationDto, String> {
+    let _resolution_guard = state
+        .screenshot_resolution_guard
+        .lock()
+        .map_err(|_| "截图上一着解析锁已损坏".to_owned())?;
     state.link_capture_generation.fetch_add(1, Ordering::SeqCst);
     let mut session = state
         .link_session
@@ -1494,6 +1667,12 @@ fn stop_link_session(
     session.pending_external_move = None;
     session.pending_expected_fen = None;
     session.screenshot_move_marker = None;
+    session.screenshot_resolution_before_fen = None;
+    session.screenshot_resolution_generation = None;
+    session.screenshot_resolution_mode = None;
+    session.screenshot_resolution_game_id = None;
+    session.screenshot_resolution_current_node = None;
+    session.screenshot_resolution_allowed_moves.clear();
     session.board_bounds = None;
     session.piece_click_centers.clear();
     session.target_region = None;
@@ -1507,6 +1686,7 @@ fn stop_link_session(
         move_iccs: None,
         reason: None,
         board: None,
+        orientation: session.board_orientation,
         capture_preview_available: false,
     })
 }
@@ -1523,6 +1703,10 @@ fn get_link_session_status(state: State<'_, DesktopState>) -> Result<LinkSession
 
 #[tauri::command]
 fn pause_link_session(state: State<'_, DesktopState>) -> Result<LinkSessionStatusDto, String> {
+    let _resolution_guard = state
+        .screenshot_resolution_guard
+        .lock()
+        .map_err(|_| "截图上一着解析锁已损坏".to_owned())?;
     state.link_capture_generation.fetch_add(1, Ordering::SeqCst);
     let mut session = state
         .link_session
@@ -1533,6 +1717,7 @@ fn pause_link_session(state: State<'_, DesktopState>) -> Result<LinkSessionStatu
         session.capture_running = false;
         session.reason = Some("连线已暂停，未写入任何新着法".into());
         session.phase = Some("paused".into());
+        invalidate_screenshot_move_resolution(&mut session);
     }
     Ok(link_status_dto(&session))
 }
@@ -1620,12 +1805,17 @@ fn recalibrate_link_session(
         session.pending_external_move = None;
         session.pending_expected_fen = None;
         session.screenshot_move_marker = None;
-        session.screenshot_move_marker = None;
+        session.screenshot_resolution_before_fen = None;
+        session.screenshot_resolution_generation = None;
+        session.screenshot_resolution_mode = None;
+        session.screenshot_resolution_game_id = None;
+        session.screenshot_resolution_current_node = None;
+        session.screenshot_resolution_allowed_moves.clear();
         session.latest_fen = None;
         session.confidence = None;
         session.confidence_threshold = confidence_threshold;
         session.frame_rate = 0.0;
-        session.stable_frames = 0;
+        reset_link_stability_progress(&mut session);
         session.capture_generation = generation;
         drop(session);
         if let Err(error) = start_window_link_capture(app.clone(), None, generation, None) {
@@ -1677,15 +1867,58 @@ fn recognize_link_image_file(
     ) {
         return Err("只有截图/照片和实体棋盘相机模式支持选择图片识别".into());
     }
+    // Invalidate before any filesystem or model work. An unreadable or
+    // oversized replacement image must never leave the prior screenshot's
+    // confirmation token usable in the backend.
+    let generation = {
+        let _resolution_guard = state
+            .screenshot_resolution_guard
+            .lock()
+            .map_err(|_| "截图上一着解析锁已损坏".to_owned())?;
+        let generation = state.link_capture_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let mut session = state
+            .link_session
+            .lock()
+            .map_err(|_| "link session lock poisoned".to_owned())?;
+        session.source = source;
+        session.board_orientation = BoardOrientation::RedAtBottom;
+        session.capture_generation = generation;
+        session.capture_preview = None;
+        session.capture_preview_kind = None;
+        session.last_move = None;
+        session.last_move_detail = None;
+        session.board_bounds = None;
+        session.piece_click_centers.clear();
+        session.target_region = None;
+        invalidate_screenshot_move_resolution(&mut session);
+        session.state = LinkSessionState::ClassifyingSquares;
+        session.phase = Some("image_preflight".into());
+        session.reason = Some("正在准备识别截图/照片局面…".into());
+        session.last_error = None;
+        session.capture_running = false;
+        session.last_heartbeat_at = Some(Utc::now());
+        generation
+    };
+    emit_link_session_updated(&app);
     let image_path = PathBuf::from(path);
     if !image_path.is_file() {
-        return Err("未找到要识别的图片文件".into());
+        let error = "未找到要识别的图片文件".to_owned();
+        set_link_capture_error(&app, generation, error.clone());
+        return Err(error);
     }
-    let bytes = fs::read(&image_path).map_err(|error| format!("无法读取图片：{error}"))?;
+    let bytes = match fs::read(&image_path) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            let error = format!("无法读取图片：{error}");
+            set_link_capture_error(&app, generation, error.clone());
+            return Err(error);
+        }
+    };
     if bytes.len() > 16 * 1024 * 1024 {
-        return Err("图片过大，请裁剪到只包含棋盘后重试".into());
+        let error = "图片过大，请裁剪到只包含棋盘后重试".to_owned();
+        set_link_capture_error(&app, generation, error.clone());
+        return Err(error);
     }
-    let generation = state.link_capture_generation.fetch_add(1, Ordering::SeqCst) + 1;
     let confidence_threshold = desktop_link_confidence_threshold(&state);
     {
         let mut session = state
@@ -1715,9 +1948,19 @@ fn recognize_link_image_file(
         session.manual_turn_override = None;
         session.pending_external_move = None;
         session.pending_expected_fen = None;
+        // A new image invalidates every marker and proposal from the prior
+        // image before inference begins.  Otherwise a failed second image
+        // could leave an old move visibly actionable in the dialog.
+        session.screenshot_move_marker = None;
+        session.screenshot_resolution_before_fen = None;
+        session.screenshot_resolution_generation = None;
+        session.screenshot_resolution_mode = None;
+        session.screenshot_resolution_game_id = None;
+        session.screenshot_resolution_current_node = None;
+        session.screenshot_resolution_allowed_moves.clear();
         session.state = LinkSessionState::ClassifyingSquares;
         session.gate = StabilityGate::new(1);
-        session.stable_frames = 0;
+        reset_link_stability_progress(&mut session);
         session.confidence = None;
         session.confidence_threshold = confidence_threshold;
         session.frame_rate = 0.0;
@@ -1734,17 +1977,54 @@ fn recognize_link_image_file(
     }
     emit_link_session_updated(&app);
 
-    let model_path = link_model_path(&app)?;
-    validate_link_model(&model_path)?;
-    let mut detector = link_vision::Yolo11Detector::open(&model_path)
-        .map_err(|error| format!("模型加载失败：{error}"))?;
+    let model_path = match link_model_path(&app) {
+        Ok(path) => path,
+        Err(error) => {
+            set_link_capture_error(&app, generation, error.clone());
+            return Err(error);
+        }
+    };
+    if let Err(error) = validate_link_model(&model_path) {
+        set_link_capture_error(&app, generation, error.clone());
+        return Err(error);
+    }
+    let mut detector = match link_vision::Yolo11Detector::open(&model_path) {
+        Ok(detector) => detector,
+        Err(error) => {
+            let error = format!("模型加载失败：{error}");
+            set_link_capture_error(&app, generation, error.clone());
+            return Err(error);
+        }
+    };
     let board = state
         .model
         .lock()
         .map_err(|_| "state lock poisoned".to_owned())?
         .board
         .clone();
-    let detections = detector.detect_png(&bytes)?;
+    let detections = match detector.detect_png(&bytes) {
+        Ok(detections) => detections,
+        Err(error) => {
+            let reason = format!("图片棋盘识别未完成：{error}");
+            set_link_capture_error(&app, generation, reason.clone());
+            let current_board = {
+                let model = state
+                    .model
+                    .lock()
+                    .map_err(|_| "state lock poisoned".to_owned())?;
+                recognized_board_snapshot(&model, &model.board)?
+            };
+            return Ok(LinkObservationDto {
+                state: LinkSessionState::NeedsManualCorrection,
+                accepted: false,
+                move_iccs: None,
+                reason: Some(reason),
+                board: Some(current_board),
+                orientation: BoardOrientation::RedAtBottom,
+                capture_preview_available: true,
+            });
+        }
+    };
     set_link_capture_detection_summary(&app, generation, "图片识别", &detections);
     if let Some(bounds) = link_vision::board_bounds(&detections) {
         if let Ok(mut session) = state.link_session.lock() {
@@ -1758,12 +2038,24 @@ fn recognize_link_image_file(
         Err(error) => {
             let reason = format!("图片未识别到可同步棋盘：{error}");
             set_link_capture_error(&app, generation, reason.clone());
+            // Recognition failure is not a reason to strand the user without
+            // a legal recovery board.  The recovery board is the current
+            // document, never an approximate position reconstructed from the
+            // failed image.
+            let current_board = {
+                let model = state
+                    .model
+                    .lock()
+                    .map_err(|_| "state lock poisoned".to_owned())?;
+                recognized_board_snapshot(&model, &model.board)?
+            };
             return Ok(LinkObservationDto {
                 state: LinkSessionState::NeedsManualCorrection,
                 accepted: false,
                 move_iccs: None,
                 reason: Some(reason),
-                board: None,
+                board: Some(current_board),
+                orientation: BoardOrientation::RedAtBottom,
                 capture_preview_available: true,
             });
         }
@@ -1776,7 +2068,7 @@ fn recognize_link_image_file(
             .then_some(session.manual_turn_override)
             .flatten()
     });
-    let mut recognition = if manual_turn_override.is_some() {
+    let recognition = if manual_turn_override.is_some() {
         link_vision::recognition_with_side_to_move(recognition, board.side_to_move())
     } else if let Some(side) = turn_indicator.as_ref().map(|indicator| indicator.side) {
         link_vision::recognition_with_side_to_move(recognition, side)
@@ -1789,15 +2081,6 @@ fn recognize_link_image_file(
         recognition.orientation,
     )
     .unwrap_or(None);
-    if let Some(marker) = screenshot_move_marker.as_ref() {
-        if let (Some(to), Ok(marked_board)) = (marker.to, Board::from_fen(&recognition.fen)) {
-            if let Some(piece) = marked_board.piece_at(to) {
-                // The haloed piece has just arrived at the destination, so the
-                // screenshot position is now the opponent's turn.
-                recognition = link_vision::recognition_with_side_to_move(recognition, piece.color.opposite());
-            }
-        }
-    }
     if let Ok(mut session) = state.link_session.lock() {
         if session.capture_generation == generation {
             session.board_orientation = recognition.orientation;
@@ -1816,14 +2099,40 @@ fn recognize_link_image_file(
             ));
             session.screenshot_move_marker = screenshot_move_marker;
             session.phase = Some("recognized".into());
-            session.reason = Some("图片局面已识别，正在同步并触发引擎分析…".into());
+            session.reason = Some("图片局面已识别；正在和当前棋谱逐一核对合法上一着…".into());
         }
     }
     // A file import is evidence for a position, not an instruction to alter the
-    // current manual tree. The user must explicitly confirm a marked move first.
-    let recognized_board = Board::from_fen(&recognition.fen).map_err(|error| error.to_string())?;
+    // current manual tree. The recognized FEN is used to filter all legal
+    // one-ply continuations before any white marker can influence their order.
+    let recognized_board = match Board::from_fen(&recognition.fen) {
+        Ok(board) => board,
+        Err(error) => {
+            let reason = format!("图片局面无法通过棋规校验：{error}");
+            set_link_capture_error(&app, generation, reason.clone());
+            let current_board = {
+                let model = state
+                    .model
+                    .lock()
+                    .map_err(|_| "state lock poisoned".to_owned())?;
+                recognized_board_snapshot(&model, &model.board)?
+            };
+            return Ok(LinkObservationDto {
+                state: LinkSessionState::NeedsManualCorrection,
+                accepted: false,
+                move_iccs: None,
+                reason: Some(reason),
+                board: Some(current_board),
+                orientation: recognition.orientation,
+                capture_preview_available: true,
+            });
+        }
+    };
     let board = {
-        let model = state.model.lock().map_err(|_| "state lock poisoned".to_owned())?;
+        let model = state
+            .model
+            .lock()
+            .map_err(|_| "state lock poisoned".to_owned())?;
         recognized_board_snapshot(&model, &recognized_board)?
     };
     if let Ok(mut session) = state.link_session.lock() {
@@ -1831,15 +2140,17 @@ fn recognize_link_image_file(
             session.latest_fen = Some(recognition.fen);
             session.state = LinkSessionState::Tracking;
             session.phase = Some("awaiting_move_confirmation".into());
-            session.reason = Some("图片局面已识别；请标记红方或黑方走子并确认后写入棋谱".into());
+            session.reason =
+                Some("图片局面已识别；请核对待确认的上一着，或手工点选起点和终点".into());
         }
     }
     let observation = LinkObservationDto {
         state: LinkSessionState::Tracking,
         accepted: false,
         move_iccs: None,
-        reason: Some("图片局面已识别；请标记红方或黑方走子并确认后写入棋谱".into()),
+        reason: Some("图片局面已识别；正在按当前棋谱的合法一步核对上一着".into()),
         board: Some(board),
+        orientation: recognition.orientation,
         capture_preview_available: true,
     };
     emit_link_session_updated(&app);
@@ -2650,19 +2961,24 @@ fn process_link_capture_frame(
             } else {
                 recognition
             };
-            if let Ok(mut session) = app.state::<DesktopState>().link_session.lock() {
-                if session.capture_generation != generation {
-                    return next_region;
-                }
-                session.board_orientation = recognition.orientation;
-                if let Some(bounds) = board_bounds {
-                    session.piece_click_centers = link_piece_click_centers(
+            let recognized_piece_click_centers = board_bounds
+                .map(|bounds| {
+                    link_piece_click_centers(
                         &detections,
                         bounds,
                         recognition.orientation,
                         capture_region,
                         frame_dimensions,
-                    );
+                    )
+                })
+                .unwrap_or_default();
+            if let Ok(mut session) = app.state::<DesktopState>().link_session.lock() {
+                if session.capture_generation != generation {
+                    return next_region;
+                }
+                if should_apply_link_recognition_geometry(&session, recognition.orientation) {
+                    session.board_orientation = recognition.orientation;
+                    session.piece_click_centers = recognized_piece_click_centers.clone();
                 }
                 session.turn_indicator = Some(link_turn_indicator_message(
                     manual_turn_override,
@@ -2674,10 +2990,18 @@ fn process_link_capture_frame(
                 }
             }
             let fen = recognition.fen.clone();
-            if let Err(error) =
-                observe_link_recognition(app, generation, fen, recognition.confidence)
-            {
-                set_link_capture_error(app, generation, error);
+            match observe_link_recognition(app, generation, fen, recognition.confidence) {
+                Ok(observation) => {
+                    if observation.accepted {
+                        if let Ok(mut session) = app.state::<DesktopState>().link_session.lock() {
+                            if session.capture_generation == generation {
+                                session.board_orientation = recognition.orientation;
+                                session.piece_click_centers = recognized_piece_click_centers;
+                            }
+                        }
+                    }
+                }
+                Err(error) => set_link_capture_error(app, generation, error),
             }
         }
         Err(error) => set_link_capture_waiting(
@@ -2900,9 +3224,7 @@ fn capture_display_frame_for_link(
 
 #[cfg(target_os = "macos")]
 fn macos_screen_capture_permission_message(prefix: &str) -> String {
-    format!(
-        "{prefix}。请在 系统设置 > 隐私与安全性 > 屏幕与系统音频录制 中允许 Xiangqi Studio，完全退出并重新打开应用后再启动连线。本地测试包使用 adhoc 签名时，覆盖安装可能让 macOS 重新要求授权；如果已勾选仍反复弹窗，请移除旧的 Xiangqi Studio 授权记录后重新授权。"
-    )
+    format!("{prefix}，屏幕采集暂不可用；请确认权限后重试。")
 }
 
 fn link_capture_generation_is_active(app: &tauri::AppHandle, generation: u64) -> bool {
@@ -3014,7 +3336,8 @@ fn set_link_capture_waiting(app: &tauri::AppHandle, generation: u64, reason: Str
             session.state = LinkSessionState::ClassifyingSquares;
             session.phase = Some("waiting_recognition".into());
             session.reason = Some(reason);
-            session.stable_frames = 0;
+            session.gate.reset();
+            reset_link_stability_progress(&mut session);
             session.last_heartbeat_at = Some(Utc::now());
         }
     }
@@ -3046,17 +3369,97 @@ fn set_link_capture_progress(app: &tauri::AppHandle, generation: u64, phase: &st
 
 fn set_link_capture_error(app: &tauri::AppHandle, generation: u64, reason: String) {
     if let Ok(mut session) = app.state::<DesktopState>().link_session.lock() {
-        if session.capture_generation == generation {
-            session.state = LinkSessionState::NeedsManualCorrection;
-            session.phase = Some("error".into());
-            session.last_error = Some(reason.clone());
-            session.reason = Some(reason);
-            session.capture_running = false;
-            session.frame_rate = 0.0;
-            session.last_heartbeat_at = Some(Utc::now());
-        }
+        apply_link_capture_error(&mut session, generation, reason);
     }
     emit_link_session_updated(app);
+}
+
+fn invalidate_screenshot_move_resolution(session: &mut LinkSession) {
+    session.latest_fen = None;
+    session.screenshot_move_marker = None;
+    session.screenshot_resolution_before_fen = None;
+    session.screenshot_resolution_generation = None;
+    session.screenshot_resolution_mode = None;
+    session.screenshot_resolution_game_id = None;
+    session.screenshot_resolution_current_node = None;
+    session.screenshot_resolution_allowed_moves.clear();
+}
+
+fn active_screenshot_resolution(
+    session: &LinkSession,
+) -> Result<ScreenshotResolutionBinding, String> {
+    if !matches!(
+        session.source,
+        CaptureSource::ImageImport | CaptureSource::CameraBoard
+    ) {
+        return Err("当前不是截图识别会话，不能确认写入上一着".into());
+    }
+    Ok(ScreenshotResolutionBinding {
+        recognized_after_fen: session.latest_fen.clone(),
+        before_fen: session
+            .screenshot_resolution_before_fen
+            .clone()
+            .ok_or_else(|| "截图上一着解析已失效，请重新选择图片".to_owned())?,
+        generation: session
+            .screenshot_resolution_generation
+            .ok_or_else(|| "截图上一着解析已失效，请重新选择图片".to_owned())?,
+        mode: session
+            .screenshot_resolution_mode
+            .ok_or_else(|| "截图上一着解析尚未完成，请重新选择图片".to_owned())?,
+        game_id: session
+            .screenshot_resolution_game_id
+            .ok_or_else(|| "截图上一着解析已失效，请重新选择图片".to_owned())?,
+        current_node: session
+            .screenshot_resolution_current_node
+            .ok_or_else(|| "截图上一着解析已失效，请重新选择图片".to_owned())?,
+        allowed_moves: session.screenshot_resolution_allowed_moves.clone(),
+    })
+}
+
+fn validate_screenshot_resolution_binding(
+    model: &AppModel,
+    binding: &ScreenshotResolutionBinding,
+) -> Result<(), String> {
+    if model.game_id != binding.game_id || model.current_node != binding.current_node {
+        return Err("截图对应的棋谱或节点已变化，请重新选择图片后再确认上一着".into());
+    }
+    if model.board.to_fen() != binding.before_fen {
+        return Err("截图对应的当前棋谱节点已变化。请先跳转到对应局面，或重新选择图片。".into());
+    }
+    Ok(())
+}
+
+fn validate_screenshot_resolution_move(
+    binding: &ScreenshotResolutionBinding,
+    iccs: &str,
+) -> Result<(), String> {
+    if binding.allowed_moves.iter().any(|allowed| allowed == iccs) {
+        Ok(())
+    } else {
+        Err("该走法不在本次截图确认的合法候选中，请重新核对或手工点选。".into())
+    }
+}
+
+fn apply_link_capture_error(session: &mut LinkSession, generation: u64, reason: String) {
+    if session.capture_generation != generation {
+        return;
+    }
+    session.state = LinkSessionState::NeedsManualCorrection;
+    session.phase = Some("error".into());
+    session.last_error = Some(reason.clone());
+    session.reason = Some(reason);
+    session.capture_running = false;
+    session.frame_rate = 0.0;
+    session.last_heartbeat_at = Some(Utc::now());
+    // An image failure has no trustworthy post-move position. Invalidate a
+    // prior screenshot resolution so only the current-document manual path
+    // can be offered after the user sees the error.
+    if matches!(
+        session.source,
+        CaptureSource::ImageImport | CaptureSource::CameraBoard
+    ) {
+        invalidate_screenshot_move_resolution(session);
+    }
 }
 
 /// The vision adapter submits a corrected FEN only after image recognition. This command is
@@ -3199,7 +3602,7 @@ fn confirm_link_engine_move(
     session.pending_expected_fen = Some(expected.to_fen());
     session.phase = Some("pending_external_move".into());
     session.gate.reset();
-    session.stable_frames = 0;
+    reset_link_stability_progress(&mut session);
     drop(session);
     emit_link_session_updated(&app);
     Ok(true)
@@ -3256,7 +3659,7 @@ fn click_external_move(
         if output.status.success() {
             Ok(click_points)
         } else {
-            Err("外部点击被 macOS 拒绝。请在 系统设置 > 隐私与安全性 > 辅助功能 中允许 Xiangqi Studio，完全退出并重新打开应用。本地测试包覆盖安装后若仍提示，通常是 adhoc 签名变化导致旧授权不再匹配。".into())
+            Err("外部点击被 macOS 拒绝；请确认辅助功能权限后重试。".into())
         }
     }
     #[cfg(not(target_os = "macos"))]
@@ -3317,7 +3720,7 @@ fn observe_link_recognition(
     generation: u64,
     fen: String,
     confidence: f32,
-) -> Result<(), String> {
+) -> Result<LinkObservationDto, String> {
     let state = app.state::<DesktopState>();
     let observation =
         observe_link_recognition_inner(&state, fen, Some(confidence), Some(generation))?;
@@ -3325,7 +3728,7 @@ fn observe_link_recognition(
         let _ = app.emit("board-navigated", board);
     }
     emit_link_session_updated(app);
-    Ok(())
+    Ok(observation)
 }
 
 fn observe_link_recognition_inner(
@@ -3351,6 +3754,7 @@ fn observe_link_recognition_inner(
             move_iccs: None,
             reason: session.reason.clone(),
             board: None,
+            orientation: session.board_orientation,
             capture_preview_available: session.capture_preview.is_some(),
         });
     }
@@ -3374,17 +3778,16 @@ fn observe_link_recognition_inner(
                 )
             });
             session.last_error = None;
-            session.latest_fen = None;
-            session.last_move = None;
-            session.last_move_detail = None;
+            clear_link_recognition_candidate(&mut session);
             session.gate.reset();
-            session.stable_frames = 0;
+            reset_link_stability_progress(&mut session);
             return Ok(LinkObservationDto {
                 state: session.state,
                 accepted: false,
                 move_iccs: None,
                 reason: session.reason.clone(),
                 board: None,
+                orientation: session.board_orientation,
                 capture_preview_available: session.capture_preview.is_some(),
             });
         }
@@ -3398,17 +3801,16 @@ fn observe_link_recognition_inner(
                 "识别未通过，主棋盘未更新：识别局面格式无效：{error}"
             ));
             session.last_error = session.reason.clone();
-            session.latest_fen = None;
-            session.last_move = None;
-            session.last_move_detail = None;
+            clear_link_recognition_candidate(&mut session);
             session.gate.reset();
-            session.stable_frames = 0;
+            reset_link_stability_progress(&mut session);
             return Ok(LinkObservationDto {
                 state: session.state,
                 accepted: false,
                 move_iccs: None,
                 reason: session.reason.clone(),
                 board: None,
+                orientation: session.board_orientation,
                 capture_preview_available: session.capture_preview.is_some(),
             });
         }
@@ -3422,17 +3824,16 @@ fn observe_link_recognition_inner(
         session.phase = Some("invalid_recognition".into());
         session.reason = Some(format!("识别未通过，主棋盘未更新：{reason}"));
         session.last_error = session.reason.clone();
-        session.latest_fen = None;
-        session.last_move = None;
-        session.last_move_detail = None;
+        clear_link_recognition_candidate(&mut session);
         session.gate.reset();
-        session.stable_frames = 0;
+        reset_link_stability_progress(&mut session);
         return Ok(LinkObservationDto {
             state: session.state,
             accepted: false,
             move_iccs: None,
             reason: session.reason.clone(),
             board: None,
+            orientation: session.board_orientation,
             capture_preview_available: session.capture_preview.is_some(),
         });
     }
@@ -3444,33 +3845,29 @@ fn observe_link_recognition_inner(
             session.phase = Some("invalid_recognition".into());
             session.reason = Some(error.to_string());
             session.last_error = session.reason.clone();
-            session.latest_fen = None;
-            session.last_move = None;
-            session.last_move_detail = None;
+            clear_link_recognition_candidate(&mut session);
+            session.gate.reset();
+            reset_link_stability_progress(&mut session);
             return Ok(LinkObservationDto {
                 state: session.state,
                 accepted: false,
                 move_iccs: None,
                 reason: session.reason.clone(),
                 board: None,
+                orientation: session.board_orientation,
                 capture_preview_available: session.capture_preview.is_some(),
             });
         }
     };
-    session.latest_fen = Some(fen.clone());
     if !stable {
-        session.state = LinkSessionState::WaitingStableFrames;
-        session.stable_frames = session.gate.matching_frames();
-        session.phase = Some("waiting_stable_frames".into());
-        session.reason = Some("等待连续稳定识别帧".into());
-        return Ok(LinkObservationDto {
-            state: session.state,
-            accepted: false,
-            move_iccs: None,
-            reason: session.reason.clone(),
-            board: None,
-            capture_preview_available: session.capture_preview.is_some(),
-        });
+        let required = session.gate.required_frames();
+        let matching = session.gate.matching_frames();
+        return Ok(wait_for_link_recognition_stability(
+            &mut session,
+            "waiting_stable_frames",
+            format!("等待连续稳定识别帧 {matching}/{required}"),
+            required,
+        ));
     }
     let mut model = state
         .model
@@ -3494,7 +3891,7 @@ fn observe_link_recognition_inner(
                     .unwrap_or_default();
                 session.state = LinkSessionState::Tracking;
                 session.initial_position_seen = true;
-                session.stable_frames = session.gate.matching_frames();
+                mark_link_stability_accepted(&mut session);
                 session.latest_fen = Some(model.board.to_fen());
                 session.phase = Some("pending_external_move".into());
                 session.reason = Some(format!(
@@ -3512,8 +3909,26 @@ fn observe_link_recognition_inner(
                     move_iccs: None,
                     reason: session.reason.clone(),
                     board: None,
+                    orientation: session.board_orientation,
                     capture_preview_available: session.capture_preview.is_some(),
                 });
+            }
+            if side_changed {
+                let required = live_side_change_required_frames(&session);
+                let matching = session.gate.matching_frames();
+                if matching < required {
+                    return Ok(wait_for_link_recognition_stability(
+                        &mut session,
+                        "waiting_side_stability",
+                        format!(
+                            "识别到{}行棋，等待轮走方连续稳定 {}/{} 后再更新",
+                            side_label(recognized_side_to_move),
+                            matching,
+                            required
+                        ),
+                        required,
+                    ));
+                }
             }
             if side_changed {
                 model.board = model.board.with_side_to_move(recognized_side_to_move);
@@ -3528,7 +3943,7 @@ fn observe_link_recognition_inner(
             };
             session.state = LinkSessionState::Tracking;
             session.initial_position_seen = true;
-            session.stable_frames = session.gate.matching_frames();
+            mark_link_stability_accepted(&mut session);
             session.latest_fen = Some(model.board.to_fen());
             session.phase = Some("tracking".into());
             session.reason = Some(if side_changed {
@@ -3545,6 +3960,7 @@ fn observe_link_recognition_inner(
                 move_iccs: None,
                 reason: session.reason.clone(),
                 board,
+                orientation: session.board_orientation,
                 capture_preview_available: session.capture_preview.is_some(),
             })
         }
@@ -3557,6 +3973,7 @@ fn observe_link_recognition_inner(
             session.pending_expected_fen = None;
             session.state = LinkSessionState::Tracking;
             session.initial_position_seen = true;
+            mark_link_stability_accepted(&mut session);
             session.last_move = Some(iccs.clone());
             session.last_move_detail = Some(last_move_detail);
             session.latest_fen = Some(board.fen.clone());
@@ -3568,6 +3985,7 @@ fn observe_link_recognition_inner(
                 move_iccs: Some(iccs),
                 reason: session.reason.clone(),
                 board: Some(board),
+                orientation: session.board_orientation,
                 capture_preview_available: session.capture_preview.is_some(),
             })
         }
@@ -3579,6 +3997,21 @@ fn observe_link_recognition_inner(
                     CaptureSource::WindowLink | CaptureSource::DesktopDetect
                 );
             if !session.initial_position_seen || should_sync_as_position_jump {
+                if should_sync_as_position_jump {
+                    let required = live_position_jump_required_frames(&session);
+                    let matching = session.gate.matching_frames();
+                    if matching < required {
+                        return Ok(wait_for_link_recognition_stability(
+                            &mut session,
+                            "waiting_jump_stability",
+                            format!(
+                                "识别到非一步衔接局面，等待连续稳定 {}/{} 后再按网页跳转同步",
+                                matching, required
+                            ),
+                            required,
+                        ));
+                    }
+                }
                 let mut document =
                     ManualDocument::new(fen.clone()).map_err(|error| error.to_string())?;
                 document.metadata.title = if should_sync_as_position_jump {
@@ -3595,6 +4028,8 @@ fn observe_link_recognition_inner(
                 let board = board_dto(&model)?;
                 session.state = LinkSessionState::Tracking;
                 session.initial_position_seen = true;
+                mark_link_stability_accepted(&mut session);
+                session.latest_fen = Some(board.fen.clone());
                 session.last_move = None;
                 session.last_move_detail = None;
                 session.last_error = None;
@@ -3614,6 +4049,7 @@ fn observe_link_recognition_inner(
                     move_iccs: None,
                     reason: session.reason.clone(),
                     board: Some(board),
+                    orientation: session.board_orientation,
                     capture_preview_available: session.capture_preview.is_some(),
                 });
             }
@@ -3621,17 +4057,16 @@ fn observe_link_recognition_inner(
             session.phase = Some("needs_manual_correction".into());
             session.reason = Some(reason);
             session.last_error = session.reason.clone();
-            session.latest_fen = None;
-            session.last_move = None;
-            session.last_move_detail = None;
+            clear_link_recognition_candidate(&mut session);
             session.gate.reset();
-            session.stable_frames = 0;
+            reset_link_stability_progress(&mut session);
             Ok(LinkObservationDto {
                 state: session.state,
                 accepted: false,
                 move_iccs: None,
                 reason: session.reason.clone(),
                 board: None,
+                orientation: session.board_orientation,
                 capture_preview_available: session.capture_preview.is_some(),
             })
         }
@@ -4260,15 +4695,52 @@ fn play_move(iccs: String, state: State<'_, DesktopState>) -> Result<BoardDto, S
 }
 
 #[tauri::command]
-fn confirm_recognized_move(fen: String, iccs: String, state: State<'_, DesktopState>) -> Result<BoardDto, String> {
+fn confirm_recognized_move(
+    iccs: String,
+    state: State<'_, DesktopState>,
+) -> Result<BoardDto, String> {
+    // Hold the resolution guard through validation and persistence. This makes
+    // image replacement and successful confirmation mutually exclusive.
+    let _resolution_guard = state
+        .screenshot_resolution_guard
+        .lock()
+        .map_err(|_| "截图上一着解析锁已损坏".to_owned())?;
+    let binding = {
+        let session = state
+            .link_session
+            .lock()
+            .map_err(|_| "link session lock poisoned".to_owned())?;
+        active_screenshot_resolution(&session)?
+    };
+    if binding.generation != state.link_capture_generation.load(Ordering::SeqCst) {
+        return Err("图片识别结果已被新的截图替换，请重新核对上一着".into());
+    }
+
     let mut model = state
         .model
         .lock()
         .map_err(|_| "state lock poisoned".to_owned())?;
-    if model.board.to_fen() != fen {
-        return Err("截图局面与当前棋谱节点不一致。请先跳转到对应局面，或将截图仅导入为独立练习局面".into());
-    }
-    commit_move(&mut model, &iccs)
+    let mv = Move::from_iccs(&iccs).map_err(|error| error.to_string())?;
+    validate_screenshot_resolution_binding(&model, &binding)?;
+    validate_screenshot_resolution_move(&binding, &iccs)?;
+    validate_screenshot_move_confirmation(
+        &model.board,
+        mv,
+        &binding.before_fen,
+        binding.recognized_after_fen.as_deref(),
+        binding.mode,
+    )?;
+    let board = commit_move(&mut model, &iccs)?;
+    drop(model);
+
+    // Consume the proposal only after the variation is stored. A second click
+    // or a direct duplicate command must start a new image-recognition cycle.
+    let mut session = state
+        .link_session
+        .lock()
+        .map_err(|_| "link session lock poisoned".to_owned())?;
+    invalidate_screenshot_move_resolution(&mut session);
+    Ok(board)
 }
 
 #[tauri::command]
@@ -4277,108 +4749,87 @@ fn preview_line(fen: String, pv: Vec<String>) -> Result<Vec<PreviewLineStepDto>,
 }
 
 #[tauri::command]
-fn preview_recognized_last_move(
-    fen: String,
+fn preview_recognized_move_from_current(
     iccs: String,
-    moved_by: String,
-) -> Result<RecognizedLastMovePreviewDto, String> {
-    let after = Board::from_fen(&fen).map_err(|error| error.to_string())?;
-    let mover = match moved_by.as_str() {
-        "红方" => Color::Red,
-        "黑方" => Color::Black,
-        _ => return Err("请选择红方或黑方的上一着".into()),
-    };
-    if after.side_to_move() != mover.opposite() {
-        return Err(format!("截图显示当前轮到{}行棋，与{}刚走完不一致，请先校正行棋方", side_label(after.side_to_move()), side_label(mover)));
-    }
-    let mv = Move::from_iccs(&iccs).map_err(|error| error.to_string())?;
-    if after.piece_at(mv.to).is_none() {
-        return Err("终点没有识别到走后的棋子，请重新标记终点".into());
-    }
-    if after.piece_at(mv.from).is_some() {
-        return Err("起点在走后局面仍有棋子；上一着回溯目前只支持非吃子走法，请改用前后截图确认吃子".into());
-    }
-    let before = after
-        .undo_non_capture_move(mv, mover)
-        .map_err(|_| "这条起点到终点不能还原为合法的上一着，请检查红黑方与两个位置".to_owned())?;
-    let notation = before.chinese_move_notation(mv).map_err(|error| error.to_string())?;
-    Ok(RecognizedLastMovePreviewDto {
-        step: PreviewLineStepDto {
-            fen: after.to_fen(), notation, moved_by: side_label(mover),
-            from: SquareDto { row: mv.from.row, col: mv.from.col },
-            to: SquareDto { row: mv.to.row, col: mv.to.col },
-            pieces: board_pieces(&after), status: game_status_label(after.status()),
-        },
-        before_fen: before.to_fen(),
-        after_fen: after.to_fen(),
-        side_to_move: side_label(after.side_to_move()),
-        captured: false,
-        marker_kind: Some("lastMove"),
-        recognition_source: Some("手工标记"),
-        recognition_confidence: None,
-    })
-}
-
-/// Validates the white target ring and selected-piece halo drawn by 天天象棋.
-/// In replay screenshots, the ring marks the vacated source and the white
-/// piece base marks the destination, so this reconstructs an already-played
-/// non-capturing move. It remains a proposal until explicit confirmation.
-#[tauri::command]
-fn preview_screenshot_marked_move(
-    _fen: String,
     state: State<'_, DesktopState>,
-) -> Result<Option<RecognizedLastMovePreviewDto>, String> {
-    let marker = state
-        .link_session
+) -> Result<RecognizedLastMovePreviewDto, String> {
+    let _resolution_guard = state
+        .screenshot_resolution_guard
         .lock()
-        .map_err(|_| "link session lock poisoned".to_owned())?
-        .screenshot_move_marker;
-    let Some(marker) = marker else { return Ok(None); };
-    let (Some(from), Some(to)) = (marker.from, marker.to) else { return Ok(None); };
+        .map_err(|_| "截图上一着解析锁已损坏".to_owned())?;
+    let mv = Move::from_iccs(&iccs).map_err(|error| error.to_string())?;
+    let binding = {
+        let session = state
+            .link_session
+            .lock()
+            .map_err(|_| "link session lock poisoned".to_owned())?;
+        active_screenshot_resolution(&session)?
+    };
+    if binding.mode != ScreenshotResolutionMode::ManualFallback
+        || binding.generation != state.link_capture_generation.load(Ordering::SeqCst)
+    {
+        return Err("只有完整局面没有精确匹配时，才能手工点选上一着".into());
+    }
     let model = state
         .model
         .lock()
         .map_err(|_| "state lock poisoned".to_owned())?;
-    Ok(preview_screenshot_marker_from_current_board(&model.board, from, to, marker))
+    validate_screenshot_resolution_binding(&model, &binding)
+        .map_err(|_| "当前棋谱节点已变化，请重新选择图片后再手工点选".to_owned())?;
+    if !model
+        .board
+        .legal_moves()
+        .into_iter()
+        .any(|candidate| candidate == mv)
+    {
+        return Err("这一步不符合当前棋谱局面的棋规，请重新点选起点和终点".into());
+    }
+    let preview = recognized_move_preview(&model.board, mv, "手工点选（当前棋谱合法着）", None)?;
+    drop(model);
+    let mut session = state
+        .link_session
+        .lock()
+        .map_err(|_| "link session lock poisoned".to_owned())?;
+    // Manual confirmation is restricted to the most recently previewed legal
+    // endpoint pair. This still lets the child change their mind by selecting
+    // a new pair, but never lets a client submit an unpreviewed ICCS string.
+    session.screenshot_resolution_allowed_moves = vec![iccs];
+    Ok(preview)
 }
 
-fn preview_screenshot_marker_from_current_board(
+fn recognized_move_preview(
     before: &Board,
-    from: Square,
-    to: Square,
-    marker: link_vision::ScreenshotMoveMarker,
-) -> Option<RecognizedLastMovePreviewDto> {
-    let mv = Move { from, to };
-    // The screenshot model can confuse a red/black horse on a tinted board.
-    // Its white source ring and destination glow only identify coordinates;
-    // resolve the piece, side and Chinese notation from the current document's
-    // legal position, never from the model-generated screenshot FEN.
-    if !before.legal_moves().into_iter().any(|candidate| candidate == mv) {
-        return None;
-    }
-    let after = match before.apply_move(mv) {
-        Ok(value) => value,
-        Err(_) => return None,
-    };
-    let notation = before.chinese_move_notation(mv).ok()?;
-    let moved_by = side_label(before.side_to_move());
-    Some(RecognizedLastMovePreviewDto {
+    mv: Move,
+    recognition_source: &'static str,
+    recognition_confidence: Option<u32>,
+) -> Result<RecognizedLastMovePreviewDto, String> {
+    let after = before.apply_move(mv).map_err(|error| error.to_string())?;
+    let notation = before
+        .chinese_move_notation(mv)
+        .map_err(|error| error.to_string())?;
+    Ok(RecognizedLastMovePreviewDto {
         step: PreviewLineStepDto {
             fen: after.to_fen(),
             notation,
-            moved_by,
-            from: SquareDto { row: mv.from.row, col: mv.from.col },
-            to: SquareDto { row: mv.to.row, col: mv.to.col },
+            moved_by: side_label(before.side_to_move()),
+            from: SquareDto {
+                row: mv.from.row,
+                col: mv.from.col,
+            },
+            to: SquareDto {
+                row: mv.to.row,
+                col: mv.to.col,
+            },
             pieces: board_pieces(&after),
             status: game_status_label(after.status()),
         },
         before_fen: before.to_fen(),
         after_fen: after.to_fen(),
         side_to_move: side_label(after.side_to_move()),
-        captured: false,
+        captured: before.would_capture(mv),
         marker_kind: Some("lastMove"),
-        recognition_source: Some("截图白色标记"),
-        recognition_confidence: Some(marker.from_confidence.saturating_add(marker.to_confidence)),
+        recognition_source: Some(recognition_source),
+        recognition_confidence,
     })
 }
 
@@ -4391,75 +4842,242 @@ fn position_placement_key(board: &Board) -> String {
         .to_owned()
 }
 
-/// Matches an imported screenshot against the current tree node.  The image is
-/// never written into the tree here: only a unique, legal one-ply difference is
-/// offered to the user as a preview for confirmation.
+/// Validates the final write at the same boundary that persists the variation.
+/// Exact YOLO resolutions must reproduce the observed post-move placement;
+/// manual fallback remains legal-only, but is still bound to the same current
+/// tree node and image generation by the caller.
+fn validate_screenshot_move_confirmation(
+    before: &Board,
+    mv: Move,
+    expected_before_fen: &str,
+    recognized_after_fen: Option<&str>,
+    mode: ScreenshotResolutionMode,
+) -> Result<(), String> {
+    if before.to_fen() != expected_before_fen {
+        return Err("截图对应的当前棋谱节点已变化。请先跳转到对应局面，或重新选择图片。".into());
+    }
+    let after = before.apply_move(mv).map_err(|error| error.to_string())?;
+    if mode == ScreenshotResolutionMode::ExactPlacement {
+        let recognized_after = recognized_after_fen
+            .ok_or_else(|| "截图识别结果已失效，请重新选择图片".to_owned())
+            .and_then(|value| Board::from_fen(value).map_err(|error| error.to_string()))?;
+        if position_placement_key(&after) != position_placement_key(&recognized_after) {
+            return Err(
+                "该走法与本次截图识别出的完整局面不一致，已拒绝写入棋谱。请重新识别或手工点选。"
+                    .into(),
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Resolves a screenshot's previous move through one strict path:
+///
+/// 1. YOLO produces the complete *post-move* board placement.
+/// 2. Every legal move from the current document is enumerated.
+/// 3. Only moves whose resulting placement exactly equals the YOLO placement
+///    survive. White source rings/destination halos may sort those survivors,
+///    but can never introduce a candidate.
+///
+/// The result remains a proposal until the user explicitly writes it as a
+/// variation. A no-match result intentionally falls back to manual endpoints.
 #[tauri::command]
-fn suggest_recognized_move(
-    fen: String,
+fn resolve_screenshot_move(
     state: State<'_, DesktopState>,
-) -> Result<Option<RecognizedLastMovePreviewDto>, String> {
-    let after = Board::from_fen(&fen).map_err(|error| error.to_string())?;
+) -> Result<ScreenshotMoveResolutionDto, String> {
+    let _resolution_guard = state
+        .screenshot_resolution_guard
+        .lock()
+        .map_err(|_| "截图上一着解析锁已损坏".to_owned())?;
+    // The only FEN permitted here is the one recorded by the image-recognition
+    // session. The UI receives it for display, but cannot feed it back to
+    // manufacture a candidate from a different post-move position.
+    let (recognized_after_fen, marker, orientation, generation, source) = {
+        let session = state
+            .link_session
+            .lock()
+            .map_err(|_| "link session lock poisoned".to_owned())?;
+        (
+            session.latest_fen.clone(),
+            session.screenshot_move_marker,
+            session.board_orientation,
+            session.capture_generation,
+            session.source,
+        )
+    };
+    if !matches!(
+        source,
+        CaptureSource::ImageImport | CaptureSource::CameraBoard
+    ) {
+        return Err("请先选择截图或照片进行识别".into());
+    }
+    if generation != state.link_capture_generation.load(Ordering::SeqCst) {
+        return Err("图片识别结果已失效，请重新选择图片".into());
+    }
     let model = state
         .model
         .lock()
         .map_err(|_| "state lock poisoned".to_owned())?;
-    let before = &model.board;
-    let target = position_placement_key(&after);
-    let candidates: Vec<_> = before
-        .legal_moves()
-        .into_iter()
-        .filter_map(|mv| before.apply_move(mv).ok().filter(|next| position_placement_key(next) == target).map(|next| (mv, next)))
-        .collect();
-    if candidates.len() != 1 {
-        return Ok(None);
-    }
-    let (mv, matched_after) = candidates.into_iter().next().expect("one candidate");
-    let notation = before.chinese_move_notation(mv).map_err(|error| error.to_string())?;
-    let moved_by = side_label(before.side_to_move());
-    Ok(Some(RecognizedLastMovePreviewDto {
-        step: PreviewLineStepDto {
-            fen: matched_after.to_fen(),
-            notation,
-            moved_by,
-            from: SquareDto { row: mv.from.row, col: mv.from.col },
-            to: SquareDto { row: mv.to.row, col: mv.to.col },
-            pieces: board_pieces(&matched_after),
-            status: game_status_label(matched_after.status()),
+    let before = model.board.clone();
+    let resolution_game_id = model.game_id;
+    let resolution_current_node = model.current_node;
+    drop(model);
+
+    let mut resolution = match recognized_after_fen {
+        Some(fen) => match Board::from_fen(&fen) {
+            Ok(recognized_after) => {
+                resolve_screenshot_move_from_board(&before, &recognized_after, marker, orientation)?
+            }
+            Err(_) => manual_screenshot_move_resolution(
+                &before,
+                orientation,
+                "图片完整局面已失效，无法自动匹配上一着；请手工点起点和终点。",
+            ),
         },
-        before_fen: before.to_fen(),
-        after_fen: matched_after.to_fen(),
-        side_to_move: side_label(matched_after.side_to_move()),
-        captured: before.would_capture(mv),
-        marker_kind: Some("lastMove"), recognition_source: Some("当前棋谱差一步"), recognition_confidence: Some(100),
-    }))
+        None => manual_screenshot_move_resolution(
+            &before,
+            orientation,
+            "未能可靠识别完整棋盘局面；白色圈和底光不能单独推断走法，请手工点起点和终点。",
+        ),
+    };
+    // The fallback must never accidentally retain candidates from a previous
+    // image. Its board is always the current manual-tree position.
+    resolution.current_pieces = board_pieces(&before);
+    resolution.current_side_to_move = side_label(before.side_to_move());
+
+    let mode = if resolution.status == "noExactMatch" {
+        ScreenshotResolutionMode::ManualFallback
+    } else {
+        ScreenshotResolutionMode::ExactPlacement
+    };
+    let mut session = state
+        .link_session
+        .lock()
+        .map_err(|_| "link session lock poisoned".to_owned())?;
+    if session.capture_generation != generation
+        || !matches!(
+            session.source,
+            CaptureSource::ImageImport | CaptureSource::CameraBoard
+        )
+    {
+        return Err("图片识别结果已被新的截图替换，请重新选择图片".into());
+    }
+    session.screenshot_resolution_before_fen = Some(before.to_fen());
+    session.screenshot_resolution_generation = Some(generation);
+    session.screenshot_resolution_mode = Some(mode);
+    session.screenshot_resolution_game_id = Some(resolution_game_id);
+    session.screenshot_resolution_current_node = Some(resolution_current_node);
+    session.screenshot_resolution_allowed_moves = resolution
+        .candidates
+        .iter()
+        .map(|candidate| {
+            Move {
+                from: Square {
+                    row: candidate.step.from.row,
+                    col: candidate.step.from.col,
+                },
+                to: Square {
+                    row: candidate.step.to.row,
+                    col: candidate.step.to.col,
+                },
+            }
+            .to_iccs()
+        })
+        .collect();
+    Ok(resolution)
 }
 
-/// Ranks legal continuations with the screenshot's optional white source/destination marks.
-/// A candidate is still only a proposal and must be explicitly confirmed in the UI.
-#[tauri::command]
-fn suggest_recognized_moves(fen: String, state: State<'_, DesktopState>) -> Result<Vec<RecognizedLastMovePreviewDto>, String> {
-    let after = Board::from_fen(&fen).map_err(|error| error.to_string())?;
-    let model = state.model.lock().map_err(|_| "state lock poisoned".to_owned())?;
-    let before = &model.board;
-    let target = position_placement_key(&after);
-    let marker = state.link_session.lock().ok().and_then(|session| session.screenshot_move_marker);
-    let mut candidates = before.legal_moves().into_iter().filter_map(|mv| {
-        let next = before.apply_move(mv).ok()?;
-        let exact = position_placement_key(&next) == target;
-        let marker_score = marker.as_ref().map(|item| {
-            let from = item.from.map(|square| (square == mv.from) as u32 * item.from_confidence).unwrap_or_default();
-            let to = item.to.map(|square| (square == mv.to) as u32 * item.to_confidence).unwrap_or_default();
-            from.saturating_add(to)
-        }).unwrap_or_default();
-        (exact || marker_score > 0).then_some((mv, next, exact, marker_score))
-    }).collect::<Vec<_>>();
-    candidates.sort_by(|left, right| (right.2 as u32 * 10_000 + right.3).cmp(&(left.2 as u32 * 10_000 + left.3)));
-    candidates.truncate(3);
-    candidates.into_iter().map(|(mv, next, exact, confidence)| Ok(RecognizedLastMovePreviewDto {
-        step: PreviewLineStepDto { fen: next.to_fen(), notation: before.chinese_move_notation(mv).map_err(|error| error.to_string())?, moved_by: side_label(before.side_to_move()), from: SquareDto { row: mv.from.row, col: mv.from.col }, to: SquareDto { row: mv.to.row, col: mv.to.col }, pieces: board_pieces(&next), status: game_status_label(next.status()) },
-        before_fen: before.to_fen(), after_fen: next.to_fen(), side_to_move: side_label(next.side_to_move()), captured: before.would_capture(mv), marker_kind: Some("lastMove"), recognition_source: Some(if exact { "当前棋谱差一步" } else { "截图白色标记候选" }), recognition_confidence: Some(confidence),
-    })).collect()
+fn manual_screenshot_move_resolution(
+    before: &Board,
+    orientation: BoardOrientation,
+    reason: impl Into<String>,
+) -> ScreenshotMoveResolutionDto {
+    ScreenshotMoveResolutionDto {
+        status: "noExactMatch",
+        candidates: Vec::new(),
+        orientation,
+        current_pieces: board_pieces(before),
+        current_side_to_move: side_label(before.side_to_move()),
+        reason: Some(reason.into()),
+    }
+}
+
+fn resolve_screenshot_move_from_board(
+    before: &Board,
+    recognized_after: &Board,
+    marker: Option<link_vision::ScreenshotMoveMarker>,
+    orientation: BoardOrientation,
+) -> Result<ScreenshotMoveResolutionDto, String> {
+    let target = position_placement_key(recognized_after);
+    let mut exact_candidates = before
+        .legal_moves()
+        .into_iter()
+        .filter_map(|mv| {
+            let after = before.apply_move(mv).ok()?;
+            (position_placement_key(&after) == target).then_some((mv, after))
+        })
+        .map(|(mv, after)| {
+            let marker_score = marker
+                .as_ref()
+                .map(|item| {
+                    let from = item
+                        .from
+                        .map(|square| (square == mv.from) as u32 * item.from_confidence)
+                        .unwrap_or_default();
+                    let to = item
+                        .to
+                        .map(|square| (square == mv.to) as u32 * item.to_confidence)
+                        .unwrap_or_default();
+                    from.saturating_add(to)
+                })
+                .unwrap_or_default();
+            (mv, after, marker_score)
+        })
+        .collect::<Vec<_>>();
+
+    // Sorting is deliberately after exact placement filtering. Tie-breaking by
+    // ICCS keeps an ambiguous result stable when the screenshot has no markers.
+    exact_candidates.sort_by(|left, right| {
+        right
+            .2
+            .cmp(&left.2)
+            .then_with(|| left.0.to_iccs().cmp(&right.0.to_iccs()))
+    });
+    exact_candidates.truncate(3);
+
+    let candidates = exact_candidates
+        .into_iter()
+        .map(|(mv, _after, marker_score)| {
+            recognized_move_preview(
+                before,
+                mv,
+                "YOLO完整局面与当前棋谱合法一步匹配",
+                (marker_score > 0).then_some(marker_score),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let (status, reason) = match candidates.len() {
+        0 => (
+            "noExactMatch",
+            Some(
+                "识别到的完整局面与当前棋谱没有合法的一步衔接。白色圈和底光只作排序证据，不能单独推断走法；请手工点起点和终点。".into(),
+            ),
+        ),
+        1 => ("unique", None),
+        _ => (
+            "ambiguous",
+            Some("完整局面存在多个合法一步匹配，请选择后再确认写入变例。".into()),
+        ),
+    };
+    Ok(ScreenshotMoveResolutionDto {
+        status,
+        candidates,
+        orientation,
+        current_pieces: board_pieces(before),
+        current_side_to_move: side_label(before.side_to_move()),
+        reason,
+    })
 }
 
 #[derive(Serialize)]
@@ -4481,15 +5099,34 @@ fn parse_chinese_line(fen: String, notation: Vec<String>) -> Result<ChineseLineP
         let matches = board
             .legal_moves()
             .into_iter()
-            .filter(|mv| board.chinese_move_notation(*mv).map(|value| normalize_chinese_move_text(&value) == expected).unwrap_or(false))
+            .filter(|mv| {
+                board
+                    .chinese_move_notation(*mv)
+                    .map(|value| normalize_chinese_move_text(&value) == expected)
+                    .unwrap_or(false)
+            })
             .collect::<Vec<_>>();
         let mv = match matches.as_slice() {
             [mv] => *mv,
-            [] => return Err(format!("第 {} 步“{}”不是当前局面的合法中文着法", index + 1, input.trim())),
-            _ => return Err(format!("第 {} 步“{}”存在歧义，请在棋盘上走出该步", index + 1, input.trim())),
+            [] => {
+                return Err(format!(
+                    "第 {} 步“{}”不是当前局面的合法中文着法",
+                    index + 1,
+                    input.trim()
+                ));
+            }
+            _ => {
+                return Err(format!(
+                    "第 {} 步“{}”存在歧义，请在棋盘上走出该步",
+                    index + 1,
+                    input.trim()
+                ));
+            }
         };
         moves.push(mv.to_iccs());
-        board = board.apply_move(mv).map_err(|error| format!("第 {} 步非法：{error}", index + 1))?;
+        board = board
+            .apply_move(mv)
+            .map_err(|error| format!("第 {} 步非法：{error}", index + 1))?;
     }
     let steps = preview_line_steps(&fen, &moves)?;
     Ok(ChineseLineParseDto { moves, steps })
@@ -7512,6 +8149,130 @@ fn ensure_builtin_master_style_seed(
     Ok(())
 }
 
+const TRAINING_SYSTEM_SOURCE_TITLE: &str =
+    "中国象棋特级大师核心训练秘诀（历代宗师+现役顶尖棋手通用体系）";
+const TRAINING_SYSTEM_SOURCE_URL: &str = "https://mp.weixin.qq.com/s/x0jQq9Re8G_aGoTlk9N59w";
+
+struct TrainingSystemSeedCard {
+    id: &'static str,
+    phase: &'static str,
+    title: &'static str,
+    summary: &'static str,
+    applies_when: &'static str,
+    risk: &'static str,
+    tags: &'static [&'static str],
+    engine_correlations: &'static [&'static str],
+}
+
+fn training_system_seed_cards() -> Vec<ImportedTheoryCard> {
+    let cards = [
+        TrainingSystemSeedCard {
+            id: "training-system-endgame-foundation",
+            phase: "endgame",
+            title: "残局打底：先判胜和再选计划",
+            summary: "每天保留短时间练基础残局，先说理论胜和、关键限制点和兑换方向，再看具体走法。",
+            applies_when: "子力减少、兵卒或仕相结构决定结果时。",
+            risk: "不要只背结论；必须把对方最强防守也说出来。",
+            tags: &["残局打底", "残局处理", "深度复盘", "理论胜和"],
+            engine_correlations: &["endgame", "conversion", "theoretical-win-draw"],
+        },
+        TrainingSystemSeedCard {
+            id: "training-system-tactical-miscalculation",
+            phase: "middle",
+            title: "战术漏算：双方强制着先扫完",
+            summary: "每个关键局面先扫双方将军、吃子、捉双和强制兑子，避免只计算自己的第一手。",
+            applies_when: "线路打开、子力接触增多、局面评价大幅波动或出现漏杀时。",
+            risk: "强制着只是候选入口，不能因为看起来凶就停止比较。",
+            tags: &["战术漏算", "强制着", "反击检查", "漏杀/防杀"],
+            engine_correlations: &["missed_tactic", "forcing-move", "mate-threat"],
+        },
+        TrainingSystemSeedCard {
+            id: "training-system-candidate-calculation",
+            phase: "middle",
+            title: "候选着计算：走一思三",
+            summary: "落子前至少提出一个首选和两个备选，并说明每个候选要防住什么反击。",
+            applies_when: "局面没有唯一应手、MultiPV 出现多个可行方向时。",
+            risk: "读秒或被将军时不硬凑三路，先确保合法应对和防漏。",
+            tags: &["候选着计算", "候选着", "候选不足", "计算"],
+            engine_correlations: &["missed_candidate", "multipv", "played-move-rank"],
+        },
+        TrainingSystemSeedCard {
+            id: "training-system-personal-opening",
+            phase: "opening",
+            title: "专属布局：先少而稳",
+            summary: "先手和后手各整理 2-3 套常用体系，用学习开局库和大师同类实战验证主线与备选。",
+            applies_when: "开局阶段脱离体系、官着命中少或同类布局反复出错时。",
+            risk: "不把大库所有分支都背下来；先固定主线、常见偏离和一条补救方案。",
+            tags: &["专属布局", "开局失误", "脱离体系", "子力协调"],
+            engine_correlations: &["opening_deviation", "development_lag", "opening-book"],
+        },
+        TrainingSystemSeedCard {
+            id: "training-system-deep-review",
+            phase: "middle",
+            title: "深度复盘：赢棋也追亏分",
+            summary: "复盘不只看胜负；胜局中只要有高亏分着法，也要生成下一次训练任务。",
+            applies_when: "整局报告出现差错、漏杀或局势大幅摆动时。",
+            risk: "复盘只保留一到两个核心原因，避免写成长篇流水账。",
+            tags: &["深度复盘", "随手棋", "推荐着对比"],
+            engine_correlations: &["evaluation-drop", "review-task", "best-move-comparison"],
+        },
+        TrainingSystemSeedCard {
+            id: "training-system-slow-game",
+            phase: "middle",
+            title: "慢棋训练：把时间花在变化点",
+            summary: "慢棋题重点训练计算深度，遇到将军、吃子、弃子、兵形变化和评价摆动时主动减速。",
+            applies_when: "限时训练、比赛复盘或孩子出现随手棋时。",
+            risk: "每步都长考会拖垮节奏；熟悉定式仍要做最短防漏检查。",
+            tags: &["慢棋训练", "随手棋", "变化点", "比赛纪律"],
+            engine_correlations: &["time-management", "evaluation-swing", "blunder"],
+        },
+        TrainingSystemSeedCard {
+            id: "training-system-mental-note",
+            phase: "middle",
+            title: "心态管理：给失误贴状态标签",
+            summary: "训练笔记只记录一个状态标签，如专注、急躁、优势放松或劣势抗压，和下一次落子提醒。",
+            applies_when: "大优势失误、劣势急攻、连续漏算或高亏分着法后。",
+            risk: "不把心态标签当责备；它只用来设计下一次更具体的行动。",
+            tags: &["心态管理", "心态波动", "训练笔记"],
+            engine_correlations: &["tilt", "large-blunder", "review-note"],
+        },
+    ];
+    cards
+        .into_iter()
+        .map(|card| ImportedTheoryCard {
+            external_id: card.id.into(),
+            phase: card.phase.into(),
+            course_name: "特级大师训练法".into(),
+            lesson_title: "每日40分钟与每周复盘闭环".into(),
+            source_path: format!("{TRAINING_SYSTEM_SOURCE_URL}#{}", card.id),
+            fingerprint: format!("training-system-v1:{}", card.id),
+            title: card.title.into(),
+            summary: card.summary.into(),
+            applies_when: card.applies_when.into(),
+            risk: card.risk.into(),
+            review_status: "approved".into(),
+            source_book: Some(format!("{TRAINING_SYSTEM_SOURCE_TITLE} · 方法论参考")),
+            source_page_start: None,
+            source_page_end: None,
+            tags: card.tags.iter().map(|tag| (*tag).into()).collect(),
+            engine_correlations: card
+                .engine_correlations
+                .iter()
+                .map(|signal| (*signal).into())
+                .collect(),
+        })
+        .collect()
+}
+
+fn ensure_training_system_seed(store: &mut LocalStore) -> Result<(), String> {
+    for card in training_system_seed_cards() {
+        store
+            .upsert_imported_theory_card(&card)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn import_master_style_profile(
     request: Option<ImportMasterStyleProfileRequest>,
@@ -9097,8 +9858,8 @@ fn submit_guided_analysis(
     if request.submission.chosen_move.trim().is_empty() {
         return Err("请先在棋盘上选择首选着".into());
     }
-    if request.submission.candidates.len() < 2 {
-        return Err("请先列出至少两个候选着".into());
+    if request.submission.candidates.is_empty() {
+        return Err("请至少保留一个首选着".into());
     }
     if !(2..=8).contains(&request.submission.predicted_line.len()) {
         return Err("请至少在棋盘上推演 2 个半回合，最多 8 个半回合".into());
@@ -9133,7 +9894,7 @@ fn submit_guided_analysis(
                     &session.report_signature,
                     node_id,
                     "U10 引导拆棋",
-                    "先独立判断威胁、强制着和候选着，再用 Pikafish 核对。",
+                    "先独立判断威胁、强制着和走一思三候选，再用 Pikafish 核对。",
                     Some(&session.phase),
                     &result.theory_signals,
                     None,
@@ -9501,6 +10262,8 @@ fn theory_tag_weight(tag: &str) -> i64 {
         "脱离体系" | "战略方向" | "子力协调" | "候选着" | "计算" | "理论胜和" | "兑子" => {
             5
         }
+        "残局打底" | "战术漏算" | "候选着计算" | "专属布局" | "深度复盘" | "慢棋训练"
+        | "心态管理" => 18,
         _ => 14,
     }
 }
@@ -9545,21 +10308,38 @@ fn phase_label(phase: &str) -> &'static str {
 
 fn training_tags_for_position(position: &GameReportPositionDto, loss: i32) -> Vec<String> {
     let mut tags = match position.phase.as_str() {
-        "opening" => vec!["开局", "脱离体系", "战略方向", "子力协调"],
-        "middle" => vec!["中局", "候选着", "计算"],
-        "endgame" => vec!["残局", "理论胜和", "兑子"],
-        _ => vec!["复盘"],
+        "opening" => vec![
+            "开局",
+            "脱离体系",
+            "战略方向",
+            "子力协调",
+            "专属布局",
+            "开局失误",
+        ],
+        "middle" => vec!["中局", "候选着", "计算", "候选着计算"],
+        "endgame" => vec!["残局", "理论胜和", "兑子", "残局打底", "残局处理"],
+        _ => vec!["复盘", "深度复盘"],
     }
     .into_iter()
     .map(str::to_owned)
     .collect::<Vec<_>>();
+    tags.push("深度复盘".into());
     if position.mate.is_some() {
         tags.push("漏杀/防杀".into());
+        tags.push("战术漏算".into());
     } else if loss >= 300 {
         tags.push("战术漏算".into());
     }
+    if loss >= 150 {
+        tags.push("随手棋".into());
+    }
+    if loss >= 500 {
+        tags.push("心态管理".into());
+        tags.push("心态波动".into());
+    }
     if position.best_notation.is_some() {
         tags.push("推荐着对比".into());
+        tags.push("候选着计算".into());
     }
     add_notation_tags(position, &mut tags);
     tags.sort();
@@ -11139,6 +11919,8 @@ fn main() {
             let mut store = LocalStore::open(data_dir.join("xiangqi.sqlite3"))?;
             ensure_builtin_master_style_seed(app.handle(), &mut store)
                 .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
+            ensure_training_system_seed(&mut store)
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
             let device_id = store.device_id()?;
             let mut lamport = store.max_lamport()?;
             let (
@@ -11262,6 +12044,7 @@ fn main() {
                 report_running: AtomicBool::new(false),
                 cloud_book_cache: Mutex::new(BTreeMap::new()),
                 link_session: Mutex::new(LinkSession::default()),
+                screenshot_resolution_guard: Mutex::new(()),
                 link_capture_generation: AtomicU64::new(0),
                 link_region_selection_background: Mutex::new(None),
                 link_region_selection: (Mutex::new(None), Condvar::new()),
@@ -11301,10 +12084,8 @@ fn main() {
             open_game,
             play_move,
             confirm_recognized_move,
-            preview_recognized_last_move,
-            preview_screenshot_marked_move,
-            suggest_recognized_move,
-            suggest_recognized_moves,
+            preview_recognized_move_from_current,
+            resolve_screenshot_move,
             preview_line,
             parse_chinese_line,
             new_game,
@@ -11488,6 +12269,7 @@ mod tests {
             report_running: AtomicBool::new(false),
             cloud_book_cache: Mutex::new(BTreeMap::new()),
             link_session: Mutex::new(LinkSession::default()),
+            screenshot_resolution_guard: Mutex::new(()),
             link_capture_generation: AtomicU64::new(0),
             link_region_selection_background: Mutex::new(None),
             link_region_selection: (Mutex::new(None), Condvar::new()),
@@ -11495,29 +12277,284 @@ mod tests {
     }
 
     #[test]
-    fn screenshot_marker_uses_the_current_document_piece_not_the_misclassified_screenshot_piece() {
-        // The supplied 天天象棋 screenshot is viewed from the black side. Its
-        // white ring marks the black horse's departure and the selected-piece
-        // glow its arrival. A screenshot model may label that horse as a cannon, but
-        // marker reconstruction must use the current document's legal board.
-        let before = Board::from_fen("4k4/9/9/9/9/1n2p4/9/9/9/4K4 b - - 0 1").unwrap();
-        let preview = preview_screenshot_marker_from_current_board(
-            &before,
-            Square { row: 5, col: 1 },
-            Square { row: 3, col: 2 },
-            link_vision::ScreenshotMoveMarker {
-                from: Some(Square { row: 5, col: 1 }),
-                to: Some(Square { row: 3, col: 2 }),
-                from_confidence: 162,
-                to_confidence: 467,
-            },
-        ).expect("a legal marker move");
+    fn screenshot_resolution_prefers_exact_yolo_position_over_conflicting_white_marker() {
+        // This intentionally has two legal red continuations. The white marker
+        // points to the cannon route, while the complete YOLO post-move FEN is
+        // the horse route. The marker must not override exact placement.
+        let before = Board::from_fen("4k4/9/9/9/9/4p4/9/C8/9/1N2K4 w - - 0 1").unwrap();
+        let horse = Move::from_iccs("b0c2").unwrap();
+        let cannon = Move::from_iccs("a2a0").unwrap();
+        assert!(before.legal_moves().contains(&horse));
+        assert!(before.legal_moves().contains(&cannon));
+        let recognized_after = before.apply_move(horse).unwrap();
 
-        assert_eq!(preview.step.notation, "马2退3");
-        assert_eq!(preview.step.moved_by, "黑方");
-        assert_eq!(preview.side_to_move, "红方");
-        assert_eq!(preview.step.from.row, 5);
-        assert_eq!(preview.step.to.row, 3);
+        let resolution = resolve_screenshot_move_from_board(
+            &before,
+            &recognized_after,
+            Some(link_vision::ScreenshotMoveMarker {
+                from: Some(cannon.from),
+                to: Some(cannon.to),
+                from_confidence: 240,
+                to_confidence: 480,
+            }),
+            BoardOrientation::RedAtBottom,
+        )
+        .unwrap();
+
+        assert_eq!(resolution.status, "unique");
+        assert_eq!(resolution.candidates.len(), 1);
+        assert_eq!(resolution.candidates[0].step.notation, "马八进七");
+        assert_eq!(resolution.candidates[0].step.from.row, horse.from.row);
+        assert_eq!(resolution.candidates[0].step.to.col, horse.to.col);
+        assert_ne!(resolution.candidates[0].step.notation, "炮九退二");
+    }
+
+    #[test]
+    fn tiantian_fixture_yolo_position_resolves_the_documented_last_move() {
+        // This is the production path exercised against the anonymous mobile
+        // fixture: YOLO reconstructs the complete post-move placement first,
+        // then the resolver enumerates legal moves from the known parent. The
+        // white circle/base glow is passed in only as a tie-breaker and cannot
+        // manufacture a candidate.
+        const PARENT_FEN: &str =
+            "1r1akabn1/3r5/nc2b2c1/p3p1p1p/9/1NR6/P3P1P1P/1C2C1N2/9/1RBAKAB2 w - - 0 1";
+        let parent = Board::from_fen(PARENT_FEN).expect("fixture parent position");
+        let expected_move = Move::from_iccs("b4c6").expect("fixture last move ICCS");
+        assert!(parent.legal_moves().contains(&expected_move));
+
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let model = manifest_dir.join("resources/link-vision/yolov11.onnx");
+        let fixture = include_bytes!("../tests/fixtures/tiantian-black-bottom-board.jpg");
+        let mut detector = link_vision::Yolo11Detector::open(&model).unwrap_or_else(|error| {
+            panic!("bundled YOLO11 model must load for fixture regression: {error}")
+        });
+        let detections = detector.detect_png(fixture).unwrap_or_else(|error| {
+            panic!("YOLO11 must infer the bundled anonymous fixture: {error}")
+        });
+        let recognition = link_vision::recognition_from_detections(&detections, &parent)
+            .unwrap_or_else(|error| {
+                panic!("fixture must reconstruct a complete board placement: {error}")
+            });
+        let marker = link_vision::detect_screenshot_move_marker_from_png(
+            fixture,
+            &detections,
+            recognition.orientation,
+        )
+        .unwrap_or_else(|error| panic!("fixture marker extraction must not fail: {error}"));
+        let recognized_after = Board::from_fen(&recognition.fen)
+            .expect("YOLO reconstruction must remain a valid Xiangqi FEN");
+
+        let resolution = resolve_screenshot_move_from_board(
+            &parent,
+            &recognized_after,
+            marker,
+            recognition.orientation,
+        )
+        .expect("strict screenshot resolution");
+
+        assert_eq!(recognition.orientation, BoardOrientation::BlackAtBottom);
+        assert_eq!(resolution.status, "unique");
+        assert_eq!(resolution.candidates.len(), 1);
+        let candidate = &resolution.candidates[0];
+        assert_eq!(candidate.step.notation, "马八进七");
+        assert_eq!(candidate.step.moved_by, "红方");
+        assert_eq!(candidate.step.from.row, expected_move.from.row);
+        assert_eq!(candidate.step.from.col, expected_move.from.col);
+        assert_eq!(candidate.step.to.row, expected_move.to.row);
+        assert_eq!(candidate.step.to.col, expected_move.to.col);
+        assert_eq!(candidate.side_to_move, "黑方");
+    }
+
+    #[test]
+    fn screenshot_resolution_never_creates_a_marker_only_candidate() {
+        let before = Board::from_fen("4k4/9/9/9/9/4p4/9/C8/9/1N2K4 w - - 0 1").unwrap();
+        let cannon = Move::from_iccs("a2a0").unwrap();
+        // The YOLO board is visibly different from every legal continuation
+        // from `before`: the red horse is missing. A high-confidence marker
+        // for cannon a2-a0 must still yield no exact match.
+        let unrelated = Board::from_fen("4k4/9/9/9/9/4p4/9/C8/9/9 b - - 0 1").unwrap();
+        let resolution = resolve_screenshot_move_from_board(
+            &before,
+            &unrelated,
+            Some(link_vision::ScreenshotMoveMarker {
+                from: Some(cannon.from),
+                to: Some(cannon.to),
+                from_confidence: 255,
+                to_confidence: 510,
+            }),
+            BoardOrientation::BlackAtBottom,
+        )
+        .unwrap();
+
+        assert_eq!(resolution.status, "noExactMatch");
+        assert!(resolution.candidates.is_empty());
+        assert_eq!(resolution.orientation, BoardOrientation::BlackAtBottom);
+        assert!(
+            resolution
+                .reason
+                .as_deref()
+                .unwrap()
+                .contains("不能单独推断走法")
+        );
+    }
+
+    #[test]
+    fn image_recognition_error_invalidates_an_old_screenshot_confirmation() {
+        let mut session = LinkSession::default();
+        session.source = CaptureSource::ImageImport;
+        session.capture_generation = 17;
+        session.latest_fen = Some("old-post-move-fen".into());
+        session.screenshot_move_marker = Some(link_vision::ScreenshotMoveMarker {
+            from: Some(Square { row: 9, col: 1 }),
+            to: Some(Square { row: 7, col: 2 }),
+            from_confidence: 255,
+            to_confidence: 510,
+        });
+        session.screenshot_resolution_before_fen = Some("old-parent-fen".into());
+        session.screenshot_resolution_generation = Some(17);
+        session.screenshot_resolution_mode = Some(ScreenshotResolutionMode::ExactPlacement);
+
+        apply_link_capture_error(&mut session, 17, "图片未识别到完整棋盘".into());
+
+        assert_eq!(session.state, LinkSessionState::NeedsManualCorrection);
+        assert!(session.latest_fen.is_none());
+        assert!(session.screenshot_move_marker.is_none());
+        assert!(session.screenshot_resolution_before_fen.is_none());
+        assert!(session.screenshot_resolution_generation.is_none());
+        assert!(session.screenshot_resolution_mode.is_none());
+        assert!(session.screenshot_resolution_game_id.is_none());
+        assert!(session.screenshot_resolution_current_node.is_none());
+        assert!(session.screenshot_resolution_allowed_moves.is_empty());
+    }
+
+    #[test]
+    fn screenshot_resolution_binding_rejects_a_same_fen_different_game_or_node() {
+        let mut state = desktop_state_for_link_tests();
+        let model = state.model.get_mut().unwrap();
+        let before_fen = model.board.to_fen();
+        let binding = ScreenshotResolutionBinding {
+            recognized_after_fen: None,
+            before_fen,
+            generation: 1,
+            mode: ScreenshotResolutionMode::ManualFallback,
+            game_id: model.game_id,
+            current_node: None,
+            allowed_moves: vec!["b2b9".into()],
+        };
+
+        validate_screenshot_resolution_binding(model, &binding)
+            .expect("the original game root remains valid");
+
+        model.current_node = Some(Uuid::new_v4());
+        let node_error = validate_screenshot_resolution_binding(model, &binding).unwrap_err();
+        assert!(node_error.contains("棋谱或节点已变化"));
+
+        model.current_node = None;
+        model.game_id = Uuid::new_v4();
+        let game_error = validate_screenshot_resolution_binding(model, &binding).unwrap_err();
+        assert!(game_error.contains("棋谱或节点已变化"));
+    }
+
+    #[test]
+    fn screenshot_resolution_only_confirms_the_resolved_or_previewed_move() {
+        let binding = ScreenshotResolutionBinding {
+            recognized_after_fen: None,
+            before_fen: STARTING_FEN.into(),
+            generation: 1,
+            mode: ScreenshotResolutionMode::ManualFallback,
+            game_id: Uuid::new_v4(),
+            current_node: None,
+            allowed_moves: vec!["b2b9".into()],
+        };
+
+        validate_screenshot_resolution_move(&binding, "b2b9").unwrap();
+        let error = validate_screenshot_resolution_move(&binding, "h2h9").unwrap_err();
+        assert!(error.contains("合法候选"));
+    }
+
+    #[test]
+    fn consuming_a_screenshot_resolution_rejects_a_second_confirmation() {
+        let mut session = LinkSession::default();
+        session.source = CaptureSource::ImageImport;
+        session.latest_fen = Some(STARTING_FEN.into());
+        session.screenshot_resolution_before_fen = Some(STARTING_FEN.into());
+        session.screenshot_resolution_generation = Some(4);
+        session.screenshot_resolution_mode = Some(ScreenshotResolutionMode::ManualFallback);
+        session.screenshot_resolution_game_id = Some(Uuid::new_v4());
+        session.screenshot_resolution_current_node = Some(None);
+        session.screenshot_resolution_allowed_moves = vec!["b2b9".into()];
+
+        active_screenshot_resolution(&session).expect("first confirmation is available");
+        invalidate_screenshot_move_resolution(&mut session);
+        let error = active_screenshot_resolution(&session).unwrap_err();
+        assert!(error.contains("已失效"));
+    }
+
+    #[test]
+    fn screenshot_resolution_matches_a_capture_from_the_complete_yolo_position() {
+        let before = Board::from_fen("4k4/9/9/9/9/4p4/9/9/4R4/4K4 w - - 0 1").unwrap();
+        let capture = Move::from_iccs("e1e4").unwrap();
+        assert!(before.legal_moves().contains(&capture));
+        let recognized_after = before.apply_move(capture).unwrap();
+
+        let resolution = resolve_screenshot_move_from_board(
+            &before,
+            &recognized_after,
+            None,
+            BoardOrientation::RedAtBottom,
+        )
+        .unwrap();
+
+        assert_eq!(resolution.status, "unique");
+        assert_eq!(resolution.candidates.len(), 1);
+        assert_eq!(resolution.candidates[0].step.notation, "车五进三");
+        assert!(resolution.candidates[0].captured);
+        assert_eq!(resolution.candidates[0].side_to_move, "黑方");
+    }
+
+    #[test]
+    fn exact_screenshot_confirmation_rejects_another_legal_move() {
+        let before = Board::from_fen("4k4/9/9/9/9/4p4/9/C8/9/1N2K4 w - - 0 1").unwrap();
+        let horse = Move::from_iccs("b0c2").unwrap();
+        let cannon = Move::from_iccs("a2a0").unwrap();
+        let recognized_after = before.apply_move(horse).unwrap();
+
+        let error = validate_screenshot_move_confirmation(
+            &before,
+            cannon,
+            &before.to_fen(),
+            Some(&recognized_after.to_fen()),
+            ScreenshotResolutionMode::ExactPlacement,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("完整局面不一致"));
+        validate_screenshot_move_confirmation(
+            &before,
+            horse,
+            &before.to_fen(),
+            Some(&recognized_after.to_fen()),
+            ScreenshotResolutionMode::ExactPlacement,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn manual_screenshot_confirmation_requires_the_original_document_node() {
+        let before = Board::from_fen("4k4/9/9/9/9/4p4/9/C8/9/1N2K4 w - - 0 1").unwrap();
+        let horse = Move::from_iccs("b0c2").unwrap();
+        let moved = before.apply_move(horse).unwrap();
+
+        let error = validate_screenshot_move_confirmation(
+            &moved,
+            moved.legal_moves()[0],
+            &before.to_fen(),
+            None,
+            ScreenshotResolutionMode::ManualFallback,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("当前棋谱节点已变化"));
     }
 
     #[test]
@@ -12042,6 +13079,85 @@ mod tests {
     }
 
     #[test]
+    fn unstable_live_side_flicker_keeps_the_last_stable_board() {
+        let state = desktop_state_for_link_tests();
+        let flicker_fen = STARTING_FEN.replacen(" w ", " b ", 1);
+        {
+            let mut session = state.link_session.lock().unwrap();
+            session.source = CaptureSource::WindowLink;
+            session.state = LinkSessionState::Tracking;
+            session.capture_running = true;
+            session.initial_position_seen = true;
+            session.latest_fen = Some(STARTING_FEN.into());
+            session.capture_generation = 8;
+            session.confidence_threshold = 0.55;
+            session.gate = StabilityGate::new(2);
+            reset_link_stability_progress(&mut session);
+        }
+
+        let observation =
+            observe_link_recognition_inner(&state, flicker_fen, Some(0.91), Some(8)).unwrap();
+        let session = state.link_session.lock().unwrap();
+        let model = state.model.lock().unwrap();
+
+        assert!(!observation.accepted);
+        assert!(observation.board.is_none());
+        assert_eq!(observation.state, LinkSessionState::WaitingStableFrames);
+        assert_eq!(session.latest_fen.as_deref(), Some(STARTING_FEN));
+        assert_eq!(session.stable_frames, 1);
+        assert_eq!(session.required_stable_frames, 2);
+        assert!(model.board.to_fen().contains(" w "));
+    }
+
+    #[test]
+    fn live_side_change_requires_extra_stability_before_updating_turn() {
+        let state = desktop_state_for_link_tests();
+        let black_to_move_fen = STARTING_FEN.replacen(" w ", " b ", 1);
+        {
+            let mut session = state.link_session.lock().unwrap();
+            session.source = CaptureSource::WindowLink;
+            session.state = LinkSessionState::Tracking;
+            session.capture_running = true;
+            session.initial_position_seen = true;
+            session.latest_fen = Some(STARTING_FEN.into());
+            session.capture_generation = 9;
+            session.confidence_threshold = 0.55;
+            session.gate = StabilityGate::new(2);
+            reset_link_stability_progress(&mut session);
+        }
+
+        for _ in 0..3 {
+            let observation = observe_link_recognition_inner(
+                &state,
+                black_to_move_fen.clone(),
+                Some(0.91),
+                Some(9),
+            )
+            .unwrap();
+            assert!(!observation.accepted);
+        }
+        {
+            let session = state.link_session.lock().unwrap();
+            let model = state.model.lock().unwrap();
+            assert_eq!(session.phase.as_deref(), Some("waiting_side_stability"));
+            assert_eq!(session.latest_fen.as_deref(), Some(STARTING_FEN));
+            assert_eq!(session.stable_frames, 3);
+            assert_eq!(session.required_stable_frames, 4);
+            assert!(model.board.to_fen().contains(" w "));
+        }
+
+        let observation =
+            observe_link_recognition_inner(&state, black_to_move_fen, Some(0.91), Some(9)).unwrap();
+        let session = state.link_session.lock().unwrap();
+        let model = state.model.lock().unwrap();
+
+        assert!(observation.accepted);
+        assert_eq!(session.state, LinkSessionState::Tracking);
+        assert!(session.latest_fen.as_deref().unwrap().contains(" b "));
+        assert!(model.board.to_fen().contains(" b "));
+    }
+
+    #[test]
     fn window_link_syncs_legal_web_manual_position_jumps() {
         let state = desktop_state_for_link_tests();
         let mut jumped = Board::from_fen(STARTING_FEN).unwrap();
@@ -12062,6 +13178,13 @@ mod tests {
             session.confidence_threshold = 0.55;
         }
 
+        for _ in 0..4 {
+            let observation =
+                observe_link_recognition_inner(&state, jumped_fen.clone(), Some(0.88), Some(5))
+                    .unwrap();
+            assert!(!observation.accepted);
+            assert_eq!(observation.state, LinkSessionState::WaitingStableFrames);
+        }
         let observation =
             observe_link_recognition_inner(&state, jumped_fen.clone(), Some(0.88), Some(5))
                 .unwrap();
@@ -12370,9 +13493,12 @@ mod tests {
 
     #[test]
     fn chinese_line_parser_reports_the_illegal_step_in_chinese() {
-        let error = parse_chinese_line(STARTING_FEN.into(), vec!["炮二平五".into(), "车九退十".into()])
-            .err()
-            .unwrap();
+        let error = parse_chinese_line(
+            STARTING_FEN.into(),
+            vec!["炮二平五".into(), "车九退十".into()],
+        )
+        .err()
+        .unwrap();
 
         assert!(error.contains("第 2 步"));
         assert!(error.contains("合法中文着法"));
@@ -12904,5 +14030,35 @@ mod tests {
             candidates
                 .contains(&base.join("flyknife-library/single-pgn/01-34仙人指路对卒底炮-一.pgn"))
         );
+    }
+
+    #[test]
+    fn training_system_seed_cards_cover_the_method_tags() {
+        let cards = training_system_seed_cards();
+        assert_eq!(cards.len(), 7);
+        assert!(cards.iter().all(|card| {
+            card.external_id.starts_with("training-system-")
+                && card.review_status == "approved"
+                && card.source_path.starts_with(TRAINING_SYSTEM_SOURCE_URL)
+                && card
+                    .source_book
+                    .as_deref()
+                    .is_some_and(|source| source.contains("方法论参考"))
+        }));
+        let tags = cards
+            .iter()
+            .flat_map(|card| card.tags.iter().map(String::as_str))
+            .collect::<std::collections::HashSet<_>>();
+        for tag in [
+            "残局打底",
+            "战术漏算",
+            "候选着计算",
+            "专属布局",
+            "深度复盘",
+            "慢棋训练",
+            "心态管理",
+        ] {
+            assert!(tags.contains(tag), "missing {tag}");
+        }
     }
 }
