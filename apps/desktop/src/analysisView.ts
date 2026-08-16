@@ -311,14 +311,17 @@ function scoreText(scoreCp: number) {
 
 function evaluationLabel(scoreCp: number) {
   const magnitude = Math.abs(scoreCp);
-  // Use the same material-scale guide presented in the trend view.
+  // Engine cp values are a position evaluation, not a literal material count.
+  // Use advantage bands here so a middle value like 320cp is not overexplained
+  // as a specific captured piece.
   if (magnitude <= 50) return "局面均衡";
   const side = scoreCp > 0 ? "红方" : "黑方";
   if (magnitude < 100) return `${side}微优`;
-  if (magnitude < 200) return `${side}约多一兵`;
-  if (magnitude < 500) return `${side}约多一过河兵`;
-  if (magnitude < 1000) return `${side}约多一马或炮`;
-  return `${side}约多一车`;
+  if (magnitude < 200) return `${side}稍优`;
+  if (magnitude < 350) return `${side}明显占优`;
+  if (magnitude < 600) return `${side}优势`;
+  if (magnitude < 1000) return `${side}大优`;
+  return `${side}胜势`;
 }
 
 export function evaluationRedShare(scoreCp: number) {

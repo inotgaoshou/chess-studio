@@ -285,15 +285,17 @@ describe("positionEvaluation", () => {
     });
   });
 
-  it("uses the documented 50/100/200/500/1000 material scale for position labels", () => {
+  it("uses advantage bands for position labels instead of literal material claims", () => {
     const labels = [
       [50, "局面均衡"],
       [51, "红方微优"],
-      [100, "红方约多一兵"],
-      [200, "红方约多一过河兵"],
-      [500, "红方约多一马或炮"],
-      [1000, "红方约多一车"],
-      [-200, "黑方约多一过河兵"],
+      [100, "红方稍优"],
+      [200, "红方明显占优"],
+      [320, "红方明显占优"],
+      [350, "红方优势"],
+      [600, "红方大优"],
+      [1000, "红方胜势"],
+      [-320, "黑方明显占优"],
     ] as const;
 
     for (const [scoreCp, label] of labels) {

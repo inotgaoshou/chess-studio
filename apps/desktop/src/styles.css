@@ -6193,10 +6193,23 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 .link-mini-selected-square { position: absolute; z-index: 9; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; color: #d41136; }
 .link-mini-selected-square path { fill: none; stroke: currentColor; stroke-width: 15; stroke-linecap: square; vector-effect: non-scaling-stroke; filter: drop-shadow(0 6px 8px rgba(255, 245, 220, .92)); }
 .link-mini-piece { position: absolute; z-index: 5; width: 9.214285714285715%; aspect-ratio: 1; object-fit: contain; transform: translate(-50%, -50%); pointer-events: none; backface-visibility: hidden; }
-.link-mini-piece.move-animate { animation: link-mini-piece-move .22s cubic-bezier(.2, .82, .18, 1) both; will-change: transform; }
+.link-mini-piece.move-animate { z-index: 7; animation: link-mini-piece-move .25s cubic-bezier(.18, .82, .16, 1) both; will-change: left, top, transform; }
+.link-mini-piece.move-arrive { animation: link-mini-piece-arrive .25s linear both; }
+.link-mini-piece.capture-animate { z-index: 6; animation: link-mini-piece-capture .24s ease-out both; will-change: opacity, transform, filter; }
 @keyframes link-mini-piece-move {
-  from { transform: translate(calc(-50% + var(--link-mini-move-dx, 0%)), calc(-50% + var(--link-mini-move-dy, 0%))); }
-  to { transform: translate(-50%, -50%); }
+  0% { left: var(--link-mini-move-from-left); top: var(--link-mini-move-from-top); opacity: 1; transform: translate(-50%, -50%) scale(.98); filter: drop-shadow(0 2px 2px rgba(0, 0, 0, .22)); }
+  72% { left: var(--link-mini-move-to-left); top: var(--link-mini-move-to-top); opacity: 1; transform: translate(-50%, -50%) scale(1.045); filter: drop-shadow(0 5px 7px rgba(0, 0, 0, .24)); }
+  99% { left: var(--link-mini-move-to-left); top: var(--link-mini-move-to-top); opacity: 1; transform: translate(-50%, -50%) scale(1); filter: none; }
+  100% { left: var(--link-mini-move-to-left); top: var(--link-mini-move-to-top); opacity: 0; transform: translate(-50%, -50%) scale(1); filter: none; }
+}
+@keyframes link-mini-piece-arrive {
+  0%, 84% { opacity: 0; }
+  100% { opacity: 1; }
+}
+@keyframes link-mini-piece-capture {
+  0% { opacity: .92; transform: translate(-50%, -50%) scale(1); filter: drop-shadow(0 0 0 rgba(255, 255, 255, 0)); }
+  42% { opacity: .72; transform: translate(-50%, -50%) scale(.92); filter: drop-shadow(0 0 8px rgba(255, 246, 220, .72)); }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(.68); filter: drop-shadow(0 0 12px rgba(255, 92, 92, .38)); }
 }
 .link-float-candidates { min-height: 0; border: 1px solid var(--border); background: var(--surface-1); }
 .link-float-candidates > header { padding: 9px 10px; border-bottom: 1px solid var(--border); display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
@@ -6938,7 +6951,7 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
     overflow: auto;
   }
   .workspace.layout-compact .compact-engine-window.detached {
-    height: min(520px, calc(100dvh - 112px));
+    height: min(370px, calc(100dvh - 112px));
   }
   .workspace.layout-compact .compact-floating-stack .compact-manual-panel {
     top: 8px;
@@ -7138,8 +7151,8 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
     right: calc(clamp(230px, 19vw, 310px) + 24px);
     left: auto;
     width: min(344px, calc(100vw - 48px));
-    height: min(410px, calc(50dvh));
-    max-height: min(720px, calc(100dvh - 72px));
+    height: min(410px, calc(100dvh - 222px));
+    max-height: min(720px, calc(100dvh - 222px));
     display: grid;
     grid-template-rows: 30px minmax(0, 1fr);
     border-color: #9fc8e6;
@@ -7154,8 +7167,8 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
     right: calc(clamp(230px, 19vw, 310px) + 24px);
     left: auto;
     width: min(344px, calc(100vw - 48px));
-    height: min(410px, calc(50dvh));
-    max-height: min(720px, calc(100dvh - 72px));
+    height: min(410px, calc(100dvh - 222px));
+    max-height: min(720px, calc(100dvh - 222px));
   }
   .workspace.layout-compact .compact-engine-window .analysis-lines {
     min-height: 0;

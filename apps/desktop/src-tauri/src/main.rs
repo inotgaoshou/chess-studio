@@ -65,6 +65,18 @@ use xiangqi_core::{
 };
 use xiangqi_manual::{ManualTree, MoveNode};
 
+#[cfg(target_os = "macos")]
+#[link(name = "CoreGraphics", kind = "framework")]
+unsafe extern "C" {
+    fn CGPreflightScreenCaptureAccess() -> bool;
+}
+
+#[cfg(target_os = "macos")]
+#[link(name = "ApplicationServices", kind = "framework")]
+unsafe extern "C" {
+    fn AXIsProcessTrusted() -> bool;
+}
+
 const BUILTIN_ENGINE_PATH: &str = "builtin:pikafish";
 const BUILTIN_FAIRY_ENGINE_PATH: &str = "builtin:fairy-stockfish";
 const PIKAFISH_260720_NNUE_SHA256: &str =
@@ -183,6 +195,8 @@ struct LinkSession {
     last_detection_summary: Option<String>,
     turn_indicator: Option<String>,
     manual_turn_override: Option<Color>,
+    side_change_candidate: Option<Color>,
+    side_change_candidate_frames: u8,
     pending_external_move: Option<String>,
     pending_expected_fen: Option<String>,
     screenshot_move_marker: Option<link_vision::ScreenshotMoveMarker>,
@@ -263,6 +277,8 @@ impl Default for LinkSession {
             last_detection_summary: None,
             turn_indicator: None,
             manual_turn_override: None,
+            side_change_candidate: None,
+            side_change_candidate_frames: 0,
             pending_external_move: None,
             pending_expected_fen: None,
             screenshot_move_marker: None,
@@ -1177,6 +1193,7 @@ fn should_apply_link_recognition_geometry(
 fn reset_link_stability_progress(session: &mut LinkSession) {
     session.stable_frames = 0;
     session.required_stable_frames = session.gate.required_frames();
+    reset_link_side_change_stability(session);
 }
 
 fn set_link_stability_progress(session: &mut LinkSession, frames: u8, required: u8) {
@@ -1192,6 +1209,23 @@ fn mark_link_stability_accepted(session: &mut LinkSession) {
         session.gate.matching_frames().max(required),
         required,
     );
+    reset_link_side_change_stability(session);
+}
+
+fn reset_link_side_change_stability(session: &mut LinkSession) {
+    session.side_change_candidate = None;
+    session.side_change_candidate_frames = 0;
+}
+
+fn observe_link_side_change_stability(session: &mut LinkSession, side: Color) -> u8 {
+    if session.side_change_candidate == Some(side) {
+        session.side_change_candidate_frames =
+            session.side_change_candidate_frames.saturating_add(1);
+    } else {
+        session.side_change_candidate = Some(side);
+        session.side_change_candidate_frames = 1;
+    }
+    session.side_change_candidate_frames
 }
 
 fn clear_link_recognition_candidate(session: &mut LinkSession) {
@@ -1226,6 +1260,28 @@ fn wait_for_link_recognition_stability(
     required_frames: u8,
 ) -> LinkObservationDto {
     set_link_stability_progress(session, session.gate.matching_frames(), required_frames);
+    session.state = LinkSessionState::WaitingStableFrames;
+    session.phase = Some(phase.into());
+    session.reason = Some(reason);
+    LinkObservationDto {
+        state: session.state,
+        accepted: false,
+        move_iccs: None,
+        reason: session.reason.clone(),
+        board: None,
+        orientation: session.board_orientation,
+        capture_preview_available: session.capture_preview.is_some(),
+    }
+}
+
+fn wait_for_link_candidate_stability(
+    session: &mut LinkSession,
+    phase: &str,
+    reason: String,
+    matching_frames: u8,
+    required_frames: u8,
+) -> LinkObservationDto {
+    set_link_stability_progress(session, matching_frames, required_frames);
     session.state = LinkSessionState::WaitingStableFrames;
     session.phase = Some(phase.into());
     session.reason = Some(reason);
@@ -3190,6 +3246,11 @@ fn link_piece_click_centers(
 fn capture_display_frame(region: Option<LinkCaptureRegion>) -> Result<Vec<u8>, String> {
     #[cfg(target_os = "macos")]
     {
+        if !macos_screen_capture_access_granted() {
+            return Err(macos_screen_capture_permission_message(
+                "未授予屏幕录制权限",
+            ));
+        }
         let directory = tempfile::tempdir().map_err(|error| error.to_string())?;
         let path = directory.path().join("xiangqi-link-frame.png");
         let mut command = ProcessCommand::new("/usr/sbin/screencapture");
@@ -3223,8 +3284,13 @@ fn capture_display_frame_for_link(
 }
 
 #[cfg(target_os = "macos")]
+fn macos_screen_capture_access_granted() -> bool {
+    unsafe { CGPreflightScreenCaptureAccess() }
+}
+
+#[cfg(target_os = "macos")]
 fn macos_screen_capture_permission_message(prefix: &str) -> String {
-    format!("{prefix}，屏幕采集暂不可用；请确认权限后重试。")
+    format!("{prefix}，屏幕采集暂不可用；已停止本轮采集，不会继续触发系统授权弹窗。")
 }
 
 fn link_capture_generation_is_active(app: &tauri::AppHandle, generation: u64) -> bool {
@@ -3650,6 +3716,9 @@ fn click_external_move(
     let click_points = link_move_click_points_for_click(bounds, orientation, mv, detected_from);
     #[cfg(target_os = "macos")]
     {
+        if !macos_accessibility_access_granted() {
+            return Err("未授予辅助功能权限，已跳过外部点击，不会继续触发系统授权弹窗。".into());
+        }
         let ((from_x, from_y), (to_x, to_y)) = click_points;
         let script = macos_link_click_script(from_x, from_y, to_x, to_y, click_target);
         let output = ProcessCommand::new("/usr/bin/osascript")
@@ -3667,6 +3736,11 @@ fn click_external_move(
         let _ = (bounds, orientation, mv, click_points, click_target);
         Err("当前平台尚未接入外部鼠标点击".into())
     }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_accessibility_access_granted() -> bool {
+    unsafe { AXIsProcessTrusted() }
 }
 
 #[cfg(target_os = "macos")]
@@ -3877,6 +3951,7 @@ fn observe_link_recognition_inner(
         ReconcileDecision::Unchanged => {
             let side_changed = model.board.side_to_move() != recognized_side_to_move;
             if side_changed && session.pending_external_move.is_some() {
+                reset_link_side_change_stability(&mut session);
                 let pending_move_display = session
                     .pending_external_move
                     .as_deref()
@@ -3915,9 +3990,10 @@ fn observe_link_recognition_inner(
             }
             if side_changed {
                 let required = live_side_change_required_frames(&session);
-                let matching = session.gate.matching_frames();
+                let matching =
+                    observe_link_side_change_stability(&mut session, recognized_side_to_move);
                 if matching < required {
-                    return Ok(wait_for_link_recognition_stability(
+                    return Ok(wait_for_link_candidate_stability(
                         &mut session,
                         "waiting_side_stability",
                         format!(
@@ -3926,15 +4002,19 @@ fn observe_link_recognition_inner(
                             matching,
                             required
                         ),
+                        matching,
                         required,
                     ));
                 }
+            } else {
+                reset_link_side_change_stability(&mut session);
             }
             if side_changed {
                 model.board = model.board.with_side_to_move(recognized_side_to_move);
                 if model.current_node.is_none() {
                     model.starting_fen = model.board.to_fen();
                 }
+                reset_link_side_change_stability(&mut session);
             }
             let board = if side_changed {
                 Some(board_dto(&model)?)
@@ -6303,7 +6383,7 @@ async fn open_compact_floating_panel(app: tauri::AppHandle, panel: String) -> Re
             420.0,
             460.0,
             340.0,
-            260.0,
+            220.0,
             None,
         ),
         "manual" => ("compact-manual", "棋谱", 430.0, 580.0, 360.0, 320.0, None),
@@ -6328,6 +6408,11 @@ async fn open_compact_floating_panel(app: tauri::AppHandle, panel: String) -> Re
         _ => return Err("未知的浮动面板".into()),
     };
     if let Some(window) = app.get_webview_window(label) {
+        if panel == "engine" {
+            window
+                .set_size(tauri::Size::Logical(tauri::LogicalSize::new(width, height)))
+                .map_err(|error| error.to_string())?;
+        }
         window
             .set_always_on_top(true)
             .map_err(|error| error.to_string())?;
@@ -13110,6 +13195,41 @@ mod tests {
     }
 
     #[test]
+    fn side_flicker_waits_even_when_position_gate_is_already_stable() {
+        let state = desktop_state_for_link_tests();
+        let flicker_fen = STARTING_FEN.replacen(" w ", " b ", 1);
+        {
+            let mut session = state.link_session.lock().unwrap();
+            session.source = CaptureSource::WindowLink;
+            session.state = LinkSessionState::Tracking;
+            session.capture_running = true;
+            session.initial_position_seen = true;
+            session.latest_fen = Some(STARTING_FEN.into());
+            session.capture_generation = 10;
+            session.confidence_threshold = 0.55;
+            session.gate = StabilityGate::new(2);
+            for _ in 0..6 {
+                let _ = session.gate.observe(&flicker_fen).unwrap();
+            }
+            mark_link_stability_accepted(&mut session);
+        }
+
+        let observation =
+            observe_link_recognition_inner(&state, flicker_fen, Some(0.91), Some(10)).unwrap();
+        let session = state.link_session.lock().unwrap();
+        let model = state.model.lock().unwrap();
+
+        assert!(!observation.accepted);
+        assert!(observation.board.is_none());
+        assert_eq!(observation.state, LinkSessionState::WaitingStableFrames);
+        assert_eq!(session.phase.as_deref(), Some("waiting_side_stability"));
+        assert_eq!(session.stable_frames, 1);
+        assert_eq!(session.required_stable_frames, 4);
+        assert_eq!(session.latest_fen.as_deref(), Some(STARTING_FEN));
+        assert!(model.board.to_fen().contains(" w "));
+    }
+
+    #[test]
     fn live_side_change_requires_extra_stability_before_updating_turn() {
         let state = desktop_state_for_link_tests();
         let black_to_move_fen = STARTING_FEN.replacen(" w ", " b ", 1);
@@ -13126,7 +13246,7 @@ mod tests {
             reset_link_stability_progress(&mut session);
         }
 
-        for _ in 0..3 {
+        for _ in 0..4 {
             let observation = observe_link_recognition_inner(
                 &state,
                 black_to_move_fen.clone(),

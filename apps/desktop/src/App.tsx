@@ -110,6 +110,9 @@ const COMPACT_ENGINE_DEFAULT_WIDTH = 344;
 const COMPACT_ENGINE_MIN_HEIGHT = 220;
 const COMPACT_ENGINE_DEFAULT_HEIGHT = 410;
 const COMPACT_ENGINE_MAX_HEIGHT = 720;
+const COMPACT_ENGINE_DEFAULT_TOP = 48;
+const COMPACT_ENGINE_DEFAULT_Y = 150;
+const COMPACT_ENGINE_VIEWPORT_GAP = 24;
 const LEGACY_ENGINE_DEFAULTS_MIGRATION_KEY = "xiangqi:migrated-engine-defaults-v6";
 const ANALYSIS_PANEL_REOPEN_TOP_KEY = "xiangqi:analysis-panel-reopen-top";
 const ANALYSIS_PANEL_REOPEN_DEFAULT_TOP = 7;
@@ -138,6 +141,13 @@ type BookCandidateAuditRunState = {
   checked?: number;
   total?: number;
 };
+
+export const compactEngineDefaultPosition = () => ({ x: 0, y: COMPACT_ENGINE_DEFAULT_Y });
+const compactManualDefaultPosition = () => ({ x: 0, y: 0 });
+const compactWindowDefaultPositions = () => ({
+  engine: compactEngineDefaultPosition(),
+  manual: compactManualDefaultPosition(),
+});
 
 export function clampAnalysisPanelReopenTop(top: number, viewportHeight: number, panelHeight = ANALYSIS_PANEL_REOPEN_HEIGHT) {
   if (!Number.isFinite(top)) return ANALYSIS_PANEL_REOPEN_DEFAULT_TOP;
@@ -830,9 +840,51 @@ function piecesToFen(pieces: Piece[], side: "red" | "black") {
 }
 
 const linkMiniPieceKey = (piece: Pick<Piece, "row" | "col">) => `${piece.row}-${piece.col}`;
+const linkMiniPieceTypeKey = (piece: Pick<Piece, "color" | "kind">) => `${piece.color}-${piece.kind}`;
+const linkMiniPieceKindKey = (piece: Pick<Piece, "kind">) => piece.kind;
 const linkMiniSamePieceType = (left: Pick<Piece, "color" | "kind">, right: Pick<Piece, "color" | "kind">) => (
   left.color === right.color && left.kind === right.kind
 );
+const linkMiniPieceTypeCounts = (pieces: Piece[]) => pieces.reduce((counts, piece) => {
+  const key = linkMiniPieceTypeKey(piece);
+  counts.set(key, (counts.get(key) ?? 0) + 1);
+  return counts;
+}, new Map<string, number>());
+const linkMiniPieceKindCounts = (pieces: Piece[]) => pieces.reduce((counts, piece) => {
+  const key = linkMiniPieceKindKey(piece);
+  counts.set(key, (counts.get(key) ?? 0) + 1);
+  return counts;
+}, new Map<string, number>());
+
+function recoverStableLinkMiniStaticPieces(
+  stablePieces: Piece[],
+  currentPieces: Piece[],
+  move: Pick<MoveItem, "from" | "to">,
+) {
+  const fromKey = linkMiniPieceKey(move.from);
+  const toKey = linkMiniPieceKey(move.to);
+  const occupiedSquares = new Set(stablePieces.map(linkMiniPieceKey));
+  const stableCounts = linkMiniPieceTypeCounts(stablePieces);
+  const currentCounts = linkMiniPieceTypeCounts(currentPieces);
+  const stableKindCounts = linkMiniPieceKindCounts(stablePieces);
+  const currentKindCounts = linkMiniPieceKindCounts(currentPieces);
+  const recoveredPieces: Piece[] = [];
+
+  for (const piece of currentPieces) {
+    const square = linkMiniPieceKey(piece);
+    if (square === fromKey || square === toKey || occupiedSquares.has(square)) continue;
+    const type = linkMiniPieceTypeKey(piece);
+    const kind = linkMiniPieceKindKey(piece);
+    if ((stableCounts.get(type) ?? 0) >= (currentCounts.get(type) ?? 0)) continue;
+    if ((stableKindCounts.get(kind) ?? 0) >= (currentKindCounts.get(kind) ?? 0)) continue;
+    recoveredPieces.push(piece);
+    occupiedSquares.add(square);
+    stableCounts.set(type, (stableCounts.get(type) ?? 0) + 1);
+    stableKindCounts.set(kind, (stableKindCounts.get(kind) ?? 0) + 1);
+  }
+
+  return recoveredPieces.length ? [...stablePieces, ...recoveredPieces] : stablePieces;
+}
 
 export function stableLinkMiniPiecesForMove(
   previousPieces: Piece[],
@@ -849,12 +901,83 @@ export function stableLinkMiniPiecesForMove(
   if (previousTarget && previousTarget.color === mover.color) return currentPieces;
   const recognizedMover = currentPieces.find((piece) => linkMiniPieceKey(piece) === toKey && linkMiniSamePieceType(piece, mover));
   const movedPiece = recognizedMover ?? { ...mover, row: move.to.row, col: move.to.col };
-  return previousPieces.flatMap((piece) => {
+  const stablePieces = previousPieces.flatMap((piece) => {
     const key = linkMiniPieceKey(piece);
     if (key === fromKey) return [{ ...movedPiece, row: move.to.row, col: move.to.col }];
     if (key === toKey) return [];
     return [piece];
   });
+  return recoverStableLinkMiniStaticPieces(stablePieces, currentPieces, move);
+}
+
+type LinkMiniPieceRenderState = { active: boolean; fen?: string; moveKey?: string; pieces: Piece[] };
+
+export function nextStableLinkMiniPieceState(
+  state: LinkMiniPieceRenderState,
+  options: {
+    boardFen: string;
+    boardPieces: Piece[];
+    linkDisplayedLastMove?: Pick<MoveItem, "from" | "to">;
+    linkDisplayedLastMoveKey?: string;
+    linkShouldShowMiniBoard: boolean;
+    allowFullRefreshWithoutMove?: boolean;
+  },
+): LinkMiniPieceRenderState {
+  if (!options.linkShouldShowMiniBoard) {
+    return {
+      ...state,
+      active: false,
+      pieces: state.pieces.length ? state.pieces : options.boardPieces,
+    };
+  }
+
+  if (!state.active || !state.pieces.length) {
+    return {
+      active: true,
+      fen: options.boardFen,
+      moveKey: options.linkDisplayedLastMoveKey,
+      pieces: options.boardPieces,
+    };
+  }
+
+  if (!options.linkDisplayedLastMove) {
+    if (options.allowFullRefreshWithoutMove) {
+      return {
+        active: true,
+        fen: options.boardFen,
+        moveKey: options.linkDisplayedLastMoveKey,
+        pieces: options.boardPieces,
+      };
+    }
+    return { ...state, active: true };
+  }
+
+  if (state.fen === options.boardFen && state.moveKey === options.linkDisplayedLastMoveKey) {
+    return { ...state, active: true };
+  }
+
+  return {
+    active: true,
+    fen: options.boardFen,
+    moveKey: options.linkDisplayedLastMoveKey,
+    pieces: stableLinkMiniPiecesForMove(state.pieces, options.boardPieces, options.linkDisplayedLastMove),
+  };
+}
+
+type LinkDisplayedMove = Pick<MoveItem, "from" | "to" | "notation" | "movedBy">;
+
+export function selectLinkDisplayedLastMove(options: {
+  linkShouldShowMiniBoard: boolean;
+  statusLatestFen?: string;
+  boardFen: string;
+  statusLastMove?: LinkDisplayedMove;
+  boardLastMove?: LinkDisplayedMove;
+}) {
+  if (!options.linkShouldShowMiniBoard) return undefined;
+  if (options.statusLatestFen === options.boardFen && options.statusLastMove) {
+    return options.statusLastMove;
+  }
+  return options.boardLastMove;
 }
 
 function formatNps(nps?: number) {
@@ -1109,8 +1232,8 @@ export default function App() {
     cloud: false,
   });
   const [compactWindowPositions, setCompactWindowPositions] = useState<Record<"engine" | "manual", { x: number; y: number }>>({
-    engine: { x: 0, y: 0 },
-    manual: { x: 0, y: 0 },
+    engine: compactEngineDefaultPosition(),
+    manual: compactManualDefaultPosition(),
   });
   const [compactEngineSize, setCompactEngineSize] = useState<{ width: number; height: number }>({
     width: COMPACT_ENGINE_DEFAULT_WIDTH,
@@ -1203,7 +1326,13 @@ export default function App() {
   flyknifePracticeRef.current = flyknifePractice;
   const compactEngineMaxHeight = typeof window === "undefined"
     ? COMPACT_ENGINE_MAX_HEIGHT
-    : Math.min(COMPACT_ENGINE_MAX_HEIGHT, Math.max(COMPACT_ENGINE_MIN_HEIGHT, window.innerHeight - 72));
+    : Math.min(
+      COMPACT_ENGINE_MAX_HEIGHT,
+      Math.max(
+        COMPACT_ENGINE_MIN_HEIGHT,
+        window.innerHeight - COMPACT_ENGINE_DEFAULT_TOP - COMPACT_ENGINE_DEFAULT_Y - COMPACT_ENGINE_VIEWPORT_GAP,
+      ),
+    );
 
   function compactEnginePanelSize(size?: { width: number; height: number }) {
     if (!size || compactEngineCollapsed) return undefined;
@@ -1230,7 +1359,7 @@ export default function App() {
     if (compactLayout && !wasCompactLayoutRef.current) {
       // A docked panel must start inside its rail. This also recovers panels
       // positioned by the old viewport-wide drag bounds.
-      setCompactWindowPositions({ engine: { x: 0, y: 0 }, manual: { x: 0, y: 0 } });
+      setCompactWindowPositions(compactWindowDefaultPositions());
       setCompactDetachedPanels({ engine: false, manual: false });
     }
     wasCompactLayoutRef.current = compactLayout;
@@ -1487,13 +1616,13 @@ export default function App() {
         setCompactEngineCollapsed(false);
         setCompactPoppedOutPanels((panels) => ({ ...panels, engine: false }));
         setCompactDetachedPanels((panels) => ({ ...panels, engine: false }));
-        setCompactWindowPositions((positions) => ({ ...positions, engine: { x: 0, y: 0 } }));
+        setCompactWindowPositions((positions) => ({ ...positions, engine: compactEngineDefaultPosition() }));
         setCompactActiveWindow("engine");
       } else if (panel === "manual") {
         setCompactManualCollapsed(false);
         setCompactPoppedOutPanels((panels) => ({ ...panels, manual: false }));
         setCompactDetachedPanels((panels) => ({ ...panels, manual: false }));
-        setCompactWindowPositions((positions) => ({ ...positions, manual: { x: 0, y: 0 } }));
+        setCompactWindowPositions((positions) => ({ ...positions, manual: compactManualDefaultPosition() }));
         setCompactManualWidth(undefined);
         setCompactActiveWindow("manual");
       } else if (panel === "cloud") {
@@ -2261,27 +2390,29 @@ export default function App() {
     linkSessionStatus.pendingExternalMove,
     linkSessionStatus.pendingExternalMove === linkConfirmMove ? linkConfirmMoveLabel : undefined,
   );
-  const linkDisplayedLastMove = linkShouldShowMiniBoard ? linkSessionStatus.lastMoveDetail ?? lastMove : undefined;
+  const linkDisplayedLastMove = selectLinkDisplayedLastMove({
+    linkShouldShowMiniBoard,
+    statusLatestFen: linkSessionStatus.latestFen,
+    boardFen: board.fen,
+    statusLastMove: linkSessionStatus.lastMoveDetail,
+    boardLastMove: lastMove,
+  });
   const linkDisplayedLastMoveKey = linkDisplayedLastMove
     ? `${linkDisplayedLastMove.from.row}-${linkDisplayedLastMove.from.col}:${linkDisplayedLastMove.to.row}-${linkDisplayedLastMove.to.col}:${board.fen}`
     : undefined;
-  const linkMiniPieceState = useRef<{ fen?: string; moveKey?: string; pieces: Piece[] }>({ pieces: [] });
+  const linkMiniPieceState = useRef<LinkMiniPieceRenderState>({ active: false, pieces: [] });
   const linkMiniPieces = useMemo(() => {
-    const state = linkMiniPieceState.current;
-    if (!linkShouldShowMiniBoard) return state.pieces.length ? state.pieces : board.pieces;
-    if (!state.pieces.length || !linkDisplayedLastMove) {
-      const next = { fen: board.fen, moveKey: linkDisplayedLastMoveKey, pieces: board.pieces };
-      linkMiniPieceState.current = next;
-      return next.pieces;
-    }
-    if (state.fen === board.fen && state.moveKey === linkDisplayedLastMoveKey) {
-      return state.pieces;
-    }
-    const nextPieces = stableLinkMiniPiecesForMove(state.pieces, board.pieces, linkDisplayedLastMove);
-    const next = { fen: board.fen, moveKey: linkDisplayedLastMoveKey, pieces: nextPieces };
+    const next = nextStableLinkMiniPieceState(linkMiniPieceState.current, {
+      boardFen: board.fen,
+      boardPieces: board.pieces,
+      linkDisplayedLastMove,
+      linkDisplayedLastMoveKey,
+      linkShouldShowMiniBoard,
+      allowFullRefreshWithoutMove: linkSessionStatus.phase === "position_jump_synced" && linkSessionStatus.latestFen === board.fen,
+    });
     linkMiniPieceState.current = next;
     return next.pieces;
-  }, [board.fen, board.pieces, linkDisplayedLastMove, linkDisplayedLastMoveKey, linkShouldShowMiniBoard]);
+  }, [board.fen, board.pieces, linkDisplayedLastMove, linkDisplayedLastMoveKey, linkSessionStatus.phase, linkShouldShowMiniBoard]);
   const linkMiniBoardHint = linkMiniBoardHintText({
     observed: linkShouldShowMiniBoard,
     sideToMove: board.sideToMove,
@@ -4889,7 +5020,7 @@ export default function App() {
     setCompactEngineCollapsed(true);
     setCompactPoppedOutPanels((panels) => ({ ...panels, engine: false }));
     setCompactDetachedPanels((panels) => ({ ...panels, engine: false }));
-    setCompactWindowPositions((positions) => ({ ...positions, engine: { x: 0, y: 0 } }));
+    setCompactWindowPositions((positions) => ({ ...positions, engine: compactEngineDefaultPosition() }));
   }
 
   async function exitReviewMode() {
@@ -4934,7 +5065,7 @@ export default function App() {
     setCompactManualCollapsed(true);
     setCompactPoppedOutPanels((panels) => ({ ...panels, engine: false, manual: false }));
     setCompactDetachedPanels({ engine: false, manual: false });
-    setCompactWindowPositions({ engine: { x: 0, y: 0 }, manual: { x: 0, y: 0 } });
+    setCompactWindowPositions(compactWindowDefaultPositions());
     setCompactManualWidth(undefined);
     setCompactActiveWindow("engine");
   }
@@ -5208,7 +5339,7 @@ export default function App() {
       setCompactEngineCollapsed((collapsed) => {
         if (collapsed) {
           setCompactDetachedPanels((panels) => ({ ...panels, engine: false }));
-          setCompactWindowPositions((positions) => ({ ...positions, engine: { x: 0, y: 0 } }));
+          setCompactWindowPositions((positions) => ({ ...positions, engine: compactEngineDefaultPosition() }));
         }
         return !collapsed;
       });
@@ -5216,7 +5347,7 @@ export default function App() {
       setCompactManualCollapsed((collapsed) => {
         if (collapsed) {
           setCompactDetachedPanels((panels) => ({ ...panels, manual: false }));
-          setCompactWindowPositions((positions) => ({ ...positions, manual: { x: 0, y: 0 } }));
+          setCompactWindowPositions((positions) => ({ ...positions, manual: compactManualDefaultPosition() }));
         }
         return !collapsed;
       });
@@ -6658,7 +6789,7 @@ export default function App() {
               <p>棋谱分析是一个智能复盘功能，棋力相当于强大师水平（AI=20 层）。它会结合内置经典开局“官着”信息，并调用 Pikafish 自动算出每步招法优劣和评分。分析需要一定时间，耗时取决于本机性能、线程、Hash 和设定深度。</p>
               <h3>局势图</h3>
               <p>当棋谱分析完成后，可以通过局势图快速找到本局局势转折点，定位哪一步出现明显问题。</p>
-              <p>曲线在 0 上方表示红方占优，局面分 &gt; 0；曲线在 0 下方表示黑方占优，局面分 &lt; 0。局面分近似理解：1000 分相当于多一个车，500 相当于多一个马或炮，200 相当于多一个过河兵，100 相当于多一个兵。50 分以内可能有计算误差，可忽略不计。</p>
+              <p>曲线在 0 上方表示红方占优，局面分 &gt; 0；曲线在 0 下方表示黑方占优，局面分 &lt; 0。局面分是引擎对当前局面的综合判断，不等同于真实子力；标签按优势程度显示，50 分以内可能有计算误差，可忽略不计。</p>
               <h3>分析</h3>
               <p>当你不明白实战着为什么差、AI 推荐为什么好时，可以切换到“分析”页查看后续招法推演。棋盘上的绿色/彩色箭头代表当前 MultiPV 候选线路，编号与右侧候选线路一致。</p>
               <h3>报告</h3>
