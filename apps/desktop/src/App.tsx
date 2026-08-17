@@ -61,7 +61,7 @@ import { buildGameReportPresentation } from "./gameReport";
 import { candidateCoachInsights, currentCoachAdvice, moveThoughtHint } from "./coachInsights";
 import { MobileToolbar, type MobileToolbarCommand } from "./MobileToolbar";
 import { MobileStudyPanel } from "./MobileStudyPanel";
-import type { AnalysisOptions, AppInfoDto, BuiltinOpeningBookManifestDto, DailyTrainingPlan, DesktopPreferencesDto, FlyknifePlan, GuidedAnalysisStart, GuidedAnalysisSubmission, LearningProfile, LinkSessionStatus, OpeningRepertoire, SubscriptionDto, SyncAccountDto, WeeklyLearningReport } from "./platform";
+import type { AnalysisOptions, AppInfoDto, BuiltinOpeningBookManifestDto, CloudAnalysisPreferences, DailyTrainingPlan, DesktopPreferencesDto, FlyknifePlan, GuidedAnalysisStart, GuidedAnalysisSubmission, LearningProfile, LinkSessionStatus, OpeningRepertoire, SubscriptionDto, SyncAccountDto, WeeklyLearningReport } from "./platform";
 import { applyColorTheme, initialColorTheme, type ColorTheme } from "./theme";
 import { WorkspaceTabs, type WorkspacePanel } from "./WorkspaceTabs";
 import { WorkspaceModeSwitch, type WorkspaceMode } from "./WorkspaceModeSwitch";
@@ -106,6 +106,7 @@ const DEFAULT_BRANCH_ARROW_COLOR = "#2f80ed";
 const DEFAULT_ENGINE_MOVE_TIME_MS = 1000;
 const DEFAULT_ANALYSIS_DEPTH = 24;
 const MOBILE_DEFAULT_ANALYSIS_DEPTH = 20;
+const MOBILE_DEFAULT_DEPTH_PREFERENCE_VERSION = 1;
 const DEFAULT_REPORT_DEPTH = 24;
 const QUICK_ANALYSIS_TIME_MS = 1200;
 const COMPACT_ENGINE_MIN_WIDTH = 280;
@@ -474,6 +475,13 @@ export function analysisFirstCandidateTimeoutMs(platformKind: "desktop" | "web")
   // A depth-20/30 request may legitimately take longer than the desktop
   // engine's first streaming info line.
   return platformKind === "web" ? 15_000 : 3_000;
+}
+
+export function normalizeMobileCloudAnalysisPreferences(preferences: CloudAnalysisPreferences, mobile: boolean) {
+  if (!mobile || preferences.mobileDefaultDepthVersion === MOBILE_DEFAULT_DEPTH_PREFERENCE_VERSION) return preferences;
+  return preferences.searchMode === "depth" && preferences.searchValue === 30
+    ? { ...preferences, searchValue: MOBILE_DEFAULT_ANALYSIS_DEPTH, mobileDefaultDepthVersion: MOBILE_DEFAULT_DEPTH_PREFERENCE_VERSION }
+    : { ...preferences, mobileDefaultDepthVersion: MOBILE_DEFAULT_DEPTH_PREFERENCE_VERSION };
 }
 
 function analysisLimitText(mode: AnalysisOptions["searchMode"], value: number) {
@@ -1225,6 +1233,7 @@ export default function App() {
   const [mobileArrowsEnabled, setMobileArrowsEnabled] = useState(true);
   const [mobileArrowFocus, setMobileArrowFocus] = useState<string>();
   const [isMobileWorkbench, setIsMobileWorkbench] = useState(() => window.matchMedia("(max-width: 640px) and (orientation: portrait)").matches);
+  const mobileDefaultDepthVersionRef = useRef(isMobileWorkbench);
   const mobileDrawerCloseRef = useRef<HTMLButtonElement>(null);
   const [workspacePanel, setWorkspacePanel] = useState<WorkspacePanel>("moves");
   // Review is the default entry. Research and training reuse this same board and
@@ -1471,15 +1480,18 @@ export default function App() {
       setDesktopPreferences(preferences);
       void chessPlatform.getCloudAnalysisPreferences().then(async (preferences) => {
         if (preferences) {
-          setServerUrl(preferences.serverUrl);
-          setToken(preferences.token);
-          setMultipv(Math.min(5, Math.max(1, preferences.multipv)));
-          setSearchMode(preferences.searchMode);
-          setSearchValue(preferences.searchValue);
-          setAutoAnalyze(preferences.autoAnalyze);
-          if (preferences.token) {
+          const restored = normalizeMobileCloudAnalysisPreferences(preferences, window.matchMedia("(max-width: 640px) and (orientation: portrait)").matches);
+          mobileDefaultDepthVersionRef.current = restored.mobileDefaultDepthVersion === MOBILE_DEFAULT_DEPTH_PREFERENCE_VERSION;
+          setServerUrl(restored.serverUrl);
+          setToken(restored.token);
+          setMultipv(Math.min(5, Math.max(1, restored.multipv)));
+          setSearchMode(restored.searchMode);
+          setSearchValue(restored.searchValue);
+          setAutoAnalyze(restored.autoAnalyze);
+          if (restored !== preferences) await chessPlatform.saveCloudAnalysisPreferences(restored);
+          if (restored.token) {
             try {
-              setSubscription(await chessPlatform.getCloudSubscription(preferences.serverUrl, preferences.token));
+              setSubscription(await chessPlatform.getCloudSubscription(restored.serverUrl, restored.token));
               setCloudConnection("online");
             } catch { setCloudConnection("offline"); }
           }
@@ -1535,6 +1547,7 @@ export default function App() {
       searchMode: validMode,
       searchValue: validMode === "time" ? Math.min(5000, Math.max(100, searchValue)) : Math.min(30, Math.max(1, searchValue)),
       autoAnalyze,
+      mobileDefaultDepthVersion: mobileDefaultDepthVersionRef.current ? MOBILE_DEFAULT_DEPTH_PREFERENCE_VERSION : undefined,
     }).catch(() => undefined);
   }, [autoAnalyze, cloudPreferencesReady, multipv, searchMode, searchValue, serverUrl, token]);
 

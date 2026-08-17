@@ -472,6 +472,7 @@ export type CloudAnalysisPreferences = {
   searchMode: "time" | "depth";
   searchValue: number;
   autoAnalyze: boolean;
+  mobileDefaultDepthVersion?: number;
 };
 export type TrainingTaskDto = {
   id: string;
