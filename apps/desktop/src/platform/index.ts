@@ -4,7 +4,7 @@ import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { webDatabase, type SyncOperation, type WebGameRecord } from "./indexedDb";
 import { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH, FALLBACK_BUILTIN_OPENING_BOOK_MANIFEST } from "./types";
-import type { AnalysisLine, AnalysisOptions, AppInfoDto, BoardState, BuiltinOpeningBookManifestDto, CaptureSource, ChessPlatform, CloudBookCandidate, DesktopPreferencesDto, EngineArenaOptionsDto, EngineArenaResultDto, EngineMoveResult, EnginePlayOptions, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, ExportFormat, FlyknifeCandidate, FlyknifePlan, FlyknifeTemplate, FlyknifeTopic, GameMirrorStatus, GameReportDatasetDto, GameReportOptionsDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, GenerateFlyknifeRequest, LibraryFolder, LinkAutoSide, LinkObservation, LinkSessionStatus, MasterGameSummaryDto, MasterPlayerDto, MasterStyleHintDto, MasterStyleImportResultDto, MasterStyleProfileDto, PreviewLineStep, ReplayExportScope, ScreenshotMoveResolution, StartLinkSessionRequest, StudySessionDto, SubscriptionDto, SyncAccountDto, SyncResult, TheoryCardDto, TheoryCardFeedbackDto, TheoryLibraryDto, TrainingGenerationResultDto, TrainingSummaryDto, TrainingTaskDto } from "./types";
+import type { AnalysisLine, AnalysisOptions, AppInfoDto, BoardState, BuiltinOpeningBookManifestDto, CaptureSource, ChessPlatform, CloudAnalysisPreferences, CloudAuthDto, CloudBookCandidate, DesktopPreferencesDto, EngineArenaOptionsDto, EngineArenaResultDto, EngineMoveResult, EnginePlayOptions, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, ExportFormat, FlyknifeCandidate, FlyknifePlan, FlyknifeTemplate, FlyknifeTopic, GameMirrorStatus, GameReportDatasetDto, GameReportOptionsDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, GenerateFlyknifeRequest, LibraryFolder, LinkAutoSide, LinkObservation, LinkSessionStatus, MasterGameSummaryDto, MasterPlayerDto, MasterStyleHintDto, MasterStyleImportResultDto, MasterStyleProfileDto, PreviewLineStep, ReplayExportScope, ScreenshotMoveResolution, StartLinkSessionRequest, StudySessionDto, SubscriptionDto, SyncAccountDto, SyncResult, TheoryCardDto, TheoryCardFeedbackDto, TheoryLibraryDto, TrainingGenerationResultDto, TrainingSummaryDto, TrainingTaskDto } from "./types";
 import type { ChineseLineParseResult, DailyTrainingPlan, GuidedAnalysisStart, GuidedAnalysisSubmission, GuidedAnalysisSubmissionResult, GuidedEngineLine, LearningProfile, OpeningRepertoire, WeeklyLearningReport } from "./types";
 
 type WebGameInstance = {
@@ -50,6 +50,14 @@ type WireSyncOperation = Omit<SyncOperation, "kind"> & {
 
 const webManualFileExtension = "xqjson";
 const webManualMimeType = "application/vnd.xiangqi-assistant+json";
+
+function cloudApiError(status: number, fallback?: string) {
+  if (status === 401) return "登录已失效，请重新登录云端分析";
+  if (status === 403) return "当前账号没有云端 Pikafish 权限";
+  if (status === 429) return "云端分析服务繁忙，请稍后重试";
+  if (status >= 500) return "云端 Pikafish 暂不可用，请稍后重试";
+  return fallback ?? `云端服务返回 ${status}`;
+}
 
 function downloadWebManual(filename: string, contents: string) {
   const blob = new Blob([contents], { type: webManualMimeType });
@@ -331,6 +339,11 @@ class DesktopPlatform implements ChessPlatform {
   returnCompactFloatingPanel(panel: "engine" | "manual" | "cloud" | "link") { return invoke<boolean>("return_compact_floating_panel", { panel }); }
   getSyncAccount() { return invoke<SyncAccountDto>("get_sync_account"); }
   getSubscription() { return invoke<SubscriptionDto>("get_subscription"); }
+  async getCloudAnalysisPreferences(): Promise<CloudAnalysisPreferences | undefined> { return undefined; }
+  async saveCloudAnalysisPreferences(): Promise<void> { }
+  async checkCloudHealth(): Promise<void> { }
+  async authenticateCloud(): Promise<CloudAuthDto> { throw new Error("桌面端请使用同步账号设置"); }
+  async getCloudSubscription(): Promise<SubscriptionDto> { return this.getSubscription(); }
   redeemSubscriptionCode(code: string) { return invoke<SubscriptionDto>("redeem_subscription_code", { code }); }
   registerSyncAccount(email: string, password: string) { return invoke<SyncAccountDto>("register_sync_account", { email, password }); }
   loginSyncAccount(email: string, password: string) { return invoke<SyncAccountDto>("login_sync_account", { email, password }); }
@@ -431,6 +444,34 @@ class WebPlatform implements ChessPlatform {
   async openMasterGame(): Promise<Partial<BoardState>> { throw new Error("Web 端大师棋谱库暂未开放"); }
   async getSyncAccount(): Promise<SyncAccountDto> { throw new Error("Web 端账号菜单不在本阶段开放"); }
   async getSubscription(): Promise<SubscriptionDto> { throw new Error("Web 端订阅权益不在本阶段开放"); }
+  async getCloudAnalysisPreferences(): Promise<CloudAnalysisPreferences | undefined> {
+    const raw = await webDatabase.meta("cloudAnalysisPreferences");
+    if (!raw) return undefined;
+    try { return JSON.parse(raw) as CloudAnalysisPreferences; } catch { return undefined; }
+  }
+  async saveCloudAnalysisPreferences(preferences: CloudAnalysisPreferences): Promise<void> {
+    await webDatabase.setMeta("cloudAnalysisPreferences", JSON.stringify(preferences));
+  }
+  async checkCloudHealth(serverUrl: string): Promise<void> {
+    const response = await fetch(`${serverUrl.replace(/\/$/, "")}/health`);
+    if (!response.ok) throw new Error(cloudApiError(response.status, `服务端不可用：${response.status}`));
+  }
+  async authenticateCloud(mode: "register" | "login", serverUrl: string, email: string, password: string): Promise<CloudAuthDto> {
+    const response = await fetch(`${serverUrl.replace(/\/$/, "")}/api/v1/auth/${mode}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    const payload = await response.json().catch(() => ({})) as Partial<CloudAuthDto> & { error?: string };
+    if (!response.ok || !payload.token || !payload.userId) throw new Error(cloudApiError(response.status, payload.error ?? `登录服务返回 ${response.status}`));
+    return { userId: payload.userId, token: payload.token };
+  }
+  async getCloudSubscription(serverUrl: string, token: string): Promise<SubscriptionDto> {
+    const response = await fetch(`${serverUrl.replace(/\/$/, "")}/api/v1/subscription`, { headers: { authorization: `Bearer ${token}` } });
+    const payload = await response.json().catch(() => ({})) as SubscriptionDto & { error?: string };
+    if (!response.ok) throw new Error(cloudApiError(response.status, payload.error ?? `订阅服务返回 ${response.status}`));
+    return payload;
+  }
   async redeemSubscriptionCode(): Promise<SubscriptionDto> { throw new Error("Web 端订阅权益不在本阶段开放"); }
   async registerSyncAccount(): Promise<SyncAccountDto> { throw new Error("Web 端账号菜单不在本阶段开放"); }
   async loginSyncAccount(): Promise<SyncAccountDto> { throw new Error("Web 端账号菜单不在本阶段开放"); }
@@ -613,8 +654,25 @@ class WebPlatform implements ChessPlatform {
     return this.scoredState(state);
   }
 
-  async previewLine(): Promise<PreviewLineStep[]> {
-    throw new Error("Web 端暂不支持本地候选线路动画预览");
+  async previewLine(fen: string, pv: string[]): Promise<PreviewLineStep[]> {
+    const module = await this.core();
+    const preview = new module.WebGame(fen);
+    const steps: PreviewLineStep[] = [];
+    for (const [index, iccs] of pv.entries()) {
+      const state = this.parseState(preview.playMove(iccs));
+      const move = state.history.at(-1);
+      if (!move) throw new Error(`候选线路第 ${index + 1} 步未生成走法`);
+      steps.push({
+        fen: state.fen,
+        notation: move.notation,
+        movedBy: move.movedBy,
+        from: move.from,
+        to: move.to,
+        pieces: state.pieces,
+        status: state.status,
+      });
+    }
+    return steps;
   }
   async previewRecognizedMoveFromCurrent(): Promise<import("./types").RecognizedLastMovePreview> { throw new Error("Web 端暂不支持截图走子确认"); }
   async resolveScreenshotMove(): Promise<import("./types").ScreenshotMoveResolution> { throw new Error("Web 端暂不支持截图走子确认"); }
@@ -633,7 +691,7 @@ class WebPlatform implements ChessPlatform {
       signal: this.abort.signal,
     });
     const payload = await response.json().catch(() => ({})) as { lines?: AnalysisLine[]; error?: string };
-    if (!response.ok) throw new Error(payload.error ?? `分析服务返回 ${response.status}`);
+    if (!response.ok) throw new Error(cloudApiError(response.status, payload.error));
     const lines = payload.lines ?? [];
     await webDatabase.saveAnalysis(options.fen, lines);
     if (analyzedNode) await webDatabase.saveNodeAnalysis(analyzedGameId, analyzedNode, lines);
@@ -809,4 +867,5 @@ class WebPlatform implements ChessPlatform {
 const tauriAvailable = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 export const chessPlatform: ChessPlatform = tauriAvailable ? new DesktopPlatform() : new WebPlatform();
 export { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH, DEFAULT_BUILTIN_OPENING_BOOK_ID, FALLBACK_BUILTIN_OPENING_BOOK_MANIFEST } from "./types";
+export type { CloudAnalysisPreferences, CloudAuthDto } from "./types";
 export type { AnalysisLine, AnalysisOptions, AppInfoDto, BoardState, BranchCoachInsightDto, BuiltinOpeningBookDto, BuiltinOpeningBookManifestDto, BuiltinOpeningBookVerificationDto, CaptureSource, ChessPlatform, ChineseLineParseResult, CloudBookCandidate, DailyTrainingPlan, DesktopPreferencesDto, EngineArenaGameDto, EngineArenaOptionsDto, EngineArenaResultDto, EngineArenaScoreDto, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, EngineRuntimeState, ExportFormat, FlyknifeCandidate, FlyknifePlan, FlyknifeSide, FlyknifeStepAnnotation, FlyknifeStepRole, FlyknifeTemplate, FlyknifeTopic, GenerateFlyknifeRequest, GameReportDatasetDto, GameReportOptionsDto, GameReportPositionDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, GuidedAnalysisResult, GuidedAnalysisSession, GuidedAnalysisStart, GuidedAnalysisSubmission, GuidedAnalysisSubmissionResult, GuidedEngineLine, LearningProfile, LegacySkinId, LibraryFolder, LinkAutoSide, LinkMode, LinkMoveDetail, LinkObservation, LinkSessionState, LinkSessionStatus, ManualTreeNode, ManualViewMode, MasterGameDetailDto, MasterGameSummaryDto, MasterPlayerDto, MasterStyleHintDto, MasterStyleImportResultDto, MasterStyleProfileDto, MasterStyleTheoryCardRefDto, MoveCoachInsightDto, MoveItem, OpeningBookHitDto, OpeningRepertoire, Piece, PreviewLineStep, QualityGrade, RecognitionMode, RecognizedLastMovePreview, ReplayExportScope, ReportPhase, ReportSidePresentationDto, RuleMode, ScreenshotMoveResolution, Side, SkinFolder, SkinId, StartLinkSessionRequest, StudySessionDto, SubscriptionDto, SyncAccountDto, SyncResult, TheoryCardDto, TheoryCardFeedbackDto, TheoryLessonDto, TheoryLibraryDto, TheoryPhase, TrainingAttempt, TrainingGenerationResultDto, TrainingSummaryDto, TrainingTaskDto, WeaknessStatDto, WeeklyLearningReport, WorkspaceLayoutMode, XqbCandidate } from "./types";

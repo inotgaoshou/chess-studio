@@ -1,12 +1,12 @@
-import { Activity, BookOpen, Moon, Plus, RotateCcw, Settings2, Square, Sun } from "lucide-react";
+import { Activity, FileDown, FolderOpen, List, Pencil, Plus, RotateCcw, Route, Settings2, Share2, Square } from "lucide-react";
 import type { ColorTheme } from "./theme";
 
-export type MobileToolbarCommand = "library" | "newGame" | "flipBoard" | "analysis" | "theme" | "settings";
+export type MobileToolbarCommand = "menu" | "newGame" | "open" | "save" | "edit" | "flipBoard" | "candidates" | "analysis" | "export" | "settings";
 
 export function MobileToolbar({
   analysisBusy,
   analysisDisabled,
-  colorTheme,
+  colorTheme: _colorTheme,
   onCommand,
 }: {
   analysisBusy: boolean;
@@ -15,11 +15,15 @@ export function MobileToolbar({
   onCommand(command: MobileToolbarCommand): void;
 }) {
   const buttons = [
-    ["library", "打开棋谱库", BookOpen],
+    ["menu", "打开功能菜单", List],
     ["newGame", "新建棋局", Plus],
+    ["open", "导入棋谱", FolderOpen],
+    ["save", "保存棋谱", FileDown],
+    ["edit", "编辑局面", Pencil],
     ["flipBoard", "翻转棋盘", RotateCcw],
+    ["candidates", "显示候选连线", Route],
     ["analysis", analysisBusy ? "停止分析" : "分析当前局面", analysisBusy ? Square : Activity],
-    ["theme", colorTheme === "light" ? "切换深色主题" : "切换浅色主题", colorTheme === "light" ? Moon : Sun],
+    ["export", "复制与导出", Share2],
     ["settings", "打开设置", Settings2],
   ] as const;
 

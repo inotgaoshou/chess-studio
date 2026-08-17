@@ -9,11 +9,14 @@ describe("MobileToolbar", () => {
     const onCommand = vi.fn();
     render(<MobileToolbar analysisBusy={false} analysisDisabled={false} colorTheme="light" onCommand={onCommand}/>);
 
-    fireEvent.click(screen.getByRole("button", { name: "打开棋谱库" }));
-    fireEvent.click(screen.getByRole("button", { name: "切换深色主题" }));
-    expect(onCommand).toHaveBeenNthCalledWith(1, "library");
-    expect(onCommand).toHaveBeenNthCalledWith(2, "theme");
+    fireEvent.click(screen.getByRole("button", { name: "打开功能菜单" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存棋谱" }));
+    expect(onCommand).toHaveBeenNthCalledWith(1, "menu");
+    expect(onCommand).toHaveBeenNthCalledWith(2, "save");
+    expect(screen.getByRole("button", { name: "显示候选连线" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "复制与导出" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "分析当前局面" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "打开设置" })).toBeTruthy();
   });
 
   it("changes the analysis command label while analysis is running", () => {

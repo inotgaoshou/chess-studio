@@ -18,6 +18,7 @@ import {
   Copy,
   Database,
   Download,
+  Eye,
   FolderOpen,
   FolderPlus,
   GitBranch,
@@ -59,6 +60,7 @@ import { GameReportDialog, GameReportView } from "./GameReportView";
 import { buildGameReportPresentation } from "./gameReport";
 import { candidateCoachInsights, currentCoachAdvice, moveThoughtHint } from "./coachInsights";
 import { MobileToolbar, type MobileToolbarCommand } from "./MobileToolbar";
+import { MobileStudyPanel } from "./MobileStudyPanel";
 import type { AnalysisOptions, AppInfoDto, BuiltinOpeningBookManifestDto, DailyTrainingPlan, DesktopPreferencesDto, FlyknifePlan, GuidedAnalysisStart, GuidedAnalysisSubmission, LearningProfile, LinkSessionStatus, OpeningRepertoire, SubscriptionDto, SyncAccountDto, WeeklyLearningReport } from "./platform";
 import { applyColorTheme, initialColorTheme, type ColorTheme } from "./theme";
 import { WorkspaceTabs, type WorkspacePanel } from "./WorkspaceTabs";
@@ -966,6 +968,74 @@ export function nextStableLinkMiniPieceState(
 
 type LinkDisplayedMove = Pick<MoveItem, "from" | "to" | "notation" | "movedBy">;
 
+/**
+ * Keeps the research-board move overlay on the same canonical intersections
+ * as pieces, click cells, analysis arrows, and flipped-board presentation.
+ */
+export function mainBoardLastMoveOverlayPoints(
+  move: Pick<MoveItem, "from" | "to"> | undefined,
+  reversed = false,
+  boardSkin?: string,
+) {
+  if (!move) return undefined;
+  return {
+    from: boardIntersectionPoint(move.from, reversed, boardSkin),
+    to: boardIntersectionPoint(move.to, reversed, boardSkin),
+  };
+}
+
+function MainBoardLastMoveOverlay({
+  move,
+  reversed,
+  boardSkin,
+}: {
+  move: Pick<MoveItem, "from" | "to"> | undefined;
+  reversed: boolean;
+  boardSkin?: string;
+}) {
+  const points = mainBoardLastMoveOverlayPoints(move, reversed, boardSkin);
+  if (!points) return null;
+
+  return (
+    <svg
+      className="main-board-last-move-flow"
+      data-testid="main-board-last-move-flow"
+      data-from={`${points.from.x},${points.from.y}`}
+      data-to={`${points.to.x},${points.to.y}`}
+      viewBox="0 0 1120 1240"
+      preserveAspectRatio="none"
+      shapeRendering="geometricPrecision"
+      aria-hidden="true"
+      style={{
+        position: "absolute",
+        inset: 0,
+        zIndex: 8,
+        width: "100%",
+        height: "100%",
+        overflow: "visible",
+        pointerEvents: "none",
+      }}
+    >
+      <g className="main-board-last-move-source">
+        {/* The source only identifies where the piece left. Keep it compact and
+            static so the blue destination remains the visual destination. */}
+        <circle className="main-board-last-move-source-ring" cx={points.from.x} cy={points.from.y} r="19" fill="none" stroke="rgba(38, 135, 242, .98)" strokeWidth="3.4" vectorEffect="non-scaling-stroke" filter="drop-shadow(0 0 2px rgba(38, 135, 242, .78))" />
+        <circle className="main-board-last-move-source-center" cx={points.from.x} cy={points.from.y} r="7.6" fill="rgba(255, 255, 255, .98)" filter="drop-shadow(0 0 1px rgba(255, 255, 255, .75))" />
+      </g>
+      <g className="main-board-last-move-target">
+        <circle cx={points.to.x} cy={points.to.y} r="54" fill="rgba(40, 132, 255, .05)" stroke="rgba(68, 151, 255, .38)" strokeWidth="8" />
+        <circle cx={points.to.x} cy={points.to.y} r="49" fill="none" stroke="#2788f5" strokeWidth="4.5" />
+        <circle cx={points.to.x} cy={points.to.y} r="43" fill="none" stroke="rgba(255, 255, 255, .96)" strokeWidth="2.6" strokeLinecap="round" strokeDasharray="17 33" opacity=".98" vectorEffect="non-scaling-stroke" filter="drop-shadow(0 0 2px rgba(255, 255, 255, .92))">
+          <animate attributeName="stroke-dashoffset" values="102;0" dur="4.4s" repeatCount="indefinite" />
+        </circle>
+        <circle cx={points.to.x} cy={points.to.y} r="50" fill="none" stroke="#197de2" strokeWidth="2.3" strokeLinecap="round" strokeDasharray="14 36" opacity=".9" vectorEffect="non-scaling-stroke" filter="drop-shadow(0 0 2px rgba(25, 125, 226, .78))">
+          <animate attributeName="stroke-dashoffset" values="0;104" dur="5.2s" repeatCount="indefinite" />
+        </circle>
+      </g>
+    </svg>
+  );
+}
+
 export function selectLinkDisplayedLastMove(options: {
   linkShouldShowMiniBoard: boolean;
   statusLatestFen?: string;
@@ -1132,13 +1202,26 @@ export default function App() {
   const [autoAnalyze, setAutoAnalyze] = useState(initialAutoAnalysis);
   const [autoRetry, setAutoRetry] = useState(0);
   const [analysisBusy, setAnalysisBusy] = useState(false);
+  const [analysisError, setAnalysisError] = useState<string>();
   const [syncBusy, setSyncBusy] = useState(false);
   const [comment, setComment] = useState("");
   const [serverUrl, setServerUrl] = useState("http://127.0.0.1:8080");
   const [token, setToken] = useState("");
+  const [cloudConnection, setCloudConnection] = useState<"idle" | "checking" | "online" | "offline">("idle");
+  const [cloudAuthBusy, setCloudAuthBusy] = useState(false);
+  const [cloudAuthMode, setCloudAuthMode] = useState<"login" | "register">("login");
+  const [cloudEmail, setCloudEmail] = useState("");
+  const [cloudPassword, setCloudPassword] = useState("");
+  const [cloudPreferencesReady, setCloudPreferencesReady] = useState(false);
   const [notice, setNotice] = useState("本地数据已保存");
   const [autosave, setAutosave] = useState<AutosaveState>({ status: "draft" });
   const [mobilePanel, setMobilePanel] = useState<"board" | "library" | "analysis" | "settings">("board");
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
+  const [mobileExportOpen, setMobileExportOpen] = useState(false);
+  const [mobileArrowsEnabled, setMobileArrowsEnabled] = useState(true);
+  const [mobileArrowFocus, setMobileArrowFocus] = useState<string>();
+  const [isMobileWorkbench, setIsMobileWorkbench] = useState(() => window.matchMedia("(max-width: 640px) and (orientation: portrait)").matches);
+  const mobileDrawerCloseRef = useRef<HTMLButtonElement>(null);
   const [workspacePanel, setWorkspacePanel] = useState<WorkspacePanel>("moves");
   // Review is the default entry. Research and training reuse this same board and
   // local game state, so switching modes never creates a second document copy.
@@ -1379,6 +1462,22 @@ export default function App() {
       desktopPreferencesRef.current = preferences;
       persistedPreferencesRef.current = preferences;
       setDesktopPreferences(preferences);
+      void chessPlatform.getCloudAnalysisPreferences().then(async (preferences) => {
+        if (preferences) {
+          setServerUrl(preferences.serverUrl);
+          setToken(preferences.token);
+          setMultipv(Math.min(5, Math.max(1, preferences.multipv)));
+          setSearchMode(preferences.searchMode);
+          setSearchValue(preferences.searchValue);
+          setAutoAnalyze(preferences.autoAnalyze);
+          if (preferences.token) {
+            try {
+              setSubscription(await chessPlatform.getCloudSubscription(preferences.serverUrl, preferences.token));
+              setCloudConnection("online");
+            } catch { setCloudConnection("offline"); }
+          }
+        }
+      }).finally(() => setCloudPreferencesReady(true));
     }
     void chessPlatform.initialize()
       .then((state) => {
@@ -1418,6 +1517,19 @@ export default function App() {
       void chessPlatform.listEngineProfiles().then((profiles) => setEngineProfiles(externalEngineProfiles(profiles))).catch(() => undefined);
     }
   }, []);
+
+  useEffect(() => {
+    if (chessPlatform.kind !== "web" || !cloudPreferencesReady) return;
+    const validMode = searchMode === "time" ? "time" : "depth";
+    void chessPlatform.saveCloudAnalysisPreferences({
+      serverUrl,
+      token,
+      multipv: Math.min(5, Math.max(1, multipv)),
+      searchMode: validMode,
+      searchValue: validMode === "time" ? Math.min(5000, Math.max(100, searchValue)) : Math.min(30, Math.max(1, searchValue)),
+      autoAnalyze,
+    }).catch(() => undefined);
+  }, [autoAnalyze, cloudPreferencesReady, multipv, searchMode, searchValue, serverUrl, token]);
 
   async function scanTheoryLibrary() {
     if (chessPlatform.kind !== "desktop" || theoryLibraryBusy) return;
@@ -2180,6 +2292,17 @@ export default function App() {
       : searchMode === "nodes"
         ? `固定节点 ${searchValue.toLocaleString()}`
       : `固定时间 ${(searchValue / 1000).toFixed(1)}s`;
+  const mobileCloudHint = chessPlatform.kind !== "web"
+    ? undefined
+    : !online
+      ? "当前离线，联网后可使用云端 Pikafish。"
+      : !token.trim()
+        ? "请在功能菜单的云端分析中登录。"
+        : cloudConnection !== "online"
+          ? "请先在功能菜单检测云端服务连接。"
+          : subscription && (subscription.status !== "active" || subscription.cloudAnalysisUsed >= subscription.cloudAnalysisQuota)
+            ? "云端分析额度不可用，请检查订阅状态。"
+            : undefined;
   const engineRuntimeLabel: Record<EngineRuntimeState, string> = {
     idle: "待分析",
     analyzing: "分析中",
@@ -2350,6 +2473,33 @@ export default function App() {
   const boardDisplayReversed = effectiveBoardReversedForLink(linkSessionStatus, board.fen, reversed);
   const boardPerspectiveLabel = boardDisplayReversed ? "黑方视角" : "红方视角";
 
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 640px) and (orientation: portrait)");
+    const sync = () => setIsMobileWorkbench(query.matches);
+    sync();
+    query.addEventListener("change", sync);
+    return () => query.removeEventListener("change", sync);
+  }, []);
+
+  useEffect(() => {
+    if (!mobileDrawerOpen) return;
+    mobileDrawerCloseRef.current?.focus();
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") setMobileDrawerOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [mobileDrawerOpen]);
+
+  useEffect(() => {
+    if (!mobileExportOpen) return;
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") setMobileExportOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [mobileExportOpen]);
+
   const analysisArrows = useMemo(() => {
     return selectAnalysisArrowLines({
       lines: orderedAnalysis,
@@ -2365,11 +2515,27 @@ export default function App() {
       return [{
         rank: line.multipv,
         color: analysisArrowColors[(line.multipv - 1) % analysisArrowColors.length] ?? analysisArrowColors[0],
-        from: boardIntersectionPoint(from, boardDisplayReversed),
-        to: boardIntersectionPoint(to, boardDisplayReversed),
+        from: boardIntersectionPoint(from, boardDisplayReversed, displayedBoardSkin),
+        to: boardIntersectionPoint(to, boardDisplayReversed, displayedBoardSkin),
       }];
     });
-  }, [analysisArrowFen, analysisFen, analysisIsStale, board.fen, boardDisplayReversed, orderedAnalysis]);
+  }, [analysisArrowFen, analysisFen, analysisIsStale, board.fen, boardDisplayReversed, displayedBoardSkin, orderedAnalysis]);
+  useEffect(() => setMobileArrowFocus(undefined), [board.fen, analysisFen]);
+  const mobileFocusedArrow = useMemo(() => {
+    if (!mobileArrowFocus || analysisIsStale) return [];
+    const focusedLine = selectAnalysisArrowLines({ lines: orderedAnalysis, analysisFen, analysisArrowFen, boardFen: board.fen, analysisIsStale })
+      .find((line) => line.pv[0] === mobileArrowFocus);
+    const iccs = focusedLine?.pv[0] ?? (compactBookRows.some((row) => row.iccs === mobileArrowFocus) ? mobileArrowFocus : undefined);
+    const from = iccs ? squareFromIccs(iccs.slice(0, 2)) : null;
+    const to = iccs ? squareFromIccs(iccs.slice(2, 4)) : null;
+    if (!from || !to) return [];
+    return [{
+      rank: focusedLine?.multipv ?? 1,
+      color: analysisArrowColors[((focusedLine?.multipv ?? 1) - 1) % analysisArrowColors.length] ?? analysisArrowColors[0],
+      from: boardIntersectionPoint(from, boardDisplayReversed, displayedBoardSkin),
+      to: boardIntersectionPoint(to, boardDisplayReversed, displayedBoardSkin),
+    }];
+  }, [analysisArrowFen, analysisFen, analysisIsStale, board.fen, boardDisplayReversed, compactBookRows, displayedBoardSkin, mobileArrowFocus, orderedAnalysis]);
   const linkMiniArrows = useMemo<LinkMiniArrow[]>(() => (
     linkHasObservedPosition && analysisFen === board.fen && !analysisIsStale
       ? orderedAnalysis.flatMap((line) => {
@@ -2435,16 +2601,27 @@ export default function App() {
     rank: index + 1,
     color: branchArrowColor,
     label: move.notation,
-    from: boardIntersectionPoint(move.from, boardDisplayReversed),
-    to: boardIntersectionPoint(move.to, boardDisplayReversed),
-  })) : [], [boardDisplayReversed, branchArrowColor, directBranchChoices, hasVisibleBranchChoices]);
+    from: boardIntersectionPoint(move.from, boardDisplayReversed, displayedBoardSkin),
+    to: boardIntersectionPoint(move.to, boardDisplayReversed, displayedBoardSkin),
+  })) : [], [boardDisplayReversed, branchArrowColor, directBranchChoices, displayedBoardSkin, hasVisibleBranchChoices]);
   const boardArrows = useMemo(() => {
     // Preview already marks the simulated from/to squares. Hide route arrows
     // so old analysis lines never look like they are attached to the preview.
     if (candidatePreview && previewStep) return [];
+    if (isMobileWorkbench) return mobileArrowsEnabled ? mobileFocusedArrow : [];
     if (branchArrows.length > 0) return branchArrows;
     return analysisArrows;
-  }, [analysisArrows, branchArrows, candidatePreview, previewStep]);
+  }, [analysisArrows, branchArrows, candidatePreview, isMobileWorkbench, mobileArrowsEnabled, mobileFocusedArrow, previewStep]);
+  const mainBoardMarkerMove = displayedLastMove ?? lastMove;
+  const mainBoardMoveGradeStyle = mainBoardMarkerMove && !candidatePreview && board.currentNode === lastMove?.id && overviewReport?.grade && overviewReport.score != null
+    ? (() => {
+        const cellStyle = boardCellStyle(mainBoardMarkerMove.to, boardDisplayReversed, displayedBoardSkin);
+        return {
+          "--piece-left": cellStyle.left,
+          "--piece-top": cellStyle.top,
+        } as CSSProperties;
+      })()
+    : undefined;
 
   function resetAnalysisHistory(fen?: string, lines: AnalysisLine[] = []) {
     analysisHistoryRef.current = fen ? { fen, lines: lines.slice(0, ENGINE_ANALYSIS_HISTORY_LIMIT) } : undefined;
@@ -3694,6 +3871,10 @@ export default function App() {
       if (!automatic) setNotice(online ? "服务端分析需要先填写登录令牌" : "当前离线，无法启动云端分析");
       return;
     }
+    if (chessPlatform.kind === "web" && (cloudConnection !== "online" || (subscription != null && (subscription.status !== "active" || subscription.cloudAnalysisUsed >= subscription.cloudAnalysisQuota)))) {
+      if (!automatic) setNotice(mobileCloudHint ?? "云端分析当前不可用");
+      return;
+    }
     const currentBoard = boardRef.current;
     const analyzedFen = currentBoard.fen;
     const analyzedRevision = boardRevision.current;
@@ -3724,6 +3905,7 @@ export default function App() {
     setAnalysisFen(analyzedFen);
     setAnalysisSideToMove(currentBoard.sideToMove);
     setAnalysis([]);
+    setAnalysisError(undefined);
     setEngineAnalyses(Object.fromEntries(analysisTargets.map((target) => [target.id, { fen: analyzedFen, name: target.name, lines: [] }])));
     clearCandidatePreviews();
     if (!automatic) {
@@ -3774,7 +3956,18 @@ export default function App() {
       setAnalysisSideToMove(currentBoard.sideToMove);
       setAnalysis(analysisStreamRef.current.lines);
       setAnalysisArrowFen(analysisHintsEnabledRef.current ? analyzedFen : undefined);
-      return { current: true, failures: completed.filter((outcome) => outcome.status === "rejected").length };
+      const failures = completed.filter((outcome) => outcome.status === "rejected");
+      if (failures.length === completed.length) {
+        const reason = friendlyError((failures[0] as PromiseRejectedResult).reason);
+        setAnalysisError(reason);
+        if (chessPlatform.kind === "web" && reason.includes("登录已失效")) {
+          setToken("");
+          setSubscription(undefined);
+          setCloudConnection("idle");
+          setMobileDrawerOpen(true);
+        }
+      }
+      return { current: true, failures: failures.length };
     };
     setNotice(automatic
       ? passPlan.quick
@@ -4889,12 +5082,78 @@ export default function App() {
 
   async function executeMobileToolbar(command: MobileToolbarCommand) {
     switch (command) {
-      case "library": setMobilePanel("library"); break;
-      case "settings": setMobilePanel("settings"); break;
+      case "menu": setMobileDrawerOpen((open) => !open); break;
       case "newGame": await createGame(startingFen); break;
+      case "open": await openDocument(); break;
+      case "save": await saveDocument(); break;
+      case "edit": setPositionEditorOpen(true); break;
       case "flipBoard": setReversed((value) => !value); break;
-      case "analysis": analysisHintsEnabled ? await stopAnalysis() : await runAnalysis(); break;
-      case "theme": await toggleColorTheme(); break;
+      case "candidates":
+        setMobileArrowsEnabled((enabled) => {
+          const next = !enabled;
+          if (!next) setMobileArrowFocus(undefined);
+          return next;
+        });
+        break;
+      case "analysis":
+        analysisHintsEnabled ? await stopAnalysis() : await runAnalysis();
+        break;
+      case "export": setMobileExportOpen((open) => !open); break;
+      case "settings": setMobilePanel("settings"); break;
+    }
+  }
+
+  async function checkMobileCloudConnection() {
+    setCloudConnection("checking");
+    try {
+      await chessPlatform.checkCloudHealth(serverUrl);
+      setCloudConnection("online");
+      setNotice("云端分析服务连接正常");
+    } catch (error) {
+      setCloudConnection("offline");
+      setNotice(`云端服务不可达：${friendlyError(error)}`);
+    }
+  }
+
+  async function authenticateMobileCloud() {
+    if (!cloudEmail.trim() || !cloudPassword) {
+      setNotice("请输入邮箱和密码");
+      return;
+    }
+    setCloudAuthBusy(true);
+    try {
+      const auth = await chessPlatform.authenticateCloud(cloudAuthMode, serverUrl, cloudEmail.trim(), cloudPassword);
+      setToken(auth.token);
+      setSubscription(await chessPlatform.getCloudSubscription(serverUrl, auth.token));
+      setCloudPassword("");
+      setCloudConnection("online");
+      setNotice(cloudAuthMode === "login" ? "云端分析登录成功" : "账号已创建并登录");
+    } catch (error) {
+      setNotice(`云端登录失败：${friendlyError(error)}`);
+    } finally {
+      setCloudAuthBusy(false);
+    }
+  }
+
+  function logoutMobileCloud() {
+    setToken("");
+    setSubscription(undefined);
+    setCloudConnection("idle");
+    setNotice("已退出云端分析账号");
+  }
+
+  function trapMobileDrawerFocus(event: KeyboardEvent<HTMLElement>) {
+    if (event.key !== "Tab") return;
+    const focusable = [...event.currentTarget.querySelectorAll<HTMLElement>("button:not(:disabled), input:not(:disabled), select:not(:disabled)")];
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable.at(-1)!;
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
     }
   }
 
@@ -5355,6 +5614,7 @@ export default function App() {
   }
 
   function playbackControls(className: string) {
+    const mobile = className.includes("mobile-playback");
     const showManualPopout = desktopPreferences.layoutMode === "compact" && !floatingPanel && className.includes("compact-playback") && chessPlatform.kind === "desktop";
     return <div className={`playback-controls ${className}`} aria-label="棋谱播放控制">
       <button title="回到开局" disabled={!board.currentNode} onClick={() => void navigateTo()}><ChevronsLeft size={15}/></button>
@@ -5362,13 +5622,15 @@ export default function App() {
       <button className={isPlaying ? "active" : ""} title={isPlaying ? "暂停播放" : "播放主线"} disabled={board.history.length === 0 && board.branches.length === 0} onClick={() => void togglePlayback()}>{isPlaying ? <Pause size={14}/> : <Play size={14}/>}</button>
       <button title={board.branches.length > 1 ? "下一着（沿主线）" : "下一着"} disabled={!preferredContinuation(board)} onClick={() => void goNext()}><ChevronRight size={15}/></button>
       <button title="前往主线终局" disabled={!preferredContinuation(board)} onClick={() => void goToEnd()}><ChevronsRight size={15}/></button>
-      <div className="branch-picker-anchor">
-        <button className="variation-jump" aria-label="跳到下一个分支点" title={hasUpcomingBranch ? "跳到下一个分支点" : "后续没有分支点"} disabled={!hasUpcomingBranch} onClick={() => void goToNextBranchPoint()}><GitFork size={14}/></button>
-        {showManualPopout && <button className="compact-manual-popout" type="button" title="弹出棋谱独立窗口" aria-label="弹出棋谱独立窗口" onClick={() => void openCompactFloatingPanel("manual")}><Maximize2 size={14}/></button>}
-      </div>
-      <div className="playback-tail">
-        <span>第 <strong>{board.history.length}</strong> 着</span>
-      </div>
+      {!mobile && <>
+        <div className="branch-picker-anchor">
+          <button className="variation-jump" aria-label="跳到下一个分支点" title={hasUpcomingBranch ? "跳到下一个分支点" : "后续没有分支点"} disabled={!hasUpcomingBranch} onClick={() => void goToNextBranchPoint()}><GitFork size={14}/></button>
+          {showManualPopout && <button className="compact-manual-popout" type="button" title="弹出棋谱独立窗口" aria-label="弹出棋谱独立窗口" onClick={() => void openCompactFloatingPanel("manual")}><Maximize2 size={14}/></button>}
+        </div>
+        <div className="playback-tail">
+          <span>第 <strong>{board.history.length}</strong> 着</span>
+        </div>
+      </>}
     </div>;
   }
 
@@ -5952,7 +6214,70 @@ export default function App() {
         <div className="window-state"><span className={analysisBusy ? "pulse" : ""} />{notice}</div>
       </header>
 
-      <MobileToolbar analysisBusy={analysisBusy} analysisDisabled={!board.playable || isPlaying || reportBusy || engineSide !== "none" || engineThinking} colorTheme={effectiveColorTheme} onCommand={(command) => void executeMobileToolbar(command)}/>
+      <MobileToolbar analysisBusy={analysisBusy} analysisDisabled={!board.playable || isPlaying || reportBusy || engineSide !== "none" || engineThinking || (chessPlatform.kind === "web" && (!online || !token.trim() || cloudConnection !== "online" || (subscription != null && (subscription.status !== "active" || subscription.cloudAnalysisUsed >= subscription.cloudAnalysisQuota))))} colorTheme={effectiveColorTheme} onCommand={(command) => void executeMobileToolbar(command)}/>
+      {mobileExportOpen && <>
+        <button className="mobile-export-backdrop" aria-label="关闭复制与导出菜单" onClick={() => setMobileExportOpen(false)}/>
+        <section className="mobile-export-menu" role="menu" aria-label="复制与导出">
+          <header><strong>复制与导出</strong><button type="button" aria-label="关闭复制与导出菜单" onClick={() => setMobileExportOpen(false)}><X size={17}/></button></header>
+          <button role="menuitem" onClick={() => { void copyPosition(); setMobileExportOpen(false); }}><Copy size={17}/>复制局面 FEN</button>
+          <button role="menuitem" disabled={chessPlatform.kind === "web"} title={chessPlatform.kind === "web" ? "Web 端暂不支持文字棋谱导出" : undefined} onClick={() => { void copyExport("chinese", "文字棋谱"); setMobileExportOpen(false); }}><ClipboardList size={17}/>复制文字棋谱</button>
+          <button role="menuitem" disabled={chessPlatform.kind === "web"} title={chessPlatform.kind === "web" ? "Web 端暂不支持东萍格式导出" : undefined} onClick={() => { void copyExport("dhtmlxq", "东萍棋谱"); setMobileExportOpen(false); }}><Copy size={17}/>复制东萍棋谱</button>
+          <button role="menuitem" onClick={() => { void saveDocument(); setMobileExportOpen(false); }}><Download size={17}/>下载棋谱文件</button>
+        </section>
+      </>}
+      {mobileDrawerOpen && <>
+        <button className="mobile-workbench-backdrop" aria-label="关闭功能菜单" onClick={() => setMobileDrawerOpen(false)}/>
+        <aside className="mobile-workbench-drawer" role="dialog" aria-modal="true" aria-label="移动端功能菜单" onKeyDown={trapMobileDrawerFocus}>
+          <header><strong>棋盘工具</strong><button ref={mobileDrawerCloseRef} type="button" aria-label="关闭功能菜单" onClick={() => setMobileDrawerOpen(false)}><X size={18}/></button></header>
+          <section><small>棋谱</small><div>
+            <button type="button" onClick={() => { setMobileDrawerOpen(false); void createGame(startingFen); }}><Plus size={17}/>新局</button>
+            <button type="button" onClick={() => { setMobileDrawerOpen(false); void openDocument(); }}><FolderOpen size={17}/>导入</button>
+            <button type="button" onClick={() => { setMobileDrawerOpen(false); void saveDocument(); }}><Save size={17}/>保存</button>
+            <button type="button" onClick={() => { setMobileDrawerOpen(false); setPositionEditorOpen(true); }}><Pencil size={17}/>编辑局面</button>
+            <button type="button" onClick={() => { setMobileDrawerOpen(false); setReversed((value) => !value); }}><RotateCcw size={17}/>翻转棋盘</button>
+          </div></section>
+          <section><small>分析</small><div>
+            <button type="button" disabled={!analysisBusy && (!board.playable || isPlaying || reportBusy || engineSide !== "none" || engineThinking || !token.trim() || cloudConnection !== "online")} onClick={() => void (analysisHintsEnabled ? stopAnalysis() : runAnalysis())}><Activity size={17}/>{analysisBusy ? "停止分析" : "分析局面"}</button>
+            <label className="mobile-drawer-toggle"><input type="checkbox" checked={autoAnalyze} onChange={(event) => setAutoAnalyze(event.target.checked)}/><span>自动分析</span></label>
+            <label className="mobile-drawer-select"><span>候选</span><select aria-label="候选数量" value={multipv} onChange={(event) => setMultipv(Number(event.target.value))}>{[1, 2, 3, 4, 5].map((value) => <option value={value} key={value}>MultiPV {value}</option>)}</select></label>
+            <label className="mobile-drawer-select"><span>搜索</span><select aria-label="搜索模式" value={searchMode === "time" ? "time" : "depth"} onChange={(event) => { const mode = event.target.value as "time" | "depth"; setSearchMode(mode); setSearchValue(mode === "time" ? 1000 : 20); }}><option value="time">时间</option><option value="depth">深度</option></select></label>
+            <label className="mobile-drawer-select"><span>{searchMode === "time" ? "毫秒" : "深度"}</span><input aria-label={searchMode === "time" ? "搜索时间毫秒" : "搜索深度"} type="number" min={searchMode === "time" ? 100 : 1} max={searchMode === "time" ? 5000 : 30} value={searchValue} onChange={(event) => setSearchValue(Math.min(searchMode === "time" ? 5000 : 30, Math.max(searchMode === "time" ? 100 : 1, Number(event.target.value) || (searchMode === "time" ? 1000 : 20))))}/></label>
+          </div></section>
+          <section className="mobile-cloud-settings"><small>云端分析</small><div>
+            <label className="mobile-cloud-field">服务地址<input aria-label="云端服务地址" inputMode="url" value={serverUrl} onChange={(event) => { setServerUrl(event.target.value); setCloudConnection("idle"); }} /></label>
+            <button type="button" disabled={cloudConnection === "checking"} onClick={() => void checkMobileCloudConnection()}>{cloudConnection === "checking" ? "检测中" : cloudConnection === "online" ? "服务已连接" : "检测连接"}</button>
+            {token.trim() ? <>
+              <p className="mobile-cloud-status">已登录 · {subscription ? `${subscription.plan.toUpperCase()} · 剩余 ${Math.max(0, subscription.cloudAnalysisQuota - subscription.cloudAnalysisUsed)} 次` : "正在读取订阅额度"}</p>
+              <button type="button" onClick={() => void chessPlatform.getCloudSubscription(serverUrl, token).then((value) => { setSubscription(value); setNotice("云端额度已刷新"); }).catch((error) => setNotice(friendlyError(error)))}>刷新额度</button>
+              <button type="button" onClick={logoutMobileCloud}>退出登录</button>
+            </> : <>
+              <label className="mobile-cloud-field">邮箱<input aria-label="云端邮箱" inputMode="email" value={cloudEmail} onChange={(event) => setCloudEmail(event.target.value)} /></label>
+              <label className="mobile-cloud-field">密码<input aria-label="云端密码" type="password" value={cloudPassword} onChange={(event) => setCloudPassword(event.target.value)} /></label>
+              <button type="button" disabled={cloudAuthBusy} onClick={() => setCloudAuthMode((mode) => mode === "login" ? "register" : "login")}>{cloudAuthMode === "login" ? "改为注册" : "改为登录"}</button>
+              <button type="button" disabled={cloudAuthBusy} onClick={() => void authenticateMobileCloud()}>{cloudAuthBusy ? "处理中" : cloudAuthMode === "login" ? "登录云端" : "注册并登录"}</button>
+            </>}
+          </div></section>
+          <section><small>显示</small><div>
+            <label className="mobile-drawer-toggle"><input type="checkbox" checked={mobileArrowsEnabled} onChange={(event) => { setMobileArrowsEnabled(event.target.checked); if (!event.target.checked) setMobileArrowFocus(undefined); }}/><span>候选箭头</span></label>
+            <button type="button" onClick={() => { setMobileDrawerOpen(false); setMobilePanel("settings"); }}><Settings2 size={17}/>设置</button>
+          </div></section>
+        </aside>
+      </>}
+      {mobilePanel === "settings" && <section className="mobile-settings-screen" aria-label="手机设置">
+        <header><button type="button" aria-label="关闭设置" onClick={() => setMobilePanel("board")}><ChevronLeft size={20}/></button><strong>设置</strong><span/></header>
+        <div className="mobile-settings-scroll">
+          <h2>显示设置</h2>
+          <button type="button" className="mobile-settings-row" onClick={() => setSkinShopOpen(true)}><span><strong>棋盘与棋子皮肤</strong><small>沿用当前主题与皮肤</small></span><ChevronRight size={18}/></button>
+          <label className="mobile-settings-row"><span><strong>显示候选箭头</strong><small>点击引擎或开局库候选后显示</small></span><input type="checkbox" checked={mobileArrowsEnabled} onChange={(event) => { setMobileArrowsEnabled(event.target.checked); if (!event.target.checked) setMobileArrowFocus(undefined); }}/></label>
+          <label className="mobile-settings-row"><span><strong>自动分析</strong><small>走棋后请求云端 Pikafish</small></span><input type="checkbox" checked={autoAnalyze} onChange={(event) => setAutoAnalyze(event.target.checked)}/></label>
+          <h2>引擎设置</h2>
+          <div className="mobile-settings-row"><span><strong>显示着法数</strong><small>服务端最多支持 5 条候选</small></span><div className="mobile-stepper"><button type="button" aria-label="减少 MultiPV" disabled={multipv <= 1} onClick={() => setMultipv((value) => Math.max(1, value - 1))}>−</button><b>{multipv}</b><button type="button" aria-label="增加 MultiPV" disabled={multipv >= 5} onClick={() => setMultipv((value) => Math.min(5, value + 1))}>＋</button></div></div>
+          <label className="mobile-settings-row"><span><strong>搜索限制</strong><small>{searchMode === "time" ? "100 - 5000 毫秒" : "1 - 30 层"}</small></span><select aria-label="搜索限制模式" value={searchMode === "time" ? "time" : "depth"} onChange={(event) => { const mode = event.target.value as "time" | "depth"; setSearchMode(mode); setSearchValue(mode === "time" ? 1000 : 20); }}><option value="depth">深度</option><option value="time">时间</option></select></label>
+          <div className="mobile-settings-row"><span><strong>{searchMode === "time" ? "搜索时间" : "最大深度"}</strong><small>{searchMode === "time" ? "毫秒" : "层"}</small></span><div className="mobile-stepper"><button type="button" aria-label="减少搜索限制" onClick={() => setSearchValue((value) => Math.max(searchMode === "time" ? 100 : 1, value - (searchMode === "time" ? 100 : 1)))}>−</button><b>{searchValue}</b><button type="button" aria-label="增加搜索限制" onClick={() => setSearchValue((value) => Math.min(searchMode === "time" ? 5000 : 30, value + (searchMode === "time" ? 100 : 1)))}>＋</button></div></div>
+          <h2>云端分析</h2>
+          <button type="button" className="mobile-settings-row" onClick={() => { setMobilePanel("board"); setMobileDrawerOpen(true); }}><span><strong>{token.trim() ? "云端 Pikafish 已登录" : "连接云端 Pikafish"}</strong><small>{subscription ? `剩余 ${Math.max(0, subscription.cloudAnalysisQuota - subscription.cloudAnalysisUsed)} 次` : "服务地址、账号与额度"}</small></span><ChevronRight size={18}/></button>
+        </div>
+      </section>}
 
       <nav className="menubar" aria-label="主菜单">
         {chessPlatform.kind === "desktop" && <DesktopMenuBar
@@ -6130,7 +6455,7 @@ export default function App() {
       </div>
 
       <main className={`workspace layout-${desktopPreferences.layoutMode} ${reviewModeOpen ? "review-mode-active" : ""} ${libraryCollapsed ? "library-collapsed" : ""} ${candidateRailCollapsed ? "candidate-rail-collapsed" : ""} ${analysisPanelCollapsed ? "analysis-panel-collapsed" : ""} ${compactDockMinimized ? "compact-dock-minimized" : ""} ${compactHasSystemPopout ? "compact-system-popout" : ""} ${desktopPreferences.layoutMode === "compact" && cloudBookCollapsed ? "compact-cloud-collapsed" : ""}`}>
-        <aside className={`library-panel ${libraryCollapsed ? "collapsed" : ""} ${mobilePanel === "library" || mobilePanel === "settings" ? "mobile-visible" : ""} ${mobilePanel === "settings" ? "mobile-settings-mode" : ""}`}>
+        <aside className={`library-panel ${libraryCollapsed ? "collapsed" : ""} ${mobilePanel === "library" ? "mobile-visible" : ""}`}>
           <div className="pane-title">
             <strong>{libraryCollapsed ? <Library size={16}/> : "棋谱库"}</strong>
             {!libraryCollapsed && <button className="tool-button" title="新建棋谱" onClick={() => void createGame(startingFen)}><Plus size={15}/></button>}
@@ -6225,13 +6550,11 @@ export default function App() {
             </aside>}
             <div className="board" aria-label="中国象棋棋盘">
               <div className="board-art" />
+              <MainBoardLastMoveOverlay move={mainBoardMarkerMove} reversed={boardDisplayReversed} boardSkin={displayedBoardSkin} />
               {cells.map(({ row, col }) => {
                 const piece = pieceMap.get(`${row}-${col}`);
                 const isSelected = selected?.row === row && selected?.col === col;
-                const markerMove = displayedLastMove ?? lastMove;
-                const isLastFrom = markerMove?.from.row === row && markerMove.from.col === col;
-                const isLastTo = markerMove?.to.row === row && markerMove.to.col === col;
-                const cellStyle = boardCellStyle({ row, col }, boardDisplayReversed);
+                const cellStyle = boardCellStyle({ row, col }, boardDisplayReversed, displayedBoardSkin);
                 const style = {
                   "--piece-left": cellStyle.left,
                   "--piece-top": cellStyle.top,
@@ -6239,7 +6562,7 @@ export default function App() {
                 return (
                   <button
                     key={`${row}-${col}`}
-                    className={`board-square piece-${piece?.color ?? "empty"} ${candidatePreview ? "previewing" : ""} ${isSelected ? "selected" : ""} ${isLastFrom ? "last-from" : ""} ${isLastTo ? "last-to" : ""}`}
+                    className={`board-square piece-${piece?.color ?? "empty"} ${candidatePreview ? "previewing" : ""} ${isSelected ? "selected" : ""}`}
                     style={style}
                     disabled={isPlaying || !board.playable || !!candidatePreview}
                     onClick={() => void selectSquare(row, col)}
@@ -6250,18 +6573,21 @@ export default function App() {
                       <span className="board-piece-label" aria-hidden="true">{piece.label}</span>
                     </>}
                     {isSelected && <img className="selection-mask" src={`/skins/${displayedBoardSkin}/mask2.png`} alt="" />}
-                    {!candidatePreview && isLastTo && board.currentNode === lastMove?.id && overviewReport?.grade && overviewReport.score != null && (
-                      <span
-                        className={`board-move-grade grade-${overviewReport.grade}`}
-                        data-tooltip={`${overviewReport.grade} ${overviewReport.score}分 · ${formatScoreDelta(overviewReport.deltaCp)}`}
-                        title={`本着质量 ${overviewReport.score} 分，等级 ${overviewReport.grade}`}
-                      >
-                        {overviewReport.grade}
-                      </span>
-                    )}
                   </button>
                 );
               })}
+              {mainBoardMoveGradeStyle && overviewReport?.grade && overviewReport.score != null && (
+                <span className="board-move-grade-floating-cell" style={mainBoardMoveGradeStyle}>
+                  <span
+                    className={`board-move-grade grade-${overviewReport.grade}`}
+                    data-tooltip={`${overviewReport.grade} ${overviewReport.score}分 · ${formatScoreDelta(overviewReport.deltaCp)}`}
+                    title={`本着质量 ${overviewReport.score} 分，等级 ${overviewReport.grade}`}
+                    aria-label={`本着质量 ${overviewReport.score} 分，等级 ${overviewReport.grade}`}
+                  >
+                    {overviewReport.grade}
+                  </span>
+                </span>
+              )}
               {!candidatePreview && boardArrows.length > 0 && (
                 <>
                   <svg className="analysis-arrow-lines" viewBox="0 0 1120 1240" aria-hidden="true">
@@ -6281,7 +6607,7 @@ export default function App() {
                         <g className="analysis-arrow-flow-marker" aria-hidden="true">
                           <path d="M -9 -6 L -2 0 L -9 6"/>
                           <path d="M 1 -6 L 8 0 L 1 6"/>
-                          <animateMotion dur={`${1.5 + arrow.rank * .16}s`} repeatCount="indefinite" rotate="auto">
+                          <animateMotion dur={`${2.7 + arrow.rank * .25}s`} repeatCount="indefinite" rotate="auto">
                             <mpath href={`#analysis-arrow-flow-${arrow.rank}`}/>
                           </animateMotion>
                         </g>
@@ -6365,6 +6691,24 @@ export default function App() {
               : "等待局面分析"}</span>
             <strong>{searchLimitLabel}</strong>
           </div>
+          <MobileStudyPanel
+            analysisBusy={analysisBusy}
+            analysisStale={analysisIsStale}
+            analysisDisabled={!board.playable || isPlaying || reportBusy || engineSide !== "none" || engineThinking || (chessPlatform.kind === "web" && (!online || !token.trim() || cloudConnection !== "online" || (subscription != null && (subscription.status !== "active" || subscription.cloudAnalysisUsed >= subscription.cloudAnalysisQuota))))}
+            analysisConfigText={`MultiPV ${multipv} · ${searchLimitLabel}`}
+            analysisHint={analysisError ?? mobileCloudHint}
+            engineRows={compactEngineRows}
+            bookRows={compactBookRows}
+            bookLoading={cloudBookLoading}
+            bookError={cloudBookError}
+            manual={manualReviewContent("移动端棋谱着法")}
+            onRunAnalysis={() => void (analysisHintsEnabled ? stopAnalysis() : runAnalysis())}
+            onFocusCandidate={(row) => { setMobileArrowsEnabled(true); setMobileArrowFocus(row.iccs); }}
+            onPreviewCandidate={(row) => void previewCompactEngineRow(row)}
+            onPlayCandidate={(row) => void playCompactEngineRow(row)}
+            onFocusBookMove={(iccs) => { setMobileArrowsEnabled(true); setMobileArrowFocus(iccs); }}
+            onPlayBookMove={(iccs) => void playIccsMove(iccs)}
+          />
           <div className="fen-row">
             <label>FEN</label>
             <input value={fenInput} onChange={(event) => setFenInput(event.target.value)} />

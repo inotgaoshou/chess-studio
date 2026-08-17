@@ -462,6 +462,15 @@ export type SubscriptionDto = {
   cloudAnalysisQuota: number;
   cloudAnalysisUsed: number;
 };
+export type CloudAuthDto = { userId: string; token: string };
+export type CloudAnalysisPreferences = {
+  serverUrl: string;
+  token: string;
+  multipv: number;
+  searchMode: "time" | "depth";
+  searchValue: number;
+  autoAnalyze: boolean;
+};
 export type TrainingTaskDto = {
   id: string;
   gameId: string;
@@ -833,6 +842,11 @@ export interface ChessPlatform {
   returnCompactFloatingPanel(panel: "engine" | "manual" | "cloud" | "link"): Promise<boolean>;
   getSyncAccount(): Promise<SyncAccountDto>;
   getSubscription(): Promise<SubscriptionDto>;
+  getCloudAnalysisPreferences(): Promise<CloudAnalysisPreferences | undefined>;
+  saveCloudAnalysisPreferences(preferences: CloudAnalysisPreferences): Promise<void>;
+  checkCloudHealth(serverUrl: string): Promise<void>;
+  authenticateCloud(mode: "register" | "login", serverUrl: string, email: string, password: string): Promise<CloudAuthDto>;
+  getCloudSubscription(serverUrl: string, token: string): Promise<SubscriptionDto>;
   redeemSubscriptionCode(code: string): Promise<SubscriptionDto>;
   registerSyncAccount(email: string, password: string): Promise<SyncAccountDto>;
   loginSyncAccount(email: string, password: string): Promise<SyncAccountDto>;
