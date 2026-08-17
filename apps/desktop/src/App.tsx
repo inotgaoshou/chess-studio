@@ -105,6 +105,7 @@ const COMPACT_ENGINE_LINE_MAX_MOVES = CANDIDATE_PREVIEW_HALF_MOVES;
 const DEFAULT_BRANCH_ARROW_COLOR = "#2f80ed";
 const DEFAULT_ENGINE_MOVE_TIME_MS = 1000;
 const DEFAULT_ANALYSIS_DEPTH = 24;
+const MOBILE_DEFAULT_ANALYSIS_DEPTH = 20;
 const DEFAULT_REPORT_DEPTH = 24;
 const QUICK_ANALYSIS_TIME_MS = 1200;
 const COMPACT_ENGINE_MIN_WIDTH = 280;
@@ -466,6 +467,13 @@ export function analysisPassPlan(options: {
     quick: shouldRunQuickPass ? { searchMode: "time" as const, searchValue: QUICK_ANALYSIS_TIME_MS } : undefined,
     deep: { searchMode: configuredMode, searchValue: configuredValue },
   };
+}
+
+export function analysisFirstCandidateTimeoutMs(platformKind: "desktop" | "web") {
+  // The web API returns its completed principal variation in one response.
+  // A depth-20/30 request may legitimately take longer than the desktop
+  // engine's first streaming info line.
+  return platformKind === "web" ? 15_000 : 3_000;
 }
 
 function analysisLimitText(mode: AnalysisOptions["searchMode"], value: number) {
@@ -1194,8 +1202,8 @@ export default function App() {
   const [libraryFilter, setLibraryFilter] = useState<string>("all");
   const [librarySearch, setLibrarySearch] = useState("");
   const [libraryTagsInput, setLibraryTagsInput] = useState("");
-  const [searchMode, setSearchMode] = useState<"time" | "depth" | "nodes" | "infinite">("infinite");
-  const [searchValue, setSearchValue] = useState(1500);
+  const [searchMode, setSearchMode] = useState<"time" | "depth" | "nodes" | "infinite">(() => window.matchMedia("(max-width: 640px) and (orientation: portrait)").matches ? "depth" : "infinite");
+  const [searchValue, setSearchValue] = useState(() => window.matchMedia("(max-width: 640px) and (orientation: portrait)").matches ? MOBILE_DEFAULT_ANALYSIS_DEPTH : 1500);
   const [threads, setThreads] = useState(2);
   const [hashMb, setHashMb] = useState(256);
   const [multipv, setMultipv] = useState(1);
@@ -2213,7 +2221,7 @@ export default function App() {
             if (boardRef.current.fen === watchedFen && !analysisBusyRef.current) void runAnalysis(true);
           }, 250);
         });
-    }, 3000);
+    }, analysisFirstCandidateTimeoutMs(chessPlatform.kind));
     return () => window.clearTimeout(timer);
   }, [analysisBusy, board.fen, board.playable, chessPlatform]);
   const compactBookRows: CompactBookRow[] = useMemo(() => [
@@ -5092,7 +5100,7 @@ export default function App() {
         });
         break;
       case "analysis":
-        analysisHintsEnabled ? await stopAnalysis() : await runAnalysis();
+        analysisBusy ? await stopAnalysis() : await runAnalysis();
         break;
       case "export": setMobileExportOpen((open) => !open); break;
       case "settings": setMobilePanel("settings"); break;
@@ -6206,7 +6214,7 @@ export default function App() {
             <button type="button" onClick={() => { setMobileDrawerOpen(false); setReversed((value) => !value); }}><RotateCcw size={17}/>翻转棋盘</button>
           </div></section>
           <section><small>分析</small><div>
-            <button type="button" disabled={!analysisBusy && (!board.playable || isPlaying || reportBusy || engineSide !== "none" || engineThinking || !online || cloudConnection !== "online")} onClick={() => void (analysisHintsEnabled ? stopAnalysis() : runAnalysis())}><Activity size={17}/>{analysisBusy ? "停止分析" : "分析局面"}</button>
+            <button type="button" disabled={!analysisBusy && (!board.playable || isPlaying || reportBusy || engineSide !== "none" || engineThinking || !online || cloudConnection !== "online")} onClick={() => void (analysisBusy ? stopAnalysis() : runAnalysis())}><Activity size={17}/>{analysisBusy ? "停止分析" : "分析局面"}</button>
             <label className="mobile-drawer-toggle"><input type="checkbox" checked={autoAnalyze} onChange={(event) => setAutoAnalyze(event.target.checked)}/><span>自动分析</span></label>
             <label className="mobile-drawer-select"><span>候选</span><select aria-label="候选数量" value={multipv} onChange={(event) => setMultipv(Number(event.target.value))}>{[1, 2, 3, 4, 5].map((value) => <option value={value} key={value}>MultiPV {value}</option>)}</select></label>
             <label className="mobile-drawer-select"><span>搜索</span><select aria-label="搜索模式" value={searchMode === "time" ? "time" : "depth"} onChange={(event) => { const mode = event.target.value as "time" | "depth"; setSearchMode(mode); setSearchValue(mode === "time" ? 1000 : 20); }}><option value="time">时间</option><option value="depth">深度</option></select></label>
@@ -6662,7 +6670,7 @@ export default function App() {
             bookLoading={cloudBookLoading}
             bookError={cloudBookError}
             manual={manualReviewContent("移动端棋谱着法")}
-            onRunAnalysis={() => void (analysisHintsEnabled ? stopAnalysis() : runAnalysis())}
+            onRunAnalysis={() => void (analysisBusy ? stopAnalysis() : runAnalysis())}
             onFocusCandidate={(row) => { setMobileArrowsEnabled(true); setMobileArrowFocus(row.iccs); }}
             onPreviewCandidate={(row) => void previewCompactEngineRow(row)}
             onPlayCandidate={(row) => void playCompactEngineRow(row)}
