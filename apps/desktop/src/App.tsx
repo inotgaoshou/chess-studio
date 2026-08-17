@@ -354,7 +354,7 @@ export function shouldRefreshAnalysisAfterMove(options: {
   if (options.engineSide !== "none" || options.engineThinking) return false;
   if (!options.autoAnalyze && !options.analysisHintsEnabled) return false;
   if (options.platformKind === "desktop") return options.enginePath.trim().length > 0;
-  return options.online && options.token.trim().length > 0;
+  return options.online;
 }
 
 export function shouldRefreshAnalysisAfterEngineSettingsSave(options: {
@@ -378,7 +378,7 @@ export function shouldRefreshAnalysisAfterEngineSettingsSave(options: {
   if (!options.playable || options.isPlaying || options.reportBusy) return false;
   if (options.engineSide !== "none" || options.engineThinking) return false;
   if (options.platformKind === "desktop" && !options.enginePath.trim()) return false;
-  if (options.platformKind === "web" && (!options.online || !options.token.trim())) return false;
+  if (options.platformKind === "web" && !options.online) return false;
   return options.multipvChanged
     || options.hadCurrentAnalysis
     || options.analysisHintsEnabled
@@ -1208,10 +1208,6 @@ export default function App() {
   const [serverUrl, setServerUrl] = useState("http://127.0.0.1:8080");
   const [token, setToken] = useState("");
   const [cloudConnection, setCloudConnection] = useState<"idle" | "checking" | "online" | "offline">("idle");
-  const [cloudAuthBusy, setCloudAuthBusy] = useState(false);
-  const [cloudAuthMode, setCloudAuthMode] = useState<"login" | "register">("login");
-  const [cloudEmail, setCloudEmail] = useState("");
-  const [cloudPassword, setCloudPassword] = useState("");
   const [cloudPreferencesReady, setCloudPreferencesReady] = useState(false);
   const [notice, setNotice] = useState("本地数据已保存");
   const [autosave, setAutosave] = useState<AutosaveState>({ status: "draft" });
@@ -1930,7 +1926,7 @@ export default function App() {
     if (engineSide !== "none" || engineThinking) return;
     if (!board.playable) return;
     if (chessPlatform.kind === "desktop" && !enginePath.trim()) return;
-    if (chessPlatform.kind === "web" && (!online || !token.trim())) return;
+    if (chessPlatform.kind === "web" && !online) return;
     if (analysisBusyRef.current) {
       void cancelRunningAnalysis("局面已更新，正在切换自动分析…", { keepHints: true })
         .finally(() => window.setTimeout(() => setAutoRetry((value) => value + 1), 80));
@@ -2299,13 +2295,9 @@ export default function App() {
     ? undefined
     : !online
       ? "当前离线，联网后可使用云端 Pikafish。"
-      : !token.trim()
-        ? "请在功能菜单的云端分析中登录。"
-        : cloudConnection !== "online"
-          ? "请先在功能菜单检测云端服务连接。"
-          : subscription && (subscription.status !== "active" || subscription.cloudAnalysisUsed >= subscription.cloudAnalysisQuota)
-            ? "云端分析额度不可用，请检查订阅状态。"
-            : undefined;
+    : cloudConnection !== "online"
+      ? "请先在功能菜单检测 Pikafish 服务连接。"
+      : undefined;
   const engineRuntimeLabel: Record<EngineRuntimeState, string> = {
     idle: "待分析",
     analyzing: "分析中",
@@ -3870,11 +3862,11 @@ export default function App() {
       if (!automatic) setNotice("未找到可用引擎，请填写引擎路径");
       return;
     }
-    if (chessPlatform.kind === "web" && (!online || !token.trim())) {
-      if (!automatic) setNotice(online ? "服务端分析需要先填写登录令牌" : "当前离线，无法启动云端分析");
+    if (chessPlatform.kind === "web" && !online) {
+      if (!automatic) setNotice("当前离线，无法启动云端分析");
       return;
     }
-    if (chessPlatform.kind === "web" && (cloudConnection !== "online" || (subscription != null && (subscription.status !== "active" || subscription.cloudAnalysisUsed >= subscription.cloudAnalysisQuota)))) {
+    if (chessPlatform.kind === "web" && cloudConnection !== "online") {
       if (!automatic) setNotice(mobileCloudHint ?? "云端分析当前不可用");
       return;
     }
@@ -3940,6 +3932,7 @@ export default function App() {
       multipv: effectiveMultipv,
       serverUrl,
       token,
+      guest: chessPlatform.kind === "web" && isMobileWorkbench,
       excludeMove,
     })));
     const applyAnalysisPass = (completed: Awaited<ReturnType<typeof runAnalysisPass>>) => {
@@ -5118,33 +5111,6 @@ export default function App() {
     }
   }
 
-  async function authenticateMobileCloud() {
-    if (!cloudEmail.trim() || !cloudPassword) {
-      setNotice("请输入邮箱和密码");
-      return;
-    }
-    setCloudAuthBusy(true);
-    try {
-      const auth = await chessPlatform.authenticateCloud(cloudAuthMode, serverUrl, cloudEmail.trim(), cloudPassword);
-      setToken(auth.token);
-      setSubscription(await chessPlatform.getCloudSubscription(serverUrl, auth.token));
-      setCloudPassword("");
-      setCloudConnection("online");
-      setNotice(cloudAuthMode === "login" ? "云端分析登录成功" : "账号已创建并登录");
-    } catch (error) {
-      setNotice(`云端登录失败：${friendlyError(error)}`);
-    } finally {
-      setCloudAuthBusy(false);
-    }
-  }
-
-  function logoutMobileCloud() {
-    setToken("");
-    setSubscription(undefined);
-    setCloudConnection("idle");
-    setNotice("已退出云端分析账号");
-  }
-
   function trapMobileDrawerFocus(event: KeyboardEvent<HTMLElement>) {
     if (event.key !== "Tab") return;
     const focusable = [...event.currentTarget.querySelectorAll<HTMLElement>("button:not(:disabled), input:not(:disabled), select:not(:disabled)")];
@@ -6217,7 +6183,7 @@ export default function App() {
         <div className="window-state"><span className={analysisBusy ? "pulse" : ""} />{notice}</div>
       </header>
 
-      <MobileToolbar analysisBusy={analysisBusy} analysisDisabled={!board.playable || isPlaying || reportBusy || engineSide !== "none" || engineThinking || (chessPlatform.kind === "web" && (!online || !token.trim() || cloudConnection !== "online" || (subscription != null && (subscription.status !== "active" || subscription.cloudAnalysisUsed >= subscription.cloudAnalysisQuota))))} colorTheme={effectiveColorTheme} onCommand={(command) => void executeMobileToolbar(command)}/>
+      <MobileToolbar analysisBusy={analysisBusy} analysisDisabled={!board.playable || isPlaying || reportBusy || engineSide !== "none" || engineThinking || (chessPlatform.kind === "web" && (!online || cloudConnection !== "online"))} colorTheme={effectiveColorTheme} onCommand={(command) => void executeMobileToolbar(command)}/>
       {mobileExportOpen && <>
         <button className="mobile-export-backdrop" aria-label="关闭复制与导出菜单" onClick={() => setMobileExportOpen(false)}/>
         <section className="mobile-export-menu" role="menu" aria-label="复制与导出">
@@ -6240,25 +6206,16 @@ export default function App() {
             <button type="button" onClick={() => { setMobileDrawerOpen(false); setReversed((value) => !value); }}><RotateCcw size={17}/>翻转棋盘</button>
           </div></section>
           <section><small>分析</small><div>
-            <button type="button" disabled={!analysisBusy && (!board.playable || isPlaying || reportBusy || engineSide !== "none" || engineThinking || !token.trim() || cloudConnection !== "online")} onClick={() => void (analysisHintsEnabled ? stopAnalysis() : runAnalysis())}><Activity size={17}/>{analysisBusy ? "停止分析" : "分析局面"}</button>
+            <button type="button" disabled={!analysisBusy && (!board.playable || isPlaying || reportBusy || engineSide !== "none" || engineThinking || !online || cloudConnection !== "online")} onClick={() => void (analysisHintsEnabled ? stopAnalysis() : runAnalysis())}><Activity size={17}/>{analysisBusy ? "停止分析" : "分析局面"}</button>
             <label className="mobile-drawer-toggle"><input type="checkbox" checked={autoAnalyze} onChange={(event) => setAutoAnalyze(event.target.checked)}/><span>自动分析</span></label>
             <label className="mobile-drawer-select"><span>候选</span><select aria-label="候选数量" value={multipv} onChange={(event) => setMultipv(Number(event.target.value))}>{[1, 2, 3, 4, 5].map((value) => <option value={value} key={value}>MultiPV {value}</option>)}</select></label>
             <label className="mobile-drawer-select"><span>搜索</span><select aria-label="搜索模式" value={searchMode === "time" ? "time" : "depth"} onChange={(event) => { const mode = event.target.value as "time" | "depth"; setSearchMode(mode); setSearchValue(mode === "time" ? 1000 : 20); }}><option value="time">时间</option><option value="depth">深度</option></select></label>
             <label className="mobile-drawer-select"><span>{searchMode === "time" ? "毫秒" : "深度"}</span><input aria-label={searchMode === "time" ? "搜索时间毫秒" : "搜索深度"} type="number" min={searchMode === "time" ? 100 : 1} max={searchMode === "time" ? 5000 : 30} value={searchValue} onChange={(event) => setSearchValue(Math.min(searchMode === "time" ? 5000 : 30, Math.max(searchMode === "time" ? 100 : 1, Number(event.target.value) || (searchMode === "time" ? 1000 : 20))))}/></label>
           </div></section>
-          <section className="mobile-cloud-settings"><small>云端分析</small><div>
+          <section className="mobile-cloud-settings"><small>Pikafish 服务</small><div>
             <label className="mobile-cloud-field">服务地址<input aria-label="云端服务地址" inputMode="url" value={serverUrl} onChange={(event) => { setServerUrl(event.target.value); setCloudConnection("idle"); }} /></label>
             <button type="button" disabled={cloudConnection === "checking"} onClick={() => void checkMobileCloudConnection()}>{cloudConnection === "checking" ? "检测中" : cloudConnection === "online" ? "服务已连接" : "检测连接"}</button>
-            {token.trim() ? <>
-              <p className="mobile-cloud-status">已登录 · {subscription ? `${subscription.plan.toUpperCase()} · 剩余 ${Math.max(0, subscription.cloudAnalysisQuota - subscription.cloudAnalysisUsed)} 次` : "正在读取订阅额度"}</p>
-              <button type="button" onClick={() => void chessPlatform.getCloudSubscription(serverUrl, token).then((value) => { setSubscription(value); setNotice("云端额度已刷新"); }).catch((error) => setNotice(friendlyError(error)))}>刷新额度</button>
-              <button type="button" onClick={logoutMobileCloud}>退出登录</button>
-            </> : <>
-              <label className="mobile-cloud-field">邮箱<input aria-label="云端邮箱" inputMode="email" value={cloudEmail} onChange={(event) => setCloudEmail(event.target.value)} /></label>
-              <label className="mobile-cloud-field">密码<input aria-label="云端密码" type="password" value={cloudPassword} onChange={(event) => setCloudPassword(event.target.value)} /></label>
-              <button type="button" disabled={cloudAuthBusy} onClick={() => setCloudAuthMode((mode) => mode === "login" ? "register" : "login")}>{cloudAuthMode === "login" ? "改为注册" : "改为登录"}</button>
-              <button type="button" disabled={cloudAuthBusy} onClick={() => void authenticateMobileCloud()}>{cloudAuthBusy ? "处理中" : cloudAuthMode === "login" ? "登录云端" : "注册并登录"}</button>
-            </>}
+            <p className="mobile-cloud-status">首版免登录。连接成功后可直接请求 Pikafish 分析。</p>
           </div></section>
           <section><small>显示</small><div>
             <label className="mobile-drawer-toggle"><input type="checkbox" checked={mobileArrowsEnabled} onChange={(event) => { setMobileArrowsEnabled(event.target.checked); if (!event.target.checked) setMobileArrowFocus(undefined); }}/><span>候选箭头</span></label>
@@ -6277,8 +6234,8 @@ export default function App() {
           <div className="mobile-settings-row"><span><strong>显示着法数</strong><small>服务端最多支持 5 条候选</small></span><div className="mobile-stepper"><button type="button" aria-label="减少 MultiPV" disabled={multipv <= 1} onClick={() => setMultipv((value) => Math.max(1, value - 1))}>−</button><b>{multipv}</b><button type="button" aria-label="增加 MultiPV" disabled={multipv >= 5} onClick={() => setMultipv((value) => Math.min(5, value + 1))}>＋</button></div></div>
           <label className="mobile-settings-row"><span><strong>搜索限制</strong><small>{searchMode === "time" ? "100 - 5000 毫秒" : "1 - 30 层"}</small></span><select aria-label="搜索限制模式" value={searchMode === "time" ? "time" : "depth"} onChange={(event) => { const mode = event.target.value as "time" | "depth"; setSearchMode(mode); setSearchValue(mode === "time" ? 1000 : 20); }}><option value="depth">深度</option><option value="time">时间</option></select></label>
           <div className="mobile-settings-row"><span><strong>{searchMode === "time" ? "搜索时间" : "最大深度"}</strong><small>{searchMode === "time" ? "毫秒" : "层"}</small></span><div className="mobile-stepper"><button type="button" aria-label="减少搜索限制" onClick={() => setSearchValue((value) => Math.max(searchMode === "time" ? 100 : 1, value - (searchMode === "time" ? 100 : 1)))}>−</button><b>{searchValue}</b><button type="button" aria-label="增加搜索限制" onClick={() => setSearchValue((value) => Math.min(searchMode === "time" ? 5000 : 30, value + (searchMode === "time" ? 100 : 1)))}>＋</button></div></div>
-          <h2>云端分析</h2>
-          <button type="button" className="mobile-settings-row" onClick={() => { setMobilePanel("board"); setMobileDrawerOpen(true); }}><span><strong>{token.trim() ? "云端 Pikafish 已登录" : "连接云端 Pikafish"}</strong><small>{subscription ? `剩余 ${Math.max(0, subscription.cloudAnalysisQuota - subscription.cloudAnalysisUsed)} 次` : "服务地址、账号与额度"}</small></span><ChevronRight size={18}/></button>
+          <h2>Pikafish 服务</h2>
+          <button type="button" className="mobile-settings-row" onClick={() => { setMobilePanel("board"); setMobileDrawerOpen(true); }}><span><strong>连接 Pikafish 服务</strong><small>{cloudConnection === "online" ? "服务已连接，可直接分析" : "服务地址与连通性检测"}</small></span><ChevronRight size={18}/></button>
         </div>
       </section>}
 
@@ -6697,7 +6654,7 @@ export default function App() {
           <MobileStudyPanel
             analysisBusy={analysisBusy}
             analysisStale={analysisIsStale}
-            analysisDisabled={!board.playable || isPlaying || reportBusy || engineSide !== "none" || engineThinking || (chessPlatform.kind === "web" && (!online || !token.trim() || cloudConnection !== "online" || (subscription != null && (subscription.status !== "active" || subscription.cloudAnalysisUsed >= subscription.cloudAnalysisQuota))))}
+            analysisDisabled={!board.playable || isPlaying || reportBusy || engineSide !== "none" || engineThinking || (chessPlatform.kind === "web" && (!online || cloudConnection !== "online"))}
             analysisConfigText={`MultiPV ${multipv} · ${searchLimitLabel}`}
             analysisHint={analysisError ?? mobileCloudHint}
             engineRows={compactEngineRows}

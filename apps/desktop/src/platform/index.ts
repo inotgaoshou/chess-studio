@@ -59,6 +59,13 @@ function cloudApiError(status: number, fallback?: string) {
   return fallback ?? `云端服务返回 ${status}`;
 }
 
+export function cloudAnalysisHeaders(token: string, guest = false): Record<string, string> {
+  return {
+    "content-type": "application/json",
+    ...(!guest && token.trim() ? { authorization: `Bearer ${token}` } : {}),
+  };
+}
+
 function downloadWebManual(filename: string, contents: string) {
   const blob = new Blob([contents], { type: webManualMimeType });
   const url = URL.createObjectURL(blob);
@@ -679,14 +686,14 @@ class WebPlatform implements ChessPlatform {
 
   async analyze(options: AnalysisOptions): Promise<AnalysisLine[]> {
     if (!navigator.onLine) throw new Error("当前离线，可查看缓存分析，联网后才能启动 Pikafish");
-    if (!options.token.trim()) throw new Error("服务端分析需要先填写登录令牌");
+    if (!options.guest && !options.token.trim()) throw new Error("服务端分析需要先填写登录令牌");
     if (options.searchMode === "infinite") throw new Error("Web 端不支持持续分析，请选择时间或深度");
     const analyzedGameId = this.gameId;
     const analyzedNode = this.state().currentNode;
     this.abort = new AbortController();
     const response = await fetch(`${options.serverUrl.replace(/\/$/, "")}/api/v1/analysis`, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${options.token}` },
+      headers: cloudAnalysisHeaders(options.token, options.guest),
       body: JSON.stringify({ fen: options.fen, mode: options.searchMode, value: options.searchValue, multiPv: options.multipv }),
       signal: this.abort.signal,
     });

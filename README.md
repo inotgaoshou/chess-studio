@@ -52,7 +52,7 @@ mysql -uroot -p xiangqi < apps/server/migrations/0001_initial.sql
 cargo run -p xiangqi-server
 ```
 
-根据本机账号修改 `.env` 中的 `DATABASE_URL`。服务端资源上限由 `ENGINE_MAX_CONCURRENT`、`ENGINE_TIMEOUT_MS`、`ENGINE_THREADS` 和 `ENGINE_HASH_MB` 控制。
+根据本机账号修改 `.env` 中的 `DATABASE_URL`。服务端资源上限由 `ENGINE_MAX_CONCURRENT`、`ENGINE_TIMEOUT_MS`、`ENGINE_THREADS` 和 `ENGINE_HASH_MB` 控制。手机 Web 首版在本地开发时可免登录使用服务端 Pikafish；发布到受控内网或公网时，需要显式设置 `ALLOW_GUEST_ANALYSIS=true` 才允许访客分析。访客分析不计入账号订阅额度，生产环境请仅在可信网络或受限反向代理后开启，并设置合适的并发和超时限制。
 
 本地开发可使用脚本启动：`./scripts/dev-server.sh start`、`./scripts/dev-server.sh restart`、`./scripts/dev-server.sh logs`、`./scripts/dev-desktop.sh`，或使用 `./scripts/dev-all.sh` 一次启动服务端和桌面端。桌面脚本固定使用 NVM 的 Node 24.14.0 与 Corepack，避免系统 Node 版本不兼容 pnpm。
 
@@ -71,7 +71,7 @@ pnpm --filter xiangqi-desktop-ui web:build
 pnpm --filter xiangqi-desktop-ui exec vite preview --host 0.0.0.0 --port 4173
 ```
 
-Web 端使用 IndexedDB 保存棋谱、变例、评论、分析缓存和待同步操作。离线时可以继续打谱并查看已缓存分析；联网且填写 JWT 后可同步并调用服务端 Pikafish。移动端不会下载或执行本地引擎。
+Web 端使用 IndexedDB 保存棋谱、变例、评论、分析缓存和待同步操作。离线时可以继续打谱并查看已缓存分析；手机工作台连接到启用访客分析的 Pikafish 服务后可直接请求引擎提示，JWT 仍只用于账号同步。移动端不会下载或执行本地引擎。
 
 XQF、CBR 已接入统一格式检测入口，但解析器需要真实样例验证具体版本、编码、注释和变例结构。桌面文件对话框目前只显示完整支持的 PGN，不提供 XQF/CBR 入口。
 

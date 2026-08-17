@@ -35,6 +35,7 @@ use xiangqi_core::Board;
 struct AppState {
     pool: MySqlPool,
     jwt_secret: String,
+    allow_guest_analysis: bool,
     engine: EngineConfig,
     engine_slots: Arc<Semaphore>,
 }
@@ -258,6 +259,10 @@ async fn main() -> anyhow::Result<()> {
         AppState {
             pool,
             jwt_secret,
+            // The phone-first development build is usable without creating an
+            // account. Production remains opt-in so public deployments do not
+            // accidentally expose their engine capacity.
+            allow_guest_analysis: env_value("ALLOW_GUEST_ANALYSIS", cfg!(debug_assertions)),
             engine,
             engine_slots: Arc::new(Semaphore::new(max_concurrent)),
         },
@@ -963,33 +968,39 @@ async fn analyze(
     headers: HeaderMap,
     Json(request): Json<AnalysisRequest>,
 ) -> Result<Json<AnalysisResponse>, ApiError> {
-    let user_id = authenticated_user(&headers, &state.jwt_secret)?;
+    let user_id = analysis_user(&headers, &state.jwt_secret, state.allow_guest_analysis)?;
     validate_analysis_request(&request)?;
     let permit = state
         .engine_slots
         .clone()
         .try_acquire_owned()
         .map_err(|_| ApiError::EngineBusy)?;
-    reserve_cloud_analysis(&state.pool, user_id).await?;
+    if let Some(user_id) = user_id {
+        reserve_cloud_analysis(&state.pool, user_id).await?;
+    }
     let timeout = state.engine.timeout;
     let result = tokio::time::timeout(timeout, run_analysis(&state.engine, &request)).await;
     drop(permit);
     match result {
         Ok(Ok(response)) => {
-            if let Err(error) =
-                record_product_event_for_pool(&state.pool, user_id, "cloud_analysis_consumed").await
-            {
-                tracing::warn!(%error, "failed to record cloud analysis event");
+            if let Some(user_id) = user_id {
+                if let Err(error) = record_product_event_for_pool(&state.pool, user_id, "cloud_analysis_consumed").await {
+                    tracing::warn!(%error, "failed to record cloud analysis event");
+                }
             }
             Ok(Json(response))
         }
         Ok(Err(error)) => {
             tracing::warn!(%error, "Pikafish analysis failed");
-            release_cloud_analysis(&state.pool, user_id).await;
+            if let Some(user_id) = user_id {
+                release_cloud_analysis(&state.pool, user_id).await;
+            }
             Err(ApiError::EngineUnavailable)
         }
         Err(_) => {
-            release_cloud_analysis(&state.pool, user_id).await;
+            if let Some(user_id) = user_id {
+                release_cloud_analysis(&state.pool, user_id).await;
+            }
             Err(ApiError::EngineTimeout)
         }
     }
@@ -1215,6 +1226,13 @@ fn authenticated_user(headers: &HeaderMap, secret: &str) -> Result<Uuid, ApiErro
     parse_uuid(token.claims.sub).map_err(|_| ApiError::Unauthorized)
 }
 
+fn analysis_user(headers: &HeaderMap, secret: &str, allow_guest_analysis: bool) -> Result<Option<Uuid>, ApiError> {
+    if headers.get("authorization").is_none() && allow_guest_analysis {
+        return Ok(None);
+    }
+    authenticated_user(headers, secret).map(Some)
+}
+
 fn parse_uuid(value: String) -> Result<Uuid, ApiError> {
     Uuid::parse_str(&value).map_err(|_| ApiError::Internal)
 }
@@ -1234,6 +1252,13 @@ mod tests {
             user_id
         );
         assert!(authenticated_user(&headers, "wrong-secret").is_err());
+    }
+
+    #[test]
+    fn guest_analysis_is_only_allowed_when_enabled() {
+        let headers = HeaderMap::new();
+        assert_eq!(analysis_user(&headers, "test-secret", true).unwrap(), None);
+        assert!(analysis_user(&headers, "test-secret", false).is_err());
     }
 
     #[test]

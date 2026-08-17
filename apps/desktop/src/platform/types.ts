@@ -123,6 +123,8 @@ export type AnalysisOptions = {
   multipv: number;
   serverUrl: string;
   token: string;
+  /** Mobile web workbench may use an explicitly enabled guest analysis service. */
+  guest?: boolean;
   searchMoves?: string[];
   excludeMove?: string;
 };
