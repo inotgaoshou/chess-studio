@@ -1360,8 +1360,11 @@ export default function App() {
   const activePieceSkin = syncAccount.status === "signedIn" || !ACCOUNT_SKINS.includes(normalizedPieceSkin)
     ? normalizedPieceSkin
     : "default";
-  const displayedBoardSkin = skinHoverPreview?.boardSkin ?? activeBoardSkin;
-  const displayedPieceSkin = skinHoverPreview?.pieceSkin ?? activePieceSkin;
+  // The phone workbench keeps the board visually dominant. Its default maps to
+  // the bundled bamboo set, while any explicit skin selection still wins.
+  const mobileDefaultSkin = isMobileWorkbench && activeBoardSkin === "default" && activePieceSkin === "default";
+  const displayedBoardSkin = skinHoverPreview?.boardSkin ?? (mobileDefaultSkin ? "qingxin-zhuyun" : activeBoardSkin);
+  const displayedPieceSkin = skinHoverPreview?.pieceSkin ?? (mobileDefaultSkin ? "qingxin-zhuyun" : activePieceSkin);
   const boardRevision = useRef(0);
   const reportExportingRef = useRef(false);
   const analysisLoadRevision = useRef(0);
