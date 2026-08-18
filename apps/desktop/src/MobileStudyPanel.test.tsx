@@ -21,8 +21,8 @@ describe("MobileStudyPanel", () => {
   it("switches between engine, opening book, and manual tabs", () => {
     render(<MobileStudyPanel analysisBusy={false} analysisStale={false} analysisDisabled={false} analysisConfigText="MultiPV 3 · 深度 20" engineRows={[engineRow]} bookRows={[{ id: "book-1", iccs: "h2e2", notation: "炮二平五", scoreText: "2999", winRateText: "51%", source: "本地库" }]} bookLoading={false} manual={<p>棋谱内容</p>} onRunAnalysis={vi.fn()} onFocusCandidate={vi.fn()} onPreviewCandidate={vi.fn()} onPlayCandidate={vi.fn()} onFocusBookMove={vi.fn()} onPlayBookMove={vi.fn()}/>);
     expect(screen.getByText("炮二平五")).toBeTruthy();
-    fireEvent.click(screen.getByRole("tab", { name: "开局库" }));
-    expect(screen.getByText("51%")).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: "云库" }));
+    expect(screen.getByText("胜率 51%")).toBeTruthy();
     fireEvent.click(screen.getByRole("tab", { name: "棋谱" }));
     expect(screen.getByText("棋谱内容")).toBeTruthy();
   });
@@ -43,14 +43,13 @@ describe("MobileStudyPanel", () => {
     expect(screen.getByText("马8进7")).toBeTruthy();
   });
 
-  it("previews and adopts opening-book moves through separate actions", () => {
+  it("adopts a cloud-book move when its row is selected", () => {
     const onFocusBookMove = vi.fn();
     const onPlayBookMove = vi.fn();
     render(<MobileStudyPanel analysisBusy={false} analysisStale={false} analysisDisabled={false} analysisConfigText="MultiPV 3 · 深度 20" engineRows={[]} bookRows={[{ id: "book-1", iccs: "h2e2", notation: "炮二平五", scoreText: "2999", winRateText: "51%", source: "本地库" }]} bookLoading={false} manual={null} onRunAnalysis={vi.fn()} onFocusCandidate={vi.fn()} onPreviewCandidate={vi.fn()} onPlayCandidate={vi.fn()} onFocusBookMove={onFocusBookMove} onPlayBookMove={onPlayBookMove}/>);
-    fireEvent.click(screen.getByRole("tab", { name: "开局库" }));
+    fireEvent.click(screen.getByRole("tab", { name: "云库" }));
     fireEvent.click(screen.getByText("炮二平五"));
-    fireEvent.click(screen.getByRole("button", { name: "采用开局库着法 炮二平五" }));
-    expect(onFocusBookMove).toHaveBeenCalledWith("h2e2");
+    expect(onFocusBookMove).not.toHaveBeenCalled();
     expect(onPlayBookMove).toHaveBeenCalledWith("h2e2");
   });
 
@@ -66,8 +65,8 @@ describe("MobileStudyPanel", () => {
     const engine = screen.getByRole("tab", { name: "引擎" });
     engine.focus();
     fireEvent.keyDown(engine, { key: "ArrowRight" });
-    expect(screen.getByRole("tab", { name: "开局库" }).getAttribute("aria-selected")).toBe("true");
-    fireEvent.keyDown(screen.getByRole("tab", { name: "开局库" }), { key: "End" });
+    expect(screen.getByRole("tab", { name: "云库" }).getAttribute("aria-selected")).toBe("true");
+    fireEvent.keyDown(screen.getByRole("tab", { name: "云库" }), { key: "End" });
     expect(screen.getByRole("tab", { name: "棋谱" }).getAttribute("aria-selected")).toBe("true");
   });
 });

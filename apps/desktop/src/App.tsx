@@ -19,6 +19,7 @@ import {
   Database,
   Download,
   Eye,
+  FlipVertical2,
   FolderOpen,
   FolderPlus,
   GitBranch,
@@ -61,6 +62,7 @@ import { buildGameReportPresentation } from "./gameReport";
 import { candidateCoachInsights, currentCoachAdvice, moveThoughtHint } from "./coachInsights";
 import { MobileToolbar, type MobileToolbarCommand } from "./MobileToolbar";
 import { MobileStudyPanel } from "./MobileStudyPanel";
+import { MobileManualRoute } from "./MobileManualRoute";
 import type { AnalysisOptions, AppInfoDto, BuiltinOpeningBookManifestDto, CloudAnalysisPreferences, DailyTrainingPlan, DesktopPreferencesDto, FlyknifePlan, GuidedAnalysisStart, GuidedAnalysisSubmission, LearningProfile, LinkSessionStatus, OpeningRepertoire, SubscriptionDto, SyncAccountDto, WeeklyLearningReport } from "./platform";
 import { applyColorTheme, initialColorTheme, type ColorTheme } from "./theme";
 import { WorkspaceTabs, type WorkspacePanel } from "./WorkspaceTabs";
@@ -420,6 +422,14 @@ export function selectAnalysisArrowLines(options: {
     .filter((line) => line.multipv >= 1 && line.pv.length > 0);
 }
 
+export function mobileCandidateArrowLines(lines: AnalysisLine[], multipv: number) {
+  const limit = Math.max(1, Math.trunc(multipv));
+  return lines
+    .filter((line) => line.multipv >= 1 && line.pv.length > 0)
+    .sort((left, right) => left.multipv - right.multipv)
+    .slice(0, limit);
+}
+
 export function compactBoardEvaluationRailText(options: {
   sideText: string;
   scoreText?: string;
@@ -475,6 +485,10 @@ export function analysisFirstCandidateTimeoutMs(platformKind: "desktop" | "web")
   // A depth-20/30 request may legitimately take longer than the desktop
   // engine's first streaming info line.
   return platformKind === "web" ? 15_000 : 3_000;
+}
+
+export function shouldQueueWebAnalysisReplacement(platformKind: "desktop" | "web", analysisBusy: boolean) {
+  return platformKind === "web" && analysisBusy;
 }
 
 export function normalizeMobileCloudAnalysisPreferences(preferences: CloudAnalysisPreferences, mobile: boolean) {
@@ -1304,6 +1318,7 @@ export default function App() {
   const [cloudBookError, setCloudBookError] = useState<string>();
   const [cloudBookLoading, setCloudBookLoading] = useState(false);
   const [cloudBookVisible, setCloudBookVisible] = useState(false);
+  const [mobileEvaluationVisible, setMobileEvaluationVisible] = useState(true);
   const [cloudBookCollapsed, setCloudBookCollapsed] = useState(false);
   const [floatingEvaluationCollapsed, setFloatingEvaluationCollapsed] = useState(false);
   const [cloudBookPosition, setCloudBookPosition] = useState<{ left: number; top: number }>();
@@ -1809,7 +1824,7 @@ export default function App() {
   }, [enginePath]);
 
   useEffect(() => {
-    if (chessPlatform.kind !== "desktop" || !desktopPreferences.cloudBookEnabled) {
+    if (!desktopPreferences.cloudBookEnabled) {
       setCloudCandidates([]); setCloudBookError(undefined); setCloudBookLoading(false); return;
     }
     let cancelled = false;
@@ -1949,6 +1964,10 @@ export default function App() {
     if (chessPlatform.kind === "desktop" && !enginePath.trim()) return;
     if (chessPlatform.kind === "web" && !online) return;
     if (analysisBusyRef.current) {
+      if (shouldQueueWebAnalysisReplacement(chessPlatform.kind, true)) {
+        pendingAutoAnalysis.current = true;
+        return;
+      }
       void cancelRunningAnalysis("局面已更新，正在切换自动分析…", { keepHints: true })
         .finally(() => window.setTimeout(() => setAutoRetry((value) => value + 1), 80));
       return;
@@ -2317,7 +2336,7 @@ export default function App() {
     : !online
       ? "当前离线，联网后可使用云端 Pikafish。"
     : cloudConnection !== "online"
-      ? "请先在功能菜单检测 Pikafish 服务连接。"
+      ? "点击分析会自动连接云端 Pikafish。"
       : undefined;
   const engineRuntimeLabel: Record<EngineRuntimeState, string> = {
     idle: "待分析",
@@ -2538,20 +2557,36 @@ export default function App() {
   }, [analysisArrowFen, analysisFen, analysisIsStale, board.fen, boardDisplayReversed, displayedBoardSkin, orderedAnalysis]);
   useEffect(() => setMobileArrowFocus(undefined), [board.fen, analysisFen]);
   const mobileFocusedArrow = useMemo(() => {
-    if (!mobileArrowFocus || analysisIsStale) return [];
-    const focusedLine = selectAnalysisArrowLines({ lines: orderedAnalysis, analysisFen, analysisArrowFen, boardFen: board.fen, analysisIsStale })
-      .find((line) => line.pv[0] === mobileArrowFocus);
-    const iccs = focusedLine?.pv[0] ?? (compactBookRows.some((row) => row.iccs === mobileArrowFocus) ? mobileArrowFocus : undefined);
-    const from = iccs ? squareFromIccs(iccs.slice(0, 2)) : null;
-    const to = iccs ? squareFromIccs(iccs.slice(2, 4)) : null;
-    if (!from || !to) return [];
-    return [{
-      rank: focusedLine?.multipv ?? 1,
-      color: analysisArrowColors[((focusedLine?.multipv ?? 1) - 1) % analysisArrowColors.length] ?? analysisArrowColors[0],
-      from: boardIntersectionPoint(from, boardDisplayReversed, displayedBoardSkin),
-      to: boardIntersectionPoint(to, boardDisplayReversed, displayedBoardSkin),
-    }];
-  }, [analysisArrowFen, analysisFen, analysisIsStale, board.fen, boardDisplayReversed, compactBookRows, displayedBoardSkin, mobileArrowFocus, orderedAnalysis]);
+    if (analysisIsStale) return [];
+    // A mobile candidate is an explicit request to display its route. Unlike
+    // desktop's persistent MultiPV overlay, it does not depend on that overlay
+    // being globally enabled when an automatic response arrives.
+    // Mobile candidate rows can be restored from the per-engine result group
+    // before the aggregate analysis array catches up. Use that same current-
+    // position source so a visible recommendation always has its route arrow.
+    const groupedLines = Object.values(currentEngineAnalyses)
+      .filter((group) => group.fen === board.fen)
+      .flatMap((group) => group.lines);
+    const selectableLines = (groupedLines.length > 0
+      ? groupedLines
+      : analysisFen === board.fen ? orderedAnalysis : [])
+      .filter((line) => line.multipv >= 1 && line.pv.length > 0);
+    const fallbackMove = compactBookRows.some((row) => row.iccs === mobileArrowFocus) ? mobileArrowFocus : undefined;
+    const candidateMoves = mobileCandidateArrowLines(selectableLines, multipv)
+      .map((line) => ({ iccs: line.pv[0], rank: line.multipv }));
+    if (candidateMoves.length === 0 && fallbackMove) candidateMoves.push({ iccs: fallbackMove, rank: 1 });
+    return candidateMoves.flatMap(({ iccs, rank }) => {
+      const from = squareFromIccs(iccs.slice(0, 2));
+      const to = squareFromIccs(iccs.slice(2, 4));
+      if (!from || !to) return [];
+      return [{
+        rank,
+        color: analysisArrowColors[(rank - 1) % analysisArrowColors.length] ?? analysisArrowColors[0],
+        from: boardIntersectionPoint(from, boardDisplayReversed, displayedBoardSkin),
+        to: boardIntersectionPoint(to, boardDisplayReversed, displayedBoardSkin),
+      }];
+    });
+  }, [analysisFen, analysisIsStale, board.fen, boardDisplayReversed, compactBookRows, currentEngineAnalyses, displayedBoardSkin, mobileArrowFocus, multipv, orderedAnalysis]);
   const linkMiniArrows = useMemo<LinkMiniArrow[]>(() => (
     linkHasObservedPosition && analysisFen === board.fen && !analysisIsStale
       ? orderedAnalysis.flatMap((line) => {
@@ -3000,7 +3035,11 @@ export default function App() {
       token,
     })) return;
     window.setTimeout(() => {
-      if (boardRef.current.fen !== next.fen || analysisBusyRef.current) return;
+      if (boardRef.current.fen !== next.fen) return;
+      if (analysisBusyRef.current) {
+        if (shouldQueueWebAnalysisReplacement(chessPlatform.kind, true)) pendingAutoAnalysis.current = true;
+        return;
+      }
       void runAnalysis(true);
     }, 260);
   }
@@ -3754,6 +3793,23 @@ export default function App() {
     await previewCandidateLine(row.line, row.analyzedFen ?? analysisFen ?? boardRef.current.fen, row.source);
   }
 
+  async function advanceMobileForcedVariation() {
+    const rows = compactEngineRows.filter((row) => !!row.line?.pv.length && !row.disabled);
+    if (rows.length === 0) {
+      setNotice("当前没有可切换的候选 PV，请先完成分析");
+      return;
+    }
+    const currentIndex = candidatePreview
+      ? rows.findIndex((row) => row.source?.id === candidatePreview.sourceEngineId && row.line?.multipv === candidatePreview.rank)
+      : -1;
+    const next = rows[currentIndex + 1];
+    if (!next) {
+      setNotice(currentIndex >= 0 ? "当前已是最后一条候选 PV" : "当前没有可预览的候选 PV");
+      return;
+    }
+    await previewCompactEngineRow(next);
+  }
+
   async function auditBookCandidatesWithPikafish() {
     const uniqueRows = compactBookRows.filter((row, index, rows) => rows.findIndex((item) => item.iccs === row.iccs) === index);
     const rows = uniqueRows.slice(0, BOOK_CANDIDATE_AUDIT_LIMIT);
@@ -3874,6 +3930,10 @@ export default function App() {
     }
     if (analysisBusyRef.current) {
       if (automatic) {
+        if (shouldQueueWebAnalysisReplacement(chessPlatform.kind, true)) {
+          pendingAutoAnalysis.current = true;
+          return;
+        }
         await cancelRunningAnalysis("局面已更新，正在切换自动分析…", { keepHints: true });
         window.setTimeout(() => setAutoRetry((value) => value + 1), 80);
       }
@@ -3888,8 +3948,15 @@ export default function App() {
       return;
     }
     if (chessPlatform.kind === "web" && cloudConnection !== "online") {
-      if (!automatic) setNotice(mobileCloudHint ?? "云端分析当前不可用");
-      return;
+      setCloudConnection("checking");
+      try {
+        await chessPlatform.checkCloudHealth(serverUrl);
+        setCloudConnection("online");
+      } catch (error) {
+        setCloudConnection("offline");
+        if (!automatic) setNotice(`云端 Pikafish 不可达：${friendlyError(error)}`);
+        return;
+      }
     }
     const currentBoard = boardRef.current;
     const analyzedFen = currentBoard.fen;
@@ -4022,7 +4089,17 @@ export default function App() {
     } catch (error) {
       if (analysisSession.revision === analysisSessionRevision.current) setNotice(friendlyError(error));
     } finally {
-      if (analysisSession.revision !== analysisSessionRevision.current) return;
+      if (analysisSession.revision !== analysisSessionRevision.current) {
+        if (chessPlatform.kind === "web") {
+          analysisBusyRef.current = false;
+          setAnalysisBusy(false);
+          if (pendingAutoAnalysis.current) {
+            pendingAutoAnalysis.current = false;
+            setAutoRetry((value) => value + 1);
+          }
+        }
+        return;
+      }
       analysisBusyRef.current = false;
       setAnalysisBusy(false);
       if (pendingAutoAnalysis.current) {
@@ -4054,11 +4131,17 @@ export default function App() {
     if (positionChanged) {
       analysisSessionRevision.current += 1;
       analysisLoadRevision.current += 1;
-      pendingAutoAnalysis.current = false;
       if (analysisBusyRef.current) {
-        analysisBusyRef.current = false;
-        setAnalysisBusy(false);
-        void chessPlatform.stopAnalysis(true).catch(() => undefined);
+        if (shouldQueueWebAnalysisReplacement(chessPlatform.kind, true)) {
+          pendingAutoAnalysis.current = true;
+        } else {
+          pendingAutoAnalysis.current = false;
+          analysisBusyRef.current = false;
+          setAnalysisBusy(false);
+          void chessPlatform.stopAnalysis(true).catch(() => undefined);
+        }
+      } else {
+        pendingAutoAnalysis.current = false;
       }
       setAnalysisArrowFen(undefined);
     }
@@ -4492,14 +4575,19 @@ export default function App() {
     }
   }
 
-  async function saveComment() {
-    if (!board.currentNode) return;
+  async function saveCommentForNode(nodeId: string, nextComment: string) {
     try {
-      applyBoard(await enqueueBoardOperation(() => chessPlatform.updateComment(board.currentNode!, comment)));
+      applyBoard(await enqueueBoardOperation(() => chessPlatform.updateComment(nodeId, nextComment)));
+      setComment(nextComment);
       setNotice("注释已保存");
     } catch (error) {
       setNotice(friendlyError(error));
     }
+  }
+
+  async function saveComment() {
+    if (!board.currentNode) return;
+    await saveCommentForNode(board.currentNode, comment);
   }
 
   async function toggleCurrentReviewMarker() {
@@ -4527,8 +4615,8 @@ export default function App() {
     }
   }
 
-  async function removeNode(nodeId: string) {
-    if (!window.confirm("确认删除分支？该着法及其后续所有子分支都会从棋谱中删除。回到上一步不需要删除，直接使用“上一着”即可。")) return;
+  async function removeNode(nodeId: string, confirmed = false): Promise<boolean> {
+    if (!confirmed && !window.confirm("确认删除分支？该着法及其后续所有子分支都会从棋谱中删除。回到上一步不需要删除，直接使用“上一着”即可。")) return false;
     stopPlayback();
     try {
       await cancelGameReportForStructureChange();
@@ -4536,8 +4624,10 @@ export default function App() {
       clearAnalysisState();
       await loadGameReport();
       setNotice("分支及其后续着法已删除");
+      return true;
     } catch (error) {
       setNotice(friendlyError(error));
+      return false;
     }
   }
 
@@ -5115,6 +5205,8 @@ export default function App() {
       case "analysis":
         analysisBusy ? await stopAnalysis() : await runAnalysis();
         break;
+      case "forceVariation": await advanceMobileForcedVariation(); break;
+      case "evaluation": setMobileEvaluationVisible((visible) => !visible); break;
       case "export": setMobileExportOpen((open) => !open); break;
       case "settings": setMobilePanel("settings"); break;
     }
@@ -6152,6 +6244,7 @@ export default function App() {
         {chessPlatform.kind === "desktop" && masterLibraryOpen && <MasterLibraryDialog
           account={syncAccount}
           listPlayers={(query, options) => chessPlatform.listMasterPlayers(query, options)}
+          getStats={(query) => chessPlatform.getMasterLibraryStats(query)}
           listGames={(playerId, query, options) => chessPlatform.listMasterGames(playerId, query, options)}
           onOpenGame={openMasterLibraryGame}
           onClose={() => setMasterLibraryOpen(false)}
@@ -6204,7 +6297,7 @@ export default function App() {
         <div className="window-state"><span className={analysisBusy ? "pulse" : ""} />{notice}</div>
       </header>
 
-      <MobileToolbar analysisBusy={analysisBusy} analysisDisabled={!board.playable || isPlaying || reportBusy || engineSide !== "none" || engineThinking || (chessPlatform.kind === "web" && (!online || cloudConnection !== "online"))} colorTheme={effectiveColorTheme} onCommand={(command) => void executeMobileToolbar(command)}/>
+      <MobileToolbar analysisBusy={analysisBusy} analysisDisabled={!board.playable || isPlaying || reportBusy || engineSide !== "none" || engineThinking || (chessPlatform.kind === "web" && !online)} evaluationVisible={mobileEvaluationVisible} colorTheme={effectiveColorTheme} onCommand={(command) => void executeMobileToolbar(command)}/>
       {mobileExportOpen && <>
         <button className="mobile-export-backdrop" aria-label="关闭复制与导出菜单" onClick={() => setMobileExportOpen(false)}/>
         <section className="mobile-export-menu" role="menu" aria-label="复制与导出">
@@ -6218,17 +6311,20 @@ export default function App() {
       {mobileDrawerOpen && <>
         <button className="mobile-workbench-backdrop" aria-label="关闭功能菜单" onClick={() => setMobileDrawerOpen(false)}/>
         <aside className="mobile-workbench-drawer" role="dialog" aria-modal="true" aria-label="移动端功能菜单" onKeyDown={trapMobileDrawerFocus}>
-          <header><strong>棋盘工具</strong><button ref={mobileDrawerCloseRef} type="button" aria-label="关闭功能菜单" onClick={() => setMobileDrawerOpen(false)}><X size={18}/></button></header>
+          <header><span><strong>棋盘工具</strong><small>图标与功能说明</small></span><button ref={mobileDrawerCloseRef} type="button" aria-label="关闭功能菜单" title="关闭功能菜单" onClick={() => setMobileDrawerOpen(false)}><X size={18}/></button></header>
           <section><small>棋谱</small><div>
-            <button type="button" onClick={() => { setMobileDrawerOpen(false); void createGame(startingFen); }}><Plus size={17}/>新局</button>
-            <button type="button" onClick={() => { setMobileDrawerOpen(false); void openDocument(); }}><FolderOpen size={17}/>导入</button>
-            <button type="button" onClick={() => { setMobileDrawerOpen(false); void saveDocument(); }}><Save size={17}/>保存</button>
-            <button type="button" onClick={() => { setMobileDrawerOpen(false); setPositionEditorOpen(true); }}><Pencil size={17}/>编辑局面</button>
-            <button type="button" onClick={() => { setMobileDrawerOpen(false); setReversed((value) => !value); }}><RotateCcw size={17}/>翻转棋盘</button>
+            <button type="button" className="mobile-drawer-command" title="新建标准开局棋谱" onClick={() => { setMobileDrawerOpen(false); void createGame(startingFen); }}><Plus size={18}/><span><strong>新局</strong><small>新建标准开局</small></span></button>
+            <button type="button" className="mobile-drawer-command" title="导入本地棋谱文件" onClick={() => { setMobileDrawerOpen(false); void openDocument(); }}><FolderOpen size={18}/><span><strong>导入棋谱</strong><small>打开本地棋谱文件</small></span></button>
+            <button type="button" className="mobile-drawer-command" title="下载当前棋谱文件" onClick={() => { setMobileDrawerOpen(false); void saveDocument(); }}><Save size={18}/><span><strong>保存棋谱</strong><small>下载当前棋谱</small></span></button>
+            <button type="button" className="mobile-drawer-command" title="编辑当前棋盘局面" onClick={() => { setMobileDrawerOpen(false); setPositionEditorOpen(true); }}><Pencil size={18}/><span><strong>编辑局面</strong><small>摆放或删除棋子</small></span></button>
+            <button type="button" className="mobile-drawer-command" aria-label="翻转红黑方视角" title="翻转红黑方视角" onClick={() => { setMobileDrawerOpen(false); setReversed((value) => !value); }}><FlipVertical2 size={18}/><span><strong>翻转红黑方</strong><small>切换红方或黑方在下</small></span></button>
+            <button type="button" className="mobile-drawer-command" title="复制局面或下载棋谱" onClick={() => { setMobileDrawerOpen(false); setMobileExportOpen(true); }}><Copy size={18}/><span><strong>复制与导出</strong><small>复制 FEN 或下载</small></span></button>
           </div></section>
           <section><small>分析</small><div>
-            <button type="button" disabled={!analysisBusy && (!board.playable || isPlaying || reportBusy || engineSide !== "none" || engineThinking || !online || cloudConnection !== "online")} onClick={() => void (analysisBusy ? stopAnalysis() : runAnalysis())}><Activity size={17}/>{analysisBusy ? "停止分析" : "分析局面"}</button>
+            <button type="button" className="mobile-drawer-command" title={analysisBusy ? "停止当前 Pikafish 分析" : "向 Pikafish 请求当前局面的候选着法"} disabled={!analysisBusy && (!board.playable || isPlaying || reportBusy || engineSide !== "none" || engineThinking || !online)} onClick={() => void (analysisBusy ? stopAnalysis() : runAnalysis())}><Activity size={18}/><span><strong>{analysisBusy ? "停止分析" : "分析局面"}</strong><small>{analysisBusy ? "停止当前搜索" : "请求 Pikafish 推荐"}</small></span></button>
+            <button type="button" className="mobile-drawer-command" title="切换到下一条引擎候选 PV" onClick={() => void advanceMobileForcedVariation()}><GitFork size={18}/><span><strong>强变招</strong><small>预览下一候选 PV</small></span></button>
             <label className="mobile-drawer-toggle"><input type="checkbox" checked={autoAnalyze} onChange={(event) => setAutoAnalyze(event.target.checked)}/><span>自动分析</span></label>
+            <label className="mobile-drawer-toggle"><input type="checkbox" checked={mobileArrowsEnabled} onChange={(event) => { setMobileArrowsEnabled(event.target.checked); if (!event.target.checked) setMobileArrowFocus(undefined); }}/><span>候选连线</span></label>
             <label className="mobile-drawer-select"><span>候选</span><select aria-label="候选数量" value={multipv} onChange={(event) => setMultipv(Number(event.target.value))}>{[1, 2, 3, 4, 5].map((value) => <option value={value} key={value}>MultiPV {value}</option>)}</select></label>
             <label className="mobile-drawer-select"><span>搜索</span><select aria-label="搜索模式" value={searchMode === "time" ? "time" : "depth"} onChange={(event) => { const mode = event.target.value as "time" | "depth"; setSearchMode(mode); setSearchValue(mode === "time" ? 1000 : 20); }}><option value="time">时间</option><option value="depth">深度</option></select></label>
             <label className="mobile-drawer-select"><span>{searchMode === "time" ? "毫秒" : "深度"}</span><input aria-label={searchMode === "time" ? "搜索时间毫秒" : "搜索深度"} type="number" min={searchMode === "time" ? 100 : 1} max={searchMode === "time" ? 5000 : 30} value={searchValue} onChange={(event) => setSearchValue(Math.min(searchMode === "time" ? 5000 : 30, Math.max(searchMode === "time" ? 100 : 1, Number(event.target.value) || (searchMode === "time" ? 1000 : 20))))}/></label>
@@ -6239,8 +6335,8 @@ export default function App() {
             <p className="mobile-cloud-status">首版免登录。连接成功后可直接请求 Pikafish 分析。</p>
           </div></section>
           <section><small>显示</small><div>
-            <label className="mobile-drawer-toggle"><input type="checkbox" checked={mobileArrowsEnabled} onChange={(event) => { setMobileArrowsEnabled(event.target.checked); if (!event.target.checked) setMobileArrowFocus(undefined); }}/><span>候选箭头</span></label>
-            <button type="button" onClick={() => { setMobileDrawerOpen(false); setMobilePanel("settings"); }}><Settings2 size={17}/>设置</button>
+            <button type="button" className="mobile-drawer-command" title={mobileEvaluationVisible ? "收起棋盘上方的局势评分条" : "显示棋盘上方的局势评分条"} onClick={() => setMobileEvaluationVisible((visible) => !visible)}><BarChart3 size={18}/><span><strong>{mobileEvaluationVisible ? "收起局势图" : "显示局势图"}</strong><small>红黑双方局势评分</small></span></button>
+            <button type="button" className="mobile-drawer-command" title="打开棋盘皮肤、候选箭头和引擎参数设置" onClick={() => { setMobileDrawerOpen(false); setMobilePanel("settings"); }}><Settings2 size={18}/><span><strong>更多设置</strong><small>皮肤与引擎参数</small></span></button>
           </div></section>
         </aside>
       </>}
@@ -6359,6 +6455,7 @@ export default function App() {
       {chessPlatform.kind === "desktop" && masterLibraryOpen && <MasterLibraryDialog
         account={syncAccount}
         listPlayers={(query, options) => chessPlatform.listMasterPlayers(query, options)}
+        getStats={(query) => chessPlatform.getMasterLibraryStats(query)}
         listGames={(playerId, query, options) => chessPlatform.listMasterGames(playerId, query, options)}
         onOpenGame={openMasterLibraryGame}
         onClose={() => setMasterLibraryOpen(false)}
@@ -6513,6 +6610,11 @@ export default function App() {
             </span>}
             <small>{board.sideToMove}行棋 · {boardPerspectiveLabel}</small>
           </div>}
+          {mobileEvaluationVisible && <section className={`mobile-evaluation-strip ${boardEvaluationScore == null ? "pending" : boardEvaluationScore < -50 ? "black" : boardEvaluationScore > 50 ? "red" : "balanced"}`} aria-label="当前局势评分条">
+            <div className="mobile-evaluation-track" aria-hidden="true"><span style={{ width: `${boardEvaluationRedShare}%` } as CSSProperties}/></div>
+            <strong>{boardEvaluationRailText.side}</strong><span>{boardEvaluationRailText.score}</span>
+            <button type="button" title="收起局势评分条" aria-label="收起局势评分条" onClick={() => setMobileEvaluationVisible(false)}><ChevronDown size={15}/></button>
+          </section>}
           <div className="board-stage">
             <div className={`board-stage-inner ${isMasterLibraryGame ? "has-master-identity" : ""}`}>
             {isMasterLibraryGame ? <section className="master-game-identity side" aria-label="当前大师棋谱信息">
@@ -6675,16 +6777,26 @@ export default function App() {
           <MobileStudyPanel
             analysisBusy={analysisBusy}
             analysisStale={analysisIsStale}
-            analysisDisabled={!board.playable || isPlaying || reportBusy || engineSide !== "none" || engineThinking || (chessPlatform.kind === "web" && (!online || cloudConnection !== "online"))}
+            analysisDisabled={!board.playable || isPlaying || reportBusy || engineSide !== "none" || engineThinking || (chessPlatform.kind === "web" && !online)}
             analysisConfigText={`MultiPV ${multipv} · ${searchLimitLabel}`}
             analysisHint={analysisError ?? mobileCloudHint}
             engineRows={compactEngineRows}
             bookRows={compactBookRows}
             bookLoading={cloudBookLoading}
             bookError={cloudBookError}
-            manual={manualReviewContent("移动端棋谱着法")}
+            bookSideToMove={board.sideToMove}
+            manual={<MobileManualRoute
+              nodes={board.manualTree ?? []}
+              history={board.history}
+              continuation={board.continuation}
+              currentNode={board.currentNode}
+              disabled={isPlaying}
+              onNavigate={(nodeId) => void navigateTo(nodeId)}
+              onSaveComment={saveCommentForNode}
+              onDelete={(nodeId) => removeNode(nodeId, true)}
+            />}
             onRunAnalysis={() => void (analysisBusy ? stopAnalysis() : runAnalysis())}
-            onFocusCandidate={(row) => { setMobileArrowsEnabled(true); setMobileArrowFocus(row.iccs); }}
+            onFocusCandidate={(row) => { clearCandidatePreviews(); setMobileArrowsEnabled(true); setMobileArrowFocus(row.iccs); }}
             onPreviewCandidate={(row) => void previewCompactEngineRow(row)}
             onPlayCandidate={(row) => void playCompactEngineRow(row)}
             onFocusBookMove={(iccs) => { setMobileArrowsEnabled(true); setMobileArrowFocus(iccs); }}

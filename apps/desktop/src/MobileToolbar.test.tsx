@@ -14,6 +14,8 @@ describe("MobileToolbar", () => {
     expect(onCommand).toHaveBeenNthCalledWith(1, "menu");
     expect(onCommand).toHaveBeenNthCalledWith(2, "save");
     expect(screen.getByRole("button", { name: "显示候选连线" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "翻转红黑方视角" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "强变招：切换到下一候选 PV" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "复制与导出" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "分析当前局面" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "打开设置" })).toBeTruthy();
@@ -28,5 +30,11 @@ describe("MobileToolbar", () => {
   it("disables starting analysis when the current workspace cannot analyze", () => {
     render(<MobileToolbar analysisBusy={false} analysisDisabled colorTheme="dark" onCommand={vi.fn()}/>);
     expect(screen.getByRole("button", { name: "分析当前局面" }).hasAttribute("disabled")).toBe(true);
+  });
+
+  it("shows a visible explanation when a toolbar button receives focus", () => {
+    render(<MobileToolbar analysisBusy={false} analysisDisabled={false} colorTheme="light" onCommand={vi.fn()}/>);
+    fireEvent.focus(screen.getByRole("button", { name: "翻转红黑方视角" }));
+    expect(screen.getByRole("status").textContent).toContain("翻转红黑方视角");
   });
 });

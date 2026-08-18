@@ -1,4 +1,4 @@
-import { Activity, BookOpen, ChevronDown, ClipboardList, Eye, Play, Route } from "lucide-react";
+import { Activity, BookOpen, ChevronDown, ClipboardList, Database, Eye, Play, Route } from "lucide-react";
 import { useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { CompactBookRow, CompactEngineAnalysisRow } from "./CompactWorkspace";
 
@@ -12,6 +12,7 @@ type Props = {
   bookRows: CompactBookRow[];
   bookLoading: boolean;
   bookError?: string;
+  bookSideToMove?: "红方" | "黑方";
   manual: ReactNode;
   onRunAnalysis(): void;
   onFocusCandidate(row: CompactEngineAnalysisRow): void;
@@ -31,6 +32,7 @@ export function MobileStudyPanel({
   bookRows,
   bookLoading,
   bookError,
+  bookSideToMove = "红方",
   manual,
   onRunAnalysis,
   onFocusCandidate,
@@ -58,7 +60,7 @@ export function MobileStudyPanel({
     <div className="mobile-study-tabs" role="tablist" aria-label="移动端研究页签">
       {([
         ["engine", "引擎", Activity],
-        ["book", "开局库", BookOpen],
+        ["book", "云库", Database],
         ["manual", "棋谱", ClipboardList],
       ] as const).map(([id, label, Icon], index) => <button
         key={id}
@@ -87,7 +89,7 @@ export function MobileStudyPanel({
         const canPreview = !!row.line?.pv.length && !row.disabled;
         const disabled = row.disabled || !row.iccs;
         return <article key={row.id} className={`mobile-study-engine-row ${row.previewActive ? "active" : ""}`}>
-          <button type="button" className="mobile-study-engine-main" disabled={disabled} onClick={() => onFocusCandidate(row)} title="在棋盘上显示这条候选箭头">
+          <button type="button" className="mobile-study-engine-main" disabled={disabled} onClick={() => onFocusCandidate(row)} title="在棋盘上显示这条候选 PV 走子路线">
             <b>{row.rank}</b>
             <span>
               <strong>{notation}</strong>
@@ -99,7 +101,7 @@ export function MobileStudyPanel({
             <button type="button" className="mobile-study-preview" aria-label={row.previewActive ? `取消预览候选 ${row.rank}` : `预览候选 ${row.rank}`} title={row.previewActive ? "取消候选线路预览" : "在棋盘上推演这条候选线路"} disabled={!canPreview} onClick={() => onPreviewCandidate(row)}><Eye size={15}/></button>
             <button type="button" className="mobile-study-adopt" aria-label={`采用候选 ${row.rank}`} title="采用这条候选的第一着" disabled={disabled} onClick={() => onPlayCandidate(row)}><Play size={15}/></button>
           </div>
-          {continuation && <details className="mobile-study-pv">
+          {continuation && <details className="mobile-study-pv" onToggle={(event) => { if (event.currentTarget.open) onFocusCandidate(row); }}>
             <summary><ChevronDown size={13}/>后续 PV <span>{moves.length} 步</span></summary>
             <p>{continuation}</p>
           </details>}
@@ -108,14 +110,11 @@ export function MobileStudyPanel({
     </div>}
 
     {tab === "book" && <div id="mobile-study-panel-book" aria-labelledby="mobile-study-tab-book" className="mobile-study-content mobile-book-content" role="tabpanel">
-      <header><span><BookOpen size={15}/><strong>开局库候选</strong></span><small>{bookLoading ? "查询中" : `${bookRows.length} 条`}</small></header>
-      {bookRows.map((row) => <article key={row.id} className="mobile-study-book-item">
-        <button type="button" className="mobile-study-book-row" onClick={() => onFocusBookMove(row.iccs)}>
-          <strong>{row.notation}</strong><span>{row.scoreText}</span><span>{row.winRateText}</span><small>{row.detail || row.source}</small>
-        </button>
-        <button type="button" className="mobile-study-adopt" aria-label={`采用开局库着法 ${row.notation}`} onClick={() => onPlayBookMove(row.iccs)}><Play size={15}/></button>
-      </article>)}
-      {!bookLoading && bookRows.length === 0 && <div className="mobile-study-empty"><BookOpen size={21}/><span>{bookError ?? "当前局面暂无开局库候选。"}</span></div>}
+      <div className="mobile-study-book-head"><span>着法</span><span>胜/和/负</span><span>{bookSideToMove}评分</span></div>
+      {bookRows.map((row) => <button key={row.id} type="button" className="mobile-study-book-row" onClick={() => onPlayBookMove(row.iccs)}>
+        <strong>{row.notation}</strong><span>{`胜率 ${row.winRateText}`}</span><span>{row.scoreText}</span>
+      </button>)}
+      {!bookLoading && bookRows.length === 0 && <div className="mobile-study-empty"><Database size={21}/><span>{bookError ?? "当前局面暂无云库着法。"}</span></div>}
     </div>}
 
     {tab === "manual" && <div id="mobile-study-panel-manual" aria-labelledby="mobile-study-tab-manual" className="mobile-study-content mobile-manual-content" role="tabpanel">

@@ -435,6 +435,10 @@ export type MasterPlayerDto = {
   profileUrl: string;
   gameCount: number;
 };
+export type MasterLibraryStatsDto = {
+  totalPlayers: number;
+  matchedPlayers: number;
+};
 export type MasterGameSummaryDto = {
   id: string;
   title: string;
@@ -766,6 +770,7 @@ export interface ChessPlatform {
   openFlyknifePractice(id: string): Promise<Partial<BoardState>>;
   listCoachReports(): Promise<GameReportDatasetDto[]>;
   listMasterPlayers(query?: string, options?: MasterLibraryPageOptions): Promise<MasterPlayerDto[]>;
+  getMasterLibraryStats(query?: string): Promise<MasterLibraryStatsDto>;
   listMasterGames(playerId: string, query?: string, options?: MasterLibraryPageOptions): Promise<MasterGameSummaryDto[]>;
   openMasterGame(gameId: string): Promise<Partial<BoardState>>;
   listTrainingTasks(): Promise<TrainingTaskDto[]>;

@@ -152,6 +152,13 @@ struct MasterPlayerDto {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct MasterLibraryStatsDto {
+    total_players: u64,
+    matched_players: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct MasterGameSummaryDto {
     id: String,
     title: String,
@@ -285,6 +292,7 @@ fn router(state: AppState, cors: CorsLayer) -> Router {
         .route("/api/v1/subscription/redeem", post(redeem_code))
         .route("/api/v1/analysis", post(analyze))
         .route("/api/v1/master/players", get(list_master_players))
+        .route("/api/v1/master/stats", get(master_library_stats))
         .route(
             "/api/v1/master/players/{player_id}/games",
             get(list_master_player_games),
@@ -530,6 +538,33 @@ async fn list_master_players(
             )
             .collect(),
     ))
+}
+
+async fn master_library_stats(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<MasterLibraryQuery>,
+) -> Result<Json<MasterLibraryStatsDto>, ApiError> {
+    authenticated_user(&headers, &state.jwt_secret)?;
+    let search = normalized_search_term(query.query.as_deref());
+    let like = sql_like_term(&search);
+    let total_players: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM master_players")
+        .fetch_one(&state.pool)
+        .await?;
+    let matched_players: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM master_players
+         WHERE (? = '' OR name LIKE ? OR normalized_name LIKE ? OR source_player_id LIKE ?)",
+    )
+    .bind(&search)
+    .bind(&like)
+    .bind(&like)
+    .bind(&like)
+    .fetch_one(&state.pool)
+    .await?;
+    Ok(Json(MasterLibraryStatsDto {
+        total_players: total_players.max(0) as u64,
+        matched_players: matched_players.max(0) as u64,
+    }))
 }
 
 async fn list_master_player_games(

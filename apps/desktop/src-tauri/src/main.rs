@@ -323,6 +323,13 @@ struct MasterPlayerDto {
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct MasterLibraryStatsDto {
+    total_players: u64,
+    matched_players: u64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct MasterGameSummaryDto {
     id: String,
     title: String,
@@ -10775,6 +10782,18 @@ async fn list_master_players(
 }
 
 #[tauri::command]
+async fn get_master_library_stats(
+    query: Option<String>,
+    state: State<'_, DesktopState>,
+) -> Result<MasterLibraryStatsDto, String> {
+    let mut params = Vec::new();
+    if let Some(query) = query {
+        params.push(("query", query));
+    }
+    master_library_get(&state, "/api/v1/master/stats", &params).await
+}
+
+#[tauri::command]
 async fn list_master_games(
     player_id: String,
     query: Option<String>,
@@ -12251,6 +12270,7 @@ fn main() {
             get_subscription,
             redeem_subscription_code,
             list_master_players,
+            get_master_library_stats,
             list_master_games,
             open_master_game,
             register_sync_account,
