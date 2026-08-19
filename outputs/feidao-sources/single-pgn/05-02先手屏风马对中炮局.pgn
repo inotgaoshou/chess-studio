@@ -1,0 +1,9 @@
+[Event "象棋布局陷阱100局"]
+[Site "xiangqiqipu.com"]
+[Title "02先手屏风马对中炮局"]
+[Opening "先手屏风马对中炮局"]
+[Source "https://www.xiangqiqipu.com/Category/View-6571.html"]
+[Library "飞刀/布局陷阱专题"]
+[Result "*"]
+
+1. h0g2 h7e7 2. b0c2 h9g7 3. c0e2 c6c5 4. d0e1 b7c7 5. a0d0 i9h9 6. i0h0 h9h3 7. g3g4 h3g3 8. h2h8 g3g2 9. h8g8 g2g1 10. g8g6 g1f1 11. g6g9 f9e8 12. g9i9 e9f9 13. b2b8 c7c8 14. d0d9 f9f8 15. h0h8 f8f7 16. i9i7 g7f5 17. d9f9 e8f9 18. h8f8 *

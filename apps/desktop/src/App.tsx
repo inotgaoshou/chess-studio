@@ -4580,8 +4580,10 @@ export default function App() {
       applyBoard(await enqueueBoardOperation(() => chessPlatform.updateComment(nodeId, nextComment)));
       setComment(nextComment);
       setNotice("注释已保存");
+      return true;
     } catch (error) {
       setNotice(friendlyError(error));
+      return false;
     }
   }
 
@@ -6417,7 +6419,7 @@ export default function App() {
         onSaveMirrorPreferences={saveMirrorPreferences}
         onRebuildMirrors={rebuildGameMirrors}
       />}
-      {userManualOpen && <UserManualDialog appVersion={appInfo?.version ?? "1.2.1"} markdown={userManualMarkdown} onClose={() => setUserManualOpen(false)}/>}
+      {userManualOpen && <UserManualDialog appVersion={appInfo?.version ?? "1.2.2"} markdown={userManualMarkdown} onClose={() => setUserManualOpen(false)}/>}
       {aboutOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setAboutOpen(false); }}>
         <section className="about-dialog" role="dialog" aria-modal="true" aria-labelledby="about-title">
           <header><span><Info size={18}/><strong id="about-title">关于棋研</strong></span><button className="tool-button" title="关闭" onClick={() => setAboutOpen(false)}><X size={16}/></button></header>
@@ -6686,11 +6688,10 @@ export default function App() {
                       <g key={arrow.rank} style={{ "--arrow-color": arrow.color } as CSSProperties}>
                         <path id={`analysis-arrow-flow-${arrow.rank}`} className="analysis-arrow-flow-path" d={`M ${arrow.from.x} ${arrow.from.y} L ${arrow.to.x} ${arrow.to.y}`}/>
                         <line x1={arrow.from.x} y1={arrow.from.y} x2={arrow.to.x} y2={arrow.to.y} markerEnd={`url(#analysis-arrowhead-${arrow.rank})`}/>
-                        <path className="analysis-arrow-water-flow" d={`M ${arrow.from.x} ${arrow.from.y} L ${arrow.to.x} ${arrow.to.y}`}/>
                         <g className="analysis-arrow-flow-marker" aria-hidden="true">
                           <path d="M -9 -6 L -2 0 L -9 6"/>
                           <path d="M 1 -6 L 8 0 L 1 6"/>
-                          <animateMotion dur={`${2.7 + arrow.rank * .25}s`} repeatCount="indefinite" rotate="auto">
+                          <animateMotion dur={`${7.2 + arrow.rank * .35}s`} repeatCount="indefinite" rotate="auto">
                             <mpath href={`#analysis-arrow-flow-${arrow.rank}`}/>
                           </animateMotion>
                         </g>

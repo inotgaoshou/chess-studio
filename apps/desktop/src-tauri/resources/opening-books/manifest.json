@@ -1,0 +1,50 @@
+{
+  "version": "2026-08-11-study-v1",
+  "defaultBookId": "learning-top3",
+  "internalUseOnly": true,
+  "vkeyVerification": {
+    "status": "unverified",
+    "note": "FEN to pfBook vkey is not verified yet; bundled books can be selected, but realtime candidates must stay hidden until verification passes."
+  },
+  "books": [
+    {
+      "id": "learning-top3",
+      "name": "学习精选 Top3",
+      "shortName": "学习精选",
+      "kind": "learning",
+      "fileName": "02_learning_top3.pfBook",
+      "description": "每个局面最多保留 3 个候选，默认用于孩子复盘和背布局。",
+      "rowCount": 2148653,
+      "positionCount": 2120232,
+      "maxCandidatesPerPosition": 3,
+      "sha256": "9aa012a23970cc7347d9e38a8ccea68161d61c0715de177090680483bd0efe20",
+      "default": true
+    },
+    {
+      "id": "complete-compatible",
+      "name": "完整兼容库",
+      "shortName": "完整库",
+      "kind": "complete",
+      "fileName": "01_complete_compatible.pfBook",
+      "description": "覆盖优先，适合给软件或引擎加载，候选分支较多。",
+      "rowCount": 2149843,
+      "positionCount": 2120232,
+      "maxCandidatesPerPosition": 32,
+      "sha256": "8337fff4f7f815e56c509df58bd28458dcf3f8c8a5f4f4428013e6a1c2dca361",
+      "default": false
+    },
+    {
+      "id": "obk-observation",
+      "name": "obk 独有观察库",
+      "shortName": "观察库",
+      "kind": "observation",
+      "fileName": "04_obk_unique_observation.pfBook",
+      "description": "只含徐风依旧 obk 的独有安全补充，用于研究，不默认混入学习主线。",
+      "rowCount": 68036,
+      "positionCount": 67269,
+      "maxCandidatesPerPosition": 19,
+      "sha256": "2fc8e1108ea60773ccb504d213d2d43c4c3368ab6a515ffca845c9e76c43d06a",
+      "default": false
+    }
+  ]
+}

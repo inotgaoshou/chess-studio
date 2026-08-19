@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "seedId": "35eeec5e27cf41714b060dd3",
+  "generatedAt": "2026-08-07T06:20:44.009Z",
+  "description": "公开棋谱结构化样本，仅用于本地学习与大师风格启发；不包含用户个人棋谱、反馈、训练记录或原始网页 HTML。",
+  "players": [
+    "赵鑫鑫",
+    "许银川",
+    "王天一",
+    "郑惟桐"
+  ],
+  "byPlayer": {
+    "赵鑫鑫": {
+      "samples": 3000,
+      "analyzed": 200,
+      "analysisRows": 200,
+      "errors": 0
+    },
+    "许银川": {
+      "samples": 3000,
+      "analyzed": 200,
+      "analysisRows": 200,
+      "errors": 0
+    },
+    "王天一": {
+      "samples": 3000,
+      "analyzed": 197,
+      "analysisRows": 200,
+      "errors": 3
+    },
+    "郑惟桐": {
+      "samples": 3000,
+      "analyzed": 194,
+      "analysisRows": 200,
+      "errors": 6
+    }
+  },
+  "files": {
+    "master-style-profiles.json": "sha256:23a1f6ae8484513a50deaf7954cb05b8f92a6549d4217643d3fd7b58d453e3c2",
+    "master-style-samples.jsonl": "sha256:6fa91fa475395ae3cfcbac01d66b3eb5321909fc0c5fdd9a7416596ba1322b57",
+    "master-style-analysis.jsonl": "sha256:159ffa21b9c57403b7ee3fc864f24d599f0ebafbc0959fff6933795e066d2563"
+  }
+}

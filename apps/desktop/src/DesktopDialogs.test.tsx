@@ -64,19 +64,12 @@ function renderDialog(dialog: "engine" | "syncSettings" | "register" | "login" |
 }
 
 describe("DesktopDialogs", () => {
-  it("writes the selected engine executable into the path field", async () => {
-    const enginePath = "/Applications/Pikafish/pikafish-apple-silicon";
-    const chooseEngine = vi.fn(async () => enginePath);
-    const { user } = renderDialog("engine", {
-      preferences: { ...preferences, enginePath: "" },
-      onChooseEngine: chooseEngine,
-    });
+  it("only exposes the bundled Pikafish engine", () => {
+    renderDialog("engine", { preferences: { ...preferences, enginePath: "/engines/other" } });
 
-    await user.click(screen.getByRole("button", { name: "选择外部引擎文件" }));
-
-    expect(chooseEngine).toHaveBeenCalledWith("");
-    expect((screen.getByLabelText("引擎可执行文件") as HTMLInputElement).value).toBe(enginePath);
-    expect((screen.getByRole("button", { name: "检测并保存" }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByLabelText("分析引擎") as HTMLInputElement).value).toBe("内置 Pikafish（随应用安装，推荐）");
+    expect(screen.queryByRole("button", { name: "选择外部引擎文件" })).toBeNull();
+    expect(screen.queryByText("主引擎 + 对比")).toBeNull();
   });
 
   it("uses a stable built-in engine marker instead of showing an install-specific path", async () => {
@@ -84,12 +77,10 @@ describe("DesktopDialogs", () => {
       preferences: { ...preferences, enginePath: BUILTIN_ENGINE_PATH, activeEngineId: "old-external-profile" },
     });
 
-    expect((screen.getByLabelText("引擎可执行文件") as HTMLInputElement).value).toBe("内置 Pikafish（随应用安装，推荐）");
-    expect(screen.getByText(/不依赖本机绝对路径/)).toBeTruthy();
-
-    await user.click(screen.getByRole("button", { name: /内置 Pikafish当前默认|内置 Pikafish随 App 安装/ }));
+    expect((screen.getByLabelText("分析引擎") as HTMLInputElement).value).toBe("内置 Pikafish（随应用安装，推荐）");
+    expect(screen.getByText(/不再加载外部引擎或并行对比档案/)).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "检测并保存" }));
-    expect(props.onSaveEngine).toHaveBeenCalledWith(expect.objectContaining({ enginePath: BUILTIN_ENGINE_PATH, activeEngineId: undefined }), "内置 Pikafish");
+    expect(props.onSaveEngine).toHaveBeenCalledWith(expect.objectContaining({ enginePath: BUILTIN_ENGINE_PATH, activeEngineId: undefined, analysisEngineMode: "single", parallelEngineIds: [], parallelEnginePaths: [] }));
   });
 
   it("does not offer bundled Fairy-Stockfish as a built-in comparison engine", () => {
@@ -98,8 +89,8 @@ describe("DesktopDialogs", () => {
     });
 
     expect(screen.queryByText("内置 Fairy-Stockfish")).toBeNull();
-    expect(screen.queryByTitle("将 内置 Fairy-Stockfish 作为对比引擎，不改变主引擎")).toBeNull();
-    expect(screen.getByText(/Fairy-Stockfish 可作为外部引擎手动导入/)).toBeTruthy();
+    expect(screen.queryByText("外部引擎档案")).toBeNull();
+    expect(screen.queryByText("主引擎 + 对比")).toBeNull();
   });
 
   it("migrates legacy bundled Fairy preferences back to bundled Pikafish", async () => {
@@ -107,7 +98,7 @@ describe("DesktopDialogs", () => {
       preferences: { ...preferences, enginePath: BUILTIN_FAIRY_ENGINE_PATH, parallelEnginePaths: [BUILTIN_FAIRY_ENGINE_PATH] },
     });
 
-    expect((screen.getByLabelText("引擎可执行文件") as HTMLInputElement).value).toBe("内置 Pikafish（随应用安装，推荐）");
+    expect((screen.getByLabelText("分析引擎") as HTMLInputElement).value).toBe("内置 Pikafish（随应用安装，推荐）");
     await user.click(screen.getByRole("button", { name: "检测并保存" }));
     expect(props.onSaveEngine).toHaveBeenCalledWith(expect.objectContaining({
       enginePath: BUILTIN_ENGINE_PATH,
@@ -115,7 +106,7 @@ describe("DesktopDialogs", () => {
     }));
   });
 
-  it("counts only effective comparison engines in the parallel summary", () => {
+  it("clears legacy comparison engines when the dialog opens", () => {
     renderDialog("engine", {
       preferences: {
         ...preferences,
@@ -130,18 +121,15 @@ describe("DesktopDialogs", () => {
       ],
     });
 
-    expect(screen.getByText("当前共 2 个引擎：1 个主引擎 + 1 个对比引擎；勾选“作为对比”后保存生效")).toBeTruthy();
+    expect(screen.queryByText(/当前共 .* 个引擎/)).toBeNull();
+    expect((screen.getByLabelText("分析引擎") as HTMLInputElement).value).toBe("内置 Pikafish（随应用安装，推荐）");
   });
 
-  it("shows a file picker error instead of failing silently", async () => {
-    const { user } = renderDialog("engine", {
-      preferences: { ...preferences, enginePath: "" },
-      onChooseEngine: vi.fn(async () => { throw new Error("dialog.open not allowed"); }),
-    });
-
-    await user.click(screen.getByRole("button", { name: "选择外部引擎文件" }));
-
-    expect((await screen.findByRole("alert")).textContent).toContain("选择引擎文件失败：dialog.open not allowed");
+  it("does not invoke the external engine picker", () => {
+    const chooseEngine = vi.fn(async () => "/engines/other");
+    renderDialog("engine", { onChooseEngine: chooseEngine });
+    expect(screen.queryByRole("button", { name: "选择外部引擎文件" })).toBeNull();
+    expect(chooseEngine).not.toHaveBeenCalled();
   });
 
   it("submits engine settings through the persistent settings callback", async () => {
@@ -151,7 +139,7 @@ describe("DesktopDialogs", () => {
     await user.clear(screen.getByLabelText("每种后续（5-8回合）"));
     await user.type(screen.getByLabelText("每种后续（5-8回合）"), "6");
     await user.click(screen.getByRole("button", { name: "检测并保存" }));
-    expect(props.onSaveEngine).toHaveBeenCalledWith(expect.objectContaining({ enginePath: "/opt/pikafish", multipv: 4, candidateLineMoves: 12 }));
+    expect(props.onSaveEngine).toHaveBeenCalledWith(expect.objectContaining({ enginePath: BUILTIN_ENGINE_PATH, multipv: 4, candidateLineMoves: 12 }));
   });
 
   it("maps the quick difficulty level to fixed depth settings", async () => {
@@ -277,42 +265,12 @@ describe("DesktopDialogs", () => {
     }));
   });
 
-  it("adds Fairy and Cyclone style engines through named presets", async () => {
-    const enginePath = "/Applications/Fairy-Stockfish/fairy-stockfish";
-    const saveEngine = vi.fn(async () => undefined);
-    const { user } = renderDialog("engine", {
-      preferences: { ...preferences, enginePath: "" },
-      onChooseEngine: vi.fn(async () => enginePath),
-      onSaveEngine: saveEngine,
+  it("does not render saved external engine profiles", () => {
+    renderDialog("engine", {
+      engineProfiles: [{ id: "engine-1", name: "象棋旋风", executablePath: "/engines/cyclone", protocol: "ucci", active: true }],
     });
-
-    await user.click(screen.getByRole("button", { name: "导入 Fairy-Stockfish" }));
-    expect((screen.getByLabelText("引擎可执行文件") as HTMLInputElement).value).toBe(enginePath);
-    expect((screen.getByLabelText("引擎档案名称") as HTMLInputElement).value).toBe("Fairy-Stockfish");
-
-    await user.click(screen.getByRole("button", { name: "检测并保存" }));
-    expect(saveEngine).toHaveBeenCalledWith(expect.objectContaining({ enginePath }), "Fairy-Stockfish");
-  });
-
-  it("switches and deletes saved engine profiles from the engine dialog", async () => {
-    const selectEngine = vi.fn(async () => ({ ...preferences, enginePath: "/engines/cyclone", activeEngineId: "engine-2" }));
-    const deleteEngine = vi.fn(async () => ({ ...preferences, enginePath: BUILTIN_ENGINE_PATH, activeEngineId: undefined }));
-    const { user } = renderDialog("engine", {
-      preferences: { ...preferences, activeEngineId: "engine-1" },
-      engineProfiles: [
-        { id: "engine-1", name: "Fairy-Stockfish", executablePath: "/engines/fairy", protocol: "uci", active: true },
-        { id: "engine-2", name: "象棋旋风", executablePath: "/engines/cyclone", protocol: "ucci", active: false },
-      ],
-      onSelectEngineProfile: selectEngine,
-      onDeleteEngineProfile: deleteEngine,
-    });
-
-    await user.click(screen.getAllByRole("button", { name: /象棋旋风/ })[1]);
-    expect(selectEngine).toHaveBeenCalledWith("engine-2");
-    expect((screen.getByLabelText("引擎可执行文件") as HTMLInputElement).value).toBe("/engines/cyclone");
-
-    await user.click(screen.getByRole("button", { name: "删除 象棋旋风 档案" }));
-    expect(deleteEngine).toHaveBeenCalledWith("engine-2");
+    expect(screen.queryByText("象棋旋风")).toBeNull();
+    expect(screen.queryByRole("button", { name: /删除 .* 档案/ })).toBeNull();
   });
 
   it("keeps an engine save failure beside the save controls", async () => {

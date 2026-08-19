@@ -1,0 +1,16 @@
+{
+  "format": 1,
+  "status": "enabled",
+  "purpose": "third-party xiangqi board and piece recognition",
+  "model": {
+    "file": "yolov11.onnx",
+    "sha256": "099c4ef0cbfbd07f680037bb1aabf59024f5c0243964b36aeec7c7a57f7213e1",
+    "source": "public-Xiangqi-master/src/main/resources/model/yolov11.onnx",
+    "license": "GPL-3.0-only",
+    "licenseEvidence": "The upstream repository root LICENSE is GPL-3.0; no separate model exclusion or model-specific license was found in the supplied source tree.",
+    "distributionNotice": "This model is bundled only with the accompanying THIRD_PARTY_NOTICES.md and GPL-3.0 license copy. It is enabled only after the desktop runtime validates this SHA-256 and opens an ONNX session."
+  },
+  "requiredLabels": ["board", "redKing", "redAdvisor", "redElephant", "redHorse", "redRook", "redCannon", "redPawn", "blackKing", "blackAdvisor", "blackElephant", "blackHorse", "blackRook", "blackCannon", "blackPawn"],
+  "input": { "width": 640, "height": 640, "layout": "NCHW" },
+  "distributionPolicy": "Bundled third-party models must retain their upstream license, provenance, SHA-256 and notices. Do not enable a model only by changing this manifest; the runtime adapter must also validate its hash."
+}

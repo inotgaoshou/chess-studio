@@ -6217,7 +6217,8 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 .link-mini-arrow-stem-backdrop { stroke: rgba(20, 23, 22, .32); stroke-width: var(--link-mini-arrow-backdrop-width, 18px); opacity: .56; filter: drop-shadow(0 4px 7px rgba(0, 0, 0, .28)); }
 .link-mini-arrow-stem-outline { stroke: rgba(255, 252, 238, .46); stroke-width: var(--link-mini-arrow-outline-width, 15px); opacity: .62; }
 .link-mini-arrow-stem { stroke-width: var(--link-mini-arrow-stem-width, 8px); opacity: .72; filter: drop-shadow(0 2px 4px rgba(255, 255, 255, .36)) drop-shadow(0 4px 6px rgba(0, 0, 0, .24)); }
-.link-mini-arrow-water-flow { fill: none; stroke: rgba(255, 255, 255, .72); stroke-width: 2.4px; stroke-linecap: round; stroke-dasharray: 12px 26px; stroke-dashoffset: 0; opacity: .9; pointer-events: none; vector-effect: non-scaling-stroke; filter: drop-shadow(0 0 2px rgba(255, 255, 255, .34)); animation: link-mini-flow-forward 2.4s linear infinite; animation-delay: var(--link-mini-arrow-flow-delay, 0s); }
+.link-mini-arrow-flow-marker { pointer-events: none; opacity: .9; filter: drop-shadow(0 0 2px rgba(255, 255, 255, .7)); }
+.link-mini-arrow-flow-marker path { fill: none; stroke: rgba(255, 255, 255, .94); stroke-width: 3.2px; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 .link-mini-arrow-labels { z-index: 8; overflow: visible; pointer-events: none; transition: opacity .16s ease; }
 .link-mini-arrow-label circle { fill: color-mix(in srgb, var(--arrow-color) 88%, #344135); stroke: rgba(255, 255, 255, .9); stroke-width: var(--link-mini-label-circle-stroke-width, 4px); filter: drop-shadow(0 4px 7px rgba(0, 0, 0, .3)); }
 .link-mini-arrow-label.high-contrast text { fill: #fffdf2; font: 900 var(--link-mini-label-font-size, 39px)/1 ui-sans-serif, system-ui, sans-serif; text-anchor: middle; dominant-baseline: central; paint-order: stroke; stroke: rgba(0, 0, 0, .38); stroke-width: var(--link-mini-label-stroke-width, 4px); stroke-linejoin: round; }
@@ -6245,7 +6246,7 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 @keyframes link-mini-flow-forward { from { stroke-dashoffset: 100; } to { stroke-dashoffset: 0; } }
 @keyframes link-mini-flow-reverse { from { stroke-dashoffset: 0; } to { stroke-dashoffset: 100; } }
 @media (prefers-reduced-motion: reduce) {
-  .link-mini-arrow-water-flow,
+  .link-mini-arrow-flow-marker,
   .link-mini-last-move .link-mini-last-arrow-flow,
   .link-mini-tiantian-target-flow-white,
   .link-mini-tiantian-target-flow-blue { animation: none; }

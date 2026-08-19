@@ -117,9 +117,9 @@ export function MobileStudyPanel({
       {!bookLoading && bookRows.length === 0 && <div className="mobile-study-empty"><Database size={21}/><span>{bookError ?? "当前局面暂无云库着法。"}</span></div>}
     </div>}
 
-    {tab === "manual" && <div id="mobile-study-panel-manual" aria-labelledby="mobile-study-tab-manual" className="mobile-study-content mobile-manual-content" role="tabpanel">
+    <div id="mobile-study-panel-manual" aria-labelledby="mobile-study-tab-manual" className="mobile-study-content mobile-manual-content" role="tabpanel" hidden={tab !== "manual"}>
       <header><span><ClipboardList size={15}/><strong>棋谱与变例</strong></span><Route size={15}/></header>
       {manual}
-    </div>}
+    </div>
   </section>;
 }

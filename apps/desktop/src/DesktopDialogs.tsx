@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { FolderOpen, LogIn, Minus, Plus, Save, Settings2, Trash2, UserPlus, X } from "lucide-react";
-import { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH, DEFAULT_BUILTIN_OPENING_BOOK_ID, FALLBACK_BUILTIN_OPENING_BOOK_MANIFEST, type BuiltinOpeningBookManifestDto, type DesktopPreferencesDto, type EngineProfileDto, type StudySessionDto, type SubscriptionDto, type SyncAccountDto, type TrainingSummaryDto, type TrainingTaskDto } from "./platform";
+import { FolderOpen, LogIn, Minus, Plus, Save, Settings2, UserPlus, X } from "lucide-react";
+import { BUILTIN_ENGINE_PATH, DEFAULT_BUILTIN_OPENING_BOOK_ID, FALLBACK_BUILTIN_OPENING_BOOK_MANIFEST, type BuiltinOpeningBookManifestDto, type DesktopPreferencesDto, type EngineProfileDto, type StudySessionDto, type SubscriptionDto, type SyncAccountDto, type TrainingSummaryDto, type TrainingTaskDto } from "./platform";
 import {
   DEFAULT_CANDIDATE_LINE_MOVES,
   DEFAULT_CANDIDATE_LINE_ROUNDS,
@@ -43,7 +43,6 @@ type Props = {
   onRebuildMirrors?(): Promise<void>;
 };
 
-const enginePresetNames = ["Pikafish", "Fairy-Stockfish", "象棋旋风", "象眼 EleEye"] as const;
 const branchArrowColors = [
   ["#2f80ed", "天蓝（推荐）"],
   ["#f2c94c", "金黄"],
@@ -114,7 +113,6 @@ function sanitizeEnginePreferences(preferences: DesktopPreferencesDto): DesktopP
     : preferences.searchMode === "depth" && (preferences.searchValue === 30 || preferences.searchValue === 26)
       ? { searchMode: "depth" as const, searchValue: DEFAULT_ANALYSIS_DEPTH }
       : {};
-  const enginePath = preferences.enginePath === BUILTIN_FAIRY_ENGINE_PATH ? BUILTIN_ENGINE_PATH : preferences.enginePath;
   const multipv = preferences.multipv < MIN_ENGINE_CANDIDATES
     ? DEFAULT_ENGINE_CANDIDATES
     : preferences.multipv;
@@ -125,9 +123,12 @@ function sanitizeEnginePreferences(preferences: DesktopPreferencesDto): DesktopP
     ...preferences,
     ...migratedSearchDefaults,
     autoAnalyze: legacyAnalysisDefaults && preferences.autoAnalyze ? false : preferences.autoAnalyze,
-    enginePath,
+    enginePath: BUILTIN_ENGINE_PATH,
+    activeEngineId: undefined,
+    analysisEngineMode: "single" as const,
     multipv,
-    parallelEnginePaths: (preferences.parallelEnginePaths ?? []).filter((path) => path !== BUILTIN_FAIRY_ENGINE_PATH),
+    parallelEngineIds: [],
+    parallelEnginePaths: [],
     linkConfidenceThreshold: preferences.linkConfidenceThreshold === 70 ? 55 : preferences.linkConfidenceThreshold,
     candidateLineMoves,
     reportDepth: preferences.reportDepth === 30 || preferences.reportDepth === 26 ? DEFAULT_REPORT_DEPTH : preferences.reportDepth,
@@ -160,16 +161,7 @@ function matchesLegacySearchDefaults(preferences: DesktopPreferencesDto) {
 
 function engineInputValue(path: string) {
   if (path === BUILTIN_ENGINE_PATH) return "内置 Pikafish（随应用安装，推荐）";
-  if (path === BUILTIN_FAIRY_ENGINE_PATH) return "内置 Fairy-Stockfish 已移除（请导入外部 Fairy）";
-  return path;
-}
-
-function protocolLabel(protocol: EngineProfileDto["protocol"]) {
-  return protocol === "ucci" ? "UCCI" : "UCI";
-}
-
-function fileNameFromPath(path: string) {
-  return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
+  return "内置 Pikafish（随应用安装，推荐）";
 }
 
 function branchArrowColorLabel(value: string) {
@@ -197,27 +189,14 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
   const [studyTags, setStudyTags] = useState("");
   const [unbindConfirmation, setUnbindConfirmation] = useState("");
   const [unbindCompleted, setUnbindCompleted] = useState(false);
-  const [enginePickerBusy, setEnginePickerBusy] = useState(false);
   const [enginePickerError, setEnginePickerError] = useState("");
   const [engineSaveError, setEngineSaveError] = useState("");
   const [engineSaveSuccess, setEngineSaveSuccess] = useState("");
-  const [engineProfileName, setEngineProfileName] = useState("");
   const initializedDialog = useRef<DesktopDialog>(null);
   const branchArrowColor = branchArrowColors.some(([value]) => value === draft.branchArrowColor) ? draft.branchArrowColor : "#2f80ed";
   const currentRuleLabel = ruleModeOptions.find((option) => option.value === draft.ruleMode)?.detail ?? ruleModeOptions[0].detail;
   const engineDifficulty = engineDifficultyFromPreferences(draft);
   const engineDifficultyDepth = engineDifficultyToDepth(engineDifficulty);
-  const builtInEngines = [
-    { path: BUILTIN_ENGINE_PATH, name: "内置 Pikafish", detail: "随 App 安装，推荐日常拆棋" },
-  ];
-  const comparisonEngineCount = new Set([
-    ...engineProfiles
-      .filter((profile) => profile.id !== draft.activeEngineId && profile.executablePath !== draft.enginePath && draft.parallelEngineIds.includes(profile.id))
-      .map((profile) => `profile:${profile.id}`),
-    ...(draft.parallelEnginePaths ?? [])
-      .filter((path) => path !== draft.enginePath)
-      .map((path) => `path:${path}`),
-  ]).size;
   const effectiveBuiltinOpeningBookManifest = builtinOpeningBookManifest ?? FALLBACK_BUILTIN_OPENING_BOOK_MANIFEST;
   const builtinOpeningBooks = effectiveBuiltinOpeningBookManifest.books;
   const activeBuiltinOpeningBookId = builtinOpeningBooks.some((book) => book.id === draft.activeBuiltinOpeningBookId)
@@ -240,11 +219,9 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
     setRedemptionCode("");
     setUnbindConfirmation("");
     setUnbindCompleted(false);
-    setEnginePickerBusy(false);
     setEnginePickerError("");
     setEngineSaveError("");
     setEngineSaveSuccess("");
-    setEngineProfileName("");
   }, [account.email, dialog, preferences]);
 
   if (!dialog) return null;
@@ -265,89 +242,13 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
     }
   }
 
-  async function chooseEngine(profileName?: string) {
-    setEnginePickerBusy(true);
-    setEnginePickerError("");
-    setEngineSaveError("");
-    setEngineSaveSuccess("");
-    try {
-      const path = await onChooseEngine(draft.enginePath.trim());
-      if (path) {
-        setDraft((current) => ({ ...current, enginePath: path, activeEngineId: undefined }));
-        setEngineProfileName(profileName ?? fileNameFromPath(path));
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setEnginePickerError(`选择引擎文件失败：${message}`);
-    } finally {
-      setEnginePickerBusy(false);
-    }
-  }
-
-  async function selectEngineProfile(profile: EngineProfileDto) {
-    setEnginePickerBusy(true);
-    setEnginePickerError("");
-    setEngineSaveError("");
-    setEngineSaveSuccess("");
-    try {
-      if (onSelectEngineProfile) {
-        const saved = await onSelectEngineProfile(profile.id);
-        setDraft((current) => ({
-          ...current,
-          enginePath: saved.enginePath,
-          activeEngineId: saved.activeEngineId,
-          parallelEngineIds: current.parallelEngineIds.filter((id) => id !== profile.id),
-          parallelEnginePaths: (current.parallelEnginePaths ?? []).filter((path) => path !== saved.enginePath),
-        }));
-      } else {
-        setDraft((current) => ({
-          ...current,
-          enginePath: profile.executablePath,
-          activeEngineId: profile.id,
-          parallelEngineIds: current.parallelEngineIds.filter((id) => id !== profile.id),
-          parallelEnginePaths: (current.parallelEnginePaths ?? []).filter((path) => path !== profile.executablePath),
-        }));
-      }
-      setEngineProfileName(profile.name);
-      setEngineSaveSuccess(`${profile.name} 已设为主引擎；箭头、总评、人机和报告会使用它`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setEnginePickerError(`切换引擎失败：${message}`);
-    } finally {
-      setEnginePickerBusy(false);
-    }
-  }
-
-  async function deleteEngineProfile(profile: EngineProfileDto) {
-    if (!onDeleteEngineProfile) return;
-    setEnginePickerBusy(true);
-    setEnginePickerError("");
-    setEngineSaveError("");
-    setEngineSaveSuccess("");
-    try {
-      const saved = await onDeleteEngineProfile(profile.id);
-      setDraft((current) => ({
-        ...current,
-        enginePath: saved.enginePath,
-        activeEngineId: saved.activeEngineId,
-      }));
-      setEngineSaveSuccess(`已删除 ${profile.name} 档案；不会删除本机引擎文件`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setEnginePickerError(`删除引擎档案失败：${message}`);
-    } finally {
-      setEnginePickerBusy(false);
-    }
-  }
-
   async function saveEngine() {
     setEngineSaveError("");
     setEngineSaveSuccess("");
     try {
       const sanitized = sanitizeEnginePreferences(draft);
       setDraft(sanitized);
-      if (engineProfileName.trim()) await onSaveEngine(sanitized, engineProfileName.trim());
-      else await onSaveEngine(sanitized);
+      await onSaveEngine(sanitized);
       setEngineSaveSuccess("引擎检测成功，设置已保存");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -387,9 +288,8 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
         </header>
 
         {dialog === "engine" && <div className="dialog-form engine-settings-form">
-          <label className="full"><span>引擎可执行文件</span><div className="dialog-input-action"><input value={engineInputValue(draft.enginePath)} readOnly={draft.enginePath === BUILTIN_ENGINE_PATH} placeholder="选择 Pikafish / Fairy / 象眼 / 旋风等 UCI 或 UCCI 引擎" onChange={(event) => { setEnginePickerError(""); setEngineSaveError(""); setEngineSaveSuccess(""); setEngineProfileName(fileNameFromPath(event.target.value)); setDraft({ ...draft, enginePath: event.target.value, activeEngineId: undefined }); }}/><button type="button" title="使用安装包内置 Pikafish" disabled={busy || enginePickerBusy} onClick={() => { setEnginePickerError(""); setEngineSaveError(""); setEngineSaveSuccess(""); setEngineProfileName("内置 Pikafish"); setDraft({ ...draft, enginePath: BUILTIN_ENGINE_PATH, activeEngineId: draft.enginePath === BUILTIN_ENGINE_PATH ? draft.activeEngineId : undefined }); }}>内置</button><button type="button" title="选择外部引擎文件" disabled={busy || enginePickerBusy} onClick={() => void chooseEngine()}><FolderOpen size={15}/></button></div></label>
-          <label className="full"><span>引擎档案名称</span><input value={engineProfileName} placeholder="例如 Fairy-Stockfish、象棋旋风、象眼 EleEye" onChange={(event) => setEngineProfileName(event.target.value)}/></label>
-          {draft.enginePath === BUILTIN_ENGINE_PATH && <p className="dialog-hint full">当前使用安装包内置 Pikafish。正式安装后会从 App 资源目录自动定位，不依赖本机绝对路径；本地对弈与擂台按“{currentRuleLabel}”处理。Fairy-Stockfish 可作为外部引擎手动导入。</p>}
+          <label className="full"><span>分析引擎</span><input aria-label="分析引擎" value={engineInputValue(BUILTIN_ENGINE_PATH)} readOnly/></label>
+          <p className="dialog-hint full">当前版本只使用随应用安装的内置 Pikafish。箭头、整局报告、U10 拆棋、人机和飞刀核验均使用同一引擎；不再加载外部引擎或并行对比档案。</p>
           <section className="engine-simple-settings full" aria-label="皮卡鱼引擎快捷设置">
             <header>
               <div><strong>皮卡鱼引擎</strong><small>快捷项会写入下方专业参数；棋规仍由应用内规则模块裁决</small></div>
@@ -426,47 +326,6 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
               <small>{currentRuleLabel}</small>
             </label>
           </section>
-          <div className="engine-profile-manager full" aria-label="多引擎档案">
-            <header>
-              <div><strong>分析引擎角色</strong><small>先确定 1 个主引擎，再选择需要同时计算的对比引擎</small></div>
-              <button type="button" disabled={busy || enginePickerBusy} onClick={() => void chooseEngine()}><FolderOpen size={13}/>新增外部引擎</button>
-            </header>
-            <div className="engine-analysis-mode" role="group" aria-label="分析引擎模式">
-              <button type="button" className={draft.analysisEngineMode === "single" ? "active" : ""} onClick={() => setDraft((current) => ({ ...current, analysisEngineMode: "single" }))}>仅主引擎</button>
-              <button type="button" className={draft.analysisEngineMode === "parallel" ? "active" : ""} onClick={() => setDraft((current) => ({ ...current, analysisEngineMode: "parallel" }))}>主引擎 + 对比</button>
-              <small>{draft.analysisEngineMode === "parallel" ? `当前共 ${comparisonEngineCount + 1} 个引擎：1 个主引擎 + ${comparisonEngineCount} 个对比引擎；勾选“作为对比”后保存生效` : "仅使用标有“主引擎”的一项进行分析"}</small>
-            </div>
-            <div className="engine-preset-grid" aria-label="常用引擎预设">
-              {enginePresetNames.map((name) => <button type="button" key={name} disabled={busy || enginePickerBusy} onClick={() => void chooseEngine(name)} title={`选择 ${name} 的外部可执行文件`}>导入 {name}</button>)}
-            </div>
-            <div className="engine-profile-list">
-              <div className="engine-profile-list-title"><strong>主引擎候选</strong><small>点击任意一项设为主引擎；内置引擎随应用提供，不是可删除档案</small></div>
-              {builtInEngines.map(({ path, name, detail }) => {
-                const active = draft.enginePath === path;
-                const selectedForComparison = (draft.parallelEnginePaths ?? []).includes(path);
-                return <div className={`engine-profile-row saved builtin ${draft.analysisEngineMode === "parallel" && !active ? "has-compare" : ""} ${active ? "active" : ""}`} key={path}>
-                  {draft.analysisEngineMode === "parallel" && !active && <label className="engine-profile-compare" title={`将 ${name} 作为对比引擎，不改变主引擎`}><input type="checkbox" checked={selectedForComparison} onChange={(event) => setDraft((current) => ({ ...current, parallelEnginePaths: event.target.checked ? [...new Set([...(current.parallelEnginePaths ?? []), path])] : (current.parallelEnginePaths ?? []).filter((value) => value !== path) }))}/><span>作为对比</span></label>}
-                  <button type="button" title={`设 ${name} 为主引擎`} disabled={busy || enginePickerBusy} onClick={() => { setEnginePickerError(""); setEngineSaveError(""); setEngineSaveSuccess(`${name} 已设为主引擎；内置引擎不可删除`); setEngineProfileName(name); setDraft((current) => ({ ...current, enginePath: path, activeEngineId: undefined, parallelEnginePaths: (current.parallelEnginePaths ?? []).filter((value) => value !== path) })); }}>
-                    <span><strong>{name}</strong><small>{active ? "当前默认：箭头、总评、人机和报告均使用它" : `${detail} · 点击设为主引擎`}</small></span>
-                    <em>{active ? "主引擎" : "内置 · 不可删除"}</em>
-                  </button>
-                </div>;
-              })}
-              {engineProfiles.length > 0 && <div className="engine-profile-list-title external"><strong>外部引擎档案</strong><small>可设为主引擎，也可加入并行对比；删除只移除档案，不删除本机文件</small></div>}
-              {engineProfiles.map((profile) => {
-                const active = draft.activeEngineId === profile.id || draft.enginePath === profile.executablePath;
-                return <div className={`engine-profile-row saved ${draft.analysisEngineMode === "parallel" && !active ? "has-compare" : ""} ${active ? "active" : ""}`} key={profile.id}>
-                  {draft.analysisEngineMode === "parallel" && !active && <label className="engine-profile-compare" title={`将 ${profile.name} 作为对比引擎，不改变主引擎`}><input type="checkbox" checked={draft.parallelEngineIds.includes(profile.id)} onChange={(event) => setDraft((current) => ({ ...current, parallelEngineIds: event.target.checked ? [...new Set([...current.parallelEngineIds, profile.id])] : current.parallelEngineIds.filter((id) => id !== profile.id) }))}/><span>作为对比</span></label>}
-                  <button type="button" title={`设 ${profile.name} 为主引擎`} disabled={busy || enginePickerBusy} onClick={() => void selectEngineProfile(profile)}>
-                    <span><strong>{profile.name}</strong><small>{active ? "当前默认：箭头、总评、人机和报告均使用它" : `${profile.executablePath} · 点击设为主引擎`}</small></span>
-                    <em>{active ? "主引擎" : protocolLabel(profile.protocol)}</em>
-                  </button>
-                  <button type="button" className="danger" title={`删除 ${profile.name} 档案`} aria-label={`删除 ${profile.name} 档案`} disabled={busy || enginePickerBusy} onClick={() => void deleteEngineProfile(profile)}><Trash2 size={12}/></button>
-                </div>;
-              })}
-              {engineProfiles.length === 0 && <p>还没有外部引擎档案。选择外部引擎后点“检测并保存”，会自动加入这里。</p>}
-            </div>
-          </div>
           {enginePickerError && <p className="dialog-warning full" role="alert">{enginePickerError}</p>}
           <label><span>线程</span><input type="number" min={1} max={64} value={draft.threads} onChange={(event) => setDraft({ ...draft, threads: Number(event.target.value) })}/></label>
           <label><span>Hash (MB)</span><input type="number" min={16} max={4096} step={16} value={draft.hashMb} onChange={(event) => setDraft({ ...draft, hashMb: Number(event.target.value) })}/></label>
@@ -502,7 +361,7 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
           {!!draft.eleeyeBookPaths?.length && <div className="full dialog-book-list"><span>ElephantEye 本地学习开局库</span>{draft.eleeyeBookPaths.map((path) => <label className="check-row" key={path}><input type="checkbox" checked={!draft.disabledEleeyeBookPaths?.includes(path)} onChange={(event) => setDraft({ ...draft, disabledEleeyeBookPaths: event.target.checked ? (draft.disabledEleeyeBookPaths ?? []).filter((value) => value !== path) : [...(draft.disabledEleeyeBookPaths ?? []), path] })}/><span>{path.split(/[\\/]/).at(-1)}</span></label>)}</div>}
           {engineSaveError && <p className="dialog-warning full engine-save-error" role="alert">{engineSaveError}</p>}
           {engineSaveSuccess && <p className="dialog-success full engine-save-success" role="status">{engineSaveSuccess}</p>}
-          <footer><button onClick={close} disabled={busy || enginePickerBusy}>{engineSaveSuccess ? "关闭" : "取消"}</button><button className="primary" disabled={busy || enginePickerBusy || !draft.enginePath.trim()} onClick={() => void saveEngine()}><Save size={14}/>{busy ? "检测中…" : enginePickerBusy ? "选择中…" : "检测并保存"}</button></footer>
+          <footer><button onClick={close} disabled={busy}>{engineSaveSuccess ? "关闭" : "取消"}</button><button className="primary" disabled={busy || !draft.enginePath.trim()} onClick={() => void saveEngine()}><Save size={14}/>{busy ? "检测中…" : "检测并保存"}</button></footer>
         </div>}
 
         {dialog === "syncSettings" && <div className="dialog-form">

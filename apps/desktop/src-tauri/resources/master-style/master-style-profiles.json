@@ -1,0 +1,1505 @@
+[
+  {
+    "profileId": "8c8dd7a16211b567",
+    "playerName": "赵鑫鑫",
+    "normalizedName": "赵鑫鑫",
+    "generatedAt": "2026-08-05T16:00:07.615Z",
+    "sources": [
+      {
+        "id": "e6610f9b-49bf-4449-b3b3-bc64a7eff148",
+        "name": "赵鑫鑫",
+        "samples": 79015,
+        "gameRefs": 1740,
+        "profileUrl": "http://www.gdchess.com/xqgame/xqpgame.asp?pid=0074",
+        "sourceSite": "gdchess.com",
+        "normalizedName": "赵鑫鑫",
+        "sourcePlayerId": "0074"
+      }
+    ],
+    "gameSummary": {
+      "games": 1740,
+      "latestDate": "2023-12-13",
+      "avgMoveCount": 90.7,
+      "earliestDate": "2002-11-02"
+    },
+    "sideDistribution": {
+      "black": 823,
+      "red": 917
+    },
+    "resultDistribution": {
+      "draw": 865,
+      "loss": 223,
+      "win": 652
+    },
+    "resultRates": {
+      "win": 37.5,
+      "draw": 49.7,
+      "loss": 12.8,
+      "unknown": 0
+    },
+    "phaseSamples": {
+      "endgame": 19566,
+      "middle": 38574,
+      "opening": 20875
+    },
+    "phaseRates": {
+      "endgame": 24.8,
+      "middle": 48.8,
+      "opening": 26.4
+    },
+    "pieceMoves": {
+      "a": 3650,
+      "b": 4467,
+      "c": 17360,
+      "k": 3324,
+      "n": 17401,
+      "p": 10980,
+      "r": 21833
+    },
+    "pieceMoveRanking": [
+      {
+        "piece": "r",
+        "label": "车",
+        "count": 21833
+      },
+      {
+        "piece": "n",
+        "label": "马",
+        "count": 17401
+      },
+      {
+        "piece": "c",
+        "label": "炮",
+        "count": 17360
+      },
+      {
+        "piece": "p",
+        "label": "兵/卒",
+        "count": 10980
+      },
+      {
+        "piece": "b",
+        "label": "相/象",
+        "count": 4467
+      },
+      {
+        "piece": "a",
+        "label": "仕/士",
+        "count": 3650
+      },
+      {
+        "piece": "k",
+        "label": "帅/将",
+        "count": 3324
+      }
+    ],
+    "topEvents": [
+      {
+        "name": "2022全国象棋男子甲级联赛",
+        "count": 42
+      },
+      {
+        "name": "2021全国象棋男子甲级联赛",
+        "count": 39
+      },
+      {
+        "name": "2023全国象棋男子甲级联赛",
+        "count": 37
+      },
+      {
+        "name": "2017全国象棋男子甲级联赛",
+        "count": 31
+      },
+      {
+        "name": "2015全国象棋男子甲级联赛",
+        "count": 31
+      },
+      {
+        "name": "2018全国象棋男子甲级联赛",
+        "count": 26
+      },
+      {
+        "name": "2015全国个人赛男子甲组",
+        "count": 26
+      },
+      {
+        "name": "2016全国象棋男子甲级联赛",
+        "count": 26
+      },
+      {
+        "name": "2020全国象棋男子甲级联赛",
+        "count": 26
+      },
+      {
+        "name": "2014全国象棋甲级联赛",
+        "count": 25
+      },
+      {
+        "name": "2019全国象棋男子甲级联赛",
+        "count": 25
+      },
+      {
+        "name": "2012伊泰杯象棋甲级联赛",
+        "count": 23
+      }
+    ],
+    "topOpenings": [
+      {
+        "name": "未知开局",
+        "count": 1740
+      }
+    ],
+    "frequentMoves": [
+      {
+        "move": "h0g2",
+        "count": 767,
+        "phase": "opening",
+        "piece": "n",
+        "phaseLabel": "开局",
+        "pieceLabel": "马"
+      },
+      {
+        "move": "h9g7",
+        "count": 745,
+        "phase": "opening",
+        "piece": "n",
+        "phaseLabel": "开局",
+        "pieceLabel": "马"
+      },
+      {
+        "move": "c3c4",
+        "count": 660,
+        "phase": "opening",
+        "piece": "p",
+        "phaseLabel": "开局",
+        "pieceLabel": "兵/卒"
+      },
+      {
+        "move": "i0h0",
+        "count": 631,
+        "phase": "opening",
+        "piece": "r",
+        "phaseLabel": "开局",
+        "pieceLabel": "车"
+      },
+      {
+        "move": "b0c2",
+        "count": 612,
+        "phase": "opening",
+        "piece": "n",
+        "phaseLabel": "开局",
+        "pieceLabel": "马"
+      },
+      {
+        "move": "i9h9",
+        "count": 603,
+        "phase": "opening",
+        "piece": "r",
+        "phaseLabel": "开局",
+        "pieceLabel": "车"
+      },
+      {
+        "move": "b9c7",
+        "count": 555,
+        "phase": "opening",
+        "piece": "n",
+        "phaseLabel": "开局",
+        "pieceLabel": "马"
+      },
+      {
+        "move": "h2e2",
+        "count": 530,
+        "phase": "opening",
+        "piece": "c",
+        "phaseLabel": "开局",
+        "pieceLabel": "炮"
+      },
+      {
+        "move": "c6c5",
+        "count": 484,
+        "phase": "opening",
+        "piece": "p",
+        "phaseLabel": "开局",
+        "pieceLabel": "兵/卒"
+      },
+      {
+        "move": "g6g5",
+        "count": 448,
+        "phase": "opening",
+        "piece": "p",
+        "phaseLabel": "开局",
+        "pieceLabel": "兵/卒"
+      },
+      {
+        "move": "g3g4",
+        "count": 424,
+        "phase": "opening",
+        "piece": "p",
+        "phaseLabel": "开局",
+        "pieceLabel": "兵/卒"
+      },
+      {
+        "move": "a0b0",
+        "count": 419,
+        "phase": "opening",
+        "piece": "r",
+        "phaseLabel": "开局",
+        "pieceLabel": "车"
+      },
+      {
+        "move": "a9b9",
+        "count": 387,
+        "phase": "opening",
+        "piece": "r",
+        "phaseLabel": "开局",
+        "pieceLabel": "车"
+      },
+      {
+        "move": "f0e1",
+        "count": 336,
+        "phase": "middle",
+        "piece": "a",
+        "phaseLabel": "中局",
+        "pieceLabel": "仕/士"
+      },
+      {
+        "move": "a0a1",
+        "count": 313,
+        "phase": "opening",
+        "piece": "r",
+        "phaseLabel": "开局",
+        "pieceLabel": "车"
+      },
+      {
+        "move": "c9e7",
+        "count": 310,
+        "phase": "opening",
+        "piece": "b",
+        "phaseLabel": "开局",
+        "pieceLabel": "相/象"
+      },
+      {
+        "move": "d0e1",
+        "count": 306,
+        "phase": "middle",
+        "piece": "a",
+        "phaseLabel": "中局",
+        "pieceLabel": "仕/士"
+      },
+      {
+        "move": "g0e2",
+        "count": 303,
+        "phase": "opening",
+        "piece": "b",
+        "phaseLabel": "开局",
+        "pieceLabel": "相/象"
+      },
+      {
+        "move": "e3e4",
+        "count": 293,
+        "phase": "middle",
+        "piece": "p",
+        "phaseLabel": "中局",
+        "pieceLabel": "兵/卒"
+      },
+      {
+        "move": "g9e7",
+        "count": 290,
+        "phase": "opening",
+        "piece": "b",
+        "phaseLabel": "开局",
+        "pieceLabel": "相/象"
+      },
+      {
+        "move": "b0a2",
+        "count": 271,
+        "phase": "opening",
+        "piece": "n",
+        "phaseLabel": "开局",
+        "pieceLabel": "马"
+      },
+      {
+        "move": "f9e8",
+        "count": 255,
+        "phase": "middle",
+        "piece": "a",
+        "phaseLabel": "中局",
+        "pieceLabel": "仕/士"
+      },
+      {
+        "move": "h7i7",
+        "count": 253,
+        "phase": "opening",
+        "piece": "c",
+        "phaseLabel": "开局",
+        "pieceLabel": "炮"
+      },
+      {
+        "move": "d9e8",
+        "count": 247,
+        "phase": "opening",
+        "piece": "a",
+        "phaseLabel": "开局",
+        "pieceLabel": "仕/士"
+      },
+      {
+        "move": "c4c5",
+        "count": 247,
+        "phase": "middle",
+        "piece": "p",
+        "phaseLabel": "中局",
+        "pieceLabel": "兵/卒"
+      }
+    ],
+    "sampledTrainingRows": 3000,
+    "notes": [
+      "这是公开棋谱统计得到的“风格启发”画像，不代表棋手本人意见，也不是冒充棋手。",
+      "Pikafish 仍负责判断棋力；大师画像只适合在引擎可接受候选中辅助重排、找相似实战和生成训练提示。",
+      "当前脚本只读 MySQL，不写数据库；后续可把稳定画像版本写入 SQLite 或 MySQL 的派生表。"
+    ]
+  },
+  {
+    "profileId": "38d1baa1fa60c915",
+    "playerName": "许银川",
+    "normalizedName": "许银川",
+    "generatedAt": "2026-08-05T16:00:09.521Z",
+    "sources": [
+      {
+        "id": "8a9ace48-c533-416e-8ca9-6f44976128db",
+        "name": "许银川",
+        "samples": 75149,
+        "gameRefs": 1664,
+        "profileUrl": "http://www.gdchess.com/xqgame/xqpgame.asp?pid=0001",
+        "sourceSite": "gdchess.com",
+        "normalizedName": "许银川",
+        "sourcePlayerId": "0001"
+      }
+    ],
+    "gameSummary": {
+      "games": 1664,
+      "latestDate": "2025-05-07",
+      "avgMoveCount": 90.2,
+      "earliestDate": "1994-04-20"
+    },
+    "sideDistribution": {
+      "black": 818,
+      "red": 846
+    },
+    "resultDistribution": {
+      "draw": 855,
+      "loss": 126,
+      "win": 683
+    },
+    "resultRates": {
+      "win": 41,
+      "draw": 51.4,
+      "loss": 7.6,
+      "unknown": 0
+    },
+    "phaseSamples": {
+      "endgame": 18204,
+      "middle": 36993,
+      "opening": 19952
+    },
+    "phaseRates": {
+      "endgame": 24.2,
+      "middle": 49.2,
+      "opening": 26.5
+    },
+    "pieceMoves": {
+      "a": 3582,
+      "b": 4259,
+      "c": 17203,
+      "k": 2601,
+      "n": 16186,
+      "p": 10454,
+      "r": 20828,
+      "unknown": 36
+    },
+    "pieceMoveRanking": [
+      {
+        "piece": "r",
+        "label": "车",
+        "count": 20828
+      },
+      {
+        "piece": "c",
+        "label": "炮",
+        "count": 17203
+      },
+      {
+        "piece": "n",
+        "label": "马",
+        "count": 16186
+      },
+      {
+        "piece": "p",
+        "label": "兵/卒",
+        "count": 10454
+      },
+      {
+        "piece": "b",
+        "label": "相/象",
+        "count": 4259
+      },
+      {
+        "piece": "a",
+        "label": "仕/士",
+        "count": 3582
+      },
+      {
+        "piece": "k",
+        "label": "帅/将",
+        "count": 2601
+      },
+      {
+        "piece": "unknown",
+        "label": "未知",
+        "count": 36
+      }
+    ],
+    "topEvents": [
+      {
+        "name": "2021全国象棋男子甲级联赛",
+        "count": 40
+      },
+      {
+        "name": "2015全国象棋男子甲级联赛",
+        "count": 32
+      },
+      {
+        "name": "2014全国象棋甲级联赛",
+        "count": 31
+      },
+      {
+        "name": "2018全国象棋男子甲级联赛",
+        "count": 30
+      },
+      {
+        "name": "2019全国象棋男子甲级联赛",
+        "count": 29
+      },
+      {
+        "name": "2016全国象棋男子甲级联赛",
+        "count": 28
+      },
+      {
+        "name": "2017全国象棋男子甲级联赛",
+        "count": 28
+      },
+      {
+        "name": "2020全国象棋男子甲级联赛",
+        "count": 25
+      },
+      {
+        "name": "未归类对局",
+        "count": 24
+      },
+      {
+        "name": "2012伊泰杯象棋甲级联赛",
+        "count": 24
+      },
+      {
+        "name": "2006启新高尔夫全国象棋甲级联赛",
+        "count": 22
+      },
+      {
+        "name": "2007七斗星杯全国象棋甲级联赛",
+        "count": 22
+      }
+    ],
+    "topOpenings": [
+      {
+        "name": "未知开局",
+        "count": 1664
+      }
+    ],
+    "frequentMoves": [
+      {
+        "move": "h9g7",
+        "count": 776,
+        "phase": "opening",
+        "piece": "n",
+        "phaseLabel": "开局",
+        "pieceLabel": "马"
+      },
+      {
+        "move": "h0g2",
+        "count": 725,
+        "phase": "opening",
+        "piece": "n",
+        "phaseLabel": "开局",
+        "pieceLabel": "马"
+      },
+      {
+        "move": "b9c7",
+        "count": 658,
+        "phase": "opening",
+        "piece": "n",
+        "phaseLabel": "开局",
+        "pieceLabel": "马"
+      },
+      {
+        "move": "i9h9",
+        "count": 610,
+        "phase": "opening",
+        "piece": "r",
+        "phaseLabel": "开局",
+        "pieceLabel": "车"
+      },
+      {
+        "move": "c3c4",
+        "count": 593,
+        "phase": "opening",
+        "piece": "p",
+        "phaseLabel": "开局",
+        "pieceLabel": "兵/卒"
+      },
+      {
+        "move": "i0h0",
+        "count": 588,
+        "phase": "opening",
+        "piece": "r",
+        "phaseLabel": "开局",
+        "pieceLabel": "车"
+      },
+      {
+        "move": "b0c2",
+        "count": 552,
+        "phase": "opening",
+        "piece": "n",
+        "phaseLabel": "开局",
+        "pieceLabel": "马"
+      },
+      {
+        "move": "g6g5",
+        "count": 508,
+        "phase": "opening",
+        "piece": "p",
+        "phaseLabel": "开局",
+        "pieceLabel": "兵/卒"
+      },
+      {
+        "move": "c6c5",
+        "count": 485,
+        "phase": "opening",
+        "piece": "p",
+        "phaseLabel": "开局",
+        "pieceLabel": "兵/卒"
+      },
+      {
+        "move": "g3g4",
+        "count": 461,
+        "phase": "opening",
+        "piece": "p",
+        "phaseLabel": "开局",
+        "pieceLabel": "兵/卒"
+      },
+      {
+        "move": "h2e2",
+        "count": 454,
+        "phase": "opening",
+        "piece": "c",
+        "phaseLabel": "开局",
+        "pieceLabel": "炮"
+      },
+      {
+        "move": "a0b0",
+        "count": 418,
+        "phase": "opening",
+        "piece": "r",
+        "phaseLabel": "开局",
+        "pieceLabel": "车"
+      },
+      {
+        "move": "c9e7",
+        "count": 364,
+        "phase": "opening",
+        "piece": "b",
+        "phaseLabel": "开局",
+        "pieceLabel": "相/象"
+      },
+      {
+        "move": "a9b9",
+        "count": 332,
+        "phase": "opening",
+        "piece": "r",
+        "phaseLabel": "开局",
+        "pieceLabel": "车"
+      },
+      {
+        "move": "f0e1",
+        "count": 326,
+        "phase": "middle",
+        "piece": "a",
+        "phaseLabel": "中局",
+        "pieceLabel": "仕/士"
+      },
+      {
+        "move": "d0e1",
+        "count": 308,
+        "phase": "middle",
+        "piece": "a",
+        "phaseLabel": "中局",
+        "pieceLabel": "仕/士"
+      },
+      {
+        "move": "e3e4",
+        "count": 296,
+        "phase": "middle",
+        "piece": "p",
+        "phaseLabel": "中局",
+        "pieceLabel": "兵/卒"
+      },
+      {
+        "move": "g0e2",
+        "count": 296,
+        "phase": "opening",
+        "piece": "b",
+        "phaseLabel": "开局",
+        "pieceLabel": "相/象"
+      },
+      {
+        "move": "a0a1",
+        "count": 277,
+        "phase": "opening",
+        "piece": "r",
+        "phaseLabel": "开局",
+        "pieceLabel": "车"
+      },
+      {
+        "move": "b0a2",
+        "count": 258,
+        "phase": "opening",
+        "piece": "n",
+        "phaseLabel": "开局",
+        "pieceLabel": "马"
+      },
+      {
+        "move": "d9e8",
+        "count": 255,
+        "phase": "middle",
+        "piece": "a",
+        "phaseLabel": "中局",
+        "pieceLabel": "仕/士"
+      },
+      {
+        "move": "d9e8",
+        "count": 253,
+        "phase": "opening",
+        "piece": "a",
+        "phaseLabel": "开局",
+        "pieceLabel": "仕/士"
+      },
+      {
+        "move": "h7i7",
+        "count": 249,
+        "phase": "opening",
+        "piece": "c",
+        "phaseLabel": "开局",
+        "pieceLabel": "炮"
+      },
+      {
+        "move": "f9e8",
+        "count": 244,
+        "phase": "middle",
+        "piece": "a",
+        "phaseLabel": "中局",
+        "pieceLabel": "仕/士"
+      },
+      {
+        "move": "c4c5",
+        "count": 240,
+        "phase": "middle",
+        "piece": "p",
+        "phaseLabel": "中局",
+        "pieceLabel": "兵/卒"
+      }
+    ],
+    "sampledTrainingRows": 3000,
+    "notes": [
+      "这是公开棋谱统计得到的“风格启发”画像，不代表棋手本人意见，也不是冒充棋手。",
+      "Pikafish 仍负责判断棋力；大师画像只适合在引擎可接受候选中辅助重排、找相似实战和生成训练提示。",
+      "当前脚本只读 MySQL，不写数据库；后续可把稳定画像版本写入 SQLite 或 MySQL 的派生表。"
+    ]
+  },
+  {
+    "profileId": "c173368f13beee2e",
+    "playerName": "王天一",
+    "normalizedName": "王天一",
+    "generatedAt": "2026-08-05T16:00:11.468Z",
+    "sources": [
+      {
+        "id": "41fa9acf-9dbe-4f76-8a16-d0b379d9020d",
+        "name": "王天一",
+        "samples": 73752,
+        "gameRefs": 1568,
+        "profileUrl": "http://www.gdchess.com/xqgame/xqpgame.asp?pid=0312&page=41",
+        "sourceSite": "gdchess.com",
+        "normalizedName": "王天一",
+        "sourcePlayerId": "0312"
+      }
+    ],
+    "gameSummary": {
+      "games": 1568,
+      "latestDate": "2023-12-10",
+      "avgMoveCount": 93.9,
+      "earliestDate": "2008-10-26"
+    },
+    "sideDistribution": {
+      "black": 765,
+      "red": 803
+    },
+    "resultDistribution": {
+      "draw": 633,
+      "loss": 142,
+      "win": 793
+    },
+    "resultRates": {
+      "win": 50.6,
+      "draw": 40.4,
+      "loss": 9.1,
+      "unknown": 0
+    },
+    "phaseSamples": {
+      "endgame": 19423,
+      "middle": 35518,
+      "opening": 18811
+    },
+    "phaseRates": {
+      "endgame": 26.3,
+      "middle": 48.2,
+      "opening": 25.5
+    },
+    "pieceMoves": {
+      "a": 3474,
+      "b": 4139,
+      "c": 16465,
+      "k": 3596,
+      "n": 15988,
+      "p": 10190,
+      "r": 19898,
+      "unknown": 2
+    },
+    "pieceMoveRanking": [
+      {
+        "piece": "r",
+        "label": "车",
+        "count": 19898
+      },
+      {
+        "piece": "c",
+        "label": "炮",
+        "count": 16465
+      },
+      {
+        "piece": "n",
+        "label": "马",
+        "count": 15988
+      },
+      {
+        "piece": "p",
+        "label": "兵/卒",
+        "count": 10190
+      },
+      {
+        "piece": "b",
+        "label": "相/象",
+        "count": 4139
+      },
+      {
+        "piece": "k",
+        "label": "帅/将",
+        "count": 3596
+      },
+      {
+        "piece": "a",
+        "label": "仕/士",
+        "count": 3474
+      },
+      {
+        "piece": "unknown",
+        "label": "未知",
+        "count": 2
+      }
+    ],
+    "topEvents": [
+      {
+        "name": "2023全国象棋男子甲级联赛",
+        "count": 45
+      },
+      {
+        "name": "2021全国象棋男子甲级联赛",
+        "count": 36
+      },
+      {
+        "name": "2022全国象棋男子甲级联赛",
+        "count": 31
+      },
+      {
+        "name": "2018全国象棋男子甲级联赛",
+        "count": 29
+      },
+      {
+        "name": "2015全国象棋男子甲级联赛",
+        "count": 28
+      },
+      {
+        "name": "2019全国象棋男子甲级联赛",
+        "count": 28
+      },
+      {
+        "name": "2017全国象棋男子甲级联赛",
+        "count": 27
+      },
+      {
+        "name": "2014全国象棋甲级联赛",
+        "count": 26
+      },
+      {
+        "name": "2012伊泰杯象棋甲级联赛",
+        "count": 24
+      },
+      {
+        "name": "2020全国象棋男子甲级联赛",
+        "count": 22
+      },
+      {
+        "name": "2013全国象棋甲级联赛",
+        "count": 21
+      },
+      {
+        "name": "2011伊泰杯象棋甲级联赛",
+        "count": 20
+      }
+    ],
+    "topOpenings": [
+      {
+        "name": "未知开局",
+        "count": 1568
+      }
+    ],
+    "frequentMoves": [
+      {
+        "move": "h9g7",
+        "count": 695,
+        "phase": "opening",
+        "piece": "n",
+        "phaseLabel": "开局",
+        "pieceLabel": "马"
+      },
+      {
+        "move": "h0g2",
+        "count": 612,
+        "phase": "opening",
+        "piece": "n",
+        "phaseLabel": "开局",
+        "pieceLabel": "马"
+      },
+      {
+        "move": "c3c4",
+        "count": 590,
+        "phase": "opening",
+        "piece": "p",
+        "phaseLabel": "开局",
+        "pieceLabel": "兵/卒"
+      },
+      {
+        "move": "i9h9",
+        "count": 557,
+        "phase": "opening",
+        "piece": "r",
+        "phaseLabel": "开局",
+        "pieceLabel": "车"
+      },
+      {
+        "move": "b0c2",
+        "count": 533,
+        "phase": "opening",
+        "piece": "n",
+        "phaseLabel": "开局",
+        "pieceLabel": "马"
+      },
+      {
+        "move": "b9c7",
+        "count": 514,
+        "phase": "opening",
+        "piece": "n",
+        "phaseLabel": "开局",
+        "pieceLabel": "马"
+      },
+      {
+        "move": "c6c5",
+        "count": 468,
+        "phase": "opening",
+        "piece": "p",
+        "phaseLabel": "开局",
+        "pieceLabel": "兵/卒"
+      },
+      {
+        "move": "i0h0",
+        "count": 458,
+        "phase": "opening",
+        "piece": "r",
+        "phaseLabel": "开局",
+        "pieceLabel": "车"
+      },
+      {
+        "move": "g6g5",
+        "count": 448,
+        "phase": "opening",
+        "piece": "p",
+        "phaseLabel": "开局",
+        "pieceLabel": "兵/卒"
+      },
+      {
+        "move": "g3g4",
+        "count": 442,
+        "phase": "opening",
+        "piece": "p",
+        "phaseLabel": "开局",
+        "pieceLabel": "兵/卒"
+      },
+      {
+        "move": "g0e2",
+        "count": 409,
+        "phase": "opening",
+        "piece": "b",
+        "phaseLabel": "开局",
+        "pieceLabel": "相/象"
+      },
+      {
+        "move": "c9e7",
+        "count": 396,
+        "phase": "opening",
+        "piece": "b",
+        "phaseLabel": "开局",
+        "pieceLabel": "相/象"
+      },
+      {
+        "move": "a0b0",
+        "count": 368,
+        "phase": "opening",
+        "piece": "r",
+        "phaseLabel": "开局",
+        "pieceLabel": "车"
+      },
+      {
+        "move": "a9b9",
+        "count": 298,
+        "phase": "opening",
+        "piece": "r",
+        "phaseLabel": "开局",
+        "pieceLabel": "车"
+      },
+      {
+        "move": "e3e4",
+        "count": 283,
+        "phase": "middle",
+        "piece": "p",
+        "phaseLabel": "中局",
+        "pieceLabel": "兵/卒"
+      },
+      {
+        "move": "d9e8",
+        "count": 281,
+        "phase": "opening",
+        "piece": "a",
+        "phaseLabel": "开局",
+        "pieceLabel": "仕/士"
+      },
+      {
+        "move": "f0e1",
+        "count": 279,
+        "phase": "middle",
+        "piece": "a",
+        "phaseLabel": "中局",
+        "pieceLabel": "仕/士"
+      },
+      {
+        "move": "a0a1",
+        "count": 275,
+        "phase": "opening",
+        "piece": "r",
+        "phaseLabel": "开局",
+        "pieceLabel": "车"
+      },
+      {
+        "move": "h2e2",
+        "count": 256,
+        "phase": "opening",
+        "piece": "c",
+        "phaseLabel": "开局",
+        "pieceLabel": "炮"
+      },
+      {
+        "move": "d0e1",
+        "count": 254,
+        "phase": "middle",
+        "piece": "a",
+        "phaseLabel": "中局",
+        "pieceLabel": "仕/士"
+      },
+      {
+        "move": "b0a2",
+        "count": 233,
+        "phase": "opening",
+        "piece": "n",
+        "phaseLabel": "开局",
+        "pieceLabel": "马"
+      },
+      {
+        "move": "g4g5",
+        "count": 231,
+        "phase": "middle",
+        "piece": "p",
+        "phaseLabel": "中局",
+        "pieceLabel": "兵/卒"
+      },
+      {
+        "move": "c4c5",
+        "count": 228,
+        "phase": "middle",
+        "piece": "p",
+        "phaseLabel": "中局",
+        "pieceLabel": "兵/卒"
+      },
+      {
+        "move": "h7i7",
+        "count": 220,
+        "phase": "opening",
+        "piece": "c",
+        "phaseLabel": "开局",
+        "pieceLabel": "炮"
+      },
+      {
+        "move": "e6e5",
+        "count": 217,
+        "phase": "middle",
+        "piece": "p",
+        "phaseLabel": "中局",
+        "pieceLabel": "兵/卒"
+      }
+    ],
+    "sampledTrainingRows": 3000,
+    "notes": [
+      "这是公开棋谱统计得到的“风格启发”画像，不代表棋手本人意见，也不是冒充棋手。",
+      "Pikafish 仍负责判断棋力；大师画像只适合在引擎可接受候选中辅助重排、找相似实战和生成训练提示。",
+      "当前脚本只读 MySQL，不写数据库；后续可把稳定画像版本写入 SQLite 或 MySQL 的派生表。"
+    ]
+  },
+  {
+    "profileId": "f4e29a59bbbada66",
+    "playerName": "郑惟桐",
+    "normalizedName": "郑惟桐",
+    "generatedAt": "2026-08-05T16:00:13.156Z",
+    "sources": [
+      {
+        "id": "9bc31837-aaab-4c6b-9da5-421819eaa90d",
+        "name": "郑惟桐",
+        "samples": 46209,
+        "gameRefs": 904,
+        "profileUrl": "http://www.gdchess.com/xqgame/xqpgame.asp?pid=1799",
+        "sourceSite": "gdchess.com",
+        "normalizedName": "郑惟桐",
+        "sourcePlayerId": "1799"
+      },
+      {
+        "id": "93e4e692-f2c8-4693-aba6-35268825164a",
+        "name": "郑惟桐",
+        "samples": 29993,
+        "gameRefs": 569,
+        "profileUrl": "https://www.xiangqiqipu.com/Player/View-9.html",
+        "sourceSite": "xiangqiqipu.com",
+        "normalizedName": "郑惟桐",
+        "sourcePlayerId": "9"
+      }
+    ],
+    "gameSummary": {
+      "games": 959,
+      "latestDate": "2023-02-19",
+      "avgMoveCount": 103.3,
+      "earliestDate": "2009-06-19"
+    },
+    "sideDistribution": {
+      "black": 445,
+      "red": 514
+    },
+    "resultDistribution": {
+      "draw": 355,
+      "loss": 126,
+      "unknown": 62,
+      "win": 416
+    },
+    "resultRates": {
+      "win": 43.4,
+      "draw": 37,
+      "loss": 13.1,
+      "unknown": 6.5
+    },
+    "phaseSamples": {
+      "endgame": 15712,
+      "middle": 22495,
+      "opening": 11503
+    },
+    "phaseRates": {
+      "endgame": 31.6,
+      "middle": 45.3,
+      "opening": 23.1
+    },
+    "pieceMoves": {
+      "a": 2217,
+      "b": 2880,
+      "c": 11730,
+      "k": 2451,
+      "n": 10902,
+      "p": 6184,
+      "r": 13346
+    },
+    "pieceMoveRanking": [
+      {
+        "piece": "r",
+        "label": "车",
+        "count": 13346
+      },
+      {
+        "piece": "c",
+        "label": "炮",
+        "count": 11730
+      },
+      {
+        "piece": "n",
+        "label": "马",
+        "count": 10902
+      },
+      {
+        "piece": "p",
+        "label": "兵/卒",
+        "count": 6184
+      },
+      {
+        "piece": "b",
+        "label": "相/象",
+        "count": 2880
+      },
+      {
+        "piece": "k",
+        "label": "帅/将",
+        "count": 2451
+      },
+      {
+        "piece": "a",
+        "label": "仕/士",
+        "count": 2217
+      }
+    ],
+    "topEvents": [
+      {
+        "name": "未知赛事",
+        "count": 261
+      },
+      {
+        "name": "2021年腾讯棋牌天天象棋全国象棋甲级联赛",
+        "count": 33
+      },
+      {
+        "name": "2021年第十届“碧桂园杯”全国象棋冠军邀请赛",
+        "count": 13
+      },
+      {
+        "name": "2020年腾讯棋牌天天象棋全国象棋甲级联赛",
+        "count": 13
+      },
+      {
+        "name": "2019第八届碧桂园杯冠军赛",
+        "count": 11
+      },
+      {
+        "name": "2019年第七届“财神杯”视频象棋快棋赛(含擂台赛)",
+        "count": 11
+      },
+      {
+        "name": "2018第七届碧桂园杯冠军赛",
+        "count": 10
+      },
+      {
+        "name": "2021第十届碧桂园杯冠军赛",
+        "count": 10
+      },
+      {
+        "name": "天天象棋2020全国象棋甲级联赛",
+        "count": 10
+      },
+      {
+        "name": "2021贺岁杯象棋冠军快棋赛",
+        "count": 10
+      },
+      {
+        "name": "2019年第八届“碧桂园杯”全国象棋冠军邀请赛",
+        "count": 10
+      },
+      {
+        "name": "2019第七财神杯视频快棋赛",
+        "count": 10
+      }
+    ],
+    "topOpenings": [
+      {
+        "name": "未知开局",
+        "count": 807
+      },
+      {
+        "name": "E40 对兵局",
+        "count": 12
+      },
+      {
+        "name": "A11 顺相局",
+        "count": 6
+      },
+      {
+        "name": "E16 仙人指路转左中炮对卒底炮飞右象 互进边马",
+        "count": 6
+      },
+      {
+        "name": "B25 中炮两头蛇对左三步虎",
+        "count": 4
+      },
+      {
+        "name": "C73 五七炮互进三兵对屏风马边卒右马外盘河 红左横车",
+        "count": 4
+      },
+      {
+        "name": "C06 中炮左边马对屏风马 红左横车",
+        "count": 4
+      },
+      {
+        "name": "E42 对兵互进右马局",
+        "count": 4
+      },
+      {
+        "name": "C46 中炮过河车互进七兵对屏风马平炮兑车 红左边炮对黑退边炮上右士右直车",
+        "count": 3
+      },
+      {
+        "name": "C70 五七炮对屏风马进３卒",
+        "count": 3
+      },
+      {
+        "name": "E10 仙人指路对卒底炮",
+        "count": 3
+      },
+      {
+        "name": "A28 飞相转屏风马对左中炮",
+        "count": 3
+      }
+    ],
+    "frequentMoves": [
+      {
+        "move": "c3c4",
+        "count": 413,
+        "phase": "opening",
+        "piece": "p",
+        "phaseLabel": "开局",
+        "pieceLabel": "兵/卒"
+      },
+      {
+        "move": "h9g7",
+        "count": 409,
+        "phase": "opening",
+        "piece": "n",
+        "phaseLabel": "开局",
+        "pieceLabel": "马"
+      },
+      {
+        "move": "h0g2",
+        "count": 386,
+        "phase": "opening",
+        "piece": "n",
+        "phaseLabel": "开局",
+        "pieceLabel": "马"
+      },
+      {
+        "move": "i0h0",
+        "count": 349,
+        "phase": "opening",
+        "piece": "r",
+        "phaseLabel": "开局",
+        "pieceLabel": "车"
+      },
+      {
+        "move": "i9h9",
+        "count": 338,
+        "phase": "opening",
+        "piece": "r",
+        "phaseLabel": "开局",
+        "pieceLabel": "车"
+      },
+      {
+        "move": "b0c2",
+        "count": 324,
+        "phase": "opening",
+        "piece": "n",
+        "phaseLabel": "开局",
+        "pieceLabel": "马"
+      },
+      {
+        "move": "b9c7",
+        "count": 306,
+        "phase": "opening",
+        "piece": "n",
+        "phaseLabel": "开局",
+        "pieceLabel": "马"
+      },
+      {
+        "move": "c6c5",
+        "count": 281,
+        "phase": "opening",
+        "piece": "p",
+        "phaseLabel": "开局",
+        "pieceLabel": "兵/卒"
+      },
+      {
+        "move": "g6g5",
+        "count": 270,
+        "phase": "opening",
+        "piece": "p",
+        "phaseLabel": "开局",
+        "pieceLabel": "兵/卒"
+      },
+      {
+        "move": "a0b0",
+        "count": 234,
+        "phase": "opening",
+        "piece": "r",
+        "phaseLabel": "开局",
+        "pieceLabel": "车"
+      },
+      {
+        "move": "h2e2",
+        "count": 231,
+        "phase": "opening",
+        "piece": "c",
+        "phaseLabel": "开局",
+        "pieceLabel": "炮"
+      },
+      {
+        "move": "g3g4",
+        "count": 230,
+        "phase": "opening",
+        "piece": "p",
+        "phaseLabel": "开局",
+        "pieceLabel": "兵/卒"
+      },
+      {
+        "move": "c9e7",
+        "count": 187,
+        "phase": "opening",
+        "piece": "b",
+        "phaseLabel": "开局",
+        "pieceLabel": "相/象"
+      },
+      {
+        "move": "d0e1",
+        "count": 182,
+        "phase": "middle",
+        "piece": "a",
+        "phaseLabel": "中局",
+        "pieceLabel": "仕/士"
+      },
+      {
+        "move": "f0e1",
+        "count": 173,
+        "phase": "middle",
+        "piece": "a",
+        "phaseLabel": "中局",
+        "pieceLabel": "仕/士"
+      },
+      {
+        "move": "g0e2",
+        "count": 168,
+        "phase": "opening",
+        "piece": "b",
+        "phaseLabel": "开局",
+        "pieceLabel": "相/象"
+      },
+      {
+        "move": "a9b9",
+        "count": 156,
+        "phase": "opening",
+        "piece": "r",
+        "phaseLabel": "开局",
+        "pieceLabel": "车"
+      },
+      {
+        "move": "e3e4",
+        "count": 149,
+        "phase": "middle",
+        "piece": "p",
+        "phaseLabel": "中局",
+        "pieceLabel": "兵/卒"
+      },
+      {
+        "move": "c4c5",
+        "count": 148,
+        "phase": "middle",
+        "piece": "p",
+        "phaseLabel": "中局",
+        "pieceLabel": "兵/卒"
+      },
+      {
+        "move": "a0a1",
+        "count": 139,
+        "phase": "opening",
+        "piece": "r",
+        "phaseLabel": "开局",
+        "pieceLabel": "车"
+      },
+      {
+        "move": "b0a2",
+        "count": 137,
+        "phase": "opening",
+        "piece": "n",
+        "phaseLabel": "开局",
+        "pieceLabel": "马"
+      },
+      {
+        "move": "g9e7",
+        "count": 134,
+        "phase": "opening",
+        "piece": "b",
+        "phaseLabel": "开局",
+        "pieceLabel": "相/象"
+      },
+      {
+        "move": "c2d4",
+        "count": 130,
+        "phase": "middle",
+        "piece": "n",
+        "phaseLabel": "中局",
+        "pieceLabel": "马"
+      },
+      {
+        "move": "c0e2",
+        "count": 128,
+        "phase": "opening",
+        "piece": "b",
+        "phaseLabel": "开局",
+        "pieceLabel": "相/象"
+      },
+      {
+        "move": "c0e2",
+        "count": 128,
+        "phase": "middle",
+        "piece": "b",
+        "phaseLabel": "中局",
+        "pieceLabel": "相/象"
+      }
+    ],
+    "sampledTrainingRows": 3000,
+    "notes": [
+      "这是公开棋谱统计得到的“风格启发”画像，不代表棋手本人意见，也不是冒充棋手。",
+      "Pikafish 仍负责判断棋力；大师画像只适合在引擎可接受候选中辅助重排、找相似实战和生成训练提示。",
+      "当前脚本只读 MySQL，不写数据库；后续可把稳定画像版本写入 SQLite 或 MySQL 的派生表。"
+    ]
+  }
+]

@@ -1,0 +1,9 @@
+[Event "象棋布局陷阱100局"]
+[Site "xiangqiqipu.com"]
+[Title "25中炮过河车对屏风马左马盘河"]
+[Opening "中炮过河车对屏风马左马盘河"]
+[Source "https://www.xiangqiqipu.com/Category/View-6548.html"]
+[Library "飞刀/布局陷阱专题"]
+[Result "*"]
+
+1. h2e2 h9g7 2. h0g2 i9h9 3. i0h0 g6g5 4. h0h6 b9c7 5. c3c4 g7f5 6. b2b5 g5g4 7. e2e6 c7e6 8. h6e6 b7e7 9. b5e5 d9e8 10. g3g4 e7e5 *

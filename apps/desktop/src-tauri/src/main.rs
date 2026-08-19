@@ -32,7 +32,7 @@ use link_core::{
     ReconcileDecision, StabilityGate,
 };
 use local_store::{
-    AnalysisSummary, DesktopPreferences, EngineProfile, FlyknifePlan, FlyknifeStepAnnotation,
+    AnalysisSummary, DesktopPreferences, FlyknifePlan, FlyknifeStepAnnotation,
     GameMirrorStatus, GuidedAnalysisSession, GuidedAnalysisSubmission, ImportedGame,
     ImportedMasterStyleProfile, ImportedMasterStyleSample, ImportedTheoryCard, LearningProfile,
     LibraryFolder, LocalGame, LocalStore, MasterStyleHint, MasterStyleProfile, StudySession,
@@ -78,7 +78,6 @@ unsafe extern "C" {
 }
 
 const BUILTIN_ENGINE_PATH: &str = "builtin:pikafish";
-const BUILTIN_FAIRY_ENGINE_PATH: &str = "builtin:fairy-stockfish";
 const PIKAFISH_260720_NNUE_SHA256: &str =
     "sha256:3cd15292bf8c979884262f57fc723959fc0dea43b4d8d544f88db5ceb2479e24";
 const PIKAFISH_260720_NNUE_LABEL: &str = "权重260720";
@@ -2313,9 +2312,11 @@ fn capture_window_link_preview(
     app: &tauri::AppHandle,
     state: &DesktopState,
 ) -> Result<Option<LinkCapturePreview>, String> {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     {
+        #[cfg(target_os = "macos")]
         prepare_window_link_selection(app);
+        #[cfg(target_os = "macos")]
         std::thread::sleep(Duration::from_millis(250));
         let desktop_snapshot = capture_display_frame(None)?;
         set_link_region_selection_background(state, Some(png_data_uri(&desktop_snapshot)))?;
@@ -2347,7 +2348,7 @@ fn capture_window_link_preview(
             region: Some(region),
         }))
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
     {
         let _ = (app, state);
         Err("当前平台尚未接入系统框选；请先使用截图/照片导入".into())
@@ -3276,10 +3277,48 @@ fn capture_display_frame(region: Option<LinkCaptureRegion>) -> Result<Vec<u8>, S
             Ok(frame)
         }
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        let directory = tempfile::tempdir().map_err(|error| error.to_string())?;
+        let path = directory.path().join("xiangqi-link-frame.png");
+        capture_windows_display_png(&path)?;
+        let frame = fs::read(path).map_err(|error| error.to_string())?;
+        if let Some(region) = region {
+            crop_link_capture_frame(&frame, region)
+        } else {
+            Ok(frame)
+        }
+    }
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
     {
         let _ = region;
         Err("当前持续连线采集尚未接入此平台".into())
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn capture_windows_display_png(path: &Path) -> Result<(), String> {
+    let output_path = path.to_string_lossy().replace('\'', "''");
+    let script = format!(
+        r#"$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+$bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
+$bitmap = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height)
+$graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+$graphics.CopyFromScreen($bounds.Left, $bounds.Top, 0, 0, $bitmap.Size)
+$bitmap.Save('{output_path}', [System.Drawing.Imaging.ImageFormat]::Png)
+$graphics.Dispose()
+$bitmap.Dispose()"#,
+    );
+    let output = ProcessCommand::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", &script])
+        .output()
+        .map_err(|error| format!("无法调用 Windows 屏幕采集：{error}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err("Windows 屏幕采集失败；请确认桌面未被系统安全界面遮挡后重试。".into())
     }
 }
 
@@ -3738,11 +3777,49 @@ fn click_external_move(
             Err("外部点击被 macOS 拒绝；请确认辅助功能权限后重试。".into())
         }
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        let ((from_x, from_y), (to_x, to_y)) = click_points;
+        windows_external_click(from_x, from_y)?;
+        if click_target {
+            std::thread::sleep(Duration::from_millis(260));
+            windows_external_click(to_x, to_y)?;
+        }
+        Ok(click_points)
+    }
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
     {
         let _ = (bounds, orientation, mv, click_points, click_target);
         Err("当前平台尚未接入外部鼠标点击".into())
     }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_external_click(x: f32, y: f32) -> Result<(), String> {
+    let script = format!(
+        r#"$ErrorActionPreference = 'Stop'
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class XiangqiStudioMouse {{
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
+}}
+'@
+[XiangqiStudioMouse]::SetCursorPos({x:.0}, {y:.0}) | Out-Null
+Start-Sleep -Milliseconds 110
+[XiangqiStudioMouse]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+[XiangqiStudioMouse]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)"#,
+    );
+    let output = ProcessCommand::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", &script])
+        .output()
+        .map_err(|error| format!("无法调用 Windows 外部点击：{error}"))?;
+    output
+        .status
+        .success()
+        .then_some(())
+        .ok_or_else(|| "Windows 外部点击失败；请以相同权限运行目标棋局窗口和棋研。".into())
 }
 
 #[cfg(target_os = "macos")]
@@ -6526,17 +6603,8 @@ fn resolve_engine_path(app: &tauri::AppHandle, value: &str) -> Result<PathBuf, S
                     .to_owned()
             });
     }
-    if trimmed == BUILTIN_FAIRY_ENGINE_PATH {
-        return Err("内置 Fairy-Stockfish 已从安装包移除；如需对比，请在引擎设置中手动导入外部 Fairy-Stockfish".into());
-    }
-    if trimmed.is_empty() {
-        return Err("请先选择 UCI/UCCI 象棋引擎".into());
-    }
-    let path = PathBuf::from(trimmed);
-    if !path.is_file() {
-        return Err("引擎可执行文件不存在".into());
-    }
-    Ok(path)
+    let _ = trimmed;
+    Err("当前版本仅支持随应用安装的内置 Pikafish".into())
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -8500,17 +8568,13 @@ fn normalize_desktop_preferences(preferences: &mut DesktopPreferences) {
         preferences.link_confidence_threshold,
     ) * 100.0)
         .round() as u8;
-    if preferences.engine_path == BUILTIN_FAIRY_ENGINE_PATH {
-        preferences.engine_path = BUILTIN_ENGINE_PATH.into();
-        preferences.active_engine_id = None;
-    }
+    preferences.engine_path = BUILTIN_ENGINE_PATH.into();
+    preferences.active_engine_id = None;
+    preferences.analysis_engine_mode = "single".into();
+    preferences.parallel_engine_ids.clear();
     preferences.board_skin = normalize_skin_id(&preferences.board_skin);
     preferences.piece_skin = normalize_skin_id(&preferences.piece_skin);
-    preferences
-        .parallel_engine_paths
-        .retain(|path| path == BUILTIN_ENGINE_PATH);
-    preferences.parallel_engine_paths.sort();
-    preferences.parallel_engine_paths.dedup();
+    preferences.parallel_engine_paths.clear();
     preferences.rule_mode = normalize_rule_mode(&preferences.rule_mode);
     preferences.active_builtin_opening_book_id =
         pfbook_opening_book::normalize_book_id(&preferences.active_builtin_opening_book_id);
@@ -8675,26 +8739,6 @@ fn get_desktop_preferences(state: State<'_, DesktopState>) -> Result<DesktopPref
             .save_desktop_preferences(&preferences)
             .map_err(|error| error.to_string())?;
     }
-    // Preserve older installations that only stored enginePath before profiles existed.
-    if preferences.active_engine_id.is_none()
-        && !preferences.engine_path.trim().is_empty()
-        && !matches!(preferences.engine_path.as_str(), BUILTIN_ENGINE_PATH)
-    {
-        let name = preferences
-            .engine_path
-            .rsplit(['/', '\\'])
-            .next()
-            .unwrap_or("本地引擎");
-        let id = model
-            .store
-            .save_engine_profile(name, &preferences.engine_path, "uci")
-            .map_err(|error| error.to_string())?;
-        preferences.active_engine_id = Some(id);
-        model
-            .store
-            .save_desktop_preferences(&preferences)
-            .map_err(|error| error.to_string())?;
-    }
     Ok(preferences)
 }
 
@@ -8769,107 +8813,28 @@ async fn probe_engine(path: String, app: tauri::AppHandle) -> Result<EngineProbe
     })
 }
 
-fn engine_profile_dto(profile: EngineProfile, active_engine_id: Option<Uuid>) -> EngineProfileDto {
-    EngineProfileDto {
-        id: profile.id,
-        name: profile.name,
-        executable_path: profile.executable_path,
-        protocol: profile.protocol,
-        active: active_engine_id == Some(profile.id),
-    }
-}
-
 #[tauri::command]
 fn list_engine_profiles(state: State<'_, DesktopState>) -> Result<Vec<EngineProfileDto>, String> {
-    let model = state
-        .model
-        .lock()
-        .map_err(|_| "state lock poisoned".to_owned())?;
-    let preferences = model
-        .store
-        .desktop_preferences()
-        .map_err(|error| error.to_string())?;
-    model
-        .store
-        .list_engine_profiles()
-        .map_err(|error| error.to_string())?
-        .into_iter()
-        .map(|profile| Ok(engine_profile_dto(profile, preferences.active_engine_id)))
-        .collect()
+    let _ = state;
+    Ok(Vec::new())
 }
 
 #[tauri::command]
 async fn register_engine_profile(
-    name: String,
-    path: String,
-    app: tauri::AppHandle,
-    state: State<'_, DesktopState>,
+    _name: String,
+    _path: String,
+    _app: tauri::AppHandle,
+    _state: State<'_, DesktopState>,
 ) -> Result<EngineProfileDto, String> {
-    let probe = probe_engine(path, app).await?;
-    let mut model = state
-        .model
-        .lock()
-        .map_err(|_| "state lock poisoned".to_owned())?;
-    let display_name = if name.trim().is_empty() {
-        probe
-            .path
-            .rsplit(['/', '\\'])
-            .next()
-            .unwrap_or("本地引擎")
-            .to_owned()
-    } else {
-        name.trim().to_owned()
-    };
-    let id = model
-        .store
-        .save_engine_profile(&display_name, &probe.path, probe.protocol)
-        .map_err(|error| error.to_string())?;
-    let mut preferences = model
-        .store
-        .desktop_preferences()
-        .map_err(|error| error.to_string())?;
-    preferences.active_engine_id = Some(id);
-    preferences.engine_path = probe.path.clone();
-    model
-        .store
-        .save_desktop_preferences(&preferences)
-        .map_err(|error| error.to_string())?;
-    Ok(EngineProfileDto {
-        id,
-        name: display_name,
-        executable_path: probe.path,
-        protocol: probe.protocol.into(),
-        active: true,
-    })
+    Err("当前版本仅支持随应用安装的内置 Pikafish".into())
 }
 
 #[tauri::command]
 fn set_active_engine_profile(
-    id: Uuid,
-    state: State<'_, DesktopState>,
+    _id: Uuid,
+    _state: State<'_, DesktopState>,
 ) -> Result<DesktopPreferences, String> {
-    let mut model = state
-        .model
-        .lock()
-        .map_err(|_| "state lock poisoned".to_owned())?;
-    let profile = model
-        .store
-        .list_engine_profiles()
-        .map_err(|error| error.to_string())?
-        .into_iter()
-        .find(|profile| profile.id == id)
-        .ok_or("引擎档案不存在")?;
-    let mut preferences = model
-        .store
-        .desktop_preferences()
-        .map_err(|error| error.to_string())?;
-    preferences.active_engine_id = Some(id);
-    preferences.engine_path = profile.executable_path;
-    model
-        .store
-        .save_desktop_preferences(&preferences)
-        .map_err(|error| error.to_string())?;
-    Ok(preferences)
+    Err("当前版本仅支持随应用安装的内置 Pikafish".into())
 }
 
 #[tauri::command]
@@ -14032,11 +13997,11 @@ mod tests {
     #[test]
     fn desktop_preferences_remove_legacy_bundled_fairy_engine() {
         let mut preferences = DesktopPreferences::default();
-        preferences.engine_path = BUILTIN_FAIRY_ENGINE_PATH.into();
+        preferences.engine_path = "builtin:fairy-stockfish".into();
         preferences.active_engine_id = Some(Uuid::new_v4());
         preferences.parallel_engine_paths = vec![
             BUILTIN_ENGINE_PATH.into(),
-            BUILTIN_FAIRY_ENGINE_PATH.into(),
+            "builtin:fairy-stockfish".into(),
             "/external/fairy-stockfish".into(),
         ];
 
@@ -14046,7 +14011,7 @@ mod tests {
         assert_eq!(preferences.active_engine_id, None);
         assert_eq!(
             preferences.parallel_engine_paths,
-            vec![BUILTIN_ENGINE_PATH.to_owned()]
+            Vec::<String>::new()
         );
     }
 
