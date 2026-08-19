@@ -100,6 +100,7 @@ pub(crate) fn query_builtin_book(
     query(&path, board, &source_label(book))
 }
 
+#[cfg(test)]
 pub(crate) fn validate(path: &Path) -> Result<(), String> {
     let connection = open(path)?;
     let columns = table_columns(&connection, "pfBook")?;
@@ -208,6 +209,7 @@ fn open(path: &Path) -> Result<Connection, String> {
         .map_err(|error| format!("无法打开 pfBook 开局库：{error}"))
 }
 
+#[cfg(test)]
 fn table_columns(connection: &Connection, table: &str) -> Result<Vec<String>, String> {
     let mut statement = connection
         .prepare(&format!("PRAGMA table_info({table})"))

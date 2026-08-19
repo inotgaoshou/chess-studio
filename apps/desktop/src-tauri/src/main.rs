@@ -1435,6 +1435,7 @@ fn apply_link_capture_timeout(session: &mut LinkSession) {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn apply_link_region_selection_failure(
     session: &mut LinkSession,
     generation: u64,
@@ -1713,6 +1714,7 @@ fn start_link_session(
     })
 }
 
+#[cfg(not(target_os = "windows"))]
 fn start_window_link_selection_worker(
     app: tauri::AppHandle,
     generation: u64,
@@ -2518,6 +2520,7 @@ fn get_link_region_selection_background(
         .map_err(|_| "link selection background lock poisoned".to_owned())
 }
 
+#[cfg(not(target_os = "windows"))]
 fn capture_window_link_preview(
     app: &tauri::AppHandle,
     state: &DesktopState,
@@ -2565,6 +2568,7 @@ fn capture_window_link_preview(
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn reset_link_region_selection(state: &DesktopState) -> Result<(), String> {
     let (lock, _) = &state.link_region_selection;
     *lock
@@ -2573,6 +2577,7 @@ fn reset_link_region_selection(state: &DesktopState) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(not(target_os = "windows"))]
 fn set_link_region_selection_background(
     state: &DesktopState,
     background: Option<String>,
@@ -2584,6 +2589,7 @@ fn set_link_region_selection_background(
     Ok(())
 }
 
+#[cfg(not(target_os = "windows"))]
 fn wait_for_link_region_selection(
     state: &DesktopState,
     timeout: Duration,
@@ -2610,6 +2616,7 @@ fn wait_for_link_region_selection(
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn open_link_region_selection_window(app: &tauri::AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("link-selection") {
         let _ = window.destroy();
@@ -2664,6 +2671,7 @@ fn restore_link_hint_window(app: &tauri::AppHandle) {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn restore_link_window_or_main(app: &tauri::AppHandle) {
     if let Some(link_window) = app.get_webview_window("compact-link") {
         let _ = link_window.show();
@@ -2818,6 +2826,7 @@ fn link_window_intersects_region(window: &tauri::WebviewWindow, region: LinkCapt
         .unwrap_or(false)
 }
 
+#[cfg(not(target_os = "windows"))]
 fn relocate_link_hint_window_away_from_region(app: &tauri::AppHandle, region: LinkCaptureRegion) {
     let Some(window) = app.get_webview_window("compact-link") else {
         return;
@@ -12949,6 +12958,7 @@ mod tests {
         assert!(session.reason.as_deref().unwrap().contains("12 秒"));
     }
 
+    #[cfg(not(target_os = "windows"))]
     #[test]
     fn link_region_selection_failure_is_visible_in_status() {
         let mut session = LinkSession::default();
