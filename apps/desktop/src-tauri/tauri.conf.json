@@ -24,7 +24,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": ["resources/fonts/OFL.txt", "resources/pikafish", "resources/link-vision", "resources/master-style", "resources/flyknife-library", "resources/opening-books"],
+    "resources": ["resources/fonts/OFL.txt", "resources/pikafish", "resources/link-vision", "resources/flyknife-library"],
     "windows": {
       "nsis": {
         "installMode": "both",

@@ -29,8 +29,9 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  FAIRY_STOCKFISH_TAG: "fairy_sf_14_0_1_xq"
-  TAURI_RESOURCE_CONFIG: '{"bundle":{"resources":["resources/fonts/OFL.txt","resources/pikafish","resources/fairy-stockfish"]}}'
+  # Keep large opening and theory data as optional local resources. Releases only
+  # ship the engine, window-link vision model and the compact flyknife library.
+  TAURI_RESOURCE_CONFIG: '{"bundle":{"resources":["resources/fonts/OFL.txt","resources/pikafish","resources/link-vision","resources/flyknife-library"]}}'
 
 jobs:
   select_build_platforms:
@@ -42,11 +43,11 @@ jobs:
       - id: targets
         run: |
           if [ "${{ github.event.inputs.platform || 'all' }}" = "all" ]; then
-            matrix='{"include":[{"name":"Windows x64","platform":"windows-x64","os":"windows-latest","rust_target":"x86_64-pc-windows-msvc","tauri_args":"--target x86_64-pc-windows-msvc","build_fairy_from_source":"0"},{"name":"macOS Apple Silicon","platform":"macos-arm64","os":"macos-latest","rust_target":"aarch64-apple-darwin","tauri_args":"--target aarch64-apple-darwin","build_fairy_from_source":"1"}]}'
+            matrix='{"include":[{"name":"Windows x64","platform":"windows-x64","os":"windows-latest","rust_target":"x86_64-pc-windows-msvc","tauri_args":"--target x86_64-pc-windows-msvc"},{"name":"macOS Apple Silicon","platform":"macos-arm64","os":"macos-latest","rust_target":"aarch64-apple-darwin","tauri_args":"--target aarch64-apple-darwin"}]}'
           elif [ "${{ github.event.inputs.platform }}" = "macos" ]; then
-            matrix='{"include":[{"name":"macOS Apple Silicon","platform":"macos-arm64","os":"macos-latest","rust_target":"aarch64-apple-darwin","tauri_args":"--target aarch64-apple-darwin","build_fairy_from_source":"1"}]}'
+            matrix='{"include":[{"name":"macOS Apple Silicon","platform":"macos-arm64","os":"macos-latest","rust_target":"aarch64-apple-darwin","tauri_args":"--target aarch64-apple-darwin"}]}'
           else
-            matrix='{"include":[{"name":"Windows x64","platform":"windows-x64","os":"windows-latest","rust_target":"x86_64-pc-windows-msvc","tauri_args":"--target x86_64-pc-windows-msvc","build_fairy_from_source":"0"}]}'
+            matrix='{"include":[{"name":"Windows x64","platform":"windows-x64","os":"windows-latest","rust_target":"x86_64-pc-windows-msvc","tauri_args":"--target x86_64-pc-windows-msvc"}]}'
           fi
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
@@ -101,19 +102,6 @@ jobs:
           workspaces: |
             . -> target
 
-      - name: Prepare embedded Fairy-Stockfish
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          FAIRY_STOCKFISH_TAG: ${{ env.FAIRY_STOCKFISH_TAG }}
-          BUILD_FAIRY_STOCKFISH_FROM_SOURCE: ${{ matrix.build_fairy_from_source }}
-        run: |
-          scripts/prepare-fairy-stockfish-resource.sh ${{ matrix.platform }}
-
-      - name: Verify embedded engine resources
-        shell: bash
-        run: scripts/verify-embedded-engine-resources.sh ${{ matrix.platform }}
-
       - name: Build and upload release asset
         uses: tauri-apps/tauri-action@v0
         env:
@@ -136,8 +124,9 @@ jobs:
 
             ## 包说明
 
-            - macOS Apple Silicon：内置 Apple Silicon Pikafish、Fairy-Stockfish 和各自 NNUE
-            - Windows x64：内置 Pikafish SSE4.1/POPCNT、Fairy-Stockfish largeboard x64 和各自 NNUE
+            - macOS Apple Silicon：内置 Apple Silicon Pikafish 与窗口连线识别模型
+            - Windows x64：内置 Pikafish SSE4.1/POPCNT 与窗口连线识别模型
+            - 开局库和棋理资料包不随安装包分发，后续按需提供
             - Linux x64：本轮 GitHub Release 暂不打包，后续需要时再启用
           releaseDraft: true
           prerelease: false

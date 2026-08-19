@@ -1,0 +1,54 @@
+name: Windows Window Link Build
+
+on:
+  push:
+    branches:
+      - version/v1.2.3
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  TAURI_RESOURCE_CONFIG: '{"bundle":{"resources":["resources/fonts/OFL.txt","resources/pikafish","resources/link-vision","resources/flyknife-library"]}}'
+
+jobs:
+  build:
+    name: Windows x64 package
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+          run_install: false
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Verify Windows desktop compilation
+        run: cargo check -p xiangqi-desktop --target x86_64-pc-windows-msvc
+
+      - name: Build Windows installer
+        shell: pwsh
+        run: pnpm --dir apps/desktop tauri build --target x86_64-pc-windows-msvc --config "$env:TAURI_RESOURCE_CONFIG"
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Xiangqi-Studio-Windows-x64
+          if-no-files-found: error
+          path: |
+            target/x86_64-pc-windows-msvc/release/bundle/**
+            apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/**
