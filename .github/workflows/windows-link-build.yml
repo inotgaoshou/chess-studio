@@ -11,7 +11,6 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  TAURI_RESOURCE_CONFIG: '{"bundle":{"resources":["resources/fonts/OFL.txt","resources/pikafish","resources/link-vision","resources/flyknife-library"]}}'
 
 jobs:
   build:
@@ -42,7 +41,7 @@ jobs:
 
       - name: Build Windows installer
         shell: pwsh
-        run: pnpm --dir apps/desktop tauri build --target x86_64-pc-windows-msvc --config "$env:TAURI_RESOURCE_CONFIG"
+        run: pnpm --dir apps/desktop tauri build --target x86_64-pc-windows-msvc
 
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4

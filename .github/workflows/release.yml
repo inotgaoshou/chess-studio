@@ -29,9 +29,6 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  # Keep large opening and theory data as optional local resources. Releases only
-  # ship the engine, window-link vision model and the compact flyknife library.
-  TAURI_RESOURCE_CONFIG: '{"bundle":{"resources":["resources/fonts/OFL.txt","resources/pikafish","resources/link-vision","resources/flyknife-library"]}}'
 
 jobs:
   select_build_platforms:
@@ -112,7 +109,9 @@ jobs:
           # The Tauri config and its pnpm build script live in this workspace package.
           # Without this, tauri-action runs `pnpm build` from the repository root.
           projectPath: apps/desktop
-          args: ${{ matrix.tauri_args }} --config ${{ env.TAURI_RESOURCE_CONFIG }}
+          # Resource selection lives in tauri.conf.json so PowerShell does not
+          # have to parse a JSON string passed through an environment variable.
+          args: ${{ matrix.tauri_args }}
           tagName: ${{ github.event.inputs.tag || github.ref_name }}
           releaseName: Xiangqi Studio ${{ github.event.inputs.tag || github.ref_name }}
           releaseBody: |
