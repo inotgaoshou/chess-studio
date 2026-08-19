@@ -718,11 +718,12 @@ export type RecognitionMode = "yoloBoard" | "perspectiveGrid";
 export type LinkMode = "spectate" | "confirmPlay" | "autoPlay";
 export type LinkSessionState = "stopped" | "detectingCorners" | "rectifyingBoard" | "classifyingSquares" | "calibrating" | "needsManualCorrection" | "waitingStableFrames" | "tracking" | "paused";
 export type LinkAutoSide = "red" | "black";
-export type StartLinkSessionRequest = { source: CaptureSource; recognitionMode: RecognitionMode; mode: LinkMode; stableFrames: number; autoSide?: LinkAutoSide };
+export type LinkTargetWindow = { id: string; title: string; processName: string; clientWidth: number; clientHeight: number; dpi: number; available: boolean; unavailableReason?: string };
+export type StartLinkSessionRequest = { source: CaptureSource; recognitionMode: RecognitionMode; mode: LinkMode; stableFrames: number; autoSide?: LinkAutoSide; targetWindowId?: string };
 export type LinkObservation = { state: LinkSessionState; accepted: boolean; moveIccs?: string; reason?: string; board?: BoardState; orientation?: BoardOrientation; capturePreviewAvailable?: boolean };
 export type BoardOrientation = "redAtBottom" | "blackAtBottom";
 export type LinkMoveDetail = { iccs: string; notation: string; movedBy: Side; from: MoveSquare; to: MoveSquare };
-export type LinkSessionStatus = { source: CaptureSource; mode: LinkMode; state: LinkSessionState; reason?: string; phase?: string; lastError?: string; startedAt?: string; lastHeartbeatAt?: string; recognitionAttempts?: number; lastDetectionSummary?: string; turnIndicator?: string; manualTurnOverride?: LinkAutoSide; pendingExternalMove?: string; capturePreviewKind?: string; frameRate: number; confidence?: number; confidenceThreshold?: number; stableFrames: number; requiredStableFrames: number; latestFen?: string; lastMove?: string; lastMoveDetail?: LinkMoveDetail; initialPositionSeen?: boolean; autoSide?: LinkAutoSide; boardOrientation?: BoardOrientation; captureRunning: boolean };
+export type LinkSessionStatus = { source: CaptureSource; mode: LinkMode; state: LinkSessionState; reason?: string; phase?: string; lastError?: string; startedAt?: string; lastHeartbeatAt?: string; recognitionAttempts?: number; lastDetectionSummary?: string; turnIndicator?: string; manualTurnOverride?: LinkAutoSide; pendingExternalMove?: string; capturePreviewKind?: string; frameRate: number; confidence?: number; confidenceThreshold?: number; stableFrames: number; requiredStableFrames: number; latestFen?: string; lastMove?: string; lastMoveDetail?: LinkMoveDetail; initialPositionSeen?: boolean; autoSide?: LinkAutoSide; boardOrientation?: BoardOrientation; captureRunning: boolean; targetWindow?: LinkTargetWindow; captureBackend?: string; captureDpi?: number; clickAvailable?: boolean };
 export type ExportFormat = "pgn" | "chinese" | "dhtmlxq";
 export type ReplayExportScope = "currentSelection" | "mainline";
 export type EngineRuntimeEvent =
@@ -795,6 +796,7 @@ export interface ChessPlatform {
   completeTrainingTask(taskId: string, completed: boolean): Promise<void>;
   playMove(iccs: string): Promise<Partial<BoardState>>;
   prepareLinkSelectionWindow(): Promise<void>;
+  listLinkTargetWindows(): Promise<LinkTargetWindow[]>;
   startLinkSession(request: StartLinkSessionRequest): Promise<LinkObservation>;
   stopLinkSession(): Promise<LinkObservation>;
   getLinkSessionStatus(): Promise<LinkSessionStatus>;

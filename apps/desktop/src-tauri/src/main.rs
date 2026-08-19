@@ -5,6 +5,8 @@ mod credential_store;
 mod eleeye_opening_book;
 mod gif_export;
 mod link_vision;
+#[cfg(target_os = "windows")]
+mod windows_link;
 mod manual_pdf;
 mod opening_book;
 mod pdf_report;
@@ -222,6 +224,10 @@ struct LinkSession {
     /// session, may be confirmed. This closes the last client-side path for
     /// adding an arbitrary legal move while a screenshot dialog is open.
     screenshot_resolution_allowed_moves: Vec<String>,
+    target_window: Option<LinkTargetWindowDto>,
+    capture_backend: Option<String>,
+    capture_dpi: Option<u32>,
+    click_available: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -287,6 +293,10 @@ impl Default for LinkSession {
             screenshot_resolution_game_id: None,
             screenshot_resolution_current_node: None,
             screenshot_resolution_allowed_moves: Vec::new(),
+            target_window: None,
+            capture_backend: None,
+            capture_dpi: None,
+            click_available: false,
         }
     }
 }
@@ -1086,6 +1096,21 @@ struct StartLinkSessionRequest {
     mode: LinkMode,
     stable_frames: u8,
     auto_side: Option<String>,
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    target_window_id: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LinkTargetWindowDto {
+    id: String,
+    title: String,
+    process_name: String,
+    client_width: i32,
+    client_height: i32,
+    dpi: u32,
+    available: bool,
+    unavailable_reason: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1129,12 +1154,22 @@ struct LinkSessionStatusDto {
     auto_side: Option<String>,
     board_orientation: BoardOrientation,
     capture_running: bool,
+    target_window: Option<LinkTargetWindowDto>,
+    capture_backend: Option<String>,
+    capture_dpi: Option<u32>,
+    click_available: bool,
 }
 
 struct LinkCapturePreview {
     data_uri: String,
     png: Vec<u8>,
     region: Option<LinkCaptureRegion>,
+}
+
+struct LiveLinkCaptureFrame {
+    png: Vec<u8>,
+    screen_origin: Option<(i32, i32)>,
+    dpi: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -1177,7 +1212,38 @@ fn link_status_dto(session: &LinkSession) -> LinkSessionStatusDto {
         auto_side: session.auto_side.map(color_name),
         board_orientation: session.board_orientation,
         capture_running: session.capture_running,
+        target_window: session.target_window.clone(),
+        capture_backend: session.capture_backend.clone(),
+        capture_dpi: session.capture_dpi,
+        click_available: session.click_available,
     }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_link_target_dto(target: windows_link::BrowserWindow) -> LinkTargetWindowDto {
+    LinkTargetWindowDto {
+        id: target.id.to_string(),
+        title: target.title,
+        process_name: target.process_name,
+        client_width: target.client_width,
+        client_height: target.client_height,
+        dpi: target.dpi,
+        available: true,
+        unavailable_reason: None,
+    }
+}
+
+#[tauri::command]
+fn list_link_target_windows() -> Result<Vec<LinkTargetWindowDto>, String> {
+    #[cfg(target_os = "windows")]
+    {
+        return Ok(windows_link::list_browser_windows()
+            .into_iter()
+            .map(windows_link_target_dto)
+            .collect());
+    }
+    #[cfg(not(target_os = "windows"))]
+    Ok(Vec::new())
 }
 
 fn link_live_session_has_stable_position(session: &LinkSession) -> bool {
@@ -1447,6 +1513,10 @@ fn initialize_link_session_for_request(
     session.board_bounds = None;
     session.piece_click_centers.clear();
     session.target_region = None;
+    session.target_window = None;
+    session.capture_backend = None;
+    session.capture_dpi = None;
+    session.click_available = false;
     session.board_orientation = BoardOrientation::RedAtBottom;
     session.capture_generation = generation;
 }
@@ -1471,6 +1541,26 @@ fn start_link_session(
     if !policy.allows_external_click && !matches!(request.mode, LinkMode::Spectate) {
         return Err("截图、照片和实体棋盘仅支持识别、跟盘与分析，不能控制第三方窗口".into());
     }
+    #[cfg(target_os = "windows")]
+    if matches!(request.mode, LinkMode::AutoPlay) {
+        return Err("Windows 不支持自动代走；请使用观战跟盘或每步确认走子".into());
+    }
+    #[cfg(target_os = "windows")]
+    if matches!(request.source, CaptureSource::DesktopDetect) && !matches!(request.mode, LinkMode::Spectate) {
+        return Err("Windows 桌面自动识别只支持观战跟盘。确认走子必须先选择 Chrome 或 Edge 目标窗口".into());
+    }
+    #[cfg(target_os = "windows")]
+    let selected_target_window = if matches!(request.source, CaptureSource::WindowLink) {
+        let target_id = request
+            .target_window_id
+            .as_deref()
+            .ok_or("请先选择 Chrome 或 Edge 中的天天象棋网页窗口")?
+            .parse::<u64>()
+            .map_err(|_| "目标窗口标识无效，请重新选择浏览器窗口")?;
+        Some(windows_link::validate_browser_window(target_id)?)
+    } else {
+        None
+    };
     let confidence_threshold = desktop_link_confidence_threshold(&state);
     let generation = {
         let _resolution_guard = state
@@ -1494,6 +1584,44 @@ fn start_link_session(
     emit_link_session_updated(&app);
 
     if matches!(request.source, CaptureSource::WindowLink) {
+        #[cfg(target_os = "windows")]
+        {
+            let target = selected_target_window
+                .ok_or("目标浏览器窗口已失效，请重新选择窗口")?;
+            if let Ok(mut session) = state.link_session.lock() {
+                if session.capture_generation == generation {
+                    session.target_window = Some(windows_link_target_dto(target.clone()));
+                    session.capture_backend = Some("Windows 原生窗口采集（实验）".into());
+                    session.capture_dpi = Some(target.dpi);
+                    session.click_available = matches!(request.mode, LinkMode::ConfirmPlay);
+                    session.capture_running = true;
+                    session.phase = Some("target_selected".into());
+                    session.reason = Some(format!(
+                        "已绑定 {}：{}，正在加载识别模型…",
+                        target.process_name, target.title
+                    ));
+                }
+            }
+            emit_link_session_updated(&app);
+            if let Err(error) = start_window_link_capture(app.clone(), None, generation, None) {
+                set_link_capture_error(&app, generation, error.clone());
+                return Err(error);
+            }
+            let session = state
+                .link_session
+                .lock()
+                .map_err(|_| "link session lock poisoned".to_owned())?;
+            return Ok(LinkObservationDto {
+                state: session.state,
+                accepted: false,
+                move_iccs: None,
+                reason: session.reason.clone(),
+                board: None,
+                orientation: session.board_orientation,
+                capture_preview_available: session.capture_preview.is_some(),
+            });
+        }
+        #[cfg(not(target_os = "windows"))]
         if let Err(error) = start_window_link_selection_worker(app.clone(), generation) {
             restore_link_window_or_main(&app);
             if let Ok(mut session) = state.link_session.lock() {
@@ -1738,6 +1866,10 @@ fn stop_link_session(
     session.board_bounds = None;
     session.piece_click_centers.clear();
     session.target_region = None;
+    session.target_window = None;
+    session.capture_backend = None;
+    session.capture_dpi = None;
+    session.click_available = false;
     if let Some(main_window) = app.get_webview_window("main") {
         let _ = main_window.show();
         let _ = main_window.set_focus();
@@ -1795,6 +1927,74 @@ fn recalibrate_link_session(
         .map_err(|_| "link session lock poisoned".to_owned())?
         .source;
     if matches!(source, CaptureSource::WindowLink) {
+        #[cfg(target_os = "windows")]
+        {
+            let (target_window_id, recognition_mode, mode, stable_frames, auto_side) = state
+                .link_session
+                .lock()
+                .map_err(|_| "link session lock poisoned".to_owned())
+                .and_then(|session| {
+                    Ok((
+                        session.target_window.as_ref().map(|target| target.id.clone())
+                            .ok_or("当前会话没有绑定浏览器窗口，请停止后重新选择窗口")?,
+                        session.recognition_mode,
+                        session.mode,
+                        session.gate.required_frames(),
+                        session.auto_side.map(color_name),
+                    ))
+                })?;
+            let target_id = target_window_id
+                .parse::<u64>()
+                .map_err(|_| "目标窗口标识已失效，请停止后重新选择窗口")?;
+            let target = windows_link::validate_browser_window(target_id).map_err(|error| {
+                format!("{error}。请停止连线后重新选择窗口")
+            })?;
+            let generation = state.link_capture_generation.fetch_add(1, Ordering::SeqCst) + 1;
+            let confidence_threshold = desktop_link_confidence_threshold(&state);
+            let request = StartLinkSessionRequest {
+                source: CaptureSource::WindowLink,
+                recognition_mode,
+                mode,
+                stable_frames,
+                auto_side,
+                target_window_id: Some(target_window_id),
+            };
+            let policy = CapturePolicy::for_source(CaptureSource::WindowLink);
+            let mut session = state
+                .link_session
+                .lock()
+                .map_err(|_| "link session lock poisoned".to_owned())?;
+            initialize_link_session_for_request(
+                &mut session,
+                &request,
+                generation,
+                confidence_threshold,
+                policy,
+            );
+            session.target_window = Some(windows_link_target_dto(target.clone()));
+            session.capture_backend = Some("Windows 原生窗口采集（实验）".into());
+            session.capture_dpi = Some(target.dpi);
+            session.click_available = matches!(mode, LinkMode::ConfirmPlay);
+            session.capture_running = true;
+            session.phase = Some("recalibrating_target".into());
+            session.reason = Some(format!(
+                "正在重新标定 {}：{}，窗口移动或缩放后会重新计算棋盘坐标…",
+                target.process_name, target.title
+            ));
+            drop(session);
+            emit_link_session_updated(&app);
+            if let Err(error) = start_window_link_capture(app.clone(), None, generation, None) {
+                set_link_capture_error(&app, generation, error.clone());
+                return Err(error);
+            }
+            let session = state
+                .link_session
+                .lock()
+                .map_err(|_| "link session lock poisoned".to_owned())?;
+            return Ok(link_status_dto(&session));
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
         let generation = state.link_capture_generation.fetch_add(1, Ordering::SeqCst) + 1;
         let confidence_threshold = desktop_link_confidence_threshold(&state);
         let mut session = state
@@ -1811,6 +2011,7 @@ fn recalibrate_link_session(
             mode,
             stable_frames,
             auto_side,
+            target_window_id: None,
         };
         let policy = CapturePolicy::for_source(CaptureSource::WindowLink);
         initialize_link_session_for_request(
@@ -1844,6 +2045,7 @@ fn recalibrate_link_session(
             .lock()
             .map_err(|_| "link session lock poisoned".to_owned())?;
         return Ok(link_status_dto(&session));
+        }
     }
     if matches!(source, CaptureSource::DesktopDetect) {
         let generation = state.link_capture_generation.fetch_add(1, Ordering::SeqCst) + 1;
@@ -1952,6 +2154,10 @@ fn recognize_link_image_file(
         session.board_bounds = None;
         session.piece_click_centers.clear();
         session.target_region = None;
+        session.target_window = None;
+        session.capture_backend = None;
+        session.capture_dpi = None;
+        session.click_available = false;
         invalidate_screenshot_move_resolution(&mut session);
         session.state = LinkSessionState::ClassifyingSquares;
         session.phase = Some("image_preflight".into());
@@ -2831,6 +3037,7 @@ fn start_window_link_capture(
                         &frame,
                         false,
                         capture_region,
+                        None,
                         "框选预览",
                     ) {
                         tracking_region = Some(next_region);
@@ -2890,16 +3097,24 @@ fn start_window_link_capture(
                             "连线浮窗靠近扩展识别区，已自动改为只采集棋盘主体以保持同步。",
                         );
                     }
-                    match capture_display_frame_for_link(&app, frame_region) {
+                    match capture_live_link_frame(&app, frame_region) {
                         Ok(frame) => {
+                            if let Some(dpi) = frame.dpi {
+                                if let Ok(mut session) = app.state::<DesktopState>().link_session.lock() {
+                                    if session.capture_generation == generation {
+                                        session.capture_dpi = Some(dpi);
+                                    }
+                                }
+                            }
                             if let Some(next_region) = process_link_capture_frame(
                                 &app,
                                 generation,
                                 &mut detector,
-                                &frame,
+                                &frame.png,
                                 true,
                                 frame_region,
-                                "屏幕采集",
+                                frame.screen_origin,
+                                if frame.screen_origin.is_some() { "目标窗口采集" } else { "屏幕采集" },
                             ) {
                                 tracking_region = Some(next_region);
                             }
@@ -2943,6 +3158,7 @@ fn process_link_capture_frame(
     frame: &[u8],
     update_bounds: bool,
     capture_region: Option<LinkCaptureRegion>,
+    capture_screen_origin: Option<(i32, i32)>,
     source_label: &str,
 ) -> Option<LinkCaptureRegion> {
     if !link_capture_generation_is_active(app, generation) {
@@ -2982,6 +3198,8 @@ fn process_link_capture_frame(
         board_bounds.and_then(|bounds| {
             let screen_bounds = if let Some(region) = capture_region {
                 map_capture_bounds_to_screen(bounds, region, frame_dimensions)
+            } else if let Some((origin_x, origin_y)) = capture_screen_origin {
+                (bounds.0 + origin_x as f32, bounds.1 + origin_y as f32, bounds.2, bounds.3)
             } else {
                 bounds
             };
@@ -3035,7 +3253,18 @@ fn process_link_capture_frame(
                         frame_dimensions,
                     )
                 })
-                .unwrap_or_default();
+                .unwrap_or_default()
+                .into_iter()
+                .map(|mut center| {
+                    if capture_region.is_none() {
+                        if let Some((origin_x, origin_y)) = capture_screen_origin {
+                            center.x += origin_x as f32;
+                            center.y += origin_y as f32;
+                        }
+                    }
+                    center
+                })
+                .collect::<Vec<_>>();
             if let Ok(mut session) = app.state::<DesktopState>().link_session.lock() {
                 if session.capture_generation != generation {
                     return next_region;
@@ -3329,6 +3558,40 @@ fn capture_display_frame_for_link(
     capture_display_frame(region)
 }
 
+fn capture_live_link_frame(
+    app: &tauri::AppHandle,
+    region: Option<LinkCaptureRegion>,
+) -> Result<LiveLinkCaptureFrame, String> {
+    #[cfg(target_os = "windows")]
+    {
+        let target = app
+            .state::<DesktopState>()
+            .link_session
+            .lock()
+            .ok()
+            .and_then(|session| {
+                (session.source == CaptureSource::WindowLink)
+                    .then(|| session.target_window.as_ref().map(|target| target.id.clone()))
+                    .flatten()
+            });
+        if let Some(target) = target {
+            let frame = windows_link::capture_browser_window(
+                target.parse::<u64>().map_err(|_| "目标窗口标识已失效，请重新选择浏览器窗口")?,
+            )?;
+            return Ok(LiveLinkCaptureFrame {
+                png: frame.png,
+                screen_origin: Some((frame.origin_x, frame.origin_y)),
+                dpi: Some(frame.dpi),
+            });
+        }
+    }
+    Ok(LiveLinkCaptureFrame {
+        png: capture_display_frame_for_link(app, region)?,
+        screen_origin: None,
+        dpi: None,
+    })
+}
+
 #[cfg(target_os = "macos")]
 fn macos_screen_capture_access_granted() -> bool {
     unsafe { CGPreflightScreenCaptureAccess() }
@@ -3556,8 +3819,20 @@ fn apply_link_capture_error(session: &mut LinkSession, generation: u64, reason: 
     if session.capture_generation != generation {
         return;
     }
+    let target_capture_error = matches!(session.source, CaptureSource::WindowLink)
+        && session.target_window.is_some()
+        && ["目标浏览器", "客户区", "窗口采集"]
+            .iter()
+            .any(|fragment| reason.contains(fragment));
     session.state = LinkSessionState::NeedsManualCorrection;
-    session.phase = Some("error".into());
+    session.phase = Some(
+        if target_capture_error {
+            "target_unavailable"
+        } else {
+            "error"
+        }
+        .into(),
+    );
     session.last_error = Some(reason.clone());
     session.reason = Some(reason);
     session.capture_running = false;
@@ -3635,7 +3910,7 @@ fn confirm_link_engine_move(
     app: tauri::AppHandle,
     state: State<'_, DesktopState>,
 ) -> Result<bool, String> {
-    let (bounds, orientation, piece_click_centers, mode, latest_fen, auto_side) = {
+    let (bounds, orientation, piece_click_centers, mode, latest_fen, auto_side, target_window_id) = {
         let session = state
             .link_session
             .lock()
@@ -3650,8 +3925,11 @@ fn confirm_link_engine_move(
             session.mode,
             session.latest_fen.clone(),
             session.auto_side,
+            session.target_window.as_ref().map(|target| target.id.clone()),
         )
     };
+    #[cfg(not(target_os = "windows"))]
+    let _ = &target_window_id;
     if !matches!(mode, LinkMode::ConfirmPlay | LinkMode::AutoPlay) {
         return Err("当前为观战跟盘模式，不能执行外部点击".into());
     }
@@ -3685,8 +3963,26 @@ fn confirm_link_engine_move(
         .filter(|center| center.square == mv.from)
         .max_by(|left, right| left.confidence.total_cmp(&right.confidence))
         .copied();
+    #[cfg(target_os = "windows")]
+    let click_target = target_window_id.is_some();
+    #[cfg(not(target_os = "windows"))]
     let click_target = matches!(mode, LinkMode::AutoPlay);
-    let click_points = click_external_move(bounds, orientation, mv, detected_from, click_target)?;
+    let click_points = link_move_click_points_for_click(bounds, orientation, mv, detected_from);
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(target_window_id) = target_window_id.as_deref() {
+            let target_window_id = target_window_id
+                .parse::<u64>()
+                .map_err(|_| "目标浏览器窗口标识已失效，请重新选择窗口")?;
+            // Windows never auto-plays.  The user's confirm action sends both
+            // endpoints to the verified browser window.
+            windows_link::click_browser_points(target_window_id, click_points.0, click_points.1)?;
+        } else {
+            click_external_move(bounds, orientation, mv, detected_from, click_target)?;
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    click_external_move(bounds, orientation, mv, detected_from, click_target)?;
     let mut session = state
         .link_session
         .lock()
@@ -12126,6 +12422,7 @@ fn main() {
             get_app_info,
             get_state,
             prepare_link_selection_window,
+            list_link_target_windows,
             complete_link_region_selection,
             cancel_link_region_selection,
             get_link_region_selection_background,
@@ -12678,6 +12975,7 @@ mod tests {
             mode: LinkMode::AutoPlay,
             stable_frames: 1,
             auto_side: Some("red".into()),
+            target_window_id: None,
         };
         let policy = CapturePolicy::for_source(request.source);
 

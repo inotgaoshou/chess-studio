@@ -38,6 +38,19 @@ uuid.workspace = true
 xiangqi-core = { path = "../../../crates/xiangqi-core" }
 xiangqi-manual = { path = "../../../crates/manual" }
 
+[target.'cfg(windows)'.dependencies]
+# Keep window enumeration, DPI conversion and capture inside the desktop
+# process.  The Windows path must not shell out to PowerShell for every frame.
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_Security",
+  "Win32_System_Threading",
+  "Win32_UI_HiDpi",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
 [[bin]]
 name = "xiangqi-desktop"
 path = "src/main.rs"

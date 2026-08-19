@@ -93,6 +93,46 @@ describe("LinkSessionDialog", () => {
     }));
   });
 
+  it("requires a selected Chrome or Edge target before starting a Windows window link", async () => {
+    const userAgent = vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
+    const { props, user } = renderLinkDialog();
+    props.onListTargetWindows = vi.fn(async () => [{
+      id: "42",
+      title: "天天象棋 - Chrome",
+      processName: "chrome.exe",
+      clientWidth: 1440,
+      clientHeight: 900,
+      dpi: 120,
+      available: true,
+    }]);
+    props.onStart = vi.fn(async () => ({ state: "tracking" as const, accepted: false }));
+    cleanup();
+    render(<LinkSessionDialog {...props}/>);
+
+    expect(await screen.findByText("目标浏览器窗口")).toBeTruthy();
+    expect(screen.queryByRole("option", { name: "自动对战" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "连接所选窗口" }));
+
+    expect(props.onStart).toHaveBeenCalledWith(expect.objectContaining({
+      source: "windowLink",
+      mode: "spectate",
+      targetWindowId: "42",
+    }));
+    userAgent.mockRestore();
+  });
+
+  it("keeps the Windows start action disabled when no target browser window is available", async () => {
+    const userAgent = vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
+    const { props } = renderLinkDialog();
+    props.onListTargetWindows = vi.fn(async () => []);
+    cleanup();
+    render(<LinkSessionDialog {...props}/>);
+
+    expect((await screen.findByRole("alert")).textContent).toContain("未找到可用的 Chrome 或 Edge 窗口");
+    expect(screen.getByRole("button", { name: "连接所选窗口" }).hasAttribute("disabled")).toBe(true);
+    userAgent.mockRestore();
+  });
+
   it("enables desktop auto recognition as a real link source", async () => {
     const { props, user } = renderLinkDialog();
 

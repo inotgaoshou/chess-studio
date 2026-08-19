@@ -1,8 +1,8 @@
 import { Camera, Image, Link2, MonitorUp, Pause, Play, ScanLine, X } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { LinkMiniBoard } from "./LinkMiniBoard";
 import { boardCanonicalSquare, boardIntersectionStyle, boardSkinFromAssetPath } from "./boardGeometry";
-import type { CaptureSource, LinkAutoSide, LinkMode, LinkObservation, RecognizedLastMovePreview, RecognitionMode, ScreenshotMoveResolution, StartLinkSessionRequest } from "./platform";
+import type { CaptureSource, LinkAutoSide, LinkMode, LinkObservation, LinkTargetWindow, RecognizedLastMovePreview, RecognitionMode, ScreenshotMoveResolution, StartLinkSessionRequest } from "./platform";
 
 type CloseOptions = { cleanupFileSession?: boolean };
 
@@ -10,6 +10,7 @@ type Props = {
   initialSource?: CaptureSource;
   onClose(options?: CloseOptions): void;
   onStart(request: StartLinkSessionRequest): Promise<LinkObservation>;
+  onListTargetWindows?(): Promise<LinkTargetWindow[]>;
   onStop(): Promise<LinkObservation>;
   onSubmit(fen: string): Promise<LinkObservation>;
   onImport(fen: string, title?: string): Promise<void>;
@@ -43,7 +44,7 @@ const stateText: Record<LinkObservation["state"], string> = {
 
 function squareToIccs(row: number, col: number) { return `${String.fromCharCode(97 + col)}${9 - row}`; }
 
-export function LinkSessionDialog({ initialSource = "windowLink", onClose, onStart, onStop, onSubmit, onImport, onStartTraining, onRecognizeImage, onPreviewMarkedMove, onResolveScreenshotMove, onConfirmMarkedMove, pieceAsset, boardAsset }: Props) {
+export function LinkSessionDialog({ initialSource = "windowLink", onClose, onStart, onListTargetWindows, onStop, onSubmit, onImport, onStartTraining, onRecognizeImage, onPreviewMarkedMove, onResolveScreenshotMove, onConfirmMarkedMove, pieceAsset, boardAsset }: Props) {
   const boardSkin = boardSkinFromAssetPath(boardAsset);
   const [source, setSource] = useState<CaptureSource>(initialSource);
   const [mode, setMode] = useState<LinkMode>("spectate");
@@ -59,6 +60,10 @@ export function LinkSessionDialog({ initialSource = "windowLink", onClose, onSta
   const [manualBoard, setManualBoard] = useState<{ pieces: import("./platform").Piece[]; sideToMove: import("./platform").Side }>();
   const [screenshotResolutionStatus, setScreenshotResolutionStatus] = useState<ScreenshotMoveResolution["status"]>();
   const [markError, setMarkError] = useState("");
+  const isWindows = typeof navigator !== "undefined" && /Windows/i.test(navigator.userAgent);
+  const [targetWindows, setTargetWindows] = useState<LinkTargetWindow[]>([]);
+  const [targetWindowId, setTargetWindowId] = useState<string>();
+  const [targetWindowError, setTargetWindowError] = useState<string>();
   const [reversed, setReversed] = useState(false);
   const hasFileRecognitionSessionRef = useRef(false);
   const stableFrames = source === "cameraBoard" ? 3 : source === "imageImport" ? 1 : 2;
@@ -66,6 +71,24 @@ export function LinkSessionDialog({ initialSource = "windowLink", onClose, onSta
   const active = observation.state !== "stopped" && !(source === "imageImport" || source === "cameraBoard");
   const fileRecognition = source === "imageImport" || source === "cameraBoard";
   const liveRecognition = source === "windowLink" || source === "desktopDetect";
+
+  const loadTargetWindows = async () => {
+    if (!isWindows || !onListTargetWindows) return;
+    setTargetWindowError(undefined);
+    try {
+      const targets = await onListTargetWindows();
+      setTargetWindows(targets);
+      setTargetWindowId((current) => targets.some((target) => target.id === current) ? current : targets.at(0)?.id);
+      if (targets.length === 0) setTargetWindowError("未找到可用的 Chrome 或 Edge 窗口。请先打开天天象棋网页版，并保持窗口可见。" );
+    } catch (error) {
+      setTargetWindows([]);
+      setTargetWindowError(error instanceof Error ? error.message : "读取 Windows 浏览器窗口失败");
+    }
+  };
+
+  useEffect(() => {
+    if (source === "windowLink") void loadTargetWindows();
+  }, [source]);
   const showCorrection = fileRecognition || correctionExpanded || observation.state === "needsManualCorrection";
 
   async function run(task: () => Promise<LinkObservation>) {
@@ -146,11 +169,12 @@ export function LinkSessionDialog({ initialSource = "windowLink", onClose, onSta
       <header><div><ScanLine size={18}/><span><strong id="link-session-title">识别与连线</strong><small>识别结果必须经过棋规与稳定帧校验</small></span></div><button className="tool-button" aria-label="关闭识别与连线" title="关闭" onClick={close}><X size={16}/></button></header>
       <div className="link-session-body">
         <section className="link-source-grid" aria-label="局面来源">
-          {sourceOptions.map((option) => { const Icon = option.icon; return <button key={option.value} className={source === option.value ? "active" : ""} onClick={() => { setSource(option.value); setCorrectionExpanded(false); setScreenshotResolutionStatus(undefined); setMarkedMove(undefined); setMarkedCandidates([]); setManualBoard(undefined); setMarkedFrom(undefined); setMarkError(""); if (option.value === "imageImport" || option.value === "cameraBoard") setMode("spectate"); }} disabled={active || !option.available}><Icon size={16}/><strong>{option.label}</strong><small>{option.hint}</small></button>; })}
+          {sourceOptions.map((option) => { const Icon = option.icon; const hint = isWindows && option.value === "windowLink" ? "选择 Chrome / Edge 网页窗口后持续同步" : option.hint; return <button key={option.value} className={source === option.value ? "active" : ""} onClick={() => { setSource(option.value); setCorrectionExpanded(false); setScreenshotResolutionStatus(undefined); setMarkedMove(undefined); setMarkedCandidates([]); setManualBoard(undefined); setMarkedFrom(undefined); setMarkError(""); setTargetWindowError(undefined); if (option.value === "imageImport" || option.value === "cameraBoard") setMode("spectate"); if (option.value === "windowLink") void loadTargetWindows(); }} disabled={active || !option.available}><Icon size={16}/><strong>{option.label}</strong><small>{hint}</small></button>; })}
         </section>
-        <div className="link-config-row"><label>模式<select value={mode} onChange={(event) => setMode(event.target.value as LinkMode)} disabled={active}><option value="autoPlay">自动对战</option><option value="confirmPlay">确认走子</option><option value="spectate">观战跟盘</option></select></label>{mode === "autoPlay" && <label>自动执棋<select value={autoSide} onChange={(event) => setAutoSide(event.target.value as LinkAutoSide)} disabled={active}><option value="red">红方</option><option value="black">黑方</option></select></label>}<label>稳定帧<input readOnly value={`${stableFrames} 帧`} /></label></div>
+        {isWindows && source === "windowLink" && <section className="link-target-window" aria-label="Windows 目标浏览器窗口"><header><strong>目标浏览器窗口</strong><button type="button" onClick={() => void loadTargetWindows()} disabled={active || busy}>刷新列表</button></header><select value={targetWindowId ?? ""} onChange={(event) => setTargetWindowId(event.target.value)} disabled={active || busy || targetWindows.length === 0}><option value="" disabled>请选择天天象棋网页窗口</option>{targetWindows.map((target) => <option key={target.id} value={target.id}>{target.processName.replace(".exe", "")} · {target.title} · {target.clientWidth}×{target.clientHeight} · {Math.round(target.dpi / 96 * 100)}%</option>)}</select><small>只采集所选浏览器客户区，不读取或保存其他窗口内容。窗口最小化、关闭或更换管理员权限后会安全暂停；Windows 仅支持观战和确认走子。</small>{targetWindowError && <p role="alert">{targetWindowError}</p>}</section>}
+        <div className="link-config-row"><label>模式<select value={mode} onChange={(event) => setMode(event.target.value as LinkMode)} disabled={active}>{!isWindows && <option value="autoPlay">自动对战</option>}<option value="confirmPlay">确认走子</option><option value="spectate">观战跟盘</option></select></label>{mode === "autoPlay" && <label>自动执棋<select value={autoSide} onChange={(event) => setAutoSide(event.target.value as LinkAutoSide)} disabled={active}><option value="red">红方</option><option value="black">黑方</option></select></label>}<label>稳定帧<input readOnly value={`${stableFrames} 帧`} /></label></div>
         <p className="link-mode-hint">{mode === "autoPlay" ? `自动对战：同步局面并启动引擎分析，轮到${autoSide === "red" ? "红方" : "黑方"}时自动点击第一候选着法。` : mode === "confirmPlay" ? "确认走子：同步局面和分析候选，但每步都需要在连线浮窗里确认。" : "观战跟盘：只同步局面和分析，不点击第三方棋盘。"}</p>
-        {liveRecognition ? <section className="link-live-card"><strong>实时连线流程</strong><ol><li>启动后打开连线浮窗，并框选第三方棋盘。</li><li>识别通过后同步主棋盘，并触发本地引擎分析/候选箭头。</li><li>识别异常会在浮窗提示缺哪边将帅、置信度和检测数量。</li></ol></section> : <ol className="link-learning-steps"><li>从天天象棋等应用保存当前局面截图，选择图片识别。</li><li>核对识别出的 FEN、标题和红黑行棋方；识别结果不理想时可以修正 FEN。</li><li>点击“导入并开始 U10 拆棋”会新建独立练习局面，不会改动原棋谱或第三方应用。</li></ol>}
+        {liveRecognition ? <section className="link-live-card"><strong>实时连线流程</strong><ol>{isWindows && source === "windowLink" ? <><li>选择 Chrome 或 Edge 中打开的天天象棋网页窗口。</li><li>识别通过后同步主棋盘，并触发本地引擎分析/候选箭头。</li><li>确认走子会先核对局面，再向该窗口发送起点和终点点击。</li></> : <><li>启动后打开连线浮窗，并框选第三方棋盘。</li><li>识别通过后同步主棋盘，并触发本地引擎分析/候选箭头。</li><li>识别异常会在浮窗提示缺哪边将帅、置信度和检测数量。</li></>}</ol></section> : <ol className="link-learning-steps"><li>从天天象棋等应用保存当前局面截图，选择图片识别。</li><li>核对识别出的 FEN、标题和红黑行棋方；识别结果不理想时可以修正 FEN。</li><li>点击“导入并开始 U10 拆棋”会新建独立练习局面，不会改动原棋谱或第三方应用。</li></ol>}
         <div className={`link-session-status ${observation.state}`}><span>当前状态</span><strong>{stateText[observation.state]}</strong>{observation.reason && <small>{observation.reason}</small>}{observation.moveIccs && <em>已同步 {observation.moveIccs}</em>}</div>
         {fileRecognition && (observation.board || manualBoard || markedMove) && pieceAsset && <section className="link-move-marker" aria-label="截图走子标记">
           <header><strong>识别到的上一着</strong><small>白色空心圈与棋子底光只用于已通过完整局面匹配的候选排序，不会单独推断走法。所有结果均需确认后才写入变例。</small></header>
@@ -164,7 +188,7 @@ export function LinkSessionDialog({ initialSource = "windowLink", onClose, onSta
         {showCorrection ? <section className="link-correction"><header><strong>{fileRecognition ? "局面校正与导入" : "高级：手动校正 FEN"}</strong><small>{fileRecognition ? "截图/照片识别结果会填入此处；可改 FEN 和标题后确认。" : "实时连线通常不需要填写。只有识别异常、或你想手动提交局面时才使用。"}</small></header><textarea value={fen} onChange={(event) => setFen(event.target.value)} placeholder="粘贴识别得到的 FEN，例如 rnbakabnr/... w - - 0 1" spellCheck={false}/>{fileRecognition && <label>新棋谱标题<input value={title} onChange={(event) => setTitle(event.target.value)} /></label>}</section> : <button type="button" className="link-manual-correction-toggle" onClick={() => setCorrectionExpanded(true)}>手动校正 FEN / 导入局面</button>}
         <p className="link-session-notice">随包 YOLO11 模型会在启动时校验 SHA-256 并建立 ONNX 会话；识别只处理当前帧，不保存第三方窗口内容。</p>
       </div>
-      <footer>{active ? <><button onClick={() => void run(onStop)} disabled={busy}><Pause size={14}/>停止连线</button>{showCorrection && <button className="primary" onClick={() => void run(() => onSubmit(fen))} disabled={busy || !fen.trim()}>提交识别局面</button>}</> : <>{showCorrection && <button onClick={() => void onImport(fen, title)} disabled={busy || !fen.trim()}><Image size={14}/>仅导入棋局</button>}{fileRecognition && observation.board && <button className="primary" onClick={() => void onStartTraining(fen, title, reversed)} disabled={busy || !fen.trim()}><Play size={14}/>导入并开始 U10 拆棋</button>}{fileRecognition ? <button onClick={() => void run(recognizeImage)} disabled={busy}><Camera size={14}/>{busy ? "识别中…" : observation.board ? "重新选择图片" : "选择图片识别"}</button> : <button className="primary" onClick={() => void run(() => onStart({ source, recognitionMode, mode, stableFrames, autoSide: mode === "autoPlay" ? autoSide : undefined }))} disabled={busy}><Play size={14}/>{busy ? "正在打开框选…" : "启动连线"}</button>}</>}</footer>
+      <footer>{active ? <><button onClick={() => void run(onStop)} disabled={busy}><Pause size={14}/>停止连线</button>{showCorrection && <button className="primary" onClick={() => void run(() => onSubmit(fen))} disabled={busy || !fen.trim()}>提交识别局面</button>}</> : <>{showCorrection && <button onClick={() => void onImport(fen, title)} disabled={busy || !fen.trim()}><Image size={14}/>仅导入棋局</button>}{fileRecognition && observation.board && <button className="primary" onClick={() => void onStartTraining(fen, title, reversed)} disabled={busy || !fen.trim()}><Play size={14}/>导入并开始 U10 拆棋</button>}{fileRecognition ? <button onClick={() => void run(recognizeImage)} disabled={busy}><Camera size={14}/>{busy ? "识别中…" : observation.board ? "重新选择图片" : "选择图片识别"}</button> : <button className="primary" onClick={() => void run(() => onStart({ source, recognitionMode, mode, stableFrames, autoSide: mode === "autoPlay" ? autoSide : undefined, targetWindowId: source === "windowLink" && isWindows ? targetWindowId : undefined }))} disabled={busy || (isWindows && source === "windowLink" && !targetWindowId)}><Play size={14}/>{busy ? (isWindows ? "正在连接…" : "正在打开框选…") : isWindows && source === "windowLink" ? "连接所选窗口" : "启动连线"}</button>}</>}</footer>
     </section>
   </div>;
 }

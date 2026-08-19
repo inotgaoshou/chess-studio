@@ -184,7 +184,7 @@ Object.defineProperty(window, "matchMedia", {
 function configurePlatform() {
   const target = platformMock as Record<string, ReturnType<typeof vi.fn> | string>;
   target.initialize = vi.fn(async () => board);
-  target.getAppInfo = vi.fn(async () => ({ version: "1.2.2", buildTimestamp: 0, platform: "macOS" }));
+  target.getAppInfo = vi.fn(async () => ({ version: "1.2.3", buildTimestamp: 0, platform: "macOS" }));
   target.listGames = vi.fn(async () => []);
   target.listLibraryFolders = vi.fn(async () => []);
   target.listFlyknifePlans = vi.fn(async () => []);

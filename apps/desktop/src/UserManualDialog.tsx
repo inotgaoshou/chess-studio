@@ -42,7 +42,7 @@ function parseChapters(markdown: string): ManualChapter[] {
   });
 }
 
-export function UserManualDialog({ appVersion = "1.2.2", markdown, onClose }: Props) {
+export function UserManualDialog({ appVersion = "1.2.3", markdown, onClose }: Props) {
   const [query, setQuery] = useState("");
   const chapters = useMemo(() => parseChapters(markdown), [markdown]);
   const visibleChapters = useMemo(() => {

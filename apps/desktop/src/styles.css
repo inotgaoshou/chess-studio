@@ -5924,6 +5924,13 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 .link-source-grid button strong { min-width: 0; color: var(--text-primary); font-size: 13px; }
 .link-source-grid button small { min-width: 0; color: var(--text-muted); font-size: 11px; line-height: 1.35; }
 .link-source-grid button.active { border-color: var(--accent); background: var(--accent-surface); }
+.link-target-window { padding: 10px; border: 1px solid var(--border); border-left: 3px solid var(--accent); background: var(--surface-1); display: grid; gap: 7px; }
+.link-target-window header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.link-target-window strong { color: var(--text-primary); font-size: 12px; }
+.link-target-window button { border: 1px solid var(--border-strong); border-radius: 4px; background: var(--surface-2); color: var(--text-secondary); min-height: 27px; padding: 0 8px; font: inherit; font-size: 11px; }
+.link-target-window select { width: 100%; min-height: 34px; border: 1px solid var(--border-strong); border-radius: 4px; background: var(--surface-0); color: var(--text-primary); padding: 0 8px; font: inherit; }
+.link-target-window small { color: var(--text-muted); font-size: 11px; line-height: 1.45; }
+.link-target-window p { margin: 0; color: var(--danger, #c34242); font-size: 11px; }
 .link-config-row { display: grid; grid-template-columns: 1fr 120px; gap: 10px; }
 .link-config-row label, .link-correction > label { display: grid; gap: 5px; color: var(--text-muted); font-size: 11px; }
 .link-config-row select, .link-config-row input, .link-correction input, .link-correction textarea { width: 100%; border: 1px solid var(--border-strong); border-radius: 4px; background: var(--surface-1); color: var(--text-primary); font: inherit; }

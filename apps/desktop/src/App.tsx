@@ -6163,7 +6163,7 @@ export default function App() {
               </div>
               <span>{linkPhaseLabel(linkSessionStatus)}</span>
             </div>
-            <div className={`link-float-status ${linkSessionStatus.state}`}><span>{linkSessionStateLabel(linkSessionStatus.state, linkSessionStatus.mode, linkSessionStatus.pendingExternalMove, linkPendingMoveDisplay)}</span><strong>{board.sideToMove}行棋</strong><small>{linkSessionStatus.lastError ?? linkSessionStatus.reason ?? "窗口连线将同步经过稳定帧与棋规校验的着法"}</small>{linkSessionStatus.turnIndicator && <small>{linkSessionStatus.turnIndicator}</small>}{linkSessionStatus.lastDetectionSummary && <small>{linkSessionStatus.lastDetectionSummary}</small>}<small>{linkSessionStatus.captureRunning ? `${linkPhaseLabel(linkSessionStatus)} · ${linkSessionStatus.confidence == null ? "等待置信度" : `置信度 ${(linkSessionStatus.confidence * 100).toFixed(0)}%`} · 稳定 ${linkSessionStatus.stableFrames}/${linkSessionStatus.requiredStableFrames} · 尝试 ${linkSessionStatus.recognitionAttempts ?? 0}` : `${linkPhaseLabel(linkSessionStatus)} · ${linkSessionStatus.confidence == null ? "等待置信度" : `置信度 ${(linkSessionStatus.confidence * 100).toFixed(0)}%`} · 尝试 ${linkSessionStatus.recognitionAttempts ?? 0}`}</small>{linkSessionStatus.lastMove && <small>最近同步：{linkSessionStatus.lastMove}</small>}</div>
+            <div className={`link-float-status ${linkSessionStatus.state}`}><span>{linkSessionStateLabel(linkSessionStatus.state, linkSessionStatus.mode, linkSessionStatus.pendingExternalMove, linkPendingMoveDisplay)}</span><strong>{board.sideToMove}行棋</strong><small>{linkSessionStatus.lastError ?? linkSessionStatus.reason ?? "窗口连线将同步经过稳定帧与棋规校验的着法"}</small>{linkSessionStatus.targetWindow && <small>目标：{linkSessionStatus.targetWindow.processName.replace(".exe", "")} · {linkSessionStatus.targetWindow.title} · {linkSessionStatus.captureDpi ? `${Math.round(linkSessionStatus.captureDpi / 96 * 100)}% DPI` : "DPI 读取中"} · {linkSessionStatus.clickAvailable ? "可确认走子" : "仅观战"}</small>}{linkSessionStatus.turnIndicator && <small>{linkSessionStatus.turnIndicator}</small>}{linkSessionStatus.lastDetectionSummary && <small>{linkSessionStatus.lastDetectionSummary}</small>}<small>{linkSessionStatus.captureRunning ? `${linkPhaseLabel(linkSessionStatus)} · ${linkSessionStatus.confidence == null ? "等待置信度" : `置信度 ${(linkSessionStatus.confidence * 100).toFixed(0)}%`} · 稳定 ${linkSessionStatus.stableFrames}/${linkSessionStatus.requiredStableFrames} · 尝试 ${linkSessionStatus.recognitionAttempts ?? 0}` : `${linkPhaseLabel(linkSessionStatus)} · ${linkSessionStatus.confidence == null ? "等待置信度" : `置信度 ${(linkSessionStatus.confidence * 100).toFixed(0)}%`} · 尝试 ${linkSessionStatus.recognitionAttempts ?? 0}`}</small>{linkSessionStatus.lastMove && <small>最近同步：{linkSessionStatus.lastMove}</small>}</div>
             <div
               className={`link-float-evaluation ${professionalEvaluationTone}`}
               aria-label={evaluation ? `当前局面评估：${evaluation.label}，分值 ${evaluation.scoreText}` : "等待局面评估"}
@@ -6198,13 +6198,13 @@ export default function App() {
                   : <p>{linkHasObservedPosition ? "当前局面已同步，等待引擎返回候选线路。" : "识别并同步局面后，在此显示当前设置的引擎候选线。"}</p>}
             </div>
             <div className="link-float-actions">
-              {linkSessionStatus.mode === "confirmPlay" && <button type="button" title={linkConfirmMove ? `按箭头1选中起始棋子：${linkConfirmMoveDisplay ?? linkConfirmMove}` : "等待箭头1候选"} disabled={linkSessionStatus.state !== "tracking" || analysisIsStale || !linkConfirmMove} onClick={() => { const move = linkConfirmMove; if (move) void chessPlatform.confirmLinkEngineMove(move).then(async () => { setNotice(`已按箭头1选中 ${linkConfirmMoveDisplay ?? move} 的起始棋子，请在网页棋盘确认落点`); setLinkSessionStatus(await chessPlatform.getLinkSessionStatus()); }).catch((error) => setNotice(friendlyError(error))); }}><Play size={14}/>{linkConfirmMoveLabel ? `重选首选 ${linkConfirmMoveLabel}` : "选中走子"}</button>}
+              {linkSessionStatus.mode === "confirmPlay" && <button type="button" title={linkConfirmMove ? `确认执行箭头1：${linkConfirmMoveDisplay ?? linkConfirmMove}` : "等待箭头1候选"} disabled={linkSessionStatus.state !== "tracking" || analysisIsStale || !linkConfirmMove || linkSessionStatus.clickAvailable === false} onClick={() => { const move = linkConfirmMove; if (move) void chessPlatform.confirmLinkEngineMove(move).then(async () => { const status = await chessPlatform.getLinkSessionStatus(); setLinkSessionStatus(status); setNotice(status.targetWindow ? `已向 ${status.targetWindow.processName.replace(".exe", "")} 窗口点击 ${linkConfirmMoveDisplay ?? move} 的起点和终点，等待局面回读` : `已按箭头1选中 ${linkConfirmMoveDisplay ?? move} 的起始棋子，请在网页棋盘确认落点`); }).catch((error) => setNotice(friendlyError(error))); }}><Play size={14}/>{linkConfirmMoveLabel ? `确认首选 ${linkConfirmMoveLabel}` : "确认走子"}</button>}
               <button type="button" disabled={linkSessionStatus.state === "stopped"} onClick={() => void chessPlatform.setLinkSideToMove(board.sideToMove === "红方" ? "black" : "red").then((next) => { applyBoard(next); return chessPlatform.getLinkSessionStatus(); }).then((status) => { setLinkSessionStatus(status); analysisHintsEnabledRef.current = true; setAnalysisHintsEnabled(true); window.setTimeout(() => void runAnalysis(true), 0); setNotice(`已校正为${board.sideToMove === "红方" ? "黑方" : "红方"}行棋`); }).catch((error) => setNotice(friendlyError(error)))}>{board.sideToMove === "红方" ? "改黑走" : "改红走"}</button>
               <button type="button" disabled={linkSessionStatus.state === "stopped"} onClick={() => void chessPlatform.pauseLinkSession().then(setLinkSessionStatus).catch((error) => setNotice(friendlyError(error)))}><Pause size={14}/>暂停</button>
-              <button type="button" onClick={() => void chessPlatform.recalibrateLinkSession().then((status) => { setLinkSessionStatus(status); return chessPlatform.getLinkCapturePreview(); }).then(setLinkCapturePreview).catch((error) => setNotice(friendlyError(error)))}><RefreshCw size={14}/>{linkSessionStatus.source === "desktopDetect" ? "重新扫描" : linkSessionStatus.source === "imageImport" || linkSessionStatus.source === "cameraBoard" ? "重新选图" : "重新框选"}</button>
+              <button type="button" onClick={() => void chessPlatform.recalibrateLinkSession().then((status) => { setLinkSessionStatus(status); return chessPlatform.getLinkCapturePreview(); }).then(setLinkCapturePreview).catch((error) => setNotice(friendlyError(error)))}><RefreshCw size={14}/>{linkSessionStatus.source === "desktopDetect" ? "重新扫描" : linkSessionStatus.source === "imageImport" || linkSessionStatus.source === "cameraBoard" ? "重新选图" : linkSessionStatus.targetWindow ? "重新标定" : "重新框选"}</button>
               <button type="button" className="stop" disabled={linkSessionStatus.state === "stopped"} onClick={() => void chessPlatform.stopLinkSession().then(() => chessPlatform.getLinkSessionStatus()).then(setLinkSessionStatus).catch((error) => setNotice(friendlyError(error)))}><Square size={13}/>停止</button>
             </div>
-            <p className="floating-panel-note">模型在本机持续识别可见棋盘，不保存截图。确认走子和自动对战只会在稳定局面、有效引擎结果及明确授权下执行。</p>
+            <p className="floating-panel-note">模型在本机持续识别可见棋盘，不保存截图。Windows 仅可对已绑定浏览器窗口确认走子，不提供自动代走；其他平台按系统权限限制执行。</p>
           </section>
         ) : (
           <section className="floating-panel-body floating-manual-body">
@@ -6419,7 +6419,7 @@ export default function App() {
         onSaveMirrorPreferences={saveMirrorPreferences}
         onRebuildMirrors={rebuildGameMirrors}
       />}
-      {userManualOpen && <UserManualDialog appVersion={appInfo?.version ?? "1.2.2"} markdown={userManualMarkdown} onClose={() => setUserManualOpen(false)}/>}
+      {userManualOpen && <UserManualDialog appVersion={appInfo?.version ?? "1.2.3"} markdown={userManualMarkdown} onClose={() => setUserManualOpen(false)}/>}
       {aboutOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setAboutOpen(false); }}>
         <section className="about-dialog" role="dialog" aria-modal="true" aria-labelledby="about-title">
           <header><span><Info size={18}/><strong id="about-title">关于棋研</strong></span><button className="tool-button" title="关闭" onClick={() => setAboutOpen(false)}><X size={16}/></button></header>
@@ -7276,6 +7276,7 @@ export default function App() {
       {linkSessionOpen && <LinkSessionDialog
         initialSource={linkSessionSource}
         onClose={closeLinkSessionDialog}
+        onListTargetWindows={() => chessPlatform.listLinkTargetWindows()}
         onStart={async (request) => {
           try {
             await saveDesktopPreferencePatch({
@@ -7290,7 +7291,7 @@ export default function App() {
             await collapseCompactStudyPanels();
             if (request.source === "windowLink" || request.source === "desktopDetect") {
               const created = await chessPlatform.openCompactFloatingPanel("link");
-              setNotice(created ? "连线提示已打开，正在准备框选棋盘区域…" : "连线提示窗口已置前，正在准备框选棋盘区域…");
+              setNotice(created ? "连线提示已打开，正在准备连线…" : "连线提示窗口已置前，正在准备连线…");
             }
             const result = await chessPlatform.startLinkSession(request);
             analysisHintsEnabledRef.current = true;
