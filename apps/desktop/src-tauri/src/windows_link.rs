@@ -210,7 +210,7 @@ fn valid_browser_window(handle: HWND) -> Option<BrowserWindow> {
 }
 
 unsafe extern "system" fn enumerate_callback(handle: HWND, lparam: LPARAM) -> BOOL {
-    let windows = &mut *(lparam as *mut Vec<BrowserWindow>);
+    let windows = unsafe { &mut *(lparam as *mut Vec<BrowserWindow>) };
     if let Some(target) = valid_browser_window(handle) {
         windows.push(target);
     }

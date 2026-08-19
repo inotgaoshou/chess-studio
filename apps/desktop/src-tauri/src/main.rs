@@ -20,6 +20,8 @@ use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 use std::process::Stdio;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
@@ -1622,32 +1624,34 @@ fn start_link_session(
             });
         }
         #[cfg(not(target_os = "windows"))]
-        if let Err(error) = start_window_link_selection_worker(app.clone(), generation) {
-            restore_link_window_or_main(&app);
-            if let Ok(mut session) = state.link_session.lock() {
-                apply_link_region_selection_failure(
-                    &mut session,
-                    generation,
-                    "region_selection_error",
-                    format!("{error}；可重新启动连线或重新框选。"),
-                );
+        {
+            if let Err(error) = start_window_link_selection_worker(app.clone(), generation) {
+                restore_link_window_or_main(&app);
+                if let Ok(mut session) = state.link_session.lock() {
+                    apply_link_region_selection_failure(
+                        &mut session,
+                        generation,
+                        "region_selection_error",
+                        format!("{error}；可重新启动连线或重新框选。"),
+                    );
+                }
+                emit_link_session_updated(&app);
+                return Err(error);
             }
-            emit_link_session_updated(&app);
-            return Err(error);
+            let session = state
+                .link_session
+                .lock()
+                .map_err(|_| "link session lock poisoned".to_owned())?;
+            return Ok(LinkObservationDto {
+                state: session.state,
+                accepted: false,
+                move_iccs: None,
+                reason: session.reason.clone(),
+                board: None,
+                orientation: session.board_orientation,
+                capture_preview_available: session.capture_preview.is_some(),
+            });
         }
-        let session = state
-            .link_session
-            .lock()
-            .map_err(|_| "link session lock poisoned".to_owned())?;
-        return Ok(LinkObservationDto {
-            state: session.state,
-            accepted: false,
-            move_iccs: None,
-            reason: session.reason.clone(),
-            board: None,
-            orientation: session.board_orientation,
-            capture_preview_available: session.capture_preview.is_some(),
-        });
     }
     let capture_preview: Option<LinkCapturePreview> = None;
     let initial_frame = capture_preview.as_ref().map(|preview| preview.png.clone());
@@ -12544,6 +12548,9 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("failed to build Xiangqi Studio")
         .run(|app_handle, event| {
+            #[cfg(not(target_os = "macos"))]
+            let _ = (&app_handle, &event);
+            #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = event {
                 if let Some(main_window) = app_handle.get_webview_window("main") {
                     let _ = main_window.show();
