@@ -40,11 +40,11 @@ jobs:
       - id: targets
         run: |
           if [ "${{ github.event.inputs.platform || 'all' }}" = "all" ]; then
-            matrix='{"include":[{"name":"Windows x64","platform":"windows-x64","os":"windows-latest","rust_target":"x86_64-pc-windows-msvc","tauri_args":"--target x86_64-pc-windows-msvc"},{"name":"macOS Apple Silicon","platform":"macos-arm64","os":"macos-latest","rust_target":"aarch64-apple-darwin","tauri_args":"--target aarch64-apple-darwin"}]}'
+            matrix='{"include":[{"name":"Windows x64","platform":"windows-x64","os":"windows-latest","rust_target":"x86_64-pc-windows-msvc","tauri_args":"--target x86_64-pc-windows-msvc --bundles nsis"},{"name":"macOS Apple Silicon","platform":"macos-arm64","os":"macos-latest","rust_target":"aarch64-apple-darwin","tauri_args":"--target aarch64-apple-darwin"}]}'
           elif [ "${{ github.event.inputs.platform }}" = "macos" ]; then
             matrix='{"include":[{"name":"macOS Apple Silicon","platform":"macos-arm64","os":"macos-latest","rust_target":"aarch64-apple-darwin","tauri_args":"--target aarch64-apple-darwin"}]}'
           else
-            matrix='{"include":[{"name":"Windows x64","platform":"windows-x64","os":"windows-latest","rust_target":"x86_64-pc-windows-msvc","tauri_args":"--target x86_64-pc-windows-msvc"}]}'
+            matrix='{"include":[{"name":"Windows x64","platform":"windows-x64","os":"windows-latest","rust_target":"x86_64-pc-windows-msvc","tauri_args":"--target x86_64-pc-windows-msvc --bundles nsis"}]}'
           fi
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
