@@ -187,6 +187,7 @@ struct LinkSession {
     capture_running: bool,
     board_bounds: Option<(f32, f32, f32, f32)>,
     piece_click_centers: Vec<LinkPieceClickCenter>,
+    board_capture_signature: Option<Vec<u8>>,
     target_region: Option<LinkCaptureRegion>,
     board_orientation: link_core::BoardOrientation,
     capture_generation: u64,
@@ -274,6 +275,7 @@ impl Default for LinkSession {
             capture_running: false,
             board_bounds: None,
             piece_click_centers: Vec::new(),
+            board_capture_signature: None,
             target_region: None,
             board_orientation: link_core::BoardOrientation::RedAtBottom,
             capture_generation: 0,
@@ -1269,13 +1271,6 @@ fn link_live_session_has_stable_position(session: &LinkSession) -> bool {
         )
 }
 
-fn should_apply_link_recognition_geometry(
-    session: &LinkSession,
-    orientation: BoardOrientation,
-) -> bool {
-    !link_live_session_has_stable_position(session) || session.board_orientation == orientation
-}
-
 fn reset_link_stability_progress(session: &mut LinkSession) {
     session.stable_frames = 0;
     session.required_stable_frames = session.gate.required_frames();
@@ -1527,6 +1522,7 @@ fn initialize_link_session_for_request(
     session.capture_running = matches!(request.source, CaptureSource::DesktopDetect);
     session.board_bounds = None;
     session.piece_click_centers.clear();
+    session.board_capture_signature = None;
     session.target_region = None;
     session.target_window = None;
     session.capture_backend = None;
@@ -1884,6 +1880,7 @@ fn stop_link_session(
     session.screenshot_resolution_allowed_moves.clear();
     session.board_bounds = None;
     session.piece_click_centers.clear();
+    session.board_capture_signature = None;
     session.target_region = None;
     session.target_window = None;
     session.capture_backend = None;
@@ -2173,6 +2170,7 @@ fn recognize_link_image_file(
         session.last_move_detail = None;
         session.board_bounds = None;
         session.piece_click_centers.clear();
+        session.board_capture_signature = None;
         session.target_region = None;
         session.target_window = None;
         session.capture_backend = None;
@@ -2261,6 +2259,7 @@ fn recognize_link_image_file(
         session.capture_running = false;
         session.board_bounds = None;
         session.piece_click_centers.clear();
+        session.board_capture_signature = None;
         session.target_region = None;
         session.capture_generation = generation;
     }
@@ -3225,33 +3224,23 @@ fn process_link_capture_frame(
         set_link_capture_board_preview(app, generation, frame, bounds, source_label);
     }
     let frame_dimensions = capture_region.and_then(|_| png_dimensions(frame).ok());
-    let next_region = if update_bounds {
-        board_bounds.and_then(|bounds| {
-            let screen_bounds = if let Some(region) = capture_region {
+    let screen_bounds = update_bounds.then(|| {
+        board_bounds.map(|bounds| {
+            if let Some(region) = capture_region {
                 map_capture_bounds_to_screen(bounds, region, frame_dimensions)
             } else if let Some((origin_x, origin_y)) = capture_screen_origin {
                 (bounds.0 + origin_x as f32, bounds.1 + origin_y as f32, bounds.2, bounds.3)
             } else {
                 bounds
-            };
-            if let Ok(mut session) = app.state::<DesktopState>().link_session.lock() {
-                if session.capture_generation == generation {
-                    if let Some(geometry) = capture_window_geometry {
-                        session.capture_window_geometry = Some(geometry);
-                    }
-                    session.board_bounds = Some(screen_bounds);
-                    if let Some(region) = capture_region {
-                        let next = link_region_around_board_bounds(region, screen_bounds);
-                        session.target_region = Some(next);
-                        return Some(next);
-                    }
-                }
             }
-            None
         })
-    } else {
-        None
-    };
+    }).flatten();
+    let next_region = capture_region
+        .zip(screen_bounds)
+        .map(|(region, bounds)| link_region_around_board_bounds(region, bounds));
+    let board_capture_signature = capture_window_geometry
+        .zip(board_bounds)
+        .and_then(|(_, bounds)| link_capture_board_signature(frame, bounds).ok());
     match link_vision::recognition_from_detections(&detections, &board) {
         Ok(recognition) => {
             let turn_indicator = link_vision::detect_turn_indicator_from_png(
@@ -3303,10 +3292,6 @@ fn process_link_capture_frame(
                 if session.capture_generation != generation {
                     return next_region;
                 }
-                if should_apply_link_recognition_geometry(&session, recognition.orientation) {
-                    session.board_orientation = recognition.orientation;
-                    session.piece_click_centers = recognized_piece_click_centers.clone();
-                }
                 session.turn_indicator = Some(link_turn_indicator_message(
                     manual_turn_override,
                     turn_indicator.as_ref(),
@@ -3324,6 +3309,12 @@ fn process_link_capture_frame(
                             if session.capture_generation == generation {
                                 session.board_orientation = recognition.orientation;
                                 session.piece_click_centers = recognized_piece_click_centers;
+                                session.board_bounds = screen_bounds;
+                                session.capture_window_geometry = capture_window_geometry;
+                                session.board_capture_signature = board_capture_signature;
+                                if let Some(region) = next_region {
+                                    session.target_region = Some(region);
+                                }
                             }
                         }
                     }
@@ -3343,6 +3334,27 @@ fn process_link_capture_frame(
 fn png_dimensions(bytes: &[u8]) -> Result<(u32, u32), String> {
     let image = image::load_from_memory(bytes).map_err(|error| error.to_string())?;
     Ok((image.width(), image.height()))
+}
+
+fn link_capture_board_signature(
+    frame: &[u8],
+    bounds: (f32, f32, f32, f32),
+) -> Result<Vec<u8>, String> {
+    let source = image::load_from_memory(frame).map_err(|error| error.to_string())?;
+    let (x, y, width, height) = bounds;
+    let left = x.floor().clamp(0.0, source.width() as f32) as u32;
+    let top = y.floor().clamp(0.0, source.height() as f32) as u32;
+    let right = (x + width).ceil().clamp(0.0, source.width() as f32) as u32;
+    let bottom = (y + height).ceil().clamp(0.0, source.height() as f32) as u32;
+    let width = right.saturating_sub(left);
+    let height = bottom.saturating_sub(top);
+    if width < 16 || height < 16 {
+        return Err("当前棋盘区域过小，无法核对确认走子".into());
+    }
+    let board = source.crop_imm(left, top, width, height).to_rgba8();
+    let mut digest = Sha256::new();
+    digest.update(board.as_raw());
+    Ok(digest.finalize().to_vec())
 }
 
 fn crop_png_by_bounds(
@@ -3961,6 +3973,7 @@ fn confirm_link_engine_move(
         auto_side,
         target_window_id,
         capture_window_geometry,
+        board_capture_signature,
     ) = {
         let session = state
             .link_session
@@ -3968,6 +3981,9 @@ fn confirm_link_engine_move(
             .map_err(|_| "link session lock poisoned".to_owned())?;
         if !matches!(session.state, LinkSessionState::Tracking) {
             return Err("外部局面尚未稳定，不能执行走子".into());
+        }
+        if session.pending_external_move.is_some() {
+            return Err("正在等待上一条确认走子的识别回读，请勿重复确认".into());
         }
         (
             session.board_bounds.ok_or("未获得棋盘坐标，请重新框选")?,
@@ -3978,10 +3994,11 @@ fn confirm_link_engine_move(
             session.auto_side,
             session.target_window.as_ref().map(|target| target.id.clone()),
             session.capture_window_geometry,
+            session.board_capture_signature.clone(),
         )
     };
     #[cfg(not(target_os = "windows"))]
-    let _ = (&target_window_id, capture_window_geometry);
+    let _ = (&target_window_id, capture_window_geometry, &board_capture_signature);
     if !matches!(mode, LinkMode::ConfirmPlay | LinkMode::AutoPlay) {
         return Err("当前为观战跟盘模式，不能执行外部点击".into());
     }
@@ -4020,38 +4037,97 @@ fn confirm_link_engine_move(
     #[cfg(not(target_os = "windows"))]
     let click_target = matches!(mode, LinkMode::AutoPlay);
     let click_points = link_move_click_points_for_click(bounds, orientation, mv, detected_from);
+    let expected_fen = expected.to_fen();
+    {
+        let mut session = state
+            .link_session
+            .lock()
+            .map_err(|_| "link session lock poisoned".to_owned())?;
+        if !matches!(session.state, LinkSessionState::Tracking)
+            || session.pending_external_move.is_some()
+            || session.latest_fen != latest_fen
+            || session.board_bounds != Some(bounds)
+            || session.capture_window_geometry != capture_window_geometry
+            || session.board_capture_signature != board_capture_signature
+        {
+            return Err("连线局面刚刚更新，已取消本次确认走子；请等待稳定后重新确认".into());
+        }
+        session.pending_external_move = Some(iccs.clone());
+        session.pending_expected_fen = Some(expected_fen.clone());
+        session.phase = Some("confirming_external_move".into());
+        session.reason = Some("正在复核目标网页棋盘和窗口坐标…".into());
+    }
+    emit_link_session_updated(&app);
     #[cfg(target_os = "windows")]
     {
-        if let Some(target_window_id) = target_window_id.as_deref() {
+        let click_result = (|| -> Result<(), String> {
+            if let Some(target_window_id) = target_window_id.as_deref() {
             let target_window_id = target_window_id
                 .parse::<u64>()
                 .map_err(|_| "目标浏览器窗口标识已失效，请重新选择窗口")?;
             let expected_geometry = capture_window_geometry
                 .ok_or("尚未获得目标浏览器的稳定棋盘坐标，请等待识别完成后再确认走子")?;
+            let expected_signature = board_capture_signature
+                .as_deref()
+                .ok_or("尚未获得稳定棋盘画面，请等待识别完成后再确认走子")?;
+            let fresh_frame = windows_link::capture_browser_window(target_window_id)?;
+            let fresh_geometry = LinkWindowGeometry {
+                origin_x: fresh_frame.geometry.origin_x,
+                origin_y: fresh_frame.geometry.origin_y,
+                client_width: fresh_frame.geometry.client_width,
+                client_height: fresh_frame.geometry.client_height,
+                dpi: fresh_frame.geometry.dpi,
+            };
+            if fresh_geometry != expected_geometry {
+                Err("目标浏览器窗口刚刚移动、缩放或切换了显示缩放。已拒绝过期点击，等待下一帧重新标定后再确认走子。".into())
+            } else {
+                let local_bounds = (
+                    bounds.0 - expected_geometry.origin_x as f32,
+                    bounds.1 - expected_geometry.origin_y as f32,
+                    bounds.2,
+                    bounds.3,
+                );
+                let fresh_signature = link_capture_board_signature(&fresh_frame.png, local_bounds)?;
+                if fresh_signature != expected_signature {
+                    Err("目标网页棋盘局面刚刚变化，已拒绝过期点击；等待稳定识别后再确认走子。".into())
+                } else {
             // Windows never auto-plays.  The user's confirm action sends both
             // endpoints to the verified browser window.
-            windows_link::click_browser_points(
-                target_window_id,
-                windows_link::WindowGeometry {
-                    origin_x: expected_geometry.origin_x,
-                    origin_y: expected_geometry.origin_y,
-                    client_width: expected_geometry.client_width,
-                    client_height: expected_geometry.client_height,
-                    dpi: expected_geometry.dpi,
-                },
-                click_points.0,
-                click_points.1,
-            )?;
-        } else {
-            click_external_move(bounds, orientation, mv, detected_from, click_target)?;
+                    windows_link::click_browser_points(
+                        target_window_id,
+                        windows_link::WindowGeometry {
+                            origin_x: expected_geometry.origin_x,
+                            origin_y: expected_geometry.origin_y,
+                            client_width: expected_geometry.client_width,
+                            client_height: expected_geometry.client_height,
+                            dpi: expected_geometry.dpi,
+                        },
+                        click_points.0,
+                        click_points.1,
+                    )
+                }
+            }
+            } else {
+                click_external_move(bounds, orientation, mv, detected_from, click_target).map(|_| ())
+            }
+        })();
+        if let Err(error) = click_result {
+            reject_pending_link_confirmation(&state, &app, &iccs, &error);
+            return Err(error);
         }
     }
     #[cfg(not(target_os = "windows"))]
-    click_external_move(bounds, orientation, mv, detected_from, click_target)?;
+    if let Err(error) = click_external_move(bounds, orientation, mv, detected_from, click_target) {
+        reject_pending_link_confirmation(&state, &app, &iccs, &error);
+        return Err(error);
+    }
     let mut session = state
         .link_session
         .lock()
         .map_err(|_| "link session lock poisoned".to_owned())?;
+    if session.pending_external_move.as_deref() != Some(iccs.as_str()) {
+        return Err("连线会话已停止或更新，已不再等待本次确认走子的回读".into());
+    }
     let ((from_x, from_y), (to_x, to_y)) = click_points;
     let click_basis = if detected_from.is_some() {
         "按识别到的棋子中心"
@@ -4062,23 +4138,55 @@ fn confirm_link_engine_move(
         format!(
             "已按箭头1自动执行 {move_display}：{}点击起点({from_x:.0},{from_y:.0})，再点击目标({to_x:.0},{to_y:.0})；等待识别确认预期局面 {}",
             click_basis,
-            expected.to_fen()
+            expected_fen
         )
     } else {
         format!(
             "已按箭头1选中起点 {move_display}：{}点击({from_x:.0},{from_y:.0})；请在网页棋盘确认目标({to_x:.0},{to_y:.0})，完成后等待同步 {}",
             click_basis,
-            expected.to_fen()
+            expected_fen
         )
     });
     session.pending_external_move = Some(iccs);
-    session.pending_expected_fen = Some(expected.to_fen());
+    session.pending_expected_fen = Some(expected_fen);
     session.phase = Some("pending_external_move".into());
     session.gate.reset();
     reset_link_stability_progress(&mut session);
     drop(session);
     emit_link_session_updated(&app);
     Ok(true)
+}
+
+fn reject_pending_link_confirmation(
+    state: &DesktopState,
+    app: &tauri::AppHandle,
+    iccs: &str,
+    error: &str,
+) {
+    let needs_recalibration = error.contains("窗口刚刚移动")
+        || error.contains("稳定棋盘")
+        || error.contains("目标网页棋盘局面刚刚变化");
+    if let Ok(mut session) = state.link_session.lock() {
+        if session.pending_external_move.as_deref() != Some(iccs) {
+            return;
+        }
+        session.pending_external_move = None;
+        session.pending_expected_fen = None;
+        session.last_error = Some(error.into());
+        session.reason = Some(error.into());
+        if needs_recalibration {
+            session.state = LinkSessionState::Calibrating;
+            session.capture_running = true;
+            session.phase = Some("recalibrating_target".into());
+            session.board_bounds = None;
+            session.piece_click_centers.clear();
+            session.board_capture_signature = None;
+            session.capture_window_geometry = None;
+        } else {
+            session.phase = Some("click_rejected".into());
+        }
+    }
+    emit_link_session_updated(app);
 }
 
 fn link_move_click_points(
@@ -13274,6 +13382,31 @@ mod tests {
             map_capture_bounds_to_screen((20.0, 10.0, 160.0, 80.0), region, Some((400, 200)));
 
         assert_eq!(bounds, (510.0, 305.0, 80.0, 40.0));
+    }
+
+    #[test]
+    fn link_capture_signature_rejects_a_changed_board_frame() {
+        let make_frame = |piece_color: [u8; 4]| {
+            let mut image = image::RgbaImage::from_pixel(32, 32, image::Rgba([210, 180, 140, 255]));
+            image.put_pixel(16, 16, image::Rgba(piece_color));
+            let mut png = Vec::new();
+            image::DynamicImage::ImageRgba8(image)
+                .write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png)
+                .unwrap();
+            png
+        };
+        let bounds = (0.0, 0.0, 32.0, 32.0);
+        let stable = make_frame([210, 0, 0, 255]);
+        let changed = make_frame([0, 0, 0, 255]);
+
+        assert_eq!(
+            link_capture_board_signature(&stable, bounds).unwrap(),
+            link_capture_board_signature(&stable, bounds).unwrap()
+        );
+        assert_ne!(
+            link_capture_board_signature(&stable, bounds).unwrap(),
+            link_capture_board_signature(&changed, bounds).unwrap()
+        );
     }
 
     #[test]

@@ -352,6 +352,9 @@ pub fn click_browser_points(
         ensure_current_geometry(handle, expected_geometry)?;
         for point in [from, to] {
             ensure_current_geometry(handle, expected_geometry)?;
+            if GetForegroundWindow() != handle {
+                return Err("目标浏览器失去前台焦点，已取消确认走子；请关闭遮挡窗口后重试".into());
+            }
             send_physical_click(point)?;
             std::thread::sleep(std::time::Duration::from_millis(260));
         }
