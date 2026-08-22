@@ -6592,7 +6592,7 @@ export default function App() {
         onSaveMirrorPreferences={saveMirrorPreferences}
         onRebuildMirrors={rebuildGameMirrors}
       />}
-      {userManualOpen && <UserManualDialog appVersion={appInfo?.version ?? "1.2.3"} markdown={userManualMarkdown} onClose={() => setUserManualOpen(false)}/>}
+      {userManualOpen && <UserManualDialog appVersion={appInfo?.version ?? "1.2.5"} markdown={userManualMarkdown} onClose={() => setUserManualOpen(false)}/>}
       {aboutOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setAboutOpen(false); }}>
         <section className="about-dialog" role="dialog" aria-modal="true" aria-labelledby="about-title">
           <header><span><Info size={18}/><strong id="about-title">关于棋研</strong></span><button className="tool-button" title="关闭" onClick={() => setAboutOpen(false)}><X size={16}/></button></header>
