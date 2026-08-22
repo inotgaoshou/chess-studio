@@ -229,6 +229,7 @@ struct LinkSession {
     target_window: Option<LinkTargetWindowDto>,
     capture_backend: Option<String>,
     capture_dpi: Option<u32>,
+    capture_window_geometry: Option<LinkWindowGeometry>,
     click_available: bool,
 }
 
@@ -298,6 +299,7 @@ impl Default for LinkSession {
             target_window: None,
             capture_backend: None,
             capture_dpi: None,
+            capture_window_geometry: None,
             click_available: false,
         }
     }
@@ -1168,10 +1170,20 @@ struct LinkCapturePreview {
     region: Option<LinkCaptureRegion>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct LinkWindowGeometry {
+    origin_x: i32,
+    origin_y: i32,
+    client_width: i32,
+    client_height: i32,
+    dpi: u32,
+}
+
 struct LiveLinkCaptureFrame {
     png: Vec<u8>,
     screen_origin: Option<(i32, i32)>,
     dpi: Option<u32>,
+    target_geometry: Option<LinkWindowGeometry>,
 }
 
 #[derive(Deserialize)]
@@ -1519,6 +1531,7 @@ fn initialize_link_session_for_request(
     session.target_window = None;
     session.capture_backend = None;
     session.capture_dpi = None;
+    session.capture_window_geometry = None;
     session.click_available = false;
     session.board_orientation = BoardOrientation::RedAtBottom;
     session.capture_generation = generation;
@@ -1875,6 +1888,7 @@ fn stop_link_session(
     session.target_window = None;
     session.capture_backend = None;
     session.capture_dpi = None;
+    session.capture_window_geometry = None;
     session.click_available = false;
     if let Some(main_window) = app.get_webview_window("main") {
         let _ = main_window.show();
@@ -2163,6 +2177,7 @@ fn recognize_link_image_file(
         session.target_window = None;
         session.capture_backend = None;
         session.capture_dpi = None;
+        session.capture_window_geometry = None;
         session.click_available = false;
         invalidate_screenshot_move_resolution(&mut session);
         session.state = LinkSessionState::ClassifyingSquares;
@@ -3051,6 +3066,7 @@ fn start_window_link_capture(
                         false,
                         capture_region,
                         None,
+                        None,
                         "框选预览",
                     ) {
                         tracking_region = Some(next_region);
@@ -3127,6 +3143,7 @@ fn start_window_link_capture(
                                 true,
                                 frame_region,
                                 frame.screen_origin,
+                                frame.target_geometry,
                                 if frame.screen_origin.is_some() { "目标窗口采集" } else { "屏幕采集" },
                             ) {
                                 tracking_region = Some(next_region);
@@ -3172,6 +3189,7 @@ fn process_link_capture_frame(
     update_bounds: bool,
     capture_region: Option<LinkCaptureRegion>,
     capture_screen_origin: Option<(i32, i32)>,
+    capture_window_geometry: Option<LinkWindowGeometry>,
     source_label: &str,
 ) -> Option<LinkCaptureRegion> {
     if !link_capture_generation_is_active(app, generation) {
@@ -3218,6 +3236,9 @@ fn process_link_capture_frame(
             };
             if let Ok(mut session) = app.state::<DesktopState>().link_session.lock() {
                 if session.capture_generation == generation {
+                    if let Some(geometry) = capture_window_geometry {
+                        session.capture_window_geometry = Some(geometry);
+                    }
                     session.board_bounds = Some(screen_bounds);
                     if let Some(region) = capture_region {
                         let next = link_region_around_board_bounds(region, screen_bounds);
@@ -3593,8 +3614,15 @@ fn capture_live_link_frame(
             )?;
             return Ok(LiveLinkCaptureFrame {
                 png: frame.png,
-                screen_origin: Some((frame.origin_x, frame.origin_y)),
-                dpi: Some(frame.dpi),
+                screen_origin: Some((frame.geometry.origin_x, frame.geometry.origin_y)),
+                dpi: Some(frame.geometry.dpi),
+                target_geometry: Some(LinkWindowGeometry {
+                    origin_x: frame.geometry.origin_x,
+                    origin_y: frame.geometry.origin_y,
+                    client_width: frame.geometry.client_width,
+                    client_height: frame.geometry.client_height,
+                    dpi: frame.geometry.dpi,
+                }),
             });
         }
     }
@@ -3602,6 +3630,7 @@ fn capture_live_link_frame(
         png: capture_display_frame_for_link(app, region)?,
         screen_origin: None,
         dpi: None,
+        target_geometry: None,
     })
 }
 
@@ -3923,7 +3952,16 @@ fn confirm_link_engine_move(
     app: tauri::AppHandle,
     state: State<'_, DesktopState>,
 ) -> Result<bool, String> {
-    let (bounds, orientation, piece_click_centers, mode, latest_fen, auto_side, target_window_id) = {
+    let (
+        bounds,
+        orientation,
+        piece_click_centers,
+        mode,
+        latest_fen,
+        auto_side,
+        target_window_id,
+        capture_window_geometry,
+    ) = {
         let session = state
             .link_session
             .lock()
@@ -3939,10 +3977,11 @@ fn confirm_link_engine_move(
             session.latest_fen.clone(),
             session.auto_side,
             session.target_window.as_ref().map(|target| target.id.clone()),
+            session.capture_window_geometry,
         )
     };
     #[cfg(not(target_os = "windows"))]
-    let _ = &target_window_id;
+    let _ = (&target_window_id, capture_window_geometry);
     if !matches!(mode, LinkMode::ConfirmPlay | LinkMode::AutoPlay) {
         return Err("当前为观战跟盘模式，不能执行外部点击".into());
     }
@@ -3987,9 +4026,22 @@ fn confirm_link_engine_move(
             let target_window_id = target_window_id
                 .parse::<u64>()
                 .map_err(|_| "目标浏览器窗口标识已失效，请重新选择窗口")?;
+            let expected_geometry = capture_window_geometry
+                .ok_or("尚未获得目标浏览器的稳定棋盘坐标，请等待识别完成后再确认走子")?;
             // Windows never auto-plays.  The user's confirm action sends both
             // endpoints to the verified browser window.
-            windows_link::click_browser_points(target_window_id, click_points.0, click_points.1)?;
+            windows_link::click_browser_points(
+                target_window_id,
+                windows_link::WindowGeometry {
+                    origin_x: expected_geometry.origin_x,
+                    origin_y: expected_geometry.origin_y,
+                    client_width: expected_geometry.client_width,
+                    client_height: expected_geometry.client_height,
+                    dpi: expected_geometry.dpi,
+                },
+                click_points.0,
+                click_points.1,
+            )?;
         } else {
             click_external_move(bounds, orientation, mv, detected_from, click_target)?;
         }

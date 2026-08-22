@@ -21,11 +21,15 @@ use windows_sys::Win32::{
     },
     UI::{
         HiDpi::GetDpiForWindow,
-        Input::KeyboardAndMouse::{mouse_event, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP},
+        Input::KeyboardAndMouse::{
+            SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN,
+            MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE, MOUSEEVENTF_VIRTUALDESK, MOUSEINPUT,
+        },
         WindowsAndMessaging::{
-            EnumWindows, GetClientRect, GetWindowTextLengthW, GetWindowTextW,
-            GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, SetCursorPos,
-            SetForegroundWindow,
+            EnumWindows, GetClientRect, GetForegroundWindow, GetSystemMetrics,
+            GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow,
+            IsWindowVisible, SetForegroundWindow, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
+            SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
         },
     },
 };
@@ -40,12 +44,25 @@ pub struct BrowserWindow {
     pub dpi: u32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WindowGeometry {
+    pub origin_x: i32,
+    pub origin_y: i32,
+    pub client_width: i32,
+    pub client_height: i32,
+    pub dpi: u32,
+}
+
+impl WindowGeometry {
+    pub fn matches(self, other: Self) -> bool {
+        self == other
+    }
+}
+
 #[derive(Debug)]
 pub struct CapturedWindowFrame {
     pub png: Vec<u8>,
-    pub origin_x: i32,
-    pub origin_y: i32,
-    pub dpi: u32,
+    pub geometry: WindowGeometry,
 }
 
 fn hwnd(id: u64) -> HWND {
@@ -153,7 +170,7 @@ fn ensure_matching_elevation(handle: HWND) -> Result<(), String> {
     Ok(())
 }
 
-fn client_geometry(handle: HWND) -> Option<(i32, i32, i32, i32, u32)> {
+fn client_geometry(handle: HWND) -> Option<WindowGeometry> {
     unsafe {
         let mut rect = RECT {
             left: 0,
@@ -173,13 +190,13 @@ fn client_geometry(handle: HWND) -> Option<(i32, i32, i32, i32, u32)> {
         if ClientToScreen(handle, &mut origin) == 0 {
             return None;
         }
-        Some((
-            origin.x,
-            origin.y,
-            width,
-            height,
-            GetDpiForWindow(handle).max(96),
-        ))
+        Some(WindowGeometry {
+            origin_x: origin.x,
+            origin_y: origin.y,
+            client_width: width,
+            client_height: height,
+            dpi: GetDpiForWindow(handle).max(96),
+        })
     }
 }
 
@@ -197,14 +214,14 @@ fn valid_browser_window(handle: HWND) -> Option<BrowserWindow> {
         if !is_supported_browser_process(&process_name) {
             return None;
         }
-        let (.., width, height, dpi) = client_geometry(handle)?;
+        let geometry = client_geometry(handle)?;
         Some(BrowserWindow {
             id: handle as usize as u64,
             title,
             process_name,
-            client_width: width,
-            client_height: height,
-            dpi,
+            client_width: geometry.client_width,
+            client_height: geometry.client_height,
+            dpi: geometry.dpi,
         })
     }
 }
@@ -245,10 +262,11 @@ pub fn validate_browser_window(id: u64) -> Result<BrowserWindow, String> {
 }
 
 pub fn capture_browser_window(id: u64) -> Result<CapturedWindowFrame, String> {
-    let target = validate_browser_window(id)?;
+    let _target = validate_browser_window(id)?;
     let handle = hwnd(id);
-    let (origin_x, origin_y, width, height, dpi) =
-        client_geometry(handle).ok_or("无法读取目标浏览器客户区尺寸")?;
+    let geometry = client_geometry(handle).ok_or("无法读取目标浏览器客户区尺寸")?;
+    let width = geometry.client_width;
+    let height = geometry.client_height;
     unsafe {
         let source = GetDC(handle);
         if source.is_null() {
@@ -310,44 +328,152 @@ pub fn capture_browser_window(id: u64) -> Result<CapturedWindowFrame, String> {
         DynamicImage::ImageRgba8(image)
             .write_to(&mut Cursor::new(&mut png), ImageFormat::Png)
             .map_err(|error| error.to_string())?;
-        let _ = target;
-        Ok(CapturedWindowFrame {
-            png,
-            origin_x,
-            origin_y,
-            dpi,
-        })
+        Ok(CapturedWindowFrame { png, geometry })
     }
 }
 
-pub fn click_browser_points(id: u64, from: (f32, f32), to: (f32, f32)) -> Result<(), String> {
+pub fn click_browser_points(
+    id: u64,
+    expected_geometry: WindowGeometry,
+    from: (f32, f32),
+    to: (f32, f32),
+) -> Result<(), String> {
     let _ = validate_browser_window(id)?;
     let handle = hwnd(id);
     ensure_matching_elevation(handle)?;
     unsafe {
+        ensure_current_geometry(handle, expected_geometry)?;
         if SetForegroundWindow(handle) == 0 {
             return Err("无法前置目标浏览器窗口；请手动点一下该窗口后重试".into());
         }
+        if GetForegroundWindow() != handle {
+            return Err("目标浏览器未保持在前台，已取消确认走子；请关闭遮挡窗口后重试".into());
+        }
+        ensure_current_geometry(handle, expected_geometry)?;
         for point in [from, to] {
-            if SetCursorPos(point.0.round() as i32, point.1.round() as i32) == 0 {
-                return Err("无法定位 Windows 鼠标；请确认棋研与浏览器使用相同权限启动".into());
-            }
-            mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
-            mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+            ensure_current_geometry(handle, expected_geometry)?;
+            send_physical_click(point)?;
             std::thread::sleep(std::time::Duration::from_millis(260));
         }
     }
     Ok(())
 }
 
+fn ensure_current_geometry(handle: HWND, expected: WindowGeometry) -> Result<(), String> {
+    let current = client_geometry(handle).ok_or("无法读取目标浏览器客户区尺寸")?;
+    if expected.matches(current) {
+        Ok(())
+    } else {
+        Err("目标浏览器窗口刚刚移动、缩放或切换了显示缩放。已拒绝过期点击，等待下一帧重新标定后再确认走子。".into())
+    }
+}
+
+fn absolute_input_coordinate(point: i32, origin: i32, span: i32) -> i32 {
+    if span <= 1 {
+        return 0;
+    }
+    let relative = point.saturating_sub(origin).clamp(0, span - 1) as f64;
+    (relative * 65_535.0 / (span - 1) as f64).round() as i32
+}
+
+fn send_physical_click(point: (f32, f32)) -> Result<(), String> {
+    unsafe {
+        let virtual_x = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        let virtual_y = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        let virtual_width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        let virtual_height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        if virtual_width <= 1 || virtual_height <= 1 {
+            return Err("无法读取 Windows 虚拟桌面尺寸，已取消确认走子".into());
+        }
+        let dx = absolute_input_coordinate(point.0.round() as i32, virtual_x, virtual_width);
+        let dy = absolute_input_coordinate(point.1.round() as i32, virtual_y, virtual_height);
+        let inputs = [
+            mouse_input(
+                dx,
+                dy,
+                MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
+            ),
+            mouse_input(
+                dx,
+                dy,
+                MOUSEEVENTF_LEFTDOWN | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
+            ),
+            mouse_input(
+                dx,
+                dy,
+                MOUSEEVENTF_LEFTUP | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
+            ),
+        ];
+        let sent = SendInput(
+            inputs.len() as u32,
+            inputs.as_ptr(),
+            size_of::<INPUT>() as i32,
+        );
+        if sent == inputs.len() as u32 {
+            Ok(())
+        } else {
+            Err("Windows 拒绝了确认走子的鼠标输入；请确认棋研与浏览器使用相同权限启动".into())
+        }
+    }
+}
+
+fn mouse_input(dx: i32, dy: i32, flags: u32) -> INPUT {
+    INPUT {
+        r#type: INPUT_MOUSE,
+        Anonymous: INPUT_0 {
+            mi: MOUSEINPUT {
+                dx,
+                dy,
+                mouseData: 0,
+                dwFlags: flags,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::is_supported_browser_process;
+    use super::{absolute_input_coordinate, is_supported_browser_process, WindowGeometry};
 
     #[test]
     fn browser_filter_is_explicit() {
         assert!(is_supported_browser_process("chrome.exe"));
         assert!(is_supported_browser_process("msedge.exe"));
         assert!(!is_supported_browser_process("notepad.exe"));
+    }
+
+    #[test]
+    fn geometry_snapshot_rejects_a_window_that_moved_or_changed_dpi() {
+        let captured_at_100_percent = WindowGeometry {
+            origin_x: 120,
+            origin_y: 80,
+            client_width: 1440,
+            client_height: 900,
+            dpi: 96,
+        };
+        let moved_at_100_percent = WindowGeometry {
+            origin_x: 180,
+            ..captured_at_100_percent
+        };
+        let resized_at_125_percent = WindowGeometry {
+            origin_x: 150,
+            origin_y: 100,
+            client_width: 1800,
+            client_height: 1125,
+            dpi: 120,
+        };
+
+        assert!(captured_at_100_percent.matches(captured_at_100_percent));
+        assert!(!captured_at_100_percent.matches(moved_at_100_percent));
+        assert!(!captured_at_100_percent.matches(resized_at_125_percent));
+    }
+
+    #[test]
+    fn absolute_input_coordinates_cover_a_virtual_desktop_with_negative_origin() {
+        assert_eq!(absolute_input_coordinate(-1920, -1920, 3840), 0,);
+        assert_eq!(absolute_input_coordinate(1919, -1920, 3840), 65_535,);
+        assert_eq!(absolute_input_coordinate(0, -1920, 3840), 32_776,);
     }
 }
