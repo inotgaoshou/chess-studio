@@ -10,15 +10,18 @@ describe("MobileToolbar", () => {
     render(<MobileToolbar analysisBusy={false} analysisDisabled={false} colorTheme="light" onCommand={onCommand}/>);
 
     fireEvent.click(screen.getByRole("button", { name: "打开功能菜单" }));
-    fireEvent.click(screen.getByRole("button", { name: "保存棋谱" }));
+    fireEvent.click(screen.getByRole("button", { name: "编辑局面" }));
     expect(onCommand).toHaveBeenNthCalledWith(1, "menu");
-    expect(onCommand).toHaveBeenNthCalledWith(2, "save");
-    expect(screen.getByRole("button", { name: "显示候选连线" })).toBeTruthy();
+    expect(onCommand).toHaveBeenNthCalledWith(2, "edit");
+    expect(screen.getByRole("button", { name: "立即出招：采用当前首选着" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "翻转红黑方视角" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "强变招：切换到下一候选 PV" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "复制与导出" })).toBeTruthy();
+    expect((document.querySelector(".force-variation-icon") as HTMLImageElement | null)?.src).toContain("/icons/force-variation.png");
+    expect(screen.queryByRole("button", { name: "导入棋谱" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "保存棋谱" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "复制与导出" })).toBeNull();
     expect(screen.getByRole("button", { name: "分析当前局面" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "打开设置" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "打开设置" })).toBeNull();
   });
 
   it("changes the analysis command label while analysis is running", () => {

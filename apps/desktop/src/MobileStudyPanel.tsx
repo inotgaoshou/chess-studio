@@ -79,7 +79,7 @@ export function MobileStudyPanel({
 
     {tab === "engine" && <div id="mobile-study-panel-engine" aria-labelledby="mobile-study-tab-engine" className="mobile-study-content mobile-engine-content" role="tabpanel">
       <header>
-        <span><Activity size={15}/><strong>{analysisBusy ? "Pikafish 正在计算" : analysisStale ? "候选更新中" : "引擎推荐"}</strong><small>{analysisConfigText}</small></span>
+        <span><Activity size={15}/><strong>{analysisBusy ? "引擎正在计算" : analysisStale ? "候选更新中" : "引擎推荐"}</strong><small>{analysisConfigText}</small></span>
         <button type="button" disabled={!analysisBusy && analysisDisabled} onClick={onRunAnalysis}>{analysisBusy ? "停止" : "分析"}</button>
       </header>
       {engineRows.length ? engineRows.slice(0, 4).map((row) => {
@@ -94,7 +94,7 @@ export function MobileStudyPanel({
             <span>
               <strong>{notation}</strong>
               <small>深 {row.depthText} · 红分 {row.scoreText} · {row.timeText} · NPS {row.npsText}</small>
-              <em>{row.sourceText ?? "云端 Pikafish"}{row.stale ? " · 候选已过期" : ""}</em>
+              <em>{row.sourceText ?? "云端引擎"}{row.stale ? " · 候选已过期" : ""}</em>
             </span>
           </button>
           <div className="mobile-study-engine-actions">

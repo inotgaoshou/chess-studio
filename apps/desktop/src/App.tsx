@@ -60,14 +60,13 @@ import { DesktopDialogs, type DesktopDialog } from "./DesktopDialogs";
 import { GameReportDialog, GameReportView } from "./GameReportView";
 import { buildGameReportPresentation } from "./gameReport";
 import { candidateCoachInsights, currentCoachAdvice, moveThoughtHint } from "./coachInsights";
-import { MobileToolbar, type MobileToolbarCommand } from "./MobileToolbar";
+import { ForceVariationIcon, MobileToolbar, type MobileToolbarCommand } from "./MobileToolbar";
 import { MobileStudyPanel } from "./MobileStudyPanel";
 import { MobileManualRoute } from "./MobileManualRoute";
-import type { AnalysisOptions, AppInfoDto, BuiltinOpeningBookManifestDto, CloudAnalysisPreferences, DailyTrainingPlan, DesktopPreferencesDto, FlyknifePlan, GuidedAnalysisStart, GuidedAnalysisSubmission, LearningProfile, LinkSessionStatus, OpeningRepertoire, SubscriptionDto, SyncAccountDto, WeeklyLearningReport } from "./platform";
+import type { AnalysisOptions, AppInfoDto, BuiltinOpeningBookManifestDto, CloudAnalysisPreferences, CloudGuestAuthDto, DailyTrainingPlan, DesktopPreferencesDto, FlyknifePlan, GuidedAnalysisStart, GuidedAnalysisSubmission, LearningProfile, LinkSessionStatus, OpeningRepertoire, SubscriptionDto, SyncAccountDto, WeeklyLearningReport } from "./platform";
 import { applyColorTheme, initialColorTheme, type ColorTheme } from "./theme";
 import { WorkspaceTabs, type WorkspacePanel } from "./WorkspaceTabs";
 import { WorkspaceModeSwitch, type WorkspaceMode } from "./WorkspaceModeSwitch";
-import { WorkspaceLayoutSwitch } from "./WorkspaceLayoutSwitch";
 import { CompactEngineAnalysisList, CompactReferencePanels, type CompactBookRow, type CompactEngineAnalysisRow, type CompactEvaluationRow } from "./CompactWorkspace";
 import { CoachProfileView } from "./CoachProfileView";
 import { SkinShopDialog } from "./SkinShopDialog";
@@ -1237,6 +1236,11 @@ export default function App() {
   const [comment, setComment] = useState("");
   const [serverUrl, setServerUrl] = useState("http://127.0.0.1:8080");
   const [token, setToken] = useState("");
+  const [guestToken, setGuestToken] = useState("");
+  const [guestTokenExpiresAt, setGuestTokenExpiresAt] = useState("");
+  const [guestQuotaLimit, setGuestQuotaLimit] = useState<number>();
+  const [guestQuotaRemaining, setGuestQuotaRemaining] = useState<number>();
+  const [guestQuotaResetsAt, setGuestQuotaResetsAt] = useState("");
   const [cloudConnection, setCloudConnection] = useState<"idle" | "checking" | "online" | "offline">("idle");
   const [cloudPreferencesReady, setCloudPreferencesReady] = useState(false);
   const [notice, setNotice] = useState("本地数据已保存");
@@ -1414,6 +1418,7 @@ export default function App() {
   const analysisBusyRef = useRef(false);
   const analysisHintsEnabledRef = useRef(false);
   const pendingAutoAnalysis = useRef(false);
+  const pendingMobileBestMoveFen = useRef<string | undefined>(undefined);
   const playbackRevision = useRef(0);
   const navigationRevision = useRef(0);
   const autosaveQueue = useRef<AutosaveOperationQueue | undefined>(undefined);
@@ -1499,6 +1504,11 @@ export default function App() {
           mobileDefaultDepthVersionRef.current = restored.mobileDefaultDepthVersion === MOBILE_DEFAULT_DEPTH_PREFERENCE_VERSION;
           setServerUrl(restored.serverUrl);
           setToken(restored.token);
+          setGuestToken(restored.guestToken ?? "");
+          setGuestTokenExpiresAt(restored.guestTokenExpiresAt ?? "");
+          setGuestQuotaLimit(restored.guestQuotaLimit);
+          setGuestQuotaRemaining(restored.guestQuotaRemaining);
+          setGuestQuotaResetsAt(restored.guestQuotaResetsAt ?? "");
           setMultipv(Math.min(5, Math.max(1, restored.multipv)));
           setSearchMode(restored.searchMode);
           setSearchValue(restored.searchValue);
@@ -1558,13 +1568,18 @@ export default function App() {
     void chessPlatform.saveCloudAnalysisPreferences({
       serverUrl,
       token,
+      guestToken,
+      guestTokenExpiresAt,
+      guestQuotaLimit,
+      guestQuotaRemaining,
+      guestQuotaResetsAt,
       multipv: Math.min(5, Math.max(1, multipv)),
       searchMode: validMode,
       searchValue: validMode === "time" ? Math.min(5000, Math.max(100, searchValue)) : Math.min(30, Math.max(1, searchValue)),
       autoAnalyze,
       mobileDefaultDepthVersion: mobileDefaultDepthVersionRef.current ? MOBILE_DEFAULT_DEPTH_PREFERENCE_VERSION : undefined,
     }).catch(() => undefined);
-  }, [autoAnalyze, cloudPreferencesReady, multipv, searchMode, searchValue, serverUrl, token]);
+  }, [autoAnalyze, cloudPreferencesReady, guestQuotaLimit, guestQuotaRemaining, guestQuotaResetsAt, guestToken, guestTokenExpiresAt, multipv, searchMode, searchValue, serverUrl, token]);
 
   async function scanTheoryLibrary() {
     if (chessPlatform.kind !== "desktop" || theoryLibraryBusy) return;
@@ -2105,6 +2120,24 @@ export default function App() {
     if (!bestMove) return undefined;
     return { bestMove, bestMoveText: primaryAnalysis?.notation?.[0] ?? bestMove, topMoves };
   }, [analysisFen, analysisIsStale, board.fen, orderedAnalysis, primaryAnalysis]);
+  useEffect(() => {
+    const pendingFen = pendingMobileBestMoveFen.current;
+    if (!pendingFen || analysisBusy) return;
+    if (pendingFen !== board.fen) {
+      pendingMobileBestMoveFen.current = undefined;
+      return;
+    }
+    const pendingBestMove = bestMoveHint?.bestMove;
+    if (pendingBestMove && analysisFen === board.fen && !analysisIsStale) {
+      pendingMobileBestMoveFen.current = undefined;
+      void playIccsMove(pendingBestMove, board.fen, undefined, { stopEngineFirst: true });
+      return;
+    }
+    if (analysisError && analysisFen === board.fen) {
+      pendingMobileBestMoveFen.current = undefined;
+      setNotice(`立即出招失败：${analysisError}`);
+    }
+  }, [analysisBusy, analysisError, analysisFen, analysisIsStale, bestMoveHint, board.fen]);
   const currentEngineAnalyses = useMemo(() => Object.fromEntries(Object.entries(engineAnalyses)
     .filter(([, group]) => group.fen === board.fen)), [board.fen, engineAnalyses]);
   useEffect(() => {
@@ -2133,7 +2166,7 @@ export default function App() {
     () => hasEngineDivergence(engineComparisonGroups, candidateSideToMove),
     [candidateSideToMove, engineComparisonGroups],
   );
-  const primaryEngineDisplayName = chessPlatform.kind === "web" ? "云端 Pikafish" : engineDisplayName(enginePath);
+  const primaryEngineDisplayName = chessPlatform.kind === "web" ? "云端引擎" : engineDisplayName(enginePath);
   const compactEngineRows: CompactEngineAnalysisRow[] = useMemo(() => {
     const primaryEngineId = primaryAnalysisEngineRef.current;
     const analyzedFen = analysisFen ?? board.fen;
@@ -2331,13 +2364,16 @@ export default function App() {
       : searchMode === "nodes"
         ? `固定节点 ${searchValue.toLocaleString()}`
       : `固定时间 ${(searchValue / 1000).toFixed(1)}s`;
+  const guestQuotaHint = !token.trim() && guestQuotaLimit != null
+    ? `游客额度 ${guestQuotaRemaining ?? "--"}/${guestQuotaLimit}${guestQuotaResetsAt ? ` · ${new Date(guestQuotaResetsAt).toLocaleDateString()} 重置` : ""}`
+    : undefined;
   const mobileCloudHint = chessPlatform.kind !== "web"
     ? undefined
     : !online
-      ? "当前离线，联网后可使用云端 Pikafish。"
+      ? "当前离线，联网后可使用云端引擎。"
     : cloudConnection !== "online"
-      ? "点击分析会自动连接云端 Pikafish。"
-      : undefined;
+      ? "点击分析会自动连接云端引擎。"
+      : guestQuotaHint;
   const engineRuntimeLabel: Record<EngineRuntimeState, string> = {
     idle: "待分析",
     analyzing: "分析中",
@@ -2346,10 +2382,10 @@ export default function App() {
     stopping: "停止中",
     faulted: "故障",
   };
-  const currentEngineLabel = chessPlatform.kind === "web" ? "云端 Pikafish" : engineDisplayName(enginePath);
+  const currentEngineLabel = chessPlatform.kind === "web" ? "云端引擎" : engineDisplayName(enginePath);
   const currentEngineVersionLabel = chessPlatform.kind === "web" ? currentEngineLabel : engineProbeDisplayName(currentEngineLabel, engineProbe);
   const currentNnueLabel = chessPlatform.kind === "web" ? undefined : nnueProbeLabel(engineProbe);
-  const currentEngineTitle = chessPlatform.kind === "web" ? "云端 Pikafish" : engineProbeTitle(currentEngineLabel, enginePath || "未配置引擎", engineProbe);
+  const currentEngineTitle = chessPlatform.kind === "web" ? "云端引擎" : engineProbeTitle(currentEngineLabel, enginePath || "未配置引擎", engineProbe);
   const currentEngineHashLabel = shortHash(engineProbe?.engineSha256);
   const currentNnueHashLabel = shortHash(engineProbe?.nnueSha256);
   const strategyInsight = useMemo(() => {
@@ -2679,10 +2715,55 @@ export default function App() {
     setAnalysisHistory(analysisHistoryRef.current?.lines ?? []);
   }
 
+  function applyGuestAnalysisToken(auth: CloudGuestAuthDto) {
+    setGuestToken(auth.token);
+    setGuestTokenExpiresAt(auth.expiresAt);
+    setGuestQuotaLimit(auth.guestQuotaLimit);
+    setGuestQuotaRemaining(auth.guestQuotaRemaining);
+    setGuestQuotaResetsAt(auth.guestQuotaResetsAt);
+  }
+
+  function clearGuestAnalysisToken() {
+    setGuestToken("");
+    setGuestTokenExpiresAt("");
+    setGuestQuotaLimit(undefined);
+    setGuestQuotaRemaining(undefined);
+    setGuestQuotaResetsAt("");
+  }
+
+  function isGuestAnalysisTokenFresh(expiresAt = guestTokenExpiresAt) {
+    const expires = Date.parse(expiresAt);
+    return Number.isFinite(expires) && expires > Date.now() + 30_000;
+  }
+
+  async function refreshGuestQuotaFromPreferences() {
+    if (chessPlatform.kind !== "web") return;
+    const preferences = await chessPlatform.getCloudAnalysisPreferences().catch(() => undefined);
+    if (!preferences) return;
+    setGuestQuotaLimit(preferences.guestQuotaLimit);
+    setGuestQuotaRemaining(preferences.guestQuotaRemaining);
+    setGuestQuotaResetsAt(preferences.guestQuotaResetsAt ?? "");
+  }
+
+  async function ensureCloudAnalysisAuth(forceGuestRefresh = false): Promise<{ token: string; guest: boolean }> {
+    if (token.trim()) return { token: token.trim(), guest: false };
+    if (chessPlatform.kind !== "web") return { token: "", guest: false };
+    if (!forceGuestRefresh && guestToken.trim() && isGuestAnalysisTokenFresh()) {
+      return { token: guestToken.trim(), guest: true };
+    }
+    const auth = await chessPlatform.authenticateCloudGuest(serverUrl);
+    applyGuestAnalysisToken(auth);
+    setCloudConnection("online");
+    return { token: auth.token, guest: true };
+  }
+
   function applyDesktopPreferences(preferences: DesktopPreferencesDto) {
     const migrated = migrateDesktopPreferences(preferences);
     const normalized = {
       ...migrated,
+      // Review is the default desktop entry and always uses its focused,
+      // compact workspace. Research keeps the user's chosen layout.
+      layoutMode: reviewModeOpen ? "compact" as const : migrated.layoutMode,
       manualViewMode: migrated.manualViewMode === "tree" ? "tree" as ManualViewMode : "track" as ManualViewMode,
       boardSkin: normalizeSkinId(migrated.boardSkin),
       pieceSkin: normalizeSkinId(migrated.pieceSkin),
@@ -3776,6 +3857,52 @@ export default function App() {
     await playIccsMove(firstMove, analyzedFen, undefined, { stopEngineFirst: true });
   }
 
+  async function playMobileBestMoveNow() {
+    const current = boardRef.current;
+    if (!current.playable) {
+      setNotice("当前研究局面不可对弈，不能立即出招");
+      return;
+    }
+    if (isPlaying) {
+      setNotice("请先停止棋谱播放再立即出招");
+      return;
+    }
+    if (reportBusy) {
+      setNotice("整局报告生成期间不能立即出招");
+      return;
+    }
+    const bestMove = bestMoveHint?.bestMove;
+    if (bestMove && analysisFen === current.fen && !analysisIsStale) {
+      ensureAnalysisHintsEnabled();
+      setMobileArrowsEnabled(true);
+      pendingMobileBestMoveFen.current = undefined;
+      await playIccsMove(bestMove, current.fen, undefined, { stopEngineFirst: true });
+      return;
+    }
+    if (chessPlatform.kind === "web" && !online) {
+      setNotice("当前离线，无法获取引擎首选着");
+      return;
+    }
+    pendingMobileBestMoveFen.current = current.fen;
+    ensureAnalysisHintsEnabled();
+    setMobileArrowsEnabled(true);
+    if (analysisBusyRef.current) {
+      setNotice("正在等待当前引擎分析完成，完成后自动采用第一候选");
+      return;
+    }
+    setNotice("正在分析当前局面，完成后自动采用第一候选");
+    await runAnalysis();
+    if (pendingMobileBestMoveFen.current !== current.fen || boardRef.current.fen !== current.fen) return;
+    const completedLines = analysisStreamRef.current?.fen === current.fen ? analysisStreamRef.current.lines : [];
+    const completedBestMove = completedLines.slice().sort((left, right) => left.multipv - right.multipv)[0]?.pv[0];
+    pendingMobileBestMoveFen.current = undefined;
+    if (completedBestMove) {
+      await playIccsMove(completedBestMove, current.fen, undefined, { stopEngineFirst: true });
+    } else {
+      setNotice("引擎没有返回可采用的首选着，请检查服务状态后重试");
+    }
+  }
+
   async function playCompactEngineRow(row: CompactEngineAnalysisRow) {
     if (!row.iccs) {
       setNotice("当前候选没有可采用的首着");
@@ -3954,7 +4081,19 @@ export default function App() {
         setCloudConnection("online");
       } catch (error) {
         setCloudConnection("offline");
-        if (!automatic) setNotice(`云端 Pikafish 不可达：${friendlyError(error)}`);
+        if (!automatic) setNotice(`云端引擎不可达：${friendlyError(error)}`);
+        return;
+      }
+    }
+    let analysisAuth = { token: token.trim(), guest: false };
+    if (chessPlatform.kind === "web") {
+      try {
+        if (!token.trim() && !automatic) setNotice("正在获取游客引擎额度…");
+        analysisAuth = await ensureCloudAnalysisAuth();
+      } catch (error) {
+        const message = friendlyError(error);
+        if (!automatic) setNotice(`云端引擎鉴权失败：${message}`);
+        setAnalysisError(message);
         return;
       }
     }
@@ -4007,22 +4146,48 @@ export default function App() {
     const passPlan = analysisPassPlan({ automatic, platformKind: chessPlatform.kind, searchMode, searchValue });
     const configuredMode = passPlan.configuredMode;
     const configuredValue = passPlan.configuredValue;
-    const runAnalysisPass = (mode: AnalysisOptions["searchMode"], value: number) => Promise.allSettled(analysisTargets.map((target) => chessPlatform.analyze({
-      enginePath: target.path,
-      engineId: target.id,
-      engineName: target.name,
-      analysisSessionId: analysisSession.revision,
-      fen: analyzedFen,
-      searchMode: mode,
-      searchValue: value,
-      threads: effectiveThreads,
-      hashMb: effectiveHashMb,
-      multipv: effectiveMultipv,
-      serverUrl,
-      token,
-      guest: chessPlatform.kind === "web" && isMobileWorkbench,
-      excludeMove,
-    })));
+    const runAnalysisPass = async (mode: AnalysisOptions["searchMode"], value: number) => {
+      const runWithAuth = (auth: { token: string; guest: boolean }) => {
+        const requestValue = auth.guest
+          ? mode === "depth"
+            ? Math.min(value, 20)
+            : mode === "time"
+              ? Math.min(value, 2000)
+              : value
+          : value;
+        const requestMultipv = auth.guest ? Math.min(effectiveMultipv, 2) : effectiveMultipv;
+        return Promise.allSettled(analysisTargets.map((target) => chessPlatform.analyze({
+          enginePath: target.path,
+          engineId: target.id,
+          engineName: target.name,
+          analysisSessionId: analysisSession.revision,
+          fen: analyzedFen,
+          searchMode: mode,
+          searchValue: requestValue,
+          threads: effectiveThreads,
+          hashMb: effectiveHashMb,
+          multipv: requestMultipv,
+          serverUrl,
+          token: auth.token,
+          guest: auth.guest,
+          excludeMove,
+        })));
+      };
+      let completed = await runWithAuth(analysisAuth);
+      const expiredGuestToken = chessPlatform.kind === "web"
+        && analysisAuth.guest
+        && completed.length > 0
+        && completed.every((outcome) => outcome.status === "rejected" && friendlyError(outcome.reason).includes("令牌已过期"));
+      if (expiredGuestToken) {
+        clearGuestAnalysisToken();
+        analysisAuth = await ensureCloudAnalysisAuth(true);
+        completed = await runWithAuth(analysisAuth);
+      }
+      if (chessPlatform.kind === "web" && analysisAuth.guest && completed.some((outcome) => outcome.status === "fulfilled")) {
+        await refreshGuestQuotaFromPreferences();
+      }
+      return completed;
+    };
     const applyAnalysisPass = (completed: Awaited<ReturnType<typeof runAnalysisPass>>) => {
       const result = completed[0]?.status === "fulfilled" ? completed[0].value : [];
       if (!isAnalysisSessionCurrent(analysisSession, analysisSessionRevision.current, boardRevision.current, boardRef.current.fen)) {
@@ -4044,11 +4209,15 @@ export default function App() {
       if (failures.length === completed.length) {
         const reason = friendlyError((failures[0] as PromiseRejectedResult).reason);
         setAnalysisError(reason);
-        if (chessPlatform.kind === "web" && reason.includes("登录已失效")) {
-          setToken("");
-          setSubscription(undefined);
-          setCloudConnection("idle");
-          setMobileDrawerOpen(true);
+        if (chessPlatform.kind === "web" && reason.includes("令牌已过期")) {
+          if (analysisAuth.guest) {
+            clearGuestAnalysisToken();
+          } else {
+            setToken("");
+            setSubscription(undefined);
+            setCloudConnection("idle");
+            setMobileDrawerOpen(true);
+          }
         }
       }
       return { current: true, failures: failures.length };
@@ -4129,6 +4298,7 @@ export default function App() {
     boardRevision.current += 1;
     boardRef.current = next;
     if (positionChanged) {
+      if (pendingMobileBestMoveFen.current && pendingMobileBestMoveFen.current !== next.fen) pendingMobileBestMoveFen.current = undefined;
       analysisSessionRevision.current += 1;
       analysisLoadRevision.current += 1;
       if (analysisBusyRef.current) {
@@ -4204,7 +4374,7 @@ export default function App() {
   async function refreshGames() {
     try {
       setGames(await chessPlatform.listGames());
-      if (chessPlatform.kind === "desktop") setLibraryFolders(await chessPlatform.listLibraryFolders());
+      setLibraryFolders(await chessPlatform.listLibraryFolders());
     } catch {
       setGames([]);
     }
@@ -5091,6 +5261,7 @@ export default function App() {
     // current report and its task progress visible after the overlay closes.
     setReviewModeOpen(true);
     setWorkspaceMode("training");
+    void setWorkspaceLayout("compact");
     setMobilePanel("board");
     setAnalysisPanelCollapsed(false);
     if (analysisHintsEnabledRef.current && !analysisBusyRef.current) {
@@ -5197,13 +5368,7 @@ export default function App() {
       case "save": await saveDocument(); break;
       case "edit": setPositionEditorOpen(true); break;
       case "flipBoard": setReversed((value) => !value); break;
-      case "candidates":
-        setMobileArrowsEnabled((enabled) => {
-          const next = !enabled;
-          if (!next) setMobileArrowFocus(undefined);
-          return next;
-        });
-        break;
+      case "moveNow": await playMobileBestMoveNow(); break;
       case "analysis":
         analysisBusy ? await stopAnalysis() : await runAnalysis();
         break;
@@ -5352,6 +5517,7 @@ export default function App() {
   async function openReviewMode(mode: Extract<WorkspaceMode, "review" | "training"> = "review") {
     setReviewModeOpen(true);
     setWorkspaceMode(mode);
+    await setWorkspaceLayout("compact");
     if (chessPlatform.kind !== "desktop") return;
     try {
       // Review has its own report and insight panels; an old compact engine popout
@@ -6318,23 +6484,29 @@ export default function App() {
             <button type="button" className="mobile-drawer-command" title="新建标准开局棋谱" onClick={() => { setMobileDrawerOpen(false); void createGame(startingFen); }}><Plus size={18}/><span><strong>新局</strong><small>新建标准开局</small></span></button>
             <button type="button" className="mobile-drawer-command" title="导入本地棋谱文件" onClick={() => { setMobileDrawerOpen(false); void openDocument(); }}><FolderOpen size={18}/><span><strong>导入棋谱</strong><small>打开本地棋谱文件</small></span></button>
             <button type="button" className="mobile-drawer-command" title="下载当前棋谱文件" onClick={() => { setMobileDrawerOpen(false); void saveDocument(); }}><Save size={18}/><span><strong>保存棋谱</strong><small>下载当前棋谱</small></span></button>
+            <button type="button" className="mobile-drawer-command" title="查看、分类和打开本地保存的棋谱" onClick={() => { setMobileDrawerOpen(false); void refreshGames(); setMobilePanel("library"); }}><Library size={18}/><span><strong>棋谱库</strong><small>分类、标签与收藏</small></span></button>
             <button type="button" className="mobile-drawer-command" title="编辑当前棋盘局面" onClick={() => { setMobileDrawerOpen(false); setPositionEditorOpen(true); }}><Pencil size={18}/><span><strong>编辑局面</strong><small>摆放或删除棋子</small></span></button>
             <button type="button" className="mobile-drawer-command" aria-label="翻转红黑方视角" title="翻转红黑方视角" onClick={() => { setMobileDrawerOpen(false); setReversed((value) => !value); }}><FlipVertical2 size={18}/><span><strong>翻转红黑方</strong><small>切换红方或黑方在下</small></span></button>
             <button type="button" className="mobile-drawer-command" title="复制局面或下载棋谱" onClick={() => { setMobileDrawerOpen(false); setMobileExportOpen(true); }}><Copy size={18}/><span><strong>复制与导出</strong><small>复制 FEN 或下载</small></span></button>
           </div></section>
           <section><small>分析</small><div>
-            <button type="button" className="mobile-drawer-command" title={analysisBusy ? "停止当前 Pikafish 分析" : "向 Pikafish 请求当前局面的候选着法"} disabled={!analysisBusy && (!board.playable || isPlaying || reportBusy || engineSide !== "none" || engineThinking || !online)} onClick={() => void (analysisBusy ? stopAnalysis() : runAnalysis())}><Activity size={18}/><span><strong>{analysisBusy ? "停止分析" : "分析局面"}</strong><small>{analysisBusy ? "停止当前搜索" : "请求 Pikafish 推荐"}</small></span></button>
-            <button type="button" className="mobile-drawer-command" title="切换到下一条引擎候选 PV" onClick={() => void advanceMobileForcedVariation()}><GitFork size={18}/><span><strong>强变招</strong><small>预览下一候选 PV</small></span></button>
+            <button type="button" className="mobile-drawer-command" title={analysisBusy ? "停止当前引擎分析" : "向云端引擎请求当前局面的候选着法"} disabled={!analysisBusy && (!board.playable || isPlaying || reportBusy || engineSide !== "none" || engineThinking || !online)} onClick={() => void (analysisBusy ? stopAnalysis() : runAnalysis())}><Activity size={18}/><span><strong>{analysisBusy ? "停止分析" : "分析局面"}</strong><small>{analysisBusy ? "停止当前搜索" : "请求引擎推荐"}</small></span></button>
+            <button type="button" className="mobile-drawer-command" title="采用当前引擎第一候选；没有候选时先分析再走" disabled={!board.playable || isPlaying || reportBusy || (chessPlatform.kind === "web" && !online)} onClick={() => void playMobileBestMoveNow()}><Zap size={18}/><span><strong>立即出招</strong><small>走当前最优解</small></span></button>
+            <button type="button" className="mobile-drawer-command" title="切换到下一条引擎候选 PV" onClick={() => void advanceMobileForcedVariation()}><ForceVariationIcon size={18}/><span><strong>强变招</strong><small>预览下一候选 PV</small></span></button>
             <label className="mobile-drawer-toggle"><input type="checkbox" checked={autoAnalyze} onChange={(event) => setAutoAnalyze(event.target.checked)}/><span>自动分析</span></label>
             <label className="mobile-drawer-toggle"><input type="checkbox" checked={mobileArrowsEnabled} onChange={(event) => { setMobileArrowsEnabled(event.target.checked); if (!event.target.checked) setMobileArrowFocus(undefined); }}/><span>候选连线</span></label>
             <label className="mobile-drawer-select"><span>候选</span><select aria-label="候选数量" value={multipv} onChange={(event) => setMultipv(Number(event.target.value))}>{[1, 2, 3, 4, 5].map((value) => <option value={value} key={value}>MultiPV {value}</option>)}</select></label>
             <label className="mobile-drawer-select"><span>搜索</span><select aria-label="搜索模式" value={searchMode === "time" ? "time" : "depth"} onChange={(event) => { const mode = event.target.value as "time" | "depth"; setSearchMode(mode); setSearchValue(mode === "time" ? 1000 : 20); }}><option value="time">时间</option><option value="depth">深度</option></select></label>
             <label className="mobile-drawer-select"><span>{searchMode === "time" ? "毫秒" : "深度"}</span><input aria-label={searchMode === "time" ? "搜索时间毫秒" : "搜索深度"} type="number" min={searchMode === "time" ? 100 : 1} max={searchMode === "time" ? 5000 : 30} value={searchValue} onChange={(event) => setSearchValue(Math.min(searchMode === "time" ? 5000 : 30, Math.max(searchMode === "time" ? 100 : 1, Number(event.target.value) || (searchMode === "time" ? 1000 : 20))))}/></label>
           </div></section>
-          <section className="mobile-cloud-settings"><small>Pikafish 服务</small><div>
+          <section className="mobile-cloud-settings"><small>引擎服务</small><div>
             <label className="mobile-cloud-field">服务地址<input aria-label="云端服务地址" inputMode="url" value={serverUrl} onChange={(event) => { setServerUrl(event.target.value); setCloudConnection("idle"); }} /></label>
             <button type="button" disabled={cloudConnection === "checking"} onClick={() => void checkMobileCloudConnection()}>{cloudConnection === "checking" ? "检测中" : cloudConnection === "online" ? "服务已连接" : "检测连接"}</button>
-            <p className="mobile-cloud-status">首版免登录。连接成功后可直接请求 Pikafish 分析。</p>
+            <p className="mobile-cloud-status">{token.trim()
+              ? "已使用登录令牌请求云端引擎。"
+              : guestQuotaHint
+                ? `免登录体验：${guestQuotaHint}`
+                : "首版免登录。分析前会自动获取游客令牌和额度。"}</p>
           </div></section>
           <section><small>显示</small><div>
             <button type="button" className="mobile-drawer-command" title={mobileEvaluationVisible ? "收起棋盘上方的局势评分条" : "显示棋盘上方的局势评分条"} onClick={() => setMobileEvaluationVisible((visible) => !visible)}><BarChart3 size={18}/><span><strong>{mobileEvaluationVisible ? "收起局势图" : "显示局势图"}</strong><small>红黑双方局势评分</small></span></button>
@@ -6348,13 +6520,13 @@ export default function App() {
           <h2>显示设置</h2>
           <button type="button" className="mobile-settings-row" onClick={() => setSkinShopOpen(true)}><span><strong>棋盘与棋子皮肤</strong><small>沿用当前主题与皮肤</small></span><ChevronRight size={18}/></button>
           <label className="mobile-settings-row"><span><strong>显示候选箭头</strong><small>点击引擎或开局库候选后显示</small></span><input type="checkbox" checked={mobileArrowsEnabled} onChange={(event) => { setMobileArrowsEnabled(event.target.checked); if (!event.target.checked) setMobileArrowFocus(undefined); }}/></label>
-          <label className="mobile-settings-row"><span><strong>自动分析</strong><small>走棋后请求云端 Pikafish</small></span><input type="checkbox" checked={autoAnalyze} onChange={(event) => setAutoAnalyze(event.target.checked)}/></label>
+          <label className="mobile-settings-row"><span><strong>自动分析</strong><small>走棋后请求云端引擎</small></span><input type="checkbox" checked={autoAnalyze} onChange={(event) => setAutoAnalyze(event.target.checked)}/></label>
           <h2>引擎设置</h2>
           <div className="mobile-settings-row"><span><strong>显示着法数</strong><small>服务端最多支持 5 条候选</small></span><div className="mobile-stepper"><button type="button" aria-label="减少 MultiPV" disabled={multipv <= 1} onClick={() => setMultipv((value) => Math.max(1, value - 1))}>−</button><b>{multipv}</b><button type="button" aria-label="增加 MultiPV" disabled={multipv >= 5} onClick={() => setMultipv((value) => Math.min(5, value + 1))}>＋</button></div></div>
           <label className="mobile-settings-row"><span><strong>搜索限制</strong><small>{searchMode === "time" ? "100 - 5000 毫秒" : "1 - 30 层"}</small></span><select aria-label="搜索限制模式" value={searchMode === "time" ? "time" : "depth"} onChange={(event) => { const mode = event.target.value as "time" | "depth"; setSearchMode(mode); setSearchValue(mode === "time" ? 1000 : 20); }}><option value="depth">深度</option><option value="time">时间</option></select></label>
           <div className="mobile-settings-row"><span><strong>{searchMode === "time" ? "搜索时间" : "最大深度"}</strong><small>{searchMode === "time" ? "毫秒" : "层"}</small></span><div className="mobile-stepper"><button type="button" aria-label="减少搜索限制" onClick={() => setSearchValue((value) => Math.max(searchMode === "time" ? 100 : 1, value - (searchMode === "time" ? 100 : 1)))}>−</button><b>{searchValue}</b><button type="button" aria-label="增加搜索限制" onClick={() => setSearchValue((value) => Math.min(searchMode === "time" ? 5000 : 30, value + (searchMode === "time" ? 100 : 1)))}>＋</button></div></div>
-          <h2>Pikafish 服务</h2>
-          <button type="button" className="mobile-settings-row" onClick={() => { setMobilePanel("board"); setMobileDrawerOpen(true); }}><span><strong>连接 Pikafish 服务</strong><small>{cloudConnection === "online" ? "服务已连接，可直接分析" : "服务地址与连通性检测"}</small></span><ChevronRight size={18}/></button>
+          <h2>引擎服务</h2>
+          <button type="button" className="mobile-settings-row" onClick={() => { setMobilePanel("board"); setMobileDrawerOpen(true); }}><span><strong>连接引擎服务</strong><small>{guestQuotaHint ?? (cloudConnection === "online" ? "服务已连接，可直接分析" : "服务地址与连通性检测")}</small></span><ChevronRight size={18}/></button>
         </div>
       </section>}
 
@@ -6478,9 +6650,7 @@ export default function App() {
           <button className="tool-button" title="保存棋谱" onClick={() => void saveDocument()}><Save size={16}/></button>
           <button className="tool-button" title="翻转棋盘" onClick={() => setReversed((value) => !value)}><RotateCcw size={16}/></button>
           <button className="tool-button" title="返回根局面" onClick={() => void navigateTo()}><RefreshCw size={16}/></button>
-          {chessPlatform.kind === "desktop" && workspaceMode === "research" && <button className="tool-button" title={syncAccount.status === "signedIn" ? "大师棋谱" : "登录后查看大师棋谱"} onClick={() => syncAccount.status === "signedIn" ? setMasterLibraryOpen(true) : setDesktopDialog(syncAccount.status === "unbound" ? "register" : "login")}><Database size={16}/></button>}
           {chessPlatform.kind === "desktop" && <button className="tool-button" title="AI 私教棋力档案" onClick={() => void openCoachProfile()}><BarChart3 size={16}/></button>}
-          {chessPlatform.kind === "desktop" && workspaceMode === "research" && <button className="tool-button flyknife-tool-button" title="飞刀库 / 专题库" onClick={() => setFlyknifeOpen(true)}><Zap size={16}/><span>飞刀库</span></button>}
         </div>
         {chessPlatform.kind === "desktop" && <div className="export-menu">
           <button className={`tool-button ${exportMenuOpen ? "active" : ""}`} title="分享与导出" aria-label="分享与导出" aria-expanded={exportMenuOpen} onClick={() => setExportMenuOpen((open) => !open)}><Share2 size={16}/></button>
@@ -6495,16 +6665,15 @@ export default function App() {
             <button role="menuitem" disabled={manualExporting} onClick={() => void exportReplayGif("mainline")}><Play size={15}/>生成完整主线 GIF</button>
           </div>}
         </div>}
-        <div className="tool-divider" />
-        <WorkspaceLayoutSwitch mode={desktopPreferences.layoutMode} onChange={(mode) => void setWorkspaceLayout(mode)}/>
-        <div className="tool-divider" />
         <WorkspaceModeSwitch
           active={workspaceMode}
           platformKind={chessPlatform.kind}
           engineReady={Boolean(engineProbe)}
           syncSignedIn={syncAccount.status === "signedIn"}
           linkSupported={linkPlatformSupported}
+          layoutMode={desktopPreferences.layoutMode}
           onChange={(mode) => void selectWorkspaceMode(mode)}
+          onLayoutChange={(mode) => void setWorkspaceLayout(mode)}
         />
         <button
           className={`mode-tool ${analysisHintsEnabled ? "active" : ""}`}
@@ -6532,10 +6701,12 @@ export default function App() {
           title={!linkPlatformSupported ? "当前平台未接入持续屏幕采集和外部点击；可使用截图或照片导入" : linkSessionStatus.state === "stopped" ? "打开识别与连线，启动连线识别" : `连线中：${linkSessionStateLabel(linkSessionStatus.state, linkSessionStatus.mode, linkSessionStatus.pendingExternalMove, linkPendingMoveDisplay)}，点击查看设置`}
           onClick={() => void openLinkSessionDialog()}
         ><Link size={15}/>连线</button>}
+        {chessPlatform.kind === "desktop" && workspaceMode === "research" && <button className="tool-button flyknife-tool-button" title="飞刀库 / 专题库" onClick={() => setFlyknifeOpen(true)}><Zap size={16}/><span>飞刀库</span></button>}
+        {chessPlatform.kind === "desktop" && workspaceMode === "research" && <button className="tool-button" title={syncAccount.status === "signedIn" ? "大师棋谱" : "登录后查看大师棋谱"} onClick={() => syncAccount.status === "signedIn" ? setMasterLibraryOpen(true) : setDesktopDialog(syncAccount.status === "unbound" ? "register" : "login")}><Database size={16}/></button>}
       </div>
 
       <main className={`workspace layout-${desktopPreferences.layoutMode} ${reviewModeOpen ? "review-mode-active" : ""} ${libraryCollapsed ? "library-collapsed" : ""} ${candidateRailCollapsed ? "candidate-rail-collapsed" : ""} ${analysisPanelCollapsed ? "analysis-panel-collapsed" : ""} ${compactDockMinimized ? "compact-dock-minimized" : ""} ${compactHasSystemPopout ? "compact-system-popout" : ""} ${desktopPreferences.layoutMode === "compact" && cloudBookCollapsed ? "compact-cloud-collapsed" : ""}`}>
-        <aside className={`library-panel ${libraryCollapsed ? "collapsed" : ""} ${mobilePanel === "library" ? "mobile-visible" : ""}`}>
+        <aside className={`library-panel ${libraryCollapsed && mobilePanel !== "library" ? "collapsed" : ""} ${mobilePanel === "library" ? "mobile-visible" : ""}`}>
           <div className="pane-title">
             <strong>{libraryCollapsed ? <Library size={16}/> : "棋谱库"}</strong>
             {!libraryCollapsed && <button className="tool-button" title="新建棋谱" onClick={() => void createGame(startingFen)}><Plus size={15}/></button>}
@@ -6558,7 +6729,7 @@ export default function App() {
                   <button title={`删除“${folder.name}”`} aria-label={`删除“${folder.name}”`} onClick={() => void deleteLibraryFolder(folder)}><Trash2 size={12}/></button>
                 </span>}
               </div>)}
-              {chessPlatform.kind === "desktop" && <button className="library-folder-new" title="新建文件夹" onClick={() => void createLibraryFolder()}><FolderPlus size={13}/>新建文件夹</button>}
+              <button className="library-folder-new" title="新建文件夹" onClick={() => void createLibraryFolder()}><FolderPlus size={13}/>新建文件夹</button>
             </div>
             {visibleLibraryGames.map((game) => (
               <button key={game.id} className={`study-entry ${game.current ? "active" : ""}`} onClick={() => void openGame(game.id)}>
@@ -6571,16 +6742,16 @@ export default function App() {
             <label>棋谱名<input value={gameTitle} onChange={(event) => setGameTitle(event.target.value)} /></label>
             <label>局面备注<textarea value={gameNote} onChange={(event) => setGameNote(event.target.value)} rows={3}/></label>
             <button onClick={() => void saveGameMetadata()}><Save size={13}/>保存信息</button>
-            {chessPlatform.kind === "desktop" && <>
-              <div className={`mirror-status ${currentLibraryGame?.mirror?.state ?? "pending"}`}>
+            <>
+              {chessPlatform.kind === "desktop" && <><div className={`mirror-status ${currentLibraryGame?.mirror?.state ?? "pending"}`}>
                 <span>Finder 镜像：{currentLibraryGame?.mirror?.state === "synced" ? "已镜像" : currentLibraryGame?.mirror?.state === "failed" ? "写入失败" : currentLibraryGame?.mirror?.state === "disabled" ? "已暂停" : "待创建"}</span>
                 {currentLibraryGame?.mirror?.error && <small title={currentLibraryGame.mirror.error}>{currentLibraryGame.mirror.error}</small>}
               </div>
-              <div className="mirror-actions"><button title="立即更新当前棋谱的完整 PGN 镜像" onClick={() => void updateCurrentMirror()}>更新镜像</button><button title="在 Finder 中显示当前镜像文件" disabled={currentLibraryGame?.mirror?.state !== "synced"} onClick={() => void revealCurrentMirror()}>Finder 显示</button><button title="自动镜像目录设置" onClick={() => setDesktopDialog("mirrorSettings")}>镜像设置</button></div>
-              <label>归档文件夹<select value={currentLibraryGame?.libraryFolder ?? ""} onChange={(event) => void saveCurrentLibrary(event.target.value || undefined)}><option value="">未分类</option>{libraryFolders.map((folder) => <option key={folder.name} value={folder.name}>{folder.name}</option>)}</select></label>
-              <label>标签（逗号分隔）<input value={libraryTagsInput} onChange={(event) => setLibraryTagsInput(event.target.value)} onBlur={() => { const tags = libraryTagsInput.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean); void saveCurrentLibrary(currentLibraryGame?.libraryFolder, currentLibraryGame?.favorite, tags); }} /></label>
-              <button className={currentLibraryGame?.favorite ? "active" : ""} onClick={() => void saveCurrentLibrary(currentLibraryGame?.libraryFolder, !(currentLibraryGame?.favorite ?? false))}><Heart size={13} fill={currentLibraryGame?.favorite ? "currentColor" : "none"}/>{currentLibraryGame?.favorite ? "已收藏" : "收藏棋谱"}</button>
-            </>}
+              <div className="mirror-actions"><button title="立即更新当前棋谱的完整 PGN 镜像" onClick={() => void updateCurrentMirror()}>更新镜像</button><button title="在 Finder 中显示当前镜像文件" disabled={currentLibraryGame?.mirror?.state !== "synced"} onClick={() => void revealCurrentMirror()}>Finder 显示</button><button title="自动镜像目录设置" onClick={() => setDesktopDialog("mirrorSettings")}>镜像设置</button></div></>}
+              <label>归档文件夹<select value={currentLibraryGame?.libraryFolder ?? ""} onChange={(event) => void saveCurrentLibrary(event.target.value || undefined)} disabled={!currentLibraryGame}><option value="">未分类</option>{libraryFolders.map((folder) => <option key={folder.name} value={folder.name}>{folder.name}</option>)}</select></label>
+              <label>标签（逗号分隔）<input disabled={!currentLibraryGame} value={libraryTagsInput} onChange={(event) => setLibraryTagsInput(event.target.value)} onBlur={() => { const tags = libraryTagsInput.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean); void saveCurrentLibrary(currentLibraryGame?.libraryFolder, currentLibraryGame?.favorite, tags); }} /></label>
+              <button className={currentLibraryGame?.favorite ? "active" : ""} disabled={!currentLibraryGame} onClick={() => void saveCurrentLibrary(currentLibraryGame?.libraryFolder, !(currentLibraryGame?.favorite ?? false))}><Heart size={13} fill={currentLibraryGame?.favorite ? "currentColor" : "none"}/>{currentLibraryGame?.favorite ? "已收藏" : "收藏棋谱"}</button>
+            </>
             <label>当前局面<input value={board.status} readOnly /></label>
             <label>行棋方<input value={board.sideToMove} readOnly /></label>
           </section>
@@ -6612,7 +6783,7 @@ export default function App() {
             </span>}
             <small>{board.sideToMove}行棋 · {boardPerspectiveLabel}</small>
           </div>}
-          {mobileEvaluationVisible && <section className={`mobile-evaluation-strip ${boardEvaluationScore == null ? "pending" : boardEvaluationScore < -50 ? "black" : boardEvaluationScore > 50 ? "red" : "balanced"}`} aria-label="当前局势评分条">
+          {isMobileWorkbench && mobileEvaluationVisible && <section className={`mobile-evaluation-strip ${boardEvaluationScore == null ? "pending" : boardEvaluationScore < -50 ? "black" : boardEvaluationScore > 50 ? "red" : "balanced"}`} aria-label="当前局势评分条">
             <div className="mobile-evaluation-track" aria-hidden="true"><span style={{ width: `${boardEvaluationRedShare}%` } as CSSProperties}/></div>
             <strong>{boardEvaluationRailText.side}</strong><span>{boardEvaluationRailText.score}</span>
             <button type="button" title="收起局势评分条" aria-label="收起局势评分条" onClick={() => setMobileEvaluationVisible(false)}><ChevronDown size={15}/></button>
@@ -6769,6 +6940,58 @@ export default function App() {
             <span className="board-meta">{boardPerspectiveLabel}</span>
           </div>
           {playbackControls("mobile-playback")}
+          {isMobileWorkbench && mobileEvaluationVisible && <section className="mobile-evaluation-chart" aria-label="局势分析图">
+            <header>
+              <span><BarChart3 size={14}/><strong>局势分析图</strong></span>
+              <small>{visibleTrendPoint ? `${visibleTrendPoint.label} · ${formatRedScore(visibleTrendPoint.scoreCp)}` : boardEvaluationRailTitle}</small>
+              <button type="button" title="隐藏局势分析图" aria-label="隐藏局势分析图" onClick={() => setMobileEvaluationVisible(false)}><ChevronDown size={14}/></button>
+            </header>
+            {evaluationTrend.length === 0
+              ? <p>完成引擎分析后，这里会显示红黑局势走势。</p>
+              : <svg
+                className="mobile-trend-chart"
+                viewBox={`0 0 ${trendChart.width} ${trendChart.height}`}
+                preserveAspectRatio="none"
+                role="group"
+                aria-label="手机局势曲线"
+                tabIndex={0}
+                onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); updateTrendCursor(event); }}
+                onPointerMove={(event) => { if (event.buttons) updateTrendCursor(event); }}
+                onPointerUp={() => releaseTrendCursor()}
+                onKeyDown={trendKeyDown}
+              >
+                <rect className="trend-equal-band" x={trendChart.left} y={trendChart.middle - 4} width={trendChart.right - trendChart.left} height="8"/>
+                <line className="trend-grid top" x1={trendChart.left} y1={trendChart.top} x2={trendChart.right} y2={trendChart.top}/>
+                <line className="trend-grid upper" x1={trendChart.left} y1="54" x2={trendChart.right} y2="54"/>
+                <line className="trend-grid middle" x1={trendChart.left} y1={trendChart.middle} x2={trendChart.right} y2={trendChart.middle}/>
+                <line className="trend-grid lower" x1={trendChart.left} y1="126" x2={trendChart.right} y2="126"/>
+                <line className="trend-grid bottom" x1={trendChart.left} y1={trendChart.bottom} x2={trendChart.right} y2={trendChart.bottom}/>
+                <text className="trend-scale-label" x="2" y={trendChart.top + 3}>红优</text>
+                <text className="trend-scale-label" x="2" y={trendChart.middle + 3}>均势</text>
+                <text className="trend-scale-label" x="2" y={trendChart.bottom + 3}>黑优</text>
+                {trendSegments.map((segment, index) => <line key={index} className={`trend-segment ${segment.side}`} x1={segment.from.x} y1={segment.from.y} x2={segment.to.x} y2={segment.to.y}/>)}
+                {evaluationTrend.map((point, index) => {
+                  const turn = trendTurnsByNode.get(point.nodeId);
+                  return <circle
+                    key={`${point.label}-${index}`}
+                    className={`${point.nodeId === board.currentNode ? "current" : ""} ${turn ? `turning ${turn.severity}` : ""}`}
+                    cx={point.x}
+                    cy={point.y}
+                    r={point.nodeId === board.currentNode ? 5 : 3.3}
+                    role={point.nodeId ? "button" : undefined}
+                    tabIndex={point.nodeId ? 0 : undefined}
+                    aria-label={point.nodeId ? `${point.label}，红方视角 ${formatRedScore(point.scoreCp)}，点击定位` : undefined}
+                    onClick={() => point.nodeId && void navigateTo(point.nodeId)}
+                    onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && point.nodeId) void navigateTo(point.nodeId); }}
+                  ><title>{point.label}：{formatRedScore(point.scoreCp)}</title></circle>;
+                })}
+                {visibleTrendPoint && <>
+                  <line className="trend-current-line" x1={visibleTrendPoint.x} y1={trendChart.top - 6} x2={visibleTrendPoint.x} y2={trendChart.bottom + 6}/>
+                  <circle className="trend-current-halo" cx={visibleTrendPoint.x} cy={visibleTrendPoint.y} r="7"/>
+                  <circle className="trend-current-node" cx={visibleTrendPoint.x} cy={visibleTrendPoint.y} r="3.5"/>
+                </>}
+              </svg>}
+          </section>}
           <div className={`engine-livebar ${primaryAnalysis ? "has-analysis" : "empty"}`}>
             <span>{primaryAnalysis
               ? <>深度 {primaryAnalysis.depth ?? "-"} · PV {primaryAnalysis.multipv} · 分数 {formatAnalysisScore(primaryAnalysis)} · NPS {formatNps(primaryAnalysis.nps)} · 时间 {((primaryAnalysis.timeMs ?? 0) / 1000).toFixed(1)}s{primaryMove ? ` · ${primaryMove}` : ""}</>

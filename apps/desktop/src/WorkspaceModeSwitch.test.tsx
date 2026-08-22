@@ -1,13 +1,14 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { useState } from "react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { WorkspaceModeSwitch, type WorkspaceMode } from "./WorkspaceModeSwitch";
 
 afterEach(cleanup);
 
 function Harness() {
   const [mode, setMode] = useState<WorkspaceMode>("review");
-  return <WorkspaceModeSwitch active={mode} platformKind="desktop" engineReady={false} syncSignedIn={false} linkSupported={true} onChange={setMode}/>;
+  const [layout, setLayout] = useState<"studio" | "compact">("compact");
+  return <WorkspaceModeSwitch active={mode} platformKind="desktop" engineReady={false} syncSignedIn={false} linkSupported={true} layoutMode={layout} onChange={setMode} onLayoutChange={setLayout}/>;
 }
 
 describe("WorkspaceModeSwitch", () => {
@@ -19,11 +20,32 @@ describe("WorkspaceModeSwitch", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "研究" }));
     expect(screen.getByRole("button", { name: "研究" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("region", { name: "研究布局" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "简洁" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByText("需配置引擎")).toBeTruthy();
   });
 
+  it("closes the research layout menu after selection, outside click, or Escape", () => {
+    const onChange = vi.fn();
+    const onLayoutChange = vi.fn();
+    render(<WorkspaceModeSwitch active="research" platformKind="desktop" engineReady={true} syncSignedIn={true} linkSupported={true} layoutMode="studio" onChange={onChange} onLayoutChange={onLayoutChange}/>);
+
+    fireEvent.click(screen.getByRole("button", { name: "研究" }));
+    fireEvent.click(screen.getByRole("button", { name: "简洁" }));
+    expect(onLayoutChange).toHaveBeenCalledWith("compact");
+    expect(screen.queryByRole("region", { name: "研究布局" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "研究" }));
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole("region", { name: "研究布局" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "研究" }));
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("region", { name: "研究布局" })).toBeNull();
+  });
+
   it("does not expose desktop-only modes in the Web shell", () => {
-    render(<WorkspaceModeSwitch active="review" platformKind="web" engineReady={false} syncSignedIn={false} linkSupported={false} onChange={() => undefined}/>);
+    render(<WorkspaceModeSwitch active="review" platformKind="web" engineReady={false} syncSignedIn={false} linkSupported={false} layoutMode="compact" onChange={() => undefined} onLayoutChange={() => undefined}/>);
     expect(screen.queryByRole("group")).toBeNull();
     expect(screen.getByText("Web 端仅提供离线棋谱、基础变例与待同步操作")).toBeTruthy();
   });

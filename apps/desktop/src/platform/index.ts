@@ -4,7 +4,7 @@ import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { webDatabase, type SyncOperation, type WebGameRecord } from "./indexedDb";
 import { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH, FALLBACK_BUILTIN_OPENING_BOOK_MANIFEST } from "./types";
-import type { AnalysisLine, AnalysisOptions, AppInfoDto, BoardState, BuiltinOpeningBookManifestDto, CaptureSource, ChessPlatform, CloudAnalysisPreferences, CloudAuthDto, CloudBookCandidate, DesktopPreferencesDto, EngineArenaOptionsDto, EngineArenaResultDto, EngineMoveResult, EnginePlayOptions, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, ExportFormat, FlyknifeCandidate, FlyknifePlan, FlyknifeTemplate, FlyknifeTopic, GameMirrorStatus, GameReportDatasetDto, GameReportOptionsDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, GenerateFlyknifeRequest, LibraryFolder, LinkAutoSide, LinkObservation, LinkSessionStatus, LinkTargetWindow, MasterGameSummaryDto, MasterLibraryStatsDto, MasterPlayerDto, MasterStyleHintDto, MasterStyleImportResultDto, MasterStyleProfileDto, PreviewLineStep, ReplayExportScope, ScreenshotMoveResolution, StartLinkSessionRequest, StudySessionDto, SubscriptionDto, SyncAccountDto, SyncResult, TheoryCardDto, TheoryCardFeedbackDto, TheoryLibraryDto, TrainingGenerationResultDto, TrainingSummaryDto, TrainingTaskDto } from "./types";
+import type { AnalysisLine, AnalysisOptions, AppInfoDto, BoardState, BuiltinOpeningBookManifestDto, CaptureSource, ChessPlatform, CloudAnalysisPreferences, CloudAuthDto, CloudBookCandidate, CloudGuestAuthDto, DesktopPreferencesDto, EngineArenaOptionsDto, EngineArenaResultDto, EngineMoveResult, EnginePlayOptions, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, ExportFormat, FlyknifeCandidate, FlyknifePlan, FlyknifeTemplate, FlyknifeTopic, GameMirrorStatus, GameReportDatasetDto, GameReportOptionsDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, GenerateFlyknifeRequest, LibraryFolder, LinkAutoSide, LinkObservation, LinkSessionStatus, LinkTargetWindow, MasterGameSummaryDto, MasterLibraryStatsDto, MasterPlayerDto, MasterStyleHintDto, MasterStyleImportResultDto, MasterStyleProfileDto, PreviewLineStep, ReplayExportScope, ScreenshotMoveResolution, StartLinkSessionRequest, StudySessionDto, SubscriptionDto, SyncAccountDto, SyncResult, TheoryCardDto, TheoryCardFeedbackDto, TheoryLibraryDto, TrainingGenerationResultDto, TrainingSummaryDto, TrainingTaskDto } from "./types";
 import type { ChineseLineParseResult, DailyTrainingPlan, GuidedAnalysisStart, GuidedAnalysisSubmission, GuidedAnalysisSubmissionResult, GuidedEngineLine, LearningProfile, OpeningRepertoire, WeeklyLearningReport } from "./types";
 
 type WebGameInstance = {
@@ -50,6 +50,7 @@ type WireSyncOperation = Omit<SyncOperation, "kind"> & {
 
 const webManualFileExtension = "xqjson";
 const webManualMimeType = "application/vnd.xiangqi-assistant+json";
+const webStartingFen = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1";
 const webCloudBookUrl = "https://www.chessdb.cn/chessdb.php";
 
 type ChessDbCloudRow = { iccs: string; score: number; rank?: number; winRate?: number; memo?: string };
@@ -78,17 +79,28 @@ function parseChessDbCloudRows(payload: string): ChessDbCloudRow[] {
 }
 
 function cloudApiError(status: number, fallback?: string) {
-  if (status === 401) return "登录已失效，请重新登录云端分析";
-  if (status === 403) return "当前账号没有云端 Pikafish 权限";
-  if (status === 429) return "云端分析服务繁忙，请稍后重试";
-  if (status >= 500) return "云端 Pikafish 暂不可用，请稍后重试";
+  const detail = fallback?.trim();
+  if (status === 401) return "引擎令牌已过期，请重新获取或重新登录";
+  if (status === 402) return "当前账号需要 Pro 权益才能使用云端引擎";
+  if (status === 403) return detail?.includes("guest")
+    ? "游客引擎参数超出限制，请降低深度或候选数"
+    : "当前账号没有云端引擎权限";
+  if (status === 429) {
+    if (detail === "guest_quota_exceeded") return "游客今日引擎额度已用完，请稍后再试或登录 Pro";
+    if (detail === "rate_limited") return "请求过快，请稍后再试";
+    if (detail === "engine_busy" || detail?.includes("busy")) return "云端引擎繁忙，请稍后重试";
+    return "云端引擎请求过多，请稍后重试";
+  }
+  if (status === 503) return "云端引擎暂不可用，请稍后重试";
+  if (status === 504) return "云端引擎分析超时，请降低搜索限制后重试";
+  if (status >= 500) return "云端引擎暂不可用，请稍后重试";
   return fallback ?? `云端服务返回 ${status}`;
 }
 
-export function cloudAnalysisHeaders(token: string, guest = false): Record<string, string> {
+export function cloudAnalysisHeaders(token: string, _guest = false): Record<string, string> {
   return {
     "content-type": "application/json",
-    ...(!guest && token.trim() ? { authorization: `Bearer ${token}` } : {}),
+    ...(token.trim() ? { authorization: `Bearer ${token}` } : {}),
   };
 }
 
@@ -380,6 +392,7 @@ class DesktopPlatform implements ChessPlatform {
   async saveCloudAnalysisPreferences(): Promise<void> { }
   async checkCloudHealth(): Promise<void> { }
   async authenticateCloud(): Promise<CloudAuthDto> { throw new Error("桌面端请使用同步账号设置"); }
+  async authenticateCloudGuest(): Promise<CloudGuestAuthDto> { throw new Error("桌面端请使用同步账号设置"); }
   async getCloudSubscription(): Promise<SubscriptionDto> { return this.getSubscription(); }
   redeemSubscriptionCode(code: string) { return invoke<SubscriptionDto>("redeem_subscription_code", { code }); }
   registerSyncAccount(email: string, password: string) { return invoke<SyncAccountDto>("register_sync_account", { email, password }); }
@@ -399,24 +412,21 @@ class WebPlatform implements ChessPlatform {
   private module?: WebCoreModule;
   private corePromise?: Promise<WebCoreModule>;
   private cloudBookCache = new Map<string, CloudBookCandidate[]>();
+  private gamePersisted = false;
+  private draftTitle = "未命名棋谱";
+  private draftNote = "";
 
   async initialize(): Promise<Partial<BoardState>> {
     const module = await this.core();
     const stored = await webDatabase.currentGame();
     this.game = stored ? module.WebGame.importJson(stored.snapshot) : new module.WebGame();
     this.gameId = stored?.id ?? crypto.randomUUID();
+    this.gamePersisted = Boolean(stored);
+    this.draftTitle = stored?.title ?? "未命名棋谱";
+    this.draftNote = stored?.note ?? "";
     this.deviceId = await webDatabase.meta("deviceId") ?? crypto.randomUUID();
     this.lamport = Number(await webDatabase.meta("lamport") ?? 0);
     await webDatabase.setMeta("deviceId", this.deviceId);
-    if (!stored) {
-      const state = this.state();
-      await this.persist(state);
-      await this.enqueue("create_game", this.gameId, {
-        title: "Web study",
-        fen: state.fen,
-        rootId: this.requireGame().rootId(),
-      });
-    }
     return this.scoredState();
   }
   async getAppInfo(): Promise<AppInfoDto> { return { version: "Web", buildTimestamp: 0, platform: "浏览器" }; }
@@ -429,15 +439,55 @@ class WebPlatform implements ChessPlatform {
       fen: game.fen,
       updatedAt: game.updatedAt,
       current: game.id === currentId,
-      favorite: false,
-      tags: [],
+      libraryFolder: game.libraryFolder,
+      favorite: game.favorite ?? false,
+      tags: game.tags ?? [],
     }));
   }
-  async listLibraryFolders(): Promise<LibraryFolder[]> { return []; }
-  async createLibraryFolder(): Promise<void> { throw new Error("Web 端暂不支持棋谱文件夹"); }
-  async renameLibraryFolder(): Promise<void> { throw new Error("Web 端暂不支持棋谱文件夹"); }
-  async deleteLibraryFolder(): Promise<void> { throw new Error("Web 端暂不支持棋谱文件夹"); }
-  async updateGameLibrary(): Promise<Partial<BoardState>> { throw new Error("Web 端暂不支持棋谱归档"); }
+  async listLibraryFolders(): Promise<LibraryFolder[]> {
+    const folders = await this.readLibraryFolderNames();
+    const games = await webDatabase.games();
+    return folders.map((name) => ({ name, system: false, gameCount: games.filter((game) => game.libraryFolder === name).length }));
+  }
+  async createLibraryFolder(name: string): Promise<void> {
+    const normalized = this.normalizeFolderName(name);
+    const folders = await this.readLibraryFolderNames();
+    if (folders.includes(normalized)) throw new Error("已存在同名文件夹");
+    await this.saveLibraryFolderNames([...folders, normalized]);
+  }
+  async renameLibraryFolder(previous: string, next: string): Promise<void> {
+    const normalized = this.normalizeFolderName(next);
+    const folders = await this.readLibraryFolderNames();
+    if (!folders.includes(previous)) throw new Error("棋谱文件夹不存在");
+    if (previous !== normalized && folders.includes(normalized)) throw new Error("已存在同名文件夹");
+    await this.saveLibraryFolderNames(folders.map((folder) => folder === previous ? normalized : folder));
+    for (const game of await webDatabase.games()) {
+      if (game.libraryFolder !== previous) continue;
+      await webDatabase.saveGame({ ...game, libraryFolder: normalized, updatedAt: new Date().toISOString() }, game.id === this.gameId);
+      await this.enqueueForGame(game.id, "update_game_metadata", game.id, { title: game.title, note: game.note ?? "", libraryFolder: normalized, favorite: game.favorite ?? false, tags: game.tags ?? [] });
+    }
+  }
+  async deleteLibraryFolder(name: string): Promise<void> {
+    const folders = await this.readLibraryFolderNames();
+    if (!folders.includes(name)) return;
+    await this.saveLibraryFolderNames(folders.filter((folder) => folder !== name));
+    for (const game of await webDatabase.games()) {
+      if (game.libraryFolder !== name) continue;
+      await webDatabase.saveGame({ ...game, libraryFolder: undefined, updatedAt: new Date().toISOString() }, game.id === this.gameId);
+      await this.enqueueForGame(game.id, "update_game_metadata", game.id, { title: game.title, note: game.note ?? "", libraryFolder: "", favorite: game.favorite ?? false, tags: game.tags ?? [] });
+    }
+  }
+  async updateGameLibrary(folder: string | undefined, favorite: boolean, tags: string[]): Promise<Partial<BoardState>> {
+    if (!this.gamePersisted) throw new Error("请先走出第一步后再归档棋谱");
+    const normalizedFolder = folder ? this.normalizeFolderName(folder) : undefined;
+    if (normalizedFolder && !(await this.readLibraryFolderNames()).includes(normalizedFolder)) throw new Error("棋谱文件夹不存在");
+    const normalizedTags = [...new Set(tags.map((tag) => tag.trim()).filter(Boolean))].slice(0, 12);
+    const record = await webDatabase.game(this.gameId);
+    if (!record) throw new Error("当前棋谱尚未保存");
+    await webDatabase.saveGame({ ...record, libraryFolder: normalizedFolder, favorite, tags: normalizedTags, updatedAt: new Date().toISOString() }, true);
+    await this.enqueue("update_game_metadata", this.gameId, { title: record.title, note: record.note ?? "", libraryFolder: normalizedFolder ?? "", favorite, tags: normalizedTags });
+    return this.scoredState();
+  }
   async getGameMirrorStatus(): Promise<GameMirrorStatus | undefined> { return undefined; }
   async updateGameMirror(): Promise<GameMirrorStatus> { throw new Error("Web 端暂不支持棋谱镜像"); }
   async rebuildGameMirrors(): Promise<GameMirrorStatus[]> { throw new Error("Web 端暂不支持棋谱镜像"); }
@@ -450,6 +500,9 @@ class WebPlatform implements ChessPlatform {
     const module = await this.core();
     this.game = module.WebGame.importJson(record.snapshot);
     this.gameId = record.id;
+    this.gamePersisted = true;
+    this.draftTitle = record.title;
+    this.draftNote = record.note ?? "";
     await webDatabase.saveGame(record, true);
     return this.scoredState();
   }
@@ -533,6 +586,24 @@ class WebPlatform implements ChessPlatform {
     if (!response.ok || !payload.token || !payload.userId) throw new Error(cloudApiError(response.status, payload.error ?? `登录服务返回 ${response.status}`));
     return { userId: payload.userId, token: payload.token };
   }
+  async authenticateCloudGuest(serverUrl: string): Promise<CloudGuestAuthDto> {
+    const response = await fetch(`${serverUrl.replace(/\/$/, "")}/api/v1/auth/guest`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+    });
+    const payload = await response.json().catch(() => ({})) as Partial<CloudGuestAuthDto> & { error?: string };
+    if (!response.ok || !payload.token || !payload.expiresAt) {
+      throw new Error(cloudApiError(response.status, payload.error ?? `游客引擎令牌返回 ${response.status}`));
+    }
+    return {
+      token: payload.token,
+      tokenType: "guest",
+      expiresAt: payload.expiresAt,
+      guestQuotaLimit: Number(payload.guestQuotaLimit ?? 0),
+      guestQuotaRemaining: Number(payload.guestQuotaRemaining ?? 0),
+      guestQuotaResetsAt: payload.guestQuotaResetsAt ?? "",
+    };
+  }
   async getCloudSubscription(serverUrl: string, token: string): Promise<SubscriptionDto> {
     const response = await fetch(`${serverUrl.replace(/\/$/, "")}/api/v1/subscription`, { headers: { authorization: `Bearer ${token}` } });
     const payload = await response.json().catch(() => ({})) as SubscriptionDto & { error?: string };
@@ -551,14 +622,22 @@ class WebPlatform implements ChessPlatform {
     const module = await this.core();
     this.game = module.WebGame.importJson(document.snapshot);
     this.gameId = crypto.randomUUID();
+    this.gamePersisted = true;
+    this.draftTitle = document.title;
+    this.draftNote = document.note;
     const state = this.state();
+    const now = new Date().toISOString();
     await webDatabase.saveGame({
       id: this.gameId,
       title: document.title,
       note: document.note,
       snapshot: this.requireGame().exportJson(),
       fen: state.fen,
-      updatedAt: new Date().toISOString(),
+      createdAt: now,
+      updatedAt: now,
+      favorite: false,
+      tags: [],
+      source: "import",
     }, true);
     await this.enqueue("create_game", this.gameId, {
       title: document.title,
@@ -612,7 +691,16 @@ class WebPlatform implements ChessPlatform {
     return link.download;
   }
   async pasteDocument(): Promise<Partial<BoardState>> { throw new Error("Web 端棋谱粘贴将在后续版本开放"); }
-  async updateGameMetadata(): Promise<Partial<BoardState>> { throw new Error("Web 端棋局元数据编辑将在后续版本开放"); }
+  async updateGameMetadata(title: string, note: string): Promise<Partial<BoardState>> {
+    this.draftTitle = title.trim() || "未命名棋谱";
+    this.draftNote = note;
+    if (!this.gamePersisted) return this.scoredState();
+    const record = await webDatabase.game(this.gameId);
+    if (!record) throw new Error("当前棋谱尚未保存");
+    await webDatabase.saveGame({ ...record, title: this.draftTitle, note, updatedAt: new Date().toISOString() }, true);
+    await this.enqueue("update_game_metadata", this.gameId, { title: this.draftTitle, note });
+    return this.scoredState();
+  }
   async reorderBranches(nodeIds: string[]): Promise<Partial<BoardState>> {
     if (nodeIds.length < 2) return this.scoredState();
     const snapshot = JSON.parse(this.requireGame().exportJson()) as { tree: { root_id: string; nodes: Record<string, { parent_id: string }> } };
@@ -622,7 +710,7 @@ class WebPlatform implements ChessPlatform {
     }
     const state = this.parseState(this.requireGame().applyOperation("reorder_branches", JSON.stringify({ parentId, nodeIds })));
     await this.persist(state);
-    await this.enqueue("reorder_branches", parentId, { parentId, nodeIds });
+    if (this.gamePersisted) await this.enqueue("reorder_branches", parentId, { parentId, nodeIds });
     return this.scoredState(state);
   }
   async runEngineArena(): Promise<EngineArenaResultDto> { throw new Error("Web 端不运行本地引擎擂台"); }
@@ -666,6 +754,7 @@ class WebPlatform implements ChessPlatform {
     const state = this.parseState(this.requireGame().playMove(iccs));
     const node = state.history.at(-1);
     if (!node || !state.currentNode) throw new Error("WASM did not return the created move node");
+    await this.ensurePersisted(state);
     await this.persist(state);
     await this.enqueue("add_move", state.currentNode, {
       nodeId: state.currentNode,
@@ -692,15 +781,17 @@ class WebPlatform implements ChessPlatform {
   async importRecognizedPosition(): Promise<Partial<BoardState>> { throw new Error("Web 端暂不支持桌面连线"); }
 
   async newGame(fen: string, title?: string, note?: string): Promise<Partial<BoardState>> {
-    if (title !== undefined || note !== undefined) {
-      throw new Error("Web 端暂不支持带元数据的局面编辑，请使用桌面版");
-    }
     const module = await this.core();
     this.game = new module.WebGame(fen);
     this.gameId = crypto.randomUUID();
+    this.gamePersisted = false;
+    this.draftTitle = title?.trim() || (fen === webStartingFen ? "未命名棋谱" : "自定义局面");
+    this.draftNote = note ?? "";
+    await webDatabase.clearCurrentGame();
     const state = this.state();
-    await this.persist(state);
-    await this.enqueue("create_game", this.gameId, { title: "Web study", fen, rootId: this.requireGame().rootId() });
+    if (fen !== webStartingFen || title !== undefined || note !== undefined) {
+      await this.ensurePersisted(state, "custom-position");
+    }
     return this.scoredState(state);
   }
 
@@ -713,7 +804,7 @@ class WebPlatform implements ChessPlatform {
   async updateComment(nodeId: string, comment: string): Promise<Partial<BoardState>> {
     const state = this.parseState(this.requireGame().updateComment(nodeId, comment));
     await this.persist(state);
-    await this.enqueue("update_comment", nodeId, { nodeId, comment });
+    if (this.gamePersisted) await this.enqueue("update_comment", nodeId, { nodeId, comment });
     return this.scoredState(state);
   }
 
@@ -722,14 +813,14 @@ class WebPlatform implements ChessPlatform {
     const parentId = snapshot.tree.nodes[nodeId]?.parent_id ?? snapshot.tree.root_id;
     const state = this.parseState(this.requireGame().setMainline(nodeId));
     await this.persist(state);
-    await this.enqueue("set_mainline", nodeId, { parentId, nodeId });
+    if (this.gamePersisted) await this.enqueue("set_mainline", nodeId, { parentId, nodeId });
     return this.scoredState(state);
   }
 
   async deleteNode(nodeId: string): Promise<Partial<BoardState>> {
     const state = this.parseState(this.requireGame().deleteNode(nodeId));
     await this.persist(state);
-    await this.enqueue("delete_node", nodeId, { nodeId });
+    if (this.gamePersisted) await this.enqueue("delete_node", nodeId, { nodeId });
     return this.scoredState(state);
   }
 
@@ -757,7 +848,8 @@ class WebPlatform implements ChessPlatform {
   async resolveScreenshotMove(): Promise<import("./types").ScreenshotMoveResolution> { throw new Error("Web 端暂不支持截图走子确认"); }
 
   async analyze(options: AnalysisOptions): Promise<AnalysisLine[]> {
-    if (!navigator.onLine) throw new Error("当前离线，可查看缓存分析，联网后才能启动 Pikafish");
+    if (!navigator.onLine) throw new Error("当前离线，可查看缓存分析，联网后才能启动引擎");
+    if (options.guest && !options.token.trim()) throw new Error("游客引擎令牌缺失，请重新分析");
     if (!options.guest && !options.token.trim()) throw new Error("服务端分析需要先填写登录令牌");
     if (options.searchMode === "infinite") throw new Error("Web 端不支持持续分析，请选择时间或深度");
     const analyzedGameId = this.gameId;
@@ -769,8 +861,23 @@ class WebPlatform implements ChessPlatform {
       body: JSON.stringify({ fen: options.fen, mode: options.searchMode, value: options.searchValue, multiPv: options.multipv }),
       signal: this.abort.signal,
     });
-    const payload = await response.json().catch(() => ({})) as { lines?: AnalysisLine[]; error?: string };
+    const payload = await response.json().catch(() => ({})) as {
+      lines?: AnalysisLine[];
+      error?: string;
+      guestQuota?: { limit?: number; remaining?: number; resetsAt?: string };
+    };
     if (!response.ok) throw new Error(cloudApiError(response.status, payload.error));
+    if (payload.guestQuota) {
+      const preferences = await this.getCloudAnalysisPreferences();
+      if (preferences) {
+        await this.saveCloudAnalysisPreferences({
+          ...preferences,
+          guestQuotaLimit: payload.guestQuota.limit,
+          guestQuotaRemaining: payload.guestQuota.remaining,
+          guestQuotaResetsAt: payload.guestQuota.resetsAt,
+        });
+      }
+    }
     const lines = payload.lines ?? [];
     await webDatabase.saveAnalysis(options.fen, lines);
     if (analyzedNode) await webDatabase.saveNodeAnalysis(analyzedGameId, analyzedNode, lines);
@@ -833,9 +940,12 @@ class WebPlatform implements ChessPlatform {
       }
       target.game.applyOperation(operation.kind, JSON.stringify(operation.payload));
       if (operation.kind === "update_game_metadata") {
-        const payload = operation.payload as { title?: string; note?: string };
+        const payload = operation.payload as { title?: string; note?: string; libraryFolder?: string | null; favorite?: boolean; tags?: string[] };
         if (payload.title) target.record.title = payload.title;
         if (payload.note != null) target.record.note = payload.note;
+        if (payload.libraryFolder !== undefined) target.record.libraryFolder = payload.libraryFolder?.trim() || undefined;
+        if (payload.favorite !== undefined) target.record.favorite = payload.favorite;
+        if (payload.tags !== undefined) target.record.tags = payload.tags;
       }
       const state = JSON.parse(target.game.stateJson()) as BoardState;
       target.record = {
@@ -906,8 +1016,8 @@ class WebPlatform implements ChessPlatform {
     const record = await webDatabase.game(this.gameId);
     return {
       ...state,
-      title: record?.title ?? "Web study",
-      note: record?.note ?? "",
+      title: record?.title ?? this.draftTitle,
+      note: record?.note ?? this.draftNote,
       playable: true,
       history: state.history.map(withScore),
       continuation: (state.continuation ?? []).map(withScore),
@@ -916,25 +1026,75 @@ class WebPlatform implements ChessPlatform {
   }
 
   private async persist(state: BoardState): Promise<void> {
+    if (!this.gamePersisted) return;
     const existing = await webDatabase.game(this.gameId);
+    const now = new Date().toISOString();
     await webDatabase.saveGame({
       id: this.gameId,
-      title: existing?.title ?? "Web study",
-      note: existing?.note ?? "",
+      title: existing?.title ?? this.draftTitle,
+      note: existing?.note ?? this.draftNote,
       snapshot: this.requireGame().exportJson(),
       fen: state.fen,
-      updatedAt: new Date().toISOString(),
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+      libraryFolder: existing?.libraryFolder,
+      favorite: existing?.favorite ?? false,
+      tags: existing?.tags ?? [],
+      source: existing?.source ?? "manual",
     } satisfies WebGameRecord);
   }
 
+  private async ensurePersisted(state: BoardState, source: WebGameRecord["source"] = "manual"): Promise<void> {
+    if (this.gamePersisted) return;
+    this.gamePersisted = true;
+    const now = new Date();
+    const title = this.draftTitle === "未命名棋谱"
+      ? `未命名棋谱 ${now.toLocaleString("zh-CN", { hour12: false }).replaceAll("/", "-")}`
+      : this.draftTitle;
+    this.draftTitle = title;
+    await this.persist(state);
+    const created = await webDatabase.game(this.gameId);
+    if (created && source !== "manual") await webDatabase.saveGame({ ...created, source }, true);
+    await this.enqueue("create_game", this.gameId, {
+      title,
+      fen: state.fen,
+      rootId: this.requireGame().rootId(),
+    });
+  }
+
+  private normalizeFolderName(name: string): string {
+    const normalized = name.trim().slice(0, 40);
+    if (!normalized) throw new Error("请输入文件夹名称");
+    return normalized;
+  }
+
+  private async readLibraryFolderNames(): Promise<string[]> {
+    const raw = await webDatabase.meta("libraryFolders");
+    if (!raw) return [];
+    try {
+      const value = JSON.parse(raw);
+      return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && Boolean(item.trim())).map((item) => item.trim()) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private saveLibraryFolderNames(folders: string[]): Promise<void> {
+    return webDatabase.setMeta("libraryFolders", JSON.stringify([...new Set(folders)]));
+  }
+
   private async enqueue(kind: SyncOperation["kind"], entityId: string, payload: Record<string, unknown>): Promise<void> {
+    await this.enqueueForGame(this.gameId, kind, entityId, payload);
+  }
+
+  private async enqueueForGame(gameId: string, kind: SyncOperation["kind"], entityId: string, payload: Record<string, unknown>): Promise<void> {
     this.lamport += 1;
     await webDatabase.setMeta("lamport", String(this.lamport));
     await webDatabase.enqueue({
       opId: crypto.randomUUID(),
       deviceId: this.deviceId,
       entityId,
-      gameId: this.gameId,
+      gameId,
       kind,
       payload,
       lamport: this.lamport,
@@ -946,5 +1106,5 @@ class WebPlatform implements ChessPlatform {
 const tauriAvailable = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 export const chessPlatform: ChessPlatform = tauriAvailable ? new DesktopPlatform() : new WebPlatform();
 export { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH, DEFAULT_BUILTIN_OPENING_BOOK_ID, FALLBACK_BUILTIN_OPENING_BOOK_MANIFEST } from "./types";
-export type { CloudAnalysisPreferences, CloudAuthDto } from "./types";
+export type { CloudAnalysisPreferences, CloudAuthDto, CloudGuestAuthDto } from "./types";
 export type { AnalysisLine, AnalysisOptions, AppInfoDto, BoardState, BranchCoachInsightDto, BuiltinOpeningBookDto, BuiltinOpeningBookManifestDto, BuiltinOpeningBookVerificationDto, CaptureSource, ChessPlatform, ChineseLineParseResult, CloudBookCandidate, DailyTrainingPlan, DesktopPreferencesDto, EngineArenaGameDto, EngineArenaOptionsDto, EngineArenaResultDto, EngineArenaScoreDto, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, EngineRuntimeState, ExportFormat, FlyknifeCandidate, FlyknifePlan, FlyknifeSide, FlyknifeStepAnnotation, FlyknifeStepRole, FlyknifeTemplate, FlyknifeTopic, GenerateFlyknifeRequest, GameReportDatasetDto, GameReportOptionsDto, GameReportPositionDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, GuidedAnalysisResult, GuidedAnalysisSession, GuidedAnalysisStart, GuidedAnalysisSubmission, GuidedAnalysisSubmissionResult, GuidedEngineLine, LearningProfile, LegacySkinId, LibraryFolder, LinkAutoSide, LinkMode, LinkMoveDetail, LinkObservation, LinkSessionState, LinkSessionStatus, LinkTargetWindow, ManualTreeNode, ManualViewMode, MasterGameDetailDto, MasterGameSummaryDto, MasterLibraryStatsDto, MasterPlayerDto, MasterStyleHintDto, MasterStyleImportResultDto, MasterStyleProfileDto, MasterStyleTheoryCardRefDto, MoveCoachInsightDto, MoveItem, OpeningBookHitDto, OpeningRepertoire, Piece, PreviewLineStep, QualityGrade, RecognitionMode, RecognizedLastMovePreview, ReplayExportScope, ReportPhase, ReportSidePresentationDto, RuleMode, ScreenshotMoveResolution, Side, SkinFolder, SkinId, StartLinkSessionRequest, StudySessionDto, SubscriptionDto, SyncAccountDto, SyncResult, TheoryCardDto, TheoryCardFeedbackDto, TheoryLessonDto, TheoryLibraryDto, TheoryPhase, TrainingAttempt, TrainingGenerationResultDto, TrainingSummaryDto, TrainingTaskDto, WeaknessStatDto, WeeklyLearningReport, WorkspaceLayoutMode, XqbCandidate } from "./types";

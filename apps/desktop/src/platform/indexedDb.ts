@@ -1,6 +1,18 @@
 import type { AnalysisLine } from "./types";
 
-export type WebGameRecord = { id: string; title: string; note?: string; snapshot: string; fen: string; updatedAt: string };
+export type WebGameRecord = {
+  id: string;
+  title: string;
+  note?: string;
+  snapshot: string;
+  fen: string;
+  createdAt?: string;
+  updatedAt: string;
+  libraryFolder?: string;
+  favorite?: boolean;
+  tags?: string[];
+  source?: "manual" | "import" | "custom-position";
+};
 export type SyncOperation = {
   opId: string;
   deviceId: string;
@@ -24,7 +36,7 @@ type NodeAnalysisRecord = {
 };
 
 const databaseName = "xiangqi-studio-web";
-const databaseVersion = 2;
+const databaseVersion = 3;
 
 function requestResult<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -93,6 +105,14 @@ export const webDatabase = {
     if (makeCurrent) {
       await writeOne("meta", { key: "currentGameId", value: game.id } satisfies MetaRecord);
     }
+  },
+
+  async clearCurrentGame(): Promise<void> {
+    const database = await openDatabase();
+    const transaction = database.transaction("meta", "readwrite");
+    transaction.objectStore("meta").delete("currentGameId");
+    await transactionDone(transaction);
+    database.close();
   },
 
   async meta(key: string): Promise<string | undefined> {

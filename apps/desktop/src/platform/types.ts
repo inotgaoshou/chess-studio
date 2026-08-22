@@ -469,9 +469,22 @@ export type SubscriptionDto = {
   cloudAnalysisUsed: number;
 };
 export type CloudAuthDto = { userId: string; token: string };
+export type CloudGuestAuthDto = {
+  token: string;
+  tokenType: "guest";
+  expiresAt: string;
+  guestQuotaLimit: number;
+  guestQuotaRemaining: number;
+  guestQuotaResetsAt: string;
+};
 export type CloudAnalysisPreferences = {
   serverUrl: string;
   token: string;
+  guestToken?: string;
+  guestTokenExpiresAt?: string;
+  guestQuotaLimit?: number;
+  guestQuotaRemaining?: number;
+  guestQuotaResetsAt?: string;
   multipv: number;
   searchMode: "time" | "depth";
   searchValue: number;
@@ -856,6 +869,7 @@ export interface ChessPlatform {
   saveCloudAnalysisPreferences(preferences: CloudAnalysisPreferences): Promise<void>;
   checkCloudHealth(serverUrl: string): Promise<void>;
   authenticateCloud(mode: "register" | "login", serverUrl: string, email: string, password: string): Promise<CloudAuthDto>;
+  authenticateCloudGuest(serverUrl: string): Promise<CloudGuestAuthDto>;
   getCloudSubscription(serverUrl: string, token: string): Promise<SubscriptionDto>;
   redeemSubscriptionCode(code: string): Promise<SubscriptionDto>;
   registerSyncAccount(email: string, password: string): Promise<SyncAccountDto>;

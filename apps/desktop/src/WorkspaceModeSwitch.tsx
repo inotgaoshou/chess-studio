@@ -1,4 +1,7 @@
 import { Activity, BookOpen, FlaskConical, GraduationCap } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import type { WorkspaceLayoutMode } from "./platform";
+import { WorkspaceLayoutSwitch } from "./WorkspaceLayoutSwitch";
 
 export const workspaceModes = ["review", "research", "training"] as const;
 export type WorkspaceMode = typeof workspaceModes[number];
@@ -15,15 +18,41 @@ export function WorkspaceModeSwitch({
   engineReady,
   syncSignedIn,
   linkSupported,
+  layoutMode,
   onChange,
+  onLayoutChange,
 }: {
   active: WorkspaceMode;
   platformKind: "desktop" | "web";
   engineReady: boolean;
   syncSignedIn: boolean;
   linkSupported: boolean;
+  layoutMode: WorkspaceLayoutMode;
   onChange(mode: WorkspaceMode): void;
+  onLayoutChange(mode: WorkspaceLayoutMode): void;
 }) {
+  const [researchMenuOpen, setResearchMenuOpen] = useState(false);
+  const switchRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    if (active !== "research") setResearchMenuOpen(false);
+  }, [active]);
+
+  useEffect(() => {
+    function closeFromOutside(event: PointerEvent) {
+      if (!switchRef.current?.contains(event.target as Node)) setResearchMenuOpen(false);
+    }
+    function closeFromKeyboard(event: KeyboardEvent) {
+      if (event.key === "Escape") setResearchMenuOpen(false);
+    }
+    document.addEventListener("pointerdown", closeFromOutside);
+    document.addEventListener("keydown", closeFromKeyboard);
+    return () => {
+      document.removeEventListener("pointerdown", closeFromOutside);
+      document.removeEventListener("keydown", closeFromKeyboard);
+    };
+  }, []);
+
   if (platformKind === "web") {
     return <div className="workspace-mode-web-notice" role="status">Web 端仅提供离线棋谱、基础变例与待同步操作</div>;
   }
@@ -34,7 +63,16 @@ export function WorkspaceModeSwitch({
       ? "本地训练可用"
       : "本地复盘可用";
 
-  return <section className="workspace-mode-switch" aria-label="工作模式">
+  function selectMode(mode: WorkspaceMode) {
+    onChange(mode);
+    if (mode === "research") {
+      setResearchMenuOpen((open) => active === "research" ? !open : true);
+      return;
+    }
+    setResearchMenuOpen(false);
+  }
+
+  return <section className="workspace-mode-switch" aria-label="工作模式" ref={switchRef}>
     <div className="workspace-mode-menu" role="group" aria-label="工作模式">
       {modes.map(([mode, label, description, Icon]) => <button
         key={mode}
@@ -42,9 +80,19 @@ export function WorkspaceModeSwitch({
         aria-pressed={active === mode}
         className={active === mode ? "active" : ""}
         title={description}
-        onClick={() => onChange(mode)}
+        onClick={() => selectMode(mode)}
       ><Icon size={14}/><span>{label}</span></button>)}
     </div>
+    {researchMenuOpen && <section className="research-layout-menu" aria-label="研究布局">
+      <span>工作台布局</span>
+      <WorkspaceLayoutSwitch
+        mode={layoutMode}
+        onChange={(mode) => {
+          onLayoutChange(mode);
+          setResearchMenuOpen(false);
+        }}
+      />
+    </section>}
     <div className="workspace-capability-status" aria-live="polite">
       <span className={active === "research" && !engineReady ? "attention" : "ready"}><Activity size={12}/>{status}</span>
       <span className={syncSignedIn ? "ready" : "muted"}>{syncSignedIn ? "同步已登录" : "同步可选"}</span>

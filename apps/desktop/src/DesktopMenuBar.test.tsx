@@ -126,6 +126,15 @@ describe("DesktopMenuBar", () => {
     expect(link.title).toContain("未接入");
   });
 
+  it("keeps research experiments focused on the link session", async () => {
+    const { commands, user } = setup();
+    await user.click(screen.getByText("研究实验", { selector: "summary" }));
+
+    expect(screen.queryByRole("button", { name: "专业工作台" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "识别与连线 · macOS 实验" }));
+    expect(commands).toEqual(["linkSession"]);
+  });
+
   it("supports keyboard menu switching and item navigation", async () => {
     const { user } = setup();
     const game = screen.getByText("棋局", { selector: "summary" });

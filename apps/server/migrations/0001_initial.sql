@@ -90,6 +90,16 @@ CREATE TABLE IF NOT EXISTS product_events (
   CONSTRAINT fk_product_events_user FOREIGN KEY (user_id) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='产品运营事件';
 
+CREATE TABLE IF NOT EXISTS analysis_rate_limits (
+  scope VARCHAR(64) NOT NULL COMMENT '限流范围，如 guest_analysis_token_day',
+  subject_hash CHAR(64) NOT NULL COMMENT '限流主体哈希，不保存原始 IP 或 token',
+  window_start TIMESTAMP(6) NOT NULL COMMENT '限流窗口开始时间',
+  count INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '当前窗口计数',
+  updated_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '更新时间',
+  PRIMARY KEY (scope, subject_hash, window_start),
+  KEY idx_analysis_rate_limits_updated (updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='云端引擎分析限流计数';
+
 CREATE TABLE IF NOT EXISTS master_players (
   id CHAR(36) PRIMARY KEY COMMENT '大师 UUID',
   name VARCHAR(80) NOT NULL COMMENT '棋手名，如赵鑫鑫',

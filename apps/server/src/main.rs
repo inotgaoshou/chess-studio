@@ -35,7 +35,12 @@ use xiangqi_core::Board;
 struct AppState {
     pool: MySqlPool,
     jwt_secret: String,
-    allow_guest_analysis: bool,
+    guest_analysis_enabled: bool,
+    guest_token_ttl: StdDuration,
+    guest_daily_analysis_limit: u32,
+    guest_token_ip_daily_limit: u32,
+    analysis_ip_per_minute_limit: u32,
+    user_analysis_per_minute_limit: u32,
     engine: EngineConfig,
     engine_slots: Arc<Semaphore>,
 }
@@ -65,6 +70,17 @@ struct AuthResponse {
     token: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GuestAuthResponse {
+    token: String,
+    token_type: &'static str,
+    expires_at: chrono::DateTime<Utc>,
+    guest_quota_limit: u32,
+    guest_quota_remaining: u32,
+    guest_quota_resets_at: chrono::DateTime<Utc>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AnalysisRequest {
@@ -87,6 +103,16 @@ struct AnalysisResponse {
     engine: &'static str,
     elapsed_ms: u64,
     lines: Vec<AnalysisLine>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    guest_quota: Option<GuestQuotaDto>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GuestQuotaDto {
+    limit: u32,
+    remaining: u32,
+    resets_at: chrono::DateTime<Utc>,
 }
 
 #[derive(Debug, Serialize)]
@@ -124,6 +150,8 @@ struct Claims {
     sub: String,
     exp: usize,
     iat: usize,
+    #[serde(default, rename = "tokenType")]
+    token_type: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -209,6 +237,10 @@ enum ApiError {
     ProRequired,
     #[error("cloud analysis quota has been used for this period")]
     QuotaExceeded,
+    #[error("rate_limited")]
+    RateLimited,
+    #[error("guest_quota_exceeded")]
+    GuestQuotaExceeded,
     #[error("internal error")]
     Internal,
 }
@@ -226,7 +258,7 @@ impl IntoResponse for ApiError {
             Self::EngineUnavailable => StatusCode::SERVICE_UNAVAILABLE,
             Self::EngineTimeout => StatusCode::GATEWAY_TIMEOUT,
             Self::ProRequired => StatusCode::PAYMENT_REQUIRED,
-            Self::QuotaExceeded => StatusCode::TOO_MANY_REQUESTS,
+            Self::QuotaExceeded | Self::RateLimited | Self::GuestQuotaExceeded => StatusCode::TOO_MANY_REQUESTS,
             Self::Database(_) | Self::Internal => StatusCode::INTERNAL_SERVER_ERROR,
         };
         let message = match &self {
@@ -255,6 +287,7 @@ async fn main() -> anyhow::Result<()> {
         timeout: StdDuration::from_millis(env_value("ENGINE_TIMEOUT_MS", 12_000)),
     };
     let max_concurrent = env_value("ENGINE_MAX_CONCURRENT", 2usize).clamp(1, 32);
+    let guest_token_ttl_minutes = env_value("GUEST_TOKEN_TTL_MINUTES", 120u64).clamp(5, 24 * 60);
     let pool = MySqlPoolOptions::new()
         .max_connections(20)
         .connect(&database_url)
@@ -266,10 +299,12 @@ async fn main() -> anyhow::Result<()> {
         AppState {
             pool,
             jwt_secret,
-            // The phone-first development build is usable without creating an
-            // account. Production remains opt-in so public deployments do not
-            // accidentally expose their engine capacity.
-            allow_guest_analysis: env_value("ALLOW_GUEST_ANALYSIS", cfg!(debug_assertions)),
+            guest_analysis_enabled: env_value("GUEST_ANALYSIS_ENABLED", cfg!(debug_assertions)),
+            guest_token_ttl: StdDuration::from_secs(guest_token_ttl_minutes * 60),
+            guest_daily_analysis_limit: env_value("GUEST_DAILY_ANALYSIS_LIMIT", 30u32).clamp(1, 10_000),
+            guest_token_ip_daily_limit: env_value("GUEST_TOKEN_IP_DAILY_LIMIT", 20u32).clamp(1, 10_000),
+            analysis_ip_per_minute_limit: env_value("ANALYSIS_IP_PER_MINUTE_LIMIT", 10u32).clamp(1, 10_000),
+            user_analysis_per_minute_limit: env_value("USER_ANALYSIS_PER_MINUTE_LIMIT", 30u32).clamp(1, 10_000),
             engine,
             engine_slots: Arc::new(Semaphore::new(max_concurrent)),
         },
@@ -286,6 +321,7 @@ fn router(state: AppState, cors: CorsLayer) -> Router {
         .route("/health", get(|| async { Json(Health { status: "ok" }) }))
         .route("/api/v1/auth/register", post(register))
         .route("/api/v1/auth/login", post(login))
+        .route("/api/v1/auth/guest", post(guest_auth))
         .route("/api/v1/sync/push", post(push))
         .route("/api/v1/sync/pull", get(pull))
         .route("/api/v1/subscription", get(subscription))
@@ -327,6 +363,37 @@ fn cors_layer() -> anyhow::Result<CorsLayer> {
         .allow_origin(origins)
         .allow_methods([Method::GET, Method::POST])
         .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE]))
+}
+
+async fn guest_auth(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<GuestAuthResponse>, ApiError> {
+    if !state.guest_analysis_enabled {
+        return Err(ApiError::Unauthorized);
+    }
+    let now = Utc::now();
+    let ip_subject = request_ip_subject(&headers);
+    consume_rate_limit(
+        &state.pool,
+        "guest_token_ip_day",
+        &ip_subject,
+        day_window_start(now),
+        state.guest_token_ip_daily_limit,
+        ApiError::RateLimited,
+    )
+    .await?;
+    let subject = Uuid::new_v4().to_string();
+    let expires_at = now + Duration::from_std(state.guest_token_ttl).map_err(|_| ApiError::Internal)?;
+    let resets_at = day_window_start(now) + Duration::days(1);
+    Ok(Json(GuestAuthResponse {
+        token: create_guest_token(&subject, expires_at, &state.jwt_secret)?,
+        token_type: "guest",
+        expires_at,
+        guest_quota_limit: state.guest_daily_analysis_limit,
+        guest_quota_remaining: state.guest_daily_analysis_limit,
+        guest_quota_resets_at: resets_at,
+    }))
 }
 
 fn allowed_origin(value: &str) -> anyhow::Result<HeaderValue> {
@@ -961,6 +1028,144 @@ async fn reserve_cloud_analysis(pool: &MySqlPool, user_id: Uuid) -> Result<(), A
     }
 }
 
+#[derive(Debug, Clone)]
+struct RateLimitUsage {
+    limit: u32,
+    count: u32,
+    window_start: chrono::DateTime<Utc>,
+}
+
+impl RateLimitUsage {
+    fn remaining(&self) -> u32 {
+        self.limit.saturating_sub(self.count)
+    }
+
+    fn resets_at(&self) -> chrono::DateTime<Utc> {
+        if self.window_start.timestamp() % 86_400 == 0 {
+            self.window_start + Duration::days(1)
+        } else {
+            self.window_start + Duration::minutes(1)
+        }
+    }
+}
+
+async fn consume_rate_limit(
+    pool: &MySqlPool,
+    scope: &str,
+    subject: &str,
+    window_start: chrono::DateTime<Utc>,
+    limit: u32,
+    error: ApiError,
+) -> Result<RateLimitUsage, ApiError> {
+    let subject_hash = rate_limit_subject_hash(scope, subject);
+    let mut transaction = pool.begin().await?;
+    let existing = sqlx::query_scalar::<_, u32>(
+        "SELECT count FROM analysis_rate_limits
+         WHERE scope = ? AND subject_hash = ? AND window_start = ?
+         FOR UPDATE",
+    )
+    .bind(scope)
+    .bind(&subject_hash)
+    .bind(window_start)
+    .fetch_optional(&mut *transaction)
+    .await?;
+    let next = existing.unwrap_or(0).saturating_add(1);
+    if next > limit {
+        transaction.rollback().await?;
+        return Err(error);
+    }
+    if existing.is_some() {
+        sqlx::query(
+            "UPDATE analysis_rate_limits SET count = ?, updated_at = ?
+             WHERE scope = ? AND subject_hash = ? AND window_start = ?",
+        )
+        .bind(next)
+        .bind(Utc::now())
+        .bind(scope)
+        .bind(&subject_hash)
+        .bind(window_start)
+        .execute(&mut *transaction)
+        .await?;
+    } else {
+        sqlx::query(
+            "INSERT INTO analysis_rate_limits (scope, subject_hash, window_start, count, updated_at)
+             VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(scope)
+        .bind(&subject_hash)
+        .bind(window_start)
+        .bind(next)
+        .bind(Utc::now())
+        .execute(&mut *transaction)
+        .await?;
+    }
+    transaction.commit().await?;
+    Ok(RateLimitUsage {
+        limit,
+        count: next,
+        window_start,
+    })
+}
+
+async fn release_rate_limit(
+    pool: &MySqlPool,
+    scope: &str,
+    subject: &str,
+    window_start: chrono::DateTime<Utc>,
+) {
+    let subject_hash = rate_limit_subject_hash(scope, subject);
+    if let Err(error) = sqlx::query(
+        "UPDATE analysis_rate_limits SET count = count - 1, updated_at = ?
+         WHERE scope = ? AND subject_hash = ? AND window_start = ? AND count > 0",
+    )
+    .bind(Utc::now())
+    .bind(scope)
+    .bind(subject_hash)
+    .bind(window_start)
+    .execute(pool)
+    .await
+    {
+        tracing::warn!(%error, %scope, "failed to release rate limit counter");
+    }
+}
+
+fn rate_limit_subject_hash(scope: &str, subject: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(scope.as_bytes());
+    hasher.update(b":");
+    hasher.update(subject.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+fn request_ip_subject(headers: &HeaderMap) -> String {
+    headers
+        .get("x-forwarded-for")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(',').next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            headers
+                .get("x-real-ip")
+                .and_then(|value| value.to_str().ok())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })
+        .unwrap_or("unknown")
+        .to_string()
+}
+
+fn minute_window_start(now: chrono::DateTime<Utc>) -> chrono::DateTime<Utc> {
+    chrono::DateTime::from_timestamp(now.timestamp() - now.timestamp().rem_euclid(60), 0)
+        .unwrap_or(now)
+}
+
+fn day_window_start(now: chrono::DateTime<Utc>) -> chrono::DateTime<Utc> {
+    let timestamp = now.timestamp();
+    chrono::DateTime::from_timestamp(timestamp - timestamp.rem_euclid(86_400), 0)
+        .unwrap_or(now)
+}
+
 async fn release_cloud_analysis(pool: &MySqlPool, user_id: Uuid) {
     if let Err(error) = sqlx::query(
         "UPDATE subscription_entitlements SET cloud_analysis_used = cloud_analysis_used - 1
@@ -1003,22 +1208,74 @@ async fn analyze(
     headers: HeaderMap,
     Json(request): Json<AnalysisRequest>,
 ) -> Result<Json<AnalysisResponse>, ApiError> {
-    let user_id = analysis_user(&headers, &state.jwt_secret, state.allow_guest_analysis)?;
+    let principal = analysis_principal(&headers, &state.jwt_secret, state.guest_analysis_enabled)?;
     validate_analysis_request(&request)?;
+    if matches!(principal, AnalysisPrincipal::Guest { .. }) {
+        validate_guest_analysis_request(&request)?;
+    }
+    let now = Utc::now();
+    let ip_subject = request_ip_subject(&headers);
+    consume_rate_limit(
+        &state.pool,
+        "analysis_ip_minute",
+        &ip_subject,
+        minute_window_start(now),
+        state.analysis_ip_per_minute_limit,
+        ApiError::RateLimited,
+    )
+    .await?;
+    let mut guest_usage: Option<(String, chrono::DateTime<Utc>, RateLimitUsage)> = None;
+    let mut reserved_user: Option<Uuid> = None;
+    match &principal {
+        AnalysisPrincipal::User(user_id) => {
+            consume_rate_limit(
+                &state.pool,
+                "user_analysis_minute",
+                &user_id.to_string(),
+                minute_window_start(now),
+                state.user_analysis_per_minute_limit,
+                ApiError::RateLimited,
+            )
+            .await?;
+            reserve_cloud_analysis(&state.pool, *user_id).await?;
+            reserved_user = Some(*user_id);
+        }
+        AnalysisPrincipal::Guest { subject } => {
+            let window = day_window_start(now);
+            let usage = consume_rate_limit(
+                &state.pool,
+                "guest_analysis_token_day",
+                subject,
+                window,
+                state.guest_daily_analysis_limit,
+                ApiError::GuestQuotaExceeded,
+            )
+            .await?;
+            guest_usage = Some((subject.clone(), window, usage));
+        }
+    }
     let permit = state
         .engine_slots
         .clone()
-        .try_acquire_owned()
-        .map_err(|_| ApiError::EngineBusy)?;
-    if let Some(user_id) = user_id {
-        reserve_cloud_analysis(&state.pool, user_id).await?;
-    }
+        .try_acquire_owned();
+    let permit = match permit {
+        Ok(permit) => permit,
+        Err(_) => {
+            release_analysis_reservation(&state, reserved_user, &guest_usage).await;
+            return Err(ApiError::EngineBusy);
+        }
+    };
+    let guest_quota = guest_usage.as_ref().map(|(_, _, usage)| GuestQuotaDto {
+        limit: usage.limit,
+        remaining: usage.remaining(),
+        resets_at: usage.resets_at(),
+    });
     let timeout = state.engine.timeout;
-    let result = tokio::time::timeout(timeout, run_analysis(&state.engine, &request)).await;
+    let result = tokio::time::timeout(timeout, run_analysis(&state.engine, &request, guest_quota)).await;
     drop(permit);
     match result {
         Ok(Ok(response)) => {
-            if let Some(user_id) = user_id {
+            if let AnalysisPrincipal::User(user_id) = principal {
                 if let Err(error) = record_product_event_for_pool(&state.pool, user_id, "cloud_analysis_consumed").await {
                     tracing::warn!(%error, "failed to record cloud analysis event");
                 }
@@ -1027,15 +1284,11 @@ async fn analyze(
         }
         Ok(Err(error)) => {
             tracing::warn!(%error, "Pikafish analysis failed");
-            if let Some(user_id) = user_id {
-                release_cloud_analysis(&state.pool, user_id).await;
-            }
+            release_analysis_reservation(&state, reserved_user, &guest_usage).await;
             Err(ApiError::EngineUnavailable)
         }
         Err(_) => {
-            if let Some(user_id) = user_id {
-                release_cloud_analysis(&state.pool, user_id).await;
-            }
+            release_analysis_reservation(&state, reserved_user, &guest_usage).await;
             Err(ApiError::EngineTimeout)
         }
     }
@@ -1058,9 +1311,44 @@ fn validate_analysis_request(request: &AnalysisRequest) -> Result<(), ApiError> 
     }
 }
 
+fn validate_guest_analysis_request(request: &AnalysisRequest) -> Result<(), ApiError> {
+    if request.multi_pv > 2 {
+        return Err(ApiError::Invalid("guest multiPv must be between 1 and 2".into()));
+    }
+    match request.mode {
+        AnalysisMode::Time if request.value > 2_000 => Err(ApiError::Invalid(
+            "guest time value must be between 100 and 2000 milliseconds".into(),
+        )),
+        AnalysisMode::Depth if request.value > 20 => Err(ApiError::Invalid(
+            "guest depth value must be between 1 and 20".into(),
+        )),
+        _ => Ok(()),
+    }
+}
+
+async fn release_analysis_reservation(
+    state: &AppState,
+    user_id: Option<Uuid>,
+    guest_usage: &Option<(String, chrono::DateTime<Utc>, RateLimitUsage)>,
+) {
+    if let Some(user_id) = user_id {
+        release_cloud_analysis(&state.pool, user_id).await;
+    }
+    if let Some((subject, window_start, _)) = guest_usage {
+        release_rate_limit(
+            &state.pool,
+            "guest_analysis_token_day",
+            subject,
+            *window_start,
+        )
+        .await;
+    }
+}
+
 async fn run_analysis(
     config: &EngineConfig,
     request: &AnalysisRequest,
+    guest_quota: Option<GuestQuotaDto>,
 ) -> Result<AnalysisResponse, String> {
     let analysis_board = Board::from_fen(&request.fen).map_err(|error| error.to_string())?;
     let path = config
@@ -1124,6 +1412,7 @@ async fn run_analysis(
         engine: "Pikafish",
         elapsed_ms: started.elapsed().as_millis() as u64,
         lines: lines.into_values().collect(),
+        guest_quota,
     })
 }
 
@@ -1237,6 +1526,7 @@ fn create_token(user_id: Uuid, secret: &str) -> Result<String, ApiError> {
         sub: user_id.to_string(),
         iat: now.timestamp() as usize,
         exp: (now + Duration::days(30)).timestamp() as usize,
+        token_type: Some("user".into()),
     };
     encode(
         &Header::default(),
@@ -1246,26 +1536,67 @@ fn create_token(user_id: Uuid, secret: &str) -> Result<String, ApiError> {
     .map_err(|_| ApiError::Internal)
 }
 
+fn create_guest_token(
+    subject: &str,
+    expires_at: chrono::DateTime<Utc>,
+    secret: &str,
+) -> Result<String, ApiError> {
+    let now = Utc::now();
+    let claims = Claims {
+        sub: subject.to_owned(),
+        iat: now.timestamp() as usize,
+        exp: expires_at.timestamp() as usize,
+        token_type: Some("guest".into()),
+    };
+    encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(secret.as_bytes()),
+    )
+    .map_err(|_| ApiError::Internal)
+}
+
+enum AnalysisPrincipal {
+    User(Uuid),
+    Guest { subject: String },
+}
+
 fn authenticated_user(headers: &HeaderMap, secret: &str) -> Result<Uuid, ApiError> {
+    let token = decode_claims(headers, secret)?;
+    if token.claims.token_type.as_deref().is_some_and(|value| value != "user") {
+        return Err(ApiError::Unauthorized);
+    }
+    parse_uuid(token.claims.sub).map_err(|_| ApiError::Unauthorized)
+}
+
+fn analysis_principal(
+    headers: &HeaderMap,
+    secret: &str,
+    guest_analysis_enabled: bool,
+) -> Result<AnalysisPrincipal, ApiError> {
+    let token = decode_claims(headers, secret)?;
+    match token.claims.token_type.as_deref().unwrap_or("user") {
+        "user" => parse_uuid(token.claims.sub).map(AnalysisPrincipal::User).map_err(|_| ApiError::Unauthorized),
+        "guest" if guest_analysis_enabled => Ok(AnalysisPrincipal::Guest { subject: token.claims.sub }),
+        _ => Err(ApiError::Unauthorized),
+    }
+}
+
+fn decode_claims(
+    headers: &HeaderMap,
+    secret: &str,
+) -> Result<jsonwebtoken::TokenData<Claims>, ApiError> {
     let value = headers
         .get("authorization")
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.strip_prefix("Bearer "))
         .ok_or(ApiError::Unauthorized)?;
-    let token = decode::<Claims>(
+    decode::<Claims>(
         value,
         &DecodingKey::from_secret(secret.as_bytes()),
         &Validation::default(),
     )
-    .map_err(|_| ApiError::Unauthorized)?;
-    parse_uuid(token.claims.sub).map_err(|_| ApiError::Unauthorized)
-}
-
-fn analysis_user(headers: &HeaderMap, secret: &str, allow_guest_analysis: bool) -> Result<Option<Uuid>, ApiError> {
-    if headers.get("authorization").is_none() && allow_guest_analysis {
-        return Ok(None);
-    }
-    authenticated_user(headers, secret).map(Some)
+    .map_err(|_| ApiError::Unauthorized)
 }
 
 fn parse_uuid(value: String) -> Result<Uuid, ApiError> {
@@ -1291,9 +1622,21 @@ mod tests {
 
     #[test]
     fn guest_analysis_is_only_allowed_when_enabled() {
-        let headers = HeaderMap::new();
-        assert_eq!(analysis_user(&headers, "test-secret", true).unwrap(), None);
-        assert!(analysis_user(&headers, "test-secret", false).is_err());
+        let empty_headers = HeaderMap::new();
+        assert!(analysis_principal(&empty_headers, "test-secret", true).is_err());
+        let token = create_guest_token(
+            "guest-subject",
+            Utc::now() + Duration::hours(2),
+            "test-secret",
+        )
+        .unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", format!("Bearer {token}").parse().unwrap());
+        match analysis_principal(&headers, "test-secret", true).unwrap() {
+            AnalysisPrincipal::Guest { subject } => assert_eq!(subject, "guest-subject"),
+            AnalysisPrincipal::User(_) => panic!("guest token must not authenticate as a user"),
+        }
+        assert!(analysis_principal(&headers, "test-secret", false).is_err());
     }
 
     #[test]
@@ -1346,6 +1689,26 @@ mod tests {
             ..valid
         };
         assert!(validate_analysis_request(&invalid).is_err());
+    }
+
+    #[test]
+    fn guest_analysis_limits_are_stricter_than_user_limits() {
+        let valid_guest = AnalysisRequest {
+            fen: xiangqi_core::STARTING_FEN.into(),
+            mode: AnalysisMode::Depth,
+            value: 20,
+            multi_pv: 2,
+        };
+        assert!(validate_guest_analysis_request(&valid_guest).is_ok());
+        assert!(validate_guest_analysis_request(&AnalysisRequest {
+            value: 21,
+            fen: valid_guest.fen.clone(),
+            ..valid_guest
+        }).is_err());
+        assert!(validate_guest_analysis_request(&AnalysisRequest {
+            multi_pv: 3,
+            ..valid_guest
+        }).is_err());
     }
 
     #[test]
@@ -1459,7 +1822,7 @@ done
             value: 8,
             multi_pv: 2,
         };
-        let response = run_analysis(&config, &request).await.unwrap();
+        let response = run_analysis(&config, &request, None).await.unwrap();
         assert_eq!(response.lines.len(), 2);
         assert_eq!(response.lines[0].score_cp, Some(42));
         assert_eq!(response.lines[0].notation, ["炮二平五", "马8进7"]);

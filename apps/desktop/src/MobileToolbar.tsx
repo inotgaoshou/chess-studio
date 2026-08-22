@@ -1,9 +1,13 @@
-import { Activity, BarChart3, FileDown, FlipVertical2, FolderOpen, GitFork, List, Pencil, Plus, Route, Settings2, Share2, Square } from "lucide-react";
+import { Activity, BarChart3, FlipVertical2, List, Pencil, Plus, Square, Zap } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useEffect, useRef, useState } from "react";
 import type { ColorTheme } from "./theme";
 
-export type MobileToolbarCommand = "menu" | "newGame" | "open" | "save" | "edit" | "flipBoard" | "candidates" | "analysis" | "forceVariation" | "evaluation" | "export" | "settings";
+export type MobileToolbarCommand = "menu" | "newGame" | "open" | "save" | "edit" | "flipBoard" | "moveNow" | "analysis" | "forceVariation" | "evaluation" | "export" | "settings";
+
+export function ForceVariationIcon({ size = 20 }: { size?: number }) {
+  return <img className="force-variation-icon" src="/icons/force-variation.png" alt="" aria-hidden="true" style={{ width: size, height: size }} />;
+}
 
 export function MobileToolbar({
   analysisBusy,
@@ -25,16 +29,12 @@ export function MobileToolbar({
   const buttons = [
     ["menu", "打开功能菜单", List],
     ["newGame", "新建棋局", Plus],
-    ["open", "导入棋谱", FolderOpen],
-    ["save", "保存棋谱", FileDown],
     ["edit", "编辑局面", Pencil],
     ["flipBoard", "翻转红黑方视角", FlipVertical2],
-    ["candidates", "显示候选连线", Route],
+    ["moveNow", "立即出招：采用当前首选着", Zap],
     ["analysis", analysisBusy ? "停止分析" : "分析当前局面", analysisBusy ? Square : Activity],
-    ["forceVariation", "强变招：切换到下一候选 PV", GitFork],
+    ["forceVariation", "强变招：切换到下一候选 PV", ForceVariationIcon],
     ["evaluation", evaluationVisible ? "收起局势评分条" : "显示局势评分条", BarChart3],
-    ["export", "复制与导出", Share2],
-    ["settings", "打开设置", Settings2],
   ] as const;
 
   useEffect(() => () => {

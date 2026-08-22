@@ -2,15 +2,16 @@ import { describe, expect, it } from "vitest";
 import { cloudAnalysisHeaders } from "./index";
 
 describe("cloud analysis request headers", () => {
-  it("sends a guest mobile request without an authorization header", () => {
+  it("omits authorization only when no token is available", () => {
     expect(cloudAnalysisHeaders("", true)).toEqual({
       "content-type": "application/json",
     });
   });
 
-  it("does not reuse a stale local token for a guest mobile request", () => {
-    expect(cloudAnalysisHeaders("expired-token", true)).toEqual({
+  it("sends bearer authentication for a guest mobile token", () => {
+    expect(cloudAnalysisHeaders("guest-token", true)).toEqual({
       "content-type": "application/json",
+      authorization: "Bearer guest-token",
     });
   });
 
