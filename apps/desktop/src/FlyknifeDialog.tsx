@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { BookOpen, CircleHelp, ChevronLeft, ChevronRight, Download, ExternalLink, Eye, Play, Save, Swords, Trash2, X } from "lucide-react";
 import { LinkMiniBoard } from "./LinkMiniBoard";
+import { BookTopicDialog } from "./BookTopicDialog";
+import { BookImportDialog } from "./BookImportDialog";
 import { chessPlatform, type BoardState, type CloudBookCandidate, type FlyknifeCandidate, type FlyknifePlan, type FlyknifeSide, type FlyknifeStepAnnotation, type FlyknifeTemplate, type FlyknifeTopic, type Piece, type PreviewLineStep, type Side, type XqbCandidate } from "./platform";
 
 function sideFromBoardSide(side: Side): FlyknifeSide {
@@ -225,9 +227,12 @@ type Props = {
   onPlanSaved(plan: FlyknifePlan): void;
   onPractice(plan: FlyknifePlan): void;
   onTopicOpened(next: Partial<BoardState>, topic: FlyknifeTopic): void;
+  onBookImported?(next: Partial<BoardState>): void;
+  onMasterGameOpened?(gameId: string): Promise<void>;
+  onStudyTopic?(): void;
 };
 
-export function FlyknifeDialog({ currentFen, currentSideToMove, cloudCandidates, xqbCandidates, enginePath, threads, hashMb, searchMode, searchValue, onClose, onPlanSaved, onPractice, onTopicOpened }: Props) {
+export function FlyknifeDialog({ currentFen, currentSideToMove, cloudCandidates, xqbCandidates, enginePath, threads, hashMb, searchMode, searchValue, onClose, onPlanSaved, onPractice, onTopicOpened, onBookImported, onMasterGameOpened, onStudyTopic }: Props) {
   const [templates, setTemplates] = useState<FlyknifeTemplate[]>([]);
   const [topics, setTopics] = useState<FlyknifeTopic[]>([]);
   const [plans, setPlans] = useState<FlyknifePlan[]>([]);
@@ -246,6 +251,8 @@ export function FlyknifeDialog({ currentFen, currentSideToMove, cloudCandidates,
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<FlyknifePreview>();
   const [definitionOpen, setDefinitionOpen] = useState(false);
+  const [bookTopic, setBookTopic] = useState<FlyknifeTopic>();
+  const [bookImportOpen, setBookImportOpen] = useState(false);
   const [notice, setNotice] = useState("用法：不填第 ③ 步就是直接拆当前局面；填一步就是先假设对手这么走，再找反击飞刀。");
 
   const startingFen = source === "template" ? template?.fen ?? currentFen : source === "custom" ? customFen.trim() : currentFen;
@@ -427,6 +434,7 @@ export function FlyknifeDialog({ currentFen, currentSideToMove, cloudCandidates,
       <header>
         <span><Swords size={18}/><strong id="flyknife-title">飞刀库 / 专题库</strong></span>
         <div className="flyknife-header-actions">
+          <button className="tool-button" title="书页棋谱入库" onClick={() => setBookImportOpen(true)}><BookOpen size={16}/><span>书页入库</span></button>
           <button className="tool-button flyknife-definition-toggle" aria-expanded={definitionOpen} title="查看飞刀定义" onClick={() => setDefinitionOpen((open) => !open)}><CircleHelp size={16}/><span>飞刀定义</span></button>
           <button className="tool-button" title="关闭" onClick={onClose}><X size={16}/></button>
         </div>
@@ -461,6 +469,7 @@ export function FlyknifeDialog({ currentFen, currentSideToMove, cloudCandidates,
               <p className="flyknife-topic-explainer"><b>参考主线，待验证</b><span>打开后选择对方可能应手，再由实验室标出我方出刀着法、分值变化和最佳防守。</span></p>
             </div>
             <div className="flyknife-topic-actions">
+              {topic.id === "book-game-53-hong-zhi-huang-shiqing" && <button type="button" onClick={() => setBookTopic(topic)}><BookOpen size={13}/>原书拆解</button>}
               <button type="button" onClick={() => void openTopicSource(topic)}><ExternalLink size={13}/>来源</button>
               <button disabled={busy} onClick={() => void openTopic(topic)}><Play size={14}/>打开并验证</button>
             </div>
@@ -587,6 +596,14 @@ export function FlyknifeDialog({ currentFen, currentSideToMove, cloudCandidates,
           </div>
         </div>
       </section>}
+      {bookTopic && <BookTopicDialog
+        topic={bookTopic}
+        onClose={() => setBookTopic(undefined)}
+        onOpenTopic={() => { setBookTopic(undefined); void openTopic(bookTopic); }}
+        onOpenMasterGame={onMasterGameOpened ?? (async () => { throw new Error("当前窗口未配置大师棋谱打开操作"); })}
+        onStudyTopic={() => { setBookTopic(undefined); onStudyTopic?.(); }}
+      />}
+      {bookImportOpen && <BookImportDialog onClose={() => setBookImportOpen(false)} onImported={(next) => { onBookImported?.(next); setBookImportOpen(false); }} />}
     </section>
   </div>;
 }

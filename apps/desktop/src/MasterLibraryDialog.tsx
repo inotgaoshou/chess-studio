@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { BookOpen, Database, RefreshCw, Search, X, Zap } from "lucide-react";
+import { BookOpen, Database, RefreshCw, Search, Swords, X, Zap } from "lucide-react";
 import type { MasterGameSummaryDto, MasterLibraryStatsDto, MasterPlayerDto, SyncAccountDto } from "./platform";
 
 type Props = {
   account: SyncAccountDto;
   onClose(): void;
   onOpenGame(gameId: string, options?: { analyze: boolean }): Promise<void>;
+  onStudyGame?(gameId: string): void;
   listPlayers(query?: string, options?: { limit?: number; offset?: number }): Promise<MasterPlayerDto[]>;
   getStats(query?: string): Promise<MasterLibraryStatsDto>;
   listGames(playerId: string, query?: string, options?: { limit?: number; offset?: number }): Promise<MasterGameSummaryDto[]>;
@@ -26,7 +27,7 @@ function gameTitle(game: MasterGameSummaryDto) {
   return game.title?.trim() || `${game.redPlayer} vs ${game.blackPlayer}`;
 }
 
-export function MasterLibraryDialog({ account, onClose, onOpenGame, listPlayers, getStats, listGames }: Props) {
+export function MasterLibraryDialog({ account, onClose, onOpenGame, onStudyGame, listPlayers, getStats, listGames }: Props) {
   const [playerQuery, setPlayerQuery] = useState("");
   const [gameQuery, setGameQuery] = useState("");
   const [playerPage, setPlayerPage] = useState(0);
@@ -39,6 +40,7 @@ export function MasterLibraryDialog({ account, onClose, onOpenGame, listPlayers,
   const [openingGameId, setOpeningGameId] = useState<string>();
   const [openingAction, setOpeningAction] = useState<"open" | "analyze">("open");
   const [error, setError] = useState("");
+  const [refreshVersion, setRefreshVersion] = useState(0);
   const selectedPlayer = useMemo(
     () => players.find((player) => player.id === selectedPlayerId),
     [players, selectedPlayerId],
@@ -64,7 +66,6 @@ export function MasterLibraryDialog({ account, onClose, onOpenGame, listPlayers,
     : `第 ${gamePage + 1} 页`;
 
   useEffect(() => {
-    if (account.status !== "signedIn") return;
     let disposed = false;
     setBusy(true);
     setError("");
@@ -86,10 +87,9 @@ export function MasterLibraryDialog({ account, onClose, onOpenGame, listPlayers,
       disposed = true;
       window.clearTimeout(timer);
     };
-  }, [account.status, listPlayers, playerPage, playerQuery]);
+  }, [listPlayers, playerPage, playerQuery, refreshVersion]);
 
   useEffect(() => {
-    if (account.status !== "signedIn") return;
     let disposed = false;
     const timer = window.setTimeout(() => {
       void getStats(playerQuery)
@@ -100,10 +100,9 @@ export function MasterLibraryDialog({ account, onClose, onOpenGame, listPlayers,
       disposed = true;
       window.clearTimeout(timer);
     };
-  }, [account.status, getStats, playerQuery]);
+  }, [getStats, playerQuery, refreshVersion]);
 
   useEffect(() => {
-    if (account.status !== "signedIn") return;
     if (!selectedPlayerId) {
       setGames([]);
       return;
@@ -127,7 +126,14 @@ export function MasterLibraryDialog({ account, onClose, onOpenGame, listPlayers,
       disposed = true;
       window.clearTimeout(timer);
     };
-  }, [account.status, gamePage, gameQuery, listGames, selectedPlayerId]);
+  }, [gamePage, gameQuery, listGames, refreshVersion, selectedPlayerId]);
+
+  function refreshLibrary() {
+    setError("");
+    setSelectedPlayerId(undefined);
+    setGames([]);
+    setRefreshVersion((version) => version + 1);
+  }
 
   async function openGame(game: MasterGameSummaryDto, analyze: boolean) {
     setOpeningGameId(game.id);
@@ -150,20 +156,16 @@ export function MasterLibraryDialog({ account, onClose, onOpenGame, listPlayers,
             <Database size={18}/>
             <span>
               <strong>大师棋谱</strong>
-              <small>{account.email ? `服务端账号：${account.email}` : "登录后从服务端 MySQL 查询公开大师库"}</small>
+              <small>{account.email ? `服务端账号：${account.email}` : "公开大师棋谱库"}</small>
             </span>
           </div>
-          <button className="tool-button" title="关闭" disabled={!!openingGameId} onClick={onClose}><X size={16}/></button>
+          <div>
+            <button className="tool-button" title="重新连接大师棋谱服务" disabled={busy || !!openingGameId} onClick={refreshLibrary}><RefreshCw size={16}/></button>
+            <button className="tool-button" title="关闭" disabled={!!openingGameId} onClick={onClose}><X size={16}/></button>
+          </div>
         </header>
 
-        {account.status !== "signedIn" ? (
-          <div className="master-library-empty">
-            <BookOpen size={24}/>
-            <strong>请先登录同步账号</strong>
-            <p>大师棋谱库来自服务端数据库。登录后即可查询赵鑫鑫、王天一等公开棋谱，并打开到棋盘继续拆棋和 Pikafish 分析。</p>
-          </div>
-        ) : (
-          <div className="master-library-body">
+        <div className="master-library-body">
             <aside className="master-player-panel">
               <label className="master-search">
                 <Search size={14}/>
@@ -172,7 +174,7 @@ export function MasterLibraryDialog({ account, onClose, onOpenGame, listPlayers,
               <p className="master-player-summary" aria-live="polite">
                 {stats ? playerQuery.trim()
                   ? `匹配 ${stats.matchedPlayers.toLocaleString("zh-CN")} 位棋手 · 全库 ${stats.totalPlayers.toLocaleString("zh-CN")} 位`
-                  : `已收录 ${stats.totalPlayers.toLocaleString("zh-CN")} 位棋手`
+                  : `已收录 ${stats.totalPlayers.toLocaleString("zh-CN")} 位棋手 · ${stats.totalGames.toLocaleString("zh-CN")} 盘棋谱`
                   : "正在统计棋手数量…"}
               </p>
               <div className="master-player-list" aria-label="大师列表">
@@ -221,6 +223,7 @@ export function MasterLibraryDialog({ account, onClose, onOpenGame, listPlayers,
                     <footer>
                       <small>{sideLabel(game.masterSide)}</small>
                       <div className="master-game-actions">
+                        {game.id === "dpxq-m-6008" && <button type="button" disabled={!!openingGameId} onClick={() => onStudyGame?.(game.id)}><Swords size={14}/>拆解学习</button>}
                         <button type="button" disabled={!!openingGameId} onClick={() => void openGame(game, false)}>
                           {openingGameId === game.id && openingAction === "open" ? <RefreshCw className="spin" size={14}/> : <BookOpen size={14}/>}
                           {openingGameId === game.id && openingAction === "open" ? "打开中…" : "打开棋谱"}
@@ -243,8 +246,7 @@ export function MasterLibraryDialog({ account, onClose, onOpenGame, listPlayers,
                 <button type="button" disabled={!gameCanJumpToLast || busy || !selectedPlayerId} onClick={() => setGamePage(gameLastPage)}>末页</button>
               </nav>
             </main>
-          </div>
-        )}
+        </div>
       </section>
     </div>
   );

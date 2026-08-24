@@ -167,6 +167,13 @@ struct MasterLibraryQuery {
     offset: Option<u32>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RelatedMasterGamesRequest {
+    topic_id: String,
+    fens: Vec<String>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct MasterPlayerDto {
@@ -182,6 +189,7 @@ struct MasterPlayerDto {
 #[serde(rename_all = "camelCase")]
 struct MasterLibraryStatsDto {
     total_players: u64,
+    total_games: u64,
     matched_players: u64,
 }
 
@@ -215,6 +223,26 @@ struct MasterGameDetailDto {
     source_url: String,
     moves: Vec<String>,
     pgn: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RelatedMasterGameDto {
+    id: String,
+    title: String,
+    red_player: String,
+    black_player: String,
+    master_side: Option<String>,
+    event_name: Option<String>,
+    game_date: Option<String>,
+    result: String,
+    move_count: u64,
+    source_url: String,
+    match_kind: String,
+    matched_ply: u64,
+    matched_fen: String,
+    divergence_move: Option<String>,
+    match_label: String,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -333,6 +361,7 @@ fn router(state: AppState, cors: CorsLayer) -> Router {
             "/api/v1/master/players/{player_id}/games",
             get(list_master_player_games),
         )
+        .route("/api/v1/master/related-games", post(find_related_master_games))
         .route("/api/v1/master/games/{game_id}", get(master_game_detail))
         .layer(DefaultBodyLimit::max(32 * 1024))
         .layer(TraceLayer::new_for_http())
@@ -562,10 +591,8 @@ async fn pull(
 
 async fn list_master_players(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Query(query): Query<MasterLibraryQuery>,
 ) -> Result<Json<Vec<MasterPlayerDto>>, ApiError> {
-    authenticated_user(&headers, &state.jwt_secret)?;
     let search = normalized_search_term(query.query.as_deref());
     let like = sql_like_term(&search);
     let limit = query.limit.unwrap_or(50).clamp(1, 100) as i64;
@@ -609,13 +636,14 @@ async fn list_master_players(
 
 async fn master_library_stats(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Query(query): Query<MasterLibraryQuery>,
 ) -> Result<Json<MasterLibraryStatsDto>, ApiError> {
-    authenticated_user(&headers, &state.jwt_secret)?;
     let search = normalized_search_term(query.query.as_deref());
     let like = sql_like_term(&search);
     let total_players: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM master_players")
+        .fetch_one(&state.pool)
+        .await?;
+    let total_games: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM master_games")
         .fetch_one(&state.pool)
         .await?;
     let matched_players: i64 = sqlx::query_scalar(
@@ -630,17 +658,16 @@ async fn master_library_stats(
     .await?;
     Ok(Json(MasterLibraryStatsDto {
         total_players: total_players.max(0) as u64,
+        total_games: total_games.max(0) as u64,
         matched_players: matched_players.max(0) as u64,
     }))
 }
 
 async fn list_master_player_games(
     State(state): State<AppState>,
-    headers: HeaderMap,
     AxumPath(player_id): AxumPath<String>,
     Query(query): Query<MasterLibraryQuery>,
 ) -> Result<Json<Vec<MasterGameSummaryDto>>, ApiError> {
-    authenticated_user(&headers, &state.jwt_secret)?;
     let search = normalized_search_term(query.query.as_deref());
     let like = sql_like_term(&search);
     let limit = query.limit.unwrap_or(50).clamp(1, 100) as i64;
@@ -709,12 +736,105 @@ async fn list_master_player_games(
     ))
 }
 
+async fn find_related_master_games(
+    State(state): State<AppState>,
+    Json(request): Json<RelatedMasterGamesRequest>,
+) -> Result<Json<Vec<RelatedMasterGameDto>>, ApiError> {
+    let fens: Vec<_> = request
+        .fens
+        .into_iter()
+        .map(|fen| fen.trim().to_owned())
+        .filter(|fen| !fen.is_empty() && fen.len() <= 255)
+        .take(12)
+        .collect();
+    if fens.is_empty() {
+        return Err(ApiError::Invalid("at least one legal checkpoint FEN is required".into()));
+    }
+
+    type Row = (
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<chrono::NaiveDate>,
+        String,
+        i64,
+        String,
+        i64,
+        String,
+        String,
+    );
+    let mut matches: std::collections::BTreeMap<String, RelatedMasterGameDto> =
+        std::collections::BTreeMap::new();
+    for fen in &fens {
+        let rows: Vec<Row> = sqlx::query_as(
+            "SELECT g.id, g.title, g.red_player, g.black_player, g.event_name, g.game_date,
+                    g.result, CAST(g.move_count AS SIGNED) AS move_count, g.source_url,
+                    CAST(m.ply AS SIGNED) AS matched_ply, m.before_fen, m.move_iccs
+             FROM master_game_moves m
+             INNER JOIN master_games g ON g.id = m.game_id
+             WHERE m.before_fen = ?
+             ORDER BY g.game_date DESC, g.created_at DESC, g.id DESC
+             LIMIT 30",
+        )
+        .bind(fen)
+        .fetch_all(&state.pool)
+        .await?;
+        for (id, title, red_player, black_player, event_name, game_date, result, move_count, source_url, matched_ply, matched_fen, divergence_move) in rows {
+            let is_source_game = request.topic_id == "book-game-53-hong-zhi-huang-shiqing"
+                && red_player.contains("洪智")
+                && black_player.contains("黄仕清")
+                && event_name.as_deref().unwrap_or_default().contains("1998");
+            let match_kind = if is_source_game { "exact" } else { "position" };
+            let label = if is_source_game {
+                "原局候选：双方、赛事与书页专题一致"
+            } else {
+                "同型参考：命中书页专题的关键局面"
+            };
+            let item = RelatedMasterGameDto {
+                id: id.clone(),
+                title,
+                red_player,
+                black_player,
+                master_side: None,
+                event_name,
+                game_date: game_date.map(|value| value.to_string()),
+                result,
+                move_count: move_count.max(0) as u64,
+                source_url,
+                match_kind: match_kind.into(),
+                matched_ply: matched_ply.max(0) as u64,
+                matched_fen,
+                divergence_move: Some(divergence_move),
+                match_label: label.into(),
+            };
+            matches
+                .entry(id)
+                .and_modify(|current| {
+                    if item.match_kind == "exact" || item.matched_ply > current.matched_ply {
+                        *current = item.clone();
+                    }
+                })
+                .or_insert(item);
+        }
+    }
+    let mut result: Vec<_> = matches.into_values().collect();
+    result.sort_by(|left, right| {
+        right
+            .match_kind
+            .eq("exact")
+            .cmp(&left.match_kind.eq("exact"))
+            .then_with(|| right.matched_ply.cmp(&left.matched_ply))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    Ok(Json(result))
+}
+
 async fn master_game_detail(
     State(state): State<AppState>,
-    headers: HeaderMap,
     AxumPath(game_id): AxumPath<String>,
 ) -> Result<Json<MasterGameDetailDto>, ApiError> {
-    authenticated_user(&headers, &state.jwt_secret)?;
     type Row = (
         String,
         String,

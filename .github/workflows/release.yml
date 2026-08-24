@@ -99,42 +99,68 @@ jobs:
           workspaces: |
             . -> target
 
-      - name: Build and upload release asset
-        uses: tauri-apps/tauri-action@v0
-        env:
-          # Repository settings may restrict the default GITHUB_TOKEN to read-only.
-          # RELEASE_TOKEN is an optional fine-grained PAT with Contents: Read and write.
-          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
-        with:
-          # The Tauri config and its pnpm build script live in this workspace package.
-          # Without this, tauri-action runs `pnpm build` from the repository root.
-          projectPath: apps/desktop
-          # Resource selection lives in tauri.conf.json so PowerShell does not
-          # have to parse a JSON string passed through an environment variable.
-          args: ${{ matrix.tauri_args }}
-          tagName: ${{ github.event.inputs.tag || github.ref_name }}
-          releaseName: Xiangqi Studio ${{ github.event.inputs.tag || github.ref_name }}
-          releaseBody: |
-            ## 更新说明
+      - name: Download Microsoft VC++ Runtime
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $runtime = Join-Path $env:RUNNER_TEMP "VC_redist.x64.exe"
+          Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" -OutFile $runtime
+          "VC_REDIST_X64_PATH=$runtime" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-            - 桌面端中国象棋打谱、变例、SQLite 自动保存
-            - 本地 Pikafish / 外部 UCI/UCCI 引擎分析、MultiPV 候选线和私教推演
-            - 整局复盘报告、局势图、质量评分和 PDF 导出
-
-            ## 包说明
-
-            - macOS Apple Silicon：内置 Apple Silicon Pikafish 与窗口连线识别模型
-            - Windows x64：内置 Pikafish SSE4.1/POPCNT 与窗口连线识别模型
-            - 开局库和棋理资料包不随安装包分发，后续按需提供
-            - Linux x64：本轮 GitHub Release 暂不打包，后续需要时再启用
-          releaseDraft: true
-          prerelease: false
+      - name: Build release asset
+        run: pnpm --dir apps/desktop tauri build ${{ matrix.tauri_args }}
 
       - name: Verify packaged Windows runtime
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $executable = Get-ChildItem -Path target, apps/desktop/src-tauri/target -Filter xiangqi-desktop.exe -Recurse |
+          $installer = Get-ChildItem -Path target/x86_64-pc-windows-msvc/release/bundle/nsis -Filter *.exe -File |
             Select-Object -First 1 -ExpandProperty FullName
-          if (-not $executable) { throw "Packaged xiangqi-desktop.exe was not found." }
-          ./scripts/verify-windows-runtime.ps1 -Executable $executable
+          if (-not $installer) { throw "Windows NSIS installer was not found." }
+          ./scripts/verify-windows-runtime.ps1 -Installer $installer -RedistInstaller $env:VC_REDIST_X64_PATH
+
+      - name: Upload verified release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.platform }}
+          if-no-files-found: error
+          path: target/${{ matrix.rust_target }}/release/bundle/**
+
+  publish:
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download verified release assets
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: release-assets
+
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: Xiangqi Studio ${{ github.event.inputs.tag || github.ref_name }}
+          body: |
+            ## 更新说明
+
+            - 桌面端中国象棋打谱、变例、SQLite 自动保存
+            - 本地 Pikafish 引擎分析、MultiPV 候选线和私教推演
+            - Windows 安装包内置 Microsoft VC++ Runtime，首次安装无需手动补装运行库
+
+            ## 包说明
+
+            - macOS Apple Silicon：内置 Apple Silicon Pikafish 与窗口连线识别模型
+            - Windows x64：内置 Pikafish SSE4.1/POPCNT、窗口连线识别模型和 VC++ Runtime
+            - 开局库和棋理资料包不随安装包分发，后续按需提供
+          draft: true
+          prerelease: false
+          files: |
+            release-assets/**/*.exe
+            release-assets/**/*.dmg
+            release-assets/**/*.tar.gz
+            release-assets/**/*.sig
+          fail_on_unmatched_files: true

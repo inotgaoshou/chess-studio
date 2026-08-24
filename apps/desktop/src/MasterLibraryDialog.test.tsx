@@ -30,12 +30,12 @@ const games: MasterGameSummaryDto[] = [
     sourceUrl: "http://www.gdchess.com/gview.asp?id=1",
   },
 ];
-const stats = { totalPlayers: 13_567, matchedPlayers: 13_567 };
+const stats = { totalPlayers: 13_567, totalGames: 147_994, matchedPlayers: 13_567 };
 
 afterEach(cleanup);
 
 describe("MasterLibraryDialog", () => {
-  it("shows the sign-in requirement before querying the server library", () => {
+  it("queries the public master library without a sync login", async () => {
     const listPlayers = vi.fn(async () => players);
     render(<MasterLibraryDialog
       account={{ serverUrl: signedIn.serverUrl, status: "signedOut" }}
@@ -46,8 +46,8 @@ describe("MasterLibraryDialog", () => {
       onClose={vi.fn()}
     />);
 
-    expect(screen.getByText("请先登录同步账号")).toBeTruthy();
-    expect(listPlayers).not.toHaveBeenCalled();
+    expect(await within(screen.getByLabelText("大师列表")).findByText("赵鑫鑫")).toBeTruthy();
+    expect(listPlayers).toHaveBeenCalledWith("", { limit: 8, offset: 0 });
   });
 
   it("lists masters, hides raw sources, and opens a selected server game for analysis", async () => {
@@ -82,7 +82,7 @@ describe("MasterLibraryDialog", () => {
   it("shows the server-backed player total and updates it for a search", async () => {
     const user = userEvent.setup();
     const getStats = vi.fn(async (query?: string) => query
-      ? { totalPlayers: 13_567, matchedPlayers: 48 }
+      ? { totalPlayers: 13_567, totalGames: 147_994, matchedPlayers: 48 }
       : stats);
     render(<MasterLibraryDialog
       account={signedIn}
@@ -93,7 +93,7 @@ describe("MasterLibraryDialog", () => {
       onClose={vi.fn()}
     />);
 
-    expect(await screen.findByText("已收录 13,567 位棋手")).toBeTruthy();
+    expect(await screen.findByText("已收录 13,567 位棋手 · 147,994 盘棋谱")).toBeTruthy();
     await user.type(screen.getByPlaceholderText("搜索大师，如 赵鑫鑫 / 王天一"), "陈松顺");
     expect(await screen.findByText("匹配 48 位棋手 · 全库 13,567 位")).toBeTruthy();
     expect(getStats).toHaveBeenLastCalledWith("陈松顺");

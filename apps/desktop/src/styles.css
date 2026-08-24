@@ -2853,7 +2853,7 @@ body.analysis-reopen-dragging * {
 .layout-compact .review-workbench, .layout-compact .review-route, .layout-compact .review-insights { box-shadow: none; }
 @media (max-width: 900px) { .review-workbench.insight-open .review-insights { display: flex; } }
 @media (min-width: 901px) {
-  .workspace.review-mode-active, .workspace.layout-compact.review-mode-active { grid-template-columns: minmax(430px, 44fr) minmax(610px, 56fr); gap: 0; overflow: hidden; }
+  .workspace.review-mode-active, .workspace.layout-compact.review-mode-active { grid-template-columns: minmax(0, 1fr) minmax(360px, 420px); gap: 0; overflow: hidden; }
   .workspace.review-mode-active > .library-panel { display: none; }
   .workspace.review-mode-active > .board-section { grid-column: 1; display: block; }
   .workspace.review-mode-active .board-main-stack { height: 100%; }
@@ -8682,7 +8682,7 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 /* These must follow compact-layout rules so review owns both remaining columns. */
 @media (min-width: 901px) {
   .workspace.layout-compact.review-mode-active {
-    grid-template-columns: minmax(430px, 44fr) minmax(610px, 56fr);
+    grid-template-columns: minmax(0, 1fr) minmax(360px, 420px);
     overflow: hidden;
   }
   .workspace.layout-compact.review-mode-active > .board-section {
@@ -9118,3 +9118,31 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
   .u10-tabs { overflow-x: auto; }
   .u10-tabs button { flex: 0 0 auto; }
 }
+/* Book-derived topics stay readable beside the existing dense research dialogs. */
+.book-topic-dialog { width:min(1080px, calc(100vw - 40px)); max-height:calc(100vh - 40px); overflow:auto; background:#fff; color:#203449; border:1px solid #cbd8e3; border-radius:8px; box-shadow:0 18px 50px #0004; }
+.book-topic-dialog > header { position:sticky; top:0; z-index:2; display:flex; justify-content:space-between; align-items:center; padding:14px 18px; background:#f5f9fc; border-bottom:1px solid #d9e4ec; }
+.book-topic-dialog > header > span { display:flex; gap:8px; align-items:center; }
+.book-topic-body { display:grid; gap:16px; padding:18px; }
+.book-topic-overview { display:grid; gap:8px; }
+.book-topic-overview > div { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+.book-topic-overview b { color:#b64232; }
+.book-topic-overview em { color:#9a5b16; font-style:normal; font-weight:700; }
+.game53-study-dialog { width:min(1220px, calc(100vw - 32px)); height:min(780px, calc(100vh - 32px)); overflow:hidden; border:1px solid #cbd8e3; border-radius:8px; background:#f7fafc; color:#203449; box-shadow:0 18px 50px #0004; display:grid; grid-template-rows:auto minmax(0, 1fr); }
+.game53-study-dialog > header { padding:12px 16px; border-bottom:1px solid #d9e4ec; background:#fff; display:flex; align-items:center; justify-content:space-between; }.game53-study-dialog > header > span { display:flex; align-items:baseline; gap:8px; }.game53-study-dialog > header small { color:#64748b; font-size:11px; }
+.game53-study-layout { min-height:0; display:grid; grid-template-columns:minmax(420px, .96fr) minmax(360px, .84fr); }.game53-board-column, .game53-learning-column { min-width:0; min-height:0; padding:14px; display:grid; gap:10px; }.game53-board-column { grid-template-rows:auto minmax(0, 1fr) auto; border-right:1px solid #d9e4ec; background:#fff; }.game53-board-column > header { display:flex; justify-content:space-between; gap:8px; }.game53-board-column > header small { color:#64748b; font-size:11px; }
+.game53-board { min-height:0; width:min(100%, 590px); aspect-ratio:1120 / 1240; justify-self:center; align-self:center; }.game53-board .link-mini-board-wrap, .game53-board .link-mini-board { width:100%; height:100%; max-height:none; }.game53-board .link-mini-board-status { display:none; }.game53-mainline { max-height:80px; overflow:auto; display:flex; flex-wrap:wrap; align-content:start; gap:5px; }.game53-mainline button, .game53-lessons button, .game53-card button, .game53-learning-column > footer button { min-height:29px; padding:0 8px; border:1px solid #cbd8e3; border-radius:4px; background:#fff; color:#334155; display:inline-flex; align-items:center; gap:5px; font-size:11px; }.game53-mainline button.active, .game53-lessons button.active, .game53-card button.primary { border-color:#2687f2; background:#eaf4ff; color:#1263b5; font-weight:800; }
+.game53-learning-column { grid-template-rows:auto minmax(0, 1fr) auto; overflow:hidden; }.game53-lessons { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:6px; }.game53-lessons button { height:42px; justify-content:center; text-align:left; }.game53-card { min-width:0; overflow:auto; padding:12px; border:1px solid #d9e4ec; border-radius:5px; background:#fff; display:grid; align-content:start; gap:9px; }.game53-card small { color:#64748b; font-size:10px; font-weight:800; }.game53-card > strong { font-size:14px; line-height:1.45; }.game53-card p { margin:0; color:#475569; font-size:12px; line-height:1.55; }.game53-card label { display:grid; gap:4px; color:#475569; font-size:11px; font-weight:700; }.game53-card input { height:32px; padding:0 8px; border:1px solid #cbd8e3; border-radius:4px; background:#fff; color:#203449; }.game53-card > div { display:flex; flex-wrap:wrap; gap:6px; }.game53-card p.answer { border-left:3px solid #e1a138; padding-left:8px; }.game53-card p.correct { border-left:3px solid #15936a; padding-left:8px; }.game53-engine-lines { display:grid; gap:5px; }.game53-engine-lines p { padding:7px; border:1px solid #e1eaf1; display:grid; grid-template-columns:auto auto; gap:3px 8px; }.game53-engine-lines span { color:#b45309; font-weight:800; }.game53-engine-lines small { grid-column:1 / -1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }.game53-learning-column > footer { display:flex; justify-content:flex-end; gap:6px; }.game53-notice { margin:0; padding:10px 14px; color:#64748b; font-size:11px; }
+.game53-reference-grid { display:grid; grid-template-columns:minmax(130px, .58fr) minmax(0, 1fr); gap:9px; align-items:start; }.game53-reference-grid > div:last-child { display:grid; gap:6px; }.game53-reference-board { width:100%; aspect-ratio:1120 / 1240; }.game53-reference-board .link-mini-board-wrap, .game53-reference-board .link-mini-board { width:100%; height:100%; max-height:none; }.game53-reference-board .link-mini-board-status { display:none; }.game53-book-image { width:100%; max-height:180px; object-fit:contain; object-position:left top; border:1px solid #d9e4ec; }
+@media (max-width: 900px) { .game53-study-dialog { height:calc(100vh - 18px); width:calc(100vw - 18px); }.game53-study-layout { overflow:auto; grid-template-columns:1fr; }.game53-board-column { min-height:560px; border-right:0; border-bottom:1px solid #d9e4ec; }.game53-learning-column { min-height:620px; }.game53-board { width:min(100%, 460px); }.game53-lessons { grid-template-columns:1fr; }.game53-lessons button { height:31px; justify-content:flex-start; } }
+.book-topic-images { display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:10px; }
+.book-topic-images img { width:100%; max-height:420px; object-fit:contain; background:#edf1f4; border:1px solid #d8e1e9; }
+.book-topic-learning { display:grid; gap:8px; }
+.book-topic-learning h3, .book-topic-related h3 { margin:0; font-size:16px; }
+.book-topic-learning p, .book-topic-learning dd { margin:0; line-height:1.65; white-space:pre-wrap; }
+.book-topic-learning dl { display:grid; grid-template-columns:70px 1fr; gap:8px 12px; margin:0; }
+.book-topic-learning dt { font-weight:700; color:#416078; }
+.book-topic-related { display:grid; gap:8px; }
+.book-topic-related article { display:flex; justify-content:space-between; gap:12px; align-items:center; padding:10px; border:1px solid #d9e4ec; border-radius:6px; }
+.book-topic-related article div { display:grid; gap:3px; }
+.book-topic-related small { color:#668096; }
+@media (max-width:640px) { .book-topic-dialog { width:100vw; max-height:100vh; border-radius:0; } .book-topic-related article { align-items:flex-start; flex-direction:column; } }

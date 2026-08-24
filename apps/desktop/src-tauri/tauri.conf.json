@@ -5,7 +5,7 @@
   "identifier": "cn.xiangqi.studio",
   "build": {
     "beforeDevCommand": "pnpm dev",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://localhost:1421",
     "beforeBuildCommand": "pnpm build",
     "frontendDist": "../dist"
   },
@@ -24,10 +24,11 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": ["resources/fonts/OFL.txt", "resources/pikafish", "resources/link-vision", "resources/flyknife-library"],
+    "resources": ["resources/fonts/OFL.txt", "resources/pikafish", "resources/link-vision", "resources/flyknife-library", "resources/book-topics"],
     "windows": {
       "nsis": {
         "installMode": "both",
+        "installerHooks": "installer-hooks.nsh",
         "languages": ["SimpChinese", "English"]
       }
     }

@@ -422,9 +422,9 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
           <p className="dialog-hint">{dialog === "register" ? "注册后当前本地棋谱库将永久绑定该账号。" : account.email ? `当前棋谱库绑定：${account.email}` : "登录后会绑定当前本地棋谱库。"}</p>
           <label className="full"><span>邮箱</span><input type="email" autoComplete="username" placeholder="name@example.com" disabled={!!account.email} value={email} onChange={(event) => setEmail(event.target.value)}/></label>
           <label className="full"><span>密码</span><input type="password" minLength={8} autoComplete={dialog === "register" ? "new-password" : "current-password"} placeholder="至少 8 个字符" value={password} onChange={(event) => setPassword(event.target.value)}/></label>
-          <p className="dialog-hint">邮箱和至少 8 个字符的密码填写完成后，注册按钮即可使用。</p>
+          <p className="dialog-hint">密码至少 8 个字符。若当前服务端没有这个已绑定邮箱，可在不清空本机棋谱的情况下重新注册。</p>
           {enginePickerError && <p className="dialog-warning full" role="alert">{enginePickerError}</p>}
-          <footer><button onClick={close} disabled={busy}>取消</button><button className="primary" disabled={busy || !email.trim() || password.length < 8} onClick={() => void authenticate(dialog)}>{dialog === "register" ? <UserPlus size={14}/> : <LogIn size={14}/>} {busy ? "请稍候…" : dialog === "register" ? "注册并登录" : "登录"}</button></footer>
+          <footer><button onClick={close} disabled={busy}>取消</button>{dialog === "login" && account.email && <button disabled={busy || !email.trim() || password.length < 8} onClick={() => void authenticate("register")}><UserPlus size={14}/>重新注册此账号</button>}<button className="primary" disabled={busy || !email.trim() || password.length < 8} onClick={() => void authenticate(dialog)}>{dialog === "register" ? <UserPlus size={14}/> : <LogIn size={14}/>} {busy ? "请稍候…" : dialog === "register" ? "注册并登录" : "登录"}</button></footer>
         </div>}
       </section>
     </div>

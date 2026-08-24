@@ -340,6 +340,7 @@ struct MasterPlayerDto {
 #[serde(rename_all = "camelCase")]
 struct MasterLibraryStatsDto {
     total_players: u64,
+    total_games: u64,
     matched_players: u64,
 }
 
@@ -373,6 +374,26 @@ struct MasterGameDetailDto {
     source_url: String,
     moves: Vec<String>,
     pgn: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RelatedMasterGameDto {
+    id: String,
+    title: String,
+    red_player: String,
+    black_player: String,
+    master_side: Option<String>,
+    event_name: Option<String>,
+    game_date: Option<String>,
+    result: String,
+    move_count: u64,
+    source_url: String,
+    match_kind: String,
+    matched_ply: u64,
+    matched_fen: String,
+    divergence_move: Option<String>,
+    match_label: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -934,6 +955,32 @@ struct FlyknifeTopicDto {
     category: &'static str,
     source: &'static str,
     move_count: usize,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct BookImportDraftDto {
+    image_path: String,
+    raw_text: String,
+    confidence: f32,
+    title: String,
+    red_player: String,
+    black_player: String,
+    event_name: String,
+    moves_text: String,
+    warnings: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SaveBookImportRequest {
+    image_path: String,
+    raw_text: String,
+    title: String,
+    red_player: String,
+    black_player: String,
+    event_name: String,
+    moves_text: String,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -9524,7 +9571,7 @@ const FLYKNIFE_TOPICS: [(&str, &str, &str, &str, &str, &str, usize); 12] = [
 ];
 
 fn flyknife_topics() -> Vec<FlyknifeTopicDto> {
-    FLYKNIFE_TOPICS
+    let mut topics: Vec<_> = FLYKNIFE_TOPICS
         .iter()
         .map(
             |(id, title, opening, category, source, _filename, move_count)| FlyknifeTopicDto {
@@ -9536,10 +9583,22 @@ fn flyknife_topics() -> Vec<FlyknifeTopicDto> {
                 move_count: *move_count,
             },
         )
-        .collect()
+        .collect();
+    topics.insert(0, FlyknifeTopicDto {
+        id: "book-game-53-hong-zhi-huang-shiqing",
+        title: "第53局 洪智胜黄仕清 · 车八平五飞刀",
+        opening: "中炮对反宫马，五六炮进三兵局",
+        category: "原书飞刀拆解",
+        source: "已授权原书第82页",
+        move_count: 23,
+    });
+    topics
 }
 
 fn flyknife_topic_file_name(id: &str) -> Option<&'static str> {
+    if id == "book-game-53-hong-zhi-huang-shiqing" {
+        return Some("../book-topics/game-53/game-53.pgn");
+    }
     FLYKNIFE_TOPICS
         .iter()
         .find(|(topic_id, ..)| *topic_id == id)
@@ -9547,6 +9606,9 @@ fn flyknife_topic_file_name(id: &str) -> Option<&'static str> {
 }
 
 fn flyknife_topic_candidates(resource_dir: &Path, filename: &str) -> Vec<PathBuf> {
+    if let Some(relative) = filename.strip_prefix("../") {
+        return vec![resource_dir.join(relative)];
+    }
     vec![
         resource_dir
             .join("resources/flyknife-library/single-pgn")
@@ -9559,6 +9621,13 @@ fn flyknife_topic_candidates(resource_dir: &Path, filename: &str) -> Vec<PathBuf
 
 fn resolve_flyknife_topic_path(app: &tauri::AppHandle, filename: &str) -> Option<PathBuf> {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    if let Some(relative) = filename.strip_prefix("../") {
+        let mut candidates = vec![manifest_dir.join("resources").join(relative)];
+        if let Ok(resource_dir) = app.path().resource_dir() {
+            candidates.push(resource_dir.join(relative));
+        }
+        return candidates.into_iter().find(|path| path.is_file());
+    }
     let mut candidates = vec![
         manifest_dir
             .join("resources/flyknife-library/single-pgn")
@@ -9573,6 +9642,197 @@ fn resolve_flyknife_topic_path(app: &tauri::AppHandle, filename: &str) -> Option
 #[tauri::command]
 fn list_flyknife_topics() -> Vec<FlyknifeTopicDto> {
     flyknife_topics()
+}
+
+fn book_topic_resource_path(app: &tauri::AppHandle, filename: &str) -> Result<PathBuf, String> {
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("resources/book-topics/game-53")
+        .join(filename);
+    if manifest.is_file() {
+        return Ok(manifest);
+    }
+    let resource_dir = app.path().resource_dir().map_err(|error| error.to_string())?;
+    let candidates = [
+        resource_dir.join("book-topics/game-53").join(filename),
+        resource_dir.join("resources/book-topics/game-53").join(filename),
+    ];
+    candidates
+        .into_iter()
+        .find(|path| path.is_file())
+        .ok_or_else(|| format!("书籍专题资源不存在：{filename}"))
+}
+
+#[tauri::command]
+fn get_book_topic_detail(id: String, app: tauri::AppHandle) -> Result<Option<serde_json::Value>, String> {
+    if id != "book-game-53-hong-zhi-huang-shiqing" {
+        return Ok(None);
+    }
+    let path = book_topic_resource_path(&app, "detail.json")?;
+    let bytes = fs::read(path).map_err(|error| error.to_string())?;
+    let mut detail: serde_json::Value =
+        serde_json::from_slice(&bytes).map_err(|error| format!("书籍专题详情格式错误：{error}"))?;
+    if let Some(images) = detail.get_mut("images").and_then(serde_json::Value::as_array_mut) {
+        for image in images {
+            if let Some(name) = image.as_str() {
+                let file_name = Path::new(name).file_name().and_then(|value| value.to_str()).unwrap_or_default();
+                // Bundled pages must also load after the packaged app is moved. Passing a
+                // data URL avoids webview asset-protocol path permissions altogether.
+                let bytes = fs::read(book_topic_resource_path(&app, file_name)?)
+                    .map_err(|error| format!("无法读取书页图片：{error}"))?;
+                *image = serde_json::Value::String(format!("data:image/jpeg;base64,{}", BASE64.encode(bytes)));
+            }
+        }
+    }
+    if let Some(checkpoints) = detail.get_mut("diagramCheckpoints").and_then(serde_json::Value::as_array_mut) {
+        for checkpoint in checkpoints {
+            if let Some(path) = checkpoint.get_mut("imagePath") {
+                if let Some(name) = path.as_str() {
+                    let file_name = Path::new(name).file_name().and_then(|value| value.to_str()).unwrap_or_default();
+                    *path = serde_json::Value::String(book_topic_resource_path(&app, file_name)?.to_string_lossy().into_owned());
+                }
+            }
+        }
+    }
+    let checkpoint_fens = detail
+        .get("diagramCheckpoints")
+        .and_then(serde_json::Value::as_array)
+        .map(|checkpoints| {
+            let moves: Vec<String> = detail
+                .get("mainline")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|value| value.as_str().map(str::to_owned))
+                .collect();
+            checkpoints
+                .iter()
+                .filter_map(|checkpoint| checkpoint.get("ply").and_then(serde_json::Value::as_u64))
+                .filter_map(|ply| {
+                    let mut board = Board::from_fen(STARTING_FEN).ok()?;
+                    for move_text in moves.iter().take(ply as usize) {
+                        board = board.apply_move(Move::from_iccs(move_text).ok()?).ok()?;
+                    }
+                    Some(serde_json::Value::String(board.to_fen()))
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if let Some(object) = detail.as_object_mut() {
+        object.insert("checkpointFens".into(), serde_json::Value::Array(checkpoint_fens));
+    }
+    Ok(Some(detail))
+}
+
+#[tauri::command]
+fn recognize_book_page(image_path: String) -> Result<BookImportDraftDto, String> {
+    let path = PathBuf::from(image_path);
+    let metadata = fs::metadata(&path).map_err(|_| "未找到书页图片".to_owned())?;
+    if !metadata.is_file() || metadata.len() > 24 * 1024 * 1024 {
+        return Err("书页图片必须是小于 24MB 的普通文件".into());
+    }
+    let output = ProcessCommand::new("tesseract")
+        .arg(&path)
+        .arg("stdout")
+        .args(["-l", "chi_sim", "--psm", "6"])
+        .output()
+        .map_err(|_| "本机离线 OCR 不可用；请安装中文 Tesseract 数据或手工录入".to_owned())?;
+    if !output.status.success() {
+        return Err("离线 OCR 未能识别此书页，请调整照片或改用手工录入".into());
+    }
+    let raw_text = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    let moves_text = raw_text
+        .lines()
+        .filter(|line| line.contains('炮') || line.contains('马') || line.contains('车') || line.contains('兵') || line.contains('卒'))
+        .collect::<Vec<_>>()
+        .join("\n");
+    Ok(BookImportDraftDto {
+        image_path: path.to_string_lossy().into_owned(),
+        raw_text,
+        confidence: 0.55,
+        title: String::new(),
+        red_player: String::new(),
+        black_player: String::new(),
+        event_name: String::new(),
+        moves_text,
+        warnings: vec!["OCR 初稿必须逐项校对；棋谱必须通过合法着法验证后才能入库。".into()],
+    })
+}
+
+fn chinese_move_tokens(text: &str) -> Vec<String> {
+    let characters: Vec<char> = text.chars().collect();
+    let mut tokens = Vec::new();
+    for index in 0..characters.len().saturating_sub(3) {
+        let piece = characters[index];
+        let file = characters[index + 1];
+        let action = characters[index + 2];
+        let target = characters[index + 3];
+        if matches!(piece, '车' | '車' | '马' | '馬' | '炮' | '砲' | '兵' | '卒' | '相' | '象' | '仕' | '士' | '帅' | '將' | '将' | '帥')
+            && matches!(file, '前' | '后' | '後' | '中' | '一' | '二' | '三' | '四' | '五' | '六' | '七' | '八' | '九' | '１' | '２' | '３' | '４' | '５' | '６' | '７' | '８' | '９' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9')
+            && matches!(action, '进' | '進' | '退' | '平')
+            && matches!(target, '一' | '二' | '三' | '四' | '五' | '六' | '七' | '八' | '九' | '１' | '２' | '３' | '４' | '５' | '６' | '７' | '８' | '９' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9')
+        {
+            tokens.push(characters[index..=index + 3].iter().collect());
+        }
+    }
+    tokens
+}
+
+fn parse_book_import_moves(moves_text: &str) -> Result<Vec<String>, String> {
+    let notation = chinese_move_tokens(moves_text);
+    if notation.is_empty() {
+        return Err("未识别到中文着法；请按“车八平五”的格式校对棋谱".into());
+    }
+    let mut board = Board::from_fen(STARTING_FEN).map_err(|error| error.to_string())?;
+    let mut moves = Vec::with_capacity(notation.len());
+    for (index, input) in notation.iter().enumerate() {
+        let expected = normalize_chinese_move_text(input);
+        let candidates = board
+            .legal_moves()
+            .into_iter()
+            .filter(|mv| board.chinese_move_notation(*mv).map(|value| normalize_chinese_move_text(&value) == expected).unwrap_or(false))
+            .collect::<Vec<_>>();
+        let mv = match candidates.as_slice() {
+            [mv] => *mv,
+            [] => return Err(format!("第 {} 步“{}”不是当前局面的合法中文着法", index + 1, input)),
+            _ => return Err(format!("第 {} 步“{}”存在歧义，请改为在棋盘上录入", index + 1, input)),
+        };
+        moves.push(mv.to_iccs());
+        board = board.apply_move(mv).map_err(|error| format!("第 {} 步非法：{error}", index + 1))?;
+    }
+    Ok(moves)
+}
+
+#[tauri::command]
+fn save_book_import(
+    request: SaveBookImportRequest,
+    state: State<'_, DesktopState>,
+) -> Result<BoardDto, String> {
+    let image = PathBuf::from(request.image_path.trim());
+    if !image.is_file() {
+        return Err("原书照片不存在，无法建立可追溯的本地专题".into());
+    }
+    let moves = parse_book_import_moves(&request.moves_text)?;
+    let mut document = ManualDocument::new(STARTING_FEN).map_err(|error| error.to_string())?;
+    document.metadata = ManualMetadata {
+        title: if request.title.trim().is_empty() { "书页棋谱导入".into() } else { request.title.trim().into() },
+        event: request.event_name.trim().into(),
+        red: request.red_player.trim().into(),
+        black: request.black_player.trim().into(),
+        result: "*".into(),
+        ..ManualMetadata::default()
+    };
+    document.note = format!(
+        "来源：用户本机书页导入\n原图：{}\n状态：已人工校对并通过逐着棋规校验\n\nOCR 原文：\n{}\n\n确认棋谱：\n{}",
+        image.to_string_lossy(), request.raw_text.trim(), request.moves_text.trim()
+    );
+    let mut parent = document.tree.root_id();
+    for iccs in moves {
+        let mv = Move::from_iccs(&iccs).map_err(|error| error.to_string())?;
+        parent = document.tree.add_move(parent, mv, "").map_err(|error| error.to_string())?;
+    }
+    let mut model = state.model.lock().map_err(|_| "state lock poisoned".to_owned())?;
+    install_document(&mut model, document, Some(image.to_string_lossy().into_owned()), Some("book-page-import".into()))?;
+    board_dto(&model)
 }
 
 #[tauri::command]
@@ -11150,7 +11410,6 @@ where
         .map_err(|error| error.to_string())?
         .server_url;
     validate_server_url(&server_url)?;
-    let token = active_sync_token(state)?.ok_or("请先登录同步账号后查看大师棋谱")?;
     let mut url = reqwest::Url::parse(&format!("{}{}", server_url.trim_end_matches('/'), path))
         .map_err(|_| "大师棋谱服务地址格式不正确".to_owned())?;
     {
@@ -11163,22 +11422,10 @@ where
     }
     let response = reqwest::Client::new()
         .get(url)
-        .bearer_auth(&token)
         .send()
         .await
         .map_err(|error| format!("大师棋谱服务不可用：{error}"))?;
     let status = response.status();
-    if status == reqwest::StatusCode::UNAUTHORIZED {
-        clear_sync_token(state)?;
-        state
-            .model
-            .lock()
-            .map_err(|_| "state lock poisoned".to_owned())?
-            .store
-            .set_sync_token_expired(true)
-            .map_err(|error| error.to_string())?;
-        return Err("登录已过期，请重新登录后查看大师棋谱".into());
-    }
     if !status.is_success() {
         let message = response
             .json::<serde_json::Value>()
@@ -11196,6 +11443,32 @@ where
         .json()
         .await
         .map_err(|_| "大师棋谱服务返回了无效数据".into())
+}
+
+async fn master_library_post<T, P>(state: &DesktopState, path: &str, payload: &P) -> Result<T, String>
+where
+    T: serde::de::DeserializeOwned,
+    P: Serialize,
+{
+    let server_url = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?
+        .store
+        .desktop_preferences()
+        .map_err(|error| error.to_string())?
+        .server_url;
+    validate_server_url(&server_url)?;
+    let response = reqwest::Client::new()
+        .post(format!("{}{}", server_url.trim_end_matches('/'), path))
+        .json(payload)
+        .send()
+        .await
+        .map_err(|error| format!("大师棋谱服务不可用：{error}"))?;
+    if !response.status().is_success() {
+        return Err(format!("大师棋谱服务返回错误 {}", response.status()));
+    }
+    response.json().await.map_err(|_| "大师棋谱服务返回了无效数据".into())
 }
 
 #[tauri::command]
@@ -11316,6 +11589,24 @@ async fn open_master_game(
 }
 
 #[tauri::command]
+async fn find_related_master_games(
+    topic_id: String,
+    fens: Vec<String>,
+    state: State<'_, DesktopState>,
+) -> Result<Vec<RelatedMasterGameDto>, String> {
+    let fens: Vec<_> = fens.into_iter().filter(|fen| fen.len() <= 255).take(12).collect();
+    if fens.is_empty() {
+        return Err("至少需要一个专题局面检查点".into());
+    }
+    master_library_post(
+        &state,
+        "/api/v1/master/related-games",
+        &serde_json::json!({ "topicId": topic_id, "fens": fens }),
+    )
+    .await
+}
+
+#[tauri::command]
 async fn get_subscription(state: State<'_, DesktopState>) -> Result<SubscriptionDto, String> {
     subscription_request(&state, "", None).await
 }
@@ -11336,7 +11627,7 @@ async fn authenticate_sync_account(
     endpoint: &str,
     email: String,
     password: String,
-    require_unbound: bool,
+    _require_unbound: bool,
     state: &DesktopState,
 ) -> Result<SyncAccountDto, String> {
     let email = email.trim().to_lowercase();
@@ -11362,9 +11653,6 @@ async fn authenticate_sync_account(
         (preferences.server_url, binding)
     };
     validate_server_url(&server_url)?;
-    if require_unbound && binding.is_some() {
-        return Err("本地棋谱库已经绑定账号，请直接登录".into());
-    }
     if let Some(existing) = &binding {
         if existing.email != email {
             return Err(format!(
@@ -11389,10 +11677,17 @@ async fn authenticate_sync_account(
             .model
             .lock()
             .map_err(|_| "state lock poisoned".to_owned())?;
-        model
-            .store
-            .bind_sync_account(&account)
-            .map_err(|error| error.to_string())?;
+        if endpoint == "register" {
+            model
+                .store
+                .recover_sync_account_binding(&account)
+                .map_err(|error| error.to_string())?;
+        } else {
+            model
+                .store
+                .bind_sync_account(&account)
+                .map_err(|error| error.to_string())?;
+        }
         model
             .store
             .set_sync_token_expired(false)
@@ -12674,6 +12969,9 @@ fn main() {
             query_cloud_opening_book,
             list_flyknife_templates,
             list_flyknife_topics,
+            get_book_topic_detail,
+            recognize_book_page,
+            save_book_import,
             open_external_url,
             open_flyknife_topic,
             generate_flyknife_candidates,
@@ -12708,6 +13006,7 @@ fn main() {
             get_master_library_stats,
             list_master_games,
             open_master_game,
+            find_related_master_games,
             register_sync_account,
             login_sync_account,
             logout_sync_account,
@@ -14616,12 +14915,37 @@ mod tests {
     #[test]
     fn flyknife_topics_list_bundled_starter_pack() {
         let topics = flyknife_topics();
-        assert_eq!(topics.len(), 12);
+        assert_eq!(topics.len(), 13);
         assert!(topics.iter().any(|topic| topic.title.contains("仙人指路")));
+        assert!(topics.iter().any(|topic| topic.id == "book-game-53-hong-zhi-huang-shiqing"));
         assert_eq!(
             flyknife_topic_file_name("pingfeng-po-guoheche"),
             Some("06-15屏风马破中炮过河车.pgn")
         );
+    }
+
+    #[test]
+    fn book_game_53_resource_is_a_legal_chinese_manual() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("resources/book-topics/game-53/game-53.pgn");
+        let document = import_document(&fs::read(path).unwrap(), Some(ManualFormat::Pgn)).unwrap();
+        assert_eq!(document.metadata.red, "洪智");
+        assert_eq!(document.metadata.black, "黄仕清");
+        assert_eq!(document.metadata.result, "1-0");
+    }
+
+    #[test]
+    fn book_import_requires_a_legal_complete_chinese_line() {
+        assert_eq!(
+            chinese_move_tokens("1. 炮二平五 马8进7 2. 马二进三"),
+            ["炮二平五", "马8进7", "马二进三"]
+        );
+        assert_eq!(
+            parse_book_import_moves("炮二平五 马8进7 马二进三").unwrap(),
+            ["h2e2", "h9g7", "h0g2"]
+        );
+        let error = parse_book_import_moves("炮二平五 马8进7 车八进九").unwrap_err();
+        assert!(error.contains("第 3 步"), "{error}");
     }
 
     #[test]

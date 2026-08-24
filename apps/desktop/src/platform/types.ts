@@ -78,6 +78,57 @@ export type FlyknifeStepAnnotation = {
 export type AppInfoDto = { version: string; buildTimestamp: number; platform: string };
 export type FlyknifeTemplate = { id: string; name: string; moves: string[]; fen: string };
 export type FlyknifeTopic = { id: string; title: string; opening: string; category: string; source: string; moveCount: number };
+export type DiagramCheckpoint = { label: string; ply: number; imagePath?: string; note: string };
+export type BookLessonNode = {
+  id: string;
+  title: string;
+  ply: number;
+  prompt: string;
+  expectedMove: string;
+  answer: string;
+  explanation: string;
+  bookVariation?: string;
+  practiceLine?: string[];
+};
+export type BookSourceMetadata = { bookTitle: string; page: string; gameNo: string; authorization: string; sourceKind: "book" | "userImport" };
+export type BookTopicDetail = {
+  topicId: string;
+  source: BookSourceMetadata;
+  redPlayer: string;
+  blackPlayer: string;
+  eventName: string;
+  result: string;
+  rawTranscript: string;
+  teaching: { situation: string; lure: string; knife: string; defense: string; practice: string };
+  flyknifeStatus: "bookClaimPendingEngine" | "engineVerified";
+  images: string[];
+  diagramCheckpoints: DiagramCheckpoint[];
+  mainline: string[];
+  checkpointFens?: string[];
+  masterGameId?: string;
+  sourceUrl?: string;
+  lessonNodes?: BookLessonNode[];
+};
+export type BookImportDraft = {
+  imagePath: string;
+  rawText: string;
+  confidence: number;
+  title: string;
+  redPlayer: string;
+  blackPlayer: string;
+  eventName: string;
+  movesText: string;
+  warnings: string[];
+};
+export type SaveBookImportRequest = {
+  imagePath: string;
+  rawText: string;
+  title: string;
+  redPlayer: string;
+  blackPlayer: string;
+  eventName: string;
+  movesText: string;
+};
 export type FlyknifePlan = { id?: string; title: string; side: FlyknifeSide; startingFen: string; templateId?: string; templateName: string; lureMove: string; knifeMove: string; mainline: string[]; bestDefense: string[]; scoreCp?: number; mate?: number; risk: string; sourceGameId?: string; sourceNodeId?: string; note: string; annotations?: FlyknifeStepAnnotation[] };
 export type FlyknifeCandidate = { setupMove?: string; setupNotation?: string; lureMove: string; lureNotation?: string; knifeMove: string; mainline: string[]; notation: string[]; bestDefense: string[]; bestDefenseNotation: string[]; scoreCp?: number; baselineScoreCp?: number; swingCp?: number; mate?: number; risk: string; annotations?: FlyknifeStepAnnotation[] };
 export type GenerateFlyknifeRequest = { startingFen: string; side: FlyknifeSide; setupMove?: string; lureMove: string; enginePath: string; threads: number; hashMb: number; searchMode: "time" | "depth" | "nodes"; searchValue: number };
@@ -437,6 +488,7 @@ export type MasterPlayerDto = {
 };
 export type MasterLibraryStatsDto = {
   totalPlayers: number;
+  totalGames: number;
   matchedPlayers: number;
 };
 export type MasterGameSummaryDto = {
@@ -450,6 +502,13 @@ export type MasterGameSummaryDto = {
   result: string;
   moveCount: number;
   sourceUrl: string;
+};
+export type RelatedMasterGame = MasterGameSummaryDto & {
+  matchKind: "exact" | "position" | "opening";
+  matchedPly: number;
+  matchedFen: string;
+  divergenceMove?: string;
+  matchLabel: string;
 };
 export type MasterGameDetailDto = MasterGameSummaryDto & {
   moves: string[];
@@ -775,6 +834,9 @@ export interface ChessPlatform {
   queryCloudOpeningBook(fen: string): Promise<CloudBookCandidate[]>;
   listFlyknifeTemplates(): Promise<FlyknifeTemplate[]>;
   listFlyknifeTopics(): Promise<FlyknifeTopic[]>;
+  getBookTopicDetail(topicId: string): Promise<BookTopicDetail | undefined>;
+  recognizeBookPage(imagePath: string): Promise<BookImportDraft>;
+  saveBookImport(request: SaveBookImportRequest): Promise<Partial<BoardState>>;
   openExternalUrl(url: string): Promise<void>;
   openFlyknifeTopic(id: string): Promise<Partial<BoardState>>;
   generateFlyknifeCandidates(request: GenerateFlyknifeRequest): Promise<FlyknifeCandidate[]>;
@@ -787,6 +849,7 @@ export interface ChessPlatform {
   getMasterLibraryStats(query?: string): Promise<MasterLibraryStatsDto>;
   listMasterGames(playerId: string, query?: string, options?: MasterLibraryPageOptions): Promise<MasterGameSummaryDto[]>;
   openMasterGame(gameId: string): Promise<Partial<BoardState>>;
+  findRelatedMasterGames(topicId: string, fens: string[]): Promise<RelatedMasterGame[]>;
   listTrainingTasks(): Promise<TrainingTaskDto[]>;
   generateTrainingTasks(): Promise<TrainingGenerationResultDto>;
   getLearningProfile(): Promise<LearningProfile>;

@@ -45,6 +45,7 @@ import {
   Settings2,
   Share2,
   Square,
+  Swords,
   Sun,
   TrendingUp,
   Trash2,
@@ -88,6 +89,7 @@ import { LinkSessionDialog } from "./LinkSessionDialog";
 import { LinkMiniBoard, type LinkMiniArrow } from "./LinkMiniBoard";
 import { FlyknifeDialog } from "./FlyknifeDialog";
 import { MasterLibraryDialog } from "./MasterLibraryDialog";
+import { Game53StudyDialog } from "./Game53StudyDialog";
 import { bundledTheoryKnowledge } from "./theoryKnowledge.generated";
 import { ReviewWorkspace } from "./ReviewWorkspace";
 import { U10TrainingDialog } from "./U10TrainingDialog";
@@ -1314,6 +1316,7 @@ export default function App() {
     ?? (typeof navigator !== "undefined" && /mac/i.test(navigator.userAgent))
   );
   const [masterLibraryOpen, setMasterLibraryOpen] = useState(false);
+  const [game53StudyOpen, setGame53StudyOpen] = useState(false);
   const [engineProbe, setEngineProbe] = useState<EngineProbeDto>();
   const [engineProfiles, setEngineProfiles] = useState<EngineProfileDto[]>([]);
   const [cloudCandidates, setCloudCandidates] = useState<CloudBookCandidate[]>([]);
@@ -2094,6 +2097,10 @@ export default function App() {
   }), [board.history.length, board.note]);
   const isMasterLibraryGame = board.sourceFormat === "server-master-pgn"
     || board.note.includes("用途：本地学习、拆棋和 Pikafish 分析。");
+  const isGame53MasterGame = isMasterLibraryGame
+    && manualMeta.red.includes("洪智")
+    && manualMeta.black.includes("黄仕清")
+    && manualMeta.event.includes("1998");
   const retryReports = useMemo(() => reports
     .filter((report) => report.missedMate || report.grade === "差" || report.grade === "错" || (report.score != null && report.score < 40))
     .sort((left, right) => {
@@ -5318,11 +5325,6 @@ export default function App() {
       case "copyFullManual": await copyGame(); break;
       case "copyMainline": await copyGame(true); break;
       case "masterLibrary":
-        if (syncAccount.status !== "signedIn") {
-          setDesktopDialog(syncAccount.status === "unbound" ? "register" : "login");
-          setNotice("请先登录同步账号后查看大师棋谱");
-          break;
-        }
         setMasterLibraryOpen(true);
         break;
       case "flyknifeLab": setFlyknifeOpen(true); break;
@@ -6416,6 +6418,7 @@ export default function App() {
           getStats={(query) => chessPlatform.getMasterLibraryStats(query)}
           listGames={(playerId, query, options) => chessPlatform.listMasterGames(playerId, query, options)}
           onOpenGame={openMasterLibraryGame}
+          onStudyGame={() => { setMasterLibraryOpen(false); setGame53StudyOpen(true); }}
           onClose={() => setMasterLibraryOpen(false)}
         />}
       </div>
@@ -6633,6 +6636,7 @@ export default function App() {
         getStats={(query) => chessPlatform.getMasterLibraryStats(query)}
         listGames={(playerId, query, options) => chessPlatform.listMasterGames(playerId, query, options)}
         onOpenGame={openMasterLibraryGame}
+        onStudyGame={() => { setMasterLibraryOpen(false); setGame53StudyOpen(true); }}
         onClose={() => setMasterLibraryOpen(false)}
       />}
       {coachProfileOpen && <CoachProfileView
@@ -6703,7 +6707,7 @@ export default function App() {
           onClick={() => void openLinkSessionDialog()}
         ><Link size={15}/>连线</button>}
         {chessPlatform.kind === "desktop" && workspaceMode === "research" && <button className="tool-button flyknife-tool-button" title="飞刀库 / 专题库" onClick={() => setFlyknifeOpen(true)}><Zap size={16}/><span>飞刀库</span></button>}
-        {chessPlatform.kind === "desktop" && workspaceMode === "research" && <button className="tool-button" title={syncAccount.status === "signedIn" ? "大师棋谱" : "登录后查看大师棋谱"} onClick={() => syncAccount.status === "signedIn" ? setMasterLibraryOpen(true) : setDesktopDialog(syncAccount.status === "unbound" ? "register" : "login")}><Database size={16}/></button>}
+        {chessPlatform.kind === "desktop" && workspaceMode === "research" && <button className="tool-button" title="大师棋谱" onClick={() => setMasterLibraryOpen(true)}><Database size={16}/></button>}
       </div>
 
       <main className={`workspace layout-${desktopPreferences.layoutMode} ${reviewModeOpen ? "review-mode-active" : ""} ${libraryCollapsed ? "library-collapsed" : ""} ${candidateRailCollapsed ? "candidate-rail-collapsed" : ""} ${analysisPanelCollapsed ? "analysis-panel-collapsed" : ""} ${compactDockMinimized ? "compact-dock-minimized" : ""} ${compactHasSystemPopout ? "compact-system-popout" : ""} ${desktopPreferences.layoutMode === "compact" && cloudBookCollapsed ? "compact-cloud-collapsed" : ""}`}>
@@ -6794,6 +6798,7 @@ export default function App() {
             {isMasterLibraryGame ? <section className="master-game-identity side" aria-label="当前大师棋谱信息">
               <nav aria-label="大师棋谱快捷操作">
                 <button type="button" onClick={() => void openMasterManualPanel()}><BookOpen size={14}/>棋谱</button>
+                {isGame53MasterGame && <button type="button" onClick={() => setGame53StudyOpen(true)}><Swords size={14}/>拆解</button>}
                 <button type="button" onClick={() => void openMasterAnalysisPanel()}><Activity size={14}/>分析</button>
                 <button type="button" onClick={() => void openAnalysisReportPanel()}><BarChart3 size={14}/>报告</button>
                 <button type="button" onClick={() => void openReviewMode()}><ClipboardList size={14}/>复盘</button>
@@ -7619,6 +7624,29 @@ export default function App() {
           void loadGameReport();
           void refreshGames();
         }}
+        onBookImported={(next) => {
+          applyBoard(normalizeBoardState(next));
+          clearAnalysisState();
+          setFlyknifeOpen(false);
+          setNotice("书页棋谱已通过逐着校验并保存到本机棋谱库。");
+          void refreshGames();
+        }}
+        onMasterGameOpened={async (gameId) => {
+          const next = normalizeBoardState(await chessPlatform.openMasterGame(gameId));
+          applyBoard(next);
+          clearAnalysisState();
+          setFlyknifeOpen(false);
+          setNotice("已打开关联大师对局，可在命中局面继续拆解和引擎复核。");
+        }}
+        onStudyTopic={() => setGame53StudyOpen(true)}
+      />}
+      {game53StudyOpen && <Game53StudyDialog
+        onClose={() => setGame53StudyOpen(false)}
+        onOpenMasterGame={async (gameId) => { await openMasterLibraryGame(gameId, { analyze: false }); setGame53StudyOpen(false); }}
+        onPlanSaved={(plan) => setFlyknifePlans((plans) => [plan, ...plans.filter((item) => item.id !== plan.id)])}
+        enginePath={enginePath}
+        threads={threads}
+        hashMb={hashMb}
       />}
       <nav className="mobile-nav" aria-label="移动端导航">
         <button className={mobilePanel === "board" ? "active" : ""} onClick={() => setMobilePanel("board")}><LayoutGrid size={19}/><span>棋盘</span></button>

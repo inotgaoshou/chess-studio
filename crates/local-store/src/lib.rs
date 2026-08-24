@@ -1479,6 +1479,19 @@ impl LocalStore {
         self.set_sync_value("sync_account", &serde_json::to_string(account)?)
     }
 
+    /// Recovers a binding after the same email is recreated on a replacement server.
+    /// This deliberately never permits moving the local library to a different email.
+    pub fn recover_sync_account_binding(&mut self, account: &SyncAccountBinding) -> Result<(), StoreError> {
+        if let Some(existing) = self.sync_account_binding()? {
+            if !existing.email.eq_ignore_ascii_case(&account.email) {
+                return Err(StoreError::AccountAlreadyBound {
+                    email: existing.email,
+                });
+            }
+        }
+        self.set_sync_value("sync_account", &serde_json::to_string(account)?)
+    }
+
     pub fn reset_sync_library(&mut self) -> Result<(), StoreError> {
         let transaction = self.connection.transaction()?;
         transaction.execute("DELETE FROM training_tasks", [])?;
@@ -4840,6 +4853,18 @@ mod tests {
             .unwrap_err();
         assert!(matches!(error, StoreError::AccountAlreadyBound { .. }));
         assert_eq!(store.sync_account_binding().unwrap(), Some(first));
+    }
+
+    #[test]
+    fn sync_account_recovery_replaces_only_the_same_email_server_id() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let old = SyncAccountBinding { user_id: Uuid::new_v4(), email: "same@example.com".into() };
+        let recovered = SyncAccountBinding { user_id: Uuid::new_v4(), email: "SAME@example.com".into() };
+        store.bind_sync_account(&old).unwrap();
+        store.recover_sync_account_binding(&recovered).unwrap();
+        assert_eq!(store.sync_account_binding().unwrap(), Some(recovered));
+        let error = store.recover_sync_account_binding(&SyncAccountBinding { user_id: Uuid::new_v4(), email: "other@example.com".into() }).unwrap_err();
+        assert!(matches!(error, StoreError::AccountAlreadyBound { .. }));
     }
 
     #[test]

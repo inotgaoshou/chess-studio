@@ -6,7 +6,7 @@
   "scripts": {
     "wasm:build": "wasm-pack build ../../crates/web-core --target web --out-dir ../../apps/desktop/public/wasm --out-name xiangqi_web_core",
     "theory:distill": "node ../../tools/theory-distill.mjs",
-    "dev": "vite --port 1420",
+    "dev": "vite --port 1421",
     "build": "tsc && vite build",
     "test": "vitest run",
     "web:dev": "pnpm wasm:build && vite --port 1420",
