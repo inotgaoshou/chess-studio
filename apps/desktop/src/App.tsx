@@ -1234,6 +1234,7 @@ export default function App() {
   const [autoRetry, setAutoRetry] = useState(0);
   const [analysisBusy, setAnalysisBusy] = useState(false);
   const [analysisError, setAnalysisError] = useState<string>();
+  const [reviewEngineHintRequest, setReviewEngineHintRequest] = useState(0);
   const [syncBusy, setSyncBusy] = useState(false);
   const [comment, setComment] = useState("");
   const [serverUrl, setServerUrl] = useState("http://127.0.0.1:8080");
@@ -3034,21 +3035,13 @@ export default function App() {
   }
 
   async function openMasterAnalysisPanel() {
-    selectWorkspacePanel("report");
-    if (gameReport) {
-      setMasterAnalysisDialogOpen(true);
-      return;
-    }
-    if (reportBusy) {
-      setNotice("整局复盘分析正在生成中，完成后可查看开局/中局/残局评分");
-      return;
-    }
-    if (!enginePath.trim()) {
-      setNotice("请先在引擎设置中选择可用引擎，再生成整局评分分析");
-      return;
-    }
-    const dataset = await generateGameReport();
-    if (dataset) setMasterAnalysisDialogOpen(true);
+    if (reviewModeOpen) setReviewEngineHintRequest((value) => value + 1);
+    await runAnalysis();
+  }
+
+  async function runReviewPositionAnalysis() {
+    setReviewEngineHintRequest((value) => value + 1);
+    await runAnalysis();
   }
 
   async function openAnalysisReportPanel() {
@@ -6683,7 +6676,7 @@ export default function App() {
         <button
           className={`mode-tool ${analysisHintsEnabled ? "active" : ""}`}
           title={analysisHintsEnabled ? "停止自动分析并隐藏 MultiPV 提示" : "开启自动分析与 MultiPV 提示"}
-          onClick={() => void (analysisHintsEnabled ? stopAnalysis() : runAnalysis())}
+          onClick={() => void (reviewModeOpen ? runReviewPositionAnalysis() : analysisHintsEnabled ? stopAnalysis() : runAnalysis())}
           disabled={!analysisHintsEnabled && (!board.playable || isPlaying)}
         ><Zap size={15}/>{analysisHintsEnabled ? "停止分析" : "分析"}</button>
         <button className="mode-tool move-now-tool" title={analysisIsStale ? "候选线路已过期，请等待当前局面重新分析" : primaryAnalysis?.pv[0] ? (engineSide !== "none" || engineStarting || engineThinking ? "停止人机搜索并采用当前第一候选着" : "采用当前第一候选着") : "请先完成当前局面分析"} disabled={chessPlatform.kind !== "desktop" || !primaryAnalysis?.pv[0] || analysisIsStale} onClick={() => void playPrimaryAnalysisMove()}><Zap size={15}/>引擎出招</button>
@@ -7058,6 +7051,11 @@ export default function App() {
             trainingGenerating={dialogBusy}
             trainingGeneration={trainingGeneration}
             analysisConfig={{ reportDepth: desktopPreferences.reportDepth, multipv, threads, hashMb }}
+            positionAnalysis={orderedAnalysis}
+            positionAnalysisBusy={analysisBusy}
+            positionAnalysisError={analysisError}
+            positionAnalysisFen={analysisFen}
+            engineHintRequest={reviewEngineHintRequest}
             playbackControls={playbackControls("review-playback")}
             onClose={() => void exitReviewMode()}
             onNavigate={(nodeId) => void navigateTo(nodeId)}
@@ -7076,6 +7074,7 @@ export default function App() {
             onCompleteTraining={(taskId, completed) => void completeTrainingTask(taskId, completed)}
             onStudyIssue={(nodeId) => void startCoachStudy(nodeId)}
             onStartU10={(nodeId) => void startU10Analysis(nodeId)}
+            onRunPositionAnalysis={() => void runReviewPositionAnalysis()}
           /> : <>
           {analysisPanelCollapsed && desktopPreferences.layoutMode !== "compact"
             ? <button

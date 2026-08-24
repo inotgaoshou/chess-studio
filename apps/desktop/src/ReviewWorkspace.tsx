@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Activity, BarChart3, Brain, CheckCircle2, ChevronRight, ClipboardPaste, ClipboardList, Download, Eye, FileText, FolderArchive, GitFork, Heart, Image, Play, Plus, RefreshCw, Swords, X } from "lucide-react";
-import type { BoardState, GameReportPresentationDto, GameReportProgressDto, LibraryFolder, ReportIssuePresentationDto, Side, TrainingGenerationResultDto, TrainingTaskDto } from "./platform/types";
+import type { AnalysisLine, BoardState, GameReportPresentationDto, GameReportProgressDto, LibraryFolder, ReportIssuePresentationDto, Side, TrainingGenerationResultDto, TrainingTaskDto } from "./platform/types";
 import { buildReviewModel, signedCp } from "./reviewModel";
 
-type InsightTab = "report" | "trend" | "issues" | "training";
+type InsightTab = "engine" | "report" | "trend" | "issues" | "training";
 type MoveScope = "issues" | "all";
 
 export type ReviewWorkspaceProps = {
@@ -22,6 +22,11 @@ export type ReviewWorkspaceProps = {
   trainingGenerating: boolean;
   trainingGeneration?: TrainingGenerationResultDto;
   analysisConfig: { reportDepth: number; multipv: number; threads: number; hashMb: number };
+  positionAnalysis: AnalysisLine[];
+  positionAnalysisBusy: boolean;
+  positionAnalysisError?: string;
+  positionAnalysisFen?: string;
+  engineHintRequest: number;
   playbackControls: ReactNode;
   onClose(): void;
   onNavigate(nodeId?: string): void;
@@ -40,9 +45,11 @@ export type ReviewWorkspaceProps = {
   onCompleteTraining(taskId: string, completed: boolean): void;
   onStudyIssue(nodeId: string): void;
   onStartU10?(nodeId?: string): void;
+  onRunPositionAnalysis(): void;
 };
 
 const insightTabs: Array<[InsightTab, string]> = [
+  ["engine", "引擎提示"],
   ["report", "整局报告"],
   ["trend", "局势趋势"],
   ["issues", "关键着法"],
@@ -61,6 +68,12 @@ function issueTone(issue?: ReportIssuePresentationDto) {
 
 function sideClass(side: Side) {
   return side === "红方" ? "red" : "black";
+}
+
+function engineScore(line: AnalysisLine) {
+  if (line.mate != null) return `杀 ${line.mate}`;
+  if (line.scoreCp == null) return "--";
+  return `${line.scoreCp > 0 ? "+" : ""}${line.scoreCp}`;
 }
 
 function flyknifeRouteMeta(comment: string) {
@@ -116,9 +129,10 @@ function ReviewTrendChart({ report, currentNode, onNavigate }: { report?: GameRe
 
 export function ReviewWorkspace({
   board, report, reportBusy, reportExporting, reportProgress, engineReady, libraryFolder, libraryFolders, favorite, libraryTags, flyknifePlanCount, trainingTasks, trainingGenerating, trainingGeneration, analysisConfig, playbackControls,
-  onClose, onNavigate, onGenerateReport, onCancelReport, onExportReport, onOpenReport, onImport, onImportScreenshot, onPaste, onManualRecord, onSaveLibrary, onOpenFlyknife, onGenerateTraining, onOpenTraining, onCompleteTraining, onStudyIssue, onStartU10,
+  positionAnalysis, positionAnalysisBusy, positionAnalysisError, positionAnalysisFen, engineHintRequest,
+  onClose, onNavigate, onGenerateReport, onCancelReport, onExportReport, onOpenReport, onImport, onImportScreenshot, onPaste, onManualRecord, onSaveLibrary, onOpenFlyknife, onGenerateTraining, onOpenTraining, onCompleteTraining, onStudyIssue, onStartU10, onRunPositionAnalysis,
 }: ReviewWorkspaceProps) {
-  const [tab, setTab] = useState<InsightTab>("report");
+  const [tab, setTab] = useState<InsightTab>("engine");
   const [moveScope, setMoveScope] = useState<MoveScope>("issues");
   const [issueSide, setIssueSide] = useState<"red" | "black">("red");
   const [expandedIssue, setExpandedIssue] = useState<string>();
@@ -130,6 +144,11 @@ export function ReviewWorkspace({
   const [archiveSaving, setArchiveSaving] = useState(false);
   const [archiveSaveFailed, setArchiveSaveFailed] = useState(false);
   const [workflowFocus, setWorkflowFocus] = useState<string>();
+  useEffect(() => {
+    if (engineHintRequest === 0) return;
+    setShowInsights(true);
+    setTab("engine");
+  }, [engineHintRequest]);
   // The backend returns the selected path and its continuation separately. Keep both
   // visible while browsing an earlier node so navigation never looks like deletion.
   const documentBoard = useMemo(() => ({ ...board, history: [...board.history, ...board.continuation] }), [board]);
@@ -301,6 +320,14 @@ export function ReviewWorkspace({
       {reportBusy && <div className="review-progress" aria-live="polite"><span>报告生成中 {reportProgress?.completed ?? 0}/{reportProgress?.total ?? "--"}</span><progress max={Math.max(1, reportProgress?.total ?? 1)} value={reportProgress?.completed ?? 0}/></div>}
       {report?.stale && <div className="review-stale">棋谱或引擎配置已变化，旧报告不会作为当前结果显示。请重新生成整局报告。</div>}
       <div className="review-insight-body">
+        {tab === "engine" && <section className="review-engine-hints" role="tabpanel" aria-label="当前局面引擎提示">
+          <header><div><strong>当前局面引擎提示</strong><small>{positionAnalysisBusy ? "Pikafish 正在计算候选着…" : positionAnalysisFen === board.fen ? `${board.sideToMove}行棋 · MultiPV ${Math.max(1, positionAnalysis.length)}` : "点击分析获取当前局面建议"}</small></div><button type="button" className="primary" disabled={positionAnalysisBusy || !board.playable} onClick={onRunPositionAnalysis}>{positionAnalysisBusy ? "分析中…" : "分析当前局面"}</button></header>
+          {!engineReady ? <div className="review-empty"><Activity size={25}/><strong>尚未配置 Pikafish</strong><span>请先在引擎设置中选择可用引擎，再获取当前局面的候选着法。</span></div>
+            : positionAnalysisBusy ? <div className="review-empty"><Activity size={25}/><strong>正在分析当前局面</strong><span>候选着法会在引擎返回后显示。</span></div>
+              : positionAnalysisError ? <div className="review-empty"><Activity size={25}/><strong>引擎提示获取失败</strong><span>{positionAnalysisError}</span><button type="button" onClick={onRunPositionAnalysis}>重新分析</button></div>
+                : positionAnalysisFen !== board.fen || positionAnalysis.length === 0 ? <div className="review-empty"><Activity size={25}/><strong>还没有当前局面提示</strong><span>点击“分析当前局面”，查看最佳着法和候选变化。</span><button type="button" onClick={onRunPositionAnalysis}>开始分析</button></div>
+                  : <div className="review-engine-lines">{positionAnalysis.map((line) => <article key={`${line.multipv}-${line.pv[0] ?? "empty"}`}><div><b>{line.multipv}. {line.notation?.[0] ?? line.pv[0] ?? "暂无着法"}</b><strong>{engineScore(line)}</strong></div><small>深度 {line.depth ?? "--"} · {line.notation?.join(" ") || line.pv.join(" ")}</small></article>)}</div>}
+        </section>}
         {tab === "report" && <section className="review-report" role="tabpanel">{!activeReport ? <div className="review-empty"><Activity size={25}/><strong>{report?.stale ? "报告需要重新生成" : "尚未生成整局报告"}</strong><span>报告完成后可查看红黑评分、阶段表现、关键失误与学习建议。</span><button type="button" className="primary" disabled={!engineReady || reportBusy || !hasRecordedMoves} onClick={onGenerateReport}>生成整局报告</button></div> : <><div className="review-scorebar">{([model.red, model.black] as const).map((side) => <article className={sideClass(side.side)} key={side.side}><small>{side.side} · {side.player}</small><strong>{side.overall}</strong><span>{side.phaseText}</span><em>{side.issues} 个失误 · 漏杀 {side.missedMate}</em></article>)}</div><div className="review-report-meta"><span>引擎：{activeReport.engineLabel || "Pikafish"}</span><span>深度：{activeReport.analysisDepth ?? "--"}</span><span>耗时：{(activeReport.totalElapsedMs / 1000).toFixed(1)}s</span><span>缓存：{activeReport.cachedPositions}</span></div><section className="review-phase-table" aria-label="阶段评分">{(["opening", "middle", "endgame"] as const).map((phase) => <div key={phase}><strong>{phase === "opening" ? "开局" : phase === "middle" ? "中局" : "残局"}</strong><span className="red">{scoreDisplay(activeReport.red.phases[phase])}</span><span className="black">{scoreDisplay(activeReport.black.phases[phase])}</span></div>)}</section><section className="review-coach"><strong>{activeReport.coachInsights.branchName}</strong><p>{activeReport.coachInsights.branchPurpose}</p><ul>{activeReport.coachInsights.studyPlan.slice(0, 3).map((item) => <li key={item}>{item}</li>)}</ul></section><div className="review-report-actions"><button type="button" onClick={onOpenReport}><Eye size={13}/>完整报告</button><button type="button" disabled={reportExporting} onClick={onExportReport}><Download size={13}/>{reportExporting ? "导出中" : "PDF"}</button></div></>}</section>}
         {tab === "trend" && <ReviewTrendChart report={activeReport} currentNode={board.currentNode} onNavigate={onNavigate}/>}
         {tab === "issues" && <section className="review-issues" role="tabpanel">{!activeReport ? <div className="review-empty"><GitFork size={25}/><strong>等待关键着法</strong><span>生成报告后会按红黑双方整理失误与推荐着法。</span></div> : <><div className="review-issue-switch" role="group" aria-label="选择问题方"><button type="button" className={issueSide === "red" ? "active red" : ""} onClick={() => setIssueSide("red")}>红方 {model.redIssues.length}</button><button type="button" className={issueSide === "black" ? "active black" : ""} onClick={() => setIssueSide("black")}>黑方 {model.blackIssues.length}</button><button type="button" disabled={model.issueCount === 0} onClick={jumpNextIssue}>下一个问题<ChevronRight size={12}/></button></div>{issueRows.length === 0 ? <div className="review-empty"><ClipboardList size={22}/><strong>暂无明显问题</strong><span>当前分析深度下，这一方没有差招、错招或漏杀。</span></div> : issueRows.map((issue, index) => <article className={`review-issue-card ${board.currentNode === issue.nodeId ? "active" : ""}`} key={issue.nodeId}><button type="button" className="review-issue-main" onClick={() => { setExpandedIssue(issue.nodeId); onNavigate(issue.nodeId); }}><span>{index + 1}</span><strong>{issue.notation}</strong><small>{issue.missedMate ? "漏杀" : issue.grade} · 损失 {issue.lossCp}cp · 局面 {signedCp(issue.redScoreCp)}</small></button><div className="review-issue-actions"><button type="button" onClick={() => setExpandedIssue(expandedIssue === issue.nodeId ? undefined : issue.nodeId)}>显示解说</button><button type="button" onClick={() => onStartU10?.(issue.nodeId)}><Brain size={12}/>U10 拆棋</button><button type="button" onClick={() => onStudyIssue(issue.nodeId)}><GitFork size={12}/>自由推演</button></div>{expandedIssue === issue.nodeId && <div className="review-issue-coach"><p><strong>目的</strong>{issue.coach.intent}</p><p><strong>弱点</strong>{issue.coach.weakness}</p><p><strong>方案</strong>{issue.coach.solution}</p>{issue.bestNotation && <p><strong>推荐</strong>{issue.bestNotation}{issue.pvNotation?.length ? ` · ${issue.pvNotation.slice(0, 8).join(" ")}` : ""}</p>}</div>}</article>)}</>}</section>}

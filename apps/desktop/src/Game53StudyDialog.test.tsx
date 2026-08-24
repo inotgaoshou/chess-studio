@@ -21,7 +21,10 @@ const detail = {
 describe("Game53StudyDialog", () => {
   it("shows the verified master game lessons and reveals the selected book answer", async () => {
     vi.spyOn(chessPlatform, "getBookTopicDetail").mockResolvedValue(detail);
-    vi.spyOn(chessPlatform, "previewLine").mockResolvedValue([]);
+    vi.spyOn(chessPlatform, "previewLine").mockResolvedValue([
+      { fen: "fen-1", notation: "炮二平五", movedBy: "红方", from: { row: 7, col: 1 }, to: { row: 7, col: 4 }, pieces: [], status: "进行中" },
+      { fen: "fen-2", notation: "马8进7", movedBy: "黑方", from: { row: 0, col: 7 }, to: { row: 2, col: 6 }, pieces: [], status: "进行中" },
+    ]);
     const user = userEvent.setup();
     render(<Game53StudyDialog onClose={vi.fn()} onOpenMasterGame={vi.fn(async () => undefined)} onPlanSaved={vi.fn()} enginePath="" threads={2} hashMb={256}/>);
 
@@ -30,5 +33,9 @@ describe("Game53StudyDialog", () => {
     expect(screen.getByText(/11\.车八平五/)).toBeTruthy();
     await user.click(screen.getByRole("button", { name: /实战应对：卒7进1/ }));
     await waitFor(() => expect(screen.getByText("红方续着？")).toBeTruthy());
+    expect(screen.getByText(/第 1 半回合/)).toBeTruthy();
+    expect(screen.queryByLabelText("书页专题参考棋盘")).toBeNull();
+    await user.click(screen.getByRole("button", { name: /2\. 马8进7/ }));
+    expect(screen.getByText(/第 2 半回合/)).toBeTruthy();
   });
 });

@@ -28,6 +28,7 @@ export function Game53StudyDialog({ onClose, onOpenMasterGame, onPlanSaved, engi
   const [detail, setDetail] = useState<BookTopicDetail>();
   const [steps, setSteps] = useState<PreviewLineStep[]>([]);
   const [lessonIndex, setLessonIndex] = useState(0);
+  const [viewedPly, setViewedPly] = useState<number>();
   const [answer, setAnswer] = useState("");
   const [revealed, setRevealed] = useState(false);
   const [engineLines, setEngineLines] = useState<AnalysisLine[]>([]);
@@ -52,10 +53,11 @@ export function Game53StudyDialog({ onClose, onOpenMasterGame, onPlanSaved, engi
 
   const lessons = detail?.lessonNodes ?? [];
   const lesson = lessons[lessonIndex];
-  const currentStep = lesson ? steps[lesson.ply - 1] : undefined;
+  const activePly = viewedPly ?? lesson?.ply ?? 0;
+  const currentStep = steps[activePly - 1];
   const currentFen = currentStep?.fen ?? STARTING_FEN;
   const currentPieces = currentStep?.pieces ?? [];
-  const nextMove = steps[lesson?.ply ?? 0];
+  const nextMove = steps[activePly];
   const correct = revealed && answer.trim().replace(/[！!]/g, "") === lesson?.expectedMove.replace(/[！!]/g, "");
   const nearbyMoves = useMemo(() => {
     if (!lesson) return [];
@@ -64,10 +66,17 @@ export function Game53StudyDialog({ onClose, onOpenMasterGame, onPlanSaved, engi
 
   function selectLesson(index: number) {
     setLessonIndex(index);
+    setViewedPly(lessons[index]?.ply);
     setAnswer("");
     setRevealed(false);
     setEngineLines([]);
     setNotice("已定位学习节点。先作答，再查看书载答案或引擎复核。");
+  }
+
+  function selectMainlineStep(step: PreviewLineStep) {
+    const ply = steps.indexOf(step) + 1;
+    setViewedPly(ply);
+    setNotice(`已定位实战第 ${ply} 半回合：${step.movedBy}${step.notation}`);
   }
 
   async function verifyEngine() {
@@ -115,14 +124,14 @@ export function Game53StudyDialog({ onClose, onOpenMasterGame, onPlanSaved, engi
       <header><span><Swords size={18}/><strong>第53局拆解学习</strong><small>洪智 vs 黄仕清 · 1998 全国个人赛</small></span><button className="tool-button" title="关闭" onClick={onClose}><X size={16}/></button></header>
       {!detail || !lesson ? <p className="game53-notice">{notice}</p> : <div className="game53-study-layout">
         <section className="game53-board-column">
-          <header><strong>完整实战</strong><small>第 {lesson.ply} 半回合前 · {lesson.title}</small></header>
+          <header><strong>完整实战</strong><small>第 {activePly} 半回合 · {lesson.title}</small></header>
           <div className="game53-board"><LinkMiniBoard presentation="preview" boardAriaLabel="第53局主棋盘" pieces={currentPieces} arrows={[]} lastMove={currentStep ? { from: currentStep.from, to: currentStep.to, notation: currentStep.notation, movedBy: currentStep.movedBy } : undefined} sideToMove={nextMove?.movedBy ?? "红方"} pieceAsset={pieceAsset} boardAsset="/skins/default/board.png"/></div>
-          <nav className="game53-mainline" aria-label="第53局关键主线">{nearbyMoves.map((step, index) => <button key={`${step.notation}-${index}`} className={step === currentStep ? "active" : ""} onClick={() => setNotice(`实战第 ${steps.indexOf(step) + 1} 半回合：${step.movedBy}${step.notation}`)}>{steps.indexOf(step) + 1}. {step.notation}</button>)}</nav>
+          <nav className="game53-mainline" aria-label="第53局关键主线">{nearbyMoves.map((step, index) => <button key={`${step.notation}-${index}`} className={step === currentStep ? "active" : ""} onClick={() => selectMainlineStep(step)}>{steps.indexOf(step) + 1}. {step.notation}</button>)}</nav>
         </section>
         <section className="game53-learning-column">
           <nav className="game53-lessons" aria-label="三段学习">{lessons.map((item, index) => <button key={item.id} className={index === lessonIndex ? "active" : ""} onClick={() => selectLesson(index)}>{index + 1}. {item.title}</button>)}</nav>
           <article className="game53-card"><small>学习问题</small><strong>{lesson.prompt}</strong><label>你的着法<input value={answer} placeholder="例如：车八平五" onChange={(event) => { setAnswer(event.target.value); setRevealed(false); }}/></label><div><button className="primary" onClick={() => setRevealed(true)}>提交作答</button><button onClick={() => setRevealed(true)}>查看书载答案</button></div>{revealed && <p className={correct ? "correct" : "answer"}><b>{correct ? "答对了。" : "书载答案："}</b>{lesson.answer}。{lesson.explanation}</p>}</article>
-          <article className="game53-card game53-reference"><small>书页核验 / 陷阱参考</small><div className="game53-reference-grid"><div className="game53-reference-board"><LinkMiniBoard presentation="preview" boardAriaLabel="书页专题参考棋盘" pieces={currentPieces} arrows={[]} lastMove={currentStep ? { from: currentStep.from, to: currentStep.to, notation: currentStep.notation, movedBy: currentStep.movedBy } : undefined} sideToMove={nextMove?.movedBy ?? "红方"} pieceAsset={pieceAsset} boardAsset="/skins/default/board.png"/></div><div><p>{detail.teaching.knife}</p>{lesson.bookVariation && <><strong>中刀变化</strong><p>{lesson.bookVariation}</p></>}</div></div>{lessonIndex === 0 && detail.images[0] && <img className="game53-book-image" src={detail.images[0]} alt="布局飞刀集图53原书页"/>}</article>
+          <article className="game53-card game53-reference"><small>书页核验 / 陷阱参考</small><p>{detail.teaching.knife}</p>{lesson.bookVariation && <><strong>中刀变化</strong><p>{lesson.bookVariation}</p></>}{lessonIndex === 0 && detail.images[0] && <img className="game53-book-image" src={detail.images[0]} alt="布局飞刀集图53原书页"/>}</article>
           <article className="game53-card"><small>本地 Pikafish</small><button disabled={busy} onClick={() => void verifyEngine()}><Activity size={14}/>{busy ? "复核中…" : "复核最佳防守"}</button>{engineLines.length > 0 && <div className="game53-engine-lines">{engineLines.map((line) => <p key={line.multipv}><b>{line.multipv}. {line.notation?.[0] ?? line.pv[0]}</b><span>{score(line)}</span><small>{line.notation?.join(" ")}</small></p>)}</div>}</article>
           <footer><button onClick={() => void savePractice()}><Save size={14}/>保存练习</button><button onClick={() => void onOpenMasterGame(detail.masterGameId ?? "dpxq-m-6008")}><BookOpen size={14}/>打开完整棋谱</button></footer>
           <p className="game53-notice" aria-live="polite">{notice}</p>

@@ -120,6 +120,10 @@ function renderWorkspace(overrides: Partial<Parameters<typeof ReviewWorkspace>[0
     trainingTasks: [],
     trainingGenerating: false,
     analysisConfig: { reportDepth: 22, multipv: 3, threads: 4, hashMb: 512 },
+    positionAnalysis: [],
+    positionAnalysisBusy: false,
+    positionAnalysisFen: undefined,
+    engineHintRequest: 0,
     playbackControls: <div aria-label="棋谱播放控制">播放控制</div>,
     onClose: vi.fn(),
     onNavigate: vi.fn(),
@@ -137,6 +141,7 @@ function renderWorkspace(overrides: Partial<Parameters<typeof ReviewWorkspace>[0
     onOpenTraining: vi.fn(),
     onCompleteTraining: vi.fn(),
     onStudyIssue: vi.fn(),
+    onRunPositionAnalysis: vi.fn(),
     ...overrides,
   };
   render(<ReviewWorkspace {...props}/>);
@@ -144,6 +149,13 @@ function renderWorkspace(overrides: Partial<Parameters<typeof ReviewWorkspace>[0
 }
 
 describe("ReviewWorkspace", () => {
+  it("opens current-position engine hints and runs the requested analysis", async () => {
+    const props = renderWorkspace({ engineHintRequest: 1 });
+    expect(await screen.findByText("当前局面引擎提示")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "分析当前局面" }));
+    expect(props.onRunPositionAnalysis).toHaveBeenCalledOnce();
+  });
+
   it("renders a dedicated review route and report insight", () => {
     renderWorkspace();
     expect(screen.getByRole("button", { name: /炮二平五/ })).toBeTruthy();
