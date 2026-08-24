@@ -129,3 +129,12 @@ jobs:
             - Linux x64：本轮 GitHub Release 暂不打包，后续需要时再启用
           releaseDraft: true
           prerelease: false
+
+      - name: Verify packaged Windows runtime
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $executable = Get-ChildItem -Path target, apps/desktop/src-tauri/target -Filter xiangqi-desktop.exe -Recurse |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $executable) { throw "Packaged xiangqi-desktop.exe was not found." }
+          ./scripts/verify-windows-runtime.ps1 -Executable $executable

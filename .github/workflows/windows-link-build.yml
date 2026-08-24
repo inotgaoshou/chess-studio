@@ -45,6 +45,14 @@ jobs:
         shell: pwsh
         run: pnpm --dir apps/desktop tauri build --target x86_64-pc-windows-msvc --bundles nsis
 
+      - name: Verify packaged Windows runtime
+        shell: pwsh
+        run: |
+          $executable = Get-ChildItem -Path target, apps/desktop/src-tauri/target -Filter xiangqi-desktop.exe -Recurse |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $executable) { throw "Packaged xiangqi-desktop.exe was not found." }
+          ./scripts/verify-windows-runtime.ps1 -Executable $executable
+
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
         with:
