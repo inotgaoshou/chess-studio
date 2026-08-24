@@ -8682,8 +8682,46 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 /* These must follow compact-layout rules so review owns both remaining columns. */
 @media (min-width: 901px) {
   .workspace.layout-compact.review-mode-active {
-    grid-template-columns: minmax(0, 1fr) minmax(360px, 420px);
+    grid-template-columns: minmax(620px, 62vw) minmax(360px, 1fr);
     overflow: hidden;
+  }
+  /* Review keeps the same large, responsive board canvas as research. The
+     * review controls scroll in their own column instead of capping pieces at
+     * the compact dashboard's 620px board width. */
+  .workspace.layout-compact.review-mode-active .board-stage-inner {
+    width: min(100cqw, calc(100cqh * .903225806 + 148px), 1000px);
+    height: min(100cqh, calc((100cqw - 148px) * 1.107142857), 1108px);
+    grid-template-columns: minmax(0, 900px) 54px;
+  }
+  .workspace.layout-compact.review-mode-active .board-stage-inner.has-master-identity {
+    width: min(100cqw, calc(100cqh * .903225806 + 148px), 1140px);
+    height: min(100cqh, calc((100cqw - 148px) * 1.107142857), 1108px);
+    grid-template-columns: 86px minmax(0, 900px) 54px;
+  }
+  .workspace.layout-compact.review-mode-active .board-stage {
+    place-items: start start;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+  .workspace.layout-compact.review-mode-active .board-stage-inner {
+    justify-self: start;
+  }
+  .workspace.layout-compact.review-mode-active .review-workbench {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .workspace.layout-compact.review-mode-active .review-workbench-insights {
+    display: inline-flex;
+  }
+  .workspace.layout-compact.review-mode-active .review-insights {
+    display: none;
+    grid-row: 2;
+  }
+  .workspace.layout-compact.review-mode-active .review-workbench.insight-open .review-route {
+    display: none;
+  }
+  .workspace.layout-compact.review-mode-active .review-workbench.insight-open .review-insights {
+    display: flex;
   }
   .workspace.layout-compact.review-mode-active > .board-section {
     grid-column: 1;

@@ -27,6 +27,9 @@ start() {
   )
   (
     cd "$ROOT"
+    set -a
+    source "$ROOT/.env"
+    set +a
     nohup "$ROOT/target/debug/xiangqi-server" >"$LOG_FILE" 2>&1 &
     echo $! >"$PID_FILE"
   )
