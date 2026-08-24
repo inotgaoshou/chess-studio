@@ -24,16 +24,39 @@ if (-not $dumpbin) {
   throw "dumpbin.exe is unavailable; cannot verify Windows runtime dependencies."
 }
 
-$installRoot = Join-Path $env:RUNNER_TEMP "xiangqi-studio-runtime-check-$([guid]::NewGuid())"
+$extractRoot = Join-Path $env:RUNNER_TEMP "xiangqi-studio-runtime-check-$([guid]::NewGuid())"
+$sevenZipCandidates = @(
+  (Get-Command 7z.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source),
+  (Join-Path $env:ProgramFiles "7-Zip\7z.exe")
+) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
+$sevenZip = $sevenZipCandidates | Select-Object -First 1
+if (-not $sevenZip) {
+  throw "7-Zip is unavailable; cannot inspect the Windows NSIS installer payload."
+}
+
 try {
-  & $resolvedInstaller /S "/D=$installRoot"
-  if ($LASTEXITCODE -notin @(0, 3010)) {
-    throw "NSIS installer failed with exit code $LASTEXITCODE"
+  # NSIS command-line install directories are not reliable in a non-interactive
+  # GitHub runner. Inspect the actual bundled archive instead of assuming a
+  # silent install created a particular directory.
+  & $sevenZip x $resolvedInstaller "-o$extractRoot" -y | Out-Host
+  if ($LASTEXITCODE -ne 0) {
+    throw "7-Zip failed to extract the NSIS installer with exit code $LASTEXITCODE"
   }
 
-  $binaries = Get-ChildItem -Path $installRoot -Recurse -File -Include *.exe, *.dll
+  $binaries = Get-ChildItem -Path $extractRoot -Recurse -File -Include *.exe, *.dll
   if ($binaries.Count -eq 0) {
-    throw "The NSIS installer did not install any executable or DLL payload."
+    throw "The NSIS installer does not contain any executable or DLL payload."
+  }
+
+  $redistPayload = Get-ChildItem -Path $extractRoot -Recurse -File -Filter VC_redist.x64.exe |
+    Select-Object -First 1
+  if (-not $redistPayload) {
+    throw "The NSIS installer does not include VC_redist.x64.exe for clean Windows installations."
+  }
+  $expectedRedistHash = (Get-FileHash -LiteralPath $resolvedRedistInstaller -Algorithm SHA256).Hash
+  $bundledRedistHash = (Get-FileHash -LiteralPath $redistPayload.FullName -Algorithm SHA256).Hash
+  if ($bundledRedistHash -ne $expectedRedistHash) {
+    throw "The NSIS installer contains a VC_redist.x64.exe that does not match the verified download."
   }
 
   $runtimeImports = [System.Collections.Generic.List[string]]::new()
@@ -49,13 +72,13 @@ try {
   }
 
   if ($runtimeImports.Count -gt 0 -and -not (Test-Path -LiteralPath $resolvedRedistInstaller)) {
-    throw "The packaged payload needs the Visual C++ runtime but VC_redist.x64.exe is not available."
+    throw "The packaged payload needs the Visual C++ runtime but the verified redistributable source is unavailable."
   }
   if ($runtimeImports.Count -gt 0) {
-    Write-Host "Verified bundled VC++ runtime for: $($runtimeImports -join '; ')"
+    Write-Host "Verified bundled VC++ runtime ($($redistPayload.FullName)) for: $($runtimeImports -join '; ')"
   } else {
-    Write-Host "Verified a static Windows runtime across the installed payload."
+    Write-Host "Verified a static Windows runtime across the NSIS payload."
   }
 } finally {
-  Remove-Item -LiteralPath $installRoot -Recurse -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $extractRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
