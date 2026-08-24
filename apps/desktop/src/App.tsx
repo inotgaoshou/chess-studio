@@ -6926,6 +6926,7 @@ export default function App() {
               </div>
             </div>
           )}
+          {reviewModeOpen && !isMobileWorkbench && playbackControls("review-board-playback")}
           <div className="board-statusbar">
             {candidatePreview && previewStep
               ? <span className="last-move-status">预览着法：<strong>{previewStep.movedBy}</strong> {previewStep.notation}</span>
@@ -7056,7 +7057,6 @@ export default function App() {
             positionAnalysisError={analysisError}
             positionAnalysisFen={analysisFen}
             engineHintRequest={reviewEngineHintRequest}
-            playbackControls={playbackControls("review-playback")}
             onClose={() => void exitReviewMode()}
             onNavigate={(nodeId) => void navigateTo(nodeId)}
             onGenerateReport={() => void generateGameReport()}

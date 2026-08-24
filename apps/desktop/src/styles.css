@@ -3494,6 +3494,7 @@ body.analysis-reopen-dragging * {
 .playback-controls .variation-jump small { font-size: 11px; }
 .playback-controls > span { min-width: 0; color: #7f8a84; text-align: right; font-size: 11px; white-space: nowrap; }
 .playback-controls > span strong { color: #cdd4d0; font-size: 11px; }
+.workspace.review-mode-active .review-board-playback { width: min(calc(100% - 16px), 420px); min-height: 38px; margin: 4px 8px 0; align-self: start; grid-template-columns: repeat(5, 34px) 46px minmax(0, 1fr); border: 1px solid var(--border); border-radius: 5px; background: var(--surface-1); }.workspace.review-mode-active .review-board-playback button { width: 32px; height: 32px; border-color: var(--border-strong); background: var(--surface-2); color: var(--text-secondary); }.workspace.review-mode-active .review-board-playback .variation-jump { width: 44px; }.workspace.review-mode-active .review-board-playback .playback-tail { justify-self: end; color: var(--text-muted); font-size: 11px; white-space: nowrap; }
 .move-review-pane { min-height: 0; display: grid; grid-template-rows: minmax(82px, 1fr) auto minmax(54px, .55fr); overflow: hidden; }
 .tree-review-pane { grid-template-rows: minmax(0, 1fr) auto auto; }
 

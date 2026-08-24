@@ -124,7 +124,6 @@ function renderWorkspace(overrides: Partial<Parameters<typeof ReviewWorkspace>[0
     positionAnalysisBusy: false,
     positionAnalysisFen: undefined,
     engineHintRequest: 0,
-    playbackControls: <div aria-label="棋谱播放控制">播放控制</div>,
     onClose: vi.fn(),
     onNavigate: vi.fn(),
     onGenerateReport: vi.fn(),
@@ -163,6 +162,7 @@ describe("ReviewWorkspace", () => {
     expect(screen.getByLabelText("复盘进度")).toBeTruthy();
     expect(within(screen.getByLabelText("复盘路线")).queryByText("录谱")).toBeNull();
     expect(screen.getByLabelText("复盘洞察")).toBeTruthy();
+    expect(screen.queryByLabelText("棋谱播放控制")).toBeNull();
     expect(screen.getAllByText("88分").length).toBeGreaterThan(0);
   });
 
