@@ -132,7 +132,7 @@ export function ReviewWorkspace({
   positionAnalysis, positionAnalysisBusy, positionAnalysisError, positionAnalysisFen, engineHintRequest,
   onClose, onNavigate, onGenerateReport, onCancelReport, onExportReport, onOpenReport, onImport, onImportScreenshot, onPaste, onManualRecord, onSaveLibrary, onOpenFlyknife, onGenerateTraining, onOpenTraining, onCompleteTraining, onStudyIssue, onStartU10, onRunPositionAnalysis,
 }: ReviewWorkspaceProps) {
-  const [tab, setTab] = useState<InsightTab>("engine");
+  const [tab, setTab] = useState<InsightTab>("report");
   const [moveScope, setMoveScope] = useState<MoveScope>("issues");
   const [issueSide, setIssueSide] = useState<"red" | "black">("red");
   const [expandedIssue, setExpandedIssue] = useState<string>();

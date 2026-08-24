@@ -89,6 +89,9 @@ export type BookLessonNode = {
   explanation: string;
   bookVariation?: string;
   practiceLine?: string[];
+  lessonKind?: "flyknife" | "practicalDefense" | "trap";
+  variationNotation?: string[];
+  variationNotes?: string[];
 };
 export type BookSourceMetadata = { bookTitle: string; page: string; gameNo: string; authorization: string; sourceKind: "book" | "userImport" };
 export type BookTopicDetail = {

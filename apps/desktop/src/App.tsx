@@ -7646,6 +7646,7 @@ export default function App() {
         enginePath={enginePath}
         threads={threads}
         hashMb={hashMb}
+        onOpenEngineSettings={() => setDesktopDialog("engine")}
       />}
       <nav className="mobile-nav" aria-label="移动端导航">
         <button className={mobilePanel === "board" ? "active" : ""} onClick={() => setMobilePanel("board")}><LayoutGrid size={19}/><span>棋盘</span></button>

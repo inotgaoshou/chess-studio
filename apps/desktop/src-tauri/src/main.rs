@@ -14396,6 +14396,20 @@ mod tests {
     }
 
     #[test]
+    fn book_game_53_trap_variation_replays_legally() {
+        let detail: serde_json::Value = serde_json::from_str(include_str!("../resources/book-topics/game-53/detail.json")).unwrap();
+        let mainline = detail["mainline"].as_array().unwrap().iter().map(|value| value.as_str().unwrap().to_owned()).collect::<Vec<_>>();
+        let lesson = detail["lessonNodes"].as_array().unwrap().iter().find(|item| item["id"] == "trap-defense").unwrap();
+        let ply = lesson["ply"].as_u64().unwrap() as usize;
+        let base = preview_line_steps(STARTING_FEN, &mainline[..ply]).unwrap().pop().unwrap();
+        let variation = lesson["variationNotation"].as_array().unwrap().iter().map(|value| value.as_str().unwrap().to_owned()).collect::<Vec<_>>();
+        let parsed = parse_chinese_line(base.fen, variation).unwrap();
+
+        assert_eq!(parsed.moves.len(), 12);
+        assert_eq!(parsed.steps.last().unwrap().notation, "相三进五");
+    }
+
+    #[test]
     fn chinese_line_parser_reports_the_illegal_step_in_chinese() {
         let error = parse_chinese_line(
             STARTING_FEN.into(),
