@@ -10,15 +10,6 @@ on:
         description: "Release tag, for example v1.0.0"
         required: true
         default: "v1.0.0"
-      platform:
-        description: "Build platform"
-        required: true
-        default: "all"
-        type: choice
-        options:
-          - windows
-          - macos
-          - all
 
 concurrency:
   group: release-${{ github.event.inputs.tag || github.ref_name }}
@@ -31,46 +22,19 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  select_build_platforms:
-    name: Select release platforms
-    runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.targets.outputs.matrix }}
-    steps:
-      - id: targets
-        run: |
-          if [ "${{ github.event.inputs.platform || 'all' }}" = "all" ]; then
-            matrix='{"include":[{"name":"Windows x64","platform":"windows-x64","os":"windows-latest","rust_target":"x86_64-pc-windows-msvc","tauri_args":"--target x86_64-pc-windows-msvc --bundles nsis"},{"name":"macOS Apple Silicon","platform":"macos-arm64","os":"macos-latest","rust_target":"aarch64-apple-darwin","tauri_args":"--target aarch64-apple-darwin"}]}'
-          elif [ "${{ github.event.inputs.platform }}" = "macos" ]; then
-            matrix='{"include":[{"name":"macOS Apple Silicon","platform":"macos-arm64","os":"macos-latest","rust_target":"aarch64-apple-darwin","tauri_args":"--target aarch64-apple-darwin"}]}'
-          else
-            matrix='{"include":[{"name":"Windows x64","platform":"windows-x64","os":"windows-latest","rust_target":"x86_64-pc-windows-msvc","tauri_args":"--target x86_64-pc-windows-msvc --bundles nsis"}]}'
-          fi
-          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
-
-  build:
-    needs: [select_build_platforms]
-    name: ${{ matrix.name }}
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.select_build_platforms.outputs.matrix) }}
-
-    runs-on: ${{ matrix.os }}
+  build_windows:
+    name: Windows x64
+    runs-on: windows-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
       - name: Install Windows 7z
-        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           choco install 7zip -y --no-progress
           "C:\Program Files\7-Zip" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-
-      - name: Install macOS 7z
-        if: runner.os == 'macOS'
-        run: brew install p7zip
 
       # setup-node resolves the pnpm cache during this step, so pnpm must exist first.
       - name: Setup pnpm
@@ -91,7 +55,7 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.rust_target }}
+          targets: x86_64-pc-windows-msvc
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
@@ -100,7 +64,6 @@ jobs:
             . -> target
 
       - name: Download Microsoft VC++ Runtime
-        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $runtime = Join-Path $env:RUNNER_TEMP "VC_redist.x64.exe"
@@ -108,10 +71,9 @@ jobs:
           "VC_REDIST_X64_PATH=$runtime" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Build release asset
-        run: pnpm --dir apps/desktop tauri build ${{ matrix.tauri_args }}
+        run: pnpm --dir apps/desktop tauri build --target x86_64-pc-windows-msvc --bundles nsis
 
       - name: Verify packaged Windows runtime
-        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $installer = Get-ChildItem -Path target/x86_64-pc-windows-msvc/release/bundle/nsis -Filter *.exe -File |
@@ -122,12 +84,12 @@ jobs:
       - name: Upload verified release assets
         uses: actions/upload-artifact@v4
         with:
-          name: release-${{ matrix.platform }}
+          name: release-windows-x64
           if-no-files-found: error
-          path: target/${{ matrix.rust_target }}/release/bundle/**
+          path: target/x86_64-pc-windows-msvc/release/bundle/**
 
   publish:
-    needs: [build]
+    needs: [build_windows]
     runs-on: ubuntu-latest
     steps:
       - name: Download verified release assets
@@ -153,14 +115,10 @@ jobs:
 
             ## 包说明
 
-            - macOS Apple Silicon：内置 Apple Silicon Pikafish 与窗口连线识别模型
             - Windows x64：内置 Pikafish SSE4.1/POPCNT、窗口连线识别模型和 VC++ Runtime
             - 开局库和棋理资料包不随安装包分发，后续按需提供
           draft: true
           prerelease: false
           files: |
             release-assets/**/*.exe
-            release-assets/**/*.dmg
-            release-assets/**/*.tar.gz
-            release-assets/**/*.sig
           fail_on_unmatched_files: true
