@@ -9179,6 +9179,39 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 .temporary-board-help { color:#64748b; text-align:center; font-size:10px; }.temporary-prediction-strip { min-width:0; min-height:102px; padding:8px 9px; border:1px solid #d9e4ec; border-radius:5px; background:#f8fafc; display:grid; grid-template-rows:auto minmax(0, 1fr) auto; gap:6px; font-size:10px; }.temporary-prediction-strip > header { display:flex; justify-content:space-between; gap:8px; }.temporary-prediction-strip > header small, .temporary-prediction-steps > span { color:#64748b; }.temporary-prediction-steps { min-height:0; display:flex; flex-wrap:wrap; align-content:start; gap:5px; overflow:auto; }.temporary-prediction-steps button, .temporary-prediction-strip > footer button { min-height:25px; padding:0 7px; border:1px solid #cbd8e3; border-radius:4px; background:#fff; color:#334155; display:inline-flex; align-items:center; gap:4px; font-size:10px; }.temporary-prediction-steps button.active { border-color:#2687f2; background:#eaf4ff; color:#1263b5; }.temporary-prediction-steps b { display:grid; width:15px; height:15px; place-items:center; border-radius:50%; background:#eaf4ff; color:#1263b5; font-size:9px; }.temporary-prediction-strip > footer { min-height:25px; display:flex; justify-content:space-between; gap:5px; }.temporary-prediction-strip > footer > span { margin-left:auto; display:inline-flex; gap:5px; }.temporary-continue-from-step { border-color:#8bc3f6 !important; color:#1263b5 !important; background:#eaf4ff !important; }.temporary-line-error { margin:0; padding:6px 8px; border-left:3px solid #d34e44; background:#fff1f0; color:#b42318; font-size:10px; }
 .game53-focus ol { margin:0; padding-left:18px; color:#475569; font-size:11px; line-height:1.55; }.game53-answer-hidden { grid-template-columns:auto minmax(0, 1fr); align-items:start; border-left:3px solid #64748b; }.game53-answer-hidden > svg { color:#64748b; }.game53-answer-hidden > div { display:grid; gap:4px; }.game53-result { border-left:3px solid #e1a138; }.game53-result.correct { border-left-color:#15936a; }
 .review-engine-hints { min-height:0; display:grid; align-content:start; gap:10px; overflow:auto; padding:12px; }.review-engine-hints > header { display:flex; align-items:start; justify-content:space-between; gap:8px; }.review-engine-hints > header > div { display:grid; gap:3px; }.review-engine-hints > header strong { font-size:14px; }.review-engine-hints > header small { color:var(--text-muted); font-size:11px; }.review-engine-hints > header button { min-height:29px; white-space:nowrap; }.review-engine-lines { display:grid; gap:7px; }.review-engine-lines article { display:grid; gap:5px; padding:9px; border:1px solid var(--border); border-left:3px solid var(--accent); background:var(--surface-1); }.review-engine-lines article > div { display:flex; justify-content:space-between; gap:8px; }.review-engine-lines article strong { color:var(--warning); }.review-engine-lines article small { overflow:hidden; color:var(--text-secondary); font-size:11px; line-height:1.45; text-overflow:ellipsis; white-space:nowrap; }
+
+/* Keep learning conclusions readable in the narrow review rail; raw engine data is opt-in. */
+.review-engine-verdict { margin:0; color:var(--text-primary); font-size:12px; font-weight:700; }
+.review-engine-pv { margin:0; color:var(--text-secondary); font-size:11px; line-height:1.5; display:-webkit-box; overflow:hidden; -webkit-box-orient:vertical; -webkit-line-clamp:2; }
+.review-engine-pv.expanded { display:block; overflow-wrap:anywhere; }
+.review-engine-expand { justify-self:start; min-height:25px; padding:0; border:0; background:transparent; color:var(--accent); font-size:11px; font-weight:700; }
+.review-engine-expand:hover { text-decoration:underline; }
+.review-engine-details { overflow:visible !important; color:var(--text-muted) !important; text-overflow:clip !important; white-space:normal !important; }
+.review-issue-main { grid-template-rows:auto auto auto auto; align-items:start; }
+.review-issue-main > span { grid-row:1 / span 4; }
+.review-issue-main small { overflow:visible; white-space:normal; text-overflow:clip; line-height:1.35; }
+.review-issue-position { color:var(--text-secondary) !important; }
+.review-issue-recommendation { color:var(--accent) !important; font-weight:700; }
+.review-issue-actions { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); justify-content:stretch; }
+.review-issue-actions button { min-width:0; }
+.review-issue-engine-details { overflow-wrap:anywhere; color:var(--text-muted); }
+
+.evaluation-trend { display:grid; gap:8px; }
+.evaluation-trend svg { width:100%; height:190px; display:block; overflow:visible; }
+.report-trend .evaluation-trend svg { height:170px; margin-top:8px; }
+.evaluation-trend .trend-grid { stroke:var(--border); stroke-width:1; stroke-dasharray:4 5; vector-effect:non-scaling-stroke; }
+.evaluation-trend .trend-grid:nth-of-type(2) { stroke:var(--border-strong); stroke-dasharray:none; }
+.evaluation-trend .trend-equal-band { fill:color-mix(in srgb, var(--warning) 16%, transparent); }
+.evaluation-trend .trend-path { fill:none; stroke-width:2.6; stroke-linecap:round; stroke-linejoin:round; vector-effect:non-scaling-stroke; }
+.evaluation-trend .trend-path.red { stroke:var(--red); }
+.evaluation-trend .trend-path.black { stroke:var(--black-side); }
+.evaluation-trend circle { fill:var(--surface-1); stroke:var(--accent); stroke-width:1.4; vector-effect:non-scaling-stroke; cursor:pointer; opacity:.22; transition:opacity .15s, r .15s; }
+.evaluation-trend circle.current, .evaluation-trend circle.hovered { fill:var(--accent); stroke:var(--surface-1); opacity:1; }
+.evaluation-trend .trend-current-line { stroke:var(--accent); stroke-width:1.1; stroke-dasharray:4 4; vector-effect:non-scaling-stroke; pointer-events:none; }
+.evaluation-trend .trend-current-node { fill:var(--accent); stroke:var(--surface-1); stroke-width:1.8; vector-effect:non-scaling-stroke; pointer-events:none; opacity:1; }
+.evaluation-trend-summary { display:grid; grid-template-columns:auto minmax(0, 1fr) auto; gap:8px; align-items:center; color:var(--text-muted); font-size:10px; }
+.evaluation-trend-summary strong { overflow:hidden; color:var(--text-primary); text-align:center; text-overflow:ellipsis; white-space:nowrap; font-size:11px; }
+@media (max-width: 420px) { .review-issue-actions { grid-template-columns:1fr 1fr; }.review-issue-actions button:last-child { grid-column:span 2; }.evaluation-trend-summary { grid-template-columns:1fr; gap:2px; }.evaluation-trend-summary strong { text-align:left; white-space:normal; } }
 @media (max-width: 900px) { .game53-study-dialog { height:calc(100vh - 18px); width:calc(100vw - 18px); }.game53-study-layout { overflow:auto; grid-template-columns:1fr; }.game53-board-column { min-height:560px; border-right:0; border-bottom:1px solid #d9e4ec; }.game53-learning-column { min-height:620px; }.game53-board { width:min(100%, 460px); }.game53-lessons { grid-template-columns:1fr; }.game53-lessons button { height:31px; justify-content:flex-start; } }
 .book-topic-images { display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:10px; }
 .book-topic-images img { width:100%; max-height:420px; object-fit:contain; background:#edf1f4; border:1px solid #d8e1e9; }

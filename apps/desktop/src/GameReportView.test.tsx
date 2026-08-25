@@ -153,4 +153,13 @@ describe("GameReportDialog", () => {
     expect(screen.getByText("局面 -240 · 变化 -500")).toBeTruthy();
     expect(screen.getByText("红方损失 500cp · 质量 0分")).toBeTruthy();
   });
+
+  it("uses the shared smooth trend chart and navigates from its current point", async () => {
+    const onNavigate = vi.fn();
+    render(<GameReportDialog report={report} exporting={false} onClose={vi.fn()} onExport={vi.fn()} onRegenerate={vi.fn()} onNavigate={onNavigate} onStudy={vi.fn()} currentNode="move-1"/>);
+
+    expect(document.querySelector(".report-trend .trend-path")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: /炮二平五，局面接近均势，点击跳转/ }));
+    expect(onNavigate).toHaveBeenCalledWith("move-1");
+  });
 });

@@ -11,6 +11,11 @@ function GradeBadge({ grade, missedMate = false }: { grade?: QualityGrade; misse
   return <span className={`quality-grade grade-${grade}`}>{grade}{missedMate && <em>漏杀</em>}</span>;
 }
 
+function signedPawnScore(scoreCp: number) {
+  const score = Math.round(scoreCp);
+  return score > 0 ? `+${score}` : `${score}`;
+}
+
 function styleRankText(rank?: number) {
   return rank ? `MultiPV 第 ${rank}` : "未进入 MultiPV";
 }

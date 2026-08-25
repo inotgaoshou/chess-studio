@@ -219,18 +219,36 @@ describe("ReviewWorkspace", () => {
   it("navigates from trend points", async () => {
     const props = renderWorkspace();
     await userEvent.click(screen.getByRole("tab", { name: "局势趋势" }));
-    fireEvent.click(screen.getByRole("button", { name: /炮二平五 -240，点击跳转/ }));
+    expect(document.querySelector(".evaluation-trend .trend-path")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /炮二平五，黑方优势 -240 cp，点击跳转/ }));
     expect(props.onNavigate).toHaveBeenCalledWith("move-1");
   });
 
-  it("groups issues by side and shows coach explanation", async () => {
+  it("groups issues by side and explains the learning conclusion before engine details", async () => {
     const props = renderWorkspace();
     await userEvent.click(screen.getByRole("tab", { name: "关键着法" }));
     expect(screen.getByRole("button", { name: /红方 1/ })).toBeTruthy();
-    await userEvent.click(screen.getByRole("button", { name: /显示解说/ }));
+    expect(screen.getByText("差招 · 这步损失约 4.2 兵")).toBeTruthy();
+    expect(screen.getByText("走后：黑方优势 -240 cp")).toBeTruthy();
+    expect(screen.getByText("建议先走：马二进三")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "查看原因" }));
     expect(screen.getByText("出子节奏偏慢。")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "查看引擎详情" }));
+    expect(screen.getByText(/原始局面分：-240 cp · 本步损失：420 cp/)).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: /推演/ }));
     expect(props.onStudyIssue).toHaveBeenCalledWith("move-1");
+  });
+
+  it("keeps a long candidate line readable and expands it on demand", async () => {
+    renderWorkspace({
+      engineHintRequest: 1,
+      positionAnalysisFen: board.fen,
+      positionAnalysis: [{ multipv: 1, depth: 24, scoreCp: 174, notation: ["马三进四", "炮8进三", "马九进七", "车三平二", "车4退2", "马九进八"], pv: ["g0f2"] }],
+    });
+    expect(await screen.findByText("红方优势 +174 cp")).toBeTruthy();
+    expect(screen.getByText("马三进四 炮8进三 马九进七 车三平二 车4退2 马九进八")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "展开完整线路" }));
+    expect(screen.getByRole("button", { name: "收起线路" })).toBeTruthy();
   });
 
   it("shows archive controls for an unarchived game", async () => {
