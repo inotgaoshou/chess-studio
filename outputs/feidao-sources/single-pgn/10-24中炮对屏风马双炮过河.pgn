@@ -1,9 +1,0 @@
-[Event "象棋布局陷阱100局"]
-[Site "xiangqiqipu.com"]
-[Title "24中炮对屏风马双炮过河"]
-[Opening "中炮对屏风马双炮过河"]
-[Source "https://www.xiangqiqipu.com/Category/View-6549.html"]
-[Library "飞刀/布局陷阱专题"]
-[Result "*"]
-
-1. h2e2 h9g7 2. h0g2 g6g5 3. b0c2 b9c7 4. c3c4 c9e7 5. i0h0 i9h9 6. c2d4 h7h3 7. f0e1 b7b3 8. c4c5 c6c5 9. d4b3 c5c4 10. b3d2 c4d4 11. d2b3 d4d3 12. b3d4 a9b9 13. b2a2 b9b4 14. d4c6 b4b6 15. c6d4 b6d6 16. d4b3 d3c3 *
