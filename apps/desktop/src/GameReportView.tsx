@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { Activity, Download, GitFork, X } from "lucide-react";
 import { CoachRadar } from "./CoachRadar";
+import { EvaluationTrendChart } from "./EvaluationTrendChart";
 import type { GameReportPresentationDto, QualityGrade, ReportPhase } from "./platform";
 
 const phaseLabels: Record<ReportPhase, string> = { opening: "开局", middle: "中局", endgame: "残局" };
@@ -8,11 +9,6 @@ const phaseLabels: Record<ReportPhase, string> = { opening: "开局", middle: "�
 function GradeBadge({ grade, missedMate = false }: { grade?: QualityGrade; missedMate?: boolean }) {
   if (!grade) return <span className="quality-grade empty">--</span>;
   return <span className={`quality-grade grade-${grade}`}>{grade}{missedMate && <em>漏杀</em>}</span>;
-}
-
-function signedPawnScore(scoreCp: number) {
-  const score = Math.round(scoreCp);
-  return score > 0 ? `+${score}` : `${score}`;
 }
 
 function styleRankText(rank?: number) {
@@ -23,61 +19,11 @@ function styleSourceText(hint: NonNullable<GameReportPresentationDto["issues"][n
   return [hint.eventName, hint.gameDate, `第 ${hint.ply} 手`].filter(Boolean).join(" · ");
 }
 
-function ReportTrend({ report }: { report: GameReportPresentationDto }) {
-  const geometry = useMemo(() => {
-    if (report.trend.length === 0) return undefined;
-    const width = 760;
-    const height = 180;
-    const values = report.trend.map((sample) => Math.max(-1000, Math.min(1000, sample.scoreCp)));
-    const points = values.map((value, index) => ({
-      ...report.trend[index],
-      x: report.trend.length === 1 ? width / 2 : index * width / (report.trend.length - 1),
-      y: height / 2 - value / 1000 * (height / 2 - 12),
-    }));
-    const lines = points.slice(1).flatMap((point, index) => {
-      const prev = points[index];
-      const prevValue = prev.scoreCp;
-      const nextValue = point.scoreCp;
-      if ((prevValue >= 0 && nextValue >= 0) || (prevValue <= 0 && nextValue <= 0)) {
-        return [{ from: prev, to: point, side: prevValue >= 0 || nextValue >= 0 ? "red" : "black" }];
-      }
-      const ratio = Math.abs(prevValue) / (Math.abs(prevValue) + Math.abs(nextValue));
-      const zero = {
-        ...point,
-        x: prev.x + (point.x - prev.x) * ratio,
-        y: height / 2,
-        scoreCp: 0,
-      };
-      return [
-        { from: prev, to: zero, side: prevValue > 0 ? "red" : "black" },
-        { from: zero, to: point, side: nextValue > 0 ? "red" : "black" },
-      ];
-    });
-    const ticks = [
-      { label: "+1000", value: 1000 },
-      { label: "+500", value: 500 },
-      { label: "0", value: 0 },
-      { label: "-500", value: -500 },
-      { label: "-1000", value: -1000 },
-    ].map((tick) => ({
-      ...tick,
-      y: height / 2 - tick.value / 1000 * (height / 2 - 12),
-    }));
-    return { width, height, points, lines, ticks };
-  }, [report.trend]);
-  if (!geometry) return <div className="report-trend-empty">暂无可绘制的局势数据</div>;
+function ReportTrend({ report, currentNode, onNavigate }: { report: GameReportPresentationDto; currentNode?: string; onNavigate(nodeId: string): void }) {
+  if (report.trend.length === 0) return <div className="report-trend-empty">暂无可绘制的局势数据</div>;
   return <section className="report-trend" aria-labelledby="report-trend-title">
     <header><strong id="report-trend-title">局势走势</strong><small>红方视角 · 原始 cp · ±50 为均势区</small></header>
-    <svg viewBox={`-10 -10 ${geometry.width + 20} ${geometry.height + 20}`} role="img" aria-label="整局局势分数走势图">
-      <rect className="trend-equal-band" x="0" y={geometry.height / 2 - 4.2} width={geometry.width} height="8.4"/>
-      {geometry.ticks.map((tick) => <g key={tick.label}>
-        <line className={`trend-grid-line ${tick.value === 0 ? "zero-tick" : ""}`} x1="0" y1={tick.y} x2={geometry.width} y2={tick.y}/>
-        <text x="4" y={tick.y - 3}>{tick.label}</text>
-      </g>)}
-      <line className="trend-zero" x1="0" y1={geometry.height / 2} x2={geometry.width} y2={geometry.height / 2}/>
-      {geometry.lines.map((line, index) => <line key={index} className={`trend-segment ${line.side}`} x1={line.from.x} y1={line.from.y} x2={line.to.x} y2={line.to.y}/>)}
-      {geometry.points.map((point, index) => <circle key={`${point.nodeId ?? "root"}-${index}`} cx={point.x} cy={point.y} r="4"><title>{point.label}：{signedPawnScore(point.scoreCp)}</title></circle>)}
-    </svg>
+    <EvaluationTrendChart points={report.trend} currentNode={currentNode} onNavigate={onNavigate} ariaLabel="整局局势趋势图"/>
   </section>;
 }
 
@@ -137,7 +83,7 @@ export function GameReportView({ report, currentNode, disabled = false, onNaviga
       </details>
     </section>
     <CoachRadar red={report.red} black={report.black}/>
-    <ReportTrend report={report}/>
+    <ReportTrend report={report} currentNode={currentNode} onNavigate={onNavigate}/>
     <section className="phase-scores">
       <header><span>阶段</span><span>红方</span><span>黑方</span></header>
       {(["opening", "middle", "endgame"] as const).map((phase) => <div key={phase}>
