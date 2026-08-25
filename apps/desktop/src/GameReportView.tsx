@@ -1,7 +1,7 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Activity, Download, GitFork, X } from "lucide-react";
 import { CoachRadar } from "./CoachRadar";
-import { EvaluationTrendChart } from "./EvaluationTrendChart";
+import { EvaluationTrendChart, redAdvantageLabel } from "./EvaluationTrendChart";
 import type { GameReportPresentationDto, QualityGrade, ReportPhase } from "./platform";
 
 const phaseLabels: Record<ReportPhase, string> = { opening: "开局", middle: "中局", endgame: "残局" };
@@ -32,6 +32,29 @@ function ReportTrend({ report, currentNode, onNavigate }: { report: GameReportPr
   </section>;
 }
 
+function ReportIssueCard({ move, index, active, disabled, analysisDepth, onNavigate, onStudy }: {
+  move: GameReportPresentationDto["issues"][number];
+  index: number;
+  active: boolean;
+  disabled: boolean;
+  analysisDepth?: number;
+  onNavigate(): void;
+  onStudy(): void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [engineExpanded, setEngineExpanded] = useState(false);
+  return <div className={`report-issue-row ${active ? "active" : ""}`}>
+    <button className="report-issue-location" aria-label={`定位${move.notation}`} disabled={disabled} onClick={onNavigate}>
+      <span>{index + 1}</span><i className={move.movedBy === "红方" ? "red" : "black"}/><strong>实战：{move.notation}</strong>
+      <span className="report-issue-score"><small>走后：{redAdvantageLabel(move.redScoreCp)}{move.opening ? ` · 官着 ${move.opening.name}` : ""}</small><em>{move.missedMate ? "错过直接取胜机会" : `损失约 ${(move.lossCp / 100).toFixed(1)} 兵`}{move.bestNotation ? ` · 建议先走 ${move.bestNotation}` : ""}</em></span>
+      <GradeBadge grade={move.grade} missedMate={move.missedMate}/>
+    </button>
+    <div className="report-issue-actions"><button type="button" disabled={disabled} aria-expanded={expanded} onClick={() => setExpanded((open) => !open)}>{expanded ? "收起原因" : "查看原因"}</button><button className="coach-study-action" disabled={disabled} title={`回到 ${move.notation} 之前推演`} onClick={onStudy}><GitFork size={13}/>自由推演</button></div>
+    {expanded && <><div className="report-issue-coach"><p><strong>为什么</strong>{move.coach.weakness}</p><p><strong>怎么改</strong>{move.coach.solution}</p>{move.bestNotation && <p><strong>推荐变化</strong>{move.bestNotation}{move.pvNotation?.length ? ` · ${move.pvNotation.join(" ")}` : ""}</p>}<button type="button" className="review-engine-expand" disabled={disabled} aria-expanded={engineExpanded} onClick={() => setEngineExpanded((open) => !open)}>{engineExpanded ? "收起引擎详情" : "查看引擎详情"}</button>{engineExpanded && <p className="report-issue-engine-details">原始局面分：{signedPawnScore(move.redScoreCp)} cp · 本步损失：{move.lossCp} cp · 质量：{move.score} 分 · 分析深度：{analysisDepth ?? "--"}</p>}{!!move.trainingTags?.length && <div className="report-issue-training-tags" aria-label={`${move.notation}训练法归因`}>{move.trainingTags.map((tag) => <span key={tag}>{tag}</span>)}</div>}{move.reviewPrompt && <p><strong>复盘</strong>{move.reviewPrompt}</p>}</div>
+      {!!move.masterStyleHints?.length && <div className="report-issue-master-style"><strong>赵鑫鑫风格启发</strong>{move.masterStyleHints.slice(0, 2).map((hint) => <article key={hint.sampleId}><header><span>{hint.confidence === "exact" ? "相同局面" : "相似参考"}</span><em>{hint.playerName}公开棋谱曾走 {hint.playedMove} · {styleRankText(hint.playedMoveRank)}</em></header><p>{hint.reason}；{styleSourceText(hint) || hint.sourceTitle}</p>{!!hint.theoryCards.length && <ul>{hint.theoryCards.slice(0, 2).map((card) => <li key={card.id}>棋理依据：{card.title}{card.sourceBook ? `（${card.sourceBook}${card.sourcePageStart ? ` p.${card.sourcePageStart}` : ""}）` : ""}</li>)}</ul>}</article>)}</div>}</>}
+  </div>;
+}
+
 export type GameReportViewProps = {
   report: GameReportPresentationDto;
   currentNode?: string;
@@ -41,7 +64,6 @@ export type GameReportViewProps = {
 };
 
 export function GameReportView({ report, currentNode, disabled = false, onNavigate, onStudy }: GameReportViewProps) {
-  const recommendationLabel = report.analysisDepth ? `深度${report.analysisDepth}推荐` : "AI推荐";
   return <div className="game-report-document">
     {report.stale && <div className="stale-report">线路已变化，此报告已过期</div>}
     <section className="report-meta-grid">
@@ -101,34 +123,7 @@ export function GameReportView({ report, currentNode, disabled = false, onNaviga
       <header><strong>关键问题着法</strong><span>{report.issues.length}</span></header>
       {report.issues.length === 0
         ? <p>当前线路没有达到“差”或“错”的着法。</p>
-        : report.issues.map((move, index) => <div key={move.nodeId} className={`report-issue-row ${currentNode === move.nodeId ? "active" : ""}`}>
-          <button className="report-issue-location" aria-label={`定位${move.notation}`} disabled={disabled} onClick={() => onNavigate(move.nodeId)}>
-            <span>{index + 1}</span><i className={move.movedBy === "红方" ? "red" : "black"}/><strong>{move.notation}</strong>
-            <span className="report-issue-score"><small>局面 {signedPawnScore(move.redScoreCp)} · 变化 {signedPawnScore(move.deltaCp)}{move.opening ? ` · 官着 ${move.opening.name}` : ""}</small><em>{move.movedBy}损失 {move.lossCp}cp · 质量 {move.score}分{move.bestNotation ? ` · ${recommendationLabel} ${move.bestNotation}` : ""}</em></span>
-            <GradeBadge grade={move.grade} missedMate={move.missedMate}/>
-          </button>
-          <button className="coach-study-action" disabled={disabled} title={`回到 ${move.notation} 之前推演`} onClick={() => onStudy(move.nodeId)}><GitFork size={13}/>推演</button>
-          <div className="report-issue-coach">
-            <p><strong>目的</strong>{move.coach.intent}</p>
-            <p><strong>弱点</strong>{move.coach.weakness}</p>
-            <p><strong>方案</strong>{move.coach.solution}</p>
-            {!!move.trainingTags?.length && <div className="report-issue-training-tags" aria-label={`${move.notation}训练法归因`}>{move.trainingTags.map((tag) => <span key={tag}>{tag}</span>)}</div>}
-            {move.reviewPrompt && <p><strong>复盘</strong>{move.reviewPrompt}</p>}
-          </div>
-          {!!move.masterStyleHints?.length && <div className="report-issue-master-style">
-            <strong>赵鑫鑫风格启发</strong>
-            {move.masterStyleHints.slice(0, 2).map((hint) => <article key={hint.sampleId}>
-              <header>
-                <span>{hint.confidence === "exact" ? "相同局面" : "相似参考"}</span>
-                <em>{hint.playerName}公开棋谱曾走 {hint.playedMove} · {styleRankText(hint.playedMoveRank)}</em>
-              </header>
-              <p>{hint.reason}；{styleSourceText(hint) || hint.sourceTitle}</p>
-              {!!hint.theoryCards.length && <ul>
-                {hint.theoryCards.slice(0, 2).map((card) => <li key={card.id}>棋理依据：{card.title}{card.sourceBook ? `（${card.sourceBook}${card.sourcePageStart ? ` p.${card.sourcePageStart}` : ""}）` : ""}</li>)}
-              </ul>}
-            </article>)}
-          </div>}
-        </div>)}
+        : report.issues.map((move, index) => <ReportIssueCard key={move.nodeId} move={move} index={index} active={currentNode === move.nodeId} disabled={disabled} analysisDepth={report.analysisDepth} onNavigate={() => onNavigate(move.nodeId)} onStudy={() => onStudy(move.nodeId)}/>)}
     </section>
     <section className="score-standards">
       <header><strong>评分标准</strong><small>质量分与五档等级的统一对应关系</small></header>

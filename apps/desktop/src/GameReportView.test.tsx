@@ -87,13 +87,14 @@ const report: GameReportPresentationDto = {
 };
 
 describe("GameReportDialog", () => {
-  it("shows the full report and closes with Escape", () => {
+  it("shows the full report and closes with Escape", async () => {
     const onClose = vi.fn();
     render(<GameReportDialog report={report} exporting={false} onClose={onClose} onExport={vi.fn()} onRegenerate={vi.fn()} onNavigate={vi.fn()} onStudy={vi.fn()}/>);
 
     expect(screen.getByRole("dialog", { name: "测试棋局整局分析报告" })).toBeTruthy();
     expect(screen.getByText("线路已变化，此报告已过期")).toBeTruthy();
     expect(screen.getByText("私教建议与变招命名")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "查看原因" }));
     expect(screen.getByText("赵鑫鑫风格启发")).toBeTruthy();
     expect(screen.getByText(/赵鑫鑫公开棋谱曾走 h2e2/)).toBeTruthy();
     expect(screen.getByText(/棋理依据：布局阶段先协调强子/)).toBeTruthy();
@@ -142,16 +143,20 @@ describe("GameReportDialog", () => {
     const onStudy = vi.fn();
     render(<GameReportDialog report={report} exporting={false} onClose={onClose} onExport={vi.fn()} onRegenerate={vi.fn()} onNavigate={vi.fn()} onStudy={onStudy}/>);
 
-    await userEvent.click(screen.getByRole("button", { name: "推演" }));
+    await userEvent.click(screen.getByRole("button", { name: "自由推演" }));
     expect(onStudy).toHaveBeenCalledWith("move-1");
     expect(onClose).toHaveBeenCalledOnce();
   });
 
-  it("shows raw position change separately from move quality", () => {
+  it("keeps child-friendly issue summaries ahead of expandable engine data", async () => {
     render(<GameReportDialog report={report} exporting={false} onClose={vi.fn()} onExport={vi.fn()} onRegenerate={vi.fn()} onNavigate={vi.fn()} onStudy={vi.fn()}/>);
 
-    expect(screen.getByText("局面 -240 · 变化 -500")).toBeTruthy();
-    expect(screen.getByText("红方损失 500cp · 质量 0分")).toBeTruthy();
+    expect(screen.getByText("走后：黑方优势 -240 cp")).toBeTruthy();
+    expect(screen.getByText("错过直接取胜机会")).toBeTruthy();
+    expect(screen.queryByText(/原始局面分：-240 cp/)).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "查看原因" }));
+    await userEvent.click(screen.getByRole("button", { name: "查看引擎详情" }));
+    expect(screen.getByText(/原始局面分：-240 cp · 本步损失：500 cp/)).toBeTruthy();
   });
 
   it("uses the shared smooth trend chart and navigates from its current point", async () => {

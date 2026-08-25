@@ -9207,10 +9207,12 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 .evaluation-trend .trend-path.black { stroke:var(--black-side); }
 .evaluation-trend circle { fill:var(--surface-1); stroke:var(--accent); stroke-width:1.4; vector-effect:non-scaling-stroke; cursor:pointer; opacity:.22; transition:opacity .15s, r .15s; }
 .evaluation-trend circle.current, .evaluation-trend circle.hovered { fill:var(--accent); stroke:var(--surface-1); opacity:1; }
+.evaluation-trend circle.turning { fill:var(--warning); stroke:var(--surface-1); opacity:1; }
 .evaluation-trend .trend-current-line { stroke:var(--accent); stroke-width:1.1; stroke-dasharray:4 4; vector-effect:non-scaling-stroke; pointer-events:none; }
 .evaluation-trend .trend-current-node { fill:var(--accent); stroke:var(--surface-1); stroke-width:1.8; vector-effect:non-scaling-stroke; pointer-events:none; opacity:1; }
 .evaluation-trend-summary { display:grid; grid-template-columns:auto minmax(0, 1fr) auto; gap:8px; align-items:center; color:var(--text-muted); font-size:10px; }
 .evaluation-trend-summary strong { overflow:hidden; color:var(--text-primary); text-align:center; text-overflow:ellipsis; white-space:nowrap; font-size:11px; }
+.report-issue-actions { display:flex; gap:6px; padding:0 10px 8px; }.report-issue-actions button { min-height:28px; padding:0 8px; border:1px solid var(--border-strong); border-radius:4px; background:var(--surface-2); color:var(--text-primary); font-size:11px; }.report-issue-engine-details { overflow-wrap:anywhere; color:var(--text-muted); }
 @media (max-width: 420px) { .review-issue-actions { grid-template-columns:1fr 1fr; }.review-issue-actions button:last-child { grid-column:span 2; }.evaluation-trend-summary { grid-template-columns:1fr; gap:2px; }.evaluation-trend-summary strong { text-align:left; white-space:normal; } }
 @media (max-width: 900px) { .game53-study-dialog { height:calc(100vh - 18px); width:calc(100vw - 18px); }.game53-study-layout { overflow:auto; grid-template-columns:1fr; }.game53-board-column { min-height:560px; border-right:0; border-bottom:1px solid #d9e4ec; }.game53-learning-column { min-height:620px; }.game53-board { width:min(100%, 460px); }.game53-lessons { grid-template-columns:1fr; }.game53-lessons button { height:31px; justify-content:flex-start; } }
 .book-topic-images { display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:10px; }

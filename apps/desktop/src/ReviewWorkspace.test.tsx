@@ -220,7 +220,8 @@ describe("ReviewWorkspace", () => {
     const props = renderWorkspace();
     await userEvent.click(screen.getByRole("tab", { name: "局势趋势" }));
     expect(document.querySelector(".evaluation-trend .trend-path")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /炮二平五，黑方优势 -240 cp，点击跳转/ }));
+    expect(document.querySelector(".evaluation-trend circle.turning")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /炮二平五，黑方优势 -240 cp，关键转折，点击跳转/ }));
     expect(props.onNavigate).toHaveBeenCalledWith("move-1");
   });
 

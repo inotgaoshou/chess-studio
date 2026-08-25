@@ -83,7 +83,9 @@ export function EvaluationTrendChart({ points, currentNode, onNavigate, classNam
       {geometry.chartPoints.map((point, index) => {
         const current = point.nodeId === currentNode;
         const hovered = index === hoveredIndex;
-        return <circle key={`${point.nodeId ?? "root"}-${index}`} className={`${current ? "current" : ""} ${hovered ? "hovered" : ""}`.trim()} cx={point.x} cy={point.y} r={current || hovered ? 5 : 2.5} role={point.nodeId ? "button" : undefined} tabIndex={point.nodeId ? 0 : undefined} aria-label={point.nodeId ? `${point.label}，${redAdvantageLabel(point.scoreCp)}，点击跳转` : undefined} onMouseEnter={() => setHoveredIndex(index)} onMouseLeave={() => setHoveredIndex(undefined)} onFocus={() => setHoveredIndex(index)} onBlur={() => setHoveredIndex(undefined)} onClick={() => point.nodeId && onNavigate?.(point.nodeId)} onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && point.nodeId) onNavigate?.(point.nodeId); }}>
+        const delta = point.deltaCp ?? (index > 0 ? point.scoreCp - geometry.chartPoints[index - 1].scoreCp : 0);
+        const turning = Math.abs(delta) >= 120;
+        return <circle key={`${point.nodeId ?? "root"}-${index}`} className={`${current ? "current" : ""} ${hovered ? "hovered" : ""} ${turning ? "turning" : ""}`.trim()} cx={point.x} cy={point.y} r={current || hovered || turning ? 5 : 2.5} role={point.nodeId ? "button" : undefined} tabIndex={point.nodeId ? 0 : undefined} aria-label={point.nodeId ? `${point.label}，${redAdvantageLabel(point.scoreCp)}${turning ? "，关键转折" : ""}，点击跳转` : undefined} onMouseEnter={() => setHoveredIndex(index)} onMouseLeave={() => setHoveredIndex(undefined)} onFocus={() => setHoveredIndex(index)} onBlur={() => setHoveredIndex(undefined)} onClick={() => point.nodeId && onNavigate?.(point.nodeId)} onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && point.nodeId) onNavigate?.(point.nodeId); }}>
           <title>{point.label}：{redAdvantageLabel(point.scoreCp)}</title>
         </circle>;
       })}
