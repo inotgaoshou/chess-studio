@@ -1,4 +1,0 @@
-[target.x86_64-pc-windows-msvc]
-# Release builds must not require a separate Visual C++ Redistributable just
-# to start the desktop executable on a player's Windows machine.
-rustflags = ["-C", "target-feature=+crt-static"]
