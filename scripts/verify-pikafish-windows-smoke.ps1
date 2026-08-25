@@ -51,10 +51,6 @@ try {
   $process.StandardInput.WriteLine("isready")
   $process.StandardInput.Flush()
   Read-Until "^readyok\s*$" 20 "NNUE readyok" | Out-Null
-  $readyOutput = $outputLines -join "`n"
-  if ($readyOutput -notmatch "NNUE evaluation using .*pikafish\.nnue") {
-    throw "Pikafish did not report loading pikafish.nnue before readyok.`n$readyOutput"
-  }
 
   $process.StandardInput.WriteLine("position startpos")
   $process.StandardInput.WriteLine("go depth 1")
@@ -71,6 +67,10 @@ try {
   )
   if ($legalStartMoves -notcontains $bestMove) {
     throw "Pikafish returned a move that is not legal in the Xiangqi start position: $bestMove"
+  }
+  $searchOutput = $outputLines -join "`n"
+  if ($searchOutput -notmatch "NNUE evaluation using .*pikafish\.nnue") {
+    throw "Pikafish did not report loading pikafish.nnue during search.`n$searchOutput"
   }
   $process.StandardInput.WriteLine("quit")
   $process.StandardInput.Close()
