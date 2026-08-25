@@ -98,6 +98,32 @@ function ReviewTrendChart({ report, currentNode, onNavigate }: { report?: GameRe
   return <section className="review-trend"><EvaluationTrendChart points={report.trend} currentNode={currentNode} onNavigate={(nodeId) => onNavigate(nodeId)} height={190} ariaLabel="复盘局势趋势图"/></section>;
 }
 
+function IssueCard({ issue, index, active, expanded, engineExpanded, analysisDepth, onNavigate, onToggleExplanation, onToggleEngine, onStartU10, onStudy }: {
+  issue: ReportIssuePresentationDto;
+  index: number;
+  active: boolean;
+  expanded: boolean;
+  engineExpanded: boolean;
+  analysisDepth?: number;
+  onNavigate(): void;
+  onToggleExplanation(): void;
+  onToggleEngine(): void;
+  onStartU10(): void;
+  onStudy(): void;
+}) {
+  const lossPawns = (issue.lossCp / 100).toFixed(1);
+  return <article className={`review-issue-card ${active ? "active" : ""}`}>
+    <button type="button" className="review-issue-main" onClick={onNavigate}>
+      <span>{index + 1}</span><strong>实战：{issue.notation}</strong>
+      <small>{issue.missedMate ? "错过了直接取胜机会" : `${issue.grade}招 · 这步损失约 ${lossPawns} 兵`}</small>
+      <small className="review-issue-position">走后：{redAdvantageLabel(issue.redScoreCp)}</small>
+      {issue.bestNotation && <small className="review-issue-recommendation">建议先走：{issue.bestNotation}</small>}
+    </button>
+    <div className="review-issue-actions"><button type="button" aria-expanded={expanded} onClick={onToggleExplanation}>{expanded ? "收起原因" : "查看原因"}</button><button type="button" onClick={onStartU10}><Brain size={12}/>开始拆棋</button><button type="button" onClick={onStudy}><GitFork size={12}/>自由推演</button></div>
+    {expanded && <div className="review-issue-coach"><p><strong>为什么</strong>{issue.coach.weakness}</p><p><strong>怎么改</strong>{issue.coach.solution}</p>{issue.bestNotation && <p><strong>推荐变化</strong>{issue.bestNotation}{issue.pvNotation?.length ? ` · ${issue.pvNotation.slice(0, 8).join(" ")}` : ""}</p>}<button type="button" className="review-engine-expand" aria-expanded={engineExpanded} onClick={onToggleEngine}>{engineExpanded ? "收起引擎详情" : "查看引擎详情"}</button>{engineExpanded && <p className="review-issue-engine-details">原始局面分：{signedCp(issue.redScoreCp)} cp · 本步损失：{issue.lossCp} cp · 分析深度：{analysisDepth ?? "--"}{issue.pvNotation?.length ? ` · 完整推荐线：${issue.pvNotation.join(" ")}` : ""}</p>}</div>}
+  </article>;
+}
+
 export function ReviewWorkspace({
   board, report, reportBusy, reportExporting, reportProgress, engineReady, libraryFolder, libraryFolders, favorite, libraryTags, flyknifePlanCount, trainingTasks, trainingGenerating, trainingGeneration, analysisConfig,
   positionAnalysis, positionAnalysisBusy, positionAnalysisError, positionAnalysisFen, engineHintRequest,
@@ -298,7 +324,18 @@ export function ReviewWorkspace({
             : positionAnalysisBusy ? <div className="review-empty"><Activity size={25}/><strong>正在分析当前局面</strong><span>候选着法会在引擎返回后显示。</span></div>
               : positionAnalysisError ? <div className="review-empty"><Activity size={25}/><strong>引擎提示获取失败</strong><span>{positionAnalysisError}</span><button type="button" onClick={onRunPositionAnalysis}>重新分析</button></div>
                 : positionAnalysisFen !== board.fen || positionAnalysis.length === 0 ? <div className="review-empty"><Activity size={25}/><strong>还没有当前局面提示</strong><span>点击“分析当前局面”，查看最佳着法和候选变化。</span><button type="button" onClick={onRunPositionAnalysis}>开始分析</button></div>
-                  : <div className="review-engine-lines">{positionAnalysis.map((line) => <article key={`${line.multipv}-${line.pv[0] ?? "empty"}`}><div><b>{line.multipv}. {line.notation?.[0] ?? line.pv[0] ?? "暂无着法"}</b><strong>{engineScore(line)}</strong></div><small>深度 {line.depth ?? "--"} · {line.notation?.join(" ") || line.pv.join(" ")}</small></article>)}</div>}
+                  : <div className="review-engine-lines">{positionAnalysis.map((line) => {
+                    const lineKey = `${line.multipv}-${line.pv[0] ?? "empty"}`;
+                    const moves = line.notation?.join(" ") || line.pv.join(" ");
+                    const expanded = expandedEngineLine === lineKey;
+                    return <article key={lineKey}>
+                      <div><b>推荐 {line.multipv} · {line.notation?.[0] ?? line.pv[0] ?? "暂无着法"}</b><strong>{engineScore(line)}</strong></div>
+                      <p className="review-engine-verdict">{line.scoreCp == null ? "引擎正在补充局面判断" : redAdvantageLabel(line.scoreCp)}</p>
+                      <p className={`review-engine-pv ${expanded ? "expanded" : ""}`}>{moves || "暂未返回后续着法"}</p>
+                      {moves && <button type="button" className="review-engine-expand" aria-expanded={expanded} onClick={() => setExpandedEngineLine(expanded ? undefined : lineKey)}>{expanded ? "收起线路" : "展开完整线路"}</button>}
+                      <small className="review-engine-details">引擎详情：深度 {line.depth ?? "--"} · 评分 {engineScore(line)} · MultiPV {line.multipv}</small>
+                    </article>;
+                  })}</div>}
         </section>}
         {tab === "report" && <section className="review-report" role="tabpanel">{!activeReport ? <div className="review-empty"><Activity size={25}/><strong>{report?.stale ? "报告需要重新生成" : "尚未生成整局报告"}</strong><span>报告完成后可查看红黑评分、阶段表现、关键失误与学习建议。</span><button type="button" className="primary" disabled={!engineReady || reportBusy || !hasRecordedMoves} onClick={onGenerateReport}>生成整局报告</button></div> : <><div className="review-scorebar">{([model.red, model.black] as const).map((side) => <article className={sideClass(side.side)} key={side.side}><small>{side.side} · {side.player}</small><strong>{side.overall}</strong><span>{side.phaseText}</span><em>{side.issues} 个失误 · 漏杀 {side.missedMate}</em></article>)}</div><div className="review-report-meta"><span>引擎：{activeReport.engineLabel || "Pikafish"}</span><span>深度：{activeReport.analysisDepth ?? "--"}</span><span>耗时：{(activeReport.totalElapsedMs / 1000).toFixed(1)}s</span><span>缓存：{activeReport.cachedPositions}</span></div><section className="review-phase-table" aria-label="阶段评分">{(["opening", "middle", "endgame"] as const).map((phase) => <div key={phase}><strong>{phase === "opening" ? "开局" : phase === "middle" ? "中局" : "残局"}</strong><span className="red">{scoreDisplay(activeReport.red.phases[phase])}</span><span className="black">{scoreDisplay(activeReport.black.phases[phase])}</span></div>)}</section><section className="review-coach"><strong>{activeReport.coachInsights.branchName}</strong><p>{activeReport.coachInsights.branchPurpose}</p><ul>{activeReport.coachInsights.studyPlan.slice(0, 3).map((item) => <li key={item}>{item}</li>)}</ul></section><div className="review-report-actions"><button type="button" onClick={onOpenReport}><Eye size={13}/>完整报告</button><button type="button" disabled={reportExporting} onClick={onExportReport}><Download size={13}/>{reportExporting ? "导出中" : "PDF"}</button></div></>}</section>}
         {tab === "trend" && <ReviewTrendChart report={activeReport} currentNode={board.currentNode} onNavigate={onNavigate}/>}
