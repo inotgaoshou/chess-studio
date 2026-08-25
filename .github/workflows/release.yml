@@ -145,7 +145,7 @@ jobs:
           draft: true
           prerelease: false
           fail_on_unmatched_files: true
-          files: release-assets/*.exe
+          files: release-assets/**/*.exe
           body: |
             ## Windows x64
 
