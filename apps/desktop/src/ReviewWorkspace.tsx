@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Activity, BarChart3, Brain, CheckCircle2, ChevronRight, ClipboardPaste, ClipboardList, Download, Eye, FileText, FolderArchive, GitFork, Heart, Image, Play, Plus, RefreshCw, Swords, X } from "lucide-react";
 import type { AnalysisLine, BoardState, GameReportPresentationDto, GameReportProgressDto, LibraryFolder, ReportIssuePresentationDto, Side, TrainingGenerationResultDto, TrainingTaskDto } from "./platform/types";
 import { buildReviewModel, signedCp } from "./reviewModel";
+import { EvaluationTrendChart, redAdvantageLabel } from "./EvaluationTrendChart";
 
 type InsightTab = "engine" | "report" | "trend" | "issues" | "training";
 type MoveScope = "issues" | "all";
@@ -93,37 +94,8 @@ function flyknifeRouteMeta(comment: string) {
 }
 
 function ReviewTrendChart({ report, currentNode, onNavigate }: { report?: GameReportPresentationDto; currentNode?: string; onNavigate(nodeId?: string): void }) {
-  const geometry = useMemo(() => {
-    const trend = report?.trend ?? [];
-    if (trend.length === 0) return undefined;
-    const width = 360;
-    const height = 156;
-    const middle = height / 2;
-    const points = trend.map((point, index) => {
-      const score = Math.max(-1000, Math.min(1000, point.scoreCp));
-      return { ...point, x: trend.length === 1 ? width / 2 : index * width / (trend.length - 1), y: middle - score / 1000 * (middle - 12) };
-    });
-    const segments = points.slice(1).flatMap((point, index) => {
-      const previous = points[index];
-      if ((previous.scoreCp >= 0 && point.scoreCp >= 0) || (previous.scoreCp <= 0 && point.scoreCp <= 0)) return [{ from: previous, to: point, side: previous.scoreCp >= 0 || point.scoreCp >= 0 ? "red" : "black" }];
-      const ratio = Math.abs(previous.scoreCp) / (Math.abs(previous.scoreCp) + Math.abs(point.scoreCp));
-      const zero = { ...point, x: previous.x + (point.x - previous.x) * ratio, y: middle, scoreCp: 0 };
-      return [{ from: previous, to: zero, side: previous.scoreCp > 0 ? "red" : "black" }, { from: zero, to: point, side: point.scoreCp > 0 ? "red" : "black" }];
-    });
-    return { width, height, middle, points, segments };
-  }, [report]);
-  if (!geometry) return <div className="review-empty"><BarChart3 size={25}/><strong>等待整局报告</strong><span>生成报告后会显示每个关键节点的红黑优劣变化。</span></div>;
-  const active = geometry.points.find((point) => point.nodeId === currentNode) ?? geometry.points.at(-1);
-  return <section className="review-trend">
-    <div className="review-trend-legend"><span>红方优势</span><strong>{active ? `${active.label} · ${signedCp(active.scoreCp)}` : "--"}</strong><span>黑方优势</span></div>
-    <svg viewBox={`-8 -8 ${geometry.width + 16} ${geometry.height + 16}`} role="img" aria-label="复盘局势图">
-      <rect className="trend-equal-band" x="0" y={geometry.middle - 4} width={geometry.width} height="8"/>
-      <line className="trend-grid" x1="0" y1="12" x2={geometry.width} y2="12"/><line className="trend-grid middle" x1="0" y1={geometry.middle} x2={geometry.width} y2={geometry.middle}/><line className="trend-grid" x1="0" y1={geometry.height - 12} x2={geometry.width} y2={geometry.height - 12}/>
-      {geometry.segments.map((segment, index) => <line key={index} className={`trend-segment ${segment.side}`} x1={segment.from.x} y1={segment.from.y} x2={segment.to.x} y2={segment.to.y}/>)}
-      {geometry.points.map((point, index) => <circle key={`${point.nodeId ?? "root"}-${index}`} className={point.nodeId === currentNode ? "current" : ""} cx={point.x} cy={point.y} r={point.nodeId === currentNode ? 5 : 3.5} role={point.nodeId ? "button" : undefined} tabIndex={point.nodeId ? 0 : undefined} aria-label={point.nodeId ? `${point.label} ${signedCp(point.scoreCp)}，点击跳转` : undefined} onClick={() => point.nodeId && onNavigate(point.nodeId)} onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && point.nodeId) onNavigate(point.nodeId); }}><title>{point.label}：{signedCp(point.scoreCp)}</title></circle>)}
-    </svg>
-    <div className="review-trend-axis"><span>+1000</span><span>红方视角 cp</span><span>-1000</span></div>
-  </section>;
+  if (!report?.trend.length) return <div className="review-empty"><BarChart3 size={25}/><strong>等待整局报告</strong><span>生成报告后会显示每个关键节点的红黑优劣变化。</span></div>;
+  return <section className="review-trend"><EvaluationTrendChart points={report.trend} currentNode={currentNode} onNavigate={(nodeId) => onNavigate(nodeId)} height={190} ariaLabel="复盘局势趋势图"/></section>;
 }
 
 export function ReviewWorkspace({
@@ -135,6 +107,8 @@ export function ReviewWorkspace({
   const [moveScope, setMoveScope] = useState<MoveScope>("issues");
   const [issueSide, setIssueSide] = useState<"red" | "black">("red");
   const [expandedIssue, setExpandedIssue] = useState<string>();
+  const [expandedEngineLine, setExpandedEngineLine] = useState<string>();
+  const [expandedEngineIssue, setExpandedEngineIssue] = useState<string>();
   const [showInsights, setShowInsights] = useState(false);
   const [archiveEditorOpen, setArchiveEditorOpen] = useState(false);
   const [archiveFolderDraft, setArchiveFolderDraft] = useState(libraryFolder ?? "");
