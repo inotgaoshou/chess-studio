@@ -8,7 +8,7 @@
 
 ## Bundled engine
 
-桌面包可随应用分发 `apps/desktop/src-tauri/resources/pikafish/` 与 `apps/desktop/src-tauri/resources/fairy-stockfish/` 两个引擎资源目录。Pikafish 与 Fairy-Stockfish 必须分目录放置，不能混用 `.nnue`；Fairy-Stockfish 在应用内会按中国象棋模式配置为 `UCI_Variant=xiangqi`。Fairy 的独立网络为官方 [Fairy-Stockfish-NNUE](https://github.com/fairy-stockfish/Fairy-Stockfish-NNUE) 的 `xiangqi-c07e94a5c7cb.nnue`，与 Fairy 可执行文件一起打包。象棋旋风、象眼及其他引擎仅支持用户从“引擎设置”手动添加；若用户自行分发这些外部引擎或对应 `.nnue` 文件，必须随包保留其许可证、README 和源码获取方式。Fairy-Stockfish 项目采用 GPL-3.0；分发时须同时遵守 NNUE 仓库和发布说明中适用的许可与源码义务。
+桌面包随应用分发 `apps/desktop/src-tauri/resources/pikafish/` 中的 Pikafish 与固定版本 `pikafish.nnue`。发布时必须保留 Pikafish 的 `Copying.txt`、本通知和对应 NNUE 的来源与哈希记录，不能混入其他引擎或网络文件。Fairy-Stockfish、象棋旋风、象眼及其他第三方引擎不随应用分发。
 
 ## Built-in opening reference
 

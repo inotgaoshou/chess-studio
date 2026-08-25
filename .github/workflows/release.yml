@@ -63,14 +63,23 @@ jobs:
 
       - name: Prepare Windows engine resources
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           # The pinned 20260726 Windows binary and NNUE are committed because
           # this engine snapshot has no public upstream release asset.
           rm -f apps/desktop/src-tauri/resources/pikafish/pikafish
-          ./scripts/prepare-fairy-stockfish-resource.sh windows-x64
           ./scripts/verify-embedded-engine-resources.sh windows-x64
+
+      - name: Smoke test Pikafish NNUE
+        shell: pwsh
+        run: ./scripts/verify-pikafish-windows-smoke.ps1 -ResourceDirectory apps/desktop/src-tauri/resources/pikafish
+
+      - name: Report staged Windows resources
+        shell: pwsh
+        run: |
+          Get-ChildItem apps/desktop/src-tauri/resources -Recurse -File |
+            Sort-Object Length -Descending |
+            Select-Object -First 30 FullName, Length |
+            Format-Table -AutoSize
 
       - name: Download Microsoft VC++ Runtime
         shell: pwsh
@@ -97,14 +106,21 @@ jobs:
           $installer = Get-ChildItem -Path target/x86_64-pc-windows-msvc/release/bundle/nsis -Filter *.exe -File |
             Select-Object -First 1 -ExpandProperty FullName
           if (-not $installer) { throw "Windows NSIS installer was not found." }
-          ./scripts/verify-windows-runtime.ps1 -Installer $installer -RedistInstaller $env:VC_REDIST_X64_PATH
+          ./scripts/verify-windows-runtime.ps1 `
+            -Installer $installer `
+            -RedistInstaller $env:VC_REDIST_X64_PATH `
+            -SizeReportJson windows-package-size-report.json `
+            -SizeReportMarkdown windows-package-size-report.md
 
       - name: Upload verified Windows installer
         uses: actions/upload-artifact@v4
         with:
           name: Xiangqi-Studio-Windows-x64
           if-no-files-found: error
-          path: target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+          path: |
+            target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+            windows-package-size-report.json
+            windows-package-size-report.md
 
   publish:
     name: Draft GitHub release
@@ -134,7 +150,7 @@ jobs:
             ## Windows x64
 
             - NSIS 安装包，适用于 Windows 10/11 x64
-            - 内置 Pikafish、Fairy-Stockfish 及各自的中国象棋 NNUE
+            - 内置 Pikafish 及固定版本的中国象棋 NNUE
             - 内置 Microsoft Visual C++ Runtime，干净系统无需手动安装运行库
             - 包含窗口连线识别模型
 

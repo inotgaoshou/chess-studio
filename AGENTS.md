@@ -80,8 +80,7 @@ crates/sync-protocol   客户端/服务端共享同步 DTO
 ### 引擎分析
 
 - 支持本地 UCI/UCCI 引擎探测、握手、`position`/`go`/`bestmove` 流程。
-- 内置 Pikafish 与 Fairy-Stockfish；可配置外部 Pikafish、Fairy-Stockfish、象眼、旋风等 UCI/UCCI 引擎。
-- Fairy-Stockfish 必须自动设置 `UCI_Variant=xiangqi`，否则会按国际象棋模式给出错误走法和评分。
+- 仅内置 Pikafish 与固定版本的中国象棋 NNUE；Fairy-Stockfish 不再随应用分发或提供专用适配。
 - 内置引擎是应用资源，不应作为用户可删除档案；外部引擎档案可删除，删除只移除档案，不删除本机文件。
 - 引擎设置项包括：
   - 线程；
@@ -123,7 +122,7 @@ crates/sync-protocol   客户端/服务端共享同步 DTO
 - 主引擎负责默认箭头、总评、人机和报告。
 - 对比引擎只参与并行对比，不改变主引擎判断。
 - 多引擎面板支持收起、弹出和悬浮展示。
-- 内置 Pikafish 与内置 Fairy-Stockfish 是分开的资源目录和引擎档案。
+- 内置分析只使用 Pikafish；旧版保存的内置 Fairy 标识会迁移回 Pikafish。
 
 ### 云库 / 开局库
 
@@ -231,19 +230,18 @@ crates/sync-protocol   客户端/服务端共享同步 DTO
 - 本地 macOS 可用 `scripts/build-macos-release.sh` 打包。
 - 正式 macOS DMG 分发需要 Developer ID 签名和 Apple 公证，否则普通用户可能看到“已损坏/无法打开”。
 - GitHub Actions Release 当前构建 Windows x64 和 macOS Apple Silicon。
-- Windows x64 Release 内置 Pikafish SSE4.1/POPCNT、Fairy-Stockfish largeboard x64 和各自 NNUE。
-- macOS Apple Silicon Release 内置 Apple Silicon Pikafish、Fairy-Stockfish 和各自 NNUE。
+- Windows x64 Release 内置 Pikafish SSE4.1/POPCNT 和固定版本 `pikafish.nnue`。
+- macOS Apple Silicon Release 内置 Apple Silicon Pikafish 和固定版本 `pikafish.nnue`。
 - Linux 在 GitHub Release 暂未启用打包，等需要时再启用。
-- Pikafish 与 Fairy-Stockfish 必须分目录打包：
+- Pikafish 必须从独立资源目录打包：
 
 ```text
 apps/desktop/src-tauri/resources/pikafish/
-apps/desktop/src-tauri/resources/fairy-stockfish/
 ```
 
 - 构建前必须通过 `scripts/verify-embedded-engine-resources.sh <platform>` 校验对应平台引擎和 NNUE，避免缺引擎或混用网络文件的安装包流出。
 
-- 不要把 `pikafish.nnue` 当作 Fairy-Stockfish 的 NNUE。
+- 安装包不得包含 Fairy-Stockfish、Fairy NNUE 或非目标平台的 Pikafish 二进制。
 - 分发第三方引擎、NNUE、字体时必须保留相应许可证和 `THIRD_PARTY_NOTICES.md`。
 
 ## 重要偏好默认值
@@ -344,6 +342,5 @@ git push origin v1.0.0
 - “变招图 SVG”是分支图/结构图，不是普通棋谱 PDF。
 - 棋谱 PDF 是面向微信/手机阅读的棋谱文档，不应做成思维导图。
 - 本地库和自动出步相关入口仍需继续按真实样例完善；不要在说明中夸大为完整成熟能力。
-- Fairy-Stockfish macOS 官方二进制资源策略仍需谨慎；GitHub Release 的 macOS Apple Silicon 包默认从源码构建 Fairy 并内置官方 Xiangqi NNUE。
 - XQF/CBR 仍处于格式识别/边界状态，没有真实样例验证前不要开放为完整导入能力。
 - macOS 普通用户分发必须签名和公证；`xattr` 绕过只适合内测。

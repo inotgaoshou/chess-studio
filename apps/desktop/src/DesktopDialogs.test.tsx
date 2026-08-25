@@ -2,7 +2,9 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DesktopDialogs, engineDifficultyFromPreferences, engineDifficultyToDepth } from "./DesktopDialogs";
-import { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH, type DesktopPreferencesDto, type SyncAccountDto } from "./platform";
+import { BUILTIN_ENGINE_PATH, type DesktopPreferencesDto, type SyncAccountDto } from "./platform";
+
+const LEGACY_BUILTIN_FAIRY_ENGINE_PATH = "builtin:fairy-stockfish";
 
 const preferences: DesktopPreferencesDto = {
   enginePath: "/opt/pikafish",
@@ -95,7 +97,7 @@ describe("DesktopDialogs", () => {
 
   it("migrates legacy bundled Fairy preferences back to bundled Pikafish", async () => {
     const { props, user } = renderDialog("engine", {
-      preferences: { ...preferences, enginePath: BUILTIN_FAIRY_ENGINE_PATH, parallelEnginePaths: [BUILTIN_FAIRY_ENGINE_PATH] },
+      preferences: { ...preferences, enginePath: LEGACY_BUILTIN_FAIRY_ENGINE_PATH, parallelEnginePaths: [LEGACY_BUILTIN_FAIRY_ENGINE_PATH] },
     });
 
     expect((screen.getByLabelText("分析引擎") as HTMLInputElement).value).toBe("内置 Pikafish（随应用安装，推荐）");
@@ -114,7 +116,7 @@ describe("DesktopDialogs", () => {
         activeEngineId: "engine-2",
         analysisEngineMode: "parallel",
         parallelEngineIds: ["deleted-profile", "engine-2"],
-        parallelEnginePaths: [BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH],
+        parallelEnginePaths: [BUILTIN_ENGINE_PATH, LEGACY_BUILTIN_FAIRY_ENGINE_PATH],
       },
       engineProfiles: [
         { id: "engine-2", name: "当前主引擎", executablePath: "/engines/main", protocol: "ucci", active: true },

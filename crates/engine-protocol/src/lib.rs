@@ -265,7 +265,28 @@ impl EngineSession {
             Protocol::Uci => format!("setoption name {name} value {value}"),
             Protocol::Ucci => format!("setoption {name} {value}"),
         };
-        self.send(&command).await
+        self.send(&command).await?;
+        if name.eq_ignore_ascii_case("EvalFile") {
+            self.wait_for_options_ready(Duration::from_secs(10)).await?;
+        }
+        Ok(())
+    }
+
+    async fn wait_for_options_ready(&mut self, duration: Duration) -> Result<(), EngineError> {
+        self.send("isready").await?;
+        let future = async {
+            while let Some(line) = self.lines.next_line().await? {
+                if line.trim() == "readyok" {
+                    return Ok(true);
+                }
+            }
+            Ok::<bool, std::io::Error>(false)
+        };
+        match timeout(duration, future).await {
+            Ok(Ok(true)) => Ok(()),
+            Ok(Ok(false)) | Err(_) => Err(EngineError::HandshakeTimeout),
+            Ok(Err(error)) => Err(error.into()),
+        }
     }
 
     pub async fn analyze(
@@ -362,6 +383,7 @@ while IFS= read -r line; do
   printf '%s\n' "$line" >> "$log"
   case "$line" in
     uci) printf 'id name Mock UCI\nuciok\n' ;;
+    isready) printf 'readyok\n' ;;
     'go depth 1') printf 'info depth 1 score cp 12 multipv 1 pv a0a1\nbestmove a0a1\n' ;;
     'go depth 2') printf 'info depth 2 score cp 24 multipv 1 pv b0b1\nbestmove b0b1\n' ;;
     'go infinite') ;;
@@ -445,9 +467,20 @@ done
 
     #[cfg(unix)]
     #[tokio::test]
+    async fn configuring_eval_file_waits_for_engine_options_to_be_ready() {
+        let (_directory, engine, _log) = mock_engine();
+        let mut session = EngineSession::launch(&engine, Duration::from_secs(3))
+            .await
+            .unwrap();
+        session.configure("EvalFile", "pikafish.nnue").await.unwrap();
+        session.close().await.unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
     async fn one_mock_process_runs_searches_serially_and_stops_infinite_search() {
         let (_directory, engine, log) = mock_engine();
-        let mut session = EngineSession::launch(&engine, Duration::from_secs(1))
+        let mut session = EngineSession::launch(&engine, Duration::from_secs(3))
             .await
             .unwrap();
 
@@ -516,7 +549,7 @@ done
     #[tokio::test]
     async fn reports_when_mock_engine_exits_during_search() {
         let (_directory, engine, _log) = mock_engine();
-        let mut session = EngineSession::launch(&engine, Duration::from_secs(1))
+        let mut session = EngineSession::launch(&engine, Duration::from_secs(3))
             .await
             .unwrap();
         session

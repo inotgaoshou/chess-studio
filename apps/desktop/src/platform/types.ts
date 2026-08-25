@@ -350,7 +350,6 @@ export type MasterStyleProfileDto = {
 };
 export type MasterStyleImportResultDto = { profiles: MasterStyleProfileDto[]; importedSamples: number };
 export const BUILTIN_ENGINE_PATH = "builtin:pikafish";
-export const BUILTIN_FAIRY_ENGINE_PATH = "builtin:fairy-stockfish";
 export const DEFAULT_BUILTIN_OPENING_BOOK_ID = "learning-top3";
 export type WorkspaceLayoutMode = "studio" | "compact";
 export type ManualViewMode = "track" | "tree";

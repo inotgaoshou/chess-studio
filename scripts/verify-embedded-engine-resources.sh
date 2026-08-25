@@ -3,8 +3,6 @@ set -euo pipefail
 
 TARGET_PLATFORM="${1:?Usage: verify-embedded-engine-resources.sh <macos-arm64|macos-x64|windows-x64|linux-x64>}"
 PIKAFISH_RESOURCE_DIR="apps/desktop/src-tauri/resources/pikafish"
-FAIRY_RESOURCE_DIR="apps/desktop/src-tauri/resources/fairy-stockfish"
-FAIRY_XIANGQI_NNUE_NAME="xiangqi-c07e94a5c7cb.nnue"
 EXPECTED_PIKAFISH_RELEASE_LABEL="Pikafish-20260726"
 EXPECTED_PIKAFISH_VERSION_MARKER="Pikafish dev-20260726-b2180562"
 EXPECTED_PIKAFISH_MACOS_SHA256="8bc6653c922681789f271c6f89990befe859e541d609a9899ea29b1e8cc336d2"
@@ -96,7 +94,6 @@ case "$TARGET_PLATFORM" in
   macos-arm64|macos-x64|linux-x64)
     PIKAFISH_EXECUTABLE="$PIKAFISH_RESOURCE_DIR/pikafish"
     require_executable "$PIKAFISH_EXECUTABLE" "Pikafish executable for $TARGET_PLATFORM"
-    require_executable "$FAIRY_RESOURCE_DIR/fairy-stockfish" "Fairy-Stockfish executable for $TARGET_PLATFORM"
     if [[ "$TARGET_PLATFORM" == macos-* ]]; then
       require_sha256 "$PIKAFISH_EXECUTABLE" "$EXPECTED_PIKAFISH_MACOS_SHA256" "Pikafish $EXPECTED_PIKAFISH_RELEASE_LABEL macOS executable"
     fi
@@ -105,7 +102,6 @@ case "$TARGET_PLATFORM" in
     PIKAFISH_EXECUTABLE="$PIKAFISH_RESOURCE_DIR/pikafish.exe"
     require_file "$PIKAFISH_EXECUTABLE" "Pikafish executable for Windows x64"
     require_sha256 "$PIKAFISH_EXECUTABLE" "$EXPECTED_PIKAFISH_WINDOWS_SHA256" "Pikafish $EXPECTED_PIKAFISH_RELEASE_LABEL Windows executable"
-    require_file "$FAIRY_RESOURCE_DIR/fairy-stockfish.exe" "Fairy-Stockfish executable for Windows x64"
     ;;
   *)
     echo "Unknown target platform: $TARGET_PLATFORM" >&2
@@ -116,12 +112,30 @@ esac
 require_file "$PIKAFISH_RESOURCE_DIR/pikafish.nnue" "Pikafish NNUE"
 require_sha256 "$PIKAFISH_RESOURCE_DIR/pikafish.nnue" "$EXPECTED_PIKAFISH_NNUE_SHA256" "Pikafish NNUE $EXPECTED_PIKAFISH_NNUE_LABEL"
 require_pikafish_runtime_metadata "$PIKAFISH_EXECUTABLE"
-require_file "$FAIRY_RESOURCE_DIR/$FAIRY_XIANGQI_NNUE_NAME" "Fairy-Stockfish Xiangqi NNUE"
 reject_mixed_nnue "$PIKAFISH_RESOURCE_DIR" 'xiangqi-*.nnue' "Pikafish"
-reject_mixed_nnue "$FAIRY_RESOURCE_DIR" 'pikafish*.nnue' "Fairy-Stockfish"
+
+FORBIDDEN_FAIRY_RESOURCE="$(find apps/desktop/src-tauri/resources -type f \( -iname '*fairy*stockfish*' -o -iname '*fairy*.nnue' \) -print -quit 2>/dev/null || true)"
+if [[ -n "$FORBIDDEN_FAIRY_RESOURCE" ]]; then
+  echo "Refusing removed Fairy-Stockfish resource: $FORBIDDEN_FAIRY_RESOURCE" >&2
+  exit 1
+fi
+for forbidden in "$PIKAFISH_RESOURCE_DIR/fairy-stockfish" "$PIKAFISH_RESOURCE_DIR/fairy-stockfish.exe"; do
+  if [[ -e "$forbidden" ]]; then
+    echo "Refusing removed Fairy-Stockfish resource: $forbidden" >&2
+    exit 1
+  fi
+done
+
+if [[ "$TARGET_PLATFORM" == "windows-x64" ]]; then
+  FORBIDDEN_UNIX_PIKAFISH="$(find "$PIKAFISH_RESOURCE_DIR" -maxdepth 1 -type f -name 'pikafish*' ! -name '*.*' -print -quit 2>/dev/null || true)"
+  if [[ -n "$FORBIDDEN_UNIX_PIKAFISH" ]]; then
+    echo "Refusing non-Windows Pikafish executable: $FORBIDDEN_UNIX_PIKAFISH" >&2
+    exit 1
+  fi
+fi
 
 echo "Verified embedded engines and NNUE resources for $TARGET_PLATFORM:"
 echo "  Pikafish release: $EXPECTED_PIKAFISH_RELEASE_LABEL"
 echo "  Pikafish runtime: $EXPECTED_PIKAFISH_VERSION_MARKER"
 echo "  Pikafish NNUE: $EXPECTED_PIKAFISH_NNUE_LABEL ($EXPECTED_PIKAFISH_NNUE_SHA256)"
-find "$PIKAFISH_RESOURCE_DIR" "$FAIRY_RESOURCE_DIR" -maxdepth 1 -type f -print
+find "$PIKAFISH_RESOURCE_DIR" -maxdepth 1 -type f -print

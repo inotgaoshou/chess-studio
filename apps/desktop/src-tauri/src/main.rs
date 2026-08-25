@@ -82,9 +82,8 @@ unsafe extern "C" {
 }
 
 const BUILTIN_ENGINE_PATH: &str = "builtin:pikafish";
-const BUILTIN_FAIRY_ENGINE_PATH: &str = "builtin:fairy-stockfish";
 const PIKAFISH_260720_NNUE_SHA256: &str =
-    "sha256:3cd15292bf8c979884262f57fc723959fc0dea43b4d8d544f88db5ceb2479e24";
+    "3cd15292bf8c979884262f57fc723959fc0dea43b4d8d544f88db5ceb2479e24";
 const PIKAFISH_260720_NNUE_LABEL: &str = "权重260720";
 const THEORY_COURSE_ROOTS: [(&str, &str, &str); 3] = [
     (
@@ -6457,7 +6456,6 @@ async fn analyze_position(
     }
     let resolved_engine_path = resolve_engine_path(&app, &engine_path)?;
     let resolved_engine_path_text = resolved_engine_path.to_string_lossy().into_owned();
-    let resolved_engine_family = engine_family(&resolved_engine_path);
     // Analysis sessions are intentionally short-lived and independent so multiple
     // configured engines can search the same position concurrently.
     let session = EngineSession::launch(&resolved_engine_path, Duration::from_secs(2))
@@ -6494,7 +6492,7 @@ async fn analyze_position(
             &fen,
             &[],
             limit,
-            &engine_search_moves_for_family(&search_moves, resolved_engine_family),
+            &search_moves,
             false,
         )
         .await
@@ -6512,8 +6510,7 @@ async fn analyze_position(
     loop {
         match runtime.session.next_event().await {
             Ok(EngineEvent::Info(info)) if !info.pv.is_empty() => {
-                let line =
-                    analysis_line_from_engine_info(&analysis_board, info, resolved_engine_family);
+                let line = analysis_line_from_engine_info(&analysis_board, info);
                 if state.analysis_generation.load(Ordering::SeqCst) == analysis_generation {
                     emit_engine_event(
                         &app,
@@ -6530,12 +6527,12 @@ async fn analyze_position(
             }
             Ok(EngineEvent::BestMove { best, ponder }) => {
                 let best =
-                    normalize_engine_move_for_board(&analysis_board, &best, resolved_engine_family)
+                    normalize_engine_move_for_board(&analysis_board, &best)
                         .unwrap_or(best);
                 let ponder = ponder.and_then(|value| {
                     let best_move = Move::from_iccs(&best).ok()?;
                     let board = analysis_board.apply_move(best_move).ok()?;
-                    normalize_engine_move_for_board(&board, &value, resolved_engine_family)
+                    normalize_engine_move_for_board(&board, &value)
                         .or(Some(value))
                 });
                 if state.analysis_generation.load(Ordering::SeqCst) == analysis_generation {
@@ -6661,7 +6658,6 @@ async fn engine_play_move(
     }
     let resolved_engine_path = resolve_engine_path(&app, &engine_path)?;
     let resolved_engine_path_text = resolved_engine_path.to_string_lossy().into_owned();
-    let resolved_engine_family = engine_family(&resolved_engine_path);
     let mut slot = state.play_session.lock().await;
     if slot
         .as_ref()
@@ -6768,7 +6764,7 @@ async fn engine_play_move(
                     &app,
                     EngineRuntimeEvent::Info {
                         fen: fen.clone(),
-                        line: analysis_line_from_engine_info(&board, info, resolved_engine_family),
+                        line: analysis_line_from_engine_info(&board, info),
                     },
                 );
             }
@@ -6796,7 +6792,7 @@ async fn engine_play_move(
     state.engine.lock().await.remove(&resolved_engine_path_text);
     let board_before_best = Board::from_fen(&fen).map_err(|error| error.to_string())?;
     let best_move =
-        normalize_engine_move_for_board(&board_before_best, &best_move, resolved_engine_family)
+        normalize_engine_move_for_board(&board_before_best, &best_move)
             .unwrap_or(best_move);
     let board_after_best = Move::from_iccs(&best_move)
         .ok()
@@ -6805,7 +6801,7 @@ async fn engine_play_move(
         board_after_best
             .as_ref()
             .and_then(|board| {
-                normalize_engine_move_for_board(board, &predicted, resolved_engine_family)
+                normalize_engine_move_for_board(board, &predicted)
             })
             .or(Some(predicted))
     });
@@ -6942,10 +6938,6 @@ fn detect_pikafish(app: tauri::AppHandle) -> Option<String> {
     if let Some(path) = std::env::var_os("PIKAFISH_PATH") {
         candidates.push(PathBuf::from(path));
     }
-    if let Some(path) = std::env::var_os("FAIRY_STOCKFISH_PATH") {
-        candidates.push(PathBuf::from(path));
-    }
-
     #[cfg(target_os = "macos")]
     candidates.push(PathBuf::from(
         "/Applications/TCHESS.app/Contents/pikafish/pikafish-apple-silicon",
@@ -6964,8 +6956,6 @@ fn detect_pikafish(app: tauri::AppHandle) -> Option<String> {
         for directory in std::env::split_paths(&paths) {
             candidates.push(directory.join("pikafish"));
             candidates.push(directory.join("pikafish.exe"));
-            candidates.push(directory.join("fairy-stockfish"));
-            candidates.push(directory.join("fairy-stockfish.exe"));
         }
     }
 
@@ -7091,25 +7081,6 @@ fn bundled_pikafish_path(app: &tauri::AppHandle) -> Option<PathBuf> {
     candidates.into_iter().find(|candidate| candidate.is_file())
 }
 
-fn bundled_fairy_stockfish_path(app: &tauri::AppHandle) -> Option<PathBuf> {
-    let mut candidates = Vec::new();
-    candidates.extend(fairy_stockfish_candidates(
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("resources")
-            .as_path(),
-    ));
-    if let Ok(resource_dir) = app.path().resource_dir() {
-        candidates.extend(fairy_stockfish_candidates(&resource_dir));
-    }
-    if let Ok(executable) = std::env::current_exe() {
-        if let Some(parent) = executable.parent() {
-            candidates.extend(fairy_stockfish_candidates(parent));
-            candidates.extend(fairy_stockfish_candidates(&parent.join("../Resources")));
-        }
-    }
-    candidates.into_iter().find(|candidate| candidate.is_file())
-}
-
 fn pikafish_candidates(base: &Path) -> Vec<PathBuf> {
     [
         "pikafish",
@@ -7119,20 +7090,6 @@ fn pikafish_candidates(base: &Path) -> Vec<PathBuf> {
         "pikafish/pikafish-apple-silicon",
         "resources/pikafish/pikafish",
         "resources/pikafish/pikafish.exe",
-    ]
-    .into_iter()
-    .map(|relative| base.join(relative))
-    .collect()
-}
-
-fn fairy_stockfish_candidates(base: &Path) -> Vec<PathBuf> {
-    [
-        "fairy-stockfish",
-        "fairy-stockfish.exe",
-        "fairy-stockfish/fairy-stockfish",
-        "fairy-stockfish/fairy-stockfish.exe",
-        "resources/fairy-stockfish/fairy-stockfish",
-        "resources/fairy-stockfish/fairy-stockfish.exe",
     ]
     .into_iter()
     .map(|relative| base.join(relative))
@@ -7153,112 +7110,12 @@ fn resolve_engine_path(app: &tauri::AppHandle, value: &str) -> Result<PathBuf, S
                     .to_owned()
             });
     }
-    if trimmed == BUILTIN_FAIRY_ENGINE_PATH {
-        return bundled_fairy_stockfish_path(app)
-            .or_else(|| {
-                std::env::var_os("FAIRY_STOCKFISH_PATH")
-                    .map(PathBuf::from)
-                    .filter(|path| path.is_file())
-            })
-            .ok_or_else(|| {
-                "安装包内未找到内置 Fairy-Stockfish；开发模式请设置 FAIRY_STOCKFISH_PATH，或手动选择外部引擎"
-                    .to_owned()
-            });
-    }
-    Err("当前版本仅支持随应用安装的内置 Pikafish 或 Fairy-Stockfish".into())
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum EngineFamily {
-    Pikafish,
-    FairyStockfish,
-    Unknown,
-}
-
-fn engine_family(engine_path: &Path) -> EngineFamily {
-    let executable_name = engine_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    if executable_name.contains("fairy-stockfish") || executable_name.contains("fairystockfish") {
-        return EngineFamily::FairyStockfish;
-    }
-    if executable_name.contains("pikafish") {
-        return EngineFamily::Pikafish;
-    }
-
-    for component in engine_path.components().rev().skip(1) {
-        let component = component.as_os_str().to_string_lossy().to_ascii_lowercase();
-        if component.contains("fairy-stockfish") || component.contains("fairystockfish") {
-            return EngineFamily::FairyStockfish;
-        }
-        if component.contains("pikafish") {
-            return EngineFamily::Pikafish;
-        }
-    }
-
-    EngineFamily::Unknown
-}
-
-fn nnue_matches_engine_family(file_name: &str, family: EngineFamily) -> bool {
-    match family {
-        EngineFamily::Pikafish => !file_name.contains("fairy"),
-        EngineFamily::FairyStockfish => !file_name.contains("pikafish"),
-        EngineFamily::Unknown => true,
-    }
+    Err("当前版本仅支持随应用安装的内置 Pikafish".into())
 }
 
 fn preferred_nnue_path(engine_path: &Path) -> Option<PathBuf> {
-    let parent = engine_path.parent()?;
-    let family = engine_family(engine_path);
-    let mut nnue_files = std::fs::read_dir(parent)
-        .ok()?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.extension()
-                .and_then(|extension| extension.to_str())
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("nnue"))
-        })
-        .filter(|path| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .map(|name| nnue_matches_engine_family(&name.to_ascii_lowercase(), family))
-                .unwrap_or(false)
-        })
-        .collect::<Vec<_>>();
-    nnue_files.sort_by(|left, right| {
-        let left_name = left
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or_default()
-            .to_ascii_lowercase();
-        let right_name = right
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or_default()
-            .to_ascii_lowercase();
-        nnue_priority(&left_name)
-            .cmp(&nnue_priority(&right_name))
-            .then_with(|| left_name.cmp(&right_name))
-    });
-    nnue_files.into_iter().next()
-}
-
-fn nnue_priority(file_name: &str) -> u8 {
-    if file_name.starts_with("xiangqi")
-        || file_name.contains("-xiangqi")
-        || file_name.contains("_xiangqi")
-    {
-        0
-    } else if file_name.contains("fairy") {
-        1
-    } else if file_name.contains("pikafish") {
-        2
-    } else {
-        3
-    }
+    let path = engine_path.parent()?.join("pikafish.nnue");
+    path.is_file().then_some(path)
 }
 
 async fn configure_engine_nnue(
@@ -7268,101 +7125,31 @@ async fn configure_engine_nnue(
     let Some(nnue_path) = preferred_nnue_path(engine_path) else {
         return Ok(None);
     };
+    let nnue_sha256 = file_sha256(&nnue_path)?;
+    if nnue_sha256 != PIKAFISH_260720_NNUE_SHA256 {
+        return Err(format!(
+            "Pikafish NNUE 哈希不匹配：期望 {PIKAFISH_260720_NNUE_SHA256}，实际 {nnue_sha256}"
+        ));
+    }
     session
         .configure("EvalFile", &nnue_path.to_string_lossy())
         .await
-        .map_err(|error| format!("设置 NNUE EvalFile 失败：{error}"))?;
+        .map_err(|error| format!("Pikafish 未能加载 NNUE {}：{error}", nnue_path.display()))?;
     Ok(Some(nnue_path))
 }
 
-fn engine_variant_option(engine_path: &Path) -> Option<&'static str> {
-    match engine_family(engine_path) {
-        EngineFamily::FairyStockfish => Some("xiangqi"),
-        EngineFamily::Pikafish | EngineFamily::Unknown => None,
-    }
+fn normalize_engine_move_for_board(board: &Board, value: &str) -> Option<String> {
+    Move::from_iccs(value)
+        .ok()
+        .filter(|mv| board.apply_move(*mv).is_ok())
+        .map(|_| value.to_owned())
 }
 
-fn fairy_rank_to_internal(rank: &str) -> Option<u8> {
-    let rank = rank.parse::<u8>().ok()?;
-    (1..=10).contains(&rank).then_some(rank - 1)
-}
-
-fn split_fairy_square_pair(value: &str) -> Option<(char, &str, char, &str)> {
-    let mut chars = value.char_indices();
-    let (_, from_file) = chars.next()?;
-    if !matches!(from_file, 'a'..='i') {
-        return None;
-    }
-    let from_rank_start = from_file.len_utf8();
-    let (to_file_index, to_file) =
-        value[from_rank_start..]
-            .char_indices()
-            .find_map(|(offset, character)| {
-                matches!(character, 'a'..='i').then_some((from_rank_start + offset, character))
-            })?;
-    let to_rank_start = to_file_index + to_file.len_utf8();
-    let from_rank = &value[from_rank_start..to_file_index];
-    let to_rank = &value[to_rank_start..];
-    if from_rank.is_empty() || to_rank.is_empty() {
-        return None;
-    }
-    Some((from_file, from_rank, to_file, to_rank))
-}
-
-fn fairy_xiangqi_to_internal_iccs(value: &str) -> Option<String> {
-    let (from_file, from_rank, to_file, to_rank) = split_fairy_square_pair(value)?;
-    let from_rank = fairy_rank_to_internal(from_rank)?;
-    let to_rank = fairy_rank_to_internal(to_rank)?;
-    Some(format!("{from_file}{from_rank}{to_file}{to_rank}"))
-}
-
-fn internal_iccs_to_fairy_xiangqi(value: &str) -> Option<String> {
-    let bytes = value.as_bytes();
-    if bytes.len() != 4
-        || !matches!(bytes[0], b'a'..=b'i')
-        || !matches!(bytes[2], b'a'..=b'i')
-        || !matches!(bytes[1], b'0'..=b'9')
-        || !matches!(bytes[3], b'0'..=b'9')
-    {
-        return None;
-    }
-    let from_rank = bytes[1] - b'0' + 1;
-    let to_rank = bytes[3] - b'0' + 1;
-    Some(format!(
-        "{}{}{}{}",
-        bytes[0] as char, from_rank, bytes[2] as char, to_rank
-    ))
-}
-
-fn normalize_engine_move_for_board(
-    board: &Board,
-    value: &str,
-    family: EngineFamily,
-) -> Option<String> {
-    let mut candidates = Vec::new();
-    if family == EngineFamily::FairyStockfish {
-        if let Some(converted) = fairy_xiangqi_to_internal_iccs(value) {
-            candidates.push(converted);
-        }
-    }
-    candidates.push(value.to_owned());
-
-    candidates.into_iter().find(|candidate| {
-        Move::from_iccs(candidate)
-            .ok()
-            .is_some_and(|mv| board.apply_move(mv).is_ok())
-    })
-}
-
-fn normalize_engine_pv_for_board(
-    board: &Board,
-    pv: &[String],
-    family: EngineFamily,
-) -> Vec<String> {
+fn normalize_engine_pv_for_board(board: &Board, pv: &[String]) -> Vec<String> {
     let mut current = board.clone();
     let mut normalized = Vec::with_capacity(pv.len());
     for raw in pv {
-        let Some(candidate) = normalize_engine_move_for_board(&current, raw, family) else {
+        let Some(candidate) = normalize_engine_move_for_board(&current, raw) else {
             normalized.push(raw.clone());
             break;
         };
@@ -7380,34 +7167,16 @@ fn normalize_engine_pv_for_board(
     normalized
 }
 
-fn normalize_pv_and_notation_with_fairy_fallback(
-    board: &Board,
-    pv: &[String],
-) -> (Vec<String>, Vec<String>) {
-    if let Ok(notation) = board.chinese_pv_notation(pv) {
-        return (pv.to_vec(), notation);
-    }
-    let normalized = normalize_engine_pv_for_board(board, pv, EngineFamily::FairyStockfish);
-    let notation = board.chinese_pv_notation(&normalized).unwrap_or_default();
-    (normalized, notation)
-}
-
-fn engine_search_moves_for_family(search_moves: &[String], family: EngineFamily) -> Vec<String> {
-    if family != EngineFamily::FairyStockfish {
-        return search_moves.to_vec();
-    }
-    search_moves
-        .iter()
-        .map(|value| internal_iccs_to_fairy_xiangqi(value).unwrap_or_else(|| value.clone()))
-        .collect()
+fn normalize_pv_and_notation(board: &Board, pv: &[String]) -> (Vec<String>, Vec<String>) {
+    let notation = board.chinese_pv_notation(pv).unwrap_or_default();
+    (pv.to_vec(), notation)
 }
 
 fn analysis_line_from_engine_info(
     board: &Board,
     info: engine_protocol::EngineInfo,
-    family: EngineFamily,
 ) -> AnalysisLine {
-    let pv = normalize_engine_pv_for_board(board, &info.pv, family);
+    let pv = normalize_engine_pv_for_board(board, &info.pv);
     AnalysisLine {
         depth: info.depth,
         score_cp: info.score_cp,
@@ -7425,24 +7194,14 @@ async fn configure_engine_for_xiangqi(
     session: &mut EngineSession,
     engine_path: &Path,
 ) -> Result<Option<PathBuf>, String> {
-    if session.protocol() == Protocol::Uci {
-        if let Some(variant) = engine_variant_option(engine_path) {
-            session
-                .configure("UCI_Variant", variant)
-                .await
-                .map_err(|error| format!("设置 Fairy-Stockfish 象棋变体失败：{error}"))?;
-        }
-    }
     configure_engine_nnue(session, engine_path).await
 }
 
 async fn next_arena_bestmove(
     session: &mut EngineSession,
-    engine_path: &Path,
     board: &Board,
     move_time_ms: u64,
 ) -> Result<String, String> {
-    let family = engine_family(engine_path);
     session
         .search(
             &board.to_fen(),
@@ -7461,7 +7220,7 @@ async fn next_arena_bestmove(
                 .map_err(|error| error.to_string())?
             {
                 EngineEvent::BestMove { best, .. } => {
-                    let best = normalize_engine_move_for_board(board, &best, family)
+                    let best = normalize_engine_move_for_board(board, &best)
                         .ok_or_else(|| format!("引擎返回非法着法：{best}"))?;
                     return Ok(best);
                 }
@@ -7482,7 +7241,7 @@ async fn launch_arena_engine(
     player: &EngineArenaPlayerDto,
     threads: u32,
     hash_mb: u32,
-) -> Result<(PathBuf, EngineSession), String> {
+) -> Result<EngineSession, String> {
     let path = resolve_engine_path(app, &player.engine_path)?;
     let mut session = EngineSession::launch(&path, Duration::from_secs(3))
         .await
@@ -7500,7 +7259,7 @@ async fn launch_arena_engine(
         .configure("MultiPV", "1")
         .await
         .map_err(|error| format!("{} 设置 MultiPV 失败：{error}", player.name))?;
-    Ok((path, session))
+    Ok(session)
 }
 
 fn arena_score(name: &str, games: &[EngineArenaGameDto]) -> EngineArenaScoreDto {
@@ -7580,9 +7339,8 @@ async fn run_arena_game(
     } else {
         &options.player_b
     };
-    let (red_path, mut red_session) =
-        launch_arena_engine(app, red, options.threads, options.hash_mb).await?;
-    let (black_path, mut black_session) =
+    let mut red_session = launch_arena_engine(app, red, options.threads, options.hash_mb).await?;
+    let mut black_session =
         launch_arena_engine(app, black, options.threads, options.hash_mb).await?;
     let mut board = Board::from_fen(STARTING_FEN).map_err(|error| error.to_string())?;
     let mut rule_state = DomesticRuleState::new(&board);
@@ -7594,14 +7352,13 @@ async fn run_arena_game(
     for ply in 0..options.max_plies.clamp(20, 240) {
         let red_turn = ply % 2 == 0;
         let current_name = if red_turn { &red.name } else { &black.name };
-        let current_path = if red_turn { &red_path } else { &black_path };
         let current_session = if red_turn {
             &mut red_session
         } else {
             &mut black_session
         };
         let best =
-            match next_arena_bestmove(current_session, current_path, &board, options.move_time_ms)
+            match next_arena_bestmove(current_session, &board, options.move_time_ms)
                 .await
             {
                 Ok(best) => best,
@@ -7825,12 +7582,6 @@ fn report_engine_fingerprint(engine_path: &Path) -> Result<String, String> {
     hasher.update(b"engine\0");
     update_fingerprint(&mut hasher, engine_path)?;
 
-    if let Some(variant) = engine_variant_option(engine_path) {
-        hasher.update(b"variant\0");
-        hasher.update(variant.as_bytes());
-        hasher.update(b"\0");
-    }
-
     if let Some(path) = preferred_nnue_path(engine_path) {
         hasher.update(b"nnue\0");
         if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
@@ -7843,9 +7594,6 @@ fn report_engine_fingerprint(engine_path: &Path) -> Result<String, String> {
 }
 
 async fn probe_pikafish_runtime_metadata(engine_path: &Path) -> (Option<String>, Option<String>) {
-    if engine_family(engine_path) != EngineFamily::Pikafish {
-        return (None, None);
-    }
     let mut command = Command::new(engine_path);
     command
         .arg("bench")
@@ -8010,7 +7758,7 @@ fn apply_report_line_to_position(
     let (pv, notation) = if line.pv.is_empty() {
         (Vec::new(), Vec::new())
     } else if line.notation.is_empty() {
-        normalize_pv_and_notation_with_fairy_fallback(&position_board, &line.pv)
+        normalize_pv_and_notation(&position_board, &line.pv)
     } else {
         (line.pv.clone(), line.notation.clone())
     };
@@ -8097,7 +7845,7 @@ fn get_saved_analysis(state: State<'_, DesktopState>) -> Result<Vec<AnalysisLine
     for line in &mut lines {
         if line.notation.is_empty() {
             let (pv, notation) =
-                normalize_pv_and_notation_with_fairy_fallback(&model.board, &line.pv);
+                normalize_pv_and_notation(&model.board, &line.pv);
             line.pv = pv;
             line.notation = notation;
         }
@@ -8116,7 +7864,6 @@ async fn generate_game_report_inner(
 ) -> Result<GameReportDatasetDto, String> {
     let resolved_engine_path = resolve_engine_path(app, &engine_path)?;
     let resolved_engine_path_text = resolved_engine_path.to_string_lossy().into_owned();
-    let resolved_engine_family = engine_family(&resolved_engine_path);
     let engine_fingerprint = report_engine_fingerprint(&resolved_engine_path)?;
     let report_depth = report_depth.clamp(8, 40);
     let limit = SearchLimit::Depth(report_depth);
@@ -8295,11 +8042,7 @@ async fn generate_game_report_inner(
                             );
                             let position_board = Board::from_fen(&position.fen)
                                 .map_err(|error| error.to_string())?;
-                            primary = Some(analysis_line_from_engine_info(
-                                &position_board,
-                                info,
-                                resolved_engine_family,
-                            ));
+                            primary = Some(analysis_line_from_engine_info(&position_board, info));
                         }
                         Ok(EngineEvent::BestMove { .. }) => break,
                         Ok(_) => {}
@@ -9345,10 +9088,11 @@ fn list_builtin_opening_books() -> Result<pfbook_opening_book::BuiltinOpeningBoo
 #[tauri::command]
 async fn probe_engine(path: String, app: tauri::AppHandle) -> Result<EngineProbeDto, String> {
     let resolved_path = resolve_engine_path(&app, &path)?;
-    let session = EngineSession::launch(&resolved_path, Duration::from_secs(5))
+    let mut session = EngineSession::launch(&resolved_path, Duration::from_secs(5))
         .await
         .map_err(|error| format!("引擎握手失败：{error}"))?;
     let protocol = protocol_name(session.protocol());
+    configure_engine_for_xiangqi(&mut session, &resolved_path).await?;
     let _ = session.close().await;
     let nnue_path = preferred_nnue_path(&resolved_path);
     let nnue_file = nnue_path
@@ -14614,109 +14358,16 @@ mod tests {
     }
 
     #[test]
-    fn fairy_stockfish_uses_xiangqi_variant_and_distinct_report_cache() {
+    fn preferred_nnue_path_uses_only_the_fixed_pikafish_network_name() {
         let directory = tempfile::tempdir().unwrap();
         let pikafish = directory.path().join("pikafish");
-        let fairy = directory.path().join("fairy-stockfish");
-        std::fs::write(&pikafish, b"same-engine-binary").unwrap();
-        std::fs::write(&fairy, b"same-engine-binary").unwrap();
-
-        assert_eq!(engine_variant_option(&fairy), Some("xiangqi"));
-        assert_eq!(engine_variant_option(&pikafish), None);
-        assert_ne!(
-            report_engine_fingerprint(&pikafish).unwrap(),
-            report_engine_fingerprint(&fairy).unwrap()
-        );
-    }
-
-    #[test]
-    fn bundled_fairy_stockfish_candidates_cover_packaged_windows_layout() {
-        let base = Path::new("C:/Program Files/Xiangqi Studio");
-        let candidates = fairy_stockfish_candidates(base);
-
-        assert!(candidates.contains(&base.join("fairy-stockfish/fairy-stockfish.exe")));
-        assert!(candidates.contains(&base.join("resources/fairy-stockfish/fairy-stockfish.exe")));
-    }
-
-    #[test]
-    fn fairy_stockfish_xiangqi_coordinates_are_normalized_to_internal_iccs() {
-        assert_eq!(
-            fairy_xiangqi_to_internal_iccs("b1c3").as_deref(),
-            Some("b0c2")
-        );
-        assert_eq!(
-            fairy_xiangqi_to_internal_iccs("a10a9").as_deref(),
-            Some("a9a8")
-        );
-        assert_eq!(
-            internal_iccs_to_fairy_xiangqi("b0c2").as_deref(),
-            Some("b1c3")
-        );
-        assert_eq!(
-            internal_iccs_to_fairy_xiangqi("a9a8").as_deref(),
-            Some("a10a9")
-        );
-    }
-
-    #[test]
-    fn fairy_stockfish_analysis_line_uses_chinese_notation_and_internal_pv() {
-        let board = Board::from_fen(STARTING_FEN).unwrap();
-        let line = analysis_line_from_engine_info(
-            &board,
-            engine_protocol::EngineInfo {
-                depth: Some(18),
-                score_cp: Some(80),
-                multipv: 1,
-                pv: vec!["b1c3".into(), "h10g8".into()],
-                ..Default::default()
-            },
-            EngineFamily::FairyStockfish,
-        );
-
-        assert_eq!(line.pv, ["b0c2", "h9g7"]);
-        assert_eq!(line.notation, ["马八进七", "马8进7"]);
-    }
-
-    #[test]
-    fn preferred_nnue_path_favors_xiangqi_networks() {
-        let directory = tempfile::tempdir().unwrap();
-        let engine = directory.path().join("fairy-stockfish");
-        let generic = directory.path().join("z-generic.nnue");
-        let fairy = directory.path().join("fairy.nnue");
-        let xiangqi = directory.path().join("xiangqi-2024.nnue");
-        std::fs::write(&engine, b"engine").unwrap();
-        std::fs::write(&generic, b"generic").unwrap();
-        std::fs::write(&fairy, b"fairy").unwrap();
-        std::fs::write(&xiangqi, b"xiangqi").unwrap();
-
-        assert_eq!(preferred_nnue_path(&engine).unwrap(), xiangqi);
-    }
-
-    #[test]
-    fn preferred_nnue_path_keeps_fairy_and_pikafish_networks_separate() {
-        let directory = tempfile::tempdir().unwrap();
-        let pikafish = directory.path().join("pikafish");
-        let fairy = directory.path().join("fairy-stockfish");
         let pikafish_nnue = directory.path().join("pikafish.nnue");
-        let fairy_nnue = directory.path().join("fairy-xiangqi.nnue");
+        let unrelated_nnue = directory.path().join("xiangqi-other.nnue");
         std::fs::write(&pikafish, b"pikafish").unwrap();
-        std::fs::write(&fairy, b"fairy").unwrap();
         std::fs::write(&pikafish_nnue, b"pikafish-network").unwrap();
-        std::fs::write(&fairy_nnue, b"fairy-network").unwrap();
+        std::fs::write(&unrelated_nnue, b"other-network").unwrap();
 
         assert_eq!(preferred_nnue_path(&pikafish).unwrap(), pikafish_nnue);
-        assert_eq!(preferred_nnue_path(&fairy).unwrap(), fairy_nnue);
-    }
-
-    #[test]
-    fn preferred_nnue_path_never_uses_pikafish_network_for_fairy() {
-        let directory = tempfile::tempdir().unwrap();
-        let fairy = directory.path().join("fairy-stockfish");
-        let pikafish_nnue = directory.path().join("pikafish.nnue");
-        std::fs::write(&fairy, b"fairy").unwrap();
-        std::fs::write(&pikafish_nnue, b"pikafish-network").unwrap();
-
-        assert_eq!(preferred_nnue_path(&fairy), None);
     }
 
     #[tokio::test]

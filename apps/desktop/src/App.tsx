@@ -52,7 +52,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { BUILTIN_ENGINE_PATH, BUILTIN_FAIRY_ENGINE_PATH, DEFAULT_BUILTIN_OPENING_BOOK_ID, FALLBACK_BUILTIN_OPENING_BOOK_MANIFEST, chessPlatform, type AnalysisLine, type BoardState, type CloudBookCandidate, type EngineProbeDto, type EngineProfileDto, type EngineRuntimeState, type ExportFormat, type GameReportDatasetDto, type GameReportProgressDto, type GameSummary, type LibraryFolder, type MasterStyleProfileDto, type MoveItem, type Piece, type PreviewLineStep, type ReplayExportScope, type StudySessionDto, type TheoryLibraryDto, type TrainingGenerationResultDto, type TrainingSummaryDto, type TrainingTaskDto } from "./platform";
+import { BUILTIN_ENGINE_PATH, DEFAULT_BUILTIN_OPENING_BOOK_ID, FALLBACK_BUILTIN_OPENING_BOOK_MANIFEST, chessPlatform, type AnalysisLine, type BoardState, type CloudBookCandidate, type EngineProbeDto, type EngineProfileDto, type EngineRuntimeState, type ExportFormat, type GameReportDatasetDto, type GameReportProgressDto, type GameSummary, type LibraryFolder, type MasterStyleProfileDto, type MoveItem, type Piece, type PreviewLineStep, type ReplayExportScope, type StudySessionDto, type TheoryLibraryDto, type TrainingGenerationResultDto, type TrainingSummaryDto, type TrainingTaskDto } from "./platform";
 import { evaluationRedShare, moveQualityFeedback, moveReports, positionEvaluation, redAnalysisScoreText, trendChart, trendPoints, trendTurningPoints } from "./analysisView";
 import { CandidateLine } from "./CandidateLine";
 import { hasEngineDivergence, MultiEngineComparison, type EngineComparisonGroup } from "./MultiEngineComparison";
@@ -718,6 +718,9 @@ const defaultSyncAccount: SyncAccountDto = {
   status: "unbound",
 };
 
+// Kept only as a migration sentinel for preferences written by older releases.
+const LEGACY_BUILTIN_FAIRY_ENGINE_PATH = "builtin:fairy-stockfish";
+
 function migrateDesktopPreferences(preferences: DesktopPreferencesDto): DesktopPreferencesDto {
   const legacyAnalysisDefaults = ((preferences.searchMode === "time" || preferences.searchMode === "infinite") && preferences.searchValue === 1500)
     || (preferences.searchMode === "depth" && (preferences.searchValue === 30 || preferences.searchValue === 26));
@@ -726,7 +729,7 @@ function migrateDesktopPreferences(preferences: DesktopPreferencesDto): DesktopP
     : preferences.searchMode === "depth" && (preferences.searchValue === 30 || preferences.searchValue === 26)
       ? { searchMode: "depth" as const, searchValue: DEFAULT_ANALYSIS_DEPTH }
       : {};
-  const enginePath = preferences.enginePath === BUILTIN_FAIRY_ENGINE_PATH ? BUILTIN_ENGINE_PATH : preferences.enginePath;
+  const enginePath = preferences.enginePath === LEGACY_BUILTIN_FAIRY_ENGINE_PATH ? BUILTIN_ENGINE_PATH : preferences.enginePath;
   const linkConfidenceThreshold = preferences.linkConfidenceThreshold === 70 ? 55 : preferences.linkConfidenceThreshold;
   const multipv = preferences.multipv < MIN_ENGINE_CANDIDATES
     ? DEFAULT_ENGINE_CANDIDATES
@@ -740,7 +743,7 @@ function migrateDesktopPreferences(preferences: DesktopPreferencesDto): DesktopP
     enginePath,
     autoAnalyze: legacyAnalysisDefaults && preferences.autoAnalyze ? false : preferences.autoAnalyze,
     multipv,
-    parallelEnginePaths: (preferences.parallelEnginePaths ?? []).filter((path) => path !== BUILTIN_FAIRY_ENGINE_PATH),
+    parallelEnginePaths: (preferences.parallelEnginePaths ?? []).filter((path) => path !== LEGACY_BUILTIN_FAIRY_ENGINE_PATH),
     linkConfidenceThreshold,
     candidateLineMoves,
     reportDepth: preferences.reportDepth === 30 || preferences.reportDepth === 26 ? DEFAULT_REPORT_DEPTH : preferences.reportDepth,
@@ -756,7 +759,7 @@ function ruleModeLabel(ruleMode?: DesktopPreferencesDto["ruleMode"]) {
 
 function engineDisplayName(path: string) {
   if (path === BUILTIN_ENGINE_PATH) return "内置 Pikafish";
-  if (path === BUILTIN_FAIRY_ENGINE_PATH) return "内置 Fairy-Stockfish 已移除";
+  if (path === LEGACY_BUILTIN_FAIRY_ENGINE_PATH) return "内置 Pikafish";
   return path ? path.split(/[\\/]/).at(-1) ?? path : "选择引擎";
 }
 
@@ -785,7 +788,7 @@ function engineProbeTitle(fallbackName: string, path: string, probe?: EngineProb
 }
 
 function externalEngineProfiles(profiles: EngineProfileDto[]) {
-  return profiles.filter((profile) => profile.executablePath !== BUILTIN_ENGINE_PATH && profile.executablePath !== BUILTIN_FAIRY_ENGINE_PATH);
+  return profiles.filter((profile) => profile.executablePath !== BUILTIN_ENGINE_PATH && profile.executablePath !== LEGACY_BUILTIN_FAIRY_ENGINE_PATH);
 }
 
 const editorPalette: Piece[] = [
@@ -4905,7 +4908,7 @@ export default function App() {
         activeEngineId,
         analysisEngineMode: preferences.analysisEngineMode,
         parallelEngineIds: preferences.parallelEngineIds,
-        parallelEnginePaths: (preferences.parallelEnginePaths ?? []).filter((path) => path !== BUILTIN_FAIRY_ENGINE_PATH),
+        parallelEnginePaths: (preferences.parallelEnginePaths ?? []).filter((path) => path !== LEGACY_BUILTIN_FAIRY_ENGINE_PATH),
         threads: preferences.threads,
         hashMb: preferences.hashMb,
         multipv: preferences.multipv,
