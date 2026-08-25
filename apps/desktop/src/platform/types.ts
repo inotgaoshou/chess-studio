@@ -90,6 +90,14 @@ export type BookLessonNode = {
   bookVariation?: string;
   practiceLine?: string[];
   lessonKind?: "flyknife" | "practicalDefense" | "trap";
+  /** Training-desk prompts shown before the book answer is revealed. */
+  thinkingHints?: string[];
+  /** The canonical first move in the book line, retained separately from display text. */
+  bookFirstMove?: string;
+  /** Forced book moves applied before the learner begins a response exercise. */
+  preludeNotation?: string[];
+  /** Validated ICCS target line for temporary-board comparison. */
+  targetVariation?: string[];
   variationNotation?: string[];
   variationNotes?: string[];
 };

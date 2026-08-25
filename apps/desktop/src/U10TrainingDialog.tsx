@@ -2,6 +2,7 @@ import { BarChart3, BookOpenCheck, Brain, CalendarDays, CheckCircle2, ChevronDow
 import { useMemo, useRef, useState } from "react";
 import { LinkMiniBoard } from "./LinkMiniBoard";
 import { boardCanonicalSquare, boardIntersectionStyle, boardSkinFromAssetPath } from "./boardGeometry";
+import { previewTemporaryLine } from "./TemporaryCalculationBoard";
 import { bundledTheoryKnowledge } from "./theoryKnowledge.generated";
 import type { DailyTrainingPlan, GuidedAnalysisStart, GuidedAnalysisSubmission, GuidedAnalysisSubmissionResult, LearningProfile, OpeningRepertoire, Piece, PreviewLineStep, WeeklyLearningReport } from "./platform";
 import { TRAINING_METHOD_LABEL } from "./trainingSystem";
@@ -149,7 +150,7 @@ export function U10TrainingDialog({ start, profile, dailyPlan, weeklyReport, rep
     try {
       interactionLocked.current = true;
       setPredictionPending(true);
-      const steps = await onPreview(limited);
+      const steps = await previewTemporaryLine(onPreview, limited, 8);
       if (requestId !== previewRequestId.current) return;
       setPredictedMoves(limited);
       setPreviewSteps(steps);
