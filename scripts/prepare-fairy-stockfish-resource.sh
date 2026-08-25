@@ -109,6 +109,11 @@ copy_optional_notices() {
   done
 }
 
+copy_project_notices() {
+  cp "LICENSE" "$RESOURCE_DIR/LICENSE-GPL-3.0.txt"
+  cp "THIRD_PARTY_NOTICES.md" "$RESOURCE_DIR/THIRD_PARTY_NOTICES.md"
+}
+
 find_engine_in_release_dir() {
   local pattern="$1"
   if [[ -z "$FAIRY_STOCKFISH_RELEASE_DIR" ]]; then
@@ -276,6 +281,7 @@ case "$TARGET_PLATFORM" in
 esac
 
 copy_optional_notices
+copy_project_notices
 chmod +x "$RESOURCE_DIR/fairy-stockfish" 2>/dev/null || true
 xattr -dr com.apple.quarantine "$RESOURCE_DIR" 2>/dev/null || true
 

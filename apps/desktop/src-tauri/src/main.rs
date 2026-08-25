@@ -82,6 +82,7 @@ unsafe extern "C" {
 }
 
 const BUILTIN_ENGINE_PATH: &str = "builtin:pikafish";
+const BUILTIN_FAIRY_ENGINE_PATH: &str = "builtin:fairy-stockfish";
 const PIKAFISH_260720_NNUE_SHA256: &str =
     "sha256:3cd15292bf8c979884262f57fc723959fc0dea43b4d8d544f88db5ceb2479e24";
 const PIKAFISH_260720_NNUE_LABEL: &str = "权重260720";
@@ -7090,6 +7091,25 @@ fn bundled_pikafish_path(app: &tauri::AppHandle) -> Option<PathBuf> {
     candidates.into_iter().find(|candidate| candidate.is_file())
 }
 
+fn bundled_fairy_stockfish_path(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    candidates.extend(fairy_stockfish_candidates(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("resources")
+            .as_path(),
+    ));
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        candidates.extend(fairy_stockfish_candidates(&resource_dir));
+    }
+    if let Ok(executable) = std::env::current_exe() {
+        if let Some(parent) = executable.parent() {
+            candidates.extend(fairy_stockfish_candidates(parent));
+            candidates.extend(fairy_stockfish_candidates(&parent.join("../Resources")));
+        }
+    }
+    candidates.into_iter().find(|candidate| candidate.is_file())
+}
+
 fn pikafish_candidates(base: &Path) -> Vec<PathBuf> {
     [
         "pikafish",
@@ -7099,6 +7119,20 @@ fn pikafish_candidates(base: &Path) -> Vec<PathBuf> {
         "pikafish/pikafish-apple-silicon",
         "resources/pikafish/pikafish",
         "resources/pikafish/pikafish.exe",
+    ]
+    .into_iter()
+    .map(|relative| base.join(relative))
+    .collect()
+}
+
+fn fairy_stockfish_candidates(base: &Path) -> Vec<PathBuf> {
+    [
+        "fairy-stockfish",
+        "fairy-stockfish.exe",
+        "fairy-stockfish/fairy-stockfish",
+        "fairy-stockfish/fairy-stockfish.exe",
+        "resources/fairy-stockfish/fairy-stockfish",
+        "resources/fairy-stockfish/fairy-stockfish.exe",
     ]
     .into_iter()
     .map(|relative| base.join(relative))
@@ -7119,8 +7153,19 @@ fn resolve_engine_path(app: &tauri::AppHandle, value: &str) -> Result<PathBuf, S
                     .to_owned()
             });
     }
-    let _ = trimmed;
-    Err("当前版本仅支持随应用安装的内置 Pikafish".into())
+    if trimmed == BUILTIN_FAIRY_ENGINE_PATH {
+        return bundled_fairy_stockfish_path(app)
+            .or_else(|| {
+                std::env::var_os("FAIRY_STOCKFISH_PATH")
+                    .map(PathBuf::from)
+                    .filter(|path| path.is_file())
+            })
+            .ok_or_else(|| {
+                "安装包内未找到内置 Fairy-Stockfish；开发模式请设置 FAIRY_STOCKFISH_PATH，或手动选择外部引擎"
+                    .to_owned()
+            });
+    }
+    Err("当前版本仅支持随应用安装的内置 Pikafish 或 Fairy-Stockfish".into())
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -14582,6 +14627,15 @@ mod tests {
             report_engine_fingerprint(&pikafish).unwrap(),
             report_engine_fingerprint(&fairy).unwrap()
         );
+    }
+
+    #[test]
+    fn bundled_fairy_stockfish_candidates_cover_packaged_windows_layout() {
+        let base = Path::new("C:/Program Files/Xiangqi Studio");
+        let candidates = fairy_stockfish_candidates(base);
+
+        assert!(candidates.contains(&base.join("fairy-stockfish/fairy-stockfish.exe")));
+        assert!(candidates.contains(&base.join("resources/fairy-stockfish/fairy-stockfish.exe")));
     }
 
     #[test]

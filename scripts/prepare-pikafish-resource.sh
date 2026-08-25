@@ -99,6 +99,9 @@ if [[ -z "$PIKAFISH_NNUE_SOURCE" || ! -f "$PIKAFISH_NNUE_SOURCE" ]]; then
 fi
 
 mkdir -p "$RESOURCE_DIR"
+# A checkout may contain the executable for another platform. Keep only the
+# executable selected below so release bundles never ship mixed-platform engines.
+rm -f "$RESOURCE_DIR/pikafish" "$RESOURCE_DIR/pikafish.exe"
 
 case "$TARGET_PLATFORM" in
   macos-arm64)

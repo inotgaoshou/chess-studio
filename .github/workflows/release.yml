@@ -1,0 +1,140 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, for example v1.0.0"
+        required: true
+        default: "v1.0.0"
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build_windows:
+    name: Windows x64
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Windows 7z
+        shell: pwsh
+        run: |
+          choco install 7zip -y --no-progress
+          "C:\Program Files\7-Zip" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+
+      - name: Prepare Windows engine resources
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PIKAFISH_VERSION: "20260726"
+        run: |
+          ./scripts/prepare-pikafish-resource.sh windows-x64
+          ./scripts/prepare-fairy-stockfish-resource.sh windows-x64
+          ./scripts/verify-embedded-engine-resources.sh windows-x64
+
+      - name: Download Microsoft VC++ Runtime
+        shell: pwsh
+        run: |
+          $runtime = Join-Path $env:RUNNER_TEMP "VC_redist.x64.exe"
+          Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" -OutFile $runtime
+          "VC_REDIST_X64_PATH=$runtime" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Test desktop UI
+        run: pnpm --filter xiangqi-desktop-ui test
+
+      - name: Build desktop UI
+        run: pnpm --filter xiangqi-desktop-ui build
+
+      - name: Check Windows desktop compilation
+        run: cargo check -p xiangqi-desktop --target x86_64-pc-windows-msvc
+
+      - name: Build Windows NSIS installer
+        run: pnpm --dir apps/desktop tauri build --target x86_64-pc-windows-msvc --bundles nsis
+
+      - name: Verify packaged Windows installer
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -Path target/x86_64-pc-windows-msvc/release/bundle/nsis -Filter *.exe -File |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $installer) { throw "Windows NSIS installer was not found." }
+          ./scripts/verify-windows-runtime.ps1 -Installer $installer -RedistInstaller $env:VC_REDIST_X64_PATH
+
+      - name: Upload verified Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Xiangqi-Studio-Windows-x64
+          if-no-files-found: error
+          path: target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+
+  publish:
+    name: Draft GitHub release
+    needs: build_windows
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download verified release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: Xiangqi-Studio-Windows-x64
+          path: release-assets
+
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: Xiangqi Studio ${{ github.event.inputs.tag || github.ref_name }}
+          draft: true
+          prerelease: false
+          fail_on_unmatched_files: true
+          files: release-assets/*.exe
+          body: |
+            ## Windows x64
+
+            - NSIS 安装包，适用于 Windows 10/11 x64
+            - 内置 Pikafish、Fairy-Stockfish 及各自的中国象棋 NNUE
+            - 内置 Microsoft Visual C++ Runtime，干净系统无需手动安装运行库
+            - 包含窗口连线识别模型
+
+            当前安装包未进行 Authenticode 代码签名。

@@ -34,33 +34,51 @@ if (-not $sevenZip) {
   throw "7-Zip is unavailable; cannot inspect the Windows NSIS installer payload."
 }
 
+function Require-PayloadFile([string]$Name) {
+  $match = Get-ChildItem -Path $extractRoot -Recurse -File -Filter $Name | Select-Object -First 1
+  if (-not $match) {
+    throw "The NSIS installer is missing required payload: $Name"
+  }
+  return $match
+}
+
 try {
-  # NSIS command-line install directories are not reliable in a non-interactive
-  # GitHub runner. Inspect the actual bundled archive instead of assuming a
-  # silent install created a particular directory.
   & $sevenZip x $resolvedInstaller "-o$extractRoot" -y | Out-Host
   if ($LASTEXITCODE -ne 0) {
     throw "7-Zip failed to extract the NSIS installer with exit code $LASTEXITCODE"
   }
 
-  $binaries = Get-ChildItem -Path $extractRoot -Recurse -File -Include *.exe, *.dll
+  $binaries = @(Get-ChildItem -Path $extractRoot -Recurse -File -Include *.exe, *.dll)
   if ($binaries.Count -eq 0) {
     throw "The NSIS installer does not contain any executable or DLL payload."
   }
 
-  $redistPayload = Get-ChildItem -Path $extractRoot -Recurse -File -Filter VC_redist.x64.exe |
-    Select-Object -First 1
-  if (-not $redistPayload) {
-    throw "The NSIS installer does not include VC_redist.x64.exe for clean Windows installations."
-  }
+  Require-PayloadFile "xiangqi-desktop.exe" | Out-Null
+  $redistPayload = Require-PayloadFile "VC_redist.x64.exe"
   $expectedRedistHash = (Get-FileHash -LiteralPath $resolvedRedistInstaller -Algorithm SHA256).Hash
   $bundledRedistHash = (Get-FileHash -LiteralPath $redistPayload.FullName -Algorithm SHA256).Hash
   if ($bundledRedistHash -ne $expectedRedistHash) {
     throw "The NSIS installer contains a VC_redist.x64.exe that does not match the verified download."
   }
 
+  Require-PayloadFile "pikafish.exe" | Out-Null
+  Require-PayloadFile "pikafish.nnue" | Out-Null
+  Require-PayloadFile "fairy-stockfish.exe" | Out-Null
+  Require-PayloadFile "xiangqi-c07e94a5c7cb.nnue" | Out-Null
+  Require-PayloadFile "yolov11.onnx" | Out-Null
+  Require-PayloadFile "LICENSE-GPL-3.0.txt" | Out-Null
+  Require-PayloadFile "THIRD_PARTY_NOTICES.md" | Out-Null
+
+  $forbiddenUnixEngines = @(Get-ChildItem -Path $extractRoot -Recurse -File | Where-Object {
+    $_.Name -ceq "pikafish" -or $_.Name -ceq "fairy-stockfish"
+  })
+  if ($forbiddenUnixEngines.Count -gt 0) {
+    throw "The Windows installer contains non-Windows engine binaries: $($forbiddenUnixEngines.FullName -join ', ')"
+  }
+
   $runtimeImports = [System.Collections.Generic.List[string]]::new()
   foreach ($binary in $binaries) {
+    if ($binary.Name -eq "VC_redist.x64.exe") { continue }
     $dependencies = & $dumpbin.FullName /DEPENDENTS $binary.FullName 2>&1
     if ($LASTEXITCODE -ne 0) {
       throw "dumpbin failed while inspecting $($binary.FullName)`n$dependencies"
@@ -71,14 +89,12 @@ try {
     }
   }
 
-  if ($runtimeImports.Count -gt 0 -and -not (Test-Path -LiteralPath $resolvedRedistInstaller)) {
-    throw "The packaged payload needs the Visual C++ runtime but the verified redistributable source is unavailable."
-  }
   if ($runtimeImports.Count -gt 0) {
-    Write-Host "Verified bundled VC++ runtime ($($redistPayload.FullName)) for: $($runtimeImports -join '; ')"
+    Write-Host "Verified bundled VC++ runtime for: $($runtimeImports -join '; ')"
   } else {
     Write-Host "Verified a static Windows runtime across the NSIS payload."
   }
+  Write-Host "Verified Windows engines, independent NNUE files, and link-vision model."
 } finally {
   Remove-Item -LiteralPath $extractRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
