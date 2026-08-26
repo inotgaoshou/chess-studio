@@ -190,7 +190,7 @@ export function ReviewWorkspace({
       : !reportReady
         ? { step: "整局报告", title: report?.stale ? "棋谱已改动，需要重新分析" : "生成整局报告", detail: "由你主动启动；报告会分析当前棋谱结构和引擎配置。" }
         : currentIssue
-          ? { step: "U10 拆棋", title: "先独立拆解当前问题", detail: `从 ${currentIssue.notation} 之前的局面开始，先隐藏引擎答案完成威胁、候选着和 4–8 个半回合计算。` }
+          ? { step: "引导拆棋", title: "先独立拆解当前问题", detail: `从 ${currentIssue.notation} 之前的局面开始，先隐藏引擎答案完成威胁、候选着和 4–8 个半回合计算。` }
           : trainingTasks.length === 0
           ? { step: "训练", title: "从关键失误生成训练", detail: "把当前报告中的问题着法转成可完成的复练任务。" }
           : { step: "训练", title: "继续训练与总结", detail: `本局已有 ${trainingTasks.length} 个训练任务，可完成复练并记录总结。` };
@@ -278,7 +278,7 @@ export function ReviewWorkspace({
         {!hasRecordedMoves ? <div className="review-guide-actions"><button type="button" className="primary" onClick={onImport}><FileText size={13}/>导入棋谱</button><button type="button" onClick={onImportScreenshot}><Image size={13}/>导入截图识别</button><button type="button" onClick={onPaste}><ClipboardPaste size={13}/>一键录入</button><button type="button" onClick={onManualRecord}><Plus size={13}/>手动录谱</button></div>
           : !archived ? <div className="review-guide-actions"><button type="button" className="primary" onClick={() => setArchiveEditorOpen(true)}><FolderArchive size={13}/>编辑并保存归档</button></div>
             : !reportReady ? <div className="review-guide-actions"><button type="button" className="primary" disabled={!engineReady || reportBusy} onClick={onGenerateReport}><Activity size={13}/>{report?.stale ? "重新生成报告" : "生成整局报告"}</button><button type="button" onClick={onOpenFlyknife}><Swords size={13}/>手动设计飞刀</button>{reportBusy && <button type="button" className="danger" onClick={onCancelReport}><RefreshCw size={13}/>取消</button>}</div>
-              : currentIssue ? <div className="review-guide-actions"><button type="button" className="primary" onClick={() => onStartU10?.(currentIssue.nodeId)}><Brain size={13}/>U10 引导拆棋</button><button type="button" onClick={onOpenFlyknife}><Swords size={13}/>设计飞刀</button><button type="button" disabled={trainingGenerating} onClick={() => void generateTraining()}><ClipboardList size={13}/>{trainingGenerating ? "生成中" : "生成训练任务"}</button></div>
+              : currentIssue ? <div className="review-guide-actions"><button type="button" className="primary" onClick={() => onStartU10?.(currentIssue.nodeId)}><Brain size={13}/>引导拆棋</button><button type="button" onClick={onOpenFlyknife}><Swords size={13}/>设计飞刀</button><button type="button" disabled={trainingGenerating} onClick={() => void generateTraining()}><ClipboardList size={13}/>{trainingGenerating ? "生成中" : "生成训练任务"}</button></div>
                 : trainingTasks.length === 0 ? <div className="review-guide-actions"><button type="button" className="primary" disabled={trainingGenerating} onClick={() => void generateTraining()}><ClipboardList size={13}/>{trainingGenerating ? "生成中" : "生成训练任务"}</button><button type="button" onClick={onOpenFlyknife}><Swords size={13}/>设计飞刀</button></div>
               : <div className="review-guide-actions"><button type="button" className="primary" onClick={onOpenTraining}><Play size={13}/>打开训练与总结</button><button type="button" onClick={onOpenFlyknife}><Swords size={13}/>设计飞刀</button></div>}
       </section>

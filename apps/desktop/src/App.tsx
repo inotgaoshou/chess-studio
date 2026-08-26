@@ -5141,11 +5141,11 @@ export default function App() {
 
   async function startU10Analysis(nodeId?: string, initialReversed = reversed) {
     if (chessPlatform.kind !== "desktop") {
-      setNotice("U10 引导拆棋需要在桌面版使用");
+      setNotice("引导拆棋需要在桌面版使用");
       return;
     }
     if (!enginePath.trim()) {
-      setNotice("请先配置 Pikafish，再开始 U10 拆棋");
+      setNotice("请先配置 Pikafish，再开始引导拆棋");
       return;
     }
     setU10Busy(true);
@@ -5164,7 +5164,7 @@ export default function App() {
       setU10DailyPlan(dailyPlan);
       setU10WeeklyReport(weeklyReport);
       setU10Repertoire(repertoire);
-      setNotice("U10 拆棋已开始：提交前引擎答案保持隐藏");
+      setNotice("引导拆棋已开始：提交前引擎答案保持隐藏");
     } catch (error) {
       setU10Error(friendlyError(error));
       setNotice(friendlyError(error));
@@ -5221,7 +5221,7 @@ export default function App() {
       ]);
       setU10DailyPlan(dailyPlan);
       setU10Repertoire(repertoire);
-      setNotice("U10 学习档案已保存");
+      setNotice("个人训练档案已保存");
     } catch (error) {
       setU10Error(friendlyError(error));
     } finally {
@@ -5245,10 +5245,10 @@ export default function App() {
         applyBoard(next);
       }
       if (next.currentNode) {
-        next = normalizeBoardState(await enqueueBoardOperation(() => chessPlatform.updateComment(next.currentNode!, "U10 拆棋变例：孩子独立预测线路")));
+        next = normalizeBoardState(await enqueueBoardOperation(() => chessPlatform.updateComment(next.currentNode!, "引导拆棋变例：独立预测线路")));
         applyBoard(next);
       }
-      setNotice("U10 临时线路已保存为普通变例；原主线未改变");
+      setNotice("引导拆棋临时线路已保存为普通变例；原主线未改变");
     } catch (error) {
       const message = friendlyError(error);
       setU10Error(message);

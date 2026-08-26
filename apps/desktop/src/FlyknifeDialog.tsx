@@ -124,6 +124,7 @@ function flyknifeTriggerText(candidate: FlyknifeCandidate, side: FlyknifeSide) {
 }
 
 function candidateKind(candidate: FlyknifeCandidate) {
+  if (candidate.verification) return candidate.verification;
   if (!candidate.lureMove) return "局面强招";
   return (candidate.mate != null && candidate.mate > 0) || (candidate.scoreCp ?? Number.NEGATIVE_INFINITY) >= 100
     ? "已验证飞刀"
@@ -342,6 +343,10 @@ export function FlyknifeDialog({ currentFen, currentSideToMove, cloudCandidates,
       bestDefense: candidate.bestDefense,
       scoreCp: candidate.scoreCp,
       mate: candidate.mate,
+      baselineScoreCp: candidate.baselineScoreCp,
+      swingCp: candidate.swingCp,
+      verification: candidate.verification,
+      verificationDepth: candidate.verificationDepth,
       risk: candidate.risk,
       note: "由飞刀实验室生成；保存前请复核最佳防守。",
       annotations: editedAnnotations(candidate, index),
@@ -350,7 +355,7 @@ export function FlyknifeDialog({ currentFen, currentSideToMove, cloudCandidates,
       const saved = await chessPlatform.saveFlyknifePlan(plan);
       setPlans((items) => [saved, ...items.filter((item) => item.id !== saved.id)]);
       onPlanSaved(saved);
-      setNotice("已保存到飞刀库；若起始局面就是当前棋谱节点，主线已作为变例附加到该节点。");
+      setNotice("已保存到飞刀库；若起始局面就是当前棋谱节点，主线会作为变例附加，并创建一条飞刀防守复练。");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : String(error));
     }
@@ -553,7 +558,7 @@ export function FlyknifeDialog({ currentFen, currentSideToMove, cloudCandidates,
                 <div className="outcome"><small>{candidate.setupMove ? "4" : candidate.lureMove ? "3" : "2"}. 预期效果</small><strong>{candidate.mate != null ? flyknifeScoreText(candidate, side) : `优势 ${candidate.scoreCp == null ? "待确认" : `${candidate.scoreCp >= 0 ? "+" : ""}${(candidate.scoreCp / 100).toFixed(2)} 分`}`}</strong></div>
               </div>
               <div className="flyknife-trigger"><strong>{flyknifeTriggerText(candidate, side)}</strong><small>{flyknifeOutcomeText(candidate, side)}</small></div>
-              <div className="flyknife-evidence"><small>引擎验证</small><p>{flyknifeEngineChangeText(candidate)}</p><small>云库实战信息</small><p>{flyknifeCloudContext(candidate, cloudCandidates)}</p></div>
+              <div className="flyknife-evidence"><small>验证等级：{candidateKind(candidate)}{candidate.verificationDepth ? ` · 深度 ${candidate.verificationDepth}` : ""}</small><p>{flyknifeEngineChangeText(candidate)}</p><small>云库实战信息</small><p>{flyknifeCloudContext(candidate, cloudCandidates)}</p></div>
               <div className="flyknife-intent"><small>这步的用意</small><p>{flyknifeIntentText(candidate)}</p></div>
               <details className="flyknife-step-annotations" open={Boolean(annotationEditors[index])} onToggle={(event) => { const open = event.currentTarget.open; setAnnotationEditors((items) => ({ ...items, [index]: open })); }}>
                 <summary>查看并编辑关键步骤说明</summary>
@@ -575,7 +580,7 @@ export function FlyknifeDialog({ currentFen, currentSideToMove, cloudCandidates,
           </section>}
         </>}
 
-        {tab === "saved" && <section className="flyknife-library"><h3>已保存飞刀库</h3>{plans.map((plan) => <article key={plan.id}><strong>{plan.title}</strong><small>{plan.side === "red" ? "红方" : "黑方"} · {plan.mainline.length === 0 ? "起步局面" : plan.risk}</small><div><button onClick={() => onPractice(plan)}><Play size={14}/>{plan.mainline.length === 0 ? "从此局面开始" : "练习"}</button><button onClick={() => plan.id && void chessPlatform.deleteFlyknifePlan(plan.id).then(() => setPlans((items) => items.filter((item) => item.id !== plan.id)))}><Trash2 size={14}/>删除</button></div></article>)}{plans.length === 0 && <p className="flyknife-notice">暂无保存方案。可以在“实验室”用云库诱导着 + Pikafish 生成后保存。</p>}</section>}
+        {tab === "saved" && <section className="flyknife-library"><h3>已保存飞刀库</h3>{plans.map((plan) => <article key={plan.id}><strong>{plan.title}</strong><small>{plan.side === "red" ? "红方" : "黑方"} · {plan.mainline.length === 0 ? "起步局面" : `${plan.verification ?? "资料案例"}${plan.verificationDepth ? ` · 深度 ${plan.verificationDepth}` : ""} · 基准 ${plan.baselineScoreCp ?? "--"}cp · 变化 ${plan.swingCp ?? "--"}cp`}</small><p>{plan.mainline.length === 0 ? plan.risk : `最佳防守：${plan.bestDefense.join(" ") || "待补充"} · ${plan.risk}`}</p><div><button onClick={() => onPractice(plan)}><Play size={14}/>{plan.mainline.length === 0 ? "从此局面开始" : "练习"}</button><button onClick={() => plan.id && void chessPlatform.deleteFlyknifePlan(plan.id).then(() => setPlans((items) => items.filter((item) => item.id !== plan.id)))}><Trash2 size={14}/>删除</button></div></article>)}{plans.length === 0 && <p className="flyknife-notice">暂无保存方案。可以在“实验室”用云库诱导着 + Pikafish 生成后保存。</p>}</section>}
       </div>
       {preview && <section className="flyknife-preview" aria-label="飞刀预览">
         <header><span><Eye size={15}/><strong>{candidateKind(preview.candidate)}预演 · 方案 {preview.index + 1}</strong><em>{candidateMoveLabel(preview.candidate)}：{knifeNotation}</em></span><button className="tool-button" title="返回推荐方案" onClick={() => setPreview(undefined)}><X size={15}/></button></header>

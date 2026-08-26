@@ -907,6 +907,12 @@ struct TrainingTaskDto {
     tags: Vec<String>,
     source_card_id: Option<i64>,
     task_type: String,
+    source_type: String,
+    training_mode: String,
+    opening_name: Option<String>,
+    last_reviewed_at: Option<String>,
+    next_review_at: Option<String>,
+    mastered: bool,
     completed_at: Option<String>,
     created_at: String,
 }
@@ -923,6 +929,12 @@ impl From<TrainingTask> for TrainingTaskDto {
             tags: task.tags,
             source_card_id: task.source_card_id,
             task_type: task.task_type,
+            source_type: task.source_type,
+            training_mode: task.training_mode,
+            opening_name: task.opening_name,
+            last_reviewed_at: task.last_reviewed_at,
+            next_review_at: task.next_review_at,
+            mastered: task.mastered,
             completed_at: task.completed_at,
             created_at: task.created_at,
         }
@@ -998,6 +1010,14 @@ struct FlyknifePlanDto {
     best_defense: Vec<String>,
     score_cp: Option<i64>,
     mate: Option<i64>,
+    #[serde(default)]
+    baseline_score_cp: Option<i64>,
+    #[serde(default)]
+    swing_cp: Option<i64>,
+    #[serde(default = "default_flyknife_verification")]
+    verification: String,
+    #[serde(default)]
+    verification_depth: Option<i64>,
     risk: String,
     source_game_id: Option<Uuid>,
     source_node_id: Option<Uuid>,
@@ -1005,6 +1025,8 @@ struct FlyknifePlanDto {
     #[serde(default)]
     annotations: Vec<FlyknifeStepAnnotationDto>,
 }
+
+fn default_flyknife_verification() -> String { "资料案例".into() }
 
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -1050,6 +1072,8 @@ struct FlyknifeCandidateDto {
     baseline_score_cp: Option<i64>,
     swing_cp: Option<i64>,
     mate: Option<i64>,
+    verification: String,
+    verification_depth: Option<u32>,
     risk: String,
     annotations: Vec<FlyknifeStepAnnotationDto>,
 }
@@ -1069,6 +1093,10 @@ impl From<FlyknifePlan> for FlyknifePlanDto {
             best_defense: plan.best_defense,
             score_cp: plan.score_cp,
             mate: plan.mate,
+            baseline_score_cp: plan.baseline_score_cp,
+            swing_cp: plan.swing_cp,
+            verification: plan.verification,
+            verification_depth: plan.verification_depth,
             risk: plan.risk,
             source_game_id: plan.source_game_id,
             source_node_id: plan.source_node_id,
@@ -9982,6 +10010,13 @@ async fn generate_flyknife_candidates(
             let favorable =
                 score.is_some_and(|value| value >= 100) || line.mate.is_some_and(|value| value > 0);
             let best_defense: Vec<String> = line.pv.iter().skip(1).take(4).cloned().collect();
+            let verification = if lure_move.is_empty() {
+                "资料案例"
+            } else if favorable && swing_cp.is_some_and(|swing| swing >= 100) && !best_defense.is_empty() {
+                "已验证飞刀"
+            } else {
+                "待验证候选"
+            };
             let notation = after_lure.chinese_pv_notation(&line.pv).unwrap_or_default();
             let best_defense_notation = after_lure
                 .apply_iccs(&knife_move)
@@ -10018,6 +10053,8 @@ async fn generate_flyknife_candidates(
                 baseline_score_cp,
                 swing_cp,
                 mate: line.mate.map(i64::from),
+                verification: verification.into(),
+                verification_depth: line.depth,
                 risk: if lure_move.is_empty() {
                     if favorable {
                         "局面强招：当前轮可取得明显主动；这不是预埋飞刀。".into()
@@ -10114,6 +10151,10 @@ fn save_flyknife_plan(
         best_defense: plan.best_defense.clone(),
         score_cp: plan.score_cp,
         mate: plan.mate,
+        baseline_score_cp: plan.baseline_score_cp,
+        swing_cp: plan.swing_cp,
+        verification: plan.verification.clone(),
+        verification_depth: plan.verification_depth,
         risk: plan.risk.clone(),
         source_game_id: None,
         source_node_id: None,
@@ -10134,6 +10175,27 @@ fn save_flyknife_plan(
         .store
         .save_flyknife_plan(&stored)
         .map_err(|error| error.to_string())?;
+    if source_matches_current && !stored.mainline.is_empty() && let Some(current_node) = model.current_node {
+        let tags = vec!["飞刀".into(), "布局陷阱".into(), "最佳防守".into()];
+        let task_game_id = model.game_id;
+        model
+            .store
+            .upsert_training_task_with_context(
+                task_game_id,
+                &format!("flyknife:{}", stored.id),
+                current_node,
+                &format!("飞刀防守复练：{}", stored.title),
+                "先判断诱导条件是否成立；再找出刀着，并写出对方最强防守。保存方案不改变原主线。",
+                Some("opening"),
+                &tags,
+                None,
+                "reinforcement",
+                "flyknife",
+                "flyknife-defense",
+                Some(&stored.template_name),
+            )
+            .map_err(|error| error.to_string())?;
+    }
     if source_matches_current {
         let original_board = model.board.clone();
         let original_node = model.current_node;
@@ -10474,6 +10536,9 @@ fn submit_guided_analysis(
                     &result.theory_signals,
                     None,
                     "reinforcement",
+                    "guided-analysis",
+                    "guided-analysis",
+                    None,
                 )
                 .map_err(|error| error.to_string())?;
             model
@@ -10612,6 +10677,24 @@ fn infer_opening_repertoire_command(
                 .max_by_key(|opening| opening.ply)?
                 .name
                 .clone();
+            let opening_positions = report.positions.iter().filter(|position| position.phase == "opening").collect::<Vec<_>>();
+            let quality_values = opening_positions.windows(2).filter_map(|pair| {
+                let before = pair[0].score_cp?;
+                let after = pair[1].score_cp?;
+                let moved_by = pair[1].move_.as_ref()?.moved_by.as_str();
+                let loss = if moved_by == "红方" { before - after } else { after - before }.max(0);
+                Some((100 - (loss / 8)).clamp(0, 100) as u8)
+            }).collect::<Vec<_>>();
+            let average_quality = (!quality_values.is_empty()).then(|| {
+                (quality_values.iter().map(|score| u32::from(*score)).sum::<u32>() / quality_values.len() as u32) as u8
+            });
+            let typical_deviation = opening_positions.windows(2).filter_map(|pair| {
+                let before = pair[0].score_cp?;
+                let after = pair[1].score_cp?;
+                let moved = pair[1].move_.as_ref()?;
+                let loss = if moved.moved_by == "红方" { before - after } else { after - before };
+                (loss >= TRAINING_TASK_LOSS_THRESHOLD_CP).then(|| moved.notation.clone())
+            }).next();
             let metadata: serde_json::Value = serde_json::from_str(&game.metadata_json).ok()?;
             let child = profile.child_name.trim();
             let side = if !child.is_empty() && metadata["red"].as_str() == Some(child) {
@@ -10630,6 +10713,9 @@ fn infer_opening_repertoire_command(
                 side: side.into(),
                 opening_name,
                 updated_at: game.updated_at,
+                average_quality,
+                typical_deviation,
+                outcome: metadata["result"].as_str().map(ToOwned::to_owned),
             })
         })
         .collect();
@@ -10759,6 +10845,9 @@ fn generate_training_tasks(
                 &tags,
                 source_card.map(|card| card.id),
                 task_type,
+                if position.phase == "opening" { "report" } else { "report" },
+                if position.phase == "opening" { "opening-deviation" } else { "guided-analysis" },
+                position.opening.as_ref().map(|opening| opening.name.as_str()),
             )
             .map_err(|error| error.to_string())?;
         if let Some(card) = source_card {
@@ -10774,12 +10863,36 @@ fn generate_training_tasks(
             );
         }
     }
+    if let Some(position) = report.positions.iter().find(|position| {
+        position.phase == "opening" && position.opening.is_some() && position.move_.is_some()
+    }) {
+        let moved = position.move_.as_ref().expect("opening position has move");
+        let opening = position.opening.as_ref().expect("opening is present");
+        let tags = vec!["开局".into(), "专属布局".into(), "标准路线".into()];
+        model
+            .store
+            .upsert_training_task_with_context(
+                report.game_id,
+                &format!("{}:opening-route", report.line_signature),
+                moved.node_id,
+                &format!("标准布局路线：{}", opening.name),
+                "从该局面开始，用本地开局资料和 Pikafish 核对关键主线；每一步先写出目的，再确认主要应手。",
+                Some("opening"),
+                &tags,
+                None,
+                "reinforcement",
+                "opening-route",
+                "standard-route",
+                Some(&opening.name),
+            )
+            .map_err(|error| error.to_string())?;
+    }
     let tasks = model
         .store
         .list_training_tasks()
         .map_err(|error| error.to_string())?
         .into_iter()
-        .filter(|task| task.game_id == model.game_id && task.report_signature == current_signature)
+        .filter(|task| task.game_id == model.game_id && (task.report_signature == current_signature || task.report_signature == format!("{}:opening-route", current_signature)))
         .map(Into::into)
         .collect();
     Ok(TrainingGenerationResultDto {

@@ -289,7 +289,7 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
 
         {dialog === "engine" && <div className="dialog-form engine-settings-form">
           <label className="full"><span>分析引擎</span><input aria-label="分析引擎" value={engineInputValue(BUILTIN_ENGINE_PATH)} readOnly/></label>
-          <p className="dialog-hint full">当前版本只使用随应用安装的内置 Pikafish。箭头、整局报告、U10 拆棋、人机和飞刀核验均使用同一引擎；不再加载外部引擎或并行对比档案。</p>
+          <p className="dialog-hint full">当前版本只使用随应用安装的内置 Pikafish。箭头、整局报告、引导拆棋、人机和飞刀核验均使用同一引擎；不再加载外部引擎或并行对比档案。</p>
           <section className="engine-simple-settings full" aria-label="皮卡鱼引擎快捷设置">
             <header>
               <div><strong>皮卡鱼引擎</strong><small>快捷项会写入下方专业参数；棋规仍由应用内规则模块裁决</small></div>

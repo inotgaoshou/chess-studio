@@ -223,6 +223,18 @@ fn issue_recommendation(issue: &ReportIssueDto) -> Option<&str> {
         .or_else(|| issue.pv_notation.first().map(String::as_str))
 }
 
+fn issue_training_prompt(issue: &ReportIssueDto) -> String {
+    let candidate_prompt = if issue.best_notation.is_some() {
+        "拆棋时先列至少三个候选，并逐一写出对方最强反击。"
+    } else {
+        "拆棋时先确认对方的将军、吃子和先手，再决定计划。"
+    };
+    let opening_prompt = issue.opening.as_ref().map(|opening| {
+        format!(" 该着属于{}，应放回同类布局主线比较，而不是孤立背答案。", opening.name)
+    }).unwrap_or_default();
+    format!("下一盘动作：{candidate_prompt}{opening_prompt}")
+}
+
 struct ReportLayout {
     font: FontId,
     pages: Vec<Vec<Op>>,
@@ -832,6 +844,13 @@ impl ReportLayout {
                     rgb(94, 139, 51),
                 );
             }
+            self.wrapped_text_at(
+                &issue_training_prompt(issue),
+                MARGIN + 18.0,
+                8.2,
+                66.0,
+                rgb(94, 88, 51),
+            );
             self.y -= 12.0;
         }
         self.y -= 8.0;

@@ -434,6 +434,12 @@ pub struct TrainingTask {
     pub tags: Vec<String>,
     pub source_card_id: Option<i64>,
     pub task_type: String,
+    pub source_type: String,
+    pub training_mode: String,
+    pub opening_name: Option<String>,
+    pub last_reviewed_at: Option<String>,
+    pub next_review_at: Option<String>,
+    pub mastered: bool,
     pub completed_at: Option<String>,
     pub created_at: String,
 }
@@ -460,11 +466,11 @@ impl LearningProfile {
         let now = chrono::Utc::now().to_rfc3339();
         Self {
             id: "default".into(),
-            child_name: "小棋手".into(),
-            level: "全国少年赛".into(),
-            age_group: "U10".into(),
+            child_name: "棋手".into(),
+            level: "成人业余".into(),
+            age_group: "成人".into(),
             session_minutes: 40,
-            coach_mode: "家长陪练".into(),
+            coach_mode: "自我复盘".into(),
             cycle_weeks: 12,
             personal_ratio: 60,
             thematic_ratio: 40,
@@ -540,6 +546,10 @@ pub struct FlyknifePlan {
     pub best_defense: Vec<String>,
     pub score_cp: Option<i64>,
     pub mate: Option<i64>,
+    pub baseline_score_cp: Option<i64>,
+    pub swing_cp: Option<i64>,
+    pub verification: String,
+    pub verification_depth: Option<i64>,
     pub risk: String,
     pub source_game_id: Option<Uuid>,
     pub source_node_id: Option<Uuid>,
@@ -685,7 +695,7 @@ pub struct ImportedTheoryCard {
 impl LocalStore {
     pub fn flyknife_plans(&self) -> Result<Vec<FlyknifePlan>, StoreError> {
         let mut statement = self.connection.prepare(
-            "SELECT id, title, side, starting_fen, template_id, template_name, lure_move, knife_move, mainline_json, best_defense_json, score_cp, mate, risk, source_game_id, source_node_id, note, annotations_json, created_at FROM flyknife_plans ORDER BY created_at DESC",
+            "SELECT id, title, side, starting_fen, template_id, template_name, lure_move, knife_move, mainline_json, best_defense_json, score_cp, mate, baseline_score_cp, swing_cp, verification, verification_depth, risk, source_game_id, source_node_id, note, annotations_json, created_at FROM flyknife_plans ORDER BY created_at DESC",
         )?;
         statement
             .query_map([], |row| {
@@ -704,17 +714,21 @@ impl LocalStore {
                         .unwrap_or_default(),
                     score_cp: row.get(10)?,
                     mate: row.get(11)?,
-                    risk: row.get(12)?,
+                    baseline_score_cp: row.get(12)?,
+                    swing_cp: row.get(13)?,
+                    verification: row.get(14)?,
+                    verification_depth: row.get(15)?,
+                    risk: row.get(16)?,
                     source_game_id: row
-                        .get::<_, Option<String>>(13)?
+                        .get::<_, Option<String>>(17)?
                         .and_then(|value| Uuid::parse_str(&value).ok()),
                     source_node_id: row
-                        .get::<_, Option<String>>(14)?
+                        .get::<_, Option<String>>(18)?
                         .and_then(|value| Uuid::parse_str(&value).ok()),
-                    note: row.get(15)?,
-                    annotations: serde_json::from_str(&row.get::<_, String>(16)?)
+                    note: row.get(19)?,
+                    annotations: serde_json::from_str(&row.get::<_, String>(20)?)
                         .unwrap_or_default(),
-                    created_at: row.get(17)?,
+                    created_at: row.get(21)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()
@@ -722,7 +736,7 @@ impl LocalStore {
     }
 
     pub fn save_flyknife_plan(&mut self, plan: &FlyknifePlan) -> Result<(), StoreError> {
-        self.connection.execute("INSERT OR REPLACE INTO flyknife_plans (id, title, side, starting_fen, template_id, template_name, lure_move, knife_move, mainline_json, best_defense_json, score_cp, mate, risk, source_game_id, source_node_id, note, annotations_json, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)", params![plan.id.to_string(), plan.title, plan.side, plan.starting_fen, plan.template_id, plan.template_name, plan.lure_move, plan.knife_move, serde_json::to_string(&plan.mainline)?, serde_json::to_string(&plan.best_defense)?, plan.score_cp, plan.mate, plan.risk, plan.source_game_id.map(|id| id.to_string()), plan.source_node_id.map(|id| id.to_string()), plan.note, serde_json::to_string(&plan.annotations)?, plan.created_at])?;
+        self.connection.execute("INSERT OR REPLACE INTO flyknife_plans (id, title, side, starting_fen, template_id, template_name, lure_move, knife_move, mainline_json, best_defense_json, score_cp, mate, baseline_score_cp, swing_cp, verification, verification_depth, risk, source_game_id, source_node_id, note, annotations_json, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)", params![plan.id.to_string(), plan.title, plan.side, plan.starting_fen, plan.template_id, plan.template_name, plan.lure_move, plan.knife_move, serde_json::to_string(&plan.mainline)?, serde_json::to_string(&plan.best_defense)?, plan.score_cp, plan.mate, plan.baseline_score_cp, plan.swing_cp, plan.verification, plan.verification_depth, plan.risk, plan.source_game_id.map(|id| id.to_string()), plan.source_node_id.map(|id| id.to_string()), plan.note, serde_json::to_string(&plan.annotations)?, plan.created_at])?;
         Ok(())
     }
 
@@ -2290,14 +2304,18 @@ impl LocalStore {
         tags: &[String],
         source_card_id: Option<i64>,
         task_type: &str,
+        source_type: &str,
+        training_mode: &str,
+        opening_name: Option<&str>,
     ) -> Result<(), StoreError> {
         self.connection.execute(
-            "INSERT INTO training_tasks (id, game_id, report_signature, node_id, title, detail, phase, tags_json, source_card_id, task_type, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+            "INSERT INTO training_tasks (id, game_id, report_signature, node_id, title, detail, phase, tags_json, source_card_id, task_type, source_type, training_mode, opening_name, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
              ON CONFLICT(game_id, report_signature, node_id)
              DO UPDATE SET title=excluded.title, detail=excluded.detail, phase=excluded.phase,
                            tags_json=excluded.tags_json, source_card_id=excluded.source_card_id,
-                           task_type=excluded.task_type",
+                           task_type=excluded.task_type, source_type=excluded.source_type,
+                           training_mode=excluded.training_mode, opening_name=excluded.opening_name",
             params![
                 Uuid::new_v4().to_string(),
                 game_id.to_string(),
@@ -2309,6 +2327,9 @@ impl LocalStore {
                 serde_json::to_string(tags)?,
                 source_card_id,
                 task_type,
+                source_type,
+                training_mode,
+                opening_name,
                 chrono::Utc::now().to_rfc3339(),
             ],
         )?;
@@ -2317,8 +2338,8 @@ impl LocalStore {
 
     pub fn list_training_tasks(&self) -> Result<Vec<TrainingTask>, StoreError> {
         let mut statement = self.connection.prepare(
-            "SELECT id, game_id, report_signature, node_id, title, detail, phase, tags_json, source_card_id, task_type, completed_at, created_at
-             FROM training_tasks ORDER BY completed_at IS NOT NULL, created_at DESC",
+            "SELECT id, game_id, report_signature, node_id, title, detail, phase, tags_json, source_card_id, task_type, source_type, training_mode, opening_name, last_reviewed_at, next_review_at, mastered, completed_at, created_at
+             FROM training_tasks ORDER BY completed_at IS NOT NULL, next_review_at IS NULL, next_review_at, created_at DESC",
         )?;
         statement
             .query_map([], |row| {
@@ -2334,8 +2355,14 @@ impl LocalStore {
                     tags: serde_json::from_str(&tags_json).unwrap_or_default(),
                     source_card_id: row.get(8)?,
                     task_type: row.get(9)?,
-                    completed_at: row.get(10)?,
-                    created_at: row.get(11)?,
+                    source_type: row.get(10)?,
+                    training_mode: row.get(11)?,
+                    opening_name: row.get(12)?,
+                    last_reviewed_at: row.get(13)?,
+                    next_review_at: row.get(14)?,
+                    mastered: row.get::<_, i64>(15)? != 0,
+                    completed_at: row.get(16)?,
+                    created_at: row.get(17)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()
@@ -2348,7 +2375,9 @@ impl LocalStore {
         completed: bool,
     ) -> Result<(), StoreError> {
         self.connection.execute(
-            "UPDATE training_tasks SET completed_at = ?2 WHERE id = ?1",
+            "UPDATE training_tasks SET completed_at = ?2, last_reviewed_at = ?2,
+             next_review_at = CASE WHEN ?2 IS NULL THEN NULL ELSE datetime(?2, '+3 days') END,
+             mastered = CASE WHEN ?2 IS NULL THEN 0 ELSE mastered END WHERE id = ?1",
             params![
                 task_id.to_string(),
                 completed.then(|| chrono::Utc::now().to_rfc3339())
@@ -2378,7 +2407,9 @@ impl LocalStore {
     ) -> Result<LearningProfile, StoreError> {
         let mut profile = profile.clone();
         profile.id = "default".into();
-        profile.age_group = "U10".into();
+        if profile.age_group == "U10" {
+            profile.age_group = "成人".into();
+        }
         profile.session_minutes = 40;
         profile.cycle_weeks = 12;
         profile.personal_ratio = 60;
@@ -2917,6 +2948,12 @@ impl LocalStore {
                node_id TEXT NOT NULL, title TEXT NOT NULL, detail TEXT NOT NULL,
                phase TEXT, tags_json TEXT NOT NULL DEFAULT '[]', source_card_id INTEGER,
                task_type TEXT NOT NULL DEFAULT 'critical',
+               source_type TEXT NOT NULL DEFAULT 'report',
+               training_mode TEXT NOT NULL DEFAULT 'guided-analysis',
+               opening_name TEXT,
+               last_reviewed_at TEXT,
+               next_review_at TEXT,
+               mastered INTEGER NOT NULL DEFAULT 0,
                completed_at TEXT, created_at TEXT NOT NULL,
                UNIQUE(game_id, report_signature, node_id)
              );
@@ -2996,6 +3033,8 @@ impl LocalStore {
                lure_move TEXT NOT NULL, knife_move TEXT NOT NULL,
                mainline_json TEXT NOT NULL, best_defense_json TEXT NOT NULL,
                score_cp INTEGER, mate INTEGER, risk TEXT NOT NULL,
+               baseline_score_cp INTEGER, swing_cp INTEGER,
+               verification TEXT NOT NULL DEFAULT '资料案例', verification_depth INTEGER,
                source_game_id TEXT, source_node_id TEXT, note TEXT NOT NULL DEFAULT '',
                annotations_json TEXT NOT NULL DEFAULT '[]',
                created_at TEXT NOT NULL
@@ -3028,6 +3067,10 @@ impl LocalStore {
             "annotations_json",
             "TEXT NOT NULL DEFAULT '[]'",
         )?;
+        ensure_column(&connection, "flyknife_plans", "baseline_score_cp", "INTEGER")?;
+        ensure_column(&connection, "flyknife_plans", "swing_cp", "INTEGER")?;
+        ensure_column(&connection, "flyknife_plans", "verification", "TEXT NOT NULL DEFAULT '资料案例'")?;
+        ensure_column(&connection, "flyknife_plans", "verification_depth", "INTEGER")?;
         connection.execute_batch(
             "INSERT OR IGNORE INTO library_folders (name, system) VALUES
              ('比赛复盘', 1), ('开局研究', 1), ('飞刀方案', 1), ('训练题', 1);",
@@ -3046,6 +3089,13 @@ impl LocalStore {
             "task_type",
             "TEXT NOT NULL DEFAULT 'critical'",
         )?;
+        ensure_column(&connection, "training_tasks", "source_type", "TEXT NOT NULL DEFAULT 'report'")?;
+        ensure_column(&connection, "training_tasks", "training_mode", "TEXT NOT NULL DEFAULT 'guided-analysis'")?;
+        ensure_column(&connection, "training_tasks", "opening_name", "TEXT")?;
+        ensure_column(&connection, "training_tasks", "last_reviewed_at", "TEXT")?;
+        ensure_column(&connection, "training_tasks", "next_review_at", "TEXT")?;
+        ensure_column(&connection, "training_tasks", "mastered", "INTEGER NOT NULL DEFAULT 0")?;
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_training_tasks_review ON training_tasks(next_review_at, completed_at)", [])?;
         ensure_column(&connection, "theory_cards", "external_id", "TEXT")?;
         connection.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_theory_cards_external_id_unique ON theory_cards(external_id)",
@@ -3766,6 +3816,10 @@ mod tests {
             best_defense: vec![],
             score_cp: Some(120),
             mate: None,
+            baseline_score_cp: Some(10),
+            swing_cp: Some(110),
+            verification: "已验证飞刀".into(),
+            verification_depth: Some(22),
             risk: "实战可用".into(),
             source_game_id: None,
             source_node_id: None,
@@ -3787,6 +3841,7 @@ mod tests {
         let saved = store.flyknife_plans().unwrap().remove(0);
         assert_eq!(saved.id, plan.id);
         assert_eq!(saved.annotations, plan.annotations);
+        assert_eq!(saved.verification, "已验证飞刀");
         store.delete_flyknife_plan(plan.id).unwrap();
         assert!(store.flyknife_plans().unwrap().is_empty());
     }
@@ -4618,6 +4673,37 @@ mod tests {
     }
 
     #[test]
+    fn contextual_training_tasks_keep_mode_and_schedule_reviews() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let game_id = Uuid::new_v4();
+        let node_id = Uuid::new_v4();
+        store
+            .upsert_training_task_with_context(
+                game_id,
+                "opening-route-1",
+                node_id,
+                "标准布局路线：中炮对屏风马",
+                "从本机开局资料核对关键主线。",
+                Some("opening"),
+                &["开局".into(), "标准路线".into()],
+                None,
+                "reinforcement",
+                "opening-route",
+                "standard-route",
+                Some("中炮对屏风马"),
+            )
+            .unwrap();
+        let task = store.list_training_tasks().unwrap().pop().unwrap();
+        assert_eq!(task.source_type, "opening-route");
+        assert_eq!(task.training_mode, "standard-route");
+        assert_eq!(task.opening_name.as_deref(), Some("中炮对屏风马"));
+        store.complete_training_task(task.id, true).unwrap();
+        let completed = store.list_training_tasks().unwrap().pop().unwrap();
+        assert!(completed.last_reviewed_at.is_some());
+        assert!(completed.next_review_at.is_some());
+    }
+
+    #[test]
     fn theory_feedback_penalizes_incorrect_matches_and_preserves_card_versions() {
         let mut store = LocalStore::open_in_memory().unwrap();
         store
@@ -4814,6 +4900,9 @@ mod tests {
                 &["候选着".into()],
                 None,
                 "critical",
+                "report",
+                "guided-analysis",
+                None,
             )
             .unwrap();
         let stats = store.weakness_stats(8).unwrap();

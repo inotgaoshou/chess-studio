@@ -140,8 +140,8 @@ export type SaveBookImportRequest = {
   eventName: string;
   movesText: string;
 };
-export type FlyknifePlan = { id?: string; title: string; side: FlyknifeSide; startingFen: string; templateId?: string; templateName: string; lureMove: string; knifeMove: string; mainline: string[]; bestDefense: string[]; scoreCp?: number; mate?: number; risk: string; sourceGameId?: string; sourceNodeId?: string; note: string; annotations?: FlyknifeStepAnnotation[] };
-export type FlyknifeCandidate = { setupMove?: string; setupNotation?: string; lureMove: string; lureNotation?: string; knifeMove: string; mainline: string[]; notation: string[]; bestDefense: string[]; bestDefenseNotation: string[]; scoreCp?: number; baselineScoreCp?: number; swingCp?: number; mate?: number; risk: string; annotations?: FlyknifeStepAnnotation[] };
+export type FlyknifePlan = { id?: string; title: string; side: FlyknifeSide; startingFen: string; templateId?: string; templateName: string; lureMove: string; knifeMove: string; mainline: string[]; bestDefense: string[]; scoreCp?: number; mate?: number; baselineScoreCp?: number; swingCp?: number; verification?: "资料案例" | "待验证候选" | "已验证飞刀"; verificationDepth?: number; risk: string; sourceGameId?: string; sourceNodeId?: string; note: string; annotations?: FlyknifeStepAnnotation[] };
+export type FlyknifeCandidate = { setupMove?: string; setupNotation?: string; lureMove: string; lureNotation?: string; knifeMove: string; mainline: string[]; notation: string[]; bestDefense: string[]; bestDefenseNotation: string[]; scoreCp?: number; baselineScoreCp?: number; swingCp?: number; mate?: number; verification?: "资料案例" | "待验证候选" | "已验证飞刀"; verificationDepth?: number; risk: string; annotations?: FlyknifeStepAnnotation[] };
 export type GenerateFlyknifeRequest = { startingFen: string; side: FlyknifeSide; setupMove?: string; lureMove: string; enginePath: string; threads: number; hashMb: number; searchMode: "time" | "depth" | "nodes"; searchValue: number };
 export type AnalysisLine = {
   depth?: number;
@@ -570,6 +570,12 @@ export type TrainingTaskDto = {
   tags?: string[];
   sourceCardId?: number;
   taskType: "critical" | "reinforcement";
+  sourceType?: "report" | "opening-route" | "flyknife" | string;
+  trainingMode?: "guided-analysis" | "standard-route" | "opening-deviation" | "flyknife-defense" | string;
+  openingName?: string;
+  lastReviewedAt?: string;
+  nextReviewAt?: string;
+  mastered?: boolean;
   completedAt?: string;
   createdAt: string;
 };
@@ -681,10 +687,21 @@ export type WeeklyLearningReport = {
 };
 export type OpeningRepertoire = {
   sampledGames: number;
-  red: Array<{ name: string; games: number }>;
-  black: Array<{ name: string; games: number }>;
+  red: OpeningSystem[];
+  black: OpeningSystem[];
   enoughData: boolean;
   note: string;
+};
+export type OpeningSystem = {
+  name: string;
+  games: number;
+  wins?: number;
+  draws?: number;
+  losses?: number;
+  averageQuality?: number;
+  recentTrend?: "improving" | "stable" | "declining";
+  typicalDeviation?: string;
+  trainingMode?: "standard-route" | "opening-deviation";
 };
 export type StudySessionDto = {
   id: string;
