@@ -11,7 +11,8 @@ export type WebGameRecord = {
   libraryFolder?: string;
   favorite?: boolean;
   tags?: string[];
-  source?: "manual" | "import" | "custom-position";
+  source?: "manual" | "import" | "custom-position" | "server-master-pgn";
+  sourcePath?: string;
 };
 export type SyncOperation = {
   opId: string;

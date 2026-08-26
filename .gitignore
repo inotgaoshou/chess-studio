@@ -8,3 +8,5 @@ target/
 apps/desktop/node_modules/
 apps/desktop/dist/
 apps/desktop/src-tauri/gen/
+mobile-package-size-report.*
+apps/desktop/mobile-package-size-report.*

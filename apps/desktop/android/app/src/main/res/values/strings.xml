@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">棋研</string>
+    <string name="title_activity_main">棋研</string>
+    <string name="package_name">cn.xiangqi.studio</string>
+    <string name="custom_url_scheme">cn.xiangqi.studio</string>
+</resources>

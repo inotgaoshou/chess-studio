@@ -423,7 +423,10 @@ where
 
 fn cors_layer() -> anyhow::Result<CorsLayer> {
     let configured = env::var("ALLOWED_ORIGINS")
-        .unwrap_or_else(|_| "http://127.0.0.1:1420,http://localhost:1420".into());
+        .unwrap_or_else(|_| {
+            "http://127.0.0.1:1420,http://localhost:1420,https://localhost,capacitor://localhost"
+                .into()
+        });
     let origins: Vec<HeaderValue> = configured
         .split(',')
         .map(str::trim)

@@ -11,9 +11,20 @@
     "test": "vitest run",
     "web:dev": "pnpm wasm:build && vite --port 1420",
     "web:build": "pnpm wasm:build && pnpm build",
+    "mobile:build": "VITE_XIANGQI_MOBILE=1 pnpm web:build && node ../../tools/verify-mobile-web-build.mjs dist",
+    "mobile:report": "node ../../tools/report-mobile-package-size.mjs --dist dist --android android --ios ios --out-json ../../mobile-package-size-report.json --out-md ../../mobile-package-size-report.md",
+    "mobile:sync": "pnpm mobile:build && cap sync",
+    "android:init": "cap add android",
+    "android:open": "pnpm mobile:build && cap sync android && cap open android",
+    "android:apk": "bash ../../scripts/build-mobile-release.sh android-apk",
+    "android:aab": "bash ../../scripts/build-mobile-release.sh android-aab",
+    "ios:init": "cap add ios",
+    "ios:open": "bash ../../scripts/build-mobile-release.sh ios-open",
+    "ios:app-store": "bash ../../scripts/build-mobile-release.sh ios-app-store",
     "tauri": "tauri"
   },
   "dependencies": {
+    "@capacitor/core": "^7.6.8",
     "@tauri-apps/api": "^2.8.0",
     "@tauri-apps/plugin-clipboard-manager": "^2.3.0",
     "@tauri-apps/plugin-dialog": "^2.4.0",
@@ -24,6 +35,9 @@
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
+    "@capacitor/android": "^7.6.8",
+    "@capacitor/cli": "^7.6.8",
+    "@capacitor/ios": "^7.6.8",
     "@tauri-apps/cli": "^2.8.0",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",

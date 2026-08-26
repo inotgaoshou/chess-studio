@@ -1,0 +1,89 @@
+name: Mobile
+
+on:
+  workflow_dispatch:
+    inputs:
+      android_package:
+        description: "Android package type"
+        required: true
+        default: "apk"
+        type: choice
+        options:
+          - apk
+          - aab
+          - both
+
+concurrency:
+  group: mobile-${{ github.event.inputs.android_package }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    name: Android mobile shell
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup Rust for WebAssembly
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        uses: jetli/wasm-pack-action@v0.4.0
+        with:
+          version: latest
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Build Android mobile package
+        env:
+          PNPM_BIN: pnpm
+          ANDROID_KEYSTORE_PATH: ${{ secrets.ANDROID_KEYSTORE_PATH }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          case "${{ github.event.inputs.android_package }}" in
+            apk) ./scripts/build-mobile-release.sh android-apk ;;
+            aab) ./scripts/build-mobile-release.sh android-aab ;;
+            both) ./scripts/build-mobile-release.sh android-both ;;
+          esac
+
+      - name: Upload Android mobile artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Xiangqi-Studio-Android-${{ github.event.inputs.android_package }}
+          if-no-files-found: error
+          path: |
+            apps/desktop/android/app/build/outputs/**/*.apk
+            apps/desktop/android/app/build/outputs/**/*.aab
+            mobile-package-size-report.json
+            mobile-package-size-report.md

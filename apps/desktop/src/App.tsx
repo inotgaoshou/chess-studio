@@ -88,6 +88,7 @@ import { TheoryLibraryView } from "./TheoryLibraryView";
 import { LinkSessionDialog } from "./LinkSessionDialog";
 import { LinkMiniBoard, type LinkMiniArrow } from "./LinkMiniBoard";
 import { FlyknifeDialog } from "./FlyknifeDialog";
+import { mobileWorkbenchMediaQuery, shouldUseMobileWorkbench } from "./mobileEnvironment";
 import { MasterLibraryDialog } from "./MasterLibraryDialog";
 import { Game53StudyDialog } from "./Game53StudyDialog";
 import { bundledTheoryKnowledge } from "./theoryKnowledge.generated";
@@ -1228,8 +1229,8 @@ export default function App() {
   const [libraryFilter, setLibraryFilter] = useState<string>("all");
   const [librarySearch, setLibrarySearch] = useState("");
   const [libraryTagsInput, setLibraryTagsInput] = useState("");
-  const [searchMode, setSearchMode] = useState<"time" | "depth" | "nodes" | "infinite">(() => window.matchMedia("(max-width: 640px) and (orientation: portrait)").matches ? "depth" : "infinite");
-  const [searchValue, setSearchValue] = useState(() => window.matchMedia("(max-width: 640px) and (orientation: portrait)").matches ? MOBILE_DEFAULT_ANALYSIS_DEPTH : 1500);
+  const [searchMode, setSearchMode] = useState<"time" | "depth" | "nodes" | "infinite">(() => shouldUseMobileWorkbench() ? "depth" : "infinite");
+  const [searchValue, setSearchValue] = useState(() => shouldUseMobileWorkbench() ? MOBILE_DEFAULT_ANALYSIS_DEPTH : 1500);
   const [threads, setThreads] = useState(2);
   const [hashMb, setHashMb] = useState(256);
   const [multipv, setMultipv] = useState(1);
@@ -1256,7 +1257,7 @@ export default function App() {
   const [mobileExportOpen, setMobileExportOpen] = useState(false);
   const [mobileArrowsEnabled, setMobileArrowsEnabled] = useState(true);
   const [mobileArrowFocus, setMobileArrowFocus] = useState<string>();
-  const [isMobileWorkbench, setIsMobileWorkbench] = useState(() => window.matchMedia("(max-width: 640px) and (orientation: portrait)").matches);
+  const [isMobileWorkbench, setIsMobileWorkbench] = useState(shouldUseMobileWorkbench);
   const mobileDefaultDepthVersionRef = useRef(isMobileWorkbench);
   const mobileDrawerCloseRef = useRef<HTMLButtonElement>(null);
   const [workspacePanel, setWorkspacePanel] = useState<WorkspacePanel>("moves");
@@ -1508,7 +1509,7 @@ export default function App() {
       setDesktopPreferences(preferences);
       void chessPlatform.getCloudAnalysisPreferences().then(async (preferences) => {
         if (preferences) {
-          const restored = normalizeMobileCloudAnalysisPreferences(preferences, window.matchMedia("(max-width: 640px) and (orientation: portrait)").matches);
+          const restored = normalizeMobileCloudAnalysisPreferences(preferences, shouldUseMobileWorkbench());
           mobileDefaultDepthVersionRef.current = restored.mobileDefaultDepthVersion === MOBILE_DEFAULT_DEPTH_PREFERENCE_VERSION;
           setServerUrl(restored.serverUrl);
           setToken(restored.token);
@@ -1521,6 +1522,7 @@ export default function App() {
           setSearchMode(restored.searchMode);
           setSearchValue(restored.searchValue);
           setAutoAnalyze(restored.autoAnalyze);
+          void chessPlatform.getSyncAccount().then(setSyncAccount).catch(() => undefined);
           if (restored !== preferences) await chessPlatform.saveCloudAnalysisPreferences(restored);
           if (restored.token) {
             try {
@@ -2557,8 +2559,8 @@ export default function App() {
   const boardPerspectiveLabel = boardDisplayReversed ? "黑方视角" : "红方视角";
 
   useEffect(() => {
-    const query = window.matchMedia("(max-width: 640px) and (orientation: portrait)");
-    const sync = () => setIsMobileWorkbench(query.matches);
+    const query = mobileWorkbenchMediaQuery();
+    const sync = () => setIsMobileWorkbench(shouldUseMobileWorkbench());
     sync();
     query.addEventListener("change", sync);
     return () => query.removeEventListener("change", sync);
@@ -3449,6 +3451,11 @@ export default function App() {
     await loadGameReport();
     await refreshGames();
     setMasterLibraryOpen(false);
+    if (chessPlatform.kind === "web") {
+      selectWorkspacePanel("moves");
+      setNotice(options.analyze ? "大师棋谱已打开；移动端可对当前局面使用云端分析" : "大师棋谱已打开");
+      return;
+    }
     if (!options.analyze) {
       selectWorkspacePanel("moves");
       setNotice("大师棋谱已打开，可先查看棋谱；需要评分时再生成整局报告");
@@ -6408,14 +6415,14 @@ export default function App() {
           onSaveMirrorPreferences={saveMirrorPreferences}
           onRebuildMirrors={rebuildGameMirrors}
         />}
-        {chessPlatform.kind === "desktop" && masterLibraryOpen && <MasterLibraryDialog
+        {masterLibraryOpen && <MasterLibraryDialog
           account={syncAccount}
           listPlayers={(query, options) => chessPlatform.listMasterPlayers(query, options)}
           getStats={(query) => chessPlatform.getMasterLibraryStats(query)}
           getOpeningProfile={(playerId) => chessPlatform.getMasterOpeningProfile(playerId)}
           listGames={(playerId, query, options, filters) => chessPlatform.listMasterGames(playerId, query, options, filters)}
           onOpenGame={openMasterLibraryGame}
-          onStudyGame={() => { setMasterLibraryOpen(false); setGame53StudyOpen(true); }}
+          onStudyGame={chessPlatform.kind === "desktop" ? () => { setMasterLibraryOpen(false); setGame53StudyOpen(true); } : undefined}
           onClose={() => setMasterLibraryOpen(false)}
         />}
       </div>
@@ -6486,6 +6493,7 @@ export default function App() {
             <button type="button" className="mobile-drawer-command" title="导入本地棋谱文件" onClick={() => { setMobileDrawerOpen(false); void openDocument(); }}><FolderOpen size={18}/><span><strong>导入棋谱</strong><small>打开本地棋谱文件</small></span></button>
             <button type="button" className="mobile-drawer-command" title="下载当前棋谱文件" onClick={() => { setMobileDrawerOpen(false); void saveDocument(); }}><Save size={18}/><span><strong>保存棋谱</strong><small>下载当前棋谱</small></span></button>
             <button type="button" className="mobile-drawer-command" title="查看、分类和打开本地保存的棋谱" onClick={() => { setMobileDrawerOpen(false); void refreshGames(); setMobilePanel("library"); }}><Library size={18}/><span><strong>棋谱库</strong><small>分类、标签与收藏</small></span></button>
+            <button type="button" className="mobile-drawer-command" title="查询服务端公开大师棋谱" onClick={() => { setMobileDrawerOpen(false); setMasterLibraryOpen(true); }}><Database size={18}/><span><strong>大师棋谱</strong><small>查询服务端棋谱库</small></span></button>
             <button type="button" className="mobile-drawer-command" title="编辑当前棋盘局面" onClick={() => { setMobileDrawerOpen(false); setPositionEditorOpen(true); }}><Pencil size={18}/><span><strong>编辑局面</strong><small>摆放或删除棋子</small></span></button>
             <button type="button" className="mobile-drawer-command" aria-label="翻转红黑方视角" title="翻转红黑方视角" onClick={() => { setMobileDrawerOpen(false); setReversed((value) => !value); }}><FlipVertical2 size={18}/><span><strong>翻转红黑方</strong><small>切换红方或黑方在下</small></span></button>
             <button type="button" className="mobile-drawer-command" title="复制局面或下载棋谱" onClick={() => { setMobileDrawerOpen(false); setMobileExportOpen(true); }}><Copy size={18}/><span><strong>复制与导出</strong><small>复制 FEN 或下载</small></span></button>
@@ -6627,14 +6635,14 @@ export default function App() {
         onSaveProfile={saveU10Profile}
         onSaveVariation={saveU10Variation}
       />}
-      {chessPlatform.kind === "desktop" && masterLibraryOpen && <MasterLibraryDialog
+      {masterLibraryOpen && <MasterLibraryDialog
         account={syncAccount}
         listPlayers={(query, options) => chessPlatform.listMasterPlayers(query, options)}
         getStats={(query) => chessPlatform.getMasterLibraryStats(query)}
         getOpeningProfile={(playerId) => chessPlatform.getMasterOpeningProfile(playerId)}
         listGames={(playerId, query, options, filters) => chessPlatform.listMasterGames(playerId, query, options, filters)}
         onOpenGame={openMasterLibraryGame}
-        onStudyGame={() => { setMasterLibraryOpen(false); setGame53StudyOpen(true); }}
+        onStudyGame={chessPlatform.kind === "desktop" ? () => { setMasterLibraryOpen(false); setGame53StudyOpen(true); } : undefined}
         onClose={() => setMasterLibraryOpen(false)}
       />}
       {coachProfileOpen && <CoachProfileView

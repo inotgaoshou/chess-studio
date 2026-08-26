@@ -2,9 +2,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import { isMobileBuild } from "../mobileEnvironment";
 import { webDatabase, type SyncOperation, type WebGameRecord } from "./indexedDb";
 import { BUILTIN_ENGINE_PATH, FALLBACK_BUILTIN_OPENING_BOOK_MANIFEST } from "./types";
-import type { AnalysisLine, AnalysisOptions, AppInfoDto, BoardState, BookImportDraft, BookTopicDetail, BuiltinOpeningBookManifestDto, CaptureSource, ChessPlatform, CloudAnalysisPreferences, CloudAuthDto, CloudBookCandidate, CloudGuestAuthDto, DesktopPreferencesDto, EngineArenaOptionsDto, EngineArenaResultDto, EngineMoveResult, EnginePlayOptions, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, ExportFormat, FlyknifeCandidate, FlyknifePlan, FlyknifeTemplate, FlyknifeTopic, GameMirrorStatus, GameReportDatasetDto, GameReportOptionsDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, GenerateFlyknifeRequest, LibraryFolder, LinkAutoSide, LinkObservation, LinkSessionStatus, LinkTargetWindow, MasterGameSummaryDto, MasterLibraryFilters, MasterLibraryStatsDto, MasterOpeningProfileDto, MasterPlayerDto, MasterStyleHintDto, MasterStyleImportResultDto, MasterStyleProfileDto, PreviewLineStep, RelatedMasterGame, ReplayExportScope, ScreenshotMoveResolution, StartLinkSessionRequest, StudySessionDto, SubscriptionDto, SyncAccountDto, SyncResult, TheoryCardDto, TheoryCardFeedbackDto, TheoryLibraryDto, TrainingGenerationResultDto, TrainingSummaryDto, TrainingTaskDto } from "./types";
+import type { AnalysisLine, AnalysisOptions, AppInfoDto, BoardState, BookImportDraft, BookTopicDetail, BuiltinOpeningBookManifestDto, CaptureSource, ChessPlatform, CloudAnalysisPreferences, CloudAuthDto, CloudBookCandidate, CloudGuestAuthDto, DesktopPreferencesDto, EngineArenaOptionsDto, EngineArenaResultDto, EngineMoveResult, EnginePlayOptions, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, ExportFormat, FlyknifeCandidate, FlyknifePlan, FlyknifeTemplate, FlyknifeTopic, GameMirrorStatus, GameReportDatasetDto, GameReportOptionsDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, GenerateFlyknifeRequest, LibraryFolder, LinkAutoSide, LinkObservation, LinkSessionStatus, LinkTargetWindow, MasterGameDetailDto, MasterGameSummaryDto, MasterLibraryFilters, MasterLibraryStatsDto, MasterOpeningProfileDto, MasterPlayerDto, MasterStyleHintDto, MasterStyleImportResultDto, MasterStyleProfileDto, PreviewLineStep, RelatedMasterGame, ReplayExportScope, ScreenshotMoveResolution, StartLinkSessionRequest, StudySessionDto, SubscriptionDto, SyncAccountDto, SyncResult, TheoryCardDto, TheoryCardFeedbackDto, TheoryLibraryDto, TrainingGenerationResultDto, TrainingSummaryDto, TrainingTaskDto } from "./types";
 import type { ChineseLineParseResult, DailyTrainingPlan, GuidedAnalysisStart, GuidedAnalysisSubmission, GuidedAnalysisSubmissionResult, GuidedEngineLine, LearningProfile, OpeningRepertoire, WeeklyLearningReport } from "./types";
 
 type WebGameInstance = {
@@ -52,6 +53,10 @@ const webManualFileExtension = "xqjson";
 const webManualMimeType = "application/vnd.xiangqi-assistant+json";
 const webStartingFen = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1";
 const webCloudBookUrl = "https://www.chessdb.cn/chessdb.php";
+const configuredWebServerUrl = import.meta.env.VITE_XIANGQI_SERVER_URL?.trim();
+const defaultWebServerUrl = configuredWebServerUrl || (isMobileBuild ? "https://api.xiangqi.studio" : "http://127.0.0.1:8080");
+const webAccountTokenSessionKey = "xiangqi.cloud.accountToken";
+const webGuestTokenSessionKey = "xiangqi.cloud.guestToken";
 
 type ChessDbCloudRow = { iccs: string; score: number; rank?: number; winRate?: number; memo?: string };
 
@@ -95,6 +100,51 @@ function cloudApiError(status: number, fallback?: string) {
   if (status === 504) return "云端引擎分析超时，请降低搜索限制后重试";
   if (status >= 500) return "云端引擎暂不可用，请稍后重试";
   return fallback ?? `云端服务返回 ${status}`;
+}
+
+function webServerBase(serverUrl: string) {
+  return serverUrl.trim().replace(/\/$/, "") || defaultWebServerUrl;
+}
+
+function sessionSecret(key: string): string | undefined {
+  if (!isMobileBuild || typeof sessionStorage === "undefined") return undefined;
+  try { return sessionStorage.getItem(key) || undefined; } catch { return undefined; }
+}
+
+function rememberSessionSecret(key: string, value?: string) {
+  if (!isMobileBuild || typeof sessionStorage === "undefined") return;
+  try {
+    if (value?.trim()) sessionStorage.setItem(key, value.trim());
+    else sessionStorage.removeItem(key);
+  } catch {
+    // Mobile WebView storage can be unavailable in private/test contexts.
+  }
+}
+
+function preferencesForRuntime(preferences: CloudAnalysisPreferences): CloudAnalysisPreferences {
+  if (!isMobileBuild) return preferences;
+  return {
+    ...preferences,
+    token: preferences.token || sessionSecret(webAccountTokenSessionKey) || "",
+    guestToken: preferences.guestToken || sessionSecret(webGuestTokenSessionKey),
+  };
+}
+
+function preferencesForStorage(preferences: CloudAnalysisPreferences): CloudAnalysisPreferences {
+  if (!isMobileBuild) return preferences;
+  rememberSessionSecret(webAccountTokenSessionKey, preferences.token);
+  rememberSessionSecret(webGuestTokenSessionKey, preferences.guestToken);
+  return {
+    ...preferences,
+    token: "",
+    guestToken: undefined,
+  };
+}
+
+async function readJsonResponse<T>(response: Response): Promise<T> {
+  const payload = await response.json().catch(() => ({})) as T & { error?: string };
+  if (!response.ok) throw new Error(cloudApiError(response.status, payload.error ?? `服务端返回 ${response.status}`));
+  return payload;
 }
 
 export function cloudAnalysisHeaders(token: string, _guest = false): Record<string, string> {
@@ -568,38 +618,128 @@ class WebPlatform implements ChessPlatform {
   async deleteFlyknifePlan(): Promise<void> { throw new Error("Web 端暂不支持飞刀库"); }
   async openFlyknifePractice(): Promise<Partial<BoardState>> { throw new Error("Web 端暂不支持飞刀库"); }
   async listCoachReports(): Promise<GameReportDatasetDto[]> { return []; }
-  async listMasterPlayers(): Promise<MasterPlayerDto[]> { throw new Error("Web 端大师棋谱库暂未开放"); }
-  async getMasterLibraryStats(): Promise<MasterLibraryStatsDto> { throw new Error("Web 端大师棋谱库暂未开放"); }
-  async getMasterOpeningProfile(): Promise<MasterOpeningProfileDto> { throw new Error("Web 端大师棋谱库暂未开放"); }
-  async listMasterGames(): Promise<MasterGameSummaryDto[]> { throw new Error("Web 端大师棋谱库暂未开放"); }
-  async openMasterGame(): Promise<Partial<BoardState>> { throw new Error("Web 端大师棋谱库暂未开放"); }
-  async findRelatedMasterGames(): Promise<RelatedMasterGame[]> { throw new Error("Web 端大师棋谱库暂未开放"); }
-  async getSyncAccount(): Promise<SyncAccountDto> { throw new Error("Web 端账号菜单不在本阶段开放"); }
-  async getSubscription(): Promise<SubscriptionDto> { throw new Error("Web 端订阅权益不在本阶段开放"); }
+  async listMasterPlayers(query?: string, options?: { limit?: number; offset?: number }): Promise<MasterPlayerDto[]> {
+    const endpoint = await this.serverEndpoint("/api/v1/master/players");
+    if (query?.trim()) endpoint.searchParams.set("query", query.trim());
+    if (options?.limit != null) endpoint.searchParams.set("limit", String(options.limit));
+    if (options?.offset != null) endpoint.searchParams.set("offset", String(options.offset));
+    return readJsonResponse<MasterPlayerDto[]>(await fetch(endpoint));
+  }
+  async getMasterLibraryStats(query?: string): Promise<MasterLibraryStatsDto> {
+    const endpoint = await this.serverEndpoint("/api/v1/master/stats");
+    if (query?.trim()) endpoint.searchParams.set("query", query.trim());
+    return readJsonResponse<MasterLibraryStatsDto>(await fetch(endpoint));
+  }
+  async getMasterOpeningProfile(playerId: string): Promise<MasterOpeningProfileDto> {
+    const endpoint = await this.serverEndpoint(`/api/v1/master/players/${encodeURIComponent(playerId)}/opening-profile`);
+    return readJsonResponse<MasterOpeningProfileDto>(await fetch(endpoint));
+  }
+  async listMasterGames(playerId: string, query?: string, options?: { limit?: number; offset?: number }, filters?: MasterLibraryFilters): Promise<MasterGameSummaryDto[]> {
+    const endpoint = await this.serverEndpoint(`/api/v1/master/players/${encodeURIComponent(playerId)}/games`);
+    if (query?.trim()) endpoint.searchParams.set("query", query.trim());
+    if (options?.limit != null) endpoint.searchParams.set("limit", String(options.limit));
+    if (options?.offset != null) endpoint.searchParams.set("offset", String(options.offset));
+    if (filters?.side) endpoint.searchParams.set("side", filters.side);
+    if (filters?.opening) endpoint.searchParams.set("opening", filters.opening);
+    if (filters?.year != null) endpoint.searchParams.set("year", String(filters.year));
+    return readJsonResponse<MasterGameSummaryDto[]>(await fetch(endpoint));
+  }
+  async openMasterGame(gameId: string): Promise<Partial<BoardState>> {
+    const endpoint = await this.serverEndpoint(`/api/v1/master/games/${encodeURIComponent(gameId)}`);
+    const detail = await readJsonResponse<MasterGameDetailDto>(await fetch(endpoint));
+    const module = await this.core();
+    const game = new module.WebGame(webStartingFen);
+    for (const move of detail.moves) game.playMove(move);
+    this.game = game;
+    this.gameId = `master:${detail.id}`;
+    this.gamePersisted = true;
+    this.draftTitle = detail.title?.trim() || `${detail.redPlayer} vs ${detail.blackPlayer}`;
+    this.draftNote = [
+      `红方：${detail.redPlayer}`,
+      `黑方：${detail.blackPlayer}`,
+      `比赛：${detail.eventName ?? "赛事未知"}`,
+      `日期：${detail.gameDate ?? "日期未知"}`,
+      `结果：${detail.result}`,
+      `手数：${detail.moveCount}`,
+      "用途：移动端学习、拆棋和云端分析。",
+    ].join("\n");
+    const state = this.state();
+    await webDatabase.saveGame({
+      id: this.gameId,
+      title: this.draftTitle,
+      note: this.draftNote,
+      snapshot: this.requireGame().exportJson(),
+      fen: state.fen,
+      updatedAt: new Date().toISOString(),
+      favorite: false,
+      tags: detail.openingTags ?? [],
+      source: "server-master-pgn",
+      sourcePath: detail.sourceUrl,
+    }, true);
+    return this.scoredState(state);
+  }
+  async findRelatedMasterGames(topicId: string, fens: string[]): Promise<RelatedMasterGame[]> {
+    const endpoint = await this.serverEndpoint("/api/v1/master/related-games");
+    return readJsonResponse<RelatedMasterGame[]>(await fetch(endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ topicId, fens }),
+    }));
+  }
+  async getSyncAccount(): Promise<SyncAccountDto> {
+    const preferences = await this.getCloudAnalysisPreferences();
+    const email = await webDatabase.meta("cloudAccountEmail");
+    return {
+      serverUrl: preferences?.serverUrl ?? defaultWebServerUrl,
+      email,
+      status: preferences?.token ? "signedIn" : email ? "signedOut" : "unbound",
+    };
+  }
+  async getSubscription(): Promise<SubscriptionDto> {
+    const preferences = await this.getCloudAnalysisPreferences();
+    if (!preferences?.token) throw new Error("请先登录账号再查看权益");
+    return this.getCloudSubscription(preferences.serverUrl, preferences.token);
+  }
   async getCloudAnalysisPreferences(): Promise<CloudAnalysisPreferences | undefined> {
     const raw = await webDatabase.meta("cloudAnalysisPreferences");
     if (!raw) return undefined;
-    try { return JSON.parse(raw) as CloudAnalysisPreferences; } catch { return undefined; }
+    try { return preferencesForRuntime(JSON.parse(raw) as CloudAnalysisPreferences); } catch { return undefined; }
   }
   async saveCloudAnalysisPreferences(preferences: CloudAnalysisPreferences): Promise<void> {
-    await webDatabase.setMeta("cloudAnalysisPreferences", JSON.stringify(preferences));
+    await webDatabase.setMeta("cloudAnalysisPreferences", JSON.stringify(preferencesForStorage(preferences)));
   }
   async checkCloudHealth(serverUrl: string): Promise<void> {
-    const response = await fetch(`${serverUrl.replace(/\/$/, "")}/health`);
+    const response = await fetch(`${webServerBase(serverUrl)}/health`);
     if (!response.ok) throw new Error(cloudApiError(response.status, `服务端不可用：${response.status}`));
   }
   async authenticateCloud(mode: "register" | "login", serverUrl: string, email: string, password: string): Promise<CloudAuthDto> {
-    const response = await fetch(`${serverUrl.replace(/\/$/, "")}/api/v1/auth/${mode}`, {
+    const response = await fetch(`${webServerBase(serverUrl)}/api/v1/auth/${mode}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ email, password }),
     });
-    const payload = await response.json().catch(() => ({})) as Partial<CloudAuthDto> & { error?: string };
-    if (!response.ok || !payload.token || !payload.userId) throw new Error(cloudApiError(response.status, payload.error ?? `登录服务返回 ${response.status}`));
+    const payload = await readJsonResponse<Partial<CloudAuthDto>>(response);
+    if (!payload.token || !payload.userId) throw new Error("登录服务没有返回有效令牌");
+    await webDatabase.setMeta("cloudAccountEmail", email.trim());
+    const current = await this.getCloudAnalysisPreferences();
+    await this.saveCloudAnalysisPreferences({
+      serverUrl: webServerBase(serverUrl),
+      token: payload.token,
+      guestToken: current?.guestToken,
+      guestTokenExpiresAt: current?.guestTokenExpiresAt,
+      guestQuotaLimit: current?.guestQuotaLimit,
+      guestQuotaRemaining: current?.guestQuotaRemaining,
+      guestQuotaResetsAt: current?.guestQuotaResetsAt,
+      multipv: current?.multipv ?? 3,
+      searchMode: current?.searchMode ?? "depth",
+      searchValue: current?.searchValue ?? 20,
+      autoAnalyze: current?.autoAnalyze ?? true,
+      mobileDefaultDepthVersion: current?.mobileDefaultDepthVersion,
+    });
     return { userId: payload.userId, token: payload.token };
   }
   async authenticateCloudGuest(serverUrl: string): Promise<CloudGuestAuthDto> {
-    const response = await fetch(`${serverUrl.replace(/\/$/, "")}/api/v1/auth/guest`, {
+    const response = await fetch(`${webServerBase(serverUrl)}/api/v1/auth/guest`, {
       method: "POST",
       headers: { "content-type": "application/json" },
     });
@@ -617,16 +757,36 @@ class WebPlatform implements ChessPlatform {
     };
   }
   async getCloudSubscription(serverUrl: string, token: string): Promise<SubscriptionDto> {
-    const response = await fetch(`${serverUrl.replace(/\/$/, "")}/api/v1/subscription`, { headers: { authorization: `Bearer ${token}` } });
-    const payload = await response.json().catch(() => ({})) as SubscriptionDto & { error?: string };
-    if (!response.ok) throw new Error(cloudApiError(response.status, payload.error ?? `订阅服务返回 ${response.status}`));
-    return payload;
+    const response = await fetch(`${webServerBase(serverUrl)}/api/v1/subscription`, { headers: { authorization: `Bearer ${token}` } });
+    return readJsonResponse<SubscriptionDto>(response);
   }
-  async redeemSubscriptionCode(): Promise<SubscriptionDto> { throw new Error("Web 端订阅权益不在本阶段开放"); }
-  async registerSyncAccount(): Promise<SyncAccountDto> { throw new Error("Web 端账号菜单不在本阶段开放"); }
-  async loginSyncAccount(): Promise<SyncAccountDto> { throw new Error("Web 端账号菜单不在本阶段开放"); }
-  async logoutSyncAccount(): Promise<SyncAccountDto> { throw new Error("Web 端账号菜单不在本阶段开放"); }
-  async unbindSyncAccount(): Promise<SyncAccountDto> { throw new Error("Web 端账号菜单不在本阶段开放"); }
+  async redeemSubscriptionCode(code: string): Promise<SubscriptionDto> {
+    const preferences = await this.getCloudAnalysisPreferences();
+    if (!preferences?.token) throw new Error("请先登录账号再兑换权益");
+    const response = await fetch(`${webServerBase(preferences.serverUrl)}/api/v1/subscription/redeem`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${preferences.token}` },
+      body: JSON.stringify({ code }),
+    });
+    return readJsonResponse<SubscriptionDto>(response);
+  }
+  async registerSyncAccount(email: string, password: string): Promise<SyncAccountDto> {
+    return this.authenticateSyncAccount("register", email, password);
+  }
+  async loginSyncAccount(email: string, password: string): Promise<SyncAccountDto> {
+    return this.authenticateSyncAccount("login", email, password);
+  }
+  async logoutSyncAccount(): Promise<SyncAccountDto> {
+    const preferences = await this.getCloudAnalysisPreferences();
+    if (preferences) await this.saveCloudAnalysisPreferences({ ...preferences, token: "" });
+    return this.getSyncAccount();
+  }
+  async unbindSyncAccount(): Promise<SyncAccountDto> {
+    await webDatabase.setMeta("cloudAccountEmail", "");
+    const preferences = await this.getCloudAnalysisPreferences();
+    if (preferences) await this.saveCloudAnalysisPreferences({ ...preferences, token: "" });
+    return this.getSyncAccount();
+  }
   async openDocument(): Promise<Partial<BoardState> | undefined> {
     const file = await selectWebManualFile();
     if (!file) return undefined;
@@ -867,7 +1027,7 @@ class WebPlatform implements ChessPlatform {
     const analyzedGameId = this.gameId;
     const analyzedNode = this.state().currentNode;
     this.abort = new AbortController();
-    const response = await fetch(`${options.serverUrl.replace(/\/$/, "")}/api/v1/analysis`, {
+    const response = await fetch(`${webServerBase(options.serverUrl)}/api/v1/analysis`, {
       method: "POST",
       headers: cloudAnalysisHeaders(options.token, options.guest),
       body: JSON.stringify({ fen: options.fen, mode: options.searchMode, value: options.searchValue, multiPv: options.multipv }),
@@ -906,7 +1066,7 @@ class WebPlatform implements ChessPlatform {
 
   async synchronize(serverUrl: string, token: string): Promise<SyncResult> {
     if (!navigator.onLine) throw new Error("当前离线，改动已保存在同步队列");
-    const base = serverUrl.replace(/\/$/, "");
+    const base = webServerBase(serverUrl);
     const pending = await webDatabase.pending();
     const pushResponse = await fetch(`${base}/api/v1/sync/push`, {
       method: "POST",
@@ -976,6 +1136,17 @@ class WebPlatform implements ChessPlatform {
     return { uploaded: pushed.accepted.length, downloaded: pulled.operations.length, cursor: pulled.cursor };
   }
 
+  private async serverEndpoint(route: string): Promise<URL> {
+    const preferences = await this.getCloudAnalysisPreferences();
+    return new URL(route, `${webServerBase(preferences?.serverUrl ?? defaultWebServerUrl)}/`);
+  }
+
+  private async authenticateSyncAccount(mode: "register" | "login", email: string, password: string): Promise<SyncAccountDto> {
+    const preferences = await this.getCloudAnalysisPreferences();
+    await this.authenticateCloud(mode, preferences?.serverUrl ?? defaultWebServerUrl, email, password);
+    return this.getSyncAccount();
+  }
+
   private requireGame(): WebGameInstance {
     if (!this.game) throw new Error("Web chess core is not initialized");
     return this.game;
@@ -1030,6 +1201,8 @@ class WebPlatform implements ChessPlatform {
       ...state,
       title: record?.title ?? this.draftTitle,
       note: record?.note ?? this.draftNote,
+      sourcePath: record?.sourcePath,
+      sourceFormat: record?.source,
       playable: true,
       history: state.history.map(withScore),
       continuation: (state.continuation ?? []).map(withScore),
@@ -1053,6 +1226,7 @@ class WebPlatform implements ChessPlatform {
       favorite: existing?.favorite ?? false,
       tags: existing?.tags ?? [],
       source: existing?.source ?? "manual",
+      sourcePath: existing?.sourcePath,
     } satisfies WebGameRecord);
   }
 
@@ -1115,7 +1289,7 @@ class WebPlatform implements ChessPlatform {
   }
 }
 
-const tauriAvailable = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+const tauriAvailable = typeof window !== "undefined" && !isMobileBuild && "__TAURI_INTERNALS__" in window;
 export const chessPlatform: ChessPlatform = tauriAvailable ? new DesktopPlatform() : new WebPlatform();
 export { BUILTIN_ENGINE_PATH, DEFAULT_BUILTIN_OPENING_BOOK_ID, FALLBACK_BUILTIN_OPENING_BOOK_MANIFEST } from "./types";
 export type { CloudAnalysisPreferences, CloudAuthDto, CloudGuestAuthDto } from "./types";
