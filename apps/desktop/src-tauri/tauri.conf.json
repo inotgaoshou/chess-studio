@@ -27,7 +27,6 @@
     "resources": [
       "../../../THIRD_PARTY_NOTICES.md",
       "resources/fonts/OFL.txt",
-      "resources/pikafish/pikafish",
       "resources/pikafish/pikafish.nnue",
       "resources/pikafish/Copying.txt",
       "resources/pikafish/Pikafish-README.md",
