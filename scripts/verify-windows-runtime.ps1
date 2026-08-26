@@ -44,13 +44,25 @@ function Require-PayloadFile([string]$Name) {
   return $match
 }
 
+function Require-UniquePayloadPath([string]$RelativePattern, [string]$Description) {
+  $matches = @($allFiles | Where-Object {
+    $relative = $_.FullName.Substring($extractRoot.Length).TrimStart('\') -replace '\\', '/'
+    $relative -match $RelativePattern
+  })
+  if ($matches.Count -ne 1) {
+    throw "Expected exactly one $Description in the installer, found $($matches.Count)."
+  }
+  return $matches[0]
+}
+
 try {
   & $sevenZip x $resolvedInstaller "-o$extractRoot" -y | Out-Host
   if ($LASTEXITCODE -ne 0) {
     throw "7-Zip failed to extract the NSIS installer with exit code $LASTEXITCODE"
   }
 
-  $binaries = @(Get-ChildItem -Path $extractRoot -Recurse -File -Include *.exe, *.dll)
+  $allFiles = @(Get-ChildItem -Path $extractRoot -Recurse -File)
+  $binaries = @($allFiles | Where-Object { $_.Extension -in @(".exe", ".dll") })
   if ($binaries.Count -eq 0) {
     throw "The NSIS installer does not contain any executable or DLL payload."
   }
@@ -68,6 +80,10 @@ try {
   $pikafishManifest = Require-PayloadFile "RESOURCE-MANIFEST.txt"
   Require-PayloadFile "Pikafish-README.md" | Out-Null
   Require-PayloadFile "yolov11.onnx" | Out-Null
+  Require-UniquePayloadPath '(^|/)master-style/seed-manifest\.json$' "master-style seed manifest" | Out-Null
+  Require-UniquePayloadPath '(^|/)master-style/master-style-profiles\.json$' "master-style profiles" | Out-Null
+  Require-UniquePayloadPath '(^|/)master-style/master-style-samples\.jsonl$' "master-style samples" | Out-Null
+  Require-UniquePayloadPath '(^|/)master-style/master-style-analysis\.jsonl$' "master-style analysis" | Out-Null
   Require-PayloadFile "Copying.txt" | Out-Null
   Require-PayloadFile "LICENSE-GPL-3.0.txt" | Out-Null
   $noticePayloads = @(Get-ChildItem -Path $extractRoot -Recurse -File -Filter "THIRD_PARTY_NOTICES.md")
@@ -83,7 +99,6 @@ try {
     throw "The packaged Pikafish resource manifest does not retain the pinned NNUE source and hash."
   }
 
-  $allFiles = @(Get-ChildItem -Path $extractRoot -Recurse -File)
   $forbiddenPayload = @($allFiles | Where-Object {
     $normalizedPath = $_.FullName -replace '\\', '/'
     $isUnixPikafish = -not $_.Extension -and $_.BaseName -match "(?i)^pikafish(?:$|[-_])"

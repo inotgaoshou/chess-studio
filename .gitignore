@@ -1,8 +1,11 @@
 .env
+.DS_Store
 .local/
 .theory-work/
 .idea/
 .pnpm-store/
+.codegraph/
+.understand-anything/
 node_modules/
 target/
 apps/desktop/node_modules/

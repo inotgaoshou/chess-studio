@@ -24,7 +24,19 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": ["../../../THIRD_PARTY_NOTICES.md", "resources/fonts/OFL.txt", "resources/pikafish", "resources/link-vision", "resources/flyknife-library", "resources/book-topics"],
+    "resources": [
+      "../../../THIRD_PARTY_NOTICES.md",
+      "resources/fonts/OFL.txt",
+      "resources/pikafish/pikafish",
+      "resources/pikafish/pikafish.nnue",
+      "resources/pikafish/Copying.txt",
+      "resources/pikafish/Pikafish-README.md",
+      "resources/pikafish/RESOURCE-MANIFEST.txt",
+      "resources/link-vision",
+      "resources/master-style",
+      "resources/flyknife-library",
+      "resources/book-topics"
+    ],
     "windows": {
       "nsis": {
         "installMode": "both",

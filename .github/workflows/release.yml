@@ -20,6 +20,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  TAURI_WINDOWS_RESOURCE_CONFIG: '{"bundle":{"resources":["../../../THIRD_PARTY_NOTICES.md","resources/fonts/OFL.txt","resources/pikafish/pikafish.exe","resources/pikafish/pikafish.nnue","resources/pikafish/Copying.txt","resources/pikafish/Pikafish-README.md","resources/pikafish/RESOURCE-MANIFEST.txt","resources/link-vision","resources/master-style","resources/flyknife-library","resources/book-topics"]}}'
 
 jobs:
   build_windows:
@@ -111,7 +112,7 @@ jobs:
         run: cargo check -p xiangqi-desktop --target x86_64-pc-windows-msvc
 
       - name: Build Windows NSIS installer
-        run: pnpm --dir apps/desktop tauri build --target x86_64-pc-windows-msvc --bundles nsis
+        run: pnpm --dir apps/desktop tauri build --config "$env:TAURI_WINDOWS_RESOURCE_CONFIG" --target x86_64-pc-windows-msvc --bundles nsis
 
       - name: Verify packaged Windows installer
         shell: pwsh
@@ -158,7 +159,10 @@ jobs:
           draft: true
           prerelease: false
           fail_on_unmatched_files: true
-          files: release-assets/**/*.exe
+          files: |
+            release-assets/**/*.exe
+            release-assets/windows-package-size-report.json
+            release-assets/windows-package-size-report.md
           body: |
             ## Windows x64
 
