@@ -269,7 +269,7 @@ export function U10TrainingDialog({ start, profile, dailyPlan, weeklyReport, rep
     <section className="u10-dialog" role="dialog" aria-modal="true" aria-labelledby="u10-title">
       <header className="u10-header">
         <div><span className="u10-badge">拆棋</span><div><strong id="u10-title">引导拆棋</strong><small>第 {profile.currentWeek} 周 · {profile.coachMode} · 每次 {profile.sessionMinutes} 分钟</small></div></div>
-        <button type="button" aria-label="关闭引导拆棋" title="关闭" onClick={close}><X size={17}/></button>
+        <button type="button" aria-label="关闭 U10 训练" title="关闭" onClick={close}><X size={17}/></button>
       </header>
       <nav className="u10-tabs" aria-label="引导拆棋分页">
         <button className={tab === "analysis" ? "active" : ""} onClick={() => setTab("analysis")}><Brain size={14}/>引导拆棋</button>
@@ -283,8 +283,8 @@ export function U10TrainingDialog({ start, profile, dailyPlan, weeklyReport, rep
           <header><strong>{phaseName(start.session.phase)}问题局面</strong><div className="u10-board-header-actions"><span>{result ? "答案已揭示" : <><b>答案已隐藏</b> · {sideToMove}走</>}</span><div className="u10-board-orientation" role="group" aria-label="棋盘视角"><button type="button" className={!reversed ? "active" : ""} aria-pressed={!reversed} onClick={() => { setReversed(false); setSelectedSquare(undefined); }}>红方在下</button><button type="button" className={reversed ? "active" : ""} aria-pressed={reversed} onClick={() => { setReversed(true); setSelectedSquare(undefined); }}>黑方在下</button></div><button type="button" aria-label="翻转棋盘" title="翻转棋盘" onClick={() => { setReversed((value) => !value); setSelectedSquare(undefined); }}><FlipVertical size={13}/></button></div></header>
           <div className="u10-board-viewport">
             <div className={`u10-board-click-layer ${selectedSquare ? "selecting" : ""}`}>
-              <LinkMiniBoard presentation="preview" markerStyle="corner" animateMoves={false} boardAriaLabel="引导拆棋临时推演棋盘" pieces={previewPieces} arrows={[]} lastMove={displayedMove} selectedSquare={selectedSquare} sideToMove={sideToMove} reversed={reversed} pieceAsset={pieceAsset} boardAsset={boardAsset}/>
-              {!result && <div className="u10-board-hit-grid" aria-label="引导拆棋临时推演走子区域">{Array.from({ length: 90 }, (_, index) => {
+              <LinkMiniBoard presentation="preview" markerStyle="corner" animateMoves={false} boardAriaLabel="U10 临时推演棋盘" pieces={previewPieces} arrows={[]} lastMove={displayedMove} selectedSquare={selectedSquare} sideToMove={sideToMove} reversed={reversed} pieceAsset={pieceAsset} boardAsset={boardAsset}/>
+              {!result && <div className="u10-board-hit-grid" aria-label="U10 临时推演走子区域">{Array.from({ length: 90 }, (_, index) => {
                 const row = Math.floor(index / 9); const col = index % 9;
                 const square = boardCanonicalSquare({ row, col }, reversed);
                 return <button key={`${row}-${col}`} type="button" disabled={predictionPending || busy} aria-label={`推演${squareLabel(row, col)}`} data-square={`${square.row}-${square.col}`} className="u10-board-hit-target" style={boardIntersectionStyle(square, reversed, boardSkin)} onClick={() => void clickSquare(row, col)}/>;
@@ -309,7 +309,7 @@ export function U10TrainingDialog({ start, profile, dailyPlan, weeklyReport, rep
           <div className="u10-chosen-summary"><strong>我的首选</strong><span>{previewSteps[0]?.notation ?? "请先在棋盘走出第一步"}</span></div>
           {candidateShortage && <p className="u10-candidate-warning">当前只有 {candidates.length} 个候选，提交后会进入“候选不足 / 候选着计算”复练。</p>}
           <label className="u10-confidence">信心 {answers.confidence}%<input type="range" min="20" max="100" step="10" value={answers.confidence} onChange={(event) => setAnswers({ ...answers, confidence: Number(event.target.value) })}/></label>
-          <aside className="u10-parent-prompt"><strong>复盘提示</strong><p>{relevantCards[0]?.parentPrompt ?? "先说出对方最强反击，再判断自己的候选能否应对。"}</p><small>先完成独立判断，再揭示引擎候选。</small></aside>
+          <aside className="u10-parent-prompt"><strong>复盘提示</strong><p>{relevantCards[0]?.parentPrompt ?? "先说出对方最强反击，再判断自己的候选能否应对。"}</p><small>先完成独立判断，提交后再揭示答案。</small></aside>
           <button type="button" className="u10-submit" disabled={!ready || busy} onClick={() => void submit()}>{busy ? "Pikafish 核对中…" : "提交并揭示答案"}</button>
         </section> : <section className={`u10-result-panel ${resultTone(result.result.resultKind)}`}>
           <header><CheckCircle2 size={20}/><div><strong>{result.result.resultLabel} · {result.result.score} 分</strong><small>{result.result.chosenRank ? `实战首选位列 MultiPV 第 ${result.result.chosenRank}` : "首选未进入前三候选"}</small></div></header>
