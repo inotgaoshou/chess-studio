@@ -99,6 +99,13 @@ else
   REQUIRE_GATEKEEPER=0 ./scripts/verify-macos-release.sh
 fi
 
+DMG_PATH="$(find target/release/bundle/dmg -maxdepth 1 -type f -name '*.dmg' | sort | tail -n 1)"
+node tools/report-macos-package-size.mjs \
+  "target/release/bundle/macos/Xiangqi Studio.app" \
+  "$DMG_PATH" \
+  macos-package-size-report.json \
+  macos-package-size-report.md
+
 echo "Done:"
 echo "  target/release/bundle/macos/Xiangqi Studio.app"
 find target/release/bundle/dmg -maxdepth 1 -name 'Xiangqi Studio_*.dmg' -print 2>/dev/null || true
