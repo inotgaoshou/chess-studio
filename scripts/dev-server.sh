@@ -21,20 +21,41 @@ start() {
   [[ -f "$ROOT/.env" ]] || { echo "缺少 $ROOT/.env" >&2; exit 1; }
   mkdir -p "$STATE_DIR"
   rm -f "$PID_FILE"
+  set -a
+  source "$ROOT/.env"
+  set +a
+  [[ -n "${DATABASE_URL:-}" ]] || { echo ".env 缺少 DATABASE_URL" >&2; exit 1; }
+  [[ -n "${JWT_SECRET:-}" ]] || { echo ".env 缺少 JWT_SECRET" >&2; exit 1; }
+  local bind_addr="${BIND_ADDR:-127.0.0.1:8080}"
+  [[ "$bind_addr" == "127.0.0.1:"* ]] || { echo "本机开发服务只能绑定 127.0.0.1，当前为 $bind_addr" >&2; exit 1; }
+  local port="${bind_addr##*:}"
+  if command -v lsof >/dev/null && lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "端口 $port 已被占用；请先确认已有服务或修改本机端口配置" >&2
+    exit 1
+  fi
   (
     cd "$ROOT"
     cargo build -p xiangqi-server
   )
   (
     cd "$ROOT"
-    set -a
-    source "$ROOT/.env"
-    set +a
     nohup "$ROOT/target/debug/xiangqi-server" >"$LOG_FILE" 2>&1 &
     echo $! >"$PID_FILE"
   )
-  echo "服务端启动中，PID $(<"$PID_FILE")"
-  echo "日志：$LOG_FILE"
+  for _ in {1..20}; do
+    if curl --silent --fail "http://$bind_addr/health" >/dev/null 2>&1; then
+      echo "服务端已启动，PID $(<"$PID_FILE")"
+      echo "健康检查：http://$bind_addr/health"
+      return
+    fi
+    sleep 0.25
+  done
+  local pid
+  pid="$(<"$PID_FILE")"
+  kill -TERM "$pid" 2>/dev/null || true
+  rm -f "$PID_FILE"
+  echo "服务端未通过健康检查。请确认 MySQL 已启动、DATABASE_URL 可用，并查看日志：$LOG_FILE" >&2
+  exit 1
 }
 
 stop() {

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { BookOpen, Database, RefreshCw, Search, Swords, X, Zap } from "lucide-react";
-import type { MasterGameSummaryDto, MasterLibraryStatsDto, MasterPlayerDto, SyncAccountDto } from "./platform";
+import type { MasterGameSummaryDto, MasterLibraryFilters, MasterLibraryStatsDto, MasterOpeningProfileDto, MasterPlayerDto, SyncAccountDto } from "./platform";
 
 type Props = {
   account: SyncAccountDto;
@@ -9,7 +9,8 @@ type Props = {
   onStudyGame?(gameId: string): void;
   listPlayers(query?: string, options?: { limit?: number; offset?: number }): Promise<MasterPlayerDto[]>;
   getStats(query?: string): Promise<MasterLibraryStatsDto>;
-  listGames(playerId: string, query?: string, options?: { limit?: number; offset?: number }): Promise<MasterGameSummaryDto[]>;
+  getOpeningProfile?(playerId: string): Promise<MasterOpeningProfileDto>;
+  listGames(playerId: string, query?: string, options?: { limit?: number; offset?: number }, filters?: MasterLibraryFilters): Promise<MasterGameSummaryDto[]>;
 };
 
 const playerPageSize = 8;
@@ -27,13 +28,17 @@ function gameTitle(game: MasterGameSummaryDto) {
   return game.title?.trim() || `${game.redPlayer} vs ${game.blackPlayer}`;
 }
 
-export function MasterLibraryDialog({ account, onClose, onOpenGame, onStudyGame, listPlayers, getStats, listGames }: Props) {
+export function MasterLibraryDialog({ account, onClose, onOpenGame, onStudyGame, listPlayers, getStats, getOpeningProfile, listGames }: Props) {
   const [playerQuery, setPlayerQuery] = useState("");
   const [gameQuery, setGameQuery] = useState("");
   const [playerPage, setPlayerPage] = useState(0);
   const [gamePage, setGamePage] = useState(0);
+  const [side, setSide] = useState<MasterLibraryFilters["side"]>();
+  const [opening, setOpening] = useState<MasterLibraryFilters["opening"]>();
+  const [year, setYear] = useState("");
   const [players, setPlayers] = useState<MasterPlayerDto[]>([]);
   const [stats, setStats] = useState<MasterLibraryStatsDto>();
+  const [openingProfile, setOpeningProfile] = useState<MasterOpeningProfileDto>();
   const [games, setGames] = useState<MasterGameSummaryDto[]>([]);
   const [selectedPlayerId, setSelectedPlayerId] = useState<string>();
   const [busy, setBusy] = useState(false);
@@ -64,6 +69,14 @@ export function MasterLibraryDialog({ account, onClose, onOpenGame, onStudyGame,
   const gamePageLabel = selectedPlayer && !gameQuery.trim()
     ? `第 ${gamePage + 1} / ${Math.max(1, Math.ceil(selectedPlayer.gameCount / gamePageSize))} 页`
     : `第 ${gamePage + 1} 页`;
+  const filters = useMemo<MasterLibraryFilters | undefined>(() => {
+    const parsedYear = Number(year);
+    const value = { side, opening, year: Number.isInteger(parsedYear) && parsedYear >= 1900 && parsedYear <= 2100 ? parsedYear : undefined };
+    return value.side || value.opening || value.year ? value : undefined;
+  }, [opening, side, year]);
+  const serviceUnavailableHint = error.includes("大师棋谱服务不可用")
+    ? "本机大师谱服务未启动。请先启动 MySQL，再在项目目录运行 scripts/dev-server.sh start。"
+    : undefined;
 
   useEffect(() => {
     let disposed = false;
@@ -103,6 +116,15 @@ export function MasterLibraryDialog({ account, onClose, onOpenGame, onStudyGame,
   }, [getStats, playerQuery, refreshVersion]);
 
   useEffect(() => {
+    let disposed = false;
+    if (selectedPlayer?.name !== "赵鑫鑫" || !getOpeningProfile) { setOpeningProfile(undefined); return () => { disposed = true; }; }
+    void getOpeningProfile(selectedPlayer.id)
+      .then((value) => { if (!disposed) setOpeningProfile(value); })
+      .catch(() => { if (!disposed) setOpeningProfile(undefined); });
+    return () => { disposed = true; };
+  }, [getOpeningProfile, selectedPlayer]);
+
+  useEffect(() => {
     if (!selectedPlayerId) {
       setGames([]);
       return;
@@ -111,7 +133,11 @@ export function MasterLibraryDialog({ account, onClose, onOpenGame, onStudyGame,
     setBusy(true);
     setError("");
     const timer = window.setTimeout(() => {
-      void listGames(selectedPlayerId, gameQuery, { limit: gamePageSize, offset: gamePage * gamePageSize })
+      const pageOptions = { limit: gamePageSize, offset: gamePage * gamePageSize };
+      const request = filters
+        ? listGames(selectedPlayerId, gameQuery, pageOptions, filters)
+        : listGames(selectedPlayerId, gameQuery, pageOptions);
+      void request
         .then((items) => {
           if (!disposed) setGames(items);
         })
@@ -126,7 +152,7 @@ export function MasterLibraryDialog({ account, onClose, onOpenGame, onStudyGame,
       disposed = true;
       window.clearTimeout(timer);
     };
-  }, [gamePage, gameQuery, listGames, refreshVersion, selectedPlayerId]);
+  }, [filters, gamePage, gameQuery, listGames, refreshVersion, selectedPlayerId]);
 
   function refreshLibrary() {
     setError("");
@@ -205,9 +231,25 @@ export function MasterLibraryDialog({ account, onClose, onOpenGame, onStudyGame,
                   <input value={gameQuery} disabled={!selectedPlayerId} placeholder="搜赛事 / 对手 / 标题" onChange={(event) => { setGameQuery(event.target.value); setGamePage(0); }}/>
                 </label>
               </div>
+              <div className="master-game-filters" aria-label="棋谱筛选">
+                <select aria-label="执棋方筛选" value={side ?? ""} disabled={!selectedPlayerId} onChange={(event) => { setSide((event.target.value || undefined) as MasterLibraryFilters["side"]); setGamePage(0); }}>
+                  <option value="">红黑不限</option><option value="red">仅执红</option><option value="black">仅执黑</option>
+                </select>
+                <select aria-label="布局体系筛选" value={opening ?? ""} disabled={!selectedPlayerId} onChange={(event) => { setOpening((event.target.value || undefined) as MasterLibraryFilters["opening"]); setGamePage(0); }}>
+                  <option value="">布局不限</option><option value="middle-cannon">中炮</option><option value="third-pawn">挺三兵</option><option value="middle-cannon-third-pawn">中炮三兵</option>
+                </select>
+                <input aria-label="年份筛选" value={year} disabled={!selectedPlayerId} inputMode="numeric" placeholder="年份" maxLength={4} onChange={(event) => { setYear(event.target.value.replace(/\D/g, "")); setGamePage(0); }}/>
+                {!!filters && <button type="button" onClick={() => { setSide(undefined); setOpening(undefined); setYear(""); setGamePage(0); }}>清除筛选</button>}
+              </div>
+              {selectedPlayer?.name === "赵鑫鑫" && <aside className="master-zhao-study-card" aria-label="赵鑫鑫布局专题">
+                <div><strong>赵鑫鑫布局专题</strong><small>先看布局目标和兵线，再用实战验证候选着。</small></div>
+                {openingProfile && <p>已入库 {openingProfile.gameCount} 局：红 {openingProfile.redGames} / 黑 {openingProfile.blackGames}，胜 {openingProfile.wins} / 和 {openingProfile.draws} / 负 {openingProfile.losses}。</p>}
+                <p>中炮三兵：先完成中路出子与三兵空间扩张，重点比较黑方的反击条件、兑车时机和横车转移。</p>
+                <footer><button type="button" onClick={() => { setOpening("middle-cannon-third-pawn"); setGamePage(0); }}>筛选中炮三兵实战</button><button type="button" onClick={() => onStudyGame?.("book-game-53-hong-zhi-huang-shiqing")}>进入三兵飞刀课</button></footer>
+              </aside>}
 
               <div className="master-library-status" aria-live="polite">
-                {error ? <p className="master-library-error" role="alert">{error}</p>
+                {error ? <p className="master-library-error" role="alert">{serviceUnavailableHint ?? error}</p>
                   : busy ? <p className="master-library-loading"><RefreshCw className="spin" size={15}/>正在查询服务端大师库…</p>
                     : <span/>}
               </div>
@@ -220,6 +262,7 @@ export function MasterLibraryDialog({ account, onClose, onOpenGame, onStudyGame,
                       <small>{gameDateLabel(game.gameDate)} · {game.eventName ?? "赛事未知"} · {game.moveCount} 手</small>
                     </div>
                     <p><span className={game.masterSide === "red" ? "master-side" : ""}>红：{game.redPlayer}</span><span className={game.masterSide === "black" ? "master-side" : ""}>黑：{game.blackPlayer}</span><em>{game.result}</em></p>
+                    {!!game.openingTags?.length && <small className="master-opening-tags">{game.openingTags.map((tag) => tag === "middle-cannon-third-pawn" ? "中炮三兵" : tag === "middle-cannon" ? "中炮" : "挺三兵").join(" · ")}</small>}
                     <footer>
                       <small>{sideLabel(game.masterSide)}</small>
                       <div className="master-game-actions">

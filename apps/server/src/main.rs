@@ -163,6 +163,9 @@ struct PullQuery {
 #[derive(Debug, Deserialize)]
 struct MasterLibraryQuery {
     query: Option<String>,
+    side: Option<String>,
+    opening: Option<String>,
+    year: Option<u16>,
     limit: Option<u32>,
     offset: Option<u32>,
 }
@@ -195,6 +198,19 @@ struct MasterLibraryStatsDto {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct MasterOpeningProfileDto {
+    player_id: String,
+    player_name: String,
+    game_count: u64,
+    red_games: u64,
+    black_games: u64,
+    wins: u64,
+    draws: u64,
+    losses: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct MasterGameSummaryDto {
     id: String,
     title: String,
@@ -206,6 +222,7 @@ struct MasterGameSummaryDto {
     result: String,
     move_count: u64,
     source_url: String,
+    opening_tags: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -223,6 +240,7 @@ struct MasterGameDetailDto {
     source_url: String,
     moves: Vec<String>,
     pgn: String,
+    opening_tags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -323,6 +341,10 @@ async fn main() -> anyhow::Result<()> {
     sqlx::raw_sql(include_str!("../migrations/0001_initial.sql"))
         .execute(&pool)
         .await?;
+    sqlx::raw_sql(include_str!("../migrations/0002_master_opening_tags.sql"))
+        .execute(&pool)
+        .await?;
+    backfill_master_opening_tags(&pool).await?;
     let app = router(
         AppState {
             pool,
@@ -344,6 +366,22 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Deliberately conservative opening tags based only on recorded ICCS moves.
+/// `INSERT IGNORE` makes startup enrichment safe for an existing local library.
+async fn backfill_master_opening_tags(pool: &sqlx::MySqlPool) -> anyhow::Result<()> {
+    for (tag, predicate) in [
+        ("middle-cannon", "m.ply = 1 AND m.move_iccs = 'h2e2'"),
+        ("third-pawn", "m.move_iccs = 'g3g4' AND m.ply <= 20"),
+        ("middle-cannon-third-pawn", "m.ply = 1 AND m.move_iccs = 'h2e2' AND EXISTS (SELECT 1 FROM master_game_moves p WHERE p.game_id = m.game_id AND p.move_iccs = 'g3g4' AND p.ply <= 20)"),
+    ] {
+        let statement = format!(
+            "INSERT IGNORE INTO master_game_opening_tags (game_id, tag) SELECT DISTINCT m.game_id, ? FROM master_game_moves m WHERE {predicate}"
+        );
+        sqlx::query(&statement).bind(tag).execute(pool).await?;
+    }
+    Ok(())
+}
+
 fn router(state: AppState, cors: CorsLayer) -> Router {
     Router::new()
         .route("/health", get(|| async { Json(Health { status: "ok" }) }))
@@ -360,6 +398,10 @@ fn router(state: AppState, cors: CorsLayer) -> Router {
         .route(
             "/api/v1/master/players/{player_id}/games",
             get(list_master_player_games),
+        )
+        .route(
+            "/api/v1/master/players/{player_id}/opening-profile",
+            get(master_opening_profile),
         )
         .route("/api/v1/master/related-games", post(find_related_master_games))
         .route("/api/v1/master/games/{game_id}", get(master_game_detail))
@@ -670,6 +712,9 @@ async fn list_master_player_games(
 ) -> Result<Json<Vec<MasterGameSummaryDto>>, ApiError> {
     let search = normalized_search_term(query.query.as_deref());
     let like = sql_like_term(&search);
+    let side = query.side.unwrap_or_default();
+    let opening = query.opening.unwrap_or_default();
+    let year = query.year.unwrap_or(0).clamp(0, 9999);
     let limit = query.limit.unwrap_or(50).clamp(1, 100) as i64;
     let offset = query.offset.unwrap_or(0).min(10_000) as i64;
     type Row = (
@@ -683,19 +728,30 @@ async fn list_master_player_games(
         String,
         i64,
         String,
+        Option<String>,
     );
     let rows: Vec<Row> = sqlx::query_as(
         "SELECT g.id, g.title, g.red_player, g.black_player, r.side,
                 g.game_date, g.event_name, g.result,
-                CAST(g.move_count AS SIGNED) AS move_count, g.source_url
+                CAST(g.move_count AS SIGNED) AS move_count, g.source_url,
+                (SELECT GROUP_CONCAT(t.tag ORDER BY t.tag SEPARATOR ',') FROM master_game_opening_tags t WHERE t.game_id = g.id) AS opening_tags
          FROM master_game_player_refs r
          INNER JOIN master_games g ON g.id = r.game_id
          WHERE r.master_player_id = ?
+           AND (? = '' OR r.side = ?)
+           AND (? = 0 OR YEAR(g.game_date) = ?)
+           AND (? = '' OR EXISTS (SELECT 1 FROM master_game_opening_tags t WHERE t.game_id = g.id AND t.tag = ?))
            AND (? = '' OR g.title LIKE ? OR g.red_player LIKE ? OR g.black_player LIKE ? OR g.event_name LIKE ?)
          ORDER BY g.game_date DESC, g.created_at DESC, g.id DESC
          LIMIT ? OFFSET ?",
     )
     .bind(player_id)
+    .bind(&side)
+    .bind(&side)
+    .bind(year)
+    .bind(year)
+    .bind(&opening)
+    .bind(&opening)
     .bind(&search)
     .bind(&like)
     .bind(&like)
@@ -719,6 +775,7 @@ async fn list_master_player_games(
                     result,
                     move_count,
                     source_url,
+                    opening_tags,
                 )| MasterGameSummaryDto {
                     id,
                     title,
@@ -730,10 +787,53 @@ async fn list_master_player_games(
                     result,
                     move_count: move_count.max(0) as u64,
                     source_url,
+                    opening_tags: opening_tags
+                        .as_deref()
+                        .unwrap_or_default()
+                        .split(',')
+                        .filter(|tag| !tag.is_empty())
+                        .map(str::to_owned)
+                        .collect(),
                 },
             )
             .collect(),
     ))
+}
+
+async fn master_opening_profile(
+    State(state): State<AppState>,
+    AxumPath(player_id): AxumPath<String>,
+) -> Result<Json<MasterOpeningProfileDto>, ApiError> {
+    type Row = (String, String, i64, i64, i64, i64, i64, i64);
+    let row: Option<Row> = sqlx::query_as(
+        "SELECT p.id, p.name,
+                CAST(COUNT(r.game_id) AS SIGNED),
+                CAST(COALESCE(SUM(r.side = 'red'), 0) AS SIGNED),
+                CAST(COALESCE(SUM(r.side = 'black'), 0) AS SIGNED),
+                CAST(COALESCE(SUM((r.side = 'red' AND g.result = '1-0') OR (r.side = 'black' AND g.result = '0-1')), 0) AS SIGNED),
+                CAST(COALESCE(SUM(g.result IN ('1/2-1/2', '1/2')), 0) AS SIGNED),
+                CAST(COALESCE(SUM((r.side = 'red' AND g.result = '0-1') OR (r.side = 'black' AND g.result = '1-0')), 0) AS SIGNED)
+         FROM master_players p
+         LEFT JOIN master_game_player_refs r ON r.master_player_id = p.id
+         LEFT JOIN master_games g ON g.id = r.game_id
+         WHERE p.id = ?
+         GROUP BY p.id, p.name",
+    )
+    .bind(player_id)
+    .fetch_optional(&state.pool)
+    .await?;
+    let (player_id, player_name, game_count, red_games, black_games, wins, draws, losses) =
+        row.ok_or_else(|| ApiError::Invalid("master player not found".into()))?;
+    Ok(Json(MasterOpeningProfileDto {
+        player_id,
+        player_name,
+        game_count: game_count.max(0) as u64,
+        red_games: red_games.max(0) as u64,
+        black_games: black_games.max(0) as u64,
+        wins: wins.max(0) as u64,
+        draws: draws.max(0) as u64,
+        losses: losses.max(0) as u64,
+    }))
 }
 
 async fn find_related_master_games(
@@ -846,10 +946,12 @@ async fn master_game_detail(
         i64,
         String,
         serde_json::Value,
+        Option<String>,
     );
     let row: Option<Row> = sqlx::query_as(
         "SELECT id, title, red_player, black_player, event_name, game_date, result,
-                CAST(move_count AS SIGNED) AS move_count, source_url, moves_json
+                CAST(move_count AS SIGNED) AS move_count, source_url, moves_json,
+                (SELECT GROUP_CONCAT(tag ORDER BY tag SEPARATOR ',') FROM master_game_opening_tags WHERE game_id = master_games.id) AS opening_tags
          FROM master_games
          WHERE id = ?",
     )
@@ -867,6 +969,7 @@ async fn master_game_detail(
         move_count,
         source_url,
         moves_json,
+        opening_tags,
     ) = row.ok_or_else(|| ApiError::Invalid("master game not found".into()))?;
     let moves: Vec<String> = serde_json::from_value(moves_json)
         .map_err(|_| ApiError::Invalid("master game has invalid move list".into()))?;
@@ -894,6 +997,13 @@ async fn master_game_detail(
         source_url,
         moves,
         pgn,
+        opening_tags: opening_tags
+            .as_deref()
+            .unwrap_or_default()
+            .split(',')
+            .filter(|tag| !tag.is_empty())
+            .map(str::to_owned)
+            .collect(),
     }))
 }
 
@@ -1890,6 +2000,18 @@ mod tests {
                 "missing foreign key {foreign_key}"
             );
         }
+    }
+
+    #[test]
+    fn master_opening_tag_migration_and_backfill_cover_middle_cannon_third_pawn() {
+        let schema = include_str!("../migrations/0002_master_opening_tags.sql");
+        assert!(schema.contains("CREATE TABLE IF NOT EXISTS master_game_opening_tags"));
+        assert!(schema.contains("idx_master_opening_tag_game"));
+        let source = include_str!("main.rs");
+        for tag in ["middle-cannon", "third-pawn", "middle-cannon-third-pawn"] {
+            assert!(source.contains(tag), "missing opening tag {tag}");
+        }
+        assert!(source.contains("INSERT IGNORE INTO master_game_opening_tags"));
     }
 
     #[test]

@@ -6412,7 +6412,8 @@ export default function App() {
           account={syncAccount}
           listPlayers={(query, options) => chessPlatform.listMasterPlayers(query, options)}
           getStats={(query) => chessPlatform.getMasterLibraryStats(query)}
-          listGames={(playerId, query, options) => chessPlatform.listMasterGames(playerId, query, options)}
+          getOpeningProfile={(playerId) => chessPlatform.getMasterOpeningProfile(playerId)}
+          listGames={(playerId, query, options, filters) => chessPlatform.listMasterGames(playerId, query, options, filters)}
           onOpenGame={openMasterLibraryGame}
           onStudyGame={() => { setMasterLibraryOpen(false); setGame53StudyOpen(true); }}
           onClose={() => setMasterLibraryOpen(false)}
@@ -6630,7 +6631,8 @@ export default function App() {
         account={syncAccount}
         listPlayers={(query, options) => chessPlatform.listMasterPlayers(query, options)}
         getStats={(query) => chessPlatform.getMasterLibraryStats(query)}
-        listGames={(playerId, query, options) => chessPlatform.listMasterGames(playerId, query, options)}
+        getOpeningProfile={(playerId) => chessPlatform.getMasterOpeningProfile(playerId)}
+        listGames={(playerId, query, options, filters) => chessPlatform.listMasterGames(playerId, query, options, filters)}
         onOpenGame={openMasterLibraryGame}
         onStudyGame={() => { setMasterLibraryOpen(false); setGame53StudyOpen(true); }}
         onClose={() => setMasterLibraryOpen(false)}

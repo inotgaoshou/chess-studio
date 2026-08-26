@@ -56,17 +56,30 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
+      - name: Setup Windows engine build toolchain
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: clang64
+          install: mingw-w64-clang-x86_64-clang make git
+
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: . -> target
 
-      - name: Prepare Windows engine resources
-        shell: bash
+      - name: Build Windows engine resources from pinned Pikafish source
+        shell: msys2 {0}
         run: |
-          # The pinned 20260726 Windows binary and NNUE are committed because
-          # this engine snapshot has no public upstream release asset.
-          rm -f apps/desktop/src-tauri/resources/pikafish/pikafish
+          PIKAFISH_SOURCE_REVISION=b97ef0f9eb15bd99899b272e0236bfebf86313b6
+          git clone https://github.com/official-pikafish/Pikafish.git "$RUNNER_TEMP/pikafish-source"
+          git -C "$RUNNER_TEMP/pikafish-source" checkout --detach "$PIKAFISH_SOURCE_REVISION"
+          cp apps/desktop/src-tauri/resources/pikafish/pikafish.nnue "$RUNNER_TEMP/pikafish-source/src/pikafish.nnue"
+          cd "$RUNNER_TEMP/pikafish-source/src"
+          make -j4 build ARCH=x86-64-universal COMP=clang EXE=pikafish.exe
+          make strip COMP=clang EXE=pikafish.exe
+          cp pikafish.exe "$GITHUB_WORKSPACE/apps/desktop/src-tauri/resources/pikafish/pikafish.exe"
+          rm -f "$GITHUB_WORKSPACE/apps/desktop/src-tauri/resources/pikafish/pikafish"
+          cd "$GITHUB_WORKSPACE"
           ./scripts/verify-embedded-engine-resources.sh windows-x64
 
       - name: Smoke test Pikafish NNUE

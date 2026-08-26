@@ -501,6 +501,16 @@ export type MasterLibraryStatsDto = {
   totalGames: number;
   matchedPlayers: number;
 };
+export type MasterOpeningProfileDto = {
+  playerId: string;
+  playerName: string;
+  gameCount: number;
+  redGames: number;
+  blackGames: number;
+  wins: number;
+  draws: number;
+  losses: number;
+};
 export type MasterGameSummaryDto = {
   id: string;
   title: string;
@@ -512,6 +522,7 @@ export type MasterGameSummaryDto = {
   result: string;
   moveCount: number;
   sourceUrl: string;
+  openingTags?: string[];
 };
 export type RelatedMasterGame = MasterGameSummaryDto & {
   matchKind: "exact" | "position" | "opening";
@@ -527,6 +538,11 @@ export type MasterGameDetailDto = MasterGameSummaryDto & {
 export type MasterLibraryPageOptions = {
   limit?: number;
   offset?: number;
+};
+export type MasterLibraryFilters = {
+  side?: "red" | "black";
+  opening?: "middle-cannon" | "third-pawn" | "middle-cannon-third-pawn";
+  year?: number;
 };
 export type SubscriptionDto = {
   plan: "free" | "pro";
@@ -874,7 +890,8 @@ export interface ChessPlatform {
   listCoachReports(): Promise<GameReportDatasetDto[]>;
   listMasterPlayers(query?: string, options?: MasterLibraryPageOptions): Promise<MasterPlayerDto[]>;
   getMasterLibraryStats(query?: string): Promise<MasterLibraryStatsDto>;
-  listMasterGames(playerId: string, query?: string, options?: MasterLibraryPageOptions): Promise<MasterGameSummaryDto[]>;
+  getMasterOpeningProfile(playerId: string): Promise<MasterOpeningProfileDto>;
+  listMasterGames(playerId: string, query?: string, options?: MasterLibraryPageOptions, filters?: MasterLibraryFilters): Promise<MasterGameSummaryDto[]>;
   openMasterGame(gameId: string): Promise<Partial<BoardState>>;
   findRelatedMasterGames(topicId: string, fens: string[]): Promise<RelatedMasterGame[]>;
   listTrainingTasks(): Promise<TrainingTaskDto[]>;

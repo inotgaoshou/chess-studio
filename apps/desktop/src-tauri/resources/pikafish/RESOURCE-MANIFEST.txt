@@ -1,7 +1,10 @@
-Pikafish release: Pikafish-20260726
-Pikafish runtime version: Pikafish dev-20260726-b2180562
-macOS universal executable SHA256: 8bc6653c922681789f271c6f89990befe859e541d609a9899ea29b1e8cc336d2
-Windows x86-64 universal executable SHA256: 9ae4dc1201ad1fc0eb5ba0405c8e663b135f56223a1e721104d38562c9b51b20
+Pikafish official source repository: https://github.com/official-pikafish/Pikafish
+Pikafish source revision: b97ef0f9eb15bd99899b272e0236bfebf86313b6
+Pikafish macOS build: macos-lipo, clang, x86_64 + arm64 universal
+Pikafish macOS executable SHA256: 41cdba496f00ae9e6fef64a1ca4b91429dd4021e3c2e400e190cfa9f18a15e81
+Pikafish Windows build: x86-64-sse41-popcnt, MinGW-w64 GCC 16.2.0, static
+Pikafish Windows executable SHA256: 9217a7f3189cc0210a109ab13a904cf7b04e4bea219845f2ea762e34d6364ee2
+Release Windows build: x86-64-universal, clang64/MSYS2 (GitHub Actions)
 Pikafish NNUE source label: pikafish权重260720
 Pikafish NNUE bundled file: pikafish.nnue
 Pikafish NNUE SHA256: 3cd15292bf8c979884262f57fc723959fc0dea43b4d8d544f88db5ceb2479e24

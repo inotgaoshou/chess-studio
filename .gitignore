@@ -1,0 +1,10 @@
+.env
+.local/
+.theory-work/
+.idea/
+.pnpm-store/
+node_modules/
+target/
+apps/desktop/node_modules/
+apps/desktop/dist/
+apps/desktop/src-tauri/gen/

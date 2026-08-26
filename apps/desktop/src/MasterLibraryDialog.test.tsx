@@ -28,6 +28,7 @@ const games: MasterGameSummaryDto[] = [
     result: "1-0",
     moveCount: 83,
     sourceUrl: "http://www.gdchess.com/gview.asp?id=1",
+    openingTags: ["middle-cannon", "middle-cannon-third-pawn"],
   },
 ];
 const stats = { totalPlayers: 13_567, totalGames: 147_994, matchedPlayers: 13_567 };
@@ -138,6 +139,26 @@ describe("MasterLibraryDialog", () => {
     await user.click(screen.getByRole("button", { name: "打开棋谱" }));
 
     await waitFor(() => expect(onOpenGame).toHaveBeenCalledWith("game-1", { analyze: false }));
+  });
+
+  it("filters Zhao Xinxin games by opening without changing the default request", async () => {
+    const user = userEvent.setup();
+    const listGames = vi.fn(async () => games);
+    render(<MasterLibraryDialog
+      account={signedIn}
+      listPlayers={vi.fn(async () => players)}
+      getStats={vi.fn(async () => stats)}
+      listGames={listGames}
+      onStudyGame={vi.fn()}
+      onOpenGame={vi.fn(async () => undefined)}
+      onClose={vi.fn()}
+    />);
+
+    await screen.findByText("赵鑫鑫 先胜 王天一");
+    expect(screen.getByText("中炮 · 中炮三兵")).toBeTruthy();
+    await user.selectOptions(screen.getByLabelText("布局体系筛选"), "middle-cannon-third-pawn");
+    await waitFor(() => expect(listGames).toHaveBeenLastCalledWith("zhao", "", { limit: 20, offset: 0 }, { opening: "middle-cannon-third-pawn", side: undefined, year: undefined }));
+    expect(screen.getByText("赵鑫鑫布局专题")).toBeTruthy();
   });
 
   it("keeps the selected game button busy while opening the master game", async () => {

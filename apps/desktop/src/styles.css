@@ -6372,6 +6372,13 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 .master-game-toolbar > div { min-width: 0; display: grid; gap: 3px; }
 .master-game-toolbar strong { color: var(--text-primary); font-size: 14px; }
 .master-game-toolbar small { color: var(--text-muted); font-size: 11px; }
+.master-game-filters { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
+.master-game-filters select, .master-game-filters input, .master-game-filters button { min-height: 30px; border: 1px solid var(--border-strong); border-radius: 4px; background: var(--surface-2); color: var(--text-primary); font: inherit; font-size: 12px; }
+.master-game-filters select, .master-game-filters input { padding: 0 8px; }.master-game-filters input { width: 66px; }.master-game-filters button { padding: 0 9px; }
+.master-zhao-study-card { padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border)); border-radius: 6px; background: color-mix(in srgb, var(--accent-surface) 48%, var(--surface-2)); display: grid; gap: 7px; }
+.master-zhao-study-card > div { display: grid; gap: 2px; }.master-zhao-study-card strong { color: var(--text-primary); font-size: 13px; }.master-zhao-study-card small, .master-zhao-study-card p { margin: 0; color: var(--text-muted); font-size: 11px; line-height: 1.55; }
+.master-zhao-study-card footer { display: flex; flex-wrap: wrap; gap: 7px; }.master-zhao-study-card button { min-height: 29px; padding: 0 9px; border: 1px solid var(--border-strong); border-radius: 4px; background: var(--surface-2); color: var(--text-primary); font: inherit; font-size: 12px; }
+.master-opening-tags { color: var(--accent) !important; }
 .master-game-list { display: grid; align-content: start; gap: 9px; }
 .master-game-card { padding: 11px 12px; border: 1px solid var(--border); border-radius: 7px; background: color-mix(in srgb, var(--surface-2) 86%, transparent); display: grid; gap: 8px; }
 .master-game-card p { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; color: var(--text-secondary); font-size: 12px; }

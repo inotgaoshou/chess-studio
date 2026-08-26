@@ -3,10 +3,8 @@ set -euo pipefail
 
 TARGET_PLATFORM="${1:?Usage: verify-embedded-engine-resources.sh <macos-arm64|macos-x64|windows-x64|linux-x64>}"
 PIKAFISH_RESOURCE_DIR="apps/desktop/src-tauri/resources/pikafish"
-EXPECTED_PIKAFISH_RELEASE_LABEL="Pikafish-20260726"
-EXPECTED_PIKAFISH_VERSION_MARKER="Pikafish dev-20260726-b2180562"
-EXPECTED_PIKAFISH_MACOS_SHA256="8bc6653c922681789f271c6f89990befe859e541d609a9899ea29b1e8cc336d2"
-EXPECTED_PIKAFISH_WINDOWS_SHA256="9ae4dc1201ad1fc0eb5ba0405c8e663b135f56223a1e721104d38562c9b51b20"
+EXPECTED_PIKAFISH_SOURCE_REVISION="b97ef0f9eb15bd99899b272e0236bfebf86313b6"
+EXPECTED_PIKAFISH_SOURCE_SHORT_REVISION="b97ef0f9"
 EXPECTED_PIKAFISH_NNUE_LABEL="pikafish权重260720"
 EXPECTED_PIKAFISH_NNUE_SHA256="3cd15292bf8c979884262f57fc723959fc0dea43b4d8d544f88db5ceb2479e24"
 EXPECTED_PIKAFISH_NNUE_RUNTIME_MARKER="NNUE evaluation using pikafish.nnue"
@@ -62,9 +60,9 @@ require_pikafish_runtime_metadata() {
     cd "$PIKAFISH_RESOURCE_DIR"
     "./$engine_name" bench 1 2>/dev/null || true
   )"
-  if [[ "$output" != *"$EXPECTED_PIKAFISH_VERSION_MARKER"* ]]; then
+  if [[ "$output" != *"Pikafish dev-"*"-$EXPECTED_PIKAFISH_SOURCE_SHORT_REVISION"* ]]; then
     echo "Pikafish runtime version mismatch for $TARGET_PLATFORM." >&2
-    echo "Expected marker: $EXPECTED_PIKAFISH_VERSION_MARKER ($EXPECTED_PIKAFISH_RELEASE_LABEL)" >&2
+    echo "Expected source revision: $EXPECTED_PIKAFISH_SOURCE_REVISION" >&2
     echo "First output lines:" >&2
     printf '%s\n' "$output" | sed -n '1,8p' >&2
     exit 1
@@ -94,14 +92,10 @@ case "$TARGET_PLATFORM" in
   macos-arm64|macos-x64|linux-x64)
     PIKAFISH_EXECUTABLE="$PIKAFISH_RESOURCE_DIR/pikafish"
     require_executable "$PIKAFISH_EXECUTABLE" "Pikafish executable for $TARGET_PLATFORM"
-    if [[ "$TARGET_PLATFORM" == macos-* ]]; then
-      require_sha256 "$PIKAFISH_EXECUTABLE" "$EXPECTED_PIKAFISH_MACOS_SHA256" "Pikafish $EXPECTED_PIKAFISH_RELEASE_LABEL macOS executable"
-    fi
     ;;
   windows-x64)
     PIKAFISH_EXECUTABLE="$PIKAFISH_RESOURCE_DIR/pikafish.exe"
     require_file "$PIKAFISH_EXECUTABLE" "Pikafish executable for Windows x64"
-    require_sha256 "$PIKAFISH_EXECUTABLE" "$EXPECTED_PIKAFISH_WINDOWS_SHA256" "Pikafish $EXPECTED_PIKAFISH_RELEASE_LABEL Windows executable"
     ;;
   *)
     echo "Unknown target platform: $TARGET_PLATFORM" >&2
@@ -135,7 +129,6 @@ if [[ "$TARGET_PLATFORM" == "windows-x64" ]]; then
 fi
 
 echo "Verified embedded engines and NNUE resources for $TARGET_PLATFORM:"
-echo "  Pikafish release: $EXPECTED_PIKAFISH_RELEASE_LABEL"
-echo "  Pikafish runtime: $EXPECTED_PIKAFISH_VERSION_MARKER"
+echo "  Pikafish source revision: $EXPECTED_PIKAFISH_SOURCE_REVISION"
 echo "  Pikafish NNUE: $EXPECTED_PIKAFISH_NNUE_LABEL ($EXPECTED_PIKAFISH_NNUE_SHA256)"
 find "$PIKAFISH_RESOURCE_DIR" -maxdepth 1 -type f -print

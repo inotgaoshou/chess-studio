@@ -1,6 +1,8 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 mod cloud_opening_book;
+mod app_state;
+mod bootstrap;
 mod credential_store;
 mod eleeye_opening_book;
 mod gif_export;
@@ -63,6 +65,7 @@ use u10_learning::{
     infer_opening_repertoire, weekly_report,
 };
 use uuid::Uuid;
+use app_state::{AppModel, DesktopState};
 use xiangqi_core::{
     Board, Color, DomesticRuleState, GameStatus, Move, PieceKind, RuleMode, RuleVerdict,
     STARTING_FEN, Square,
@@ -109,45 +112,6 @@ struct TheoryLibraryDto {
     lessons: Vec<TheoryLesson>,
     cards: Vec<TheoryCard>,
     downloading_files: usize,
-}
-
-struct AppModel {
-    board: Board,
-    starting_fen: String,
-    tree: ManualTree,
-    current_node: Option<Uuid>,
-    game_id: Uuid,
-    device_id: Uuid,
-    lamport: u64,
-    store: LocalStore,
-    metadata: ManualMetadata,
-    note: String,
-    source_path: Option<String>,
-    source_format: Option<String>,
-    playable: bool,
-}
-
-struct DesktopState {
-    model: Mutex<AppModel>,
-    credentials: SharedCredentialStore,
-    session_token: Mutex<Option<String>>,
-    engine: tokio::sync::Mutex<HashMap<String, EngineControl>>,
-    report_engine: tokio::sync::Mutex<Option<EngineControl>>,
-    report_commit: tokio::sync::Mutex<()>,
-    play_session: tokio::sync::Mutex<Option<EngineRuntime>>,
-    analysis_generation: AtomicU64,
-    play_generation: AtomicU64,
-    report_generation: AtomicU64,
-    report_running: AtomicBool,
-    cloud_book_cache: Mutex<BTreeMap<String, Vec<cloud_opening_book::CloudBookCandidateDto>>>,
-    link_session: Mutex<LinkSession>,
-    /// Serializes screenshot invalidation, resolution and confirmation. The
-    /// capture generation is still checked, but this closes the interval where
-    /// a replacement image could begin after confirmation has read that value.
-    screenshot_resolution_guard: Mutex<()>,
-    link_capture_generation: AtomicU64,
-    link_region_selection_background: Mutex<Option<String>>,
-    link_region_selection: (Mutex<Option<Result<LinkCaptureRegion, String>>>, Condvar),
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -346,6 +310,19 @@ struct MasterLibraryStatsDto {
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct MasterOpeningProfileDto {
+    player_id: String,
+    player_name: String,
+    game_count: u64,
+    red_games: u64,
+    black_games: u64,
+    wins: u64,
+    draws: u64,
+    losses: u64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct MasterGameSummaryDto {
     id: String,
     title: String,
@@ -357,6 +334,8 @@ struct MasterGameSummaryDto {
     result: String,
     move_count: u64,
     source_url: String,
+    #[serde(default)]
+    opening_tags: Vec<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -374,6 +353,8 @@ struct MasterGameDetailDto {
     source_url: String,
     moves: Vec<String>,
     pgn: String,
+    #[serde(default)]
+    opening_tags: Vec<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -11403,11 +11384,31 @@ async fn get_master_library_stats(
 }
 
 #[tauri::command]
+async fn get_master_opening_profile(
+    player_id: String,
+    state: State<'_, DesktopState>,
+) -> Result<MasterOpeningProfileDto, String> {
+    let player_id = player_id.trim();
+    if player_id.is_empty() {
+        return Err("请选择大师".into());
+    }
+    master_library_get(
+        &state,
+        &format!("/api/v1/master/players/{player_id}/opening-profile"),
+        &[],
+    )
+    .await
+}
+
+#[tauri::command]
 async fn list_master_games(
     player_id: String,
     query: Option<String>,
     limit: Option<u32>,
     offset: Option<u32>,
+    side: Option<String>,
+    opening: Option<String>,
+    year: Option<u16>,
     state: State<'_, DesktopState>,
 ) -> Result<Vec<MasterGameSummaryDto>, String> {
     let player_id = player_id.trim();
@@ -11420,6 +11421,15 @@ async fn list_master_games(
     ];
     if let Some(query) = query {
         params.push(("query", query));
+    }
+    if let Some(side) = side.filter(|value| matches!(value.as_str(), "red" | "black")) {
+        params.push(("side", side));
+    }
+    if let Some(opening) = opening.filter(|value| matches!(value.as_str(), "middle-cannon" | "third-pawn" | "middle-cannon-third-pawn")) {
+        params.push(("opening", opening));
+    }
+    if let Some(year) = year.filter(|value| (1900..=2100).contains(value)) {
+        params.push(("year", year.to_string()));
     }
     master_library_get(
         &state,
@@ -12648,144 +12658,7 @@ fn create_theory_card(
 
 fn main() {
     tauri::Builder::default()
-        .setup(|app| {
-            let data_dir = app.path().app_data_dir()?;
-            std::fs::create_dir_all(&data_dir)?;
-            let mut store = LocalStore::open(data_dir.join("xiangqi.sqlite3"))?;
-            ensure_builtin_master_style_seed(app.handle(), &mut store)
-                .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
-            ensure_training_system_seed(&mut store)
-                .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
-            let device_id = store.device_id()?;
-            let mut lamport = store.max_lamport()?;
-            let (
-                board,
-                starting_fen,
-                tree,
-                current_node,
-                game_id,
-                metadata,
-                note,
-                source_path,
-                source_format,
-                playable,
-            ) = if let Some(game) = match store.active_game_id()? {
-                Some(game_id) => store.load_game(game_id)?,
-                None => None,
-            }
-            .or(store.load_latest_game()?)
-            {
-                let mut tree = ManualTree::with_root(game.root_id);
-                tree.restore_nodes(store.load_move_nodes(game.id)?)?;
-                let mut board = Board::from_fen(&game.starting_fen)?;
-                if let Some(current) = game.current_node_id {
-                    for mv in tree.line_to(current)? {
-                        board = board.apply_move(mv)?;
-                    }
-                }
-                let metadata =
-                    serde_json::from_str(&game.metadata_json).unwrap_or_else(|_| ManualMetadata {
-                        title: game.title.clone(),
-                        result: "*".into(),
-                        ..ManualMetadata::default()
-                    });
-                (
-                    board,
-                    game.starting_fen,
-                    tree,
-                    game.current_node_id,
-                    game.id,
-                    metadata,
-                    game.note,
-                    game.source_path,
-                    game.source_format,
-                    game.playable,
-                )
-            } else {
-                let game_id = Uuid::new_v4();
-                let tree = ManualTree::new();
-                let metadata = ManualMetadata {
-                    title: "新建棋谱".into(),
-                    result: "*".into(),
-                    ..ManualMetadata::default()
-                };
-                lamport += 1;
-                let operation = Operation {
-                    op_id: Uuid::new_v4(),
-                    device_id,
-                    entity_id: game_id,
-                    game_id,
-                    kind: OperationKind::CreateGame,
-                    payload: serde_json::to_value(CreateGamePayload {
-                        title: metadata.title.clone(),
-                        fen: STARTING_FEN.into(),
-                        root_id: tree.root_id(),
-                    })?,
-                    lamport,
-                    created_at: Utc::now(),
-                };
-                store.save_game_with_operation(
-                    game_id,
-                    &metadata.title,
-                    STARTING_FEN,
-                    tree.root_id(),
-                    &operation,
-                )?;
-                store.set_game_document_properties(
-                    game_id,
-                    &serde_json::to_string(&metadata)?,
-                    true,
-                )?;
-                store.set_active_game_id(game_id)?;
-                (
-                    Board::from_fen(STARTING_FEN)?,
-                    STARTING_FEN.into(),
-                    tree,
-                    None,
-                    game_id,
-                    metadata,
-                    String::new(),
-                    None,
-                    None,
-                    true,
-                )
-            };
-            store.set_active_game_id(game_id)?;
-            app.manage(DesktopState {
-                model: Mutex::new(AppModel {
-                    board,
-                    starting_fen,
-                    tree,
-                    current_node,
-                    game_id,
-                    device_id,
-                    lamport,
-                    store,
-                    metadata,
-                    note,
-                    source_path,
-                    source_format,
-                    playable,
-                }),
-                credentials: Arc::new(SystemCredentialStore),
-                session_token: Mutex::new(None),
-                engine: tokio::sync::Mutex::new(HashMap::new()),
-                report_engine: tokio::sync::Mutex::new(None),
-                report_commit: tokio::sync::Mutex::new(()),
-                play_session: tokio::sync::Mutex::new(None),
-                analysis_generation: AtomicU64::new(0),
-                play_generation: AtomicU64::new(0),
-                report_generation: AtomicU64::new(0),
-                report_running: AtomicBool::new(false),
-                cloud_book_cache: Mutex::new(BTreeMap::new()),
-                link_session: Mutex::new(LinkSession::default()),
-                screenshot_resolution_guard: Mutex::new(()),
-                link_capture_generation: AtomicU64::new(0),
-                link_region_selection_background: Mutex::new(None),
-                link_region_selection: (Mutex::new(None), Condvar::new()),
-            });
-            Ok(())
-        })
+        .setup(bootstrap::initialize)
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .invoke_handler(tauri::generate_handler![
@@ -12906,6 +12779,7 @@ fn main() {
             redeem_subscription_code,
             list_master_players,
             get_master_library_stats,
+            get_master_opening_profile,
             list_master_games,
             open_master_game,
             find_related_master_games,
