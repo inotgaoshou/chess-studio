@@ -48,4 +48,5 @@ pub(crate) struct DesktopState {
     pub(crate) link_capture_generation: AtomicU64,
     pub(crate) link_region_selection_background: Mutex<Option<String>>,
     pub(crate) link_region_selection: (Mutex<Option<Result<LinkCaptureRegion, String>>>, Condvar),
+    pub(crate) ttxq_sync: Mutex<crate::ttxq_sync::TtxqSyncState>,
 }

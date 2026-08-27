@@ -59,6 +59,17 @@ pub struct ImportedGame<'a> {
     pub metadata_json: &'a str,
 }
 
+/// A stable provider-owned identifier for an imported game.  This deliberately
+/// contains no provider credentials or account data.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExternalGameImport {
+    pub provider: String,
+    pub external_id: String,
+    pub game_id: Uuid,
+    pub payload_hash: String,
+    pub imported_at: String,
+}
+
 #[derive(Debug, Error)]
 pub enum StoreError {
     #[error(transparent)]
@@ -1637,6 +1648,50 @@ impl LocalStore {
         Ok(())
     }
 
+    pub fn external_game_import(
+        &self,
+        provider: &str,
+        external_id: &str,
+    ) -> Result<Option<ExternalGameImport>, StoreError> {
+        let row = self.connection
+            .query_row(
+                "SELECT provider, external_id, game_id, payload_hash, imported_at
+                 FROM external_game_imports WHERE provider=?1 AND external_id=?2",
+                params![provider, external_id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, String>(4)?)),
+            )
+            .optional()
+            .map_err(StoreError::from)?;
+        row.map(|(provider, external_id, game_id, payload_hash, imported_at)| Ok(ExternalGameImport {
+            provider,
+            external_id,
+            game_id: Uuid::parse_str(&game_id).map_err(json_error)?,
+            payload_hash,
+            imported_at,
+        })).transpose()
+    }
+
+    pub fn record_external_game_import(
+        &mut self,
+        provider: &str,
+        external_id: &str,
+        game_id: Uuid,
+        payload_hash: &str,
+        imported_at: &str,
+    ) -> Result<(), StoreError> {
+        self.connection.execute(
+            "INSERT INTO external_game_imports
+             (provider, external_id, game_id, payload_hash, imported_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+            ON CONFLICT(provider, external_id) DO UPDATE SET
+                game_id=excluded.game_id,
+                payload_hash=excluded.payload_hash,
+                imported_at=excluded.imported_at",
+            params![provider, external_id, game_id.to_string(), payload_hash, imported_at],
+        )?;
+        Ok(())
+    }
+
     pub fn pending_operations(&self, limit: usize) -> Result<Vec<Operation>, StoreError> {
         let mut statement = self.connection.prepare(
             "SELECT op_id, device_id, entity_id, game_id, kind, payload, lamport, created_at
@@ -3044,6 +3099,12 @@ impl LocalStore {
                game_id TEXT PRIMARY KEY, path TEXT, state TEXT NOT NULL,
                updated_at TEXT, error TEXT
              );
+             CREATE TABLE IF NOT EXISTS external_game_imports (
+               provider TEXT NOT NULL, external_id TEXT NOT NULL, game_id TEXT NOT NULL,
+               payload_hash TEXT NOT NULL, imported_at TEXT NOT NULL,
+               PRIMARY KEY(provider, external_id),
+               FOREIGN KEY(game_id) REFERENCES games(id)
+             );
              UPDATE operations
              SET payload = json_set(
                payload,
@@ -3903,6 +3964,29 @@ mod tests {
             .save_game_with_operation(game_id, "Study", "fen", root_id, &op)
             .unwrap();
         assert_eq!(store.pending_operations(10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn external_game_import_tracks_the_latest_revision_by_provider_and_qipu_id() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let game_id = Uuid::new_v4();
+        let root_id = Uuid::new_v4();
+        store
+            .save_game_with_operation(game_id, "Imported", "fen", root_id, &operation(game_id))
+            .unwrap();
+        store
+            .record_external_game_import("ttxq", "qipu-42", game_id, "sha256:first", "2026-08-27T00:00:00Z")
+            .unwrap();
+        let revision_game_id = Uuid::new_v4();
+        store
+            .save_game_with_operation(revision_game_id, "Imported revision", "fen", Uuid::new_v4(), &operation(revision_game_id))
+            .unwrap();
+        store
+            .record_external_game_import("ttxq", "qipu-42", revision_game_id, "sha256:second", "2026-08-28T00:00:00Z")
+            .unwrap();
+        let saved = store.external_game_import("ttxq", "qipu-42").unwrap().unwrap();
+        assert_eq!(saved.game_id, revision_game_id);
+        assert_eq!(saved.payload_hash, "sha256:second");
     }
 
     #[test]

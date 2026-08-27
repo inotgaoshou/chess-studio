@@ -35,6 +35,7 @@ tauri-plugin-dialog = "2"
 tempfile = "3.23"
 tokio.workspace = true
 uuid.workspace = true
+url = "2"
 xiangqi-core = { path = "../../../crates/xiangqi-core" }
 xiangqi-manual = { path = "../../../crates/manual" }
 

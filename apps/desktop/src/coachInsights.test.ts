@@ -43,6 +43,16 @@ describe("coachInsights", () => {
     })).toContain("延续中炮局官着");
   });
 
+  it("generates lightweight per-move thoughts for grades, missed mates, and recommendations", () => {
+    expect(moveThoughtHint({ notation: "车一平二", movedBy: "红方", grade: "优", deltaCp: 12 })).toContain("基本保持计划");
+    expect(moveThoughtHint({ notation: "马8进7", movedBy: "黑方", grade: "良" })).toContain("基本保持计划");
+    expect(moveThoughtHint({ notation: "兵七进一", movedBy: "红方", grade: "中", deltaCp: -70 })).toContain("方向尚可");
+    expect(moveThoughtHint({ notation: "炮二进七", movedBy: "红方", grade: "差", deltaCp: -260 })).toContain("暴露明显问题");
+    expect(moveThoughtHint({ notation: "车九平八", movedBy: "红方", grade: "错", deltaCp: -620 })).toContain("建立变招分支");
+    expect(moveThoughtHint({ notation: "将5平4", movedBy: "黑方", missedMate: true })).toContain("杀棋机会");
+    expect(moveThoughtHint({ notation: "炮二平五", movedBy: "红方", bestNotation: "马二进三" })).toContain("AI 推荐「马二进三」");
+  });
+
   it("builds branch naming and study guidance from the weakest line", () => {
     const insights = branchCoachInsights(sideReport(55, 88), sideReport(90, 40), [move], {
       code: "R01",

@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { Activity, BarChart3, Brain, CheckCircle2, ChevronRight, ClipboardPaste, ClipboardList, Download, Eye, FileText, FolderArchive, GitFork, Heart, Image, Play, Plus, RefreshCw, Swords, X } from "lucide-react";
+import { Activity, BarChart3, Brain, CheckCircle2, ChevronRight, ClipboardPaste, ClipboardList, Download, Eye, FileText, FolderArchive, GitFork, Heart, Image, Lightbulb, Play, Plus, RefreshCw, Swords, X } from "lucide-react";
 import type { AnalysisLine, BoardState, GameReportPresentationDto, GameReportProgressDto, LibraryFolder, ReportIssuePresentationDto, Side, TrainingGenerationResultDto, TrainingTaskDto } from "./platform/types";
 import { buildReviewModel, signedCp } from "./reviewModel";
 import { EvaluationTrendChart, redAdvantageLabel } from "./EvaluationTrendChart";
+import { buildMoveThought, type MoveThought } from "./moveThoughtModel";
 
 type InsightTab = "engine" | "report" | "trend" | "issues" | "training";
 type MoveScope = "issues" | "all";
@@ -28,6 +29,8 @@ export type ReviewWorkspaceProps = {
   positionAnalysisError?: string;
   positionAnalysisFen?: string;
   engineHintRequest: number;
+  showMoveThoughts?: boolean;
+  onMoveThoughtVisibilityChange?(visible: boolean): void;
   onClose(): void;
   onNavigate(nodeId?: string): void;
   onGenerateReport(): void;
@@ -93,6 +96,16 @@ function flyknifeRouteMeta(comment: string) {
   };
 }
 
+function ThoughtDetails({ thought, compact = false }: { thought: MoveThought; compact?: boolean }) {
+  return <div className={compact ? "review-thought-details compact" : "review-thought-details"}>
+    <p><strong>目的</strong><span>{thought.purpose}</span></p>
+    <p><strong>风险</strong><span>{thought.risk}</span></p>
+    <p><strong>建议</strong><span>{thought.nextAction}</span></p>
+    {thought.comparison && <p className="review-thought-compare"><strong>比较</strong><span>{thought.comparison}</span></p>}
+    {thought.confidenceNote && <small>{thought.confidenceNote}</small>}
+  </div>;
+}
+
 function ReviewTrendChart({ report, currentNode, onNavigate }: { report?: GameReportPresentationDto; currentNode?: string; onNavigate(nodeId?: string): void }) {
   if (!report?.trend.length) return <div className="review-empty"><BarChart3 size={25}/><strong>等待整局报告</strong><span>生成报告后会显示每个关键节点的红黑优劣变化。</span></div>;
   return <section className="review-trend"><EvaluationTrendChart points={report.trend} currentNode={currentNode} onNavigate={(nodeId) => onNavigate(nodeId)} height={190} ariaLabel="复盘局势趋势图"/></section>;
@@ -126,7 +139,7 @@ function IssueCard({ issue, index, active, expanded, engineExpanded, analysisDep
 
 export function ReviewWorkspace({
   board, report, reportBusy, reportExporting, reportProgress, engineReady, libraryFolder, libraryFolders, favorite, libraryTags, flyknifePlanCount, trainingTasks, trainingGenerating, trainingGeneration, analysisConfig,
-  positionAnalysis, positionAnalysisBusy, positionAnalysisError, positionAnalysisFen, engineHintRequest,
+  positionAnalysis, positionAnalysisBusy, positionAnalysisError, positionAnalysisFen, engineHintRequest, showMoveThoughts: controlledShowMoveThoughts, onMoveThoughtVisibilityChange,
   onClose, onNavigate, onGenerateReport, onCancelReport, onExportReport, onOpenReport, onImport, onImportScreenshot, onPaste, onManualRecord, onSaveLibrary, onOpenFlyknife, onGenerateTraining, onOpenTraining, onCompleteTraining, onStudyIssue, onStartU10, onRunPositionAnalysis,
 }: ReviewWorkspaceProps) {
   const [tab, setTab] = useState<InsightTab>("report");
@@ -136,6 +149,9 @@ export function ReviewWorkspace({
   const [expandedEngineLine, setExpandedEngineLine] = useState<string>();
   const [expandedEngineIssue, setExpandedEngineIssue] = useState<string>();
   const [showInsights, setShowInsights] = useState(false);
+  const [internalShowMoveThoughts, setInternalShowMoveThoughts] = useState(true);
+  const [expandedThoughtMove, setExpandedThoughtMove] = useState<string>();
+  const [archiveExpanded, setArchiveExpanded] = useState(false);
   const [archiveEditorOpen, setArchiveEditorOpen] = useState(false);
   const [archiveFolderDraft, setArchiveFolderDraft] = useState(libraryFolder ?? "");
   const [archiveTagsInput, setArchiveTagsInput] = useState(libraryTags.join(", "));
@@ -143,6 +159,7 @@ export function ReviewWorkspace({
   const [archiveSaving, setArchiveSaving] = useState(false);
   const [archiveSaveFailed, setArchiveSaveFailed] = useState(false);
   const [workflowFocus, setWorkflowFocus] = useState<string>();
+  const showMoveThoughts = controlledShowMoveThoughts ?? internalShowMoveThoughts;
   useEffect(() => {
     if (engineHintRequest === 0) return;
     setShowInsights(true);
@@ -157,6 +174,10 @@ export function ReviewWorkspace({
   const model = useMemo(() => buildReviewModel(documentBoard, activeReport), [documentBoard, activeReport]);
   const issueIds = useMemo(() => new Set(activeReport?.issues.map((issue) => issue.nodeId) ?? []), [activeReport]);
   const currentIssue = activeReport?.issues.find((issue) => issue.nodeId === board.currentNode);
+  const thoughtByMoveId = useMemo(() => new Map(model.moveRows.map((row) => [row.move.id, buildMoveThought(row.move, row.issue)])), [model.moveRows]);
+  const currentMoveId = board.currentNode ?? board.history.at(-1)?.id;
+  const currentThoughtRow = currentMoveId ? model.moveRows.find((row) => row.move.id === currentMoveId) : undefined;
+  const currentThought = currentMoveId ? thoughtByMoveId.get(currentMoveId) : undefined;
   const moveRows = moveScope === "issues" && activeReport ? model.moveRows.filter((row) => issueIds.has(row.move.id)) : model.moveRows;
   const moveRounds = useMemo(() => {
     const rounds = new Map<number, typeof moveRows>();
@@ -222,7 +243,10 @@ export function ReviewWorkspace({
     setArchiveSaveFailed(false);
     const saved = await onSaveLibrary(archiveFolderDraft || undefined, archiveFavoriteDraft, parsedArchiveTags);
     setArchiveSaving(false);
-    if (saved) setArchiveEditorOpen(false);
+    if (saved) {
+      setArchiveEditorOpen(false);
+      setArchiveExpanded(false);
+    }
     else setArchiveSaveFailed(true);
   }
   function closeArchiveEditor() {
@@ -233,6 +257,10 @@ export function ReviewWorkspace({
     setArchiveSaveFailed(false);
     setArchiveEditorOpen(false);
   }
+  function openArchiveEditor() {
+    setArchiveExpanded(true);
+    setArchiveEditorOpen(true);
+  }
   function closeReview() {
     if (archiveDirty && !window.confirm("归档资料尚未保存，确定返回研究模式吗？")) return;
     onClose();
@@ -240,6 +268,11 @@ export function ReviewWorkspace({
   async function generateTraining() {
     await onGenerateTraining();
     setTab("training");
+  }
+  function setMoveThoughtVisibility(visible: boolean) {
+    if (controlledShowMoveThoughts == null) setInternalShowMoveThoughts(visible);
+    onMoveThoughtVisibilityChange?.(visible);
+    if (!visible) setExpandedThoughtMove(undefined);
   }
   function selectWorkflowStep(label: string) {
     setWorkflowFocus(label);
@@ -249,7 +282,7 @@ export function ReviewWorkspace({
       return;
     }
     if (label === "归档") {
-      if (hasRecordedMoves) setArchiveEditorOpen(true);
+      if (hasRecordedMoves) setArchiveExpanded((expanded) => !expanded);
       return;
     }
     if (label === "整局报告") {
@@ -265,9 +298,14 @@ export function ReviewWorkspace({
 
   return <section className={`review-workbench ${showInsights ? "insight-open" : ""}`} aria-label="整局复盘工作台">
     <header className="review-workbench-header">
-      <div className="review-workbench-title"><span>整局复盘</span><strong>{model.title}</strong><small>{archiveStatus} · 当前 {model.currentMoveLabel} · {!hasRecordedMoves ? "等待录谱" : reportBusy ? "报告生成中" : report?.stale ? "报告需更新" : reportReady ? "报告已生成" : "待分析"}</small></div>
+      <div className="review-workbench-title">
+        <span>整局复盘</span>
+        <strong title={model.title}>{model.title}</strong>
+        <small title={`${archiveStatus} · 当前 ${model.currentMoveLabel} · ${!hasRecordedMoves ? "等待录谱" : reportBusy ? "报告生成中" : report?.stale ? "报告需更新" : reportReady ? "报告已生成" : "待分析"}`}>{archiveStatus} · 当前 {model.currentMoveLabel} · {!hasRecordedMoves ? "等待录谱" : reportBusy ? "报告生成中" : report?.stale ? "报告需更新" : reportReady ? "报告已生成" : "待分析"}</small>
+      </div>
       <ol className="review-header-workflow" aria-label="复盘进度">{workflow.map((item, index) => <li key={item.label} className={`${item.complete ? "complete" : ""} ${(workflowFocus ?? guide.step) === item.label ? "current" : ""} ${item.stale ? "stale" : ""}`}><button type="button" aria-label={item.label} title={`打开${item.label}`} onClick={() => selectWorkflowStep(item.label)}><i>{item.complete ? <CheckCircle2 size={12}/> : index + 1}</i><span>{item.label}</span></button></li>)}</ol>
       <div className="review-workbench-header-actions">
+        <button type="button" className="review-workbench-thoughts" aria-pressed={showMoveThoughts} onClick={() => setMoveThoughtVisibility(!showMoveThoughts)}><Lightbulb size={15}/>{showMoveThoughts ? "隐藏思路" : "显示思路"}</button>
         <button type="button" className="review-workbench-insights" aria-label="查看复盘洞察" title="查看复盘洞察" onClick={() => setShowInsights((open) => !open)}><Eye size={15}/>洞察</button>
         <button type="button" className="review-workbench-close" aria-label="返回研究模式" title="返回研究模式" onClick={closeReview}><X size={17}/></button>
       </div>
@@ -276,7 +314,7 @@ export function ReviewWorkspace({
       <section className="review-guide-card" aria-label="当前复盘步骤">
         <small>当前步骤 · {guide.step}</small><strong>{guide.title}</strong><p>{guide.detail}</p>
         {!hasRecordedMoves ? <div className="review-guide-actions"><button type="button" className="primary" onClick={onImport}><FileText size={13}/>导入棋谱</button><button type="button" onClick={onImportScreenshot}><Image size={13}/>导入截图识别</button><button type="button" onClick={onPaste}><ClipboardPaste size={13}/>一键录入</button><button type="button" onClick={onManualRecord}><Plus size={13}/>手动录谱</button></div>
-          : !archived ? <div className="review-guide-actions"><button type="button" className="primary" onClick={() => setArchiveEditorOpen(true)}><FolderArchive size={13}/>编辑并保存归档</button></div>
+          : !archived ? <div className="review-guide-actions"><button type="button" className="primary" onClick={openArchiveEditor}><FolderArchive size={13}/>编辑并保存归档</button></div>
             : !reportReady ? <div className="review-guide-actions"><button type="button" className="primary" disabled={!engineReady || reportBusy} onClick={onGenerateReport}><Activity size={13}/>{report?.stale ? "重新生成报告" : "生成整局报告"}</button><button type="button" onClick={onOpenFlyknife}><Swords size={13}/>手动设计飞刀</button>{reportBusy && <button type="button" className="danger" onClick={onCancelReport}><RefreshCw size={13}/>取消</button>}</div>
               : currentIssue ? <div className="review-guide-actions"><button type="button" className="primary" onClick={() => onStartU10?.(currentIssue.nodeId)}><Brain size={13}/>引导拆棋</button><button type="button" onClick={onOpenFlyknife}><Swords size={13}/>设计飞刀</button><button type="button" disabled={trainingGenerating} onClick={() => void generateTraining()}><ClipboardList size={13}/>{trainingGenerating ? "生成中" : "生成训练任务"}</button></div>
                 : trainingTasks.length === 0 ? <div className="review-guide-actions"><button type="button" className="primary" disabled={trainingGenerating} onClick={() => void generateTraining()}><ClipboardList size={13}/>{trainingGenerating ? "生成中" : "生成训练任务"}</button><button type="button" onClick={onOpenFlyknife}><Swords size={13}/>设计飞刀</button></div>
@@ -290,11 +328,17 @@ export function ReviewWorkspace({
         </div>
         <small>将新建独立棋谱，当前复盘不会被覆盖。</small>
       </section>}
-      {hasRecordedMoves && <section className={`review-archive-card ${archiveEditorOpen ? "editing" : ""}`} aria-label="棋谱归档资料">
-        <header><div><strong>归档资料</strong><small>{archived ? "已保存到本地棋谱库" : "待确认归档"}</small></div><button type="button" onClick={() => setArchiveEditorOpen(true)}>编辑归档</button></header>
-        {!archiveEditorOpen && <small className="review-archive-location">本机保存：Application Support/cn.xiangqi.studio/xiangqi.sqlite3</small>}
-        {!archiveEditorOpen ? <div className="review-archive-summary"><span>{libraryFolder || "未分类"}</span>{favorite && <span className="favorite"><Heart size={12} fill="currentColor"/>已收藏</span>}{libraryTags.map((tag) => <em key={tag}>{tag}</em>)}</div>
-          : <><div className="review-archive-fields"><label>文件夹<select aria-label="归档文件夹" value={archiveFolderDraft} onChange={(event) => setArchiveFolderDraft(event.target.value)}><option value="">未分类</option>{libraryFolders.map((folder) => <option key={folder.name} value={folder.name}>{folder.name}</option>)}</select></label><label>标签<input aria-label="归档标签" value={archiveTagsInput} placeholder="赛事、后手、中炮" onChange={(event) => setArchiveTagsInput(event.target.value)} /></label></div>
+      {showMoveThoughts && hasRecordedMoves && currentThoughtRow && currentThought && <section className="review-current-thought-card" aria-label="当前着法思路">
+        <header>
+          <div><small>当前着法思路 · {currentThought.sourceLabel}</small><strong>第 {currentThoughtRow.index} 着 · {currentThoughtRow.move.movedBy} {currentThoughtRow.move.notation}</strong></div>
+          <button type="button" onClick={() => setMoveThoughtVisibility(false)}>隐藏</button>
+        </header>
+        <ThoughtDetails thought={currentThought}/>
+      </section>}
+      {hasRecordedMoves && <section className={`review-archive-card ${archiveExpanded ? "expanded" : "collapsed"} ${archiveEditorOpen ? "editing" : ""}`} aria-label="棋谱归档资料">
+        <header><div><strong>归档资料</strong><small>{archived ? "已保存" : "待确认"} · {libraryFolder || "未分类"}{favorite ? " · 已收藏" : ""}{libraryTags.length ? ` · ${libraryTags.join("、")}` : ""}</small></div><div className="review-archive-header-actions"><button type="button" onClick={() => setArchiveExpanded((expanded) => !expanded)}>{archiveExpanded ? "收起" : "展开"}</button><button type="button" onClick={openArchiveEditor}>编辑归档</button></div></header>
+        {archiveExpanded && !archiveEditorOpen && <><small className="review-archive-location">本机保存：Application Support/cn.xiangqi.studio/xiangqi.sqlite3</small><div className="review-archive-summary"><span>{libraryFolder || "未分类"}</span>{favorite && <span className="favorite"><Heart size={12} fill="currentColor"/>已收藏</span>}{libraryTags.map((tag) => <em key={tag}>{tag}</em>)}</div></>}
+        {archiveEditorOpen && <><div className="review-archive-fields"><label>文件夹<select aria-label="归档文件夹" value={archiveFolderDraft} onChange={(event) => setArchiveFolderDraft(event.target.value)}><option value="">未分类</option>{libraryFolders.map((folder) => <option key={folder.name} value={folder.name}>{folder.name}</option>)}</select></label><label>标签<input aria-label="归档标签" value={archiveTagsInput} placeholder="赛事、后手、中炮" onChange={(event) => setArchiveTagsInput(event.target.value)} /></label></div>
           <div className="review-archive-tools"><button type="button" className={archiveFavoriteDraft ? "active" : ""} onClick={() => setArchiveFavoriteDraft((value) => !value)}><Heart size={13} fill={archiveFavoriteDraft ? "currentColor" : "none"}/>{archiveFavoriteDraft ? "已收藏" : "收藏"}</button><button type="button" onClick={closeArchiveEditor}>取消</button><button type="button" disabled={!archiveDirty || archiveSaving} onClick={() => void saveArchive()}>{archiveSaving ? "保存中" : "保存归档"}</button></div>{archiveDirty && <small className="review-archive-dirty">未保存的修改</small>}{archiveSaveFailed && <small className="review-archive-error">保存失败，草稿已保留，请重试。</small>}</>}
       </section>}
       <div className="review-config" aria-label="整局分析配置"><span>深度 {analysisConfig.reportDepth}</span><span>PV {analysisConfig.multipv}</span><span>{analysisConfig.threads} 线程</span><span>Hash {analysisConfig.hashMb} MB</span></div>
@@ -305,11 +349,19 @@ export function ReviewWorkspace({
             const scoreText = row.scoreText === "---" ? "待分析" : row.scoreText;
             const detail = `${row.move.movedBy} · ${scoreText}${row.issue ? ` · 损失 ${row.issue.lossCp}cp` : ""}`;
             const flyknife = flyknifeRouteMeta(row.move.comment);
-            return <button aria-label={`${row.move.movedBy} ${row.move.notation}`} className={`review-route-move ${row.move.movedBy === "红方" ? "red" : "black"} ${flyknife ? "has-flyknife" : ""} ${board.currentNode === row.move.id ? "active" : ""} ${issueTone(row.issue)}`} key={row.move.id} type="button" onClick={() => row.issue ? openIssue(row.issue) : onNavigate(row.move.id)}>
-              <div className="review-route-move-main"><strong title={row.move.notation}>{row.move.notation}</strong><small title={detail}>{scoreText}{row.issue ? ` · 损失 ${row.issue.lossCp}cp` : ""}</small></div>
-              {flyknife && <div className="review-route-flyknife" title={flyknife.intent}><Swords size={12}/><b>{flyknife.label}</b><small>{flyknife.intent}</small></div>}
-              <em>{row.issue?.missedMate ? "漏杀" : row.quality ?? "记录"}</em>
-            </button>;
+            const thought = thoughtByMoveId.get(row.move.id);
+            const thoughtExpanded = expandedThoughtMove === row.move.id;
+            return <div className={`review-route-entry ${thoughtExpanded ? "expanded" : ""}`} key={row.move.id}>
+              <button aria-label={`${row.move.movedBy} ${row.move.notation}`} className={`review-route-move ${row.move.movedBy === "红方" ? "red" : "black"} ${flyknife ? "has-flyknife" : ""} ${thought ? "has-thought" : ""} ${board.currentNode === row.move.id ? "active" : ""} ${issueTone(row.issue)}`} type="button" onClick={() => row.issue ? openIssue(row.issue) : onNavigate(row.move.id)}>
+                <div className="review-route-move-main"><strong title={row.move.notation}>{row.move.notation}</strong><small title={detail}>{scoreText}{row.issue ? ` · 损失 ${row.issue.lossCp}cp` : ""}</small></div>
+                {flyknife && <div className="review-route-flyknife" title={flyknife.intent}><Swords size={12}/><b>{flyknife.label}</b><small>{flyknife.intent}</small></div>}
+                <em>{row.issue?.missedMate ? "漏杀" : row.quality ?? "记录"}</em>
+              </button>
+              {showMoveThoughts && thought && <button type="button" className="review-route-thought-toggle" aria-expanded={thoughtExpanded} aria-label={`${thoughtExpanded ? "收起" : "展开"}第 ${row.index} 着思路`} title={`${row.move.notation}：${thought.purpose}`} onClick={() => setExpandedThoughtMove(thoughtExpanded ? undefined : row.move.id)}>思路</button>}
+              {showMoveThoughts && thoughtExpanded && thought && <div className="review-route-thought" aria-label={`${row.move.notation} 的着法思路`}>
+                <ThoughtDetails thought={thought} compact/>
+              </div>}
+            </div>;
           })}</div></article>)}
       </section>
     </section>

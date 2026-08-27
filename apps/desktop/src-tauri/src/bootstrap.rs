@@ -145,6 +145,7 @@ pub(crate) fn initialize(app: &mut tauri::App) -> Result<(), Box<dyn std::error:
         link_capture_generation: AtomicU64::new(0),
         link_region_selection_background: Mutex::new(None),
         link_region_selection: (Mutex::new(None), Condvar::new()),
+        ttxq_sync: Mutex::new(crate::ttxq_sync::TtxqSyncState::default()),
     });
     Ok(())
 }

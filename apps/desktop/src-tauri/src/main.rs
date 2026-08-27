@@ -18,6 +18,7 @@ mod pfbook_opening_book;
 mod report_service;
 mod sync_service;
 mod training_service;
+mod ttxq_sync;
 mod u10_learning;
 mod window_service;
 #[cfg(target_os = "windows")]
@@ -132,6 +133,14 @@ fn main() {
             link_service::set_link_side_to_move,
             link_service::confirm_link_engine_move,
             link_service::import_recognized_position,
+            ttxq_sync::get_ttxq_sync_progress,
+            ttxq_sync::start_ttxq_authorization,
+            ttxq_sync::collect_ttxq_h5_history,
+            ttxq_sync::submit_ttxq_bridge_payload,
+            ttxq_sync::report_ttxq_read_progress,
+            ttxq_sync::report_ttxq_bridge_error,
+            ttxq_sync::import_ttxq_history,
+            ttxq_sync::disconnect_ttxq,
             manual_service::list_games,
             manual_service::get_game_mirror_status,
             manual_service::update_game_mirror,

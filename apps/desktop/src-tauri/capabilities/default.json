@@ -4,6 +4,7 @@
   "description": "Desktop chess document and clipboard permissions",
   "windows": ["main", "compact-engine", "compact-manual", "compact-cloud", "compact-link"],
   "permissions": [
+    "default",
     "core:default",
     "core:window:allow-destroy",
     "dialog:allow-open",

@@ -166,6 +166,58 @@ describe("ReviewWorkspace", () => {
     expect(screen.getAllByText("88分").length).toBeGreaterThan(0);
   });
 
+  it("shows the current move thought card from report coaching", () => {
+    renderWorkspace();
+    const card = screen.getByLabelText("当前着法思路");
+    expect(within(card).getByText(/第 1 着 · 红方 炮二平五/)).toBeTruthy();
+    expect(within(card).getByText("目的")).toBeTruthy();
+    expect(within(card).getByText("风险")).toBeTruthy();
+    expect(within(card).getByText("建议")).toBeTruthy();
+    expect(within(card).getByText("想快速抢中路。")).toBeTruthy();
+    expect(within(card).getByText("出子节奏偏慢。")).toBeTruthy();
+    expect(within(card).getByText("可比较：实战「炮二平五」 vs 推荐「马二进三」")).toBeTruthy();
+  });
+
+  it("prefers manual purpose comments over report coaching", () => {
+    renderWorkspace({
+      board: {
+        ...board,
+        history: [{
+          ...board.history[0],
+          comment: "意图：先抢中路牵制黑方马炮\n风险：左翼出子可能偏慢\n计划：补马再出车",
+        }],
+      },
+    });
+    const card = screen.getByLabelText("当前着法思路");
+    expect(within(card).getByText("当前着法思路 · 人工注释")).toBeTruthy();
+    expect(within(card).getByText("先抢中路牵制黑方马炮")).toBeTruthy();
+    expect(within(card).getByText("左翼出子可能偏慢")).toBeTruthy();
+    expect(within(card).getByText("补马再出车")).toBeTruthy();
+    expect(within(card).queryByText("想快速抢中路。")).toBeNull();
+  });
+
+  it("can hide and restore move thoughts without leaving expanded row details visible", async () => {
+    renderWorkspace();
+    expect(screen.getByLabelText("当前着法思路")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "展开第 1 着思路" }));
+    expect(screen.getByLabelText("炮二平五 的着法思路")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "隐藏思路" }));
+    expect(screen.queryByLabelText("当前着法思路")).toBeNull();
+    expect(screen.queryByLabelText("炮二平五 的着法思路")).toBeNull();
+    expect(screen.queryByRole("button", { name: /展开 .* 思路/ })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "显示思路" }));
+    expect(screen.getByLabelText("当前着法思路")).toBeTruthy();
+    expect(screen.queryByLabelText("炮二平五 的着法思路")).toBeNull();
+  });
+
+  it("keeps the full review title available when the header is visually compact", () => {
+    const longTitle = "张国凤 柳大华 2004年第01届常家庄园杯全国冠军混双赛";
+    renderWorkspace({ board: { ...board, title: longTitle } });
+    const title = document.querySelector(".review-workbench-title strong");
+    expect(title?.textContent).toContain("张国凤 柳大华");
+    expect(title?.getAttribute("title")).toBe(longTitle);
+  });
+
   it("shows generate CTA when report is missing", async () => {
     const props = renderWorkspace({ report: undefined });
     await userEvent.click(screen.getByRole("tab", { name: "整局报告" }));
@@ -202,6 +254,19 @@ describe("ReviewWorkspace", () => {
     renderWorkspace({ report: undefined });
     expect(screen.getByText(/比赛复盘 · 已归档/)).toBeTruthy();
     expect(screen.getByLabelText("棋谱归档资料")).toBeTruthy();
+    expect(screen.getByText(/已保存 · 比赛复盘 · 后手/)).toBeTruthy();
+    expect(screen.queryByText(/Application Support/)).toBeNull();
+  });
+
+  it("keeps archive details collapsed by default and expands them on demand", async () => {
+    renderWorkspace();
+    const archive = screen.getByLabelText("棋谱归档资料");
+    expect(within(archive).getByRole("button", { name: "展开" })).toBeTruthy();
+    expect(within(archive).queryByText(/Application Support/)).toBeNull();
+    await userEvent.click(within(archive).getByRole("button", { name: "展开" }));
+    expect(within(archive).getByRole("button", { name: "收起" })).toBeTruthy();
+    expect(within(archive).getByText(/Application Support/)).toBeTruthy();
+    expect(within(archive).getByText("后手")).toBeTruthy();
   });
 
   it("keeps screenshot import and manual recording tools visible after a game has moves", async () => {
@@ -233,7 +298,7 @@ describe("ReviewWorkspace", () => {
     expect(screen.getByText("走后：黑方优势 -240 cp")).toBeTruthy();
     expect(screen.getByText("建议先走：马二进三")).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "查看原因" }));
-    expect(screen.getByText("出子节奏偏慢。")).toBeTruthy();
+    expect(screen.getAllByText("出子节奏偏慢。").length).toBeGreaterThan(0);
     await userEvent.click(screen.getByRole("button", { name: "查看引擎详情" }));
     expect(screen.getByText(/原始局面分：-240 cp · 本步损失：420 cp/)).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: /推演/ }));
@@ -280,6 +345,16 @@ describe("ReviewWorkspace", () => {
     expect(screen.getByRole("button", { name: /炮二平五/ })).toBeTruthy();
   });
 
+  it("expands a thought explanation for an individual route move", async () => {
+    renderWorkspace();
+    await userEvent.click(screen.getByRole("button", { name: "展开第 1 着思路" }));
+    const thought = screen.getByLabelText("炮二平五 的着法思路");
+    expect(within(thought).getByText("想快速抢中路。")).toBeTruthy();
+    expect(within(thought).getByText("优先出马再组织进攻。")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "收起第 1 着思路" }));
+    expect(screen.queryByLabelText("炮二平五 的着法思路")).toBeNull();
+  });
+
   it("keeps later moves visible when browsing an earlier move in the full score", async () => {
     const props = renderWorkspace({ board: earlierNodeBoard });
     const scope = screen.getByLabelText("棋谱范围");
@@ -305,6 +380,26 @@ describe("ReviewWorkspace", () => {
     expect(screen.getByText("已验证飞刀")).toBeTruthy();
     expect(screen.getByText("意图：马8进7 炮二平五 马2进3")).toBeTruthy();
     expect(screen.getByLabelText("复盘棋谱路线").querySelector(".review-route-move")?.className).toContain("has-flyknife");
+  });
+
+  it("uses flyknife intent in the current move thought card when no active report is available", () => {
+    const flyknifeBoard = {
+      ...board,
+      history: [{ ...board.history[0], comment: "飞刀方案：测试红方飞刀\n意图：诱导黑方补右马后抢中路\n最佳防守：马2进3\n风险：反击候选需要复核。" }],
+    };
+    renderWorkspace({ board: flyknifeBoard, report: undefined });
+    const card = screen.getByLabelText("当前着法思路");
+    expect(within(card).getByText("当前着法思路 · 飞刀标注")).toBeTruthy();
+    expect(within(card).getByText("诱导黑方补右马后抢中路")).toBeTruthy();
+    expect(within(card).getByText("反击候选需要复核。")).toBeTruthy();
+  });
+
+  it("falls back to lightweight move thought hints before analysis", () => {
+    renderWorkspace({ report: undefined });
+    const card = screen.getByLabelText("当前着法思路");
+    expect(within(card).getByText("当前着法思路 · 轻量提示")).toBeTruthy();
+    expect(within(card).getByText("等待分析后可判断这步的目的和改进方向。")).toBeTruthy();
+    expect(within(card).getByText("未分析时显示的是规则化轻量提示，生成整局报告后会更准确。")).toBeTruthy();
   });
 
   it("does not render stale report scores, trend or export actions", () => {

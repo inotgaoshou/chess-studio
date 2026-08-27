@@ -46,6 +46,8 @@ export function MasterLibraryDialog({ account, onClose, onOpenGame, onStudyGame,
   const [openingAction, setOpeningAction] = useState<"open" | "analyze">("open");
   const [error, setError] = useState("");
   const [refreshVersion, setRefreshVersion] = useState(0);
+  const [playerSearchSubmitVersion, setPlayerSearchSubmitVersion] = useState(0);
+  const [gameSearchSubmitVersion, setGameSearchSubmitVersion] = useState(0);
   const selectedPlayer = useMemo(
     () => players.find((player) => player.id === selectedPlayerId),
     [players, selectedPlayerId],
@@ -100,7 +102,7 @@ export function MasterLibraryDialog({ account, onClose, onOpenGame, onStudyGame,
       disposed = true;
       window.clearTimeout(timer);
     };
-  }, [listPlayers, playerPage, playerQuery, refreshVersion]);
+  }, [listPlayers, playerPage, playerQuery, playerSearchSubmitVersion, refreshVersion]);
 
   useEffect(() => {
     let disposed = false;
@@ -113,7 +115,7 @@ export function MasterLibraryDialog({ account, onClose, onOpenGame, onStudyGame,
       disposed = true;
       window.clearTimeout(timer);
     };
-  }, [getStats, playerQuery, refreshVersion]);
+  }, [getStats, playerQuery, playerSearchSubmitVersion, refreshVersion]);
 
   useEffect(() => {
     let disposed = false;
@@ -152,13 +154,23 @@ export function MasterLibraryDialog({ account, onClose, onOpenGame, onStudyGame,
       disposed = true;
       window.clearTimeout(timer);
     };
-  }, [filters, gamePage, gameQuery, listGames, refreshVersion, selectedPlayerId]);
+  }, [filters, gamePage, gameQuery, gameSearchSubmitVersion, listGames, refreshVersion, selectedPlayerId]);
 
   function refreshLibrary() {
     setError("");
     setSelectedPlayerId(undefined);
     setGames([]);
     setRefreshVersion((version) => version + 1);
+  }
+
+  function submitPlayerSearch() {
+    setPlayerPage(0);
+    setPlayerSearchSubmitVersion((version) => version + 1);
+  }
+
+  function submitGameSearch() {
+    setGamePage(0);
+    setGameSearchSubmitVersion((version) => version + 1);
   }
 
   async function openGame(game: MasterGameSummaryDto, analyze: boolean) {
@@ -193,10 +205,11 @@ export function MasterLibraryDialog({ account, onClose, onOpenGame, onStudyGame,
 
         <div className="master-library-body">
             <aside className="master-player-panel">
-              <label className="master-search">
+              <form className="master-search" role="search" aria-label="搜索大师" onSubmit={(event) => { event.preventDefault(); submitPlayerSearch(); }}>
                 <Search size={14}/>
                 <input value={playerQuery} placeholder="搜索大师，如 赵鑫鑫 / 王天一" onChange={(event) => { setPlayerQuery(event.target.value); setPlayerPage(0); }}/>
-              </label>
+                <button type="submit" disabled={busy || !!openingGameId}>搜索大师</button>
+              </form>
               <p className="master-player-summary" aria-live="polite">
                 {stats ? playerQuery.trim()
                   ? `匹配 ${stats.matchedPlayers.toLocaleString("zh-CN")} 位棋手 · 全库 ${stats.totalPlayers.toLocaleString("zh-CN")} 位`
@@ -220,16 +233,17 @@ export function MasterLibraryDialog({ account, onClose, onOpenGame, onStudyGame,
               </nav>
             </aside>
 
-            <main className="master-game-panel">
+            <main className={`master-game-panel ${selectedPlayer?.name === "赵鑫鑫" ? "has-study-card" : ""}`}>
               <div className="master-game-toolbar">
                 <div>
                   <strong>{selectedPlayer?.name ?? "请选择大师"}</strong>
                   <small>{selectedPlayer ? `${selectedPlayer.gameCount} 盘已入库 · 可打开查看，也可直接分析打分` : "从左侧选择大师"}</small>
                 </div>
-                <label className="master-search">
+                <form className="master-search" role="search" aria-label="搜索棋谱" onSubmit={(event) => { event.preventDefault(); submitGameSearch(); }}>
                   <Search size={14}/>
                   <input value={gameQuery} disabled={!selectedPlayerId} placeholder="搜赛事 / 对手 / 标题" onChange={(event) => { setGameQuery(event.target.value); setGamePage(0); }}/>
-                </label>
+                  <button type="submit" disabled={!selectedPlayerId || busy || !!openingGameId}>搜索棋谱</button>
+                </form>
               </div>
               <div className="master-game-filters" aria-label="棋谱筛选">
                 <select aria-label="执棋方筛选" value={side ?? ""} disabled={!selectedPlayerId} onChange={(event) => { setSide((event.target.value || undefined) as MasterLibraryFilters["side"]); setGamePage(0); }}>
@@ -257,7 +271,7 @@ export function MasterLibraryDialog({ account, onClose, onOpenGame, onStudyGame,
               <div className="master-game-list" aria-label="大师棋谱列表">
                 {games.map((game) => (
                   <article className="master-game-card" key={game.id}>
-                    <div>
+                    <div className="master-game-heading">
                       <strong>{gameTitle(game)}</strong>
                       <small>{gameDateLabel(game.gameDate)} · {game.eventName ?? "赛事未知"} · {game.moveCount} 手</small>
                     </div>

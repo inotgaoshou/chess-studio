@@ -68,11 +68,15 @@ describe("MasterLibraryDialog", () => {
     const playerList = screen.getByLabelText("大师列表");
     await waitFor(() => expect(within(playerList).getByText("赵鑫鑫")).toBeTruthy());
     expect(listPlayers).toHaveBeenCalledWith("", { limit: 8, offset: 0 });
+    expect(screen.getByRole("button", { name: "搜索大师" })).toBeTruthy();
     expect(await screen.findByText("赵鑫鑫 先胜 王天一")).toBeTruthy();
     expect(listGames).toHaveBeenCalledWith("zhao", "", { limit: 20, offset: 0 });
+    expect(screen.getByRole("button", { name: "搜索棋谱" })).toBeTruthy();
     const gameCard = screen.getByText("赵鑫鑫 先胜 王天一").closest("article");
     expect(gameCard).toBeTruthy();
     expect(within(gameCard!).getByText(/全国象棋甲级联赛/)).toBeTruthy();
+    expect(within(gameCard!).getByRole("button", { name: "打开棋谱" })).toBeTruthy();
+    expect(within(gameCard!).getByRole("button", { name: "分析打分" })).toBeTruthy();
     expect(screen.queryByText(/gdchess\.com/)).toBeNull();
 
     await user.click(screen.getByRole("button", { name: "分析打分" }));
@@ -120,6 +124,34 @@ describe("MasterLibraryDialog", () => {
     await user.click(within(gamePagination).getByRole("button", { name: "末页" }));
     await waitFor(() => expect(listGames).toHaveBeenLastCalledWith("zhao", "", { limit: 20, offset: 1720 }));
     await user.click(within(gamePagination).getByRole("button", { name: "首页" }));
+    await waitFor(() => expect(listGames).toHaveBeenLastCalledWith("zhao", "", { limit: 20, offset: 0 }));
+  });
+
+  it("submits explicit master and game searches from the visible buttons", async () => {
+    const user = userEvent.setup();
+    const listPlayers = vi.fn(async () => players);
+    const listGames = vi.fn(async () => games);
+    render(<MasterLibraryDialog
+      account={signedIn}
+      listPlayers={listPlayers}
+      getStats={vi.fn(async () => stats)}
+      listGames={listGames}
+      onOpenGame={vi.fn(async () => undefined)}
+      onClose={vi.fn()}
+    />);
+
+    await screen.findByText("赵鑫鑫 先胜 王天一");
+
+    const playerPagination = screen.getByLabelText("大师分页");
+    await user.click(within(playerPagination).getByRole("button", { name: "下一页" }));
+    await waitFor(() => expect(listPlayers).toHaveBeenLastCalledWith("", { limit: 8, offset: 8 }));
+    await user.click(screen.getByRole("button", { name: "搜索大师" }));
+    await waitFor(() => expect(listPlayers).toHaveBeenLastCalledWith("", { limit: 8, offset: 0 }));
+
+    const gamePagination = screen.getByLabelText("棋谱分页");
+    await user.click(within(gamePagination).getByRole("button", { name: "下一页" }));
+    await waitFor(() => expect(listGames).toHaveBeenLastCalledWith("zhao", "", { limit: 20, offset: 20 }));
+    await user.click(screen.getByRole("button", { name: "搜索棋谱" }));
     await waitFor(() => expect(listGames).toHaveBeenLastCalledWith("zhao", "", { limit: 20, offset: 0 }));
   });
 

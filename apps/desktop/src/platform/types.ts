@@ -839,6 +839,7 @@ export type LinkObservation = { state: LinkSessionState; accepted: boolean; move
 export type BoardOrientation = "redAtBottom" | "blackAtBottom";
 export type LinkMoveDetail = { iccs: string; notation: string; movedBy: Side; from: MoveSquare; to: MoveSquare };
 export type LinkSessionStatus = { source: CaptureSource; mode: LinkMode; state: LinkSessionState; reason?: string; phase?: string; lastError?: string; startedAt?: string; lastHeartbeatAt?: string; recognitionAttempts?: number; lastDetectionSummary?: string; turnIndicator?: string; manualTurnOverride?: LinkAutoSide; pendingExternalMove?: string; capturePreviewKind?: string; frameRate: number; confidence?: number; confidenceThreshold?: number; stableFrames: number; requiredStableFrames: number; latestFen?: string; lastMove?: string; lastMoveDetail?: LinkMoveDetail; initialPositionSeen?: boolean; autoSide?: LinkAutoSide; boardOrientation?: BoardOrientation; captureRunning: boolean; targetWindow?: LinkTargetWindow; captureBackend?: string; captureDpi?: number; clickAvailable?: boolean };
+export type TtxqSyncProgress = { state: "disconnected" | "authorizing" | "reading" | "ready" | "importing" | "complete" | "partial" | "error" | string; readPhase?: "discovering" | "loading" | "reading" | string; readScanned?: number; readCurrent?: number; readTotal: number; readCompleted: number; readFailed: number; loaded: number; completed: number; imported: number; skipped: number; failed: number; message: string };
 export type ExportFormat = "pgn" | "chinese" | "dhtmlxq";
 export type ReplayExportScope = "currentSelection" | "mainline";
 export type EngineRuntimeEvent =
@@ -929,6 +930,11 @@ export interface ChessPlatform {
   setLinkSideToMove(side: LinkAutoSide): Promise<Partial<BoardState>>;
   confirmLinkEngineMove(iccs: string): Promise<boolean>;
   importRecognizedPosition(fen: string, title?: string): Promise<Partial<BoardState>>;
+  getTtxqSyncProgress(): Promise<TtxqSyncProgress>;
+  startTtxqAuthorization(): Promise<void>;
+  collectTtxqHistory(): Promise<void>;
+  importTtxqHistory(): Promise<TtxqSyncProgress>;
+  disconnectTtxq(): Promise<void>;
   newGame(fen: string, title?: string, note?: string): Promise<Partial<BoardState>>;
   openDocument(): Promise<Partial<BoardState> | undefined>;
   importXqbOpeningBook(): Promise<Partial<BoardState> | undefined>;

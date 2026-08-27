@@ -11,5 +11,8 @@ fn main() {
         });
     println!("cargo:rustc-env=XIANGQI_BUILD_TIMESTAMP={timestamp}");
     println!("cargo:rerun-if-changed=build.rs");
-    tauri_build::build()
+    tauri_build::try_build(
+        tauri_build::Attributes::new().app_manifest(tauri_build::AppManifest::new()),
+    )
+    .expect("failed to build Tauri application permissions")
 }

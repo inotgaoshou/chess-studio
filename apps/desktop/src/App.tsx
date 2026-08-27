@@ -64,7 +64,7 @@ import { candidateCoachInsights, currentCoachAdvice, moveThoughtHint } from "./c
 import { ForceVariationIcon, MobileToolbar, type MobileToolbarCommand } from "./MobileToolbar";
 import { MobileStudyPanel } from "./MobileStudyPanel";
 import { MobileManualRoute } from "./MobileManualRoute";
-import type { AnalysisOptions, AppInfoDto, BuiltinOpeningBookManifestDto, CloudAnalysisPreferences, CloudGuestAuthDto, DailyTrainingPlan, DesktopPreferencesDto, FlyknifePlan, GuidedAnalysisStart, GuidedAnalysisSubmission, LearningProfile, LinkSessionStatus, OpeningRepertoire, SubscriptionDto, SyncAccountDto, WeeklyLearningReport } from "./platform";
+import type { AnalysisOptions, AppInfoDto, BuiltinOpeningBookManifestDto, CloudAnalysisPreferences, CloudGuestAuthDto, DailyTrainingPlan, DesktopPreferencesDto, FlyknifePlan, GuidedAnalysisStart, GuidedAnalysisSubmission, LearningProfile, LinkSessionStatus, OpeningRepertoire, SubscriptionDto, SyncAccountDto, TtxqSyncProgress, WeeklyLearningReport } from "./platform";
 import { applyColorTheme, initialColorTheme, type ColorTheme } from "./theme";
 import { WorkspaceTabs, type WorkspacePanel } from "./WorkspaceTabs";
 import { WorkspaceModeSwitch, type WorkspaceMode } from "./WorkspaceModeSwitch";
@@ -91,11 +91,13 @@ import { FlyknifeDialog } from "./FlyknifeDialog";
 import { mobileWorkbenchMediaQuery, shouldUseMobileWorkbench } from "./mobileEnvironment";
 import { MasterLibraryDialog } from "./MasterLibraryDialog";
 import { Game53StudyDialog } from "./Game53StudyDialog";
+import { TtxqImportDialog } from "./TtxqImportDialog";
 import { bundledTheoryKnowledge } from "./theoryKnowledge.generated";
 import { ReviewWorkspace } from "./ReviewWorkspace";
 import { U10TrainingDialog } from "./U10TrainingDialog";
 import { UserManualDialog } from "./UserManualDialog";
 import { boardCellStyle, boardIntersectionPoint } from "./boardGeometry";
+import { buildSelectedPieceThought, type PieceThoughtSelection } from "./pieceThoughtModel";
 import userManualMarkdown from "../../../docs/USER_MANUAL.zh-CN.md?raw";
 
 
@@ -113,6 +115,7 @@ const MOBILE_DEFAULT_ANALYSIS_DEPTH = 20;
 const MOBILE_DEFAULT_DEPTH_PREFERENCE_VERSION = 1;
 const DEFAULT_REPORT_DEPTH = 24;
 const QUICK_ANALYSIS_TIME_MS = 1200;
+const BOARD_REVIEW_DOUBLE_CLICK_DELAY_MS = 180;
 const COMPACT_ENGINE_MIN_WIDTH = 280;
 const COMPACT_ENGINE_DEFAULT_WIDTH = 344;
 const COMPACT_ENGINE_MIN_HEIGHT = 220;
@@ -849,6 +852,10 @@ function squareFromIccs(value: string) {
   return { row: 9 - Number(value[1]), col: value.charCodeAt(0) - 97 };
 }
 
+function pieceSide(piece: Piece): BoardState["sideToMove"] {
+  return piece.color === "red" ? "红方" : "黑方";
+}
+
 function pieceAsset(piece: Piece, skin: DesktopPreferencesDto["pieceSkin"]) {
   const folder = skinAssetFolder(skin);
   return `/skins/${folder}/${piece.color === "red" ? "r" : "b"}${pieceCode[piece.kind] ?? "p"}.png`;
@@ -1213,6 +1220,8 @@ export default function App() {
 
   const [board, setBoard] = useState<BoardState>(fallback);
   const [selected, setSelected] = useState<{ row: number; col: number } | null>(null);
+  const [selectedPieceInspection, setSelectedPieceInspection] = useState<PieceThoughtSelection>();
+  const [showMoveThoughts, setShowMoveThoughts] = useState(true);
   const [reversed, setReversed] = useState(false);
   const [fenInput, setFenInput] = useState(startingFen);
   const [enginePath, setEnginePath] = useState("");
@@ -1240,6 +1249,7 @@ export default function App() {
   const [analysisError, setAnalysisError] = useState<string>();
   const [reviewEngineHintRequest, setReviewEngineHintRequest] = useState(0);
   const [syncBusy, setSyncBusy] = useState(false);
+  const [ttxqSync, setTtxqSync] = useState<TtxqSyncProgress>({ state: "disconnected", readPhase: "", readTotal: 0, readCompleted: 0, readFailed: 0, loaded: 0, completed: 0, imported: 0, skipped: 0, failed: 0, message: "未连接天天象棋" });
   const [comment, setComment] = useState("");
   const [serverUrl, setServerUrl] = useState("http://127.0.0.1:8080");
   const [token, setToken] = useState("");
@@ -1321,6 +1331,7 @@ export default function App() {
     ?? (typeof navigator !== "undefined" && /mac/i.test(navigator.userAgent))
   );
   const [masterLibraryOpen, setMasterLibraryOpen] = useState(false);
+  const [ttxqImportOpen, setTtxqImportOpen] = useState(false);
   const [game53StudyOpen, setGame53StudyOpen] = useState(false);
   const [engineProbe, setEngineProbe] = useState<EngineProbeDto>();
   const [engineProfiles, setEngineProfiles] = useState<EngineProfileDto[]>([]);
@@ -1438,6 +1449,7 @@ export default function App() {
   const compactWindowSuppressClickRef = useRef<Record<"engine" | "manual", boolean>>({ engine: false, manual: false });
   const bookCandidateAuditRevisionRef = useRef(0);
   const analysisPanelReopenDragRef = useRef<{ startY: number; startTop: number; latestTop: number; moved: boolean } | undefined>(undefined);
+  const reviewBoardMoveClickTimerRef = useRef<number | undefined>(undefined);
   const analysisPanelReopenSuppressClickRef = useRef(false);
   const compactManualResizeRef = useRef<{ startX: number; startWidth: number; maxWidth: number; detached: boolean; startPosition: { x: number; y: number } } | undefined>(undefined);
   const compactEngineResizeRef = useRef<{ startX: number; startY: number; startWidth: number; startHeight: number; maxWidth: number; maxHeight: number } | undefined>(undefined);
@@ -1496,6 +1508,10 @@ export default function App() {
   useEffect(() => () => {
     if (floatingPanelInteractionTimerRef.current != null) {
       window.clearTimeout(floatingPanelInteractionTimerRef.current);
+    }
+    if (reviewBoardMoveClickTimerRef.current != null) {
+      window.clearTimeout(reviewBoardMoveClickTimerRef.current);
+      reviewBoardMoveClickTimerRef.current = undefined;
     }
   }, []);
 
@@ -2121,6 +2137,19 @@ export default function App() {
   const orderedAnalysis = useMemo(() => currentAnalysis.slice().sort((left, right) => left.multipv - right.multipv), [currentAnalysis]);
   const primaryAnalysis = orderedAnalysis[0];
   const candidateSideToMove = analysisSideToMove ?? board.sideToMove;
+  const currentMoveForThought = board.history.at(-1);
+  const currentMoveIssueForThought = currentMoveForThought
+    ? reportPresentation?.issues.find((issue) => issue.nodeId === currentMoveForThought.id)
+    : undefined;
+  const selectedPieceThought = useMemo(() => selectedPieceInspection ? buildSelectedPieceThought({
+    selection: selectedPieceInspection,
+    board,
+    analysisLines: orderedAnalysis,
+    analysisFen,
+    analysisIsStale,
+    currentMove: currentMoveForThought,
+    currentMoveIssue: currentMoveIssueForThought,
+  }) : undefined, [analysisFen, analysisIsStale, board, currentMoveForThought, currentMoveIssueForThought, orderedAnalysis, selectedPieceInspection]);
   const bestMoveHint = useMemo<BestMoveHint | undefined>(() => {
     if (analysisFen !== board.fen || analysisIsStale || orderedAnalysis.length === 0) return undefined;
     const seen = new Set<string>();
@@ -3178,6 +3207,7 @@ export default function App() {
       setNotice("已停止人机对弈，正在采用当前候选着…");
     }
     setAnalysisArrowFen(undefined);
+    setSelectedPieceInspection(undefined);
     clearCandidatePreviews();
     try {
       await stopRunningAnalysisBeforeMove();
@@ -3257,6 +3287,7 @@ export default function App() {
         return;
       }
       setSelected(null);
+      setSelectedPieceInspection(undefined);
       setCandidatePreviewBranches([]);
       setCandidatePreview({
         rank: line.multipv,
@@ -3374,6 +3405,10 @@ export default function App() {
   }
 
   async function selectSquare(row: number, col: number) {
+    if (reviewBoardMoveClickTimerRef.current != null) {
+      window.clearTimeout(reviewBoardMoveClickTimerRef.current);
+      reviewBoardMoveClickTimerRef.current = undefined;
+    }
     if (!board.playable) {
       setNotice("当前研究局面不可对弈，请先修正局面");
       return;
@@ -3393,7 +3428,60 @@ export default function App() {
       return;
     }
     const iccs = `${squareToIccs(selected.row, selected.col)}${squareToIccs(row, col)}`;
+    if (reviewModeOpen) {
+      const expectedFen = board.fen;
+      reviewBoardMoveClickTimerRef.current = window.setTimeout(() => {
+        reviewBoardMoveClickTimerRef.current = undefined;
+        void playIccsMove(iccs, expectedFen);
+      }, BOARD_REVIEW_DOUBLE_CLICK_DELAY_MS);
+      return;
+    }
     await playIccsMove(iccs);
+  }
+
+  function inspectPieceThought(row: number, col: number) {
+    if (reviewBoardMoveClickTimerRef.current != null) {
+      window.clearTimeout(reviewBoardMoveClickTimerRef.current);
+      reviewBoardMoveClickTimerRef.current = undefined;
+    }
+    if (!reviewModeOpen) {
+      setNotice("进入复盘模式后，可双击当前行棋方的棋子查看这枚子的思路");
+      return;
+    }
+    if (candidatePreview) {
+      setSelectedPieceInspection(undefined);
+      setNotice("候选推演预览中不记录选子思路，退出预览后再双击棋子");
+      return;
+    }
+    if (!board.playable) {
+      setSelectedPieceInspection(undefined);
+      setNotice("当前研究局面不可对弈，请先修正局面");
+      return;
+    }
+    if (engineThinking || isEngineTurn(board)) {
+      setNotice(engineThinking ? `${currentEngineLabel} 正在思考` : `当前轮到 ${currentEngineLabel} 行棋`);
+      return;
+    }
+    const piece = pieceMap.get(`${row}-${col}`);
+    if (!piece) {
+      setSelected(null);
+      setSelectedPieceInspection(undefined);
+      setNotice("请双击当前行棋方的棋子，查看这枚子的作用和候选方向");
+      return;
+    }
+    if (pieceSide(piece) !== board.sideToMove) {
+      setSelected(null);
+      setNotice(`当前是${board.sideToMove}行棋，只能查看${board.sideToMove}棋子的可走思路`);
+      return;
+    }
+    setSelected({ row, col });
+    setSelectedPieceInspection({
+      piece,
+      square: { row, col },
+      fen: board.fen,
+      sideToMove: board.sideToMove,
+    });
+    setNotice(`正在查看${board.sideToMove}${piece.label}在 ${squareToIccs(row, col).toUpperCase()} 的作用与候选方向`);
   }
 
   async function createGame(fen = fenInput) {
@@ -4327,6 +4415,7 @@ export default function App() {
       setAnalysisArrowFen(undefined);
     }
     clearCandidatePreviews();
+    if (positionChanged) setSelectedPieceInspection(undefined);
     setBoard(next);
     setFenInput(next.fen);
   }
@@ -4839,6 +4928,55 @@ export default function App() {
     } finally {
       setSyncBusy(false);
     }
+  }
+
+  async function refreshTtxqSync() {
+    if (chessPlatform.kind !== "desktop") return;
+    setTtxqSync(await chessPlatform.getTtxqSyncProgress());
+  }
+
+  useEffect(() => {
+    if (chessPlatform.kind !== "desktop" || ttxqSync.state !== "reading") return;
+    const timer = window.setInterval(() => {
+      void refreshTtxqSync().catch(() => undefined);
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [ttxqSync.state]);
+
+  async function startTtxqAuthorization() {
+    try {
+      await chessPlatform.startTtxqAuthorization();
+      await refreshTtxqSync();
+      setNotice("请在天天象棋窗口内自行登录并进入最近对局；读取时会自动加载历史棋谱");
+    } catch (error) { setNotice(friendlyError(error)); }
+  }
+
+  async function collectTtxqHistory() {
+    setSyncBusy(true);
+    try {
+      await chessPlatform.collectTtxqHistory();
+      await refreshTtxqSync();
+    } catch (error) { setNotice(friendlyError(error)); }
+    finally { setSyncBusy(false); }
+  }
+
+  async function importTtxqHistory() {
+    setSyncBusy(true);
+    try {
+      const result = await chessPlatform.importTtxqHistory();
+      setTtxqSync(result);
+      await refreshGames();
+      setNotice(result.message);
+    } catch (error) { setNotice(friendlyError(error)); }
+    finally { setSyncBusy(false); }
+  }
+
+  async function disconnectTtxq() {
+    try {
+      await chessPlatform.disconnectTtxq();
+      await refreshTtxqSync();
+      setNotice("天天象棋授权窗口已关闭，本应用未保存 QQ/微信登录信息");
+    } catch (error) { setNotice(friendlyError(error)); }
   }
 
   async function saveEnginePreferences(preferences: DesktopPreferencesDto, profileName?: string) {
@@ -6655,6 +6793,7 @@ export default function App() {
 
       <div className="actionbar">
         <button className="wide-tool" onClick={() => void createGame(startingFen)}><FolderOpen size={14}/>手动录谱</button>
+        <button className="mode-tool ttxq-import-shortcut" title="导入天天象棋最近对局" onClick={() => setTtxqImportOpen(true)}><Database size={15}/>天天象棋导入</button>
         <div className="tool-group">
           <button className="tool-button" title="新建棋谱" onClick={() => void createGame(startingFen)}><Plus size={17}/></button>
           <button className="tool-button" title="打开棋谱" onClick={() => void openDocument()}><FolderOpen size={16}/></button>
@@ -6713,7 +6852,7 @@ export default function App() {
           onClick={() => void openLinkSessionDialog()}
         ><Link size={15}/>连线</button>}
         {chessPlatform.kind === "desktop" && workspaceMode === "research" && <button className="tool-button flyknife-tool-button" title="飞刀库 / 专题库" onClick={() => setFlyknifeOpen(true)}><Zap size={16}/><span>飞刀库</span></button>}
-        {chessPlatform.kind === "desktop" && workspaceMode === "research" && <button className="tool-button" title="大师棋谱" onClick={() => setMasterLibraryOpen(true)}><Database size={16}/></button>}
+        {chessPlatform.kind === "desktop" && workspaceMode !== "training" && <button className="tool-button" title="大师棋谱" aria-label="大师棋谱" onClick={() => setMasterLibraryOpen(true)}><Database size={16}/></button>}
       </div>
 
       <main className={`workspace layout-${desktopPreferences.layoutMode} ${reviewModeOpen ? "review-mode-active" : ""} ${libraryCollapsed ? "library-collapsed" : ""} ${candidateRailCollapsed ? "candidate-rail-collapsed" : ""} ${analysisPanelCollapsed ? "analysis-panel-collapsed" : ""} ${compactDockMinimized ? "compact-dock-minimized" : ""} ${compactHasSystemPopout ? "compact-system-popout" : ""} ${desktopPreferences.layoutMode === "compact" && cloudBookCollapsed ? "compact-cloud-collapsed" : ""}`}>
@@ -6822,6 +6961,7 @@ export default function App() {
               {cells.map(({ row, col }) => {
                 const piece = pieceMap.get(`${row}-${col}`);
                 const isSelected = selected?.row === row && selected?.col === col;
+                const isThoughtPiece = showMoveThoughts && selectedPieceThought?.square.row === row && selectedPieceThought.square.col === col;
                 const cellStyle = boardCellStyle({ row, col }, boardDisplayReversed, displayedBoardSkin);
                 const style = {
                   "--piece-left": cellStyle.left,
@@ -6830,10 +6970,15 @@ export default function App() {
                 return (
                   <button
                     key={`${row}-${col}`}
-                    className={`board-square piece-${piece?.color ?? "empty"} ${candidatePreview ? "previewing" : ""} ${isSelected ? "selected" : ""}`}
+                    className={`board-square piece-${piece?.color ?? "empty"} ${candidatePreview ? "previewing" : ""} ${isSelected ? "selected" : ""} ${isThoughtPiece ? "thought-selected" : ""}`}
                     style={style}
                     disabled={isPlaying || !board.playable || !!candidatePreview}
                     onClick={() => void selectSquare(row, col)}
+                    onDoubleClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      inspectPieceThought(row, col);
+                    }}
                     aria-label={`${squareToIccs(row, col)}${piece ? ` ${piece.color === "red" ? "红" : "黑"}${piece.label}` : ""}`}
                   >
                     {piece && <>
@@ -6917,6 +7062,30 @@ export default function App() {
               </div>
             </aside>
             </div>
+            {showMoveThoughts && selectedPieceThought && <section className={`selected-piece-thought-card source-${selectedPieceThought.source}`} aria-label="选中棋子思路">
+              <header>
+                <div>
+                  <small>选中棋子思路 · {selectedPieceThought.sourceLabel}</small>
+                  <strong>{selectedPieceThought.title}</strong>
+                </div>
+                <button type="button" onClick={() => setSelectedPieceInspection(undefined)}>清除</button>
+              </header>
+              <p><b>作用</b><span>{selectedPieceThought.role}</span></p>
+              {selectedPieceThought.candidates.length > 0 && <div className="selected-piece-candidates" aria-label="这枚棋子的候选走法">
+                <b>候选</b>
+                <ul>
+                  {selectedPieceThought.candidates.slice(0, 3).map((candidate) => <li key={candidate.iccs}>
+                    <strong>{candidate.notation}</strong>
+                    <small>{candidate.scoreText}{candidate.depth ? ` · 深度 ${candidate.depth}` : ""}</small>
+                    <span>{candidate.line}</span>
+                  </li>)}
+                </ul>
+              </div>}
+              <p><b>风险</b><span>{selectedPieceThought.risk}</span></p>
+              <p><b>建议</b><span>{selectedPieceThought.nextAction}</span></p>
+              {selectedPieceThought.comparison && <p><b>比较</b><span>{selectedPieceThought.comparison}</span></p>}
+              {selectedPieceThought.confidenceNote && <small>{selectedPieceThought.confidenceNote}</small>}
+            </section>}
           </div>
           {candidatePreview && previewStep && (
             <div className="candidate-preview-bar" style={{ "--pv-color": candidatePreview.color } as CSSProperties}>
@@ -7070,6 +7239,8 @@ export default function App() {
             positionAnalysisError={analysisError}
             positionAnalysisFen={analysisFen}
             engineHintRequest={reviewEngineHintRequest}
+            showMoveThoughts={showMoveThoughts}
+            onMoveThoughtVisibilityChange={setShowMoveThoughts}
             onClose={() => void exitReviewMode()}
             onNavigate={(nodeId) => void navigateTo(nodeId)}
             onGenerateReport={() => void generateGameReport()}
@@ -7660,6 +7831,15 @@ export default function App() {
         threads={threads}
         hashMb={hashMb}
         onOpenEngineSettings={() => setDesktopDialog("engine")}
+      />}
+      {chessPlatform.kind === "desktop" && ttxqImportOpen && <TtxqImportDialog
+        progress={ttxqSync}
+        busy={syncBusy}
+        onClose={() => setTtxqImportOpen(false)}
+        onAuthorize={() => void startTtxqAuthorization()}
+        onCollect={() => void collectTtxqHistory()}
+        onImport={() => void importTtxqHistory()}
+        onDisconnect={() => void disconnectTtxq()}
       />}
       <nav className="mobile-nav" aria-label="移动端导航">
         <button className={mobilePanel === "board" ? "active" : ""} onClick={() => setMobilePanel("board")}><LayoutGrid size={19}/><span>棋盘</span></button>

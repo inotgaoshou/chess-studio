@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BoardState, DailyTrainingPlan, DesktopPreferencesDto, GuidedAnalysisStart, LearningProfile, OpeningRepertoire, WeeklyLearningReport } from "./platform";
@@ -150,9 +150,10 @@ vi.mock("./CoachRadar", () => ({ CoachProfileView: () => null }));
 vi.mock("./UserManualDialog", () => ({ UserManualDialog: () => null }));
 
 vi.mock("./ReviewWorkspace", () => ({
-  ReviewWorkspace: ({ onStartU10 }: { onStartU10(nodeId?: string): void }) => (
+  ReviewWorkspace: ({ onStartU10, showMoveThoughts = true, onMoveThoughtVisibilityChange }: { onStartU10(nodeId?: string): void; showMoveThoughts?: boolean; onMoveThoughtVisibilityChange?(visible: boolean): void }) => (
     <section data-testid="review-workspace">
       <button type="button" onClick={() => onStartU10("node-1")}>开始 U10</button>
+      <button type="button" onClick={() => onMoveThoughtVisibilityChange?.(!showMoveThoughts)}>{showMoveThoughts ? "隐藏思路" : "显示思路"}</button>
     </section>
   ),
 }));
@@ -181,9 +182,9 @@ Object.defineProperty(window, "matchMedia", {
   })),
 });
 
-function configurePlatform() {
+function configurePlatform(initialBoard: BoardState = board) {
   const target = platformMock as Record<string, ReturnType<typeof vi.fn> | string>;
-  target.initialize = vi.fn(async () => board);
+  target.initialize = vi.fn(async () => initialBoard);
   target.getAppInfo = vi.fn(async () => ({ version: "1.2.5", buildTimestamp: 0, platform: "macOS" }));
   target.listGames = vi.fn(async () => []);
   target.listLibraryFolders = vi.fn(async () => []);
@@ -196,6 +197,8 @@ function configurePlatform() {
   target.listEngineProfiles = vi.fn(async () => []);
   target.getGameReport = vi.fn(async () => undefined);
   target.loadSavedAnalysis = vi.fn(async () => []);
+  target.previewLine = vi.fn(async () => []);
+  target.playMove = vi.fn(async () => initialBoard);
   target.queryCloudOpeningBook = vi.fn(async () => []);
   target.subscribeGameReportProgress = vi.fn(async () => () => undefined);
   target.subscribeEngineEvents = vi.fn(async () => () => undefined);
@@ -231,5 +234,52 @@ describe("App U10 close", () => {
       expect(screen.getByRole("button", { name: "训练" }).getAttribute("aria-pressed")).toBe("true");
       expect(view.container.querySelector("main.workspace")?.classList.contains("review-mode-active")).toBe(true);
     });
+  });
+
+  it("shows selected piece thinking when a side-to-move piece is double-clicked", async () => {
+    configurePlatform({
+      ...board,
+      pieces: [{ row: 9, col: 1, color: "red", kind: "horse", label: "马" }],
+    });
+    const user = userEvent.setup();
+    render(<App/>);
+
+    const horseSquare = await screen.findByRole("button", { name: /b0 红马/ });
+    fireEvent.doubleClick(horseSquare);
+
+    const card = await screen.findByLabelText("选中棋子思路");
+    expect(card.textContent).toContain("红方马");
+    expect(card.textContent).toContain("跳点");
+    expect(horseSquare.className).toContain("thought-selected");
+
+    await user.click(screen.getByRole("button", { name: "隐藏思路" }));
+    expect(screen.queryByLabelText("选中棋子思路")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "显示思路" }));
+    expect(screen.getByLabelText("选中棋子思路")).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "清除" }));
+    expect(screen.queryByLabelText("选中棋子思路")).toBeNull();
+  });
+
+  it("cancels a pending review move when the destination is double-clicked for inspection", async () => {
+    configurePlatform({
+      ...board,
+      pieces: [
+        { row: 9, col: 1, color: "red", kind: "horse", label: "马" },
+        { row: 0, col: 4, color: "black", kind: "king", label: "将" },
+      ],
+    });
+    render(<App/>);
+
+    const horseSquare = await screen.findByRole("button", { name: /b0 红马/ });
+    const emptySquare = screen.getByRole("button", { name: "b1" });
+    fireEvent.click(horseSquare);
+    fireEvent.click(emptySquare);
+    fireEvent.doubleClick(emptySquare);
+
+    await new Promise((resolve) => window.setTimeout(resolve, 240));
+    expect((platformMock as { playMove?: ReturnType<typeof vi.fn> }).playMove).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText("选中棋子思路")).toBeNull();
   });
 });
