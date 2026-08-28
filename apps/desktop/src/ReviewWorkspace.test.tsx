@@ -3,8 +3,9 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BoardState, GameReportPresentationDto, GameSummary, LibraryFolder, ReportSidePresentationDto, TrainingTaskDto } from "./platform/types";
 import { ReviewWorkspace } from "./ReviewWorkspace";
+import { chessPlatform } from "./platform";
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 const board: BoardState = {
   fen: "fen-2",
@@ -188,6 +189,43 @@ describe("ReviewWorkspace", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     await userEvent.click(screen.getByRole("button", { name: /删除 1/ }));
     expect(onDeleteGames).toHaveBeenCalledWith(["ttxq-1"]);
+  });
+
+  it("supports select-all and direct deletion from the local game library", async () => {
+    const onDeleteGames = vi.fn().mockResolvedValue(undefined);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderWorkspace({ onDeleteGames });
+    await userEvent.click(screen.getByRole("button", { name: "棋谱库" }));
+
+    await userEvent.click(screen.getByRole("button", { name: "全选当前" }));
+    await userEvent.click(screen.getByRole("button", { name: /删除 1/ }));
+    expect(onDeleteGames).toHaveBeenCalledWith(["ttxq-1"]);
+
+    await userEvent.click(screen.getByRole("button", { name: /删除 放飞 vs 棋友/ }));
+    expect(onDeleteGames).toHaveBeenLastCalledWith(["ttxq-1"]);
+  });
+
+  it("opens the metadata editor and waits for the share action before closing the library", async () => {
+    const onShareGame = vi.fn().mockResolvedValue(undefined);
+    const onRefreshLibrary = vi.fn().mockResolvedValue(undefined);
+    vi.spyOn(chessPlatform, "getGameMetadata").mockResolvedValue({
+      title: "放飞 vs 棋友", event: "棋力评测", site: "天天象棋", date: "2026-08-15 19:54", red: "放飞", black: "棋友", result: "1/2-1/2", note: "",
+    });
+    vi.spyOn(chessPlatform, "updateGameMetadataForGame").mockResolvedValue({});
+    renderWorkspace({ onShareGame, onRefreshLibrary });
+
+    await userEvent.click(screen.getByRole("button", { name: "棋谱库" }));
+    expect(screen.getByRole("button", { name: /编辑 放飞 vs 棋友/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /分享 放飞 vs 棋友/ })).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: /编辑 放飞 vs 棋友/ }));
+    expect(await screen.findByRole("dialog", { name: "编辑棋谱信息" })).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+    expect(chessPlatform.updateGameMetadataForGame).toHaveBeenCalledWith("ttxq-1", expect.objectContaining({ title: "放飞 vs 棋友" }));
+    expect(onRefreshLibrary).toHaveBeenCalledOnce();
+
+    await userEvent.click(screen.getByRole("button", { name: /分享 放飞 vs 棋友/ }));
+    expect(onShareGame).toHaveBeenCalledWith("ttxq-1");
+    expect(screen.queryByRole("dialog", { name: "本地棋谱库" })).toBeNull();
   });
 
   it("opens current-position engine hints and runs the requested analysis", async () => {

@@ -17,6 +17,14 @@ use xiangqi_core::{Board, STARTING_FEN};
 use xiangqi_manual::ManualTree;
 
 pub(crate) fn initialize(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(window) = app.get_webview_window("main") {
+        let title = if cfg!(debug_assertions) {
+            "Xiangqi Studio · 开发版"
+        } else {
+            "Xiangqi Studio · 正式版"
+        };
+        window.set_title(title)?;
+    }
     let data_dir = app.path().app_data_dir()?;
     std::fs::create_dir_all(&data_dir)?;
     let mut store = LocalStore::open(data_dir.join("xiangqi.sqlite3"))?;

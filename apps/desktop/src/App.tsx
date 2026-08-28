@@ -4578,7 +4578,7 @@ export default function App() {
   }, [currentLibraryGame?.id]);
 
   async function openGame(gameId: string) {
-    if (!ensureBoardChangeAllowed()) return;
+    if (!ensureBoardChangeAllowed()) return false;
     stopPlayback();
     stopEnginePlay();
     await cancelAnalysisForDocumentChange();
@@ -4594,8 +4594,10 @@ export default function App() {
       await refreshGames();
       setNotice("已打开棋谱");
       setMobilePanel("board");
+      return true;
     } catch (error) {
       setNotice(friendlyError(error));
+      return false;
     }
   }
 
@@ -4610,8 +4612,9 @@ export default function App() {
     }
   }
 
-  function shareLibraryGame(gameId: string) {
-    void (async () => { await openGame(gameId); setExportMenuOpen(true); })();
+  async function shareLibraryGame(gameId: string) {
+    if (!await openGame(gameId)) throw new Error("棋谱未能打开，请稍后重试");
+    setExportMenuOpen(true);
   }
 
   function stopPlayback(keepBusy = false) {

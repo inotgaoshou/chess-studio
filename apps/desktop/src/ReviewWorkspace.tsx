@@ -46,7 +46,7 @@ export type ReviewWorkspaceProps = {
   onPaste(): void;
   onManualRecord(): void;
   onOpenGame?(gameId: string): void;
-  onShareGame?(gameId: string): void;
+  onShareGame?(gameId: string): Promise<void>;
   onRefreshLibrary?(): Promise<void>;
   onDeleteGames?(gameIds: string[]): Promise<void>;
   onSaveLibrary(folder: string | undefined, favorite: boolean, tags: string[]): Promise<boolean>;

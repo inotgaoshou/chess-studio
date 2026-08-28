@@ -9027,6 +9027,7 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
   background: rgba(10, 16, 14, .58);
 }
 .review-game-library {
+  position: relative;
   width: min(760px, calc(100vw - 36px));
   max-height: min(680px, calc(100dvh - 36px));
   display: grid;
@@ -9054,6 +9055,8 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 .review-game-library-toolbar > label { min-width: 0; flex: 1; margin: 0; padding: 0 12px; display: flex; align-items: center; gap: 7px; color: var(--text-muted); }
 .review-library-delete { flex: 0 0 auto; margin: 7px 9px 7px 0; padding: 0 8px; border: 1px solid #b54848; border-radius: 4px; background: transparent; color: #c85b5b; display: inline-flex; align-items: center; gap: 5px; font-size: 11px; }
 .review-library-delete:disabled { opacity: .45; cursor: not-allowed; }
+.review-library-select-all { flex: 0 0 auto; margin: 7px 6px 7px 0; padding: 0 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-1); color: var(--text-secondary); font-size: 11px; }
+.review-library-select-all:disabled { opacity: .45; cursor: not-allowed; }
 .review-game-library-body > main input { min-width: 0; width: 100%; border: 0; outline: 0; background: transparent; color: var(--text-primary); font-size: 12px; }
 .review-game-library-list { min-height: 0; overflow: auto; padding: 7px; display: grid; align-content: start; gap: 5px; }
 .review-game-library-list > p { padding: 30px; color: var(--text-muted); text-align: center; font-size: 12px; }
@@ -9071,8 +9074,12 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 .review-library-open em.result.black { background: #3c5264; color: #fff; }
 .review-library-open em.result.draw { background: #7b7155; color: #fff; }
 .review-library-actions { flex: 0 0 auto; padding: 5px 6px 5px 0; display: flex; align-items: center; gap: 3px; }
-.review-library-actions button { width: 27px; height: 27px; border: 1px solid var(--border); border-radius: 3px; background: var(--surface-0); color: var(--text-secondary); display: grid; place-items: center; }
+.review-library-actions button { min-width: 51px; height: 27px; padding: 0 6px; border: 1px solid var(--border); border-radius: 3px; background: var(--surface-0); color: var(--text-secondary); display: inline-flex; align-items: center; justify-content: center; gap: 4px; font-size: 10px; }
 .review-library-actions button:hover { border-color: var(--review-accent); color: var(--review-accent); }
+.review-library-actions button.danger { border-color: #b54848; color: #c85b5b; }
+.review-library-actions button.danger:hover { border-color: #dc6262; color: #dc6262; }
+.review-library-actions button:disabled { opacity: .55; cursor: wait; }
+.review-library-action-error { margin: 7px 8px 0; padding: 7px 8px; border: 1px solid #b54848; border-radius: 4px; background: rgba(181, 72, 72, .1); color: #cb6464; font-size: 11px; }
 .review-library-editor { position: absolute; z-index: 2; inset: 30px; max-width: 620px; margin: auto; align-self: center; border: 1px solid var(--border); border-radius: 5px; background: var(--surface-0); box-shadow: 0 16px 42px rgba(0,0,0,.42); overflow: auto; }
 .review-library-editor > header, .review-library-editor > footer { min-height: 46px; padding: 8px 12px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .review-library-editor > header button, .review-library-editor > footer button { min-height: 28px; padding: 0 9px; border: 1px solid var(--border); border-radius: 3px; background: var(--surface-1); color: var(--text-primary); }
