@@ -275,9 +275,10 @@ apps/desktop/src-tauri/resources/pikafish/
 桌面开发：
 
 ```bash
-PIKAFISH_PATH=/Users/chenyubin/Documents/chess/Pikafish.2026-01-02/MacOS/pikafish-apple-silicon \
-node /Users/chenyubin/.cache/node/corepack/pnpm/11.7.0/bin/pnpm.cjs --filter xiangqi-desktop-ui tauri dev
+./scripts/dev-desktop.sh
 ```
+
+不要用 `cargo run -p xiangqi-desktop` 作为桌面开发启动方式；它可能加载上一次嵌入的前端构建。`scripts/dev-desktop.sh` 会选择 Node 22+ 并使用 Tauri 的开发流程，使 Rust 壳连接当前 Vite 源码。
 
 前端：
 

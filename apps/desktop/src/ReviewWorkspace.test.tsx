@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { BoardState, GameReportPresentationDto, LibraryFolder, ReportSidePresentationDto, TrainingTaskDto } from "./platform/types";
+import type { BoardState, GameReportPresentationDto, GameSummary, LibraryFolder, ReportSidePresentationDto, TrainingTaskDto } from "./platform/types";
 import { ReviewWorkspace } from "./ReviewWorkspace";
 
 afterEach(cleanup);
@@ -95,6 +95,10 @@ const report: GameReportPresentationDto = {
 };
 
 const folders: LibraryFolder[] = [{ name: "比赛复盘", system: true, gameCount: 1 }];
+const libraryGames: GameSummary[] = [
+  { id: "ttxq-1", title: "Panel_BoardContainer<QipuChessBoardControl>", fen: "fen-1", updatedAt: "2026-08-15T19:54:00Z", current: false, libraryFolder: "天天象棋备份", favorite: false, tags: [], sourceFormat: "ttxq-h5", red: "放飞", black: "棋友", event: "棋力评测", result: "1/2-1/2", date: "2026/08/15 19:54:44", round: "29 回合", moveCount: 57 },
+  { id: "local-1", title: "省赛复盘", fen: "fen-local", updatedAt: "2026-08-16T12:00:00Z", current: true, libraryFolder: "比赛复盘", favorite: true, tags: ["中炮"] },
+];
 const trainingTask: TrainingTaskDto = {
   id: "task-1",
   gameId: "game-1",
@@ -114,6 +118,7 @@ function renderWorkspace(overrides: Partial<Parameters<typeof ReviewWorkspace>[0
     engineReady: true,
     libraryFolder: "比赛复盘",
     libraryFolders: folders,
+    games: libraryGames,
     favorite: false,
     libraryTags: ["后手"],
     flyknifePlanCount: 0,
@@ -134,6 +139,7 @@ function renderWorkspace(overrides: Partial<Parameters<typeof ReviewWorkspace>[0
     onImportScreenshot: vi.fn(),
     onPaste: vi.fn(),
     onManualRecord: vi.fn(),
+    onOpenGame: vi.fn(),
     onSaveLibrary: vi.fn().mockResolvedValue(true),
     onOpenFlyknife: vi.fn(),
     onGenerateTraining: vi.fn().mockResolvedValue(undefined),
@@ -148,6 +154,42 @@ function renderWorkspace(overrides: Partial<Parameters<typeof ReviewWorkspace>[0
 }
 
 describe("ReviewWorkspace", () => {
+  it("opens the in-review library with TianTian Xiangqi games selected and loads the selected game", async () => {
+    const props = renderWorkspace();
+
+    await userEvent.click(screen.getByRole("button", { name: "棋谱库" }));
+    expect(screen.getByRole("dialog", { name: "本地棋谱库" })).toBeTruthy();
+    expect(screen.getByText("放飞 vs 棋友 · 1/2-1/2")).toBeTruthy();
+    expect(screen.queryByText("省赛复盘")).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: /全部本地/ }));
+    expect(screen.getByText("省赛复盘")).toBeTruthy();
+    await userEvent.type(screen.getByPlaceholderText("搜索标题、棋手、赛果、回合或赛事"), "省赛");
+    expect(screen.getByText("省赛复盘")).toBeTruthy();
+    expect(screen.queryByText("放飞 vs 棋友 · 1/2-1/2")).toBeNull();
+    await userEvent.clear(screen.getByPlaceholderText("搜索标题、棋手、赛果、回合或赛事"));
+    await userEvent.click(screen.getByRole("button", { name: /天天象棋 1/ }));
+    await userEvent.click(screen.getByRole("button", { name: "放飞 vs 棋友 · 1/2-1/2" }));
+    expect(props.onOpenGame).toHaveBeenCalledWith("ttxq-1");
+    expect(screen.queryByRole("dialog", { name: "本地棋谱库" })).toBeNull();
+  });
+
+  it("shows TianTian metadata, searches it, and deletes selected non-current games", async () => {
+    const onDeleteGames = vi.fn().mockResolvedValue(undefined);
+    renderWorkspace({ onDeleteGames });
+    await userEvent.click(screen.getByRole("button", { name: "棋谱库" }));
+    expect(screen.getByText(/棋力评测/)).toBeTruthy();
+    expect(screen.getByText("和棋")).toBeTruthy();
+    expect(screen.getByText(/29 回合/)).toBeTruthy();
+    const search = screen.getByPlaceholderText("搜索标题、棋手、赛果、回合或赛事");
+    await userEvent.type(search, "放飞");
+    expect(screen.getByText("放飞 vs 棋友 · 1/2-1/2")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "勾选删除" }));
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    await userEvent.click(screen.getByRole("button", { name: /删除 1/ }));
+    expect(onDeleteGames).toHaveBeenCalledWith(["ttxq-1"]);
+  });
+
   it("opens current-position engine hints and runs the requested analysis", async () => {
     const props = renderWorkspace({ engineHintRequest: 1 });
     expect(await screen.findByText("当前局面引擎提示")).toBeTruthy();

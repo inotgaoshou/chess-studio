@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { Activity, BarChart3, Brain, CheckCircle2, ChevronRight, ClipboardPaste, ClipboardList, Download, Eye, FileText, FolderArchive, GitFork, Heart, Image, Lightbulb, Play, Plus, RefreshCw, Swords, X } from "lucide-react";
-import type { AnalysisLine, BoardState, GameReportPresentationDto, GameReportProgressDto, LibraryFolder, ReportIssuePresentationDto, Side, TrainingGenerationResultDto, TrainingTaskDto } from "./platform/types";
+import { Activity, BarChart3, BookOpen, Brain, CheckCircle2, ChevronRight, ClipboardPaste, ClipboardList, Download, Eye, FileText, FolderArchive, GitFork, Heart, Image, Lightbulb, Play, Plus, RefreshCw, Swords, X } from "lucide-react";
+import type { AnalysisLine, BoardState, GameReportPresentationDto, GameReportProgressDto, GameSummary, LibraryFolder, ReportIssuePresentationDto, Side, TrainingGenerationResultDto, TrainingTaskDto } from "./platform/types";
 import { buildReviewModel, signedCp } from "./reviewModel";
 import { EvaluationTrendChart, redAdvantageLabel } from "./EvaluationTrendChart";
 import { buildMoveThought, type MoveThought } from "./moveThoughtModel";
+import { ReviewGameLibrary } from "./ReviewGameLibrary";
 
 type InsightTab = "engine" | "report" | "trend" | "issues" | "training";
 type MoveScope = "issues" | "all";
@@ -17,6 +18,9 @@ export type ReviewWorkspaceProps = {
   engineReady: boolean;
   libraryFolder?: string;
   libraryFolders: LibraryFolder[];
+  games?: GameSummary[];
+  libraryOpen?: boolean;
+  onLibraryOpenChange?(open: boolean): void;
   favorite: boolean;
   libraryTags: string[];
   flyknifePlanCount: number;
@@ -41,6 +45,10 @@ export type ReviewWorkspaceProps = {
   onImportScreenshot(): void;
   onPaste(): void;
   onManualRecord(): void;
+  onOpenGame?(gameId: string): void;
+  onShareGame?(gameId: string): void;
+  onRefreshLibrary?(): Promise<void>;
+  onDeleteGames?(gameIds: string[]): Promise<void>;
   onSaveLibrary(folder: string | undefined, favorite: boolean, tags: string[]): Promise<boolean>;
   onOpenFlyknife(): void;
   onGenerateTraining(): Promise<void>;
@@ -138,9 +146,9 @@ function IssueCard({ issue, index, active, expanded, engineExpanded, analysisDep
 }
 
 export function ReviewWorkspace({
-  board, report, reportBusy, reportExporting, reportProgress, engineReady, libraryFolder, libraryFolders, favorite, libraryTags, flyknifePlanCount, trainingTasks, trainingGenerating, trainingGeneration, analysisConfig,
+  board, report, reportBusy, reportExporting, reportProgress, engineReady, libraryFolder, libraryFolders, games = [], libraryOpen: controlledLibraryOpen, onLibraryOpenChange, favorite, libraryTags, flyknifePlanCount, trainingTasks, trainingGenerating, trainingGeneration, analysisConfig,
   positionAnalysis, positionAnalysisBusy, positionAnalysisError, positionAnalysisFen, engineHintRequest, showMoveThoughts: controlledShowMoveThoughts, onMoveThoughtVisibilityChange,
-  onClose, onNavigate, onGenerateReport, onCancelReport, onExportReport, onOpenReport, onImport, onImportScreenshot, onPaste, onManualRecord, onSaveLibrary, onOpenFlyknife, onGenerateTraining, onOpenTraining, onCompleteTraining, onStudyIssue, onStartU10, onRunPositionAnalysis,
+  onClose, onNavigate, onGenerateReport, onCancelReport, onExportReport, onOpenReport, onImport, onImportScreenshot, onPaste, onManualRecord, onOpenGame, onShareGame, onRefreshLibrary, onDeleteGames, onSaveLibrary, onOpenFlyknife, onGenerateTraining, onOpenTraining, onCompleteTraining, onStudyIssue, onStartU10, onRunPositionAnalysis,
 }: ReviewWorkspaceProps) {
   const [tab, setTab] = useState<InsightTab>("report");
   const [moveScope, setMoveScope] = useState<MoveScope>("issues");
@@ -158,6 +166,12 @@ export function ReviewWorkspace({
   const [archiveFavoriteDraft, setArchiveFavoriteDraft] = useState(favorite);
   const [archiveSaving, setArchiveSaving] = useState(false);
   const [archiveSaveFailed, setArchiveSaveFailed] = useState(false);
+  const [internalLibraryOpen, setInternalLibraryOpen] = useState(false);
+  const libraryOpen = controlledLibraryOpen ?? internalLibraryOpen;
+  const setLibraryOpen = (open: boolean) => {
+    if (controlledLibraryOpen == null) setInternalLibraryOpen(open);
+    onLibraryOpenChange?.(open);
+  };
   const [workflowFocus, setWorkflowFocus] = useState<string>();
   const showMoveThoughts = controlledShowMoveThoughts ?? internalShowMoveThoughts;
   useEffect(() => {
@@ -305,6 +319,7 @@ export function ReviewWorkspace({
       </div>
       <ol className="review-header-workflow" aria-label="复盘进度">{workflow.map((item, index) => <li key={item.label} className={`${item.complete ? "complete" : ""} ${(workflowFocus ?? guide.step) === item.label ? "current" : ""} ${item.stale ? "stale" : ""}`}><button type="button" aria-label={item.label} title={`打开${item.label}`} onClick={() => selectWorkflowStep(item.label)}><i>{item.complete ? <CheckCircle2 size={12}/> : index + 1}</i><span>{item.label}</span></button></li>)}</ol>
       <div className="review-workbench-header-actions">
+        <button type="button" className="review-workbench-library" onClick={() => setLibraryOpen(true)}><BookOpen size={15}/>棋谱库</button>
         <button type="button" className="review-workbench-thoughts" aria-pressed={showMoveThoughts} onClick={() => setMoveThoughtVisibility(!showMoveThoughts)}><Lightbulb size={15}/>{showMoveThoughts ? "隐藏思路" : "显示思路"}</button>
         <button type="button" className="review-workbench-insights" aria-label="查看复盘洞察" title="查看复盘洞察" onClick={() => setShowInsights((open) => !open)}><Eye size={15}/>洞察</button>
         <button type="button" className="review-workbench-close" aria-label="返回研究模式" title="返回研究模式" onClick={closeReview}><X size={17}/></button>
@@ -395,5 +410,6 @@ export function ReviewWorkspace({
         {tab === "training" && <section className="review-training" role="tabpanel"><header><strong>本局训练</strong><button type="button" onClick={onOpenTraining}>训练与总结</button></header><aside className="review-training-explainer" aria-label="训练生成规则"><strong>这几题怎样选出来？</strong><span><b>关键复练</b>：本着使己方局面下降至少 0.80 分。</span><span><b>巩固复练</b>：没有严重失误时，从下降 0.30–0.79 分的着法中选最多 3 题。</span><small>1. 点`开始拆棋`，回到该错误着之前的局面；2. 先独立推演，答案保持隐藏；3. 提交后核对，再勾选完成。</small></aside>{trainingGeneration && <p className="review-training-result">{trainingGeneration.criticalCount > 0 ? `已生成 ${trainingGeneration.criticalCount} 个关键复练任务。` : trainingGeneration.reinforcementCount > 0 ? `本局没有严重失误，已生成 ${trainingGeneration.reinforcementCount} 个巩固训练。` : "当前报告没有可训练节点。"}</p>}{!activeReport ? <div className="review-empty"><ClipboardList size={25}/><strong>先生成整局报告</strong><span>训练任务只从当前有效报告生成，避免复练过期局面。</span></div> : trainingTasks.length === 0 ? <div className="review-empty"><ClipboardList size={25}/><strong>还没有训练任务</strong><span>会优先生成关键失误；若没有严重失误，则生成轻度巩固训练。</span><button type="button" className="primary" disabled={trainingGenerating} onClick={() => void generateTraining()}>{trainingGenerating ? "生成中" : "生成训练任务"}</button></div> : <div className="review-training-list">{trainingTasks.map((task) => <article key={task.id}><label><input type="checkbox" checked={Boolean(task.completedAt)} onChange={(event) => onCompleteTraining(task.id, event.target.checked)}/><span><strong>{task.taskType === "reinforcement" ? "巩固" : "关键"} · {task.title}</strong><small>{task.detail}</small></span></label><button type="button" onClick={() => onStartU10?.(task.nodeId)}><Brain size={13}/>开始拆棋</button></article>)}</div>}</section>}
       </div>
     </section>
+    {libraryOpen && <ReviewGameLibrary games={games} folders={libraryFolders} onOpen={(gameId) => onOpenGame?.(gameId)} onShare={onShareGame} onDelete={onDeleteGames} onChanged={onRefreshLibrary} onClose={() => setLibraryOpen(false)}/>}
   </section>;
 }

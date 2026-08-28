@@ -18,6 +18,7 @@ mod pfbook_opening_book;
 mod report_service;
 mod sync_service;
 mod training_service;
+mod ttxq_decoder;
 mod ttxq_sync;
 mod u10_learning;
 mod window_service;
@@ -60,7 +61,7 @@ use manual_format::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sync_protocol::{
-    AddMovePayload, CreateGamePayload, DeleteNodePayload, Operation, OperationKind,
+    AddMovePayload, CreateGamePayload, DeleteGamePayload, DeleteNodePayload, ExternalGameSourcePayload, Operation, OperationKind,
     ReorderBranchesPayload, SetMainlinePayload, UpdateCommentPayload, UpdateGameMetadataPayload,
 };
 use tauri::{Emitter, Manager, State};
@@ -134,6 +135,9 @@ fn main() {
             link_service::confirm_link_engine_move,
             link_service::import_recognized_position,
             ttxq_sync::get_ttxq_sync_progress,
+            ttxq_sync::preview_ttxq_history,
+            ttxq_sync::list_ttxq_diagnostic_samples,
+            ttxq_sync::clear_ttxq_diagnostic_samples,
             ttxq_sync::start_ttxq_authorization,
             ttxq_sync::collect_ttxq_h5_history,
             ttxq_sync::submit_ttxq_bridge_payload,
@@ -142,6 +146,8 @@ fn main() {
             ttxq_sync::import_ttxq_history,
             ttxq_sync::disconnect_ttxq,
             manual_service::list_games,
+            manual_service::get_game_metadata,
+            manual_service::update_game_metadata_for_game,
             manual_service::get_game_mirror_status,
             manual_service::update_game_mirror,
             manual_service::rebuild_game_mirrors,
@@ -151,6 +157,7 @@ fn main() {
             manual_service::rename_library_folder,
             manual_service::delete_library_folder,
             manual_service::update_game_library,
+            manual_service::delete_games,
             manual_service::open_game,
             manual_service::play_move,
             manual_service::confirm_recognized_move,

@@ -7,7 +7,7 @@ use chrono::Utc;
 use serde::Deserialize;
 use sqlx::{MySql, Transaction};
 use sync_protocol::{
-    AddMovePayload, CreateGamePayload, DeleteNodePayload, Operation, OperationKind, PullResponse,
+    AddMovePayload, CreateGamePayload, DeleteGamePayload, DeleteNodePayload, Operation, OperationKind, PullResponse,
     PushRequest, PushResponse, ReorderBranchesPayload, SequencedOperation, SetMainlinePayload,
     UpdateCommentPayload, UpdateGameMetadataPayload,
 };
@@ -112,7 +112,7 @@ pub(crate) async fn persist_operation(
         .as_str()
         .ok_or(ApiError::Internal)?
         .to_owned();
-    if matches!(operation.kind, OperationKind::CreateGame) {
+    let external_source = if matches!(operation.kind, OperationKind::CreateGame) {
         let payload: CreateGamePayload = serde_json::from_value(operation.payload.clone())
             .map_err(|_| ApiError::Invalid("invalid create-game payload".into()))?;
         sqlx::query("INSERT IGNORE INTO games (id, owner_id, title) VALUES (?, ?, ?)")
@@ -121,7 +121,10 @@ pub(crate) async fn persist_operation(
             .bind(payload.title)
             .execute(&mut **transaction)
             .await?;
-    }
+        payload.external_source
+    } else {
+        None
+    };
     let owns_game: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM games WHERE id = ? AND owner_id = ? AND deleted_at IS NULL",
     )
@@ -133,6 +136,37 @@ pub(crate) async fn persist_operation(
         return Err(ApiError::Invalid(
             "operation references an unavailable game".into(),
         ));
+    }
+    if let Some(source) = external_source {
+        sqlx::query(
+            "INSERT INTO external_game_sources
+             (owner_id, provider, external_id, game_id, source_format, payload_hash, imported_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE
+                game_id=VALUES(game_id), source_format=VALUES(source_format),
+                payload_hash=VALUES(payload_hash), imported_at=VALUES(imported_at)",
+        )
+        .bind(user_id.to_string())
+        .bind(source.provider)
+        .bind(source.external_id)
+        .bind(operation.game_id.to_string())
+        .bind(source.source_format)
+        .bind(source.payload_hash)
+        .bind(source.imported_at)
+        .execute(&mut **transaction)
+        .await?;
+    }
+    if matches!(operation.kind, OperationKind::DeleteGame) {
+        sqlx::query("UPDATE games SET deleted_at = NOW() WHERE id = ? AND owner_id = ?")
+            .bind(operation.game_id.to_string())
+            .bind(user_id.to_string())
+            .execute(&mut **transaction)
+            .await?;
+        sqlx::query("DELETE FROM external_game_sources WHERE owner_id = ? AND game_id = ?")
+            .bind(user_id.to_string())
+            .bind(operation.game_id.to_string())
+            .execute(&mut **transaction)
+            .await?;
     }
     sqlx::query(
         "INSERT IGNORE INTO operations (op_id, user_id, device_id, entity_id, game_id, kind, payload, lamport, created_at)
@@ -146,8 +180,22 @@ pub(crate) async fn persist_operation(
 pub(crate) fn validate_operation(operation: &Operation) -> Result<(), ApiError> {
     let entity_matches = match operation.kind {
         OperationKind::CreateGame => {
-            serde_json::from_value::<CreateGamePayload>(operation.payload.clone())
+            let payload = serde_json::from_value::<CreateGamePayload>(operation.payload.clone())
                 .map_err(|_| ApiError::Invalid("invalid create-game payload".into()))?;
+            if let Some(source) = payload.external_source {
+                let valid = !source.provider.trim().is_empty()
+                    && source.provider.len() <= 64
+                    && !source.external_id.trim().is_empty()
+                    && source.external_id.len() <= 191
+                    && !source.source_format.trim().is_empty()
+                    && source.source_format.len() <= 64
+                    && source.payload_hash.starts_with("sha256:")
+                    && source.payload_hash.len() <= 80
+                    && source.imported_at.len() <= 40;
+                if !valid {
+                    return Err(ApiError::Invalid("invalid external game source".into()));
+                }
+            }
             operation.entity_id == operation.game_id
         }
         OperationKind::AddMove => {
@@ -180,6 +228,11 @@ pub(crate) fn validate_operation(operation: &Operation) -> Result<(), ApiError> 
             let payload: DeleteNodePayload = serde_json::from_value(operation.payload.clone())
                 .map_err(|_| ApiError::Invalid("invalid delete-node payload".into()))?;
             payload.node_id == operation.entity_id
+        }
+        OperationKind::DeleteGame => {
+            serde_json::from_value::<DeleteGamePayload>(operation.payload.clone())
+                .map_err(|_| ApiError::Invalid("invalid delete-game payload".into()))?;
+            operation.entity_id == operation.game_id
         }
         OperationKind::Unknown => {
             return Err(ApiError::Invalid("unknown operation kind".into()));

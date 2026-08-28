@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use sync_protocol::{
-    AddMovePayload, CreateGamePayload, DeleteNodePayload, Operation, OperationKind,
+    AddMovePayload, CreateGamePayload, DeleteGamePayload, DeleteNodePayload, Operation, OperationKind,
     ReorderBranchesPayload, SetMainlinePayload, UpdateCommentPayload, UpdateGameMetadataPayload,
 };
 use thiserror::Error;
@@ -68,6 +68,21 @@ pub struct ExternalGameImport {
     pub game_id: Uuid,
     pub payload_hash: String,
     pub imported_at: String,
+}
+
+/// A bounded, device-local capture of an unsupported external move encoding.
+/// These rows are intentionally not represented as operations and never sync.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TtxqDiagnosticSample {
+    pub id: i64,
+    pub qipu_id: String,
+    pub field_path: String,
+    pub value_type: String,
+    pub value_length: usize,
+    pub raw_sample: String,
+    pub error: String,
+    pub captured_at: String,
 }
 
 #[derive(Debug, Error)]
@@ -1692,6 +1707,55 @@ impl LocalStore {
         Ok(())
     }
 
+    pub fn record_ttxq_diagnostic_sample(
+        &mut self,
+        qipu_id: &str,
+        field_path: &str,
+        value_type: &str,
+        value_length: usize,
+        raw_sample: &str,
+        error: &str,
+        captured_at: &str,
+    ) -> Result<(), StoreError> {
+        self.connection.execute(
+            "INSERT INTO ttxq_diagnostic_samples
+             (qipu_id, field_path, value_type, value_length, raw_sample, error, captured_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![qipu_id, field_path, value_type, value_length as i64, raw_sample, error, captured_at],
+        )?;
+        self.connection.execute(
+            "DELETE FROM ttxq_diagnostic_samples WHERE id NOT IN (
+               SELECT id FROM ttxq_diagnostic_samples ORDER BY id DESC LIMIT 10
+             )",
+            [],
+        )?;
+        Ok(())
+    }
+
+    pub fn ttxq_diagnostic_samples(&self) -> Result<Vec<TtxqDiagnosticSample>, StoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, qipu_id, field_path, value_type, value_length, raw_sample, error, captured_at
+             FROM ttxq_diagnostic_samples ORDER BY id DESC",
+        )?;
+        statement.query_map([], |row| {
+            Ok(TtxqDiagnosticSample {
+                id: row.get(0)?,
+                qipu_id: row.get(1)?,
+                field_path: row.get(2)?,
+                value_type: row.get(3)?,
+                value_length: row.get::<_, i64>(4)? as usize,
+                raw_sample: row.get(5)?,
+                error: row.get(6)?,
+                captured_at: row.get(7)?,
+            })
+        })?.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn clear_ttxq_diagnostic_samples(&mut self) -> Result<(), StoreError> {
+        self.connection.execute("DELETE FROM ttxq_diagnostic_samples", [])?;
+        Ok(())
+    }
+
     pub fn pending_operations(&self, limit: usize) -> Result<Vec<Operation>, StoreError> {
         let mut statement = self.connection.prepare(
             "SELECT op_id, device_id, entity_id, game_id, kind, payload, lamport, created_at
@@ -1919,6 +1983,25 @@ impl LocalStore {
         transaction.execute(
             "UPDATE games SET library_folder=?1, favorite=?2, tags_json=?3, updated_at=?4 WHERE id=?5",
             params![folder, favorite as i32, serde_json::to_string(tags)?, operation.created_at.to_rfc3339(), game_id.to_string()],
+        )?;
+        insert_operation(&transaction, operation, false)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn delete_game_with_operation(
+        &mut self,
+        game_id: Uuid,
+        operation: &Operation,
+    ) -> Result<(), StoreError> {
+        let transaction = self.connection.transaction()?;
+        transaction.execute(
+            "UPDATE games SET deleted_at=?1, updated_at=?1 WHERE id=?2 AND deleted_at IS NULL",
+            params![operation.created_at.to_rfc3339(), game_id.to_string()],
+        )?;
+        transaction.execute(
+            "DELETE FROM external_game_imports WHERE game_id=?1",
+            [game_id.to_string()],
         )?;
         insert_operation(&transaction, operation, false)?;
         transaction.commit()?;
@@ -2763,9 +2846,32 @@ impl LocalStore {
         operation: &Operation,
         cursor: u64,
     ) -> Result<(), StoreError> {
+        let external_source = if matches!(operation.kind, OperationKind::CreateGame) {
+            serde_json::from_value::<CreateGamePayload>(operation.payload.clone())?.external_source
+        } else {
+            None
+        };
         let transaction = self.connection.transaction()?;
         project_operation(&transaction, operation)?;
         insert_operation(&transaction, operation, true)?;
+        if let Some(source) = external_source {
+            transaction.execute(
+                "INSERT INTO external_game_imports
+                 (provider, external_id, game_id, payload_hash, imported_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(provider, external_id) DO UPDATE SET
+                    game_id=excluded.game_id,
+                    payload_hash=excluded.payload_hash,
+                    imported_at=excluded.imported_at",
+                params![
+                    source.provider,
+                    source.external_id,
+                    operation.game_id.to_string(),
+                    source.payload_hash,
+                    source.imported_at,
+                ],
+            )?;
+        }
         transaction.execute(
             "INSERT INTO sync_state (key, value) VALUES ('remote_cursor', ?1)
              ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -3104,6 +3210,16 @@ impl LocalStore {
                payload_hash TEXT NOT NULL, imported_at TEXT NOT NULL,
                PRIMARY KEY(provider, external_id),
                FOREIGN KEY(game_id) REFERENCES games(id)
+             );
+             CREATE TABLE IF NOT EXISTS ttxq_diagnostic_samples (
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               qipu_id TEXT NOT NULL,
+               field_path TEXT NOT NULL,
+               value_type TEXT NOT NULL,
+               value_length INTEGER NOT NULL,
+               raw_sample TEXT NOT NULL,
+               error TEXT NOT NULL,
+               captured_at TEXT NOT NULL
              );
              UPDATE operations
              SET payload = json_set(
@@ -3567,6 +3683,17 @@ fn project_operation(connection: &Connection, operation: &Operation) -> Result<(
             )?;
             promote_first_live_sibling(connection, payload.node_id)?;
         }
+        OperationKind::DeleteGame => {
+            let _: DeleteGamePayload = serde_json::from_value(operation.payload.clone())?;
+            connection.execute(
+                "UPDATE games SET deleted_at=?1, updated_at=?1 WHERE id=?2",
+                params![operation.created_at.to_rfc3339(), operation.game_id.to_string()],
+            )?;
+            connection.execute(
+                "DELETE FROM external_game_imports WHERE game_id=?1",
+                [operation.game_id.to_string()],
+            )?;
+        }
         OperationKind::Unknown => {}
     }
     Ok(())
@@ -3990,6 +4117,24 @@ mod tests {
     }
 
     #[test]
+    fn ttxq_diagnostic_samples_are_local_and_bounded() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        for index in 0..12 {
+            store.record_ttxq_diagnostic_sample(
+                &format!("qipu-{index}"), "source[0].moveStep", "array", index,
+                &format!("[{index}]"), "走法格式不兼容", &format!("2026-08-27T00:00:{index:02}Z"),
+            ).unwrap();
+        }
+        let samples = store.ttxq_diagnostic_samples().unwrap();
+        assert_eq!(samples.len(), 10);
+        assert_eq!(samples.first().unwrap().qipu_id, "qipu-11");
+        assert_eq!(samples.last().unwrap().qipu_id, "qipu-2");
+        assert!(store.pending_operations(100).unwrap().is_empty());
+        store.clear_ttxq_diagnostic_samples().unwrap();
+        assert!(store.ttxq_diagnostic_samples().unwrap().is_empty());
+    }
+
+    #[test]
     fn latest_game_and_move_tree_can_be_restored() {
         let mut store = LocalStore::open_in_memory().unwrap();
         let game_id = Uuid::new_v4();
@@ -4150,6 +4295,7 @@ mod tests {
             title: "Remote study".into(),
             fen: xiangqi_core::STARTING_FEN.into(),
             root_id,
+            external_source: None,
         })
         .unwrap();
         store.apply_remote_operation(&create, 1).unwrap();
@@ -4231,6 +4377,40 @@ mod tests {
         tree.restore_nodes(nodes).unwrap();
         assert!(tree.branches(root_id).unwrap().is_empty());
         assert_eq!(store.remote_cursor().unwrap(), 5);
+    }
+
+    #[test]
+    fn remote_ttxq_create_restores_the_external_import_mapping() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let game_id = Uuid::new_v4();
+        let root_id = Uuid::new_v4();
+        let mut create = operation(game_id);
+        create.payload = serde_json::to_value(CreateGamePayload {
+            title: "天天象棋对局".into(),
+            fen: xiangqi_core::STARTING_FEN.into(),
+            root_id,
+            external_source: Some(sync_protocol::ExternalGameSourcePayload {
+                provider: "ttxq".into(),
+                external_id: "qipu-42".into(),
+                source_format: "ttxq-h5".into(),
+                payload_hash: "sha256:abc".into(),
+                imported_at: "2026-08-27T00:00:00Z".into(),
+            }),
+        })
+        .unwrap();
+
+        store.apply_remote_operation(&create, 1).unwrap();
+
+        assert_eq!(
+            store.external_game_import("ttxq", "qipu-42").unwrap(),
+            Some(ExternalGameImport {
+                provider: "ttxq".into(),
+                external_id: "qipu-42".into(),
+                game_id,
+                payload_hash: "sha256:abc".into(),
+                imported_at: "2026-08-27T00:00:00Z".into(),
+            })
+        );
     }
 
     #[test]
@@ -4434,6 +4614,7 @@ mod tests {
             title: "Study".into(),
             fen: xiangqi_core::STARTING_FEN.into(),
             root_id,
+            external_source: None,
         })
         .unwrap();
         store.apply_remote_operation(&create, 1).unwrap();
@@ -4489,6 +4670,7 @@ mod tests {
             title: "Old".into(),
             fen: xiangqi_core::STARTING_FEN.into(),
             root_id,
+            external_source: None,
         })
         .unwrap();
         store.apply_remote_operation(&create, 1).unwrap();

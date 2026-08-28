@@ -48,6 +48,7 @@ mod tests {
                 title: "连线测试".into(),
                 fen: STARTING_FEN.into(),
                 root_id: tree.root_id(),
+                external_source: None,
             })
             .unwrap(),
             lamport: 1,

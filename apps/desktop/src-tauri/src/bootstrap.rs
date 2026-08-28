@@ -86,6 +86,7 @@ pub(crate) fn initialize(app: &mut tauri::App) -> Result<(), Box<dyn std::error:
                 title: metadata.title.clone(),
                 fen: STARTING_FEN.into(),
                 root_id: tree.root_id(),
+                external_source: None,
             })?,
             lamport,
             created_at: Utc::now(),

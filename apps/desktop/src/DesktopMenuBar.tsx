@@ -6,6 +6,7 @@ import {
   ClipboardList,
   ClipboardPaste,
   Copy,
+  Database,
   FolderOpen,
   GitFork,
   Info,
@@ -39,6 +40,7 @@ export type MenuCommand =
   | "copyFullManual"
   | "copyMainline"
   | "pasteTextManual"
+  | "openLocalLibrary"
   | "masterLibrary"
   | "flyknifeLab"
   | "nextBranch"
@@ -55,6 +57,7 @@ export type MenuCommand =
   | "syncRegister"
   | "syncLogin"
   | "syncNow"
+  | "ttxqImport"
   | "syncSettings"
   | "subscription"
   | "syncLogout"
@@ -224,6 +227,7 @@ export function DesktopMenuBar({
       <details open={openMenu === "manual"}>
         {summary("manual", "棋谱")}
         {openMenu === "manual" && <div className="menu-popup">
+          <MenuItem command="openLocalLibrary" execute={execute} close={close} title="浏览本机保存的棋谱和文件夹"><FolderOpen size={14}/>本地棋谱库</MenuItem>
           <MenuItem command="copyFullManual" execute={execute} close={close}><Copy size={14}/>复制完整棋谱</MenuItem>
           <MenuItem command="copyMainline" execute={execute} close={close}><ClipboardList size={14}/>复制当前主线</MenuItem>
           <MenuItem command="pasteTextManual" execute={execute} close={close}><ClipboardPaste size={14}/>粘贴文本棋谱</MenuItem>
@@ -258,11 +262,21 @@ export function DesktopMenuBar({
           <MenuItem command="syncRegister" execute={execute} close={close} disabled={status.syncStatus !== "unbound"} title={status.syncStatus !== "unbound" ? "本地棋谱库已经绑定账号" : undefined}><UserPlus size={14}/>注册账号</MenuItem>
           <MenuItem command="syncLogin" execute={execute} close={close} disabled={status.syncStatus === "signedIn"} title={status.syncStatus === "signedIn" ? "当前账号已经登录" : undefined}><LogIn size={14}/>登录账号</MenuItem>
           <MenuItem command="syncNow" execute={execute} close={close} disabled={status.syncStatus !== "signedIn" || status.syncBusy} title={status.syncBusy ? "同步正在进行" : status.syncStatus !== "signedIn" ? "请先登录同步账号" : undefined}>{status.syncBusy ? <RefreshCw className="spin" size={14}/> : <RefreshCw size={14}/>}立即同步</MenuItem>
+          <MenuItem command="ttxqImport" execute={execute} close={close} title="从天天象棋网页读取当前账号可访问的历史棋谱"><Database size={14}/>天天象棋导入</MenuItem>
           <MenuItem command="subscription" execute={execute} close={close} disabled={status.syncStatus !== "signedIn"} title={status.syncStatus !== "signedIn" ? "请先登录同步账号" : undefined}><BarChart3 size={14}/>Pro 权益</MenuItem>
           <MenuItem command="syncSettings" execute={execute} close={close}><Settings2 size={14}/>同步设置</MenuItem>
           <MenuItem command="syncLogout" execute={execute} close={close} disabled={status.syncStatus === "unbound" || status.syncStatus === "signedOut"} title={status.syncStatus === "unbound" ? "本地棋谱库尚未绑定账号" : status.syncStatus === "signedOut" ? "当前已经退出登录" : undefined}><LogOut size={14}/>退出登录</MenuItem>
         </div>}
       </details>
+      <button
+        type="button"
+        className="menu-command ttxq-menu-command"
+        title="打开天天象棋授权并导入最近对局"
+        onClick={() => {
+          close();
+          void execute("ttxqImport");
+        }}
+      ><Database size={14}/>天天象棋</button>
       <details open={openMenu === "help"}>
         {summary("help", "帮助")}
         {openMenu === "help" && <div className="menu-popup">

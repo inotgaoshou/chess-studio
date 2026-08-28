@@ -64,7 +64,7 @@ import { candidateCoachInsights, currentCoachAdvice, moveThoughtHint } from "./c
 import { ForceVariationIcon, MobileToolbar, type MobileToolbarCommand } from "./MobileToolbar";
 import { MobileStudyPanel } from "./MobileStudyPanel";
 import { MobileManualRoute } from "./MobileManualRoute";
-import type { AnalysisOptions, AppInfoDto, BuiltinOpeningBookManifestDto, CloudAnalysisPreferences, CloudGuestAuthDto, DailyTrainingPlan, DesktopPreferencesDto, FlyknifePlan, GuidedAnalysisStart, GuidedAnalysisSubmission, LearningProfile, LinkSessionStatus, OpeningRepertoire, SubscriptionDto, SyncAccountDto, TtxqSyncProgress, WeeklyLearningReport } from "./platform";
+import type { AnalysisOptions, AppInfoDto, BuiltinOpeningBookManifestDto, CloudAnalysisPreferences, CloudGuestAuthDto, DailyTrainingPlan, DesktopPreferencesDto, FlyknifePlan, GuidedAnalysisStart, GuidedAnalysisSubmission, LearningProfile, LinkSessionStatus, OpeningRepertoire, SubscriptionDto, SyncAccountDto, TtxqDiagnosticSample, TtxqGamePreview, TtxqSyncProgress, WeeklyLearningReport } from "./platform";
 import { applyColorTheme, initialColorTheme, type ColorTheme } from "./theme";
 import { WorkspaceTabs, type WorkspacePanel } from "./WorkspaceTabs";
 import { WorkspaceModeSwitch, type WorkspaceMode } from "./WorkspaceModeSwitch";
@@ -645,6 +645,7 @@ const ruleModeLabels: Record<DesktopPreferencesDto["ruleMode"], string> = {
   asianAxf: "亚洲象棋规则（AXF导向）",
 };
 const defaultRuleMode: DesktopPreferencesDto["ruleMode"] = "domestic2020";
+const TTXQ_BACKUP_FOLDER = "天天象棋备份";
 const engineBlockingRuleVerdicts = new Set([
   "checkmate",
   "stalemate",
@@ -1248,8 +1249,11 @@ export default function App() {
   const [analysisBusy, setAnalysisBusy] = useState(false);
   const [analysisError, setAnalysisError] = useState<string>();
   const [reviewEngineHintRequest, setReviewEngineHintRequest] = useState(0);
+  const [reviewGameLibraryOpen, setReviewGameLibraryOpen] = useState(false);
   const [syncBusy, setSyncBusy] = useState(false);
   const [ttxqSync, setTtxqSync] = useState<TtxqSyncProgress>({ state: "disconnected", readPhase: "", readTotal: 0, readCompleted: 0, readFailed: 0, loaded: 0, completed: 0, imported: 0, skipped: 0, failed: 0, message: "未连接天天象棋" });
+  const [ttxqPreview, setTtxqPreview] = useState<TtxqGamePreview[]>([]);
+  const [ttxqDiagnostics, setTtxqDiagnostics] = useState<TtxqDiagnosticSample[]>([]);
   const [comment, setComment] = useState("");
   const [serverUrl, setServerUrl] = useState("http://127.0.0.1:8080");
   const [token, setToken] = useState("");
@@ -4487,6 +4491,7 @@ export default function App() {
     const matchesFilter = libraryFilter === "all" || (libraryFilter === "favorites" ? game.favorite : libraryFilter === "uncategorized" ? !game.libraryFolder : game.libraryFolder === libraryFilter);
     return matchesQuery && matchesFilter;
   });
+  const ttxqGameCount = games.filter((game) => game.libraryFolder === TTXQ_BACKUP_FOLDER).length;
 
   async function saveCurrentLibrary(folder: string | undefined, favorite = currentLibraryGame?.favorite ?? false, tags = currentLibraryGame?.tags ?? []) {
     try {
@@ -4592,6 +4597,21 @@ export default function App() {
     } catch (error) {
       setNotice(friendlyError(error));
     }
+  }
+
+  async function deleteLibraryGames(gameIds: string[]) {
+    try {
+      await chessPlatform.deleteGames(gameIds);
+      await refreshGames();
+      setNotice(`已删除 ${gameIds.length} 盘棋谱；删除操作会在下次同步时发送到云端`);
+    } catch (error) {
+      setNotice(friendlyError(error));
+      throw error;
+    }
+  }
+
+  function shareLibraryGame(gameId: string) {
+    void (async () => { await openGame(gameId); setExportMenuOpen(true); })();
   }
 
   function stopPlayback(keepBusy = false) {
@@ -4932,7 +4952,23 @@ export default function App() {
 
   async function refreshTtxqSync() {
     if (chessPlatform.kind !== "desktop") return;
-    setTtxqSync(await chessPlatform.getTtxqSyncProgress());
+    const progress = await chessPlatform.getTtxqSyncProgress();
+    setTtxqSync(progress);
+    if (progress.state === "ready") {
+      const [preview, diagnostics] = await Promise.all([
+        chessPlatform.previewTtxqHistory(),
+        chessPlatform.listTtxqDiagnosticSamples(),
+      ]);
+      setTtxqPreview(preview);
+      setTtxqDiagnostics(diagnostics);
+    } else {
+      setTtxqPreview([]);
+    }
+  }
+
+  async function refreshTtxqDiagnostics() {
+    if (chessPlatform.kind !== "desktop") return;
+    setTtxqDiagnostics(await chessPlatform.listTtxqDiagnosticSamples());
   }
 
   useEffect(() => {
@@ -4965,6 +5001,7 @@ export default function App() {
     try {
       const result = await chessPlatform.importTtxqHistory();
       setTtxqSync(result);
+      setTtxqPreview([]);
       await refreshGames();
       setNotice(result.message);
     } catch (error) { setNotice(friendlyError(error)); }
@@ -4974,8 +5011,17 @@ export default function App() {
   async function disconnectTtxq() {
     try {
       await chessPlatform.disconnectTtxq();
+      setTtxqPreview([]);
       await refreshTtxqSync();
       setNotice("天天象棋授权窗口已关闭，本应用未保存 QQ/微信登录信息");
+    } catch (error) { setNotice(friendlyError(error)); }
+  }
+
+  async function clearTtxqDiagnostics() {
+    try {
+      await chessPlatform.clearTtxqDiagnosticSamples();
+      setTtxqDiagnostics([]);
+      setNotice("已清除本地天天象棋失败样本");
     } catch (error) { setNotice(friendlyError(error)); }
   }
 
@@ -5463,6 +5509,19 @@ export default function App() {
       case "copyFen": await copyPosition(); break;
       case "pasteDocument":
       case "pasteTextManual": await pasteDocument(); break;
+      case "openLocalLibrary":
+        if (reviewModeOpen) {
+          await refreshGames();
+          setReviewGameLibraryOpen(true);
+          break;
+        }
+        await exitReviewMode();
+        await setWorkspaceLayout("studio");
+        await setLibraryVisibility(false);
+        await refreshGames();
+        setLibraryFilter(TTXQ_BACKUP_FOLDER);
+        setNotice("已打开本地棋谱库：天天象棋备份");
+        break;
       case "copyFullManual": await copyGame(); break;
       case "copyMainline": await copyGame(true); break;
       case "masterLibrary":
@@ -5491,6 +5550,11 @@ export default function App() {
       case "syncRegister": setDesktopDialog("register"); break;
       case "syncLogin": setDesktopDialog("login"); break;
       case "syncNow": await synchronize(); break;
+      case "ttxqImport":
+        setTtxqImportOpen(true);
+        await refreshTtxqSync();
+        await refreshTtxqDiagnostics();
+        break;
       case "subscription": setDesktopDialog("subscription"); break;
       case "syncSettings": setDesktopDialog("syncSettings"); break;
       case "syncLogout": await logoutSync(); break;
@@ -6867,6 +6931,7 @@ export default function App() {
           <div className="library-tree">
             <div className="tree-group open"><ChevronDown size={14}/><strong>研习棋谱</strong></div>
             <div className="library-filters">
+              {ttxqGameCount > 0 && <button className={`ttxq-library-filter ${libraryFilter === TTXQ_BACKUP_FOLDER ? "active" : ""}`} onClick={() => setLibraryFilter(TTXQ_BACKUP_FOLDER)} title="查看天天象棋导入的对战棋谱"><Database size={12}/>天天象棋 {ttxqGameCount}</button>}
               <button className={libraryFilter === "all" ? "active" : ""} onClick={() => setLibraryFilter("all")}>全部 {games.length}</button>
               <button className={libraryFilter === "favorites" ? "active" : ""} onClick={() => setLibraryFilter("favorites")}><Heart size={12}/>收藏 {games.filter((game) => game.favorite).length}</button>
               <button className={libraryFilter === "uncategorized" ? "active" : ""} onClick={() => setLibraryFilter("uncategorized")}>未分类 {games.filter((game) => !game.libraryFolder).length}</button>
@@ -7227,6 +7292,9 @@ export default function App() {
             engineReady={!!enginePath.trim()}
             libraryFolder={currentLibraryGame?.libraryFolder}
             libraryFolders={libraryFolders}
+            games={games}
+            libraryOpen={reviewGameLibraryOpen}
+            onLibraryOpenChange={setReviewGameLibraryOpen}
             favorite={currentLibraryGame?.favorite ?? false}
             libraryTags={currentLibraryGame?.tags ?? []}
             flyknifePlanCount={flyknifePlans.filter((plan) => plan.sourceGameId === currentLibraryGame?.id).length}
@@ -7251,6 +7319,10 @@ export default function App() {
             onImportScreenshot={() => void openLinkSessionDialog("imageImport")}
             onPaste={() => void pasteDocument()}
             onManualRecord={() => void createGame(startingFen)}
+            onOpenGame={(gameId) => void openGame(gameId)}
+            onShareGame={shareLibraryGame}
+            onRefreshLibrary={refreshGames}
+            onDeleteGames={deleteLibraryGames}
             onSaveLibrary={(folder, favorite, tags) => saveCurrentLibrary(folder, favorite, tags)}
             onOpenFlyknife={() => setFlyknifeOpen(true)}
             onGenerateTraining={() => generateTrainingTasks()}
@@ -7834,12 +7906,16 @@ export default function App() {
       />}
       {chessPlatform.kind === "desktop" && ttxqImportOpen && <TtxqImportDialog
         progress={ttxqSync}
+        preview={ttxqPreview}
+        diagnostics={ttxqDiagnostics}
         busy={syncBusy}
         onClose={() => setTtxqImportOpen(false)}
         onAuthorize={() => void startTtxqAuthorization()}
         onCollect={() => void collectTtxqHistory()}
         onImport={() => void importTtxqHistory()}
         onDisconnect={() => void disconnectTtxq()}
+        onShowDiagnostics={() => void refreshTtxqDiagnostics()}
+        onClearDiagnostics={() => void clearTtxqDiagnostics()}
       />}
       <nav className="mobile-nav" aria-label="移动端导航">
         <button className={mobilePanel === "board" ? "active" : ""} onClick={() => setMobilePanel("board")}><LayoutGrid size={19}/><span>棋盘</span></button>

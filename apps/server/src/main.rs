@@ -47,6 +47,9 @@ async fn main() -> anyhow::Result<()> {
     sqlx::raw_sql(include_str!("../migrations/0002_master_opening_tags.sql"))
         .execute(&pool)
         .await?;
+    sqlx::raw_sql(include_str!("../migrations/0003_external_game_sources.sql"))
+        .execute(&pool)
+        .await?;
     backfill_master_opening_tags(&pool).await?;
     let app = router(
         AppState {

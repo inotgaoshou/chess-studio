@@ -19,7 +19,7 @@ export type SyncOperation = {
   deviceId: string;
   entityId: string;
   gameId: string;
-  kind: "create_game" | "add_move" | "update_comment" | "update_game_metadata" | "reorder_branches" | "set_mainline" | "delete_node";
+  kind: "create_game" | "add_move" | "update_comment" | "update_game_metadata" | "reorder_branches" | "set_mainline" | "delete_node" | "delete_game";
   payload: Record<string, unknown>;
   lamport: number;
   createdAt: string;
@@ -99,6 +99,13 @@ export const webDatabase = {
     const records = await requestResult(transaction.objectStore("games").getAll());
     database.close();
     return (records as WebGameRecord[]).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  },
+  async deleteGame(id: string): Promise<void> {
+    const database = await openDatabase();
+    const transaction = database.transaction("games", "readwrite");
+    transaction.objectStore("games").delete(id);
+    await transactionDone(transaction);
+    database.close();
   },
 
   async saveGame(game: WebGameRecord, makeCurrent = true): Promise<void> {

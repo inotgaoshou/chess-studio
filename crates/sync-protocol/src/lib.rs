@@ -30,6 +30,7 @@ pub enum OperationKind {
     ReorderBranches,
     SetMainline,
     DeleteNode,
+    DeleteGame,
     #[serde(other)]
     Unknown,
 }
@@ -40,6 +41,20 @@ pub struct CreateGamePayload {
     pub title: String,
     pub fen: String,
     pub root_id: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_source: Option<ExternalGameSourcePayload>,
+}
+
+/// Provider-owned source metadata for cross-device import de-duplication.
+/// It intentionally contains neither provider credentials nor raw provider data.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalGameSourcePayload {
+    pub provider: String,
+    pub external_id: String,
+    pub source_format: String,
+    pub payload_hash: String,
+    pub imported_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -106,6 +121,11 @@ pub struct SetMainlinePayload {
 pub struct DeleteNodePayload {
     pub node_id: Uuid,
 }
+
+/// A game deletion is a tombstone so every device converges without losing
+/// the operation history needed by the sync log.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct DeleteGamePayload {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PushRequest {

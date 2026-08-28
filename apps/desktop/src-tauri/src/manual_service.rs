@@ -28,6 +28,17 @@ pub(crate) fn list_games(state: State<'_, DesktopState>) -> Result<Vec<GameSumma
         .map_err(|error| error.to_string())?
         .into_iter()
         .map(|game| {
+            let metadata = serde_json::from_str::<ManualMetadata>(&game.metadata_json).ok();
+            let non_empty = |value: Option<String>| value.filter(|value| !value.trim().is_empty());
+            let source_value = |name: &str| game.note.lines().find_map(|line| {
+                line.strip_prefix(&format!("{name}："))
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_owned)
+            });
+            let move_count = model.store.load_move_nodes(game.id)
+                .map_err(|error| error.to_string())?
+                .into_iter().filter(|node| !node.deleted).count();
             let mirror = model
                 .store
                 .game_mirror_status(game.id)
@@ -42,10 +53,66 @@ pub(crate) fn list_games(state: State<'_, DesktopState>) -> Result<Vec<GameSumma
                 library_folder: game.library_folder,
                 favorite: game.favorite,
                 tags: game.tags,
+                source_format: game.source_format,
+                red: non_empty(metadata.as_ref().map(|metadata| metadata.red.clone())),
+                black: non_empty(metadata.as_ref().map(|metadata| metadata.black.clone())),
+                date: non_empty(metadata.as_ref().map(|metadata| metadata.date.clone())),
+                result: non_empty(metadata.as_ref().map(|metadata| metadata.result.clone())),
+                event: non_empty(metadata.as_ref().map(|metadata| metadata.event.clone())),
+                round: source_value("回合").or_else(|| source_value("棋谱手数")),
+                played_at: source_value("对局时间"),
+                duration: source_value("对局用时"),
+                time_control: source_value("用时规则"),
+                move_count,
                 mirror,
             })
         })
         .collect::<Result<Vec<_>, String>>()?)
+}
+
+#[tauri::command]
+pub(crate) fn get_game_metadata(game_id: Uuid, state: State<'_, DesktopState>) -> Result<GameMetadataDto, String> {
+    let model = state.model.lock().map_err(|_| "state lock poisoned".to_owned())?;
+    let game = model.store.load_game(game_id).map_err(|error| error.to_string())?.ok_or("棋谱不存在")?;
+    let metadata = serde_json::from_str::<ManualMetadata>(&game.metadata_json).unwrap_or_default();
+    Ok(GameMetadataDto { title: game.title, event: metadata.event, site: metadata.site, date: metadata.date, red: metadata.red, black: metadata.black, result: metadata.result, note: game.note })
+}
+
+#[tauri::command]
+pub(crate) fn update_game_metadata_for_game(game_id: Uuid, metadata: GameMetadataDto, state: State<'_, DesktopState>) -> Result<BoardDto, String> {
+    let mut model = state.model.lock().map_err(|_| "state lock poisoned".to_owned())?;
+    let title = metadata.title.trim();
+    if title.is_empty() { return Err("棋谱标题不能为空".into()); }
+    if model.store.load_game(game_id).map_err(|error| error.to_string())?.is_none() { return Err("棋谱不存在".into()); }
+    let document_metadata = ManualMetadata { title: title.to_owned(), event: metadata.event.trim().to_owned(), site: metadata.site.trim().to_owned(), date: metadata.date.trim().to_owned(), red: metadata.red.trim().to_owned(), black: metadata.black.trim().to_owned(), result: metadata.result.trim().to_owned(), };
+    let payload = metadata_payload(&document_metadata, &metadata.note);
+    let operation = next_operation_for_game(&mut model, game_id, OperationKind::UpdateGameMetadata, serde_json::to_value(payload).map_err(|error| error.to_string())?);
+    let metadata_json = serde_json::to_string(&document_metadata).map_err(|error| error.to_string())?;
+    model.store.update_game_metadata_with_operation(game_id, title, &metadata.note, &metadata_json, &operation).map_err(|error| error.to_string())?;
+    if model.game_id == game_id {
+        model.metadata = document_metadata;
+        model.note = metadata.note;
+        let _ = sync_current_game_mirror(&mut model);
+    }
+    board_dto(&model)
+}
+
+#[tauri::command]
+pub(crate) fn delete_games(game_ids: Vec<Uuid>, state: State<'_, DesktopState>) -> Result<(), String> {
+    if game_ids.is_empty() { return Ok(()); }
+    let mut model = state.model.lock().map_err(|_| "state lock poisoned".to_owned())?;
+    if game_ids.iter().any(|game_id| *game_id == model.game_id) {
+        return Err("请先打开另一盘棋，再删除当前复盘棋谱".into());
+    }
+    for game_id in game_ids {
+        if model.store.load_game(game_id).map_err(|error| error.to_string())?.is_none() { continue; }
+        let operation = next_operation_for_game(
+            &mut model, game_id, OperationKind::DeleteGame,
+            serde_json::to_value(DeleteGamePayload::default()).map_err(|error| error.to_string())?,
+        );
+        model.store.delete_game_with_operation(game_id, &operation).map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 pub(crate) fn default_game_mirror_root() -> PathBuf {

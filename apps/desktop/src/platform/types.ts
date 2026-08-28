@@ -823,7 +823,8 @@ export type EngineArenaResultDto = {
   ruleName: string;
   summary: string;
 };
-export type GameSummary = { id: string; title: string; fen: string; updatedAt: string; current: boolean; libraryFolder?: string; favorite: boolean; tags: string[]; mirror?: GameMirrorStatus };
+export type GameSummary = { id: string; title: string; fen: string; updatedAt: string; current: boolean; libraryFolder?: string; favorite: boolean; tags: string[]; sourceFormat?: string; red?: string; black?: string; date?: string; result?: string; event?: string; round?: string; playedAt?: string; duration?: string; timeControl?: string; moveCount?: number; mirror?: GameMirrorStatus };
+export type GameMetadata = { title: string; event: string; site: string; date: string; red: string; black: string; result: string; note: string };
 export type LibraryFolder = { name: string; system: boolean; gameCount: number };
 export type EnginePlayOptions = { enginePath: string; moveTimeMs: number; threads: number; hashMb: number; ponder: boolean };
 export type EngineMoveResult = { board: BoardState; ponder?: string };
@@ -840,6 +841,8 @@ export type BoardOrientation = "redAtBottom" | "blackAtBottom";
 export type LinkMoveDetail = { iccs: string; notation: string; movedBy: Side; from: MoveSquare; to: MoveSquare };
 export type LinkSessionStatus = { source: CaptureSource; mode: LinkMode; state: LinkSessionState; reason?: string; phase?: string; lastError?: string; startedAt?: string; lastHeartbeatAt?: string; recognitionAttempts?: number; lastDetectionSummary?: string; turnIndicator?: string; manualTurnOverride?: LinkAutoSide; pendingExternalMove?: string; capturePreviewKind?: string; frameRate: number; confidence?: number; confidenceThreshold?: number; stableFrames: number; requiredStableFrames: number; latestFen?: string; lastMove?: string; lastMoveDetail?: LinkMoveDetail; initialPositionSeen?: boolean; autoSide?: LinkAutoSide; boardOrientation?: BoardOrientation; captureRunning: boolean; targetWindow?: LinkTargetWindow; captureBackend?: string; captureDpi?: number; clickAvailable?: boolean };
 export type TtxqSyncProgress = { state: "disconnected" | "authorizing" | "reading" | "ready" | "importing" | "complete" | "partial" | "error" | string; readPhase?: "discovering" | "loading" | "reading" | string; readScanned?: number; readCurrent?: number; readTotal: number; readCompleted: number; readFailed: number; loaded: number; completed: number; imported: number; skipped: number; failed: number; message: string };
+export type TtxqGamePreview = { qipuId: string; title: string; red: string; black: string; event: string; date: string; result: string; round: string; playedAt: string; duration: string; moveCount: number; variationCount: number; branchComplete: boolean; valid: boolean; error?: string; diagnostic?: string };
+export type TtxqDiagnosticSample = { id: number; qipuId: string; fieldPath: string; valueType: string; valueLength: number; rawSample: string; error: string; capturedAt: string };
 export type ExportFormat = "pgn" | "chinese" | "dhtmlxq";
 export type ReplayExportScope = "currentSelection" | "mainline";
 export type EngineRuntimeEvent =
@@ -854,6 +857,9 @@ export interface ChessPlatform {
   initialize(): Promise<Partial<BoardState>>;
   getAppInfo(): Promise<AppInfoDto>;
   listGames(): Promise<GameSummary[]>;
+  deleteGames(gameIds: string[]): Promise<void>;
+  getGameMetadata(gameId: string): Promise<GameMetadata>;
+  updateGameMetadataForGame(gameId: string, metadata: GameMetadata): Promise<Partial<BoardState>>;
   listLibraryFolders(): Promise<LibraryFolder[]>;
   createLibraryFolder(name: string): Promise<void>;
   renameLibraryFolder(previous: string, next: string): Promise<void>;
@@ -931,6 +937,9 @@ export interface ChessPlatform {
   confirmLinkEngineMove(iccs: string): Promise<boolean>;
   importRecognizedPosition(fen: string, title?: string): Promise<Partial<BoardState>>;
   getTtxqSyncProgress(): Promise<TtxqSyncProgress>;
+  previewTtxqHistory(): Promise<TtxqGamePreview[]>;
+  listTtxqDiagnosticSamples(): Promise<TtxqDiagnosticSample[]>;
+  clearTtxqDiagnosticSamples(): Promise<void>;
   startTtxqAuthorization(): Promise<void>;
   collectTtxqHistory(): Promise<void>;
   importTtxqHistory(): Promise<TtxqSyncProgress>;

@@ -628,7 +628,41 @@ pub(crate) struct GameSummaryDto {
     pub(crate) library_folder: Option<String>,
     pub(crate) favorite: bool,
     pub(crate) tags: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) source_format: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) red: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) black: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) date: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) result: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) event: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) round: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) played_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) duration: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) time_control: Option<String>,
+    pub(crate) move_count: usize,
     pub(crate) mirror: Option<GameMirrorStatusDto>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GameMetadataDto {
+    pub(crate) title: String,
+    pub(crate) event: String,
+    pub(crate) site: String,
+    pub(crate) date: String,
+    pub(crate) red: String,
+    pub(crate) black: String,
+    pub(crate) result: String,
+    pub(crate) note: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -1531,6 +1565,7 @@ pub(crate) fn install_document(
             title: document.metadata.title.clone(),
             fen: document.starting_fen.clone(),
             root_id,
+            external_source: None,
         })
         .map_err(|error| error.to_string())?,
         lamport: model.lamport,

@@ -54,6 +54,15 @@ describe("DesktopMenuBar", () => {
     expect(screen.queryByRole("button", { name: "引擎设置" })).toBeNull();
   });
 
+  it("opens the local library from the Manual menu", async () => {
+    const { commands, user } = setup();
+
+    await user.click(screen.getByText("棋谱", { selector: "summary" }));
+    await user.click(screen.getByRole("button", { name: "本地棋谱库" }));
+
+    expect(commands).toEqual(["openLocalLibrary"]);
+  });
+
   it("executes a command once and closes its menu", async () => {
     const { commands, user } = setup();
     await user.click(screen.getByText("人机对弈", { selector: "summary" }));
@@ -96,6 +105,16 @@ describe("DesktopMenuBar", () => {
     expect(screen.getByText("user@example.com")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "立即同步" }));
     expect(commands).toEqual(["syncNow"]);
+
+    await user.click(screen.getByText("同步", { selector: "summary" }));
+    await user.click(screen.getByRole("button", { name: "天天象棋导入" }));
+    expect(commands).toEqual(["syncNow", "ttxqImport"]);
+  });
+
+  it("keeps 天天象棋 import directly visible beside Sync", async () => {
+    const { commands, user } = setup();
+    await user.click(screen.getByRole("button", { name: "天天象棋" }));
+    expect(commands).toEqual(["ttxqImport"]);
   });
 
   it("shows the manual and About commands in a visible Help menu", async () => {
