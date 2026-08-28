@@ -823,7 +823,7 @@ export type EngineArenaResultDto = {
   ruleName: string;
   summary: string;
 };
-export type GameSummary = { id: string; title: string; fen: string; updatedAt: string; current: boolean; libraryFolder?: string; favorite: boolean; tags: string[]; sourceFormat?: string; red?: string; black?: string; date?: string; result?: string; event?: string; round?: string; playedAt?: string; duration?: string; timeControl?: string; moveCount?: number; mirror?: GameMirrorStatus };
+export type GameSummary = { id: string; title: string; fen: string; updatedAt: string; current: boolean; libraryFolder?: string; favorite: boolean; tags: string[]; sourceFormat?: string; sourceOrder?: number; red?: string; black?: string; date?: string; result?: string; event?: string; round?: string; playedAt?: string; duration?: string; timeControl?: string; moveCount?: number; mirror?: GameMirrorStatus };
 export type GameMetadata = { title: string; event: string; site: string; date: string; red: string; black: string; result: string; note: string };
 export type LibraryFolder = { name: string; system: boolean; gameCount: number };
 export type EnginePlayOptions = { enginePath: string; moveTimeMs: number; threads: number; hashMb: number; ponder: boolean };

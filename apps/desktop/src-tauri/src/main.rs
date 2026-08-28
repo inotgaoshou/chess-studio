@@ -61,7 +61,7 @@ use manual_format::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sync_protocol::{
-    AddMovePayload, CreateGamePayload, DeleteGamePayload, DeleteNodePayload, ExternalGameSourcePayload, Operation, OperationKind,
+    AddMovePayload, CreateGamePayload, DeleteNodePayload, ExternalGameSourcePayload, Operation, OperationKind,
     ReorderBranchesPayload, SetMainlinePayload, UpdateCommentPayload, UpdateGameMetadataPayload,
 };
 use tauri::{Emitter, Manager, State};

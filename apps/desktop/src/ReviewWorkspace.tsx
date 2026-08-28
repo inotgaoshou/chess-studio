@@ -17,6 +17,7 @@ export type ReviewWorkspaceProps = {
   reportProgress?: GameReportProgressDto;
   engineReady: boolean;
   libraryFolder?: string;
+  playedAt?: string;
   libraryFolders: LibraryFolder[];
   games?: GameSummary[];
   libraryOpen?: boolean;
@@ -146,7 +147,7 @@ function IssueCard({ issue, index, active, expanded, engineExpanded, analysisDep
 }
 
 export function ReviewWorkspace({
-  board, report, reportBusy, reportExporting, reportProgress, engineReady, libraryFolder, libraryFolders, games = [], libraryOpen: controlledLibraryOpen, onLibraryOpenChange, favorite, libraryTags, flyknifePlanCount, trainingTasks, trainingGenerating, trainingGeneration, analysisConfig,
+  board, report, reportBusy, reportExporting, reportProgress, engineReady, libraryFolder, playedAt, libraryFolders, games = [], libraryOpen: controlledLibraryOpen, onLibraryOpenChange, favorite, libraryTags, flyknifePlanCount, trainingTasks, trainingGenerating, trainingGeneration, analysisConfig,
   positionAnalysis, positionAnalysisBusy, positionAnalysisError, positionAnalysisFen, engineHintRequest, showMoveThoughts: controlledShowMoveThoughts, onMoveThoughtVisibilityChange,
   onClose, onNavigate, onGenerateReport, onCancelReport, onExportReport, onOpenReport, onImport, onImportScreenshot, onPaste, onManualRecord, onOpenGame, onShareGame, onRefreshLibrary, onDeleteGames, onSaveLibrary, onOpenFlyknife, onGenerateTraining, onOpenTraining, onCompleteTraining, onStudyIssue, onStartU10, onRunPositionAnalysis,
 }: ReviewWorkspaceProps) {
@@ -212,6 +213,8 @@ export function ReviewWorkspace({
   const archiveStatus = !hasRecordedMoves
     ? archivePreset ? `待录谱 · 预设归档：${libraryFolder}（录入后确认）` : "待录谱 · 未设置预设归档"
     : archived ? `${libraryFolder} · 已归档` : "待确认归档";
+  const reviewState = !hasRecordedMoves ? "等待录谱" : reportBusy ? "报告生成中" : report?.stale ? "报告需更新" : reportReady ? "报告已生成" : "待分析";
+  const headerStatus = [archiveStatus, playedAt?.trim() ? `对局时间 ${playedAt.trim()}` : "", `当前 ${model.currentMoveLabel}`, reviewState].filter(Boolean).join(" · ");
   useEffect(() => {
     if (archiveEditorOpen && archiveDirty) return;
     setArchiveFolderDraft(libraryFolder ?? "");
@@ -314,8 +317,8 @@ export function ReviewWorkspace({
     <header className="review-workbench-header">
       <div className="review-workbench-title">
         <span>整局复盘</span>
-        <strong title={model.title}>{model.title}</strong>
-        <small title={`${archiveStatus} · 当前 ${model.currentMoveLabel} · ${!hasRecordedMoves ? "等待录谱" : reportBusy ? "报告生成中" : report?.stale ? "报告需更新" : reportReady ? "报告已生成" : "待分析"}`}>{archiveStatus} · 当前 {model.currentMoveLabel} · {!hasRecordedMoves ? "等待录谱" : reportBusy ? "报告生成中" : report?.stale ? "报告需更新" : reportReady ? "报告已生成" : "待分析"}</small>
+        <h2 title={model.title}>{model.title}</h2>
+        <small title={headerStatus}>{headerStatus}</small>
       </div>
       <ol className="review-header-workflow" aria-label="复盘进度">{workflow.map((item, index) => <li key={item.label} className={`${item.complete ? "complete" : ""} ${(workflowFocus ?? guide.step) === item.label ? "current" : ""} ${item.stale ? "stale" : ""}`}><button type="button" aria-label={item.label} title={`打开${item.label}`} onClick={() => selectWorkflowStep(item.label)}><i>{item.complete ? <CheckCircle2 size={12}/> : index + 1}</i><span>{item.label}</span></button></li>)}</ol>
       <div className="review-workbench-header-actions">

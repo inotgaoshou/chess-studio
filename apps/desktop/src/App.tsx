@@ -4603,9 +4603,27 @@ export default function App() {
 
   async function deleteLibraryGames(gameIds: string[]) {
     try {
+      const deletingCurrent = currentLibraryGame && gameIds.includes(currentLibraryGame.id);
+      if (deletingCurrent) {
+        const replacement = games.find((game) => !gameIds.includes(game.id));
+        if (replacement) {
+          if (!await openGame(replacement.id)) throw new Error("无法切换到其他棋谱，当前棋谱未删除");
+        } else {
+          if (!ensureBoardChangeAllowed()) throw new Error("当前棋谱仍有操作进行中，暂时不能删除");
+          stopPlayback();
+          stopEnginePlay();
+          await cancelAnalysisForDocumentChange();
+          await cancelGameReportForStructureChange();
+          applyBoard(await chessPlatform.newGame(startingFen));
+          setAutosave({ status: "saved" });
+          setSelected(null);
+          clearAnalysisState();
+          setGameReport(undefined);
+        }
+      }
       await chessPlatform.deleteGames(gameIds);
       await refreshGames();
-      setNotice(`已删除 ${gameIds.length} 盘棋谱；删除操作会在下次同步时发送到云端`);
+      setNotice(`已从本机删除 ${gameIds.length} 盘棋谱；云端和其他设备不会受影响`);
     } catch (error) {
       setNotice(friendlyError(error));
       throw error;
@@ -4992,10 +5010,15 @@ export default function App() {
 
   async function collectTtxqHistory() {
     setSyncBusy(true);
+    setTtxqPreview([]);
+    setTtxqDiagnostics([]);
     try {
       await chessPlatform.collectTtxqHistory();
       await refreshTtxqSync();
-    } catch (error) { setNotice(friendlyError(error)); }
+    } catch (error) {
+      setNotice(friendlyError(error));
+      await refreshTtxqSync().catch(() => undefined);
+    }
     finally { setSyncBusy(false); }
   }
 
@@ -7294,6 +7317,7 @@ export default function App() {
             reportProgress={reportProgress}
             engineReady={!!enginePath.trim()}
             libraryFolder={currentLibraryGame?.libraryFolder}
+            playedAt={currentLibraryGame?.playedAt || currentLibraryGame?.date}
             libraryFolders={libraryFolders}
             games={games}
             libraryOpen={reviewGameLibraryOpen}

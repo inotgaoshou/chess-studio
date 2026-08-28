@@ -28,6 +28,7 @@ pub(crate) fn list_games(state: State<'_, DesktopState>) -> Result<Vec<GameSumma
         .map_err(|error| error.to_string())?
         .into_iter()
         .map(|game| {
+            let source_order = ttxq_sync::source_order_from_path(game.source_path.as_deref());
             let metadata = serde_json::from_str::<ManualMetadata>(&game.metadata_json).ok();
             let non_empty = |value: Option<String>| value.filter(|value| !value.trim().is_empty());
             let source_value = |name: &str| game.note.lines().find_map(|line| {
@@ -54,6 +55,7 @@ pub(crate) fn list_games(state: State<'_, DesktopState>) -> Result<Vec<GameSumma
                 favorite: game.favorite,
                 tags: game.tags,
                 source_format: game.source_format,
+                source_order,
                 red: non_empty(metadata.as_ref().map(|metadata| metadata.red.clone())),
                 black: non_empty(metadata.as_ref().map(|metadata| metadata.black.clone())),
                 date: non_empty(metadata.as_ref().map(|metadata| metadata.date.clone())),
@@ -106,11 +108,7 @@ pub(crate) fn delete_games(game_ids: Vec<Uuid>, state: State<'_, DesktopState>) 
     }
     for game_id in game_ids {
         if model.store.load_game(game_id).map_err(|error| error.to_string())?.is_none() { continue; }
-        let operation = next_operation_for_game(
-            &mut model, game_id, OperationKind::DeleteGame,
-            serde_json::to_value(DeleteGamePayload::default()).map_err(|error| error.to_string())?,
-        );
-        model.store.delete_game_with_operation(game_id, &operation).map_err(|error| error.to_string())?;
+        model.store.delete_game_locally(game_id).map_err(|error| error.to_string())?;
     }
     Ok(())
 }

@@ -631,6 +631,8 @@ pub(crate) struct GameSummaryDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) source_format: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) source_order: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) red: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) black: Option<String>,

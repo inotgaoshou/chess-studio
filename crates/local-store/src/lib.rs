@@ -2008,6 +2008,21 @@ impl LocalStore {
         Ok(())
     }
 
+    /// Removes a game from this device without adding a cloud-sync operation.
+    pub fn delete_game_locally(&mut self, game_id: Uuid) -> Result<(), StoreError> {
+        let transaction = self.connection.transaction()?;
+        transaction.execute(
+            "UPDATE games SET deleted_at=?1, updated_at=?1 WHERE id=?2 AND deleted_at IS NULL",
+            params![chrono::Utc::now().to_rfc3339(), game_id.to_string()],
+        )?;
+        transaction.execute(
+            "DELETE FROM external_game_imports WHERE game_id=?1",
+            [game_id.to_string()],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
     pub fn reorder_branches_with_operation(
         &mut self,
         game_id: Uuid,
@@ -3921,6 +3936,24 @@ mod tests {
             .unwrap();
         assert_eq!(store.pending_operations(10).unwrap(), vec![op.clone()]);
         store.mark_uploaded(&[op.op_id]).unwrap();
+        assert!(store.pending_operations(10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn local_game_delete_does_not_append_a_sync_operation() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let game_id = Uuid::new_v4();
+        let op = operation(game_id);
+        store
+            .save_game_with_operation(game_id, "Local only", "fen", Uuid::new_v4(), &op)
+            .unwrap();
+        store.mark_uploaded(&[op.op_id]).unwrap();
+        store.record_external_game_import("ttxq", "123", game_id, "sha256:test", "2026-08-28T00:00:00Z").unwrap();
+
+        store.delete_game_locally(game_id).unwrap();
+
+        assert!(store.load_game(game_id).unwrap().is_none());
+        assert!(store.external_game_import("ttxq", "123").unwrap().is_none());
         assert!(store.pending_operations(10).unwrap().is_empty());
     }
 

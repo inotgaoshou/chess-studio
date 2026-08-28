@@ -97,7 +97,7 @@ const report: GameReportPresentationDto = {
 
 const folders: LibraryFolder[] = [{ name: "比赛复盘", system: true, gameCount: 1 }];
 const libraryGames: GameSummary[] = [
-  { id: "ttxq-1", title: "Panel_BoardContainer<QipuChessBoardControl>", fen: "fen-1", updatedAt: "2026-08-15T19:54:00Z", current: false, libraryFolder: "天天象棋备份", favorite: false, tags: [], sourceFormat: "ttxq-h5", red: "放飞", black: "棋友", event: "棋力评测", result: "1/2-1/2", date: "2026/08/15 19:54:44", round: "29 回合", moveCount: 57 },
+  { id: "ttxq-1", title: "preLinkChessBoardMark<PrefabLink>", fen: "fen-1", updatedAt: "2026-08-15T19:54:00Z", current: false, libraryFolder: "天天象棋备份", favorite: false, tags: [], sourceFormat: "ttxq-h5", red: "放飞", black: "棋友", event: "棋力评测", result: "1/2-1/2", date: "2026/08/15 19:54:44", round: "29 回合", moveCount: 57 },
   { id: "local-1", title: "省赛复盘", fen: "fen-local", updatedAt: "2026-08-16T12:00:00Z", current: true, libraryFolder: "比赛复盘", favorite: true, tags: ["中炮"] },
 ];
 const trainingTask: TrainingTaskDto = {
@@ -175,6 +175,20 @@ describe("ReviewWorkspace", () => {
     expect(screen.queryByRole("dialog", { name: "本地棋谱库" })).toBeNull();
   });
 
+  it("keeps TianTian games in their captured top-to-bottom source order", async () => {
+    const ttxqGames = [
+      { ...libraryGames[0], id: "bottom", title: "列表底部", updatedAt: "2026-08-28T10:00:03Z", sourceOrder: 2 },
+      { ...libraryGames[0], id: "middle", title: "列表中间", updatedAt: "2026-08-28T10:00:02Z", sourceOrder: 1 },
+      { ...libraryGames[0], id: "top", title: "列表顶部", updatedAt: "2026-08-28T10:00:01Z", sourceOrder: 0 },
+    ] as (GameSummary & { sourceOrder: number })[];
+    renderWorkspace({ games: ttxqGames });
+
+    await userEvent.click(screen.getByRole("button", { name: "棋谱库" }));
+    const titles = [...screen.getByLabelText("棋谱列表").querySelectorAll(".review-library-open strong")]
+      .map((element) => element.textContent);
+    expect(titles).toEqual(["列表顶部", "列表中间", "列表底部"]);
+  });
+
   it("shows TianTian metadata, searches it, and deletes selected non-current games", async () => {
     const onDeleteGames = vi.fn().mockResolvedValue(undefined);
     renderWorkspace({ onDeleteGames });
@@ -186,23 +200,55 @@ describe("ReviewWorkspace", () => {
     await userEvent.type(search, "放飞");
     expect(screen.getByText("放飞 vs 棋友 · 1/2-1/2")).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "勾选删除" }));
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     await userEvent.click(screen.getByRole("button", { name: /删除 1/ }));
+    expect(screen.getByRole("alertdialog", { name: "确认删除棋谱" })).toBeTruthy();
+    expect(document.querySelector(".review-library-delete-confirm-backdrop")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "确认删除" }));
     expect(onDeleteGames).toHaveBeenCalledWith(["ttxq-1"]);
+    expect(screen.getByRole("status").textContent).toContain("已从本机删除 1 盘棋谱");
   });
 
   it("supports select-all and direct deletion from the local game library", async () => {
     const onDeleteGames = vi.fn().mockResolvedValue(undefined);
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     renderWorkspace({ onDeleteGames });
     await userEvent.click(screen.getByRole("button", { name: "棋谱库" }));
 
     await userEvent.click(screen.getByRole("button", { name: "全选当前" }));
     await userEvent.click(screen.getByRole("button", { name: /删除 1/ }));
+    await userEvent.click(screen.getByRole("button", { name: "确认删除" }));
     expect(onDeleteGames).toHaveBeenCalledWith(["ttxq-1"]);
 
     await userEvent.click(screen.getByRole("button", { name: /删除 放飞 vs 棋友/ }));
+    await userEvent.click(screen.getByRole("button", { name: "确认删除" }));
     expect(onDeleteGames).toHaveBeenLastCalledWith(["ttxq-1"]);
+  });
+
+  it("allows the currently opened local game to be deleted after confirmation", async () => {
+    const onDeleteGames = vi.fn().mockResolvedValue(undefined);
+    renderWorkspace({ onDeleteGames });
+    await userEvent.click(screen.getByRole("button", { name: "棋谱库" }));
+    await userEvent.click(screen.getByRole("button", { name: /全部本地/ }));
+
+    const currentGame = screen.getByText("省赛复盘").closest("article");
+    expect(currentGame?.textContent).toContain("当前");
+    const deleteCurrent = within(currentGame as HTMLElement).getByRole("button", { name: "删除 省赛复盘" });
+    expect(deleteCurrent.hasAttribute("disabled")).toBe(false);
+    await userEvent.click(deleteCurrent);
+    await userEvent.click(screen.getByRole("button", { name: "确认删除" }));
+
+    expect(onDeleteGames).toHaveBeenCalledWith(["local-1"]);
+  });
+
+  it("keeps the delete confirmation open and shows its failure message", async () => {
+    const onDeleteGames = vi.fn().mockRejectedValue(new Error("本地棋谱库暂时不可写入"));
+    renderWorkspace({ onDeleteGames });
+    await userEvent.click(screen.getByRole("button", { name: "棋谱库" }));
+    await userEvent.click(screen.getByRole("button", { name: "全选当前" }));
+    await userEvent.click(screen.getByRole("button", { name: /删除 1/ }));
+    await userEvent.click(screen.getByRole("button", { name: "确认删除" }));
+
+    expect((await screen.findByRole("alert")).textContent).toContain("本地棋谱库暂时不可写入");
+    expect(screen.getByRole("alertdialog", { name: "确认删除棋谱" })).toBeTruthy();
   });
 
   it("opens the metadata editor and waits for the share action before closing the library", async () => {
@@ -293,9 +339,16 @@ describe("ReviewWorkspace", () => {
   it("keeps the full review title available when the header is visually compact", () => {
     const longTitle = "张国凤 柳大华 2004年第01届常家庄园杯全国冠军混双赛";
     renderWorkspace({ board: { ...board, title: longTitle } });
-    const title = document.querySelector(".review-workbench-title strong");
-    expect(title?.textContent).toContain("张国凤 柳大华");
-    expect(title?.getAttribute("title")).toBe(longTitle);
+    const title = screen.getByRole("heading", { name: longTitle });
+    expect(title.getAttribute("title")).toBe(longTitle);
+    expect(title.closest(".review-workbench-title")?.querySelector("small")?.textContent).toContain("当前");
+  });
+
+  it("shows the imported game time in the review header", () => {
+    renderWorkspace({ playedAt: "2026/08/08 20:57:43" });
+    const title = screen.getByRole("heading", { name: "测试棋局" });
+    expect(title.closest(".review-workbench-title")?.querySelector("small")?.textContent)
+      .toContain("对局时间 2026/08/08 20:57:43");
   });
 
   it("shows generate CTA when report is missing", async () => {
