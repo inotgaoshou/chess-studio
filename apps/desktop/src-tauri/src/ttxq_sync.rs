@@ -11,6 +11,15 @@ const TTXQ_BACKUP_FOLDER: &str = "天天象棋备份";
 const TTXQ_ORDERED_SOURCE_PREFIX: &str = "ttxq-order:";
 const BRIDGE_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 
+fn normalize_ttxq_target_folder(target_folder: Option<String>) -> Result<String, String> {
+    let folder = target_folder
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(TTXQ_BACKUP_FOLDER);
+    crate::manual_service::normalize_library_folder_path(folder)
+}
+
 fn ordered_source_path(qipu_id: &str, source_order: usize) -> String {
     format!("{TTXQ_ORDERED_SOURCE_PREFIX}{source_order:06}:{qipu_id}")
 }
@@ -29,6 +38,10 @@ pub(crate) fn source_order_from_path(source_path: Option<&str>) -> Option<usize>
 pub(crate) struct TtxqVariationDto {
     pub after_ply: usize,
     pub moves: Vec<String>,
+    #[serde(default)]
+    pub comment: String,
+    #[serde(default)]
+    pub children: Vec<TtxqVariationDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -251,6 +264,7 @@ fn source_note_with_existing(existing_note: &str, record: &TtxqGameRecordDto) ->
         "对局时间",
         "对局用时",
         "用时规则",
+        "网页分支",
     ];
     let mut lines: Vec<String> = existing_note
         .lines()
@@ -279,6 +293,14 @@ fn source_note_with_existing(existing_note: &str, record: &TtxqGameRecordDto) ->
         ("对局时间", record.played_at.as_str()),
         ("对局用时", record.duration.as_str()),
         ("用时规则", record.time_control.as_str()),
+        (
+            "网页分支",
+            if !record.branch_data.trim().is_empty() && !record.branch_complete {
+                "已发现分支数据，当前版本仅确定导入主线；分支结构待适配"
+            } else {
+                ""
+            },
+        ),
     ] {
         let value = value.trim();
         if !value.is_empty() {
@@ -299,6 +321,10 @@ fn is_placeholder_title(title: &str) -> bool {
         || title.contains("<PrefabLink>")
         || title.contains("QipuChessBoardControl")
         || title.starts_with("天天象棋 ")
+        || matches!(
+            title,
+            "自建棋谱" | "棋力评测" | "收藏棋谱" | "最近对局" | "棋谱&记谱"
+        )
 }
 
 fn ttxq_player_name(value: &str) -> String {
@@ -362,6 +388,14 @@ fn enrich_title_metadata(record: &mut TtxqGameRecordDto) {
         .filter(|count| *count > 0)
         .map(|count| count.div_ceil(2));
     let title = record.title.trim().to_owned();
+    if !title.is_empty()
+        && record.black.trim().is_empty()
+        && ttxq_player_name(&record.red) == ttxq_player_name(&title)
+    {
+        // Self-recorded/favourite QQ chess manuals often expose the card title
+        // again through `sRedName`. Treat it as a title, not as a real player.
+        record.red.clear();
+    }
     if is_placeholder_title(&title) {
         if let Some(round) = expected_round {
             record.round = format!("{round} 回合");
@@ -378,6 +412,7 @@ fn enrich_title_metadata(record: &mut TtxqGameRecordDto) {
             value
                 .chars()
                 .rev()
+                .skip_while(|character| !character.is_ascii_digit())
                 .take_while(|character| character.is_ascii_digit())
                 .collect::<String>()
                 .chars()
@@ -426,6 +461,7 @@ fn enrich_title_metadata(record: &mut TtxqGameRecordDto) {
         let digits = before_round
             .chars()
             .rev()
+            .skip_while(|character| !character.is_ascii_digit())
             .take_while(|character| character.is_ascii_digit())
             .collect::<String>()
             .chars()
@@ -523,6 +559,93 @@ fn backfill_existing_game(
     Ok(true)
 }
 
+fn append_ttxq_variations_to_existing(
+    model: &mut AppModel,
+    game: &local_store::LocalGame,
+    record: &TtxqGameRecordDto,
+) -> Result<usize, String> {
+    if record.variations.is_empty() {
+        return Ok(0);
+    }
+    let stored_nodes = model
+        .store
+        .load_move_nodes(game.id)
+        .map_err(|error| error.to_string())?;
+    let existing_ids = stored_nodes
+        .iter()
+        .map(|node| node.id)
+        .collect::<HashSet<_>>();
+    let mut tree = xiangqi_manual::ManualTree::with_root(game.root_id);
+    tree.restore_nodes(stored_nodes)
+        .map_err(|error| error.to_string())?;
+    let mut document =
+        ManualDocument::new(&game.starting_fen).map_err(|error| error.to_string())?;
+    document.tree = tree;
+    let mut parent = game.root_id;
+    let mut parents = vec![game.root_id];
+    for raw_move in &record.moves {
+        let next = document
+            .tree
+            .branches(parent)
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .find(|node| node.is_mainline && node.mv.to_iccs() == raw_move.as_str())
+            .map(|node| node.id)
+            .ok_or("现有棋谱主线与天天象棋主线不一致")?;
+        parent = next;
+        parents.push(parent);
+    }
+    for variation in &record.variations {
+        insert_ttxq_variation(
+            &mut document,
+            &game.starting_fen,
+            &record.moves,
+            &parents,
+            variation,
+        )?;
+    }
+    let mut added = 0;
+    let nodes = collect_nodes(&document.tree)?;
+    for node in nodes
+        .into_iter()
+        .filter(|node| !existing_ids.contains(&node.id))
+    {
+        model.lamport += 1;
+        let operation = Operation {
+            op_id: Uuid::new_v4(),
+            device_id: model.device_id,
+            entity_id: node.id,
+            game_id: game.id,
+            kind: OperationKind::AddMove,
+            payload: serde_json::to_value(AddMovePayload {
+                node_id: node.id,
+                parent_id: node.parent_id,
+                move_iccs: node.mv.to_iccs(),
+                order_key: node.order_key,
+                is_mainline: node.is_mainline,
+            })
+            .map_err(|error| error.to_string())?,
+            lamport: model.lamport,
+            created_at: Utc::now(),
+        };
+        model
+            .store
+            .save_move_with_operation(
+                node.id,
+                game.id,
+                Some(node.parent_id),
+                &node.mv.to_iccs(),
+                &node.comment,
+                node.order_key,
+                node.is_mainline,
+                &operation,
+            )
+            .map_err(|error| error.to_string())?;
+        added += 1;
+    }
+    Ok(added)
+}
+
 fn resolved_moves(record: &TtxqGameRecordDto, starting_fen: &str) -> Result<Vec<String>, String> {
     if !record.moves.is_empty() {
         return Ok(record.moves.clone());
@@ -546,6 +669,467 @@ fn resolved_moves(record: &TtxqGameRecordDto, starting_fen: &str) -> Result<Vec<
     }
     crate::manual_service::parse_chinese_line(starting_fen.into(), notation)
         .map(|parsed| parsed.moves)
+}
+
+#[derive(Debug, Clone)]
+struct TtxqBranchCandidate {
+    _path: String,
+    raw: String,
+    after_ply: Option<usize>,
+    comment: String,
+}
+
+fn prepare_import_record(
+    record: &TtxqGameRecordDto,
+    starting_fen: &str,
+) -> Result<TtxqGameRecordDto, String> {
+    let mut prepared = record.clone();
+    prepared.moves = resolved_moves(&prepared, starting_fen)?;
+    let decoded = decode_ttxq_branch_variations(&prepared, starting_fen)?;
+    if !decoded.is_empty() {
+        prepared.variations = merge_variations(prepared.variations, decoded);
+        prepared.branch_complete = true;
+    } else if !prepared.branch_data.trim().is_empty() && !prepared.branch_complete {
+        return Err(ttxq_branch_failure_message(&prepared));
+    }
+    Ok(prepared)
+}
+
+fn recursive_variation_count(variations: &[TtxqVariationDto]) -> usize {
+    variations
+        .iter()
+        .map(|variation| 1 + recursive_variation_count(&variation.children))
+        .sum()
+}
+
+fn variation_has_too_many_moves(variation: &TtxqVariationDto) -> bool {
+    variation.moves.len() > MAX_MOVES_PER_GAME
+        || variation.children.iter().any(variation_has_too_many_moves)
+}
+
+fn variation_has_invalid_iccs(variation: &TtxqVariationDto) -> bool {
+    variation.moves.iter().any(|mv| !is_iccs(mv))
+        || variation.children.iter().any(variation_has_invalid_iccs)
+}
+
+fn merge_variations(
+    mut existing: Vec<TtxqVariationDto>,
+    decoded: Vec<TtxqVariationDto>,
+) -> Vec<TtxqVariationDto> {
+    for variation in decoded {
+        let duplicate = existing
+            .iter()
+            .any(|known| known.after_ply == variation.after_ply && known.moves == variation.moves);
+        if !duplicate {
+            existing.push(variation);
+        }
+    }
+    existing
+}
+
+fn decode_ttxq_branch_variations(
+    record: &TtxqGameRecordDto,
+    starting_fen: &str,
+) -> Result<Vec<TtxqVariationDto>, String> {
+    if record.branch_data.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let candidates = branch_candidates_from_payload(&record.branch_data);
+    let mut variations = Vec::new();
+    for candidate in candidates {
+        let candidate_moves =
+            branch_candidate_moves(&candidate.raw, starting_fen, candidate.after_ply);
+        if candidate_moves.is_empty() {
+            continue;
+        }
+        let Some((after_ply, moves)) = locate_branch_tail(
+            &record.moves,
+            &candidate_moves,
+            candidate.after_ply,
+            starting_fen,
+        ) else {
+            continue;
+        };
+        if moves.is_empty() || moves.len() > MAX_MOVES_PER_GAME {
+            continue;
+        }
+        if variation_is_legal(starting_fen, &record.moves, after_ply, &moves) {
+            variations.push(TtxqVariationDto {
+                after_ply,
+                moves,
+                comment: candidate.comment,
+                children: Vec::new(),
+            });
+        }
+    }
+    Ok(dedupe_variations(variations))
+}
+
+fn branch_candidates_from_payload(payload: &str) -> Vec<TtxqBranchCandidate> {
+    let mut candidates = Vec::new();
+    if payload.trim().is_empty() || payload.len() > 32 * 1024 {
+        return candidates;
+    }
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(payload) {
+        collect_branch_candidates(&value, "$", None, "", 0, &mut candidates);
+    } else {
+        candidates.push(TtxqBranchCandidate {
+            _path: "branchData".into(),
+            raw: payload.to_owned(),
+            after_ply: None,
+            comment: String::new(),
+        });
+    }
+    candidates
+}
+
+fn collect_branch_candidates(
+    value: &serde_json::Value,
+    path: &str,
+    inherited_after_ply: Option<usize>,
+    inherited_comment: &str,
+    depth: usize,
+    candidates: &mut Vec<TtxqBranchCandidate>,
+) {
+    if depth > 10 || candidates.len() >= 512 {
+        return;
+    }
+    let after_ply = inherited_after_ply.or_else(|| branch_after_ply_hint(value, path));
+    let comment = branch_comment_hint(value).unwrap_or_else(|| inherited_comment.to_owned());
+    if let Some(raw) = branch_raw_text(value, path) {
+        candidates.push(TtxqBranchCandidate {
+            _path: path.to_owned(),
+            raw,
+            after_ply,
+            comment: comment.clone(),
+        });
+    }
+    match value {
+        serde_json::Value::Array(items) => {
+            for (index, item) in items.iter().enumerate().take(256) {
+                collect_branch_candidates(
+                    item,
+                    &format!("{path}[{index}]"),
+                    after_ply,
+                    &comment,
+                    depth + 1,
+                    candidates,
+                );
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for (key, child) in map.iter().take(256) {
+                collect_branch_candidates(
+                    child,
+                    &format!("{path}.{key}"),
+                    after_ply,
+                    &comment,
+                    depth + 1,
+                    candidates,
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+fn branch_after_ply_hint(value: &serde_json::Value, path: &str) -> Option<usize> {
+    if let serde_json::Value::Object(map) = value {
+        for key in [
+            "afterPly",
+            "after_ply",
+            "ply",
+            "parentPly",
+            "moveIndex",
+            "stepIndex",
+            "startPly",
+            "branchPly",
+        ] {
+            if let Some(number) = map.get(key).and_then(json_usize) {
+                return Some(number);
+            }
+        }
+    }
+    path.split(|ch: char| !ch.is_ascii_digit())
+        .filter(|part| !part.is_empty())
+        .filter_map(|part| part.parse::<usize>().ok())
+        .next_back()
+}
+
+fn branch_comment_hint(value: &serde_json::Value) -> Option<String> {
+    let serde_json::Value::Object(map) = value else {
+        return None;
+    };
+    for key in ["comment", "remark", "memo", "name", "title", "label"] {
+        if let Some(text) = map.get(key).and_then(json_text) {
+            let text = text.trim();
+            if !text.is_empty() && text.len() <= 240 {
+                return Some(text.to_owned());
+            }
+        }
+    }
+    None
+}
+
+fn json_usize(value: &serde_json::Value) -> Option<usize> {
+    value
+        .as_u64()
+        .and_then(|number| usize::try_from(number).ok())
+        .or_else(|| value.as_str()?.trim().parse::<usize>().ok())
+}
+
+fn json_text(value: &serde_json::Value) -> Option<&str> {
+    match value {
+        serde_json::Value::String(text) => Some(text),
+        _ => None,
+    }
+}
+
+fn branch_raw_text(value: &serde_json::Value, path: &str) -> Option<String> {
+    let move_like_path = path
+        .rsplit_once('.')
+        .map(|(_, key)| key)
+        .unwrap_or(path)
+        .chars()
+        .any(|ch| ch.is_ascii_digit())
+        || [
+            "move", "moves", "step", "steps", "msg", "raw", "text", "value", "line", "branch",
+            "DhtmlXQ", "movelist", "MOVE_STR",
+        ]
+        .iter()
+        .any(|marker| {
+            path.to_ascii_lowercase()
+                .contains(&marker.to_ascii_lowercase())
+        });
+    if !move_like_path {
+        return None;
+    }
+    match value {
+        serde_json::Value::String(text) => {
+            let text = text.trim();
+            (text.len() <= 32 * 1024
+                && (looks_like_move_payload(text) || contains_dhtml_move_tag(text)))
+            .then(|| text.to_owned())
+        }
+        serde_json::Value::Number(number) => Some(number.to_string()),
+        serde_json::Value::Array(items) => {
+            let numeric = items
+                .iter()
+                .map(|item| match item {
+                    serde_json::Value::Number(number) => {
+                        number.as_u64().map(|value| value.to_string())
+                    }
+                    serde_json::Value::String(text)
+                        if text.chars().all(|ch| ch.is_ascii_digit()) =>
+                    {
+                        Some(text.clone())
+                    }
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>();
+            numeric.map(|items| items.join("")).filter(|text| {
+                !text.is_empty() && text.len() <= 32 * 1024 && looks_like_move_payload(text)
+            })
+        }
+        serde_json::Value::Object(map) => {
+            for key in [
+                "raw", "text", "value", "data", "move", "moves", "step", "steps", "msg", "movelist",
+            ] {
+                if let Some(raw) = map.get(key).and_then(|child| branch_raw_text(child, key)) {
+                    return Some(raw);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn looks_like_move_payload(text: &str) -> bool {
+    if text.is_empty() || text.len() > 32 * 1024 {
+        return false;
+    }
+    text.chars().all(|character| {
+        character.is_ascii_digit()
+            || character.is_ascii_whitespace()
+            || matches!(character, '[' | ']' | ',')
+    }) || !extract_iccs_moves(text).is_empty()
+        || !crate::training_service::chinese_move_tokens(text).is_empty()
+}
+
+fn contains_dhtml_move_tag(text: &str) -> bool {
+    text.contains("[DhtmlXQ_move_") || text.contains("[DhtmlXQ_movelist]")
+}
+
+fn branch_candidate_moves(raw: &str, starting_fen: &str, after_ply: Option<usize>) -> Vec<String> {
+    if raw.len() > 32 * 1024 {
+        return Vec::new();
+    }
+    if contains_dhtml_move_tag(raw) {
+        let mut moves = Vec::new();
+        for (_, segment) in dhtml_tagged_move_segments(raw) {
+            let decoded = crate::ttxq_decoder::dhtml_move_list_to_iccs(&segment);
+            if !decoded.is_empty() {
+                moves.extend(decoded);
+            }
+        }
+        if !moves.is_empty() {
+            return moves;
+        }
+    }
+    let dhtml = crate::ttxq_decoder::dhtml_move_list_to_iccs(raw);
+    if !dhtml.is_empty() {
+        return dhtml;
+    }
+    let iccs = extract_iccs_moves(raw);
+    if !iccs.is_empty() {
+        return iccs;
+    }
+    let notation = crate::training_service::chinese_move_tokens(raw);
+    if notation.is_empty() {
+        return Vec::new();
+    }
+    let fen = after_ply
+        .and_then(|_| Some(starting_fen.to_owned()))
+        .unwrap_or_else(|| starting_fen.to_owned());
+    crate::manual_service::parse_chinese_line(fen, notation)
+        .map(|parsed| parsed.moves)
+        .unwrap_or_default()
+}
+
+fn dhtml_tagged_move_segments(raw: &str) -> Vec<(Option<usize>, String)> {
+    let mut result = Vec::new();
+    let mut offset = 0;
+    while let Some(start) = raw[offset..].find("[DhtmlXQ_move_") {
+        let tag_start = offset + start;
+        let number_start = tag_start + "[DhtmlXQ_move_".len();
+        let Some(number_end_relative) = raw[number_start..].find(']') else {
+            break;
+        };
+        let number_end = number_start + number_end_relative;
+        let tag_number = raw[number_start..number_end].parse::<usize>().ok();
+        let content_start = number_end + 1;
+        let Some(content_end_relative) = raw[content_start..].find("[/DhtmlXQ_move_") else {
+            break;
+        };
+        let content_end = content_start + content_end_relative;
+        result.push((tag_number, raw[content_start..content_end].to_owned()));
+        offset = content_end + "[/DhtmlXQ_move_".len();
+    }
+    if let Some(start) = raw.find("[DhtmlXQ_movelist]") {
+        let content_start = start + "[DhtmlXQ_movelist]".len();
+        if let Some(end_relative) = raw[content_start..].find("[/DhtmlXQ_movelist]") {
+            result.push((
+                None,
+                raw[content_start..content_start + end_relative].to_owned(),
+            ));
+        }
+    }
+    result
+}
+
+fn locate_branch_tail(
+    mainline: &[String],
+    candidate_moves: &[String],
+    hinted_after_ply: Option<usize>,
+    starting_fen: &str,
+) -> Option<(usize, Vec<String>)> {
+    if let Some(after_ply) = hinted_after_ply.filter(|value| *value <= mainline.len()) {
+        let tail = candidate_moves.to_vec();
+        if branch_tail_differs(mainline, after_ply, &tail)
+            && variation_is_legal(starting_fen, mainline, after_ply, &tail)
+        {
+            return Some((after_ply, tail));
+        }
+    }
+    let common = mainline
+        .iter()
+        .zip(candidate_moves.iter())
+        .take_while(|(left, right)| left == right)
+        .count();
+    if common < candidate_moves.len() {
+        let tail = candidate_moves[common..].to_vec();
+        if branch_tail_differs(mainline, common, &tail)
+            && variation_is_legal(starting_fen, mainline, common, &tail)
+        {
+            return Some((common, tail));
+        }
+    }
+    // Some QQ branch snippets only contain the variation tail and encode their
+    // owner ply in an unstable key. If no reliable hint exists, find the unique
+    // legal attachment point whose first move is not already the mainline child.
+    let mut legal = Vec::new();
+    for after_ply in 0..=mainline.len() {
+        if branch_tail_differs(mainline, after_ply, candidate_moves)
+            && variation_is_legal(starting_fen, mainline, after_ply, candidate_moves)
+        {
+            legal.push((after_ply, candidate_moves.to_vec()));
+        }
+        if legal.len() > 1 {
+            return None;
+        }
+    }
+    legal.pop()
+}
+
+fn branch_tail_differs(mainline: &[String], after_ply: usize, tail: &[String]) -> bool {
+    !tail.is_empty()
+        && match mainline.get(after_ply) {
+            Some(mainline_move) => mainline_move != &tail[0],
+            None => true,
+        }
+}
+
+fn variation_is_legal(
+    starting_fen: &str,
+    mainline: &[String],
+    after_ply: usize,
+    tail: &[String],
+) -> bool {
+    if after_ply > mainline.len() || tail.is_empty() {
+        return false;
+    }
+    let mut board = match Board::from_fen(starting_fen) {
+        Ok(board) => board,
+        Err(_) => return false,
+    };
+    for raw_move in mainline.iter().take(after_ply) {
+        let Ok(mv) = Move::from_iccs(raw_move) else {
+            return false;
+        };
+        let Ok(next_board) = board.apply_move(mv) else {
+            return false;
+        };
+        board = next_board;
+    }
+    for raw_move in tail {
+        let Ok(mv) = Move::from_iccs(raw_move) else {
+            return false;
+        };
+        let Ok(next_board) = board.apply_move(mv) else {
+            return false;
+        };
+        board = next_board;
+    }
+    true
+}
+
+fn dedupe_variations(mut variations: Vec<TtxqVariationDto>) -> Vec<TtxqVariationDto> {
+    let mut seen = HashSet::new();
+    variations.retain(|variation| {
+        seen.insert(format!(
+            "{}:{}",
+            variation.after_ply,
+            variation.moves.join(" ")
+        ))
+    });
+    variations.sort_by(|left, right| {
+        left.after_ply
+            .cmp(&right.after_ply)
+            .then_with(|| left.moves.len().cmp(&right.moves.len()))
+            .then_with(|| left.moves.cmp(&right.moves))
+    });
+    variations
 }
 
 fn extract_dhtml_moves(record: &TtxqGameRecordDto) -> Vec<String> {
@@ -600,7 +1184,81 @@ fn extract_iccs_moves(text: &str) -> Vec<String> {
         .collect()
 }
 
+fn ttxq_branch_route_summary(record: &TtxqGameRecordDto) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(&record.branch_data).ok()?;
+    let route_numbers = value
+        .get("routeNumbers")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(json_usize)
+                .filter(|route| *route >= 2)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let routes_attempted = value
+        .get("routesAttempted")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(json_usize)
+                .filter(|route| *route >= 2)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let route_count = route_numbers.len().max(routes_attempted.len());
+    if route_count == 0 {
+        return None;
+    }
+    let failures = value
+        .get("routeFailures")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .take(3)
+                .filter_map(|item| {
+                    let route_no = item.get("routeNo").and_then(json_usize)?;
+                    let reason = item
+                        .get("reason")
+                        .and_then(json_text)
+                        .unwrap_or("未取得分支走法");
+                    Some(format!("{route_no}路：{reason}"))
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let mut message = format!("发现 {route_count} 个分支导航，但未取得可校验的分支走法");
+    if !routes_attempted.is_empty() {
+        message.push_str(&format!(
+            "；已尝试路线 {}",
+            routes_attempted
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("/")
+        ));
+    }
+    if !failures.is_empty() {
+        message.push_str(&format!("；{}", failures.join("；")));
+    }
+    Some(message)
+}
+
+fn ttxq_branch_failure_message(record: &TtxqGameRecordDto) -> String {
+    ttxq_branch_route_summary(record).unwrap_or_else(|| {
+        "已发现天天象棋分支字段，但未识别到可校验的分支走法；为避免丢失变招，本盘暂不导入".into()
+    })
+}
+
 fn diagnostic_summary(record: &TtxqGameRecordDto) -> Option<String> {
+    if !record.branch_data.trim().is_empty() && !record.branch_complete {
+        if let Some(summary) = ttxq_branch_route_summary(record) {
+            return Some(summary);
+        }
+    }
     (!record.raw_move_path.is_empty() || !record.raw_move_type.is_empty()).then(|| {
         format!(
             "字段：{} · 类型：{} · 长度：{}",
@@ -648,10 +1306,7 @@ fn validate_payload(payload: &TtxqBridgePayloadDto) -> Result<(), String> {
         if (game.moves.is_empty() && game.raw_moves.trim().is_empty())
             || game.raw_moves.len() > 32 * 1024
             || game.moves.len() > MAX_MOVES_PER_GAME
-            || game
-                .variations
-                .iter()
-                .any(|branch| branch.moves.len() > MAX_MOVES_PER_GAME)
+            || game.variations.iter().any(variation_has_too_many_moves)
         {
             return Err(format!("棋谱 {} 的着法数量异常", game.qipu_id));
         }
@@ -664,6 +1319,7 @@ fn validate_payload(payload: &TtxqBridgePayloadDto) -> Result<(), String> {
                     .flat_map(|branch| branch.moves.iter()),
             )
             .any(|mv| !is_iccs(mv))
+            || game.variations.iter().any(variation_has_invalid_iccs)
         {
             return Err(format!(
                 "棋谱 {} 的走法格式不兼容，请更新同步适配器",
@@ -710,24 +1366,15 @@ pub(crate) fn preview_ttxq_history(
         .games
         .iter()
         .map(|game| {
-            let variation_count = game.variations.len();
             let starting_fen = if game.starting_fen.trim().is_empty() {
                 STARTING_FEN
             } else {
                 game.starting_fen.as_str()
             };
-            match resolved_moves(game, starting_fen) {
-                Ok(moves) if !game.branch_data.trim().is_empty() && !game.branch_complete => Ok(TtxqGamePreviewDto {
-                    qipu_id: game.qipu_id.clone(), title: ttxq_title(game), red: game.red.clone(), black: game.black.clone(),
-                    event: game.event.clone(), date: game.date.clone(), result: game.result.clone(), round: game.round.clone(),
-                    played_at: game.played_at.clone(), duration: game.duration.clone(), move_count: moves.len(), variation_count,
-                    branch_complete: false, valid: false,
-                    error: Some("网页变招数据已读取，尚未完成确定性解码；为避免不完整备份，本盘不会导入".into()),
-                    diagnostic: Some(format!("字段：{} · 变招样本 {} 字符", game.branch_path, game.branch_data.len())),
-                }),
-                Ok(moves) => Ok(TtxqGamePreviewDto {
+            match prepare_import_record(game, starting_fen) {
+                Ok(prepared) => Ok(TtxqGamePreviewDto {
                     qipu_id: game.qipu_id.clone(),
-                    title: ttxq_title(game),
+                    title: ttxq_title(&prepared),
                     red: game.red.clone(),
                     black: game.black.clone(),
                     event: game.event.clone(),
@@ -736,10 +1383,22 @@ pub(crate) fn preview_ttxq_history(
                     round: game.round.clone(),
                     played_at: game.played_at.clone(),
                     duration: game.duration.clone(),
-                    move_count: moves.len(), variation_count, branch_complete: true,
+                    move_count: prepared.moves.len(),
+                    variation_count: recursive_variation_count(&prepared.variations),
+                    branch_complete: prepared.branch_complete,
                     valid: true,
                     error: None,
-                    diagnostic: None,
+                    diagnostic: (!prepared.branch_data.trim().is_empty()
+                        && prepared.variations.is_empty()
+                        && !prepared.branch_complete)
+                        .then(|| {
+                            ttxq_branch_route_summary(game).unwrap_or_else(|| {
+                                format!(
+                                    "已发现网页分支字段：{} · 未识别到可校验的分支走法",
+                                    game.branch_path
+                                )
+                            })
+                        }),
                 }),
                 Err(error) => Ok(TtxqGamePreviewDto {
                     qipu_id: game.qipu_id.clone(),
@@ -752,7 +1411,9 @@ pub(crate) fn preview_ttxq_history(
                     round: game.round.clone(),
                     played_at: game.played_at.clone(),
                     duration: game.duration.clone(),
-                    move_count: 0, variation_count, branch_complete: game.branch_complete,
+                    move_count: 0,
+                    variation_count: recursive_variation_count(&game.variations),
+                    branch_complete: game.branch_complete,
                     valid: false,
                     error: Some(error),
                     diagnostic: diagnostic_summary(game),
@@ -863,6 +1524,36 @@ pub(crate) fn submit_ttxq_bridge_payload(
                         &chrono::Utc::now().to_rfc3339(),
                     )
                     .map_err(|error| error.to_string())?;
+            }
+            if !game.branch_data.trim().is_empty()
+                && !game.branch_complete
+                && decode_ttxq_branch_variations(game, starting_fen)
+                    .map(|variations| variations.is_empty())
+                    .unwrap_or(true)
+            {
+                let signature = format!(
+                    "branch\u{1f}{}\u{1f}{}",
+                    game.branch_path,
+                    game.branch_data.chars().take(240).collect::<String>()
+                );
+                if recorded_diagnostics.insert(signature) {
+                    model
+                        .store
+                        .record_ttxq_diagnostic_sample(
+                            &game.qipu_id,
+                            if game.branch_path.trim().is_empty() {
+                                "branch-data"
+                            } else {
+                                &game.branch_path
+                            },
+                            "branch-data",
+                            game.branch_data.len(),
+                            &game.branch_data.chars().take(32 * 1024).collect::<String>(),
+                            &ttxq_branch_failure_message(game),
+                            &chrono::Utc::now().to_rfc3339(),
+                        )
+                        .map_err(|error| error.to_string())?;
+                }
             }
             if is_placeholder_title(&game.title) && !game.metadata_probe.trim().is_empty() {
                 let signature = "metadata-snapshot".to_owned();
@@ -1105,32 +1796,76 @@ pub(crate) fn collect_ttxq_h5_history(
       let model = null;
       for (let attempt = 0; attempt < 80; attempt += 1) {
         try { model = window.fdk && window.fdk.getModel && window.fdk.getModel('QipuModel'); } catch (_) { model = null; }
-        if (model && model._qipuRecentView && model.jumpQipuGame) break;
+        const hasAnyQipuListRoot = () => {
+          if (!model) return false;
+          if (model._qipuRecentView || model._qipuWallDataList || model._qipuWallPreViewData || model._qipuDataList || model._qipuCollectDataList || model._qipuCreateDataList) return true;
+          try {
+            return Object.keys(model).some(key => /(?:qipu|recent|wall|collect|favor|create|record|manual|list|data)/i.test(key) && model[key] && typeof model[key] === 'object');
+          } catch (_) {
+            return false;
+          }
+        };
+        if (model && hasAnyQipuListRoot() && model.jumpQipuGame) break;
         if (attempt % 8 === 0) await invoke('report_ttxq_read_progress', { attemptId: __TTXQ_ATTEMPT_ID__, total: 0, completed: 0, failed: 0, scanned: 0, current: 0, phase: 'discovering' });
         await delay(250);
       }
-      if (!model || !model._qipuRecentView || !model.jumpQipuGame) throw new Error('未检测到“最近对局”数据，请在授权窗口进入最近对局后重试');
+      if (!model || !model.jumpQipuGame) throw new Error('未检测到天天象棋棋谱数据，请在授权窗口进入“最近对局 / 我的收藏 / 我创建的 / 记谱”列表后重试');
       // Tencent's H5 list is virtualized. Trigger bounded scrolls before scanning
       // so the page has a chance to append older items without an unbounded loop.
+      const scrollPageAndLists = () => {
+        const height = Math.max(document.body?.scrollHeight || 0, document.documentElement?.scrollHeight || 0);
+        window.scrollTo(0, height);
+        for (const element of Array.from(document.querySelectorAll('*')).slice(0, 800)) {
+          try {
+            if (element.scrollHeight > element.clientHeight + 20) element.scrollTop = element.scrollHeight;
+          } catch (_) { /* Ignore detached nodes. */ }
+        }
+        return height;
+      };
       let stableScrolls = 0;
       let previousHeight = 0;
       for (let pass = 0; pass < 24 && stableScrolls < 3; pass += 1) {
-        const height = Math.max(document.body?.scrollHeight || 0, document.documentElement?.scrollHeight || 0);
-        window.scrollTo(0, height);
+        const height = scrollPageAndLists();
         await delay(500);
         const nextHeight = Math.max(document.body?.scrollHeight || 0, document.documentElement?.scrollHeight || 0);
         stableScrolls = nextHeight > previousHeight ? 0 : stableScrolls + 1;
         previousHeight = Math.max(previousHeight, nextHeight);
       }
+      const qipuListRoots = () => {
+        const roots = [];
+        const add = (value) => { if (value && typeof value === 'object' && !roots.includes(value)) roots.push(value); };
+        for (const key of ['_qipuRecentView', '_qipuWallDataList', '_qipuWallPreViewData', '_qipuDataList', '_qipuCollectDataList', '_qipuCreateDataList', '_qipuListData', '_qipuFavoriteDataList']) {
+          try { add(model[key]); } catch (_) { /* Ignore transient getters. */ }
+        }
+        try {
+          for (const key of Object.keys(model).slice(0, 240)) {
+            if (/(?:daily|live|friend|report|statistics|result|rsp|response)/i.test(key)) continue;
+            if (!/(?:qipu|recent|wall|collect|favor|create|created|record|manual|list|data|folder)/i.test(key)) continue;
+            try { add(model[key]); } catch (_) { /* Ignore transient getters. */ }
+          }
+        } catch (_) { /* Model keys can be inaccessible while switching pages. */ }
+        return roots;
+      };
+      const qipuIdOf = (value) => {
+        const candidateId = value && (value.qipuId ?? value.qipuID ?? value.iQipuId ?? value.iQipuID ?? value.lQipuId ?? value.lQiPuID ?? value.qipu_id);
+        if (candidateId == null) return '';
+        const id = String(candidateId).trim();
+        // Real QQ chess qipu ids are numeric and non-zero. Model placeholders
+        // such as qipuId=0 and unrelated caches must not become phantom rows.
+        if (!/^[1-9]\d{4,}$/.test(id)) return '';
+        return id;
+      };
       const found = new Map();
-      // _qipuRecentView is a display-object graph as well as a data source. Its
+      // QQ exposes different list roots for recent games, favourites, and
+      // self-recorded manuals. Each root is a display-object graph as well as a
+      // data source. Its
       // parent/stage/event branches can be effectively unbounded, so only follow
       // data-shaped children and always retain records discovered before a limit.
-      const stack = [{ value: model._qipuRecentView, depth: 0 }];
+      const stack = qipuListRoots().map(value => ({ value, depth: 0 }));
       const seen = new WeakSet();
-      const scanLimit = 5000;
-      const depthLimit = 12;
-      const dataKey = /(?:qipu|recent|list|items?|records?|data|result|page|collection|provider)/i;
+      const scanLimit = 16000;
+      const depthLimit = 14;
+      const dataKey = /(?:qipu|recent|list|items?|records?|data|result|page|collection|collect|favor|create|created|manual|wall|provider|extDataBody|stTittleInfo)/i;
       const ignoredKey = /^(?:parent|_parent|stage|_stage|root|_root|owner|_owner|target|currentTarget|event|events|listeners?|children|_children)$/;
       let scanned = 0;
       let lastReported = 0;
@@ -1138,7 +1873,8 @@ pub(crate) fn collect_ttxq_h5_history(
         const { value, depth } = stack.pop();
         if (!value || typeof value !== 'object' || seen.has(value)) continue;
         seen.add(value); scanned += 1;
-        if (value.qipuId != null) found.set(String(value.qipuId), value);
+        const candidateId = qipuIdOf(value);
+        if (candidateId) found.set(candidateId, value);
         if (depth < depthLimit) {
           const keys = Object.keys(value).slice(0, 80);
           // The traversal stack is LIFO. Push children in reverse so Tencent's
@@ -1149,7 +1885,8 @@ pub(crate) fn collect_ttxq_h5_history(
             try {
               const child = value[key];
               if (!child || typeof child !== 'object') continue;
-              if (Array.isArray(child) || child.qipuId != null || dataKey.test(key)) stack.push({ value: child, depth: depth + 1 });
+              const childId = qipuIdOf(child);
+              if (Array.isArray(child) || childId || dataKey.test(key)) stack.push({ value: child, depth: depth + 1 });
             } catch (_) { /* Ignore inaccessible H5 properties. */ }
           }
         }
@@ -1174,6 +1911,11 @@ pub(crate) fn collect_ttxq_h5_history(
         window.fdk,
         model,
         model && model._qipuRecentView,
+        model && model._qipuWallDataList,
+        model && model._qipuWallPreViewData,
+        model && model._qipuDataList,
+        model && model._qipuCollectDataList,
+        model && model._qipuCreateDataList,
         model && model._qipuView,
         model && model.currentQipu,
       ].filter(Boolean);
@@ -1454,30 +2196,291 @@ pub(crate) fn collect_ttxq_h5_history(
         return [notifyState, `QipuModel ${modelDetail}`, ...sources].join('\n').slice(0, 8 * 1024);
       };
       const branchPayload = () => {
-        const control = boardControls()[0];
-        if (!control) return { data: '', path: '', complete: true };
-        let branchKey = null;
-        try { branchKey = control.getMoveBranchKey; } catch (_) { return { data: '', path: '', complete: true }; }
-        const hasBranch = Array.isArray(branchKey) ? branchKey.length > 0
-          : branchKey && typeof branchKey === 'object' ? Object.keys(branchKey).length > 0
-          : Boolean(branchKey);
-        if (!hasBranch) return { data: '', path: 'NOTIFY_QIPU_DATA._boardControl.getMoveBranchKey', complete: true };
-        const shallow = (value) => {
-          if (Array.isArray(value)) return value.slice(0, 128);
-          if (!value || typeof value !== 'object') return value;
+        const safeBranchClone = (value, depth = 0, seen = new WeakSet()) => {
+          if (value == null || typeof value === 'boolean' || typeof value === 'number') return value;
+          if (typeof value === 'string') return value.slice(0, 1000);
+          if (typeof value === 'function') return '[function]';
+          if (typeof value !== 'object' || depth > 4) return `[${typeof value}]`;
+          if (seen.has(value)) return '[cycle]';
+          seen.add(value);
+          if (Array.isArray(value)) return value.slice(0, 80).map(item => safeBranchClone(item, depth + 1, seen));
           const copy = {};
-          for (const key of Object.keys(value).slice(0, 128)) copy[key] = value[key];
+          let keys = [];
+          try { keys = Object.getOwnPropertyNames(value).slice(0, 80); } catch (_) { keys = propertyNames(value).slice(0, 80); }
+          for (const key of keys) {
+            if (/cookie|token|ticket|skey|p_skey|credential|password|html/i.test(key)) continue;
+            try { copy[key] = safeBranchClone(value[key], depth + 1, seen); } catch (_) { copy[key] = '[unavailable]'; }
+          }
           return copy;
         };
-        let msg = null;
-        try {
-          const messageOwner = findObjectWithOwnProperty(control, 'msg', 5_000);
-          msg = messageOwner && messageOwner.msg;
-        } catch (_) { /* Branch message data is optional. */ }
+        const branchPlyHint = (path, owner) => {
+          if (owner && typeof owner === 'object') {
+            for (const key of ['afterPly', 'after_ply', 'ply', 'parentPly', 'moveIndex', 'stepIndex', 'startPly', 'branchPly']) {
+              try {
+                const value = owner[key];
+                if (Number.isInteger(value) && value >= 0) return value;
+                if (typeof value === 'string' && /^\d+$/.test(value)) return Number(value);
+              } catch (_) { /* Ignore transient branch getters. */ }
+            }
+          }
+          const numbers = String(path).match(/\d+/g) || [];
+          return numbers.length ? Number(numbers[numbers.length - 1]) : undefined;
+        };
+        const branchMoveCandidate = (value, path, owner = null) => {
+          let text = '';
+          const primitiveToken = (item) => {
+            if (typeof item === 'number' && Number.isInteger(item)) return String(item);
+            if (typeof item === 'string' && /^\d+$/.test(item)) return item;
+            return null;
+          };
+          if (Array.isArray(value)) {
+            const tokens = value.map(primitiveToken);
+            if (tokens.length && tokens.every(Boolean)) text = tokens.join('');
+          }
+          if (!text && (typeof value === 'string' || typeof value === 'number')) text = String(value).trim();
+          if (!text && value && typeof value === 'object') {
+            const serialized = stringifyMoveValue(value);
+            if (serialized.status === 'ok' && serialized.text !== '[object Object]') text = serialized.text;
+          }
+          if (!text || text.length > 32 * 1024) return null;
+          const compactDigits = text.replace(/[^0-9]/g, '');
+          const dhtml = safeMoveText.test(text) && compactDigits.length >= 4 && compactDigits.length % 4 === 0;
+          const tagged = text.includes('[DhtmlXQ_move_') || text.includes('[DhtmlXQ_movelist]');
+          const iccs = (text.match(/[a-i][0-9][a-i][0-9]/gi) || []).length;
+          const chinese = (text.match(/[车車马馬炮砲兵卒相象仕士帅将將帥][前后後中一二三四五六七八九１２３４５６７８９][进退平][前后後中一二三四五六七八九１２３４５６７８９]/g) || []).length;
+          if (!dhtml && !tagged && !iccs && !chinese) return null;
+          return {
+            path,
+            raw: dhtml ? compactDigits : text.slice(0, 32 * 1024),
+            valueType: Array.isArray(value) ? 'array' : typeof value,
+            afterPly: branchPlyHint(path, owner),
+          };
+        };
+        const collectBranchCandidates = (roots) => {
+          const candidates = [];
+          const seen = new WeakSet();
+          const stack = roots.filter(Boolean).map(({ value, path }) => ({ value, path, depth: 0, owner: null }));
+          let visited = 0;
+          while (stack.length && visited < 4000 && candidates.length < 256) {
+            const { value, path, depth, owner } = stack.pop();
+            if (value == null) continue;
+            const candidate = branchMoveCandidate(value, path, owner);
+            if (candidate) candidates.push(candidate);
+            if (!value || typeof value !== 'object' || depth >= 7 || seen.has(value)) continue;
+            seen.add(value); visited += 1;
+            for (const key of propertyNames(value).slice(0, 100)) {
+              if (/cookie|token|ticket|skey|p_skey|credential|password|html/i.test(key)) continue;
+              if (!/(?:move|step|msg|branch|qipu|data|list|line|comment|remark|DhtmlXQ|key|^\d+$)/i.test(key)) continue;
+              try {
+                const child = value[key];
+                stack.push({ value: child, path: `${path}.${key}`, depth: depth + 1, owner: value });
+              } catch (_) { /* Ignore transient branch getters. */ }
+            }
+          }
+          const seenSignatures = new Set();
+          return candidates.filter(candidate => {
+            const signature = `${candidate.afterPly ?? ''}:${candidate.raw}`;
+            if (seenSignatures.has(signature)) return false;
+            seenSignatures.add(signature);
+            return true;
+          });
+        };
+        const branchMessageContainers = (root, property, rootPath, limit = 8_000) => {
+          const containers = [];
+          if (!root || typeof root !== 'object') return containers;
+          const seen = new WeakSet();
+          const returned = new WeakSet();
+          const stack = [{ value: root, path: rootPath, depth: 0 }];
+          let visited = 0;
+          while (stack.length && visited < limit && containers.length < 32) {
+            const { value, path, depth } = stack.pop();
+            if (!value || typeof value !== 'object' || seen.has(value) || depth > 10) continue;
+            seen.add(value); visited += 1;
+            for (const key of propertyNames(value).slice(0, 120)) {
+              if (/^(?:parent|_parent|stage|_stage|root|_root|owner|_owner|target|currentTarget|event|events|listeners?)$/i.test(key)) continue;
+              if (/cookie|token|ticket|skey|p_skey|credential|password|html/i.test(key)) continue;
+              let child; try { child = value[key]; } catch (_) { continue; }
+              if (Array.isArray(child) && child.some(item => item && typeof item === 'object' && Object.prototype.hasOwnProperty.call(item, property))) {
+                if (!returned.has(value)) {
+                  returned.add(value);
+                  containers.push({ value, path });
+                }
+              }
+              if (child && typeof child === 'object' && !seen.has(child)) {
+                stack.push({ value: child, path: `${path}.${key}`, depth: depth + 1 });
+              }
+            }
+          }
+          return containers;
+        };
+        const routeNumberFromText = (text) => {
+          const normalized = String(text || '').trim();
+          if (!/^\d{1,2}$/.test(normalized)) return null;
+          const route = Number(normalized);
+          return route >= 1 && route <= 16 ? route : null;
+        };
+        const collectNumericRouteGroups = () => {
+          const textOf = (value) => {
+            if (!value || typeof value !== 'object') return '';
+            for (const key of ['text', '_text', 'value', '_value', 'label', '_label', 'name', '_name']) {
+              try {
+                const candidate = value[key];
+                if ((typeof candidate === 'string' || typeof candidate === 'number') && String(candidate).trim().length <= 32) {
+                  return String(candidate).trim();
+                }
+              } catch (_) { /* Ignore display-object getters. */ }
+            }
+            return '';
+          };
+          const childValues = (value) => {
+            const children = [];
+            for (const key of propertyNames(value).slice(0, 120)) {
+              if (/^(?:parent|_parent|stage|_stage|root|_root|owner|_owner|target|currentTarget|event|events|listeners?)$/i.test(key)) continue;
+              if (/cookie|token|ticket|skey|p_skey|credential|password|html/i.test(key)) continue;
+              try {
+                const child = value[key];
+                if (child && typeof child === 'object') children.push(child);
+              } catch (_) { /* Ignore inaccessible display properties. */ }
+            }
+            return children;
+          };
+          const consecutiveRouteGroup = (numbers) => {
+            const unique = [...new Set(numbers)].sort((left, right) => left - right);
+            if (unique.length < 2 || unique.length > 8 || unique[0] !== 1) return [];
+            for (let index = 0; index < unique.length; index += 1) {
+              if (unique[index] !== index + 1) return [];
+            }
+            return unique;
+          };
+          const groups = [];
+          const seen = new WeakSet();
+          const roots = [
+            ...(typeof detailDisplayRoots === 'function' ? detailDisplayRoots() : []),
+            ...(typeof boardControls === 'function' ? boardControls() : []),
+          ].filter(Boolean);
+          const stack = roots.map(value => ({ value, depth: 0 }));
+          let visited = 0;
+          while (stack.length && visited < 16_000 && groups.length < 8) {
+            const { value, depth } = stack.pop();
+            if (!value || typeof value !== 'object' || seen.has(value) || depth > 14) continue;
+            seen.add(value); visited += 1;
+            const children = childValues(value);
+            const childRoutes = consecutiveRouteGroup(children.map(child => routeNumberFromText(textOf(child))).filter(number => number != null));
+            if (childRoutes.length) groups.push(childRoutes);
+            const ownTextRoutes = consecutiveRouteGroup((textOf(value).match(/\b\d{1,2}\b/g) || []).map(routeNumberFromText).filter(number => number != null));
+            if (ownTextRoutes.length) groups.push(ownTextRoutes);
+            for (const child of children) stack.push({ value: child, depth: depth + 1 });
+          }
+          return [...new Set(groups.flat())].sort((left, right) => left - right);
+        };
+        const routeNumbersFromBranchSignals = (signals) => {
+          const routes = new Set();
+          const visit = (value, depth = 0) => {
+            if (value == null || depth > 4 || routes.size >= 16) return;
+            if (typeof value === 'number' || typeof value === 'string') {
+              const route = routeNumberFromText(value);
+              if (route != null) routes.add(route);
+              return;
+            }
+            if (typeof value !== 'object') return;
+            if (Array.isArray(value)) {
+              if (value.length >= 2 && value.length <= 16) {
+                for (let index = 1; index <= value.length; index += 1) routes.add(index);
+              }
+              value.slice(0, 32).forEach(item => visit(item, depth + 1));
+              return;
+            }
+            for (const key of propertyNames(value).slice(0, 80)) {
+              const route = routeNumberFromText(key);
+              if (route != null) routes.add(route);
+              try { visit(value[key], depth + 1); } catch (_) { /* Ignore transient branch values. */ }
+            }
+          };
+          for (const signal of signals) visit(signal.value);
+          return [...routes].filter(route => route >= 1 && route <= 16).sort((left, right) => left - right);
+        };
+        const controls = boardControls();
+        if (!controls.length) return { data: '', path: '', complete: true };
+        const branchSources = [];
+        const branchSignals = [];
+        let hasStructuralBranchSignal = false;
+        const addBranchSource = (value, path) => {
+          if (value == null) return;
+          branchSources.push({ value, path });
+        };
+        const hasBranchValue = (value) => Array.isArray(value) ? value.length > 0
+          : value && typeof value === 'object' ? Object.keys(value).length > 0
+          : Boolean(value);
+        const branchFieldNames = [
+          'getMoveBranchKey', 'moveBranchKey', '_moveBranchKey', 'branchKey',
+          'msg', '_msg', 'branchData', '_branchData', 'variationData',
+          '_variationData', 'moveBranchData', '_moveBranchData', 'qipuBranchData',
+        ];
+        for (const [index, control] of controls.entries()) {
+          addBranchSource(control, `boardControl[${index}]`);
+          for (const key of branchFieldNames) {
+            try {
+              if (!(key in control)) continue;
+              const value = control[key];
+              if (/branch|msg/i.test(key) && hasBranchValue(value)) {
+                branchSignals.push({ path: `boardControl[${index}].${key}`, value });
+                if (/branch|MoveBranchKey/i.test(key)) hasStructuralBranchSignal = true;
+              }
+              addBranchSource(value, `boardControl[${index}].${key}`);
+            } catch (_) { /* Ignore transient branch fields. */ }
+          }
+          for (const key of ['getMoveBranchKey', 'msg']) {
+            try {
+              const owner = findObjectWithOwnProperty(control, key, 8_000);
+              if (owner && owner !== control) {
+                const value = owner[key];
+                if (hasBranchValue(value)) branchSignals.push({ path: `boardControl[${index}].*.${key}`, value });
+                if (/branch|MoveBranchKey/i.test(key) && hasBranchValue(value)) hasStructuralBranchSignal = true;
+                addBranchSource(value, `boardControl[${index}].*.${key}`);
+                addBranchSource(owner, `boardControl[${index}].${key}Owner`);
+              }
+            } catch (_) { /* Branch message data is optional. */ }
+          }
+          for (const container of branchMessageContainers(control, 'msg', `boardControl[${index}]`)) {
+            // Tencent also stores ordinary move comments / recommendations as
+            // `{msg, time, uname}` rows. They are useful search roots for real
+            // branch move fields, but a comment-only msg container must not
+            // block importing the mainline as "分支未识别".
+            addBranchSource(container.value, `${container.path}.msgContainer`);
+          }
+        }
+        for (const [index, root] of [model && model._qipuView, model && model.currentQipu, model && model._qipuData, model && model._qipuInfo].filter(Boolean).entries()) {
+          for (const key of ['getMoveBranchKey', 'msg']) {
+            try {
+              const owner = findObjectWithOwnProperty(root, key, 8_000);
+              if (!owner) continue;
+              const value = owner[key];
+              if (hasBranchValue(value)) branchSignals.push({ path: `detailRoot[${index}].*.${key}`, value });
+              if (/branch|MoveBranchKey/i.test(key) && hasBranchValue(value)) hasStructuralBranchSignal = true;
+              addBranchSource(value, `detailRoot[${index}].*.${key}`);
+            } catch (_) { /* Detail roots vary by Tencent build. */ }
+          }
+          for (const container of branchMessageContainers(root, 'msg', `detailRoot[${index}]`)) {
+            addBranchSource(container.value, `${container.path}.msgContainer`);
+          }
+        }
+        const candidates = collectBranchCandidates(branchSources);
+        const routeNumbers = [...new Set([
+          ...routeNumbersFromBranchSignals(branchSignals),
+          ...collectNumericRouteGroups(),
+        ])].filter(route => route >= 1 && route <= 16).sort((left, right) => left - right);
+        const signalSamples = branchSignals.slice(0, 12).map(signal => ({
+          path: signal.path,
+          value: safeBranchClone(signal.value),
+        }));
+        const hasBranchSignal = hasStructuralBranchSignal || candidates.length > 0 || routeNumbers.length > 1;
+        if (!hasBranchSignal) {
+          return { data: '', path: 'NOTIFY_QIPU_DATA._boardControl.getMoveBranchKey', complete: true };
+        }
         try {
           return {
-            data: JSON.stringify({ getMoveBranchKey: shallow(branchKey), msg: shallow(msg) }).slice(0, 32 * 1024),
-            path: 'NOTIFY_QIPU_DATA._boardControl.getMoveBranchKey + msg',
+            data: JSON.stringify({ signals: signalSamples, candidates, routeNumbers }).slice(0, 32 * 1024),
+            path: 'NOTIFY_QIPU_DATA._boardControl.getMoveBranchKey + msg + routeButtons',
             complete: false,
           };
         } catch (_) {
@@ -1494,17 +2497,142 @@ pub(crate) fn collect_ttxq_h5_history(
         }
         return '';
       };
+      const snapshotHasCoordinateCandidate = (snapshot) =>
+        typeof snapshot === 'string' && /getQipuMoveStep:[^\n]*coordinate-candidate/.test(snapshot);
+      const acceptsTargetCandidate = (candidate, qipuId, beforeSignature, beforeOwner = null, options = {}) => {
+        if (!candidate || !candidate.text) return false;
+        const signature = `${candidate.path}:${candidate.type}:${candidate.text}`;
+        const controllerChanged = candidate.owner && beforeOwner && candidate.owner !== beforeOwner;
+        const loadedId = liveLoadedId();
+        if (loadedId && loadedId !== String(qipuId)) return false;
+        if (loadedId === String(qipuId) || signature !== beforeSignature || controllerChanged) return true;
+        // Some QQ pages reuse the same board controller and can produce the
+        // same coordinate stream for adjacent records. After a bounded wait,
+        // a snapshot of the live notification board that already marks the
+        // move field as a DhtmlXQ coordinate candidate is the best available
+        // positive signal; a contradictory loadedId above still wins.
+        return Boolean(options.coordinateSnapshot);
+      };
       const waitForTarget = async (qipuId, beforeSignature, beforeOwner = null, extraSources = [], maxPolls = 12) => {
         for (let poll = 0; poll < maxPolls; poll += 1) {
           await delay(200);
           const candidate = directNotifyMove() || directModelMove() || readRawMoves(extraSources);
-          const signature = `${candidate.path}:${candidate.type}:${candidate.text}`;
-          const controllerChanged = candidate.owner && beforeOwner && candidate.owner !== beforeOwner;
-          const loadedId = liveLoadedId();
-          const staleTarget = loadedId && loadedId !== String(qipuId);
-          if (candidate.text && !staleTarget && (loadedId === String(qipuId) || signature !== beforeSignature || controllerChanged)) return candidate;
+          if (acceptsTargetCandidate(candidate, qipuId, beforeSignature, beforeOwner)) return candidate;
         }
         throw new Error('棋谱加载超时');
+      };
+      const candidateSignature = (candidate) => candidate && candidate.text
+        ? `${candidate.path}:${candidate.type}:${candidate.text}`
+        : '';
+      const readBranchRoutes = async (qipuId, mainRaw, passiveBranch) => {
+        let envelope = {};
+        let hasExplicitRouteSignal = false;
+        if (passiveBranch && passiveBranch.data) {
+          try {
+            envelope = JSON.parse(passiveBranch.data);
+          } catch (_) {
+            envelope = { rawBranchData: String(passiveBranch.data).slice(0, 2000) };
+          }
+        }
+        const routeNumbers = [...new Set(Array.isArray(envelope.routeNumbers) ? envelope.routeNumbers : [])]
+          .map(route => Number(route))
+          .filter(route => Number.isInteger(route) && route >= 2 && route <= 16)
+          .sort((left, right) => left - right);
+        hasExplicitRouteSignal = routeNumbers.length > 0;
+        // Some QQ builds render the arrows but keep the backing branch object
+        // outside the fields exposed by getMoveBranchKey/msg. Probe the first
+        // few documented route slots; unchanged mainline reads are discarded,
+        // so ordinary games are not treated as incomplete just because a slot
+        // does not exist.
+        const routesToTry = (routeNumbers.length ? routeNumbers : [2, 3, 4]).slice(0, 16);
+        const mainSignature = candidateSignature(mainRaw);
+        const routeCandidates = [];
+        const routeFailures = [];
+        const seenRaw = new Set([mainRaw && mainRaw.text].filter(Boolean));
+        for (const routeNo of routesToTry) {
+          let routeRaw = null;
+          let jumpResult = null;
+          const beforeCandidate = directNotifyMove() || directModelMove() || readRawMoves([]);
+          const beforeSignature = candidateSignature(beforeCandidate) || mainSignature;
+          const beforeOwner = beforeCandidate && beforeCandidate.owner || null;
+          moveOwnerCache = null;
+          moveOwnerSearchAt = 0;
+          try {
+            jumpResult = model.jumpQipuGame(qipuId, -1, false, 0, routeNo, 0);
+          } catch (error) {
+            routeFailures.push({ routeNo, reason: String(error && error.message || error).slice(0, 240) });
+            continue;
+          }
+          for (let poll = 0; poll < 4; poll += 1) {
+            await delay(150);
+            const candidate = directNotifyMove() || directModelMove() || readRawMoves([jumpResult]);
+            if (!candidate || !candidate.text) continue;
+            const loadedId = liveLoadedId();
+            if (loadedId && loadedId !== String(qipuId)) continue;
+            const signature = candidateSignature(candidate);
+            const changed = signature && signature !== beforeSignature && signature !== mainSignature;
+            const controllerChanged = candidate.owner && beforeOwner && candidate.owner !== beforeOwner;
+            if ((changed || controllerChanged) && candidate.text !== (mainRaw && mainRaw.text)) {
+              routeRaw = candidate;
+              break;
+            }
+          }
+          if (!routeRaw) {
+            const settled = directNotifyMove() || directModelMove() || readRawMoves([jumpResult]);
+            if (settled && settled.text && settled.text !== (mainRaw && mainRaw.text)) {
+              const loadedId = liveLoadedId();
+              if (!loadedId || loadedId === String(qipuId)) routeRaw = settled;
+            }
+          }
+          if (routeRaw && !seenRaw.has(routeRaw.text)) {
+            seenRaw.add(routeRaw.text);
+            routeCandidates.push({
+              path: `route[${routeNo}].${routeRaw.path || 'getQipuMoveStep'}`,
+              raw: routeRaw.text.slice(0, 32 * 1024),
+              valueType: routeRaw.type || '',
+              afterPly: null,
+              comment: `天天象棋分支 ${routeNo}`,
+            });
+          } else if (hasExplicitRouteSignal) {
+            routeFailures.push({ routeNo, reason: '未取得与主线不同的分支走法' });
+          }
+        }
+        if (routesToTry.length) {
+          try { model.jumpQipuGame(qipuId, -1, false, 0, 1, 0); } catch (_) { /* Restore best-effort only. */ }
+        }
+        if (!routeCandidates.length) {
+          if (hasExplicitRouteSignal && passiveBranch && passiveBranch.data) {
+            envelope.routesAttempted = routesToTry;
+            envelope.routeFailures = routeFailures.slice(0, 16);
+            try {
+              return {
+                data: JSON.stringify(envelope).slice(0, 32 * 1024),
+                path: `${passiveBranch.path || 'ttxq-branch'} + routeProbe`,
+                complete: false,
+              };
+            } catch (_) { /* Fall back to passive branch below. */ }
+          }
+          return passiveBranch;
+        }
+        const existingCandidates = Array.isArray(envelope.candidates) ? envelope.candidates : [];
+        envelope.candidates = [...existingCandidates, ...routeCandidates].slice(0, 256);
+        envelope.routesAttempted = routesToTry;
+        envelope.routeCandidates = routeCandidates.map(candidate => ({
+          path: candidate.path,
+          valueType: candidate.valueType,
+          length: candidate.raw.length,
+          comment: candidate.comment,
+        }));
+        if (routeFailures.length) envelope.routeFailures = routeFailures.slice(0, 16);
+        try {
+          return {
+            data: JSON.stringify(envelope).slice(0, 32 * 1024),
+            path: `${passiveBranch && passiveBranch.path || 'ttxq-branch'} + routeProbe`,
+            complete: false,
+          };
+        } catch (_) {
+          return passiveBranch;
+        }
       };
       let current = 0;
       const failures = [];
@@ -1526,11 +2654,7 @@ pub(crate) fn collect_ttxq_h5_history(
           try { raw = await waitForTarget(qipuId, beforeSignature, beforeOwner, [info, jumpResult], polls); } catch (_) { /* Retry the boundary state below. */ }
           if (!raw.text) {
             const settled = directNotifyMove() || directModelMove() || readRawMoves([info, jumpResult]);
-            const settledSignature = settled ? `${settled.path}:${settled.type}:${settled.text}` : '';
-            const controllerChanged = settled && settled.owner && beforeOwner && settled.owner !== beforeOwner;
-            const settledId = liveLoadedId();
-            const staleTarget = settledId && settledId !== String(qipuId);
-            if (settled && settled.text && !staleTarget && (settledId === String(qipuId) || settledSignature !== beforeSignature || controllerChanged)) raw = settled;
+            if (acceptsTargetCandidate(settled, qipuId, beforeSignature, beforeOwner)) raw = settled;
           }
           if (!raw.text) {
             const snapshot = bridgeSnapshot([info]);
@@ -1539,11 +2663,7 @@ pub(crate) fn collect_ttxq_h5_history(
             // coordinate array. Re-read once before committing a false
             // missing diagnostic, while retaining the stale-game guard.
             const settledAfterSnapshot = directNotifyMove() || directModelMove() || readRawMoves([info, jumpResult]);
-            const afterSnapshotSignature = settledAfterSnapshot ? `${settledAfterSnapshot.path}:${settledAfterSnapshot.type}:${settledAfterSnapshot.text}` : '';
-            const controllerChanged = settledAfterSnapshot && settledAfterSnapshot.owner && beforeOwner && settledAfterSnapshot.owner !== beforeOwner;
-            const settledAfterSnapshotId = liveLoadedId();
-            const staleTarget = settledAfterSnapshotId && settledAfterSnapshotId !== String(qipuId);
-            if (settledAfterSnapshot && settledAfterSnapshot.text && !staleTarget && (settledAfterSnapshotId === String(qipuId) || afterSnapshotSignature !== beforeSignature || controllerChanged)) {
+            if (acceptsTargetCandidate(settledAfterSnapshot, qipuId, beforeSignature, beforeOwner, { coordinateSnapshot: snapshotHasCoordinateCandidate(snapshot) })) {
               raw = settledAfterSnapshot;
             } else {
               raw = {
@@ -1556,7 +2676,7 @@ pub(crate) fn collect_ttxq_h5_history(
             }
           }
           const moves = raw.text ? (raw.text.match(/[a-i][0-9][a-i][0-9]/gi) || []).map(move => move.toLowerCase()) : [];
-          const branch = branchPayload();
+          const passiveBranch = branchPayload();
           // Tencent keeps the visible detail fields under version-dependent model
           // objects. Read only approved scalar names from a bounded graph; never
           // serialize the graph, HTML, credentials, or page data.
@@ -1566,7 +2686,7 @@ pub(crate) fn collect_ttxq_h5_history(
           // small ordered candidate set instead of letting that first value
           // permanently mask the useful one.
           const scalarFields = new Map();
-          const wantedField = /^(?:title|name|qipuName|qipuTitle|qipuTitleName|qipuGameName|gameName|szQipuName|getToWallQipuName|red|redName|redPlayer|redNick|redUserName|redPlayerName|redUserNick|szRedName|black|blackName|blackPlayer|blackNick|blackUserName|blackPlayerName|blackUserNick|szBlackName|event|eventName|competition|competitionName|matchName|szEventName|site|location|platform|date|gameDate|gameDateTime|createdDate|createTime|result|gameResult|resultText|resultDesc|winLose|winner|winSide|round|roundNo|roundNumber|roundName|gameRound|stage|playedAt|gameTime|startTime|createdAt|duration|gameDuration|durationText|elapsedTime|usedTime|totalTime|timeControl|timeRule|clockRule|gameRule|ruleName|playRule)$/i;
+          const wantedField = /^(?:title|name|qipuName|qipuTitle|qipuTitleName|qipuGameName|gameName|sTitle|szQipuName|getToWallQipuName|red|redName|redPlayer|redNick|redUserName|redPlayerName|redUserNick|sRedName|szRedName|black|blackName|blackPlayer|blackNick|blackUserName|blackPlayerName|blackUserNick|sBlackName|szBlackName|event|eventName|competition|competitionName|matchName|sEventName|szEventName|site|location|platform|date|gameDate|gameDateTime|createdDate|createTime|sCreateTime|result|gameResult|resultText|resultDesc|winLose|winner|winSide|round|roundNo|roundNumber|roundName|gameRound|iRound|stage|playedAt|gameTime|startTime|createdAt|duration|gameDuration|durationText|elapsedTime|usedTime|totalTime|iTime|timeControl|timeRule|clockRule|gameRule|ruleName|playRule)$/i;
           const seenMetadata = new WeakSet(); let metadataNodes = 0;
           const collectMetadata = (value, depth = 0) => {
             if (!value || depth > 4 || metadataNodes >= 1800 || typeof value !== 'object') return;
@@ -1581,7 +2701,7 @@ pub(crate) fn collect_ttxq_h5_history(
                   values.push(text); scalarFields.set(normalizedKey, values);
                 }
               }
-              if (child && typeof child === 'object' && /(?:qipu|game|match|player|detail|info|data|model|board)/i.test(key)) collectMetadata(child, depth + 1);
+              if (child && typeof child === 'object' && /(?:qipu|game|match|player|detail|info|data|model|board|body|title|tittle|battle|user|profile|avatar|^va$)/i.test(key)) collectMetadata(child, depth + 1);
               // Some QQ H5 revisions put the detail object into a JSON string.
               // Only parse bounded strings under known detail/data keys; the
               // parsed object is used in-memory for the approved scalar fields.
@@ -1626,6 +2746,7 @@ pub(crate) fn collect_ttxq_h5_history(
                   if (match && match[1].trim() && !fields[field]) fields[field] = match[1].trim();
                 }
               }
+              if (!fields.title && /(?:[一二三四五六七八九十百千万\d]+轮|布局|开局|中局|残局|顺炮|列炮|飞相|屏风马|反宫马|横车|直车|过宫炮|士角炮|仙人指路|起马|巡河炮|急进中兵|创建于\s*20\d{2})/.test(text)) fields.title = text;
               // Full QQ titles are generated as player/rank + result + rank +
               // move count, for example 放飞[业9-2]先和[业9-2],29回合.
               if (/(?:先胜|先负|先和|后胜|后负|后和)/.test(text) && /[,，]?\d+\s*回合/.test(text)) fields.title = text;
@@ -1650,7 +2771,17 @@ pub(crate) fn collect_ttxq_h5_history(
                 if (/^(?:parent|_parent|stage|_stage|root|_root|owner|_owner|target|currentTarget|event|events|listeners?)$/i.test(key)) continue;
                 try {
                   const child = value[key];
-                  if (typeof child === 'string' || typeof child === 'number') acceptText(child);
+                  if (typeof child === 'string' || typeof child === 'number') {
+                    if (/^(?:sTitle|qipuName|qipuTitle|gameName)$/i.test(key)) {
+                      const text = String(child).trim();
+                      if (text && text.length <= 240 && !fields.title) fields.title = text;
+                    }
+                    if (/^(?:iRound|round|gameRound)$/i.test(key)) {
+                      const text = String(child).trim();
+                      if (/^\d+$/.test(text) && !fields.round) fields.round = `${text} 回合`;
+                    }
+                    acceptText(child);
+                  }
                   else if (child && typeof child === 'object') stack.push({ value: child, depth: depth + 1 });
                 } catch (_) { /* Ignore transient FDK getters. */ }
               }
@@ -1834,23 +2965,24 @@ pub(crate) fn collect_ttxq_h5_history(
             await delay(150);
             visible = detailFields();
           }
+          const branch = await readBranchRoutes(qipuId, raw, passiveBranch);
           const rawResult = firstText('result', 'gameResult', 'resultText', 'resultDesc', 'winLose', 'winner', 'winSide') || visible.result;
           const normalizedResult = /和/.test(rawResult) ? '1/2-1/2'
             : /(?:先胜|红胜|后负)/.test(rawResult) ? '1-0'
             : /(?:后胜|黑胜|先负)/.test(rawResult) ? '0-1' : rawResult;
           games.push({
             qipuId,
-            title: firstUsableTitle('title', 'qipuName', 'qipuTitle', 'szQipuName', 'getToWallQipuName', 'name') || visible.title,
-            red: firstText('red', 'redName', 'redPlayer', 'redNick', 'redUserName', 'redPlayerName', 'szRedName') || visible.red,
-            black: firstText('black', 'blackName', 'blackPlayer', 'blackNick', 'blackUserName', 'blackPlayerName', 'szBlackName') || visible.black,
-            event: firstText('event', 'eventName', 'competition', 'competitionName', 'matchName', 'szEventName') || visible.event,
+            title: firstUsableTitle('sTitle', 'title', 'qipuName', 'qipuTitle', 'szQipuName', 'getToWallQipuName', 'gameName', 'name') || visible.title,
+            red: firstText('red', 'redName', 'redPlayer', 'redNick', 'redUserName', 'redPlayerName', 'sRedName', 'szRedName') || visible.red,
+            black: firstText('black', 'blackName', 'blackPlayer', 'blackNick', 'blackUserName', 'blackPlayerName', 'sBlackName', 'szBlackName') || visible.black,
+            event: firstText('event', 'eventName', 'competition', 'competitionName', 'matchName', 'sEventName', 'szEventName') || visible.event,
             site: firstText('site', 'location', 'platform') || visible.site || '天天象棋',
             date: displayDate(firstText('date', 'gameDate', 'createdDate') || visible.date),
             result: normalizedResult,
             note: rawResult && rawResult !== normalizedResult ? `天天象棋赛果：${rawResult}` : '',
-            round: firstText('round', 'roundNo', 'roundNumber', 'roundName', 'gameRound', 'stage') || visible.round,
-            playedAt: displayDate(firstText('playedAt', 'gameTime', 'startTime', 'createdAt', 'gameDateTime', 'createTime') || visible.date),
-            duration: firstText('duration', 'gameDuration', 'durationText', 'elapsedTime', 'usedTime', 'totalTime'),
+            round: firstText('round', 'roundNo', 'roundNumber', 'roundName', 'gameRound', 'iRound', 'stage') || visible.round,
+            playedAt: displayDate(firstText('playedAt', 'gameTime', 'startTime', 'createdAt', 'gameDateTime', 'createTime', 'sCreateTime') || visible.date),
+            duration: firstText('duration', 'gameDuration', 'durationText', 'elapsedTime', 'usedTime', 'totalTime', 'iTime'),
             timeControl: firstText('timeControl', 'timeRule', 'clockRule', 'gameRule', 'ruleName', 'playRule'),
             moves,
             rawMoves: raw.text.slice(0, 32 * 1024),
@@ -1903,6 +3035,7 @@ pub(crate) fn collect_ttxq_h5_history(
 
 #[tauri::command]
 pub(crate) fn import_ttxq_history(
+    target_folder: Option<String>,
     state: State<'_, DesktopState>,
 ) -> Result<TtxqSyncProgressDto, String> {
     let payload = state
@@ -1917,6 +3050,7 @@ pub(crate) fn import_ttxq_history(
         .model
         .lock()
         .map_err(|_| "state lock poisoned".to_owned())?;
+    let target_folder = normalize_ttxq_target_folder(target_folder)?;
     let active_game_id = model.game_id;
     let mut progress = TtxqSyncProgressDto {
         state: "importing".into(),
@@ -1932,8 +3066,8 @@ pub(crate) fn import_ttxq_history(
         } else {
             imported_record.starting_fen.trim().to_owned()
         };
-        imported_record.moves = match resolved_moves(&imported_record, &starting_fen) {
-            Ok(moves) => moves,
+        imported_record = match prepare_import_record(&imported_record, &starting_fen) {
+            Ok(record) => record,
             Err(_) => {
                 progress.failed += 1;
                 continue;
@@ -1954,19 +3088,52 @@ pub(crate) fn import_ttxq_history(
                 )
                 .map_err(|error| error.to_string())?;
             if existing.payload_hash == hash {
-                let updated = if let Some(previous) = model
+                let (updated, added_variations) = if let Some(previous) = model
                     .store
                     .load_game(existing.game_id)
                     .map_err(|error| error.to_string())?
                 {
-                    backfill_existing_game(&mut model, &previous, &imported_record)?
+                    (
+                        backfill_existing_game(&mut model, &previous, &imported_record)?,
+                        append_ttxq_variations_to_existing(
+                            &mut model,
+                            &previous,
+                            &imported_record,
+                        )?,
+                    )
                 } else {
-                    false
+                    (false, 0)
                 };
-                if updated {
+                if updated || added_variations > 0 {
                     progress.imported += 1;
                 } else {
                     progress.skipped += 1;
+                }
+                if let Some(previous) = model
+                    .store
+                    .load_game(existing.game_id)
+                    .map_err(|error| error.to_string())?
+                {
+                    if previous.library_folder.as_deref() != Some(target_folder.as_str()) {
+                        let payload =
+                            library_metadata_payload(&previous, Some(target_folder.clone()));
+                        let operation = next_operation_for_game(
+                            &mut model,
+                            existing.game_id,
+                            OperationKind::UpdateGameMetadata,
+                            serde_json::to_value(payload).map_err(|error| error.to_string())?,
+                        );
+                        model
+                            .store
+                            .update_game_library_with_operation(
+                                existing.game_id,
+                                Some(&target_folder),
+                                previous.favorite,
+                                &previous.tags,
+                                &operation,
+                            )
+                            .map_err(|error| error.to_string())?;
+                    }
                 }
                 continue;
             }
@@ -1976,7 +3143,33 @@ pub(crate) fn import_ttxq_history(
                 .map_err(|error| error.to_string())?
             {
                 if same_persisted_mainline(&model, &previous, &imported_record.moves)? {
-                    let _ = backfill_existing_game(&mut model, &previous, &imported_record)?;
+                    let metadata_updated =
+                        backfill_existing_game(&mut model, &previous, &imported_record)?;
+                    let added_variations = append_ttxq_variations_to_existing(
+                        &mut model,
+                        &previous,
+                        &imported_record,
+                    )?;
+                    if previous.library_folder.as_deref() != Some(target_folder.as_str()) {
+                        let payload =
+                            library_metadata_payload(&previous, Some(target_folder.clone()));
+                        let operation = next_operation_for_game(
+                            &mut model,
+                            previous.id,
+                            OperationKind::UpdateGameMetadata,
+                            serde_json::to_value(payload).map_err(|error| error.to_string())?,
+                        );
+                        model
+                            .store
+                            .update_game_library_with_operation(
+                                previous.id,
+                                Some(&target_folder),
+                                previous.favorite,
+                                &previous.tags,
+                                &operation,
+                            )
+                            .map_err(|error| error.to_string())?;
+                    }
                     model
                         .store
                         .record_external_game_import(
@@ -1987,7 +3180,11 @@ pub(crate) fn import_ttxq_history(
                             &Utc::now().to_rfc3339(),
                         )
                         .map_err(|error| error.to_string())?;
-                    progress.imported += 1;
+                    if metadata_updated || added_variations > 0 {
+                        progress.imported += 1;
+                    } else {
+                        progress.skipped += 1;
+                    }
                     continue;
                 }
             }
@@ -2009,6 +3206,7 @@ pub(crate) fn import_ttxq_history(
             &hash,
             &imported_at,
             source_order,
+            &target_folder,
         ) {
             Ok(game_id) => {
                 model
@@ -2051,20 +3249,77 @@ pub(crate) fn import_ttxq_history(
     Ok(progress)
 }
 
+fn insert_ttxq_variation(
+    document: &mut ManualDocument,
+    starting_fen: &str,
+    mainline: &[String],
+    mainline_parents: &[Uuid],
+    variation: &TtxqVariationDto,
+) -> Result<(), String> {
+    if variation.after_ply > mainline.len() {
+        return Err("变招位置超出主线".into());
+    }
+    let mut board = Board::from_fen(starting_fen).map_err(|error| error.to_string())?;
+    for raw_move in mainline.iter().take(variation.after_ply) {
+        board = board
+            .apply_move(Move::from_iccs(raw_move).map_err(|error| error.to_string())?)
+            .map_err(|error| error.to_string())?;
+    }
+    let parent = *mainline_parents
+        .get(variation.after_ply)
+        .ok_or("变招位置超出主线")?;
+    insert_ttxq_variation_tail(document, board, parent, variation)
+}
+
+fn insert_ttxq_variation_tail(
+    document: &mut ManualDocument,
+    mut board: Board,
+    parent: Uuid,
+    variation: &TtxqVariationDto,
+) -> Result<(), String> {
+    if variation.moves.len() > MAX_MOVES_PER_GAME {
+        return Err("变招着法数量异常".into());
+    }
+    let mut parent_ids = vec![parent];
+    let mut boards = vec![board.clone()];
+    let mut current_parent = parent;
+    for (index, raw_move) in variation.moves.iter().enumerate() {
+        let mv = Move::from_iccs(raw_move).map_err(|error| error.to_string())?;
+        board = board.apply_move(mv).map_err(|error| error.to_string())?;
+        let comment = if index == 0 {
+            variation.comment.as_str()
+        } else {
+            ""
+        };
+        current_parent = document
+            .tree
+            .add_move(current_parent, mv, comment)
+            .map_err(|error| error.to_string())?;
+        parent_ids.push(current_parent);
+        boards.push(board.clone());
+    }
+    for child in &variation.children {
+        let child_parent = *parent_ids
+            .get(child.after_ply)
+            .ok_or("子变招位置超出父分支")?;
+        let child_board = boards
+            .get(child.after_ply)
+            .cloned()
+            .ok_or("子变招局面超出父分支")?;
+        insert_ttxq_variation_tail(document, child_board, child_parent, child)?;
+    }
+    Ok(())
+}
+
 fn import_game(
     model: &mut AppModel,
     record: &TtxqGameRecordDto,
     payload_hash: &str,
     imported_at: &str,
     source_order: usize,
+    target_folder: &str,
 ) -> Result<Uuid, String> {
     let mut record = record.clone();
-    if !record.branch_data.trim().is_empty() && !record.branch_complete {
-        return Err(format!(
-            "棋谱 {} 的网页变招尚未完成确定性解码，已阻止不完整导入",
-            record.qipu_id
-        ));
-    }
     let starting_fen = if record.starting_fen.trim().is_empty() {
         STARTING_FEN.to_owned()
     } else {
@@ -2106,23 +3361,13 @@ fn import_game(
         );
     }
     for variation in &record.variations {
-        let mut branch_board = Board::from_fen(&starting_fen).map_err(|error| error.to_string())?;
-        for raw_move in record.moves.iter().take(variation.after_ply) {
-            branch_board = branch_board
-                .apply_move(Move::from_iccs(raw_move).map_err(|error| error.to_string())?)
-                .map_err(|error| error.to_string())?;
-        }
-        let mut parent = *parents.get(variation.after_ply).ok_or("变招位置超出主线")?;
-        for raw_move in &variation.moves {
-            let mv = Move::from_iccs(raw_move).map_err(|error| error.to_string())?;
-            branch_board = branch_board
-                .apply_move(mv)
-                .map_err(|error| error.to_string())?;
-            parent = document
-                .tree
-                .add_move(parent, mv, "")
-                .map_err(|error| error.to_string())?;
-        }
+        insert_ttxq_variation(
+            &mut document,
+            &starting_fen,
+            &record.moves,
+            &parents,
+            variation,
+        )?;
     }
     let game_id = Uuid::new_v4();
     let root_id = document.tree.root_id();
@@ -2210,7 +3455,7 @@ fn import_game(
         .map_err(|error| error.to_string())?;
     model
         .store
-        .create_library_folder(TTXQ_BACKUP_FOLDER)
+        .create_library_folder(target_folder)
         .map_err(|error| error.to_string())?;
     model.lamport += 1;
     let library_operation = Operation {
@@ -2228,7 +3473,7 @@ fn import_game(
             red: Some(document.metadata.red.clone()),
             black: Some(document.metadata.black.clone()),
             result: Some(document.metadata.result.clone()),
-            library_folder: Some(TTXQ_BACKUP_FOLDER.into()),
+            library_folder: Some(target_folder.into()),
             favorite: None,
             tags: None,
         })
@@ -2240,7 +3485,7 @@ fn import_game(
         .store
         .update_game_library_with_operation(
             game_id,
-            Some(TTXQ_BACKUP_FOLDER),
+            Some(target_folder),
             false,
             &[],
             &library_operation,
@@ -2272,6 +3517,600 @@ pub(crate) fn disconnect_ttxq(
 mod tests {
     use super::*;
     use std::io::Write;
+
+    fn collector_source_between(start_marker: &str, end_marker: &str) -> String {
+        let source = include_str!("ttxq_sync.rs");
+        let start = source
+            .find(start_marker)
+            .expect("collector marker must exist");
+        let end = source[start..]
+            .find(end_marker)
+            .expect("collector end marker must exist")
+            + start;
+        source[start..end].to_owned()
+    }
+
+    fn collector_candidate_guard_source() -> String {
+        collector_source_between(
+            "      const snapshotHasCoordinateCandidate = (snapshot) =>",
+            "      const waitForTarget = async",
+        )
+    }
+
+    fn collector_recovery_source(end_marker: &str) -> String {
+        format!(
+            "{}\n{}",
+            collector_candidate_guard_source(),
+            collector_source_between(
+                "          let raw = { text: '', path: '', type: '', length: 0, score: 0 };",
+                end_marker,
+            )
+        )
+    }
+
+    fn ttxq_record(qipu_id: &str) -> TtxqGameRecordDto {
+        TtxqGameRecordDto {
+            qipu_id: qipu_id.into(),
+            title: String::new(),
+            starting_fen: String::new(),
+            moves: Vec::new(),
+            raw_moves: String::new(),
+            raw_move_path: String::new(),
+            raw_move_type: String::new(),
+            raw_move_length: 0,
+            variations: Vec::new(),
+            branch_data: String::new(),
+            branch_path: String::new(),
+            branch_complete: true,
+            red: String::new(),
+            black: String::new(),
+            event: String::new(),
+            site: String::new(),
+            date: String::new(),
+            result: String::new(),
+            note: String::new(),
+            round: String::new(),
+            played_at: String::new(),
+            duration: String::new(),
+            time_control: String::new(),
+            metadata_probe: String::new(),
+        }
+    }
+
+    fn test_app_model() -> AppModel {
+        AppModel {
+            board: Board::from_fen(STARTING_FEN).unwrap(),
+            starting_fen: STARTING_FEN.into(),
+            tree: xiangqi_manual::ManualTree::new(),
+            current_node: None,
+            game_id: Uuid::new_v4(),
+            device_id: Uuid::new_v4(),
+            lamport: 1,
+            store: LocalStore::open_in_memory().unwrap(),
+            metadata: ManualMetadata::default(),
+            note: String::new(),
+            source_path: None,
+            source_format: None,
+            playable: true,
+        }
+    }
+
+    #[test]
+    fn decodes_ttxq_branch_candidates_into_variations() {
+        let mut record = ttxq_record("self-recorded-branch");
+        record.raw_moves = "26252042".into();
+        record.raw_move_path = "NOTIFY_QIPU_DATA[0].thisObj._boardControl.getQipuMoveStep".into();
+        record.raw_move_type = "array<number>".into();
+        record.moves = resolved_moves(&record, STARTING_FEN).unwrap();
+        record.branch_complete = false;
+        record.branch_data = serde_json::json!({
+            "candidates": [
+                {
+                    "path": "msg.variation1.move",
+                    "raw": "7062",
+                    "valueType": "string",
+                    "afterPly": 1,
+                    "comment": "绿色分支 1"
+                }
+            ]
+        })
+        .to_string();
+
+        let prepared = prepare_import_record(&record, STARTING_FEN).unwrap();
+
+        assert!(prepared.branch_complete);
+        assert_eq!(prepared.variations.len(), 1);
+        assert_eq!(prepared.variations[0].after_ply, 1);
+        assert_eq!(prepared.variations[0].moves, ["h9g7"]);
+        assert_eq!(prepared.variations[0].comment, "绿色分支 1");
+    }
+
+    #[test]
+    fn decodes_ttxq_arrow_route_full_line_into_a_local_variation_tail() {
+        let mut record = ttxq_record("self-recorded-arrow-route");
+        record.raw_moves = "26252042".into();
+        record.raw_move_path = "NOTIFY_QIPU_DATA[0].thisObj._boardControl.getQipuMoveStep".into();
+        record.raw_move_type = "array<number>".into();
+        record.moves = resolved_moves(&record, STARTING_FEN).unwrap();
+        record.branch_complete = false;
+        record.branch_data = serde_json::json!({
+            "routeNumbers": [1, 2],
+            "routesAttempted": [2],
+            "candidates": [
+                {
+                    "path": "route[2].NOTIFY_QIPU_DATA[0].thisObj._boardControl.getQipuMoveStep",
+                    "raw": "26257062",
+                    "valueType": "array<number>",
+                    "afterPly": null,
+                    "comment": "天天象棋分支 2"
+                }
+            ]
+        })
+        .to_string();
+
+        let prepared = prepare_import_record(&record, STARTING_FEN).unwrap();
+
+        assert!(prepared.branch_complete);
+        assert_eq!(prepared.variations.len(), 1);
+        assert_eq!(prepared.variations[0].after_ply, 1);
+        assert_eq!(prepared.variations[0].moves, ["h9g7"]);
+        assert_eq!(prepared.variations[0].comment, "天天象棋分支 2");
+    }
+
+    #[test]
+    fn branch_signal_without_decodable_moves_is_not_importable() {
+        let mut record = ttxq_record("self-recorded-branch-diagnostic");
+        record.raw_moves = "26252042".into();
+        record.raw_move_path = "NOTIFY_QIPU_DATA[0].thisObj._boardControl.getQipuMoveStep".into();
+        record.raw_move_type = "array<number>".into();
+        record.branch_complete = false;
+        record.branch_data = serde_json::json!({
+            "signals": [
+                {
+                    "path": "boardControl[1].getMoveBranchKey",
+                    "value": { "10": "green-branch" }
+                }
+            ],
+            "candidates": []
+        })
+        .to_string();
+
+        let error = prepare_import_record(&record, STARTING_FEN).unwrap_err();
+
+        assert!(error.contains("为避免丢失变招"));
+    }
+
+    #[test]
+    fn route_signal_without_moves_reports_arrow_navigation_diagnostic() {
+        let mut record = ttxq_record("self-recorded-route-diagnostic");
+        record.raw_moves = "26252042".into();
+        record.raw_move_path = "NOTIFY_QIPU_DATA[0].thisObj._boardControl.getQipuMoveStep".into();
+        record.raw_move_type = "array<number>".into();
+        record.branch_complete = false;
+        record.branch_data = serde_json::json!({
+            "routeNumbers": [1, 2, 3, 4],
+            "routesAttempted": [2, 3, 4],
+            "routeFailures": [
+                { "routeNo": 2, "reason": "未取得与主线不同的分支走法" },
+                { "routeNo": 3, "reason": "未取得与主线不同的分支走法" }
+            ],
+            "candidates": []
+        })
+        .to_string();
+
+        let error = prepare_import_record(&record, STARTING_FEN).unwrap_err();
+
+        assert!(error.contains("发现 3 个分支导航"));
+        assert!(error.contains("已尝试路线 2/3/4"));
+    }
+
+    #[test]
+    fn decoded_ttxq_variations_are_written_as_sibling_branches() {
+        let mainline = vec!["c3c4".to_owned(), "c9e7".to_owned()];
+        let variation = TtxqVariationDto {
+            after_ply: 1,
+            moves: vec!["h9g7".into()],
+            comment: "绿色分支 1".into(),
+            children: Vec::new(),
+        };
+        let mut document = ManualDocument::new(STARTING_FEN).unwrap();
+        let mut board = Board::from_fen(STARTING_FEN).unwrap();
+        let mut parents = vec![document.tree.root_id()];
+        for raw_move in &mainline {
+            let mv = Move::from_iccs(raw_move).unwrap();
+            board = board.apply_move(mv).unwrap();
+            let parent = *parents.last().unwrap();
+            parents.push(document.tree.add_move(parent, mv, "").unwrap());
+        }
+
+        insert_ttxq_variation(&mut document, STARTING_FEN, &mainline, &parents, &variation)
+            .unwrap();
+
+        let branches = document.tree.branches(parents[1]).unwrap();
+        assert_eq!(branches.len(), 2);
+        assert!(branches
+            .iter()
+            .any(|node| node.is_mainline && node.mv.to_iccs() == "c9e7"));
+        assert!(branches.iter().any(|node| !node.is_mainline
+            && node.mv.to_iccs() == "h9g7"
+            && node.comment == "绿色分支 1"));
+    }
+
+    #[test]
+    fn reimporting_existing_ttxq_mainline_backfills_new_branch_nodes() {
+        let mut model = test_app_model();
+        let mut original = ttxq_record("self-recorded-existing");
+        original.raw_moves = "26252042".into();
+        original.raw_move_path = "NOTIFY_QIPU_DATA[0].thisObj._boardControl.getQipuMoveStep".into();
+        original.raw_move_type = "array<number>".into();
+        let imported_at = Utc::now().to_rfc3339();
+        let game_id = import_game(
+            &mut model,
+            &original,
+            "sha256:mainline",
+            &imported_at,
+            0,
+            TTXQ_BACKUP_FOLDER,
+        )
+        .unwrap();
+        let previous = model.store.load_game(game_id).unwrap().unwrap();
+        assert_eq!(
+            model
+                .store
+                .load_move_nodes(game_id)
+                .unwrap()
+                .iter()
+                .filter(|node| !node.deleted && !node.is_mainline)
+                .count(),
+            0
+        );
+
+        let mut reread = original.clone();
+        reread.branch_complete = false;
+        reread.branch_data = serde_json::json!({
+            "candidates": [
+                {
+                    "path": "msg.variation1.move",
+                    "raw": "7062",
+                    "valueType": "string",
+                    "afterPly": 1
+                }
+            ]
+        })
+        .to_string();
+        let prepared = prepare_import_record(&reread, STARTING_FEN).unwrap();
+
+        let added = append_ttxq_variations_to_existing(&mut model, &previous, &prepared).unwrap();
+
+        assert_eq!(added, 1);
+        let nodes = model.store.load_move_nodes(game_id).unwrap();
+        assert!(nodes
+            .iter()
+            .any(|node| !node.deleted && !node.is_mainline && node.mv.to_iccs() == "h9g7"));
+        assert!(model
+            .store
+            .pending_operations(50)
+            .unwrap()
+            .iter()
+            .any(|operation| {
+                operation.kind == OperationKind::AddMove && operation.game_id == game_id
+            }));
+    }
+
+    #[test]
+    fn collector_reads_branch_data_from_later_board_controls() {
+        let branch_source = collector_source_between(
+            "      const branchPayload = () => {",
+            "      const liveLoadedId = () => {",
+        );
+        let harness = format!(
+            r#"(async () => {{
+const propertyNames = (value) => {{
+  const names = new Set();
+  let current = value;
+  for (let depth = 0; current && depth < 3; depth += 1) {{
+    Object.getOwnPropertyNames(current).forEach(name => names.add(name));
+    current = Object.getPrototypeOf(current);
+  }}
+  return [...names];
+}};
+const stringifyMoveValue = (value) => {{
+  if (!value || typeof value !== 'object') return {{ status: 'not-object', text: '', length: 0 }};
+  const text = String(value).trim();
+  return text ? {{ status: 'ok', text, length: text.length }} : {{ status: 'empty', text: '', length: 0 }};
+}};
+const safeMoveText = /^[0-9,\s\[\]]+$/;
+const findObjectWithOwnProperty = (root, property) => {{
+  const stack = [root];
+  const seen = new WeakSet();
+  while (stack.length) {{
+    const value = stack.pop();
+    if (!value || typeof value !== 'object' || seen.has(value)) continue;
+    seen.add(value);
+    if (Object.prototype.hasOwnProperty.call(value, property)) return value;
+    for (const child of Object.values(value)) if (child && typeof child === 'object') stack.push(child);
+  }}
+  return null;
+}};
+const firstControl = {{ getMoveBranchKey: {{}} }};
+const secondControl = {{
+  getMoveBranchKey: {{ '10': 'green-branch' }},
+  nested: {{
+    msg: {{
+      branches: [
+        {{ afterPly: 1, move: '7062', comment: '局面分支 1' }},
+      ],
+    }},
+  }},
+}};
+const model = {{}};
+const boardControls = () => [firstControl, secondControl];
+{branch_source}
+const branch = branchPayload();
+const payload = JSON.parse(branch.data);
+if (!payload.candidates || payload.candidates.length !== 1) {{
+  throw new Error(`expected one branch candidate from the second board control, got ${{branch.data}}`);
+}}
+if (payload.candidates[0].raw !== '7062') {{
+  throw new Error(`unexpected branch raw move: ${{payload.candidates[0].raw}}`);
+}}
+if (branch.complete) throw new Error('branch signal with candidates must be decoded by Rust, not marked complete in JS');
+}})().catch(error => {{ console.error(error.message); process.exitCode = 1; }});
+"#
+        );
+        let mut child = std::process::Command::new("node")
+            .arg("-")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("Node.js is required to exercise branch extraction");
+        child
+            .stdin
+            .as_mut()
+            .expect("branch extraction checker stdin")
+            .write_all(harness.as_bytes())
+            .expect("write branch extraction harness to Node.js");
+        let output = child
+            .wait_with_output()
+            .expect("run branch extraction harness");
+        assert!(
+            output.status.success(),
+            "collector missed branch data from a later board control: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn collector_reads_reference_exporter_msg_container_siblings() {
+        let branch_source = collector_source_between(
+            "      const branchPayload = () => {",
+            "      const liveLoadedId = () => {",
+        );
+        let harness = format!(
+            r#"(async () => {{
+const propertyNames = (value) => {{
+  const names = new Set();
+  let current = value;
+  for (let depth = 0; current && depth < 3; depth += 1) {{
+    Object.getOwnPropertyNames(current).forEach(name => names.add(name));
+    current = Object.getPrototypeOf(current);
+  }}
+  return [...names];
+}};
+const stringifyMoveValue = (value) => {{
+  if (!value || typeof value !== 'object') return {{ status: 'not-object', text: '', length: 0 }};
+  const text = String(value).trim();
+  return text ? {{ status: 'ok', text, length: text.length }} : {{ status: 'empty', text: '', length: 0 }};
+}};
+const safeMoveText = /^[0-9,\s\[\]]+$/;
+const findObjectWithOwnProperty = (root, property) => {{
+  const stack = [root];
+  const seen = new WeakSet();
+  while (stack.length) {{
+    const value = stack.pop();
+    if (!value || typeof value !== 'object' || seen.has(value)) continue;
+    seen.add(value);
+    if (Object.prototype.hasOwnProperty.call(value, property)) return value;
+    for (const child of Object.values(value)) if (child && typeof child === 'object') stack.push(child);
+  }}
+  return null;
+}};
+const branchContainer = {{
+  markerRows: [{{ msg: {{ current: 'branch-tab-visible' }} }}],
+  branchRows: [{{ afterPly: 1, move: '7062', comment: '父容器同级分支' }}],
+}};
+const control = {{
+  getMoveBranchKey: {{ '10': 'green-branch' }},
+  holder: {{ branchContainer }},
+}};
+const model = {{}};
+const boardControls = () => [control];
+{branch_source}
+const branch = branchPayload();
+const payload = JSON.parse(branch.data);
+if (!payload.candidates || payload.candidates.length !== 1) {{
+  throw new Error(`expected one branch candidate from msg container siblings, got ${{branch.data}}`);
+}}
+if (payload.candidates[0].raw !== '7062') {{
+  throw new Error(`unexpected branch raw move: ${{payload.candidates[0].raw}}`);
+}}
+}})().catch(error => {{ console.error(error.message); process.exitCode = 1; }});
+"#
+        );
+        let mut child = std::process::Command::new("node")
+            .arg("-")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("Node.js is required to exercise reference exporter branch shape");
+        child
+            .stdin
+            .as_mut()
+            .expect("reference branch checker stdin")
+            .write_all(harness.as_bytes())
+            .expect("write reference branch harness to Node.js");
+        let output = child
+            .wait_with_output()
+            .expect("run reference branch harness");
+        assert!(
+            output.status.success(),
+            "collector missed sibling branch data from the msg container: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn collector_does_not_treat_comment_only_msg_rows_as_missing_branches() {
+        let branch_source = collector_source_between(
+            "      const branchPayload = () => {",
+            "      const liveLoadedId = () => {",
+        );
+        let harness = format!(
+            r#"(async () => {{
+const propertyNames = (value) => {{
+  const names = new Set();
+  let current = value;
+  for (let depth = 0; current && depth < 3; depth += 1) {{
+    Object.getOwnPropertyNames(current).forEach(name => names.add(name));
+    current = Object.getPrototypeOf(current);
+  }}
+  return [...names];
+}};
+const stringifyMoveValue = (value) => {{
+  if (!value || typeof value !== 'object') return {{ status: 'not-object', text: '', length: 0 }};
+  const text = String(value).trim();
+  return text ? {{ status: 'ok', text, length: text.length }} : {{ status: 'empty', text: '', length: 0 }};
+}};
+const safeMoveText = /^[0-9,\s\[\]]+$/;
+const findObjectWithOwnProperty = (root, property) => {{
+  const stack = [root];
+  const seen = new WeakSet();
+  while (stack.length) {{
+    const value = stack.pop();
+    if (!value || typeof value !== 'object' || seen.has(value)) continue;
+    seen.add(value);
+    if (Object.prototype.hasOwnProperty.call(value, property)) return value;
+    for (const child of Object.values(value)) if (child && typeof child === 'object') stack.push(child);
+  }}
+  return null;
+}};
+const control = {{
+  comments: {{
+    '6-1': [
+      {{ msg: '软件推荐', time: '24-09-05 13:24', uUin: 48477741, uname: 'Zero' }},
+    ],
+  }},
+}};
+const model = {{}};
+const boardControls = () => [control];
+{branch_source}
+const branch = branchPayload();
+if (!branch.complete) throw new Error(`comment-only msg rows were treated as missing branches: ${{branch.data}}`);
+if (branch.data) throw new Error(`comment-only msg rows should not emit branch data: ${{branch.data}}`);
+}})().catch(error => {{ console.error(error.message); process.exitCode = 1; }});
+"#
+        );
+        let mut child = std::process::Command::new("node")
+            .arg("-")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("Node.js is required to exercise comment-only msg rows");
+        child
+            .stdin
+            .as_mut()
+            .expect("comment-only msg checker stdin")
+            .write_all(harness.as_bytes())
+            .expect("write comment-only msg harness to Node.js");
+        let output = child
+            .wait_with_output()
+            .expect("run comment-only msg harness");
+        assert!(
+            output.status.success(),
+            "collector misclassified comment-only msg rows as branches: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn collector_reads_visible_arrow_routes_as_branch_candidates() {
+        let route_source = collector_source_between(
+            "      const snapshotHasCoordinateCandidate = (snapshot) =>",
+            "      let current = 0;",
+        );
+        let harness = format!(
+            r#"(async () => {{
+const qipuId = '77610272440';
+let activeRoute = 1;
+const jumps = [];
+let moveOwnerCache = null;
+let moveOwnerSearchAt = 0;
+const model = {{
+  jumpQipuGame: (_qipuId, _step, _flag, _unknown, routeNo) => {{
+    activeRoute = routeNo;
+    jumps.push(routeNo);
+    return {{ routeNo }};
+  }},
+}};
+const delay = async () => undefined;
+const liveLoadedId = () => qipuId;
+const mainRaw = {{
+  text: '26252042',
+  path: 'NOTIFY_QIPU_DATA[0].thisObj._boardControl.getQipuMoveStep',
+  type: 'array<number>',
+  owner: {{ main: true }},
+}};
+const routeTwoRaw = {{
+  text: '26257062',
+  path: 'NOTIFY_QIPU_DATA[0].thisObj._boardControl.getQipuMoveStep',
+  type: 'array<number>',
+  owner: {{ route: 2 }},
+}};
+const directNotifyMove = () => activeRoute === 2 ? routeTwoRaw : mainRaw;
+const directModelMove = () => null;
+const readRawMoves = () => directNotifyMove();
+{route_source}
+const branch = await readBranchRoutes(qipuId, mainRaw, {{ data: '', path: '', complete: true }});
+if (branch.complete) throw new Error('route branch candidates must be decoded by Rust, not marked complete in JS');
+const payload = JSON.parse(branch.data);
+if (!payload.candidates || payload.candidates.length !== 1) {{
+  throw new Error(`expected one active route candidate, got ${{branch.data}}`);
+}}
+if (payload.candidates[0].raw !== routeTwoRaw.text) {{
+  throw new Error(`unexpected route raw: ${{payload.candidates[0].raw}}`);
+}}
+if (!payload.candidates[0].path.startsWith('route[2].')) {{
+  throw new Error(`route candidate did not preserve its route number: ${{payload.candidates[0].path}}`);
+}}
+if (jumps.join(',') !== '2,3,4,1') {{
+  throw new Error(`unexpected route probing order: ${{jumps.join(',')}}`);
+}}
+}})().catch(error => {{ console.error(error.message); process.exitCode = 1; }});
+"#
+        );
+        let mut child = std::process::Command::new("node")
+            .arg("-")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("Node.js is required to exercise active route branch extraction");
+        child
+            .stdin
+            .as_mut()
+            .expect("active route checker stdin")
+            .write_all(harness.as_bytes())
+            .expect("write active route harness to Node.js");
+        let output = child.wait_with_output().expect("run active route harness");
+        assert!(
+            output.status.success(),
+            "collector did not turn QQ arrow routes into branch candidates: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 
     #[test]
     fn reading_attempt_without_bridge_acknowledgement_times_out() {
@@ -2353,7 +4192,7 @@ mod tests {
     fn collector_preserves_recent_list_top_to_bottom_order() {
         let source = include_str!("ttxq_sync.rs");
         let traversal_start = source
-            .find("      const found = new Map();")
+            .find("      const qipuListRoots = () => {")
             .expect("recent-list traversal must exist");
         let traversal_end = source[traversal_start..]
             .find("      if (!found.size) {")
@@ -2363,16 +4202,16 @@ mod tests {
             source[traversal_start..traversal_end].replace("__TTXQ_ATTEMPT_ID__", "1");
         let harness = format!(
             r#"(async () => {{
-const model = {{ _qipuRecentView: {{ records: [
-  {{ qipuId: 'top', title: '列表顶部' }},
-  {{ qipuId: 'middle', title: '列表中间' }},
-  {{ qipuId: 'bottom', title: '列表底部' }},
-] }} }};
+	const model = {{ _qipuRecentView: {{ records: [
+	  {{ qipuId: '77000000001', title: '列表顶部' }},
+	  {{ qipuId: '77000000002', title: '列表中间' }},
+	  {{ qipuId: '77000000003', title: '列表底部' }},
+	] }} }};
 const invoke = async () => undefined;
 const delay = async () => undefined;
-{traversal_source}
-const order = [...found.keys()].join(',');
-if (order !== 'top,middle,bottom') throw new Error(`collector order was ${{order}}`);
+	{traversal_source}
+	const order = [...found.keys()].join(',');
+	if (order !== '77000000001,77000000002,77000000003') throw new Error(`collector order was ${{order}}`);
 }})().catch(error => {{ console.error(error.message); process.exitCode = 1; }});
 "#
         );
@@ -2395,6 +4234,58 @@ if (order !== 'top,middle,bottom') throw new Error(`collector order was ${{order
         assert!(
             output.status.success(),
             "collector reversed the visible recent-list order: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn collector_discovers_favourite_and_created_qipu_list_roots() {
+        let source = include_str!("ttxq_sync.rs");
+        let traversal_start = source
+            .find("      const qipuListRoots = () => {")
+            .expect("recent-list traversal must exist");
+        let traversal_end = source[traversal_start..]
+            .find("      if (!found.size) {")
+            .expect("recent-list traversal must terminate")
+            + traversal_start;
+        let traversal_source =
+            source[traversal_start..traversal_end].replace("__TTXQ_ATTEMPT_ID__", "1");
+        let harness = format!(
+            r#"(async () => {{
+	const model = {{
+	  _qipuRecentView: {{ records: [{{ qipuId: '77000000011' }}] }},
+	  _qipuWallDataList: {{ favourites: [{{ iQipuId: '77000000012', extDataBody: {{ sTitle: '收藏布局' }} }}] }},
+	  _qipuCreateDataList: {{ created: [{{ lQipuId: '77000000013', extDataBody: {{ sTitle: '自录布局' }} }}] }},
+}};
+const invoke = async () => undefined;
+const delay = async () => undefined;
+	{traversal_source}
+	const ids = [...found.keys()];
+	for (const id of ['77000000011', '77000000012', '77000000013']) {{
+	  if (!ids.includes(id)) throw new Error(`collector missed ${{id}} from mixed qipu roots: ${{ids.join(',')}}`);
+	}}
+}})().catch(error => {{ console.error(error.message); process.exitCode = 1; }});
+"#
+        );
+        let mut child = std::process::Command::new("node")
+            .arg("-")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("Node.js is required to exercise mixed qipu list roots");
+        child
+            .stdin
+            .as_mut()
+            .expect("mixed qipu roots checker stdin")
+            .write_all(harness.as_bytes())
+            .expect("write mixed qipu roots harness to Node.js");
+        let output = child
+            .wait_with_output()
+            .expect("run mixed qipu roots harness");
+        assert!(
+            output.status.success(),
+            "collector missed favourite or created list roots: {}",
             String::from_utf8_lossy(&output.stderr)
         );
     }
@@ -2584,16 +4475,68 @@ if (moveCandidate(animation, 'source[0].moveFailEffect')) throw new Error('anima
     }
 
     #[test]
-    fn collector_accepts_same_moves_from_a_new_board_controller() {
+    fn collector_ignores_placeholder_and_non_visible_qipu_cache_ids() {
         let source = include_str!("ttxq_sync.rs");
-        let wait_start = source
-            .find("      const waitForTarget = async")
-            .expect("target wait helper must exist");
-        let wait_end = source[wait_start..]
-            .find("      let current = 0;")
-            .expect("target wait helper must terminate")
-            + wait_start;
-        let wait_source = &source[wait_start..wait_end];
+        let traversal_start = source
+            .find("      const qipuListRoots = () => {")
+            .expect("qipu-list root selection must exist");
+        let traversal_end = source[traversal_start..]
+            .find("      if (!found.size) {")
+            .expect("recent-list traversal must terminate")
+            + traversal_start;
+        let traversal_source =
+            source[traversal_start..traversal_end].replace("__TTXQ_ATTEMPT_ID__", "1");
+        let harness = format!(
+            r#"(async () => {{
+	const realRows = Array.from({{ length: 9 }}, (_, index) => ({{
+	  qipuId: String(77000000100 + index),
+	  title: `目录棋谱 ${{index + 1}}`,
+	}}));
+	const model = {{
+	  _qipuWallDataList: {{ rows: realRows, placeholder: {{ qipuId: 0, title: '占位' }} }},
+	  _dailyQipuIdRsp: [{{ lQiPuID: 77999999999, sTitle: '每日推荐，不属于当前目录' }}],
+	  _qipuLiveWallDataList: [{{ qipuId: 77888888888, sTitle: '直播缓存，不属于当前目录' }}],
+	}};
+	const invoke = async () => undefined;
+	const delay = async () => undefined;
+	{traversal_source}
+	const ids = [...found.keys()];
+	if (ids.length !== 9) throw new Error(`collector counted ${{ids.length}} rows: ${{ids.join(',')}}`);
+	if (ids.includes('0') || ids.includes('77999999999') || ids.includes('77888888888')) {{
+	  throw new Error(`collector included placeholder/cache ids: ${{ids.join(',')}}`);
+	}}
+	}})().catch(error => {{ console.error(error.message); process.exitCode = 1; }});
+	"#
+        );
+        let mut child = std::process::Command::new("node")
+            .arg("-")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("Node.js is required to exercise phantom qipu filtering");
+        child
+            .stdin
+            .as_mut()
+            .expect("phantom qipu checker stdin")
+            .write_all(harness.as_bytes())
+            .expect("write phantom qipu harness to Node.js");
+        let output = child
+            .wait_with_output()
+            .expect("run phantom qipu traversal harness");
+        assert!(
+            output.status.success(),
+            "collector counted a placeholder or non-visible cache as a qipu: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn collector_accepts_same_moves_from_a_new_board_controller() {
+        let wait_source = collector_source_between(
+            "      const snapshotHasCoordinateCandidate = (snapshot) =>",
+            "      let current = 0;",
+        );
         let harness = format!(
             r#"(async () => {{
 let switched = false;
@@ -2635,15 +4578,7 @@ if (candidate.owner !== currentOwner) throw new Error('new board controller was 
 
     #[test]
     fn collector_recovers_a_move_array_that_settles_at_the_wait_boundary() {
-        let source = include_str!("ttxq_sync.rs");
-        let recovery_start = source
-            .find("          let raw = { text: '', path: '', type: '', length: 0, score: 0 };")
-            .expect("per-game move loading must exist");
-        let recovery_end = source[recovery_start..]
-            .find("          const moves =")
-            .expect("per-game move loading must terminate")
-            + recovery_start;
-        let recovery_source = &source[recovery_start..recovery_end];
+        let recovery_source = collector_recovery_source("          const moves =");
         let harness = format!(
             r#"(async () => {{
 let ready = false;
@@ -2689,15 +4624,7 @@ if (raw.text !== '2625') throw new Error('settled move array was discarded after
 
     #[test]
     fn collector_recovers_a_move_array_that_settles_during_snapshot() {
-        let source = include_str!("ttxq_sync.rs");
-        let recovery_start = source
-            .find("          let raw = { text: '', path: '', type: '', length: 0, score: 0 };")
-            .expect("per-game move loading must exist");
-        let recovery_end = source[recovery_start..]
-            .find("          const branch =")
-            .expect("per-game recovery must terminate")
-            + recovery_start;
-        let recovery_source = &source[recovery_start..recovery_end];
+        let recovery_source = collector_recovery_source("          const passiveBranch =");
         let harness = format!(
             r#"(async () => {{
 let ready = false;
@@ -2745,16 +4672,55 @@ if (raw.path === 'bridge-snapshot' || raw.text !== '2625') {{
     }
 
     #[test]
+    fn collector_accepts_same_signature_after_coordinate_snapshot() {
+        let recovery_source = collector_recovery_source("          const passiveBranch =");
+        let harness = format!(
+            r#"(async () => {{
+const current = 9;
+const qipuId = '77047568900';
+const info = {{ qipuId }};
+const model = {{ jumpQipuGame: () => ({{}}) }};
+const rawMove = '77471242192710220919725289877062875750417967807057536364464500101713424567464547';
+const previousOwner = {{}};
+const directNotifyMove = () => ({{ text: rawMove, path: 'NOTIFY_QIPU_DATA[0].thisObj._boardControl.getQipuMoveStep', type: 'array<number>', length: 196, score: 23560, owner: previousOwner }});
+const directModelMove = () => null;
+const liveLoadedId = () => '';
+const readRawMoves = () => directNotifyMove();
+const waitForTarget = async () => {{ throw new Error('棋谱加载超时'); }};
+const bridgeSnapshot = () => 'NOTIFY_QIPU_DATA:found · boardControl:object · getQipuMoveStep:array(196) · elements:number · toString:391 chars · coordinate-candidate';
+{recovery_source}
+if (raw.path === 'bridge-snapshot' || raw.text !== rawMove) {{
+  throw new Error('same-signature coordinate candidate was discarded as a missing diagnostic');
+}}
+}})().catch(error => {{ console.error(error.message); process.exitCode = 1; }});
+"#
+        );
+        let mut child = std::process::Command::new("node")
+            .arg("-")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("Node.js is required to exercise same-signature recovery");
+        child
+            .stdin
+            .as_mut()
+            .expect("same-signature checker stdin")
+            .write_all(harness.as_bytes())
+            .expect("write same-signature harness to Node.js");
+        let output = child
+            .wait_with_output()
+            .expect("run same-signature harness");
+        assert!(
+            output.status.success(),
+            "collector discarded a same-signature coordinate snapshot: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
     fn collector_rejects_unchanged_previous_game_at_the_wait_boundary() {
-        let source = include_str!("ttxq_sync.rs");
-        let recovery_start = source
-            .find("          let raw = { text: '', path: '', type: '', length: 0, score: 0 };")
-            .expect("per-game move loading must exist");
-        let recovery_end = source[recovery_start..]
-            .find("          const moves =")
-            .expect("per-game move loading must terminate")
-            + recovery_start;
-        let recovery_source = &source[recovery_start..recovery_end];
+        let recovery_source = collector_recovery_source("          const moves =");
         let harness = format!(
             r#"(async () => {{
 const current = 16;
@@ -3020,6 +4986,42 @@ if (raw.path !== 'bridge-snapshot') throw new Error('unchanged previous-game mov
     }
 
     #[test]
+    fn title_metadata_treats_self_recorded_card_title_as_title_not_player() {
+        let mut game = TtxqGameRecordDto {
+            qipu_id: "self-recorded".into(),
+            title: "世界象棋选拔赛第五轮".into(),
+            starting_fen: String::new(),
+            moves: vec!["h2e2".into(); 34],
+            raw_moves: String::new(),
+            raw_move_path: String::new(),
+            raw_move_type: String::new(),
+            raw_move_length: 0,
+            variations: vec![],
+            branch_data: String::new(),
+            branch_path: String::new(),
+            branch_complete: true,
+            red: "世界象棋选拔赛第五轮".into(),
+            black: String::new(),
+            event: "自建棋谱".into(),
+            site: "天天象棋".into(),
+            date: String::new(),
+            result: String::new(),
+            note: String::new(),
+            round: "17".into(),
+            played_at: "2026-08-26 17:13".into(),
+            duration: String::new(),
+            time_control: String::new(),
+            metadata_probe: String::new(),
+        };
+
+        enrich_title_metadata(&mut game);
+
+        assert_eq!(ttxq_title(&game), "世界象棋选拔赛第五轮");
+        assert!(game.red.is_empty());
+        assert_eq!(game.round, "17 回合");
+    }
+
+    #[test]
     fn source_note_preserves_ttxq_game_timing_and_round() {
         let record = TtxqGameRecordDto {
             qipu_id: "qipu-1".into(),
@@ -3211,6 +5213,8 @@ if (raw.path !== 'bridge-snapshot') throw new Error('unchanged previous-game mov
         let bridge = &source[bridge_start..bridge_end];
         for marker in [
             "model && model._qipuRecentView",
+            "model && model._qipuWallDataList",
+            "model && model._qipuCreateDataList",
             "const findObjectWithOwnProperty",
             "findObjectWithOwnProperty(window.fdk, 'NOTIFY_QIPU_DATA', 100_000)",
             "limit = 100_000",
@@ -3240,12 +5244,15 @@ if (raw.path !== 'bridge-snapshot') throw new Error('unchanged previous-game mov
             "const displayObjectDetailFields = () =>",
             "const semanticDetailFields = () =>",
             "const metadataProbe = () =>",
+            "sTitle",
+            "sRedName",
+            "iRound",
             "metadataProbe: visible.title ? '' : metadataProbe()",
             "(?:先胜|先负|先和|后胜|后负|后和)",
             "window.fdk]",
             "visited < 40_000",
             "const panelStart = pageText.indexOf('棋谱属性');",
-            "title: firstUsableTitle('title'",
+            "title: firstUsableTitle('sTitle'",
             ") || visible.title,",
             "const rawResult = firstText('result'",
             ") || visible.result;",

@@ -223,6 +223,167 @@ describe("ReviewWorkspace", () => {
     expect(onDeleteGames).toHaveBeenLastCalledWith(["ttxq-1"]);
   });
 
+  it("creates a root folder from all-local and a child folder from the selected folder", async () => {
+    const onRefreshLibrary = vi.fn().mockResolvedValue(undefined);
+    vi.spyOn(chessPlatform, "createLibraryFolder").mockResolvedValue(undefined);
+    renderWorkspace({ onRefreshLibrary });
+    await userEvent.click(screen.getByRole("button", { name: "棋谱库" }));
+
+    await userEvent.click(screen.getByRole("button", { name: /全部本地/ }));
+    await userEvent.click(screen.getByRole("button", { name: "新建目录" }));
+    await userEvent.type(screen.getByLabelText("目录名"), "开局研究");
+    await userEvent.click(screen.getByRole("button", { name: "创建" }));
+    expect(chessPlatform.createLibraryFolder).toHaveBeenCalledWith("开局研究");
+    expect(onRefreshLibrary).toHaveBeenCalledOnce();
+    expect(screen.getByRole("status").textContent).toContain("已创建目录：开局研究");
+
+    await userEvent.click(screen.getByRole("button", { name: /比赛复盘/ }));
+    await userEvent.click(screen.getByRole("button", { name: "新建子目录" }));
+    expect((screen.getByLabelText("父目录") as HTMLSelectElement).value).toBe("比赛复盘");
+    await userEvent.type(screen.getByLabelText("目录名"), "第1轮");
+    await userEvent.click(screen.getByRole("button", { name: "创建" }));
+    expect(chessPlatform.createLibraryFolder).toHaveBeenLastCalledWith("比赛复盘/第1轮");
+  });
+
+  it("creates TianTian subfolders from the TianTian filter", async () => {
+    vi.spyOn(chessPlatform, "createLibraryFolder").mockResolvedValue(undefined);
+    renderWorkspace({ onRefreshLibrary: vi.fn().mockResolvedValue(undefined) });
+    await userEvent.click(screen.getByRole("button", { name: "棋谱库" }));
+
+    await userEvent.click(screen.getByRole("button", { name: "新建子目录" }));
+    expect((screen.getByLabelText("父目录") as HTMLSelectElement).value).toBe("天天象棋备份");
+    await userEvent.type(screen.getByLabelText("目录名"), "第3轮");
+    await userEvent.click(screen.getByRole("button", { name: "创建" }));
+    expect(chessPlatform.createLibraryFolder).toHaveBeenCalledWith("天天象棋备份/第3轮");
+  });
+
+  it("keeps the create-folder parent synced with the selected folder", async () => {
+    vi.spyOn(chessPlatform, "createLibraryFolder").mockResolvedValue(undefined);
+    renderWorkspace({
+      onRefreshLibrary: vi.fn().mockResolvedValue(undefined),
+      libraryFolders: [
+        ...folders,
+        { name: "陈诗涵棋谱", system: false, gameCount: 0 },
+      ],
+    });
+    await userEvent.click(screen.getByRole("button", { name: "棋谱库" }));
+
+    await userEvent.click(screen.getByRole("button", { name: "新建子目录" }));
+    expect(screen.getByText("当前父目录：天天象棋")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: /陈诗涵棋谱/ }));
+    expect((screen.getByLabelText("父目录") as HTMLSelectElement).value).toBe("陈诗涵棋谱");
+    expect(screen.getByText("当前父目录：陈诗涵棋谱")).toBeTruthy();
+    await userEvent.type(screen.getByLabelText("目录名"), "第1轮");
+    await userEvent.click(screen.getByRole("button", { name: "创建" }));
+    expect(chessPlatform.createLibraryFolder).toHaveBeenCalledWith("陈诗涵棋谱/第1轮");
+  });
+
+  it("renames, moves, and deletes selected library folders from the review library", async () => {
+    const onRefreshLibrary = vi.fn().mockResolvedValue(undefined);
+    vi.spyOn(chessPlatform, "renameLibraryFolder").mockResolvedValue(undefined);
+    vi.spyOn(chessPlatform, "deleteLibraryFolder").mockResolvedValue(undefined);
+    renderWorkspace({
+      onRefreshLibrary,
+      libraryFolders: [
+        ...folders,
+        { name: "陈诗涵", system: false, gameCount: 0 },
+        { name: "开局研究", system: false, gameCount: 0 },
+      ],
+    });
+    await userEvent.click(screen.getByRole("button", { name: "棋谱库" }));
+
+    await userEvent.click(screen.getByRole("button", { name: /陈诗涵/ }));
+    await userEvent.click(screen.getByRole("button", { name: "目录操作 陈诗涵" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "重命名目录 陈诗涵" }));
+    await userEvent.clear(screen.getByLabelText("目录名"));
+    await userEvent.type(screen.getByLabelText("目录名"), "陈诗涵实战");
+    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+    expect(chessPlatform.renameLibraryFolder).toHaveBeenCalledWith("陈诗涵", "陈诗涵实战");
+    expect(screen.getByRole("status").textContent).toContain("已重命名目录：陈诗涵实战");
+
+    await userEvent.click(screen.getByRole("button", { name: /陈诗涵/ }));
+    await userEvent.click(screen.getByRole("button", { name: "目录操作 陈诗涵" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "移动目录 陈诗涵" }));
+    await userEvent.selectOptions(screen.getByLabelText("移动到"), "开局研究");
+    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+    expect(chessPlatform.renameLibraryFolder).toHaveBeenLastCalledWith("陈诗涵", "开局研究/陈诗涵");
+
+    await userEvent.click(screen.getByRole("button", { name: /陈诗涵/ }));
+    await userEvent.click(screen.getByRole("button", { name: "目录操作 陈诗涵" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "删除目录 陈诗涵" }));
+    expect(screen.getByText(/里面的棋谱不会删除/)).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "确认删除" }));
+    expect(chessPlatform.deleteLibraryFolder).toHaveBeenCalledWith("陈诗涵");
+    expect(onRefreshLibrary).toHaveBeenCalledTimes(3);
+  });
+
+  it("renders TianTian child folders as an expandable tree and moves a folder under TianTian Xiangqi", async () => {
+    const onRefreshLibrary = vi.fn().mockResolvedValue(undefined);
+    vi.spyOn(chessPlatform, "renameLibraryFolder").mockResolvedValue(undefined);
+    renderWorkspace({
+      onRefreshLibrary,
+      libraryFolders: [
+        ...folders,
+        { name: "陈诗涵棋谱", system: false, gameCount: 0 },
+        { name: "天天象棋备份/陈诗涵棋谱", system: false, gameCount: 0 },
+      ],
+    });
+    await userEvent.click(screen.getByRole("button", { name: "棋谱库" }));
+    expect(screen.getAllByRole("button", { name: /^陈诗涵棋谱/ })).toHaveLength(2);
+    await userEvent.click(screen.getByRole("button", { name: "折叠目录 天天象棋" }));
+    expect(screen.getAllByRole("button", { name: /^陈诗涵棋谱/ })).toHaveLength(1);
+    await userEvent.click(screen.getByRole("button", { name: "展开目录 天天象棋" }));
+    expect(screen.getAllByRole("button", { name: /^陈诗涵棋谱/ })).toHaveLength(2);
+
+    await userEvent.click(screen.getAllByRole("button", { name: /^陈诗涵棋谱/ })[1]);
+    await userEvent.click(screen.getByRole("button", { name: "目录操作 陈诗涵棋谱" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "移动目录 陈诗涵棋谱" }));
+    await userEvent.selectOptions(screen.getByLabelText("移动到"), "天天象棋备份");
+    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+    expect(chessPlatform.renameLibraryFolder).toHaveBeenCalledWith("陈诗涵棋谱", "天天象棋备份/陈诗涵棋谱");
+    expect(onRefreshLibrary).toHaveBeenCalledOnce();
+    expect(screen.getByRole("status").textContent).toContain("已移动目录：天天象棋/陈诗涵棋谱");
+  });
+
+  it("explains when a folder is already under the selected move target", async () => {
+    vi.spyOn(chessPlatform, "renameLibraryFolder").mockResolvedValue(undefined);
+    renderWorkspace({
+      libraryFolders: [
+        ...folders,
+        { name: "天天象棋备份/陈诗涵棋谱", system: false, gameCount: 0 },
+      ],
+    });
+    await userEvent.click(screen.getByRole("button", { name: "棋谱库" }));
+    await userEvent.click(screen.getByRole("button", { name: /^陈诗涵棋谱/ }));
+    await userEvent.click(screen.getByRole("button", { name: "目录操作 天天象棋/陈诗涵棋谱" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "移动目录 天天象棋/陈诗涵棋谱" }));
+    await userEvent.selectOptions(screen.getByLabelText("移动到"), "天天象棋备份");
+    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+    expect(chessPlatform.renameLibraryFolder).not.toHaveBeenCalled();
+    expect(screen.getByRole("status").textContent).toContain("目录已在“天天象棋”下，无需移动");
+  });
+
+  it("paginates local library games without changing the active filter selection", async () => {
+    const manyTtxqGames = Array.from({ length: 25 }, (_, index) => ({
+      ...libraryGames[0],
+      id: `ttxq-${index + 1}`,
+      title: `天天对局 ${index + 1}`,
+      sourceOrder: index,
+    }));
+    renderWorkspace({ games: manyTtxqGames });
+    await userEvent.click(screen.getByRole("button", { name: "棋谱库" }));
+
+    expect(screen.getByLabelText("棋谱列表").querySelectorAll(".review-library-game")).toHaveLength(20);
+    expect(screen.getByText("1-20 / 25 盘")).toBeTruthy();
+    expect(screen.getByText("天天对局 1")).toBeTruthy();
+    expect(screen.queryByText("天天对局 21")).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "下一页" }));
+    expect(screen.getByText("21-25 / 25 盘")).toBeTruthy();
+    expect(screen.getByText("天天对局 21")).toBeTruthy();
+    expect(screen.queryByText("天天对局 1")).toBeNull();
+  });
+
   it("allows the currently opened local game to be deleted after confirmation", async () => {
     const onDeleteGames = vi.fn().mockResolvedValue(undefined);
     renderWorkspace({ onDeleteGames });

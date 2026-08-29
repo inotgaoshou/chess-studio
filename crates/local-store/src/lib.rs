@@ -1913,10 +1913,7 @@ impl LocalStore {
     }
 
     pub fn create_library_folder(&mut self, name: &str) -> Result<(), StoreError> {
-        self.connection.execute(
-            "INSERT OR IGNORE INTO library_folders (name, system) VALUES (?1, 0)",
-            [name],
-        )?;
+        insert_library_folder_path(&self.connection, name, false)?;
         Ok(())
     }
 
@@ -1936,9 +1933,34 @@ impl LocalStore {
             "UPDATE library_folders SET name=?1 WHERE name=?2",
             params![next, previous],
         )?;
+        let descendant_prefix = format!("{previous}/");
+        let descendants = {
+            let mut statement = transaction.prepare(
+                "SELECT name FROM library_folders WHERE name LIKE ?1 ORDER BY name",
+            )?;
+            statement
+                .query_map([format!("{descendant_prefix}%")], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        for name in descendants {
+            let renamed = format!("{next}/{}", &name[descendant_prefix.len()..]);
+            transaction.execute(
+                "UPDATE library_folders SET name=?1 WHERE name=?2",
+                params![renamed, name],
+            )?;
+        }
         transaction.execute(
             "UPDATE games SET library_folder=?1 WHERE library_folder=?2",
             params![next, previous],
+        )?;
+        transaction.execute(
+            "UPDATE games SET library_folder=?1 || substr(library_folder, ?2)
+             WHERE library_folder LIKE ?3",
+            params![
+                next,
+                previous.chars().count() + 1,
+                format!("{descendant_prefix}%")
+            ],
         )?;
         transaction.commit()?;
         Ok(())
@@ -1960,7 +1982,15 @@ impl LocalStore {
             "UPDATE games SET library_folder=NULL WHERE library_folder=?1",
             [name],
         )?;
+        transaction.execute(
+            "UPDATE games SET library_folder=NULL WHERE library_folder LIKE ?1",
+            [format!("{name}/%")],
+        )?;
         transaction.execute("DELETE FROM library_folders WHERE name=?1", [name])?;
+        transaction.execute(
+            "DELETE FROM library_folders WHERE name LIKE ?1",
+            [format!("{name}/%")],
+        )?;
         transaction.commit()?;
         Ok(())
     }
@@ -1975,10 +2005,7 @@ impl LocalStore {
     ) -> Result<(), StoreError> {
         let transaction = self.connection.transaction()?;
         if let Some(folder) = folder {
-            transaction.execute(
-                "INSERT OR IGNORE INTO library_folders (name, system) VALUES (?1, 0)",
-                [folder],
-            )?;
+            insert_library_folder_path(&transaction, folder, false)?;
         }
         transaction.execute(
             "UPDATE games SET library_folder=?1, favorite=?2, tags_json=?3, updated_at=?4 WHERE id=?5",
@@ -3516,6 +3543,35 @@ fn parse_local_game(
     })
 }
 
+fn folder_path_prefixes(folder: &str) -> Vec<String> {
+    let mut prefixes = Vec::new();
+    let mut current = String::new();
+    for segment in folder.split('/').map(str::trim).filter(|value| !value.is_empty()) {
+        if !current.is_empty() {
+            current.push('/');
+        }
+        current.push_str(segment);
+        prefixes.push(current.clone());
+    }
+    prefixes
+}
+
+fn insert_library_folder_path(
+    connection: &Connection,
+    folder: &str,
+    system: bool,
+) -> Result<(), StoreError> {
+    let prefixes = folder_path_prefixes(folder);
+    for (index, prefix) in prefixes.iter().enumerate() {
+        let folder_system = system && index + 1 == prefixes.len();
+        connection.execute(
+            "INSERT OR IGNORE INTO library_folders (name, system) VALUES (?1, ?2)",
+            params![prefix, folder_system as i32],
+        )?;
+    }
+    Ok(())
+}
+
 fn project_operation(connection: &Connection, operation: &Operation) -> Result<(), StoreError> {
     match operation.kind {
         OperationKind::CreateGame => {
@@ -3607,10 +3663,7 @@ fn project_operation(connection: &Connection, operation: &Operation) -> Result<(
                 .filter(|folder| !folder.is_empty());
             let replace_library_folder = payload.library_folder.is_some();
             if let Some(folder) = library_folder {
-                connection.execute(
-                    "INSERT OR IGNORE INTO library_folders (name, system) VALUES (?1, 0)",
-                    [folder],
-                )?;
+                insert_library_folder_path(connection, folder, false)?;
             }
             let metadata_json =
                 metadata_json_with_payload(connection, operation.game_id, &payload)?;
@@ -4019,6 +4072,58 @@ mod tests {
         );
         assert!(store.rename_library_folder("比赛复盘", "其他").is_err());
         assert!(store.delete_library_folder("不存在").is_err());
+    }
+
+    #[test]
+    fn nested_library_folders_are_created_and_updated_as_paths() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let game_id = Uuid::new_v4();
+        store
+            .save_game_with_operation(
+                game_id,
+                "目录棋谱",
+                "fen",
+                Uuid::new_v4(),
+                &operation(game_id),
+            )
+            .unwrap();
+        store.create_library_folder("天天象棋备份/备战世青赛/第1轮").unwrap();
+        let folder_names = store
+            .library_folders()
+            .unwrap()
+            .into_iter()
+            .map(|folder| folder.name)
+            .collect::<Vec<_>>();
+        assert!(folder_names.contains(&"天天象棋备份".into()));
+        assert!(folder_names.contains(&"天天象棋备份/备战世青赛".into()));
+        assert!(folder_names.contains(&"天天象棋备份/备战世青赛/第1轮".into()));
+
+        let mut update = operation(game_id);
+        update.kind = OperationKind::UpdateGameMetadata;
+        store
+            .update_game_library_with_operation(
+                game_id,
+                Some("天天象棋备份/备战世青赛/第1轮"),
+                false,
+                &[],
+                &update,
+            )
+            .unwrap();
+        store.rename_library_folder("天天象棋备份/备战世青赛", "天天象棋备份/暑假赛").unwrap();
+        assert_eq!(
+            store
+                .load_game(game_id)
+                .unwrap()
+                .unwrap()
+                .library_folder
+                .as_deref(),
+            Some("天天象棋备份/暑假赛/第1轮")
+        );
+        store.delete_library_folder("天天象棋备份/暑假赛").unwrap();
+        assert_eq!(
+            store.load_game(game_id).unwrap().unwrap().library_folder,
+            None
+        );
     }
 
     #[test]

@@ -331,7 +331,7 @@ class DesktopPlatform implements ChessPlatform {
   clearTtxqDiagnosticSamples() { return invoke<void>("clear_ttxq_diagnostic_samples"); }
   startTtxqAuthorization() { return invoke<void>("start_ttxq_authorization"); }
   collectTtxqHistory() { return invoke<void>("collect_ttxq_h5_history"); }
-  importTtxqHistory() { return invoke<TtxqSyncProgress>("import_ttxq_history"); }
+  importTtxqHistory(targetFolder?: string) { return invoke<TtxqSyncProgress>("import_ttxq_history", { targetFolder: targetFolder ?? null }); }
   disconnectTtxq() { return invoke<void>("disconnect_ttxq"); }
   newGame(fen: string, title?: string, note?: string) { return invoke<Partial<BoardState>>("new_game", { fen, title, note }); }
   async openDocument() {

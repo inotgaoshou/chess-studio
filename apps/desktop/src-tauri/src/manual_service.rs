@@ -149,6 +149,35 @@ pub(crate) fn sanitize_mirror_segment(value: &str, fallback: &str) -> String {
     }
 }
 
+pub(crate) fn normalize_library_folder_path(value: &str) -> Result<String, String> {
+    let mut parts = Vec::new();
+    for part in value
+        .replace('\\', "/")
+        .split('/')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+    {
+        if matches!(part, "." | "..") || part.contains('%') {
+            return Err("目录名不能包含 .、.. 或 %".into());
+        }
+        let cleaned = part
+            .chars()
+            .filter(|character| !character.is_control())
+            .collect::<String>();
+        if cleaned.is_empty() {
+            continue;
+        }
+        parts.push(cleaned.chars().take(48).collect::<String>());
+    }
+    if parts.is_empty() {
+        return Err("文件夹名称不能为空".into());
+    }
+    if parts.len() > 6 {
+        return Err("目录最多支持 6 层".into());
+    }
+    Ok(parts.join("/"))
+}
+
 pub(crate) fn mirror_date(metadata: &ManualMetadata) -> String {
     let date = metadata.date.trim();
     if date.len() >= 4 && date.as_bytes()[..4].iter().all(u8::is_ascii_digit) {
@@ -179,12 +208,24 @@ pub(crate) fn mirror_opponent_and_side(metadata: &ManualMetadata) -> (String, St
     }
 }
 
-pub(crate) fn game_mirror_target(root: &Path, game_id: Uuid, metadata: &ManualMetadata) -> PathBuf {
+pub(crate) fn game_mirror_target_in_folder(
+    root: &Path,
+    game_id: Uuid,
+    metadata: &ManualMetadata,
+    folder: Option<&str>,
+) -> PathBuf {
     let event = sanitize_mirror_segment(&metadata.event, "未命名赛事");
     let (opponent, side) = mirror_opponent_and_side(metadata);
     let base = format!("{}_{}_{}_{}", mirror_date(metadata), event, opponent, side);
     let _ = game_id;
-    root.join(mirror_year(metadata))
+    let mut target = root.to_path_buf();
+    if let Some(folder) = folder {
+        for segment in folder.split('/').filter(|segment| !segment.trim().is_empty()) {
+            target = target.join(sanitize_mirror_segment(segment, "未命名目录"));
+        }
+    }
+    target
+        .join(mirror_year(metadata))
         .join(&event)
         .join(format!("{base}.pgn"))
 }
@@ -265,7 +306,12 @@ pub(crate) fn sync_current_game_mirror(
         return mirror_status(model, "pending", None, None);
     }
     let root = configured_game_mirror_root(&preferences);
-    let mut target = game_mirror_target(&root, model.game_id, &model.metadata);
+    let mut target = game_mirror_target_in_folder(
+        &root,
+        model.game_id,
+        &model.metadata,
+        current_game.library_folder.as_deref(),
+    );
     let old = model
         .store
         .game_mirror_status(model.game_id)
@@ -394,10 +440,11 @@ pub(crate) fn rebuild_game_mirrors(
                     tree,
                     warnings: Vec::new(),
                 };
-                let mut target = game_mirror_target(
+                let mut target = game_mirror_target_in_folder(
                     &configured_game_mirror_root(&preferences),
                     game.id,
                     &metadata,
+                    game.library_folder.as_deref(),
                 );
                 if target.exists()
                     && previous
@@ -508,16 +555,13 @@ pub(crate) fn create_library_folder(
     name: String,
     state: State<'_, DesktopState>,
 ) -> Result<(), String> {
-    let name = name.trim();
-    if name.is_empty() {
-        return Err("文件夹名称不能为空".into());
-    }
+    let name = normalize_library_folder_path(&name)?;
     state
         .model
         .lock()
         .map_err(|_| "state lock poisoned".to_owned())?
         .store
-        .create_library_folder(name)
+        .create_library_folder(&name)
         .map_err(|_| "无法创建文件夹".into())
 }
 
@@ -527,27 +571,36 @@ pub(crate) fn rename_library_folder(
     next: String,
     state: State<'_, DesktopState>,
 ) -> Result<(), String> {
-    let next = next.trim();
-    if next.is_empty() {
-        return Err("文件夹名称不能为空".into());
-    }
+    let previous = normalize_library_folder_path(&previous)?;
+    let next = normalize_library_folder_path(&next)?;
     let mut model = state
         .model
         .lock()
         .map_err(|_| "state lock poisoned".to_owned())?;
+    let previous_prefix = format!("{previous}/");
     let affected = model
         .store
         .load_games()
         .map_err(|error| error.to_string())?
         .into_iter()
-        .filter(|game| game.library_folder.as_deref() == Some(previous.as_str()))
+        .filter(|game| {
+            game.library_folder
+                .as_deref()
+                .is_some_and(|folder| folder == previous || folder.starts_with(&previous_prefix))
+        })
         .collect::<Vec<_>>();
     model
         .store
-        .rename_library_folder(&previous, next)
+        .rename_library_folder(&previous, &next)
         .map_err(|_| "系统文件夹不能重命名，或文件夹不存在".to_owned())?;
     for game in affected {
-        let payload = library_metadata_payload(&game, Some(next.to_owned()));
+        let old_folder = game.library_folder.as_deref().unwrap_or_default();
+        let new_folder = if old_folder == previous {
+            next.clone()
+        } else {
+            format!("{next}/{}", &old_folder[previous_prefix.len()..])
+        };
+        let payload = library_metadata_payload(&game, Some(new_folder.clone()));
         let operation = next_operation_for_game(
             &mut model,
             game.id,
@@ -558,7 +611,7 @@ pub(crate) fn rename_library_folder(
             .store
             .update_game_library_with_operation(
                 game.id,
-                Some(next),
+                Some(&new_folder),
                 game.favorite,
                 &game.tags,
                 &operation,
@@ -573,16 +626,22 @@ pub(crate) fn delete_library_folder(
     name: String,
     state: State<'_, DesktopState>,
 ) -> Result<(), String> {
+    let name = normalize_library_folder_path(&name)?;
     let mut model = state
         .model
         .lock()
         .map_err(|_| "state lock poisoned".to_owned())?;
+    let name_prefix = format!("{name}/");
     let affected = model
         .store
         .load_games()
         .map_err(|error| error.to_string())?
         .into_iter()
-        .filter(|game| game.library_folder.as_deref() == Some(name.as_str()))
+        .filter(|game| {
+            game.library_folder
+                .as_deref()
+                .is_some_and(|folder| folder == name || folder.starts_with(&name_prefix))
+        })
         .collect::<Vec<_>>();
     model
         .store
@@ -623,7 +682,8 @@ pub(crate) fn update_game_library(
         .map_err(|_| "state lock poisoned".to_owned())?;
     let folder = folder
         .filter(|value| !value.trim().is_empty())
-        .map(|value| value.trim().to_owned());
+        .map(|value| normalize_library_folder_path(&value))
+        .transpose()?;
     let tags: Vec<String> = tags
         .into_iter()
         .map(|tag| tag.trim().to_owned())

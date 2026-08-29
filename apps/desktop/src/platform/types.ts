@@ -942,7 +942,7 @@ export interface ChessPlatform {
   clearTtxqDiagnosticSamples(): Promise<void>;
   startTtxqAuthorization(): Promise<void>;
   collectTtxqHistory(): Promise<void>;
-  importTtxqHistory(): Promise<TtxqSyncProgress>;
+  importTtxqHistory(targetFolder?: string): Promise<TtxqSyncProgress>;
   disconnectTtxq(): Promise<void>;
   newGame(fen: string, title?: string, note?: string): Promise<Partial<BoardState>>;
   openDocument(): Promise<Partial<BoardState> | undefined>;

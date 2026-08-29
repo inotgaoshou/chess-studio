@@ -1254,6 +1254,7 @@ export default function App() {
   const [ttxqSync, setTtxqSync] = useState<TtxqSyncProgress>({ state: "disconnected", readPhase: "", readTotal: 0, readCompleted: 0, readFailed: 0, loaded: 0, completed: 0, imported: 0, skipped: 0, failed: 0, message: "未连接天天象棋" });
   const [ttxqPreview, setTtxqPreview] = useState<TtxqGamePreview[]>([]);
   const [ttxqDiagnostics, setTtxqDiagnostics] = useState<TtxqDiagnosticSample[]>([]);
+  const [ttxqImportFolder, setTtxqImportFolder] = useState(TTXQ_BACKUP_FOLDER);
   const [comment, setComment] = useState("");
   const [serverUrl, setServerUrl] = useState("http://127.0.0.1:8080");
   const [token, setToken] = useState("");
@@ -4485,13 +4486,14 @@ export default function App() {
   }
 
   const currentLibraryGame = games.find((game) => game.id === games.find((item) => item.current)?.id);
+  const libraryFolderMatches = (game: GameSummary, folder: string) => game.libraryFolder === folder || game.libraryFolder?.startsWith(`${folder}/`);
   const visibleLibraryGames = games.filter((game) => {
     const query = librarySearch.trim().toLocaleLowerCase();
     const matchesQuery = !query || `${game.title} ${game.tags.join(" ")}`.toLocaleLowerCase().includes(query);
-    const matchesFilter = libraryFilter === "all" || (libraryFilter === "favorites" ? game.favorite : libraryFilter === "uncategorized" ? !game.libraryFolder : game.libraryFolder === libraryFilter);
+    const matchesFilter = libraryFilter === "all" || (libraryFilter === "favorites" ? game.favorite : libraryFilter === "uncategorized" ? !game.libraryFolder : libraryFolderMatches(game, libraryFilter));
     return matchesQuery && matchesFilter;
   });
-  const ttxqGameCount = games.filter((game) => game.libraryFolder === TTXQ_BACKUP_FOLDER).length;
+  const ttxqGameCount = games.filter((game) => game.sourceFormat === "ttxq-h5" || libraryFolderMatches(game, TTXQ_BACKUP_FOLDER)).length;
 
   async function saveCurrentLibrary(folder: string | undefined, favorite = currentLibraryGame?.favorite ?? false, tags = currentLibraryGame?.tags ?? []) {
     try {
@@ -4538,7 +4540,7 @@ export default function App() {
   }
 
   async function createLibraryFolder() {
-    const name = window.prompt("文件夹名称")?.trim();
+    const name = window.prompt("文件夹名称（用 / 创建子目录）")?.trim();
     if (!name) return;
     try {
       await chessPlatform.createLibraryFolder(name);
@@ -4553,17 +4555,19 @@ export default function App() {
     if (!name || name === folder.name) return;
     try {
       await chessPlatform.renameLibraryFolder(folder.name, name);
-      if (libraryFilter === folder.name) setLibraryFilter(name);
+      if (libraryFilter === folder.name || libraryFilter.startsWith(`${folder.name}/`)) {
+        setLibraryFilter(libraryFilter === folder.name ? name : `${name}/${libraryFilter.slice(folder.name.length + 1)}`);
+      }
       await refreshGames();
       setNotice("文件夹已重命名");
     } catch (error) { setNotice(friendlyError(error)); }
   }
 
   async function deleteLibraryFolder(folder: LibraryFolder) {
-    if (!window.confirm(`删除文件夹“${folder.name}”？其中的棋谱会移到“未分类”。`)) return;
+    if (!window.confirm(`删除文件夹“${folder.name}”及其子目录？其中的棋谱会移到“未分类”。`)) return;
     try {
       await chessPlatform.deleteLibraryFolder(folder.name);
-      if (libraryFilter === folder.name) setLibraryFilter("uncategorized");
+      if (libraryFilter === folder.name || libraryFilter.startsWith(`${folder.name}/`)) setLibraryFilter("uncategorized");
       await refreshGames();
       setNotice("文件夹已删除，棋谱已移至未分类");
     } catch (error) { setNotice(friendlyError(error)); }
@@ -5025,7 +5029,7 @@ export default function App() {
   async function importTtxqHistory() {
     setSyncBusy(true);
     try {
-      const result = await chessPlatform.importTtxqHistory();
+      const result = await chessPlatform.importTtxqHistory(ttxqImportFolder);
       setTtxqSync(result);
       setTtxqPreview([]);
       await refreshGames();
@@ -5040,6 +5044,20 @@ export default function App() {
       setTtxqPreview([]);
       await refreshTtxqSync();
       setNotice("天天象棋授权窗口已关闭，本应用未保存 QQ/微信登录信息");
+    } catch (error) { setNotice(friendlyError(error)); }
+  }
+
+  async function createTtxqImportFolder(folder?: string) {
+    const name = (folder || ttxqImportFolder).trim().replace(/\\/g, "/").replace(/\/+/g, "/").replace(/^\/|\/$/g, "");
+    if (!name) {
+      setNotice("请先填写导入目录名称");
+      return;
+    }
+    try {
+      await chessPlatform.createLibraryFolder(name);
+      setTtxqImportFolder(name);
+      await refreshGames();
+      setNotice(`已创建目录：${name}`);
     } catch (error) { setNotice(friendlyError(error)); }
   }
 
@@ -6964,7 +6982,7 @@ export default function App() {
             </div>
             <div className="library-folder-list">
               {libraryFolders.map((folder) => <div className="library-folder-row" key={folder.name}>
-                <button className={libraryFilter === folder.name ? "active" : ""} onClick={() => setLibraryFilter(folder.name)}><FolderOpen size={12}/><span>{folder.name}</span><small>{folder.gameCount}</small></button>
+                <button className={libraryFilter === folder.name ? "active" : ""} style={{ paddingLeft: 9 + Math.max(0, folder.name.split("/").length - 1) * 10 }} onClick={() => setLibraryFilter(folder.name)}><FolderOpen size={12}/><span title={folder.name}>{folder.name.split("/").pop() || folder.name}</span><small>{games.filter((game) => libraryFolderMatches(game, folder.name)).length}</small></button>
                 {!folder.system && <span className="library-folder-actions">
                   <button title={`重命名“${folder.name}”`} aria-label={`重命名“${folder.name}”`} onClick={() => void renameLibraryFolder(folder)}><Pencil size={12}/></button>
                   <button title={`删除“${folder.name}”`} aria-label={`删除“${folder.name}”`} onClick={() => void deleteLibraryFolder(folder)}><Trash2 size={12}/></button>
@@ -7935,8 +7953,12 @@ export default function App() {
         progress={ttxqSync}
         preview={ttxqPreview}
         diagnostics={ttxqDiagnostics}
+        folders={libraryFolders}
+        targetFolder={ttxqImportFolder}
         busy={syncBusy}
         onClose={() => setTtxqImportOpen(false)}
+        onTargetFolderChange={setTtxqImportFolder}
+        onCreateFolder={(folder) => void createTtxqImportFolder(folder)}
         onAuthorize={() => void startTtxqAuthorization()}
         onCollect={() => void collectTtxqHistory()}
         onImport={() => void importTtxqHistory()}
