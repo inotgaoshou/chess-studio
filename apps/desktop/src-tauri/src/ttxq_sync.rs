@@ -2420,7 +2420,7 @@ pub(crate) fn collect_ttxq_h5_history(
         }
         return '';
       };
-      const branchPayload = () => {
+      const branchPayload = (preferredControl = null) => {
         const safeBranchClone = (value, depth = 0, seen = new WeakSet()) => {
           if (value == null || typeof value === 'boolean' || typeof value === 'number') return value;
           if (typeof value === 'string') return value.slice(0, 1000);
@@ -2453,6 +2453,8 @@ pub(crate) fn collect_ttxq_h5_history(
         };
         const branchMoveCandidate = (value, path, owner = null) => {
           if (/(?:^|\.)(?:getQipuMoveStep|qipuMoveStep|_qipuMoveStep)$/.test(path) && !/^route\[\d+\]\./.test(path)) return null;
+          if (/(?:^|\.)(?:msg|_msg|comment|remark|note)$/i.test(path)) return null;
+          if (/(?:^|\.)(?:content|text|body|title|label|description)(?:\.|$)/i.test(path)) return null;
           let text = '';
           const primitiveToken = (item) => {
             if (typeof item === 'number' && Number.isInteger(item)) return String(item);
@@ -2496,9 +2498,15 @@ pub(crate) fn collect_ttxq_h5_history(
             seen.add(value); visited += 1;
             for (const key of propertyNames(value).slice(0, 100)) {
               if (/cookie|token|ticket|skey|p_skey|credential|password|html/i.test(key)) continue;
-              if (!/(?:move|step|msg|branch|qipu|data|list|line|comment|remark|DhtmlXQ|key|^\d+$)/i.test(key)) continue;
+              // Tencent's msg rows mix branch payloads with comment metadata.
+              // Keep unknown/obfuscated keys available, but never interpret
+              // stable account, author, or timestamp fields as coordinates.
+              if (/^(?:msg|comment|remark|note|content|text|body|title|label|description|id|uUin|uin|userId|userName|uname|nickName|avatar|face|time|date|timestamp|createTime|updateTime|qipuId)$/i.test(key)) continue;
               try {
                 const child = value[key];
+                const namedBranchField = /(?:move|step|msg|branch|qipu|data|list|line|comment|remark|DhtmlXQ|key|^\d+$)/i.test(key);
+                const insideBranchContainer = /(?:branch|variation|msgContainer|getMoveBranchKey)/i.test(path);
+                if (!namedBranchField && !insideBranchContainer) continue;
                 stack.push({ value: child, path: `${path}.${key}`, depth: depth + 1, owner: value });
               } catch (_) { /* Ignore transient branch getters. */ }
             }
@@ -2578,12 +2586,29 @@ pub(crate) fn collect_ttxq_h5_history(
             }
             return unique;
           };
+          const containsControl = (root, control) => {
+            if (!root || !control || typeof root !== 'object' || typeof control !== 'object') return false;
+            const seen = new WeakSet();
+            const stack = [{ value: root, depth: 0 }];
+            let visited = 0;
+            while (stack.length && visited < 8_000) {
+              const { value, depth } = stack.pop();
+              if (value === control) return true;
+              if (!value || typeof value !== 'object' || seen.has(value) || depth > 14) continue;
+              seen.add(value); visited += 1;
+              for (const child of childValues(value)) stack.push({ value: child, depth: depth + 1 });
+            }
+            return false;
+          };
           const groups = [];
           const seen = new WeakSet();
-          const roots = [
-            ...(typeof detailDisplayRoots === 'function' ? detailDisplayRoots() : []),
-            ...(typeof boardControls === 'function' ? boardControls() : []),
-          ].filter(Boolean);
+          const globalDetailRoots = typeof detailDisplayRoots === 'function' ? detailDisplayRoots() : [];
+          const roots = preferredControl && typeof preferredControl === 'object'
+            ? [preferredControl, ...globalDetailRoots.filter(root => containsControl(root, preferredControl))]
+            : [
+                ...globalDetailRoots,
+                ...(typeof boardControls === 'function' ? boardControls() : []),
+              ].filter(Boolean);
           const stack = roots.map(value => ({ value, depth: 0 }));
           let visited = 0;
           while (stack.length && visited < 16_000 && groups.length < 8) {
@@ -2603,7 +2628,8 @@ pub(crate) fn collect_ttxq_h5_history(
               || typeof item.control.click === 'function'
               || typeof item.control.onClick === 'function'
             );
-            if (childRoutes.length && routeContext && activatable.length === childRoutes.length) {
+            const belongsToPreferredControl = !preferredControl || containsControl(value, preferredControl);
+            if (childRoutes.length && routeContext && activatable.length === childRoutes.length && belongsToPreferredControl) {
               groups.push({
                 numbers: childRoutes,
                 buttons: activatable
@@ -2619,11 +2645,13 @@ pub(crate) fn collect_ttxq_h5_history(
         };
         const routeNumbersFromBranchSignals = (signals) => {
           const routes = new Set();
-          const visit = (value, depth = 0) => {
+          const visit = (value, depth = 0, explicitRouteField = false) => {
             if (value == null || depth > 4 || routes.size >= 16) return;
             if (typeof value === 'number' || typeof value === 'string') {
-              const route = routeNumberFromText(value);
-              if (route != null) routes.add(route);
+              if (explicitRouteField) {
+                const route = routeNumberFromText(value);
+                if (route != null) routes.add(route);
+              }
               return;
             }
             if (typeof value !== 'object') return;
@@ -2645,17 +2673,22 @@ pub(crate) fn collect_ttxq_h5_history(
                   const route = routeNumberFromText(child);
                   if (route != null) routes.add(route);
                 }
-                visit(child, depth + 1);
+                visit(child, depth + 1, /^(?:route|routeNo|branchNo|branchIndex|lineNo|variationNo)$/i.test(key));
               } catch (_) { /* Ignore transient branch values. */ }
             }
           };
           for (const signal of signals) visit(signal.value);
           return [...routes].filter(route => route >= 1 && route <= 16).sort((left, right) => left - right);
         };
-        const controls = boardControls();
-        if (!controls.length) return { data: '', path: '', complete: true };
+        const discoveredControls = boardControls();
+        const controls = preferredControl && typeof preferredControl === 'object'
+          ? [preferredControl]
+          : discoveredControls;
+        const branchOwner = controls[0] || null;
+        if (!controls.length) return { data: '', path: '', complete: true, owner: null };
         const branchSources = [];
         const branchSignals = [];
+        const referenceContainers = [];
         let hasStructuralBranchSignal = false;
         const addBranchSource = (value, path) => {
           if (value == null) return;
@@ -2700,9 +2733,12 @@ pub(crate) fn collect_ttxq_h5_history(
             // branch move fields, but a comment-only msg container must not
             // block importing the mainline as "分支未识别".
             addBranchSource(container.value, `${container.path}.msgContainer`);
+            referenceContainers.push({ path: `${container.path}.msgContainer`, value: container.value });
           }
         }
-        for (const [index, root] of [model && model._qipuView, model && model.currentQipu, model && model._qipuData, model && model._qipuInfo].filter(Boolean).entries()) {
+        const detailRoots = preferredControl ? []
+          : [model && model._qipuView, model && model.currentQipu, model && model._qipuData, model && model._qipuInfo].filter(Boolean);
+        for (const [index, root] of detailRoots.entries()) {
           for (const key of ['getMoveBranchKey', 'msg']) {
             try {
               const owner = findObjectWithOwnProperty(root, key, 8_000);
@@ -2715,6 +2751,7 @@ pub(crate) fn collect_ttxq_h5_history(
           }
           for (const container of branchMessageContainers(root, 'msg', `detailRoot[${index}]`)) {
             addBranchSource(container.value, `${container.path}.msgContainer`);
+            referenceContainers.push({ path: `${container.path}.msgContainer`, value: container.value });
           }
         }
         const candidates = collectBranchCandidates(branchSources);
@@ -2726,25 +2763,39 @@ pub(crate) fn collect_ttxq_h5_history(
           path: signal.path,
           value: safeBranchClone(signal.value),
         }));
-        const hasBranchSignal = hasStructuralBranchSignal || candidates.length > 0;
+        const referenceSamples = referenceContainers.slice(0, 4).map(container => {
+          const value = container.value;
+          let keys = [];
+          try { keys = propertyNames(value).slice(0, 24); } catch (_) { keys = []; }
+          return {
+            path: container.path,
+            valueType: Array.isArray(value) ? 'array' : typeof value,
+            length: Array.isArray(value) ? value.length : keys.length,
+            keys,
+          };
+        });
+        const hasIndependentCandidate = candidates.some(candidate => !/msgContainer/i.test(candidate.path));
+        const hasBranchSignal = hasStructuralBranchSignal || visibleRouteNumbers.length > 1 || hasIndependentCandidate;
         if (!hasBranchSignal) {
           if (visibleRouteNumbers.length > 1) {
             return {
               data: JSON.stringify({ signals: [], candidates: [], visibleRouteNumbers }).slice(0, 32 * 1024),
               path: 'routeButtons',
               complete: false,
+              owner: branchOwner,
             };
           }
-          return { data: '', path: 'NOTIFY_QIPU_DATA._boardControl.getMoveBranchKey', complete: true };
+          return { data: '', path: 'NOTIFY_QIPU_DATA._boardControl.getMoveBranchKey', complete: true, owner: branchOwner };
         }
         try {
           return {
-            data: JSON.stringify({ signals: signalSamples, candidates, routeNumbers, visibleRouteNumbers }).slice(0, 32 * 1024),
+            data: JSON.stringify({ signals: signalSamples, referenceSamples, candidates, routeNumbers, visibleRouteNumbers }).slice(0, 32 * 1024),
             path: 'NOTIFY_QIPU_DATA._boardControl.getMoveBranchKey + msg + routeButtons',
             complete: false,
+            owner: branchOwner,
           };
         } catch (_) {
-          return { data: '[网页变招字段无法序列化]', path: 'NOTIFY_QIPU_DATA._boardControl.getMoveBranchKey', complete: false };
+          return { data: '[网页变招字段无法序列化]', path: 'NOTIFY_QIPU_DATA._boardControl.getMoveBranchKey', complete: false, owner: branchOwner };
         }
       };
       const liveLoadedId = () => {
@@ -2788,7 +2839,61 @@ pub(crate) fn collect_ttxq_h5_history(
       const candidateSignature = (candidate) => candidate && candidate.text
         ? `${candidate.path}:${candidate.type}:${candidate.text}`
         : '';
-      const readBranchRoutes = async (qipuId, mainRaw, passiveBranch) => {
+      const readBranchRoutes = async (qipuId, mainRaw, passiveBranch, beforeBranchSignature = '') => {
+        // getQipuMoveStep becomes available before QQ finishes installing the
+        // branch-key/msg structures. The reference exporter polls the board
+        // control as a whole; do the same here instead of permanently trusting
+        // the first (often empty) snapshot taken as soon as the mainline loads.
+        const preferredOwner = mainRaw && mainRaw.owner || null;
+        const passiveOwnedByTarget = Boolean(
+          preferredOwner && passiveBranch && passiveBranch.owner === preferredOwner,
+        );
+        let settledBranch = preferredOwner && passiveBranch && passiveBranch.owner && !passiveOwnedByTarget
+          ? { data: '', path: '', complete: true, owner: preferredOwner }
+          : (passiveBranch || { data: '', path: '', complete: true, owner: preferredOwner });
+        let previousSnapshotUnverified = passiveOwnedByTarget
+          && Boolean(settledBranch.data)
+          && String(settledBranch.data) === beforeBranchSignature;
+        let verifiedNonEmptySnapshot = passiveOwnedByTarget
+          && Boolean(settledBranch.data)
+          && !previousSnapshotUnverified;
+        let consecutiveEmptySnapshots = 0;
+        for (let poll = 0; poll < 5; poll += 1) {
+          if (poll > 0) await delay(150);
+          const observed = branchPayload(preferredOwner);
+          const signature = String(observed && observed.data || '');
+          if (signature || (observed && observed.complete === false)) {
+            if (signature && previousSnapshotUnverified && signature === beforeBranchSignature) {
+              consecutiveEmptySnapshots = 0;
+              continue;
+            }
+            settledBranch = observed;
+            if (preferredOwner && observed && observed.owner === preferredOwner && signature) {
+              verifiedNonEmptySnapshot = true;
+              previousSnapshotUnverified = false;
+            }
+            consecutiveEmptySnapshots = 0;
+          } else if (!verifiedNonEmptySnapshot) {
+            consecutiveEmptySnapshots += 1;
+            // A stale controller can expose the previous game's branches for
+            // the first read after jumpQipuGame. Two explicit empty snapshots
+            // from the settled target clear that old payload without masking a
+            // branch structure that appears later in this bounded window.
+            if (consecutiveEmptySnapshots >= 2) {
+              settledBranch = observed;
+              previousSnapshotUnverified = false;
+            }
+          }
+        }
+        if (previousSnapshotUnverified && !verifiedNonEmptySnapshot) {
+          settledBranch = {
+            data: JSON.stringify({ staleSnapshot: true, signals: [], candidates: [] }),
+            path: 'previous-game-branch-signature',
+            complete: false,
+            owner: preferredOwner,
+          };
+        }
+        passiveBranch = settledBranch;
         let envelope = {};
         if (passiveBranch && passiveBranch.data) {
           try {
@@ -2865,7 +2970,7 @@ pub(crate) fn collect_ttxq_h5_history(
             await delay(150);
             const loadedId = liveLoadedId();
             if (loadedId && loadedId !== String(qipuId)) continue;
-            const activeBranch = branchPayload();
+            const activeBranch = branchPayload(preferredOwner);
             const activeBranchSignature = String(activeBranch && activeBranch.data || '');
             const branchChanged = activeBranchSignature
               && activeBranchSignature !== previousBranchSignature;
@@ -2973,6 +3078,9 @@ pub(crate) fn collect_ttxq_h5_history(
           const beforeCandidate = directNotifyMove() || directModelMove() || readRawMoves([info]);
           const beforeSignature = `${beforeCandidate.path}:${beforeCandidate.type}:${beforeCandidate.text}`;
           const beforeOwner = beforeCandidate.owner || null;
+          const beforeBranchSignature = typeof branchPayload === 'function'
+            ? String((branchPayload(beforeOwner || null) || {}).data || '')
+            : '';
           moveOwnerCache = null;
           moveOwnerSearchAt = 0;
           const jumpResult = model.jumpQipuGame(qipuId, -1, false, 0, 1, 0);
@@ -3020,7 +3128,7 @@ pub(crate) fn collect_ttxq_h5_history(
             }
           }
           const moves = raw.text ? (raw.text.match(/[a-i][0-9][a-i][0-9]/gi) || []).map(move => move.toLowerCase()) : [];
-          const passiveBranch = branchPayload();
+          const passiveBranch = branchPayload(raw.owner || null);
           // Tencent keeps the visible detail fields under version-dependent model
           // objects. Read only approved scalar names from a bounded graph; never
           // serialize the graph, HTML, credentials, or page data.
@@ -3309,7 +3417,7 @@ pub(crate) fn collect_ttxq_h5_history(
             await delay(150);
             visible = detailFields();
           }
-          const branch = await readBranchRoutes(qipuId, raw, passiveBranch);
+          const branch = await readBranchRoutes(qipuId, raw, passiveBranch, beforeBranchSignature);
           const rawResult = firstText('result', 'gameResult', 'resultText', 'resultDesc', 'winLose', 'winner', 'winSide') || visible.result;
           const normalizedResult = /和/.test(rawResult) ? '1/2-1/2'
             : /(?:先胜|红胜|后负)/.test(rawResult) ? '1-0'
@@ -4154,11 +4262,9 @@ mod tests {
 
         let branches = document.tree.branches(parents[1]).unwrap();
         assert_eq!(branches.len(), 2);
-        assert!(
-            branches
-                .iter()
-                .any(|node| node.is_mainline && node.mv.to_iccs() == "c9e7")
-        );
+        assert!(branches
+            .iter()
+            .any(|node| node.is_mainline && node.mv.to_iccs() == "c9e7"));
         assert!(branches.iter().any(|node| !node.is_mainline
             && node.mv.to_iccs() == "h9g7"
             && node.comment == "绿色分支 1"));
@@ -4224,21 +4330,17 @@ mod tests {
 
         assert_eq!(added, 1);
         let nodes = model.store.load_move_nodes(game_id).unwrap();
-        assert!(
-            nodes
-                .iter()
-                .any(|node| !node.deleted && !node.is_mainline && node.mv.to_iccs() == "h9g7")
-        );
-        assert!(
-            model
-                .store
-                .pending_operations(50)
-                .unwrap()
-                .iter()
-                .any(|operation| {
-                    operation.kind == OperationKind::AddMove && operation.game_id == game_id
-                })
-        );
+        assert!(nodes
+            .iter()
+            .any(|node| !node.deleted && !node.is_mainline && node.mv.to_iccs() == "h9g7"));
+        assert!(model
+            .store
+            .pending_operations(50)
+            .unwrap()
+            .iter()
+            .any(|operation| {
+                operation.kind == OperationKind::AddMove && operation.game_id == game_id
+            }));
         assert_eq!(
             model
                 .store
@@ -4418,7 +4520,7 @@ mod tests {
     #[test]
     fn collector_reads_branch_data_from_later_board_controls() {
         let branch_source = collector_source_between(
-            "      const branchPayload = () => {",
+            "      const branchPayload = (preferredControl = null) => {",
             "      const liveLoadedId = () => {",
         );
         let harness = format!(
@@ -4502,7 +4604,7 @@ if (branch.complete) throw new Error('branch signal with candidates must be deco
     #[test]
     fn collector_reads_reference_exporter_msg_container_siblings() {
         let branch_source = collector_source_between(
-            "      const branchPayload = () => {",
+            "      const branchPayload = (preferredControl = null) => {",
             "      const liveLoadedId = () => {",
         );
         let harness = format!(
@@ -4580,9 +4682,89 @@ if (payload.candidates[0].raw !== '7062') {{
     }
 
     #[test]
+    fn collector_reads_obfuscated_move_fields_inside_reference_msg_container() {
+        let branch_source = collector_source_between(
+            "      const branchPayload = (preferredControl = null) => {",
+            "      const liveLoadedId = () => {",
+        );
+        let harness = format!(
+            r#"(async () => {{
+const propertyNames = (value) => {{
+  const names = new Set();
+  let current = value;
+  for (let depth = 0; current && depth < 3; depth += 1) {{
+    Object.getOwnPropertyNames(current).forEach(name => names.add(name));
+    current = Object.getPrototypeOf(current);
+  }}
+  return [...names];
+}};
+const stringifyMoveValue = (value) => {{
+  if (!value || typeof value !== 'object') return {{ status: 'not-object', text: '', length: 0 }};
+  const text = String(value).trim();
+  return text ? {{ status: 'ok', text, length: text.length }} : {{ status: 'empty', text: '', length: 0 }};
+}};
+const safeMoveText = /^[0-9,\s\[\]]+$/;
+const findObjectWithOwnProperty = (root, property) => {{
+  const stack = [root];
+  const seen = new WeakSet();
+  while (stack.length) {{
+    const value = stack.pop();
+    if (!value || typeof value !== 'object' || seen.has(value)) continue;
+    seen.add(value);
+    if (Object.prototype.hasOwnProperty.call(value, property)) return value;
+    for (const child of Object.values(value)) if (child && typeof child === 'object') stack.push(child);
+  }}
+  return null;
+}};
+const referenceContainer = {{
+  a: [{{ msg: '路线 2' }}],
+  b: [{{ afterPly: 1, x: '7062' }}],
+}};
+const control = {{
+  getMoveBranchKey: {{ '10': {{ routeNo: 2 }} }},
+  holder: {{ referenceContainer }},
+}};
+const model = {{}};
+const boardControls = () => [control];
+{branch_source}
+const branch = branchPayload(control);
+const payload = JSON.parse(branch.data);
+if (!payload.candidates || payload.candidates.length !== 1) {{
+  throw new Error(`expected an obfuscated branch move from the reference msg parent, got ${{branch.data}}`);
+}}
+if (payload.candidates[0].raw !== '7062' || payload.candidates[0].afterPly !== 1) {{
+  throw new Error(`unexpected obfuscated branch candidate: ${{JSON.stringify(payload.candidates[0])}}`);
+}}
+}})().catch(error => {{ console.error(error.message); process.exitCode = 1; }});
+"#
+        );
+        let mut child = std::process::Command::new("node")
+            .arg("-")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("Node.js is required to exercise obfuscated branch fields");
+        child
+            .stdin
+            .as_mut()
+            .expect("obfuscated branch checker stdin")
+            .write_all(harness.as_bytes())
+            .expect("write obfuscated branch harness to Node.js");
+        let output = child
+            .wait_with_output()
+            .expect("run obfuscated branch collection harness");
+        assert!(
+            output.status.success(),
+            "collector filtered a move stored under an ordinary Tencent field name: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
     fn collector_does_not_treat_comment_only_msg_rows_as_missing_branches() {
         let branch_source = collector_source_between(
-            "      const branchPayload = () => {",
+            "      const branchPayload = (preferredControl = null) => {",
             "      const liveLoadedId = () => {",
         );
         let harness = format!(
@@ -4615,9 +4797,16 @@ const findObjectWithOwnProperty = (root, property) => {{
   return null;
 }};
 const control = {{
+  getMoveBranchKey: {{ '10': {{ routeNo: 1 }} }},
   comments: {{
     '6-1': [
-      {{ msg: '软件推荐', time: '24-09-05 13:24', uUin: 48477741, uname: 'Zero' }},
+      {{
+        msg: '软件推荐：炮二平五 马8进7',
+        content: {{ text: '车一进一' }},
+        time: '24-09-05 13:24',
+        uUin: 48477741,
+        uname: 'Zero',
+      }},
     ],
   }},
 }};
@@ -4625,8 +4814,8 @@ const model = {{}};
 const boardControls = () => [control];
 {branch_source}
 const branch = branchPayload();
-if (!branch.complete) throw new Error(`comment-only msg rows were treated as missing branches: ${{branch.data}}`);
-if (branch.data) throw new Error(`comment-only msg rows should not emit branch data: ${{branch.data}}`);
+const payload = JSON.parse(branch.data);
+if (payload.candidates.length) throw new Error(`nested comment text was treated as a branch move: ${{branch.data}}`);
 }})().catch(error => {{ console.error(error.message); process.exitCode = 1; }});
 "#
         );
@@ -4654,9 +4843,335 @@ if (branch.data) throw new Error(`comment-only msg rows should not emit branch d
     }
 
     #[test]
+    fn collector_ignores_global_detail_branches_after_binding_the_target_control() {
+        let branch_source = collector_source_between(
+            "      const branchPayload = (preferredControl = null) => {",
+            "      const liveLoadedId = () => {",
+        );
+        let harness = format!(
+            r#"(async () => {{
+const propertyNames = (value) => {{
+  const names = new Set();
+  let current = value;
+  for (let depth = 0; current && depth < 3; depth += 1) {{
+    Object.getOwnPropertyNames(current).forEach(name => names.add(name));
+    current = Object.getPrototypeOf(current);
+  }}
+  return [...names];
+}};
+const stringifyMoveValue = (value) => {{
+  if (!value || typeof value !== 'object') return {{ status: 'not-object', text: '', length: 0 }};
+  const text = String(value).trim();
+  return text ? {{ status: 'ok', text, length: text.length }} : {{ status: 'empty', text: '', length: 0 }};
+}};
+const safeMoveText = /^[0-9,\s\[\]]+$/;
+const findObjectWithOwnProperty = () => null;
+const targetControl = {{}};
+const staleRoutePanel = {{
+  context: {{ text: '下变' }},
+  routeOne: {{ text: '1', click() {{}} }},
+  routeTwo: {{ text: '2', click() {{}} }},
+}};
+const model = {{ _qipuView: {{ getMoveBranchKey: {{ stale: '7062' }} }} }};
+const boardControls = () => [targetControl, staleRoutePanel];
+const sharedDetailRoot = {{ activeBoardControl: targetControl, staleRoutePanel }};
+const detailDisplayRoots = () => [sharedDetailRoot];
+{branch_source}
+const branch = branchPayload(targetControl);
+if (!branch.complete || branch.data) {{
+  throw new Error(`global stale detail or route controls leaked into the target control: ${{branch.data}}`);
+}}
+}})().catch(error => {{ console.error(error.message); process.exitCode = 1; }});
+"#
+        );
+        let mut child = std::process::Command::new("node")
+            .arg("-")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("Node.js is required to exercise target-bound branch collection");
+        child
+            .stdin
+            .as_mut()
+            .expect("target-bound branch checker stdin")
+            .write_all(harness.as_bytes())
+            .expect("write target-bound branch harness to Node.js");
+        let output = child
+            .wait_with_output()
+            .expect("run target-bound branch collection harness");
+        assert!(
+            output.status.success(),
+            "collector mixed a global detail root into the target game: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn collector_waits_for_branch_structures_that_settle_after_mainline() {
+        let branch_and_route_source = collector_source_between(
+            "      const branchPayload = (preferredControl = null) => {",
+            "      let current = 0;",
+        );
+        let harness = format!(
+            r#"(async () => {{
+const qipuId = '77610272440';
+let branchPolls = 0;
+const propertyNames = (value) => {{
+  const names = new Set();
+  let current = value;
+  for (let depth = 0; current && depth < 3; depth += 1) {{
+    Object.getOwnPropertyNames(current).forEach(name => names.add(name));
+    current = Object.getPrototypeOf(current);
+  }}
+  return [...names];
+}};
+const stringifyMoveValue = (value) => {{
+  if (!value || typeof value !== 'object') return {{ status: 'not-object', text: '', length: 0 }};
+  const text = String(value).trim();
+  return text ? {{ status: 'ok', text, length: text.length }} : {{ status: 'empty', text: '', length: 0 }};
+}};
+const safeMoveText = /^[0-9,\s\[\]]+$/;
+const findObjectWithOwnProperty = (root, property) => {{
+  const stack = [root];
+  const seen = new WeakSet();
+  while (stack.length) {{
+    const value = stack.pop();
+    if (!value || typeof value !== 'object' || seen.has(value)) continue;
+    seen.add(value);
+    if (Object.prototype.hasOwnProperty.call(value, property)) return value;
+    for (const child of Object.values(value)) if (child && typeof child === 'object') stack.push(child);
+  }}
+  return null;
+}};
+const control = {{
+  get getMoveBranchKey() {{ return branchPolls >= 2 ? {{ anchor: '10' }} : {{}}; }},
+  get branchData() {{
+    return branchPolls >= 2
+      ? {{ rows: [{{ afterPly: 1, move: '7062', comment: '延迟安装的分支' }}] }}
+      : {{}};
+  }},
+}};
+const model = {{ jumpQipuGame: () => undefined }};
+const boardControls = () => [control];
+const detailDisplayRoots = () => [];
+const delay = async () => {{ branchPolls += 1; }};
+const qipuSources = () => [{{ qipuId }}];
+const mainRaw = {{
+  text: '26252042',
+  path: 'NOTIFY_QIPU_DATA[0].thisObj._boardControl.getQipuMoveStep',
+  type: 'array<number>',
+  owner: control,
+}};
+const directNotifyMove = () => mainRaw;
+const directModelMove = () => null;
+const readRawMoves = () => mainRaw;
+{branch_and_route_source}
+const early = branchPayload();
+if (!early.complete || early.data) throw new Error(`fixture must start before branch data settles: ${{JSON.stringify(early)}}`);
+const branch = await readBranchRoutes(qipuId, mainRaw, early);
+if (branch.complete) throw new Error(`late branch data was silently treated as complete mainline: ${{JSON.stringify(branch)}}`);
+const payload = JSON.parse(branch.data);
+if (!payload.candidates || payload.candidates.length !== 1 || payload.candidates[0].raw !== '7062') {{
+  throw new Error(`late branch candidate was not collected: ${{branch.data}}`);
+}}
+}})().catch(error => {{ console.error(error.message); process.exitCode = 1; }});
+"#
+        );
+        let mut child = std::process::Command::new("node")
+            .arg("-")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("Node.js is required to exercise delayed branch collection");
+        child
+            .stdin
+            .as_mut()
+            .expect("delayed branch checker stdin")
+            .write_all(harness.as_bytes())
+            .expect("write delayed branch harness to Node.js");
+        let output = child
+            .wait_with_output()
+            .expect("run delayed branch collection harness");
+        assert!(
+            output.status.success(),
+            "collector missed branch data that settled after the mainline: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn collector_clears_a_previous_games_stale_branch_snapshot() {
+        let read_branch_source = collector_source_between(
+            "      const readBranchRoutes = async (qipuId, mainRaw, passiveBranch, beforeBranchSignature = '') => {",
+            "      let current = 0;",
+        );
+        let harness = format!(
+            r#"(async () => {{
+const delay = async () => undefined;
+const previousControl = {{}};
+const currentControl = {{}};
+const emptyBranch = {{ data: '', path: 'current-board', complete: true, owner: currentControl }};
+const branchPayload = () => emptyBranch;
+branchPayload.routeControls = {{ numbers: [], buttons: [] }};
+const liveLoadedId = () => 'current-game';
+const directNotifyMove = () => null;
+const directModelMove = () => null;
+const readRawMoves = () => null;
+{read_branch_source}
+const stale = {{
+  data: JSON.stringify({{ candidates: [{{ raw: '26257062', afterPly: 1 }}] }}),
+  path: 'previous-board',
+  complete: false,
+  owner: previousControl,
+}};
+const branch = await readBranchRoutes('current-game', {{ text: '26252042', owner: currentControl }}, stale);
+if (!branch.complete || branch.data) {{
+  throw new Error(`previous-game branch payload survived current empty snapshots: ${{JSON.stringify(branch)}}`);
+}}
+}})().catch(error => {{ console.error(error.message); process.exitCode = 1; }});
+"#
+        );
+        let mut child = std::process::Command::new("node")
+            .arg("-")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("Node.js is required to exercise stale branch clearing");
+        child
+            .stdin
+            .as_mut()
+            .expect("stale branch checker stdin")
+            .write_all(harness.as_bytes())
+            .expect("write stale branch harness to Node.js");
+        let output = child
+            .wait_with_output()
+            .expect("run stale branch clearing harness");
+        assert!(
+            output.status.success(),
+            "collector retained a previous game's branch data: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn collector_clears_a_stale_branch_snapshot_when_tencent_reuses_the_controller() {
+        let read_branch_source = collector_source_between(
+            "      const readBranchRoutes = async (qipuId, mainRaw, passiveBranch, beforeBranchSignature = '') => {",
+            "      let current = 0;",
+        );
+        let harness = format!(
+            r#"(async () => {{
+const delay = async () => undefined;
+const reusedControl = {{}};
+const emptyBranch = {{ data: '', path: 'current-board', complete: true, owner: reusedControl }};
+const branchPayload = () => emptyBranch;
+branchPayload.routeControls = {{ numbers: [], buttons: [] }};
+const liveLoadedId = () => 'current-game';
+const directNotifyMove = () => null;
+const directModelMove = () => null;
+const readRawMoves = () => null;
+{read_branch_source}
+const staleData = JSON.stringify({{ candidates: [{{ raw: '26257062', afterPly: 1 }}] }});
+const stale = {{ data: staleData, path: 'reused-board', complete: false, owner: reusedControl }};
+const branch = await readBranchRoutes(
+  'current-game',
+  {{ text: '26252042', owner: reusedControl }},
+  stale,
+  staleData,
+);
+if (!branch.complete || branch.data) {{
+  throw new Error(`same-controller previous branch survived current empty snapshots: ${{JSON.stringify(branch)}}`);
+}}
+}})().catch(error => {{ console.error(error.message); process.exitCode = 1; }});
+"#
+        );
+        let mut child = std::process::Command::new("node")
+            .arg("-")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("Node.js is required to exercise same-controller branch clearing");
+        child
+            .stdin
+            .as_mut()
+            .expect("same-controller branch checker stdin")
+            .write_all(harness.as_bytes())
+            .expect("write same-controller branch harness to Node.js");
+        let output = child
+            .wait_with_output()
+            .expect("run same-controller branch clearing harness");
+        assert!(
+            output.status.success(),
+            "collector retained a previous branch on Tencent's reused controller: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn collector_preserves_a_target_owned_branch_snapshot_during_empty_reads() {
+        let read_branch_source = collector_source_between(
+            "      const readBranchRoutes = async (qipuId, mainRaw, passiveBranch, beforeBranchSignature = '') => {",
+            "      let current = 0;",
+        );
+        let harness = format!(
+            r#"(async () => {{
+const control = {{}};
+const delay = async () => undefined;
+const branchPayload = () => ({{ data: '', path: 'current-board', complete: true, owner: control }});
+branchPayload.routeControls = {{ numbers: [], buttons: [] }};
+const liveLoadedId = () => 'current-game';
+const directNotifyMove = () => null;
+const directModelMove = () => null;
+const readRawMoves = () => null;
+{read_branch_source}
+const targetBranch = {{
+  data: JSON.stringify({{ candidates: [{{ raw: '7062', afterPly: 1 }}] }}),
+  path: 'current-board',
+  complete: false,
+  owner: control,
+}};
+const branch = await readBranchRoutes(
+  'current-game',
+  {{ text: '26252042', owner: control }},
+  targetBranch,
+);
+if (branch.complete || !branch.data) {{
+  throw new Error(`current target branch was erased by transient empty reads: ${{JSON.stringify(branch)}}`);
+}}
+}})().catch(error => {{ console.error(error.message); process.exitCode = 1; }});
+"#
+        );
+        let mut child = std::process::Command::new("node")
+            .arg("-")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("Node.js is required to exercise target-owned branch settling");
+        child
+            .stdin
+            .as_mut()
+            .expect("target-owned branch checker stdin")
+            .write_all(harness.as_bytes())
+            .expect("write target-owned branch harness to Node.js");
+        let output = child
+            .wait_with_output()
+            .expect("run target-owned branch settling harness");
+        assert!(
+            output.status.success(),
+            "collector erased a branch snapshot already tied to the target board: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
     fn collector_does_not_block_import_for_visible_number_groups_without_branch_data() {
         let branch_source = collector_source_between(
-            "      const branchPayload = () => {",
+            "      const branchPayload = (preferredControl = null) => {",
             "      const liveLoadedId = () => {",
         );
         let harness = format!(
@@ -4721,7 +5236,7 @@ if (branch.data) throw new Error(`plain visible number groups must be ignored: $
     fn collector_reads_initial_fen_from_board_control_slash_string() {
         let fen_source = collector_source_between(
             "      const normalizeInitialFen = (value) =>",
-            "      const branchPayload = () => {",
+            "      const branchPayload = (preferredControl = null) => {",
         );
         let harness = format!(
             r#"(async () => {{
@@ -4765,7 +5280,7 @@ if (result !== customFen) throw new Error(`initial FEN was not collected: ${{res
     #[test]
     fn collector_activates_real_route_controls_when_mainline_stream_does_not_change() {
         let branch_and_route_source = collector_source_between(
-            "      const branchPayload = () => {",
+            "      const branchPayload = (preferredControl = null) => {",
             "      let current = 0;",
         );
         let harness = format!(
@@ -4826,6 +5341,7 @@ const routeButton = (routeNo) => ({{
   }},
 }});
 const routePanel = {{
+  boardControl: control,
   route1: routeButton(1),
   route2: routeButton(2),
   route3: routeButton(3),
@@ -4833,9 +5349,10 @@ const routePanel = {{
   edit: {{ text: '编辑' }},
   next: {{ text: '下一步' }},
 }};
+const detailRoot = {{ control, routePanel }};
 const model = {{ jumpQipuGame: () => undefined }};
 const boardControls = () => [control];
-const detailDisplayRoots = () => [routePanel];
+const detailDisplayRoots = () => [routePanel, detailRoot];
 const delay = async () => {{
   pendingPolls += 1;
   if (pendingPolls >= 2) dataRoute = pendingRoute;
@@ -4895,7 +5412,7 @@ if (activeRoute !== 1) throw new Error(`route selection was not restored: ${{act
     #[test]
     fn collector_accepts_a_stable_direct_route_move_stream_without_branch_data() {
         let branch_and_route_source = collector_source_between(
-            "      const branchPayload = () => {",
+            "      const branchPayload = (preferredControl = null) => {",
             "      let current = 0;",
         );
         let harness = format!(
@@ -4937,6 +5454,7 @@ const routeButton = (routeNo) => ({{
   }},
 }});
 const routePanel = {{
+  boardControl: control,
   route1: routeButton(1),
   route2: routeButton(2),
   route3: routeButton(3),
@@ -4944,9 +5462,10 @@ const routePanel = {{
   edit: {{ text: '编辑' }},
   next: {{ text: '下一步' }},
 }};
+const detailRoot = {{ control, routePanel }};
 const model = {{ jumpQipuGame: () => undefined }};
 const boardControls = () => [control];
-const detailDisplayRoots = () => [routePanel];
+const detailDisplayRoots = () => [routePanel, detailRoot];
 const delay = async () => {{
   pendingPolls += 1;
   if (pendingPolls >= 2) activeRoute = pendingRoute;
@@ -5829,12 +6348,10 @@ if (raw.path !== 'bridge-snapshot') throw new Error('unchanged previous-game mov
         let original = payload_hash(&game).unwrap();
         game.metadata_probe = "detailRoot[2]._text=标题：放飞".into();
         assert_eq!(original, payload_hash(&game).unwrap());
-        assert!(
-            serde_json::to_value(&game)
-                .unwrap()
-                .get("metadataProbe")
-                .is_none()
-        );
+        assert!(serde_json::to_value(&game)
+            .unwrap()
+            .get("metadataProbe")
+            .is_none());
     }
 
     #[test]

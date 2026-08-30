@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
-import { Activity, BarChart3, BookOpen, Brain, CheckCircle2, ChevronRight, ClipboardPaste, ClipboardList, Download, Eye, FileText, FolderArchive, GitFork, Heart, Image, Lightbulb, Play, Plus, RefreshCw, Swords, X } from "lucide-react";
-import type { AnalysisLine, BoardState, GameReportPresentationDto, GameReportProgressDto, GameSummary, LibraryFolder, ReportIssuePresentationDto, Side, TrainingGenerationResultDto, TrainingTaskDto } from "./platform/types";
+import { Activity, BarChart3, BookOpen, Brain, CheckCircle2, ChevronRight, ClipboardPaste, ClipboardList, Download, Eye, FileText, FolderArchive, GitBranch, GitFork, Heart, Image, Lightbulb, List, Play, Plus, RefreshCw, Settings2, Swords, X } from "lucide-react";
+import type { AnalysisLine, BoardState, GameReportPresentationDto, GameReportProgressDto, GameSummary, LibraryFolder, ManualTreeNode, MoveItem, ReportIssuePresentationDto, Side, TrainingGenerationResultDto, TrainingTaskDto } from "./platform/types";
 import { buildReviewModel, signedCp } from "./reviewModel";
 import { EvaluationTrendChart, redAdvantageLabel } from "./EvaluationTrendChart";
 import { buildMoveThought, type MoveThought } from "./moveThoughtModel";
 import { ReviewGameLibrary } from "./ReviewGameLibrary";
+import { ManualTreeView } from "./ManualTreeView";
 
 type InsightTab = "engine" | "report" | "trend" | "issues" | "training";
 type MoveScope = "issues" | "all";
+type RouteView = "tree" | "rounds";
 
 export type ReviewWorkspaceProps = {
   board: BoardState;
@@ -38,6 +40,9 @@ export type ReviewWorkspaceProps = {
   onMoveThoughtVisibilityChange?(visible: boolean): void;
   onClose(): void;
   onNavigate(nodeId?: string): void;
+  onMakeMainline(nodeId: string): void;
+  onReorderBranches(nodeIds: string[], from: number, to: number): void;
+  onRemoveBranch(nodeId: string): void;
   onGenerateReport(): void;
   onCancelReport(): void;
   onExportReport(): void;
@@ -86,6 +91,16 @@ function engineScore(line: AnalysisLine) {
   if (line.mate != null) return `杀 ${line.mate}`;
   if (line.scoreCp == null) return "--";
   return `${line.scoreCp > 0 ? "+" : ""}${line.scoreCp}`;
+}
+
+function treeMoveScore(move: MoveItem) {
+  if (move.mate != null) return `杀 ${move.mate}`;
+  if (move.scoreCp == null) return "";
+  return `${move.scoreCp > 0 ? "+" : ""}${move.scoreCp}`;
+}
+
+function linearManualTree(moves: MoveItem[]): ManualTreeNode[] {
+  return moves.reduceRight<ManualTreeNode[]>((children, move) => [{ move, children }], []);
 }
 
 function flyknifeRouteMeta(comment: string) {
@@ -149,10 +164,13 @@ function IssueCard({ issue, index, active, expanded, engineExpanded, analysisDep
 export function ReviewWorkspace({
   board, report, reportBusy, reportExporting, reportProgress, engineReady, libraryFolder, playedAt, libraryFolders, games = [], libraryOpen: controlledLibraryOpen, onLibraryOpenChange, favorite, libraryTags, flyknifePlanCount, trainingTasks, trainingGenerating, trainingGeneration, analysisConfig,
   positionAnalysis, positionAnalysisBusy, positionAnalysisError, positionAnalysisFen, engineHintRequest, showMoveThoughts: controlledShowMoveThoughts, onMoveThoughtVisibilityChange,
-  onClose, onNavigate, onGenerateReport, onCancelReport, onExportReport, onOpenReport, onImport, onImportScreenshot, onPaste, onManualRecord, onOpenGame, onShareGame, onRefreshLibrary, onDeleteGames, onSaveLibrary, onOpenFlyknife, onGenerateTraining, onOpenTraining, onCompleteTraining, onStudyIssue, onStartU10, onRunPositionAnalysis,
+  onClose, onNavigate, onMakeMainline, onReorderBranches, onRemoveBranch, onGenerateReport, onCancelReport, onExportReport, onOpenReport, onImport, onImportScreenshot, onPaste, onManualRecord, onOpenGame, onShareGame, onRefreshLibrary, onDeleteGames, onSaveLibrary, onOpenFlyknife, onGenerateTraining, onOpenTraining, onCompleteTraining, onStudyIssue, onStartU10, onRunPositionAnalysis,
 }: ReviewWorkspaceProps) {
   const [tab, setTab] = useState<InsightTab>("report");
   const [moveScope, setMoveScope] = useState<MoveScope>("issues");
+  const [routeView, setRouteView] = useState<RouteView>("tree");
+  const [collapsedTreeNodes, setCollapsedTreeNodes] = useState<Set<string>>(() => new Set());
+  const [branchEditing, setBranchEditing] = useState(false);
   const [issueSide, setIssueSide] = useState<"red" | "black">("red");
   const [expandedIssue, setExpandedIssue] = useState<string>();
   const [expandedEngineLine, setExpandedEngineLine] = useState<string>();
@@ -205,6 +223,11 @@ export function ReviewWorkspace({
     return [...rounds.entries()].map(([number, rows]) => ({ number, rows }));
   }, [moveRows]);
   const issueRows = issueSide === "red" ? model.redIssues : model.blackIssues;
+  const activeTreePath = useMemo(() => new Set(board.history.map((move) => move.id)), [board.history]);
+  const treeNodes = useMemo(() => board.manualTree?.length ? board.manualTree : linearManualTree(documentBoard.history), [board.manualTree, documentBoard.history]);
+  const treeQualityByMoveId = useMemo(() => new Map(
+    (activeReport?.issues ?? []).map((issue) => [issue.nodeId, { score: issue.score, grade: issue.grade }]),
+  ), [activeReport]);
   const archived = hasRecordedMoves && Boolean(libraryFolder);
   const archivePreset = !hasRecordedMoves && Boolean(libraryFolder);
   const parsedArchiveTags = archiveTagsInput.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean);
@@ -360,9 +383,30 @@ export function ReviewWorkspace({
           <div className="review-archive-tools"><button type="button" className={archiveFavoriteDraft ? "active" : ""} onClick={() => setArchiveFavoriteDraft((value) => !value)}><Heart size={13} fill={archiveFavoriteDraft ? "currentColor" : "none"}/>{archiveFavoriteDraft ? "已收藏" : "收藏"}</button><button type="button" onClick={closeArchiveEditor}>取消</button><button type="button" disabled={!archiveDirty || archiveSaving} onClick={() => void saveArchive()}>{archiveSaving ? "保存中" : "保存归档"}</button></div>{archiveDirty && <small className="review-archive-dirty">未保存的修改</small>}{archiveSaveFailed && <small className="review-archive-error">保存失败，草稿已保留，请重试。</small>}</>}
       </section>}
       <div className="review-config" aria-label="整局分析配置"><span>深度 {analysisConfig.reportDepth}</span><span>PV {analysisConfig.multipv}</span><span>{analysisConfig.threads} 线程</span><span>Hash {analysisConfig.hashMb} MB</span></div>
-      <section className="review-move-list" aria-label="复盘棋谱路线">
-        <header><strong>棋谱路线</strong><div role="group" aria-label="棋谱范围"><button type="button" className={moveScope === "all" ? "active" : ""} title="浏览完整棋谱，不删除后续着法" onClick={() => setMoveScope("all")}>完整棋谱</button><button type="button" className={moveScope === "issues" ? "active" : ""} disabled={!activeReport} onClick={() => setMoveScope("issues")}>关键着法</button></div></header>
-        {moveRounds.length === 0 ? <div className="review-route-empty"><FolderArchive size={21}/><span>{activeReport ? "没有需要重点复盘的失误，可查看完整棋谱。" : "生成整局报告后会在这里列出关键着法。"}</span></div>
+      <section className={`review-move-list ${routeView === "tree" ? "tree-mode" : "rounds-mode"}`} aria-label="复盘棋谱路线">
+        <header><strong>棋谱路线</strong><div className="review-move-view-actions"><div role="group" aria-label="棋谱视图"><button type="button" aria-pressed={routeView === "tree"} className={routeView === "tree" ? "active" : ""} onClick={() => setRouteView("tree")}><GitBranch size={12}/>分支树</button><button type="button" aria-pressed={routeView === "rounds"} className={routeView === "rounds" ? "active" : ""} onClick={() => setRouteView("rounds")}><List size={12}/>回合列表</button></div>{routeView === "tree" ? <button type="button" className={branchEditing ? "active" : ""} aria-pressed={branchEditing} onClick={() => setBranchEditing((editing) => !editing)}><Settings2 size={12}/>{branchEditing ? "完成管理" : "管理分支"}</button> : <div role="group" aria-label="棋谱范围"><button type="button" className={moveScope === "all" ? "active" : ""} title="浏览完整棋谱，不删除后续着法" onClick={() => setMoveScope("all")}>完整棋谱</button><button type="button" className={moveScope === "issues" ? "active" : ""} disabled={!activeReport} onClick={() => setMoveScope("issues")}>关键着法</button></div>}</div></header>
+        {routeView === "tree" ? <div className="review-branch-tree" aria-label="复盘分支棋谱树">
+          <button type="button" className={`review-tree-root ${!board.currentNode ? "active" : ""}`} onClick={() => onNavigate()}><GitBranch size={12}/>开始局面</button>
+          {treeNodes.length > 0 ? <ManualTreeView
+            nodes={treeNodes}
+            currentNode={board.currentNode}
+            activePath={activeTreePath}
+            collapsed={collapsedTreeNodes}
+            editing={branchEditing}
+            qualityByMoveId={treeQualityByMoveId}
+            formatScore={treeMoveScore}
+            onNavigate={onNavigate}
+            onToggle={(nodeId) => setCollapsedTreeNodes((collapsed) => {
+              const next = new Set(collapsed);
+              if (next.has(nodeId)) next.delete(nodeId); else next.add(nodeId);
+              return next;
+            })}
+            onMakeMainline={onMakeMainline}
+            onReorder={onReorderBranches}
+            onRemove={onRemoveBranch}
+          /> : <div className="review-route-empty"><FolderArchive size={21}/><span>当前棋谱还没有可显示的走法树。</span></div>}
+        </div> : <div className="review-round-list" aria-label="复盘回合列表">
+          {moveRounds.length === 0 ? <div className="review-route-empty"><FolderArchive size={21}/><span>{activeReport ? "没有需要重点复盘的失误，可查看完整棋谱。" : "生成整局报告后会在这里列出关键着法。"}</span></div>
           : moveRounds.map((round) => <article className="review-route-round" key={round.number} aria-label={`第 ${round.number} 回合`}><span className="review-route-round-number">{round.number}</span><div>{round.rows.map((row) => {
             const scoreText = row.scoreText === "---" ? "待分析" : row.scoreText;
             const detail = `${row.move.movedBy} · ${scoreText}${row.issue ? ` · 损失 ${row.issue.lossCp}cp` : ""}`;
@@ -380,7 +424,7 @@ export function ReviewWorkspace({
                 <ThoughtDetails thought={thought} compact/>
               </div>}
             </div>;
-          })}</div></article>)}
+          })}</div></article>)}</div>}
       </section>
     </section>
     <section className="review-insights" aria-label="复盘洞察">

@@ -9417,6 +9417,20 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
   grid-column: 1;
   grid-row: 1;
 }
+.review-move-view-actions,
+.review-move-view-actions > div { min-width: 0; display: flex; align-items: center; gap: 3px; }
+.review-move-view-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 3px; white-space: nowrap; }
+.review-branch-tree,
+.review-round-list { min-height: 0; flex: 1 1 auto; overflow: auto; overscroll-behavior: contain; }
+.review-branch-tree { display: flex; flex-direction: column; background: var(--surface-1); }
+.review-branch-tree > .manual-tree-view { min-height: 0; flex: 1 1 auto; padding-top: 3px; }
+.review-tree-root { flex: 0 0 30px; min-height: 30px; display: flex; align-items: center; gap: 6px; padding: 0 11px; border: 0; border-bottom: 1px solid var(--border); background: var(--surface-2); color: var(--text-secondary); font-size: 11px; font-weight: 800; text-align: left; }
+.review-tree-root:hover,
+.review-tree-root.active { background: var(--accent-surface); color: var(--text-primary); }
+.review-round-list { display: flex; flex-direction: column; }
+.review-branch-tree .manual-tree-row { padding-right: 7px; }
+.review-branch-tree .manual-tree-move { grid-template-columns: auto 7px minmax(64px, 1fr) auto auto auto auto; }
+.review-branch-tree .manual-tree-actions { flex: 0 0 auto; }
 .review-move-list > .review-route-empty {
   min-height: 160px;
 }

@@ -132,6 +132,9 @@ function renderWorkspace(overrides: Partial<Parameters<typeof ReviewWorkspace>[0
     engineHintRequest: 0,
     onClose: vi.fn(),
     onNavigate: vi.fn(),
+    onMakeMainline: vi.fn(),
+    onReorderBranches: vi.fn(),
+    onRemoveBranch: vi.fn(),
     onGenerateReport: vi.fn(),
     onCancelReport: vi.fn(),
     onExportReport: vi.fn(),
@@ -155,6 +158,45 @@ function renderWorkspace(overrides: Partial<Parameters<typeof ReviewWorkspace>[0
 }
 
 describe("ReviewWorkspace", () => {
+  it("shows and manages the complete variation tree in review mode", async () => {
+    const mainReply = {
+      id: "main-reply", iccs: "h9g7", notation: "马8进7", movedBy: "黑方" as const,
+      from: { row: 0, col: 7 }, to: { row: 2, col: 6 }, comment: "", isMainline: true,
+    };
+    const variationReply = {
+      id: "variation-reply", iccs: "b9c7", notation: "马2进3", movedBy: "黑方" as const,
+      from: { row: 0, col: 1 }, to: { row: 2, col: 2 }, comment: "牛头滚变化", isMainline: false,
+    };
+    const branchBoard: BoardState = {
+      ...board,
+      currentNode: "move-1",
+      manualTree: [{
+        move: board.history[0],
+        children: [
+          { move: mainReply, children: [] },
+          { move: variationReply, children: [] },
+        ],
+      }],
+    };
+    const props = renderWorkspace({ board: branchBoard });
+
+    expect(screen.getByRole("button", { name: "分支树" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByLabelText("复盘分支棋谱树")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /马2进3/ })).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: /马2进3/ }));
+    expect(props.onNavigate).toHaveBeenCalledWith("variation-reply");
+
+    await userEvent.click(screen.getByRole("button", { name: "管理分支" }));
+    await userEvent.click(screen.getByTitle("设为主线"));
+    expect(props.onMakeMainline).toHaveBeenCalledWith("variation-reply");
+    await userEvent.click(within(screen.getByTestId("tree-node-variation-reply")).getByTitle("删除分支及其后续"));
+    expect(props.onRemoveBranch).toHaveBeenCalledWith("variation-reply");
+
+    await userEvent.click(screen.getByRole("button", { name: "回合列表" }));
+    expect(screen.queryByLabelText("复盘分支棋谱树")).toBeNull();
+    expect(screen.getByLabelText("复盘回合列表")).toBeTruthy();
+  });
+
   it("opens the in-review library with TianTian Xiangqi games selected and loads the selected game", async () => {
     const props = renderWorkspace();
 
@@ -486,6 +528,7 @@ describe("ReviewWorkspace", () => {
   it("can hide and restore move thoughts without leaving expanded row details visible", async () => {
     renderWorkspace();
     expect(screen.getByLabelText("当前着法思路")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "回合列表" }));
     await userEvent.click(screen.getByRole("button", { name: "展开第 1 着思路" }));
     expect(screen.getByLabelText("炮二平五 的着法思路")).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "隐藏思路" }));
@@ -635,12 +678,14 @@ describe("ReviewWorkspace", () => {
 
   it("switches from key moves to the full move list", async () => {
     renderWorkspace();
+    await userEvent.click(screen.getByRole("button", { name: "回合列表" }));
     await userEvent.click(screen.getByRole("button", { name: "完整棋谱" }));
     expect(screen.getByRole("button", { name: /炮二平五/ })).toBeTruthy();
   });
 
   it("expands a thought explanation for an individual route move", async () => {
     renderWorkspace();
+    await userEvent.click(screen.getByRole("button", { name: "回合列表" }));
     await userEvent.click(screen.getByRole("button", { name: "展开第 1 着思路" }));
     const thought = screen.getByLabelText("炮二平五 的着法思路");
     expect(within(thought).getByText("想快速抢中路。")).toBeTruthy();
@@ -651,6 +696,7 @@ describe("ReviewWorkspace", () => {
 
   it("keeps later moves visible when browsing an earlier move in the full score", async () => {
     const props = renderWorkspace({ board: earlierNodeBoard });
+    await userEvent.click(screen.getByRole("button", { name: "回合列表" }));
     const scope = screen.getByLabelText("棋谱范围");
     expect(within(scope).getAllByRole("button").map((button) => button.textContent)).toEqual(["完整棋谱", "关键着法"]);
     await userEvent.click(within(scope).getByRole("button", { name: "完整棋谱" }));
@@ -664,12 +710,13 @@ describe("ReviewWorkspace", () => {
     expect(screen.getByRole("button", { name: /炮二平五/ })).toBeTruthy();
   });
 
-  it("marks saved flyknife routes with their intent without expanding ordinary moves", () => {
+  it("marks saved flyknife routes with their intent without expanding ordinary moves", async () => {
     const flyknifeBoard = {
       ...board,
       history: [{ ...board.history[0], comment: "飞刀方案：测试红方飞刀\n执方：红方\n诱导：h9g7\n主变：马8进7 炮二平五 马2进3\n最佳防守：马2进3\n风险：实战可用：对常见应手形成主动攻势。" }],
     };
     renderWorkspace({ board: flyknifeBoard });
+    await userEvent.click(screen.getByRole("button", { name: "回合列表" }));
 
     expect(screen.getByText("已验证飞刀")).toBeTruthy();
     expect(screen.getByText("意图：马8进7 炮二平五 马2进3")).toBeTruthy();

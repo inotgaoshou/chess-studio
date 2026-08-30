@@ -94,6 +94,7 @@ import { Game53StudyDialog } from "./Game53StudyDialog";
 import { TtxqImportDialog } from "./TtxqImportDialog";
 import { bundledTheoryKnowledge } from "./theoryKnowledge.generated";
 import { ReviewWorkspace } from "./ReviewWorkspace";
+import { ReviewGameLibrary } from "./ReviewGameLibrary";
 import { U10TrainingDialog } from "./U10TrainingDialog";
 import { UserManualDialog } from "./UserManualDialog";
 import { boardCellStyle, boardIntersectionPoint } from "./boardGeometry";
@@ -5554,17 +5555,9 @@ export default function App() {
       case "pasteDocument":
       case "pasteTextManual": await pasteDocument(); break;
       case "openLocalLibrary":
-        if (reviewModeOpen) {
-          await refreshGames();
-          setReviewGameLibraryOpen(true);
-          break;
-        }
-        await exitReviewMode();
-        await setWorkspaceLayout("studio");
-        await setLibraryVisibility(false);
         await refreshGames();
-        setLibraryFilter(TTXQ_BACKUP_FOLDER);
-        setNotice("已打开本地棋谱库：天天象棋备份");
+        setReviewGameLibraryOpen(true);
+        setNotice("已打开本地棋谱库");
         break;
       case "copyFullManual": await copyGame(); break;
       case "copyMainline": await copyGame(true); break;
@@ -7356,6 +7349,9 @@ export default function App() {
             onMoveThoughtVisibilityChange={setShowMoveThoughts}
             onClose={() => void exitReviewMode()}
             onNavigate={(nodeId) => void navigateTo(nodeId)}
+            onMakeMainline={(nodeId) => void makeMainline(nodeId)}
+            onReorderBranches={(nodeIds, from, to) => void reorderBranchNodes(nodeIds, from, to)}
+            onRemoveBranch={(nodeId) => void removeNode(nodeId)}
             onGenerateReport={() => void generateGameReport()}
             onCancelReport={() => void cancelGameReport()}
             onExportReport={() => void exportGameReport()}
@@ -7965,6 +7961,15 @@ export default function App() {
         onDisconnect={() => void disconnectTtxq()}
         onShowDiagnostics={() => void refreshTtxqDiagnostics()}
         onClearDiagnostics={() => void clearTtxqDiagnostics()}
+      />}
+      {!reviewModeOpen && reviewGameLibraryOpen && <ReviewGameLibrary
+        games={games}
+        folders={libraryFolders}
+        onOpen={(gameId) => void openGame(gameId)}
+        onShare={shareLibraryGame}
+        onDelete={deleteLibraryGames}
+        onChanged={refreshGames}
+        onClose={() => setReviewGameLibraryOpen(false)}
       />}
       <nav className="mobile-nav" aria-label="移动端导航">
         <button className={mobilePanel === "board" ? "active" : ""} onClick={() => setMobilePanel("board")}><LayoutGrid size={19}/><span>棋盘</span></button>

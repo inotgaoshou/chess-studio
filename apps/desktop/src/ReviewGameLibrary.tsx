@@ -411,7 +411,7 @@ export function ReviewGameLibrary({ games, folders, onOpen, onShare, onDelete, o
   return <>
     <div className="review-library-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="review-game-library" role="dialog" aria-modal="true" aria-label="本地棋谱库">
-      <header><div><Database size={18}/><span><strong>本地棋谱库</strong><small>选择一盘棋，直接在当前复盘中打开</small></span></div><button type="button" aria-label="关闭棋谱库" title="关闭" onClick={onClose}><X size={17}/></button></header>
+      <header><div><Database size={18}/><span><strong>本地棋谱库</strong><small>选择一盘棋，直接在当前工作台打开</small></span></div><button type="button" aria-label="关闭棋谱库" title="关闭" onClick={onClose}><X size={17}/></button></header>
       <div className="review-game-library-body" style={{ gridTemplateColumns: `${sidebarWidth}px 6px minmax(0, 1fr)` }}>
         <aside aria-label="棋谱库筛选">
           <div className="review-library-folder-node">

@@ -31,15 +31,21 @@ pub(crate) fn list_games(state: State<'_, DesktopState>) -> Result<Vec<GameSumma
             let source_order = ttxq_sync::source_order_from_path(game.source_path.as_deref());
             let metadata = serde_json::from_str::<ManualMetadata>(&game.metadata_json).ok();
             let non_empty = |value: Option<String>| value.filter(|value| !value.trim().is_empty());
-            let source_value = |name: &str| game.note.lines().find_map(|line| {
-                line.strip_prefix(&format!("{name}："))
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(str::to_owned)
-            });
-            let move_count = model.store.load_move_nodes(game.id)
+            let source_value = |name: &str| {
+                game.note.lines().find_map(|line| {
+                    line.strip_prefix(&format!("{name}："))
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_owned)
+                })
+            };
+            let move_count = model
+                .store
+                .load_move_nodes(game.id)
                 .map_err(|error| error.to_string())?
-                .into_iter().filter(|node| !node.deleted).count();
+                .into_iter()
+                .filter(|node| !node.deleted)
+                .count();
             let mirror = model
                 .store
                 .game_mirror_status(game.id)
@@ -73,24 +79,82 @@ pub(crate) fn list_games(state: State<'_, DesktopState>) -> Result<Vec<GameSumma
 }
 
 #[tauri::command]
-pub(crate) fn get_game_metadata(game_id: Uuid, state: State<'_, DesktopState>) -> Result<GameMetadataDto, String> {
-    let model = state.model.lock().map_err(|_| "state lock poisoned".to_owned())?;
-    let game = model.store.load_game(game_id).map_err(|error| error.to_string())?.ok_or("棋谱不存在")?;
+pub(crate) fn get_game_metadata(
+    game_id: Uuid,
+    state: State<'_, DesktopState>,
+) -> Result<GameMetadataDto, String> {
+    let model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    let game = model
+        .store
+        .load_game(game_id)
+        .map_err(|error| error.to_string())?
+        .ok_or("棋谱不存在")?;
     let metadata = serde_json::from_str::<ManualMetadata>(&game.metadata_json).unwrap_or_default();
-    Ok(GameMetadataDto { title: game.title, event: metadata.event, site: metadata.site, date: metadata.date, red: metadata.red, black: metadata.black, result: metadata.result, note: game.note })
+    Ok(GameMetadataDto {
+        title: game.title,
+        event: metadata.event,
+        site: metadata.site,
+        date: metadata.date,
+        red: metadata.red,
+        black: metadata.black,
+        result: metadata.result,
+        note: game.note,
+    })
 }
 
 #[tauri::command]
-pub(crate) fn update_game_metadata_for_game(game_id: Uuid, metadata: GameMetadataDto, state: State<'_, DesktopState>) -> Result<BoardDto, String> {
-    let mut model = state.model.lock().map_err(|_| "state lock poisoned".to_owned())?;
+pub(crate) fn update_game_metadata_for_game(
+    game_id: Uuid,
+    metadata: GameMetadataDto,
+    state: State<'_, DesktopState>,
+) -> Result<BoardDto, String> {
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
     let title = metadata.title.trim();
-    if title.is_empty() { return Err("棋谱标题不能为空".into()); }
-    if model.store.load_game(game_id).map_err(|error| error.to_string())?.is_none() { return Err("棋谱不存在".into()); }
-    let document_metadata = ManualMetadata { title: title.to_owned(), event: metadata.event.trim().to_owned(), site: metadata.site.trim().to_owned(), date: metadata.date.trim().to_owned(), red: metadata.red.trim().to_owned(), black: metadata.black.trim().to_owned(), result: metadata.result.trim().to_owned(), };
+    if title.is_empty() {
+        return Err("棋谱标题不能为空".into());
+    }
+    if model
+        .store
+        .load_game(game_id)
+        .map_err(|error| error.to_string())?
+        .is_none()
+    {
+        return Err("棋谱不存在".into());
+    }
+    let document_metadata = ManualMetadata {
+        title: title.to_owned(),
+        event: metadata.event.trim().to_owned(),
+        site: metadata.site.trim().to_owned(),
+        date: metadata.date.trim().to_owned(),
+        red: metadata.red.trim().to_owned(),
+        black: metadata.black.trim().to_owned(),
+        result: metadata.result.trim().to_owned(),
+    };
     let payload = metadata_payload(&document_metadata, &metadata.note);
-    let operation = next_operation_for_game(&mut model, game_id, OperationKind::UpdateGameMetadata, serde_json::to_value(payload).map_err(|error| error.to_string())?);
-    let metadata_json = serde_json::to_string(&document_metadata).map_err(|error| error.to_string())?;
-    model.store.update_game_metadata_with_operation(game_id, title, &metadata.note, &metadata_json, &operation).map_err(|error| error.to_string())?;
+    let operation = next_operation_for_game(
+        &mut model,
+        game_id,
+        OperationKind::UpdateGameMetadata,
+        serde_json::to_value(payload).map_err(|error| error.to_string())?,
+    );
+    let metadata_json =
+        serde_json::to_string(&document_metadata).map_err(|error| error.to_string())?;
+    model
+        .store
+        .update_game_metadata_with_operation(
+            game_id,
+            title,
+            &metadata.note,
+            &metadata_json,
+            &operation,
+        )
+        .map_err(|error| error.to_string())?;
     if model.game_id == game_id {
         model.metadata = document_metadata;
         model.note = metadata.note;
@@ -100,15 +164,33 @@ pub(crate) fn update_game_metadata_for_game(game_id: Uuid, metadata: GameMetadat
 }
 
 #[tauri::command]
-pub(crate) fn delete_games(game_ids: Vec<Uuid>, state: State<'_, DesktopState>) -> Result<(), String> {
-    if game_ids.is_empty() { return Ok(()); }
-    let mut model = state.model.lock().map_err(|_| "state lock poisoned".to_owned())?;
+pub(crate) fn delete_games(
+    game_ids: Vec<Uuid>,
+    state: State<'_, DesktopState>,
+) -> Result<(), String> {
+    if game_ids.is_empty() {
+        return Ok(());
+    }
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
     if game_ids.iter().any(|game_id| *game_id == model.game_id) {
         return Err("请先打开另一盘棋，再删除当前复盘棋谱".into());
     }
     for game_id in game_ids {
-        if model.store.load_game(game_id).map_err(|error| error.to_string())?.is_none() { continue; }
-        model.store.delete_game_locally(game_id).map_err(|error| error.to_string())?;
+        if model
+            .store
+            .load_game(game_id)
+            .map_err(|error| error.to_string())?
+            .is_none()
+        {
+            continue;
+        }
+        model
+            .store
+            .delete_game_locally(game_id)
+            .map_err(|error| error.to_string())?;
     }
     Ok(())
 }
@@ -220,7 +302,10 @@ pub(crate) fn game_mirror_target_in_folder(
     let _ = game_id;
     let mut target = root.to_path_buf();
     if let Some(folder) = folder {
-        for segment in folder.split('/').filter(|segment| !segment.trim().is_empty()) {
+        for segment in folder
+            .split('/')
+            .filter(|segment| !segment.trim().is_empty())
+        {
             target = target.join(sanitize_mirror_segment(segment, "未命名目录"));
         }
     }
@@ -1622,7 +1707,7 @@ pub(crate) fn reorder_branches(
         .model
         .lock()
         .map_err(|_| "state lock poisoned".to_owned())?;
-    let parent_id = model.current_node.unwrap_or_else(|| model.tree.root_id());
+    let parent_id = branch_parent_id(&model.tree, &node_ids)?;
     let mut reordered_tree = model.tree.clone();
     reordered_tree
         .reorder_branches(parent_id, &node_ids)
@@ -1645,6 +1730,22 @@ pub(crate) fn reorder_branches(
     model.tree = reordered_tree;
     let _ = sync_current_game_mirror(&mut model);
     board_dto(&model)
+}
+
+fn branch_parent_id(tree: &ManualTree, node_ids: &[Uuid]) -> Result<Uuid, String> {
+    let first = node_ids.first().ok_or("变招排序不能为空")?;
+    let parent_id = tree
+        .node(*first)
+        .map_err(|error| error.to_string())?
+        .parent_id;
+    if node_ids.iter().any(|node_id| {
+        tree.node(*node_id)
+            .map(|node| node.parent_id != parent_id)
+            .unwrap_or(true)
+    }) {
+        return Err("变招排序必须来自同一局面".into());
+    }
+    Ok(parent_id)
 }
 
 #[tauri::command]
@@ -1793,4 +1894,29 @@ pub(crate) fn delete_node(
     }
     let _ = sync_current_game_mirror(&mut model);
     board_dto(&model)
+}
+
+#[cfg(test)]
+mod branch_order_tests {
+    use super::branch_parent_id;
+    use xiangqi_core::Move;
+    use xiangqi_manual::ManualTree;
+
+    #[test]
+    fn branch_order_uses_the_siblings_parent_instead_of_the_current_node() {
+        let mut tree = ManualTree::new();
+        let root = tree.root_id();
+        let parent = tree
+            .add_move(root, Move::from_iccs("h2e2").unwrap(), "")
+            .unwrap();
+        let first = tree
+            .add_move(parent, Move::from_iccs("h9g7").unwrap(), "")
+            .unwrap();
+        let second = tree
+            .add_move(parent, Move::from_iccs("b9c7").unwrap(), "")
+            .unwrap();
+
+        assert_eq!(branch_parent_id(&tree, &[second, first]).unwrap(), parent);
+        assert_ne!(parent, second);
+    }
 }
