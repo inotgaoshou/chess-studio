@@ -9,10 +9,10 @@ pub(crate) fn dhtml_move_list_to_iccs(raw: &str) -> Vec<String> {
 
 /// Converts `getMoveBranchKey` values into ICCS moves.
 ///
-/// Unlike the main move list, QQ Chess branch values already use ICCS-native
-/// ranks. Their files and ranks therefore pass through without inversion.
+/// Branch values use the same DhtmlXQ top-left coordinate system as the main
+/// move list, so ranks must also be inverted for ICCS.
 pub(crate) fn dhtml_branch_move_list_to_iccs(raw: &str) -> Vec<String> {
-    coordinate_move_list_to_iccs(raw, false)
+    coordinate_move_list_to_iccs(raw, true)
 }
 
 fn coordinate_move_list_to_iccs(raw: &str, invert_rank: bool) -> Vec<String> {
@@ -61,10 +61,10 @@ mod tests {
     }
 
     #[test]
-    fn converts_dhtml_branch_coordinates_without_flipping_ranks() {
-        assert_eq!(dhtml_branch_move_list_to_iccs("1927"), ["b9c7"]);
-        assert_eq!(dhtml_branch_move_list_to_iccs("5041"), ["f0e1"]);
-        assert_eq!(dhtml_branch_move_list_to_iccs("7274"), ["h2h4"]);
+    fn converts_dhtml_branch_coordinates_to_iccs() {
+        assert_eq!(dhtml_branch_move_list_to_iccs("7082"), ["h9i7"]);
+        assert_eq!(dhtml_branch_move_list_to_iccs("1927"), ["b0c2"]);
+        assert_eq!(dhtml_branch_move_list_to_iccs("7274"), ["h7h5"]);
     }
 
     #[test]
