@@ -83,9 +83,13 @@ export function TtxqImportDialog({ progress, preview, diagnostics, folders, targ
   const isReading = progress.state === "reading";
   const isDiscovering = isReading && progress.readPhase === "discovering";
   const isLoadingGame = isReading && progress.readPhase === "loading";
+  const isMetadata = isReading && progress.readPhase === "metadata";
+  const isBranches = isReading && progress.readPhase === "branches";
   const importSucceeded = progress.state === "complete" && progress.failed === 0;
   const showDiagnostics = diagnostics.length > 0 && !importSucceeded;
-  const readPercent = progress.readTotal > 0 ? Math.round((progress.readCompleted / progress.readTotal) * 100) : 0;
+  const stageFraction = isLoadingGame ? 0.15 : isMetadata ? 0.45 : isBranches ? 0.75 : 0;
+  const readProgressValue = Math.min(progress.readTotal, progress.readCompleted + stageFraction);
+  const readPercent = progress.readTotal > 0 ? Math.round((readProgressValue / progress.readTotal) * 100) : 0;
   const [readElapsedSeconds, setReadElapsedSeconds] = useState(0);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
@@ -95,10 +99,7 @@ export function TtxqImportDialog({ progress, preview, diagnostics, folders, targ
   const newFolderPath = normalizeFolderPath(`${normalizedTargetFolder}/${newFolderName}`);
 
   useEffect(() => {
-    if (!isReading) {
-      setReadElapsedSeconds(0);
-      return;
-    }
+    if (!isReading) return;
     const startedAt = Date.now();
     setReadElapsedSeconds(0);
     const timer = window.setInterval(() => setReadElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000)), 1000);
@@ -125,20 +126,25 @@ export function TtxqImportDialog({ progress, preview, diagnostics, folders, targ
           <div><span>同步状态</span><strong className={progress.state}>{stateLabel(progress.state)}</strong></div>
           <p>{progress.message}</p>
           {isReading && <section className="ttxq-import-reading-progress" aria-label="读取进度">
-            <header><strong>{isDiscovering ? "扫描已加载列表" : isLoadingGame ? "等待棋谱加载" : "读取棋谱走法"}</strong><span>{isDiscovering ? `已发现 ${progress.readTotal} 盘` : isLoadingGame ? `第 ${progress.readCurrent ?? 0} / ${progress.readTotal} 盘` : `${readPercent}%`}</span></header>
+            <header><strong>{isDiscovering ? "扫描已加载列表" : isLoadingGame ? "等待棋谱加载" : isMetadata ? "解析棋谱信息" : isBranches ? "读取分支变化" : "读取棋谱走法"}</strong><span>{isDiscovering ? `已发现 ${progress.readTotal} 盘` : isLoadingGame || isMetadata || isBranches ? `第 ${progress.readCurrent ?? 0} / ${progress.readTotal} 盘` : `${readPercent}%`}</span></header>
             {isDiscovering
               ? <i aria-label="正在扫描已加载棋谱"/>
               : progress.readTotal > 0
-              ? <progress value={progress.readCompleted} max={progress.readTotal} aria-label="读取进度"/>
+              ? <progress value={readProgressValue} max={progress.readTotal} aria-label="读取进度"/>
               : <i aria-label="正在发现已加载棋谱"/>}
             <p>{isDiscovering
               ? <>正在检查已加载的最近对局 · 已处理 <b>{progress.readScanned ?? 0}</b> 个数据项 · 已等待 <b>{readElapsedSeconds}</b> 秒{readElapsedSeconds >= 12 && <>。若长时间不变，请在授权窗口打开“最近对局”，等列表显示后重新读取。</>}</>
               : isLoadingGame
               ? <>正在确认第 <b>{progress.readCurrent ?? 0}</b> 盘走法已加载 · 已等待 <b>{readElapsedSeconds}</b> 秒。首盘最多等待 12 秒，其余每盘最多约 3 秒；超时只跳过该盘并保留诊断样本。</>
+              : isMetadata
+              ? <>第 <b>{progress.readCurrent ?? 0}</b> / {progress.readTotal} 盘 · 正在读取标题、棋手、时间和赛果 · 已等待 <b>{readElapsedSeconds}</b> 秒</>
+              : isBranches
+              ? <>第 <b>{progress.readCurrent ?? 0}</b> / {progress.readTotal} 盘 · 正在识别主线、路线按钮和变招节点 · 已等待 <b>{readElapsedSeconds}</b> 秒</>
               : progress.readTotal > 0
               ? <>发现 <b>{progress.readTotal}</b> 盘 · 已读取 <b>{progress.readCompleted}</b> / {progress.readTotal} · 失败 <b>{progress.readFailed}</b></>
               : "正在检查天天象棋网页中已加载的最近对局…"}</p>
           </section>}
+          {progress.state === "error" && readElapsedSeconds > 0 && <p className="ttxq-import-read-duration">本次读取用时 {readElapsedSeconds} 秒</p>}
           {progress.loaded > 0 && <p className="ttxq-import-count">已加载 <b>{progress.loaded}</b> 盘{hasResult && <> · 导入 <b>{progress.imported}</b> · 跳过 <b>{progress.skipped}</b> · 失败 <b>{progress.failed}</b></>}</p>}
           {importSucceeded && <p className="ttxq-import-success" role="status"><CheckCircle2 size={16}/>已成功导入 {progress.imported} 盘棋谱，已保存到本地棋谱库。</p>}
         </section>

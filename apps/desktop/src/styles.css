@@ -2993,6 +2993,16 @@ body.analysis-reopen-dragging * {
   .workspace.review-mode-active > .library-panel { display: none; }
   .workspace.review-mode-active > .board-section { grid-column: 1; display: block; }
   .workspace.review-mode-active .board-main-stack { height: 100%; }
+  .workspace.layout-compact.review-mode-active .board-main-stack {
+    overflow: hidden;
+    scrollbar-gutter: auto;
+  }
+  .workspace.layout-compact.review-mode-active .board-stage {
+    flex: 1 1 0;
+    height: auto;
+    min-height: 0;
+    overflow: hidden;
+  }
   .workspace.review-mode-active .board-candidate-rail { display: none; }
   .workspace.review-mode-active > .analysis-panel, .workspace.review-mode-active > .analysis-panel.collapsed { grid-column: 2; display: block; min-height: 0; padding: 0; border-left: 1px solid #416052; }
   .workspace.review-mode-active .review-workbench { height: 100%; }

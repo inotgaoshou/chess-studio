@@ -1,11 +1,14 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { LibraryFolder, TtxqDiagnosticSample, TtxqGamePreview, TtxqSyncProgress } from "./platform";
 import { TtxqImportDialog } from "./TtxqImportDialog";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 const disconnected: TtxqSyncProgress = { state: "disconnected", readTotal: 0, readCompleted: 0, readFailed: 0, loaded: 0, completed: 0, imported: 0, skipped: 0, failed: 0, message: "未连接天天象棋" };
 
@@ -77,6 +80,69 @@ describe("TtxqImportDialog", () => {
     renderDialog({ state: "reading", readPhase: "loading", readTotal: 20, readCurrent: 8, readCompleted: 7, readFailed: 1, loaded: 0, completed: 0, imported: 0, skipped: 0, failed: 0, message: "正在加载第 8/20 盘棋谱" });
     expect(screen.getByText("等待棋谱加载")).toBeTruthy();
     expect(document.querySelector(".ttxq-import-reading-progress")?.textContent).toContain("正在确认第 8 盘走法已加载");
+  });
+
+  it("shows progress inside the current game while metadata and branches are parsed", () => {
+    const base = { state: "reading", readTotal: 9, readCurrent: 1, readCompleted: 0, readFailed: 0, loaded: 0, completed: 0, imported: 0, skipped: 0, failed: 0 };
+    const { rerender } = render(<TtxqImportDialog
+      progress={{ ...base, readPhase: "metadata", message: "正在解析第 1/9 盘棋谱信息" }}
+      preview={[]}
+      diagnostics={[]}
+      folders={[]}
+      targetFolder="天天象棋备份"
+      busy={false}
+      onClose={vi.fn()}
+      onTargetFolderChange={vi.fn()}
+      onCreateFolder={vi.fn()}
+      onAuthorize={vi.fn()}
+      onCollect={vi.fn()}
+      onImport={vi.fn()}
+      onDisconnect={vi.fn()}
+      onShowDiagnostics={vi.fn()}
+      onClearDiagnostics={vi.fn()}
+    />);
+
+    expect(screen.getByText("解析棋谱信息")).toBeTruthy();
+    expect(document.querySelector(".ttxq-import-reading-progress > p")?.textContent).toContain("第 1 / 9 盘 · 正在读取标题、棋手、时间和赛果");
+    expect(screen.getByRole("progressbar", { name: "读取进度" }).getAttribute("value")).toBe("0.45");
+
+    rerender(<TtxqImportDialog
+      progress={{ ...base, readPhase: "branches", message: "正在读取第 1/9 盘分支变化" }}
+      preview={[]}
+      diagnostics={[]}
+      folders={[]}
+      targetFolder="天天象棋备份"
+      busy={false}
+      onClose={vi.fn()}
+      onTargetFolderChange={vi.fn()}
+      onCreateFolder={vi.fn()}
+      onAuthorize={vi.fn()}
+      onCollect={vi.fn()}
+      onImport={vi.fn()}
+      onDisconnect={vi.fn()}
+      onShowDiagnostics={vi.fn()}
+      onClearDiagnostics={vi.fn()}
+    />);
+    expect(screen.getByText("读取分支变化")).toBeTruthy();
+    expect(document.querySelector(".ttxq-import-reading-progress > p")?.textContent).toContain("第 1 / 9 盘 · 正在识别主线、路线按钮和变招节点");
+    expect(screen.getByRole("progressbar", { name: "读取进度" }).getAttribute("value")).toBe("0.75");
+  });
+
+  it("shows elapsed time during a stage and preserves it after a stalled read", () => {
+    vi.useFakeTimers();
+    const base = { state: "reading", readPhase: "metadata", readTotal: 9, readCurrent: 1, readCompleted: 0, readFailed: 0, loaded: 0, completed: 0, imported: 0, skipped: 0, failed: 0, message: "正在解析第 1/9 盘棋谱信息" };
+    const props = {
+      preview: [], diagnostics: [], folders: [], targetFolder: "天天象棋备份", busy: false,
+      onClose: vi.fn(), onTargetFolderChange: vi.fn(), onCreateFolder: vi.fn(), onAuthorize: vi.fn(),
+      onCollect: vi.fn(), onImport: vi.fn(), onDisconnect: vi.fn(), onShowDiagnostics: vi.fn(), onClearDiagnostics: vi.fn(),
+    };
+    const { rerender } = render(<TtxqImportDialog progress={base} {...props}/>);
+
+    act(() => vi.advanceTimersByTime(3_000));
+    expect(document.querySelector(".ttxq-import-reading-progress > p")?.textContent).toContain("已等待 3 秒");
+
+    rerender(<TtxqImportDialog progress={{ ...base, state: "error", message: "读取失败：第 1/9 盘长时间没有进度" }} {...props}/>);
+    expect(screen.getByText("本次读取用时 3 秒")).toBeTruthy();
   });
 
   it("shows a bridge timeout and allows the user to retry", () => {
