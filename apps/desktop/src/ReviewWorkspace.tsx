@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Activity, BarChart3, BookOpen, Brain, CheckCircle2, ChevronRight, ClipboardPaste, ClipboardList, Download, Eye, FileText, FolderArchive, GitBranch, GitFork, Heart, Image, Lightbulb, List, Play, Plus, RefreshCw, Settings2, Swords, X } from "lucide-react";
+import { Activity, BarChart3, BookOpen, Brain, CheckCircle2, ChevronDown, ChevronRight, ClipboardPaste, ClipboardList, Download, Eye, FileText, FolderArchive, GitBranch, GitFork, Heart, Image, Lightbulb, List, Maximize2, Play, Plus, RefreshCw, Settings2, Swords, X } from "lucide-react";
 import type { AnalysisLine, BoardState, GameReportPresentationDto, GameReportProgressDto, GameSummary, LibraryFolder, ManualTreeNode, MoveItem, ReportIssuePresentationDto, Side, TrainingGenerationResultDto, TrainingTaskDto } from "./platform/types";
 import { buildReviewModel, signedCp } from "./reviewModel";
 import { EvaluationTrendChart, redAdvantageLabel } from "./EvaluationTrendChart";
@@ -38,6 +38,8 @@ export type ReviewWorkspaceProps = {
   engineHintRequest: number;
   showMoveThoughts?: boolean;
   onMoveThoughtVisibilityChange?(visible: boolean): void;
+  routePoppedOut?: boolean;
+  onPopOutRoute?(): void;
   onClose(): void;
   onNavigate(nodeId?: string): void;
   onMakeMainline(nodeId: string): void;
@@ -163,7 +165,7 @@ function IssueCard({ issue, index, active, expanded, engineExpanded, analysisDep
 
 export function ReviewWorkspace({
   board, report, reportBusy, reportExporting, reportProgress, engineReady, libraryFolder, playedAt, libraryFolders, games = [], libraryOpen: controlledLibraryOpen, onLibraryOpenChange, favorite, libraryTags, flyknifePlanCount, trainingTasks, trainingGenerating, trainingGeneration, analysisConfig,
-  positionAnalysis, positionAnalysisBusy, positionAnalysisError, positionAnalysisFen, engineHintRequest, showMoveThoughts: controlledShowMoveThoughts, onMoveThoughtVisibilityChange,
+  positionAnalysis, positionAnalysisBusy, positionAnalysisError, positionAnalysisFen, engineHintRequest, showMoveThoughts: controlledShowMoveThoughts, onMoveThoughtVisibilityChange, routePoppedOut = false, onPopOutRoute,
   onClose, onNavigate, onMakeMainline, onReorderBranches, onRemoveBranch, onGenerateReport, onCancelReport, onExportReport, onOpenReport, onImport, onImportScreenshot, onPaste, onManualRecord, onOpenGame, onShareGame, onRefreshLibrary, onDeleteGames, onSaveLibrary, onOpenFlyknife, onGenerateTraining, onOpenTraining, onCompleteTraining, onStudyIssue, onStartU10, onRunPositionAnalysis,
 }: ReviewWorkspaceProps) {
   const [tab, setTab] = useState<InsightTab>("report");
@@ -171,6 +173,7 @@ export function ReviewWorkspace({
   const [routeView, setRouteView] = useState<RouteView>("tree");
   const [collapsedTreeNodes, setCollapsedTreeNodes] = useState<Set<string>>(() => new Set());
   const [branchEditing, setBranchEditing] = useState(false);
+  const [routeCollapsed, setRouteCollapsed] = useState(false);
   const [issueSide, setIssueSide] = useState<"red" | "black">("red");
   const [expandedIssue, setExpandedIssue] = useState<string>();
   const [expandedEngineLine, setExpandedEngineLine] = useState<string>();
@@ -383,9 +386,9 @@ export function ReviewWorkspace({
           <div className="review-archive-tools"><button type="button" className={archiveFavoriteDraft ? "active" : ""} onClick={() => setArchiveFavoriteDraft((value) => !value)}><Heart size={13} fill={archiveFavoriteDraft ? "currentColor" : "none"}/>{archiveFavoriteDraft ? "已收藏" : "收藏"}</button><button type="button" onClick={closeArchiveEditor}>取消</button><button type="button" disabled={!archiveDirty || archiveSaving} onClick={() => void saveArchive()}>{archiveSaving ? "保存中" : "保存归档"}</button></div>{archiveDirty && <small className="review-archive-dirty">未保存的修改</small>}{archiveSaveFailed && <small className="review-archive-error">保存失败，草稿已保留，请重试。</small>}</>}
       </section>}
       <div className="review-config" aria-label="整局分析配置"><span>深度 {analysisConfig.reportDepth}</span><span>PV {analysisConfig.multipv}</span><span>{analysisConfig.threads} 线程</span><span>Hash {analysisConfig.hashMb} MB</span></div>
-      <section className={`review-move-list ${routeView === "tree" ? "tree-mode" : "rounds-mode"}`} aria-label="复盘棋谱路线">
-        <header><strong>棋谱路线</strong><div className="review-move-view-actions"><div role="group" aria-label="棋谱视图"><button type="button" aria-pressed={routeView === "tree"} className={routeView === "tree" ? "active" : ""} onClick={() => setRouteView("tree")}><GitBranch size={12}/>分支树</button><button type="button" aria-pressed={routeView === "rounds"} className={routeView === "rounds" ? "active" : ""} onClick={() => setRouteView("rounds")}><List size={12}/>回合列表</button></div>{routeView === "tree" ? <button type="button" className={branchEditing ? "active" : ""} aria-pressed={branchEditing} onClick={() => setBranchEditing((editing) => !editing)}><Settings2 size={12}/>{branchEditing ? "完成管理" : "管理分支"}</button> : <div role="group" aria-label="棋谱范围"><button type="button" className={moveScope === "all" ? "active" : ""} title="浏览完整棋谱，不删除后续着法" onClick={() => setMoveScope("all")}>完整棋谱</button><button type="button" className={moveScope === "issues" ? "active" : ""} disabled={!activeReport} onClick={() => setMoveScope("issues")}>关键着法</button></div>}</div></header>
-        {routeView === "tree" ? <div className="review-branch-tree" aria-label="复盘分支棋谱树">
+      <section className={`review-move-list ${routeView === "tree" ? "tree-mode" : "rounds-mode"} ${routeCollapsed || routePoppedOut ? "collapsed" : ""}`} aria-label="复盘棋谱路线">
+        <header><div className="review-route-title"><strong>棋谱路线</strong>{routePoppedOut && <small>独立窗口中</small>}</div><div className="review-move-view-actions">{!routePoppedOut && !routeCollapsed && <><div role="group" aria-label="棋谱视图"><button type="button" aria-pressed={routeView === "tree"} className={routeView === "tree" ? "active" : ""} onClick={() => setRouteView("tree")}><GitBranch size={12}/>分支树</button><button type="button" aria-pressed={routeView === "rounds"} className={routeView === "rounds" ? "active" : ""} onClick={() => setRouteView("rounds")}><List size={12}/>回合列表</button></div>{routeView === "tree" ? <button type="button" className={branchEditing ? "active" : ""} aria-pressed={branchEditing} onClick={() => setBranchEditing((editing) => !editing)}><Settings2 size={12}/>{branchEditing ? "完成管理" : "管理分支"}</button> : <div role="group" aria-label="棋谱范围"><button type="button" className={moveScope === "all" ? "active" : ""} title="浏览完整棋谱，不删除后续着法" onClick={() => setMoveScope("all")}>完整棋谱</button><button type="button" className={moveScope === "issues" ? "active" : ""} disabled={!activeReport} onClick={() => setMoveScope("issues")}>关键着法</button></div>}</>}{onPopOutRoute && <button type="button" title={routePoppedOut ? "将棋谱路线独立窗口置前" : "弹出棋谱路线独立窗口"} aria-label={routePoppedOut ? "置前棋谱路线独立窗口" : "弹出棋谱路线独立窗口"} onClick={onPopOutRoute}><Maximize2 size={12}/>{routePoppedOut ? "置前" : "弹出"}</button>}<button type="button" title={routeCollapsed ? "展开棋谱路线" : "收起棋谱路线"} aria-label={routeCollapsed ? "展开棋谱路线" : "收起棋谱路线"} aria-expanded={!routeCollapsed} disabled={routePoppedOut} onClick={() => setRouteCollapsed((collapsed) => !collapsed)}><ChevronDown className={routeCollapsed ? "collapsed-icon" : undefined} size={13}/></button></div></header>
+        {!routeCollapsed && !routePoppedOut && (routeView === "tree" ? <div className="review-branch-tree" aria-label="复盘分支棋谱树">
           <button type="button" className={`review-tree-root ${!board.currentNode ? "active" : ""}`} onClick={() => onNavigate()}><GitBranch size={12}/>开始局面</button>
           {treeNodes.length > 0 ? <ManualTreeView
             nodes={treeNodes}
@@ -424,7 +427,7 @@ export function ReviewWorkspace({
                 <ThoughtDetails thought={thought} compact/>
               </div>}
             </div>;
-          })}</div></article>)}</div>}
+          })}</div></article>)}</div>)}
       </section>
     </section>
     <section className="review-insights" aria-label="复盘洞察">

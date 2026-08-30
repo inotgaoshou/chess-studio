@@ -673,7 +673,125 @@ fn append_ttxq_variations_to_existing(
         .store
         .append_move_nodes_with_operations(game.id, game.current_node_id, &entries)
         .map_err(|error| error.to_string())?;
-    Ok(added)
+    let reordered = reconcile_ttxq_source_branch_order(model, game, record)?;
+    Ok(added + reordered)
+}
+
+fn expected_ttxq_tree(
+    starting_fen: &str,
+    record: &TtxqGameRecordDto,
+) -> Result<xiangqi_manual::ManualTree, String> {
+    let mut document = ManualDocument::new(starting_fen).map_err(|error| error.to_string())?;
+    let mut board = Board::from_fen(starting_fen).map_err(|error| error.to_string())?;
+    let mut parents = vec![document.tree.root_id()];
+    for raw_move in &record.moves {
+        let mv = Move::from_iccs(raw_move).map_err(|error| error.to_string())?;
+        board = board.apply_move(mv).map_err(|error| error.to_string())?;
+        let parent = *parents.last().ok_or("棋谱树缺少根节点")?;
+        parents.push(
+            document
+                .tree
+                .add_move(parent, mv, "")
+                .map_err(|error| error.to_string())?,
+        );
+    }
+    for variation in &record.variations {
+        insert_ttxq_variation(
+            &mut document,
+            starting_fen,
+            &record.moves,
+            &parents,
+            variation,
+        )?;
+    }
+    Ok(document.tree)
+}
+
+fn reconcile_ttxq_source_branch_order(
+    model: &mut AppModel,
+    game: &local_store::LocalGame,
+    record: &TtxqGameRecordDto,
+) -> Result<usize, String> {
+    let expected = expected_ttxq_tree(&game.starting_fen, record)?;
+    let mut actual = xiangqi_manual::ManualTree::with_root(game.root_id);
+    actual
+        .restore_nodes(
+            model
+                .store
+                .load_move_nodes(game.id)
+                .map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+    let mut pending = vec![(expected.root_id(), actual.root_id())];
+    let mut reordered = 0;
+
+    while let Some((expected_parent, actual_parent)) = pending.pop() {
+        let expected_children = expected
+            .branches(expected_parent)
+            .map_err(|error| error.to_string())?;
+        let actual_children = actual
+            .branches(actual_parent)
+            .map_err(|error| error.to_string())?;
+        if expected_children.is_empty() || actual_children.is_empty() {
+            continue;
+        }
+
+        let mut matched_actual_ids = HashSet::new();
+        let mut source_ids = Vec::new();
+        for expected_child in expected_children {
+            if let Some(actual_child) = actual_children.iter().find(|actual_child| {
+                !matched_actual_ids.contains(&actual_child.id)
+                    && actual_child.mv == expected_child.mv
+            }) {
+                matched_actual_ids.insert(actual_child.id);
+                source_ids.push(actual_child.id);
+                pending.push((expected_child.id, actual_child.id));
+            }
+        }
+        if source_ids.len() < 2 {
+            continue;
+        }
+
+        let mut ordered_ids = source_ids;
+        ordered_ids.extend(
+            actual_children
+                .iter()
+                .filter(|node| !matched_actual_ids.contains(&node.id))
+                .map(|node| node.id),
+        );
+        let current_ids = actual_children
+            .iter()
+            .map(|node| node.id)
+            .collect::<Vec<_>>();
+        if ordered_ids == current_ids {
+            continue;
+        }
+
+        model.lamport += 1;
+        let operation = Operation {
+            op_id: Uuid::new_v4(),
+            device_id: model.device_id,
+            entity_id: actual_parent,
+            game_id: game.id,
+            kind: OperationKind::ReorderBranches,
+            payload: serde_json::to_value(ReorderBranchesPayload {
+                parent_id: actual_parent,
+                node_ids: ordered_ids.clone(),
+            })
+            .map_err(|error| error.to_string())?,
+            lamport: model.lamport,
+            created_at: Utc::now(),
+        };
+        model
+            .store
+            .reorder_branches_with_operation(game.id, actual_parent, &ordered_ids, &operation)
+            .map_err(|error| error.to_string())?;
+        actual
+            .reorder_branches(actual_parent, &ordered_ids)
+            .map_err(|error| error.to_string())?;
+        reordered += 1;
+    }
+    Ok(reordered)
 }
 
 fn reload_active_game_after_ttxq_import(
@@ -1630,6 +1748,9 @@ fn variation_is_legal(
 }
 
 fn dedupe_variations(mut variations: Vec<TtxqVariationDto>) -> Vec<TtxqVariationDto> {
+    for variation in &mut variations {
+        variation.children = dedupe_variations(std::mem::take(&mut variation.children));
+    }
     let mut seen = HashSet::new();
     variations.retain(|variation| {
         seen.insert(format!(
@@ -1642,6 +1763,8 @@ fn dedupe_variations(mut variations: Vec<TtxqVariationDto>) -> Vec<TtxqVariation
     variations.sort_by(|left, right| {
         left.after_ply
             .cmp(&right.after_ply)
+            .then_with(|| left.route_no.is_none().cmp(&right.route_no.is_none()))
+            .then_with(|| left.route_no.cmp(&right.route_no))
             .then_with(|| left.moves.len().cmp(&right.moves.len()))
             .then_with(|| left.moves.cmp(&right.moves))
     });
@@ -4617,6 +4740,32 @@ mod tests {
             .sum()
     }
 
+    #[test]
+    fn dedupe_variations_orders_ttxq_routes_by_route_number() {
+        let variation = |route_no, first_move: &str| TtxqVariationDto {
+            after_ply: 11,
+            moves: vec![first_move.into()],
+            route_no: Some(route_no),
+            source_key: format!("0-12-{route_no}"),
+            comment: String::new(),
+            children: Vec::new(),
+        };
+
+        let ordered = dedupe_variations(vec![
+            variation(3, "b2b6"),
+            variation(2, "h6g6"),
+            variation(1, "b0c2"),
+        ]);
+
+        assert_eq!(
+            ordered
+                .iter()
+                .map(|variation| variation.route_no)
+                .collect::<Vec<_>>(),
+            vec![Some(1), Some(2), Some(3)]
+        );
+    }
+
     fn assert_variation_topology(
         variations: &[TtxqVariationDto],
         expected_parent_route_id: usize,
@@ -4840,6 +4989,129 @@ mod tests {
         assert_eq!(
             model.store.pending_operations(10_000).unwrap().len(),
             initial_operation_count
+        );
+    }
+
+    #[test]
+    fn reimport_repairs_legacy_ttxq_route_order_once_without_recreating_nodes() {
+        let fixtures = real_branch_failure_fixtures();
+        let fixture = fixtures
+            .games
+            .iter()
+            .find(|fixture| fixture.qipu_id == "77610272440")
+            .unwrap();
+        let record = real_branch_record(fixture, &fixtures.starting_fen);
+        let mut model = test_app_model();
+        let first = import_ttxq_record(
+            &mut model,
+            &record,
+            0,
+            TTXQ_BACKUP_FOLDER,
+            "2026-08-30T00:00:00Z",
+        )
+        .unwrap();
+        let TtxqImportOutcome::Imported(game_id) = first else {
+            panic!("first import must create the fixture game, got {first:?}");
+        };
+        let game = model.store.load_game(game_id).unwrap().unwrap();
+        let initial_nodes = model.store.load_move_nodes(game_id).unwrap();
+        let mut tree = xiangqi_manual::ManualTree::with_root(game.root_id);
+        tree.restore_nodes(initial_nodes.clone()).unwrap();
+        let branch_parent = initial_nodes
+            .iter()
+            .map(|node| node.parent_id)
+            .find(|parent_id| {
+                let branches = tree.branches(*parent_id).unwrap();
+                [1, 2, 3].iter().all(|route_no| {
+                    branches.iter().any(|node| {
+                        node.comment
+                            .contains(&format!("天天象棋路线 {route_no}"))
+                    })
+                })
+            })
+            .expect("fixture must contain the four-way root branch");
+        let branches = tree.branches(branch_parent).unwrap();
+        let mainline = branches.iter().find(|node| node.is_mainline).unwrap().id;
+        let route_id = |route_no| {
+            branches
+                .iter()
+                .find(|node| {
+                    node.comment
+                        .contains(&format!("天天象棋路线 {route_no}"))
+                })
+                .unwrap()
+                .id
+        };
+        assert_eq!(
+            branches
+                .iter()
+                .map(|node| node.mv.to_iccs())
+                .collect::<Vec<_>>(),
+            vec!["e4e5", "b0c2", "h6g6", "b2b6"]
+        );
+
+        let legacy_order = vec![mainline, route_id(3), route_id(2), route_id(1)];
+        let legacy_operation = next_operation_for_game(
+            &mut model,
+            game_id,
+            OperationKind::ReorderBranches,
+            serde_json::to_value(ReorderBranchesPayload {
+                parent_id: branch_parent,
+                node_ids: legacy_order.clone(),
+            })
+            .unwrap(),
+        );
+        model
+            .store
+            .reorder_branches_with_operation(
+                game_id,
+                branch_parent,
+                &legacy_order,
+                &legacy_operation,
+            )
+            .unwrap();
+        let operations_before_repair = model.store.pending_operations(10_000).unwrap().len();
+
+        let repaired = import_ttxq_record(
+            &mut model,
+            &record,
+            0,
+            TTXQ_BACKUP_FOLDER,
+            "2026-08-30T00:01:00Z",
+        )
+        .unwrap();
+        assert_eq!(repaired, TtxqImportOutcome::Updated(game_id));
+        let repaired_nodes = model.store.load_move_nodes(game_id).unwrap();
+        let mut repaired_tree = xiangqi_manual::ManualTree::with_root(game.root_id);
+        repaired_tree.restore_nodes(repaired_nodes.clone()).unwrap();
+        assert_eq!(
+            repaired_tree
+                .branches(branch_parent)
+                .unwrap()
+                .iter()
+                .map(|node| node.mv.to_iccs())
+                .collect::<Vec<_>>(),
+            vec!["e4e5", "b0c2", "h6g6", "b2b6"]
+        );
+        assert_eq!(repaired_nodes.len(), initial_nodes.len());
+        assert_eq!(
+            model.store.pending_operations(10_000).unwrap().len(),
+            operations_before_repair + 1
+        );
+
+        let operations_after_repair = model.store.pending_operations(10_000).unwrap().len();
+        let repeated = import_ttxq_record(
+            &mut model,
+            &record,
+            0,
+            TTXQ_BACKUP_FOLDER,
+            "2026-08-30T00:02:00Z",
+        )
+        .unwrap();
+        assert_eq!(repeated, TtxqImportOutcome::Skipped(game_id));
+        assert_eq!(
+            model.store.pending_operations(10_000).unwrap().len(),
+            operations_after_repair
         );
     }
 

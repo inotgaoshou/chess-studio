@@ -72,7 +72,16 @@ pub(crate) async fn open_compact_floating_panel(
     if let Some((x, y)) = position {
         builder = builder.position(x, y);
     }
-    builder.build().map_err(|error| error.to_string())?;
+    let window = builder.build().map_err(|error| error.to_string())?;
+    let app_handle = app.clone();
+    window.on_window_event(move |event| {
+        if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+            let _ = app_handle.emit(
+                "compact-panel-return",
+                serde_json::json!({ "panel": panel }),
+            );
+        }
+    });
 
     Ok(true)
 }

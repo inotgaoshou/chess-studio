@@ -999,6 +999,13 @@ pub(crate) fn validate_server_url(value: &str) -> Result<(), String> {
 }
 
 pub(crate) fn normalize_desktop_preferences(preferences: &mut DesktopPreferences) {
+    if preferences.branch_arrow_style_version < 1 {
+        if preferences.branch_arrow_color == "#2f80ed" {
+            preferences.branch_arrow_color = "#f45d0b".into();
+        }
+        preferences.branch_arrow_badge_color = "#4aa51c".into();
+        preferences.branch_arrow_style_version = 1;
+    }
     let legacy_analysis_defaults =
         (matches!(preferences.search_mode.as_str(), "time" | "infinite")
             && preferences.search_value == 1500)
@@ -1110,9 +1117,33 @@ pub(crate) fn validate_preferences(preferences: &DesktopPreferences) -> Result<(
     }
     if !matches!(
         preferences.branch_arrow_color.as_str(),
-        "#2f80ed" | "#f2c94c" | "#27ae60" | "#9b51e0" | "#eb5757"
+        "#2f80ed"
+            | "#f45d0b"
+            | "#e67e22"
+            | "#f2994a"
+            | "#f2c94c"
+            | "#4aa51c"
+            | "#1f8f4e"
+            | "#27ae60"
+            | "#9b51e0"
+            | "#eb5757"
     ) {
         return Err("不支持的分支箭头颜色".into());
+    }
+    if !matches!(
+        preferences.branch_arrow_badge_color.as_str(),
+        "#2f80ed"
+            | "#f45d0b"
+            | "#e67e22"
+            | "#f2994a"
+            | "#f2c94c"
+            | "#4aa51c"
+            | "#1f8f4e"
+            | "#27ae60"
+            | "#9b51e0"
+            | "#eb5757"
+    ) {
+        return Err("不支持的分支编号颜色".into());
     }
     if !(1..=64).contains(&preferences.threads) {
         return Err("线程数必须在 1 到 64 之间".into());

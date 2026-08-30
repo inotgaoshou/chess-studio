@@ -1725,6 +1725,31 @@ mod tests {
     }
 
     #[test]
+    fn desktop_preferences_migrate_legacy_branch_arrow_defaults_once() {
+        let mut legacy_default = DesktopPreferences::default();
+        legacy_default.branch_arrow_color = "#2f80ed".into();
+        legacy_default.branch_arrow_badge_color.clear();
+        legacy_default.branch_arrow_style_version = 0;
+
+        normalize_desktop_preferences(&mut legacy_default);
+
+        assert_eq!(legacy_default.branch_arrow_color, "#f45d0b");
+        assert_eq!(legacy_default.branch_arrow_badge_color, "#4aa51c");
+        assert_eq!(legacy_default.branch_arrow_style_version, 1);
+
+        legacy_default.branch_arrow_color = "#9b51e0".into();
+        normalize_desktop_preferences(&mut legacy_default);
+        assert_eq!(legacy_default.branch_arrow_color, "#9b51e0");
+
+        let mut legacy_custom = DesktopPreferences::default();
+        legacy_custom.branch_arrow_color = "#eb5757".into();
+        legacy_custom.branch_arrow_style_version = 0;
+        normalize_desktop_preferences(&mut legacy_custom);
+        assert_eq!(legacy_custom.branch_arrow_color, "#eb5757");
+        assert_eq!(legacy_custom.branch_arrow_badge_color, "#4aa51c");
+    }
+
+    #[test]
     fn desktop_preferences_remove_legacy_bundled_fairy_engine() {
         let mut preferences = DesktopPreferences::default();
         preferences.engine_path = "builtin:fairy-stockfish".into();

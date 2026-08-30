@@ -28,6 +28,7 @@ import {
   Link,
   LayoutGrid,
   Library,
+  List,
   Heart,
   Info,
   ListStart,
@@ -109,7 +110,8 @@ const ENGINE_ANALYSIS_SNAPSHOT_KEY = "xiangqi:engine-analysis-snapshot";
 const ENGINE_ANALYSIS_CHANNEL = "xiangqi:engine-analysis";
 const COMPACT_ENGINE_LINE_MIN_MOVES = MIN_CANDIDATE_LINE_MOVES;
 const COMPACT_ENGINE_LINE_MAX_MOVES = CANDIDATE_PREVIEW_HALF_MOVES;
-const DEFAULT_BRANCH_ARROW_COLOR = "#2f80ed";
+const DEFAULT_BRANCH_ARROW_COLOR = "#f45d0b";
+const DEFAULT_BRANCH_ARROW_BADGE_COLOR = "#4aa51c";
 const DEFAULT_ENGINE_MOVE_TIME_MS = 1000;
 const DEFAULT_ANALYSIS_DEPTH = 24;
 const MOBILE_DEFAULT_ANALYSIS_DEPTH = 20;
@@ -694,6 +696,8 @@ const defaultDesktopPreferences: DesktopPreferencesDto = {
   analysisPanelCollapsed: false,
   evaluationCollapsed: true,
   branchArrowColor: DEFAULT_BRANCH_ARROW_COLOR,
+  branchArrowBadgeColor: DEFAULT_BRANCH_ARROW_BADGE_COLOR,
+  branchArrowStyleVersion: 1,
   workspacePanel: "moves",
   layoutMode: "compact",
   manualViewMode: "track",
@@ -1358,6 +1362,7 @@ export default function App() {
   const [engineDivergenceOpen, setEngineDivergenceOpen] = useState(false);
   const [engineDivergencePosition, setEngineDivergencePosition] = useState<{ left: number; top: number }>();
   const [branchEditing, setBranchEditing] = useState(false);
+  const [floatingManualRouteView, setFloatingManualRouteView] = useState<"tree" | "rounds">("tree");
   const [manualLineDialogOpen, setManualLineDialogOpen] = useState(false);
   const [bestMovePractice, setBestMovePractice] = useState<BestMovePractice>();
   const [collapsedTreeNodes, setCollapsedTreeNodes] = useState<Set<string>>(() => new Set());
@@ -2733,13 +2738,16 @@ export default function App() {
   const hasVisibleBranchChoices = branchChoices.length > 1;
   const hasUpcomingBranch = hasUpcomingBranchPoint(board.manualTree ?? [], board.currentNode);
   const branchArrowColor = desktopPreferences.branchArrowColor || DEFAULT_BRANCH_ARROW_COLOR;
+  const branchArrowBadgeColor = desktopPreferences.branchArrowBadgeColor || DEFAULT_BRANCH_ARROW_BADGE_COLOR;
   const branchArrows = useMemo(() => hasVisibleBranchChoices && directBranchChoices.length > 1 ? directBranchChoices.map((move, index) => ({
     rank: index + 1,
     color: branchArrowColor,
+    badgeColor: branchArrowBadgeColor,
+    kind: "branch" as const,
     label: move.notation,
     from: boardIntersectionPoint(move.from, boardDisplayReversed, displayedBoardSkin),
     to: boardIntersectionPoint(move.to, boardDisplayReversed, displayedBoardSkin),
-  })) : [], [boardDisplayReversed, branchArrowColor, directBranchChoices, displayedBoardSkin, hasVisibleBranchChoices]);
+  })) : [], [boardDisplayReversed, branchArrowBadgeColor, branchArrowColor, directBranchChoices, displayedBoardSkin, hasVisibleBranchChoices]);
   const boardArrows = useMemo(() => {
     // Preview already marks the simulated from/to squares. Hide route arrows
     // so old analysis lines never look like they are attached to the preview.
@@ -5156,6 +5164,8 @@ export default function App() {
         autoAnalyze: preferences.autoAnalyze,
         reportDepth: preferences.reportDepth,
         branchArrowColor: preferences.branchArrowColor,
+        branchArrowBadgeColor: preferences.branchArrowBadgeColor,
+        branchArrowStyleVersion: preferences.branchArrowStyleVersion,
         boardSkin,
         pieceSkin,
         cloudBookEnabled: preferences.cloudBookEnabled,
@@ -5778,6 +5788,17 @@ export default function App() {
   }
 
   async function exitReviewMode() {
+    if (chessPlatform.kind === "desktop" && compactPoppedOutPanels.manual) {
+      await chessPlatform.returnCompactFloatingPanel("manual").catch(() => false);
+    }
+    setCompactPoppedOutPanels((panels) => ({ ...panels, manual: false }));
+    setCompactManualCollapsed(false);
+    setCompactDetachedPanels((panels) => ({ ...panels, manual: false }));
+    setCompactWindowPositions((positions) => ({
+      ...positions,
+      manual: compactManualDefaultPosition(),
+    }));
+    setCompactManualWidth(undefined);
     setReviewModeOpen(false);
     setWorkspaceMode("research");
     // The review workbench suppresses the research rails. Re-run the normal
@@ -6153,7 +6174,16 @@ export default function App() {
     if (!hasVisibleBranchChoices) return null;
     return <section className={`branch-map-controls ${branchEditing ? "editing" : ""}`} aria-label="当前分支选择">
       <header><span><GitFork size={14}/><strong>变招 {branchChoices.length} 条</strong><small>当前局面可选，点击即进入</small></span><button type="button" className="branch-map-edit" onClick={() => setBranchEditing((editing) => !editing)}>{branchEditing ? "完成" : "管理"}</button></header>
-      <div className="branch-map-scroll">
+      <div
+        className="branch-map-scroll"
+        tabIndex={0}
+        aria-label="横向滚动查看全部变招"
+        onWheel={(event) => {
+          if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+          event.currentTarget.scrollLeft += event.deltaY;
+          event.preventDefault();
+        }}
+      >
         {branchChoices.map((move, index) => {
           const label = String(index + 1);
           const detail = move.isMainline ? `主线 ${label}` : `分支 ${label}`;
@@ -6262,6 +6292,23 @@ export default function App() {
           strategyInsight={strategyInsight}
           viewMode={desktopPreferences.manualViewMode ?? "track"}
         />}
+    </div>;
+  }
+
+  function floatingManualRoundList() {
+    const routeMoves = [...board.history, ...board.continuation];
+    const rounds = Array.from({ length: Math.ceil(routeMoves.length / 2) }, (_, index) => ({
+      number: index + 1,
+      red: routeMoves[index * 2],
+      black: routeMoves[index * 2 + 1],
+    }));
+    return <div className="floating-manual-round-list" aria-label="浮动窗口回合列表">
+      {rounds.map((round) => <article key={round.number}>
+        <span>{round.number}</span>
+        {[round.red, round.black].map((move, index) => move
+          ? <button key={move.id} type="button" className={`${move.movedBy === "红方" ? "red" : "black"} ${board.currentNode === move.id ? "active" : ""}`} onClick={() => void navigateTo(move.id)}><strong>{move.notation}</strong><small>{formatMoveScore(move) || (move.isMainline ? "主线" : "分支")}</small></button>
+          : <i key={`${round.number}-${index}`} aria-hidden="true"/>)}
+      </article>)}
     </div>;
   }
 
@@ -6620,7 +6667,13 @@ export default function App() {
         ) : (
           <section className="floating-panel-body floating-manual-body">
             {playbackControls("compact-playback floating-playback")}
-            {manualReviewContent("浮动窗口棋谱着法")}
+            <div className="floating-manual-route">
+              <div className="floating-manual-route-tabs" role="tablist" aria-label="浮动窗口棋谱视图">
+                <button type="button" role="tab" aria-selected={floatingManualRouteView === "tree"} className={floatingManualRouteView === "tree" ? "active" : ""} onClick={() => setFloatingManualRouteView("tree")}><GitBranch size={13}/>分支树</button>
+                <button type="button" role="tab" aria-selected={floatingManualRouteView === "rounds"} className={floatingManualRouteView === "rounds" ? "active" : ""} onClick={() => setFloatingManualRouteView("rounds")}><List size={13}/>回合列表</button>
+              </div>
+              {floatingManualRouteView === "tree" ? manualReviewContent("浮动窗口棋谱着法") : floatingManualRoundList()}
+            </div>
             {branchMapControls()}
             <p className="floating-panel-note">这是系统独立窗口，可拖到主窗口外；主窗口走棋后这里会自动刷新。</p>
           </section>
@@ -7114,14 +7167,15 @@ export default function App() {
                     ))}
                   </defs>
                   {boardArrows.map((arrow) => {
+                    const isBranchArrow = "kind" in arrow && arrow.kind === "branch";
                     return (
-                      <g key={arrow.rank} style={{ "--arrow-color": arrow.color } as CSSProperties}>
+                      <g key={arrow.rank} className={isBranchArrow ? "branch-route-arrow" : undefined} style={{ "--arrow-color": arrow.color } as CSSProperties}>
                         <path id={`analysis-arrow-flow-${arrow.rank}`} className="analysis-arrow-flow-path" d={`M ${arrow.from.x} ${arrow.from.y} L ${arrow.to.x} ${arrow.to.y}`}/>
                         <line x1={arrow.from.x} y1={arrow.from.y} x2={arrow.to.x} y2={arrow.to.y} markerEnd={`url(#analysis-arrowhead-${arrow.rank})`}/>
                         <g className="analysis-arrow-flow-marker" aria-hidden="true">
                           <path d="M -9 -6 L -2 0 L -9 6"/>
                           <path d="M 1 -6 L 8 0 L 1 6"/>
-                          <animateMotion dur={`${7.2 + arrow.rank * .35}s`} repeatCount="indefinite" rotate="auto">
+                          <animateMotion dur={`${isBranchArrow ? 5.4 + arrow.rank * .25 : 7.2 + arrow.rank * .35}s`} repeatCount="indefinite" rotate="auto">
                             <mpath href={`#analysis-arrow-flow-${arrow.rank}`}/>
                           </animateMotion>
                         </g>
@@ -7131,12 +7185,13 @@ export default function App() {
                   </svg>
                   <svg className="analysis-arrow-labels" viewBox="0 0 1120 1240" aria-hidden="true">
                     {boardArrows.map((arrow) => {
+                      const badgeColor = "badgeColor" in arrow ? arrow.badgeColor : arrow.color;
                       const labelX = arrow.from.x + (arrow.to.x - arrow.from.x) * .55;
                       const labelY = arrow.from.y + (arrow.to.y - arrow.from.y) * .55;
                       const moveLabel = "label" in arrow && arrow.label ? `${arrow.rank} ${arrow.label}` : "";
                       const labelWidth = Math.max(54, Math.min(190, 30 + moveLabel.length * 18));
                       return (
-                        <g key={arrow.rank} style={{ "--arrow-color": arrow.color } as CSSProperties}>
+                        <g key={arrow.rank} className={"kind" in arrow && arrow.kind === "branch" ? "branch-route-arrow" : undefined} style={{ "--arrow-color": arrow.color, "--arrow-badge-color": badgeColor } as CSSProperties}>
                           {moveLabel && <title>{moveLabel}</title>}
                           <circle cx={labelX} cy={labelY} r="23"/>
                           <text x={labelX} y={labelY}>{arrow.rank}</text>
@@ -7347,6 +7402,8 @@ export default function App() {
             engineHintRequest={reviewEngineHintRequest}
             showMoveThoughts={showMoveThoughts}
             onMoveThoughtVisibilityChange={setShowMoveThoughts}
+            routePoppedOut={compactPoppedOutPanels.manual}
+            onPopOutRoute={chessPlatform.kind === "desktop" ? () => void openCompactFloatingPanel("manual") : undefined}
             onClose={() => void exitReviewMode()}
             onNavigate={(nodeId) => void navigateTo(nodeId)}
             onMakeMainline={(nodeId) => void makeMainline(nodeId)}

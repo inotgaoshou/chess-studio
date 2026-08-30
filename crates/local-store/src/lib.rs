@@ -119,6 +119,10 @@ pub struct DesktopPreferences {
     pub evaluation_collapsed: bool,
     #[serde(default = "default_branch_arrow_color")]
     pub branch_arrow_color: String,
+    #[serde(default = "default_branch_arrow_badge_color")]
+    pub branch_arrow_badge_color: String,
+    #[serde(default)]
+    pub branch_arrow_style_version: u32,
     #[serde(default = "default_workspace_panel")]
     pub workspace_panel: String,
     #[serde(default = "default_layout_mode")]
@@ -190,7 +194,11 @@ fn default_evaluation_collapsed() -> bool {
 }
 
 fn default_branch_arrow_color() -> String {
-    "#2f80ed".into()
+    "#f45d0b".into()
+}
+
+fn default_branch_arrow_badge_color() -> String {
+    "#4aa51c".into()
 }
 
 fn default_analysis_engine_mode() -> String {
@@ -285,6 +293,8 @@ impl Default for DesktopPreferences {
             analysis_panel_collapsed: false,
             evaluation_collapsed: default_evaluation_collapsed(),
             branch_arrow_color: default_branch_arrow_color(),
+            branch_arrow_badge_color: default_branch_arrow_badge_color(),
+            branch_arrow_style_version: 1,
             workspace_panel: default_workspace_panel(),
             layout_mode: default_layout_mode(),
             manual_view_mode: default_manual_view_mode(),
@@ -5035,6 +5045,8 @@ mod tests {
             analysis_panel_collapsed: true,
             evaluation_collapsed: true,
             branch_arrow_color: "#9b51e0".into(),
+            branch_arrow_badge_color: "#eb5757".into(),
+            branch_arrow_style_version: 1,
             workspace_panel: "summary".into(),
             layout_mode: "compact".into(),
             manual_view_mode: "track".into(),
@@ -5087,7 +5099,9 @@ mod tests {
         assert_eq!(preferences.layout_mode, "compact");
         assert_eq!(preferences.manual_view_mode, "track");
         assert_eq!(preferences.color_theme, "dark");
-        assert_eq!(preferences.branch_arrow_color, "#2f80ed");
+        assert_eq!(preferences.branch_arrow_color, "#f45d0b");
+        assert_eq!(preferences.branch_arrow_badge_color, "#4aa51c");
+        assert_eq!(preferences.branch_arrow_style_version, 0);
         assert_eq!(preferences.report_depth, 24);
         assert_eq!(preferences.candidate_line_moves, 16);
         assert!(preferences.xqb_book_paths.is_empty());

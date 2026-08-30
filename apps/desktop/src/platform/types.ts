@@ -450,6 +450,8 @@ export type DesktopPreferencesDto = {
   analysisPanelCollapsed: boolean;
   evaluationCollapsed: boolean;
   branchArrowColor: string;
+  branchArrowBadgeColor?: string;
+  branchArrowStyleVersion?: number;
   workspacePanel: "moves" | "analysis" | "trend" | "summary" | "report" | "theory";
   layoutMode: WorkspaceLayoutMode;
   manualViewMode: ManualViewMode;

@@ -93,8 +93,8 @@ describe("ManualTrackView", () => {
     fireEvent.change(screen.getByLabelText("变招选择"), { target: { value: "v1" } });
 
     expect(onNavigate).toHaveBeenCalledWith("v1");
-    expect(screen.getByRole("option", { name: /A · 主线 · 车九平八/ })).toBeTruthy();
-    expect(screen.getByRole("option", { name: /B · 炮2平5/ })).toBeTruthy();
+    expect(screen.getByRole("option", { name: /1 · 主线 · 车九平八/ })).toBeTruthy();
+    expect(screen.getByRole("option", { name: /2 · 炮2平5/ })).toBeTruthy();
   });
 
   it("toggles fork expansion without navigating", () => {

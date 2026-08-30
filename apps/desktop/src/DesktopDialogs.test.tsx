@@ -66,6 +66,23 @@ function renderDialog(dialog: "engine" | "syncSettings" | "register" | "login" |
 }
 
 describe("DesktopDialogs", () => {
+  it("configures branch arrow shaft and number badge independently", async () => {
+    const { props, user } = renderDialog("engine", {
+      preferences: { ...preferences, branchArrowColor: "#f45d0b", branchArrowBadgeColor: "#4aa51c", branchArrowStyleVersion: 1 },
+    });
+
+    await user.selectOptions(screen.getByLabelText("分支箭杆颜色"), "#9b51e0");
+    await user.selectOptions(screen.getByLabelText("分支编号颜色"), "#eb5757");
+    expect(screen.getByLabelText(/分支箭头预览/).getAttribute("style")).toContain("#9b51e0");
+    expect(screen.getByLabelText(/分支箭头预览/).getAttribute("style")).toContain("#eb5757");
+    await user.click(screen.getByRole("button", { name: "检测并保存" }));
+    expect(props.onSaveEngine).toHaveBeenCalledWith(expect.objectContaining({
+      branchArrowColor: "#9b51e0",
+      branchArrowBadgeColor: "#eb5757",
+      branchArrowStyleVersion: 1,
+    }));
+  });
+
   it("only exposes the bundled Pikafish engine", () => {
     renderDialog("engine", { preferences: { ...preferences, enginePath: "/engines/other" } });
 

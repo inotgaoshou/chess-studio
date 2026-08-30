@@ -44,9 +44,14 @@ type Props = {
 };
 
 const branchArrowColors = [
-  ["#2f80ed", "天蓝（推荐）"],
+  ["#f45d0b", "鲜橙（推荐）"],
+  ["#e67e22", "深橙"],
+  ["#f2994a", "亮橙"],
+  ["#2f80ed", "天蓝"],
   ["#f2c94c", "金黄"],
-  ["#27ae60", "绿色"],
+  ["#4aa51c", "草绿（推荐）"],
+  ["#1f8f4e", "深绿"],
+  ["#27ae60", "亮绿"],
   ["#9b51e0", "紫色"],
   ["#eb5757", "红色"],
 ] as const;
@@ -150,7 +155,9 @@ function sanitizeEnginePreferences(preferences: DesktopPreferencesDto): DesktopP
     ),
     reportDepth: clampInteger(migrated.reportDepth, 8, 40),
     moveTimeMs: clampInteger(migrated.moveTimeMs, 100, 30000),
-    branchArrowColor: branchArrowColors.some(([value]) => value === migrated.branchArrowColor) ? migrated.branchArrowColor : "#2f80ed",
+    branchArrowColor: branchArrowColors.some(([value]) => value === migrated.branchArrowColor) ? migrated.branchArrowColor : "#f45d0b",
+    branchArrowBadgeColor: branchArrowColors.some(([value]) => value === migrated.branchArrowBadgeColor) ? migrated.branchArrowBadgeColor : "#4aa51c",
+    branchArrowStyleVersion: 1,
     ruleMode: migrated.ruleMode === "asianAxf" ? "asianAxf" : "domestic2020",
   };
 }
@@ -165,7 +172,7 @@ function engineInputValue(path: string) {
 }
 
 function branchArrowColorLabel(value: string) {
-  return branchArrowColors.find(([color]) => color === value)?.[1] ?? "天蓝（推荐）";
+  return branchArrowColors.find(([color]) => color === value)?.[1] ?? "鲜橙（推荐）";
 }
 
 function candidateLineRoundsInputValue(halfMoves: number) {
@@ -193,7 +200,8 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
   const [engineSaveError, setEngineSaveError] = useState("");
   const [engineSaveSuccess, setEngineSaveSuccess] = useState("");
   const initializedDialog = useRef<DesktopDialog>(null);
-  const branchArrowColor = branchArrowColors.some(([value]) => value === draft.branchArrowColor) ? draft.branchArrowColor : "#2f80ed";
+  const branchArrowColor = branchArrowColors.some(([value]) => value === draft.branchArrowColor) ? draft.branchArrowColor : "#f45d0b";
+  const branchArrowBadgeColor = branchArrowColors.some(([value]) => value === draft.branchArrowBadgeColor) ? draft.branchArrowBadgeColor! : "#4aa51c";
   const currentRuleLabel = ruleModeOptions.find((option) => option.value === draft.ruleMode)?.detail ?? ruleModeOptions[0].detail;
   const engineDifficulty = engineDifficultyFromPreferences(draft);
   const engineDifficultyDepth = engineDifficultyToDepth(engineDifficulty);
@@ -336,9 +344,12 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
           <label><span>整局复盘深度</span><input type="number" min={8} max={40} value={draft.reportDepth} onChange={(event) => setDraft({ ...draft, reportDepth: Number(event.target.value) })}/></label>
           <label><span>棋规模式</span><select value={draft.ruleMode ?? "domestic2020"} onChange={(event) => setDraft({ ...draft, ruleMode: event.target.value as DesktopPreferencesDto["ruleMode"] })}>{ruleModeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
           <p className="dialog-hint full">当前棋规：{currentRuleLabel}。天天象棋式 6/12/18、5 次重复、400 步阈值暂作为后续独立模式参考。</p>
-          <label className="branch-arrow-color-field"><span>分支箭头颜色</span><div className="branch-arrow-color-control">
-            <select value={branchArrowColor} onChange={(event) => setDraft({ ...draft, branchArrowColor: event.target.value })}>{branchArrowColors.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
-            <div className="branch-arrow-preview" style={{ "--branch-arrow-preview-color": branchArrowColor } as CSSProperties} aria-label={`当前分支箭头颜色预览：${branchArrowColorLabel(branchArrowColor)}`}>
+          <label className="branch-arrow-color-field"><span>分支箭头样式</span><div className="branch-arrow-color-control">
+            <div className="branch-arrow-color-selects">
+              <select aria-label="分支箭杆颜色" value={branchArrowColor} onChange={(event) => setDraft({ ...draft, branchArrowColor: event.target.value })}>{branchArrowColors.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+              <select aria-label="分支编号颜色" value={branchArrowBadgeColor} onChange={(event) => setDraft({ ...draft, branchArrowBadgeColor: event.target.value })}>{branchArrowColors.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+            </div>
+            <div className="branch-arrow-preview" style={{ "--branch-arrow-preview-color": branchArrowColor, "--branch-arrow-preview-badge-color": branchArrowBadgeColor } as CSSProperties} aria-label={`分支箭头预览：${branchArrowColorLabel(branchArrowColor)}箭杆，${branchArrowColorLabel(branchArrowBadgeColor)}编号`}>
               <svg viewBox="0 0 126 38" aria-hidden="true">
                 <defs><marker id="branch-arrow-preview-head" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M 0 0 L 12 6 L 0 12 z"/></marker></defs>
                 <line x1="14" y1="24" x2="86" y2="13" markerEnd="url(#branch-arrow-preview-head)"/>

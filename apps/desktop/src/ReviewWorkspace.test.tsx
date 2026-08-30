@@ -110,8 +110,8 @@ const trainingTask: TrainingTaskDto = {
   createdAt: "2026-08-01T00:00:00Z",
 };
 
-function renderWorkspace(overrides: Partial<Parameters<typeof ReviewWorkspace>[0]> = {}) {
-  const props: Parameters<typeof ReviewWorkspace>[0] = {
+function renderWorkspaceProps(overrides: Partial<Parameters<typeof ReviewWorkspace>[0]> = {}) {
+  return {
     board,
     report,
     reportBusy: false,
@@ -152,12 +152,35 @@ function renderWorkspace(overrides: Partial<Parameters<typeof ReviewWorkspace>[0
     onStudyIssue: vi.fn(),
     onRunPositionAnalysis: vi.fn(),
     ...overrides,
-  };
+  } satisfies Parameters<typeof ReviewWorkspace>[0];
+}
+
+function renderWorkspace(overrides: Partial<Parameters<typeof ReviewWorkspace>[0]> = {}) {
+  const props = renderWorkspaceProps(overrides);
   render(<ReviewWorkspace {...props}/>);
   return props;
 }
 
 describe("ReviewWorkspace", () => {
+  it("collapses the review route and opens or focuses its system window", async () => {
+    const onPopOutRoute = vi.fn();
+    const { rerender } = render(<ReviewWorkspace {...renderWorkspaceProps({ onPopOutRoute })}/>);
+
+    expect(screen.getByLabelText("复盘分支棋谱树")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "收起棋谱路线" }));
+    expect(screen.queryByLabelText("复盘分支棋谱树")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "展开棋谱路线" }));
+    expect(screen.getByLabelText("复盘分支棋谱树")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "弹出棋谱路线独立窗口" }));
+    expect(onPopOutRoute).toHaveBeenCalledOnce();
+
+    rerender(<ReviewWorkspace {...renderWorkspaceProps({ onPopOutRoute, routePoppedOut: true })}/>);
+    expect(screen.getByText("独立窗口中")).toBeTruthy();
+    expect(screen.queryByLabelText("复盘分支棋谱树")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "置前棋谱路线独立窗口" }));
+    expect(onPopOutRoute).toHaveBeenCalledTimes(2);
+  });
+
   it("shows and manages the complete variation tree in review mode", async () => {
     const mainReply = {
       id: "main-reply", iccs: "h9g7", notation: "马8进7", movedBy: "黑方" as const,

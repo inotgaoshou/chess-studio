@@ -55,8 +55,8 @@ describe("ManualTreeView", () => {
     fireEvent.change(screen.getByLabelText("变招选择"), { target: { value: "variation" } });
 
     expect(navigate).toHaveBeenCalledWith("variation");
-    expect(screen.getByRole("option", { name: /A · 主线 · 马8进7/ })).toBeTruthy();
-    expect(screen.getByRole("option", { name: /B · 车8进6/ })).toBeTruthy();
+    expect(screen.getByRole("option", { name: /1 · 主线 · 马8进7/ })).toBeTruthy();
+    expect(screen.getByRole("option", { name: /2 · 车8进6/ })).toBeTruthy();
   });
 
   it("keeps the current path visible even when ancestors were collapsed before navigation", () => {

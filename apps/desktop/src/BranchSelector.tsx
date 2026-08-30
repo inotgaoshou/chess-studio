@@ -12,7 +12,7 @@ type Props = {
 };
 
 function branchLabel(index: number) {
-  return String.fromCharCode(65 + index);
+  return String(index + 1);
 }
 
 export function BranchSelector({ branches, currentBranchId, onNavigate, label = "变招" }: Props) {
