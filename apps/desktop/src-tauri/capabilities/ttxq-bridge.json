@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "ttxq-bridge",
+  "description": "Lets the dedicated TianTian XiangQi window submit only validated import bridge data.",
+  "local": false,
+  "windows": ["ttxq-sync"],
+  "remote": {
+    "urls": [
+      "https://h5login.qqchess.qq.com/*",
+      "https://*.qqchess.qq.com/*"
+    ]
+  },
+  "permissions": ["ttxq-bridge"]
+}

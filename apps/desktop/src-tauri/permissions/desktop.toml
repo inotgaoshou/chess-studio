@@ -1,0 +1,55 @@
+# Application command ACL. Local desktop windows retain the current command set;
+# the remote Tencent page receives only the separate `ttxq-bridge` permission.
+
+[default]
+description = "Allows Xiangqi Studio's local desktop UI to invoke application commands."
+permissions = ["local-desktop"]
+
+[[permission]]
+identifier = "local-desktop"
+description = "Application commands available to local Xiangqi Studio windows."
+commands.allow = [
+  "get_app_info", "get_state", "prepare_link_selection_window", "list_link_target_windows",
+  "complete_link_region_selection", "cancel_link_region_selection", "get_link_region_selection_background",
+  "start_link_session", "stop_link_session", "get_link_session_status", "pause_link_session",
+  "recalibrate_link_session", "get_link_capture_preview", "recognize_link_image_file",
+  "submit_link_position", "set_link_side_to_move", "confirm_link_engine_move", "import_recognized_position",
+  "get_ttxq_sync_progress", "preview_ttxq_history", "list_ttxq_diagnostic_samples", "clear_ttxq_diagnostic_samples", "start_ttxq_authorization", "collect_ttxq_h5_history",
+  "submit_ttxq_bridge_payload", "report_ttxq_read_progress", "report_ttxq_bridge_error",
+  "import_ttxq_history", "disconnect_ttxq", "list_games", "get_game_metadata", "update_game_metadata_for_game", "delete_games", "get_game_mirror_status",
+  "update_game_mirror", "rebuild_game_mirrors", "reveal_game_mirror", "list_library_folders",
+  "create_library_folder", "rename_library_folder", "delete_library_folder", "update_game_library",
+  "open_game", "play_move", "confirm_recognized_move", "preview_recognized_move_from_current",
+  "resolve_screenshot_move", "preview_line", "parse_chinese_line", "new_game", "open_document",
+  "import_xqb_opening_book", "import_eleeye_opening_book", "import_text", "export_text",
+  "export_document_text", "export_document_file", "export_replay_gif", "export_mind_map_svg",
+  "export_text_file", "export_manual_pdf", "save_document", "update_game_metadata", "reorder_branches",
+  "navigate_to", "update_comment", "set_mainline", "delete_node", "detect_pikafish",
+  "open_compact_floating_panel", "return_compact_floating_panel", "analyze_position", "run_engine_arena",
+  "engine_play_move", "move_now", "stop_engine_play", "stop_analysis", "get_saved_analysis",
+  "generate_game_report", "cancel_game_report", "get_game_report", "export_game_report_pdf",
+  "import_master_style_profile", "list_master_style_profiles", "match_master_style_hints",
+  "get_desktop_preferences", "save_desktop_preferences", "list_builtin_opening_books", "probe_engine",
+  "list_engine_profiles", "register_engine_profile", "set_active_engine_profile", "delete_engine_profile",
+  "query_cloud_opening_book", "list_flyknife_templates", "list_flyknife_topics", "get_book_topic_detail",
+  "recognize_book_page", "save_book_import", "open_external_url", "open_flyknife_topic",
+  "generate_flyknife_candidates", "list_flyknife_plans", "save_flyknife_plan", "delete_flyknife_plan",
+  "open_flyknife_practice", "list_coach_reports", "get_learning_profile", "save_learning_profile",
+  "start_guided_analysis", "submit_guided_analysis", "cancel_guided_analysis", "generate_daily_training_plan",
+  "get_weekly_learning_report", "infer_opening_repertoire_command", "list_training_tasks",
+  "generate_training_tasks", "complete_training_task", "get_training_summary", "list_study_sessions",
+  "save_study_session", "scan_theory_library", "get_theory_library", "review_theory_card",
+  "create_theory_card", "save_theory_feedback", "get_sync_account", "get_subscription",
+  "redeem_subscription_code", "list_master_players", "get_master_library_stats", "get_master_opening_profile",
+  "list_master_games", "open_master_game", "find_related_master_games", "register_sync_account",
+  "login_sync_account", "logout_sync_account", "unbind_sync_account"
+]
+
+[[permission]]
+identifier = "ttxq-bridge"
+description = "Allows a Tencent chess page to report validated TianTian XiangQi import data."
+commands.allow = [
+  "submit_ttxq_bridge_payload",
+  "report_ttxq_read_progress",
+  "report_ttxq_bridge_error"
+]

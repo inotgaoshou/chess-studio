@@ -1847,6 +1847,59 @@ impl LocalStore {
         Ok(())
     }
 
+    pub fn append_move_nodes_with_operations(
+        &mut self,
+        game_id: Uuid,
+        current_node_id: Option<Uuid>,
+        entries: &[(MoveNode, Operation)],
+    ) -> Result<(), StoreError> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        let transaction = self.connection.transaction()?;
+        for (node, operation) in entries {
+            if node.is_mainline {
+                transaction.execute(
+                    "UPDATE move_nodes SET is_mainline = 0
+                     WHERE game_id = ?1 AND parent_id = ?2 AND deleted_at IS NULL",
+                    params![game_id.to_string(), node.parent_id.to_string()],
+                )?;
+            }
+            transaction.execute(
+                "INSERT INTO move_nodes
+                 (id, game_id, parent_id, move_iccs, comment, order_key, is_mainline)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ON CONFLICT(id) DO UPDATE SET comment=excluded.comment,
+                 order_key=excluded.order_key, is_mainline=excluded.is_mainline, deleted_at=NULL",
+                params![
+                    node.id.to_string(),
+                    game_id.to_string(),
+                    node.parent_id.to_string(),
+                    node.mv.to_iccs(),
+                    node.comment,
+                    node.order_key as i64,
+                    node.is_mainline as i32,
+                ],
+            )?;
+            insert_operation(&transaction, operation, false)?;
+        }
+        let updated_at = entries
+            .last()
+            .map(|(_, operation)| operation.created_at)
+            .unwrap_or_else(chrono::Utc::now)
+            .to_rfc3339();
+        transaction.execute(
+            "UPDATE games SET current_node_id = ?1, updated_at = ?2 WHERE id = ?3",
+            params![
+                current_node_id.map(|id| id.to_string()),
+                updated_at,
+                game_id.to_string(),
+            ],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
     pub fn update_comment_with_operation(
         &mut self,
         node_id: Uuid,
@@ -4391,6 +4444,73 @@ mod tests {
         assert!(store.load_move_nodes(game_id).unwrap().is_empty());
         assert!(store.pending_operations(10).unwrap().is_empty());
         assert_eq!(store.active_game_id().unwrap(), Some(previous_game_id));
+    }
+
+    #[test]
+    fn appended_move_batch_is_atomic_and_preserves_the_current_node() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let game_id = Uuid::new_v4();
+        let root_id = Uuid::new_v4();
+        let create = operation(game_id);
+        store
+            .save_game_with_operation(game_id, "Study", "fen", root_id, &create)
+            .unwrap();
+        let first_node = MoveNode {
+            id: Uuid::new_v4(),
+            parent_id: root_id,
+            mv: Move::from_iccs("a0a1").unwrap(),
+            comment: String::new(),
+            order_key: 1,
+            is_mainline: false,
+            deleted: false,
+        };
+        let second_node = MoveNode {
+            id: Uuid::new_v4(),
+            parent_id: first_node.id,
+            mv: Move::from_iccs("a9a8").unwrap(),
+            comment: String::new(),
+            order_key: 0,
+            is_mainline: true,
+            deleted: false,
+        };
+        let first_operation = Operation {
+            op_id: Uuid::new_v4(),
+            entity_id: first_node.id,
+            kind: OperationKind::AddMove,
+            lamport: 2,
+            ..operation(game_id)
+        };
+        let mut second_operation = first_operation.clone();
+        second_operation.op_id = Uuid::new_v4();
+        second_operation.entity_id = second_node.id;
+        second_operation.lamport = 3;
+        store
+            .connection
+            .execute_batch(&format!(
+                "CREATE TRIGGER abort_second_appended_move
+                 BEFORE INSERT ON move_nodes
+                 WHEN NEW.id = '{}'
+                 BEGIN SELECT RAISE(ABORT, 'simulated append failure'); END;",
+                second_node.id
+            ))
+            .unwrap();
+
+        let result = store.append_move_nodes_with_operations(
+            game_id,
+            None,
+            &[
+                (first_node, first_operation),
+                (second_node, second_operation),
+            ],
+        );
+
+        assert!(result.is_err());
+        assert!(store.load_move_nodes(game_id).unwrap().is_empty());
+        assert_eq!(
+            store.load_game(game_id).unwrap().unwrap().current_node_id,
+            None
+        );
+        assert_eq!(store.pending_operations(10).unwrap(), vec![create]);
     }
 
     #[test]
