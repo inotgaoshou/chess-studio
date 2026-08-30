@@ -10,6 +10,7 @@ const MAX_PAYLOAD_BYTES: usize = 8 * 1024 * 1024;
 const TTXQ_BACKUP_FOLDER: &str = "天天象棋备份";
 const TTXQ_ORDERED_SOURCE_PREFIX: &str = "ttxq-order:";
 const BRIDGE_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
+const BRIDGE_PROGRESS_STALL_TIMEOUT: Duration = Duration::from_secs(20);
 
 fn normalize_ttxq_target_folder(target_folder: Option<String>) -> Result<String, String> {
     let folder = target_folder
@@ -181,6 +182,11 @@ pub(crate) struct TtxqSyncState {
     active_attempt: u64,
     next_attempt: u64,
     bridge_acknowledged: bool,
+    progress_revision: u64,
+}
+
+fn advance_progress_revision(sync: &mut TtxqSyncState) {
+    sync.progress_revision = sync.progress_revision.wrapping_add(1);
 }
 
 fn begin_read_attempt(sync: &mut TtxqSyncState) -> u64 {
@@ -194,6 +200,7 @@ fn begin_read_attempt(sync: &mut TtxqSyncState) -> u64 {
         ..TtxqSyncProgressDto::default()
     };
     sync.payload = None;
+    advance_progress_revision(sync);
     sync.active_attempt
 }
 
@@ -248,6 +255,30 @@ fn fail_unacknowledged_bridge(sync: &mut TtxqSyncState, attempt_id: u64, host: &
             } else {
                 &safe_host
             }
+        ),
+    )
+}
+
+fn fail_stalled_read(sync: &mut TtxqSyncState, attempt_id: u64, observed_revision: u64) -> bool {
+    if sync.progress.state != "reading"
+        || sync.active_attempt != attempt_id
+        || sync.progress_revision != observed_revision
+    {
+        return false;
+    }
+    let location = if sync.progress.read_current > 0 && sync.progress.read_total > 0 {
+        format!(
+            "第 {}/{} 盘",
+            sync.progress.read_current, sync.progress.read_total
+        )
+    } else {
+        "棋谱列表".into()
+    };
+    set_read_error(
+        sync,
+        attempt_id,
+        &format!(
+            "{location}长时间没有进度；已停止本次读取。请确认授权窗口中的棋谱详情可回放后重试"
         ),
     )
 }
@@ -1867,6 +1898,7 @@ pub(crate) fn report_ttxq_read_progress(
         },
         ..TtxqSyncProgressDto::default()
     };
+    advance_progress_revision(&mut sync);
     Ok(())
 }
 
@@ -3127,6 +3159,9 @@ pub(crate) fn collect_ttxq_h5_history(
               };
             }
           }
+          if (typeof invoke === 'function') {
+            await invoke('report_ttxq_read_progress', { attemptId: __TTXQ_ATTEMPT_ID__, total, completed, failed, scanned, current, phase: 'reading' });
+          }
           const moves = raw.text ? (raw.text.match(/[a-i][0-9][a-i][0-9]/gi) || []).map(move => move.toLowerCase()) : [];
           const passiveBranch = branchPayload(raw.owner || null);
           // Tencent keeps the visible detail fields under version-dependent model
@@ -3213,9 +3248,13 @@ pub(crate) fn collect_ttxq_h5_history(
               if (!fields.site && text === '天天象棋') fields.site = text;
             };
             const seen = new WeakSet();
-            const stack = [...detailDisplayRoots(), window.fdk].filter(Boolean).map(value => ({ value, depth: 0 }));
+            // The traversal stack is LIFO. Put the global FDK root first so
+            // current detail roots are popped and searched before the broad
+            // application graph.
+            const stack = [window.fdk, ...detailDisplayRoots()].filter(Boolean).map(value => ({ value, depth: 0 }));
             let visited = 0;
-            while (stack.length && visited < 40_000) {
+            const traversalDeadline = Date.now() + 350;
+            while (stack.length && visited < 40_000 && Date.now() < traversalDeadline) {
               const { value, depth } = stack.pop();
               if (!value || typeof value !== 'object' || seen.has(value) || depth > 16) continue;
               seen.add(value); visited += 1;
@@ -3344,12 +3383,15 @@ pub(crate) fn collect_ttxq_h5_history(
             // The board control is the fast path. The FDK root is necessary for
             // current QQ builds where the right-side property panel is a sibling
             // of the board rather than a child of it.
-            const roots = [...detailDisplayRoots(), window.fdk]
+            // The stack below is LIFO: keep the broad FDK graph as the final
+            // fallback after the current board/detail roots.
+            const roots = [window.fdk, ...detailDisplayRoots()]
               .filter(Boolean);
             const seen = new WeakSet();
             const stack = roots.map(value => ({ value, depth: 0 }));
             let visited = 0;
-            while (stack.length && visited < 40_000) {
+            const traversalDeadline = Date.now() + 350;
+            while (stack.length && visited < 40_000 && Date.now() < traversalDeadline) {
               const { value, depth } = stack.pop();
               if (!value || typeof value !== 'object' || seen.has(value) || depth > 16) continue;
               seen.add(value); visited += 1;
@@ -3402,12 +3444,15 @@ pub(crate) fn collect_ttxq_h5_history(
             const two = part => String(part).padStart(2, '0');
             return `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())} ${two(date.getHours())}:${two(date.getMinutes())}`;
           };
+          const mergeDetailFields = (...sources) => {
+            const keys = new Set(sources.flatMap(source => Object.keys(source || {})));
+            return Object.fromEntries([...keys].map(key => [key, sources.find(source => source && source[key])?.[key] || '']));
+          };
           const detailFields = () => {
             const dom = visibleDetailFields();
             const display = displayObjectDetailFields();
             const semantic = semanticDetailFields();
-            const keys = new Set([...Object.keys(dom), ...Object.keys(display), ...Object.keys(semantic)]);
-            return Object.fromEntries([...keys].map(key => [key, display[key] || dom[key] || semantic[key]]));
+            return mergeDetailFields(display, dom, semantic);
           };
           let visible = detailFields();
           // The board control reaches getQipuMoveStep before QQ paints the
@@ -3415,7 +3460,10 @@ pub(crate) fn collect_ttxq_h5_history(
           // to settle, otherwise a valid game incorrectly falls back to its id.
           for (let detailPoll = 0; detailPoll < 10 && !visible.title && !visible.red && !visible.event; detailPoll += 1) {
             await delay(150);
-            visible = detailFields();
+            visible = mergeDetailFields(visibleDetailFields(), visible);
+          }
+          if (!visible.title && !visible.red && !visible.event) {
+            visible = mergeDetailFields(detailFields(), visible);
           }
           const branch = await readBranchRoutes(qipuId, raw, passiveBranch, beforeBranchSignature);
           const rawResult = firstText('result', 'gameResult', 'resultText', 'resultDesc', 'winLose', 'winner', 'winSide') || visible.result;
@@ -3481,6 +3529,32 @@ pub(crate) fn collect_ttxq_h5_history(
         let state = watchdog_app.state::<DesktopState>();
         if let Ok(mut sync) = state.ttxq_sync.lock() {
             fail_unacknowledged_bridge(&mut sync, attempt_id, &current_host);
+        }
+    });
+    let stall_watchdog_app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            let observed_revision = {
+                let state = stall_watchdog_app.state::<DesktopState>();
+                let Ok(sync) = state.ttxq_sync.lock() else {
+                    return;
+                };
+                if sync.progress.state != "reading" || sync.active_attempt != attempt_id {
+                    return;
+                }
+                sync.progress_revision
+            };
+            tokio::time::sleep(BRIDGE_PROGRESS_STALL_TIMEOUT).await;
+            let state = stall_watchdog_app.state::<DesktopState>();
+            let Ok(mut sync) = state.ttxq_sync.lock() else {
+                return;
+            };
+            if fail_stalled_read(&mut sync, attempt_id, observed_revision) {
+                return;
+            }
+            if sync.progress.state != "reading" || sync.active_attempt != attempt_id {
+                return;
+            }
         }
     });
     Ok(())
@@ -5567,6 +5641,36 @@ if (activeRoute !== 1) throw new Error(`route selection was not restored: ${{act
     }
 
     #[test]
+    fn acknowledged_attempt_times_out_when_loading_progress_stalls() {
+        let mut sync = TtxqSyncState::default();
+        let attempt_id = begin_read_attempt(&mut sync);
+        sync.bridge_acknowledged = true;
+        sync.progress.read_phase = "loading".into();
+        sync.progress.read_current = 1;
+        sync.progress.read_total = 9;
+        let observed_revision = sync.progress_revision;
+
+        assert!(fail_stalled_read(&mut sync, attempt_id, observed_revision));
+        assert_eq!(sync.progress.state, "error");
+        assert!(sync.progress.message.contains("第 1/9 盘"));
+        assert!(sync.progress.message.contains("长时间没有进度"));
+    }
+
+    #[test]
+    fn acknowledged_attempt_does_not_time_out_after_progress_advances() {
+        let mut sync = TtxqSyncState::default();
+        let attempt_id = begin_read_attempt(&mut sync);
+        sync.bridge_acknowledged = true;
+        let observed_revision = sync.progress_revision;
+
+        sync.progress.read_current = 2;
+        advance_progress_revision(&mut sync);
+
+        assert!(!fail_stalled_read(&mut sync, attempt_id, observed_revision));
+        assert_eq!(sync.progress.state, "reading");
+    }
+
+    #[test]
     fn collector_script_is_valid_javascript() {
         let source = include_str!("ttxq_sync.rs");
         let bridge_start = source
@@ -5595,6 +5699,60 @@ if (activeRoute !== 1) throw new Error(`route selection was not restored: ${{act
         assert!(
             output.status.success(),
             "collector script is invalid JavaScript: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn collector_reads_current_detail_root_before_the_global_fdk_graph() {
+        let display_source = collector_source_between(
+            "          const displayObjectDetailFields = () => {",
+            "          const metadataProbe = () => {",
+        );
+        let harness = format!(
+            r#"(async () => {{
+let propertyReads = 0;
+const propertyNames = (value) => {{ propertyReads += 1; return Object.getOwnPropertyNames(value); }};
+const panel = {{
+  header: {{ text: '棋谱属性' }},
+  title: {{ text: '标题：世界象棋选拔赛第五轮' }},
+  red: {{ text: '红方：测试棋手' }},
+}};
+panel.header.parent = panel;
+const globalFdk = {{}};
+for (let outer = 0; outer < 120; outer += 1) {{
+  const group = {{}};
+  for (let inner = 0; inner < 120; inner += 1) group[`item${{inner}}`] = {{ value: inner }};
+  globalFdk[`group${{outer}}`] = group;
+}}
+const window = {{ fdk: globalFdk }};
+const detailDisplayRoots = () => [panel];
+{display_source}
+const fields = displayObjectDetailFields();
+if (fields.title !== '世界象棋选拔赛第五轮') throw new Error(`detail title was not read: ${{JSON.stringify(fields)}}`);
+if (propertyReads >= 200) throw new Error(`global FDK graph was scanned first: ${{propertyReads}} property reads`);
+}})().catch(error => {{ console.error(error.message); process.exitCode = 1; }});
+"#
+        );
+        let mut child = std::process::Command::new("node")
+            .arg("-")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("Node.js is required to exercise detail traversal order");
+        child
+            .stdin
+            .as_mut()
+            .expect("detail traversal checker stdin")
+            .write_all(harness.as_bytes())
+            .expect("write detail traversal harness to Node.js");
+        let output = child
+            .wait_with_output()
+            .expect("run detail traversal harness");
+        assert!(
+            output.status.success(),
+            "collector traversed the global FDK graph before the current detail: {}",
             String::from_utf8_lossy(&output.stderr)
         );
     }
@@ -6724,8 +6882,9 @@ if (raw.path !== 'bridge-snapshot') throw new Error('unchanged previous-game mov
             "iRound",
             "metadataProbe: visible.title ? '' : metadataProbe()",
             "(?:先胜|先负|先和|后胜|后负|后和)",
-            "window.fdk]",
+            "[window.fdk, ...detailDisplayRoots()]",
             "visited < 40_000",
+            "Date.now() < traversalDeadline",
             "const panelStart = pageText.indexOf('棋谱属性');",
             "title: firstUsableTitle('sTitle'",
             ") || visible.title,",
