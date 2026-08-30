@@ -1,5 +1,5 @@
 use super::*;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 const TTXQ_WINDOW_LABEL: &str = "ttxq-sync";
 const BRIDGE_VERSION: u32 = 1;
@@ -738,6 +738,20 @@ struct TtxqBranchCandidate {
     comment: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DhtmlBranchKey {
+    parent_branch_id: usize,
+    parent_ply: usize,
+    branch_id: usize,
+}
+
+#[derive(Debug, Clone)]
+struct DecodedDhtmlBranch {
+    key: DhtmlBranchKey,
+    prefix_before_moves: Vec<String>,
+    variation: TtxqVariationDto,
+}
+
 fn prepare_import_record(
     record: &TtxqGameRecordDto,
     starting_fen: &str,
@@ -887,8 +901,11 @@ fn decode_ttxq_branch_variations(
         return Ok(Vec::new());
     }
     let candidates = branch_candidates_from_payload(&record.branch_data);
-    let mut variations = Vec::new();
-    for candidate in candidates {
+    let (dhtml_candidates, regular_candidates): (Vec<_>, Vec<_>) = candidates
+        .into_iter()
+        .partition(|candidate| dhtml_branch_key(&candidate.source_key).is_some());
+    let mut variations = decode_dhtml_branch_tree(&record.moves, dhtml_candidates, starting_fen)?;
+    for candidate in regular_candidates {
         let candidate_moves =
             branch_candidate_moves(&candidate.raw, starting_fen, candidate.after_ply);
         if candidate_moves.is_empty() {
@@ -919,13 +936,202 @@ fn decode_ttxq_branch_variations(
     Ok(dedupe_variations(variations))
 }
 
+fn decode_dhtml_branch_tree(
+    mainline: &[String],
+    mut candidates: Vec<TtxqBranchCandidate>,
+    starting_fen: &str,
+) -> Result<Vec<TtxqVariationDto>, String> {
+    if candidates.is_empty() {
+        return Ok(Vec::new());
+    }
+    candidates.sort_by_key(|candidate| {
+        dhtml_branch_key(&candidate.source_key)
+            .map(|key| key.branch_id)
+            .unwrap_or(usize::MAX)
+    });
+    let mut pending = candidates;
+    let mut decoded = HashMap::<usize, DecodedDhtmlBranch>::new();
+    while !pending.is_empty() {
+        let mut next = Vec::new();
+        let mut progressed = false;
+        for candidate in pending {
+            let Some(key) = dhtml_branch_key(&candidate.source_key) else {
+                continue;
+            };
+            if decoded.contains_key(&key.branch_id) {
+                continue;
+            }
+            let (parent_line, parent_prefix_len, parent_local_len) = if key.parent_branch_id == 0 {
+                (mainline.to_vec(), 0, mainline.len())
+            } else if let Some(parent) = decoded.get(&key.parent_branch_id) {
+                let mut line = parent.prefix_before_moves.clone();
+                let prefix_len = line.len();
+                let local_len = parent.variation.moves.len();
+                line.extend(parent.variation.moves.iter().cloned());
+                (line, prefix_len, local_len)
+            } else {
+                next.push(candidate);
+                continue;
+            };
+            if key.parent_ply > parent_local_len {
+                return Err(format!(
+                    "天天象棋分支 {} 的锚点超出父分支 {}：第 {} 半回合，父线路仅 {} 半回合；本盘未导入",
+                    candidate.source_key,
+                    key.parent_branch_id,
+                    key.parent_ply,
+                    parent_local_len
+                ));
+            }
+            let candidate_moves = dhtml_branch_candidate_moves(&candidate.raw);
+            if candidate_moves.is_empty() {
+                return Err(format!(
+                    "天天象棋分支 {} 的走法格式无法按原生 ICCS 坐标解析；本盘未导入",
+                    candidate.source_key
+                ));
+            }
+            let Some(absolute_after_ply) = parent_prefix_len.checked_add(key.parent_ply) else {
+                return Err(format!(
+                    "天天象棋分支 {} 的锚点数值溢出；本盘未导入",
+                    candidate.source_key
+                ));
+            };
+            if !branch_tail_differs(&parent_line, absolute_after_ply, &candidate_moves) {
+                return Err(format!(
+                    "天天象棋分支 {} 在父线路第 {} 半回合后与原路线相同；本盘未导入",
+                    candidate.source_key, key.parent_ply
+                ));
+            }
+            validate_dhtml_branch_at_exact_anchor(
+                starting_fen,
+                &parent_line,
+                absolute_after_ply,
+                &candidate_moves,
+                &candidate.source_key,
+                key,
+            )?;
+            let prefix_before_moves = parent_line[..absolute_after_ply].to_vec();
+            decoded.insert(
+                key.branch_id,
+                DecodedDhtmlBranch {
+                    key,
+                    prefix_before_moves,
+                    variation: TtxqVariationDto {
+                        after_ply: key.parent_ply,
+                        moves: candidate_moves,
+                        route_no: candidate.route_no,
+                        source_key: candidate.source_key,
+                        comment: candidate.comment,
+                        children: Vec::new(),
+                    },
+                },
+            );
+            progressed = true;
+        }
+        if !progressed {
+            let unresolved = next
+                .iter()
+                .filter_map(|candidate| dhtml_branch_key(&candidate.source_key))
+                .map(|key| key.branch_id.to_string())
+                .collect::<Vec<_>>()
+                .join("/");
+            return Err(format!(
+                "天天象棋分支父路线缺失或形成循环（分支 {unresolved}）；本盘未导入"
+            ));
+        }
+        pending = next;
+    }
+
+    let mut children_by_parent = HashMap::<usize, Vec<usize>>::new();
+    for branch in decoded.values() {
+        children_by_parent
+            .entry(branch.key.parent_branch_id)
+            .or_default()
+            .push(branch.key.branch_id);
+    }
+    for children in children_by_parent.values_mut() {
+        children.sort_unstable();
+    }
+
+    fn assemble_branch(
+        branch_id: usize,
+        decoded: &mut HashMap<usize, DecodedDhtmlBranch>,
+        children_by_parent: &HashMap<usize, Vec<usize>>,
+    ) -> Option<TtxqVariationDto> {
+        let mut branch = decoded.remove(&branch_id)?;
+        if let Some(child_ids) = children_by_parent.get(&branch_id) {
+            branch.variation.children = child_ids
+                .iter()
+                .filter_map(|child_id| assemble_branch(*child_id, decoded, children_by_parent))
+                .collect();
+        }
+        Some(branch.variation)
+    }
+
+    let root_ids = children_by_parent.get(&0).cloned().unwrap_or_default();
+    let mut result = Vec::with_capacity(root_ids.len());
+    for branch_id in root_ids {
+        if let Some(variation) = assemble_branch(branch_id, &mut decoded, &children_by_parent) {
+            result.push(variation);
+        }
+    }
+    if !decoded.is_empty() {
+        return Err("天天象棋分支树存在无法连接的节点；本盘未导入".into());
+    }
+    Ok(result)
+}
+
 fn branch_candidates_from_payload(payload: &str) -> Vec<TtxqBranchCandidate> {
     let mut candidates = Vec::new();
     if payload.trim().is_empty() || payload.len() > 32 * 1024 {
         return candidates;
     }
     if let Ok(value) = serde_json::from_str::<serde_json::Value>(payload) {
-        collect_branch_candidates(&value, "$", None, None, "", 0, &mut candidates);
+        if let Some(items) = value
+            .get("candidates")
+            .and_then(serde_json::Value::as_array)
+        {
+            for item in items.iter().take(512) {
+                let Some(map) = item.as_object() else {
+                    continue;
+                };
+                let source_key = map
+                    .get("path")
+                    .and_then(json_text)
+                    .unwrap_or("branchData.candidates")
+                    .to_owned();
+                let Some(raw) = map
+                    .get("raw")
+                    .and_then(|raw| branch_raw_text(raw, &source_key))
+                else {
+                    continue;
+                };
+                let after_ply = dhtml_branch_key(&source_key)
+                    .map(|key| key.parent_ply)
+                    .or_else(|| map.get("afterPly").and_then(json_usize));
+                let route_no = map
+                    .get("routeNo")
+                    .and_then(json_usize)
+                    .or_else(|| route_no_from_source_path(&source_key));
+                let comment = map
+                    .get("comment")
+                    .and_then(json_text)
+                    .unwrap_or_default()
+                    .trim()
+                    .chars()
+                    .take(240)
+                    .collect();
+                candidates.push(TtxqBranchCandidate {
+                    source_key,
+                    raw,
+                    after_ply,
+                    route_no,
+                    comment,
+                });
+            }
+        }
+        if candidates.is_empty() {
+            collect_branch_candidates(&value, "$", None, None, "", 0, &mut candidates);
+        }
     } else {
         candidates.push(TtxqBranchCandidate {
             source_key: "branchData".into(),
@@ -1022,6 +1228,9 @@ fn route_no_from_source_path(path: &str) -> Option<usize> {
 }
 
 fn branch_after_ply_hint(value: &serde_json::Value, path: &str) -> Option<usize> {
+    if let Some(key) = dhtml_branch_key(path) {
+        return Some(key.parent_ply);
+    }
     if let serde_json::Value::Object(map) = value {
         for key in [
             "afterPly",
@@ -1042,6 +1251,26 @@ fn branch_after_ply_hint(value: &serde_json::Value, path: &str) -> Option<usize>
         .filter(|part| !part.is_empty())
         .filter_map(|part| part.parse::<usize>().ok())
         .next_back()
+}
+
+fn dhtml_branch_key(path: &str) -> Option<DhtmlBranchKey> {
+    let (_, key) = path.rsplit_once("getMoveBranchKey.")?;
+    let key = key.trim();
+    if key.contains('.') {
+        return None;
+    }
+    let mut parts = key.split('-');
+    let parent_branch_id = parts.next()?.parse().ok()?;
+    let parent_ply = parts.next()?.parse().ok()?;
+    let branch_id = parts.next()?.parse().ok()?;
+    if parts.next().is_some() || branch_id == 0 {
+        return None;
+    }
+    Some(DhtmlBranchKey {
+        parent_branch_id,
+        parent_ply,
+        branch_id,
+    })
 }
 
 fn branch_comment_hint(value: &serde_json::Value) -> Option<String> {
@@ -1183,6 +1412,81 @@ fn branch_candidate_moves(raw: &str, starting_fen: &str, after_ply: Option<usize
     crate::manual_service::parse_chinese_line(fen, notation)
         .map(|parsed| parsed.moves)
         .unwrap_or_default()
+}
+
+fn dhtml_branch_candidate_moves(raw: &str) -> Vec<String> {
+    if raw.len() > 32 * 1024 {
+        return Vec::new();
+    }
+    if contains_dhtml_move_tag(raw) {
+        let mut moves = Vec::new();
+        for (_, segment) in dhtml_tagged_move_segments(raw) {
+            let decoded = crate::ttxq_decoder::dhtml_branch_move_list_to_iccs(&segment);
+            if !decoded.is_empty() {
+                moves.extend(decoded);
+            }
+        }
+        if !moves.is_empty() {
+            return moves;
+        }
+    }
+    let dhtml = crate::ttxq_decoder::dhtml_branch_move_list_to_iccs(raw);
+    if !dhtml.is_empty() {
+        return dhtml;
+    }
+    let iccs = extract_iccs_moves(raw);
+    if !iccs.is_empty() {
+        return iccs;
+    }
+    Vec::new()
+}
+
+fn validate_dhtml_branch_at_exact_anchor(
+    starting_fen: &str,
+    parent_line: &[String],
+    after_ply: usize,
+    tail: &[String],
+    source_key: &str,
+    key: DhtmlBranchKey,
+) -> Result<(), String> {
+    let mut board = Board::from_fen(starting_fen).map_err(|_| {
+        format!("天天象棋分支 {source_key} 缺少可用的起始 FEN，无法校验原生 ICCS 坐标；本盘未导入")
+    })?;
+    for raw_move in parent_line.iter().take(after_ply) {
+        let mv = Move::from_iccs(raw_move).map_err(|_| {
+            format!("天天象棋分支 {source_key} 的父线路包含无效走法 {raw_move}；本盘未导入")
+        })?;
+        board = board.apply_move(mv).map_err(|_| {
+            format!("天天象棋分支 {source_key} 的父线路走法 {raw_move} 非法；本盘未导入")
+        })?;
+    }
+    let anchor_side = if board.side_to_move() == Color::Red {
+        "红方"
+    } else {
+        "黑方"
+    };
+    for (index, raw_move) in tail.iter().enumerate() {
+        let mv = Move::from_iccs(raw_move).map_err(|_| {
+            format!(
+                "天天象棋分支 {source_key}（原生 ICCS 坐标，父分支 {}）在第 {} 半回合后第 {} 着 {raw_move} 格式无效（锚点由{anchor_side}行棋）；本盘未导入",
+                key.parent_branch_id,
+                key.parent_ply,
+                index + 1
+            )
+        })?;
+        board = board.apply_move(mv).map_err(|_| {
+            let move_label = if index == 0 {
+                format!("首着 {raw_move}")
+            } else {
+                format!("第 {} 着 {raw_move}", index + 1)
+            };
+            format!(
+                "天天象棋分支 {source_key}（原生 ICCS 坐标，父分支 {}）在第 {} 半回合后{move_label} 非法（锚点由{anchor_side}行棋）；本盘未导入",
+                key.parent_branch_id, key.parent_ply
+            )
+        })?;
+    }
+    Ok(())
 }
 
 fn dhtml_tagged_move_segments(raw: &str) -> Vec<(Option<usize>, String)> {
@@ -1430,6 +1734,103 @@ fn ttxq_branch_failure_message(record: &TtxqGameRecordDto) -> String {
     ttxq_branch_route_summary(record).unwrap_or_else(|| {
         "已发现天天象棋分支字段，但未识别到可校验的分支走法；为避免丢失变招，本盘暂不导入".into()
     })
+}
+
+fn ttxq_branch_decode_failure(
+    record: &TtxqGameRecordDto,
+    starting_fen: &str,
+    resolved_mainline: Option<&[String]>,
+) -> Option<String> {
+    if record.branch_data.trim().is_empty() || record.branch_complete {
+        return None;
+    }
+    let mut diagnostic_record = record.clone();
+    if let Some(moves) = resolved_mainline {
+        diagnostic_record.moves = moves.to_vec();
+    }
+    match decode_ttxq_branch_variations(&diagnostic_record, starting_fen) {
+        Ok(variations) if variations.is_empty() => Some(ttxq_branch_failure_message(record)),
+        Err(error) => Some(error),
+        _ => None,
+    }
+}
+
+fn dhtml_branch_absolute_anchor(
+    key: DhtmlBranchKey,
+    keys_by_id: &HashMap<usize, DhtmlBranchKey>,
+    visiting: &mut HashSet<usize>,
+) -> Option<usize> {
+    if key.parent_branch_id == 0 {
+        return Some(key.parent_ply);
+    }
+    if !visiting.insert(key.branch_id) {
+        return None;
+    }
+    let parent = *keys_by_id.get(&key.parent_branch_id)?;
+    let absolute =
+        dhtml_branch_absolute_anchor(parent, keys_by_id, visiting)?.checked_add(key.parent_ply);
+    visiting.remove(&key.branch_id);
+    absolute
+}
+
+fn ttxq_branch_diagnostic_sample(record: &TtxqGameRecordDto, starting_fen: &str) -> String {
+    let candidates = branch_candidates_from_payload(&record.branch_data);
+    let keys_by_id = candidates
+        .iter()
+        .filter_map(|candidate| dhtml_branch_key(&candidate.source_key))
+        .map(|key| (key.branch_id, key))
+        .collect::<HashMap<_, _>>();
+    let starting_side = Board::from_fen(starting_fen)
+        .ok()
+        .map(|board| board.side_to_move());
+    let branches = candidates
+        .iter()
+        .take(32)
+        .map(|candidate| {
+            if let Some(key) = dhtml_branch_key(&candidate.source_key) {
+                let absolute_anchor =
+                    dhtml_branch_absolute_anchor(key, &keys_by_id, &mut HashSet::new());
+                let anchor_side = absolute_anchor.and_then(|ply| {
+                    starting_side.map(|side| {
+                        let side = if ply % 2 == 0 { side } else { side.opposite() };
+                        if side == Color::Red {
+                            "red"
+                        } else {
+                            "black"
+                        }
+                    })
+                });
+                let decoded = dhtml_branch_candidate_moves(&candidate.raw);
+                serde_json::json!({
+                    "sourcePath": candidate.source_key,
+                    "coordinateMode": "branch-native-iccs",
+                    "parentBranchId": key.parent_branch_id,
+                    "anchorPly": key.parent_ply,
+                    "absoluteAnchorPly": absolute_anchor,
+                    "branchId": key.branch_id,
+                    "decodedFirstMove": decoded.first(),
+                    "anchorSide": anchor_side,
+                    "rawLength": candidate.raw.len(),
+                    "rawSample": candidate.raw.chars().take(64).collect::<String>(),
+                })
+            } else {
+                serde_json::json!({
+                    "sourcePath": candidate.source_key,
+                    "coordinateMode": "existing-candidate-parser",
+                    "anchorPly": candidate.after_ply,
+                    "rawLength": candidate.raw.len(),
+                    "rawSample": candidate.raw.chars().take(64).collect::<String>(),
+                })
+            }
+        })
+        .collect::<Vec<_>>();
+    let sample = serde_json::json!({
+        "startingFenPresent": !record.starting_fen.trim().is_empty(),
+        "mainlineCoordinateSample": record.raw_moves.chars().take(256).collect::<String>(),
+        "branches": branches,
+    })
+    .to_string();
+    sample.chars().take(32 * 1024).collect()
 }
 
 fn diagnostic_summary(record: &TtxqGameRecordDto) -> Option<String> {
@@ -1703,7 +2104,8 @@ pub(crate) fn submit_ttxq_bridge_payload(
             } else {
                 &game.starting_fen
             };
-            if let Err(error) = resolved_moves(game, starting_fen) {
+            let resolved_mainline = resolved_moves(game, starting_fen);
+            if let Err(error) = &resolved_mainline {
                 // All rows share one detail board while Tencent's page is
                 // loading. Keep a representative local sample for a shared
                 // structural failure instead of filling all ten slots with it.
@@ -1722,22 +2124,16 @@ pub(crate) fn submit_ttxq_bridge_payload(
                         &game.raw_move_type,
                         game.raw_move_length.max(game.raw_moves.len()),
                         &game.raw_moves.chars().take(32 * 1024).collect::<String>(),
-                        &error,
+                        error,
                         &chrono::Utc::now().to_rfc3339(),
                     )
                     .map_err(|error| error.to_string())?;
             }
-            if !game.branch_data.trim().is_empty()
-                && !game.branch_complete
-                && decode_ttxq_branch_variations(game, starting_fen)
-                    .map(|variations| variations.is_empty())
-                    .unwrap_or(true)
-            {
-                let signature = format!(
-                    "branch\u{1f}{}\u{1f}{}",
-                    game.branch_path,
-                    game.branch_data.chars().take(240).collect::<String>()
-                );
+            let branch_failure =
+                ttxq_branch_decode_failure(game, starting_fen, resolved_mainline.as_deref().ok());
+            if let Some(branch_failure) = branch_failure {
+                let diagnostic_sample = ttxq_branch_diagnostic_sample(game, starting_fen);
+                let signature = format!("branch\u{1f}{}\u{1f}{}", game.branch_path, branch_failure);
                 if recorded_diagnostics.insert(signature) {
                     model
                         .store
@@ -1750,8 +2146,8 @@ pub(crate) fn submit_ttxq_bridge_payload(
                             },
                             "branch-data",
                             game.branch_data.len(),
-                            &game.branch_data.chars().take(32 * 1024).collect::<String>(),
-                            &ttxq_branch_failure_message(game),
+                            &diagnostic_sample,
+                            &branch_failure,
                             &chrono::Utc::now().to_rfc3339(),
                         )
                         .map_err(|error| error.to_string())?;
@@ -1871,7 +2267,12 @@ pub(crate) fn report_ttxq_read_progress(
     let current = current.unwrap_or(completed);
     validate_read_progress(total, completed, failed, scanned, current)?;
     let read_phase = phase.unwrap_or_else(|| "reading".into());
-    if read_phase != "discovering" && read_phase != "loading" && read_phase != "reading" {
+    if read_phase != "discovering"
+        && read_phase != "loading"
+        && read_phase != "metadata"
+        && read_phase != "branches"
+        && read_phase != "reading"
+    {
         return Err("天天象棋读取阶段无效".into());
     }
     let mut sync = state
@@ -1891,6 +2292,10 @@ pub(crate) fn report_ttxq_read_progress(
             format!("正在扫描天天象棋网页，已发现 {total} 盘")
         } else if read_phase == "loading" {
             format!("正在加载第 {current}/{total} 盘棋谱")
+        } else if read_phase == "metadata" {
+            format!("正在解析第 {current}/{total} 盘棋谱信息")
+        } else if read_phase == "branches" {
+            format!("正在读取第 {current}/{total} 盘分支变化")
         } else if total == 0 {
             "未发现已加载的历史棋谱；请在天天象棋窗口滚动历史列表后重试".into()
         } else {
@@ -2453,7 +2858,15 @@ pub(crate) fn collect_ttxq_h5_history(
         return '';
       };
       const branchPayload = (preferredControl = null) => {
+        const branchDeadline = Date.now() + 800;
+        let branchScanTimedOut = false;
+        const branchScanExpired = () => {
+          if (Date.now() < branchDeadline) return false;
+          branchScanTimedOut = true;
+          return true;
+        };
         const safeBranchClone = (value, depth = 0, seen = new WeakSet()) => {
+          if (branchScanExpired()) return '[scan-timeout]';
           if (value == null || typeof value === 'boolean' || typeof value === 'number') return value;
           if (typeof value === 'string') return value.slice(0, 1000);
           if (typeof value === 'function') return '[function]';
@@ -2471,6 +2884,8 @@ pub(crate) fn collect_ttxq_h5_history(
           return copy;
         };
         const branchPlyHint = (path, owner) => {
+          const dhtmlKey = String(path).match(/(?:^|\.)(\d+)-(\d+)-(\d+)$/);
+          if (dhtmlKey) return Number(dhtmlKey[2]);
           if (owner && typeof owner === 'object') {
             for (const key of ['afterPly', 'after_ply', 'ply', 'parentPly', 'moveIndex', 'stepIndex', 'startPly', 'branchPly']) {
               try {
@@ -2487,6 +2902,11 @@ pub(crate) fn collect_ttxq_h5_history(
           if (/(?:^|\.)(?:getQipuMoveStep|qipuMoveStep|_qipuMoveStep)$/.test(path) && !/^route\[\d+\]\./.test(path)) return null;
           if (/(?:^|\.)(?:msg|_msg|comment|remark|note)$/i.test(path)) return null;
           if (/(?:^|\.)(?:content|text|body|title|label|description)(?:\.|$)/i.test(path)) return null;
+          const directDhtmlBranch = /(?:^|\.)getMoveBranchKey(?:\.|$)/.test(path);
+          const explicitMoveField = /(?:^|\.)(?:move|moves|moveList|movelist|moveStep|steps|step|raw|MOVE_STR|variationMoves)(?:\.|$)/i.test(path);
+          const activatedRoute = /^route\[\d+\]\./.test(path);
+          const referenceMsgField = path.includes('.msgContainer.');
+          if (!directDhtmlBranch && !explicitMoveField && !activatedRoute && !referenceMsgField) return null;
           let text = '';
           const primitiveToken = (item) => {
             if (typeof item === 'number' && Number.isInteger(item)) return String(item);
@@ -2521,7 +2941,7 @@ pub(crate) fn collect_ttxq_h5_history(
           const seen = new WeakSet();
           const stack = roots.filter(Boolean).map(({ value, path }) => ({ value, path, depth: 0, owner: null }));
           let visited = 0;
-          while (stack.length && visited < 4000 && candidates.length < 256) {
+          while (stack.length && visited < 4000 && candidates.length < 256 && !branchScanExpired()) {
             const { value, path, depth, owner } = stack.pop();
             if (value == null) continue;
             const candidate = branchMoveCandidate(value, path, owner);
@@ -2529,6 +2949,7 @@ pub(crate) fn collect_ttxq_h5_history(
             if (!value || typeof value !== 'object' || depth >= 7 || seen.has(value)) continue;
             seen.add(value); visited += 1;
             for (const key of propertyNames(value).slice(0, 100)) {
+              if (branchScanExpired()) break;
               if (/cookie|token|ticket|skey|p_skey|credential|password|html/i.test(key)) continue;
               // Tencent's msg rows mix branch payloads with comment metadata.
               // Keep unknown/obfuscated keys available, but never interpret
@@ -2558,11 +2979,12 @@ pub(crate) fn collect_ttxq_h5_history(
           const returned = new WeakSet();
           const stack = [{ value: root, path: rootPath, depth: 0 }];
           let visited = 0;
-          while (stack.length && visited < limit && containers.length < 32) {
+          while (stack.length && visited < limit && containers.length < 32 && !branchScanExpired()) {
             const { value, path, depth } = stack.pop();
             if (!value || typeof value !== 'object' || seen.has(value) || depth > 10) continue;
             seen.add(value); visited += 1;
             for (const key of propertyNames(value).slice(0, 120)) {
+              if (branchScanExpired()) break;
               if (/^(?:parent|_parent|stage|_stage|root|_root|owner|_owner|target|currentTarget|event|events|listeners?)$/i.test(key)) continue;
               if (/cookie|token|ticket|skey|p_skey|credential|password|html/i.test(key)) continue;
               let child; try { child = value[key]; } catch (_) { continue; }
@@ -2601,6 +3023,7 @@ pub(crate) fn collect_ttxq_h5_history(
           const childValues = (value) => {
             const children = [];
             for (const key of propertyNames(value).slice(0, 120)) {
+              if (branchScanExpired()) break;
               if (/^(?:parent|_parent|stage|_stage|root|_root|owner|_owner|target|currentTarget|event|events|listeners?)$/i.test(key)) continue;
               if (/cookie|token|ticket|skey|p_skey|credential|password|html/i.test(key)) continue;
               try {
@@ -2623,7 +3046,7 @@ pub(crate) fn collect_ttxq_h5_history(
             const seen = new WeakSet();
             const stack = [{ value: root, depth: 0 }];
             let visited = 0;
-            while (stack.length && visited < 8_000) {
+            while (stack.length && visited < 8_000 && !branchScanExpired()) {
               const { value, depth } = stack.pop();
               if (value === control) return true;
               if (!value || typeof value !== 'object' || seen.has(value) || depth > 14) continue;
@@ -2643,7 +3066,7 @@ pub(crate) fn collect_ttxq_h5_history(
               ].filter(Boolean);
           const stack = roots.map(value => ({ value, depth: 0 }));
           let visited = 0;
-          while (stack.length && visited < 16_000 && groups.length < 8) {
+          while (stack.length && visited < 16_000 && groups.length < 8 && !branchScanExpired()) {
             const { value, depth } = stack.pop();
             if (!value || typeof value !== 'object' || seen.has(value) || depth > 14) continue;
             seen.add(value); visited += 1;
@@ -2660,8 +3083,10 @@ pub(crate) fn collect_ttxq_h5_history(
               || typeof item.control.click === 'function'
               || typeof item.control.onClick === 'function'
             );
-            const belongsToPreferredControl = !preferredControl || containsControl(value, preferredControl);
-            if (childRoutes.length && routeContext && activatable.length === childRoutes.length && belongsToPreferredControl) {
+            const belongsToPreferredControl = childRoutes.length && routeContext && activatable.length === childRoutes.length
+              ? (!preferredControl || containsControl(value, preferredControl))
+              : false;
+            if (belongsToPreferredControl) {
               groups.push({
                 numbers: childRoutes,
                 buttons: activatable
@@ -2678,7 +3103,7 @@ pub(crate) fn collect_ttxq_h5_history(
         const routeNumbersFromBranchSignals = (signals) => {
           const routes = new Set();
           const visit = (value, depth = 0, explicitRouteField = false) => {
-            if (value == null || depth > 4 || routes.size >= 16) return;
+            if (value == null || depth > 4 || routes.size >= 16 || branchScanExpired()) return;
             if (typeof value === 'number' || typeof value === 'string') {
               if (explicitRouteField) {
                 const route = routeNumberFromText(value);
@@ -2735,7 +3160,6 @@ pub(crate) fn collect_ttxq_h5_history(
           '_variationData', 'moveBranchData', '_moveBranchData', 'qipuBranchData',
         ];
         for (const [index, control] of controls.entries()) {
-          addBranchSource(control, `boardControl[${index}]`);
           for (const key of branchFieldNames) {
             try {
               if (!(key in control)) continue;
@@ -2755,7 +3179,6 @@ pub(crate) fn collect_ttxq_h5_history(
                 if (hasBranchValue(value)) branchSignals.push({ path: `boardControl[${index}].*.${key}`, value });
                 if (/branch|MoveBranchKey/i.test(key) && hasBranchValue(value)) hasStructuralBranchSignal = true;
                 addBranchSource(value, `boardControl[${index}].*.${key}`);
-                addBranchSource(owner, `boardControl[${index}].${key}Owner`);
               }
             } catch (_) { /* Branch message data is optional. */ }
           }
@@ -2788,8 +3211,15 @@ pub(crate) fn collect_ttxq_h5_history(
         }
         const candidates = collectBranchCandidates(branchSources);
         const routeNumbers = routeNumbersFromBranchSignals(branchSignals);
-        const routeControls = collectRouteControlGroup();
+        const routeControls = hasStructuralBranchSignal
+          ? { numbers: [], buttons: [], container: null }
+          : preferredControl
+            && branchPayload.routeControlOwner === preferredControl
+            && branchPayload.routeControls
+            ? branchPayload.routeControls
+            : collectRouteControlGroup();
         branchPayload.routeControls = routeControls;
+        branchPayload.routeControlOwner = preferredControl;
         const visibleRouteNumbers = routeControls.numbers;
         const signalSamples = branchSignals.slice(0, 12).map(signal => ({
           path: signal.path,
@@ -2808,6 +3238,14 @@ pub(crate) fn collect_ttxq_h5_history(
         });
         const hasIndependentCandidate = candidates.some(candidate => !/msgContainer/i.test(candidate.path));
         const hasBranchSignal = hasStructuralBranchSignal || visibleRouteNumbers.length > 1 || hasIndependentCandidate;
+        if (branchScanTimedOut && !hasBranchSignal) {
+          return {
+            data: JSON.stringify({ scanTimedOut: true, signals: signalSamples, candidates: [] }).slice(0, 32 * 1024),
+            path: 'ttxq-branch-scan-timeout',
+            complete: false,
+            owner: branchOwner,
+          };
+        }
         if (!hasBranchSignal) {
           if (visibleRouteNumbers.length > 1) {
             return {
@@ -2872,6 +3310,15 @@ pub(crate) fn collect_ttxq_h5_history(
         ? `${candidate.path}:${candidate.type}:${candidate.text}`
         : '';
       const readBranchRoutes = async (qipuId, mainRaw, passiveBranch, beforeBranchSignature = '') => {
+        const reportBranchHeartbeat = async () => {
+          if (typeof invoke !== 'function'
+            || typeof total === 'undefined'
+            || typeof completed === 'undefined'
+            || typeof failed === 'undefined'
+            || typeof scanned === 'undefined'
+            || typeof current === 'undefined') return;
+          await invoke('report_ttxq_read_progress', { attemptId: __TTXQ_ATTEMPT_ID__, total, completed, failed, scanned, current, phase: 'branches' });
+        };
         // getQipuMoveStep becomes available before QQ finishes installing the
         // branch-key/msg structures. The reference exporter polls the board
         // control as a whole; do the same here instead of permanently trusting
@@ -2892,6 +3339,7 @@ pub(crate) fn collect_ttxq_h5_history(
         let consecutiveEmptySnapshots = 0;
         for (let poll = 0; poll < 5; poll += 1) {
           if (poll > 0) await delay(150);
+          await reportBranchHeartbeat();
           const observed = branchPayload(preferredOwner);
           const signature = String(observed && observed.data || '');
           if (signature || (observed && observed.complete === false)) {
@@ -3000,6 +3448,7 @@ pub(crate) fn collect_ttxq_h5_history(
           let previousRouteRawSignature = '';
           for (let poll = 0; poll < 6 && !collected; poll += 1) {
             await delay(150);
+            await reportBranchHeartbeat();
             const loadedId = liveLoadedId();
             if (loadedId && loadedId !== String(qipuId)) continue;
             const activeBranch = branchPayload(preferredOwner);
@@ -3115,6 +3564,10 @@ pub(crate) fn collect_ttxq_h5_history(
             : '';
           moveOwnerCache = null;
           moveOwnerSearchAt = 0;
+          if (typeof branchPayload === 'function') {
+            branchPayload.routeControls = null;
+            branchPayload.routeControlOwner = null;
+          }
           const jumpResult = model.jumpQipuGame(qipuId, -1, false, 0, 1, 0);
           // The first page needs enough time to mount QQ's board controls.
           // Each remaining game is bounded independently so a full virtual
@@ -3160,14 +3613,21 @@ pub(crate) fn collect_ttxq_h5_history(
             }
           }
           if (typeof invoke === 'function') {
-            await invoke('report_ttxq_read_progress', { attemptId: __TTXQ_ATTEMPT_ID__, total, completed, failed, scanned, current, phase: 'reading' });
+            await invoke('report_ttxq_read_progress', { attemptId: __TTXQ_ATTEMPT_ID__, total, completed, failed, scanned, current, phase: 'metadata' });
           }
           const moves = raw.text ? (raw.text.match(/[a-i][0-9][a-i][0-9]/gi) || []).map(move => move.toLowerCase()) : [];
-          const passiveBranch = branchPayload(raw.owner || null);
           // Tencent keeps the visible detail fields under version-dependent model
           // objects. Read only approved scalar names from a bounded graph; never
           // serialize the graph, HTML, credentials, or page data.
-          const metadata = [info, ...qipuSources([info]), ...boardControls()];
+          const metadata = [
+            info,
+            raw.owner,
+            ...(typeof boardControls === 'function' ? boardControls() : []),
+            model && model.currentQipu,
+            model && model._qipuData,
+            model && model._qipuInfo,
+            model && model._qipuView,
+          ].filter(Boolean);
           // A display-control title such as Panel_BoardContainer can appear
           // before the actual game title under the same field name. Keep a
           // small ordered candidate set instead of letting that first value
@@ -3175,10 +3635,12 @@ pub(crate) fn collect_ttxq_h5_history(
           const scalarFields = new Map();
           const wantedField = /^(?:title|name|qipuName|qipuTitle|qipuTitleName|qipuGameName|gameName|sTitle|szQipuName|getToWallQipuName|red|redName|redPlayer|redNick|redUserName|redPlayerName|redUserNick|sRedName|szRedName|black|blackName|blackPlayer|blackNick|blackUserName|blackPlayerName|blackUserNick|sBlackName|szBlackName|event|eventName|competition|competitionName|matchName|sEventName|szEventName|site|location|platform|date|gameDate|gameDateTime|createdDate|createTime|sCreateTime|result|gameResult|resultText|resultDesc|winLose|winner|winSide|round|roundNo|roundNumber|roundName|gameRound|iRound|stage|playedAt|gameTime|startTime|createdAt|duration|gameDuration|durationText|elapsedTime|usedTime|totalTime|iTime|timeControl|timeRule|clockRule|gameRule|ruleName|playRule)$/i;
           const seenMetadata = new WeakSet(); let metadataNodes = 0;
+          const metadataDeadline = Date.now() + 250;
           const collectMetadata = (value, depth = 0) => {
-            if (!value || depth > 4 || metadataNodes >= 1800 || typeof value !== 'object') return;
+            if (!value || depth > 4 || metadataNodes >= 1800 || Date.now() >= metadataDeadline || typeof value !== 'object') return;
             if (seenMetadata.has(value)) return; seenMetadata.add(value); metadataNodes += 1;
             for (const key of propertyNames(value).slice(0, 100)) {
+              if (Date.now() >= metadataDeadline) break;
               let child; try { child = value[key]; } catch (_) { continue; }
               if (wantedField.test(key) && (typeof child === 'string' || typeof child === 'number')) {
                 const text = String(child).trim();
@@ -3413,9 +3875,10 @@ pub(crate) fn collect_ttxq_h5_history(
             const seen = new WeakSet();
             const stack = detailDisplayRoots().map((value, index) => ({ value, path: `detailRoot[${index}]`, depth: 0 }));
             let visited = 0;
+            const traversalDeadline = Date.now() + 250;
             const usefulKey = /(?:text|label|value|title|name|qipu|red|black|result|event|date|round|site)/i;
             const usefulText = /(?:标题|场次|赛事|日期|地点|红方|黑方|结果|回合|先胜|先负|先和|后胜|后负|后和|天天象棋|^20\d{2}[\/-])/;
-            while (stack.length && visited < 8_000 && samples.length < 80) {
+            while (stack.length && visited < 8_000 && samples.length < 80 && Date.now() < traversalDeadline) {
               const { value, path, depth } = stack.pop();
               if (!value || typeof value !== 'object' || seen.has(value) || depth > 10) continue;
               seen.add(value); visited += 1;
@@ -3450,6 +3913,7 @@ pub(crate) fn collect_ttxq_h5_history(
           };
           const detailFields = () => {
             const dom = visibleDetailFields();
+            if (dom.title || dom.red || dom.black || dom.event) return dom;
             const display = displayObjectDetailFields();
             const semantic = semanticDetailFields();
             return mergeDetailFields(display, dom, semantic);
@@ -3465,6 +3929,10 @@ pub(crate) fn collect_ttxq_h5_history(
           if (!visible.title && !visible.red && !visible.event) {
             visible = mergeDetailFields(detailFields(), visible);
           }
+          if (typeof invoke === 'function') {
+            await invoke('report_ttxq_read_progress', { attemptId: __TTXQ_ATTEMPT_ID__, total, completed, failed, scanned, current, phase: 'branches' });
+          }
+          const passiveBranch = branchPayload(raw.owner || null);
           const branch = await readBranchRoutes(qipuId, raw, passiveBranch, beforeBranchSignature);
           const rawResult = firstText('result', 'gameResult', 'resultText', 'resultDesc', 'winLose', 'winner', 'winSide') || visible.result;
           const normalizedResult = /和/.test(rawResult) ? '1/2-1/2'
@@ -4264,6 +4732,161 @@ mod tests {
     }
 
     #[test]
+    fn dhtml_branch_keys_build_nested_variations_instead_of_using_branch_id_as_ply() {
+        let mut record = ttxq_record("self-recorded-nested-dhtml-branches");
+        record.raw_moves = "26252042".into();
+        record.raw_move_path = "NOTIFY_QIPU_DATA[0].thisObj._boardControl.getQipuMoveStep".into();
+        record.raw_move_type = "array<number>".into();
+        record.moves = resolved_moves(&record, STARTING_FEN).unwrap();
+        record.branch_complete = false;
+        record.branch_data = serde_json::json!({
+            "candidates": [
+                {
+                    "path": "boardControl[0].getMoveBranchKey.0-1-1",
+                    "raw": "19271022",
+                    "valueType": "string",
+                    "afterPly": 1
+                },
+                {
+                    "path": "boardControl[0].getMoveBranchKey.1-1-22",
+                    "raw": "7274",
+                    "valueType": "string",
+                    "afterPly": 22
+                }
+            ]
+        })
+        .to_string();
+
+        let prepared = prepare_import_record(&record, STARTING_FEN).unwrap();
+
+        assert_eq!(prepared.variations.len(), 1);
+        let root_branch = &prepared.variations[0];
+        assert_eq!(root_branch.after_ply, 1);
+        assert_eq!(root_branch.moves, ["b9c7", "b0c2"]);
+        assert_eq!(root_branch.children.len(), 1);
+        assert_eq!(root_branch.children[0].after_ply, 1);
+        assert_eq!(root_branch.children[0].moves, ["h2h4"]);
+    }
+
+    #[test]
+    fn dhtml_branch_key_never_searches_for_another_legal_anchor() {
+        let mut record = ttxq_record("exact-dhtml-branch-anchor");
+        record.raw_moves = "26252042".into();
+        record.raw_move_path = "NOTIFY_QIPU_DATA[0].thisObj._boardControl.getQipuMoveStep".into();
+        record.raw_move_type = "array<number>".into();
+        record.moves = resolved_moves(&record, STARTING_FEN).unwrap();
+        record.branch_complete = false;
+        record.branch_data = serde_json::json!({
+            "candidates": [{
+                "path": "boardControl[0].getMoveBranchKey.0-1-1",
+                "raw": "7062",
+                "valueType": "string",
+                "afterPly": 1
+            }]
+        })
+        .to_string();
+
+        let error = prepare_import_record(&record, STARTING_FEN).unwrap_err();
+
+        assert!(error.contains("第 1 半回合后首着 h0g2 非法"), "{error}");
+        assert!(error.contains("原生 ICCS 坐标"), "{error}");
+    }
+
+    #[test]
+    fn real_dhtml_branch_keys_preserve_parent_local_anchors() {
+        assert!(dhtml_branch_key("msg.variation.0-11-1").is_none());
+        assert_eq!(
+            dhtml_branch_key("boardControl[0].getMoveBranchKey.0-11-1"),
+            Some(DhtmlBranchKey {
+                parent_branch_id: 0,
+                parent_ply: 11,
+                branch_id: 1,
+            })
+        );
+        assert_eq!(
+            dhtml_branch_key("boardControl[0].getMoveBranchKey.0-13-4"),
+            Some(DhtmlBranchKey {
+                parent_branch_id: 0,
+                parent_ply: 13,
+                branch_id: 4,
+            })
+        );
+        assert_eq!(
+            dhtml_branch_key("boardControl[0].getMoveBranchKey.0-19-5"),
+            Some(DhtmlBranchKey {
+                parent_branch_id: 0,
+                parent_ply: 19,
+                branch_id: 5,
+            })
+        );
+        let nested = dhtml_branch_key("boardControl[0].getMoveBranchKey.3-8-6").unwrap();
+        let keys = HashMap::from([
+            (
+                3,
+                DhtmlBranchKey {
+                    parent_branch_id: 0,
+                    parent_ply: 10,
+                    branch_id: 3,
+                },
+            ),
+            (6, nested),
+        ]);
+        assert_eq!(
+            dhtml_branch_absolute_anchor(nested, &keys, &mut HashSet::new()),
+            Some(18)
+        );
+    }
+
+    #[test]
+    fn branch_diagnostic_identifies_coordinate_mode_move_and_anchor_side() {
+        let mut record = ttxq_record("branch-coordinate-diagnostic");
+        record.starting_fen = STARTING_FEN.into();
+        record.raw_moves = "26252042".into();
+        record.branch_data = serde_json::json!({
+            "candidates": [{
+                "path": "boardControl[0].getMoveBranchKey.0-1-1",
+                "raw": "1927",
+                "valueType": "string"
+            }]
+        })
+        .to_string();
+
+        let sample: serde_json::Value =
+            serde_json::from_str(&ttxq_branch_diagnostic_sample(&record, STARTING_FEN)).unwrap();
+
+        assert_eq!(sample["startingFenPresent"], true);
+        assert_eq!(sample["mainlineCoordinateSample"], "26252042");
+        assert_eq!(
+            sample["branches"][0]["coordinateMode"],
+            "branch-native-iccs"
+        );
+        assert_eq!(sample["branches"][0]["decodedFirstMove"], "b9c7");
+        assert_eq!(sample["branches"][0]["anchorPly"], 1);
+        assert_eq!(sample["branches"][0]["anchorSide"], "black");
+    }
+
+    #[test]
+    fn branch_diagnostic_uses_the_resolved_numeric_mainline() {
+        let mut record = ttxq_record("resolved-mainline-branch-diagnostic");
+        record.raw_moves = "26252042".into();
+        record.raw_move_path = "NOTIFY_QIPU_DATA[0].thisObj._boardControl.getQipuMoveStep".into();
+        record.raw_move_type = "array<number>".into();
+        record.branch_complete = false;
+        record.branch_data = serde_json::json!({
+            "candidates": [{
+                "path": "boardControl[0].getMoveBranchKey.0-1-1",
+                "raw": "1927",
+                "valueType": "string"
+            }]
+        })
+        .to_string();
+        let resolved = resolved_moves(&record, STARTING_FEN).unwrap();
+
+        assert!(record.moves.is_empty());
+        assert!(ttxq_branch_decode_failure(&record, STARTING_FEN, Some(&resolved)).is_none());
+    }
+
+    #[test]
     fn branch_signal_without_decodable_moves_is_not_importable() {
         let mut record = ttxq_record("self-recorded-branch-diagnostic");
         record.raw_moves = "26252042".into();
@@ -4311,15 +4934,22 @@ mod tests {
     }
 
     #[test]
-    fn decoded_ttxq_variations_are_written_as_sibling_branches() {
+    fn decoded_ttxq_variations_are_written_as_recursive_sibling_branches() {
         let mainline = vec!["c3c4".to_owned(), "c9e7".to_owned()];
         let variation = TtxqVariationDto {
             after_ply: 1,
-            moves: vec!["h9g7".into()],
+            moves: vec!["b9c7".into(), "b0c2".into()],
             route_no: None,
             source_key: String::new(),
             comment: "绿色分支 1".into(),
-            children: Vec::new(),
+            children: vec![TtxqVariationDto {
+                after_ply: 1,
+                moves: vec!["h2h4".into()],
+                route_no: None,
+                source_key: String::new(),
+                comment: "嵌套分支".into(),
+                children: Vec::new(),
+            }],
         };
         let mut document = ManualDocument::new(STARTING_FEN).unwrap();
         let mut board = Board::from_fen(STARTING_FEN).unwrap();
@@ -4339,9 +4969,16 @@ mod tests {
         assert!(branches
             .iter()
             .any(|node| node.is_mainline && node.mv.to_iccs() == "c9e7"));
-        assert!(branches.iter().any(|node| !node.is_mainline
-            && node.mv.to_iccs() == "h9g7"
-            && node.comment == "绿色分支 1"));
+        let branch_root = branches
+            .iter()
+            .find(|node| !node.is_mainline && node.mv.to_iccs() == "b9c7")
+            .unwrap();
+        assert_eq!(branch_root.comment, "绿色分支 1");
+        let nested = document.tree.branches(branch_root.id).unwrap();
+        assert!(nested.iter().any(|node| node.mv.to_iccs() == "b0c2"));
+        assert!(nested
+            .iter()
+            .any(|node| node.mv.to_iccs() == "h2h4" && node.comment == "嵌套分支"));
     }
 
     #[test]
@@ -4671,6 +5308,146 @@ if (branch.complete) throw new Error('branch signal with candidates must be deco
         assert!(
             output.status.success(),
             "collector missed branch data from a later board control: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn collector_does_not_treat_branch_renderer_properties_as_move_candidates() {
+        let branch_source = collector_source_between(
+            "      const branchPayload = (preferredControl = null) => {",
+            "      const liveLoadedId = () => {",
+        );
+        let harness = format!(
+            r#"(async () => {{
+const propertyNames = (value) => {{
+  const names = new Set();
+  let current = value;
+  for (let depth = 0; current && depth < 3; depth += 1) {{
+    Object.getOwnPropertyNames(current).forEach(name => names.add(name));
+    current = Object.getPrototypeOf(current);
+  }}
+  return [...names];
+}};
+const stringifyMoveValue = (value) => {{
+  if (!value || typeof value !== 'object') return {{ status: 'not-object', text: '', length: 0 }};
+  const text = String(value).trim();
+  return text ? {{ status: 'ok', text, length: text.length }} : {{ status: 'empty', text: '', length: 0 }};
+}};
+const safeMoveText = /^[0-9,\s\[\]]+$/;
+const findObjectWithOwnProperty = (root, property) => {{
+  const stack = [root];
+  const seen = new WeakSet();
+  while (stack.length) {{
+    const value = stack.pop();
+    if (!value || typeof value !== 'object' || seen.has(value)) continue;
+    seen.add(value);
+    if (Object.prototype.hasOwnProperty.call(value, property)) return value;
+    for (const child of Object.values(value)) if (child && typeof child === 'object') stack.push(child);
+  }}
+  return null;
+}};
+const control = {{
+  getMoveBranchKey: {{ '0-1-1': '7062' }},
+  branchChooseComponent: {{
+    normalColor: {{ _data: 214214214255 }},
+    sprite: {{ uuid: 'a5d590e8-2570-43d7-9f8d-7b8f7e17e5c5@f9941' }},
+    renderData: {{ vertexOffset: 7028 }},
+  }},
+}};
+const model = {{}};
+const boardControls = () => [control];
+{branch_source}
+const branch = branchPayload(control);
+const payload = JSON.parse(branch.data);
+const candidates = payload.candidates || [];
+if (candidates.length !== 1) {{
+  throw new Error(`renderer properties polluted branch candidates: ${{JSON.stringify(candidates)}}`);
+}}
+if (candidates[0].path !== 'boardControl[0].getMoveBranchKey.0-1-1' || candidates[0].raw !== '7062') {{
+  throw new Error(`direct DhtmlXQ branch key was not preserved: ${{JSON.stringify(candidates)}}`);
+}}
+}})().catch(error => {{ console.error(error.message); process.exitCode = 1; }});
+"#
+        );
+        let mut child = std::process::Command::new("node")
+            .arg("-")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("Node.js is required to exercise branch renderer filtering");
+        child
+            .stdin
+            .as_mut()
+            .expect("branch renderer checker stdin")
+            .write_all(harness.as_bytes())
+            .expect("write branch renderer harness to Node.js");
+        let output = child
+            .wait_with_output()
+            .expect("run branch renderer harness");
+        assert!(
+            output.status.success(),
+            "collector accepted branch renderer properties as moves: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn collector_branch_scan_is_time_bounded() {
+        let branch_source = collector_source_between(
+            "      const branchPayload = (preferredControl = null) => {",
+            "      const liveLoadedId = () => {",
+        );
+        let harness = format!(
+            r#"(() => {{
+let clock = 0;
+const Date = {{ now: () => (clock += 10) }};
+let propertyReads = 0;
+const propertyNames = value => {{ propertyReads += 1; return Object.getOwnPropertyNames(value); }};
+const stringifyMoveValue = value => ({{ status: 'ok', text: String(value), length: String(value).length }});
+const safeMoveText = /^[0-9,\s\[\]]+$/;
+const findObjectWithOwnProperty = (root, property, limit = 8_000) => {{
+  const stack = [root]; const seen = new WeakSet(); let visited = 0;
+  while (stack.length && visited < limit) {{
+    const value = stack.pop();
+    if (!value || typeof value !== 'object' || seen.has(value)) continue;
+    seen.add(value); visited += 1;
+    if (Object.prototype.hasOwnProperty.call(value, property)) return value;
+    for (const key of propertyNames(value)) {{
+      const child = value[key];
+      if (child && typeof child === 'object') stack.push(child);
+    }}
+  }}
+  return null;
+}};
+const control = {{ getMoveBranchKey: {{}} }};
+const detailRoot = {{ board: control }};
+for (let outer = 0; outer < 24; outer += 1) {{
+  const group = {{}};
+  for (let inner = 0; inner < 24; inner += 1) group[`data${{inner}}`] = {{ value: inner }};
+  detailRoot[`group${{outer}}`] = group;
+}}
+const model = {{}};
+const boardControls = () => [control];
+const detailDisplayRoots = () => [detailRoot];
+{branch_source}
+const branch = branchPayload(control);
+if (branch.complete !== false || !branch.path.includes('scan-timeout')) {{
+  throw new Error(`exhausted branch scan was reported as complete: ${{JSON.stringify(branch)}}`);
+}}
+if (propertyReads > 1_200) throw new Error(`branch scan exceeded its read budget: ${{propertyReads}}`);
+}})();
+"#
+        );
+        let output = std::process::Command::new("node")
+            .arg("-e")
+            .arg(harness)
+            .output()
+            .expect("Node.js is required to exercise branch traversal bounds");
+        assert!(
+            output.status.success(),
+            "collector branch traversal exceeded its budget: {}",
             String::from_utf8_lossy(&output.stderr)
         );
     }
@@ -5758,6 +6535,43 @@ if (propertyReads >= 200) throw new Error(`global FDK graph was scanned first: $
     }
 
     #[test]
+    fn collector_metadata_scan_is_time_bounded() {
+        let metadata_source = collector_source_between(
+            "          const scalarFields = new Map();",
+            "          const firstText = (...keys) => {",
+        );
+        let harness = format!(
+            r#"(() => {{
+let clock = 0;
+const Date = {{ now: () => ++clock }};
+let propertyReads = 0;
+const propertyNames = value => {{ propertyReads += 1; return Object.getOwnPropertyNames(value); }};
+const root = {{ title: '世界象棋选拔赛第五轮' }};
+for (let outer = 0; outer < 80; outer += 1) {{
+  const group = {{}};
+  for (let inner = 0; inner < 80; inner += 1) group[`data${{inner}}`] = {{ title: `候选${{outer}}-${{inner}}` }};
+  root[`data${{outer}}`] = group;
+}}
+const metadata = [root];
+{metadata_source}
+if ((scalarFields.get('title') || [])[0] !== '世界象棋选拔赛第五轮') throw new Error('root title was not collected');
+if (propertyReads > 350) throw new Error(`metadata scan was not time bounded: ${{propertyReads}} object reads`);
+}})();
+"#
+        );
+        let output = std::process::Command::new("node")
+            .arg("-e")
+            .arg(harness)
+            .output()
+            .expect("Node.js is required to exercise metadata traversal bounds");
+        assert!(
+            output.status.success(),
+            "collector metadata traversal exceeded its budget: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
     fn collector_preserves_recent_list_top_to_bottom_order() {
         let source = include_str!("ttxq_sync.rs");
         let traversal_start = source
@@ -6193,7 +7007,7 @@ if (raw.text !== '2625') throw new Error('settled move array was discarded after
 
     #[test]
     fn collector_recovers_a_move_array_that_settles_during_snapshot() {
-        let recovery_source = collector_recovery_source("          const passiveBranch =");
+        let recovery_source = collector_recovery_source("          const moves =");
         let harness = format!(
             r#"(async () => {{
 let ready = false;
@@ -6242,7 +7056,7 @@ if (raw.path === 'bridge-snapshot' || raw.text !== '2625') {{
 
     #[test]
     fn collector_accepts_same_signature_after_coordinate_snapshot() {
-        let recovery_source = collector_recovery_source("          const passiveBranch =");
+        let recovery_source = collector_recovery_source("          const moves =");
         let harness = format!(
             r#"(async () => {{
 const current = 9;

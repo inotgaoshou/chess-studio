@@ -4,6 +4,18 @@
 /// The H5 board stores ranks from the red side, while ICCS counts from black's
 /// side, so ranks are inverted with `9 - value`.
 pub(crate) fn dhtml_move_list_to_iccs(raw: &str) -> Vec<String> {
+    coordinate_move_list_to_iccs(raw, true)
+}
+
+/// Converts `getMoveBranchKey` values into ICCS moves.
+///
+/// Unlike the main move list, QQ Chess branch values already use ICCS-native
+/// ranks. Their files and ranks therefore pass through without inversion.
+pub(crate) fn dhtml_branch_move_list_to_iccs(raw: &str) -> Vec<String> {
+    coordinate_move_list_to_iccs(raw, false)
+}
+
+fn coordinate_move_list_to_iccs(raw: &str, invert_rank: bool) -> Vec<String> {
     if !raw.chars().all(|character| {
         character.is_ascii_digit()
             || matches!(character, '[' | ']' | ',' | ' ' | '\t' | '\r' | '\n')
@@ -23,7 +35,10 @@ pub(crate) fn dhtml_move_list_to_iccs(raw: &str) -> Vec<String> {
                 return None;
             };
             (*from_file <= 8 && *to_file <= 8 && *from_rank <= 9 && *to_rank <= 9).then(|| {
-                let square = |file: u8, rank: u8| format!("{}{}", (b'a' + file) as char, 9 - rank);
+                let square = |file: u8, rank: u8| {
+                    let rank = if invert_rank { 9 - rank } else { rank };
+                    format!("{}{}", (b'a' + file) as char, rank)
+                };
                 format!(
                     "{}{}",
                     square(*from_file, *from_rank),
@@ -43,6 +58,13 @@ mod tests {
     fn converts_dhtml_coordinates_to_iccs() {
         assert_eq!(dhtml_move_list_to_iccs("26252042"), ["c3c4", "c9e7"]);
         assert_eq!(dhtml_move_list_to_iccs("2,6,2,5,2,0,4,2"), ["c3c4", "c9e7"]);
+    }
+
+    #[test]
+    fn converts_dhtml_branch_coordinates_without_flipping_ranks() {
+        assert_eq!(dhtml_branch_move_list_to_iccs("1927"), ["b9c7"]);
+        assert_eq!(dhtml_branch_move_list_to_iccs("5041"), ["f0e1"]);
+        assert_eq!(dhtml_branch_move_list_to_iccs("7274"), ["h2h4"]);
     }
 
     #[test]
