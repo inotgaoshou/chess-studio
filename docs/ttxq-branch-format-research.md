@@ -108,12 +108,26 @@ absoluteAfterPly    = parentPrefixBeforeRoute + localAfterPly
 - 起始局面和主线第 2 半回合分别为 `comment0_0`、`comment0_2`；
 - 本地界面编号与来源 ID 分离：主线显示为 `1`，来源分支 `C` 显示为 `C + 1`。
 
-桥接还兼容 `R_P`、主线纯步号和旧版 `step-route` 键，但必须先转换为
-`sourceRouteId + absoluteAfterPly`，再通过已经解码的完整路线节点路径定位。普通社交评论列表没有位置键，不进入棋谱节点。
+腾讯注解容器还使用 `R-P` 简写，两个数字分别是来源路线 ID 和从开局起的
+绝对半回合，不是“步号-界面路线号”。本机真实失败样本中的 `11-2`、
+`11-13`、`18-6` 因此分别等价于 `comment11_2`、`comment11_13`、
+`comment18_6`。先前将其换算为 `route=P-1 / ply=R+1` 的
+`legacy-step-route` 规则会稳定产生路线不存在或位置越界，已废弃。
+
+桥接继续兼容 `R_P`、主线纯步号和起始局面别名；所有格式必须先转换为
+`sourceRouteId + absoluteAfterPly`，再通过已经解码的完整路线节点路径定位。
+普通社交评论列表没有位置键，不进入棋谱节点。
+
+注解容器与分支字段必须物理隔离：`findObjectA(boardControl, "msg")` 的父容器
+只用于注解，容器中的同级数字或可序列化对象也不能作为分支候选。分支存在性
+只由当前控制器 `getMoveBranchKey` 下合法的 `A-B-C` 坐标项声明；数字按钮、
+空包装对象和普通元数据不声明分支。切盘时分支结构签名和注解签名分别计算，
+注解内容相同不能触发 `previous-game-branch-signature`。
 
 ## 实现约束
 
 - Collector 只读取上述棋谱字段及受限诊断摘要，不扩大远程页面权限。
+- Collector 不通过路线按钮切换或主线流差分推测分支；缺少合法 `A-B-C` 数据时按无分支处理。
 - Decoder 必须保留字段来源，分别识别 DhtmlXQ、明确 ICCS 和中文着法，禁止内容猜测。
 - Importer 只有在主线和全部已声明分支都能在精确锚点合法重放时才写入棋谱树。
 - 失败诊断只保留定位所需的键、坐标模式、局部/绝对锚点、转换后首着和短样本；不得进入 outbox 或云同步。
