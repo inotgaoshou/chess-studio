@@ -46,6 +46,7 @@ export type ReviewWorkspaceProps = {
   onPopOutRoute?(): void;
   onClose(): void;
   onNavigate(nodeId?: string): void;
+  onSaveComment?(nodeId: string, value: string): Promise<boolean>;
   onMakeMainline(nodeId: string): void;
   onReorderBranches(nodeIds: string[], from: number, to: number): void;
   onRemoveBranch(nodeId: string): void;
@@ -160,7 +161,7 @@ function IssueCard({ issue, index, active, expanded, engineExpanded, analysisDep
 export function ReviewWorkspace({
   board, report, reportBusy, reportExporting, reportProgress, engineReady, libraryFolder, playedAt, libraryFolders, games = [], libraryOpen: controlledLibraryOpen, onLibraryOpenChange, favorite, libraryTags, flyknifePlanCount, trainingTasks, trainingGenerating, trainingGeneration, analysisConfig,
   positionAnalysis, positionAnalysisBusy, positionAnalysisError, positionAnalysisFen, engineHintRequest, showMoveThoughts: controlledShowMoveThoughts, onMoveThoughtVisibilityChange, routePoppedOut = false, onPopOutRoute,
-  onClose, onNavigate, onMakeMainline, onReorderBranches, onRemoveBranch, onGenerateReport, onCancelReport, onExportReport, onOpenReport, onImport, onImportScreenshot, onPaste, onManualRecord, onOpenGame, onShareGame, onRefreshLibrary, onDeleteGames, onSaveLibrary, onOpenFlyknife, onGenerateTraining, onOpenTraining, onCompleteTraining, onStudyIssue, onStartU10, onRunPositionAnalysis,
+  onClose, onNavigate, onSaveComment, onMakeMainline, onReorderBranches, onRemoveBranch, onGenerateReport, onCancelReport, onExportReport, onOpenReport, onImport, onImportScreenshot, onPaste, onManualRecord, onOpenGame, onShareGame, onRefreshLibrary, onDeleteGames, onSaveLibrary, onOpenFlyknife, onGenerateTraining, onOpenTraining, onCompleteTraining, onStudyIssue, onStartU10, onRunPositionAnalysis,
 }: ReviewWorkspaceProps) {
   const [tab, setTab] = useState<InsightTab>("report");
   const [moveScope, setMoveScope] = useState<MoveScope>("issues");
@@ -390,7 +391,11 @@ export function ReviewWorkspace({
         </header>
         <MoveThoughtDetails thought={currentThought}/>
       </section>}
-      <TtxqAnnotationCard value={currentAnnotationValue}/>
+      <TtxqAnnotationCard
+        value={currentAnnotationValue}
+        editable={Boolean(currentMoveId && onSaveComment)}
+        onSaveLocal={currentMoveId && onSaveComment ? (value) => onSaveComment(currentMoveId, value) : undefined}
+      />
       {hasRecordedMoves && <section className={`review-archive-card ${archiveExpanded ? "expanded" : "collapsed"} ${archiveEditorOpen ? "editing" : ""}`} aria-label="棋谱归档资料">
         <header><div><strong>归档资料</strong><small>{archived ? "已保存" : "待确认"} · {libraryFolder || "未分类"}{favorite ? " · 已收藏" : ""}{libraryTags.length ? ` · ${libraryTags.join("、")}` : ""}</small></div><div className="review-archive-header-actions"><button type="button" onClick={() => setArchiveExpanded((expanded) => !expanded)}>{archiveExpanded ? "收起" : "展开"}</button><button type="button" onClick={openArchiveEditor}>编辑归档</button></div></header>
         {archiveExpanded && !archiveEditorOpen && <><small className="review-archive-location">本机保存：Application Support/cn.xiangqi.studio/xiangqi.sqlite3</small><div className="review-archive-summary"><span>{libraryFolder || "未分类"}</span>{favorite && <span className="favorite"><Heart size={12} fill="currentColor"/>已收藏</span>}{libraryTags.map((tag) => <em key={tag}>{tag}</em>)}</div></>}

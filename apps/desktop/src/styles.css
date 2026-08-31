@@ -9168,6 +9168,10 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 .review-library-delete:disabled { opacity: .45; cursor: not-allowed; }
 .review-library-select-all { flex: 0 0 auto; margin: 7px 6px 7px 0; padding: 0 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-1); color: var(--text-secondary); font-size: 11px; }
 .review-library-select-all:disabled { opacity: .45; cursor: not-allowed; }
+.review-library-move { flex: 0 0 auto; min-width: 72px; margin: 7px 6px 7px 0; padding: 0 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-1); color: var(--text-secondary); display: inline-flex; align-items: center; justify-content: center; gap: 5px; font: 700 11px/1 "PingFang SC", "Microsoft YaHei", Inter, sans-serif; white-space: nowrap; }
+.review-library-move:hover:not(:disabled) { border-color: var(--review-accent); color: var(--review-accent); }
+.review-library-move:disabled { opacity: .45; cursor: not-allowed; }
+.review-library-move svg { flex: 0 0 auto; }
 .review-game-library-body > main input { min-width: 0; width: 100%; border: 0; outline: 0; background: transparent; color: var(--text-primary); font-size: 12px; }
 .review-library-action-feedback { min-height: 0; }
 .review-game-library-list { min-height: 0; overflow: auto; padding: 7px; display: grid; align-content: start; gap: 5px; }
@@ -9222,13 +9226,28 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 .review-library-move-dialog { border-color: var(--review-accent); }
 .review-library-move-dialog > label { display: grid; gap: 5px; color: var(--text-secondary); }
 .review-library-move-dialog select { min-height: 31px; padding: 0 7px; border: 1px solid var(--border); border-radius: 3px; background: var(--surface-1); color: var(--text-primary); }
-.review-library-delete-confirm button.primary { border-color: var(--review-accent); background: var(--review-accent); color: #fff; }
-.ttxq-annotation-card { display: grid; gap: 7px; padding: 9px 11px; border: 1px solid color-mix(in srgb, #31834e 44%, var(--border)); border-left: 3px solid #c76b16; border-radius: 4px; background: color-mix(in srgb, #31834e 7%, var(--surface-1)); }
-.ttxq-annotation-card > header { display: flex; align-items: center; gap: 7px; color: #31834e; }
+.review-library-folder-manage-dialog { width: min(420px, calc(100vw - 36px)); border-color: var(--review-accent); }
+.review-library-folder-manage-dialog > small { min-width: 0; overflow: hidden; color: var(--text-muted); text-overflow: ellipsis; white-space: nowrap; }
+.review-library-folder-manage-dialog > label { display: grid; gap: 5px; color: var(--text-secondary); font-size: 11px; font-weight: 700; }
+.review-library-folder-manage-dialog input, .review-library-folder-manage-dialog select { min-width: 0; width: 100%; box-sizing: border-box; min-height: 32px; padding: 0 8px; border: 1px solid var(--border); border-radius: 3px; background: var(--surface-1); color: var(--text-primary); font-size: 11px; }
+.review-library-folder-manage-dialog > p { margin: 0; color: var(--text-secondary); font-size: 11px; line-height: 1.5; }
+.review-library-delete-confirm button.primary { border-color: #1676b8; background: #1676b8; color: #fff; box-shadow: 0 1px 2px rgba(20, 78, 117, .28); font-weight: 800; }
+.review-library-delete-confirm button.primary:hover:not(:disabled) { border-color: #0f659f; background: #0f659f; }
+.review-library-delete-confirm button.primary:disabled { opacity: .42; box-shadow: none; cursor: not-allowed; }
+.review-library-move-hint { color: var(--text-muted); font-size: 10px; line-height: 1.4; }
+.review-library-move-hint.warning { color: var(--warning); }
+.ttxq-annotation-card { min-height: 0; max-height: min(240px, 28vh); overflow: auto; display: grid; gap: 7px; padding: 9px 11px; border: 1px solid color-mix(in srgb, #31834e 44%, var(--border)); border-left: 3px solid #c76b16; border-radius: 4px; background: color-mix(in srgb, #31834e 7%, var(--surface-1)); overscroll-behavior: contain; }
+.ttxq-annotation-card > header { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 7px; color: #31834e; background: color-mix(in srgb, var(--surface-1) 94%, transparent); }
 .ttxq-annotation-card > header > div { min-width: 0; display: grid; gap: 1px; }
 .ttxq-annotation-card strong { color: var(--text-primary); font-size: 11px; }
 .ttxq-annotation-card small { color: var(--text-secondary); font-size: 10px; }
-.ttxq-annotation-card p { margin: 0; color: var(--text-primary); font-size: 11px; line-height: 1.55; white-space: pre-wrap; }
+.ttxq-annotation-card p { margin: 0; color: var(--text-primary); font-size: 11px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ttxq-annotation-edit { margin-left: auto; width: 24px; height: 23px; border: 1px solid var(--border); border-radius: 3px; background: var(--surface-2); color: var(--text-secondary); display: grid; place-items: center; }
+.ttxq-annotation-edit:hover { border-color: var(--accent); color: var(--accent); }
+.ttxq-annotation-local { display: grid; gap: 5px; padding-top: 7px; border-top: 1px solid var(--border); }
+.ttxq-annotation-local label { display: grid; gap: 4px; color: var(--text-muted); font-size: 10px; }
+.ttxq-annotation-local textarea { min-height: 56px; max-height: 140px; resize: vertical; padding: 6px 7px; border: 1px solid var(--border); border-radius: 3px; background: var(--surface-input); color: var(--text-primary); font: inherit; font-size: 11px; line-height: 1.45; }
+.ttxq-annotation-local > button { justify-self: end; min-height: 25px; padding: 0 8px; border: 1px solid var(--accent); border-radius: 3px; background: var(--accent-surface); color: var(--text-primary); display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-weight: 700; }
 .ttxq-annotation-card.compact { padding: 6px 8px; gap: 4px; }
 @media (max-width: 620px) { .review-library-backdrop { padding: 8px; } .review-game-library { width: 100%; height: calc(100dvh - 16px); } .review-game-library-body { grid-template-columns: 126px minmax(0, 1fr); } .review-game-library-body > aside { padding: 6px; } .review-game-library-body > aside button { padding: 0 5px; } .review-library-editor { inset: 6px; width: calc(100% - 12px); height: calc(100% - 12px); } .review-library-editor-fields { grid-template-columns: 1fr; } }
 .review-header-workflow {

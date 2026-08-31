@@ -293,6 +293,23 @@ describe("ReviewWorkspace", () => {
     expect(within(result as HTMLElement).getByText("所在目录：开局研究/残局")).toBeTruthy();
   });
 
+  it("exposes complete truncated game text on hover", async () => {
+    const title = "五八炮三兵横车第一阶段完整训练棋谱标题";
+    const folder = "天天象棋备份/陈诗涵棋谱/收藏棋谱/三兵横车五八炮";
+    renderWorkspace({
+      games: [{ ...libraryGames[0], id: "long-text", title, libraryFolder: folder, round: "12 回合", playedAt: "2026-03-21 22:59", duration: "1.503 小时" }],
+      libraryFolders: [...folders, { name: folder, system: false, gameCount: 1 }],
+    });
+    await userEvent.click(screen.getByRole("button", { name: "棋谱库" }));
+
+    expect(screen.getByText(title).getAttribute("title")).toBe(title);
+    const folderText = `所在目录：天天象棋/陈诗涵棋谱/收藏棋谱/三兵横车五八炮`;
+    expect(screen.getByText(folderText).getAttribute("title")).toBe(folderText);
+    const article = screen.getByText(title).closest("article");
+    const metadata = article?.querySelector(".review-library-game-meta");
+    expect(metadata?.getAttribute("title")).toBe(metadata?.textContent);
+  });
+
   it("moves one game or the current selection to another folder", async () => {
     vi.spyOn(chessPlatform, "moveGamesToFolder").mockResolvedValue({ folderCount: 0, gameCount: 2 });
     const onRefreshLibrary = vi.fn().mockResolvedValue(undefined);
@@ -312,6 +329,24 @@ describe("ReviewWorkspace", () => {
     expect(onRefreshLibrary).toHaveBeenCalledTimes(2);
   });
 
+  it("starts game movement with an explicit target prompt instead of a fake selected folder", async () => {
+    vi.spyOn(chessPlatform, "moveGamesToFolder").mockResolvedValue({ folderCount: 0, gameCount: 1 });
+    renderWorkspace({ libraryFolders: [...folders, { name: "开局研究", system: false, gameCount: 0 }] });
+    await userEvent.click(screen.getByRole("button", { name: "棋谱库" }));
+    await userEvent.click(screen.getByRole("button", { name: /移动 放飞 vs 棋友/ }));
+
+    const target = screen.getByLabelText("目标目录") as HTMLSelectElement;
+    const confirm = screen.getByRole("button", { name: "确认移动" });
+    expect(target.value).toBe("__choose__");
+    expect(screen.getByRole("option", { name: "请选择目标目录" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "天天象棋（当前位置）" }).hasAttribute("disabled")).toBe(true);
+    expect(confirm.hasAttribute("disabled")).toBe(true);
+    expect(screen.getByText("请选择与当前位置不同的目标目录")).toBeTruthy();
+
+    await userEvent.selectOptions(target, "开局研究");
+    expect(confirm.hasAttribute("disabled")).toBe(false);
+  });
+
   it("shows imported TTXQ annotations separately from generated thoughts", () => {
     renderWorkspace({
       board: {
@@ -326,6 +361,26 @@ describe("ReviewWorkspace", () => {
     expect(within(annotation).getByText("金玉满堂 · 25-01-07 19:13")).toBeTruthy();
     expect(within(annotation).getByText("进边兵制马，针锋相对。")).toBeTruthy();
     expect(within(screen.getByLabelText("当前着法思路")).queryByText("进边兵制马，针锋相对。")).toBeNull();
+  });
+
+  it("keeps a single-line source annotation visible and edits only the local note", async () => {
+    const onSaveComment = vi.fn().mockResolvedValue(true);
+    renderWorkspace({
+      board: {
+        ...board,
+        currentNode: "move-1",
+        history: [{ ...board.history[0], comment: "【天天象棋注解】\n单行原文\n【天天象棋注解结束】\n\n旧本地备注" }],
+      },
+      onSaveComment,
+    });
+    const annotation = screen.getByLabelText("天天象棋注解");
+    expect(within(annotation).getByText("单行原文")).toBeTruthy();
+    await userEvent.click(within(annotation).getByRole("button", { name: "编辑本地备注" }));
+    const editor = within(annotation).getByRole("textbox");
+    await userEvent.clear(editor);
+    await userEvent.type(editor, "新的本地备注");
+    await userEvent.click(within(annotation).getByRole("button", { name: "保存备注" }));
+    expect(onSaveComment).toHaveBeenCalledWith("move-1", "新的本地备注");
   });
 
   it("supports select-all and direct deletion from the local game library", async () => {
@@ -425,7 +480,7 @@ describe("ReviewWorkspace", () => {
     await userEvent.click(screen.getByRole("button", { name: "目录操作 陈诗涵" }));
     await userEvent.click(screen.getByRole("menuitem", { name: "移动目录 陈诗涵" }));
     await userEvent.selectOptions(screen.getByLabelText("移动到"), "开局研究");
-    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+    await userEvent.click(screen.getByRole("button", { name: "确认移动" }));
     expect(chessPlatform.renameLibraryFolder).toHaveBeenLastCalledWith("陈诗涵", "开局研究/陈诗涵");
 
     await userEvent.click(screen.getByRole("button", { name: /陈诗涵/ }));
@@ -459,10 +514,41 @@ describe("ReviewWorkspace", () => {
     await userEvent.click(screen.getByRole("button", { name: "目录操作 陈诗涵棋谱" }));
     await userEvent.click(screen.getByRole("menuitem", { name: "移动目录 陈诗涵棋谱" }));
     await userEvent.selectOptions(screen.getByLabelText("移动到"), "天天象棋备份");
-    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+    await userEvent.click(screen.getByRole("button", { name: "确认移动" }));
     expect(chessPlatform.renameLibraryFolder).toHaveBeenCalledWith("陈诗涵棋谱", "天天象棋备份/陈诗涵棋谱");
     expect(onRefreshLibrary).toHaveBeenCalledOnce();
     expect(screen.getByRole("status").textContent).toContain("已移动目录：天天象棋/陈诗涵棋谱");
+  });
+
+  it("opens folder movement as a visible confirmation and includes descendant games", async () => {
+    const onRefreshLibrary = vi.fn().mockResolvedValue(undefined);
+    vi.spyOn(chessPlatform, "renameLibraryFolder").mockResolvedValue({ folderCount: 2, gameCount: 2 });
+    renderWorkspace({
+      onRefreshLibrary,
+      games: [
+        { ...libraryGames[0], id: "parent-game", libraryFolder: "25国赛" },
+        { ...libraryGames[1], id: "child-game", libraryFolder: "25国赛/25年寒假霍老师" },
+      ],
+      libraryFolders: [
+        ...folders,
+        { name: "25国赛", system: false, gameCount: 1 },
+        { name: "25国赛/25年寒假霍老师", system: false, gameCount: 1 },
+        { name: "比赛复盘", system: false, gameCount: 0 },
+      ],
+    });
+    await userEvent.click(screen.getByRole("button", { name: "棋谱库" }));
+    await userEvent.click(screen.getByRole("button", { name: /^25国赛/ }));
+    await userEvent.click(screen.getByRole("button", { name: "目录操作 25国赛" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "移动目录 25国赛" }));
+
+    const dialog = screen.getByRole("dialog", { name: "移动目录" });
+    expect(within(dialog).getByText("将同时移动 1 个子目录和 2 盘棋谱")).toBeTruthy();
+    await userEvent.selectOptions(within(dialog).getByLabelText("移动到"), "比赛复盘");
+    await userEvent.click(within(dialog).getByRole("button", { name: "确认移动" }));
+
+    expect(chessPlatform.renameLibraryFolder).toHaveBeenCalledWith("25国赛", "比赛复盘/25国赛");
+    expect(onRefreshLibrary).toHaveBeenCalledOnce();
+    expect(screen.getByRole("status").textContent).toContain("2 个目录，2 盘棋谱");
   });
 
   it("explains when a folder is already under the selected move target", async () => {
@@ -477,10 +563,11 @@ describe("ReviewWorkspace", () => {
     await userEvent.click(screen.getByRole("button", { name: /^陈诗涵棋谱/ }));
     await userEvent.click(screen.getByRole("button", { name: "目录操作 天天象棋/陈诗涵棋谱" }));
     await userEvent.click(screen.getByRole("menuitem", { name: "移动目录 天天象棋/陈诗涵棋谱" }));
-    await userEvent.selectOptions(screen.getByLabelText("移动到"), "天天象棋备份");
-    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+    const currentParent = screen.getByRole("option", { name: "天天象棋（当前位置）" });
+    expect(currentParent.hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "确认移动" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByText("请选择与当前位置不同的目标目录")).toBeTruthy();
     expect(chessPlatform.renameLibraryFolder).not.toHaveBeenCalled();
-    expect(screen.getByRole("status").textContent).toContain("目录已在“天天象棋”下，无需移动");
   });
 
   it("paginates local library games without changing the active filter selection", async () => {

@@ -5,6 +5,7 @@ import { chessPlatform, type GameMetadata, type GameSummary, type LibraryFolder 
 
 const TTXQ_FOLDER = "天天象棋备份";
 const TTXQ_LABEL = "天天象棋";
+const MOVE_TARGET_UNSET = "__choose__";
 const PAGE_SIZE_OPTIONS = [10, 20, 50] as const;
 type Filter = "all" | "ttxq" | `folder:${string}`;
 type FolderCreateMode = { parent: string };
@@ -104,7 +105,7 @@ export function ReviewGameLibrary({ games, folders, onOpen, onShare, onDelete, o
   const [actionSuccess, setActionSuccess] = useState<string>();
   const [pendingDelete, setPendingDelete] = useState<string[]>();
   const [pendingMove, setPendingMove] = useState<string[]>();
-  const [moveTarget, setMoveTarget] = useState("");
+  const [moveTarget, setMoveTarget] = useState(MOVE_TARGET_UNSET);
   const [moving, setMoving] = useState(false);
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [folderCreate, setFolderCreate] = useState<FolderCreateMode | null>(null);
@@ -128,6 +129,14 @@ export function ReviewGameLibrary({ games, folders, onOpen, onShare, onDelete, o
     if (!folderManage || folderManage.action !== "move") return folderOptions;
     return folderOptions.filter((folder) => folder !== folderManage.folder && !folder.startsWith(`${folderManage.folder}/`));
   }, [folderManage, folderOptions]);
+  const folderMoveImpact = useMemo(() => {
+    if (!folderManage || folderManage.action !== "move") return undefined;
+    const prefix = `${folderManage.folder}/`;
+    return {
+      childFolderCount: folders.filter((folder) => folder.name.startsWith(prefix)).length,
+      gameCount: games.filter((game) => game.libraryFolder === folderManage.folder || game.libraryFolder?.startsWith(prefix)).length,
+    };
+  }, [folderManage, folders, games]);
   const visibleGames = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase();
     const filtered = games.filter((game) => {
@@ -157,6 +166,16 @@ export function ReviewGameLibrary({ games, folders, onOpen, onShare, onDelete, o
   const deletable = [...selected];
   const visibleDeletable = visibleGames.map((game) => game.id);
   const allVisibleSelected = visibleDeletable.length > 0 && visibleDeletable.every((id) => selected.has(id));
+  const pendingMoveFolder = useMemo(() => {
+    if (!pendingMove?.length) return undefined;
+    const pendingIds = new Set(pendingMove);
+    const sourceFolders = new Set(games.filter((game) => pendingIds.has(game.id)).map((game) => game.libraryFolder ?? ""));
+    return sourceFolders.size === 1 ? [...sourceFolders][0] : null;
+  }, [games, pendingMove]);
+  const moveTargetUnset = moveTarget === MOVE_TARGET_UNSET;
+  const moveTargetUnchanged = pendingMoveFolder != null && !moveTargetUnset && moveTarget === pendingMoveFolder;
+  const folderMoveTargetUnset = folderManage?.action === "move" && folderManage.parent === MOVE_TARGET_UNSET;
+  const folderMoveTargetUnchanged = folderManage?.action === "move" && !folderMoveTargetUnset && folderManage.parent === folderParent(folderManage.folder);
 
   useEffect(() => {
     setPage(1);
@@ -285,18 +304,21 @@ export function ReviewGameLibrary({ games, folders, onOpen, onShare, onDelete, o
     setActionError(undefined);
     setActionSuccess(undefined);
     setFolderCreate(null);
+    setActiveFolderActions(null);
     setFolderManage({ action: "rename", folder, name: folderBasename(folder) });
   }
   function startFolderMove(folder: string) {
     setActionError(undefined);
     setActionSuccess(undefined);
     setFolderCreate(null);
-    setFolderManage({ action: "move", folder, parent: folderParent(folder) });
+    setActiveFolderActions(null);
+    setFolderManage({ action: "move", folder, parent: MOVE_TARGET_UNSET });
   }
   function startFolderDelete(folder: string) {
     setActionError(undefined);
     setActionSuccess(undefined);
     setFolderCreate(null);
+    setActiveFolderActions(null);
     setFolderManage({ action: "delete", folder });
   }
   async function submitFolderManage(event?: FormEvent<HTMLFormElement>) {
@@ -309,6 +331,10 @@ export function ReviewGameLibrary({ games, folders, onOpen, onShare, onDelete, o
         if (filter === `folder:${folderManage.folder}` || filter.startsWith(`folder:${folderManage.folder}/`)) setLibraryFilter("all");
         setActionSuccess(`已删除目录：${folderDisplayPath(folderManage.folder)}，其中棋谱已移到未分类。`);
       } else {
+        if (folderManage.action === "move" && folderMoveTargetUnset) {
+          setActionError("请选择目标目录。");
+          return;
+        }
         const form = event?.currentTarget;
         const formData = form ? new FormData(form) : undefined;
         const basename = folderManage.action === "rename"
@@ -365,11 +391,12 @@ export function ReviewGameLibrary({ games, folders, onOpen, onShare, onDelete, o
     if (!gameIds.length) return;
     setActionError(undefined);
     setActionSuccess(undefined);
-    setMoveTarget("");
+    setMoveTarget(MOVE_TARGET_UNSET);
     setPendingMove(gameIds);
   }
   async function confirmMove() {
     if (!pendingMove?.length) return;
+    if (moveTargetUnset || moveTargetUnchanged) return;
     setMoving(true);
     try {
       const target = moveTarget || undefined;
@@ -477,24 +504,6 @@ export function ReviewGameLibrary({ games, folders, onOpen, onShare, onDelete, o
               <button type="submit" className="primary" disabled={creatingFolder}>{creatingFolder ? "创建中…" : "创建"}</button>
             </div>
           </form>}
-          {folderManage && <form className="review-library-create-panel review-library-manage-form" onSubmit={(event) => void submitFolderManage(event)} aria-label="编辑目录表单">
-            <strong>{folderManage.action === "rename" ? "重命名目录" : folderManage.action === "move" ? "移动目录" : "删除目录"}</strong>
-            <small title={folderDisplayPath(folderManage.folder)}>当前：{folderDisplayPath(folderManage.folder)}</small>
-            {folderManage.action === "rename" && <label>目录名
-              <input autoFocus name="folderName" defaultValue={folderManage.name}/>
-            </label>}
-            {folderManage.action === "move" && <label>移动到
-              <select name="parent" value={folderManage.parent} onChange={(event) => setFolderManage((current) => current?.action === "move" ? { ...current, parent: event.target.value } : current)}>
-                <option value="">根目录</option>
-                {movableFolderOptions.map((folder) => <option key={folder} value={folder}>{folderDisplayPath(folder)}</option>)}
-              </select>
-            </label>}
-            {folderManage.action === "delete" && <p>删除后，该目录及子目录会移除；里面的棋谱不会删除，会移动到“未分类”。</p>}
-            <div>
-              <button type="button" disabled={creatingFolder} onClick={() => setFolderManage(null)}>取消</button>
-              <button type="submit" className={folderManage.action === "delete" ? "danger" : "primary"} disabled={creatingFolder}>{creatingFolder ? "处理中…" : folderManage.action === "delete" ? "确认删除" : "保存"}</button>
-            </div>
-          </form>}
         </aside>
         <div className="review-library-resize-handle" role="separator" aria-orientation="vertical" aria-label="调整目录栏宽度" title="拖动调整目录栏宽度" onPointerDown={startSidebarResize}/>
         <main>
@@ -508,8 +517,8 @@ export function ReviewGameLibrary({ games, folders, onOpen, onShare, onDelete, o
               <article key={game.id} className={`review-library-game ${game.current ? "current" : ""}`}>
                 <button type="button" className="review-library-select" aria-label="勾选删除" title={`勾选删除：${gameTitle(game)}`} onClick={() => toggle(game.id)}>
                   {selected.has(game.id) ? <CheckSquare size={17}/> : <Square size={17}/>}</button>
-                <button type="button" className="review-library-open" aria-label={gameTitle(game)} onClick={() => { onOpen(game.id); onClose(); }}>
-                  <span><strong>{gameTitle(game)}</strong><small>{gameDetail(game) || "本地棋谱"}</small><small className="review-library-game-folder">所在目录：{gameFolderLabel(game)}</small></span>
+                <button type="button" className="review-library-open" aria-label={gameTitle(game)} title={`打开：${gameTitle(game)}`} onClick={() => { onOpen(game.id); onClose(); }}>
+                  <span><strong title={gameTitle(game)}>{gameTitle(game)}</strong><small className="review-library-game-meta" title={gameDetail(game) || "本地棋谱"}>{gameDetail(game) || "本地棋谱"}</small><small className="review-library-game-folder" title={`所在目录：${gameFolderLabel(game)}`}>所在目录：{gameFolderLabel(game)}</small></span>
                   {resultLabel(game) && <em className={`result ${game.result === "1-0" ? "red" : game.result === "0-1" ? "black" : "draw"}`}>{resultLabel(game)}</em>}
                   {game.current && <em>当前</em>}
                 </button>
@@ -552,10 +561,37 @@ export function ReviewGameLibrary({ games, folders, onOpen, onShare, onDelete, o
     {pendingMove && createPortal(<div className="review-library-delete-confirm-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !moving) setPendingMove(undefined); }}>
       <section className="review-library-delete-confirm review-library-move-dialog" role="dialog" aria-modal="true" aria-label="移动棋谱" onMouseDown={(event) => event.stopPropagation()}>
         <strong>移动 {pendingMove.length} 盘棋谱</strong>
-        <label>目标目录<select aria-label="目标目录" value={moveTarget} onChange={(event) => setMoveTarget(event.target.value)}><option value="">未分类</option>{folderOptions.map((folder) => <option key={folder} value={folder}>{folderDisplayPath(folder)}</option>)}</select></label>
+        <label>目标目录<select aria-label="目标目录" value={moveTarget} onChange={(event) => setMoveTarget(event.target.value)}><option value={MOVE_TARGET_UNSET} disabled>请选择目标目录</option><option value="" disabled={pendingMoveFolder === ""}>未分类{pendingMoveFolder === "" ? "（当前位置）" : ""}</option>{folderOptions.map((folder) => <option key={folder} value={folder} disabled={pendingMoveFolder === folder}>{folderDisplayPath(folder)}{pendingMoveFolder === folder ? "（当前位置）" : ""}</option>)}</select></label>
+        <small className={`review-library-move-hint ${moveTargetUnchanged ? "warning" : ""}`}>{moveTargetUnset ? "请选择与当前位置不同的目标目录" : moveTargetUnchanged ? "棋谱已在该目录，请选择其他目录" : `将移动到：${moveTarget ? folderDisplayPath(moveTarget) : "未分类"}`}</small>
         {actionError && <p className="review-library-delete-error" role="alert">{actionError}</p>}
-        <div><button type="button" onClick={() => setPendingMove(undefined)} disabled={moving}>取消</button><button type="button" className="primary" onClick={() => void confirmMove()} disabled={moving}>{moving ? "移动中…" : "确认移动"}</button></div>
+        <div><button type="button" onClick={() => setPendingMove(undefined)} disabled={moving}>取消</button><button type="button" className="primary" onClick={() => void confirmMove()} disabled={moving || moveTargetUnset || moveTargetUnchanged}>{moving ? "移动中…" : "确认移动"}</button></div>
       </section>
+    </div>, document.body)}
+    {folderManage && createPortal(<div className="review-library-delete-confirm-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !creatingFolder) setFolderManage(null); }}>
+      <form className="review-library-delete-confirm review-library-folder-manage-dialog" role="dialog" aria-modal="true" aria-label={folderManage.action === "rename" ? "重命名目录" : folderManage.action === "move" ? "移动目录" : "删除目录"} onSubmit={(event) => void submitFolderManage(event)} onMouseDown={(event) => event.stopPropagation()}>
+        <strong>{folderManage.action === "rename" ? "重命名目录" : folderManage.action === "move" ? "移动目录" : "删除目录"}</strong>
+        <small title={folderDisplayPath(folderManage.folder)}>当前：{folderDisplayPath(folderManage.folder)}</small>
+        {folderManage.action === "rename" && <label>目录名
+          <input autoFocus name="folderName" defaultValue={folderManage.name}/>
+        </label>}
+        {folderManage.action === "move" && <>
+          <label>移动到
+            <select autoFocus name="parent" value={folderManage.parent} onChange={(event) => setFolderManage((current) => current?.action === "move" ? { ...current, parent: event.target.value } : current)}>
+              <option value={MOVE_TARGET_UNSET} disabled>请选择目标目录</option>
+              <option value="" disabled={folderParent(folderManage.folder) === ""}>根目录{folderParent(folderManage.folder) === "" ? "（当前位置）" : ""}</option>
+              {movableFolderOptions.map((folder) => <option key={folder} value={folder} disabled={folderParent(folderManage.folder) === folder}>{folderDisplayPath(folder)}{folderParent(folderManage.folder) === folder ? "（当前位置）" : ""}</option>)}
+            </select>
+          </label>
+          <p>将同时移动 {folderMoveImpact?.childFolderCount ?? 0} 个子目录和 {folderMoveImpact?.gameCount ?? 0} 盘棋谱</p>
+          <small className={`review-library-move-hint ${folderMoveTargetUnchanged ? "warning" : ""}`}>{folderMoveTargetUnset ? "请选择与当前位置不同的目标目录" : folderMoveTargetUnchanged ? "目录已在该位置，请选择其他目录" : `移动后位置：${folderManage.parent ? `${folderDisplayPath(folderManage.parent)}/${folderBasename(folderManage.folder)}` : folderBasename(folderManage.folder)}`}</small>
+        </>}
+        {folderManage.action === "delete" && <p>删除后，该目录及子目录会移除；里面的棋谱不会删除，会移动到“未分类”。</p>}
+        {actionError && <p className="review-library-delete-error" role="alert">{actionError}</p>}
+        <div>
+          <button type="button" disabled={creatingFolder} onClick={() => setFolderManage(null)}>取消</button>
+          <button type="submit" className={folderManage.action === "delete" ? "danger" : "primary"} disabled={creatingFolder || folderMoveTargetUnset || folderMoveTargetUnchanged}>{creatingFolder ? "处理中…" : folderManage.action === "delete" ? "确认删除" : folderManage.action === "move" ? "确认移动" : "保存"}</button>
+        </div>
+      </form>
     </div>, document.body)}
   </>;
 }

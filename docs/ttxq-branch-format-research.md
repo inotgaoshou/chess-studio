@@ -121,13 +121,16 @@ absoluteAfterPly    = parentPrefixBeforeRoute + localAfterPly
 注解容器与分支字段必须物理隔离：`findObjectA(boardControl, "msg")` 的父容器
 只用于注解，容器中的同级数字或可序列化对象也不能作为分支候选。分支存在性
 只由当前控制器 `getMoveBranchKey` 下合法的 `A-B-C` 坐标项声明；数字按钮、
-空包装对象和普通元数据不声明分支。切盘时分支结构签名和注解签名分别计算，
-注解内容相同不能触发 `previous-game-branch-signature`。
+空包装对象和普通元数据不声明分支。页面若采用按路线惰性挂载结构，可以有限激活
+与编辑/完成/下变同组的路线按钮，让对应的 `getMoveBranchKey` 项出现；按钮切换后的
+`getQipuMoveStep` 主线差异本身绝不作为分支候选。切盘时分支结构签名和注解签名分别
+计算，注解内容相同不能触发 `previous-game-branch-signature`。
 
 ## 实现约束
 
 - Collector 只读取上述棋谱字段及受限诊断摘要，不扩大远程页面权限。
-- Collector 不通过路线按钮切换或主线流差分推测分支；缺少合法 `A-B-C` 数据时按无分支处理。
+- Collector 只在有限预算内激活明确的路线控件以挂载结构化分支数据，不通过切换后的
+  主线流差分推测分支；缺少合法 `A-B-C` 数据时按无分支处理。
 - Decoder 必须保留字段来源，分别识别 DhtmlXQ、明确 ICCS 和中文着法，禁止内容猜测。
 - Importer 只有在主线和全部已声明分支都能在精确锚点合法重放时才写入棋谱树。
 - 失败诊断只保留定位所需的键、坐标模式、局部/绝对锚点、转换后首着和短样本；不得进入 outbox 或云同步。

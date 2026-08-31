@@ -4378,6 +4378,114 @@ mod tests {
     }
 
     #[test]
+    fn recursive_folder_move_with_operations_moves_all_descendant_games() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let parent_game_id = Uuid::new_v4();
+        let child_game_id = Uuid::new_v4();
+        store
+            .save_game_with_operation(
+                parent_game_id,
+                "父目录棋谱",
+                "fen",
+                Uuid::new_v4(),
+                &operation(parent_game_id),
+            )
+            .unwrap();
+        store
+            .save_game_with_operation(
+                child_game_id,
+                "子目录棋谱",
+                "fen",
+                Uuid::new_v4(),
+                &operation(child_game_id),
+            )
+            .unwrap();
+        store.create_library_folder("25国赛/寒假赛").unwrap();
+        let mut parent_seed = operation(parent_game_id);
+        parent_seed.op_id = Uuid::new_v4();
+        parent_seed.kind = OperationKind::UpdateGameMetadata;
+        store
+            .update_game_library_with_operation(
+                parent_game_id,
+                Some("25国赛"),
+                false,
+                &[],
+                &parent_seed,
+            )
+            .unwrap();
+        let mut child_seed = operation(child_game_id);
+        child_seed.op_id = Uuid::new_v4();
+        child_seed.kind = OperationKind::UpdateGameMetadata;
+        store
+            .update_game_library_with_operation(
+                child_game_id,
+                Some("25国赛/寒假赛"),
+                false,
+                &[],
+                &child_seed,
+            )
+            .unwrap();
+        let mut parent_move = operation(parent_game_id);
+        parent_move.op_id = Uuid::new_v4();
+        parent_move.kind = OperationKind::UpdateGameMetadata;
+        let mut child_move = operation(child_game_id);
+        child_move.op_id = Uuid::new_v4();
+        child_move.kind = OperationKind::UpdateGameMetadata;
+
+        assert_eq!(
+            store
+                .rename_library_folder_with_operations(
+                    "25国赛",
+                    "比赛复盘/25国赛",
+                    &[
+                        (
+                            parent_game_id,
+                            "比赛复盘/25国赛".into(),
+                            parent_move.clone(),
+                        ),
+                        (
+                            child_game_id,
+                            "比赛复盘/25国赛/寒假赛".into(),
+                            child_move.clone(),
+                        ),
+                    ],
+                )
+                .unwrap(),
+            (2, 2)
+        );
+
+        assert_eq!(
+            store
+                .load_game(parent_game_id)
+                .unwrap()
+                .unwrap()
+                .library_folder
+                .as_deref(),
+            Some("比赛复盘/25国赛")
+        );
+        assert_eq!(
+            store
+                .load_game(child_game_id)
+                .unwrap()
+                .unwrap()
+                .library_folder
+                .as_deref(),
+            Some("比赛复盘/25国赛/寒假赛")
+        );
+        let folders = store
+            .library_folders()
+            .unwrap()
+            .into_iter()
+            .map(|folder| folder.name)
+            .collect::<Vec<_>>();
+        assert!(folders.contains(&"比赛复盘/25国赛".into()));
+        assert!(folders.contains(&"比赛复盘/25国赛/寒假赛".into()));
+        let pending = store.pending_operations(20).unwrap();
+        assert!(pending.contains(&parent_move));
+        assert!(pending.contains(&child_move));
+    }
+
+    #[test]
     fn flyknife_plans_survive_listing_and_deletion() {
         let mut store = LocalStore::open_in_memory().unwrap();
         let plan = FlyknifePlan {

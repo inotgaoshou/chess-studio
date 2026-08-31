@@ -7389,6 +7389,7 @@ export default function App() {
             onPopOutRoute={chessPlatform.kind === "desktop" ? () => void openCompactFloatingPanel("manual") : undefined}
             onClose={() => void exitReviewMode()}
             onNavigate={(nodeId) => void navigateTo(nodeId)}
+            onSaveComment={saveCommentForNode}
             onMakeMainline={(nodeId) => void makeMainline(nodeId)}
             onReorderBranches={(nodeIds, from, to) => void reorderBranchNodes(nodeIds, from, to)}
             onRemoveBranch={(nodeId) => void removeNode(nodeId)}
