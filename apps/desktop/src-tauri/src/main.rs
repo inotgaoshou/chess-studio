@@ -155,6 +155,7 @@ fn main() {
             manual_service::list_library_folders,
             manual_service::create_library_folder,
             manual_service::rename_library_folder,
+            manual_service::move_games_to_folder,
             manual_service::delete_library_folder,
             manual_service::update_game_library,
             manual_service::delete_games,

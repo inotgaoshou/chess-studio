@@ -18,7 +18,7 @@ commands.allow = [
   "submit_ttxq_bridge_payload", "report_ttxq_read_progress", "report_ttxq_bridge_error",
   "import_ttxq_history", "disconnect_ttxq", "list_games", "get_game_metadata", "update_game_metadata_for_game", "delete_games", "get_game_mirror_status",
   "update_game_mirror", "rebuild_game_mirrors", "reveal_game_mirror", "list_library_folders",
-  "create_library_folder", "rename_library_folder", "delete_library_folder", "update_game_library",
+  "create_library_folder", "rename_library_folder", "delete_library_folder", "move_games_to_folder", "update_game_library",
   "open_game", "play_move", "confirm_recognized_move", "preview_recognized_move_from_current",
   "resolve_screenshot_move", "preview_line", "parse_chinese_line", "new_game", "open_document",
   "import_xqb_opening_book", "import_eleeye_opening_book", "import_text", "export_text",

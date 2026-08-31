@@ -5,7 +5,7 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { isMobileBuild } from "../mobileEnvironment";
 import { webDatabase, type SyncOperation, type WebGameRecord } from "./indexedDb";
 import { BUILTIN_ENGINE_PATH, FALLBACK_BUILTIN_OPENING_BOOK_MANIFEST } from "./types";
-import type { AnalysisLine, AnalysisOptions, AppInfoDto, BoardState, BookImportDraft, BookTopicDetail, BuiltinOpeningBookManifestDto, CaptureSource, ChessPlatform, CloudAnalysisPreferences, CloudAuthDto, CloudBookCandidate, CloudGuestAuthDto, DesktopPreferencesDto, EngineArenaOptionsDto, EngineArenaResultDto, EngineMoveResult, EnginePlayOptions, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, ExportFormat, FlyknifeCandidate, FlyknifePlan, FlyknifeTemplate, FlyknifeTopic, GameMetadata, GameMirrorStatus, GameReportDatasetDto, GameReportOptionsDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, GenerateFlyknifeRequest, LibraryFolder, LinkAutoSide, LinkObservation, LinkSessionStatus, LinkTargetWindow, MasterGameDetailDto, MasterGameSummaryDto, MasterLibraryFilters, MasterLibraryStatsDto, MasterOpeningProfileDto, MasterPlayerDto, MasterStyleHintDto, MasterStyleImportResultDto, MasterStyleProfileDto, PreviewLineStep, RelatedMasterGame, ReplayExportScope, ScreenshotMoveResolution, StartLinkSessionRequest, StudySessionDto, SubscriptionDto, SyncAccountDto, SyncResult, TheoryCardDto, TheoryCardFeedbackDto, TheoryLibraryDto, TrainingGenerationResultDto, TrainingSummaryDto, TrainingTaskDto, TtxqDiagnosticSample, TtxqGamePreview, TtxqSyncProgress } from "./types";
+import type { AnalysisLine, AnalysisOptions, AppInfoDto, BoardState, BookImportDraft, BookTopicDetail, BuiltinOpeningBookManifestDto, CaptureSource, ChessPlatform, CloudAnalysisPreferences, CloudAuthDto, CloudBookCandidate, CloudGuestAuthDto, DesktopPreferencesDto, EngineArenaOptionsDto, EngineArenaResultDto, EngineMoveResult, EnginePlayOptions, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, ExportFormat, FlyknifeCandidate, FlyknifePlan, FlyknifeTemplate, FlyknifeTopic, GameMetadata, GameMirrorStatus, GameReportDatasetDto, GameReportOptionsDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, GenerateFlyknifeRequest, LibraryFolder, LibraryMoveResult, LinkAutoSide, LinkObservation, LinkSessionStatus, LinkTargetWindow, MasterGameDetailDto, MasterGameSummaryDto, MasterLibraryFilters, MasterLibraryStatsDto, MasterOpeningProfileDto, MasterPlayerDto, MasterStyleHintDto, MasterStyleImportResultDto, MasterStyleProfileDto, PreviewLineStep, RelatedMasterGame, ReplayExportScope, ScreenshotMoveResolution, StartLinkSessionRequest, StudySessionDto, SubscriptionDto, SyncAccountDto, SyncResult, TheoryCardDto, TheoryCardFeedbackDto, TheoryLibraryDto, TrainingGenerationResultDto, TrainingSummaryDto, TrainingTaskDto, TtxqDiagnosticSample, TtxqGamePreview, TtxqSyncProgress } from "./types";
 import type { ChineseLineParseResult, DailyTrainingPlan, GuidedAnalysisStart, GuidedAnalysisSubmission, GuidedAnalysisSubmissionResult, GuidedEngineLine, LearningProfile, OpeningRepertoire, WeeklyLearningReport } from "./types";
 
 type WebGameInstance = {
@@ -223,8 +223,9 @@ class DesktopPlatform implements ChessPlatform {
   updateGameMetadataForGame(gameId: string, metadata: GameMetadata) { return invoke<Partial<BoardState>>("update_game_metadata_for_game", { gameId, metadata }); }
   listLibraryFolders() { return invoke<LibraryFolder[]>("list_library_folders"); }
   createLibraryFolder(name: string) { return invoke<void>("create_library_folder", { name }); }
-  renameLibraryFolder(previous: string, next: string) { return invoke<void>("rename_library_folder", { previous, next }); }
+  renameLibraryFolder(previous: string, next: string) { return invoke<LibraryMoveResult>("rename_library_folder", { previous, next }); }
   deleteLibraryFolder(name: string) { return invoke<void>("delete_library_folder", { name }); }
+  moveGamesToFolder(gameIds: string[], folder: string | undefined) { return invoke<LibraryMoveResult>("move_games_to_folder", { gameIds, folder: folder ?? null }); }
   updateGameLibrary(folder: string | undefined, favorite: boolean, tags: string[]) { return invoke<Partial<BoardState>>("update_game_library", { folder: folder ?? null, favorite, tags }); }
   getGameMirrorStatus(gameId?: string) { return invoke<GameMirrorStatus | undefined>("get_game_mirror_status", { gameId: gameId ?? null }); }
   updateGameMirror() { return invoke<GameMirrorStatus>("update_game_mirror"); }
@@ -537,17 +538,26 @@ class WebPlatform implements ChessPlatform {
     if (folders.includes(normalized)) throw new Error("已存在同名文件夹");
     await this.saveLibraryFolderNames([...folders, normalized]);
   }
-  async renameLibraryFolder(previous: string, next: string): Promise<void> {
+  async renameLibraryFolder(previous: string, next: string): Promise<LibraryMoveResult> {
     const normalized = this.normalizeFolderName(next);
     const folders = await this.readLibraryFolderNames();
     if (!folders.includes(previous)) throw new Error("棋谱文件夹不存在");
-    if (previous !== normalized && folders.includes(normalized)) throw new Error("已存在同名文件夹");
-    await this.saveLibraryFolderNames(folders.map((folder) => folder === previous ? normalized : folder));
+    const previousPrefix = `${previous}/`;
+    const affectedFolders = folders.filter((folder) => folder === previous || folder.startsWith(previousPrefix));
+    const renamedFolders = new Map(affectedFolders.map((folder) => [folder, folder === previous ? normalized : `${normalized}/${folder.slice(previousPrefix.length)}`]));
+    const unaffected = new Set(folders.filter((folder) => !renamedFolders.has(folder)));
+    if ([...renamedFolders.values()].some((folder) => unaffected.has(folder))) throw new Error("已存在同名文件夹");
+    await this.saveLibraryFolderNames(folders.map((folder) => renamedFolders.get(folder) ?? folder));
+    let gameCount = 0;
     for (const game of await webDatabase.games()) {
-      if (game.libraryFolder !== previous) continue;
-      await webDatabase.saveGame({ ...game, libraryFolder: normalized, updatedAt: new Date().toISOString() }, game.id === this.gameId);
-      await this.enqueueForGame(game.id, "update_game_metadata", game.id, { title: game.title, note: game.note ?? "", libraryFolder: normalized, favorite: game.favorite ?? false, tags: game.tags ?? [] });
+      const folder = game.libraryFolder;
+      if (!folder || (folder !== previous && !folder.startsWith(previousPrefix))) continue;
+      const renamed = folder === previous ? normalized : `${normalized}/${folder.slice(previousPrefix.length)}`;
+      await webDatabase.saveGame({ ...game, libraryFolder: renamed, updatedAt: new Date().toISOString() }, game.id === this.gameId);
+      await this.enqueueForGame(game.id, "update_game_metadata", game.id, { title: game.title, note: game.note ?? "", libraryFolder: renamed, favorite: game.favorite ?? false, tags: game.tags ?? [] });
+      gameCount += 1;
     }
+    return { folderCount: affectedFolders.length, gameCount };
   }
   async deleteLibraryFolder(name: string): Promise<void> {
     const folders = await this.readLibraryFolderNames();
@@ -558,6 +568,20 @@ class WebPlatform implements ChessPlatform {
       await webDatabase.saveGame({ ...game, libraryFolder: undefined, updatedAt: new Date().toISOString() }, game.id === this.gameId);
       await this.enqueueForGame(game.id, "update_game_metadata", game.id, { title: game.title, note: game.note ?? "", libraryFolder: "", favorite: game.favorite ?? false, tags: game.tags ?? [] });
     }
+  }
+  async moveGamesToFolder(gameIds: string[], folder: string | undefined): Promise<LibraryMoveResult> {
+    const normalizedFolder = folder ? this.normalizeFolderName(folder) : undefined;
+    if (normalizedFolder && !(await this.readLibraryFolderNames()).includes(normalizedFolder)) throw new Error("棋谱文件夹不存在");
+    const selected = new Set(gameIds);
+    const games = (await webDatabase.games()).filter((game) => selected.has(game.id));
+    if (games.length !== selected.size) throw new Error("部分棋谱已不存在，请刷新棋谱库后重试");
+    let gameCount = 0;
+    for (const game of games) {
+      await webDatabase.saveGame({ ...game, libraryFolder: normalizedFolder, updatedAt: new Date().toISOString() }, game.id === this.gameId);
+      await this.enqueueForGame(game.id, "update_game_metadata", game.id, { title: game.title, note: game.note ?? "", libraryFolder: normalizedFolder ?? "", favorite: game.favorite ?? false, tags: game.tags ?? [] });
+      gameCount += 1;
+    }
+    return { folderCount: 0, gameCount };
   }
   async updateGameLibrary(folder: string | undefined, favorite: boolean, tags: string[]): Promise<Partial<BoardState>> {
     if (!this.gamePersisted) throw new Error("请先走出第一步后再归档棋谱");

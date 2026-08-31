@@ -218,6 +218,10 @@ describe("ReviewWorkspace", () => {
     await userEvent.click(screen.getByRole("button", { name: "回合列表" }));
     expect(screen.queryByLabelText("复盘分支棋谱树")).toBeNull();
     expect(screen.getByLabelText("复盘回合列表")).toBeTruthy();
+    expect(screen.getByText("变招 2")).toBeTruthy();
+    expect(screen.getByRole("group", { name: "当前局面变招" })).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "路线 2 马2进3" }));
+    expect(props.onNavigate).toHaveBeenLastCalledWith("variation-reply");
   });
 
   it("opens the in-review library with TianTian Xiangqi games selected and loads the selected game", async () => {
@@ -271,6 +275,57 @@ describe("ReviewWorkspace", () => {
     await userEvent.click(screen.getByRole("button", { name: "确认删除" }));
     expect(onDeleteGames).toHaveBeenCalledWith(["ttxq-1"]);
     expect(screen.getByRole("status").textContent).toContain("已从本机删除 1 盘棋谱");
+  });
+
+  it("searches all folders and shows the containing folder for each result", async () => {
+    renderWorkspace({
+      games: [
+        ...libraryGames,
+        { ...libraryGames[1], id: "hidden-folder", title: "跨目录残局", current: false, libraryFolder: "开局研究/残局" },
+      ],
+      libraryFolders: [...folders, { name: "开局研究/残局", system: false, gameCount: 1 }],
+    });
+    await userEvent.click(screen.getByRole("button", { name: "棋谱库" }));
+    expect(screen.queryByText("跨目录残局")).toBeNull();
+    await userEvent.type(screen.getByPlaceholderText("搜索标题、棋手、赛果、回合或赛事"), "跨目录残局");
+    const result = screen.getByText("跨目录残局").closest("article");
+    expect(result).toBeTruthy();
+    expect(within(result as HTMLElement).getByText("所在目录：开局研究/残局")).toBeTruthy();
+  });
+
+  it("moves one game or the current selection to another folder", async () => {
+    vi.spyOn(chessPlatform, "moveGamesToFolder").mockResolvedValue({ folderCount: 0, gameCount: 2 });
+    const onRefreshLibrary = vi.fn().mockResolvedValue(undefined);
+    renderWorkspace({ onRefreshLibrary, libraryFolders: [...folders, { name: "开局研究", system: false, gameCount: 0 }] });
+    await userEvent.click(screen.getByRole("button", { name: "棋谱库" }));
+
+    await userEvent.click(screen.getByRole("button", { name: /移动 放飞 vs 棋友/ }));
+    await userEvent.selectOptions(screen.getByLabelText("目标目录"), "开局研究");
+    await userEvent.click(screen.getByRole("button", { name: "确认移动" }));
+    expect(chessPlatform.moveGamesToFolder).toHaveBeenCalledWith(["ttxq-1"], "开局研究");
+
+    await userEvent.click(screen.getByRole("button", { name: "勾选删除" }));
+    await userEvent.click(screen.getByRole("button", { name: /移动 1/ }));
+    await userEvent.selectOptions(screen.getByLabelText("目标目录"), "");
+    await userEvent.click(screen.getByRole("button", { name: "确认移动" }));
+    expect(chessPlatform.moveGamesToFolder).toHaveBeenLastCalledWith(["ttxq-1"], undefined);
+    expect(onRefreshLibrary).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows imported TTXQ annotations separately from generated thoughts", () => {
+    renderWorkspace({
+      board: {
+        ...board,
+        history: [{
+          ...board.history[0],
+          comment: "【天天象棋注解】\n金玉满堂 · 25-01-07 19:13\n进边兵制马，针锋相对。\n【天天象棋注解结束】\n\n我的本地备注",
+        }],
+      },
+    });
+    const annotation = screen.getByLabelText("天天象棋注解");
+    expect(within(annotation).getByText("金玉满堂 · 25-01-07 19:13")).toBeTruthy();
+    expect(within(annotation).getByText("进边兵制马，针锋相对。")).toBeTruthy();
+    expect(within(screen.getByLabelText("当前着法思路")).queryByText("进边兵制马，针锋相对。")).toBeNull();
   });
 
   it("supports select-all and direct deletion from the local game library", async () => {
@@ -345,7 +400,7 @@ describe("ReviewWorkspace", () => {
 
   it("renames, moves, and deletes selected library folders from the review library", async () => {
     const onRefreshLibrary = vi.fn().mockResolvedValue(undefined);
-    vi.spyOn(chessPlatform, "renameLibraryFolder").mockResolvedValue(undefined);
+    vi.spyOn(chessPlatform, "renameLibraryFolder").mockResolvedValue({ folderCount: 1, gameCount: 0 });
     vi.spyOn(chessPlatform, "deleteLibraryFolder").mockResolvedValue(undefined);
     renderWorkspace({
       onRefreshLibrary,
@@ -384,7 +439,7 @@ describe("ReviewWorkspace", () => {
 
   it("renders TianTian child folders as an expandable tree and moves a folder under TianTian Xiangqi", async () => {
     const onRefreshLibrary = vi.fn().mockResolvedValue(undefined);
-    vi.spyOn(chessPlatform, "renameLibraryFolder").mockResolvedValue(undefined);
+    vi.spyOn(chessPlatform, "renameLibraryFolder").mockResolvedValue({ folderCount: 1, gameCount: 0 });
     renderWorkspace({
       onRefreshLibrary,
       libraryFolders: [
@@ -411,7 +466,7 @@ describe("ReviewWorkspace", () => {
   });
 
   it("explains when a folder is already under the selected move target", async () => {
-    vi.spyOn(chessPlatform, "renameLibraryFolder").mockResolvedValue(undefined);
+    vi.spyOn(chessPlatform, "renameLibraryFolder").mockResolvedValue({ folderCount: 1, gameCount: 0 });
     renderWorkspace({
       libraryFolders: [
         ...folders,
@@ -704,6 +759,22 @@ describe("ReviewWorkspace", () => {
     await userEvent.click(screen.getByRole("button", { name: "回合列表" }));
     await userEvent.click(screen.getByRole("button", { name: "完整棋谱" }));
     expect(screen.getByRole("button", { name: /炮二平五/ })).toBeTruthy();
+  });
+
+  it("keeps the current move visible and active when the key-move filter is selected", async () => {
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: scrollIntoView });
+    const secondMove = earlierNodeBoard.continuation[0];
+    renderWorkspace({
+      board: { ...earlierNodeBoard, history: [...earlierNodeBoard.history, secondMove], continuation: [], currentNode: secondMove.id },
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "回合列表" }));
+
+    const current = screen.getByRole("button", { name: "黑方 马8进7" });
+    expect(current.className).toContain("active");
+    expect(current.closest("[data-current-node='true']")).toBeTruthy();
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "center", behavior: "auto" });
   });
 
   it("expands a thought explanation for an individual route move", async () => {

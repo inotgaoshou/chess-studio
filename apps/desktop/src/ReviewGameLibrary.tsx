@@ -1,4 +1,4 @@
-import { CheckSquare, ChevronDown, ChevronRight, Database, FilePenLine, FolderOpen, FolderPlus, MoreHorizontal, Search, Share2, Square, Trash2, X } from "lucide-react";
+import { CheckSquare, ChevronDown, ChevronRight, Database, FilePenLine, FolderInput, FolderOpen, FolderPlus, MoreHorizontal, Search, Share2, Square, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState, type CSSProperties, type FormEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
 import { chessPlatform, type GameMetadata, type GameSummary, type LibraryFolder } from "./platform";
@@ -68,10 +68,14 @@ function gameTitle(game: GameSummary) {
 
 function gameDetail(game: GameSummary) {
   const players = [game.red, game.black].filter(Boolean).join(" vs ");
-  const source = isTtxqGame(game) ? TTXQ_LABEL : game.libraryFolder ? folderDisplayPath(game.libraryFolder) : "未分类";
+  const source = isTtxqGame(game) ? TTXQ_LABEL : "";
   const turns = game.round || (game.moveCount ? `${Math.ceil(game.moveCount / 2)} 回合 · ${game.moveCount} 半回合` : "");
   const result = game.result && game.result !== "*" ? game.result : "";
   return [game.event, players, result, turns, game.playedAt || game.date, game.duration, game.timeControl, source].filter(Boolean).join(" · ");
+}
+
+function gameFolderLabel(game: GameSummary) {
+  return game.libraryFolder ? folderDisplayPath(game.libraryFolder) : "未分类";
 }
 
 function resultLabel(game: GameSummary) {
@@ -99,6 +103,9 @@ export function ReviewGameLibrary({ games, folders, onOpen, onShare, onDelete, o
   const [actionError, setActionError] = useState<string>();
   const [actionSuccess, setActionSuccess] = useState<string>();
   const [pendingDelete, setPendingDelete] = useState<string[]>();
+  const [pendingMove, setPendingMove] = useState<string[]>();
+  const [moveTarget, setMoveTarget] = useState("");
+  const [moving, setMoving] = useState(false);
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [folderCreate, setFolderCreate] = useState<FolderCreateMode | null>(null);
   const [folderManage, setFolderManage] = useState<FolderManageMode | null>(null);
@@ -124,9 +131,10 @@ export function ReviewGameLibrary({ games, folders, onOpen, onShare, onDelete, o
   const visibleGames = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase();
     const filtered = games.filter((game) => {
-      const inFilter = filter === "all"
+      const inFilter = normalizedQuery || filter === "all"
         || (filter === "ttxq" ? isTtxqGame(game) : folderMatches(game, filter.slice("folder:".length)));
-      return inFilter && (!normalizedQuery || `${gameTitle(game)} ${gameDetail(game)} ${game.tags.join(" ")} ${game.event || ""} ${game.round || ""}`.toLocaleLowerCase().includes(normalizedQuery));
+      const folderTerms = `${game.libraryFolder || ""} ${gameFolderLabel(game)}`;
+      return inFilter && (!normalizedQuery || `${gameTitle(game)} ${gameDetail(game)} ${folderTerms} ${game.tags.join(" ")} ${game.event || ""} ${game.round || ""}`.toLocaleLowerCase().includes(normalizedQuery));
     });
     if (filter !== "ttxq") return filtered;
     return filtered
@@ -324,9 +332,10 @@ export function ReviewGameLibrary({ games, folders, onOpen, onShare, onDelete, o
           setActionError("不能把目录移动到它自己的子目录下。");
           return;
         }
-        await chessPlatform.renameLibraryFolder(folderManage.folder, next);
+        const result = await chessPlatform.renameLibraryFolder(folderManage.folder, next);
         setLibraryFilter(`folder:${next}`);
-        setActionSuccess(folderManage.action === "rename" ? `已重命名目录：${folderDisplayPath(next)}` : `已移动目录：${folderDisplayPath(next)}`);
+        const affected = `（${result.folderCount} 个目录，${result.gameCount} 盘棋谱）`;
+        setActionSuccess(folderManage.action === "rename" ? `已重命名目录：${folderDisplayPath(next)}${affected}` : `已移动目录：${folderDisplayPath(next)}${affected}`);
       }
       await onChanged?.();
       setFolderManage(null);
@@ -351,6 +360,30 @@ export function ReviewGameLibrary({ games, folders, onOpen, onShare, onDelete, o
     }
     catch (error) { setActionError(`删除失败：${error instanceof Error ? error.message : String(error)}`); }
     finally { setDeleting(false); }
+  }
+  function requestMove(gameIds: string[]) {
+    if (!gameIds.length) return;
+    setActionError(undefined);
+    setActionSuccess(undefined);
+    setMoveTarget("");
+    setPendingMove(gameIds);
+  }
+  async function confirmMove() {
+    if (!pendingMove?.length) return;
+    setMoving(true);
+    try {
+      const target = moveTarget || undefined;
+      const result = await chessPlatform.moveGamesToFolder(pendingMove, target);
+      await onChanged?.();
+      setSelected((ids) => { const next = new Set(ids); pendingMove.forEach((id) => next.delete(id)); return next; });
+      setActionError(undefined);
+      setActionSuccess(`已将 ${result.gameCount} 盘棋谱移动到“${target ? folderDisplayPath(target) : "未分类"}”。`);
+      setPendingMove(undefined);
+    } catch (error) {
+      setActionError(`移动失败：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setMoving(false);
+    }
   }
   async function startEdit(gameId: string) {
     try {
@@ -465,7 +498,7 @@ export function ReviewGameLibrary({ games, folders, onOpen, onShare, onDelete, o
         </aside>
         <div className="review-library-resize-handle" role="separator" aria-orientation="vertical" aria-label="调整目录栏宽度" title="拖动调整目录栏宽度" onPointerDown={startSidebarResize}/>
         <main>
-          <div className="review-game-library-toolbar"><label><Search size={15}/><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索标题、棋手、赛果、回合或赛事" /></label>{onDelete && <><button type="button" className="review-library-select-all" disabled={visibleDeletable.length === 0 || deleting} onClick={toggleVisibleSelection}>{allVisibleSelected ? "取消全选" : "全选当前"}</button><button type="button" className="review-library-delete" title={deletable.length ? `删除 ${deletable.length} 盘` : "勾选要删除的棋谱"} disabled={deleting || deletable.length === 0} onClick={() => requestDelete(deletable)}><Trash2 size={15}/>{deleting ? "删除中" : `删除${deletable.length ? ` ${deletable.length}` : ""}`}</button></>}</div>
+          <div className="review-game-library-toolbar"><label><Search size={15}/><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索标题、棋手、赛果、回合或赛事" /></label><button type="button" className="review-library-select-all" disabled={visibleDeletable.length === 0 || deleting || moving} onClick={toggleVisibleSelection}>{allVisibleSelected ? "取消全选" : "全选当前"}</button><button type="button" className="review-library-move" title={deletable.length ? `移动 ${deletable.length} 盘` : "勾选要移动的棋谱"} disabled={moving || deletable.length === 0} onClick={() => requestMove(deletable)}><FolderInput size={15}/>{`移动${deletable.length ? ` ${deletable.length}` : ""}`}</button>{onDelete && <button type="button" className="review-library-delete" title={deletable.length ? `删除 ${deletable.length} 盘` : "勾选要删除的棋谱"} disabled={deleting || deletable.length === 0} onClick={() => requestDelete(deletable)}><Trash2 size={15}/>{deleting ? "删除中" : `删除${deletable.length ? ` ${deletable.length}` : ""}`}</button>}</div>
           <div className="review-library-action-feedback" aria-live="polite">
             {actionError && !pendingDelete && <p className="review-library-action-error" role="alert">{actionError}</p>}
             {actionSuccess && <p className="review-library-action-success" role="status">{actionSuccess}</p>}
@@ -476,12 +509,13 @@ export function ReviewGameLibrary({ games, folders, onOpen, onShare, onDelete, o
                 <button type="button" className="review-library-select" aria-label="勾选删除" title={`勾选删除：${gameTitle(game)}`} onClick={() => toggle(game.id)}>
                   {selected.has(game.id) ? <CheckSquare size={17}/> : <Square size={17}/>}</button>
                 <button type="button" className="review-library-open" aria-label={gameTitle(game)} onClick={() => { onOpen(game.id); onClose(); }}>
-                  <span><strong>{gameTitle(game)}</strong><small>{gameDetail(game) || "本地棋谱"}</small></span>
+                  <span><strong>{gameTitle(game)}</strong><small>{gameDetail(game) || "本地棋谱"}</small><small className="review-library-game-folder">所在目录：{gameFolderLabel(game)}</small></span>
                   {resultLabel(game) && <em className={`result ${game.result === "1-0" ? "red" : game.result === "0-1" ? "black" : "draw"}`}>{resultLabel(game)}</em>}
                   {game.current && <em>当前</em>}
                 </button>
                 <div className="review-library-actions">
                   <button type="button" title="编辑棋谱信息" aria-label={`编辑 ${gameTitle(game)}`} onClick={() => void startEdit(game.id)}><FilePenLine size={15}/><span>编辑</span></button>
+                  <button type="button" title="移动到其他目录" aria-label={`移动 ${gameTitle(game)}`} disabled={moving} onClick={() => requestMove([game.id])}><FolderInput size={15}/><span>移动</span></button>
                   {onShare && <button type="button" title="打开分享与导出" aria-label={`分享 ${gameTitle(game)}`} disabled={sharingId === game.id} onClick={() => void share(game.id)}><Share2 size={15}/><span>{sharingId === game.id ? "打开中" : "分享"}</span></button>}
                   {onDelete && <button type="button" className="danger" title="删除棋谱" aria-label={`删除 ${gameTitle(game)}`} disabled={deleting} onClick={() => requestDelete([game.id])}><Trash2 size={15}/><span>删除</span></button>}
                 </div>
@@ -513,6 +547,14 @@ export function ReviewGameLibrary({ games, folders, onOpen, onShare, onDelete, o
         <strong>从本机删除 {pendingDelete.length} 盘棋谱？</strong><span>仅移除当前设备的棋谱，不会删除云端或其他设备的数据。</span>
         {actionError && <p className="review-library-delete-error" role="alert">{actionError}</p>}
         <div><button type="button" onClick={(event) => { event.stopPropagation(); setPendingDelete(undefined); }} disabled={deleting}>取消</button><button type="button" className="danger" onClick={(event) => { event.stopPropagation(); void confirmDelete(); }} disabled={deleting}>{deleting ? "删除中…" : "确认删除"}</button></div>
+      </section>
+    </div>, document.body)}
+    {pendingMove && createPortal(<div className="review-library-delete-confirm-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !moving) setPendingMove(undefined); }}>
+      <section className="review-library-delete-confirm review-library-move-dialog" role="dialog" aria-modal="true" aria-label="移动棋谱" onMouseDown={(event) => event.stopPropagation()}>
+        <strong>移动 {pendingMove.length} 盘棋谱</strong>
+        <label>目标目录<select aria-label="目标目录" value={moveTarget} onChange={(event) => setMoveTarget(event.target.value)}><option value="">未分类</option>{folderOptions.map((folder) => <option key={folder} value={folder}>{folderDisplayPath(folder)}</option>)}</select></label>
+        {actionError && <p className="review-library-delete-error" role="alert">{actionError}</p>}
+        <div><button type="button" onClick={() => setPendingMove(undefined)} disabled={moving}>取消</button><button type="button" className="primary" onClick={() => void confirmMove()} disabled={moving}>{moving ? "移动中…" : "确认移动"}</button></div>
       </section>
     </div>, document.body)}
   </>;

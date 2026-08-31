@@ -1,11 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Activity, BarChart3, BookOpen, Brain, CheckCircle2, ChevronDown, ChevronRight, ClipboardPaste, ClipboardList, Download, Eye, FileText, FolderArchive, GitBranch, GitFork, Heart, Image, Lightbulb, List, Maximize2, Play, Plus, RefreshCw, Settings2, Swords, X } from "lucide-react";
 import type { AnalysisLine, BoardState, GameReportPresentationDto, GameReportProgressDto, GameSummary, LibraryFolder, ManualTreeNode, MoveItem, ReportIssuePresentationDto, Side, TrainingGenerationResultDto, TrainingTaskDto } from "./platform/types";
 import { buildReviewModel, signedCp } from "./reviewModel";
 import { EvaluationTrendChart, redAdvantageLabel } from "./EvaluationTrendChart";
-import { buildMoveThought, type MoveThought } from "./moveThoughtModel";
+import { buildMoveThought } from "./moveThoughtModel";
+import { MoveThoughtDetails } from "./MoveThoughtDetails";
+import { TtxqAnnotationCard } from "./TtxqAnnotationCard";
+import { hasTtxqAnnotation, splitTtxqComment } from "./ttxqAnnotations";
 import { ReviewGameLibrary } from "./ReviewGameLibrary";
 import { ManualTreeView } from "./ManualTreeView";
+import { childrenForCurrentNode, variationCountByMove } from "./manualTreeQueries";
 
 type InsightTab = "engine" | "report" | "trend" | "issues" | "training";
 type MoveScope = "issues" | "all";
@@ -122,16 +126,6 @@ function flyknifeRouteMeta(comment: string) {
   };
 }
 
-function ThoughtDetails({ thought, compact = false }: { thought: MoveThought; compact?: boolean }) {
-  return <div className={compact ? "review-thought-details compact" : "review-thought-details"}>
-    <p><strong>目的</strong><span>{thought.purpose}</span></p>
-    <p><strong>风险</strong><span>{thought.risk}</span></p>
-    <p><strong>建议</strong><span>{thought.nextAction}</span></p>
-    {thought.comparison && <p className="review-thought-compare"><strong>比较</strong><span>{thought.comparison}</span></p>}
-    {thought.confidenceNote && <small>{thought.confidenceNote}</small>}
-  </div>;
-}
-
 function ReviewTrendChart({ report, currentNode, onNavigate }: { report?: GameReportPresentationDto; currentNode?: string; onNavigate(nodeId?: string): void }) {
   if (!report?.trend.length) return <div className="review-empty"><BarChart3 size={25}/><strong>等待整局报告</strong><span>生成报告后会显示每个关键节点的红黑优劣变化。</span></div>;
   return <section className="review-trend"><EvaluationTrendChart points={report.trend} currentNode={currentNode} onNavigate={(nodeId) => onNavigate(nodeId)} height={190} ariaLabel="复盘局势趋势图"/></section>;
@@ -195,6 +189,7 @@ export function ReviewWorkspace({
     onLibraryOpenChange?.(open);
   };
   const [workflowFocus, setWorkflowFocus] = useState<string>();
+  const currentRoundMoveRef = useRef<HTMLDivElement>(null);
   const showMoveThoughts = controlledShowMoveThoughts ?? internalShowMoveThoughts;
   useEffect(() => {
     if (engineHintRequest === 0) return;
@@ -210,11 +205,21 @@ export function ReviewWorkspace({
   const model = useMemo(() => buildReviewModel(documentBoard, activeReport), [documentBoard, activeReport]);
   const issueIds = useMemo(() => new Set(activeReport?.issues.map((issue) => issue.nodeId) ?? []), [activeReport]);
   const currentIssue = activeReport?.issues.find((issue) => issue.nodeId === board.currentNode);
-  const thoughtByMoveId = useMemo(() => new Map(model.moveRows.map((row) => [row.move.id, buildMoveThought(row.move, row.issue)])), [model.moveRows]);
+  const thoughtByMoveId = useMemo(() => new Map(model.moveRows.map((row) => [row.move.id, buildMoveThought({ ...row.move, comment: splitTtxqComment(row.move.comment).localText }, row.issue)])), [model.moveRows]);
   const currentMoveId = board.currentNode ?? board.history.at(-1)?.id;
   const currentThoughtRow = currentMoveId ? model.moveRows.find((row) => row.move.id === currentMoveId) : undefined;
   const currentThought = currentMoveId ? thoughtByMoveId.get(currentMoveId) : undefined;
-  const moveRows = moveScope === "issues" && activeReport ? model.moveRows.filter((row) => issueIds.has(row.move.id)) : model.moveRows;
+  const currentAnnotationValue = currentMoveId
+    ? model.moveRows.find((row) => row.move.id === currentMoveId)?.move.comment ?? ""
+    : board.note;
+  const moveRows = moveScope === "issues" && activeReport
+    ? (() => {
+        const rows = model.moveRows.filter((row) => issueIds.has(row.move.id));
+        const currentRow = currentMoveId ? model.moveRows.find((row) => row.move.id === currentMoveId) : undefined;
+        if (currentRow && !rows.some((row) => row.move.id === currentRow.move.id)) rows.push(currentRow);
+        return rows.sort((left, right) => left.index - right.index);
+      })()
+    : model.moveRows;
   const moveRounds = useMemo(() => {
     const rounds = new Map<number, typeof moveRows>();
     for (const row of moveRows) {
@@ -228,6 +233,8 @@ export function ReviewWorkspace({
   const issueRows = issueSide === "red" ? model.redIssues : model.blackIssues;
   const activeTreePath = useMemo(() => new Set(board.history.map((move) => move.id)), [board.history]);
   const treeNodes = useMemo(() => board.manualTree?.length ? board.manualTree : linearManualTree(documentBoard.history), [board.manualTree, documentBoard.history]);
+  const variationCounts = useMemo(() => variationCountByMove(treeNodes), [treeNodes]);
+  const currentBranches = useMemo(() => board.branches.length > 1 ? board.branches : childrenForCurrentNode(treeNodes, board.currentNode), [board.branches, board.currentNode, treeNodes]);
   const treeQualityByMoveId = useMemo(() => new Map(
     (activeReport?.issues ?? []).map((issue) => [issue.nodeId, { score: issue.score, grade: issue.grade }]),
   ), [activeReport]);
@@ -241,6 +248,10 @@ export function ReviewWorkspace({
     : archived ? `${libraryFolder} · 已归档` : "待确认归档";
   const reviewState = !hasRecordedMoves ? "等待录谱" : reportBusy ? "报告生成中" : report?.stale ? "报告需更新" : reportReady ? "报告已生成" : "待分析";
   const headerStatus = [archiveStatus, playedAt?.trim() ? `对局时间 ${playedAt.trim()}` : "", `当前 ${model.currentMoveLabel}`, reviewState].filter(Boolean).join(" · ");
+  useEffect(() => {
+    if (routeView !== "rounds") return;
+    currentRoundMoveRef.current?.scrollIntoView?.({ block: "center", behavior: "auto" });
+  }, [board.currentNode, routeView]);
   useEffect(() => {
     if (archiveEditorOpen && archiveDirty) return;
     setArchiveFolderDraft(libraryFolder ?? "");
@@ -377,8 +388,9 @@ export function ReviewWorkspace({
           <div><small>当前着法思路 · {currentThought.sourceLabel}</small><strong>第 {currentThoughtRow.index} 着 · {currentThoughtRow.move.movedBy} {currentThoughtRow.move.notation}</strong></div>
           <button type="button" onClick={() => setMoveThoughtVisibility(false)}>隐藏</button>
         </header>
-        <ThoughtDetails thought={currentThought}/>
+        <MoveThoughtDetails thought={currentThought}/>
       </section>}
+      <TtxqAnnotationCard value={currentAnnotationValue}/>
       {hasRecordedMoves && <section className={`review-archive-card ${archiveExpanded ? "expanded" : "collapsed"} ${archiveEditorOpen ? "editing" : ""}`} aria-label="棋谱归档资料">
         <header><div><strong>归档资料</strong><small>{archived ? "已保存" : "待确认"} · {libraryFolder || "未分类"}{favorite ? " · 已收藏" : ""}{libraryTags.length ? ` · ${libraryTags.join("、")}` : ""}</small></div><div className="review-archive-header-actions"><button type="button" onClick={() => setArchiveExpanded((expanded) => !expanded)}>{archiveExpanded ? "收起" : "展开"}</button><button type="button" onClick={openArchiveEditor}>编辑归档</button></div></header>
         {archiveExpanded && !archiveEditorOpen && <><small className="review-archive-location">本机保存：Application Support/cn.xiangqi.studio/xiangqi.sqlite3</small><div className="review-archive-summary"><span>{libraryFolder || "未分类"}</span>{favorite && <span className="favorite"><Heart size={12} fill="currentColor"/>已收藏</span>}{libraryTags.map((tag) => <em key={tag}>{tag}</em>)}</div></>}
@@ -416,18 +428,21 @@ export function ReviewWorkspace({
             const flyknife = flyknifeRouteMeta(row.move.comment);
             const thought = thoughtByMoveId.get(row.move.id);
             const thoughtExpanded = expandedThoughtMove === row.move.id;
-            return <div className={`review-route-entry ${thoughtExpanded ? "expanded" : ""}`} key={row.move.id}>
+            const variationCount = variationCounts.get(row.move.id);
+            return <div ref={board.currentNode === row.move.id ? currentRoundMoveRef : undefined} data-current-node={board.currentNode === row.move.id || undefined} className={`review-route-entry ${thoughtExpanded ? "expanded" : ""}`} key={row.move.id}>
               <button aria-label={`${row.move.movedBy} ${row.move.notation}`} className={`review-route-move ${row.move.movedBy === "红方" ? "red" : "black"} ${flyknife ? "has-flyknife" : ""} ${thought ? "has-thought" : ""} ${board.currentNode === row.move.id ? "active" : ""} ${issueTone(row.issue)}`} type="button" onClick={() => row.issue ? openIssue(row.issue) : onNavigate(row.move.id)}>
-                <div className="review-route-move-main"><strong title={row.move.notation}>{row.move.notation}</strong><small title={detail}>{scoreText}{row.issue ? ` · 损失 ${row.issue.lossCp}cp` : ""}</small></div>
+                <div className="review-route-move-main"><strong title={row.move.notation}>{row.move.notation}{hasTtxqAnnotation(row.move.comment) && <i className="review-route-annotation-marker">注解</i>}</strong><small title={detail}>{variationCount && <b className="review-route-variation-count">变招 {variationCount}</b>}{scoreText}{row.issue ? ` · 损失 ${row.issue.lossCp}cp` : ""}</small></div>
                 {flyknife && <div className="review-route-flyknife" title={flyknife.intent}><Swords size={12}/><b>{flyknife.label}</b><small>{flyknife.intent}</small></div>}
                 <em>{row.issue?.missedMate ? "漏杀" : row.quality ?? "记录"}</em>
               </button>
               {showMoveThoughts && thought && <button type="button" className="review-route-thought-toggle" aria-expanded={thoughtExpanded} aria-label={`${thoughtExpanded ? "收起" : "展开"}第 ${row.index} 着思路`} title={`${row.move.notation}：${thought.purpose}`} onClick={() => setExpandedThoughtMove(thoughtExpanded ? undefined : row.move.id)}>思路</button>}
               {showMoveThoughts && thoughtExpanded && thought && <div className="review-route-thought" aria-label={`${row.move.notation} 的着法思路`}>
-                <ThoughtDetails thought={thought} compact/>
+                <MoveThoughtDetails thought={thought} compact/>
               </div>}
             </div>;
-          })}</div></article>)}</div>)}
+          })}</div></article>)}
+          {currentBranches.length > 1 && <div className="manual-round-branches review-round-branches" role="group" aria-label="当前局面变招"><strong>当前变招</strong>{currentBranches.map((move, index) => <button key={move.id} type="button" aria-label={`路线 ${index + 1} ${move.notation}`} className={move.isMainline ? "mainline" : ""} onClick={() => onNavigate(move.id)}><b>{index + 1}</b><span>{move.notation}</span></button>)}</div>}
+        </div>)}
       </section>
     </section>
     <section className="review-insights" aria-label="复盘洞察">

@@ -843,8 +843,9 @@ export type BoardOrientation = "redAtBottom" | "blackAtBottom";
 export type LinkMoveDetail = { iccs: string; notation: string; movedBy: Side; from: MoveSquare; to: MoveSquare };
 export type LinkSessionStatus = { source: CaptureSource; mode: LinkMode; state: LinkSessionState; reason?: string; phase?: string; lastError?: string; startedAt?: string; lastHeartbeatAt?: string; recognitionAttempts?: number; lastDetectionSummary?: string; turnIndicator?: string; manualTurnOverride?: LinkAutoSide; pendingExternalMove?: string; capturePreviewKind?: string; frameRate: number; confidence?: number; confidenceThreshold?: number; stableFrames: number; requiredStableFrames: number; latestFen?: string; lastMove?: string; lastMoveDetail?: LinkMoveDetail; initialPositionSeen?: boolean; autoSide?: LinkAutoSide; boardOrientation?: BoardOrientation; captureRunning: boolean; targetWindow?: LinkTargetWindow; captureBackend?: string; captureDpi?: number; clickAvailable?: boolean };
 export type TtxqSyncProgress = { state: "disconnected" | "authorizing" | "reading" | "ready" | "importing" | "complete" | "partial" | "error" | string; readPhase?: "discovering" | "loading" | "metadata" | "branches" | "reading" | string; readScanned?: number; readCurrent?: number; readTotal: number; readCompleted: number; readFailed: number; loaded: number; completed: number; imported: number; skipped: number; failed: number; message: string };
-export type TtxqGamePreview = { qipuId: string; title: string; red: string; black: string; event: string; date: string; result: string; round: string; playedAt: string; duration: string; moveCount: number; variationCount: number; routeCount: number; decodedRouteCount: number; variationNodeCount: number; branchComplete: boolean; valid: boolean; error?: string; diagnostic?: string };
+export type TtxqGamePreview = { qipuId: string; title: string; red: string; black: string; event: string; date: string; result: string; round: string; playedAt: string; duration: string; moveCount: number; variationCount: number; routeCount: number; decodedRouteCount: number; variationNodeCount: number; branchComplete: boolean; annotationCount?: number; annotationsComplete?: boolean; valid: boolean; error?: string; diagnostic?: string };
 export type TtxqDiagnosticSample = { id: number; qipuId: string; fieldPath: string; valueType: string; valueLength: number; rawSample: string; error: string; capturedAt: string };
+export type LibraryMoveResult = { folderCount: number; gameCount: number };
 export type ExportFormat = "pgn" | "chinese" | "dhtmlxq";
 export type ReplayExportScope = "currentSelection" | "mainline";
 export type EngineRuntimeEvent =
@@ -864,8 +865,9 @@ export interface ChessPlatform {
   updateGameMetadataForGame(gameId: string, metadata: GameMetadata): Promise<Partial<BoardState>>;
   listLibraryFolders(): Promise<LibraryFolder[]>;
   createLibraryFolder(name: string): Promise<void>;
-  renameLibraryFolder(previous: string, next: string): Promise<void>;
+  renameLibraryFolder(previous: string, next: string): Promise<LibraryMoveResult>;
   deleteLibraryFolder(name: string): Promise<void>;
+  moveGamesToFolder(gameIds: string[], folder: string | undefined): Promise<LibraryMoveResult>;
   updateGameLibrary(folder: string | undefined, favorite: boolean, tags: string[]): Promise<Partial<BoardState>>;
   getGameMirrorStatus(gameId?: string): Promise<GameMirrorStatus | undefined>;
   updateGameMirror(): Promise<GameMirrorStatus>;

@@ -96,6 +96,10 @@ import { TtxqImportDialog } from "./TtxqImportDialog";
 import { bundledTheoryKnowledge } from "./theoryKnowledge.generated";
 import { ReviewWorkspace } from "./ReviewWorkspace";
 import { ReviewGameLibrary } from "./ReviewGameLibrary";
+import { FloatingManualRoundList } from "./FloatingManualRoundList";
+import { TtxqAnnotationCard } from "./TtxqAnnotationCard";
+import { mergeTtxqLocalComment, splitTtxqComment } from "./ttxqAnnotations";
+import { HorizontalScrollArea } from "./HorizontalScrollArea";
 import { U10TrainingDialog } from "./U10TrainingDialog";
 import { UserManualDialog } from "./UserManualDialog";
 import { boardCellStyle, boardIntersectionPoint } from "./boardGeometry";
@@ -1921,12 +1925,12 @@ export default function App() {
 
   useEffect(() => {
     const current = board.history.find((move) => move.id === board.currentNode);
-    setComment(current?.comment ?? "");
+    setComment(splitTtxqComment(current?.comment ?? "").localText);
   }, [board.currentNode, board.history]);
 
   useEffect(() => {
     setGameTitle(board.title);
-    setGameNote(board.note);
+    setGameNote(splitTtxqComment(board.note).localText);
   }, [board.note, board.title]);
 
   useEffect(() => {
@@ -3749,7 +3753,8 @@ export default function App() {
 
   async function saveGameMetadata() {
     try {
-      applyBoard(await enqueueBoardOperation(() => chessPlatform.updateGameMetadata(gameTitle.trim() || "未命名棋谱", gameNote)));
+      const note = mergeTtxqLocalComment(board.note, gameNote);
+      applyBoard(await enqueueBoardOperation(() => chessPlatform.updateGameMetadata(gameTitle.trim() || "未命名棋谱", note)));
       await refreshGames();
       setNotice("棋谱名称和局面备注已保存");
     } catch (error) {
@@ -3768,7 +3773,7 @@ export default function App() {
     setEditorPieces(board.pieces.map((piece) => ({ ...piece })));
     setEditorSide(board.sideToMove === "红方" ? "red" : "black");
     setGameTitle(board.title);
-    setGameNote(board.note);
+    setGameNote(splitTtxqComment(board.note).localText);
     setEditorPiece(editorPalette[0]);
     setPositionEditorOpen(true);
   }
@@ -4901,7 +4906,9 @@ export default function App() {
 
   async function saveCommentForNode(nodeId: string, nextComment: string) {
     try {
-      applyBoard(await enqueueBoardOperation(() => chessPlatform.updateComment(nodeId, nextComment)));
+      const current = [...board.history, ...board.continuation].find((move) => move.id === nodeId);
+      const mergedComment = mergeTtxqLocalComment(current?.comment ?? "", nextComment);
+      applyBoard(await enqueueBoardOperation(() => chessPlatform.updateComment(nodeId, mergedComment)));
       setComment(nextComment);
       setNotice("注释已保存");
       return true;
@@ -4921,7 +4928,8 @@ export default function App() {
     const currentMove = board.history.find((move) => move.id === nodeId);
     if (!nodeId || !currentMove) return;
     try {
-      const nextComment = toggleReviewMarker(currentMove.comment);
+      const parts = splitTtxqComment(currentMove.comment);
+      const nextComment = mergeTtxqLocalComment(currentMove.comment, toggleReviewMarker(parts.localText));
       applyBoard(await enqueueBoardOperation(() => chessPlatform.updateComment(nodeId, nextComment)));
       setNotice(hasReviewMarker(nextComment) ? "已标记当前着法，复盘时会在棋谱树中显示" : "已取消当前着法的复盘标记");
     } catch (error) {
@@ -6174,16 +6182,7 @@ export default function App() {
     if (!hasVisibleBranchChoices) return null;
     return <section className={`branch-map-controls ${branchEditing ? "editing" : ""}`} aria-label="当前分支选择">
       <header><span><GitFork size={14}/><strong>变招 {branchChoices.length} 条</strong><small>当前局面可选，点击即进入</small></span><button type="button" className="branch-map-edit" onClick={() => setBranchEditing((editing) => !editing)}>{branchEditing ? "完成" : "管理"}</button></header>
-      <div
-        className="branch-map-scroll"
-        tabIndex={0}
-        aria-label="横向滚动查看全部变招"
-        onWheel={(event) => {
-          if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
-          event.currentTarget.scrollLeft += event.deltaY;
-          event.preventDefault();
-        }}
-      >
+      <HorizontalScrollArea className="branch-map-scroll" ariaLabel="横向滚动查看全部变招" showButtons={floatingPanel === "manual"}>
         {branchChoices.map((move, index) => {
           const label = String(index + 1);
           const detail = move.isMainline ? `主线 ${label}` : `分支 ${label}`;
@@ -6197,7 +6196,7 @@ export default function App() {
             </div>}
           </div>;
         })}
-      </div>
+      </HorizontalScrollArea>
       {branchEditing && <button type="button" className="branch-map-done" onClick={() => setBranchEditing(false)}>完成管理</button>}
     </section>;
   }
@@ -6242,6 +6241,7 @@ export default function App() {
       qualityByMoveId: reportByMoveId,
     };
     return <div className={`manual-review-content ${desktopPreferences.manualViewMode === "tree" ? "tree-mode" : "track-mode"}`}>
+      <TtxqAnnotationCard value={currentMove?.comment ?? board.note} compact/>
       {desktopPreferences.manualViewMode === "tree"
         ? <div className="manual-tree-shell">
           <header className="manual-track-toolbar">
@@ -6292,23 +6292,6 @@ export default function App() {
           strategyInsight={strategyInsight}
           viewMode={desktopPreferences.manualViewMode ?? "track"}
         />}
-    </div>;
-  }
-
-  function floatingManualRoundList() {
-    const routeMoves = [...board.history, ...board.continuation];
-    const rounds = Array.from({ length: Math.ceil(routeMoves.length / 2) }, (_, index) => ({
-      number: index + 1,
-      red: routeMoves[index * 2],
-      black: routeMoves[index * 2 + 1],
-    }));
-    return <div className="floating-manual-round-list" aria-label="浮动窗口回合列表">
-      {rounds.map((round) => <article key={round.number}>
-        <span>{round.number}</span>
-        {[round.red, round.black].map((move, index) => move
-          ? <button key={move.id} type="button" className={`${move.movedBy === "红方" ? "red" : "black"} ${board.currentNode === move.id ? "active" : ""}`} onClick={() => void navigateTo(move.id)}><strong>{move.notation}</strong><small>{formatMoveScore(move) || (move.isMainline ? "主线" : "分支")}</small></button>
-          : <i key={`${round.number}-${index}`} aria-hidden="true"/>)}
-      </article>)}
     </div>;
   }
 
@@ -6672,7 +6655,7 @@ export default function App() {
                 <button type="button" role="tab" aria-selected={floatingManualRouteView === "tree"} className={floatingManualRouteView === "tree" ? "active" : ""} onClick={() => setFloatingManualRouteView("tree")}><GitBranch size={13}/>分支树</button>
                 <button type="button" role="tab" aria-selected={floatingManualRouteView === "rounds"} className={floatingManualRouteView === "rounds" ? "active" : ""} onClick={() => setFloatingManualRouteView("rounds")}><List size={13}/>回合列表</button>
               </div>
-              {floatingManualRouteView === "tree" ? manualReviewContent("浮动窗口棋谱着法") : floatingManualRoundList()}
+              {floatingManualRouteView === "tree" ? manualReviewContent("浮动窗口棋谱着法") : <FloatingManualRoundList branches={board.branches} currentNode={board.currentNode} issues={reportPresentation?.issues} manualTree={board.manualTree ?? []} moves={[...board.history, ...board.continuation]} showThoughts={showMoveThoughts} formatScore={formatMoveScore} onNavigate={(nodeId) => void navigateTo(nodeId)}/>}
             </div>
             {branchMapControls()}
             <p className="floating-panel-note">这是系统独立窗口，可拖到主窗口外；主窗口走棋后这里会自动刷新。</p>

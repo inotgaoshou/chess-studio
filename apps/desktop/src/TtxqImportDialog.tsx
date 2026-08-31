@@ -164,7 +164,7 @@ export function TtxqImportDialog({ progress, preview, diagnostics, folders, targ
           <header><strong>导入预览 · {preview.length} 盘</strong><span>{validPreviewCount} 盘可导入</span></header>
           <ol>
             {preview.map((game) => <li key={game.qipuId} className={game.valid ? "valid" : "invalid"}>
-              <div><strong>{game.title.trim() || `天天象棋 ${game.qipuId}`}</strong><span>{game.valid ? `${game.moveCount} 半回合${game.routeCount > 1 ? ` · 路线 ${game.decodedRouteCount}/${game.routeCount}` : ""}${game.variationNodeCount ? ` · ${game.variationNodeCount} 个变招节点` : ""}` : `${game.routeCount > 1 ? `路线 ${game.decodedRouteCount}/${game.routeCount} · ` : ""}格式待处理`}</span></div>
+              <div><strong>{game.title.trim() || `天天象棋 ${game.qipuId}`}</strong><span>{game.valid ? `${game.moveCount} 半回合${game.routeCount > 1 ? ` · 路线 ${game.decodedRouteCount}/${game.routeCount}` : ""}${game.variationNodeCount ? ` · ${game.variationNodeCount} 个变招节点` : ""}${game.annotationCount ? ` · ${game.annotationCount} 条注解` : ""}` : `${game.routeCount > 1 ? `路线 ${game.decodedRouteCount}/${game.routeCount} · ` : ""}${game.annotationsComplete === false ? "注解未完整定位 · " : ""}格式待处理`}</span></div>
               <p>{[game.red, game.black].filter(Boolean).join(" vs ") || game.event || "自建/收藏棋谱"}{game.result ? ` · ${resultLabel(game.result)}` : ""}</p>
               {(game.event || game.date || game.round || game.playedAt || game.duration) && <small>{[game.event, game.date, roundLabel(game.round), game.playedAt, game.duration && `用时 ${game.duration}`].filter(Boolean).join(" · ")}</small>}
               {game.valid && game.diagnostic && <small>{game.diagnostic}</small>}

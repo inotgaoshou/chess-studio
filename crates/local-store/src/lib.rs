@@ -1999,10 +1999,13 @@ impl LocalStore {
         let descendant_prefix = format!("{previous}/");
         let descendants = {
             let mut statement = transaction.prepare(
-                "SELECT name FROM library_folders WHERE name LIKE ?1 ORDER BY name",
+                "SELECT name FROM library_folders WHERE substr(name, 1, ?2)=?1 ORDER BY name",
             )?;
             statement
-                .query_map([format!("{descendant_prefix}%")], |row| row.get::<_, String>(0))?
+                .query_map(
+                    params![descendant_prefix, descendant_prefix.chars().count()],
+                    |row| row.get::<_, String>(0),
+                )?
                 .collect::<Result<Vec<_>, _>>()?
         };
         for name in descendants {
@@ -2018,15 +2021,96 @@ impl LocalStore {
         )?;
         transaction.execute(
             "UPDATE games SET library_folder=?1 || substr(library_folder, ?2)
-             WHERE library_folder LIKE ?3",
+             WHERE substr(library_folder, 1, ?4)=?3",
             params![
                 next,
                 previous.chars().count() + 1,
-                format!("{descendant_prefix}%")
+                descendant_prefix,
+                descendant_prefix.chars().count()
             ],
         )?;
         transaction.commit()?;
         Ok(())
+    }
+
+    pub fn rename_library_folder_with_operations(
+        &mut self,
+        previous: &str,
+        next: &str,
+        game_operations: &[(Uuid, String, Operation)],
+    ) -> Result<(usize, usize), StoreError> {
+        let transaction = self.connection.transaction()?;
+        let system: Option<bool> = transaction
+            .query_row(
+                "SELECT system FROM library_folders WHERE name=?1",
+                [previous],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if system != Some(false) || previous == next || next.starts_with(&format!("{previous}/")) {
+            return Err(StoreError::Sql(rusqlite::Error::InvalidQuery));
+        }
+        let descendant_prefix = format!("{previous}/");
+        let descendants = {
+            let mut statement = transaction.prepare(
+                "SELECT name FROM library_folders WHERE substr(name, 1, ?2)=?1 ORDER BY length(name) DESC, name",
+            )?;
+            statement
+                .query_map(
+                    params![descendant_prefix, descendant_prefix.chars().count()],
+                    |row| row.get::<_, String>(0),
+                )?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        let affected_folder_count = descendants.len() + 1;
+        for name in descendants {
+            let renamed = format!("{next}/{}", &name[descendant_prefix.len()..]);
+            transaction.execute(
+                "UPDATE library_folders SET name=?1 WHERE name=?2",
+                params![renamed, name],
+            )?;
+        }
+        transaction.execute(
+            "UPDATE library_folders SET name=?1 WHERE name=?2",
+            params![next, previous],
+        )?;
+        for (game_id, folder, operation) in game_operations {
+            let updated = transaction.execute(
+                "UPDATE games SET library_folder=?1, updated_at=?2 WHERE id=?3 AND deleted_at IS NULL",
+                params![folder, operation.created_at.to_rfc3339(), game_id.to_string()],
+            )?;
+            if updated != 1 {
+                return Err(StoreError::Sql(rusqlite::Error::InvalidQuery));
+            }
+            insert_operation(&transaction, operation, false)?;
+        }
+        transaction.commit()?;
+        Ok((affected_folder_count, game_operations.len()))
+    }
+
+    pub fn move_games_to_folder_with_operations(
+        &mut self,
+        entries: &[(Uuid, Option<String>, Operation)],
+    ) -> Result<usize, StoreError> {
+        if entries.is_empty() {
+            return Ok(0);
+        }
+        let transaction = self.connection.transaction()?;
+        for (game_id, folder, operation) in entries {
+            if let Some(folder) = folder.as_deref() {
+                insert_library_folder_path(&transaction, folder, false)?;
+            }
+            let updated = transaction.execute(
+                "UPDATE games SET library_folder=?1, updated_at=?2 WHERE id=?3 AND deleted_at IS NULL",
+                params![folder, operation.created_at.to_rfc3339(), game_id.to_string()],
+            )?;
+            if updated != 1 {
+                return Err(StoreError::Sql(rusqlite::Error::InvalidQuery));
+            }
+            insert_operation(&transaction, operation, false)?;
+        }
+        transaction.commit()?;
+        Ok(entries.len())
     }
 
     pub fn delete_library_folder(&mut self, name: &str) -> Result<(), StoreError> {
@@ -2046,13 +2130,13 @@ impl LocalStore {
             [name],
         )?;
         transaction.execute(
-            "UPDATE games SET library_folder=NULL WHERE library_folder LIKE ?1",
-            [format!("{name}/%")],
+            "UPDATE games SET library_folder=NULL WHERE substr(library_folder, 1, ?2)=?1",
+            params![format!("{name}/"), format!("{name}/").chars().count()],
         )?;
         transaction.execute("DELETE FROM library_folders WHERE name=?1", [name])?;
         transaction.execute(
-            "DELETE FROM library_folders WHERE name LIKE ?1",
-            [format!("{name}/%")],
+            "DELETE FROM library_folders WHERE substr(name, 1, ?2)=?1",
+            params![format!("{name}/"), format!("{name}/").chars().count()],
         )?;
         transaction.commit()?;
         Ok(())
@@ -4187,6 +4271,110 @@ mod tests {
             store.load_game(game_id).unwrap().unwrap().library_folder,
             None
         );
+    }
+
+    #[test]
+    fn recursive_folder_move_treats_sql_wildcards_as_literal_path_characters() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        store.create_library_folder("赛_事/子目录").unwrap();
+        store.create_library_folder("赛X事/保留目录").unwrap();
+
+        store.rename_library_folder("赛_事", "新目录").unwrap();
+
+        let folders = store
+            .library_folders()
+            .unwrap()
+            .into_iter()
+            .map(|folder| folder.name)
+            .collect::<Vec<_>>();
+        assert!(folders.contains(&"新目录/子目录".into()));
+        assert!(folders.contains(&"赛X事/保留目录".into()));
+    }
+
+    #[test]
+    fn batch_game_move_preserves_metadata_and_commits_outbox_with_the_folder() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let game_id = Uuid::new_v4();
+        let create = operation(game_id);
+        store.save_game_with_operation(game_id, "目录棋谱", "fen", Uuid::new_v4(), &create).unwrap();
+        let mut seed = operation(game_id);
+        seed.op_id = Uuid::new_v4();
+        seed.kind = OperationKind::UpdateGameMetadata;
+        store.update_game_library_with_operation(game_id, Some("原目录"), true, &["布局".into()], &seed).unwrap();
+        let mut moved = operation(game_id);
+        moved.op_id = Uuid::new_v4();
+        moved.kind = OperationKind::UpdateGameMetadata;
+
+        assert_eq!(store.move_games_to_folder_with_operations(&[(game_id, Some("新目录/子目录".into()), moved.clone())]).unwrap(), 1);
+
+        let game = store.load_game(game_id).unwrap().unwrap();
+        assert_eq!(game.library_folder.as_deref(), Some("新目录/子目录"));
+        assert!(game.favorite);
+        assert_eq!(game.tags, vec!["布局"]);
+        assert!(store.pending_operations(10).unwrap().contains(&moved));
+    }
+
+    #[test]
+    fn batch_game_move_rolls_back_when_any_game_is_missing() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let game_id = Uuid::new_v4();
+        store
+            .save_game_with_operation(
+                game_id,
+                "目录棋谱",
+                "fen",
+                Uuid::new_v4(),
+                &operation(game_id),
+            )
+            .unwrap();
+        let missing_id = Uuid::new_v4();
+        let mut valid_move = operation(game_id);
+        valid_move.op_id = Uuid::new_v4();
+        valid_move.kind = OperationKind::UpdateGameMetadata;
+        let mut missing_move = operation(missing_id);
+        missing_move.op_id = Uuid::new_v4();
+        missing_move.kind = OperationKind::UpdateGameMetadata;
+        let pending_before = store.pending_operations(20).unwrap();
+
+        let result = store.move_games_to_folder_with_operations(&[
+            (game_id, Some("新目录".into()), valid_move),
+            (missing_id, Some("新目录".into()), missing_move),
+        ]);
+
+        assert!(result.is_err());
+        assert_eq!(store.load_game(game_id).unwrap().unwrap().library_folder, None);
+        assert_eq!(store.pending_operations(20).unwrap(), pending_before);
+    }
+
+    #[test]
+    fn recursive_folder_move_rolls_back_folders_games_and_outbox_on_collision() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let game_id = Uuid::new_v4();
+        let create = operation(game_id);
+        store.save_game_with_operation(game_id, "目录棋谱", "fen", Uuid::new_v4(), &create).unwrap();
+        store.create_library_folder("原目录/子目录").unwrap();
+        store.create_library_folder("目标/子目录").unwrap();
+        let mut seed = operation(game_id);
+        seed.op_id = Uuid::new_v4();
+        seed.kind = OperationKind::UpdateGameMetadata;
+        store.update_game_library_with_operation(game_id, Some("原目录/子目录"), false, &[], &seed).unwrap();
+        let pending_before = store.pending_operations(20).unwrap();
+        let mut moved = operation(game_id);
+        moved.op_id = Uuid::new_v4();
+        moved.kind = OperationKind::UpdateGameMetadata;
+
+        let result = store.rename_library_folder_with_operations(
+            "原目录",
+            "目标",
+            &[(game_id, "目标/子目录".into(), moved)],
+        );
+
+        assert!(result.is_err());
+        assert_eq!(store.load_game(game_id).unwrap().unwrap().library_folder.as_deref(), Some("原目录/子目录"));
+        let folders = store.library_folders().unwrap().into_iter().map(|folder| folder.name).collect::<Vec<_>>();
+        assert!(folders.contains(&"原目录/子目录".into()));
+        assert!(folders.contains(&"目标/子目录".into()));
+        assert_eq!(store.pending_operations(20).unwrap(), pending_before);
     }
 
     #[test]

@@ -11,6 +11,12 @@ const TTXQ_BACKUP_FOLDER: &str = "天天象棋备份";
 const TTXQ_ORDERED_SOURCE_PREFIX: &str = "ttxq-order:";
 const BRIDGE_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 const BRIDGE_PROGRESS_STALL_TIMEOUT: Duration = Duration::from_secs(20);
+const TTXQ_ANNOTATION_BEGIN: &str = "【天天象棋注解】";
+const TTXQ_ANNOTATION_END: &str = "【天天象棋注解结束】";
+
+fn default_true() -> bool {
+    true
+}
 
 fn normalize_ttxq_target_folder(target_folder: Option<String>) -> Result<String, String> {
     let folder = target_folder
@@ -49,6 +55,19 @@ pub(crate) struct TtxqVariationDto {
     pub children: Vec<TtxqVariationDto>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TtxqAnnotationDto {
+    pub route_no: usize,
+    pub after_ply: usize,
+    pub text: String,
+    #[serde(default)]
+    pub author: String,
+    #[serde(default)]
+    pub created_at: String,
+    pub source_key: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TtxqGameRecordDto {
@@ -69,6 +88,10 @@ pub(crate) struct TtxqGameRecordDto {
     pub raw_move_length: usize,
     #[serde(default)]
     pub variations: Vec<TtxqVariationDto>,
+    #[serde(default)]
+    pub annotations: Vec<TtxqAnnotationDto>,
+    #[serde(default = "default_true")]
+    pub annotations_complete: bool,
     /// Raw branch metadata is local-only until a deterministic QQ branch decoder
     /// has converted it into `variations`.
     #[serde(default)]
@@ -150,6 +173,8 @@ pub(crate) struct TtxqGamePreviewDto {
     pub decoded_route_count: usize,
     pub variation_node_count: usize,
     pub branch_complete: bool,
+    pub annotation_count: usize,
+    pub annotations_complete: bool,
     pub valid: bool,
     pub error: Option<String>,
     pub diagnostic: Option<String>,
@@ -294,6 +319,78 @@ fn source_note(record: &TtxqGameRecordDto) -> String {
     source_note_with_existing(&record.note, record)
 }
 
+fn split_ttxq_annotation_block(value: &str) -> (String, String) {
+    let Some(start) = value.find(TTXQ_ANNOTATION_BEGIN) else {
+        return (String::new(), value.trim().to_owned());
+    };
+    let content_start = start + TTXQ_ANNOTATION_BEGIN.len();
+    let Some(relative_end) = value[content_start..].find(TTXQ_ANNOTATION_END) else {
+        return (String::new(), value.trim().to_owned());
+    };
+    let end = content_start + relative_end;
+    let source = value[content_start..end].trim().to_owned();
+    let local = format!(
+        "{}\n{}",
+        &value[..start],
+        &value[end + TTXQ_ANNOTATION_END.len()..]
+    )
+    .trim()
+    .to_owned();
+    (source, local)
+}
+
+pub(crate) fn local_ttxq_comment(value: &str) -> String {
+    split_ttxq_annotation_block(value).1
+}
+
+pub(crate) fn merge_ttxq_local_comment(existing: &str, local: &str) -> String {
+    let (source, _) = split_ttxq_annotation_block(existing);
+    let source_block = (!source.is_empty()).then(|| {
+        format!("{TTXQ_ANNOTATION_BEGIN}\n{source}\n{TTXQ_ANNOTATION_END}")
+    });
+    [source_block.as_deref(), Some(local.trim())]
+        .into_iter()
+        .flatten()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn annotation_managed_text(annotations: &[&TtxqAnnotationDto]) -> String {
+    let body = annotations
+        .iter()
+        .map(|annotation| {
+            let byline = [annotation.author.trim(), annotation.created_at.trim()]
+                .into_iter()
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<_>>()
+                .join(" · ");
+            [(!byline.is_empty()).then_some(byline.as_str()), Some(annotation.text.trim())]
+                .into_iter()
+                .flatten()
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    if body.is_empty() {
+        String::new()
+    } else {
+        format!("{TTXQ_ANNOTATION_BEGIN}\n{body}\n{TTXQ_ANNOTATION_END}")
+    }
+}
+
+fn replace_ttxq_annotations(existing: &str, annotations: &[&TtxqAnnotationDto]) -> String {
+    let (_, local) = split_ttxq_annotation_block(existing);
+    [annotation_managed_text(annotations), local]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
 fn source_note_with_existing(existing_note: &str, record: &TtxqGameRecordDto) -> String {
     let source_labels = [
         "来源",
@@ -304,7 +401,13 @@ fn source_note_with_existing(existing_note: &str, record: &TtxqGameRecordDto) ->
         "用时规则",
         "网页分支",
     ];
-    let mut lines: Vec<String> = existing_note
+    let root_annotations = record
+        .annotations
+        .iter()
+        .filter(|annotation| annotation.route_no == 1 && annotation.after_ply == 0)
+        .collect::<Vec<_>>();
+    let (_, local_note) = split_ttxq_annotation_block(existing_note);
+    let mut local_lines: Vec<String> = local_note
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
@@ -315,6 +418,7 @@ fn source_note_with_existing(existing_note: &str, record: &TtxqGameRecordDto) ->
         })
         .map(ToOwned::to_owned)
         .collect();
+    let managed_annotations = annotation_managed_text(&root_annotations);
     let move_count = if record.moves.len() % 2 == 0 {
         format!(
             "{} 回合（{} 半回合）",
@@ -343,12 +447,19 @@ fn source_note_with_existing(existing_note: &str, record: &TtxqGameRecordDto) ->
         let value = value.trim();
         if !value.is_empty() {
             let line = format!("{label}：{value}");
-            if !lines.contains(&line) {
-                lines.push(line);
+            if !local_lines.contains(&line) {
+                local_lines.push(line);
             }
         }
     }
-    lines.join("\n")
+    [
+        (!managed_annotations.is_empty()).then_some(managed_annotations),
+        (!local_lines.is_empty()).then(|| local_lines.join("\n")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join("\n\n")
 }
 
 fn is_placeholder_title(title: &str) -> bool {
@@ -900,6 +1011,48 @@ fn prepare_import_record(
     if !decoded.is_empty() {
         prepared.variations = merge_variations(prepared.variations, decoded);
         prepared.branch_complete = true;
+    }
+    if !prepared.annotations_complete {
+        return Err("天天象棋注解存在但无法确定对应路线或局面；本盘未导入".into());
+    }
+    let mut route_lengths = HashMap::from([(1usize, prepared.moves.len())]);
+    fn collect_route_lengths(variations: &[TtxqVariationDto], lengths: &mut HashMap<usize, usize>) {
+        for variation in variations {
+            if let Some(route_no) = variation.route_no {
+                lengths.insert(route_no, variation.moves.len());
+            }
+            collect_route_lengths(&variation.children, lengths);
+        }
+    }
+    collect_route_lengths(&prepared.variations, &mut route_lengths);
+    let mut seen = HashSet::new();
+    prepared.annotations.retain(|annotation| {
+        seen.insert((
+            annotation.source_key.clone(),
+            annotation.author.clone(),
+            annotation.created_at.clone(),
+            annotation.text.clone(),
+        ))
+    });
+    for annotation in &prepared.annotations {
+        if annotation.route_no == 0
+            || annotation.text.trim().is_empty()
+            || annotation.text.len() > 8 * 1024
+        {
+            return Err("天天象棋注解格式无效；本盘未导入".into());
+        }
+        let Some(route_length) = route_lengths.get(&annotation.route_no) else {
+            return Err(format!(
+                "天天象棋注解 {} 无法定位到路线 {}；本盘未导入",
+                annotation.source_key, annotation.route_no
+            ));
+        };
+        if annotation.after_ply > *route_length {
+            return Err(format!(
+                "天天象棋注解 {} 的局面位置超出路线；本盘未导入",
+                annotation.source_key
+            ));
+        }
     }
     Ok(prepared)
 }
@@ -2052,6 +2205,8 @@ fn ttxq_game_preview(game: &TtxqGameRecordDto) -> TtxqGamePreviewDto {
                 },
                 variation_node_count: recursive_variation_node_count(&prepared.variations),
                 branch_complete: prepared.branch_complete,
+                annotation_count: prepared.annotations.len(),
+                annotations_complete: prepared.annotations_complete,
                 valid: true,
                 error: None,
                 diagnostic: None,
@@ -2100,6 +2255,8 @@ fn ttxq_game_preview(game: &TtxqGameRecordDto) -> TtxqGamePreviewDto {
                 },
                 variation_node_count: recursive_variation_node_count(&decoded_variations),
                 branch_complete: false,
+                annotation_count: game.annotations.len(),
+                annotations_complete: game.annotations_complete,
                 valid: false,
                 error: Some(error),
                 diagnostic: diagnostic_summary(game),
@@ -2133,6 +2290,18 @@ fn validate_payload(payload: &TtxqBridgePayloadDto) -> Result<(), String> {
         }
         if game.metadata_probe.len() > 8 * 1024 {
             return Err(format!("棋谱 {} 的元数据诊断样本过大", game.qipu_id));
+        }
+        if game.annotations.len() > 512
+            || game.annotations.iter().any(|annotation| {
+                annotation.route_no == 0
+                    || annotation.route_no > 16
+                    || annotation.text.len() > 8 * 1024
+                    || annotation.author.len() > 200
+                    || annotation.created_at.len() > 100
+                    || annotation.source_key.len() > 500
+            })
+        {
+            return Err(format!("棋谱 {} 的注解数据异常", game.qipu_id));
         }
         if (game.moves.is_empty() && game.raw_moves.trim().is_empty())
             || game.raw_moves.len() > 32 * 1024
@@ -3027,6 +3196,23 @@ pub(crate) fn collect_ttxq_h5_history(
         }
         return '';
       };
+      const boundedBranchJson = (value) => {
+        try {
+          const encoded = JSON.stringify(value);
+          if (encoded.length <= 32 * 1024) return encoded;
+          return JSON.stringify({
+            payloadTruncated: true,
+            annotationsComplete: false,
+            annotationCount: Array.isArray(value && value.annotations) ? value.annotations.length : 0,
+            routeNumbers: Array.isArray(value && value.routeNumbers) ? value.routeNumbers.slice(0, 16) : [],
+            visibleRouteNumbers: Array.isArray(value && value.visibleRouteNumbers) ? value.visibleRouteNumbers.slice(0, 16) : [],
+            routeFailures: [{ reason: '分支或注解数据超过本地安全上限' }],
+            candidates: [],
+          });
+        } catch (_) {
+          return JSON.stringify({ serializationFailed: true, annotationsComplete: false, candidates: [] });
+        }
+      };
       const branchPayload = (preferredControl = null) => {
         const branchDeadline = Date.now() + 800;
         let branchScanTimedOut = false;
@@ -3379,6 +3565,67 @@ pub(crate) fn collect_ttxq_h5_history(
             referenceContainers.push({ path: `${container.path}.msgContainer`, value: container.value });
           }
         }
+        const collectAnnotations = (containers) => {
+          const annotations = [];
+          const signatures = new Set();
+          const seen = new WeakSet();
+          let complete = true;
+          const visit = (value, path, depth = 0) => {
+            if (!value || typeof value !== 'object' || seen.has(value)) return;
+            if (depth > 6 || annotations.length >= 256 || branchScanExpired()) {
+              complete = false;
+              return;
+            }
+            seen.add(value);
+            const names = propertyNames(value);
+            if (names.length > 120) complete = false;
+            for (const key of names.slice(0, 120)) {
+              if (/cookie|token|ticket|skey|p_skey|credential|password|html|uin|avatar|face/i.test(key)) continue;
+              let child; try { child = value[key]; } catch (_) { continue; }
+              if (Array.isArray(child) && child.some(row => row && typeof row === 'object' && typeof row.msg === 'string')) {
+                const keyMatch = String(key).match(/^(-?\d+)-(\d+)$/);
+                const rootKey = /^(?:root|start|initial)$/i.test(String(key));
+                if (!keyMatch && !rootKey) complete = false;
+                if (child.length > 32) complete = false;
+                child.slice(0, 32).forEach((row, index) => {
+                  if (!row || typeof row !== 'object' || typeof row.msg !== 'string') return;
+                  const rawText = row.msg.trim();
+                  if (rawText.length > 8 * 1024) complete = false;
+                  const text = rawText.slice(0, 8 * 1024);
+                  if (!text) return;
+                  const stepIndex = rootKey ? -1 : Number(keyMatch && keyMatch[1]);
+                  const routeNo = rootKey ? 1 : Number(keyMatch && keyMatch[2]);
+                  if (!Number.isInteger(stepIndex) || stepIndex < -1 || !Number.isInteger(routeNo) || routeNo < 1 || routeNo > 16) {
+                    complete = false;
+                    return;
+                  }
+                  const rawAuthor = typeof row.uname === 'string' ? row.uname.trim() : '';
+                  const rawCreatedAt = typeof row.time === 'string' || typeof row.time === 'number' ? String(row.time).trim() : '';
+                  const rawSourceKey = `${path}.${key}[${index}]`;
+                  if (rawAuthor.length > 200 || rawCreatedAt.length > 100 || rawSourceKey.length > 500) complete = false;
+                  const annotation = {
+                    routeNo,
+                    afterPly: stepIndex < 0 ? 0 : stepIndex + 1,
+                    text,
+                    author: rawAuthor.slice(0, 200),
+                    createdAt: rawCreatedAt.slice(0, 100),
+                    sourceKey: rawSourceKey.slice(0, 500),
+                  };
+                  const signature = `${annotation.sourceKey}:${annotation.author}:${annotation.createdAt}:${annotation.text}`;
+                  if (!signatures.has(signature)) {
+                    signatures.add(signature);
+                    annotations.push(annotation);
+                  }
+                });
+              } else if (child && typeof child === 'object') {
+                visit(child, `${path}.${key}`, depth + 1);
+              }
+            }
+          };
+          containers.forEach(container => visit(container.value, container.path));
+          return { annotations, complete };
+        };
+        const annotationState = collectAnnotations(referenceContainers);
         const candidates = collectBranchCandidates(branchSources);
         const routeNumbers = routeNumbersFromBranchSignals(branchSignals);
         const routeControls = hasStructuralBranchSignal
@@ -3410,7 +3657,7 @@ pub(crate) fn collect_ttxq_h5_history(
         const hasBranchSignal = hasStructuralBranchSignal || visibleRouteNumbers.length > 1 || hasIndependentCandidate;
         if (branchScanTimedOut && !hasBranchSignal) {
           return {
-            data: JSON.stringify({ scanTimedOut: true, signals: signalSamples, candidates: [] }).slice(0, 32 * 1024),
+            data: boundedBranchJson({ scanTimedOut: true, signals: signalSamples, candidates: [], annotations: annotationState.annotations, annotationsComplete: false }),
             path: 'ttxq-branch-scan-timeout',
             complete: false,
             owner: branchOwner,
@@ -3419,17 +3666,24 @@ pub(crate) fn collect_ttxq_h5_history(
         if (!hasBranchSignal) {
           if (visibleRouteNumbers.length > 1) {
             return {
-              data: JSON.stringify({ signals: [], candidates: [], visibleRouteNumbers }).slice(0, 32 * 1024),
+              data: boundedBranchJson({ signals: [], candidates: [], visibleRouteNumbers, annotationsComplete: annotationState.complete }),
               path: 'routeButtons',
               complete: false,
               owner: branchOwner,
             };
           }
-          return { data: '', path: 'NOTIFY_QIPU_DATA._boardControl.getMoveBranchKey', complete: true, owner: branchOwner };
+          return {
+            data: annotationState.annotations.length || !annotationState.complete
+              ? boundedBranchJson({ signals: [], candidates: [], annotations: annotationState.annotations, annotationsComplete: annotationState.complete })
+              : '',
+            path: 'NOTIFY_QIPU_DATA._boardControl.getMoveBranchKey',
+            complete: true,
+            owner: branchOwner,
+          };
         }
         try {
           return {
-            data: JSON.stringify({ signals: signalSamples, referenceSamples, candidates, routeNumbers, visibleRouteNumbers }).slice(0, 32 * 1024),
+            data: boundedBranchJson({ signals: signalSamples, referenceSamples, candidates, routeNumbers, visibleRouteNumbers, annotations: annotationState.annotations, annotationsComplete: annotationState.complete }),
             path: 'NOTIFY_QIPU_DATA._boardControl.getMoveBranchKey + msg + routeButtons',
             complete: false,
             owner: branchOwner,
@@ -3552,6 +3806,18 @@ pub(crate) fn collect_ttxq_h5_history(
             envelope = { rawBranchData: String(passiveBranch.data).slice(0, 2000) };
           }
         }
+        const annotationsBySignature = new Map();
+        let annotationsComplete = envelope.annotationsComplete !== false;
+        const mergeAnnotations = (candidateEnvelope) => {
+          if (!candidateEnvelope || typeof candidateEnvelope !== 'object') return;
+          if (candidateEnvelope.annotationsComplete === false) annotationsComplete = false;
+          for (const annotation of Array.isArray(candidateEnvelope.annotations) ? candidateEnvelope.annotations : []) {
+            if (!annotation || typeof annotation !== 'object') continue;
+            const signature = `${annotation.sourceKey || ''}:${annotation.author || ''}:${annotation.createdAt || ''}:${annotation.text || ''}`;
+            if (signature) annotationsBySignature.set(signature, annotation);
+          }
+        };
+        mergeAnnotations(envelope);
         const structuralRouteNumbers = [...new Set(Array.isArray(envelope.routeNumbers) ? envelope.routeNumbers : [])]
           .map(route => Number(route))
           .filter(route => Number.isInteger(route) && route >= 2 && route <= 16)
@@ -3628,6 +3894,7 @@ pub(crate) fn collect_ttxq_h5_history(
             if (!routeSelectionConfirmed(routeNo)) continue;
             let activeEnvelope = {};
             try { activeEnvelope = activeBranch && activeBranch.data ? JSON.parse(activeBranch.data) : {}; } catch (_) { activeEnvelope = {}; }
+            mergeAnnotations(activeEnvelope);
             if (branchChanged) {
               const activeCandidates = Array.isArray(activeEnvelope.candidates) ? activeEnvelope.candidates : [];
               for (const candidate of activeCandidates) {
@@ -3687,11 +3954,13 @@ pub(crate) fn collect_ttxq_h5_history(
         envelope.visibleRouteNumbers = visibleRouteNumbers;
         envelope.routesAttempted = routesToTry;
         envelope.routeFailures = routeFailures.slice(0, 16);
+        envelope.annotations = [...annotationsBySignature.values()].slice(0, 256);
+        envelope.annotationsComplete = annotationsComplete;
         if (!routeCandidates.length) {
           if (routeNumbers.length > 1 || (passiveBranch && passiveBranch.complete === false)) {
             try {
               return {
-                data: JSON.stringify(envelope).slice(0, 32 * 1024),
+                data: boundedBranchJson(envelope),
                 path: `${passiveBranch && passiveBranch.path || 'ttxq-branch'} + routeControls`,
                 complete: false,
               };
@@ -3711,7 +3980,7 @@ pub(crate) fn collect_ttxq_h5_history(
         if (routeFailures.length) envelope.routeFailures = routeFailures.slice(0, 16);
         try {
           return {
-            data: JSON.stringify(envelope).slice(0, 32 * 1024),
+            data: boundedBranchJson(envelope),
             path: `${passiveBranch && passiveBranch.path || 'ttxq-branch'} + routeControls`,
             complete: false,
           };
@@ -4108,6 +4377,8 @@ pub(crate) fn collect_ttxq_h5_history(
           const normalizedResult = /和/.test(rawResult) ? '1/2-1/2'
             : /(?:先胜|红胜|后负)/.test(rawResult) ? '1-0'
             : /(?:后胜|黑胜|先负)/.test(rawResult) ? '0-1' : rawResult;
+          let annotationEnvelope = {};
+          try { annotationEnvelope = branch.data ? JSON.parse(branch.data) : {}; } catch (_) { annotationEnvelope = { annotationsComplete: false }; }
           games.push({
             qipuId,
             title: firstUsableTitle('sTitle', 'title', 'qipuName', 'qipuTitle', 'szQipuName', 'getToWallQipuName', 'gameName', 'name') || visible.title,
@@ -4131,6 +4402,8 @@ pub(crate) fn collect_ttxq_h5_history(
             branchData: branch.data,
             branchPath: branch.path,
             branchComplete: branch.complete,
+            annotations: Array.isArray(annotationEnvelope.annotations) ? annotationEnvelope.annotations : [],
+            annotationsComplete: annotationEnvelope.annotationsComplete !== false,
             metadataProbe: visible.title ? '' : metadataProbe(),
           });
         } catch (error) {
@@ -4206,6 +4479,152 @@ enum TtxqImportOutcome {
     Failed,
 }
 
+fn ttxq_route_node_paths(
+    tree: &xiangqi_manual::ManualTree,
+    mainline_path: &[Uuid],
+    variations: &[TtxqVariationDto],
+) -> Result<HashMap<usize, Vec<Uuid>>, String> {
+    fn collect(
+        tree: &xiangqi_manual::ManualTree,
+        parent_path: &[Uuid],
+        parent_route_start: usize,
+        variations: &[TtxqVariationDto],
+        paths: &mut HashMap<usize, Vec<Uuid>>,
+    ) -> Result<(), String> {
+        for variation in variations {
+            let anchor_index = parent_route_start
+                .checked_add(variation.after_ply)
+                .filter(|index| *index < parent_path.len())
+                .ok_or("天天象棋注解的分支锚点超出路线")?;
+            let anchor = *parent_path
+                .get(anchor_index)
+                .ok_or("天天象棋注解的分支锚点超出路线")?;
+            let mut route_path = parent_path[..=anchor_index].to_vec();
+            let mut parent = anchor;
+            for raw_move in &variation.moves {
+                let mv = Move::from_iccs(raw_move).map_err(|error| error.to_string())?;
+                let node = tree
+                    .branches(parent)
+                    .map_err(|error| error.to_string())?
+                    .into_iter()
+                    .find(|node| node.mv == mv)
+                    .ok_or("天天象棋注解无法匹配已导入的分支节点")?;
+                parent = node.id;
+                route_path.push(parent);
+            }
+            if let Some(route_no) = variation.route_no {
+                paths.insert(route_no, route_path[anchor_index..].to_vec());
+            }
+            collect(
+                tree,
+                &route_path,
+                anchor_index,
+                &variation.children,
+                paths,
+            )?;
+        }
+        Ok(())
+    }
+
+    let mut paths = HashMap::from([(1usize, mainline_path.to_vec())]);
+    collect(tree, mainline_path, 0, variations, &mut paths)?;
+    Ok(paths)
+}
+
+fn apply_annotations_to_document(
+    document: &mut ManualDocument,
+    mainline_path: &[Uuid],
+    record: &TtxqGameRecordDto,
+) -> Result<(), String> {
+    if record.annotations.is_empty() {
+        return Ok(());
+    }
+    let paths = ttxq_route_node_paths(&document.tree, mainline_path, &record.variations)?;
+    let mut by_node: HashMap<Uuid, Vec<&TtxqAnnotationDto>> = HashMap::new();
+    for annotation in &record.annotations {
+        let node_id = *paths
+            .get(&annotation.route_no)
+            .and_then(|path| path.get(annotation.after_ply))
+            .ok_or_else(|| format!("天天象棋注解 {} 无法定位到棋谱节点", annotation.source_key))?;
+        by_node.entry(node_id).or_default().push(annotation);
+    }
+    for (node_id, annotations) in by_node {
+        if node_id == document.tree.root_id() {
+            document.note = replace_ttxq_annotations(&document.note, &annotations);
+        } else {
+            let existing = document
+                .tree
+                .node(node_id)
+                .map_err(|error| error.to_string())?
+                .comment
+                .clone();
+            document
+                .tree
+                .update_comment(node_id, replace_ttxq_annotations(&existing, &annotations))
+                .map_err(|error| error.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+fn update_existing_ttxq_annotations(
+    model: &mut AppModel,
+    game: &local_store::LocalGame,
+    record: &TtxqGameRecordDto,
+) -> Result<usize, String> {
+    let nodes = model.store.load_move_nodes(game.id).map_err(|error| error.to_string())?;
+    let existing_managed_nodes = nodes
+        .iter()
+        .filter(|node| !node.deleted && !split_ttxq_annotation_block(&node.comment).0.is_empty())
+        .map(|node| node.id)
+        .collect::<HashSet<_>>();
+    let mut tree = xiangqi_manual::ManualTree::with_root(game.root_id);
+    tree.restore_nodes(nodes).map_err(|error| error.to_string())?;
+    let mut mainline_path = vec![game.root_id];
+    let mut parent = game.root_id;
+    for raw_move in &record.moves {
+        let next = tree
+            .branches(parent)
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .find(|node| node.is_mainline && node.mv.to_iccs() == raw_move.as_str())
+            .ok_or("现有棋谱主线与天天象棋注解路线不一致")?;
+        parent = next.id;
+        mainline_path.push(parent);
+    }
+    let paths = ttxq_route_node_paths(&tree, &mainline_path, &record.variations)?;
+    let mut by_node: HashMap<Uuid, Vec<&TtxqAnnotationDto>> = HashMap::new();
+    for annotation in record.annotations.iter().filter(|annotation| !(annotation.route_no == 1 && annotation.after_ply == 0)) {
+        let node_id = *paths
+            .get(&annotation.route_no)
+            .and_then(|path| path.get(annotation.after_ply))
+            .ok_or_else(|| format!("天天象棋注解 {} 无法定位到棋谱节点", annotation.source_key))?;
+        by_node.entry(node_id).or_default().push(annotation);
+    }
+    let mut target_nodes = existing_managed_nodes;
+    target_nodes.extend(by_node.keys().copied());
+    let mut changed = 0;
+    for node_id in target_nodes {
+        let annotations = by_node.remove(&node_id).unwrap_or_default();
+        let existing = tree.node(node_id).map_err(|error| error.to_string())?.comment.clone();
+        let comment = replace_ttxq_annotations(&existing, &annotations);
+        if comment == existing {
+            continue;
+        }
+        let operation = next_operation_for_game(
+            model,
+            game.id,
+            OperationKind::UpdateComment,
+            serde_json::to_value(UpdateCommentPayload { node_id, comment: comment.clone() })
+                .map_err(|error| error.to_string())?,
+        );
+        model.store.update_comment_with_operation(node_id, &comment, &operation).map_err(|error| error.to_string())?;
+        tree.update_comment(node_id, comment).map_err(|error| error.to_string())?;
+        changed += 1;
+    }
+    Ok(changed)
+}
+
 fn move_imported_game_to_folder(
     model: &mut AppModel,
     game_id: Uuid,
@@ -4275,16 +4694,16 @@ fn import_ttxq_record(
             .load_game(existing.game_id)
             .map_err(|error| error.to_string())?;
         if existing.payload_hash == hash {
-            let (metadata_updated, added_variations) = if let Some(previous) = &previous {
-                (
-                    backfill_existing_game(model, previous, &imported_record)?,
-                    append_ttxq_variations_to_existing(model, previous, &imported_record)?,
-                )
+            let (metadata_updated, added_variations, updated_annotations) = if let Some(previous) = &previous {
+                let metadata_updated = backfill_existing_game(model, previous, &imported_record)?;
+                let added_variations = append_ttxq_variations_to_existing(model, previous, &imported_record)?;
+                let updated_annotations = update_existing_ttxq_annotations(model, previous, &imported_record)?;
+                (metadata_updated, added_variations, updated_annotations)
             } else {
-                (false, 0)
+                (false, 0, 0)
             };
             move_imported_game_to_folder(model, existing.game_id, target_folder)?;
-            return Ok(if metadata_updated || added_variations > 0 {
+            return Ok(if metadata_updated || added_variations > 0 || updated_annotations > 0 {
                 TtxqImportOutcome::Updated(existing.game_id)
             } else {
                 TtxqImportOutcome::Skipped(existing.game_id)
@@ -4295,6 +4714,8 @@ fn import_ttxq_record(
                 let metadata_updated = backfill_existing_game(model, &previous, &imported_record)?;
                 let added_variations =
                     append_ttxq_variations_to_existing(model, &previous, &imported_record)?;
+                let updated_annotations =
+                    update_existing_ttxq_annotations(model, &previous, &imported_record)?;
                 move_imported_game_to_folder(model, previous.id, target_folder)?;
                 model
                     .store
@@ -4306,7 +4727,7 @@ fn import_ttxq_record(
                         imported_at,
                     )
                     .map_err(|error| error.to_string())?;
-                return Ok(if metadata_updated || added_variations > 0 {
+                return Ok(if metadata_updated || added_variations > 0 || updated_annotations > 0 {
                     TtxqImportOutcome::Updated(previous.id)
                 } else {
                     TtxqImportOutcome::Skipped(previous.id)
@@ -4538,6 +4959,7 @@ fn import_game(
             variation,
         )?;
     }
+    apply_annotations_to_document(&mut document, &parents, &record)?;
     let game_id = Uuid::new_v4();
     let root_id = document.tree.root_id();
     let nodes = collect_nodes(&document.tree)?;
@@ -4799,6 +5221,11 @@ mod tests {
 
     fn collector_source_between(start_marker: &str, end_marker: &str) -> String {
         let source = include_str!("ttxq_sync.rs");
+        let start_marker = if start_marker == "      const branchPayload = (preferredControl = null) => {" {
+            "      const boundedBranchJson = (value) => {"
+        } else {
+            start_marker
+        };
         let start = source
             .find(start_marker)
             .expect("collector marker must exist");
@@ -4838,6 +5265,8 @@ mod tests {
             raw_move_type: String::new(),
             raw_move_length: 0,
             variations: Vec::new(),
+            annotations: Vec::new(),
+            annotations_complete: true,
             branch_data: String::new(),
             branch_path: String::new(),
             branch_complete: true,
@@ -4872,6 +5301,121 @@ mod tests {
             source_format: None,
             playable: true,
         }
+    }
+
+    #[test]
+    fn ttxq_annotations_import_to_positions_and_reimport_preserves_local_notes() {
+        let mut model = test_app_model();
+        let mut record = ttxq_record("annotation-game");
+        record.title = "带注解棋谱".into();
+        record.moves = vec!["h2e2".into()];
+        record.note = "本地整谱备注".into();
+        record.annotations = vec![
+            TtxqAnnotationDto {
+                route_no: 1,
+                after_ply: 0,
+                text: "整谱说明".into(),
+                author: "作者甲".into(),
+                created_at: "2026-08-31 10:00".into(),
+                source_key: "root-1".into(),
+            },
+            TtxqAnnotationDto {
+                route_no: 1,
+                after_ply: 1,
+                text: "进边兵制马".into(),
+                author: "作者乙".into(),
+                created_at: "2026-08-31 10:01".into(),
+                source_key: "0-1".into(),
+            },
+        ];
+        let game_id = import_game(
+            &mut model,
+            &record,
+            "sha256:annotations-1",
+            "2026-08-31T10:00:00Z",
+            0,
+            TTXQ_BACKUP_FOLDER,
+        )
+        .unwrap();
+        let game = model.store.load_game(game_id).unwrap().unwrap();
+        assert!(game.note.contains("整谱说明"));
+        assert!(game.note.contains("本地整谱备注"));
+        let node = model.store.load_move_nodes(game_id).unwrap().remove(0);
+        assert!(node.comment.contains("进边兵制马"));
+
+        let local_comment = merge_ttxq_local_comment(&node.comment, "我的本地备注");
+        let operation = next_operation_for_game(
+            &mut model,
+            game_id,
+            OperationKind::UpdateComment,
+            serde_json::to_value(UpdateCommentPayload { node_id: node.id, comment: local_comment.clone() }).unwrap(),
+        );
+        model.store.update_comment_with_operation(node.id, &local_comment, &operation).unwrap();
+        record.annotations[1].text = "更新后的腾讯注解".into();
+        update_existing_ttxq_annotations(&mut model, &game, &record).unwrap();
+        let updated = model.store.load_move_nodes(game_id).unwrap().remove(0);
+        assert!(updated.comment.contains("更新后的腾讯注解"));
+        assert!(updated.comment.contains("我的本地备注"));
+        assert!(!updated.comment.contains("进边兵制马"));
+
+        record.annotations.clear();
+        assert_eq!(update_existing_ttxq_annotations(&mut model, &game, &record).unwrap(), 1);
+        let cleared = model.store.load_move_nodes(game_id).unwrap().remove(0);
+        assert!(!cleared.comment.contains(TTXQ_ANNOTATION_BEGIN));
+        assert!(cleared.comment.contains("我的本地备注"));
+    }
+
+    #[test]
+    fn nested_route_annotations_use_route_local_ply_indexes() {
+        let mut model = test_app_model();
+        let mut record = ttxq_record("nested-annotation-game");
+        record.title = "嵌套注解棋谱".into();
+        record.moves = vec!["h2e2".into(), "h9g7".into()];
+        record.variations = vec![TtxqVariationDto {
+            after_ply: 1,
+            moves: vec!["b9c7".into()],
+            route_no: Some(2),
+            source_key: "0-2-2".into(),
+            comment: String::new(),
+            children: vec![TtxqVariationDto {
+                after_ply: 1,
+                moves: vec!["h0g2".into()],
+                route_no: Some(3),
+                source_key: "2-2-3".into(),
+                comment: String::new(),
+                children: vec![],
+            }],
+        }];
+        record.annotations = vec![TtxqAnnotationDto {
+            route_no: 3,
+            after_ply: 1,
+            text: "嵌套路线首着注解".into(),
+            author: "作者乙".into(),
+            created_at: "2026-08-31 11:00".into(),
+            source_key: "0-3".into(),
+        }];
+
+        let game_id = import_game(
+            &mut model,
+            &record,
+            "sha256:nested-annotations",
+            "2026-08-31T11:00:00Z",
+            0,
+            TTXQ_BACKUP_FOLDER,
+        )
+        .unwrap();
+        let nodes = model.store.load_move_nodes(game_id).unwrap();
+        let annotated = nodes
+            .iter()
+            .find(|node| node.mv.to_iccs() == "h0g2")
+            .expect("nested route move");
+        assert!(annotated.comment.contains("嵌套路线首着注解"));
+        assert!(!nodes
+            .iter()
+            .find(|node| node.mv.to_iccs() == "b9c7")
+            .expect("parent route move")
+            .comment
+            .contains("嵌套路线首着注解"));
     }
 
     #[test]
@@ -6273,6 +6817,12 @@ const boardControls = () => [control];
 const branch = branchPayload();
 const payload = JSON.parse(branch.data);
 if (payload.candidates.length) throw new Error(`nested comment text was treated as a branch move: ${{branch.data}}`);
+if (!payload.annotations || payload.annotations.length !== 1) throw new Error(`comment annotation was not collected: ${{branch.data}}`);
+const annotation = payload.annotations[0];
+if (annotation.routeNo !== 1 || annotation.afterPly !== 7 || annotation.author !== 'Zero' || annotation.createdAt !== '24-09-05 13:24') {{
+  throw new Error(`comment annotation was mapped incorrectly: ${{JSON.stringify(annotation)}}`);
+}}
+if (JSON.stringify(annotation).includes('48477741') || Object.prototype.hasOwnProperty.call(annotation, 'uUin')) throw new Error('private account fields leaked into annotation payload');
 }})().catch(error => {{ console.error(error.message); process.exitCode = 1; }});
 "#
         );
@@ -6295,6 +6845,80 @@ if (payload.candidates.length) throw new Error(`nested comment text was treated 
         assert!(
             output.status.success(),
             "collector misclassified comment-only msg rows as branches: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn collector_marks_truncated_annotation_payloads_incomplete_and_keeps_valid_json() {
+        let branch_source = collector_source_between(
+            "      const branchPayload = (preferredControl = null) => {",
+            "      const liveLoadedId = () => {",
+        );
+        let harness = format!(
+            r#"(async () => {{
+const propertyNames = (value) => {{
+  const names = new Set();
+  let current = value;
+  for (let depth = 0; current && depth < 3; depth += 1) {{
+    Object.getOwnPropertyNames(current).forEach(name => names.add(name));
+    current = Object.getPrototypeOf(current);
+  }}
+  return [...names];
+}};
+const stringifyMoveValue = (value) => {{
+  if (!value || typeof value !== 'object') return {{ status: 'not-object', text: '', length: 0 }};
+  const text = String(value).trim();
+  return text ? {{ status: 'ok', text, length: text.length }} : {{ status: 'empty', text: '', length: 0 }};
+}};
+const safeMoveText = /^[0-9,\s\[\]]+$/;
+const findObjectWithOwnProperty = (root, property) => {{
+  const stack = [root];
+  const seen = new WeakSet();
+  while (stack.length) {{
+    const value = stack.pop();
+    if (!value || typeof value !== 'object' || seen.has(value)) continue;
+    seen.add(value);
+    if (Object.prototype.hasOwnProperty.call(value, property)) return value;
+    for (const child of Object.values(value)) if (child && typeof child === 'object') stack.push(child);
+  }}
+  return null;
+}};
+const control = {{
+  getMoveBranchKey: {{ '10': {{ routeNo: 1 }} }},
+  comments: {{
+    '6-1': Array.from({{ length: 33 }}, (_, index) => ({{ msg: `注解${{index}}-${{'长'.repeat(1500)}}`, uname: '作者' }})),
+  }},
+}};
+const model = {{}};
+const boardControls = () => [control];
+{branch_source}
+const branch = branchPayload(control);
+const payload = JSON.parse(branch.data);
+if (payload.annotationsComplete !== false) throw new Error(`truncated annotations were marked complete: ${{branch.data}}`);
+if (payload.payloadTruncated !== true) throw new Error(`oversized branch JSON was not replaced by a valid bounded envelope: ${{branch.data}}`);
+}})().catch(error => {{ console.error(error.message); process.exitCode = 1; }});
+"#
+        );
+        let mut child = std::process::Command::new("node")
+            .arg("-")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("Node.js is required to exercise annotation payload bounds");
+        child
+            .stdin
+            .as_mut()
+            .expect("annotation bounds checker stdin")
+            .write_all(harness.as_bytes())
+            .expect("write annotation bounds harness to Node.js");
+        let output = child
+            .wait_with_output()
+            .expect("run annotation bounds harness");
+        assert!(
+            output.status.success(),
+            "collector silently truncated annotation data: {}",
             String::from_utf8_lossy(&output.stderr)
         );
     }
@@ -7832,6 +8456,8 @@ if (raw.path !== 'bridge-snapshot') throw new Error('unchanged previous-game mov
                 raw_move_type: String::new(),
                 raw_move_length: 0,
                 variations: vec![],
+                annotations: vec![],
+                annotations_complete: true,
                 branch_data: String::new(),
                 branch_path: String::new(),
                 branch_complete: true,
@@ -7874,6 +8500,8 @@ if (raw.path !== 'bridge-snapshot') throw new Error('unchanged previous-game mov
             raw_move_type: String::new(),
             raw_move_length: 0,
             variations: vec![],
+            annotations: vec![],
+            annotations_complete: true,
             branch_data: String::new(),
             branch_path: String::new(),
             branch_complete: true,
@@ -7907,6 +8535,8 @@ if (raw.path !== 'bridge-snapshot') throw new Error('unchanged previous-game mov
             raw_move_type: String::new(),
             raw_move_length: 0,
             variations: vec![],
+            annotations: vec![],
+            annotations_complete: true,
             branch_data: String::new(),
             branch_path: String::new(),
             branch_complete: true,
@@ -7944,6 +8574,8 @@ if (raw.path !== 'bridge-snapshot') throw new Error('unchanged previous-game mov
             raw_move_type: String::new(),
             raw_move_length: 0,
             variations: vec![],
+            annotations: vec![],
+            annotations_complete: true,
             branch_data: String::new(),
             branch_path: String::new(),
             branch_complete: true,
@@ -7979,6 +8611,8 @@ if (raw.path !== 'bridge-snapshot') throw new Error('unchanged previous-game mov
             raw_move_type: String::new(),
             raw_move_length: 0,
             variations: vec![],
+            annotations: vec![],
+            annotations_complete: true,
             branch_data: String::new(),
             branch_path: String::new(),
             branch_complete: true,
@@ -8015,6 +8649,8 @@ if (raw.path !== 'bridge-snapshot') throw new Error('unchanged previous-game mov
             raw_move_type: String::new(),
             raw_move_length: 0,
             variations: vec![],
+            annotations: vec![],
+            annotations_complete: true,
             branch_data: String::new(),
             branch_path: String::new(),
             branch_complete: true,
@@ -8050,6 +8686,8 @@ if (raw.path !== 'bridge-snapshot') throw new Error('unchanged previous-game mov
             raw_move_type: String::new(),
             raw_move_length: 0,
             variations: vec![],
+            annotations: vec![],
+            annotations_complete: true,
             branch_data: String::new(),
             branch_path: String::new(),
             branch_complete: true,
@@ -8086,6 +8724,8 @@ if (raw.path !== 'bridge-snapshot') throw new Error('unchanged previous-game mov
             raw_move_type: String::new(),
             raw_move_length: 0,
             variations: vec![],
+            annotations: vec![],
+            annotations_complete: true,
             branch_data: String::new(),
             branch_path: String::new(),
             branch_complete: true,
@@ -8109,6 +8749,27 @@ if (raw.path !== 'bridge-snapshot') throw new Error('unchanged previous-game mov
     }
 
     #[test]
+    fn source_note_does_not_strip_source_like_lines_from_ttxq_annotations() {
+        let mut record = ttxq_record("annotation-source-line");
+        record.note = "本地备注\n来源：旧的自动元数据".into();
+        record.annotations = vec![TtxqAnnotationDto {
+            route_no: 1,
+            after_ply: 0,
+            text: "来源：棋友整理\n重点观察中路变化".into(),
+            author: "作者甲".into(),
+            created_at: "2026-08-31 10:00".into(),
+            source_key: "root-1".into(),
+        }];
+
+        let note = source_note(&record);
+
+        assert!(note.contains("来源：棋友整理\n重点观察中路变化"));
+        assert!(note.contains("本地备注"));
+        assert!(!note.contains("来源：旧的自动元数据"));
+        assert!(note.contains("来源：天天象棋网页"));
+    }
+
+    #[test]
     fn resolves_chinese_provider_moves_before_import() {
         let record = TtxqGameRecordDto {
             qipu_id: "qipu-chinese".into(),
@@ -8120,6 +8781,8 @@ if (raw.path !== 'bridge-snapshot') throw new Error('unchanged previous-game mov
             raw_move_type: "string".into(),
             raw_move_length: 22,
             variations: vec![],
+            annotations: vec![],
+            annotations_complete: true,
             branch_data: String::new(),
             branch_path: String::new(),
             branch_complete: true,
@@ -8154,6 +8817,8 @@ if (raw.path !== 'bridge-snapshot') throw new Error('unchanged previous-game mov
             raw_move_type: "array".into(),
             raw_move_length: 35,
             variations: vec![],
+            annotations: vec![],
+            annotations_complete: true,
             branch_data: String::new(),
             branch_path: String::new(),
             branch_complete: true,
@@ -8188,6 +8853,8 @@ if (raw.path !== 'bridge-snapshot') throw new Error('unchanged previous-game mov
             raw_move_type: "array".into(),
             raw_move_length: 8,
             variations: vec![],
+            annotations: vec![],
+            annotations_complete: true,
             branch_data: String::new(),
             branch_path: String::new(),
             branch_complete: true,
@@ -8230,6 +8897,8 @@ if (raw.path !== 'bridge-snapshot') throw new Error('unchanged previous-game mov
             raw_move_type: "missing".into(),
             raw_move_length: 92,
             variations: vec![],
+            annotations: vec![],
+            annotations_complete: true,
             branch_data: String::new(),
             branch_path: String::new(),
             branch_complete: true,

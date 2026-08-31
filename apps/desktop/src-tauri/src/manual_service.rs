@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::HashSet;
 use crate::{
     link_service::{
         active_screenshot_resolution, invalidate_screenshot_move_resolution,
@@ -101,7 +102,7 @@ pub(crate) fn get_game_metadata(
         red: metadata.red,
         black: metadata.black,
         result: metadata.result,
-        note: game.note,
+        note: ttxq_sync::local_ttxq_comment(&game.note),
     })
 }
 
@@ -119,14 +120,12 @@ pub(crate) fn update_game_metadata_for_game(
     if title.is_empty() {
         return Err("棋谱标题不能为空".into());
     }
-    if model
+    let existing_game = model
         .store
         .load_game(game_id)
         .map_err(|error| error.to_string())?
-        .is_none()
-    {
-        return Err("棋谱不存在".into());
-    }
+        .ok_or("棋谱不存在")?;
+    let note = ttxq_sync::merge_ttxq_local_comment(&existing_game.note, &metadata.note);
     let document_metadata = ManualMetadata {
         title: title.to_owned(),
         event: metadata.event.trim().to_owned(),
@@ -136,7 +135,7 @@ pub(crate) fn update_game_metadata_for_game(
         black: metadata.black.trim().to_owned(),
         result: metadata.result.trim().to_owned(),
     };
-    let payload = metadata_payload(&document_metadata, &metadata.note);
+    let payload = metadata_payload(&document_metadata, &note);
     let operation = next_operation_for_game(
         &mut model,
         game_id,
@@ -150,14 +149,14 @@ pub(crate) fn update_game_metadata_for_game(
         .update_game_metadata_with_operation(
             game_id,
             title,
-            &metadata.note,
+            &note,
             &metadata_json,
             &operation,
         )
         .map_err(|error| error.to_string())?;
     if model.game_id == game_id {
         model.metadata = document_metadata;
-        model.note = metadata.note;
+        model.note = note;
         let _ = sync_current_game_mirror(&mut model);
     }
     board_dto(&model)
@@ -655,9 +654,12 @@ pub(crate) fn rename_library_folder(
     previous: String,
     next: String,
     state: State<'_, DesktopState>,
-) -> Result<(), String> {
+) -> Result<LibraryMoveResultDto, String> {
     let previous = normalize_library_folder_path(&previous)?;
     let next = normalize_library_folder_path(&next)?;
+    if previous == next || next.starts_with(&format!("{previous}/")) {
+        return Err("不能把目录移动到自身或它的子目录".into());
+    }
     let mut model = state
         .model
         .lock()
@@ -674,10 +676,7 @@ pub(crate) fn rename_library_folder(
                 .is_some_and(|folder| folder == previous || folder.starts_with(&previous_prefix))
         })
         .collect::<Vec<_>>();
-    model
-        .store
-        .rename_library_folder(&previous, &next)
-        .map_err(|_| "系统文件夹不能重命名，或文件夹不存在".to_owned())?;
+    let mut game_operations = Vec::with_capacity(affected.len());
     for game in affected {
         let old_folder = game.library_folder.as_deref().unwrap_or_default();
         let new_folder = if old_folder == previous {
@@ -692,18 +691,63 @@ pub(crate) fn rename_library_folder(
             OperationKind::UpdateGameMetadata,
             serde_json::to_value(payload).map_err(|error| error.to_string())?,
         );
-        model
-            .store
-            .update_game_library_with_operation(
-                game.id,
-                Some(&new_folder),
-                game.favorite,
-                &game.tags,
-                &operation,
-            )
-            .map_err(|error| error.to_string())?;
+        game_operations.push((game.id, new_folder, operation));
     }
-    Ok(())
+    let (folder_count, game_count) = model
+        .store
+        .rename_library_folder_with_operations(&previous, &next, &game_operations)
+        .map_err(|_| "系统文件夹不能移动、目标名称冲突，或文件夹不存在".to_owned())?;
+    Ok(LibraryMoveResultDto { folder_count, game_count })
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LibraryMoveResultDto {
+    pub folder_count: usize,
+    pub game_count: usize,
+}
+
+#[tauri::command]
+pub(crate) fn move_games_to_folder(
+    game_ids: Vec<Uuid>,
+    folder: Option<String>,
+    state: State<'_, DesktopState>,
+) -> Result<LibraryMoveResultDto, String> {
+    let folder = folder
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| normalize_library_folder_path(&value))
+        .transpose()?;
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    let unique_ids = game_ids.into_iter().collect::<HashSet<_>>();
+    let games = model
+        .store
+        .load_games()
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .filter(|game| unique_ids.contains(&game.id))
+        .collect::<Vec<_>>();
+    if games.len() != unique_ids.len() {
+        return Err("部分棋谱已不存在，请刷新棋谱库后重试".to_owned());
+    }
+    let mut entries = Vec::with_capacity(games.len());
+    for game in games {
+        let payload = library_metadata_payload(&game, folder.clone());
+        let operation = next_operation_for_game(
+            &mut model,
+            game.id,
+            OperationKind::UpdateGameMetadata,
+            serde_json::to_value(payload).map_err(|error| error.to_string())?,
+        );
+        entries.push((game.id, folder.clone(), operation));
+    }
+    let game_count = model
+        .store
+        .move_games_to_folder_with_operations(&entries)
+        .map_err(|error| error.to_string())?;
+    Ok(LibraryMoveResultDto { folder_count: 0, game_count })
 }
 
 #[tauri::command]
