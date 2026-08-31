@@ -95,6 +95,22 @@ absoluteAfterPly    = parentPrefixBeforeRoute + localAfterPly
 - `A!=0` 时必须先找到 ID 为 `A` 的已解码父路线；父路线完整路径由“进入父路线前的主线/祖先前缀 + 父路线自身走法”组成。
 - 转为标准东萍标签时，绝对首着序号是 `absoluteAfterPly + 1`；递归本地 DTO 的 `afterPly` 则保持相对直接父路线的 `localAfterPly`。
 
+## 路线局面注解
+
+天天象棋右侧“棋谱注解”与“棋谱评论”是两类数据。参考导出器通过
+`findObjectA(boardControl, "msg")` 读取前者；其中 `{ msg, time, uname }` 是注解正文、时间和显示作者，不能作为分支走法。
+
+东萍解析器 `ShowCommentText` / `EditComment` 使用
+`DhtmlXQ_comment<routeId>_<absolutePly>`：
+
+- `routeId=0` 表示主线，腾讯分支键 `A-B-C` 的路线使用来源 ID `C`；
+- `absolutePly` 是从整谱起点开始的绝对半回合，不是分支内局部序号；
+- 起始局面和主线第 2 半回合分别为 `comment0_0`、`comment0_2`；
+- 本地界面编号与来源 ID 分离：主线显示为 `1`，来源分支 `C` 显示为 `C + 1`。
+
+桥接还兼容 `R_P`、主线纯步号和旧版 `step-route` 键，但必须先转换为
+`sourceRouteId + absoluteAfterPly`，再通过已经解码的完整路线节点路径定位。普通社交评论列表没有位置键，不进入棋谱节点。
+
 ## 实现约束
 
 - Collector 只读取上述棋谱字段及受限诊断摘要，不扩大远程页面权限。
