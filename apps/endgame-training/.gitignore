@@ -1,0 +1,3 @@
+dist/
+public/wasm/*
+!public/wasm/.gitignore

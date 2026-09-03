@@ -1,4 +1,5 @@
 packages:
   - apps/desktop
+  - apps/endgame-training
 allowBuilds:
   esbuild: true

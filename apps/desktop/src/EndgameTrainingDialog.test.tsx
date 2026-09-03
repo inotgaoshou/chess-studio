@@ -1,10 +1,10 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EndgameTrainingDialog } from "./EndgameTrainingDialog";
 
 const firstBook = {
   id: "book-chen", title: "中国象棋实用残局增订本-陈松顺", sourcePath: "/tmp/chen.cbl",
-  fingerprint: "chen", parserVersion: 2, problemCount: 1, completedCount: 0, importedAt: "2026-09-03T00:00:00Z",
+  fingerprint: "chen", parserVersion: 2, problemCount: 2, completedCount: 0, importedAt: "2026-09-03T00:00:00Z",
 };
 const secondBook = {
   id: "book-next", title: "第二本残局集", sourcePath: "/tmp/next.cbl",
@@ -14,6 +14,9 @@ const problems = {
   "book-chen": [{
     id: "horse", libraryId: "book-chen", sourceIndex: 48, title: "（一）马取单士--着法1，红先胜", category: "马类",
     startingFen: "9/3kaN3/9/9/9/9/9/9/9/4K4 w - - 0 1", note: "单马必胜单士", solutionJson: "[{\"iccs\":\"f8e6\",\"comment\":\"\",\"children\":[]}]", completedAttempts: 0, totalElapsedMs: 0,
+  }, {
+    id: "auto-reply", libraryId: "book-chen", sourceIndex: 49, title: "自动应手演示", category: "马类",
+    startingFen: "9/3kaN3/9/9/9/9/9/9/9/4K4 w - - 0 1", note: "", solutionJson: "[{\"iccs\":\"f8e6\",\"comment\":\"\",\"children\":[{\"iccs\":\"d8d7\",\"comment\":\"\",\"children\":[]}]}]", completedAttempts: 0, totalElapsedMs: 0,
   }],
   "book-next": [{
     id: "next", libraryId: "book-next", sourceIndex: 0, title: "车兵残局", category: "车类",
@@ -36,7 +39,7 @@ const platform = vi.hoisted(() => ({
 
 vi.mock("./platform", () => ({ chessPlatform: platform }));
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 beforeEach(() => {
   platform.refreshEndgameLibraries.mockResolvedValue({ warnings: [] });
@@ -91,5 +94,20 @@ describe("EndgameTrainingDialog", () => {
     expect(screen.getByText(/删除题库《/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
     expect(platform.deleteEndgameLibrary).not.toHaveBeenCalled();
+  });
+
+  it("keeps the correct move visible before the automatic reply and names that reply in Chinese", async () => {
+    platform.endgameChineseMainline.mockResolvedValue(["马六进四", "将5进1"]);
+    render(<EndgameTrainingDialog onClose={vi.fn()}/>);
+
+    await screen.findByRole("button", { name: /中国象棋实用残局增订本-陈松顺/ });
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole("button", { name: /自动应手演示/ }));
+    fireEvent.click(screen.getByLabelText("f8"));
+    fireEvent.click(screen.getByLabelText("e6"));
+    expect(screen.getByText("正确，正在显示对方应手…")).toBeTruthy();
+    await act(async () => { await vi.advanceTimersByTimeAsync(650); });
+    expect(screen.getByText("正确，对方应手已自动走出：将5进1。")).toBeTruthy();
+    expect(platform.saveEndgameAttempt).toHaveBeenCalledWith(expect.objectContaining({ outcome: "completed" }));
   });
 });

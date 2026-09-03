@@ -7908,6 +7908,7 @@ dependencies = [
 name = "xiangqi-web-core"
 version = "1.0.1"
 dependencies = [
+ "manual-format",
  "serde",
  "serde_json",
  "uuid",

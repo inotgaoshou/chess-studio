@@ -15,6 +15,7 @@ const fmt = (ms: number) => `${String(Math.floor(ms / 60000)).padStart(2, "0")}:
 const sq = (value: Square) => `${String.fromCharCode(97 + value.col)}${9 - value.row}`;
 const attemptModeLabel: Record<string, string> = { solver: "只走解题方", replay: "双方复现", free: "自由实战" };
 const attemptOutcomeLabel: Record<string, string> = { completed: "解出", revealed: "已看答案", abandoned: "已放弃", free_finished: "自由对局结束" };
+const AUTO_REPLY_DELAY_MS = 650;
 
 function readFen(fen: string): Piece[] {
   const result: Piece[] = [];
@@ -96,6 +97,9 @@ export function EndgameTrainingDialog({ onClose }: { onClose(): void }) {
   const [demoPlaying, setDemoPlaying] = useState(false);
   const [freeMoves, setFreeMoves] = useState<string[]>([]);
   const [freeMovePending, setFreeMovePending] = useState(false);
+  const [autoReplyPending, setAutoReplyPending] = useState(false);
+  const [attemptFinished, setAttemptFinished] = useState(false);
+  const [playedMoves, setPlayedMoves] = useState<string[]>([]);
   const [attempts, setAttempts] = useState<EndgameAttemptDto[]>([]);
   const [showAttempts, setShowAttempts] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{
@@ -105,11 +109,13 @@ export function EndgameTrainingDialog({ onClose }: { onClose(): void }) {
     title: string;
   }>();
   const sampleImportAttempted = useRef(false);
+  const trainingSession = useRef(0);
+  const finishingAttempt = useRef(false);
   const elapsed = elapsedBeforePause + (startedAt ? Date.now() - startedAt : 0);
   const categories = useMemo(() => ["全部", ...Array.from(new Set(problems.map((item) => item.category))).sort()], [problems]);
   const visibleProblems = useMemo(() => problems.filter((item) => (category === "全部" || item.category === category) && (!query.trim() || `${item.title} ${item.category}`.includes(query.trim()))), [category, problems, query]);
   const index = problem ? visibleProblems.findIndex((item) => item.id === problem.id) : -1;
-  const expected = useMemo(() => line.map((move) => move.iccs), [line]);
+  const hintSquare = hints >= 2 && line[0] ? moveSquares(line[0].iccs).from : undefined;
   const answerMoves = useMemo(() => problem ? mainline(JSON.parse(problem.solutionJson)) : [], [problem]);
   const answerLines = answerNotation.length ? answerNotation : answerMoves;
   const rounds = useMemo(() => problem ? answerRounds(problem.startingFen, answerLines) : [], [answerLines, problem]);
@@ -196,8 +202,10 @@ export function EndgameTrainingDialog({ onClose }: { onClose(): void }) {
   }
 
   function start(item: EndgameProblemDto) {
+    trainingSession.current += 1;
+    finishingAttempt.current = false;
     setProblem(item); setLine(JSON.parse(item.solutionJson)); setPieces(readFen(item.startingFen)); setSelected(undefined); setLast(undefined);
-    setStartedAt(undefined); setElapsedBeforePause(0); setClock(0); setHints(0); setMistakes(0); setHasAdvanced(false); setNotice("选中棋子后再点目标点。第一步开始计时。"); setRevealed(false); setAnswerNotation([]); setAnswerStep(0); setDemoPlaying(false); setFreeMoves([]); setFreeMovePending(false); setShowAttempts(false); void loadAttempts(item.id);
+    setStartedAt(undefined); setElapsedBeforePause(0); setClock(0); setHints(0); setMistakes(0); setHasAdvanced(false); setNotice("选中棋子后再点目标点。第一步开始计时。"); setRevealed(false); setAttemptFinished(false); setAutoReplyPending(false); setPlayedMoves([]); setAnswerNotation([]); setAnswerStep(0); setDemoPlaying(false); setFreeMoves([]); setFreeMovePending(false); setShowAttempts(false); void loadAttempts(item.id);
   }
 
   function stopClock() {
@@ -208,7 +216,10 @@ export function EndgameTrainingDialog({ onClose }: { onClose(): void }) {
   }
 
   async function finish(outcome: "completed" | "revealed" | "abandoned" | "free_finished", duration = elapsed) {
-    if (!problem) return;
+    if (!problem || attemptFinished || finishingAttempt.current) return;
+    finishingAttempt.current = true;
+    setAttemptFinished(true);
+    setAutoReplyPending(false);
     setElapsedBeforePause(duration);
     setStartedAt(undefined);
     await chessPlatform.saveEndgameAttempt({ problemId: problem.id, mode, elapsedMs: duration, hintsUsed: hints, mistakes, outcome });
@@ -264,7 +275,7 @@ export function EndgameTrainingDialog({ onClose }: { onClose(): void }) {
   }
 
   async function revealAnswer() {
-    if (!problem) return;
+    if (!problem || attemptFinished) return;
     const moves = answerMoves;
     await finish("revealed");
     setPieces(readFen(problem.startingFen));
@@ -290,7 +301,7 @@ export function EndgameTrainingDialog({ onClose }: { onClose(): void }) {
   }
 
   async function playFreeMove(iccs: string, from: Square, to: Square, duration: number) {
-    if (!problem || freeMovePending) return;
+    if (!problem || freeMovePending || attemptFinished) return;
     setFreeMovePending(true);
     try {
       const result = await chessPlatform.endgameFreePracticeMove(problem.startingFen, freeMoves, iccs);
@@ -310,47 +321,71 @@ export function EndgameTrainingDialog({ onClose }: { onClose(): void }) {
   }
 
   function click(square: Square) {
-    if (!problem || revealed || freeMovePending || (!startedAt && elapsedBeforePause > 0)) return;
+    if (!problem || revealed || freeMovePending || autoReplyPending || attemptFinished || (!startedAt && elapsedBeforePause > 0)) return;
     const own = pieces.find((piece) => piece.row === square.row && piece.col === square.col);
     if (!selected) { if (own) setSelected(square); return; }
     if (own) { setSelected(square); return; }
     const moveStartedAt = Date.now();
-    const durationAfterMove = elapsedBeforePause + (startedAt ? moveStartedAt - startedAt : 0);
     const iccs = `${sq(selected)}${sq(square)}`;
     if (mode === "free") {
       setSelected(undefined);
+      const durationAfterMove = elapsedBeforePause + (startedAt ? moveStartedAt - startedAt : 0);
       void playFreeMove(iccs, selected, square, durationAfterMove);
       return;
     }
-    if (!startedAt) setStartedAt(moveStartedAt);
     const answer = line.find((move) => move.iccs === iccs);
     setSelected(undefined);
     if (!answer) { setMistakes((value) => value + 1); setNotice("这步不在题解分支中，局面没有改变，可以继续尝试。"); return; }
+    if (!startedAt) setStartedAt(moveStartedAt);
+    const durationAfterMove = elapsedBeforePause + (startedAt ? moveStartedAt - startedAt : 0);
     setHasAdvanced(true);
-    let nextPieces = apply(pieces, iccs);
+    const nextPieces = apply(pieces, iccs);
     let nextLine = answer.children;
     setLast({ from: selected, to: square });
-    if (mode === "solver" && nextLine.length) {
-      const reply = nextLine[0]; nextPieces = apply(nextPieces, reply.iccs); nextLine = reply.children;
-      setNotice(`正确，对方应手已自动走出：${reply.iccs}。`);
-    } else setNotice("正确，继续完成题解。");
-    setPieces(nextPieces); setLine(nextLine);
-    if (!nextLine.length) void finish("completed", durationAfterMove);
+    const nextPlayedMoves = [...playedMoves, iccs];
+    setPieces(nextPieces); setPlayedMoves(nextPlayedMoves);
+    if (mode !== "solver" || !nextLine.length) {
+      setLine(nextLine);
+      setNotice("正确，继续完成题解。");
+      if (!nextLine.length) void finish("completed", durationAfterMove);
+      return;
+    }
+    const reply = nextLine[0];
+    const currentSession = trainingSession.current;
+    setLine(nextLine);
+    setAutoReplyPending(true);
+    setNotice("正确，正在显示对方应手…");
+    window.setTimeout(() => {
+      if (currentSession !== trainingSession.current || finishingAttempt.current) return;
+      void (async () => {
+        const replyMoves = [...nextPlayedMoves, reply.iccs];
+        const notation = await chessPlatform.endgameChineseMainline(problem.startingFen, replyMoves).then((items) => items.at(-1)).catch(() => reply.iccs);
+        if (currentSession !== trainingSession.current || finishingAttempt.current) return;
+        setPieces(apply(nextPieces, reply.iccs));
+        setLast(moveSquares(reply.iccs));
+        setLine(reply.children);
+        setPlayedMoves(replyMoves);
+        setAutoReplyPending(false);
+        setNotice(`正确，对方应手已自动走出：${notation}。`);
+        if (!reply.children.length) await finish("completed", durationAfterMove + Date.now() - moveStartedAt);
+      })();
+    }, AUTO_REPLY_DELAY_MS);
   }
 
   function togglePause() {
+    if (attemptFinished || autoReplyPending) return;
     if (startedAt) { stopClock(); setNotice("已暂停，暂停时间不会计入本题用时。"); }
     else if (elapsedBeforePause > 0 && !revealed) { setStartedAt(Date.now()); setNotice("继续作答。"); }
   }
-  function restart() { if (problem && (startedAt || elapsedBeforePause || hints || mistakes)) void finish("abandoned"); if (problem) start(problem); }
+  async function restart() { if (!problem) return; if (!attemptFinished && (startedAt || elapsedBeforePause || hints || mistakes)) await finish("abandoned"); start(problem); }
   const next = (offset: number) => { const item = visibleProblems[index + offset]; if (item) start(item); };
 
   return <div className="modal-backdrop endgame-backdrop"><section className="endgame-training-dialog" role="dialog" aria-modal="true" aria-label="残局训练工作台">
     <header className="endgame-topbar"><span><Sparkles size={18}/><strong>残局训练</strong><small>{library?.title ?? "本地题库"}</small></span><div className="endgame-topbar-actions">{library && <button title="删除当前题库" onClick={() => setDeleteTarget({ kind: "library", id: library.id, title: library.title })}><Trash2 size={16}/></button>}<button title="关闭" onClick={onClose}><X size={19}/></button></div></header>
     {!library ? <div className="endgame-empty"><BookOpen size={32}/><strong>导入本地残局题库</strong><span>选择 CBL 文件后即可按题号练习。</span><button className="primary" onClick={() => void importCbl()}>导入 CBL</button>{importError && <p className="endgame-import-error">导入失败：{importError}</p>}{libraries.map((item) => <button key={item.id} onClick={() => void selectLibrary(item)}>{item.title} · {item.completedCount}/{item.problemCount}</button>)}</div> : <div className="endgame-training-layout">
       <aside className="endgame-library-rail"><header><strong>题库目录</strong><small>共 {libraries.length} 本本地题库</small></header><button className="endgame-import" onClick={() => void importCbl()}>新增 CBL 题库</button><div className="endgame-library-tree">{libraries.map((item) => { const expanded = item.id === expandedLibraryId; return <section className={`endgame-library-group ${expanded ? "expanded" : ""}`} key={item.id}><button className={`endgame-library-parent ${expanded ? "active" : ""}`} aria-expanded={expanded} onClick={() => toggleLibrary(item)}><BookOpen size={15}/><span><strong>{item.title}</strong><small>{item.completedCount}/{item.problemCount} 已完成</small></span>{expanded ? <ChevronDown size={15}/> : <ChevronRight size={15}/>}</button>{expanded && <div className="endgame-library-children"><div className="endgame-filters"><label><Search size={13}/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索题名"/></label><select value={category} onChange={(event) => setCategory(event.target.value)}>{categories.map((categoryItem) => <option key={categoryItem}>{categoryItem}</option>)}</select></div><div className="endgame-problem-list">{visibleProblems.map((problemItem) => <button className={problemItem.id === problem?.id ? "active" : ""} key={problemItem.id} onClick={() => start(problemItem)}><b>{problemItem.sourceIndex + 1}</b><span><strong>{problemItem.title}</strong><small>{problemItem.category} · {problemItem.completedAttempts ? `累计 ${fmt(problemItem.totalElapsedMs)}` : "未练"}</small></span></button>)}{visibleProblems.length === 0 && <p className="endgame-no-problems">没有匹配题目</p>}</div></div>}</section>; })}</div>{importError && <p className="endgame-import-error">导入失败：{importError}</p>}</aside>
-      <main className="endgame-board-stage">{!problem ? <div className="endgame-empty"><BookOpen size={28}/><strong>选择一道残局</strong><span>从左侧题号开始，完成进度会自动保存。</span></div> : <><header className="endgame-problem-heading"><span>第 {problem.sourceIndex + 1}/{problems.length} 题</span><strong>{problem.title}</strong><small>{problem.category}</small><button className="endgame-problem-delete" title="从训练目录移除当前残局" onClick={() => setDeleteTarget({ kind: "problem", id: problem.id, libraryId: problem.libraryId, title: problem.title })}><Trash2 size={15}/></button></header><div className="endgame-board-wrap"><LinkMiniBoard presentation="preview" markerStyle="corner" animateMoves={false} boardAriaLabel="残局训练棋盘" pieces={pieces} arrows={[]} selectedSquare={selected} lastMove={last ? { ...last, movedBy: "红方" } : undefined} pieceAsset={(piece) => `/skins/qingxin-zhuyun/${piece.color === "red" ? "r" : "b"}${piece.kind}.png`} boardAsset={boardAsset}/><div className="endgame-hit-grid">{Array.from({ length: 90 }, (_, squareIndex) => { const square = { row: Math.floor(squareIndex / 9), col: squareIndex % 9 }; return <button key={squareIndex} aria-label={sq(square)} style={boardIntersectionStyle(square, false, "qingxin-zhuyun")} onClick={() => click(square)}/>; })}</div></div><p className="endgame-board-tip">{mode === "free" ? "自由实战：双方轮流走任意合法着法。" : "选棋子，再点目标点。错误走法不会改变局面。"}</p></>}</main>
-      <aside className="endgame-control-rail">{problem ? <><section className="endgame-clock"><span>本题用时</span><strong>{fmt(elapsed)}</strong><small>累计用时 {fmt(problem.totalElapsedMs)}</small><button className="endgame-attempts-trigger" onClick={() => { setShowAttempts((value) => !value); void loadAttempts(problem.id); }}><History size={13}/>记录</button></section><section className="endgame-mode"><label title="只输入解题方着法，系统自动走题解中的对方应手"><input type="radio" checked={mode === "solver"} disabled={hasAdvanced || revealed} onChange={() => setMode("solver")}/>只走解题方</label><label title="红黑双方都必须按题解逐手复现"><input type="radio" checked={mode === "replay"} disabled={hasAdvanced || revealed} onChange={() => setMode("replay")}/>双方复现（按题解）</label><label title="双方轮流走任意合法着法，不校验是否进入题解分支"><input type="radio" checked={mode === "free"} disabled={hasAdvanced || revealed} onChange={() => setMode("free")}/>自由实战</label></section><section className="endgame-actions"><button className="endgame-hint" onClick={() => { const value = Math.min(3, hints + 1); setHints(value); setNotice(value === 1 ? (problem.note || "先寻找将军、吃子和强制着。") : value === 2 ? "提示：请关注题解首着的起点。" : `首着：${expected[0] ?? "题解结束"}`); }}><Lightbulb size={16}/>提示 {hints}/3</button><button disabled={!startedAt && elapsedBeforePause === 0} onClick={togglePause}>{startedAt ? <Pause size={16}/> : <Play size={16}/>}{startedAt ? "暂停" : "继续"}</button><button onClick={restart}><RotateCcw size={16}/>重来</button><button onClick={() => void revealAnswer()}><ListRestart size={16}/>看答案</button></section><section className="endgame-status"><span>错误 {mistakes} 次</span>{notice && <p>{renderCblText(notice)}</p>}</section>{showAttempts ? <section className="endgame-attempt-history"><header><strong>答题记录</strong><small>最近 {attempts.length} 次</small></header><div>{attempts.length ? attempts.map((attempt) => <p key={attempt.id}><b>{attemptOutcomeLabel[attempt.outcome] ?? attempt.outcome}</b><span>{attemptModeLabel[attempt.mode] ?? attempt.mode} · {fmt(attempt.elapsedMs)} · 错 {attempt.mistakes} · 提示 {attempt.hintsUsed}</span><small>{attempt.createdAt.replace("T", " ").slice(0, 16)}</small></p>) : <p className="endgame-no-attempts">还没有答题记录</p>}</div></section> : revealed && <section className="endgame-answer"><header><strong>题解回合</strong><small>{answerStep}/{answerMoves.length} 手</small></header><div className="endgame-answer-rounds">{rounds.map((round) => <p key={round.round}><b>第 {round.round} 回合</b><span>{round.first}{round.second ? ` · ${round.second}` : ""}</span></p>)}</div><footer className="endgame-answer-demo"><button onClick={() => setDemoPlaying((value) => !value)} disabled={answerStep >= answerMoves.length}>{demoPlaying ? <Pause size={14}/> : <Play size={14}/>} {demoPlaying ? "暂停演示" : answerStep ? "继续演示" : "演示答案"}</button><button onClick={restartAnswerDemo} disabled={answerStep === 0}><RotateCcw size={14}/>从头</button></footer>{demoSummary && <section className="endgame-demo-summary"><strong>演示总结</strong><p>{renderCblText(demoSummary)}</p></section>}</section>}<footer className="endgame-navigation"><button disabled={index <= 0} title="上一题" onClick={() => next(-1)}><ChevronLeft size={17}/></button><button disabled={index >= visibleProblems.length - 1} title="下一题" onClick={() => next(1)}><ChevronRight size={17}/></button></footer></> : <p>从左侧选择题目。</p>}</aside>
+      <main className="endgame-board-stage">{!problem ? <div className="endgame-empty"><BookOpen size={28}/><strong>选择一道残局</strong><span>从左侧题号开始，完成进度会自动保存。</span></div> : <><header className="endgame-problem-heading"><span>第 {problem.sourceIndex + 1}/{problems.length} 题</span><strong>{problem.title}</strong><small>{problem.category}</small><button className="endgame-problem-delete" title="从训练目录移除当前残局" onClick={() => setDeleteTarget({ kind: "problem", id: problem.id, libraryId: problem.libraryId, title: problem.title })}><Trash2 size={15}/></button></header><div className="endgame-board-wrap"><LinkMiniBoard presentation="preview" markerStyle="corner" animateMoves={false} boardAriaLabel="残局训练棋盘" pieces={pieces} arrows={[]} selectedSquare={selected ?? hintSquare} lastMove={last ? { ...last, movedBy: "红方" } : undefined} pieceAsset={(piece) => `/skins/qingxin-zhuyun/${piece.color === "red" ? "r" : "b"}${piece.kind}.png`} boardAsset={boardAsset}/><div className="endgame-hit-grid">{Array.from({ length: 90 }, (_, squareIndex) => { const square = { row: Math.floor(squareIndex / 9), col: squareIndex % 9 }; return <button key={squareIndex} aria-label={sq(square)} style={boardIntersectionStyle(square, false, "qingxin-zhuyun")} onClick={() => click(square)}/>; })}</div></div><p className="endgame-board-tip">{mode === "free" ? "自由实战：双方轮流走任意合法着法。" : "选棋子，再点目标点。错误走法不会改变局面。"}</p></>}</main>
+      <aside className="endgame-control-rail">{problem ? <><section className="endgame-clock"><span>本题用时</span><strong>{fmt(elapsed)}</strong><small>累计用时 {fmt(problem.totalElapsedMs)}</small><button className="endgame-attempts-trigger" onClick={() => { setShowAttempts((value) => !value); void loadAttempts(problem.id); }}><History size={13}/>记录</button></section><section className="endgame-mode"><label title="只输入解题方着法，系统自动走题解中的对方应手"><input type="radio" checked={mode === "solver"} disabled={hasAdvanced || revealed || attemptFinished} onChange={() => setMode("solver")}/>只走解题方</label><label title="红黑双方都必须按题解逐手复现"><input type="radio" checked={mode === "replay"} disabled={hasAdvanced || revealed || attemptFinished} onChange={() => setMode("replay")}/>双方复现（按题解）</label><label title="双方轮流走任意合法着法，不校验是否进入题解分支"><input type="radio" checked={mode === "free"} disabled={hasAdvanced || revealed || attemptFinished} onChange={() => setMode("free")}/>自由实战</label></section><section className="endgame-actions"><button className="endgame-hint" disabled={attemptFinished || autoReplyPending} onClick={() => { void (async () => { const value = Math.min(3, hints + 1); const lead = line[0]?.iccs; setHints(value); if (value === 1) setNotice(problem.note || "先寻找将军、吃子和强制着。"); else if (!lead) setNotice("题解已完成。"); else if (value === 2) setNotice("提示：棋盘上已标出当前应走棋子。"); else { const notation = await chessPlatform.endgameChineseMainline(problem.startingFen, [...playedMoves, lead]).then((items) => items.at(-1)).catch(() => lead); setNotice(`首着：${notation}`); } })(); }}><Lightbulb size={16}/>提示 {hints}/3</button><button disabled={attemptFinished || autoReplyPending || (!startedAt && elapsedBeforePause === 0)} onClick={togglePause}>{startedAt ? <Pause size={16}/> : <Play size={16}/>}{startedAt ? "暂停" : "继续"}</button><button onClick={() => void restart()}><RotateCcw size={16}/>重来</button><button disabled={attemptFinished} onClick={() => void revealAnswer()}><ListRestart size={16}/>看答案</button></section><section className="endgame-status"><span>错误 {mistakes} 次</span>{notice && <p>{renderCblText(notice)}</p>}</section>{showAttempts ? <section className="endgame-attempt-history"><header><strong>答题记录</strong><small>最近 {attempts.length} 次</small></header><div>{attempts.length ? attempts.map((attempt) => <p key={attempt.id}><b>{attemptOutcomeLabel[attempt.outcome] ?? attempt.outcome}</b><span>{attemptModeLabel[attempt.mode] ?? attempt.mode} · {fmt(attempt.elapsedMs)} · 错 {attempt.mistakes} · 提示 {attempt.hintsUsed}</span><small>{attempt.createdAt.replace("T", " ").slice(0, 16)}</small></p>) : <p className="endgame-no-attempts">还没有答题记录</p>}</div></section> : revealed && <section className="endgame-answer"><header><strong>题解回合</strong><small>{answerStep}/{answerMoves.length} 手</small></header><div className="endgame-answer-rounds">{rounds.map((round) => <p key={round.round}><b>第 {round.round} 回合</b><span>{round.first}{round.second ? ` · ${round.second}` : ""}</span></p>)}</div><footer className="endgame-answer-demo"><button onClick={() => setDemoPlaying((value) => !value)} disabled={answerStep >= answerMoves.length}>{demoPlaying ? <Pause size={14}/> : <Play size={14}/>} {demoPlaying ? "暂停演示" : answerStep ? "继续演示" : "演示答案"}</button><button onClick={restartAnswerDemo} disabled={answerStep === 0}><RotateCcw size={14}/>从头</button></footer>{demoSummary && <section className="endgame-demo-summary"><strong>演示总结</strong><p>{renderCblText(demoSummary)}</p></section>}</section>}<footer className="endgame-navigation"><button disabled={index <= 0} title="上一题" onClick={() => next(-1)}><ChevronLeft size={17}/></button><button disabled={index >= visibleProblems.length - 1} title="下一题" onClick={() => next(1)}><ChevronRight size={17}/></button></footer></> : <p>从左侧选择题目。</p>}</aside>
     </div>}{deleteTarget && <div className="endgame-delete-backdrop" role="alertdialog" aria-modal="true" aria-label="确认删除" onMouseDown={() => setDeleteTarget(undefined)}><section className="endgame-delete-confirm" onMouseDown={(event) => event.stopPropagation()}><strong>确认删除</strong><p>{deleteTarget.kind === "library" ? `删除题库《${deleteTarget.title}》及全部本地答题记录？此操作不可恢复。` : `从训练目录移除《${deleteTarget.title}》？已有答题记录会保留在本机。`}</p><footer><button onClick={() => setDeleteTarget(undefined)}>取消</button><button className="danger" onClick={() => void confirmDelete()}>删除</button></footer></section></div>}
   </section></div>;
 }

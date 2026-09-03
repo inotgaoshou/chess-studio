@@ -14,6 +14,7 @@ uuid = { version = "1.18", features = ["v4", "serde", "js"] }
 wasm-bindgen = "0.2"
 xiangqi-core = { path = "../xiangqi-core" }
 xiangqi-manual = { path = "../manual" }
+manual-format = { path = "../manual-format" }
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
