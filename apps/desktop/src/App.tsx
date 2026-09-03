@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type SyntheticEvent } from "react";
 import { flushSync } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -82,7 +82,8 @@ import { CandidatePreviewSteps } from "./CandidatePreviewSteps";
 import { ENGINE_ANALYSIS_HISTORY_LIMIT, beginAnalysisHistory, beginAnalysisStream, completeAnalysisStream, isAnalysisSessionCurrent, updateAnalysisHistory, updateAnalysisStream, type AnalysisHistoryBuffer, type AnalysisStreamBuffer } from "./analysisStream";
 import { auditResultText, classifyBookCandidateAudit, type BookCandidateAuditResult } from "./bookCandidateAudit";
 import { ACCOUNT_SKINS, normalizeSkinId, requiresSignInForSkinPatch, skinAssetFolder } from "./skinAccess";
-import { hasUpcomingBranchPoint } from "./branchNavigation";
+import { reconcilePiecesWithFen } from "./boardState";
+import { findManualTreeNode, hasUpcomingBranchPoint } from "./branchNavigation";
 import { buildMindMapSvg } from "./mindMapExport";
 import { buildStrategyInsight } from "./strategyInsights";
 import { TheoryLibraryView } from "./TheoryLibraryView";
@@ -98,11 +99,13 @@ import { ReviewWorkspace } from "./ReviewWorkspace";
 import { ReviewGameLibrary } from "./ReviewGameLibrary";
 import { FloatingManualRoundList } from "./FloatingManualRoundList";
 import { TtxqAnnotationCard } from "./TtxqAnnotationCard";
-import { mergeTtxqLocalComment, splitTtxqComment } from "./ttxqAnnotations";
+import { currentTtxqAnnotationValueForNode, mergeTtxqLocalComment, splitTtxqComment } from "./ttxqAnnotations";
 import { HorizontalScrollArea } from "./HorizontalScrollArea";
 import { U10TrainingDialog } from "./U10TrainingDialog";
+import { EndgameTrainingDialog } from "./EndgameTrainingDialog";
 import { UserManualDialog } from "./UserManualDialog";
 import { boardCellStyle, boardIntersectionPoint } from "./boardGeometry";
+import { PositionEditorBoard } from "./PositionEditorBoard";
 import { buildSelectedPieceThought, type PieceThoughtSelection } from "./pieceThoughtModel";
 import userManualMarkdown from "../../../docs/USER_MANUAL.zh-CN.md?raw";
 
@@ -114,6 +117,7 @@ const ENGINE_ANALYSIS_SNAPSHOT_KEY = "xiangqi:engine-analysis-snapshot";
 const ENGINE_ANALYSIS_CHANNEL = "xiangqi:engine-analysis";
 const COMPACT_ENGINE_LINE_MIN_MOVES = MIN_CANDIDATE_LINE_MOVES;
 const COMPACT_ENGINE_LINE_MAX_MOVES = CANDIDATE_PREVIEW_HALF_MOVES;
+const COMPACT_ENGINE_LIBRARY_CANDIDATE_COUNT = 5;
 const DEFAULT_BRANCH_ARROW_COLOR = "#f45d0b";
 const DEFAULT_BRANCH_ARROW_BADGE_COLOR = "#4aa51c";
 const DEFAULT_ENGINE_MOVE_TIME_MS = 1000;
@@ -426,12 +430,18 @@ export function selectAnalysisArrowLines(options: {
   analysisArrowFen?: string;
   boardFen: string;
   analysisIsStale?: boolean;
+  candidateLimit?: number;
 }) {
   if (options.analysisFen !== options.boardFen) return [];
   if (options.analysisArrowFen !== options.boardFen) return [];
   if (options.analysisIsStale) return [];
+  const candidateLimit = options.candidateLimit == null
+    ? undefined
+    : Math.max(MIN_ENGINE_CANDIDATES, Math.trunc(options.candidateLimit));
   return options.lines
-    .filter((line) => line.multipv >= 1 && line.pv.length > 0);
+    .filter((line) => line.multipv >= 1 && line.pv.length > 0)
+    .sort((left, right) => left.multipv - right.multipv)
+    .slice(0, candidateLimit);
 }
 
 export function mobileCandidateArrowLines(lines: AnalysisLine[], multipv: number) {
@@ -835,10 +845,25 @@ function initialManualViewMode(): ManualViewMode {
 }
 
 function normalizeBoardState(value?: Partial<BoardState> | null): BoardState {
+  const hasInput = value != null;
+  const hasFen = typeof value?.fen === "string" && value.fen.trim().length > 0;
+  // A valid Xiangqi position always contains at least the two kings. Treat an
+  // empty or partial array from a damaged/stale bridge response as missing
+  // data too; the FEN is the canonical position and must not be replaced by
+  // the standard opening position.
+  const hasPieces = Array.isArray(value?.pieces) && value.pieces.length > 0;
+  const providedPieces = hasPieces
+    ? value!.pieces!.filter((piece): piece is Piece => Boolean(piece && typeof piece === "object"))
+    : [];
+  const pieces = hasFen ? reconcilePiecesWithFen(value!.fen!, providedPieces) : providedPieces;
   return {
     ...fallback,
     ...value,
-    pieces: Array.isArray(value?.pieces) ? value.pieces : fallback.pieces,
+    // A malformed or partial piece list is repaired from its FEN. If the FEN
+    // itself is unusable, keep the list empty and surface the corruption
+    // instead of silently restoring the standard opening position.
+    pieces: pieces.length > 0 ? pieces : hasFen || hasInput ? [] : fallback.pieces,
+    status: pieces.length === 0 && (hasFen || hasInput) ? "局面数据损坏，请重新读取" : value?.status ?? fallback.status,
     history: Array.isArray(value?.history) ? value.history : [],
     continuation: Array.isArray(value?.continuation) ? value.continuation : [],
     branches: Array.isArray(value?.branches) ? value.branches : [],
@@ -868,7 +893,31 @@ function pieceSide(piece: Piece): BoardState["sideToMove"] {
 
 function pieceAsset(piece: Piece, skin: DesktopPreferencesDto["pieceSkin"]) {
   const folder = skinAssetFolder(skin);
-  return `/skins/${folder}/${piece.color === "red" ? "r" : "b"}${pieceCode[piece.kind] ?? "p"}.png`;
+  const kind = String(piece?.kind ?? "").toLowerCase();
+  const label = String(piece?.label ?? "");
+  const code = pieceCode[kind]
+    ?? ({ knight: "n", horse: "n", bishop: "b", guard: "a", advisor: "a", general: "k", king: "k", chariot: "r", rook: "r", soldier: "p", pawn: "p", cannon: "c" } as Record<string, string>)[kind]
+    ?? ({ 马: "n", 相: "b", 象: "b", 仕: "a", 士: "a", 帅: "k", 将: "k", 车: "r", 炮: "c", 兵: "p", 卒: "p" } as Record<string, string>)[label]
+    ?? "p";
+  return `/skins/${folder}/${piece?.color === "red" ? "r" : "b"}${code}.png`;
+}
+
+function pieceFallbackAsset(piece: Piece) {
+  const color = piece?.color === "red" ? "#b43b2f" : "#263238";
+  const label = String(piece?.label ?? piece?.kind ?? "?").trim().replace(/[&<>\"']/g, (value) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[value] ?? value));
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120"><circle cx="60" cy="60" r="53" fill="#f6e5b9" stroke="#9d7746" stroke-width="4"/><text x="60" y="78" text-anchor="middle" font-size="60" font-weight="700" font-family="KaiTi,STKaiti,serif" fill="${color}">${label}</text></svg>`)}`;
+}
+
+function handlePieceAssetError(event: SyntheticEvent<HTMLImageElement>, piece: Piece) {
+  const image = event.currentTarget;
+  if (image.dataset.fallback === "true") {
+    image.style.display = "none";
+    const label = image.parentElement?.querySelector<HTMLElement>(".board-piece-label");
+    if (label) label.style.display = "grid";
+    return;
+  }
+  image.dataset.fallback = "true";
+  image.src = pieceFallbackAsset(piece);
 }
 
 function piecesToFen(pieces: Piece[], side: "red" | "black") {
@@ -1366,6 +1415,8 @@ export default function App() {
   const [engineDivergenceOpen, setEngineDivergenceOpen] = useState(false);
   const [engineDivergencePosition, setEngineDivergencePosition] = useState<{ left: number; top: number }>();
   const [branchEditing, setBranchEditing] = useState(false);
+  const [branchPickerOpen, setBranchPickerOpen] = useState(false);
+  const [branchEditNodeId, setBranchEditNodeId] = useState<string>();
   const [floatingManualRouteView, setFloatingManualRouteView] = useState<"tree" | "rounds">("tree");
   const [manualLineDialogOpen, setManualLineDialogOpen] = useState(false);
   const [bestMovePractice, setBestMovePractice] = useState<BestMovePractice>();
@@ -1407,6 +1458,7 @@ export default function App() {
   const [trainingTasks, setTrainingTasks] = useState<TrainingTaskDto[]>([]);
   const [trainingGeneration, setTrainingGeneration] = useState<TrainingGenerationResultDto>();
   const [trainingSummary, setTrainingSummary] = useState<TrainingSummaryDto>();
+  const [endgameTrainingOpen, setEndgameTrainingOpen] = useState(false);
   const [studySessions, setStudySessions] = useState<StudySessionDto[]>([]);
   const [u10Start, setU10Start] = useState<GuidedAnalysisStart>();
   const [u10InitialReversed, setU10InitialReversed] = useState(false);
@@ -1456,6 +1508,8 @@ export default function App() {
   const pendingMobileBestMoveFen = useRef<string | undefined>(undefined);
   const playbackRevision = useRef(0);
   const navigationRevision = useRef(0);
+  const libraryRefreshRevision = useRef(0);
+  const libraryOperationRevision = useRef(0);
   const autosaveQueue = useRef<AutosaveOperationQueue | undefined>(undefined);
   const desktopPreferencesRef = useRef(defaultDesktopPreferences);
   const persistedPreferencesRef = useRef(defaultDesktopPreferences);
@@ -1573,6 +1627,8 @@ export default function App() {
         if (chessPlatform.kind === "desktop") void chessPlatform.listFlyknifePlans().then(setFlyknifePlans).catch(() => undefined);
         if (chessPlatform.kind === "desktop") void chessPlatform.getTheoryLibrary().then(setTheoryLibrary).catch(() => undefined);
         if (chessPlatform.kind === "desktop") void chessPlatform.listStudySessions().then(setStudySessions).catch(() => undefined);
+        // Parser upgrades repair local CBL indexes before the training desk is opened.
+        if (chessPlatform.kind === "desktop") void chessPlatform.refreshEndgameLibraries().catch(() => undefined);
         void refreshGames();
         if (chessPlatform.kind === "web") setNotice("离线棋谱已就绪");
       })
@@ -1929,6 +1985,18 @@ export default function App() {
   }, [board.currentNode, board.history]);
 
   useEffect(() => {
+    if (!branchPickerOpen) return;
+    const closeOnEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setBranchPickerOpen(false);
+        setBranchEditNodeId(undefined);
+      }
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [branchPickerOpen]);
+
+  useEffect(() => {
     setGameTitle(board.title);
     setGameNote(splitTtxqComment(board.note).localText);
   }, [board.note, board.title]);
@@ -2250,7 +2318,7 @@ export default function App() {
       COMPACT_ENGINE_LINE_MIN_MOVES,
       Math.min(COMPACT_ENGINE_LINE_MAX_MOVES, Math.trunc(desktopPreferences.candidateLineMoves) || DEFAULT_CANDIDATE_LINE_MOVES),
     );
-    const visibleCandidateLimit = Math.max(MIN_ENGINE_CANDIDATES, Math.trunc(desktopPreferences.multipv) || DEFAULT_ENGINE_CANDIDATES);
+    const visibleCandidateLimit = COMPACT_ENGINE_LIBRARY_CANDIDATE_COUNT;
     return displayItems
       .filter(({ line }) => line.multipv >= 1 && line.multipv <= visibleCandidateLimit)
       .slice(0, visibleCandidateLimit)
@@ -2276,7 +2344,7 @@ export default function App() {
         stale: analysisIsStale,
       };
       });
-  }, [analysisFen, analysisHistory, analysisIsStale, board.fen, candidatePreview, candidateSideToMove, currentEngineAnalyses, desktopPreferences.candidateLineMoves, desktopPreferences.multipv, orderedAnalysis, primaryEngineDisplayName]);
+  }, [analysisFen, analysisHistory, analysisIsStale, board.fen, candidatePreview, candidateSideToMove, currentEngineAnalyses, desktopPreferences.candidateLineMoves, orderedAnalysis, primaryEngineDisplayName]);
   useEffect(() => {
     if (chessPlatform.kind !== "desktop" || linkSessionStatus.mode !== "autoPlay" || linkSessionStatus.state !== "tracking") return;
     const expectedSide = linkSessionStatus.autoSide === "red" ? "红方" : "黑方";
@@ -2377,20 +2445,6 @@ export default function App() {
       advantageText: formatOpeningBookGap(gap),
     }; }),
   ], [board.xqbCandidates, cloudCandidates]);
-  const activeBuiltinOpeningBook = useMemo(() => {
-    const books = builtinOpeningBookManifest.books;
-    return books.find((book) => book.id === desktopPreferences.activeBuiltinOpeningBookId)
-      ?? books.find((book) => book.id === builtinOpeningBookManifest.defaultBookId)
-      ?? books[0];
-  }, [builtinOpeningBookManifest, desktopPreferences.activeBuiltinOpeningBookId]);
-  const builtinOpeningBookReferenceStatus = activeBuiltinOpeningBook ? {
-    enabled: desktopPreferences.builtinOpeningBookEnabled ?? true,
-    verified: builtinOpeningBookManifest.vkeyVerification.status === "verified",
-    name: activeBuiltinOpeningBook.name,
-    shortName: activeBuiltinOpeningBook.shortName,
-    maxCandidatesPerPosition: activeBuiltinOpeningBook.maxCandidatesPerPosition,
-    note: builtinOpeningBookManifest.vkeyVerification.note,
-  } : undefined;
   const activeBookCandidateAuditByMove = bookCandidateAuditState.fen === board.fen
     ? bookCandidateAuditByMove
     : {};
@@ -2636,6 +2690,7 @@ export default function App() {
       analysisArrowFen,
       boardFen: board.fen,
       analysisIsStale,
+      candidateLimit: desktopPreferences.multipv,
     })
     .flatMap((line) => {
       const from = squareFromIccs(line.pv[0].slice(0, 2));
@@ -2648,7 +2703,7 @@ export default function App() {
         to: boardIntersectionPoint(to, boardDisplayReversed, displayedBoardSkin),
       }];
     });
-  }, [analysisArrowFen, analysisFen, analysisIsStale, board.fen, boardDisplayReversed, displayedBoardSkin, orderedAnalysis]);
+  }, [analysisArrowFen, analysisFen, analysisIsStale, board.fen, boardDisplayReversed, desktopPreferences.multipv, displayedBoardSkin, orderedAnalysis]);
   useEffect(() => setMobileArrowFocus(undefined), [board.fen, analysisFen]);
   const mobileFocusedArrow = useMemo(() => {
     if (analysisIsStale) return [];
@@ -2683,14 +2738,14 @@ export default function App() {
   }, [analysisFen, analysisIsStale, board.fen, boardDisplayReversed, compactBookRows, currentEngineAnalyses, displayedBoardSkin, mobileArrowFocus, multipv, orderedAnalysis]);
   const linkMiniArrows = useMemo<LinkMiniArrow[]>(() => (
     linkHasObservedPosition && analysisFen === board.fen && !analysisIsStale
-      ? orderedAnalysis.flatMap((line) => {
+      ? orderedAnalysis.slice(0, Math.max(MIN_ENGINE_CANDIDATES, Math.trunc(desktopPreferences.multipv))).flatMap((line) => {
         const firstMove = line.pv[0];
         const from = firstMove ? squareFromIccs(firstMove.slice(0, 2)) : null;
         const to = firstMove ? squareFromIccs(firstMove.slice(2, 4)) : null;
         return from && to ? [{ rank: line.multipv, color: analysisArrowColors[(line.multipv - 1) % analysisArrowColors.length] ?? analysisArrowColors[0], iccs: firstMove, notation: line.notation?.[0], from, to }] : [];
       })
       : []
-  ), [analysisFen, analysisIsStale, board.fen, linkHasObservedPosition, orderedAnalysis]);
+  ), [analysisFen, analysisIsStale, board.fen, desktopPreferences.multipv, linkHasObservedPosition, orderedAnalysis]);
   const linkMiniBoardReversed = boardDisplayReversed;
   const linkPrimaryCandidateRow = compactEngineRows.at(0);
   const linkArrowOne = linkMiniArrows.find((arrow) => arrow.rank === 1) ?? linkMiniArrows[0];
@@ -2740,6 +2795,15 @@ export default function App() {
   const directBranchChoices = board.branches.length > 1 ? board.branches : [];
   const branchChoices = directBranchChoices;
   const hasVisibleBranchChoices = branchChoices.length > 1;
+  useEffect(() => {
+    // A node change can remove the old branch choices while the picker is
+    // still open. Clear that transient UI state so the next click always
+    // opens choices for the current position.
+    if (hasVisibleBranchChoices) return;
+    setBranchPickerOpen(false);
+    setBranchEditing(false);
+    setBranchEditNodeId(undefined);
+  }, [board.currentNode, hasVisibleBranchChoices]);
   const hasUpcomingBranch = hasUpcomingBranchPoint(board.manualTree ?? [], board.currentNode);
   const branchArrowColor = desktopPreferences.branchArrowColor || DEFAULT_BRANCH_ARROW_COLOR;
   const branchArrowBadgeColor = desktopPreferences.branchArrowBadgeColor || DEFAULT_BRANCH_ARROW_BADGE_COLOR;
@@ -4226,7 +4290,11 @@ export default function App() {
     const latestPreferences = desktopPreferencesRef.current;
     const effectiveThreads = Math.min(64, Math.max(1, latestPreferences.threads || threads));
     const effectiveHashMb = Math.min(4096, Math.max(16, latestPreferences.hashMb || hashMb));
-    const effectiveMultipv = Math.max(MIN_ENGINE_CANDIDATES, Math.trunc(latestPreferences.multipv || multipvRef.current || DEFAULT_ENGINE_CANDIDATES));
+    const effectiveMultipv = Math.max(
+      COMPACT_ENGINE_LIBRARY_CANDIDATE_COUNT,
+      MIN_ENGINE_CANDIDATES,
+      Math.trunc(latestPreferences.multipv || multipvRef.current || DEFAULT_ENGINE_CANDIDATES),
+    );
     const activeProfile = engineProfiles.find((profile) => profile.id === latestPreferences.activeEngineId || profile.executablePath === enginePath);
     const primaryTarget = { id: activeProfile?.id ?? "primary", name: activeProfile?.name ?? engineDisplayName(enginePath), path: enginePath };
     const parallelTargets = latestPreferences.analysisEngineMode === "parallel"
@@ -4491,11 +4559,17 @@ export default function App() {
   }
 
   async function refreshGames() {
+    const revision = ++libraryRefreshRevision.current;
     try {
-      setGames(await chessPlatform.listGames());
-      setLibraryFolders(await chessPlatform.listLibraryFolders());
+      const [nextGames, nextFolders] = await Promise.all([
+        chessPlatform.listGames(),
+        chessPlatform.listLibraryFolders(),
+      ]);
+      if (revision !== libraryRefreshRevision.current) return;
+      setGames(nextGames);
+      setLibraryFolders(nextFolders);
     } catch {
-      setGames([]);
+      if (revision === libraryRefreshRevision.current) setGames([]);
     }
   }
 
@@ -4597,12 +4671,33 @@ export default function App() {
 
   async function openGame(gameId: string) {
     if (!ensureBoardChangeAllowed()) return false;
+    const operationRevision = ++libraryOperationRevision.current;
     stopPlayback();
     stopEnginePlay();
     await cancelAnalysisForDocumentChange();
     await cancelGameReportForStructureChange();
     try {
-      const next = await chessPlatform.openGame(gameId);
+      let next: Partial<BoardState>;
+      try {
+        next = await chessPlatform.openGame(gameId);
+      } catch (error) {
+        // A library row can be stale while provider de-duplication is being
+        // reconciled. Refresh first, then retry a still-visible ID once so a
+        // transient projection race never becomes a false "棋谱不存在" toast.
+        await refreshGames();
+        const latest = await chessPlatform.listGames().catch(() => [] as GameSummary[]);
+        if (!latest.some((game) => game.id === gameId)) {
+          setSelected(null);
+          setNotice("棋谱列表已更新，已移除失效记录");
+          return false;
+        }
+        try {
+          next = await chessPlatform.openGame(gameId);
+        } catch (_) {
+          throw error;
+        }
+      }
+      if (operationRevision !== libraryOperationRevision.current) return false;
       applyBoard(next);
       setAutosave({ status: "saved" });
       setSelected(null);
@@ -4614,36 +4709,53 @@ export default function App() {
       setMobilePanel("board");
       return true;
     } catch (error) {
+      if (operationRevision !== libraryOperationRevision.current) return false;
       setNotice(friendlyError(error));
       return false;
     }
   }
 
   async function deleteLibraryGames(gameIds: string[]) {
+    const operationRevision = ++libraryOperationRevision.current;
     try {
-      const deletingCurrent = currentLibraryGame && gameIds.includes(currentLibraryGame.id);
-      if (deletingCurrent) {
-        const replacement = games.find((game) => !gameIds.includes(game.id));
-        if (replacement) {
-          if (!await openGame(replacement.id)) throw new Error("无法切换到其他棋谱，当前棋谱未删除");
-        } else {
-          if (!ensureBoardChangeAllowed()) throw new Error("当前棋谱仍有操作进行中，暂时不能删除");
-          stopPlayback();
-          stopEnginePlay();
-          await cancelAnalysisForDocumentChange();
-          await cancelGameReportForStructureChange();
-          applyBoard(await chessPlatform.newGame(startingFen));
-          setAutosave({ status: "saved" });
-          setSelected(null);
-          clearAnalysisState();
-          setGameReport(undefined);
-        }
-      }
+      // Delete first. The Tauri command is idempotent and also switches the
+      // active workspace to a valid replacement. Opening a replacement before
+      // deletion races with a stale library row and used to surface
+      // misleading “棋谱不存在/删除失败” errors.
       await chessPlatform.deleteGames(gameIds);
+      if (operationRevision !== libraryOperationRevision.current) return;
       await refreshGames();
+      setSelected(null);
       setNotice(`已从本机删除 ${gameIds.length} 盘棋谱；云端和其他设备不会受影响`);
     } catch (error) {
-      setNotice(friendlyError(error));
+      // A library row can be stale after provider de-duplication or a prior
+      // successful delete. Refresh once and treat a fully absent target set
+      // as an idempotent success instead of surfacing a false failure toast.
+      const latest = await chessPlatform.listGames().catch(() => [] as GameSummary[]);
+      const remaining = new Set(latest.map((game) => game.id));
+      if (operationRevision === libraryOperationRevision.current
+        && gameIds.every((gameId) => !remaining.has(gameId))) {
+        await refreshGames();
+        setSelected(null);
+        setNotice(`棋谱列表已更新，${gameIds.length} 盘目标棋谱已不存在`);
+        return;
+      }
+      // Retry once against the refreshed projection. A list row can survive
+      // provider de-duplication while its canonical UUID is being rebound;
+      // surfacing the first transient backend error is what produced the
+      // intermittent duplicate "删除失败" toast.
+      try {
+        if (operationRevision === libraryOperationRevision.current) {
+          await chessPlatform.deleteGames(gameIds);
+          await refreshGames();
+          setSelected(null);
+          setNotice(`已从本机删除 ${gameIds.length} 盘棋谱；云端和其他设备不会受影响`);
+          return;
+        }
+      } catch (_) {
+        // The second failure is handled by the library dialog so it can show
+        // one actionable error instead of two competing notifications.
+      }
       throw error;
     }
   }
@@ -4814,14 +4926,30 @@ export default function App() {
     }
   }
 
+  function openBranchPicker() {
+    if (!hasVisibleBranchChoices) return false;
+    setBranchPickerOpen(true);
+    setNotice(`当前有 ${branchChoices.length} 条走法，请选择下一步`);
+    return true;
+  }
+
   async function goNext() {
+    if (openBranchPicker()) {
+      return;
+    }
     const next = preferredContinuation(board);
     if (next) await navigateTo(next.id);
   }
 
   async function selectBranchChoice(nodeId: string) {
     setBranchEditing(false);
-    await navigateTo(nodeId);
+    setBranchEditNodeId(undefined);
+    setBranchPickerOpen(false);
+    const next = await navigateTo(nodeId);
+    if (next && (next.branches?.length ?? 0) > 1) {
+      setBranchPickerOpen(true);
+      setNotice(`已进入 ${next.history?.length ?? 0} 半回合位置，请继续选择下一步`);
+    }
   }
 
   async function goToEnd() {
@@ -4880,6 +5008,7 @@ export default function App() {
     if (state.branches.length > 1) {
       setIsPlaying(false);
       selectWorkspacePanel("moves");
+      setBranchPickerOpen(true);
       setNotice(`当前已到分支点，共 ${state.branches.length} 个变招可选`);
       return;
     }
@@ -4891,6 +5020,7 @@ export default function App() {
       if (state.branches.length > 1) {
         setIsPlaying(false);
         selectWorkspacePanel("moves");
+        setBranchPickerOpen(true);
         setNotice(`已到下一分支点，共 ${state.branches.length} 个变招`);
         return;
       }
@@ -4911,6 +5041,19 @@ export default function App() {
       applyBoard(await enqueueBoardOperation(() => chessPlatform.updateComment(nodeId, mergedComment)));
       setComment(nextComment);
       setNotice("注释已保存");
+      return true;
+    } catch (error) {
+      setNotice(friendlyError(error));
+      return false;
+    }
+  }
+
+  async function saveRootLocalNote(nextComment: string) {
+    try {
+      const mergedNote = mergeTtxqLocalComment(board.note, nextComment);
+      applyBoard(await enqueueBoardOperation(() => chessPlatform.updateGameMetadata(gameTitle.trim() || "未命名棋谱", mergedNote)));
+      setGameNote(nextComment);
+      setNotice("局面备注已保存");
       return true;
     } catch (error) {
       setNotice(friendlyError(error));
@@ -5594,12 +5737,8 @@ export default function App() {
       case "engineSettings": setDesktopDialog("engine"); break;
       case "coachProfile": await openCoachProfile(); break;
       case "trainingTasks":
-        if (subscription?.plan !== "pro" || subscription.status !== "active") {
-          setDesktopDialog("subscription");
-          setNotice("训练任务属于 Pro 内测权益，请先兑换 Pro");
-          break;
-        }
         await loadTrainingTasks();
+        setNotice("本地残局和复盘训练可用");
         setDesktopDialog("training");
         break;
       case "syncRegister": setDesktopDialog("register"); break;
@@ -5825,14 +5964,8 @@ export default function App() {
     await openReviewMode(mode);
     if (selection !== modeSelectionRef.current) return;
     if (mode === "training") {
-      if (subscription?.plan !== "pro" || subscription.status !== "active") {
-        setDesktopDialog("subscription");
-        setNotice("训练任务属于 Pro 内测权益，请先兑换 Pro；U10 拆棋仍可从有效报告进入");
-        return;
-      }
-      await loadTrainingTasks();
       if (selection !== modeSelectionRef.current) return;
-      setDesktopDialog("training");
+      setEndgameTrainingOpen(true);
     }
   }
 
@@ -6144,11 +6277,11 @@ export default function App() {
       <button title="回到开局" disabled={!board.currentNode} onClick={() => void navigateTo()}><ChevronsLeft size={15}/></button>
       <button title="上一着（只浏览，不删除棋谱）" aria-label="上一着（只浏览，不删除棋谱）" disabled={!board.currentNode} onClick={() => void goPrevious()}><ChevronLeft size={15}/></button>
       <button className={isPlaying ? "active" : ""} title={isPlaying ? "暂停播放" : "播放主线"} disabled={board.history.length === 0 && board.branches.length === 0} onClick={() => void togglePlayback()}>{isPlaying ? <Pause size={14}/> : <Play size={14}/>}</button>
-      <button title={board.branches.length > 1 ? "下一着（沿主线）" : "下一着"} disabled={!preferredContinuation(board)} onClick={() => void goNext()}><ChevronRight size={15}/></button>
+      <button title={hasVisibleBranchChoices ? "下一着（选择变招）" : "下一着"} aria-label={hasVisibleBranchChoices ? "下一着（选择变招）" : "下一着"} aria-expanded={hasVisibleBranchChoices ? branchPickerOpen : undefined} disabled={!preferredContinuation(board)} onPointerDown={(event) => event.stopPropagation()} onClick={() => void goNext()}><ChevronRight size={15}/></button>
       <button title="前往主线终局" disabled={!preferredContinuation(board)} onClick={() => void goToEnd()}><ChevronsRight size={15}/></button>
       {!mobile && <>
         <div className="branch-picker-anchor">
-          <button className="variation-jump" aria-label="跳到下一个分支点" title={hasUpcomingBranch ? "跳到下一个分支点" : "后续没有分支点"} disabled={!hasUpcomingBranch} onClick={() => void goToNextBranchPoint()}><GitFork size={14}/></button>
+          <button className={`variation-jump ${branchPickerOpen ? "active" : ""}`} aria-label={hasVisibleBranchChoices ? "选择当前局面的变招" : "跳到下一个分支点"} title={hasVisibleBranchChoices ? "选择当前局面的变招" : hasUpcomingBranch ? "跳到下一个分支点" : "后续没有分支点"} aria-expanded={hasVisibleBranchChoices ? branchPickerOpen : undefined} disabled={!hasVisibleBranchChoices && !hasUpcomingBranch} onPointerDown={(event) => event.stopPropagation()} onClick={() => hasVisibleBranchChoices ? setBranchPickerOpen((open) => !open) : void goToNextBranchPoint()}><GitFork size={14}/>{hasVisibleBranchChoices && <small>{branchChoices.length}</small>}</button>
           {showManualPopout && <button className="compact-manual-popout" type="button" title="弹出棋谱独立窗口" aria-label="弹出棋谱独立窗口" onClick={() => void openCompactFloatingPanel("manual")}><Maximize2 size={14}/></button>}
         </div>
         <div className="playback-tail">
@@ -6180,24 +6313,36 @@ export default function App() {
 
   function branchMapControls() {
     if (!hasVisibleBranchChoices) return null;
-    return <section className={`branch-map-controls ${branchEditing ? "editing" : ""}`} aria-label="当前分支选择">
-      <header><span><GitFork size={14}/><strong>变招 {branchChoices.length} 条</strong><small>当前局面可选，点击即进入</small></span><button type="button" className="branch-map-edit" onClick={() => setBranchEditing((editing) => !editing)}>{branchEditing ? "完成" : "管理"}</button></header>
+    const editingMove = branchChoices.find((move) => move.id === branchEditNodeId);
+    if (!branchPickerOpen && !branchEditing) return null;
+    return <section className={`branch-map-controls branch-map-floating ${branchEditing ? "editing" : ""}`} aria-label="当前分支选择" role="dialog" data-testid="branch-picker">
+      <header>
+        <span><GitFork size={14}/><strong>选择变招 · {branchChoices.length} 条</strong><small>按天天象棋顺序选择下一步</small></span>
+        <div className="branch-map-header-actions">
+          <button type="button" className={branchEditing ? "active branch-map-edit" : "branch-map-edit"} onClick={() => setBranchEditing((editing) => !editing)} title={branchEditing ? "完成分支管理" : "管理分支、编辑备注或删除"}><Settings2 size={12}/>{branchEditing ? "完成" : "管理"}</button>
+          <button type="button" className="branch-map-close" onClick={() => { setBranchPickerOpen(false); setBranchEditNodeId(undefined); }} title="关闭变招选择" aria-label="关闭变招选择"><X size={13}/></button>
+        </div>
+      </header>
       <HorizontalScrollArea className="branch-map-scroll" ariaLabel="横向滚动查看全部变招" showButtons={floatingPanel === "manual"}>
         {branchChoices.map((move, index) => {
           const label = String(index + 1);
           const detail = move.isMainline ? `主线 ${label}` : `分支 ${label}`;
-          return <div className="branch-map-option" key={move.id}>
+          return <div className={`branch-map-option ${move.id === board.currentNode ? "active" : ""}`} key={move.id}>
             <button type="button" className="branch-map-choice" onClick={() => void selectBranchChoice(move.id)} title={`${detail} · ${move.notation}`}>
               <b>{label}</b><strong>{move.notation}</strong><small>{detail}</small>
             </button>
             {branchEditing && <div className="branch-map-actions">
-              {!move.isMainline && <button type="button" title="设为主线" onClick={() => void makeMainline(move.id)}><ListStart size={12}/></button>}
-              <button type="button" title="删除分支及其后续" onClick={() => void removeNode(move.id)}><Trash2 size={12}/></button>
+              <button type="button" title="编辑该着法的本地备注" aria-label={`编辑${move.notation}的备注`} onClick={(event) => { event.stopPropagation(); setBranchEditNodeId(move.id); setComment(splitTtxqComment(move.comment).localText); }}><Pencil size={11}/></button>
+              {!move.isMainline && <button type="button" title="设为主线" aria-label={`将${move.notation}设为主线`} onClick={(event) => { event.stopPropagation(); void makeMainline(move.id); }}><ListStart size={11}/></button>}
+              <button type="button" title="删除分支及其后续" aria-label={`删除${move.notation}分支`} onClick={(event) => { event.stopPropagation(); void removeNode(move.id).then((removed) => { if (removed) setBranchPickerOpen(false); }); }}><Trash2 size={11}/></button>
             </div>}
           </div>;
         })}
       </HorizontalScrollArea>
-      {branchEditing && <button type="button" className="branch-map-done" onClick={() => setBranchEditing(false)}>完成管理</button>}
+      {branchEditing && editingMove && <div className="branch-map-inline-editor">
+        <label><span>编辑 {editingMove.notation} 的本地备注</span><input value={comment} onChange={(event) => setComment(event.target.value)} placeholder="可选：补充该分支说明" /></label>
+        <button type="button" onClick={() => void saveCommentForNode(editingMove.id, comment).then((saved) => { if (saved) setBranchEditNodeId(undefined); })} title="保存本地备注"><Save size={12}/>保存</button>
+      </div>}
     </section>;
   }
 
@@ -6221,7 +6366,16 @@ export default function App() {
   }
 
   function manualReviewContent(label: string) {
-    const currentMove = board.history.at(-1);
+    const currentMove = board.currentNode
+      ? findManualTreeNode(board.manualTree ?? [], board.currentNode)?.move
+        ?? board.history.find((move) => move.id === board.currentNode)
+      : undefined;
+    const annotationValue = currentTtxqAnnotationValueForNode(
+      board.note,
+      board.currentNode,
+      board.history,
+      board.manualTree ?? [],
+    );
     const treeProps = {
       activePath: activeTreePath,
       collapsed: collapsedTreeNodes,
@@ -6241,7 +6395,12 @@ export default function App() {
       qualityByMoveId: reportByMoveId,
     };
     return <div className={`manual-review-content ${desktopPreferences.manualViewMode === "tree" ? "tree-mode" : "track-mode"}`}>
-      <TtxqAnnotationCard value={currentMove?.comment ?? board.note} compact/>
+      {workspaceMode === "review" && <TtxqAnnotationCard
+        value={annotationValue}
+        compact
+        editable
+        onSaveLocal={board.currentNode ? (value) => saveCommentForNode(board.currentNode!, value) : saveRootLocalNote}
+      />}
       {desktopPreferences.manualViewMode === "tree"
         ? <div className="manual-tree-shell">
           <header className="manual-track-toolbar">
@@ -6295,7 +6454,23 @@ export default function App() {
     </div>;
   }
 
-  function candidateLinesView(className = "") {
+  function compactManualDock(className = "") {
+    return <section className={`compact-manual-panel compact-manual-dock ${className} ${compactManualCollapsed ? "collapsed" : ""}`.trim()} aria-label="简洁布局棋谱">
+      <header>
+        <span><ClipboardList size={14}/><strong>棋谱</strong></span>
+        <small title={`当前主引擎：${currentEngineLabel}`}>{compactManualCollapsed ? "已收起" : `主引擎：${currentEngineLabel} · ${board.history.length} 着${board.continuation.length ? ` · 后续 ${board.continuation.length} 着` : ""}`}</small>
+        {chessPlatform.kind === "desktop" && <button className="compact-window-toggle compact-manual-popout" type="button" title="弹出棋谱独立窗口" aria-label="弹出棋谱独立窗口" onClick={() => void openCompactFloatingPanel("manual")}><Maximize2 size={14}/></button>}
+        <button className="compact-window-toggle" type="button" title={compactManualCollapsed ? "展开棋谱" : "收起棋谱"} aria-label={compactManualCollapsed ? "展开棋谱" : "收起棋谱"} onClick={() => toggleCompactPanelCollapsed("manual")}>{compactManualCollapsed ? <ChevronDown size={16}/> : <X size={15}/>}</button>
+      </header>
+      {!compactManualCollapsed && <>
+        {playbackControls("compact-playback")}
+        {manualReviewContent("简洁布局棋谱着法")}
+        {branchMapControls()}
+      </>}
+    </section>;
+  }
+
+  function candidateLinesView(className = "", includeCompactManual = true) {
     const compactLayout = desktopPreferences.layoutMode === "compact";
     const compactDockClass = [
       "variations",
@@ -6347,7 +6522,7 @@ export default function App() {
           </>}
         </article>}
 
-        <article
+        {includeCompactManual && <article
           className={`compact-floating-panel compact-manual-panel ${compactManualCollapsed ? "collapsed" : ""} ${compactDetachedPanels.manual ? "detached" : ""} ${compactActiveWindow === "manual" ? "active" : ""}`}
           style={manualPanelStyle}
           aria-label="简洁布局棋谱"
@@ -6364,7 +6539,7 @@ export default function App() {
             {manualReviewContent("简洁布局棋谱着法")}
             {branchMapControls()}
           </>}
-        </article>
+        </article>}
       </section>;
     }
     if (candidateRailCollapsed && !compactLayout) {
@@ -6445,19 +6620,39 @@ export default function App() {
           </button>;
         })}
       </section> : null}
-      {compactLayout && <section className={`compact-manual-panel ${compactManualCollapsed ? "collapsed" : ""}`} aria-label="简洁布局棋谱">
-        <header>
-          <span><ClipboardList size={14}/><strong>棋谱</strong></span>
-          <small title={`当前主引擎：${currentEngineLabel}`}>{compactManualCollapsed ? "已收起" : `主引擎：${currentEngineLabel} · ${board.history.length} 着${board.continuation.length ? ` · 后续 ${board.continuation.length} 着` : ""}`}</small>
-          <button className="compact-window-toggle" title={compactManualCollapsed ? "展开并停靠棋谱" : "收起棋谱"} aria-label={compactManualCollapsed ? "展开并停靠棋谱" : "收起棋谱"} onClick={() => toggleCompactPanelCollapsed("manual")}>{compactManualCollapsed ? <ChevronDown size={16}/> : <X size={15}/>}</button>
-        </header>
-        {!compactManualCollapsed && <>
-          {playbackControls("compact-playback")}
-          {manualReviewContent("简洁布局棋谱着法")}
-          {branchMapControls()}
-        </>}
-      </section>}
+      {compactLayout && includeCompactManual && compactManualDock()}
     </section>;
+  }
+
+  function compactReferencePanels() {
+    return <CompactReferencePanels
+      cloudEnabled={desktopPreferences.cloudBookEnabled ?? false}
+      bookLoading={cloudBookLoading}
+      bookError={cloudBookError}
+      bookRows={compactBookRows}
+      bookAuditByMove={activeBookCandidateAuditByMove}
+      bookAuditState={activeBookCandidateAuditState}
+      engineRows={compactEngineRows}
+      engineBusy={analysisBusy}
+      evaluationRows={compactEvaluationRows}
+      evaluationLabel={evaluation?.label ?? "等待分析"}
+      evaluationScore={evaluation?.scoreText ?? "--"}
+      qualityText={overviewReport?.score != null ? `${overviewReport.score} ${overviewReport.grade}` : "--"}
+      redShare={evaluation?.redShare}
+      depthText={`${primaryAnalysis?.depth ?? "--"}`}
+      timeText={primaryAnalysis?.timeMs != null ? `${(primaryAnalysis.timeMs / 1000).toFixed(1)}s` : "--"}
+      collapsed={desktopPreferences.layoutMode === "compact" && cloudBookCollapsed}
+      evaluationCollapsed={desktopPreferences.evaluationCollapsed}
+      onOpenSettings={() => chessPlatform.kind === "desktop" ? setDesktopDialog("engine") : setNotice("Web 版使用云端引擎，无本地引擎设置")}
+      onToggleCollapsed={() => setCloudBookCollapsed((collapsed) => !collapsed)}
+      onToggleEvaluationCollapsed={() => void setEvaluationVisibility(!desktopPreferences.evaluationCollapsed)}
+      onPopOut={chessPlatform.kind === "desktop" ? () => void openCompactFloatingPanel("cloud") : undefined}
+      onAuditBookCandidates={() => void auditBookCandidatesWithPikafish()}
+      onPlayBookMove={(iccs) => void playIccsMove(iccs)}
+      onPlayEngineMove={(iccs) => void playIccsMove(iccs, analysisFen ?? board.fen)}
+      onRunEngineAnalysis={() => void runAnalysis()}
+      onPlayEvaluationMove={(iccs) => void playIccsMove(iccs, analysisFen ?? board.fen)}
+    />;
   }
 
   function startCloudBookDrag(event: PointerEvent<HTMLDivElement>) {
@@ -6578,7 +6773,8 @@ export default function App() {
               bookRows={compactBookRows}
               bookAuditByMove={activeBookCandidateAuditByMove}
               bookAuditState={activeBookCandidateAuditState}
-              builtinBookStatus={builtinOpeningBookReferenceStatus}
+              engineRows={compactEngineRows}
+              engineBusy={analysisBusy}
               evaluationRows={compactEvaluationRows}
               evaluationLabel={evaluation?.label ?? "等待分析"}
               evaluationScore={evaluation?.scoreText ?? "--"}
@@ -6591,6 +6787,8 @@ export default function App() {
               onToggleEvaluationCollapsed={() => void setEvaluationVisibility(!floatingEvaluationCollapsed)}
               onAuditBookCandidates={() => void auditBookCandidatesWithPikafish()}
               onPlayBookMove={(iccs) => void playIccsMove(iccs)}
+              onPlayEngineMove={(iccs) => void playIccsMove(iccs, analysisFen ?? board.fen)}
+              onRunEngineAnalysis={() => void runAnalysis()}
               onPlayEvaluationMove={(iccs) => void playIccsMove(iccs, analysisFen ?? board.fen)}
             />
             <p className="floating-panel-note">这是系统独立窗口，可拖到主窗口外；主窗口走棋后这里会自动刷新。</p>
@@ -6686,6 +6884,7 @@ export default function App() {
           onSaveStudy={saveStudySession}
           onAnalyzeStudy={analyzeStudySession}
           onCompleteTraining={completeTrainingTask}
+          onOpenEndgame={() => { setDesktopDialog(null); setEndgameTrainingOpen(true); }}
           onChooseMirrorRoot={() => chessPlatform.chooseGameMirrorRoot()}
           onSaveMirrorPreferences={saveMirrorPreferences}
           onRebuildMirrors={rebuildGameMirrors}
@@ -6733,6 +6932,14 @@ export default function App() {
             : reportBusy
               ? "整局报告生成期间不能开始人机对弈"
               : `等待轮到 ${currentEngineVersionLabel}`;
+  const boardAnnotationValue = currentTtxqAnnotationValueForNode(
+    board.note,
+    board.currentNode,
+    board.history,
+    board.manualTree ?? [],
+  );
+  const boardAnnotationParts = splitTtxqComment(boardAnnotationValue);
+  const boardHasAnnotation = Boolean(boardAnnotationParts.sourceText || boardAnnotationParts.localText);
 
   return (
     <div className={`app-shell ${chessPlatform.kind}-shell theme-${effectiveColorTheme} layout-${desktopPreferences.layoutMode} board-skin-${displayedBoardSkin} piece-skin-${displayedPieceSkin}`}>
@@ -6871,11 +7078,13 @@ export default function App() {
         onSaveStudy={saveStudySession}
         onAnalyzeStudy={analyzeStudySession}
         onCompleteTraining={completeTrainingTask}
+        onOpenEndgame={() => { setDesktopDialog(null); setEndgameTrainingOpen(true); }}
         onChooseMirrorRoot={() => chessPlatform.chooseGameMirrorRoot()}
         onSaveMirrorPreferences={saveMirrorPreferences}
         onRebuildMirrors={rebuildGameMirrors}
       />}
       {userManualOpen && <UserManualDialog appVersion={appInfo?.version ?? "1.0.0"} markdown={userManualMarkdown} onClose={() => setUserManualOpen(false)}/>}
+      {endgameTrainingOpen && <EndgameTrainingDialog onClose={() => setEndgameTrainingOpen(false)}/>}
       {aboutOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setAboutOpen(false); }}>
         <section className="about-dialog" role="dialog" aria-modal="true" aria-labelledby="about-title">
           <header><span><Info size={18}/><strong id="about-title">关于棋研</strong></span><button className="tool-button" title="关闭" onClick={() => setAboutOpen(false)}><X size={16}/></button></header>
@@ -6992,7 +7201,7 @@ export default function App() {
         {chessPlatform.kind === "desktop" && workspaceMode !== "training" && <button className="tool-button" title="大师棋谱" aria-label="大师棋谱" onClick={() => setMasterLibraryOpen(true)}><Database size={16}/></button>}
       </div>
 
-      <main className={`workspace layout-${desktopPreferences.layoutMode} ${reviewModeOpen ? "review-mode-active" : ""} ${libraryCollapsed ? "library-collapsed" : ""} ${candidateRailCollapsed ? "candidate-rail-collapsed" : ""} ${analysisPanelCollapsed ? "analysis-panel-collapsed" : ""} ${compactDockMinimized ? "compact-dock-minimized" : ""} ${compactHasSystemPopout ? "compact-system-popout" : ""} ${desktopPreferences.layoutMode === "compact" && cloudBookCollapsed ? "compact-cloud-collapsed" : ""}`}>
+      <main className={`workspace workspace-mode-${workspaceMode} layout-${desktopPreferences.layoutMode} ${reviewModeOpen ? "review-mode-active" : ""} ${libraryCollapsed ? "library-collapsed" : ""} ${candidateRailCollapsed ? "candidate-rail-collapsed" : ""} ${analysisPanelCollapsed ? "analysis-panel-collapsed" : ""} ${compactDockMinimized ? "compact-dock-minimized" : ""} ${compactHasSystemPopout ? "compact-system-popout" : ""} ${desktopPreferences.layoutMode === "compact" && cloudBookCollapsed ? "compact-cloud-collapsed" : ""}`}>
         <aside className={`library-panel ${libraryCollapsed && mobilePanel !== "library" ? "collapsed" : ""} ${mobilePanel === "library" ? "mobile-visible" : ""}`}>
           <div className="pane-title">
             <strong>{libraryCollapsed ? <Library size={16}/> : "棋谱库"}</strong>
@@ -7076,7 +7285,7 @@ export default function App() {
             <strong>{boardEvaluationRailText.side}</strong><span>{boardEvaluationRailText.score}</span>
             <button type="button" title="收起局势评分条" aria-label="收起局势评分条" onClick={() => setMobileEvaluationVisible(false)}><ChevronDown size={15}/></button>
           </section>}
-          <div className="board-stage">
+          <div className={`board-stage ${(reviewModeOpen || boardHasAnnotation) ? "has-side-note" : ""}`}>
             <div className={`board-stage-inner ${isMasterLibraryGame ? "has-master-identity" : ""}`}>
             {isMasterLibraryGame ? <section className="master-game-identity side" aria-label="当前大师棋谱信息">
               <nav aria-label="大师棋谱快捷操作">
@@ -7120,7 +7329,7 @@ export default function App() {
                     aria-label={`${squareToIccs(row, col)}${piece ? ` ${piece.color === "red" ? "红" : "黑"}${piece.label}` : ""}`}
                   >
                     {piece && <>
-                      <img src={pieceAsset(piece, displayedPieceSkin)} alt="" draggable={false} />
+                      <img src={pieceAsset(piece, displayedPieceSkin)} alt={piece.label} draggable={false} onError={(event) => handlePieceAssetError(event, piece)} />
                       <span className="board-piece-label" aria-hidden="true">{piece.label}</span>
                     </>}
                     {isSelected && <img className="selection-mask" src={`/skins/${displayedBoardSkin}/mask2.png`} alt="" />}
@@ -7202,6 +7411,14 @@ export default function App() {
               </div>
             </aside>
             </div>
+            {workspaceMode === "review" && (reviewModeOpen || boardHasAnnotation) && <div id="board-current-thought-slot" className={`board-current-thought-slot ${boardHasAnnotation ? "has-annotation" : ""}`} aria-live="polite">
+              {boardHasAnnotation && <TtxqAnnotationCard
+                value={boardAnnotationValue}
+                compact
+                editable
+                onSaveLocal={board.currentNode ? (value) => saveCommentForNode(board.currentNode!, value) : saveRootLocalNote}
+              />}
+            </div>}
             {showMoveThoughts && selectedPieceThought && <section className={`selected-piece-thought-card source-${selectedPieceThought.source}`} aria-label="选中棋子思路">
               <header>
                 <div>
@@ -7248,7 +7465,10 @@ export default function App() {
               </div>
             </div>
           )}
-          {reviewModeOpen && !isMobileWorkbench && playbackControls("review-board-playback")}
+          {reviewModeOpen && !isMobileWorkbench && <div className="review-board-playback-wrap">
+            {playbackControls("review-board-playback")}
+            {branchMapControls()}
+          </div>}
           <div className="board-statusbar">
             {candidatePreview && previewStep
               ? <span className="last-move-status">预览着法：<strong>{previewStep.movedBy}</strong> {previewStep.notation}</span>
@@ -7354,7 +7574,7 @@ export default function App() {
             <button onClick={() => void createGame()}>载入</button>
           </div>
           </div>
-          {!reviewModeOpen && candidateLinesView("board-candidate-rail")}
+          {!reviewModeOpen && candidateLinesView("board-candidate-rail", workspaceMode !== "research")}
         </section>
 
         <aside className={`analysis-panel ${reviewModeOpen ? "review-mode-panel" : ""} ${analysisPanelCollapsed && desktopPreferences.layoutMode !== "compact" ? "collapsed" : ""} ${mobilePanel === "analysis" ? "mobile-visible" : ""}`}>
@@ -7403,6 +7623,7 @@ export default function App() {
             onManualRecord={() => void createGame(startingFen)}
             onOpenGame={(gameId) => void openGame(gameId)}
             onShareGame={shareLibraryGame}
+            onReorderLibraryGame={(gameId, direction) => chessPlatform.reorderLibraryGame(gameId, direction)}
             onRefreshLibrary={refreshGames}
             onDeleteGames={deleteLibraryGames}
             onSaveLibrary={(folder, favorite, tags) => saveCurrentLibrary(folder, favorite, tags)}
@@ -7426,31 +7647,10 @@ export default function App() {
               ><ChevronLeft size={16}/></button>
             : null}
           {(!analysisPanelCollapsed || desktopPreferences.layoutMode === "compact") && <>
-            <CompactReferencePanels
-              cloudEnabled={desktopPreferences.cloudBookEnabled ?? false}
-              bookLoading={cloudBookLoading}
-              bookError={cloudBookError}
-              bookRows={compactBookRows}
-              bookAuditByMove={activeBookCandidateAuditByMove}
-              bookAuditState={activeBookCandidateAuditState}
-              builtinBookStatus={builtinOpeningBookReferenceStatus}
-              evaluationRows={compactEvaluationRows}
-              evaluationLabel={evaluation?.label ?? "等待分析"}
-              evaluationScore={evaluation?.scoreText ?? "--"}
-              qualityText={overviewReport?.score != null ? `${overviewReport.score} ${overviewReport.grade}` : "--"}
-              redShare={evaluation?.redShare}
-              depthText={`${primaryAnalysis?.depth ?? "--"}`}
-              timeText={primaryAnalysis?.timeMs != null ? `${(primaryAnalysis.timeMs / 1000).toFixed(1)}s` : "--"}
-              collapsed={desktopPreferences.layoutMode === "compact" && cloudBookCollapsed}
-              evaluationCollapsed={desktopPreferences.evaluationCollapsed}
-              onOpenSettings={() => chessPlatform.kind === "desktop" ? setDesktopDialog("engine") : setNotice("Web 版使用云端引擎，无本地引擎设置")}
-              onToggleCollapsed={() => setCloudBookCollapsed((collapsed) => !collapsed)}
-              onToggleEvaluationCollapsed={() => void setEvaluationVisibility(!desktopPreferences.evaluationCollapsed)}
-              onPopOut={chessPlatform.kind === "desktop" ? () => void openCompactFloatingPanel("cloud") : undefined}
-              onAuditBookCandidates={() => void auditBookCandidatesWithPikafish()}
-              onPlayBookMove={(iccs) => void playIccsMove(iccs)}
-              onPlayEvaluationMove={(iccs) => void playIccsMove(iccs, analysisFen ?? board.fen)}
-            />
+            {desktopPreferences.layoutMode === "compact" && workspaceMode === "research" ? <div className="research-reference-stack">
+              {compactReferencePanels()}
+              {compactManualDock("research-manual-panel")}
+            </div> : compactReferencePanels()}
             <div className="standard-analysis-layout">
           <div className="position-overview" aria-label="局势概览">
             <div className="overview-heading"><span><TrendingUp size={14}/>局势概览</span><strong>{evaluation?.label ?? "等待分析"}</strong><button className="panel-collapse-button" title="收起局面分析" aria-label="收起局面分析" onClick={() => void setAnalysisPanelVisibility(true)}><ChevronRight size={16}/></button></div>
@@ -7814,15 +8014,19 @@ export default function App() {
           <section className="position-editor" role="dialog" aria-modal="true" aria-labelledby="position-editor-title">
             <header><div><LayoutGrid size={17}/><strong id="position-editor-title">编辑研究局面</strong></div><button className="tool-button" title="关闭" onClick={() => setPositionEditorOpen(false)}><X size={16}/></button></header>
             <div className="editor-body">
-              <div className="editor-board" aria-label="局面编辑棋盘">
-                {cells.map(({ row, col }) => {
-                  const piece = editorPieceMap.get(`${row}-${col}`);
-                  return <button key={`${row}-${col}`} onClick={() => editSquare(row, col)} aria-label={`编辑 ${squareToIccs(row, col)}`}>{piece && <img src={pieceAsset(piece, displayedPieceSkin)} alt={piece.label}/>}</button>;
-                })}
-              </div>
+              <PositionEditorBoard
+                cells={cells}
+                pieces={editorPieceMap}
+                boardSkin={displayedBoardSkin}
+                pieceSkin={displayedPieceSkin}
+                pieceAsset={(piece) => pieceAsset(piece, displayedPieceSkin)}
+                onPieceAssetError={handlePieceAssetError}
+                onEditSquare={editSquare}
+                squareLabel={squareToIccs}
+              />
               <aside className="editor-tools">
                 <div className="piece-palette">
-                  {editorPalette.map((piece) => <button key={`${piece.color}-${piece.kind}`} className={editorPiece?.color === piece.color && editorPiece.kind === piece.kind ? "active" : ""} onClick={() => setEditorPiece(piece)}><img src={pieceAsset(piece, displayedPieceSkin)} alt={`${piece.color === "red" ? "红" : "黑"}${piece.label}`}/></button>)}
+                  {editorPalette.map((piece) => <button key={`${piece.color}-${piece.kind}`} className={editorPiece?.color === piece.color && editorPiece.kind === piece.kind ? "active" : ""} onClick={() => setEditorPiece(piece)}><img src={pieceAsset(piece, displayedPieceSkin)} alt={`${piece.color === "red" ? "红" : "黑"}${piece.label}`} onError={(event) => handlePieceAssetError(event, piece)}/></button>)}
                   <button className={editorPiece == null ? "active erase" : "erase"} onClick={() => setEditorPiece(null)}><Trash2 size={18}/><span>删除</span></button>
                 </div>
                 <div className="editor-actions">
@@ -8008,6 +8212,7 @@ export default function App() {
         folders={libraryFolders}
         onOpen={(gameId) => void openGame(gameId)}
         onShare={shareLibraryGame}
+        onReorder={(gameId, direction) => chessPlatform.reorderLibraryGame(gameId, direction)}
         onDelete={deleteLibraryGames}
         onChanged={refreshGames}
         onClose={() => setReviewGameLibraryOpen(false)}

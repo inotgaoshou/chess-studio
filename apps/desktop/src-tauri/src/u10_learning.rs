@@ -235,14 +235,19 @@ pub fn daily_plan(
         })
         .map(|attempt| attempt.task_id)
         .collect::<Vec<_>>();
-    due_task_ids.extend(tasks.iter().filter(|task| {
-        !task.mastered
-            && task
-                .next_review_at
-                .as_deref()
-                .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
-                .is_some_and(|date| date.with_timezone(&Utc) <= now)
-    }).map(|task| task.id));
+    due_task_ids.extend(
+        tasks
+            .iter()
+            .filter(|task| {
+                !task.mastered
+                    && task
+                        .next_review_at
+                        .as_deref()
+                        .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+                        .is_some_and(|date| date.with_timezone(&Utc) <= now)
+            })
+            .map(|task| task.id),
+    );
     due_task_ids.sort();
     due_task_ids.dedup();
     let due_tasks: Vec<DailyPlanItemDto> = tasks
@@ -443,32 +448,77 @@ pub fn infer_opening_repertoire(mut samples: Vec<OpeningSample>) -> OpeningReper
     fn systems(samples: &[OpeningSample], side: &str) -> Vec<OpeningSystemDto> {
         let mut grouped = BTreeMap::<String, Vec<&OpeningSample>>::new();
         for sample in samples.iter().filter(|sample| sample.side == side) {
-            grouped.entry(sample.opening_name.clone()).or_default().push(sample);
+            grouped
+                .entry(sample.opening_name.clone())
+                .or_default()
+                .push(sample);
         }
         let mut result = grouped
             .into_iter()
             .filter(|(_, games)| games.len() >= 3)
             .map(|(name, games)| {
-                let qualities = games.iter().filter_map(|sample| sample.average_quality).collect::<Vec<_>>();
+                let qualities = games
+                    .iter()
+                    .filter_map(|sample| sample.average_quality)
+                    .collect::<Vec<_>>();
                 let average_quality = (!qualities.is_empty()).then(|| {
-                    (qualities.iter().map(|score| u32::from(*score)).sum::<u32>() / qualities.len() as u32) as u8
+                    (qualities.iter().map(|score| u32::from(*score)).sum::<u32>()
+                        / qualities.len() as u32) as u8
                 });
-                let typical_deviation = games.iter().rev().find_map(|sample| sample.typical_deviation.clone());
-                let training_mode = if typical_deviation.is_some() { "opening-deviation" } else { "standard-route" };
-                let wins = games.iter().filter(|sample| {
-                    matches!((sample.side.as_str(), sample.outcome.as_deref()), ("red", Some("1-0")) | ("black", Some("0-1")))
-                }).count() as u32;
-                let draws = games.iter().filter(|sample| sample.outcome.as_deref() == Some("1/2-1/2")).count() as u32;
-                let losses = games.iter().filter(|sample| {
-                    matches!((sample.side.as_str(), sample.outcome.as_deref()), ("red", Some("0-1")) | ("black", Some("1-0")))
-                }).count() as u32;
-                let recent = games.iter().take(2).filter_map(|sample| sample.average_quality).collect::<Vec<_>>();
-                let earlier = games.iter().skip(2).filter_map(|sample| sample.average_quality).collect::<Vec<_>>();
+                let typical_deviation = games
+                    .iter()
+                    .rev()
+                    .find_map(|sample| sample.typical_deviation.clone());
+                let training_mode = if typical_deviation.is_some() {
+                    "opening-deviation"
+                } else {
+                    "standard-route"
+                };
+                let wins = games
+                    .iter()
+                    .filter(|sample| {
+                        matches!(
+                            (sample.side.as_str(), sample.outcome.as_deref()),
+                            ("red", Some("1-0")) | ("black", Some("0-1"))
+                        )
+                    })
+                    .count() as u32;
+                let draws = games
+                    .iter()
+                    .filter(|sample| sample.outcome.as_deref() == Some("1/2-1/2"))
+                    .count() as u32;
+                let losses = games
+                    .iter()
+                    .filter(|sample| {
+                        matches!(
+                            (sample.side.as_str(), sample.outcome.as_deref()),
+                            ("red", Some("0-1")) | ("black", Some("1-0"))
+                        )
+                    })
+                    .count() as u32;
+                let recent = games
+                    .iter()
+                    .take(2)
+                    .filter_map(|sample| sample.average_quality)
+                    .collect::<Vec<_>>();
+                let earlier = games
+                    .iter()
+                    .skip(2)
+                    .filter_map(|sample| sample.average_quality)
+                    .collect::<Vec<_>>();
                 let recent_trend = match (recent.is_empty(), earlier.is_empty()) {
                     (false, false) => {
-                        let latest = recent.iter().map(|score| i32::from(*score)).sum::<i32>() / recent.len() as i32;
-                        let previous = earlier.iter().map(|score| i32::from(*score)).sum::<i32>() / earlier.len() as i32;
-                        if latest - previous >= 8 { "improving" } else if previous - latest >= 8 { "declining" } else { "stable" }
+                        let latest = recent.iter().map(|score| i32::from(*score)).sum::<i32>()
+                            / recent.len() as i32;
+                        let previous = earlier.iter().map(|score| i32::from(*score)).sum::<i32>()
+                            / earlier.len() as i32;
+                        if latest - previous >= 8 {
+                            "improving"
+                        } else if previous - latest >= 8 {
+                            "declining"
+                        } else {
+                            "stable"
+                        }
                     }
                     _ => "stable",
                 };

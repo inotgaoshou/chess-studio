@@ -229,9 +229,16 @@ fn issue_training_prompt(issue: &ReportIssueDto) -> String {
     } else {
         "拆棋时先确认对方的将军、吃子和先手，再决定计划。"
     };
-    let opening_prompt = issue.opening.as_ref().map(|opening| {
-        format!(" 该着属于{}，应放回同类布局主线比较，而不是孤立背答案。", opening.name)
-    }).unwrap_or_default();
+    let opening_prompt = issue
+        .opening
+        .as_ref()
+        .map(|opening| {
+            format!(
+                " 该着属于{}，应放回同类布局主线比较，而不是孤立背答案。",
+                opening.name
+            )
+        })
+        .unwrap_or_default();
     format!("下一盘动作：{candidate_prompt}{opening_prompt}")
 }
 

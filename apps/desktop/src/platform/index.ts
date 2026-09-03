@@ -5,7 +5,7 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { isMobileBuild } from "../mobileEnvironment";
 import { webDatabase, type SyncOperation, type WebGameRecord } from "./indexedDb";
 import { BUILTIN_ENGINE_PATH, FALLBACK_BUILTIN_OPENING_BOOK_MANIFEST } from "./types";
-import type { AnalysisLine, AnalysisOptions, AppInfoDto, BoardState, BookImportDraft, BookTopicDetail, BuiltinOpeningBookManifestDto, CaptureSource, ChessPlatform, CloudAnalysisPreferences, CloudAuthDto, CloudBookCandidate, CloudGuestAuthDto, DesktopPreferencesDto, EngineArenaOptionsDto, EngineArenaResultDto, EngineMoveResult, EnginePlayOptions, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, ExportFormat, FlyknifeCandidate, FlyknifePlan, FlyknifeTemplate, FlyknifeTopic, GameMetadata, GameMirrorStatus, GameReportDatasetDto, GameReportOptionsDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, GenerateFlyknifeRequest, LibraryFolder, LibraryMoveResult, LinkAutoSide, LinkObservation, LinkSessionStatus, LinkTargetWindow, MasterGameDetailDto, MasterGameSummaryDto, MasterLibraryFilters, MasterLibraryStatsDto, MasterOpeningProfileDto, MasterPlayerDto, MasterStyleHintDto, MasterStyleImportResultDto, MasterStyleProfileDto, PreviewLineStep, RelatedMasterGame, ReplayExportScope, ScreenshotMoveResolution, StartLinkSessionRequest, StudySessionDto, SubscriptionDto, SyncAccountDto, SyncResult, TheoryCardDto, TheoryCardFeedbackDto, TheoryLibraryDto, TrainingGenerationResultDto, TrainingSummaryDto, TrainingTaskDto, TtxqDiagnosticSample, TtxqGamePreview, TtxqSyncProgress } from "./types";
+import type { AnalysisLine, AnalysisOptions, AppInfoDto, BoardState, BookImportDraft, BookTopicDetail, BuiltinOpeningBookManifestDto, CaptureSource, ChessPlatform, CloudAnalysisPreferences, CloudAuthDto, CloudBookCandidate, CloudGuestAuthDto, DesktopPreferencesDto, EndgameAttemptDto, EndgameFreePracticeMoveDto, EndgameImportResultDto, EndgameLibraryDto, EndgameProblemDto, EndgameRefreshResultDto, EngineArenaOptionsDto, EngineArenaResultDto, EngineMoveResult, EnginePlayOptions, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, ExportFormat, FlyknifeCandidate, FlyknifePlan, FlyknifeTemplate, FlyknifeTopic, GameMetadata, GameMirrorStatus, GameReportDatasetDto, GameReportOptionsDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, GenerateFlyknifeRequest, LibraryFolder, LibraryMoveResult, LinkAutoSide, LinkObservation, LinkSessionStatus, LinkTargetWindow, MasterGameDetailDto, MasterGameSummaryDto, MasterLibraryFilters, MasterLibraryStatsDto, MasterOpeningProfileDto, MasterPlayerDto, MasterStyleHintDto, MasterStyleImportResultDto, MasterStyleProfileDto, PreviewLineStep, RelatedMasterGame, ReplayExportScope, ScreenshotMoveResolution, StartLinkSessionRequest, StudySessionDto, SubscriptionDto, SyncAccountDto, SyncResult, TheoryCardDto, TheoryCardFeedbackDto, TheoryLibraryDto, TrainingGenerationResultDto, TrainingSummaryDto, TrainingTaskDto, TtxqDiagnosticSample, TtxqGamePreview, TtxqSyncProgress } from "./types";
 import type { ChineseLineParseResult, DailyTrainingPlan, GuidedAnalysisStart, GuidedAnalysisSubmission, GuidedAnalysisSubmissionResult, GuidedEngineLine, LearningProfile, OpeningRepertoire, WeeklyLearningReport } from "./types";
 
 type WebGameInstance = {
@@ -218,6 +218,7 @@ class DesktopPlatform implements ChessPlatform {
   async listGames(): Promise<GameSummary[]> {
     return invoke<GameSummary[]>("list_games");
   }
+  reorderLibraryGame(gameId: string, direction: number) { return invoke<void>("reorder_library_game", { gameId, direction }); }
   deleteGames(gameIds: string[]) { return invoke<void>("delete_games", { gameIds }); }
   getGameMetadata(gameId: string) { return invoke<GameMetadata>("get_game_metadata", { gameId }); }
   updateGameMetadataForGame(gameId: string, metadata: GameMetadata) { return invoke<Partial<BoardState>>("update_game_metadata_for_game", { gameId, metadata }); }
@@ -294,6 +295,17 @@ class DesktopPlatform implements ChessPlatform {
   getWeeklyLearningReport() { return invoke<WeeklyLearningReport>("get_weekly_learning_report"); }
   inferOpeningRepertoire() { return invoke<OpeningRepertoire>("infer_opening_repertoire_command"); }
   getTrainingSummary() { return invoke<TrainingSummaryDto>("get_training_summary"); }
+  async importEndgameCbl() { const path = await open({ multiple: false, directory: false, filters: [{ name: "CCBridge 残局题库", extensions: ["cbl"] }] }); if (!path || Array.isArray(path)) return undefined; return invoke<EndgameImportResultDto>("import_endgame_cbl", { path }); }
+  importEndgameCblFromPath(path: string) { return invoke<EndgameImportResultDto>("import_endgame_cbl", { path }); }
+  refreshEndgameLibraries() { return invoke<EndgameRefreshResultDto>("refresh_endgame_libraries"); }
+  listEndgameLibraries() { return invoke<EndgameLibraryDto[]>("list_endgame_libraries"); }
+  listEndgameProblems(libraryId: string) { return invoke<EndgameProblemDto[]>("list_endgame_problems", { libraryId }); }
+  listEndgameAttempts(problemId: string) { return invoke<EndgameAttemptDto[]>("list_endgame_attempts", { problemId }); }
+  saveEndgameAttempt(request: { problemId: string; mode: "solver" | "replay" | "free"; elapsedMs: number; hintsUsed: number; mistakes: number; outcome: "completed" | "revealed" | "abandoned" | "free_finished" }) { return invoke<void>("save_endgame_attempt", request); }
+  deleteEndgameLibrary(libraryId: string) { return invoke<void>("delete_endgame_library", { libraryId }); }
+  deleteEndgameProblem(problemId: string) { return invoke<void>("delete_endgame_problem", { problemId }); }
+  endgameChineseMainline(startingFen: string, moves: string[]) { return invoke<string[]>("endgame_chinese_mainline", { startingFen, moves }); }
+  endgameFreePracticeMove(startingFen: string, previousMoves: string[], iccs: string) { return invoke<EndgameFreePracticeMoveDto>("endgame_free_practice_move", { startingFen, previousMoves, iccs }); }
   listStudySessions() { return invoke<StudySessionDto[]>("list_study_sessions"); }
   saveStudySession(reflection: string, tags: string[]) { return invoke<StudySessionDto>("save_study_session", { reflection, tags }); }
   scanTheoryLibrary() { return invoke<TheoryLibraryDto>("scan_theory_library"); }
@@ -502,7 +514,23 @@ class WebPlatform implements ChessPlatform {
 
   async listGames(): Promise<GameSummary[]> {
     const currentId = await webDatabase.meta("currentGameId");
-    return (await webDatabase.games()).map((game) => ({
+    const rawOrder = await webDatabase.meta("libraryGameOrderV1");
+    let order: Record<string, string[]> = {};
+    if (rawOrder) {
+      try {
+        const parsed = JSON.parse(rawOrder) as unknown;
+        if (parsed && typeof parsed === "object") order = parsed as Record<string, string[]>;
+      } catch {
+        // A corrupt optional ordering value must not prevent the library from
+        // opening; the next reorder replaces it with valid JSON.
+      }
+    }
+    const ranked = (await webDatabase.games()).map((game, index) => ({ game, index })).sort((left, right) => {
+      const leftOrder = order[left.game.libraryFolder ?? ""]?.indexOf(left.game.id) ?? -1;
+      const rightOrder = order[right.game.libraryFolder ?? ""]?.indexOf(right.game.id) ?? -1;
+      return (leftOrder < 0 ? Number.MAX_SAFE_INTEGER : leftOrder) - (rightOrder < 0 ? Number.MAX_SAFE_INTEGER : rightOrder) || left.index - right.index;
+    });
+    return ranked.map(({ game }) => ({
       id: game.id,
       title: game.title,
       fen: game.fen,
@@ -512,6 +540,32 @@ class WebPlatform implements ChessPlatform {
       favorite: game.favorite ?? false,
       tags: game.tags ?? [], moveCount: 0,
     }));
+  }
+  async reorderLibraryGame(gameId: string, direction: number): Promise<void> {
+    const games = await webDatabase.games();
+    const game = games.find((item) => item.id === gameId);
+    if (!game) throw new Error("棋谱不存在");
+    const siblings = games.filter((item) => item.libraryFolder === game.libraryFolder);
+    const rawOrder = await webDatabase.meta("libraryGameOrderV1");
+    let order: Record<string, string[]> = {};
+    if (rawOrder) {
+      try {
+        const parsed = JSON.parse(rawOrder) as unknown;
+        if (parsed && typeof parsed === "object") order = parsed as Record<string, string[]>;
+      } catch {
+        // Treat malformed optional ordering metadata as an empty order.
+      }
+    }
+    const key = game.libraryFolder ?? "";
+    const known = new Set(siblings.map((item) => item.id));
+    const current = (order[key] ?? []).filter((id) => known.has(id));
+    siblings.forEach((item) => { if (!current.includes(item.id)) current.push(item.id); });
+    const index = current.indexOf(gameId);
+    const target = index + direction;
+    if (index < 0 || target < 0 || target >= current.length) return;
+    current.splice(target, 0, current.splice(index, 1)[0]);
+    order[key] = current;
+    await webDatabase.setMeta("libraryGameOrderV1", JSON.stringify(order));
   }
   async deleteGames(gameIds: string[]) {
     const currentId = await webDatabase.meta("currentGameId");
@@ -952,6 +1006,17 @@ class WebPlatform implements ChessPlatform {
   async getWeeklyLearningReport(): Promise<WeeklyLearningReport> { throw new Error("Web 端暂不支持 U10 周报"); }
   async inferOpeningRepertoire(): Promise<OpeningRepertoire> { throw new Error("Web 端暂不支持 U10 布局画像"); }
   async getTrainingSummary(): Promise<TrainingSummaryDto> { throw new Error("Web 端暂不支持训练总结"); }
+  async importEndgameCbl(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
+  async importEndgameCblFromPath(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
+  async refreshEndgameLibraries(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
+  async listEndgameLibraries(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
+  async listEndgameProblems(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
+  async listEndgameAttempts(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
+  async saveEndgameAttempt(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
+  async deleteEndgameLibrary(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
+  async deleteEndgameProblem(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
+  async endgameChineseMainline(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
+  async endgameFreePracticeMove(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
   async listStudySessions(): Promise<StudySessionDto[]> { throw new Error("Web 端暂不支持训练总结"); }
   async saveStudySession(): Promise<StudySessionDto> { throw new Error("Web 端暂不支持训练总结"); }
   async scanTheoryLibrary(): Promise<TheoryLibraryDto> { throw new Error("Web 端暂不支持本地棋理库"); }

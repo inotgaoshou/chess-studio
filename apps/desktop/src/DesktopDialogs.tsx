@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { FolderOpen, LogIn, Minus, Plus, Save, Settings2, UserPlus, X } from "lucide-react";
+import { ClipboardList, FolderOpen, LogIn, Minus, Plus, Save, Settings2, Swords, UserPlus, X } from "lucide-react";
 import { BUILTIN_ENGINE_PATH, DEFAULT_BUILTIN_OPENING_BOOK_ID, FALLBACK_BUILTIN_OPENING_BOOK_MANIFEST, type BuiltinOpeningBookManifestDto, type DesktopPreferencesDto, type EngineProfileDto, type StudySessionDto, type SubscriptionDto, type SyncAccountDto, type TrainingSummaryDto, type TrainingTaskDto } from "./platform";
 import {
   DEFAULT_CANDIDATE_LINE_MOVES,
@@ -38,6 +38,7 @@ type Props = {
   onSaveStudy(reflection: string, tags: string[]): Promise<void>;
   onAnalyzeStudy(): Promise<void>;
   onCompleteTraining(taskId: string, completed: boolean): Promise<void>;
+  onOpenEndgame?(): void;
   onChooseMirrorRoot?(): Promise<string | undefined>;
   onSaveMirrorPreferences?(enabled: boolean, root: string): Promise<void>;
   onRebuildMirrors?(): Promise<void>;
@@ -187,7 +188,7 @@ function authenticationErrorMessage(error: unknown) {
     : message;
 }
 
-export function DesktopDialogs({ dialog, preferences, account, subscription, trainingTasks, trainingSummary, studySessions, engineProfiles = [], builtinOpeningBookManifest, busy, onClose, onChooseEngine, onSaveEngine, onSelectEngineProfile, onDeleteEngineProfile, onSaveSync, onUnbindSync, onAuthenticate, onRedeemSubscription, onGenerateTraining, onSaveStudy, onAnalyzeStudy, onCompleteTraining, onChooseMirrorRoot, onSaveMirrorPreferences, onRebuildMirrors }: Props) {
+export function DesktopDialogs({ dialog, preferences, account, subscription, trainingTasks, trainingSummary, studySessions, engineProfiles = [], builtinOpeningBookManifest, busy, onClose, onChooseEngine, onSaveEngine, onSelectEngineProfile, onDeleteEngineProfile, onSaveSync, onUnbindSync, onAuthenticate, onRedeemSubscription, onGenerateTraining, onSaveStudy, onAnalyzeStudy, onCompleteTraining, onOpenEndgame, onChooseMirrorRoot, onSaveMirrorPreferences, onRebuildMirrors }: Props) {
   const [draft, setDraft] = useState(() => sanitizeEnginePreferences(preferences));
   const [email, setEmail] = useState(account.email ?? "");
   const [password, setPassword] = useState("");
@@ -199,6 +200,7 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
   const [enginePickerError, setEnginePickerError] = useState("");
   const [engineSaveError, setEngineSaveError] = useState("");
   const [engineSaveSuccess, setEngineSaveSuccess] = useState("");
+  const [trainingView, setTrainingView] = useState<"choose" | "review">("choose");
   const initializedDialog = useRef<DesktopDialog>(null);
   const branchArrowColor = branchArrowColors.some(([value]) => value === draft.branchArrowColor) ? draft.branchArrowColor : "#f45d0b";
   const branchArrowBadgeColor = branchArrowColors.some(([value]) => value === draft.branchArrowBadgeColor) ? draft.branchArrowBadgeColor! : "#4aa51c";
@@ -230,6 +232,7 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
     setEnginePickerError("");
     setEngineSaveError("");
     setEngineSaveSuccess("");
+    setTrainingView("choose");
   }, [account.email, dialog, preferences]);
 
   if (!dialog) return null;
@@ -403,13 +406,24 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
           <footer><button onClick={close} disabled={busy}>关闭</button><button className="primary" disabled={busy || !redemptionCode.trim() || account.status !== "signedIn"} onClick={() => void redeemSubscription()}>{busy ? "兑换中…" : "兑换 Pro"}</button></footer>
         </div>}
 
-        {dialog === "training" && <div className="dialog-form account-form">
+        {dialog === "training" && trainingView === "choose" && <div className="dialog-form training-chooser">
+          <button className="training-choice primary" type="button" onClick={onOpenEndgame}><Swords size={21}/><span><strong>残局做题</strong><small>导入 CBL 题库，按题号走棋训练</small></span></button>
+          <button className="training-choice" type="button" onClick={() => setTrainingView("review")}><ClipboardList size={21}/><span><strong>复盘训练</strong><small>从当前棋谱报告生成训练任务</small></span></button>
+        </div>}
+
+        {dialog === "training" && trainingView === "review" && <div className="dialog-form training-review-summary">
+          <button className="training-back" type="button" onClick={() => setTrainingView("choose")}>返回训练方式</button>
+          <p className="dialog-hint">复盘训练会在后续版本恢复；当前请使用残局做题完成本地题库训练。</p>
+        </div>}
+
+        {false && dialog === "training" && trainingView === "review" && <div className="dialog-form account-form">
+          <button className="training-back" type="button" onClick={() => setTrainingView("choose")}>返回训练方式</button>
           <p className="dialog-hint">总结会绑定当前棋局和当前节点。保存后用本地 Pikafish 核验该局面；课程建议只使用已确认的原则卡。</p>
           <label className="full"><span>本局训练总结</span><textarea value={studyReflection} placeholder="例如：第18回合只考虑抢攻，漏算了对方平炮后的反击；请核验应补防、兑子还是继续进攻。" onChange={(event) => setStudyReflection(event.target.value)}/></label>
           <label className="full"><span>训练标签（逗号分隔）</span><input value={studyTags} placeholder="候选着, 反击, 防守" onChange={(event) => setStudyTags(event.target.value)}/></label>
           <button className="theory-card-create" type="button" disabled={busy || !studyReflection.trim()} onClick={() => void onSaveStudy(studyReflection, studyTags.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean)).then(() => { setStudyReflection(""); setStudyTags(""); })}>保存总结</button>
           {studySessions.length > 0 && <div className="full dialog-book-list">{studySessions.slice(0, 3).map((session) => <div key={session.id}><strong>{session.nodeId ? "当前节点复盘" : "整局复盘"}</strong><small>{session.reflection}{session.tags.length ? ` · ${session.tags.join(" / ")}` : ""}</small></div>)}</div>}
-          {!!trainingSummary?.weakSpots.length && <div className="full dialog-book-list" aria-label="薄弱项追踪">{trainingSummary.weakSpots.slice(0, 6).map((spot) => <div key={`${spot.phase}-${spot.tag}`}><strong>{spot.phase} · {spot.tag}</strong><small>出现 {spot.occurrences} 次，未完成 {spot.openTasks}，已完成 {spot.completedTasks}{spot.reviewCards.length ? ` · 复习：${spot.reviewCards.slice(0, 2).map((card) => card.sourceBook ? `${card.sourceBook}${card.sourcePageStart ? ` p.${card.sourcePageStart}` : ""}` : card.title).join("；")}` : ""}</small></div>)}</div>}
+          {!!trainingSummary?.weakSpots.length && <div className="full dialog-book-list" aria-label="薄弱项追踪">{trainingSummary?.weakSpots.slice(0, 6).map((spot) => <div key={`${spot.phase}-${spot.tag}`}><strong>{spot.phase} · {spot.tag}</strong><small>出现 {spot.occurrences} 次，未完成 {spot.openTasks}，已完成 {spot.completedTasks}{spot.reviewCards.length ? ` · 复习：${spot.reviewCards.slice(0, 2).map((card) => card.sourceBook ? `${card.sourceBook}${card.sourcePageStart ? ` p.${card.sourcePageStart}` : ""}` : card.title).join("；")}` : ""}</small></div>)}</div>}
           {trainingTasks.length === 0 ? <p className="dialog-hint">还没有训练任务。先生成整局报告，再创建任务。</p> : <div className="full dialog-book-list">{trainingTasks.map((task) => <label className="check-row" key={task.id}><input type="checkbox" checked={!!task.completedAt} disabled={busy} onChange={(event) => void onCompleteTraining(task.id, event.target.checked)}/><span><strong>{task.title}</strong><small>{task.detail}</small></span></label>)}</div>}
           {enginePickerError && <p className="dialog-warning full" role="alert">{enginePickerError}</p>}
           <footer><button onClick={close} disabled={busy}>关闭</button><button disabled={busy || !studyReflection.trim()} onClick={() => void onSaveStudy(studyReflection, studyTags.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean)).then(() => { setStudyReflection(""); setStudyTags(""); })}>保存总结</button><button className="primary" disabled={busy} onClick={() => void onAnalyzeStudy()}>{busy ? "分析中…" : "引擎核验当前局面"}</button><button className="primary" disabled={busy} onClick={() => void onGenerateTraining()}>从报告生成任务</button></footer>

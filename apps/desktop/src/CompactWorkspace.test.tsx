@@ -45,25 +45,33 @@ describe("CompactReferencePanels", () => {
     expect(screen.getByText("0 条 · 云库关闭")).toBeTruthy();
   });
 
-  it("shows enabled builtin opening book status without exposing unverified moves", () => {
+  it("switches to engine-library analysis without exposing the retired builtin source", () => {
+    const onPlayEngineMove = vi.fn();
+    const onRunEngineAnalysis = vi.fn();
     render(<CompactReferencePanels
       {...common}
-      cloudEnabled={false}
-      bookRows={[]}
-      builtinBookStatus={{
-        enabled: true,
-        verified: false,
-        name: "学习精选 Top3",
-        shortName: "学习精选",
-        maxCandidatesPerPosition: 3,
-        note: "FEN to pfBook vkey is not implemented yet; realtime pfBook candidates are hidden.",
-      }}
+      engineRows={[{
+        id: "engine-1",
+        iccs: "h2e2",
+        rank: 1,
+        depthText: "26",
+        scoreText: "+18",
+        timeText: "1.2s",
+        npsText: "2.1M",
+        hfText: "--",
+        lineText: "马二进三 马8进7",
+      }]}
+      onPlayEngineMove={onPlayEngineMove}
+      onRunEngineAnalysis={onRunEngineAnalysis}
     />);
 
-    expect(screen.getByText("内嵌库")).toBeTruthy();
-    expect(screen.getByText("0 条 · 内嵌库待验证")).toBeTruthy();
-    expect(screen.getAllByText("学习精选已启用，vkey 未验证，暂不显示推荐").length).toBeGreaterThan(0);
-    expect(screen.queryByRole("button", { name: /学习精选/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "引擎库" }));
+    expect(screen.getByText("1. 马二进三")).toBeTruthy();
+    expect(screen.queryByText("内嵌库")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "分析当前局面" }));
+    expect(onRunEngineAnalysis).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("row", { name: /马二进三/ }));
+    expect(onPlayEngineMove).toHaveBeenCalledWith("h2e2");
   });
 
   it("runs Pikafish audit from the opening book header", () => {
@@ -123,8 +131,8 @@ describe("CompactReferencePanels", () => {
       }]}
     />);
 
-    expect(screen.getByText("1 条 · 云库关闭")).toBeTruthy();
-    expect(screen.getAllByText("本地 XQB").length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "本地 XQB" }));
+    expect(screen.getByText("1 条")).toBeTruthy();
     expect(screen.getByLabelText("胜 36% ，和 32% ，负 32%")).toBeTruthy();
     expect(screen.getByText("71,368")).toBeTruthy();
     expect(screen.getByText("红优 +12")).toBeTruthy();

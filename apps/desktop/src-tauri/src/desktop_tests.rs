@@ -33,6 +33,12 @@ mod tests {
         format!("http://{address}")
     }
 
+    #[test]
+    fn local_desktop_permission_allows_library_game_reorder() {
+        let permissions = include_str!("../permissions/desktop.toml");
+        assert!(permissions.contains("\"reorder_library_game\""));
+    }
+
     fn desktop_state_for_link_tests() -> DesktopState {
         let game_id = Uuid::new_v4();
         let device_id = Uuid::new_v4();

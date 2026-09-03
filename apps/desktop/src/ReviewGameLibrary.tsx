@@ -1,4 +1,4 @@
-import { CheckSquare, ChevronDown, ChevronRight, Database, FilePenLine, FolderInput, FolderOpen, FolderPlus, MoreHorizontal, Search, Share2, Square, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, CheckSquare, ChevronDown, ChevronRight, Database, FilePenLine, FolderInput, FolderOpen, FolderPlus, MoreHorizontal, Search, Share2, Square, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState, type CSSProperties, type FormEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
 import { chessPlatform, type GameMetadata, type GameSummary, type LibraryFolder } from "./platform";
@@ -84,23 +84,26 @@ function resultLabel(game: GameSummary) {
   return game.result === "1-0" ? "红胜" : game.result === "0-1" ? "黑胜" : game.result === "1/2-1/2" ? "和棋" : game.result;
 }
 
-export function ReviewGameLibrary({ games, folders, onOpen, onShare, onDelete, onChanged, onClose }: {
+export function ReviewGameLibrary({ games, folders, onOpen, onShare, onDelete, onReorder, onChanged, onClose }: {
   games: GameSummary[];
   folders: LibraryFolder[];
   onOpen(gameId: string): void;
   onShare?(gameId: string): Promise<void>;
   onDelete?(gameIds: string[]): Promise<void>;
+  onReorder?(gameId: string, direction: number): Promise<void>;
   onChanged?(): Promise<void>;
   onClose(): void;
 }) {
-  const ttxqCount = games.filter(isTtxqGame).length;
-  const [filter, setFilter] = useState<Filter>(ttxqCount > 0 ? "ttxq" : "all");
+  const initialTtxqCount = games.filter(isTtxqGame).length;
+  const [filter, setFilter] = useState<Filter>(initialTtxqCount > 0 ? "ttxq" : "all");
   const [query, setQuery] = useState("");
+  const [localGames, setLocalGames] = useState(games);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
   const [editing, setEditing] = useState<{ id: string; value: GameMetadata }>();
   const [saving, setSaving] = useState(false);
   const [sharingId, setSharingId] = useState<string>();
+  const [reorderingId, setReorderingId] = useState<string>();
   const [actionError, setActionError] = useState<string>();
   const [actionSuccess, setActionSuccess] = useState<string>();
   const [pendingDelete, setPendingDelete] = useState<string[]>();
@@ -115,8 +118,9 @@ export function ReviewGameLibrary({ games, folders, onOpen, onShare, onDelete, o
   const [sidebarWidth, setSidebarWidth] = useState(236);
   const [pageSize, setPageSize] = useState<(typeof PAGE_SIZE_OPTIONS)[number]>(20);
   const [page, setPage] = useState(1);
+  const ttxqCount = localGames.filter(isTtxqGame).length;
   const folderMatches = (game: GameSummary, folder: string) => game.libraryFolder === folder || game.libraryFolder?.startsWith(`${folder}/`);
-  const folderCount = (folder: string) => games.filter((game) => folderMatches(game, folder)).length;
+  const folderCount = (folder: string) => localGames.filter((game) => folderMatches(game, folder)).length;
   const folderOptions = useMemo(() => {
     const names = new Set<string>(folders.map((folder) => folder.name));
     names.add(TTXQ_FOLDER);
@@ -134,12 +138,12 @@ export function ReviewGameLibrary({ games, folders, onOpen, onShare, onDelete, o
     const prefix = `${folderManage.folder}/`;
     return {
       childFolderCount: folders.filter((folder) => folder.name.startsWith(prefix)).length,
-      gameCount: games.filter((game) => game.libraryFolder === folderManage.folder || game.libraryFolder?.startsWith(prefix)).length,
+      gameCount: localGames.filter((game) => game.libraryFolder === folderManage.folder || game.libraryFolder?.startsWith(prefix)).length,
     };
-  }, [folderManage, folders, games]);
+  }, [folderManage, folders, localGames]);
   const visibleGames = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase();
-    const filtered = games.filter((game) => {
+    const filtered = localGames.filter((game) => {
       const inFilter = normalizedQuery || filter === "all"
         || (filter === "ttxq" ? isTtxqGame(game) : folderMatches(game, filter.slice("folder:".length)));
       const folderTerms = `${game.libraryFolder || ""} ${gameFolderLabel(game)}`;
@@ -157,7 +161,7 @@ export function ReviewGameLibrary({ games, folders, onOpen, onShare, onDelete, o
         return left.index - right.index;
       })
       .map(({ game }) => game);
-  }, [filter, games, query]);
+  }, [filter, localGames, query]);
   const pageCount = Math.max(1, Math.ceil(visibleGames.length / pageSize));
   const safePage = Math.min(page, pageCount);
   const pagedGames = visibleGames.slice((safePage - 1) * pageSize, safePage * pageSize);
@@ -169,13 +173,17 @@ export function ReviewGameLibrary({ games, folders, onOpen, onShare, onDelete, o
   const pendingMoveFolder = useMemo(() => {
     if (!pendingMove?.length) return undefined;
     const pendingIds = new Set(pendingMove);
-    const sourceFolders = new Set(games.filter((game) => pendingIds.has(game.id)).map((game) => game.libraryFolder ?? ""));
+    const sourceFolders = new Set(localGames.filter((game) => pendingIds.has(game.id)).map((game) => game.libraryFolder ?? ""));
     return sourceFolders.size === 1 ? [...sourceFolders][0] : null;
-  }, [games, pendingMove]);
+  }, [localGames, pendingMove]);
   const moveTargetUnset = moveTarget === MOVE_TARGET_UNSET;
   const moveTargetUnchanged = pendingMoveFolder != null && !moveTargetUnset && moveTarget === pendingMoveFolder;
   const folderMoveTargetUnset = folderManage?.action === "move" && folderManage.parent === MOVE_TARGET_UNSET;
   const folderMoveTargetUnchanged = folderManage?.action === "move" && !folderMoveTargetUnset && folderManage.parent === folderParent(folderManage.folder);
+
+  useEffect(() => {
+    setLocalGames(games);
+  }, [games]);
 
   useEffect(() => {
     setPage(1);
@@ -384,7 +392,31 @@ export function ReviewGameLibrary({ games, folders, onOpen, onShare, onDelete, o
       setActionError(undefined);
       setActionSuccess(`已从本机删除 ${gameIds.length} 盘棋谱，不会同步到云端。`);
     }
-    catch (error) { setActionError(`删除失败：${error instanceof Error ? error.message : String(error)}`); }
+    catch (error) {
+      // A rendered library row can refer to a UUID that was already hidden by
+      // Tencent de-duplication or a previous delete. Refresh the projection and
+      // treat an explicit missing/deleted response as idempotent success.
+      await onChanged?.().catch(() => undefined);
+      const message = error instanceof Error ? error.message : String(error);
+      // The command is idempotent, but a stale row can still race the list
+      // refresh. Treat a target that no longer exists in the refreshed
+      // projection as success even when the backend reported a generic error
+      // while recovering the active workspace.
+      const latestGames = await chessPlatform.listGames().catch(() => localGames);
+      const targetStillVisible = gameIds.some((id) => latestGames.some((game) => game.id === id));
+      if (!targetStillVisible || /棋谱不存在|已删除|not found|missing/i.test(message)) {
+        setSelected((ids) => {
+          const next = new Set(ids);
+          gameIds.forEach((id) => next.delete(id));
+          return next;
+        });
+        setPendingDelete(undefined);
+        setActionError(undefined);
+        setActionSuccess(`棋谱列表已更新，${gameIds.length} 盘目标棋谱已不存在。`);
+        return;
+      }
+      setActionError(`删除失败：${error instanceof Error ? error.message : String(error)}`);
+    }
     finally { setDeleting(false); }
   }
   function requestMove(gameIds: string[]) {
@@ -412,12 +444,58 @@ export function ReviewGameLibrary({ games, folders, onOpen, onShare, onDelete, o
       setMoving(false);
     }
   }
+  async function reorderGame(gameId: string, direction: number) {
+    if (!onReorder || reorderingId) return;
+    const game = visibleGames.find((item) => item.id === gameId);
+    if (!game || !filter.startsWith("folder:") || query.trim()) return;
+    const siblingIds = visibleGames
+      .filter((item) => item.libraryFolder === game.libraryFolder)
+      .map((item) => item.id);
+    const index = siblingIds.indexOf(gameId);
+    const targetIndex = index + direction;
+    if (index < 0 || targetIndex < 0 || targetIndex >= siblingIds.length) return;
+    const targetId = siblingIds[targetIndex];
+    const previousGames = localGames;
+    setActionError(undefined);
+    setActionSuccess("正在保存排序…");
+    setReorderingId(gameId);
+    setLocalGames((current) => {
+      const next = [...current];
+      const from = next.findIndex((item) => item.id === gameId);
+      const to = next.findIndex((item) => item.id === targetId);
+      if (from < 0 || to < 0) return current;
+      [next[from], next[to]] = [next[to], next[from]];
+      return next;
+    });
+    try {
+      await onReorder(gameId, direction);
+      await onChanged?.();
+      setActionSuccess("排序已保存。");
+    } catch (error) {
+      setLocalGames(previousGames);
+      setActionError(`排序失败：${error instanceof Error ? error.message : String(error)}`);
+      setActionSuccess(undefined);
+    } finally {
+      setReorderingId(undefined);
+    }
+  }
   async function startEdit(gameId: string) {
     try {
       setActionError(undefined);
       setEditing({ id: gameId, value: await chessPlatform.getGameMetadata(gameId) });
     } catch (error) {
-      setActionError(`无法读取棋谱信息：${error instanceof Error ? error.message : String(error)}`);
+      const message = error instanceof Error ? error.message : String(error);
+      // A list row may be one render behind provider de-duplication. Refresh
+      // the projection before surfacing an error; the stale row is not a
+      // missing user action and should not produce a misleading toast.
+      if (/棋谱不存在|已删除|not found|missing/i.test(message)) {
+        await onChanged?.().catch(() => undefined);
+        setEditing(undefined);
+        setActionError(undefined);
+        setActionSuccess("棋谱列表已更新，失效记录已移除。");
+        return;
+      }
+      setActionError(`无法读取棋谱信息：${message}`);
     }
   }
   async function saveEdit() {
@@ -441,7 +519,14 @@ export function ReviewGameLibrary({ games, folders, onOpen, onShare, onDelete, o
       await onShare(gameId);
       onClose();
     } catch (error) {
-      setActionError(`无法打开分享：${error instanceof Error ? error.message : String(error)}`);
+      const message = error instanceof Error ? error.message : String(error);
+      if (/棋谱不存在|已删除|not found|missing/i.test(message)) {
+        await onChanged?.().catch(() => undefined);
+        setActionError(undefined);
+        setActionSuccess("棋谱列表已更新，失效记录已移除。");
+      } else {
+        setActionError(`无法打开分享：${message}`);
+      }
     } finally {
       setSharingId(undefined);
     }
@@ -481,7 +566,7 @@ export function ReviewGameLibrary({ games, folders, onOpen, onShare, onDelete, o
             </div>
             {expandedFolders.has(TTXQ_FOLDER) && ttxqTree?.children.map((child) => renderFolderNode(child, 1))}
           </div>
-          <button type="button" className={filter === "all" ? "active" : ""} onClick={() => setLibraryFilter("all")}><FolderOpen size={14}/>全部本地 <small>{games.length}</small></button>
+          <button type="button" className={filter === "all" ? "active" : ""} onClick={() => setLibraryFilter("all")}><FolderOpen size={14}/>全部本地 <small>{localGames.length}</small></button>
           {nonTtxqFolderTree.map((node) => renderFolderNode(node))}
           <div className="review-library-folder-actions">
             <button type="button" disabled={creatingFolder} onClick={startCreateFolder}><FolderPlus size={14}/>{currentFolderParent() ? "新建子目录" : "新建目录"}</button>
@@ -513,8 +598,16 @@ export function ReviewGameLibrary({ games, folders, onOpen, onShare, onDelete, o
             {actionSuccess && <p className="review-library-action-success" role="status">{actionSuccess}</p>}
           </div>
           <div className="review-game-library-list" aria-label="棋谱列表">
-            {visibleGames.length === 0 ? <p>没有匹配的本地棋谱。</p> : pagedGames.map((game) => (
-              <article key={game.id} className={`review-library-game ${game.current ? "current" : ""}`}>
+            {visibleGames.length === 0 ? <p>没有匹配的本地棋谱。</p> : pagedGames.map((game) => {
+              const folderOrdering = filter.startsWith("folder:") && !query.trim();
+              // A parent-folder view can include descendants. Reordering must
+              // still use the exact sibling set that the backend persists.
+              const folderSiblings = folderOrdering
+                ? visibleGames.filter((item) => item.libraryFolder === game.libraryFolder)
+                : [];
+              const folderIndex = folderOrdering ? folderSiblings.findIndex((item) => item.id === game.id) : -1;
+              return (
+              <article key={game.id} className={`review-library-game ${game.current ? "current" : ""} ${reorderingId === game.id ? "reordering" : ""}`}>
                 <button type="button" className="review-library-select" aria-label="勾选删除" title={`勾选删除：${gameTitle(game)}`} onClick={() => toggle(game.id)}>
                   {selected.has(game.id) ? <CheckSquare size={17}/> : <Square size={17}/>}</button>
                 <button type="button" className="review-library-open" aria-label={gameTitle(game)} title={`打开：${gameTitle(game)}`} onClick={() => { onOpen(game.id); onClose(); }}>
@@ -525,11 +618,16 @@ export function ReviewGameLibrary({ games, folders, onOpen, onShare, onDelete, o
                 <div className="review-library-actions">
                   <button type="button" title="编辑棋谱信息" aria-label={`编辑 ${gameTitle(game)}`} onClick={() => void startEdit(game.id)}><FilePenLine size={15}/><span>编辑</span></button>
                   <button type="button" title="移动到其他目录" aria-label={`移动 ${gameTitle(game)}`} disabled={moving} onClick={() => requestMove([game.id])}><FolderInput size={15}/><span>移动</span></button>
+                  {onReorder && folderOrdering && <>
+                    <button type="button" className="review-library-reorder" title={reorderingId === game.id ? "排序保存中" : "在当前目录上移"} aria-label={`上移 ${gameTitle(game)}`} disabled={!!reorderingId || folderIndex <= 0} onClick={() => void reorderGame(game.id, -1)}><ArrowUp size={15}/><span>上移</span></button>
+                    <button type="button" className="review-library-reorder" title={reorderingId === game.id ? "排序保存中" : "在当前目录下移"} aria-label={`下移 ${gameTitle(game)}`} disabled={!!reorderingId || folderIndex < 0 || folderIndex >= folderSiblings.length - 1} onClick={() => void reorderGame(game.id, 1)}><ArrowDown size={15}/><span>下移</span></button>
+                  </>}
                   {onShare && <button type="button" title="打开分享与导出" aria-label={`分享 ${gameTitle(game)}`} disabled={sharingId === game.id} onClick={() => void share(game.id)}><Share2 size={15}/><span>{sharingId === game.id ? "打开中" : "分享"}</span></button>}
                   {onDelete && <button type="button" className="danger" title="删除棋谱" aria-label={`删除 ${gameTitle(game)}`} disabled={deleting} onClick={() => requestDelete([game.id])}><Trash2 size={15}/><span>删除</span></button>}
                 </div>
               </article>
-            ))}
+            );
+            })}
           </div>
           <nav className="review-library-pagination" aria-label="棋谱分页">
             <span>{visibleGames.length === 0 ? "0 盘" : `${pageStart}-${pageEnd} / ${visibleGames.length} 盘`}</span>

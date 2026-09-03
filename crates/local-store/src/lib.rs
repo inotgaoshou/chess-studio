@@ -2,9 +2,15 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
+
+mod game_lifecycle;
+mod library;
+pub mod ttxq;
+pub(crate) use library::insert_library_folder_path;
 use sync_protocol::{
-    AddMovePayload, CreateGamePayload, DeleteGamePayload, DeleteNodePayload, Operation, OperationKind,
-    ReorderBranchesPayload, SetMainlinePayload, UpdateCommentPayload, UpdateGameMetadataPayload,
+    AddMovePayload, CreateGamePayload, DeleteGamePayload, DeleteNodePayload, Operation,
+    OperationKind, ReorderBranchesPayload, SetMainlinePayload, UpdateCommentPayload,
+    UpdateGameMetadataPayload,
 };
 use thiserror::Error;
 use uuid::Uuid;
@@ -569,6 +575,56 @@ pub struct TrainingAttempt {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct EndgameLibrary {
+    pub id: Uuid,
+    pub title: String,
+    pub source_path: String,
+    pub fingerprint: String,
+    pub parser_version: u32,
+    pub problem_count: u32,
+    pub completed_count: u32,
+    pub imported_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EndgameProblem {
+    pub id: Uuid,
+    pub library_id: Uuid,
+    pub source_index: u32,
+    pub title: String,
+    pub category: String,
+    pub starting_fen: String,
+    pub note: String,
+    pub solution_json: String,
+    pub completed_attempts: u32,
+    pub total_elapsed_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EndgameAttempt {
+    pub id: Uuid,
+    pub mode: String,
+    pub elapsed_ms: u64,
+    pub hints_used: u32,
+    pub mistakes: u32,
+    pub outcome: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EndgameProblemImport {
+    pub source_index: u32,
+    pub title: String,
+    pub category: String,
+    pub starting_fen: String,
+    pub note: String,
+    pub solution_json: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FlyknifePlan {
     pub id: Uuid,
     pub title: String,
@@ -788,6 +844,217 @@ impl LocalStore {
 
     pub fn open_in_memory() -> Result<Self, StoreError> {
         Self::initialize(Connection::open_in_memory()?)
+    }
+
+    pub fn import_endgame_library(
+        &mut self,
+        source_path: &str,
+        fingerprint: &str,
+        title: &str,
+        parser_version: u32,
+        problems: &[EndgameProblemImport],
+    ) -> Result<EndgameLibrary, StoreError> {
+        if let Some(existing) = self
+            .connection
+            .query_row(
+                "SELECT id FROM endgame_libraries WHERE fingerprint=?1",
+                [fingerprint],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+        {
+            let transaction = self.connection.transaction()?;
+            transaction.execute(
+                "UPDATE endgame_libraries SET source_path=?1, title=?2, parser_version=?3 WHERE id=?4",
+                params![source_path, title, parser_version, existing],
+            )?;
+            transaction.execute(
+                "UPDATE endgame_problems SET active=0 WHERE library_id=?1",
+                [existing.as_str()],
+            )?;
+            for problem in problems {
+                let updated = transaction.execute(
+                    "UPDATE endgame_problems SET title=?1, category=?2, starting_fen=?3, note=?4, solution_json=?5, active=1 WHERE library_id=?6 AND source_index=?7",
+                    params![problem.title, problem.category, problem.starting_fen, problem.note, problem.solution_json, existing, problem.source_index],
+                )?;
+                if updated == 0 {
+                    transaction.execute(
+                        "INSERT INTO endgame_problems (id, library_id, source_index, title, category, starting_fen, note, solution_json, active) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1)",
+                        params![Uuid::new_v4().to_string(), existing, problem.source_index, problem.title, problem.category, problem.starting_fen, problem.note, problem.solution_json],
+                    )?;
+                }
+            }
+            transaction.commit()?;
+            return self
+                .endgame_library(Uuid::parse_str(&existing).map_err(json_error)?)?
+                .ok_or_else(|| StoreError::Sql(rusqlite::Error::QueryReturnedNoRows));
+        }
+        let id = Uuid::new_v4();
+        let imported_at = chrono::Utc::now().to_rfc3339();
+        let transaction = self.connection.transaction()?;
+        transaction.execute("INSERT INTO endgame_libraries (id, title, source_path, fingerprint, parser_version, imported_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![id.to_string(), title, source_path, fingerprint, parser_version, imported_at])?;
+        for problem in problems {
+            transaction.execute("INSERT INTO endgame_problems (id, library_id, source_index, title, category, starting_fen, note, solution_json, active) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1)", params![Uuid::new_v4().to_string(), id.to_string(), problem.source_index, problem.title, problem.category, problem.starting_fen, problem.note, problem.solution_json])?;
+        }
+        transaction.commit()?;
+        self.endgame_library(id)?
+            .ok_or_else(|| StoreError::Sql(rusqlite::Error::QueryReturnedNoRows))
+    }
+
+    pub fn endgame_libraries(&self) -> Result<Vec<EndgameLibrary>, StoreError> {
+        let mut statement = self.connection.prepare("SELECT id, title, source_path, fingerprint, parser_version, imported_at FROM endgame_libraries ORDER BY imported_at DESC")?;
+        statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, u32>(4)?,
+                    row.get::<_, String>(5)?,
+                ))
+            })?
+            .map(|row| {
+                let (id, title, path, fingerprint, parser_version, imported_at) = row?;
+                self.endgame_library_from_values(
+                    id,
+                    title,
+                    path,
+                    fingerprint,
+                    parser_version,
+                    imported_at,
+                )
+            })
+            .collect()
+    }
+
+    pub fn endgame_libraries_requiring_refresh(
+        &self,
+        parser_version: u32,
+    ) -> Result<Vec<EndgameLibrary>, StoreError> {
+        let mut statement = self.connection.prepare("SELECT id, title, source_path, fingerprint, parser_version, imported_at FROM endgame_libraries WHERE parser_version < ?1 ORDER BY imported_at DESC")?;
+        statement
+            .query_map([parser_version], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, u32>(4)?,
+                    row.get::<_, String>(5)?,
+                ))
+            })?
+            .map(|row| {
+                let (id, title, path, fingerprint, parser_version, imported_at) = row?;
+                self.endgame_library_from_values(
+                    id,
+                    title,
+                    path,
+                    fingerprint,
+                    parser_version,
+                    imported_at,
+                )
+            })
+            .collect()
+    }
+
+    pub fn endgame_library(&self, id: Uuid) -> Result<Option<EndgameLibrary>, StoreError> {
+        self.connection.query_row("SELECT id, title, source_path, fingerprint, parser_version, imported_at FROM endgame_libraries WHERE id=?1", [id.to_string()], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, u32>(4)?, row.get::<_, String>(5)?))).optional()?
+            .map(|(id, title, path, fingerprint, parser_version, imported_at)| self.endgame_library_from_values(id, title, path, fingerprint, parser_version, imported_at)).transpose()
+    }
+
+    fn endgame_library_from_values(
+        &self,
+        id: String,
+        title: String,
+        source_path: String,
+        fingerprint: String,
+        parser_version: u32,
+        imported_at: String,
+    ) -> Result<EndgameLibrary, StoreError> {
+        let problem_count: u32 = self.connection.query_row(
+            "SELECT COUNT(*) FROM endgame_problems WHERE library_id=?1 AND active=1",
+            [id.as_str()],
+            |row| row.get(0),
+        )?;
+        let completed_count: u32 = self.connection.query_row("SELECT COUNT(DISTINCT problem_id) FROM endgame_attempts WHERE outcome='completed' AND problem_id IN (SELECT id FROM endgame_problems WHERE library_id=?1 AND active=1)", [id.as_str()], |row| row.get(0))?;
+        Ok(EndgameLibrary {
+            id: Uuid::parse_str(&id).map_err(json_error)?,
+            title,
+            source_path,
+            fingerprint,
+            parser_version,
+            problem_count,
+            completed_count,
+            imported_at,
+        })
+    }
+
+    pub fn endgame_problems(&self, library_id: Uuid) -> Result<Vec<EndgameProblem>, StoreError> {
+        let mut statement = self.connection.prepare("SELECT id, library_id, source_index, title, category, starting_fen, note, solution_json FROM endgame_problems WHERE library_id=?1 AND active=1 ORDER BY source_index")?;
+        statement.query_map([library_id.to_string()], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, u32>(2)?, row.get::<_, String>(3)?, row.get::<_, String>(4)?, row.get::<_, String>(5)?, row.get::<_, String>(6)?, row.get::<_, String>(7)?)))?
+            .map(|row| { let (id, library_id, source_index, title, category, starting_fen, note, solution_json) = row?; let completed_attempts = self.connection.query_row("SELECT COUNT(*) FROM endgame_attempts WHERE problem_id=?1 AND outcome='completed'", [id.as_str()], |r| r.get(0))?; let total_elapsed_ms = self.connection.query_row("SELECT COALESCE(SUM(elapsed_ms), 0) FROM endgame_attempts WHERE problem_id=?1 AND outcome='completed'", [id.as_str()], |r| r.get(0))?; Ok(EndgameProblem { id: Uuid::parse_str(&id).map_err(json_error)?, library_id: Uuid::parse_str(&library_id).map_err(json_error)?, source_index, title, category, starting_fen, note, solution_json, completed_attempts, total_elapsed_ms }) }).collect()
+    }
+
+    pub fn save_endgame_attempt(
+        &mut self,
+        problem_id: Uuid,
+        mode: &str,
+        elapsed_ms: u64,
+        hints_used: u32,
+        mistakes: u32,
+        outcome: &str,
+    ) -> Result<(), StoreError> {
+        self.connection.execute("INSERT INTO endgame_attempts (id, problem_id, mode, elapsed_ms, hints_used, mistakes, outcome, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)", params![Uuid::new_v4().to_string(), problem_id.to_string(), mode, elapsed_ms, hints_used, mistakes, outcome, chrono::Utc::now().to_rfc3339()])?;
+        Ok(())
+    }
+
+    pub fn endgame_attempts(&self, problem_id: Uuid) -> Result<Vec<EndgameAttempt>, StoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, mode, elapsed_ms, hints_used, mistakes, outcome, created_at
+             FROM endgame_attempts WHERE problem_id=?1 ORDER BY created_at DESC LIMIT 30",
+        )?;
+        statement
+            .query_map([problem_id.to_string()], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, u64>(2)?,
+                    row.get::<_, u32>(3)?,
+                    row.get::<_, u32>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                ))
+            })?
+            .map(|row| {
+                let (id, mode, elapsed_ms, hints_used, mistakes, outcome, created_at) = row?;
+                Ok(EndgameAttempt {
+                    id: Uuid::parse_str(&id).map_err(json_error)?,
+                    mode,
+                    elapsed_ms,
+                    hints_used,
+                    mistakes,
+                    outcome,
+                    created_at,
+                })
+            })
+            .collect()
+    }
+
+    pub fn delete_endgame_library(&mut self, id: Uuid) -> Result<(), StoreError> {
+        self.connection.execute(
+            "DELETE FROM endgame_libraries WHERE id=?1",
+            [id.to_string()],
+        )?;
+        Ok(())
+    }
+
+    pub fn hide_endgame_problem(&mut self, id: Uuid) -> Result<(), StoreError> {
+        self.connection.execute(
+            "UPDATE endgame_problems SET active=0 WHERE id=?1",
+            [id.to_string()],
+        )?;
+        Ok(())
     }
 
     pub fn upsert_theory_lesson(
@@ -1531,7 +1798,10 @@ impl LocalStore {
 
     /// Recovers a binding after the same email is recreated on a replacement server.
     /// This deliberately never permits moving the local library to a different email.
-    pub fn recover_sync_account_binding(&mut self, account: &SyncAccountBinding) -> Result<(), StoreError> {
+    pub fn recover_sync_account_binding(
+        &mut self,
+        account: &SyncAccountBinding,
+    ) -> Result<(), StoreError> {
         if let Some(existing) = self.sync_account_binding()? {
             if !existing.email.eq_ignore_ascii_case(&account.email) {
                 return Err(StoreError::AccountAlreadyBound {
@@ -1678,22 +1948,36 @@ impl LocalStore {
         provider: &str,
         external_id: &str,
     ) -> Result<Option<ExternalGameImport>, StoreError> {
-        let row = self.connection
+        let row = self
+            .connection
             .query_row(
                 "SELECT provider, external_id, game_id, payload_hash, imported_at
                  FROM external_game_imports WHERE provider=?1 AND external_id=?2",
                 params![provider, external_id],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, String>(4)?)),
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                    ))
+                },
             )
             .optional()
             .map_err(StoreError::from)?;
-        row.map(|(provider, external_id, game_id, payload_hash, imported_at)| Ok(ExternalGameImport {
-            provider,
-            external_id,
-            game_id: Uuid::parse_str(&game_id).map_err(json_error)?,
-            payload_hash,
-            imported_at,
-        })).transpose()
+        row.map(
+            |(provider, external_id, game_id, payload_hash, imported_at)| {
+                Ok(ExternalGameImport {
+                    provider,
+                    external_id,
+                    game_id: Uuid::parse_str(&game_id).map_err(json_error)?,
+                    payload_hash,
+                    imported_at,
+                })
+            },
+        )
+        .transpose()
     }
 
     pub fn record_external_game_import(
@@ -1712,7 +1996,13 @@ impl LocalStore {
                 game_id=excluded.game_id,
                 payload_hash=excluded.payload_hash,
                 imported_at=excluded.imported_at",
-            params![provider, external_id, game_id.to_string(), payload_hash, imported_at],
+            params![
+                provider,
+                external_id,
+                game_id.to_string(),
+                payload_hash,
+                imported_at
+            ],
         )?;
         Ok(())
     }
@@ -1731,7 +2021,15 @@ impl LocalStore {
             "INSERT INTO ttxq_diagnostic_samples
              (qipu_id, field_path, value_type, value_length, raw_sample, error, captured_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![qipu_id, field_path, value_type, value_length as i64, raw_sample, error, captured_at],
+            params![
+                qipu_id,
+                field_path,
+                value_type,
+                value_length as i64,
+                raw_sample,
+                error,
+                captured_at
+            ],
         )?;
         self.connection.execute(
             "DELETE FROM ttxq_diagnostic_samples WHERE id NOT IN (
@@ -1747,22 +2045,26 @@ impl LocalStore {
             "SELECT id, qipu_id, field_path, value_type, value_length, raw_sample, error, captured_at
              FROM ttxq_diagnostic_samples ORDER BY id DESC",
         )?;
-        statement.query_map([], |row| {
-            Ok(TtxqDiagnosticSample {
-                id: row.get(0)?,
-                qipu_id: row.get(1)?,
-                field_path: row.get(2)?,
-                value_type: row.get(3)?,
-                value_length: row.get::<_, i64>(4)? as usize,
-                raw_sample: row.get(5)?,
-                error: row.get(6)?,
-                captured_at: row.get(7)?,
-            })
-        })?.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+        statement
+            .query_map([], |row| {
+                Ok(TtxqDiagnosticSample {
+                    id: row.get(0)?,
+                    qipu_id: row.get(1)?,
+                    field_path: row.get(2)?,
+                    value_type: row.get(3)?,
+                    value_length: row.get::<_, i64>(4)? as usize,
+                    raw_sample: row.get(5)?,
+                    error: row.get(6)?,
+                    captured_at: row.get(7)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(Into::into)
     }
 
     pub fn clear_ttxq_diagnostic_samples(&mut self) -> Result<(), StoreError> {
-        self.connection.execute("DELETE FROM ttxq_diagnostic_samples", [])?;
+        self.connection
+            .execute("DELETE FROM ttxq_diagnostic_samples", [])?;
         Ok(())
     }
 
@@ -1958,211 +2260,6 @@ impl LocalStore {
         Ok(())
     }
 
-    pub fn library_folders(&self) -> Result<Vec<LibraryFolder>, StoreError> {
-        let mut statement = self.connection.prepare(
-            "SELECT folders.name, folders.system, COUNT(games.id)
-             FROM library_folders folders
-             LEFT JOIN games ON games.library_folder = folders.name AND games.deleted_at IS NULL
-             GROUP BY folders.name, folders.system ORDER BY folders.system DESC, folders.name COLLATE NOCASE",
-        )?;
-        let rows = statement.query_map([], |row| {
-            Ok(LibraryFolder {
-                name: row.get(0)?,
-                system: row.get(1)?,
-                game_count: row.get::<_, i64>(2)? as u32,
-            })
-        })?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
-    }
-
-    pub fn create_library_folder(&mut self, name: &str) -> Result<(), StoreError> {
-        insert_library_folder_path(&self.connection, name, false)?;
-        Ok(())
-    }
-
-    pub fn rename_library_folder(&mut self, previous: &str, next: &str) -> Result<(), StoreError> {
-        let transaction = self.connection.transaction()?;
-        let system: Option<bool> = transaction
-            .query_row(
-                "SELECT system FROM library_folders WHERE name=?1",
-                [previous],
-                |row| row.get(0),
-            )
-            .optional()?;
-        if system != Some(false) {
-            return Err(StoreError::Sql(rusqlite::Error::InvalidQuery));
-        }
-        transaction.execute(
-            "UPDATE library_folders SET name=?1 WHERE name=?2",
-            params![next, previous],
-        )?;
-        let descendant_prefix = format!("{previous}/");
-        let descendants = {
-            let mut statement = transaction.prepare(
-                "SELECT name FROM library_folders WHERE substr(name, 1, ?2)=?1 ORDER BY name",
-            )?;
-            statement
-                .query_map(
-                    params![descendant_prefix, descendant_prefix.chars().count()],
-                    |row| row.get::<_, String>(0),
-                )?
-                .collect::<Result<Vec<_>, _>>()?
-        };
-        for name in descendants {
-            let renamed = format!("{next}/{}", &name[descendant_prefix.len()..]);
-            transaction.execute(
-                "UPDATE library_folders SET name=?1 WHERE name=?2",
-                params![renamed, name],
-            )?;
-        }
-        transaction.execute(
-            "UPDATE games SET library_folder=?1 WHERE library_folder=?2",
-            params![next, previous],
-        )?;
-        transaction.execute(
-            "UPDATE games SET library_folder=?1 || substr(library_folder, ?2)
-             WHERE substr(library_folder, 1, ?4)=?3",
-            params![
-                next,
-                previous.chars().count() + 1,
-                descendant_prefix,
-                descendant_prefix.chars().count()
-            ],
-        )?;
-        transaction.commit()?;
-        Ok(())
-    }
-
-    pub fn rename_library_folder_with_operations(
-        &mut self,
-        previous: &str,
-        next: &str,
-        game_operations: &[(Uuid, String, Operation)],
-    ) -> Result<(usize, usize), StoreError> {
-        let transaction = self.connection.transaction()?;
-        let system: Option<bool> = transaction
-            .query_row(
-                "SELECT system FROM library_folders WHERE name=?1",
-                [previous],
-                |row| row.get(0),
-            )
-            .optional()?;
-        if system != Some(false) || previous == next || next.starts_with(&format!("{previous}/")) {
-            return Err(StoreError::Sql(rusqlite::Error::InvalidQuery));
-        }
-        let descendant_prefix = format!("{previous}/");
-        let descendants = {
-            let mut statement = transaction.prepare(
-                "SELECT name FROM library_folders WHERE substr(name, 1, ?2)=?1 ORDER BY length(name) DESC, name",
-            )?;
-            statement
-                .query_map(
-                    params![descendant_prefix, descendant_prefix.chars().count()],
-                    |row| row.get::<_, String>(0),
-                )?
-                .collect::<Result<Vec<_>, _>>()?
-        };
-        let affected_folder_count = descendants.len() + 1;
-        for name in descendants {
-            let renamed = format!("{next}/{}", &name[descendant_prefix.len()..]);
-            transaction.execute(
-                "UPDATE library_folders SET name=?1 WHERE name=?2",
-                params![renamed, name],
-            )?;
-        }
-        transaction.execute(
-            "UPDATE library_folders SET name=?1 WHERE name=?2",
-            params![next, previous],
-        )?;
-        for (game_id, folder, operation) in game_operations {
-            let updated = transaction.execute(
-                "UPDATE games SET library_folder=?1, updated_at=?2 WHERE id=?3 AND deleted_at IS NULL",
-                params![folder, operation.created_at.to_rfc3339(), game_id.to_string()],
-            )?;
-            if updated != 1 {
-                return Err(StoreError::Sql(rusqlite::Error::InvalidQuery));
-            }
-            insert_operation(&transaction, operation, false)?;
-        }
-        transaction.commit()?;
-        Ok((affected_folder_count, game_operations.len()))
-    }
-
-    pub fn move_games_to_folder_with_operations(
-        &mut self,
-        entries: &[(Uuid, Option<String>, Operation)],
-    ) -> Result<usize, StoreError> {
-        if entries.is_empty() {
-            return Ok(0);
-        }
-        let transaction = self.connection.transaction()?;
-        for (game_id, folder, operation) in entries {
-            if let Some(folder) = folder.as_deref() {
-                insert_library_folder_path(&transaction, folder, false)?;
-            }
-            let updated = transaction.execute(
-                "UPDATE games SET library_folder=?1, updated_at=?2 WHERE id=?3 AND deleted_at IS NULL",
-                params![folder, operation.created_at.to_rfc3339(), game_id.to_string()],
-            )?;
-            if updated != 1 {
-                return Err(StoreError::Sql(rusqlite::Error::InvalidQuery));
-            }
-            insert_operation(&transaction, operation, false)?;
-        }
-        transaction.commit()?;
-        Ok(entries.len())
-    }
-
-    pub fn delete_library_folder(&mut self, name: &str) -> Result<(), StoreError> {
-        let transaction = self.connection.transaction()?;
-        let system: Option<bool> = transaction
-            .query_row(
-                "SELECT system FROM library_folders WHERE name=?1",
-                [name],
-                |row| row.get(0),
-            )
-            .optional()?;
-        if system != Some(false) {
-            return Err(StoreError::Sql(rusqlite::Error::InvalidQuery));
-        }
-        transaction.execute(
-            "UPDATE games SET library_folder=NULL WHERE library_folder=?1",
-            [name],
-        )?;
-        transaction.execute(
-            "UPDATE games SET library_folder=NULL WHERE substr(library_folder, 1, ?2)=?1",
-            params![format!("{name}/"), format!("{name}/").chars().count()],
-        )?;
-        transaction.execute("DELETE FROM library_folders WHERE name=?1", [name])?;
-        transaction.execute(
-            "DELETE FROM library_folders WHERE substr(name, 1, ?2)=?1",
-            params![format!("{name}/"), format!("{name}/").chars().count()],
-        )?;
-        transaction.commit()?;
-        Ok(())
-    }
-
-    pub fn update_game_library_with_operation(
-        &mut self,
-        game_id: Uuid,
-        folder: Option<&str>,
-        favorite: bool,
-        tags: &[String],
-        operation: &Operation,
-    ) -> Result<(), StoreError> {
-        let transaction = self.connection.transaction()?;
-        if let Some(folder) = folder {
-            insert_library_folder_path(&transaction, folder, false)?;
-        }
-        transaction.execute(
-            "UPDATE games SET library_folder=?1, favorite=?2, tags_json=?3, updated_at=?4 WHERE id=?5",
-            params![folder, favorite as i32, serde_json::to_string(tags)?, operation.created_at.to_rfc3339(), game_id.to_string()],
-        )?;
-        insert_operation(&transaction, operation, false)?;
-        transaction.commit()?;
-        Ok(())
-    }
-
     pub fn delete_game_with_operation(
         &mut self,
         game_id: Uuid,
@@ -2295,22 +2392,6 @@ impl LocalStore {
         )?;
         insert_operation(&transaction, operation, false)?;
         transaction.commit()?;
-        Ok(())
-    }
-
-    pub fn set_current_node(
-        &mut self,
-        game_id: Uuid,
-        current_node_id: Option<Uuid>,
-    ) -> Result<(), StoreError> {
-        self.connection.execute(
-            "UPDATE games SET current_node_id = ?1, updated_at = ?2 WHERE id = ?3",
-            params![
-                current_node_id.map(|id| id.to_string()),
-                chrono::Utc::now().to_rfc3339(),
-                game_id.to_string()
-            ],
-        )?;
         Ok(())
     }
 
@@ -3082,42 +3163,6 @@ impl LocalStore {
             .map_err(Into::into)
     }
 
-    pub fn set_active_game_id(&mut self, game_id: Uuid) -> Result<(), StoreError> {
-        self.connection.execute(
-            "INSERT INTO sync_state (key, value) VALUES ('active_game_id', ?1)
-             ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            [game_id.to_string()],
-        )?;
-        Ok(())
-    }
-
-    pub fn load_game(&self, game_id: Uuid) -> Result<Option<LocalGame>, StoreError> {
-        self.load_game_where(
-            "WHERE id = ?1 AND deleted_at IS NULL",
-            [game_id.to_string()],
-        )
-    }
-
-    pub fn load_latest_game(&self) -> Result<Option<LocalGame>, StoreError> {
-        self.load_game_where(
-            "WHERE deleted_at IS NULL ORDER BY updated_at DESC LIMIT 1",
-            [],
-        )
-    }
-
-    pub fn load_games(&self) -> Result<Vec<LocalGame>, StoreError> {
-        let mut statement = self.connection.prepare(
-            "SELECT id, title, starting_fen, root_id, current_node_id, note,
-                    source_path, source_format, playable, updated_at, metadata_json, library_folder, favorite, tags_json
-             FROM games WHERE deleted_at IS NULL ORDER BY updated_at DESC",
-        )?;
-        let rows = statement.query_map([], local_game_from_row)?;
-        rows.collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .map(parse_local_game)
-            .collect()
-    }
-
     pub fn game_mirror_status(
         &self,
         game_id: Uuid,
@@ -3433,10 +3478,25 @@ impl LocalStore {
             "annotations_json",
             "TEXT NOT NULL DEFAULT '[]'",
         )?;
-        ensure_column(&connection, "flyknife_plans", "baseline_score_cp", "INTEGER")?;
+        ensure_column(
+            &connection,
+            "flyknife_plans",
+            "baseline_score_cp",
+            "INTEGER",
+        )?;
         ensure_column(&connection, "flyknife_plans", "swing_cp", "INTEGER")?;
-        ensure_column(&connection, "flyknife_plans", "verification", "TEXT NOT NULL DEFAULT '资料案例'")?;
-        ensure_column(&connection, "flyknife_plans", "verification_depth", "INTEGER")?;
+        ensure_column(
+            &connection,
+            "flyknife_plans",
+            "verification",
+            "TEXT NOT NULL DEFAULT '资料案例'",
+        )?;
+        ensure_column(
+            &connection,
+            "flyknife_plans",
+            "verification_depth",
+            "INTEGER",
+        )?;
         connection.execute_batch(
             "INSERT OR IGNORE INTO library_folders (name, system) VALUES
              ('比赛复盘', 1), ('开局研究', 1), ('飞刀方案', 1), ('训练题', 1);",
@@ -3455,12 +3515,27 @@ impl LocalStore {
             "task_type",
             "TEXT NOT NULL DEFAULT 'critical'",
         )?;
-        ensure_column(&connection, "training_tasks", "source_type", "TEXT NOT NULL DEFAULT 'report'")?;
-        ensure_column(&connection, "training_tasks", "training_mode", "TEXT NOT NULL DEFAULT 'guided-analysis'")?;
+        ensure_column(
+            &connection,
+            "training_tasks",
+            "source_type",
+            "TEXT NOT NULL DEFAULT 'report'",
+        )?;
+        ensure_column(
+            &connection,
+            "training_tasks",
+            "training_mode",
+            "TEXT NOT NULL DEFAULT 'guided-analysis'",
+        )?;
         ensure_column(&connection, "training_tasks", "opening_name", "TEXT")?;
         ensure_column(&connection, "training_tasks", "last_reviewed_at", "TEXT")?;
         ensure_column(&connection, "training_tasks", "next_review_at", "TEXT")?;
-        ensure_column(&connection, "training_tasks", "mastered", "INTEGER NOT NULL DEFAULT 0")?;
+        ensure_column(
+            &connection,
+            "training_tasks",
+            "mastered",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
         connection.execute("CREATE INDEX IF NOT EXISTS idx_training_tasks_review ON training_tasks(next_review_at, completed_at)", [])?;
         ensure_column(&connection, "theory_cards", "external_id", "TEXT")?;
         connection.execute(
@@ -3586,7 +3661,40 @@ impl LocalStore {
              CREATE TABLE IF NOT EXISTS training_review_schedule (
                task_id TEXT PRIMARY KEY, next_review_at TEXT, review_round INTEGER NOT NULL DEFAULT 0,
                mastered INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL
-             );",
+             );
+             CREATE TABLE IF NOT EXISTS endgame_libraries (
+               id TEXT PRIMARY KEY, title TEXT NOT NULL, source_path TEXT NOT NULL,
+               fingerprint TEXT NOT NULL UNIQUE, parser_version INTEGER NOT NULL DEFAULT 0,
+               imported_at TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS endgame_problems (
+               id TEXT PRIMARY KEY, library_id TEXT NOT NULL, source_index INTEGER NOT NULL,
+               title TEXT NOT NULL, category TEXT NOT NULL, starting_fen TEXT NOT NULL,
+               note TEXT NOT NULL DEFAULT '', solution_json TEXT NOT NULL,
+               active INTEGER NOT NULL DEFAULT 1,
+               UNIQUE(library_id, source_index),
+               FOREIGN KEY(library_id) REFERENCES endgame_libraries(id) ON DELETE CASCADE
+             );
+             CREATE INDEX IF NOT EXISTS idx_endgame_problems_library ON endgame_problems(library_id, source_index);
+             CREATE TABLE IF NOT EXISTS endgame_attempts (
+               id TEXT PRIMARY KEY, problem_id TEXT NOT NULL, mode TEXT NOT NULL,
+               elapsed_ms INTEGER NOT NULL, hints_used INTEGER NOT NULL, mistakes INTEGER NOT NULL,
+               outcome TEXT NOT NULL, created_at TEXT NOT NULL,
+               FOREIGN KEY(problem_id) REFERENCES endgame_problems(id) ON DELETE CASCADE
+             );
+             CREATE INDEX IF NOT EXISTS idx_endgame_attempts_problem ON endgame_attempts(problem_id, created_at DESC);",
+        )?;
+        ensure_column(
+            &connection,
+            "endgame_libraries",
+            "parser_version",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
+        ensure_column(
+            &connection,
+            "endgame_problems",
+            "active",
+            "INTEGER NOT NULL DEFAULT 1",
         )?;
         Ok(Self { connection })
     }
@@ -3688,35 +3796,6 @@ fn parse_local_game(
         favorite,
         tags: serde_json::from_str(&tags_json).unwrap_or_default(),
     })
-}
-
-fn folder_path_prefixes(folder: &str) -> Vec<String> {
-    let mut prefixes = Vec::new();
-    let mut current = String::new();
-    for segment in folder.split('/').map(str::trim).filter(|value| !value.is_empty()) {
-        if !current.is_empty() {
-            current.push('/');
-        }
-        current.push_str(segment);
-        prefixes.push(current.clone());
-    }
-    prefixes
-}
-
-fn insert_library_folder_path(
-    connection: &Connection,
-    folder: &str,
-    system: bool,
-) -> Result<(), StoreError> {
-    let prefixes = folder_path_prefixes(folder);
-    for (index, prefix) in prefixes.iter().enumerate() {
-        let folder_system = system && index + 1 == prefixes.len();
-        connection.execute(
-            "INSERT OR IGNORE INTO library_folders (name, system) VALUES (?1, ?2)",
-            params![prefix, folder_system as i32],
-        )?;
-    }
-    Ok(())
 }
 
 fn project_operation(connection: &Connection, operation: &Operation) -> Result<(), StoreError> {
@@ -3902,7 +3981,10 @@ fn project_operation(connection: &Connection, operation: &Operation) -> Result<(
             let _: DeleteGamePayload = serde_json::from_value(operation.payload.clone())?;
             connection.execute(
                 "UPDATE games SET deleted_at=?1, updated_at=?1 WHERE id=?2",
-                params![operation.created_at.to_rfc3339(), operation.game_id.to_string()],
+                params![
+                    operation.created_at.to_rfc3339(),
+                    operation.game_id.to_string()
+                ],
             )?;
             connection.execute(
                 "DELETE FROM external_game_imports WHERE game_id=?1",
@@ -4140,6 +4222,50 @@ mod tests {
     }
 
     #[test]
+    fn library_game_order_is_persisted_for_folder_siblings() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let ids = (0..3).map(|_| Uuid::new_v4()).collect::<Vec<_>>();
+        for id in &ids {
+            let op = operation(*id);
+            store
+                .save_game_with_operation(*id, "排序测试", "fen", Uuid::new_v4(), &op)
+                .unwrap();
+            store
+                .connection
+                .execute(
+                    "UPDATE games SET library_folder=?1 WHERE id=?2",
+                    params!["排序目录", id.to_string()],
+                )
+                .unwrap();
+        }
+
+        let mut ordered_ids = ids.clone();
+        ordered_ids.reverse();
+        store
+            .reorder_games_in_folder(Some("排序目录"), &ordered_ids)
+            .unwrap();
+        let ordered = store
+            .apply_library_game_order(store.load_games().unwrap())
+            .unwrap()
+            .into_iter()
+            .filter(|game| game.library_folder.as_deref() == Some("排序目录"))
+            .map(|game| game.id)
+            .collect::<Vec<_>>();
+        assert_eq!(ordered, ordered_ids);
+
+        // The order is stored in sync_state and survives a fresh projection
+        // read rather than being an in-memory component concern.
+        let reloaded = store
+            .apply_library_game_order(store.load_games().unwrap())
+            .unwrap()
+            .into_iter()
+            .filter(|game| game.library_folder.as_deref() == Some("排序目录"))
+            .map(|game| game.id)
+            .collect::<Vec<_>>();
+        assert_eq!(reloaded, ordered_ids);
+    }
+
+    #[test]
     fn local_game_delete_does_not_append_a_sync_operation() {
         let mut store = LocalStore::open_in_memory().unwrap();
         let game_id = Uuid::new_v4();
@@ -4148,7 +4274,15 @@ mod tests {
             .save_game_with_operation(game_id, "Local only", "fen", Uuid::new_v4(), &op)
             .unwrap();
         store.mark_uploaded(&[op.op_id]).unwrap();
-        store.record_external_game_import("ttxq", "123", game_id, "sha256:test", "2026-08-28T00:00:00Z").unwrap();
+        store
+            .record_external_game_import(
+                "ttxq",
+                "123",
+                game_id,
+                "sha256:test",
+                "2026-08-28T00:00:00Z",
+            )
+            .unwrap();
 
         store.delete_game_locally(game_id).unwrap();
 
@@ -4234,7 +4368,9 @@ mod tests {
                 &operation(game_id),
             )
             .unwrap();
-        store.create_library_folder("天天象棋备份/备战世青赛/第1轮").unwrap();
+        store
+            .create_library_folder("天天象棋备份/备战世青赛/第1轮")
+            .unwrap();
         let folder_names = store
             .library_folders()
             .unwrap()
@@ -4256,7 +4392,9 @@ mod tests {
                 &update,
             )
             .unwrap();
-        store.rename_library_folder("天天象棋备份/备战世青赛", "天天象棋备份/暑假赛").unwrap();
+        store
+            .rename_library_folder("天天象棋备份/备战世青赛", "天天象棋备份/暑假赛")
+            .unwrap();
         assert_eq!(
             store
                 .load_game(game_id)
@@ -4296,16 +4434,35 @@ mod tests {
         let mut store = LocalStore::open_in_memory().unwrap();
         let game_id = Uuid::new_v4();
         let create = operation(game_id);
-        store.save_game_with_operation(game_id, "目录棋谱", "fen", Uuid::new_v4(), &create).unwrap();
+        store
+            .save_game_with_operation(game_id, "目录棋谱", "fen", Uuid::new_v4(), &create)
+            .unwrap();
         let mut seed = operation(game_id);
         seed.op_id = Uuid::new_v4();
         seed.kind = OperationKind::UpdateGameMetadata;
-        store.update_game_library_with_operation(game_id, Some("原目录"), true, &["布局".into()], &seed).unwrap();
+        store
+            .update_game_library_with_operation(
+                game_id,
+                Some("原目录"),
+                true,
+                &["布局".into()],
+                &seed,
+            )
+            .unwrap();
         let mut moved = operation(game_id);
         moved.op_id = Uuid::new_v4();
         moved.kind = OperationKind::UpdateGameMetadata;
 
-        assert_eq!(store.move_games_to_folder_with_operations(&[(game_id, Some("新目录/子目录".into()), moved.clone())]).unwrap(), 1);
+        assert_eq!(
+            store
+                .move_games_to_folder_with_operations(&[(
+                    game_id,
+                    Some("新目录/子目录".into()),
+                    moved.clone()
+                )])
+                .unwrap(),
+            1
+        );
 
         let game = store.load_game(game_id).unwrap().unwrap();
         assert_eq!(game.library_folder.as_deref(), Some("新目录/子目录"));
@@ -4342,7 +4499,10 @@ mod tests {
         ]);
 
         assert!(result.is_err());
-        assert_eq!(store.load_game(game_id).unwrap().unwrap().library_folder, None);
+        assert_eq!(
+            store.load_game(game_id).unwrap().unwrap().library_folder,
+            None
+        );
         assert_eq!(store.pending_operations(20).unwrap(), pending_before);
     }
 
@@ -4351,13 +4511,17 @@ mod tests {
         let mut store = LocalStore::open_in_memory().unwrap();
         let game_id = Uuid::new_v4();
         let create = operation(game_id);
-        store.save_game_with_operation(game_id, "目录棋谱", "fen", Uuid::new_v4(), &create).unwrap();
+        store
+            .save_game_with_operation(game_id, "目录棋谱", "fen", Uuid::new_v4(), &create)
+            .unwrap();
         store.create_library_folder("原目录/子目录").unwrap();
         store.create_library_folder("目标/子目录").unwrap();
         let mut seed = operation(game_id);
         seed.op_id = Uuid::new_v4();
         seed.kind = OperationKind::UpdateGameMetadata;
-        store.update_game_library_with_operation(game_id, Some("原目录/子目录"), false, &[], &seed).unwrap();
+        store
+            .update_game_library_with_operation(game_id, Some("原目录/子目录"), false, &[], &seed)
+            .unwrap();
         let pending_before = store.pending_operations(20).unwrap();
         let mut moved = operation(game_id);
         moved.op_id = Uuid::new_v4();
@@ -4370,8 +4534,21 @@ mod tests {
         );
 
         assert!(result.is_err());
-        assert_eq!(store.load_game(game_id).unwrap().unwrap().library_folder.as_deref(), Some("原目录/子目录"));
-        let folders = store.library_folders().unwrap().into_iter().map(|folder| folder.name).collect::<Vec<_>>();
+        assert_eq!(
+            store
+                .load_game(game_id)
+                .unwrap()
+                .unwrap()
+                .library_folder
+                .as_deref(),
+            Some("原目录/子目录")
+        );
+        let folders = store
+            .library_folders()
+            .unwrap()
+            .into_iter()
+            .map(|folder| folder.name)
+            .collect::<Vec<_>>();
         assert!(folders.contains(&"原目录/子目录".into()));
         assert!(folders.contains(&"目标/子目录".into()));
         assert_eq!(store.pending_operations(20).unwrap(), pending_before);
@@ -4599,16 +4776,37 @@ mod tests {
             .save_game_with_operation(game_id, "Imported", "fen", root_id, &operation(game_id))
             .unwrap();
         store
-            .record_external_game_import("ttxq", "qipu-42", game_id, "sha256:first", "2026-08-27T00:00:00Z")
+            .record_external_game_import(
+                "ttxq",
+                "qipu-42",
+                game_id,
+                "sha256:first",
+                "2026-08-27T00:00:00Z",
+            )
             .unwrap();
         let revision_game_id = Uuid::new_v4();
         store
-            .save_game_with_operation(revision_game_id, "Imported revision", "fen", Uuid::new_v4(), &operation(revision_game_id))
+            .save_game_with_operation(
+                revision_game_id,
+                "Imported revision",
+                "fen",
+                Uuid::new_v4(),
+                &operation(revision_game_id),
+            )
             .unwrap();
         store
-            .record_external_game_import("ttxq", "qipu-42", revision_game_id, "sha256:second", "2026-08-28T00:00:00Z")
+            .record_external_game_import(
+                "ttxq",
+                "qipu-42",
+                revision_game_id,
+                "sha256:second",
+                "2026-08-28T00:00:00Z",
+            )
             .unwrap();
-        let saved = store.external_game_import("ttxq", "qipu-42").unwrap().unwrap();
+        let saved = store
+            .external_game_import("ttxq", "qipu-42")
+            .unwrap()
+            .unwrap();
         assert_eq!(saved.game_id, revision_game_id);
         assert_eq!(saved.payload_hash, "sha256:second");
     }
@@ -4617,10 +4815,17 @@ mod tests {
     fn ttxq_diagnostic_samples_are_local_and_bounded() {
         let mut store = LocalStore::open_in_memory().unwrap();
         for index in 0..12 {
-            store.record_ttxq_diagnostic_sample(
-                &format!("qipu-{index}"), "source[0].moveStep", "array", index,
-                &format!("[{index}]"), "走法格式不兼容", &format!("2026-08-27T00:00:{index:02}Z"),
-            ).unwrap();
+            store
+                .record_ttxq_diagnostic_sample(
+                    &format!("qipu-{index}"),
+                    "source[0].moveStep",
+                    "array",
+                    index,
+                    &format!("[{index}]"),
+                    "走法格式不兼容",
+                    &format!("2026-08-27T00:00:{index:02}Z"),
+                )
+                .unwrap();
         }
         let samples = store.ttxq_diagnostic_samples().unwrap();
         assert_eq!(samples.len(), 10);
@@ -4693,6 +4898,393 @@ mod tests {
         store.set_current_node(newer_id, None).unwrap();
         assert_eq!(store.load_latest_game().unwrap().unwrap().id, newer_id);
         assert_eq!(store.active_game_id().unwrap(), Some(older_id));
+    }
+
+    #[test]
+    fn load_games_hides_legacy_duplicate_ttxq_source_rows() {
+        let store = LocalStore::open_in_memory().unwrap();
+        let root = Uuid::new_v4();
+        let older_id = Uuid::new_v4();
+        let newer_id = Uuid::new_v4();
+        store
+            .connection
+            .execute(
+                "INSERT INTO games (id, title, starting_fen, root_id, updated_at, source_path, source_format)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'ttxq-h5')",
+                params![
+                    older_id.to_string(),
+                    "旧副本",
+                    xiangqi_core::STARTING_FEN,
+                    root.to_string(),
+                    "2026-08-31T00:00:00Z",
+                    "ttxq-order:000005:48625913948",
+                ],
+            )
+            .unwrap();
+        store
+            .connection
+            .execute(
+                "INSERT INTO games (id, title, starting_fen, root_id, updated_at, source_path, source_format)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'ttxq-h5')",
+                params![
+                    newer_id.to_string(),
+                    "最新副本",
+                    xiangqi_core::STARTING_FEN,
+                    Uuid::new_v4().to_string(),
+                    "2026-09-01T00:00:00Z",
+                    "ttxq-order:000005:48625913948",
+                ],
+            )
+            .unwrap();
+        let reordered_id = Uuid::new_v4();
+        store
+            .connection
+            .execute(
+                "INSERT INTO games (id, title, starting_fen, root_id, updated_at, source_path, source_format)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'ttxq-h5')",
+                params![
+                    reordered_id.to_string(),
+                    "同一棋谱的新顺序副本",
+                    xiangqi_core::STARTING_FEN,
+                    Uuid::new_v4().to_string(),
+                    "2026-09-02T00:00:00Z",
+                    "ttxq-order:000000:48625913948",
+                ],
+            )
+            .unwrap();
+
+        let games = store.load_games().unwrap();
+        assert_eq!(games.len(), 1);
+        assert_eq!(games[0].id, reordered_id);
+    }
+
+    #[test]
+    fn load_games_deduplicates_plain_legacy_ttxq_paths() {
+        let store = LocalStore::open_in_memory().unwrap();
+        let older_id = Uuid::new_v4();
+        let newer_id = Uuid::new_v4();
+        for (id, title, updated_at) in [
+            (older_id, "旧天天象棋副本", "2026-08-31T00:00:00Z"),
+            (newer_id, "最新天天象棋副本", "2026-09-01T00:00:00Z"),
+        ] {
+            store
+                .connection
+                .execute(
+                    "INSERT INTO games (id, title, starting_fen, root_id, updated_at, source_path, source_format)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'ttxq-h5')",
+                    params![
+                        id.to_string(),
+                        title,
+                        xiangqi_core::STARTING_FEN,
+                        Uuid::new_v4().to_string(),
+                        updated_at,
+                        "ttxq:51244181592",
+                    ],
+                )
+                .unwrap();
+        }
+        let games = store.load_games().unwrap();
+        assert_eq!(games.len(), 1);
+        assert_eq!(games[0].id, newer_id);
+    }
+
+    #[test]
+    fn reconcile_ttxq_duplicates_soft_deletes_old_rows_and_merges_metadata() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let older_id = Uuid::new_v4();
+        let newer_id = Uuid::new_v4();
+        for (id, updated_at, note, favorite, tags) in [
+            (
+                older_id,
+                "2026-08-31T00:00:00Z",
+                "本地备注",
+                1,
+                "[\"旧标签\"]",
+            ),
+            (newer_id, "2026-09-01T00:00:00Z", "", 0, "[\"新标签\"]"),
+        ] {
+            store
+                .connection
+                .execute(
+                    "INSERT INTO games (id, title, starting_fen, root_id, note, updated_at, source_path, source_format, favorite, tags_json)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'ttxq-h5', ?8, ?9)",
+                    params![
+                        id.to_string(),
+                        "同一棋谱",
+                        xiangqi_core::STARTING_FEN,
+                        Uuid::new_v4().to_string(),
+                        note,
+                        updated_at,
+                        format!("ttxq-order:000001:qipu-merge"),
+                        favorite,
+                        tags,
+                    ],
+                )
+                .unwrap();
+        }
+        assert_eq!(store.reconcile_ttxq_duplicates().unwrap(), 1);
+        assert!(store.load_game(older_id).unwrap().is_none());
+        let canonical = store.load_game(newer_id).unwrap().unwrap();
+        assert_eq!(canonical.note, "本地备注");
+        assert!(canonical.favorite);
+        assert_eq!(canonical.tags, vec!["新标签", "旧标签"]);
+    }
+
+    #[test]
+    fn reconcile_ttxq_duplicates_never_promotes_a_tombstone() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let first = Uuid::new_v4();
+        let second = Uuid::new_v4();
+        for (id, order, deleted_at) in [
+            (first, "000001", Some("2026-08-31T00:00:00Z")),
+            (second, "000002", Some("2026-08-31T00:01:00Z")),
+        ] {
+            store
+                .connection
+                .execute(
+                    "INSERT INTO games
+                     (id,title,starting_fen,root_id,current_node_id,note,source_path,
+                      source_format,playable,updated_at,deleted_at,metadata_json,
+                      library_folder,favorite,tags_json)
+                     VALUES (?1,?2,?3,?4,NULL,'',?5,'ttxq-h5',1,?6,?7,'{}',NULL,0,'[]')",
+                    rusqlite::params![
+                        id.to_string(),
+                        "已删除天天象棋棋谱",
+                        xiangqi_core::STARTING_FEN,
+                        Uuid::new_v4().to_string(),
+                        format!("ttxq-order:{order}:same-qipu"),
+                        deleted_at.unwrap(),
+                        deleted_at,
+                    ],
+                )
+                .unwrap();
+        }
+
+        assert_eq!(store.reconcile_ttxq_duplicates().unwrap(), 0);
+        assert!(store.load_games().unwrap().is_empty());
+        assert!(store.find_ttxq_game_id("same-qipu").unwrap().is_none());
+    }
+
+    #[test]
+    fn reconcile_ttxq_duplicates_restores_a_fully_tombstoned_annotated_group() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let annotated_id = Uuid::new_v4();
+        let plain_id = Uuid::new_v4();
+        let annotated_root = Uuid::new_v4();
+        for (id, root_id, order, deleted_at) in [
+            (
+                annotated_id,
+                annotated_root,
+                "000001",
+                "2026-09-02T01:24:26.579018Z",
+            ),
+            (
+                plain_id,
+                Uuid::new_v4(),
+                "000002",
+                "2026-09-01T13:00:40.518166Z",
+            ),
+        ] {
+            store
+                .connection
+                .execute(
+                    "INSERT INTO games
+                 (id,title,starting_fen,root_id,current_node_id,note,source_path,
+                  source_format,playable,updated_at,deleted_at,metadata_json,
+                  library_folder,favorite,tags_json)
+                 VALUES (?1,'注解恢复',?2,?3,NULL,'',?4,'ttxq-h5',1,?5,?5,'{}',NULL,0,'[]')",
+                    params![
+                        id.to_string(),
+                        xiangqi_core::STARTING_FEN,
+                        root_id.to_string(),
+                        format!("ttxq-order:{order}:restore-annotated"),
+                        deleted_at,
+                    ],
+                )
+                .unwrap();
+        }
+        store
+            .connection
+            .execute(
+                "INSERT INTO move_nodes
+             (id,game_id,parent_id,move_iccs,comment,order_key,is_mainline)
+             VALUES (?1,?2,?3,'h2e2',?4,1,1)",
+                params![
+                    Uuid::new_v4().to_string(),
+                    annotated_id.to_string(),
+                    annotated_root.to_string(),
+                    "【天天象棋注解】\n第一步说明\n【天天象棋注解结束】",
+                ],
+            )
+            .unwrap();
+
+        assert_eq!(store.reconcile_ttxq_duplicates().unwrap(), 1);
+        assert_eq!(
+            store.find_ttxq_game_id("restore-annotated").unwrap(),
+            Some(annotated_id)
+        );
+        assert!(
+            store
+                .external_game_import("ttxq", "restore-annotated")
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn reconcile_ttxq_duplicates_respects_an_explicit_ttxq_delete_marker() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let annotated_id = Uuid::new_v4();
+        let annotated_root = Uuid::new_v4();
+        for (id, root_id, order) in [
+            (annotated_id, annotated_root, "000001"),
+            (Uuid::new_v4(), Uuid::new_v4(), "000002"),
+        ] {
+            store
+                .connection
+                .execute(
+                    "INSERT INTO games
+                 (id,title,starting_fen,root_id,current_node_id,note,source_path,
+                  source_format,playable,updated_at,deleted_at,metadata_json,
+                  library_folder,favorite,tags_json)
+                 VALUES (?1,'显式删除',?2,?3,NULL,'',?4,'ttxq-h5',1,
+                         '2026-09-02T00:00:00Z','2026-09-02T00:00:00Z','{}',NULL,0,'[]')",
+                    params![
+                        id.to_string(),
+                        xiangqi_core::STARTING_FEN,
+                        root_id.to_string(),
+                        format!("ttxq-order:{order}:deleted-by-user"),
+                    ],
+                )
+                .unwrap();
+        }
+        store
+            .connection
+            .execute(
+                "INSERT INTO move_nodes
+             (id,game_id,parent_id,move_iccs,comment,order_key,is_mainline)
+             VALUES (?1,?2,?3,'h2e2',?4,1,1)",
+                params![
+                    Uuid::new_v4().to_string(),
+                    annotated_id.to_string(),
+                    annotated_root.to_string(),
+                    "【天天象棋注解】\n不应复活\n【天天象棋注解结束】",
+                ],
+            )
+            .unwrap();
+        store.mark_ttxq_user_deleted("deleted-by-user").unwrap();
+
+        assert_eq!(store.reconcile_ttxq_duplicates().unwrap(), 0);
+        assert!(
+            store
+                .find_ttxq_game_id("deleted-by-user")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn reconcile_ttxq_duplicates_prefers_the_copy_with_node_annotations() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let annotated_id = Uuid::new_v4();
+        let newer_id = Uuid::new_v4();
+        let annotated_root = Uuid::new_v4();
+        for (id, root_id, updated_at) in [
+            (annotated_id, annotated_root, "2026-08-31T00:00:00Z"),
+            (newer_id, Uuid::new_v4(), "2026-09-01T00:00:00Z"),
+        ] {
+            store
+                .connection
+                .execute(
+                    "INSERT INTO games
+                     (id,title,starting_fen,root_id,current_node_id,note,source_path,
+                      source_format,playable,updated_at,deleted_at,metadata_json,
+                      library_folder,favorite,tags_json)
+                     VALUES (?1,?2,?3,?4,NULL,'',?5,'ttxq-h5',1,?6,NULL,'{}',NULL,0,'[]')",
+                    rusqlite::params![
+                        id.to_string(),
+                        "同一棋谱",
+                        xiangqi_core::STARTING_FEN,
+                        root_id.to_string(),
+                        format!("ttxq-order:000001:same-qipu-annotated"),
+                        updated_at,
+                    ],
+                )
+                .unwrap();
+        }
+        store
+            .connection
+            .execute(
+                "INSERT INTO move_nodes
+                 (id,game_id,parent_id,move_iccs,comment,order_key,is_mainline)
+                 VALUES (?1,?2,?3,'h2e2',?4,1,1)",
+                rusqlite::params![
+                    Uuid::new_v4().to_string(),
+                    annotated_id.to_string(),
+                    annotated_root.to_string(),
+                    "【天天象棋注解】\n节点注解\n【天天象棋注解结束】",
+                ],
+            )
+            .unwrap();
+
+        assert_eq!(store.reconcile_ttxq_duplicates().unwrap(), 1);
+        assert!(store.load_game(newer_id).unwrap().is_none());
+        assert!(store.load_game(annotated_id).unwrap().is_some());
+        assert_eq!(
+            store.find_ttxq_game_id("same-qipu-annotated").unwrap(),
+            Some(annotated_id)
+        );
+    }
+
+    #[test]
+    fn reconcile_ttxq_duplicates_recovers_annotations_from_a_tombstoned_copy() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let donor_id = Uuid::new_v4();
+        let canonical_id = Uuid::new_v4();
+        let donor_root = Uuid::new_v4();
+        let canonical_root = Uuid::new_v4();
+        let fen = xiangqi_core::STARTING_FEN;
+        store.connection.execute(
+            "INSERT INTO games (id,title,starting_fen,root_id,note,source_path,source_format,playable,updated_at,deleted_at,metadata_json,favorite,tags_json)
+             VALUES (?1,'同一棋谱',?2,?3,?4,?5,'ttxq-h5',1,?6,?7,'{}',0,'[]')",
+            params![
+                donor_id.to_string(), fen, donor_root.to_string(), "",
+                "ttxq-order:000001:recover-qipu", "2026-08-31T00:00:00Z",
+                "2026-08-31T01:00:00Z",
+            ],
+        ).unwrap();
+        store.connection.execute(
+            "INSERT INTO games (id,title,starting_fen,root_id,note,source_path,source_format,playable,updated_at,metadata_json,favorite,tags_json)
+             VALUES (?1,'同一棋谱',?2,?3,'本地备注',?4,'ttxq-h5',1,?5,'{}',0,'[]')",
+            params![
+                canonical_id.to_string(), fen, canonical_root.to_string(),
+                "ttxq-order:000001:recover-qipu", "2026-09-01T00:00:00Z",
+            ],
+        ).unwrap();
+        let donor_node = Uuid::new_v4();
+        let canonical_node = Uuid::new_v4();
+        let annotation = "【天天象棋注解】\n旧副本注解\n【天天象棋注解结束】";
+        for (node_id, game_id, root_id, comment) in [
+            (donor_node, donor_id, donor_root, annotation),
+            (canonical_node, canonical_id, canonical_root, ""),
+        ] {
+            store.connection.execute(
+                "INSERT INTO move_nodes (id,game_id,parent_id,move_iccs,comment,order_key,is_mainline)
+                 VALUES (?1,?2,?3,'h2e2',?4,1,1)",
+                params![node_id.to_string(), game_id.to_string(), root_id.to_string(), comment],
+            ).unwrap();
+        }
+        assert_eq!(store.reconcile_ttxq_duplicates().unwrap(), 0);
+        let canonical = store.load_game(canonical_id).unwrap().unwrap();
+        assert!(canonical.note.contains("本地备注"));
+        let node = store
+            .load_move_nodes(canonical_id)
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap();
+        assert!(node.comment.contains("旧副本注解"));
+        assert!(store.load_game(donor_id).unwrap().is_none());
     }
 
     #[test]
@@ -5507,6 +6099,81 @@ mod tests {
     }
 
     #[test]
+    fn endgame_library_reuses_an_identical_import_and_accumulates_completed_time() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let problems = vec![EndgameProblemImport {
+            source_index: 0,
+            title: "马高兵必胜炮士".into(),
+            category: "马兵残局".into(),
+            starting_fen: "4k4/9/9/9/9/9/9/9/9/4K4 w - - 0 1".into(),
+            note: String::new(),
+            solution_json: "[]".into(),
+        }];
+        let first = store
+            .import_endgame_library("/tmp/book.cbl", "sha256:one", "残局", 1, &problems)
+            .unwrap();
+        let repeated = store
+            .import_endgame_library("/tmp/moved-book.cbl", "sha256:one", "残局", 1, &problems)
+            .unwrap();
+        assert_eq!(first.id, repeated.id);
+        let problem = store.endgame_problems(first.id).unwrap().pop().unwrap();
+        store
+            .save_endgame_attempt(problem.id, "solver", 4_000, 1, 0, "completed")
+            .unwrap();
+        let refreshed = store.endgame_problems(first.id).unwrap().pop().unwrap();
+        assert_eq!(refreshed.total_elapsed_ms, 4_000);
+        assert_eq!(store.endgame_libraries().unwrap()[0].completed_count, 1);
+    }
+
+    #[test]
+    fn endgame_reimport_updates_rows_in_place_and_hides_obsolete_problems() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let initial = vec![
+            EndgameProblemImport {
+                source_index: 8,
+                title: "旧题名".into(),
+                category: "未分类".into(),
+                starting_fen: "4k4/9/9/9/9/9/9/9/9/4K4 w - - 0 1".into(),
+                note: String::new(),
+                solution_json: "[]".into(),
+            },
+            EndgameProblemImport {
+                source_index: 9,
+                title: "旧目录记录".into(),
+                category: "未分类".into(),
+                starting_fen: "4k4/9/9/9/9/9/9/9/9/4K4 w - - 0 1".into(),
+                note: String::new(),
+                solution_json: "[]".into(),
+            },
+        ];
+        let library = store
+            .import_endgame_library("/tmp/book.cbl", "sha256:one", "残局", 1, &initial)
+            .unwrap();
+        let retained = store.endgame_problems(library.id).unwrap().remove(0);
+        store
+            .save_endgame_attempt(retained.id, "solver", 4_000, 1, 0, "completed")
+            .unwrap();
+        let corrected = vec![EndgameProblemImport {
+            source_index: 8,
+            title: "马取单士".into(),
+            category: "马类".into(),
+            starting_fen: "9/3kaN3/9/9/9/9/9/9/9/4K4 w - - 0 1".into(),
+            note: "单马必胜单士".into(),
+            solution_json: "[\"f8e6\"]".into(),
+        }];
+        let refreshed = store
+            .import_endgame_library("/tmp/book.cbl", "sha256:one", "残局", 2, &corrected)
+            .unwrap();
+        assert_eq!(library.id, refreshed.id);
+        assert_eq!(refreshed.parser_version, 2);
+        let visible = store.endgame_problems(library.id).unwrap();
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].id, retained.id);
+        assert_eq!(visible[0].title, "马取单士");
+        assert_eq!(visible[0].total_elapsed_ms, 4_000);
+    }
+
+    #[test]
     fn contextual_training_tasks_keep_mode_and_schedule_reviews() {
         let mut store = LocalStore::open_in_memory().unwrap();
         let game_id = Uuid::new_v4();
@@ -5781,12 +6448,23 @@ mod tests {
     #[test]
     fn sync_account_recovery_replaces_only_the_same_email_server_id() {
         let mut store = LocalStore::open_in_memory().unwrap();
-        let old = SyncAccountBinding { user_id: Uuid::new_v4(), email: "same@example.com".into() };
-        let recovered = SyncAccountBinding { user_id: Uuid::new_v4(), email: "SAME@example.com".into() };
+        let old = SyncAccountBinding {
+            user_id: Uuid::new_v4(),
+            email: "same@example.com".into(),
+        };
+        let recovered = SyncAccountBinding {
+            user_id: Uuid::new_v4(),
+            email: "SAME@example.com".into(),
+        };
         store.bind_sync_account(&old).unwrap();
         store.recover_sync_account_binding(&recovered).unwrap();
         assert_eq!(store.sync_account_binding().unwrap(), Some(recovered));
-        let error = store.recover_sync_account_binding(&SyncAccountBinding { user_id: Uuid::new_v4(), email: "other@example.com".into() }).unwrap_err();
+        let error = store
+            .recover_sync_account_binding(&SyncAccountBinding {
+                user_id: Uuid::new_v4(),
+                email: "other@example.com".into(),
+            })
+            .unwrap_err();
         assert!(matches!(error, StoreError::AccountAlreadyBound { .. }));
     }
 

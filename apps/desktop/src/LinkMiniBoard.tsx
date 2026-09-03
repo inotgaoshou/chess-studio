@@ -1,4 +1,4 @@
-import { useId, useRef, type CSSProperties } from "react";
+import { useId, useRef, type CSSProperties, type SyntheticEvent } from "react";
 import type { Piece, Side } from "./platform";
 import {
   BOARD_ART_HEIGHT,
@@ -74,6 +74,28 @@ type MovingMiniPiece = Piece & {
 type ReconcileOptions = { stabilizeLinkedMove?: boolean };
 
 const LINK_MINI_MOVE_ANIMATION_MS = 320;
+
+function pieceFallbackAsset(piece: Piece) {
+  const color = piece?.color === "red" ? "#b43b2f" : "#263238";
+  const label = String(piece?.label ?? piece?.kind ?? "?").trim().replace(/[&<>\"']/g, (value) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&#39;",
+  }[value] ?? value));
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120"><circle cx="60" cy="60" r="53" fill="#f6e5b9" stroke="#9d7746" stroke-width="4"/><text x="60" y="78" text-anchor="middle" font-size="60" font-weight="700" font-family="KaiTi,STKaiti,serif" fill="${color}">${label}</text></svg>`)}`;
+}
+
+function handlePieceAssetError(event: SyntheticEvent<HTMLImageElement>, piece: Piece) {
+  const image = event.currentTarget;
+  if (image.dataset.fallback === "true") {
+    image.style.display = "none";
+    return;
+  }
+  image.dataset.fallback = "true";
+  image.src = pieceFallbackAsset(piece);
+}
 
 const shortenLine = (
   from: { x: number; y: number },
@@ -493,15 +515,15 @@ export function LinkMiniBoard({ pieces, arrows, lastMove, sideToMove, reversed =
       {presentation !== "preview" && selectedLayer}
       {capturedPieces.map((piece) => {
         const pointAtPiece = pointForSquare(piece);
-        return <img key={piece.renderKey} data-piece-key={piece.renderKey} data-piece={pieceTypeKey(piece)} data-square={squareKey(piece)} className="link-mini-piece capture-animate" style={pieceStyle(pointAtPiece, safePieceScale)} src={pieceAsset(piece)} alt="" draggable={false}/>;
+        return <img key={piece.renderKey} data-piece-key={piece.renderKey} data-piece={pieceTypeKey(piece)} data-square={squareKey(piece)} className="link-mini-piece capture-animate" style={pieceStyle(pointAtPiece, safePieceScale)} src={pieceAsset(piece)} alt={piece.label} draggable={false} onError={(event) => handlePieceAssetError(event, piece)}/>;
       })}
       {reconciledPieces.pieces.map((piece) => {
         const pointAtPiece = pointForSquare(piece);
-        return <img key={piece.renderKey} data-piece-key={piece.renderKey} data-piece={pieceTypeKey(piece)} data-square={squareKey(piece)} className={`link-mini-piece${movingBaseKeys.has(piece.renderKey) ? " move-arrive" : ""}`} style={pieceStyle(pointAtPiece, safePieceScale)} src={pieceAsset(piece)} alt="" draggable={false}/>;
+        return <img key={piece.renderKey} data-piece-key={piece.renderKey} data-piece={pieceTypeKey(piece)} data-square={squareKey(piece)} className={`link-mini-piece${movingBaseKeys.has(piece.renderKey) ? " move-arrive" : ""}`} style={pieceStyle(pointAtPiece, safePieceScale)} src={pieceAsset(piece)} alt={piece.label} draggable={false} onError={(event) => handlePieceAssetError(event, piece)}/>;
       })}
       {movingPieces.map((piece) => {
         const pointAtPiece = pointForSquare(piece);
-        return <img key={piece.renderKey} data-piece-key={piece.renderKey} data-piece={pieceTypeKey(piece)} data-square={squareKey(piece)} className="link-mini-piece move-animate" style={movingPieceStyle(pointForSquare(piece.moveFrom), pointAtPiece, safePieceScale) as CSSProperties} src={pieceAsset(piece)} alt="" draggable={false}/>;
+        return <img key={piece.renderKey} data-piece-key={piece.renderKey} data-piece={pieceTypeKey(piece)} data-square={squareKey(piece)} className="link-mini-piece move-animate" style={movingPieceStyle(pointForSquare(piece.moveFrom), pointAtPiece, safePieceScale) as CSSProperties} src={pieceAsset(piece)} alt={piece.label} draggable={false} onError={(event) => handlePieceAssetError(event, piece)}/>;
       })}
       {presentation === "preview" && lastMoveLayer}
       {presentation === "preview" && selectedLayer}

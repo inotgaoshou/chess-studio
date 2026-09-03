@@ -1,5 +1,4 @@
 use super::*;
-use std::collections::HashSet;
 use crate::{
     link_service::{
         active_screenshot_resolution, invalidate_screenshot_move_resolution,
@@ -7,6 +6,62 @@ use crate::{
     },
     training_service::normalize_chinese_move_text,
 };
+use std::collections::HashSet;
+
+/// Resolve a library UUID that may have been rendered just before Tencent
+/// duplicate reconciliation. Provider-owned records are identified by qipu id,
+/// so a stale tombstone can safely follow the remaining visible canonical row.
+fn resolve_visible_game_id(model: &AppModel, requested_id: Uuid) -> Result<Option<Uuid>, String> {
+    let loaded = model
+        .store
+        .load_game(requested_id)
+        .map_err(|error| error.to_string())?;
+    if let Some(game) = loaded {
+        // A pre-deduplication Tencent row may still be visible in an already
+        // rendered list. Always resolve provider-owned UUIDs through the
+        // canonical projection, even when the stale row itself is active.
+        if let Some(qipu_id) = game
+            .source_path
+            .as_deref()
+            .and_then(local_store::ttxq::qipu_id_from_source_path)
+        {
+            let canonical = model
+                .store
+                .find_ttxq_game_id(qipu_id)
+                .map_err(|error| error.to_string())?;
+            return Ok(canonical.or(Some(requested_id)));
+        }
+        return Ok(Some(requested_id));
+    }
+    let Some(stale) = model
+        .store
+        .load_game_including_deleted(requested_id)
+        .map_err(|error| error.to_string())?
+    else {
+        return Ok(None);
+    };
+    let Some(qipu_id) = stale
+        .source_path
+        .as_deref()
+        .and_then(local_store::ttxq::qipu_id_from_source_path)
+    else {
+        return Ok(None);
+    };
+    Ok(model
+        .store
+        .find_ttxq_game_id(qipu_id)
+        .map_err(|error| error.to_string())?)
+}
+
+fn resolve_visible_game(
+    model: &AppModel,
+    requested_id: Uuid,
+) -> Result<Option<local_store::LocalGame>, String> {
+    let Some(id) = resolve_visible_game_id(model, requested_id)? else {
+        return Ok(None);
+    };
+    model.store.load_game(id).map_err(|error| error.to_string())
+}
 
 #[tauri::command]
 pub(crate) fn get_state(state: State<'_, DesktopState>) -> Result<BoardDto, String> {
@@ -19,14 +74,27 @@ pub(crate) fn get_state(state: State<'_, DesktopState>) -> Result<BoardDto, Stri
 
 #[tauri::command]
 pub(crate) fn list_games(state: State<'_, DesktopState>) -> Result<Vec<GameSummaryDto>, String> {
-    let model = state
+    let mut model = state
         .model
         .lock()
         .map_err(|_| "state lock poisoned".to_owned())?;
-    Ok(model
+    // Older bridge revisions could leave multiple active rows for one
+    // (provider, qipuId). Reconcile before every projection read so a stale
+    // library refresh cannot resurrect a duplicate that import already hid.
+    model
         .store
-        .load_games()
-        .map_err(|error| error.to_string())?
+        .reconcile_ttxq_duplicates()
+        .map_err(|error| error.to_string())?;
+    let games = model
+        .store
+        .apply_library_game_order(
+            model
+                .store
+                .load_games()
+                .map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+    Ok(games
         .into_iter()
         .map(|game| {
             let source_order = ttxq_sync::source_order_from_path(game.source_path.as_deref());
@@ -84,15 +152,15 @@ pub(crate) fn get_game_metadata(
     game_id: Uuid,
     state: State<'_, DesktopState>,
 ) -> Result<GameMetadataDto, String> {
-    let model = state
+    let mut model = state
         .model
         .lock()
         .map_err(|_| "state lock poisoned".to_owned())?;
-    let game = model
+    model
         .store
-        .load_game(game_id)
-        .map_err(|error| error.to_string())?
-        .ok_or("棋谱不存在")?;
+        .reconcile_ttxq_duplicates()
+        .map_err(|error| error.to_string())?;
+    let game = resolve_visible_game(&model, game_id)?.ok_or("棋谱不存在")?;
     let metadata = serde_json::from_str::<ManualMetadata>(&game.metadata_json).unwrap_or_default();
     Ok(GameMetadataDto {
         title: game.title,
@@ -116,15 +184,17 @@ pub(crate) fn update_game_metadata_for_game(
         .model
         .lock()
         .map_err(|_| "state lock poisoned".to_owned())?;
+    model
+        .store
+        .reconcile_ttxq_duplicates()
+        .map_err(|error| error.to_string())?;
     let title = metadata.title.trim();
     if title.is_empty() {
         return Err("棋谱标题不能为空".into());
     }
-    let existing_game = model
-        .store
-        .load_game(game_id)
-        .map_err(|error| error.to_string())?
-        .ok_or("棋谱不存在")?;
+    let resolved_game = resolve_visible_game(&model, game_id)?.ok_or("棋谱不存在")?;
+    let game_id = resolved_game.id;
+    let existing_game = resolved_game;
     let note = ttxq_sync::merge_ttxq_local_comment(&existing_game.note, &metadata.note);
     let document_metadata = ManualMetadata {
         title: title.to_owned(),
@@ -146,13 +216,7 @@ pub(crate) fn update_game_metadata_for_game(
         serde_json::to_string(&document_metadata).map_err(|error| error.to_string())?;
     model
         .store
-        .update_game_metadata_with_operation(
-            game_id,
-            title,
-            &note,
-            &metadata_json,
-            &operation,
-        )
+        .update_game_metadata_with_operation(game_id, title, &note, &metadata_json, &operation)
         .map_err(|error| error.to_string())?;
     if model.game_id == game_id {
         model.metadata = document_metadata;
@@ -174,22 +238,71 @@ pub(crate) fn delete_games(
         .model
         .lock()
         .map_err(|_| "state lock poisoned".to_owned())?;
-    if game_ids.iter().any(|game_id| *game_id == model.game_id) {
-        return Err("请先打开另一盘棋，再删除当前复盘棋谱".into());
-    }
-    for game_id in game_ids {
-        if model
-            .store
-            .load_game(game_id)
-            .map_err(|error| error.to_string())?
-            .is_none()
-        {
-            continue;
+    // Deletion is intentionally idempotent: list rows can outlive their
+    // SQLite projection after import de-duplication, and deleting an already
+    // hidden row should still succeed. Delete first, then recover the active
+    // workspace. Opening a replacement before the delete creates a race with
+    // a concurrent list refresh and was the source of intermittent failures.
+    let mut existing_targets = HashSet::new();
+    for game_id in &game_ids {
+        if let Some(resolved_id) = resolve_visible_game_id(&model, *game_id)? {
+            existing_targets.insert(resolved_id);
         }
+    }
+    let active_exists = model
+        .store
+        .load_game(model.game_id)
+        .map_err(|error| error.to_string())?
+        .is_some();
+    // The in-memory active UUID can be an obsolete Tencent duplicate while
+    // the visible/library UUID resolves to a different canonical row. Compare
+    // against the resolved identity so deleting that canonical row also
+    // refreshes the active workspace instead of leaving a tombstoned board
+    // selected in memory.
+    let active_resolved_id =
+        resolve_visible_game_id(&model, model.game_id)?.unwrap_or(model.game_id);
+    let recover_active = existing_targets.contains(&active_resolved_id) || !active_exists;
+    for game_id in game_ids {
+        // A stale duplicate UUID should delete the visible canonical record;
+        // an already missing UUID resolves to None and remains an idempotent
+        // no-op.
+        let Some(game_id) = resolve_visible_game_id(&model, game_id)? else {
+            continue;
+        };
+        // Explicit Tencent deletion is different from reconciliation
+        // housekeeping. Record the provider identity first so the idempotent
+        // tombstone repair cannot revive a game the user intentionally hid.
+        model
+            .store
+            .mark_ttxq_game_user_deleted(game_id)
+            .map_err(|error| error.to_string())?;
         model
             .store
             .delete_game_locally(game_id)
             .map_err(|error| error.to_string())?;
+    }
+    if recover_active {
+        let replacements = model
+            .store
+            .load_games()
+            .map_err(|error| error.to_string())?;
+        let mut restored = false;
+        let active_game_id = model.game_id;
+        for game in replacements
+            .into_iter()
+            .filter(|game| game.id != active_game_id)
+        {
+            // A stale/corrupt replacement must not turn an already successful
+            // deletion into an error. Try the next visible game instead.
+            if load_game_into_model(&mut model, game).is_ok() {
+                restored = true;
+                break;
+            }
+        }
+        if !restored {
+            let document = ManualDocument::new(STARTING_FEN).map_err(|error| error.to_string())?;
+            install_document(&mut model, document, None, None)?;
+        }
     }
     Ok(())
 }
@@ -697,7 +810,10 @@ pub(crate) fn rename_library_folder(
         .store
         .rename_library_folder_with_operations(&previous, &next, &game_operations)
         .map_err(|_| "系统文件夹不能移动、目标名称冲突，或文件夹不存在".to_owned())?;
-    Ok(LibraryMoveResultDto { folder_count, game_count })
+    Ok(LibraryMoveResultDto {
+        folder_count,
+        game_count,
+    })
 }
 
 #[derive(Debug, Serialize)]
@@ -747,7 +863,60 @@ pub(crate) fn move_games_to_folder(
         .store
         .move_games_to_folder_with_operations(&entries)
         .map_err(|error| error.to_string())?;
-    Ok(LibraryMoveResultDto { folder_count: 0, game_count })
+    Ok(LibraryMoveResultDto {
+        folder_count: 0,
+        game_count,
+    })
+}
+
+/// Move one game up or down among the visible games in its current directory.
+/// The order is local library metadata and does not create a sync operation.
+#[tauri::command]
+pub(crate) fn reorder_library_game(
+    game_id: Uuid,
+    direction: i32,
+    state: State<'_, DesktopState>,
+) -> Result<(), String> {
+    if direction != -1 && direction != 1 {
+        return Err("排序方向无效".into());
+    }
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    model
+        .store
+        .reconcile_ttxq_duplicates()
+        .map_err(|error| error.to_string())?;
+    let game = resolve_visible_game(&model, game_id)?.ok_or("棋谱不存在")?;
+    let game_id = game.id;
+    let folder = game.library_folder.clone();
+    let siblings = model
+        .store
+        .apply_library_game_order(
+            model
+                .store
+                .load_games()
+                .map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .filter(|item| item.library_folder == folder)
+        .map(|item| item.id)
+        .collect::<Vec<_>>();
+    let Some(index) = siblings.iter().position(|id| *id == game_id) else {
+        return Err("棋谱不在当前目录".into());
+    };
+    let target = index as i32 + direction;
+    if !(0..siblings.len() as i32).contains(&target) {
+        return Ok(());
+    }
+    let mut ordered = siblings;
+    ordered.swap(index, target as usize);
+    model
+        .store
+        .reorder_games_in_folder(folder.as_deref(), &ordered)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -857,11 +1026,11 @@ pub(crate) fn open_game(game_id: Uuid, state: State<'_, DesktopState>) -> Result
         .model
         .lock()
         .map_err(|_| "state lock poisoned".to_owned())?;
-    let game = model
+    model
         .store
-        .load_game(game_id)
-        .map_err(|error| error.to_string())?
-        .ok_or_else(|| "棋谱不存在".to_owned())?;
+        .reconcile_ttxq_duplicates()
+        .map_err(|error| error.to_string())?;
+    let game = resolve_visible_game(&model, game_id)?.ok_or("棋谱不存在")?;
     load_game_into_model(&mut model, game)?;
     board_dto(&model)
 }

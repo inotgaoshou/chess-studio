@@ -7,9 +7,9 @@ use chrono::Utc;
 use serde::Deserialize;
 use sqlx::{MySql, Transaction};
 use sync_protocol::{
-    AddMovePayload, CreateGamePayload, DeleteGamePayload, DeleteNodePayload, Operation, OperationKind, PullResponse,
-    PushRequest, PushResponse, ReorderBranchesPayload, SequencedOperation, SetMainlinePayload,
-    UpdateCommentPayload, UpdateGameMetadataPayload,
+    AddMovePayload, CreateGamePayload, DeleteGamePayload, DeleteNodePayload, Operation,
+    OperationKind, PullResponse, PushRequest, PushResponse, ReorderBranchesPayload,
+    SequencedOperation, SetMainlinePayload, UpdateCommentPayload, UpdateGameMetadataPayload,
 };
 use uuid::Uuid;
 

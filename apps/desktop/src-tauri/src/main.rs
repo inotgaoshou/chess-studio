@@ -6,6 +6,7 @@ mod cloud_opening_book;
 mod credential_store;
 mod desktop_types;
 mod eleeye_opening_book;
+mod endgame_service;
 mod engine_service;
 mod gif_export;
 mod link_service;
@@ -48,21 +49,23 @@ use link_core::{
     ReconcileDecision, StabilityGate,
 };
 use local_store::{
-    AnalysisSummary, DesktopPreferences, FlyknifePlan, FlyknifeStepAnnotation, GameMirrorStatus,
-    GuidedAnalysisSession, GuidedAnalysisSubmission, ImportedGame, ImportedMasterStyleProfile,
-    ImportedMasterStyleSample, ImportedTheoryCard, LearningProfile, LibraryFolder, LocalGame,
-    LocalStore, MasterStyleHint, MasterStyleProfile, StudySession, SyncAccountBinding, TheoryCard,
-    TheoryCardFeedback, TheoryLesson, TrainingAttempt, TrainingTask, WeaknessStat,
+    AnalysisSummary, DesktopPreferences, ExternalGameImport, FlyknifePlan, FlyknifeStepAnnotation,
+    GameMirrorStatus, GuidedAnalysisSession, GuidedAnalysisSubmission, ImportedGame,
+    ImportedMasterStyleProfile, ImportedMasterStyleSample, ImportedTheoryCard, LearningProfile,
+    LibraryFolder, LocalGame, LocalStore, MasterStyleHint, MasterStyleProfile, StudySession,
+    SyncAccountBinding, TheoryCard, TheoryCardFeedback, TheoryLesson, TrainingAttempt,
+    TrainingTask, WeaknessStat,
 };
 use manual_format::{
     ManualDocument, ManualFormat, ManualMetadata, detect_format, export_chinese_text,
-    export_dhtmlxq, export_mainline_pgn, export_pgn, import_document,
+    export_dhtmlxq, export_mainline_pgn, export_pgn, import_cbl_library, import_document,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sync_protocol::{
-    AddMovePayload, CreateGamePayload, DeleteNodePayload, ExternalGameSourcePayload, Operation, OperationKind,
-    ReorderBranchesPayload, SetMainlinePayload, UpdateCommentPayload, UpdateGameMetadataPayload,
+    AddMovePayload, CreateGamePayload, DeleteNodePayload, ExternalGameSourcePayload, Operation,
+    OperationKind, ReorderBranchesPayload, SetMainlinePayload, UpdateCommentPayload,
+    UpdateGameMetadataPayload,
 };
 use tauri::{Emitter, Manager, State};
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -156,6 +159,7 @@ fn main() {
             manual_service::create_library_folder,
             manual_service::rename_library_folder,
             manual_service::move_games_to_folder,
+            manual_service::reorder_library_game,
             manual_service::delete_library_folder,
             manual_service::update_game_library,
             manual_service::delete_games,
@@ -236,6 +240,16 @@ fn main() {
             training_service::generate_training_tasks,
             training_service::complete_training_task,
             training_service::get_training_summary,
+            endgame_service::import_endgame_cbl,
+            endgame_service::refresh_endgame_libraries,
+            endgame_service::list_endgame_libraries,
+            endgame_service::list_endgame_problems,
+            endgame_service::list_endgame_attempts,
+            endgame_service::save_endgame_attempt,
+            endgame_service::delete_endgame_library,
+            endgame_service::delete_endgame_problem,
+            endgame_service::endgame_chinese_mainline,
+            endgame_service::endgame_free_practice_move,
             training_service::list_study_sessions,
             training_service::save_study_session,
             training_service::scan_theory_library,

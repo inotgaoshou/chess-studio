@@ -8,28 +8,28 @@
 use image::{DynamicImage, ImageFormat, RgbaImage};
 use std::{ffi::c_void, io::Cursor, mem::size_of};
 use windows_sys::Win32::{
-    Foundation::{CloseHandle, BOOL, HANDLE, HWND, LPARAM, POINT, RECT},
+    Foundation::{BOOL, CloseHandle, HANDLE, HWND, LPARAM, POINT, RECT},
     Graphics::Gdi::{
-        BitBlt, ClientToScreen, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject,
-        GetDC, GetDIBits, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
-        DIB_RGB_COLORS, SRCCOPY,
+        BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BitBlt, ClientToScreen, CreateCompatibleBitmap,
+        CreateCompatibleDC, DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, GetDIBits, ReleaseDC,
+        SRCCOPY, SelectObject,
     },
-    Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY},
+    Security::{GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation},
     System::Threading::{
-        GetCurrentProcess, OpenProcess, OpenProcessToken, QueryFullProcessImageNameW,
-        PROCESS_QUERY_LIMITED_INFORMATION,
+        GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
+        QueryFullProcessImageNameW,
     },
     UI::{
         HiDpi::GetDpiForWindow,
         Input::KeyboardAndMouse::{
-            SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN,
-            MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE, MOUSEEVENTF_VIRTUALDESK, MOUSEINPUT,
+            INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN,
+            MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE, MOUSEEVENTF_VIRTUALDESK, MOUSEINPUT, SendInput,
         },
         WindowsAndMessaging::{
             EnumWindows, GetClientRect, GetForegroundWindow, GetSystemMetrics,
             GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow,
-            IsWindowVisible, SetForegroundWindow, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
-            SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+            IsWindowVisible, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
+            SM_YVIRTUALSCREEN, SetForegroundWindow,
         },
     },
 };
@@ -438,7 +438,7 @@ fn mouse_input(dx: i32, dy: i32, flags: u32) -> INPUT {
 
 #[cfg(test)]
 mod tests {
-    use super::{absolute_input_coordinate, is_supported_browser_process, WindowGeometry};
+    use super::{WindowGeometry, absolute_input_coordinate, is_supported_browser_process};
 
     #[test]
     fn browser_filter_is_explicit() {

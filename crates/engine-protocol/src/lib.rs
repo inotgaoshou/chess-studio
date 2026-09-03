@@ -472,7 +472,10 @@ done
         let mut session = EngineSession::launch(&engine, Duration::from_secs(3))
             .await
             .unwrap();
-        session.configure("EvalFile", "pikafish.nnue").await.unwrap();
+        session
+            .configure("EvalFile", "pikafish.nnue")
+            .await
+            .unwrap();
         session.close().await.unwrap();
     }
 

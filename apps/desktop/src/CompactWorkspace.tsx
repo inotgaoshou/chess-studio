@@ -69,14 +69,8 @@ type Props = {
     status: "idle" | "running" | "done" | "error";
     message: string;
   };
-  builtinBookStatus?: {
-    enabled: boolean;
-    verified: boolean;
-    name: string;
-    shortName: string;
-    maxCandidatesPerPosition: number;
-    note?: string;
-  };
+  engineRows?: CompactEngineAnalysisRow[];
+  engineBusy?: boolean;
   evaluationRows: CompactEvaluationRow[];
   evaluationLabel: string;
   evaluationScore: string;
@@ -92,6 +86,8 @@ type Props = {
   onPopOut?(): void;
   onAuditBookCandidates?(): void;
   onPlayBookMove(iccs: string): void;
+  onPlayEngineMove?(iccs: string): void;
+  onRunEngineAnalysis?(): void;
   onPlayEvaluationMove(iccs: string): void;
 };
 
@@ -162,7 +158,7 @@ export function CompactEngineAnalysisList({ busy, rows, onPlayMove, onPreview, o
       })}
       {rows.length === 0 && <div className="compact-engine-empty">
         <Activity size={22}/><strong>{busy ? "AI 正在计算…" : "等待引擎分析"}</strong>
-        <span>{busy ? "收到搜索结果后在这里按设置数量显示候选走法、评分和后续 PV" : "点击上方“分析”后显示截图式引擎列表"}</span>
+        <span>{busy ? "收到搜索结果后在这里固定显示前 5 条候选走法、评分和后续 PV" : "点击上方“分析”后显示截图式引擎列表"}</span>
       </div>}
     </div>
   </div>;
@@ -175,7 +171,8 @@ export function CompactReferencePanels({
   bookRows,
   bookAuditByMove,
   bookAuditState,
-  builtinBookStatus,
+  engineRows = [],
+  engineBusy = false,
   evaluationRows,
   evaluationLabel,
   evaluationScore,
@@ -191,54 +188,40 @@ export function CompactReferencePanels({
   onPopOut,
   onAuditBookCandidates,
   onPlayBookMove,
+  onPlayEngineMove,
+  onRunEngineAnalysis,
   onPlayEvaluationMove,
 }: Props) {
   const [evaluationTab, setEvaluationTab] = useState<"position" | "book">("position");
+  const [bookTab, setBookTab] = useState<"cloud" | "local" | "engine">("cloud");
   const blackShare = redShare == null ? undefined : 100 - redShare;
   const sourceRows = bookRows;
   const bookAuditVisible = !!bookAuditState && bookAuditState.status !== "idle";
-  const hasLocalBookRows = bookRows.some((row) => row.distribution);
-  const builtinBookEnabled = builtinBookStatus?.enabled === true;
-  const builtinBookVerified = builtinBookStatus?.verified === true;
-  const builtinBookLabel = builtinBookStatus?.shortName || "内嵌库";
-  const builtinBookStatusText = builtinBookStatus
-    ? builtinBookEnabled
-      ? builtinBookVerified
-        ? `${builtinBookLabel}已启用，可显示候选`
-        : `${builtinBookLabel}已启用，vkey 未验证，暂不显示推荐`
-      : `${builtinBookLabel}未启用`
-    : undefined;
-  const sourceStatusText = [
-    hasLocalBookRows ? "本地库显示胜/和/负、样本量和局面分" : cloudEnabled ? "云库显示胜率、局面分和相对首选差值" : "云库已关闭",
-    builtinBookEnabled ? builtinBookStatusText : undefined,
-  ].filter(Boolean).join(" · ");
+  const cloudRows = bookRows.filter((row) => !row.distribution);
+  const localBookRows = bookRows.filter((row) => !!row.distribution);
+  const activeBookRows = bookTab === "cloud" ? cloudRows : bookTab === "local" ? localBookRows : [];
+  const sourceStatusText = bookTab === "engine"
+    ? engineBusy ? "Pikafish 正在计算当前局面候选" : engineRows.length ? "引擎库固定显示前 5 条候选，棋盘箭头数量由设置控制" : "点击“分析”生成当前局面的引擎候选"
+    : bookTab === "local"
+      ? localBookRows.length ? "本地 XQB 显示胜/和/负、样本量和局面分" : "尚未导入或当前局面没有本地 XQB 候选"
+      : cloudEnabled ? "云库显示胜率、局面分和相对首选差值" : "云库已关闭";
   const cloudScores = sourceRows.map((row) => numericScore(row.scoreText)).filter((value): value is number => Number.isFinite(value));
   const cloudWinRates = sourceRows.map((row) => Number(row.winRateText.replace("%", ""))).filter(Number.isFinite);
   const topCloudRow = sourceRows[0];
   const bestCloudScore = cloudScores.length ? Math.max(...cloudScores) : undefined;
   const averageCloudWinRate = cloudWinRates.length ? cloudWinRates.reduce((sum, value) => sum + value, 0) / cloudWinRates.length : undefined;
-  const bookStatus = bookLoading
-      ? "查询中"
-      : bookError
-        ? bookError
-        : bookRows.length > 0
-          ? `${bookRows.length} 条${cloudEnabled ? "" : " · 云库关闭"}`
-          : `${bookRows.length} 条${builtinBookEnabled ? ` · ${builtinBookVerified ? "内嵌库启用" : "内嵌库待验证"}` : cloudEnabled ? "" : " · 云库关闭"}`;
-  const emptyBookText = bookError
-    ? "云库暂时不可用"
-    : builtinBookEnabled && !builtinBookVerified
-      ? `${builtinBookLabel}已启用，vkey 未验证，暂不显示推荐`
-      : cloudEnabled
-        ? "当前局面暂无云库着法"
-        : builtinBookEnabled
-          ? `当前局面暂无${builtinBookLabel}着法`
-          : "ChessDB 云库未启用";
+  const bookStatus = bookTab === "engine"
+    ? engineBusy ? "计算中" : `${engineRows.length} 条`
+    : bookTab === "local"
+      ? `${localBookRows.length} 条`
+      : bookLoading ? "查询中" : bookError ?? `${cloudRows.length} 条${cloudEnabled ? "" : " · 云库关闭"}`;
+  const emptyBookText = bookTab === "engine"
+    ? "点击“分析”后显示引擎候选"
+    : bookTab === "local"
+      ? "当前局面暂无本地 XQB 着法"
+      : bookError ? "云库暂时不可用" : cloudEnabled ? "当前局面暂无云库着法" : "ChessDB 云库未启用";
   const emptyBookStatText = sourceRows.length === 0
-    ? builtinBookEnabled && !builtinBookVerified
-      ? `${builtinBookLabel}待 vkey 验证`
-      : cloudEnabled || builtinBookEnabled
-        ? "暂无开局库统计"
-        : "ChessDB 云库未启用"
+    ? cloudEnabled ? "暂无开局库统计" : "ChessDB 云库未启用"
     : undefined;
   const bookRowTitle = (row: CompactBookRow) => [
     row.notation,
@@ -267,23 +250,25 @@ export function CompactReferencePanels({
         <small>{bookStatus}</small>
         {onPopOut && <button type="button" className="compact-reference-popout" title="弹出为独立窗口，可拖到 App 外面" aria-label="弹出云库独立窗口" onClick={onPopOut}><Maximize2 size={13}/><span>弹出</span></button>}
         {onToggleCollapsed && <button type="button" title="收起云库" aria-label="收起云库" onClick={onToggleCollapsed}><ChevronRight size={14}/></button>}
-        {onAuditBookCandidates && <button type="button" className="compact-reference-audit" title="用 Pikafish 验证当前开局库候选" aria-label="Pikafish 验证开局库候选" disabled={bookAuditState?.status === "running"} onClick={onAuditBookCandidates}><Activity size={13}/></button>}
+        {bookTab !== "engine" && onAuditBookCandidates && <button type="button" className="compact-reference-audit" title="用 Pikafish 验证当前开局库候选" aria-label="Pikafish 验证开局库候选" disabled={bookAuditState?.status === "running"} onClick={onAuditBookCandidates}><Activity size={13}/></button>}
+        {bookTab === "engine" && onRunEngineAnalysis && <button type="button" className="compact-reference-audit" title="分析当前局面" aria-label="分析当前局面" disabled={engineBusy} onClick={onRunEngineAnalysis}>{engineBusy ? <Activity size={13}/> : <Play size={13}/>}</button>}
         <button type="button" title="开局库与引擎设置" aria-label="开局库与引擎设置" onClick={onOpenSettings}><Settings2 size={14}/></button>
       </header>
       <div className="compact-source-status" aria-label="开局库状态">
-        <span className={cloudEnabled && !bookError ? "ready" : ""}><Database size={12}/>云库</span>
-        <span className={hasLocalBookRows ? "ready" : ""}><BookOpen size={12}/>本地 XQB</span>
-        {builtinBookEnabled && builtinBookStatus && <span
-          className={builtinBookEnabled ? "ready" : ""}
-          title={`${builtinBookStatus.name} · 每局面最多 ${builtinBookStatus.maxCandidatesPerPosition} 候选${builtinBookStatus.note ? ` · ${builtinBookStatus.note}` : ""}`}
-        ><BookOpen size={12}/>内嵌库</span>}
+        <button type="button" className={bookTab === "cloud" ? "ready active" : ""} onClick={() => setBookTab("cloud")}><Database size={12}/>云库</button>
+        <button type="button" className={bookTab === "local" ? "ready active" : ""} onClick={() => setBookTab("local")}><BookOpen size={12}/>本地 XQB</button>
+        <button type="button" className={bookTab === "engine" ? "ready active" : ""} onClick={() => setBookTab("engine")}><Activity size={12}/>引擎库</button>
         <small>{sourceStatusText}</small>
       </div>
-      {bookAuditVisible && <p className={`book-audit-status ${bookAuditState.status}`}>{bookAuditState.message}</p>}
-      <div className="compact-data-table compact-book-table" role="group" aria-label="开局库候选">
+      {bookAuditVisible && bookTab !== "engine" && <p className={`book-audit-status ${bookAuditState.status}`}>{bookAuditState.message}</p>}
+      {bookTab === "engine" ? <CompactEngineAnalysisList
+        busy={engineBusy}
+        rows={engineRows}
+        onPlayMove={(iccs) => onPlayEngineMove?.(iccs)}
+      /> : <div className="compact-data-table compact-book-table" role="group" aria-label="开局库候选">
         <div className="compact-data-head"><span>着法</span><span>胜/和/负</span><span>样本</span><span>分/差</span></div>
         <div className="compact-data-body">
-          {bookRows.map((row) => {
+          {activeBookRows.map((row) => {
             const audit = bookAuditByMove?.[row.iccs];
             const auditText = auditResultText(audit);
             return <button type="button" key={row.id} onClick={() => onPlayBookMove(row.iccs)} title={bookRowTitle(row)}>
@@ -294,9 +279,9 @@ export function CompactReferencePanels({
             <span className="book-samples">{row.sampleCount?.toLocaleString() ?? "--"}</span><small className={`book-advantage ${audit ? `book-audit-${audit.status}` : ""}`}>{auditText ? `${auditText} · ${row.scoreText}` : `${row.scoreText}${row.advantageText ? ` · ${row.advantageText}` : ""}`}</small>
           </button>;
           })}
-          {!bookLoading && bookRows.length === 0 && <div className="compact-table-empty"><BookOpen size={20}/><span>{emptyBookText}</span></div>}
+          {!bookLoading && activeBookRows.length === 0 && <div className="compact-table-empty"><BookOpen size={20}/><span>{emptyBookText}</span></div>}
         </div>
-      </div>
+      </div>}
     </section>
 
     {evaluationCollapsed && onToggleEvaluationCollapsed ? <button

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Activity, BarChart3, BookOpen, Brain, CheckCircle2, ChevronDown, ChevronRight, ClipboardPaste, ClipboardList, Download, Eye, FileText, FolderArchive, GitBranch, GitFork, Heart, Image, Lightbulb, List, Maximize2, Play, Plus, RefreshCw, Settings2, Swords, X } from "lucide-react";
 import type { AnalysisLine, BoardState, GameReportPresentationDto, GameReportProgressDto, GameSummary, LibraryFolder, ManualTreeNode, MoveItem, ReportIssuePresentationDto, Side, TrainingGenerationResultDto, TrainingTaskDto } from "./platform/types";
 import { buildReviewModel, signedCp } from "./reviewModel";
@@ -6,7 +7,7 @@ import { EvaluationTrendChart, redAdvantageLabel } from "./EvaluationTrendChart"
 import { buildMoveThought } from "./moveThoughtModel";
 import { MoveThoughtDetails } from "./MoveThoughtDetails";
 import { TtxqAnnotationCard } from "./TtxqAnnotationCard";
-import { hasTtxqAnnotation, splitTtxqComment } from "./ttxqAnnotations";
+import { currentTtxqAnnotationValue, hasTtxqAnnotation, splitTtxqComment } from "./ttxqAnnotations";
 import { ReviewGameLibrary } from "./ReviewGameLibrary";
 import { ManualTreeView } from "./ManualTreeView";
 import { childrenForCurrentNode, variationCountByMove } from "./manualTreeQueries";
@@ -60,6 +61,7 @@ export type ReviewWorkspaceProps = {
   onManualRecord(): void;
   onOpenGame?(gameId: string): void;
   onShareGame?(gameId: string): Promise<void>;
+  onReorderLibraryGame?(gameId: string, direction: number): Promise<void>;
   onRefreshLibrary?(): Promise<void>;
   onDeleteGames?(gameIds: string[]): Promise<void>;
   onSaveLibrary(folder: string | undefined, favorite: boolean, tags: string[]): Promise<boolean>;
@@ -161,7 +163,7 @@ function IssueCard({ issue, index, active, expanded, engineExpanded, analysisDep
 export function ReviewWorkspace({
   board, report, reportBusy, reportExporting, reportProgress, engineReady, libraryFolder, playedAt, libraryFolders, games = [], libraryOpen: controlledLibraryOpen, onLibraryOpenChange, favorite, libraryTags, flyknifePlanCount, trainingTasks, trainingGenerating, trainingGeneration, analysisConfig,
   positionAnalysis, positionAnalysisBusy, positionAnalysisError, positionAnalysisFen, engineHintRequest, showMoveThoughts: controlledShowMoveThoughts, onMoveThoughtVisibilityChange, routePoppedOut = false, onPopOutRoute,
-  onClose, onNavigate, onSaveComment, onMakeMainline, onReorderBranches, onRemoveBranch, onGenerateReport, onCancelReport, onExportReport, onOpenReport, onImport, onImportScreenshot, onPaste, onManualRecord, onOpenGame, onShareGame, onRefreshLibrary, onDeleteGames, onSaveLibrary, onOpenFlyknife, onGenerateTraining, onOpenTraining, onCompleteTraining, onStudyIssue, onStartU10, onRunPositionAnalysis,
+  onClose, onNavigate, onSaveComment, onMakeMainline, onReorderBranches, onRemoveBranch, onGenerateReport, onCancelReport, onExportReport, onOpenReport, onImport, onImportScreenshot, onPaste, onManualRecord, onOpenGame, onShareGame, onReorderLibraryGame, onRefreshLibrary, onDeleteGames, onSaveLibrary, onOpenFlyknife, onGenerateTraining, onOpenTraining, onCompleteTraining, onStudyIssue, onStartU10, onRunPositionAnalysis,
 }: ReviewWorkspaceProps) {
   const [tab, setTab] = useState<InsightTab>("report");
   const [moveScope, setMoveScope] = useState<MoveScope>("issues");
@@ -191,7 +193,18 @@ export function ReviewWorkspace({
   };
   const [workflowFocus, setWorkflowFocus] = useState<string>();
   const currentRoundMoveRef = useRef<HTMLDivElement>(null);
+  const [thoughtPortalTarget, setThoughtPortalTarget] = useState<HTMLElement>();
   const showMoveThoughts = controlledShowMoveThoughts ?? internalShowMoveThoughts;
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const target = document.getElementById("board-current-thought-slot");
+    if (!target) return;
+    // The board annotation/thought dock is now a real layout column with a
+    // below-board fallback. Portal the current thought there at every desktop
+    // width instead of duplicating it in the route panel below 1440px.
+    setThoughtPortalTarget(target);
+    return () => setThoughtPortalTarget(undefined);
+  }, []);
   useEffect(() => {
     if (engineHintRequest === 0) return;
     setShowInsights(true);
@@ -210,9 +223,17 @@ export function ReviewWorkspace({
   const currentMoveId = board.currentNode ?? board.history.at(-1)?.id;
   const currentThoughtRow = currentMoveId ? model.moveRows.find((row) => row.move.id === currentMoveId) : undefined;
   const currentThought = currentMoveId ? thoughtByMoveId.get(currentMoveId) : undefined;
-  const currentAnnotationValue = currentMoveId
-    ? model.moveRows.find((row) => row.move.id === currentMoveId)?.move.comment ?? ""
-    : board.note;
+  const currentMoveComment = currentMoveId
+    ? model.moveRows.find((row) => row.move.id === currentMoveId)?.move.comment || ""
+    : "";
+  // A route annotation belongs to exactly one position. Only show the root
+  // annotation at the root; falling back to it for every later move makes a
+  // correctly imported game look as if all comments were attached together.
+  const currentAnnotationValue = currentTtxqAnnotationValue(board.note, currentMoveId, currentMoveComment);
+  const hasCurrentAnnotation = (() => {
+    const { sourceText, localText } = splitTtxqComment(currentAnnotationValue);
+    return Boolean(sourceText.trim() || localText.trim());
+  })();
   const moveRows = moveScope === "issues" && activeReport
     ? (() => {
         const rows = model.moveRows.filter((row) => issueIds.has(row.move.id));
@@ -351,6 +372,16 @@ export function ReviewWorkspace({
     setTab("training");
   }
 
+  const currentThoughtCard = showMoveThoughts && hasRecordedMoves && currentThoughtRow && currentThought
+    ? <section className="review-current-thought-card" aria-label="当前着法思路">
+        <header>
+          <div><small>当前着法思路 · {currentThought.sourceLabel}</small><strong>第 {currentThoughtRow.index} 着 · {currentThoughtRow.move.movedBy} {currentThoughtRow.move.notation}</strong></div>
+          <button type="button" onClick={() => setMoveThoughtVisibility(false)}>隐藏</button>
+        </header>
+        <MoveThoughtDetails thought={currentThought}/>
+      </section>
+    : null;
+
   return <section className={`review-workbench ${showInsights ? "insight-open" : ""}`} aria-label="整局复盘工作台">
     <header className="review-workbench-header">
       <div className="review-workbench-title">
@@ -384,18 +415,7 @@ export function ReviewWorkspace({
         </div>
         <small>将新建独立棋谱，当前复盘不会被覆盖。</small>
       </section>}
-      {showMoveThoughts && hasRecordedMoves && currentThoughtRow && currentThought && <section className="review-current-thought-card" aria-label="当前着法思路">
-        <header>
-          <div><small>当前着法思路 · {currentThought.sourceLabel}</small><strong>第 {currentThoughtRow.index} 着 · {currentThoughtRow.move.movedBy} {currentThoughtRow.move.notation}</strong></div>
-          <button type="button" onClick={() => setMoveThoughtVisibility(false)}>隐藏</button>
-        </header>
-        <MoveThoughtDetails thought={currentThought}/>
-      </section>}
-      <TtxqAnnotationCard
-        value={currentAnnotationValue}
-        editable={Boolean(currentMoveId && onSaveComment)}
-        onSaveLocal={currentMoveId && onSaveComment ? (value) => onSaveComment(currentMoveId, value) : undefined}
-      />
+      {currentThoughtCard && (thoughtPortalTarget ? createPortal(currentThoughtCard, thoughtPortalTarget) : currentThoughtCard)}
       {hasRecordedMoves && <section className={`review-archive-card ${archiveExpanded ? "expanded" : "collapsed"} ${archiveEditorOpen ? "editing" : ""}`} aria-label="棋谱归档资料">
         <header><div><strong>归档资料</strong><small>{archived ? "已保存" : "待确认"} · {libraryFolder || "未分类"}{favorite ? " · 已收藏" : ""}{libraryTags.length ? ` · ${libraryTags.join("、")}` : ""}</small></div><div className="review-archive-header-actions"><button type="button" onClick={() => setArchiveExpanded((expanded) => !expanded)}>{archiveExpanded ? "收起" : "展开"}</button><button type="button" onClick={openArchiveEditor}>编辑归档</button></div></header>
         {archiveExpanded && !archiveEditorOpen && <><small className="review-archive-location">本机保存：Application Support/cn.xiangqi.studio/xiangqi.sqlite3</small><div className="review-archive-summary"><span>{libraryFolder || "未分类"}</span>{favorite && <span className="favorite"><Heart size={12} fill="currentColor"/>已收藏</span>}{libraryTags.map((tag) => <em key={tag}>{tag}</em>)}</div></>}
@@ -405,6 +425,13 @@ export function ReviewWorkspace({
       <div className="review-config" aria-label="整局分析配置"><span>深度 {analysisConfig.reportDepth}</span><span>PV {analysisConfig.multipv}</span><span>{analysisConfig.threads} 线程</span><span>Hash {analysisConfig.hashMb} MB</span></div>
       <section className={`review-move-list ${routeView === "tree" ? "tree-mode" : "rounds-mode"} ${routeCollapsed || routePoppedOut ? "collapsed" : ""}`} aria-label="复盘棋谱路线">
         <header><div className="review-route-title"><strong>棋谱路线</strong>{routePoppedOut && <small>独立窗口中</small>}</div><div className="review-move-view-actions">{!routePoppedOut && !routeCollapsed && <><div role="group" aria-label="棋谱视图"><button type="button" aria-pressed={routeView === "tree"} className={routeView === "tree" ? "active" : ""} onClick={() => setRouteView("tree")}><GitBranch size={12}/>分支树</button><button type="button" aria-pressed={routeView === "rounds"} className={routeView === "rounds" ? "active" : ""} onClick={() => setRouteView("rounds")}><List size={12}/>回合列表</button></div>{routeView === "tree" ? <button type="button" className={branchEditing ? "active" : ""} aria-pressed={branchEditing} onClick={() => setBranchEditing((editing) => !editing)}><Settings2 size={12}/>{branchEditing ? "完成管理" : "管理分支"}</button> : <div role="group" aria-label="棋谱范围"><button type="button" className={moveScope === "all" ? "active" : ""} title="浏览完整棋谱，不删除后续着法" onClick={() => setMoveScope("all")}>完整棋谱</button><button type="button" className={moveScope === "issues" ? "active" : ""} disabled={!activeReport} onClick={() => setMoveScope("issues")}>关键着法</button></div>}</>}{onPopOutRoute && <button type="button" title={routePoppedOut ? "将棋谱路线独立窗口置前" : "弹出棋谱路线独立窗口"} aria-label={routePoppedOut ? "置前棋谱路线独立窗口" : "弹出棋谱路线独立窗口"} onClick={onPopOutRoute}><Maximize2 size={12}/>{routePoppedOut ? "置前" : "弹出"}</button>}<button type="button" title={routeCollapsed ? "展开棋谱路线" : "收起棋谱路线"} aria-label={routeCollapsed ? "展开棋谱路线" : "收起棋谱路线"} aria-expanded={!routeCollapsed} disabled={routePoppedOut} onClick={() => setRouteCollapsed((collapsed) => !collapsed)}><ChevronDown className={routeCollapsed ? "collapsed-icon" : undefined} size={13}/></button></div></header>
+        {!thoughtPortalTarget && hasCurrentAnnotation && <aside className="review-route-annotations" aria-label="当前局面注解">
+          <TtxqAnnotationCard
+            value={currentAnnotationValue}
+            editable={Boolean(currentMoveComment && currentMoveId && onSaveComment)}
+            onSaveLocal={currentMoveComment && currentMoveId && onSaveComment ? (value) => onSaveComment(currentMoveId, value) : undefined}
+          />
+        </aside>}
         {!routeCollapsed && !routePoppedOut && (routeView === "tree" ? <div className="review-branch-tree" aria-label="复盘分支棋谱树">
           <button type="button" className={`review-tree-root ${!board.currentNode ? "active" : ""}`} onClick={() => onNavigate()}><GitBranch size={12}/>开始局面</button>
           {treeNodes.length > 0 ? <ManualTreeView
@@ -480,6 +507,6 @@ export function ReviewWorkspace({
         {tab === "training" && <section className="review-training" role="tabpanel"><header><strong>本局训练</strong><button type="button" onClick={onOpenTraining}>训练与总结</button></header><aside className="review-training-explainer" aria-label="训练生成规则"><strong>这几题怎样选出来？</strong><span><b>关键复练</b>：本着使己方局面下降至少 0.80 分。</span><span><b>巩固复练</b>：没有严重失误时，从下降 0.30–0.79 分的着法中选最多 3 题。</span><small>1. 点`开始拆棋`，回到该错误着之前的局面；2. 先独立推演，答案保持隐藏；3. 提交后核对，再勾选完成。</small></aside>{trainingGeneration && <p className="review-training-result">{trainingGeneration.criticalCount > 0 ? `已生成 ${trainingGeneration.criticalCount} 个关键复练任务。` : trainingGeneration.reinforcementCount > 0 ? `本局没有严重失误，已生成 ${trainingGeneration.reinforcementCount} 个巩固训练。` : "当前报告没有可训练节点。"}</p>}{!activeReport ? <div className="review-empty"><ClipboardList size={25}/><strong>先生成整局报告</strong><span>训练任务只从当前有效报告生成，避免复练过期局面。</span></div> : trainingTasks.length === 0 ? <div className="review-empty"><ClipboardList size={25}/><strong>还没有训练任务</strong><span>会优先生成关键失误；若没有严重失误，则生成轻度巩固训练。</span><button type="button" className="primary" disabled={trainingGenerating} onClick={() => void generateTraining()}>{trainingGenerating ? "生成中" : "生成训练任务"}</button></div> : <div className="review-training-list">{trainingTasks.map((task) => <article key={task.id}><label><input type="checkbox" checked={Boolean(task.completedAt)} onChange={(event) => onCompleteTraining(task.id, event.target.checked)}/><span><strong>{task.taskType === "reinforcement" ? "巩固" : "关键"} · {task.title}</strong><small>{task.detail}</small></span></label><button type="button" onClick={() => onStartU10?.(task.nodeId)}><Brain size={13}/>开始拆棋</button></article>)}</div>}</section>}
       </div>
     </section>
-    {libraryOpen && <ReviewGameLibrary games={games} folders={libraryFolders} onOpen={(gameId) => onOpenGame?.(gameId)} onShare={onShareGame} onDelete={onDeleteGames} onChanged={onRefreshLibrary} onClose={() => setLibraryOpen(false)}/>}
+    {libraryOpen && <ReviewGameLibrary games={games} folders={libraryFolders} onOpen={(gameId) => onOpenGame?.(gameId)} onShare={onShareGame} onReorder={onReorderLibraryGame} onDelete={onDeleteGames} onChanged={onRefreshLibrary} onClose={() => setLibraryOpen(false)}/>}
   </section>;
 }

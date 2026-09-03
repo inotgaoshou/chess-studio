@@ -115,7 +115,7 @@ export function TtxqImportDialog({ progress, preview, diagnostics, folders, targ
           <Database size={19}/>
           <span>
             <strong>天天象棋棋谱导入</strong>
-            <small>自动读取当前授权账号可访问的最近对局</small>
+            <small>读取授权窗口当前打开的最近、收藏或自建列表</small>
           </span>
         </div>
         <button type="button" className="tool-button" title="关闭天天象棋棋谱导入" aria-label="关闭天天象棋棋谱导入" disabled={busy} onClick={onClose}><X size={16}/></button>
@@ -125,6 +125,7 @@ export function TtxqImportDialog({ progress, preview, diagnostics, folders, targ
         <section className="ttxq-import-status" aria-live="polite">
           <div><span>同步状态</span><strong className={progress.state}>{stateLabel(progress.state)}</strong></div>
           <p>{progress.message}</p>
+          {(progress.bridgeVersion || progress.sourceList) && <p className="ttxq-import-source">桥接 v{progress.bridgeVersion ?? "-"}{progress.sourceList ? ` · 当前列表：${progress.sourceList}` : ""}{progress.ignoredStaleCount ? ` · 已忽略旧缓存 ${progress.ignoredStaleCount} 项` : ""}</p>}
           {isReading && <section className="ttxq-import-reading-progress" aria-label="读取进度">
             <header><strong>{isDiscovering ? "扫描已加载列表" : isLoadingGame ? "等待棋谱加载" : isMetadata ? "解析棋谱信息" : isBranches ? "读取分支变化" : "读取棋谱走法"}</strong><span>{isDiscovering ? `已发现 ${progress.readTotal} 盘` : isLoadingGame || isMetadata || isBranches ? `第 ${progress.readCurrent ?? 0} / ${progress.readTotal} 盘` : `${readPercent}%`}</span></header>
             {isDiscovering
@@ -133,9 +134,9 @@ export function TtxqImportDialog({ progress, preview, diagnostics, folders, targ
               ? <progress value={readProgressValue} max={progress.readTotal} aria-label="读取进度"/>
               : <i aria-label="正在发现已加载棋谱"/>}
             <p>{isDiscovering
-              ? <>正在检查已加载的最近对局 · 已处理 <b>{progress.readScanned ?? 0}</b> 个数据项 · 已等待 <b>{readElapsedSeconds}</b> 秒{readElapsedSeconds >= 12 && <>。若长时间不变，请在授权窗口打开“最近对局”，等列表显示后重新读取。</>}</>
+              ? <>正在检查当前可见列表 · 已处理 <b>{progress.readScanned ?? 0}</b> 个数据项 · 已发现 <b>{progress.discoveredCount ?? progress.readTotal}</b> 盘 · 已等待 <b>{readElapsedSeconds}</b> 秒{readElapsedSeconds >= 12 && <>。若长时间不变，请在授权窗口打开目标列表，等列表显示后重新读取。</>}</>
               : isLoadingGame
-              ? <>正在确认第 <b>{progress.readCurrent ?? 0}</b> 盘走法已加载 · 已等待 <b>{readElapsedSeconds}</b> 秒。首盘最多等待 12 秒，其余每盘最多约 3 秒；超时只跳过该盘并保留诊断样本。</>
+              ? <>正在确认第 <b>{progress.readCurrent ?? 0}</b> 盘走法已加载 · 已等待 <b>{readElapsedSeconds}</b> 秒。每盘最多等待约 12 秒；超时只跳过该盘并保留诊断样本。</>
               : isMetadata
               ? <>第 <b>{progress.readCurrent ?? 0}</b> / {progress.readTotal} 盘 · 正在读取标题、棋手、时间和赛果 · 已等待 <b>{readElapsedSeconds}</b> 秒</>
               : isBranches
@@ -164,7 +165,7 @@ export function TtxqImportDialog({ progress, preview, diagnostics, folders, targ
           <header><strong>导入预览 · {preview.length} 盘</strong><span>{validPreviewCount} 盘可导入</span></header>
           <ol>
             {preview.map((game) => <li key={game.qipuId} className={game.valid ? "valid" : "invalid"}>
-              <div><strong>{game.title.trim() || `天天象棋 ${game.qipuId}`}</strong><span>{game.valid ? `${game.moveCount} 半回合${game.routeCount > 1 ? ` · 路线 ${game.decodedRouteCount}/${game.routeCount}` : ""}${game.variationNodeCount ? ` · ${game.variationNodeCount} 个变招节点` : ""}${game.annotationCount ? ` · ${game.annotationCount} 条注解` : ""}` : `${game.routeCount > 1 ? `路线 ${game.decodedRouteCount}/${game.routeCount} · ` : ""}${game.annotationsComplete === false ? "注解未完整定位 · " : ""}格式待处理`}</span></div>
+              <div><strong>{game.title.trim() || `天天象棋 ${game.qipuId}`}</strong><span>{game.valid ? `${game.moveCount} 半回合${game.routeCount > 1 ? ` · 路线 ${game.decodedRouteCount}/${game.routeCount}` : ""}${game.variationNodeCount ? ` · ${game.variationNodeCount} 个变招节点` : ""}${game.annotationCount ? ` · ${game.annotationCount} 条注解` : ""}` : `${game.routeCount > 1 ? `路线 ${game.decodedRouteCount}/${game.routeCount} · ` : ""}${game.annotationCount ? `已解析 ${game.annotationCount} 条注解 · ` : ""}${game.annotationsComplete === false ? "注解未完整定位 · " : ""}格式待处理`}</span></div>
               <p>{[game.red, game.black].filter(Boolean).join(" vs ") || game.event || "自建/收藏棋谱"}{game.result ? ` · ${resultLabel(game.result)}` : ""}</p>
               {(game.event || game.date || game.round || game.playedAt || game.duration) && <small>{[game.event, game.date, roundLabel(game.round), game.playedAt, game.duration && `用时 ${game.duration}`].filter(Boolean).join(" · ")}</small>}
               {game.valid && game.diagnostic && <small>{game.diagnostic}</small>}
@@ -199,7 +200,7 @@ export function TtxqImportDialog({ progress, preview, diagnostics, folders, targ
 
         <div className="ttxq-import-actions">
           <button type="button" className="primary" disabled={busy} onClick={onAuthorize}><ExternalLink size={15}/>{connected ? "打开授权窗口" : "登录天天象棋"}</button>
-          <button type="button" disabled={busy || !connected || progress.state === "reading"} onClick={onCollect}><RefreshCw className={progress.state === "reading" ? "spin" : undefined} size={15}/>{progress.state === "reading" ? "读取中…" : "读取已加载棋谱"}</button>
+          <button type="button" aria-label={progress.state === "reading" ? "读取中…" : "读取已加载棋谱"} title="重新读取已加载棋谱" disabled={busy || !connected || progress.state === "reading"} onClick={onCollect}><RefreshCw className={progress.state === "reading" ? "spin" : undefined} size={15}/>{progress.state === "reading" ? "读取中…" : "重新读取已加载棋谱"}</button>
           <button type="button" className="primary" disabled={!canImport} onClick={onImport}><Download size={15}/>{busy ? "导入中…" : "导入全部"}</button>
         </div>
       </div>

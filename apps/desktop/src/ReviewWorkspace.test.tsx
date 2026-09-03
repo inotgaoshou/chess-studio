@@ -258,6 +258,32 @@ describe("ReviewWorkspace", () => {
     expect(titles).toEqual(["列表顶部", "列表中间", "列表底部"]);
   });
 
+  it("reorders games within the selected folder and disables the edge actions", async () => {
+    const onReorderLibraryGame = vi.fn().mockResolvedValue(undefined);
+    const onRefreshLibrary = vi.fn().mockResolvedValue(undefined);
+    const folderGames = ["一号棋谱", "二号棋谱", "三号棋谱"].map((title, index) => ({
+      ...libraryGames[1], id: `folder-${index + 1}`, title, current: false, libraryFolder: "比赛复盘",
+    }));
+    renderWorkspace({
+      games: folderGames,
+      libraryFolders: [{ name: "比赛复盘", system: false, gameCount: folderGames.length }],
+      onReorderLibraryGame,
+      onRefreshLibrary,
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "棋谱库" }));
+    await userEvent.click(screen.getByRole("button", { name: "比赛复盘 3" }));
+    const rows = [...screen.getByLabelText("棋谱列表").querySelectorAll(".review-library-game")];
+    expect((within(rows[0] as HTMLElement).getByRole("button", { name: "上移 一号棋谱" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((within(rows[2] as HTMLElement).getByRole("button", { name: "下移 三号棋谱" }) as HTMLButtonElement).disabled).toBe(true);
+
+    await userEvent.click(within(rows[1] as HTMLElement).getByRole("button", { name: "上移 二号棋谱" }));
+    expect(onReorderLibraryGame).toHaveBeenCalledWith("folder-2", -1);
+    expect(onRefreshLibrary).toHaveBeenCalledOnce();
+    await userEvent.click(within(rows[1] as HTMLElement).getByRole("button", { name: "下移 二号棋谱" }));
+    expect(onReorderLibraryGame).toHaveBeenLastCalledWith("folder-2", 1);
+  });
+
   it("shows TianTian metadata, searches it, and deletes selected non-current games", async () => {
     const onDeleteGames = vi.fn().mockResolvedValue(undefined);
     renderWorkspace({ onDeleteGames });
@@ -358,6 +384,8 @@ describe("ReviewWorkspace", () => {
       },
     });
     const annotation = screen.getByLabelText("天天象棋注解");
+    const route = screen.getByLabelText("复盘棋谱路线");
+    expect(route.contains(annotation)).toBe(true);
     expect(within(annotation).getByText("金玉满堂 · 25-01-07 19:13")).toBeTruthy();
     expect(within(annotation).getByText("进边兵制马，针锋相对。")).toBeTruthy();
     expect(within(screen.getByLabelText("当前着法思路")).queryByText("进边兵制马，针锋相对。")).toBeNull();
@@ -381,6 +409,18 @@ describe("ReviewWorkspace", () => {
     await userEvent.type(editor, "新的本地备注");
     await userEvent.click(within(annotation).getByRole("button", { name: "保存备注" }));
     expect(onSaveComment).toHaveBeenCalledWith("move-1", "新的本地备注");
+  });
+
+  it("keeps the imported root annotation scoped to the starting position", () => {
+    renderWorkspace({
+      board: {
+        ...board,
+        currentNode: "move-1",
+        note: "【天天象棋注解】\n开局总评\n【天天象棋注解结束】",
+      },
+    });
+
+    expect(screen.queryByLabelText("天天象棋注解")).toBeNull();
   });
 
   it("supports select-all and direct deletion from the local game library", async () => {

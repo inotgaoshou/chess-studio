@@ -602,6 +602,12 @@ export type TrainingGenerationResultDto = {
   criticalCount: number;
   reinforcementCount: number;
 };
+export type EndgameLibraryDto = { id: string; title: string; sourcePath: string; fingerprint: string; parserVersion: number; problemCount: number; completedCount: number; importedAt: string };
+export type EndgameProblemDto = { id: string; libraryId: string; sourceIndex: number; title: string; category: string; startingFen: string; note: string; solutionJson: string; completedAttempts: number; totalElapsedMs: number };
+export type EndgameImportResultDto = { library: EndgameLibraryDto; warnings: string[] };
+export type EndgameRefreshResultDto = { warnings: string[] };
+export type EndgameFreePracticeMoveDto = { fen: string; notation: string; terminal: boolean };
+export type EndgameAttemptDto = { id: string; mode: string; elapsedMs: number; hintsUsed: number; mistakes: number; outcome: string; createdAt: string };
 export type LearningProfile = {
   id: string;
   childName: string;
@@ -842,7 +848,7 @@ export type LinkObservation = { state: LinkSessionState; accepted: boolean; move
 export type BoardOrientation = "redAtBottom" | "blackAtBottom";
 export type LinkMoveDetail = { iccs: string; notation: string; movedBy: Side; from: MoveSquare; to: MoveSquare };
 export type LinkSessionStatus = { source: CaptureSource; mode: LinkMode; state: LinkSessionState; reason?: string; phase?: string; lastError?: string; startedAt?: string; lastHeartbeatAt?: string; recognitionAttempts?: number; lastDetectionSummary?: string; turnIndicator?: string; manualTurnOverride?: LinkAutoSide; pendingExternalMove?: string; capturePreviewKind?: string; frameRate: number; confidence?: number; confidenceThreshold?: number; stableFrames: number; requiredStableFrames: number; latestFen?: string; lastMove?: string; lastMoveDetail?: LinkMoveDetail; initialPositionSeen?: boolean; autoSide?: LinkAutoSide; boardOrientation?: BoardOrientation; captureRunning: boolean; targetWindow?: LinkTargetWindow; captureBackend?: string; captureDpi?: number; clickAvailable?: boolean };
-export type TtxqSyncProgress = { state: "disconnected" | "authorizing" | "reading" | "ready" | "importing" | "complete" | "partial" | "error" | string; readPhase?: "discovering" | "loading" | "metadata" | "branches" | "reading" | string; readScanned?: number; readCurrent?: number; readTotal: number; readCompleted: number; readFailed: number; loaded: number; completed: number; imported: number; skipped: number; failed: number; message: string };
+export type TtxqSyncProgress = { state: "disconnected" | "authorizing" | "reading" | "ready" | "importing" | "complete" | "partial" | "error" | string; bridgeVersion?: number; sourceList?: string; discoveredCount?: number; ignoredStaleCount?: number; readPhase?: "discovering" | "loading" | "metadata" | "branches" | "reading" | string; readScanned?: number; readCurrent?: number; readTotal: number; readCompleted: number; readFailed: number; loaded: number; completed: number; imported: number; skipped: number; failed: number; message: string };
 export type TtxqGamePreview = { qipuId: string; title: string; red: string; black: string; event: string; date: string; result: string; round: string; playedAt: string; duration: string; moveCount: number; variationCount: number; routeCount: number; decodedRouteCount: number; variationNodeCount: number; branchComplete: boolean; annotationCount?: number; annotationsComplete?: boolean; valid: boolean; error?: string; diagnostic?: string };
 export type TtxqDiagnosticSample = { id: number; qipuId: string; fieldPath: string; valueType: string; valueLength: number; rawSample: string; error: string; capturedAt: string };
 export type LibraryMoveResult = { folderCount: number; gameCount: number };
@@ -868,6 +874,7 @@ export interface ChessPlatform {
   renameLibraryFolder(previous: string, next: string): Promise<LibraryMoveResult>;
   deleteLibraryFolder(name: string): Promise<void>;
   moveGamesToFolder(gameIds: string[], folder: string | undefined): Promise<LibraryMoveResult>;
+  reorderLibraryGame(gameId: string, direction: number): Promise<void>;
   updateGameLibrary(folder: string | undefined, favorite: boolean, tags: string[]): Promise<Partial<BoardState>>;
   getGameMirrorStatus(gameId?: string): Promise<GameMirrorStatus | undefined>;
   updateGameMirror(): Promise<GameMirrorStatus>;
@@ -917,6 +924,17 @@ export interface ChessPlatform {
   getWeeklyLearningReport(): Promise<WeeklyLearningReport>;
   inferOpeningRepertoire(): Promise<OpeningRepertoire>;
   getTrainingSummary(): Promise<TrainingSummaryDto>;
+  importEndgameCbl(): Promise<EndgameImportResultDto | undefined>;
+  importEndgameCblFromPath(path: string): Promise<EndgameImportResultDto>;
+  refreshEndgameLibraries(): Promise<EndgameRefreshResultDto>;
+  listEndgameLibraries(): Promise<EndgameLibraryDto[]>;
+  listEndgameProblems(libraryId: string): Promise<EndgameProblemDto[]>;
+  listEndgameAttempts(problemId: string): Promise<EndgameAttemptDto[]>;
+  saveEndgameAttempt(request: { problemId: string; mode: "solver" | "replay" | "free"; elapsedMs: number; hintsUsed: number; mistakes: number; outcome: "completed" | "revealed" | "abandoned" | "free_finished" }): Promise<void>;
+  deleteEndgameLibrary(libraryId: string): Promise<void>;
+  deleteEndgameProblem(problemId: string): Promise<void>;
+  endgameChineseMainline(startingFen: string, moves: string[]): Promise<string[]>;
+  endgameFreePracticeMove(startingFen: string, previousMoves: string[], iccs: string): Promise<EndgameFreePracticeMoveDto>;
   listStudySessions(): Promise<StudySessionDto[]>;
   saveStudySession(reflection: string, tags: string[]): Promise<StudySessionDto>;
   scanTheoryLibrary(): Promise<TheoryLibraryDto>;

@@ -428,6 +428,14 @@ describe("link floating status helpers", () => {
       boardFen: "current-fen",
       analysisIsStale: true,
     })).toEqual([]);
+
+    expect(selectAnalysisArrowLines({
+      lines,
+      analysisFen: "current-fen",
+      analysisArrowFen: "current-fen",
+      boardFen: "current-fen",
+      candidateLimit: 2,
+    }).map((line) => line.multipv)).toEqual([1, 2]);
   });
 
   it("hides arrows when the arrow state is cleared during a coach study", () => {
