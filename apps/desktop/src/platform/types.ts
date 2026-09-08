@@ -153,6 +153,10 @@ export type AnalysisLine = {
   multipv: number;
   notation?: string[];
   pv: string[];
+  source?: "local" | "cloud";
+  engineVersion?: string;
+  nnueVersion?: string;
+  cached?: boolean;
 };
 export type PreviewLineStep = {
   fen: string;
@@ -187,8 +191,19 @@ export type AnalysisOptions = {
   token: string;
   /** Mobile web workbench may use an explicitly enabled guest analysis service. */
   guest?: boolean;
+  onCloudProgress?: (progress: CloudAnalysisProgress) => void;
   searchMoves?: string[];
   excludeMove?: string;
+};
+export type CloudAnalysisProgress = {
+  jobId: string;
+  status: "queued" | "running" | "completed" | "failed" | "cancelled";
+  depth?: number;
+  elapsedMs?: number;
+  candidateCount?: number;
+  engineVersion: string;
+  nnueVersion: string;
+  cacheHit: boolean;
 };
 export type ReportPhase = "opening" | "middle" | "endgame";
 export type QualityGrade = "优" | "良" | "中" | "差" | "错";

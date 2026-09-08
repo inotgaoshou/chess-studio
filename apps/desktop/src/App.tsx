@@ -66,6 +66,7 @@ import { ForceVariationIcon, MobileToolbar, type MobileToolbarCommand } from "./
 import { MobileStudyPanel } from "./MobileStudyPanel";
 import { MobileManualRoute } from "./MobileManualRoute";
 import type { AnalysisOptions, AppInfoDto, BuiltinOpeningBookManifestDto, CloudAnalysisPreferences, CloudGuestAuthDto, DailyTrainingPlan, DesktopPreferencesDto, FlyknifePlan, GuidedAnalysisStart, GuidedAnalysisSubmission, LearningProfile, LinkSessionStatus, OpeningRepertoire, SubscriptionDto, SyncAccountDto, TtxqDiagnosticSample, TtxqGamePreview, TtxqSyncProgress, WeeklyLearningReport } from "./platform";
+import type { CloudAnalysisProgress } from "./platform/types";
 import { applyColorTheme, initialColorTheme, type ColorTheme } from "./theme";
 import { WorkspaceTabs, type WorkspacePanel } from "./WorkspaceTabs";
 import { WorkspaceModeSwitch, type WorkspaceMode } from "./WorkspaceModeSwitch";
@@ -1306,6 +1307,7 @@ export default function App() {
   const [autoRetry, setAutoRetry] = useState(0);
   const [analysisBusy, setAnalysisBusy] = useState(false);
   const [analysisError, setAnalysisError] = useState<string>();
+  const [cloudAnalysisProgress, setCloudAnalysisProgress] = useState<CloudAnalysisProgress>();
   const [reviewEngineHintRequest, setReviewEngineHintRequest] = useState(0);
   const [reviewGameLibraryOpen, setReviewGameLibraryOpen] = useState(false);
   const [syncBusy, setSyncBusy] = useState(false);
@@ -2494,7 +2496,7 @@ export default function App() {
     stopping: "停止中",
     faulted: "故障",
   };
-  const currentEngineLabel = chessPlatform.kind === "web" ? "云端引擎" : engineDisplayName(enginePath);
+  const currentEngineLabel = chessPlatform.kind === "web" ? primaryAnalysis?.engineVersion ?? "云端引擎" : engineDisplayName(enginePath);
   const currentEngineVersionLabel = chessPlatform.kind === "web" ? currentEngineLabel : engineProbeDisplayName(currentEngineLabel, engineProbe);
   const currentNnueLabel = chessPlatform.kind === "web" ? undefined : nnueProbeLabel(engineProbe);
   const currentEngineTitle = chessPlatform.kind === "web" ? "云端引擎" : engineProbeTitle(currentEngineLabel, enginePath || "未配置引擎", engineProbe);
@@ -4327,6 +4329,7 @@ export default function App() {
     }
     setAnalysisArrowFen(analysisHintsEnabledRef.current ? analyzedFen : undefined);
     setAnalysisBusy(true);
+    setCloudAnalysisProgress(undefined);
     if (!automatic && searchMode === "infinite") await collapseCompactStudyPanels();
     if (!automatic) selectWorkspacePanel("analysis");
     const passPlan = analysisPassPlan({ automatic, platformKind: chessPlatform.kind, searchMode, searchValue });
@@ -4356,6 +4359,7 @@ export default function App() {
           serverUrl,
           token: auth.token,
           guest: auth.guest,
+          onCloudProgress: chessPlatform.kind === "web" ? setCloudAnalysisProgress : undefined,
           excludeMove,
         })));
       };
@@ -4390,6 +4394,7 @@ export default function App() {
       setAnalysisFen(analyzedFen);
       setAnalysisSideToMove(currentBoard.sideToMove);
       setAnalysis(analysisStreamRef.current.lines);
+      setCloudAnalysisProgress(undefined);
       setAnalysisArrowFen(analysisHintsEnabledRef.current ? analyzedFen : undefined);
       const failures = completed.filter((outcome) => outcome.status === "rejected");
       if (failures.length === completed.length) {
@@ -7693,7 +7698,13 @@ export default function App() {
               </button>
               {engineProfiles.length > 0 && <div className="engine-profile-select"><label><span>当前引擎</span><select value={desktopPreferences.activeEngineId ?? ""} onChange={(event) => void selectEngineProfile(event.target.value)}><option value="" disabled>选择已添加的引擎</option>{engineProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.protocol.toUpperCase()}</option>)}</select></label><button title="删除当前引擎档案" onClick={() => void removeEngineProfile()}><Trash2 size={13}/></button></div>}
             </>}
-            {chessPlatform.kind === "web" && <div className="web-engine-source"><span>{serverUrl}</span><strong>MultiPV {multipv}</strong></div>}
+            {chessPlatform.kind === "web" && <div className="web-engine-source"><span>{serverUrl}</span><strong>{cloudAnalysisProgress
+              ? cloudAnalysisProgress.status === "queued"
+                ? "云端排队中"
+                : `云端深度 ${cloudAnalysisProgress.depth ?? "--"} · ${cloudAnalysisProgress.candidateCount ?? 0} 路`
+              : primaryAnalysis?.source === "cloud"
+                ? `${primaryAnalysis.cached ? "云端缓存" : "云端完成"} · ${primaryAnalysis.engineVersion ?? "Pikafish"}`
+                : `MultiPV ${multipv}`}</strong></div>}
             <div className="engine-run-row">
               <div className={`search-modes ${chessPlatform.kind === "web" ? "web-modes" : ""}`} role="group" aria-label="搜索模式">
                 <button className={searchMode === "time" ? "active" : ""} onClick={() => { setSearchMode("time"); setSearchValue(1500); }}>时间</button>

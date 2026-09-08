@@ -179,6 +179,7 @@ pub(crate) fn create_guest_token(
     .map_err(|_| ApiError::Internal)
 }
 
+#[derive(Debug, Clone)]
 pub(crate) enum AnalysisPrincipal {
     User(Uuid),
     Guest { subject: String },

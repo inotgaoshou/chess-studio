@@ -8,6 +8,7 @@ use sqlx::mysql::MySqlPoolOptions;
 use tokio::sync::Semaphore;
 
 mod analysis;
+mod analysis_jobs;
 mod auth;
 mod error;
 mod master_library;
@@ -16,6 +17,7 @@ mod state;
 mod subscription;
 mod sync;
 
+use crate::analysis_jobs::AnalysisJobStore;
 use crate::master_library::backfill_master_opening_tags;
 use crate::router::{cors_layer, env_value, router};
 use crate::state::{AppState, EngineConfig};
@@ -34,8 +36,14 @@ async fn main() -> anyhow::Result<()> {
         threads: env_value("ENGINE_THREADS", 2).clamp(1, 64),
         hash_mb: env_value("ENGINE_HASH_MB", 256).clamp(16, 4096),
         timeout: StdDuration::from_millis(env_value("ENGINE_TIMEOUT_MS", 12_000)),
+        engine_version: env::var("PIKAFISH_ENGINE_VERSION")
+            .unwrap_or_else(|_| "Pikafish-2026-09-06".into()),
+        nnue_version: env::var("PIKAFISH_NNUE_VERSION").unwrap_or_else(|_| {
+            "sha256:7d13d73569a9b571ba0eb20cf1596247bc2a42738967e61afef6482b231e900e".into()
+        }),
     };
     let max_concurrent = env_value("ENGINE_MAX_CONCURRENT", 2usize).clamp(1, 32);
+    let max_queued = env_value("ENGINE_MAX_QUEUED", 64usize).clamp(max_concurrent, 10_000);
     let guest_token_ttl_minutes = env_value("GUEST_TOKEN_TTL_MINUTES", 120u64).clamp(5, 24 * 60);
     let pool = MySqlPoolOptions::new()
         .max_connections(20)
@@ -67,6 +75,7 @@ async fn main() -> anyhow::Result<()> {
                 .clamp(1, 10_000),
             engine,
             engine_slots: Arc::new(Semaphore::new(max_concurrent)),
+            analysis_jobs: AnalysisJobStore::new(max_queued),
         },
         cors_layer()?,
     );
@@ -87,6 +96,7 @@ mod tests {
         AnalysisMode, AnalysisRequest, run_analysis, validate_analysis_request,
         validate_guest_analysis_request,
     };
+    use crate::analysis_jobs::{AnalysisBudget, CreateAnalysisJobRequest, analysis_cache_key};
     use crate::auth::{
         AnalysisPrincipal, Credentials, analysis_principal, authenticated_user, create_guest_token,
         create_token, validate_credentials,
@@ -207,6 +217,56 @@ mod tests {
     }
 
     #[test]
+    fn cloud_analysis_cache_keys_normalize_fen_and_isolate_every_budget_version() {
+        let config = EngineConfig {
+            path: None,
+            threads: 2,
+            hash_mb: 64,
+            timeout: StdDuration::from_secs(2),
+            engine_version: "Pikafish-2026-09-06".into(),
+            nnue_version: "nnue-sha-1".into(),
+        };
+        let request = CreateAnalysisJobRequest {
+            fen: format!("  {}  ", xiangqi_core::STARTING_FEN),
+            engine_version: Some(config.engine_version.clone()),
+            nnue_version: Some(config.nnue_version.clone()),
+            budget: AnalysisBudget {
+                mode: AnalysisMode::Depth,
+                value: 20,
+            },
+            multi_pv: 3,
+        };
+        let canonical_request = CreateAnalysisJobRequest {
+            fen: xiangqi_core::STARTING_FEN.into(),
+            ..request.clone()
+        };
+        assert_eq!(
+            analysis_cache_key(&config, &request).unwrap(),
+            analysis_cache_key(&config, &canonical_request).unwrap()
+        );
+
+        let deeper = CreateAnalysisJobRequest {
+            budget: AnalysisBudget {
+                mode: AnalysisMode::Depth,
+                value: 21,
+            },
+            ..request.clone()
+        };
+        assert_ne!(
+            analysis_cache_key(&config, &request).unwrap(),
+            analysis_cache_key(&config, &deeper).unwrap()
+        );
+        let other_nnue = EngineConfig {
+            nnue_version: "nnue-sha-2".into(),
+            ..config.clone()
+        };
+        assert_ne!(
+            analysis_cache_key(&config, &request).unwrap(),
+            analysis_cache_key(&other_nnue, &request).unwrap()
+        );
+    }
+
+    #[test]
     fn cors_requires_https_except_for_local_development() {
         assert!(allowed_origin("https://chess.example.com").is_ok());
         assert!(allowed_origin("http://127.0.0.1:1420").is_ok());
@@ -228,6 +288,9 @@ mod tests {
             "/api/v1/subscription",
             "/api/v1/subscription/redeem",
             "/api/v1/analysis",
+            "/api/v1/analysis/jobs",
+            "/api/v1/analysis/jobs/{job_id}",
+            "/api/v1/analysis/jobs/{job_id}/cancel",
             "/api/v1/master/players",
             "/api/v1/master/stats",
             "/api/v1/master/players/{player_id}/games",
@@ -346,6 +409,8 @@ done
             threads: 2,
             hash_mb: 64,
             timeout: StdDuration::from_secs(2),
+            engine_version: "Testfish".into(),
+            nnue_version: "test-nnue".into(),
         };
         let request = AnalysisRequest {
             fen: xiangqi_core::STARTING_FEN.into(),

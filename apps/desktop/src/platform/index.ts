@@ -4,6 +4,7 @@ import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { isMobileBuild } from "../mobileEnvironment";
 import { webDatabase, type SyncOperation, type WebGameRecord } from "./indexedDb";
+import { runCloudAnalysisJob } from "./cloudAnalysisJobs";
 import { BUILTIN_ENGINE_PATH, FALLBACK_BUILTIN_OPENING_BOOK_MANIFEST } from "./types";
 import type { AnalysisLine, AnalysisOptions, AppInfoDto, BoardState, BookImportDraft, BookTopicDetail, BuiltinOpeningBookManifestDto, CaptureSource, ChessPlatform, CloudAnalysisPreferences, CloudAuthDto, CloudBookCandidate, CloudGuestAuthDto, DesktopPreferencesDto, EndgameAttemptDto, EndgameFreePracticeMoveDto, EndgameImportResultDto, EndgameLibraryDto, EndgameProblemDto, EndgameRefreshResultDto, EngineArenaOptionsDto, EngineArenaResultDto, EngineMoveResult, EnginePlayOptions, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, ExportFormat, FlyknifeCandidate, FlyknifePlan, FlyknifeTemplate, FlyknifeTopic, GameMetadata, GameMirrorStatus, GameReportDatasetDto, GameReportOptionsDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, GenerateFlyknifeRequest, LibraryFolder, LibraryMoveResult, LinkAutoSide, LinkObservation, LinkSessionStatus, LinkTargetWindow, MasterGameDetailDto, MasterGameSummaryDto, MasterLibraryFilters, MasterLibraryStatsDto, MasterOpeningProfileDto, MasterPlayerDto, MasterStyleHintDto, MasterStyleImportResultDto, MasterStyleProfileDto, PreviewLineStep, RelatedMasterGame, ReplayExportScope, ScreenshotMoveResolution, StartLinkSessionRequest, StudySessionDto, SubscriptionDto, SyncAccountDto, SyncResult, TheoryCardDto, TheoryCardFeedbackDto, TheoryLibraryDto, TrainingGenerationResultDto, TrainingSummaryDto, TrainingTaskDto, TtxqDiagnosticSample, TtxqGamePreview, TtxqSyncProgress } from "./types";
 import type { ChineseLineParseResult, DailyTrainingPlan, GuidedAnalysisStart, GuidedAnalysisSubmission, GuidedAnalysisSubmissionResult, GuidedEngineLine, LearningProfile, OpeningRepertoire, WeeklyLearningReport } from "./types";
@@ -1149,30 +1150,42 @@ class WebPlatform implements ChessPlatform {
     const analyzedGameId = this.gameId;
     const analyzedNode = this.state().currentNode;
     this.abort = new AbortController();
-    const response = await fetch(`${webServerBase(options.serverUrl)}/api/v1/analysis`, {
-      method: "POST",
+    const controller = this.abort;
+    const completed = await runCloudAnalysisJob({
+      baseUrl: webServerBase(options.serverUrl),
       headers: cloudAnalysisHeaders(options.token, options.guest),
-      body: JSON.stringify({ fen: options.fen, mode: options.searchMode, value: options.searchValue, multiPv: options.multipv }),
-      signal: this.abort.signal,
+      request: {
+        fen: options.fen,
+        budget: { mode: options.searchMode as "time" | "depth", value: options.searchValue },
+        multiPv: options.multipv,
+      },
+      signal: controller.signal,
+      formatHttpError: cloudApiError,
+      onProgress: (job) => options.onCloudProgress?.({
+        jobId: job.jobId,
+        status: job.status,
+        depth: job.progress?.depth,
+        elapsedMs: job.progress?.elapsedMs,
+        candidateCount: job.progress?.candidateCount,
+        engineVersion: job.engineVersion,
+        nnueVersion: job.nnueVersion,
+        cacheHit: job.cacheHit,
+      }),
+    }).finally(() => {
+      if (this.abort === controller) this.abort = undefined;
     });
-    const payload = await response.json().catch(() => ({})) as {
-      lines?: AnalysisLine[];
-      error?: string;
-      guestQuota?: { limit?: number; remaining?: number; resetsAt?: string };
-    };
-    if (!response.ok) throw new Error(cloudApiError(response.status, payload.error));
-    if (payload.guestQuota) {
+    if (completed.guestQuota) {
       const preferences = await this.getCloudAnalysisPreferences();
       if (preferences) {
         await this.saveCloudAnalysisPreferences({
           ...preferences,
-          guestQuotaLimit: payload.guestQuota.limit,
-          guestQuotaRemaining: payload.guestQuota.remaining,
-          guestQuotaResetsAt: payload.guestQuota.resetsAt,
+          guestQuotaLimit: completed.guestQuota.limit,
+          guestQuotaRemaining: completed.guestQuota.remaining,
+          guestQuotaResetsAt: completed.guestQuota.resetsAt,
         });
       }
     }
-    const lines = payload.lines ?? [];
+    const lines = completed.lines;
     await webDatabase.saveAnalysis(options.fen, lines);
     if (analyzedNode) await webDatabase.saveNodeAnalysis(analyzedGameId, analyzedNode, lines);
     return lines;

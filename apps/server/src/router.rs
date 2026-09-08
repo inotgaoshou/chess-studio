@@ -10,6 +10,7 @@ use std::env;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 use crate::analysis::analyze;
+use crate::analysis_jobs::{cancel_analysis_job, create_analysis_job, get_analysis_job};
 use crate::auth::{guest_auth, login, register};
 use crate::master_library::{
     find_related_master_games, list_master_player_games, list_master_players, master_game_detail,
@@ -34,6 +35,12 @@ pub(crate) fn router(state: AppState, cors: CorsLayer) -> Router {
         .route("/api/v1/subscription", get(subscription))
         .route("/api/v1/subscription/redeem", post(redeem_code))
         .route("/api/v1/analysis", post(analyze))
+        .route("/api/v1/analysis/jobs", post(create_analysis_job))
+        .route("/api/v1/analysis/jobs/{job_id}", get(get_analysis_job))
+        .route(
+            "/api/v1/analysis/jobs/{job_id}/cancel",
+            post(cancel_analysis_job),
+        )
         .route("/api/v1/master/players", get(list_master_players))
         .route("/api/v1/master/stats", get(master_library_stats))
         .route(

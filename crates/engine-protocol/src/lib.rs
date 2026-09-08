@@ -1,8 +1,10 @@
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
@@ -37,6 +39,57 @@ pub struct EngineInfo {
     pub hashfull: Option<u32>,
     pub multipv: u32,
     pub pv: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineOptions {
+    pub threads: u32,
+    pub hash_mb: u32,
+    pub multi_pv: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eval_file: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineAnalysis {
+    pub fen: String,
+    #[serde(default)]
+    pub moves: Vec<String>,
+    pub limit: SearchLimit,
+    #[serde(default)]
+    pub search_moves: Vec<String>,
+    #[serde(default)]
+    pub ponder: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EngineStatus {
+    Unloaded,
+    Idle,
+    Analyzing,
+    Pondering,
+    Stopping,
+    Faulted,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineAnalysisResult {
+    pub best_move: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ponder: Option<String>,
+    pub lines: Vec<EngineInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "type", content = "payload")]
+pub enum EngineUpdate {
+    Info(EngineInfo),
+    Complete(EngineAnalysisResult),
+    Status(EngineStatus),
 }
 
 impl Default for EngineInfo {
@@ -77,6 +130,24 @@ pub enum EngineError {
     Io(#[from] std::io::Error),
     #[error("engine process exited")]
     Exited,
+    #[error("engine is not loaded")]
+    NotLoaded,
+    #[error("engine cannot {operation} while it is {status:?}")]
+    InvalidState {
+        operation: &'static str,
+        status: EngineStatus,
+    },
+}
+
+/// Platform-independent boundary implemented by process, JNI, and Apple-native engines.
+#[async_trait]
+pub trait Engine: Send {
+    fn status(&self) -> EngineStatus;
+    async fn configure(&mut self, options: EngineOptions) -> Result<(), EngineError>;
+    async fn start_analysis(&mut self, request: EngineAnalysis) -> Result<(), EngineError>;
+    async fn next_update(&mut self) -> Result<EngineUpdate, EngineError>;
+    async fn cancel(&mut self) -> Result<(), EngineError>;
+    async fn shutdown(&mut self) -> Result<(), EngineError>;
 }
 
 pub fn position_command(fen: &str, moves: &[String]) -> String {
@@ -365,6 +436,139 @@ impl EngineSession {
     }
 }
 
+pub struct ProcessEngine {
+    session: Option<EngineSession>,
+    status: EngineStatus,
+    lines: BTreeMap<u32, EngineInfo>,
+}
+
+impl ProcessEngine {
+    pub async fn load(
+        path: impl AsRef<Path>,
+        handshake_timeout: Duration,
+    ) -> Result<Self, EngineError> {
+        Ok(Self {
+            session: Some(EngineSession::launch(path, handshake_timeout).await?),
+            status: EngineStatus::Idle,
+            lines: BTreeMap::new(),
+        })
+    }
+
+    fn session_mut(&mut self) -> Result<&mut EngineSession, EngineError> {
+        self.session.as_mut().ok_or(EngineError::NotLoaded)
+    }
+}
+
+#[async_trait]
+impl Engine for ProcessEngine {
+    fn status(&self) -> EngineStatus {
+        self.status
+    }
+
+    async fn configure(&mut self, options: EngineOptions) -> Result<(), EngineError> {
+        if self.status != EngineStatus::Idle {
+            return Err(EngineError::InvalidState {
+                operation: "configure",
+                status: self.status,
+            });
+        }
+        let session = self.session_mut()?;
+        session
+            .configure("Threads", &options.threads.to_string())
+            .await?;
+        session
+            .configure("Hash", &options.hash_mb.to_string())
+            .await?;
+        session
+            .configure("MultiPV", &options.multi_pv.to_string())
+            .await?;
+        if let Some(eval_file) = options.eval_file {
+            session.configure("EvalFile", &eval_file).await?;
+        }
+        Ok(())
+    }
+
+    async fn start_analysis(&mut self, request: EngineAnalysis) -> Result<(), EngineError> {
+        if self.status != EngineStatus::Idle {
+            return Err(EngineError::InvalidState {
+                operation: "start analysis",
+                status: self.status,
+            });
+        }
+        self.lines.clear();
+        self.session_mut()?
+            .search(
+                &request.fen,
+                &request.moves,
+                request.limit,
+                &request.search_moves,
+                request.ponder,
+            )
+            .await?;
+        self.status = if request.ponder {
+            EngineStatus::Pondering
+        } else {
+            EngineStatus::Analyzing
+        };
+        Ok(())
+    }
+
+    async fn next_update(&mut self) -> Result<EngineUpdate, EngineError> {
+        if !matches!(
+            self.status,
+            EngineStatus::Analyzing | EngineStatus::Pondering | EngineStatus::Stopping
+        ) {
+            return Err(EngineError::InvalidState {
+                operation: "read analysis update",
+                status: self.status,
+            });
+        }
+        match self.session_mut()?.next_event().await {
+            Ok(EngineEvent::Info(info)) => {
+                if !info.pv.is_empty() {
+                    self.lines.insert(info.multipv, info.clone());
+                }
+                Ok(EngineUpdate::Info(info))
+            }
+            Ok(EngineEvent::BestMove { best, ponder }) => {
+                self.status = EngineStatus::Idle;
+                Ok(EngineUpdate::Complete(EngineAnalysisResult {
+                    best_move: best,
+                    ponder,
+                    lines: self.lines.values().cloned().collect(),
+                }))
+            }
+            Ok(EngineEvent::Ready(_)) | Ok(EngineEvent::Unknown(_)) => {
+                Ok(EngineUpdate::Status(self.status))
+            }
+            Err(error) => {
+                self.status = EngineStatus::Faulted;
+                Err(error)
+            }
+        }
+    }
+
+    async fn cancel(&mut self) -> Result<(), EngineError> {
+        if matches!(
+            self.status,
+            EngineStatus::Analyzing | EngineStatus::Pondering
+        ) {
+            self.status = EngineStatus::Stopping;
+            self.session_mut()?.stop().await?;
+        }
+        Ok(())
+    }
+
+    async fn shutdown(&mut self) -> Result<(), EngineError> {
+        if let Some(session) = self.session.take() {
+            session.close().await?;
+        }
+        self.lines.clear();
+        self.status = EngineStatus::Unloaded;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -563,5 +767,53 @@ done
             session.next_event().await,
             Err(EngineError::Exited)
         ));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn process_engine_exposes_a_stable_analysis_lifecycle() {
+        let (_directory, engine_path, _log) = mock_engine();
+        let mut engine = ProcessEngine::load(&engine_path, Duration::from_secs(3))
+            .await
+            .unwrap();
+
+        assert_eq!(engine.status(), EngineStatus::Idle);
+        engine
+            .configure(EngineOptions {
+                threads: 2,
+                hash_mb: 64,
+                multi_pv: 1,
+                eval_file: None,
+            })
+            .await
+            .unwrap();
+        engine
+            .start_analysis(EngineAnalysis {
+                fen: "fen-one".into(),
+                moves: Vec::new(),
+                limit: SearchLimit::Depth(1),
+                search_moves: Vec::new(),
+                ponder: false,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(engine.status(), EngineStatus::Analyzing);
+        assert!(matches!(
+            engine.next_update().await.unwrap(),
+            EngineUpdate::Info(EngineInfo {
+                score_cp: Some(12),
+                ..
+            })
+        ));
+        let EngineUpdate::Complete(result) = engine.next_update().await.unwrap() else {
+            panic!("analysis should finish after bestmove");
+        };
+        assert_eq!(result.best_move, "a0a1");
+        assert_eq!(result.lines.len(), 1);
+        assert_eq!(engine.status(), EngineStatus::Idle);
+
+        engine.shutdown().await.unwrap();
+        assert_eq!(engine.status(), EngineStatus::Unloaded);
     }
 }

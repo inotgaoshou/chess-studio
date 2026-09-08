@@ -1,9 +1,11 @@
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::time::{Duration as StdDuration, Instant};
 
 use axum::{Json, extract::State, http::HeaderMap};
 use chrono::{Duration, Utc};
-use engine_protocol::{EngineEvent, EngineSession, SearchLimit};
+use engine_protocol::{
+    Engine, EngineAnalysis, EngineOptions, EngineUpdate, ProcessEngine, SearchLimit,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::MySqlPool;
@@ -17,7 +19,7 @@ use crate::subscription::{
     record_product_event_for_pool, release_cloud_analysis, reserve_cloud_analysis,
 };
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AnalysisRequest {
     pub(crate) fen: String,
@@ -26,14 +28,14 @@ pub(crate) struct AnalysisRequest {
     pub(crate) multi_pv: u32,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum AnalysisMode {
     Time,
     Depth,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AnalysisResponse {
     pub(crate) engine: &'static str,
@@ -43,7 +45,7 @@ pub(crate) struct AnalysisResponse {
     pub(crate) guest_quota: Option<GuestQuotaDto>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GuestQuotaDto {
     limit: u32,
@@ -51,7 +53,7 @@ pub(crate) struct GuestQuotaDto {
     resets_at: chrono::DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AnalysisLine {
     pub(crate) depth: Option<u32>,
@@ -67,6 +69,20 @@ pub(crate) struct RateLimitUsage {
     limit: u32,
     count: u32,
     window_start: chrono::DateTime<Utc>,
+}
+
+pub(crate) struct AnalysisReservation {
+    pub(crate) principal: AnalysisPrincipal,
+    pub(crate) guest_usage: Option<(String, chrono::DateTime<Utc>, RateLimitUsage)>,
+    pub(crate) reserved_user: Option<Uuid>,
+    pub(crate) guest_quota: Option<GuestQuotaDto>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct AnalysisProgressUpdate {
+    pub(crate) depth: Option<u32>,
+    pub(crate) elapsed_ms: Option<u64>,
+    pub(crate) candidate_count: usize,
 }
 
 impl RateLimitUsage {
@@ -208,6 +224,55 @@ pub(crate) async fn analyze(
     if matches!(principal, AnalysisPrincipal::Guest { .. }) {
         validate_guest_analysis_request(&request)?;
     }
+    let reservation = reserve_analysis_request(&state, &headers, principal, &request).await?;
+    let AnalysisReservation {
+        principal,
+        guest_usage,
+        reserved_user,
+        guest_quota,
+    } = reservation;
+    let permit = state.engine_slots.clone().try_acquire_owned();
+    let permit = match permit {
+        Ok(permit) => permit,
+        Err(_) => {
+            release_analysis_reservation(&state, reserved_user, &guest_usage).await;
+            return Err(ApiError::EngineBusy);
+        }
+    };
+    let timeout = state.engine.timeout;
+    let result =
+        tokio::time::timeout(timeout, run_analysis(&state.engine, &request, guest_quota)).await;
+    drop(permit);
+    match result {
+        Ok(Ok(response)) => {
+            if let AnalysisPrincipal::User(user_id) = principal {
+                if let Err(error) =
+                    record_product_event_for_pool(&state.pool, user_id, "cloud_analysis_consumed")
+                        .await
+                {
+                    tracing::warn!(%error, "failed to record cloud analysis event");
+                }
+            }
+            Ok(Json(response))
+        }
+        Ok(Err(error)) => {
+            tracing::warn!(%error, "Pikafish analysis failed");
+            release_analysis_reservation(&state, reserved_user, &guest_usage).await;
+            Err(ApiError::EngineUnavailable)
+        }
+        Err(_) => {
+            release_analysis_reservation(&state, reserved_user, &guest_usage).await;
+            Err(ApiError::EngineTimeout)
+        }
+    }
+}
+
+pub(crate) async fn reserve_analysis_request(
+    state: &AppState,
+    headers: &HeaderMap,
+    principal: AnalysisPrincipal,
+    _request: &AnalysisRequest,
+) -> Result<AnalysisReservation, ApiError> {
     let now = Utc::now();
     let ip_subject = request_ip_subject(&headers);
     consume_rate_limit(
@@ -249,45 +314,17 @@ pub(crate) async fn analyze(
             guest_usage = Some((subject.clone(), window, usage));
         }
     }
-    let permit = state.engine_slots.clone().try_acquire_owned();
-    let permit = match permit {
-        Ok(permit) => permit,
-        Err(_) => {
-            release_analysis_reservation(&state, reserved_user, &guest_usage).await;
-            return Err(ApiError::EngineBusy);
-        }
-    };
     let guest_quota = guest_usage.as_ref().map(|(_, _, usage)| GuestQuotaDto {
         limit: usage.limit,
         remaining: usage.remaining(),
         resets_at: usage.resets_at(),
     });
-    let timeout = state.engine.timeout;
-    let result =
-        tokio::time::timeout(timeout, run_analysis(&state.engine, &request, guest_quota)).await;
-    drop(permit);
-    match result {
-        Ok(Ok(response)) => {
-            if let AnalysisPrincipal::User(user_id) = principal {
-                if let Err(error) =
-                    record_product_event_for_pool(&state.pool, user_id, "cloud_analysis_consumed")
-                        .await
-                {
-                    tracing::warn!(%error, "failed to record cloud analysis event");
-                }
-            }
-            Ok(Json(response))
-        }
-        Ok(Err(error)) => {
-            tracing::warn!(%error, "Pikafish analysis failed");
-            release_analysis_reservation(&state, reserved_user, &guest_usage).await;
-            Err(ApiError::EngineUnavailable)
-        }
-        Err(_) => {
-            release_analysis_reservation(&state, reserved_user, &guest_usage).await;
-            Err(ApiError::EngineTimeout)
-        }
-    }
+    Ok(AnalysisReservation {
+        principal,
+        guest_usage,
+        reserved_user,
+        guest_quota,
+    })
 }
 
 pub(crate) fn validate_analysis_request(request: &AnalysisRequest) -> Result<(), ApiError> {
@@ -348,6 +385,15 @@ pub(crate) async fn run_analysis(
     request: &AnalysisRequest,
     guest_quota: Option<GuestQuotaDto>,
 ) -> Result<AnalysisResponse, String> {
+    run_analysis_with_progress(config, request, guest_quota, None).await
+}
+
+pub(crate) async fn run_analysis_with_progress(
+    config: &EngineConfig,
+    request: &AnalysisRequest,
+    guest_quota: Option<GuestQuotaDto>,
+    progress: Option<tokio::sync::mpsc::UnboundedSender<AnalysisProgressUpdate>>,
+) -> Result<AnalysisResponse, String> {
     let analysis_board = Board::from_fen(&request.fen).map_err(|error| error.to_string())?;
     let path = config
         .path
@@ -358,58 +404,69 @@ pub(crate) async fn run_analysis(
         AnalysisMode::Depth => SearchLimit::Depth(request.value as u32),
     };
     let started = Instant::now();
-    let mut session = EngineSession::launch(path, StdDuration::from_secs(2))
+    let mut engine = ProcessEngine::load(path, StdDuration::from_secs(2))
         .await
         .map_err(|error| error.to_string())?;
-    session
-        .configure("Threads", &config.threads.to_string())
+    engine
+        .configure(EngineOptions {
+            threads: config.threads,
+            hash_mb: config.hash_mb,
+            multi_pv: request.multi_pv,
+            eval_file: None,
+        })
         .await
         .map_err(|error| error.to_string())?;
-    session
-        .configure("Hash", &config.hash_mb.to_string())
+    engine
+        .start_analysis(EngineAnalysis {
+            fen: request.fen.clone(),
+            moves: Vec::new(),
+            limit,
+            search_moves: Vec::new(),
+            ponder: false,
+        })
         .await
         .map_err(|error| error.to_string())?;
-    session
-        .configure("MultiPV", &request.multi_pv.to_string())
-        .await
-        .map_err(|error| error.to_string())?;
-    session
-        .analyze(&request.fen, &[], limit)
-        .await
-        .map_err(|error| error.to_string())?;
-    let mut lines = BTreeMap::new();
-    loop {
-        match session
-            .next_event()
+    let mut seen_candidates = BTreeSet::new();
+    let engine_lines = loop {
+        match engine
+            .next_update()
             .await
             .map_err(|error| error.to_string())?
         {
-            EngineEvent::Info(info) if !info.pv.is_empty() => {
-                lines.insert(
-                    info.multipv,
-                    AnalysisLine {
+            EngineUpdate::Info(info) if !info.pv.is_empty() => {
+                seen_candidates.insert(info.multipv);
+                if let Some(progress) = &progress {
+                    let _ = progress.send(AnalysisProgressUpdate {
                         depth: info.depth,
-                        score_cp: info.score_cp,
-                        mate: info.mate,
-                        nps: info.nps,
-                        time_ms: info.time_ms,
-                        multipv: info.multipv,
-                        notation: analysis_board
-                            .chinese_pv_notation(&info.pv)
-                            .unwrap_or_default(),
-                        pv: info.pv,
-                    },
-                );
+                        elapsed_ms: info.time_ms,
+                        candidate_count: seen_candidates.len(),
+                    });
+                }
             }
-            EngineEvent::BestMove { .. } => break,
+            EngineUpdate::Complete(result) => break result.lines,
             _ => {}
         }
-    }
-    session.close().await.map_err(|error| error.to_string())?;
+    };
+    engine.shutdown().await.map_err(|error| error.to_string())?;
+    let lines = engine_lines
+        .into_iter()
+        .map(|info| AnalysisLine {
+            depth: info.depth,
+            score_cp: info.score_cp,
+            mate: info.mate,
+            nps: info.nps,
+            time_ms: info.time_ms,
+            multipv: info.multipv,
+            notation: analysis_board
+                .chinese_pv_notation(&info.pv)
+                .unwrap_or_default(),
+            pv: info.pv,
+        })
+        .collect();
     Ok(AnalysisResponse {
         engine: "Pikafish",
         elapsed_ms: started.elapsed().as_millis() as u64,
-        lines: lines.into_values().collect(),
+        lines,
         guest_quota,
     })
 }

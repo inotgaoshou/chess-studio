@@ -1,5 +1,7 @@
 # APK 与 iPhone 打包方案
 
+> 混合分析迁移状态见 [`pikafish-hybrid-analysis.md`](pikafish-hybrid-analysis.md)。当前主应用发布包仍执行本文件的云端分析边界；在 JNI/iOS 原生库、Tauri mobile bridge 和真机资源校验全部通过前，不把 Android 训练应用里的 ELF 可执行文件视为主应用原生引擎。
+
 本项目的移动端是轻量版：复用现有 Web/PWA 工作台，不把桌面 Tauri/Rust 后端、Pikafish、NNUE、YOLO 连线模型或系统窗口能力搬到手机里。这样 APK/IPA 的体积和审核风险都可控，手机端主要承担打谱、分支树、IndexedDB 离线缓存、云端分析、同步和大师棋谱查询。
 
 本轮选择 Capacitor 作为移动壳，而不是直接启用 Tauri mobile。原因是当前桌面后端已经绑定 SQLite、本地 keyring、ONNX/YOLO、截图/窗口控制、PDF/GIF、本地引擎进程等桌面能力；移动端目标是复用 Web/PWA，而不是把这些 Rust 桌面能力裁剪到 iOS/Android。等后端领域拆分稳定后，如果确实需要原生移动 Rust 能力，再评估 Tauri mobile。
@@ -10,7 +12,7 @@
 
 - WASM 棋规、FEN、UUID 棋谱树和非破坏性导航；
 - IndexedDB 本地缓存与同步 outbox；
-- 云端 `/api/v1/analysis` 引擎分析；
+- 云端 `/api/v1/analysis/jobs` 异步引擎分析；
 - 账号、订阅、同步和大师棋谱查询的服务端 API；
 - 浏览器/系统 WebView 能支持的复制、导入、下载与分享。
 
@@ -168,6 +170,9 @@ iPhone：
 
 - `/api/v1/auth/guest`
 - `/api/v1/analysis`
+- `/api/v1/analysis/jobs`
+- `/api/v1/analysis/jobs/{jobId}`
+- `/api/v1/analysis/jobs/{jobId}/cancel`
 - `/api/v1/sync/push`
 - `/api/v1/sync/pull`
 - `/api/v1/master/*`

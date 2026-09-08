@@ -1299,6 +1299,7 @@ dependencies = [
 name = "engine-protocol"
 version = "1.0.1"
 dependencies = [
+ "async-trait",
  "serde",
  "tempfile",
  "thiserror 2.0.19",

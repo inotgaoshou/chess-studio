@@ -209,6 +209,18 @@ pub(crate) async fn reserve_cloud_analysis(
     }
 }
 
+pub(crate) async fn require_cloud_analysis_entitlement(
+    pool: &MySqlPool,
+    user_id: Uuid,
+) -> Result<(), ApiError> {
+    let membership = load_subscription(pool, user_id).await?;
+    if membership.plan == "pro" && membership.status == "active" {
+        Ok(())
+    } else {
+        Err(ApiError::ProRequired)
+    }
+}
+
 pub(crate) async fn release_cloud_analysis(pool: &MySqlPool, user_id: Uuid) {
     if let Err(error) = sqlx::query(
         "UPDATE subscription_entitlements SET cloud_analysis_used = cloud_analysis_used - 1

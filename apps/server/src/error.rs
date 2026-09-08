@@ -12,6 +12,8 @@ pub(crate) enum ApiError {
     Invalid(String),
     #[error("conflict: {0}")]
     Conflict(String),
+    #[error("not found")]
+    NotFound,
     #[error("database error")]
     Database(#[from] sqlx::Error),
     #[error("analysis service is busy")]
@@ -41,6 +43,7 @@ impl IntoResponse for ApiError {
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::Invalid(_) => StatusCode::BAD_REQUEST,
             Self::Conflict(_) => StatusCode::CONFLICT,
+            Self::NotFound => StatusCode::NOT_FOUND,
             Self::EngineBusy => StatusCode::TOO_MANY_REQUESTS,
             Self::EngineUnavailable => StatusCode::SERVICE_UNAVAILABLE,
             Self::EngineTimeout => StatusCode::GATEWAY_TIMEOUT,

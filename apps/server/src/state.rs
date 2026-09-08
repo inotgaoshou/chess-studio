@@ -5,6 +5,8 @@ use std::time::Duration as StdDuration;
 use sqlx::MySqlPool;
 use tokio::sync::Semaphore;
 
+use crate::analysis_jobs::AnalysisJobStore;
+
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub(crate) pool: MySqlPool,
@@ -17,6 +19,7 @@ pub(crate) struct AppState {
     pub(crate) user_analysis_per_minute_limit: u32,
     pub(crate) engine: EngineConfig,
     pub(crate) engine_slots: Arc<Semaphore>,
+    pub(crate) analysis_jobs: AnalysisJobStore,
 }
 
 #[derive(Clone)]
@@ -25,4 +28,6 @@ pub(crate) struct EngineConfig {
     pub(crate) threads: u32,
     pub(crate) hash_mb: u32,
     pub(crate) timeout: StdDuration,
+    pub(crate) engine_version: String,
+    pub(crate) nnue_version: String,
 }
