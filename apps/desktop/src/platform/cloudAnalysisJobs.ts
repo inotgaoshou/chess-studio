@@ -1,11 +1,14 @@
 import type { AnalysisLine } from "./types";
 
+export const CLOUD_ENGINE_VERSION = "Pikafish-2026-09-06";
+export const CLOUD_NNUE_VERSION = "sha256:7d13d73569a9b571ba0eb20cf1596247bc2a42738967e61afef6482b231e900e";
+
 export type CloudAnalysisJobStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 
 export type CloudAnalysisJobRequest = {
   fen: string;
-  engineVersion?: string;
-  nnueVersion?: string;
+  engineVersion: string;
+  nnueVersion: string;
   budget: { mode: "time" | "depth"; value: number };
   multiPv: number;
 };

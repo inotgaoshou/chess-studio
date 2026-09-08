@@ -228,8 +228,8 @@ mod tests {
         };
         let request = CreateAnalysisJobRequest {
             fen: format!("  {}  ", xiangqi_core::STARTING_FEN),
-            engine_version: Some(config.engine_version.clone()),
-            nnue_version: Some(config.nnue_version.clone()),
+            engine_version: config.engine_version.clone(),
+            nnue_version: config.nnue_version.clone(),
             budget: AnalysisBudget {
                 mode: AnalysisMode::Depth,
                 value: 20,

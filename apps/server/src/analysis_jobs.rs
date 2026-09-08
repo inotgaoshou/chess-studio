@@ -34,10 +34,8 @@ pub(crate) struct AnalysisBudget {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CreateAnalysisJobRequest {
     pub(crate) fen: String,
-    #[serde(default)]
-    pub(crate) engine_version: Option<String>,
-    #[serde(default)]
-    pub(crate) nnue_version: Option<String>,
+    pub(crate) engine_version: String,
+    pub(crate) nnue_version: String,
     pub(crate) budget: AnalysisBudget,
     #[serde(alias = "candidateCount")]
     pub(crate) multi_pv: u32,
@@ -354,21 +352,13 @@ fn validate_requested_versions(
     config: &EngineConfig,
     request: &CreateAnalysisJobRequest,
 ) -> Result<(), ApiError> {
-    if request
-        .engine_version
-        .as_deref()
-        .is_some_and(|version| version != config.engine_version)
-    {
+    if request.engine_version != config.engine_version {
         return Err(ApiError::Conflict(format!(
             "requested engine version is unavailable; server provides {}",
             config.engine_version
         )));
     }
-    if request
-        .nnue_version
-        .as_deref()
-        .is_some_and(|version| version != config.nnue_version)
-    {
+    if request.nnue_version != config.nnue_version {
         return Err(ApiError::Conflict(format!(
             "requested NNUE version is unavailable; server provides {}",
             config.nnue_version
@@ -608,8 +598,8 @@ mod tests {
     fn request() -> CreateAnalysisJobRequest {
         CreateAnalysisJobRequest {
             fen: xiangqi_core::STARTING_FEN.into(),
-            engine_version: Some("Pikafish-test".into()),
-            nnue_version: Some("nnue-test".into()),
+            engine_version: "Pikafish-test".into(),
+            nnue_version: "nnue-test".into(),
             budget: AnalysisBudget {
                 mode: AnalysisMode::Depth,
                 value: 8,
@@ -686,12 +676,66 @@ mod tests {
         assert!(!store.mark_running(submission.job.job_id).await.unwrap());
 
         let incompatible = CreateAnalysisJobRequest {
-            engine_version: Some("Pikafish-other".into()),
+            engine_version: "Pikafish-other".into(),
             ..request()
         };
         assert!(matches!(
             store.prepare(owner, &engine_config(), incompatible).await,
             Err(ApiError::Conflict(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn running_jobs_can_be_cancelled_and_terminal_jobs_release_queue_capacity() {
+        let store = AnalysisJobStore::new(1);
+        let owner = AnalysisJobOwner::Guest("guest-1".into());
+        let submission = store
+            .prepare(owner.clone(), &engine_config(), request())
+            .await
+            .unwrap();
+        let cancel = submission.cancel.unwrap();
+        store.mark_running(submission.job.job_id).await.unwrap();
+
+        assert!(matches!(
+            store
+                .prepare(owner.clone(), &engine_config(), request())
+                .await,
+            Err(ApiError::EngineBusy)
+        ));
+        let cancelled = store.cancel(&owner, submission.job.job_id).await.unwrap();
+        assert_eq!(cancelled.status, AnalysisJobStatus::Cancelled);
+        cancel.notified().await;
+
+        assert!(
+            store
+                .prepare(owner, &engine_config(), request())
+                .await
+                .unwrap()
+                .should_run()
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_fen_is_rejected_without_occupying_queue_capacity() {
+        let store = AnalysisJobStore::new(1);
+        let owner = AnalysisJobOwner::Guest("guest-1".into());
+        let invalid = CreateAnalysisJobRequest {
+            fen: "not-a-fen".into(),
+            ..request()
+        };
+
+        assert!(matches!(
+            store
+                .prepare(owner.clone(), &engine_config(), invalid)
+                .await,
+            Err(ApiError::Invalid(_))
+        ));
+        assert!(
+            store
+                .prepare(owner, &engine_config(), request())
+                .await
+                .unwrap()
+                .should_run()
+        );
     }
 }

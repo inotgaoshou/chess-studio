@@ -17,7 +17,7 @@ describe("cloud analysis jobs", () => {
     const completed = await runCloudAnalysisJob({
       baseUrl: "https://analysis.example.com",
       headers: { authorization: "Bearer token" },
-      request: { fen: "fen", budget: { mode: "depth", value: 8 }, multiPv: 1 },
+      request: { fen: "fen", engineVersion: "Pikafish-test", nnueVersion: "nnue-test", budget: { mode: "depth", value: 8 }, multiPv: 1 },
       fetchImpl,
       pollDelayMs: 0,
     });
@@ -25,6 +25,10 @@ describe("cloud analysis jobs", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(3);
     expect(fetchImpl.mock.calls[0][0]).toBe("https://analysis.example.com/api/v1/analysis/jobs");
     expect(fetchImpl.mock.calls[1][0]).toBe("https://analysis.example.com/api/v1/analysis/jobs/job-1");
+    expect(JSON.parse(String(fetchImpl.mock.calls[0][1]?.body))).toMatchObject({
+      engineVersion: "Pikafish-test",
+      nnueVersion: "nnue-test",
+    });
     expect(completed.lines[0]).toMatchObject({
       scoreCp: 12,
       source: "cloud",
@@ -46,7 +50,7 @@ describe("cloud analysis jobs", () => {
     const pending = runCloudAnalysisJob({
       baseUrl: "https://analysis.example.com",
       headers: { authorization: "Bearer token" },
-      request: { fen: "fen", budget: { mode: "depth", value: 8 }, multiPv: 1 },
+      request: { fen: "fen", engineVersion: "Pikafish-test", nnueVersion: "nnue-test", budget: { mode: "depth", value: 8 }, multiPv: 1 },
       signal: controller.signal,
       fetchImpl,
       pollDelayMs: 10_000,

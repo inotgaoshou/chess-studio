@@ -816,4 +816,36 @@ done
         engine.shutdown().await.unwrap();
         assert_eq!(engine.status(), EngineStatus::Unloaded);
     }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn process_engine_cancel_stops_an_infinite_search() {
+        let (_directory, engine_path, _log) = mock_engine();
+        let mut engine = ProcessEngine::load(&engine_path, Duration::from_secs(3))
+            .await
+            .unwrap();
+        engine
+            .start_analysis(EngineAnalysis {
+                fen: "fen-one".into(),
+                moves: Vec::new(),
+                limit: SearchLimit::Infinite,
+                search_moves: Vec::new(),
+                ponder: false,
+            })
+            .await
+            .unwrap();
+
+        engine.cancel().await.unwrap();
+        assert_eq!(engine.status(), EngineStatus::Stopping);
+        assert!(matches!(
+            engine.next_update().await.unwrap(),
+            EngineUpdate::Info(_)
+        ));
+        assert!(matches!(
+            engine.next_update().await.unwrap(),
+            EngineUpdate::Complete(_)
+        ));
+        assert_eq!(engine.status(), EngineStatus::Idle);
+        engine.shutdown().await.unwrap();
+    }
 }

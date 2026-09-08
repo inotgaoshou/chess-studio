@@ -4,7 +4,7 @@ import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { isMobileBuild } from "../mobileEnvironment";
 import { webDatabase, type SyncOperation, type WebGameRecord } from "./indexedDb";
-import { runCloudAnalysisJob } from "./cloudAnalysisJobs";
+import { CLOUD_ENGINE_VERSION, CLOUD_NNUE_VERSION, runCloudAnalysisJob } from "./cloudAnalysisJobs";
 import { BUILTIN_ENGINE_PATH, FALLBACK_BUILTIN_OPENING_BOOK_MANIFEST } from "./types";
 import type { AnalysisLine, AnalysisOptions, AppInfoDto, BoardState, BookImportDraft, BookTopicDetail, BuiltinOpeningBookManifestDto, CaptureSource, ChessPlatform, CloudAnalysisPreferences, CloudAuthDto, CloudBookCandidate, CloudGuestAuthDto, DesktopPreferencesDto, EndgameAttemptDto, EndgameFreePracticeMoveDto, EndgameImportResultDto, EndgameLibraryDto, EndgameProblemDto, EndgameRefreshResultDto, EngineArenaOptionsDto, EngineArenaResultDto, EngineMoveResult, EnginePlayOptions, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, ExportFormat, FlyknifeCandidate, FlyknifePlan, FlyknifeTemplate, FlyknifeTopic, GameMetadata, GameMirrorStatus, GameReportDatasetDto, GameReportOptionsDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, GenerateFlyknifeRequest, LibraryFolder, LibraryMoveResult, LinkAutoSide, LinkObservation, LinkSessionStatus, LinkTargetWindow, MasterGameDetailDto, MasterGameSummaryDto, MasterLibraryFilters, MasterLibraryStatsDto, MasterOpeningProfileDto, MasterPlayerDto, MasterStyleHintDto, MasterStyleImportResultDto, MasterStyleProfileDto, PreviewLineStep, RelatedMasterGame, ReplayExportScope, ScreenshotMoveResolution, StartLinkSessionRequest, StudySessionDto, SubscriptionDto, SyncAccountDto, SyncResult, TheoryCardDto, TheoryCardFeedbackDto, TheoryLibraryDto, TrainingGenerationResultDto, TrainingSummaryDto, TrainingTaskDto, TtxqDiagnosticSample, TtxqGamePreview, TtxqSyncProgress } from "./types";
 import type { ChineseLineParseResult, DailyTrainingPlan, GuidedAnalysisStart, GuidedAnalysisSubmission, GuidedAnalysisSubmissionResult, GuidedEngineLine, LearningProfile, OpeningRepertoire, WeeklyLearningReport } from "./types";
@@ -1156,6 +1156,8 @@ class WebPlatform implements ChessPlatform {
       headers: cloudAnalysisHeaders(options.token, options.guest),
       request: {
         fen: options.fen,
+        engineVersion: CLOUD_ENGINE_VERSION,
+        nnueVersion: CLOUD_NNUE_VERSION,
         budget: { mode: options.searchMode as "time" | "depth", value: options.searchValue },
         multiPv: options.multipv,
       },
