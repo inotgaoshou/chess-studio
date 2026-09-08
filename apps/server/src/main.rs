@@ -12,6 +12,8 @@ mod analysis_jobs;
 mod auth;
 mod error;
 mod master_library;
+mod reference_library;
+mod reference_migration;
 mod router;
 mod state;
 mod subscription;
@@ -58,6 +60,7 @@ async fn main() -> anyhow::Result<()> {
     sqlx::raw_sql(include_str!("../migrations/0003_external_game_sources.sql"))
         .execute(&pool)
         .await?;
+    reference_migration::migrate_reference_library(&pool).await?;
     backfill_master_opening_tags(&pool).await?;
     let app = router(
         AppState {
@@ -271,7 +274,9 @@ mod tests {
         assert!(allowed_origin("https://chess.example.com").is_ok());
         assert!(allowed_origin("http://127.0.0.1:1420").is_ok());
         assert!(allowed_origin("http://localhost:1420").is_ok());
+        assert!(allowed_origin("capacitor://localhost").is_ok());
         assert!(allowed_origin("http://chess.example.com").is_err());
+        assert!(allowed_origin("capacitor://chess.example.com").is_err());
         assert!(allowed_origin("https://chess.example.com/path").is_err());
     }
 

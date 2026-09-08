@@ -16,9 +16,16 @@ use crate::master_library::{
     find_related_master_games, list_master_player_games, list_master_players, master_game_detail,
     master_library_stats, master_opening_profile,
 };
+use crate::reference_library::{
+    confirm_reference_batch, create_reference_source, list_openings, list_reference_fingerprints,
+    list_reference_games, offline_package_manifest, opening_detail, publish_reference_chunk,
+    query_position,
+};
 use crate::state::AppState;
 use crate::subscription::{redeem_code, subscription};
 use crate::sync::{pull, push};
+
+pub(crate) const REFERENCE_PUBLISH_BODY_LIMIT: usize = 16 * 1024 * 1024;
 
 #[derive(Debug, Serialize)]
 pub(crate) struct Health {
@@ -56,6 +63,28 @@ pub(crate) fn router(state: AppState, cors: CorsLayer) -> Router {
             post(find_related_master_games),
         )
         .route("/api/v1/master/games/{game_id}", get(master_game_detail))
+        .route("/api/v1/openings", get(list_openings))
+        .route("/api/v1/openings/{code}", get(opening_detail))
+        .route("/api/v1/reference/games", get(list_reference_games))
+        .route(
+            "/api/v1/reference/fingerprints",
+            get(list_reference_fingerprints),
+        )
+        .route("/api/v1/reference/position-query", post(query_position))
+        .route(
+            "/api/v1/reference/offline-package",
+            get(offline_package_manifest),
+        )
+        .route("/api/v1/reference/sources", post(create_reference_source))
+        .route(
+            "/api/v1/reference/publish/chunks",
+            post(publish_reference_chunk)
+                .layer(DefaultBodyLimit::max(REFERENCE_PUBLISH_BODY_LIMIT)),
+        )
+        .route(
+            "/api/v1/reference/publish/confirm",
+            post(confirm_reference_batch),
+        )
         .layer(DefaultBodyLimit::max(32 * 1024))
         .layer(TraceLayer::new_for_http())
         .layer(cors)
@@ -97,8 +126,9 @@ pub(crate) fn allowed_origin(value: &str) -> anyhow::Result<HeaderValue> {
     let host = uri
         .host()
         .ok_or_else(|| anyhow::anyhow!("origin is missing a host: {value}"))?;
-    let local_http = scheme == "http" && matches!(host, "localhost" | "127.0.0.1" | "::1");
-    if scheme != "https" && !local_http {
+    let local_host = matches!(host, "localhost" | "127.0.0.1" | "::1");
+    let local_development_origin = local_host && matches!(scheme, "http" | "capacitor");
+    if scheme != "https" && !local_development_origin {
         anyhow::bail!("non-local ALLOWED_ORIGINS entries must use HTTPS: {value}");
     }
     if uri

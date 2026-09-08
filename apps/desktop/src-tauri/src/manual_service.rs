@@ -1653,6 +1653,59 @@ pub(crate) fn open_document(
     board_dto(&model)
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CblGameLibraryImportResultDto {
+    pub title: String,
+    pub folder: String,
+    pub imported: u32,
+    pub skipped: u32,
+    pub first_game_id: Option<Uuid>,
+    pub warnings: Vec<String>,
+    pub source_id: String,
+    pub batch_id: String,
+    pub revised: u32,
+    pub duplicates: u32,
+    pub invalid: u32,
+    pub unclassified: u32,
+}
+
+#[tauri::command]
+pub(crate) fn import_cbl_game_library(
+    path: String,
+    state: State<'_, DesktopState>,
+) -> Result<CblGameLibraryImportResultDto, String> {
+    let stem = Path::new(&path)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("CBL棋谱库");
+    let mut library = state
+        .reference_library
+        .lock()
+        .map_err(|_| "参考实战库锁已损坏".to_owned())?;
+    let source = library
+        .register_source(&path, stem, true, "local-only")
+        .map_err(|error| error.to_string())?;
+    let batch = library
+        .scan_source(&source.id)
+        .map_err(|error| error.to_string())?;
+    Ok(CblGameLibraryImportResultDto {
+        title: source.display_name,
+        folder: "参考实战库".into(),
+        imported: batch.imported_records,
+        skipped: batch.duplicate_records + batch.invalid_records,
+        first_game_id: None,
+        warnings: batch.warnings,
+        source_id: source.id,
+        batch_id: batch.id,
+        revised: batch.revised_records,
+        duplicates: batch.duplicate_records,
+        invalid: batch.invalid_records,
+        unclassified: batch.unclassified_records,
+    })
+}
+
 #[tauri::command]
 pub(crate) fn import_xqb_opening_book(
     path: String,

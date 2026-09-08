@@ -1,5 +1,6 @@
 [package]
 name = "xiangqi-server"
+default-run = "xiangqi-server"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -23,9 +24,14 @@ tokio.workspace = true
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+url = "2"
 uuid.workspace = true
 xiangqi-core = { path = "../../crates/xiangqi-core" }
 
 [[bin]]
 name = "xiangqi-server"
 path = "src/main.rs"
+
+[[bin]]
+name = "reference-library-backfill"
+path = "src/bin/reference_library_backfill.rs"

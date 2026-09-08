@@ -16,6 +16,7 @@ mod manual_service;
 mod opening_book;
 mod pdf_report;
 mod pfbook_opening_book;
+mod reference_service;
 mod report_service;
 mod sync_service;
 mod training_service;
@@ -172,6 +173,25 @@ fn main() {
             manual_service::parse_chinese_line,
             manual_service::new_game,
             manual_service::open_document,
+            manual_service::import_cbl_game_library,
+            reference_service::register_reference_source,
+            reference_service::list_reference_sources,
+            reference_service::scan_reference_source,
+            reference_service::list_reference_import_batches,
+            reference_service::review_reference_batch,
+            reference_service::classify_reference_batch,
+            reference_service::list_reference_batch_issues,
+            reference_service::update_reference_game_identity,
+            reference_service::override_reference_game_opening,
+            reference_service::resolve_reference_duplicate,
+            reference_service::query_reference_position,
+            reference_service::browse_reference_openings,
+            reference_service::list_reference_games,
+            reference_service::get_reference_game_document,
+            reference_service::create_server_reference_source,
+            reference_service::publish_reference_batch,
+            reference_service::get_reference_offline_package_manifest,
+            reference_service::install_reference_offline_package,
             manual_service::import_xqb_opening_book,
             manual_service::import_eleeye_opening_book,
             manual_service::import_text,

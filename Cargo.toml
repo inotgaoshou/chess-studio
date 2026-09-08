@@ -9,6 +9,7 @@ members = [
   "crates/link-core",
   "crates/sync-protocol",
   "crates/local-store",
+  "crates/reference-library",
   "apps/server",
   "apps/desktop/src-tauri",
 ]

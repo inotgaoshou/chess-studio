@@ -85,6 +85,14 @@ mod tests {
                 source_format: None,
                 playable: true,
             }),
+            reference_library: Mutex::new(
+                reference_library::ReferenceLibrary::open_in_memory().unwrap(),
+            ),
+            offline_reference_library: Mutex::new(None),
+            offline_reference_library_path: std::env::temp_dir().join(format!(
+                "xiangqi-test-reference-offline-{}.sqlite",
+                Uuid::new_v4()
+            )),
             credentials: Arc::new(SystemCredentialStore),
             session_token: Mutex::new(None),
             engine: tokio::sync::Mutex::new(HashMap::new()),

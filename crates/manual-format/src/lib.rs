@@ -8,7 +8,11 @@ use xiangqi_core::{Board, Color, Move, STARTING_FEN};
 use xiangqi_manual::ManualTree;
 
 mod cbl;
-pub use cbl::{CBL_PARSER_VERSION, CblLibrary, CblMove, CblProblem, import_cbl_library};
+pub use cbl::{
+    CBL_PARSER_VERSION, CblGame, CblGameLibrarySummary, CblLibrary, CblMove, CblProblem,
+    import_cbl_game_library, import_cbl_game_library_reader, import_cbl_game_library_with_limit,
+    import_cbl_library,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

@@ -14,6 +14,7 @@ base64 = "0.22"
 chrono.workspace = true
 engine-protocol = { path = "../../../crates/engine-protocol" }
 local-store = { path = "../../../crates/local-store" }
+reference-library = { path = "../../../crates/reference-library" }
 link-core = { path = "../../../crates/link-core" }
 lopdf = { version = "0.35.0", default-features = false, features = ["nom_parser"] }
 manual-format = { path = "../../../crates/manual-format" }
@@ -37,6 +38,7 @@ tempfile = "3.23"
 tokio.workspace = true
 uuid.workspace = true
 url = "2"
+zstd = "0.13"
 xiangqi-core = { path = "../../../crates/xiangqi-core" }
 xiangqi-manual = { path = "../../../crates/manual" }
 

@@ -63,6 +63,15 @@ describe("DesktopMenuBar", () => {
     expect(commands).toEqual(["openLocalLibrary"]);
   });
 
+  it("imports a CBL game library from the Game menu", async () => {
+    const { commands, user } = setup();
+
+    await user.click(screen.getByText("棋局", { selector: "summary" }));
+    await user.click(screen.getByRole("button", { name: "导入 CBL 棋谱库" }));
+
+    expect(commands).toEqual(["importCblGameLibrary"]);
+  });
+
   it("executes a command once and closes its menu", async () => {
     const { commands, user } = setup();
     await user.click(screen.getByText("人机对弈", { selector: "summary" }));

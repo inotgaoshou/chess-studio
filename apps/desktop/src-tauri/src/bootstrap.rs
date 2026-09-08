@@ -7,6 +7,7 @@ use crate::{
 use chrono::Utc;
 use local_store::LocalStore;
 use manual_format::ManualMetadata;
+use reference_library::ReferenceLibrary;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Condvar, Mutex};
@@ -36,6 +37,21 @@ pub(crate) fn initialize(app: &mut tauri::App) -> Result<(), Box<dyn std::error:
     };
     std::fs::create_dir_all(&data_dir)?;
     let mut store = LocalStore::open(data_dir.join("xiangqi.sqlite3"))?;
+    let reference_library = ReferenceLibrary::open(data_dir.join("reference-library.sqlite"))?;
+    let offline_reference_library_path = data_dir.join("reference-library-offline.sqlite");
+    let offline_reference_library = if offline_reference_library_path.exists() {
+        match ReferenceLibrary::validate_offline_package(&offline_reference_library_path)
+            .and_then(|_| ReferenceLibrary::open(&offline_reference_library_path))
+        {
+            Ok(library) => Some(library),
+            Err(_) => {
+                eprintln!("离线参考实战库校验失败，已停用；可在资料源页重新安装");
+                None
+            }
+        }
+    } else {
+        None
+    };
     ensure_builtin_master_style_seed(app.handle(), &mut store).map_err(std::io::Error::other)?;
     ensure_training_system_seed(&mut store).map_err(std::io::Error::other)?;
     let device_id = store.device_id()?;
@@ -146,6 +162,9 @@ pub(crate) fn initialize(app: &mut tauri::App) -> Result<(), Box<dyn std::error:
             source_format,
             playable,
         }),
+        reference_library: Mutex::new(reference_library),
+        offline_reference_library: Mutex::new(offline_reference_library),
+        offline_reference_library_path,
         credentials: Arc::new(SystemCredentialStore),
         session_token: Mutex::new(None),
         engine: tokio::sync::Mutex::new(HashMap::new()),
@@ -163,6 +182,14 @@ pub(crate) fn initialize(app: &mut tauri::App) -> Result<(), Box<dyn std::error:
         link_region_selection_background: Mutex::new(None),
         link_region_selection: (Mutex::new(None), Condvar::new()),
         ttxq_sync: Mutex::new(crate::ttxq_sync::TtxqSyncState::default()),
+    });
+    let app_handle = app.handle().clone();
+    std::thread::spawn(move || {
+        if let Some(state) = app_handle.try_state::<DesktopState>() {
+            if let Ok(mut library) = state.reference_library.lock() {
+                let _ = library.auto_scan_sources();
+            }
+        }
     });
     Ok(())
 }

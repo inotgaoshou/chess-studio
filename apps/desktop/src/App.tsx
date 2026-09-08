@@ -93,6 +93,8 @@ import { LinkMiniBoard, type LinkMiniArrow } from "./LinkMiniBoard";
 import { FlyknifeDialog } from "./FlyknifeDialog";
 import { mobileWorkbenchMediaQuery, shouldUseMobileWorkbench } from "./mobileEnvironment";
 import { MasterLibraryDialog } from "./MasterLibraryDialog";
+import { ReferenceLibraryDialog } from "./ReferenceLibraryDialog";
+import { ReferencePositionPanel } from "./ReferencePositionPanel";
 import { Game53StudyDialog } from "./Game53StudyDialog";
 import { TtxqImportDialog } from "./TtxqImportDialog";
 import { bundledTheoryKnowledge } from "./theoryKnowledge.generated";
@@ -1396,6 +1398,7 @@ export default function App() {
     ?? (typeof navigator !== "undefined" && /mac/i.test(navigator.userAgent))
   );
   const [masterLibraryOpen, setMasterLibraryOpen] = useState(false);
+  const [referenceLibraryOpen, setReferenceLibraryOpen] = useState(false);
   const [ttxqImportOpen, setTtxqImportOpen] = useState(false);
   const [game53StudyOpen, setGame53StudyOpen] = useState(false);
   const [engineProbe, setEngineProbe] = useState<EngineProbeDto>();
@@ -3653,6 +3656,21 @@ export default function App() {
     }
   }
 
+  async function importCblGameLibrary() {
+    try {
+      setNotice("正在导入 CBL 棋谱库，较大的东萍库可能需要一些时间…");
+      const result = await chessPlatform.importCblGameLibrary();
+      if (!result) {
+        setNotice("已取消导入 CBL 棋谱库");
+        return;
+      }
+      setReferenceLibraryOpen(true);
+      setNotice(`《${result.title}》已进入参考实战库：新增 ${result.imported}、修订 ${result.revised}、重复 ${result.duplicates}、非法 ${result.invalid}、待分类 ${result.unclassified}`);
+    } catch (error) {
+      setNotice(friendlyError(error));
+    }
+  }
+
   async function importEleeyeOpeningBook() {
     try {
       const next = await chessPlatform.importEleeyeOpeningBook();
@@ -5711,6 +5729,7 @@ export default function App() {
     switch (command) {
       case "newGame": await createGame(startingFen); break;
       case "openDocument": await openDocument(); break;
+      case "importCblGameLibrary": await importCblGameLibrary(); break;
       case "importXqbOpeningBook": await importXqbOpeningBook(); break;
       case "importEleeyeOpeningBook": await importEleeyeOpeningBook(); break;
       case "saveDocument": await saveDocument(); break;
@@ -5729,6 +5748,9 @@ export default function App() {
       case "copyMainline": await copyGame(true); break;
       case "masterLibrary":
         setMasterLibraryOpen(true);
+        break;
+      case "referenceLibrary":
+        setReferenceLibraryOpen(true);
         break;
       case "flyknifeLab": setFlyknifeOpen(true); break;
       case "nextBranch": await goToNextBranchPoint(); break;
@@ -6904,6 +6926,7 @@ export default function App() {
           onStudyGame={chessPlatform.kind === "desktop" ? () => { setMasterLibraryOpen(false); setGame53StudyOpen(true); } : undefined}
           onClose={() => setMasterLibraryOpen(false)}
         />}
+        {referenceLibraryOpen && <ReferenceLibraryDialog platform={chessPlatform} onClose={() => setReferenceLibraryOpen(false)}/>}
       </div>
     );
   }
@@ -7134,6 +7157,7 @@ export default function App() {
         onStudyGame={chessPlatform.kind === "desktop" ? () => { setMasterLibraryOpen(false); setGame53StudyOpen(true); } : undefined}
         onClose={() => setMasterLibraryOpen(false)}
       />}
+      {referenceLibraryOpen && <ReferenceLibraryDialog platform={chessPlatform} onClose={() => setReferenceLibraryOpen(false)}/>}
       {coachProfileOpen && <CoachProfileView
         reports={coachReports}
         masterStyleProfiles={masterStyleProfiles}
@@ -7204,6 +7228,7 @@ export default function App() {
         ><Link size={15}/>连线</button>}
         {chessPlatform.kind === "desktop" && workspaceMode === "research" && <button className="tool-button flyknife-tool-button" title="飞刀库 / 专题库" onClick={() => setFlyknifeOpen(true)}><Zap size={16}/><span>飞刀库</span></button>}
         {chessPlatform.kind === "desktop" && workspaceMode !== "training" && <button className="tool-button" title="大师棋谱" aria-label="大师棋谱" onClick={() => setMasterLibraryOpen(true)}><Database size={16}/></button>}
+        {chessPlatform.kind === "desktop" && workspaceMode !== "training" && <button className="tool-button" title="参考实战库与布局探索" aria-label="参考实战库与布局探索" onClick={() => setReferenceLibraryOpen(true)}><BookOpen size={16}/></button>}
       </div>
 
       <main className={`workspace workspace-mode-${workspaceMode} layout-${desktopPreferences.layoutMode} ${reviewModeOpen ? "review-mode-active" : ""} ${libraryCollapsed ? "library-collapsed" : ""} ${candidateRailCollapsed ? "candidate-rail-collapsed" : ""} ${analysisPanelCollapsed ? "analysis-panel-collapsed" : ""} ${compactDockMinimized ? "compact-dock-minimized" : ""} ${compactHasSystemPopout ? "compact-system-popout" : ""} ${desktopPreferences.layoutMode === "compact" && cloudBookCollapsed ? "compact-cloud-collapsed" : ""}`}>
@@ -7652,6 +7677,14 @@ export default function App() {
               ><ChevronLeft size={16}/></button>
             : null}
           {(!analysisPanelCollapsed || desktopPreferences.layoutMode === "compact") && <>
+            <ReferencePositionPanel
+              fen={board.fen}
+              enabled={chessPlatform.kind === "desktop" && !candidatePreview}
+              query={(fen) => chessPlatform.queryReferencePosition({ fen, limit: 8 })}
+              onPreview={(iccs, notation) => void previewCandidateLine({ multipv: 1, pv: [iccs], notation: [notation] }, board.fen, { id: "reference-library", name: "实战库" })}
+              onAdd={(iccs) => void playIccsMove(iccs, board.fen)}
+              onOpenExplorer={() => setReferenceLibraryOpen(true)}
+            />
             {desktopPreferences.layoutMode === "compact" && workspaceMode === "research" ? <div className="research-reference-stack">
               {compactReferencePanels()}
               {compactManualDock("research-manual-panel")}

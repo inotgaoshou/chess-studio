@@ -29,6 +29,8 @@ import type { WorkspaceMode } from "./WorkspaceModeSwitch";
 export type MenuCommand =
   | "newGame"
   | "openDocument"
+  | "importCblGameLibrary"
+  | "referenceLibrary"
   | "importXqbOpeningBook"
   | "importEleeyeOpeningBook"
   | "saveDocument"
@@ -209,6 +211,7 @@ export function DesktopMenuBar({
         {openMenu === "game" && <div className="menu-popup">
           <MenuItem command="newGame" execute={execute} close={close}><Plus size={14}/>新建棋局</MenuItem>
           <MenuItem command="openDocument" execute={execute} close={close}><FolderOpen size={14}/>打开棋谱</MenuItem>
+          <MenuItem command="importCblGameLibrary" execute={execute} close={close}><BookOpen size={14}/>导入 CBL 棋谱库</MenuItem>
           <MenuItem command="importXqbOpeningBook" execute={execute} close={close}><BookOpen size={14}/>导入 XQB 开局库</MenuItem>
           <MenuItem command="importEleeyeOpeningBook" execute={execute} close={close}><BookOpen size={14}/>导入 ElephantEye 开局库</MenuItem>
           <MenuItem command="saveDocument" execute={execute} close={close}><Save size={14}/>保存棋谱</MenuItem>
@@ -232,6 +235,7 @@ export function DesktopMenuBar({
           <MenuItem command="copyMainline" execute={execute} close={close}><ClipboardList size={14}/>复制当前主线</MenuItem>
           <MenuItem command="pasteTextManual" execute={execute} close={close}><ClipboardPaste size={14}/>粘贴文本棋谱</MenuItem>
           <MenuItem command="masterLibrary" execute={execute} close={close} title={status.syncStatus !== "signedIn" ? "登录后查询服务端大师棋谱" : "查询服务端大师棋谱"}><BookOpen size={14}/>大师棋谱</MenuItem>
+          <MenuItem command="referenceLibrary" execute={execute} close={close} title="浏览本地参考实战、布局分类和导入批次"><Database size={14}/>参考实战库</MenuItem>
           {mode === "research" && <MenuItem command="flyknifeLab" execute={execute} close={close}><Zap size={14}/>飞刀入库 / 设计</MenuItem>}
           <MenuItem command="nextBranch" execute={execute} close={close} disabled={!status.hasContinuation} title={!status.hasContinuation ? "当前节点没有后续着法" : undefined}><GitFork size={14}/>跳到下个分支点</MenuItem>
         </div>}

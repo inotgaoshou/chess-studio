@@ -6,7 +6,7 @@ import { isMobileBuild } from "../mobileEnvironment";
 import { webDatabase, type SyncOperation, type WebGameRecord } from "./indexedDb";
 import { CLOUD_ENGINE_VERSION, CLOUD_NNUE_VERSION, runCloudAnalysisJob } from "./cloudAnalysisJobs";
 import { BUILTIN_ENGINE_PATH, FALLBACK_BUILTIN_OPENING_BOOK_MANIFEST } from "./types";
-import type { AnalysisLine, AnalysisOptions, AppInfoDto, BoardState, BookImportDraft, BookTopicDetail, BuiltinOpeningBookManifestDto, CaptureSource, ChessPlatform, CloudAnalysisPreferences, CloudAuthDto, CloudBookCandidate, CloudGuestAuthDto, DesktopPreferencesDto, EndgameAttemptDto, EndgameFreePracticeMoveDto, EndgameImportResultDto, EndgameLibraryDto, EndgameProblemDto, EndgameRefreshResultDto, EngineArenaOptionsDto, EngineArenaResultDto, EngineMoveResult, EnginePlayOptions, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, ExportFormat, FlyknifeCandidate, FlyknifePlan, FlyknifeTemplate, FlyknifeTopic, GameMetadata, GameMirrorStatus, GameReportDatasetDto, GameReportOptionsDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, GenerateFlyknifeRequest, LibraryFolder, LibraryMoveResult, LinkAutoSide, LinkObservation, LinkSessionStatus, LinkTargetWindow, MasterGameDetailDto, MasterGameSummaryDto, MasterLibraryFilters, MasterLibraryStatsDto, MasterOpeningProfileDto, MasterPlayerDto, MasterStyleHintDto, MasterStyleImportResultDto, MasterStyleProfileDto, PreviewLineStep, RelatedMasterGame, ReplayExportScope, ScreenshotMoveResolution, StartLinkSessionRequest, StudySessionDto, SubscriptionDto, SyncAccountDto, SyncResult, TheoryCardDto, TheoryCardFeedbackDto, TheoryLibraryDto, TrainingGenerationResultDto, TrainingSummaryDto, TrainingTaskDto, TtxqDiagnosticSample, TtxqGamePreview, TtxqSyncProgress } from "./types";
+import type { AnalysisLine, AnalysisOptions, AppInfoDto, BoardState, BookImportDraft, BookTopicDetail, BuiltinOpeningBookManifestDto, CaptureSource, CblGameLibraryImportResultDto, ChessPlatform, CloudAnalysisPreferences, CloudAuthDto, CloudBookCandidate, CloudGuestAuthDto, DesktopPreferencesDto, EndgameAttemptDto, EndgameFreePracticeMoveDto, EndgameImportResultDto, EndgameLibraryDto, EndgameProblemDto, EndgameRefreshResultDto, EngineArenaOptionsDto, EngineArenaResultDto, EngineMoveResult, EnginePlayOptions, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, ExportFormat, FlyknifeCandidate, FlyknifePlan, FlyknifeTemplate, FlyknifeTopic, GameMetadata, GameMirrorStatus, GameReportDatasetDto, GameReportOptionsDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, GenerateFlyknifeRequest, LibraryFolder, LibraryMoveResult, LinkAutoSide, LinkObservation, LinkSessionStatus, LinkTargetWindow, MasterGameDetailDto, MasterLibraryStatsDto, MasterGameSummaryDto, MasterLibraryFilters, MasterOpeningProfileDto, MasterPlayerDto, MasterStyleHintDto, MasterStyleImportResultDto, MasterStyleProfileDto, OpeningCategoryDto, OpeningMatchDto, PositionExplorerRequest, PositionMoveStatDto, PreviewLineStep, ReferenceGameDocumentDto, ReferenceGameFilters, ReferenceGameSummaryDto, ReferenceImportBatchDto, ReferenceOfflinePackageManifestDto, ReferenceOfflinePackageResultDto, ReferencePublishResultDto, ReferenceReviewIssueDto, ReferenceSourceDto, RelatedMasterGame, ReplayExportScope, ScreenshotMoveResolution, StartLinkSessionRequest, StudySessionDto, SubscriptionDto, SyncAccountDto, SyncResult, TheoryCardDto, TheoryCardFeedbackDto, TheoryLibraryDto, TrainingGenerationResultDto, TrainingSummaryDto, TrainingTaskDto, TtxqDiagnosticSample, TtxqGamePreview, TtxqSyncProgress } from "./types";
 import type { ChineseLineParseResult, DailyTrainingPlan, GuidedAnalysisStart, GuidedAnalysisSubmission, GuidedAnalysisSubmissionResult, GuidedEngineLine, LearningProfile, OpeningRepertoire, WeeklyLearningReport } from "./types";
 
 type WebGameInstance = {
@@ -238,6 +238,48 @@ class DesktopPlatform implements ChessPlatform {
   }
   revealGameMirror() { return invoke<void>("reveal_game_mirror"); }
   openGame(gameId: string) { return invoke<Partial<BoardState>>("open_game", { gameId }); }
+  async importCblGameLibrary() {
+    const path = await open({ multiple: false, directory: false, filters: [{ name: "CCBridge CBL 棋谱库", extensions: ["cbl"] }] });
+    if (!path || Array.isArray(path)) return undefined;
+    return invoke<CblGameLibraryImportResultDto>("import_cbl_game_library", { path });
+  }
+  async chooseReferenceSource() {
+    const path = await open({ multiple: false, directory: true, title: "选择 CBL 资料源目录" });
+    return typeof path === "string" ? path : undefined;
+  }
+  registerReferenceSource(path: string, displayName: string, autoScan: boolean, licenseStatus: string) {
+    return invoke<ReferenceSourceDto>("register_reference_source", { path, displayName, autoScan, licenseStatus });
+  }
+  listReferenceSources() { return invoke<ReferenceSourceDto[]>("list_reference_sources"); }
+  scanReferenceSource(sourceId: string) { return invoke<ReferenceImportBatchDto>("scan_reference_source", { sourceId }); }
+  listReferenceImportBatches(sourceId?: string, limit = 50) { return invoke<ReferenceImportBatchDto[]>("list_reference_import_batches", { sourceId: sourceId ?? null, limit }); }
+  reviewReferenceBatch(batchId: string, approved: boolean, note: string) { return invoke<ReferenceImportBatchDto>("review_reference_batch", { batchId, approved, note }); }
+  classifyReferenceBatch(batchId: string) { return invoke<OpeningMatchDto[]>("classify_reference_batch", { batchId }); }
+  listReferenceBatchIssues(batchId: string) { return invoke<ReferenceReviewIssueDto[]>("list_reference_batch_issues", { batchId }); }
+  updateReferenceGameIdentity(gameId: string, redPlayer: string, blackPlayer: string, gameDate: string) { return invoke<void>("update_reference_game_identity", { gameId, redPlayer, blackPlayer, gameDate }); }
+  overrideReferenceGameOpening(gameId: string, categoryCode: string, reviewedAlias?: string) { return invoke<void>("override_reference_game_opening", { gameId, categoryCode, reviewedAlias: reviewedAlias ?? null }); }
+  resolveReferenceDuplicate(issueId: string, merge: boolean) { return invoke<void>("resolve_reference_duplicate", { issueId, merge }); }
+  queryReferencePosition(request: PositionExplorerRequest) { return invoke<PositionMoveStatDto[]>("query_reference_position", { request }); }
+  browseReferenceOpenings(parentCode?: string) { return invoke<OpeningCategoryDto[]>("browse_reference_openings", { parentCode: parentCode ?? null }); }
+  listReferenceGames(openingCode?: string, query?: string, limit = 50, offset = 0, filters: ReferenceGameFilters = {}) {
+    return invoke<ReferenceGameSummaryDto[]>("list_reference_games", {
+      openingCode: openingCode ?? null,
+      query: query ?? null,
+      player: filters.player ?? null,
+      event: filters.event ?? null,
+      yearFrom: filters.yearFrom ?? null,
+      yearTo: filters.yearTo ?? null,
+      side: filters.side ?? null,
+      masterOnly: filters.masterOnly ?? false,
+      limit,
+      offset,
+    });
+  }
+  getReferenceGameDocument(gameId: string) { return invoke<ReferenceGameDocumentDto | undefined>("get_reference_game_document", { gameId }); }
+  createServerReferenceSource(displayName: string, licenseStatus: string, licenseNote: string, publicLocator: string | undefined, serverUrl: string) { return invoke<string>("create_server_reference_source", { displayName, licenseStatus, licenseNote, publicLocator: publicLocator ?? null, serverUrl }); }
+  publishReferenceBatch(batchId: string, serverSourceId: string, serverUrl: string) { return invoke<ReferencePublishResultDto>("publish_reference_batch", { batchId, serverSourceId, serverUrl }); }
+  getReferenceOfflinePackageManifest(serverUrl: string) { return invoke<ReferenceOfflinePackageManifestDto>("get_reference_offline_package_manifest", { serverUrl }); }
+  installReferenceOfflinePackage(packageUrl: string, sha256: string) { return invoke<ReferenceOfflinePackageResultDto>("install_reference_offline_package", { packageUrl, sha256 }); }
   detectEngine() { return invoke<string | null>("detect_pikafish"); }
   getDesktopPreferences() { return invoke<DesktopPreferencesDto>("get_desktop_preferences"); }
   saveDesktopPreferences(preferences: DesktopPreferencesDto) { return invoke<DesktopPreferencesDto>("save_desktop_preferences", { preferences }); }
@@ -1009,6 +1051,51 @@ class WebPlatform implements ChessPlatform {
   async getTrainingSummary(): Promise<TrainingSummaryDto> { throw new Error("Web 端暂不支持训练总结"); }
   async importEndgameCbl(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
   async importEndgameCblFromPath(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
+  async importCblGameLibrary(): Promise<never> { throw new Error("Web 端不支持本地 CBL 棋谱库"); }
+  async chooseReferenceSource(): Promise<never> { throw new Error("Web 端不支持本地参考实战库"); }
+  async registerReferenceSource(): Promise<never> { throw new Error("Web 端不支持本地参考实战库"); }
+  async listReferenceSources(): Promise<never> { throw new Error("Web 端没有安装离线参考实战库"); }
+  async scanReferenceSource(): Promise<never> { throw new Error("Web 端不支持本地资料源扫描"); }
+  async listReferenceImportBatches(): Promise<never> { throw new Error("Web 端不支持本地导入批次"); }
+  async reviewReferenceBatch(): Promise<never> { throw new Error("Web 端不支持本地批次审核"); }
+  async classifyReferenceBatch(): Promise<never> { throw new Error("Web 端不支持本地布局分类"); }
+  async listReferenceBatchIssues(): Promise<never> { throw new Error("Web 端不支持本地批次审核"); }
+  async updateReferenceGameIdentity(): Promise<never> { throw new Error("Web 端不支持本地批次审核"); }
+  async overrideReferenceGameOpening(): Promise<never> { throw new Error("Web 端不支持本地批次审核"); }
+  async resolveReferenceDuplicate(): Promise<never> { throw new Error("Web 端不支持本地批次审核"); }
+  async queryReferencePosition(request: PositionExplorerRequest): Promise<PositionMoveStatDto[]> {
+    const endpoint = await this.serverEndpoint("/api/v1/reference/position-query");
+    return readJsonResponse<PositionMoveStatDto[]>(await fetch(endpoint, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(request),
+    }));
+  }
+  async browseReferenceOpenings(parentCode?: string): Promise<OpeningCategoryDto[]> {
+    const endpoint = await this.serverEndpoint("/api/v1/openings");
+    if (parentCode) endpoint.searchParams.set("parentCode", parentCode);
+    return readJsonResponse<OpeningCategoryDto[]>(await fetch(endpoint));
+  }
+  async listReferenceGames(openingCode?: string, query?: string, limit = 50, offset = 0, filters: ReferenceGameFilters = {}): Promise<ReferenceGameSummaryDto[]> {
+    const endpoint = await this.serverEndpoint("/api/v1/reference/games");
+    if (openingCode) endpoint.searchParams.set("openingCode", openingCode);
+    if (query) endpoint.searchParams.set("query", query);
+    if (filters.player) endpoint.searchParams.set("player", filters.player);
+    if (filters.event) endpoint.searchParams.set("event", filters.event);
+    if (filters.yearFrom) endpoint.searchParams.set("yearFrom", String(filters.yearFrom));
+    if (filters.yearTo) endpoint.searchParams.set("yearTo", String(filters.yearTo));
+    if (filters.side) endpoint.searchParams.set("side", filters.side);
+    if (filters.masterOnly) endpoint.searchParams.set("masterOnly", "true");
+    endpoint.searchParams.set("limit", String(limit));
+    endpoint.searchParams.set("offset", String(offset));
+    return readJsonResponse<ReferenceGameSummaryDto[]>(await fetch(endpoint));
+  }
+  async getReferenceGameDocument(): Promise<never> { throw new Error("当前设备没有可用的离线参考实战库"); }
+  async createServerReferenceSource(): Promise<never> { throw new Error("Web 端不支持登记本地参考实战来源"); }
+  async publishReferenceBatch(): Promise<never> { throw new Error("Web 端不支持发布本地参考实战批次"); }
+  async getReferenceOfflinePackageManifest(serverUrl: string): Promise<ReferenceOfflinePackageManifestDto> {
+    const endpoint = new URL("/api/v1/reference/offline-package", webServerBase(serverUrl));
+    return readJsonResponse<ReferenceOfflinePackageManifestDto>(await fetch(endpoint));
+  }
+  async installReferenceOfflinePackage(): Promise<never> { throw new Error("Web 端不支持安装桌面离线参考库"); }
   async refreshEndgameLibraries(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
   async listEndgameLibraries(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
   async listEndgameProblems(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }

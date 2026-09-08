@@ -6,7 +6,9 @@ use crate::{
 use engine_protocol::EngineControl;
 use local_store::LocalStore;
 use manual_format::ManualMetadata;
+use reference_library::ReferenceLibrary;
 use std::collections::{BTreeMap, HashMap};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Condvar, Mutex};
 use uuid::Uuid;
@@ -31,6 +33,9 @@ pub(crate) struct AppModel {
 
 pub(crate) struct DesktopState {
     pub(crate) model: Mutex<AppModel>,
+    pub(crate) reference_library: Mutex<ReferenceLibrary>,
+    pub(crate) offline_reference_library: Mutex<Option<ReferenceLibrary>>,
+    pub(crate) offline_reference_library_path: PathBuf,
     pub(crate) credentials: SharedCredentialStore,
     pub(crate) session_token: Mutex<Option<String>>,
     pub(crate) engine: tokio::sync::Mutex<HashMap<String, EngineControl>>,
