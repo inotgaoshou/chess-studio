@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Activity, BarChart3, BookOpen, Brain, CheckCircle2, ChevronDown, ChevronRight, ClipboardPaste, ClipboardList, Download, Eye, FileText, FolderArchive, GitBranch, GitFork, Heart, Image, Lightbulb, List, Maximize2, Play, Plus, RefreshCw, Settings2, Swords, X } from "lucide-react";
+import { Activity, BarChart3, BookOpen, Brain, CheckCircle2, ChevronDown, ChevronRight, ClipboardPaste, ClipboardList, Download, Eye, FileText, FolderArchive, GitBranch, GitFork, Heart, Image, Lightbulb, List, Maximize2, MessageSquareText, Play, Plus, RefreshCw, Settings2, Swords, X } from "lucide-react";
 import type { AnalysisLine, BoardState, GameReportPresentationDto, GameReportProgressDto, GameSummary, LibraryFolder, ManualTreeNode, MoveItem, ReportIssuePresentationDto, Side, TrainingGenerationResultDto, TrainingTaskDto } from "./platform/types";
 import { buildReviewModel, signedCp } from "./reviewModel";
 import { EvaluationTrendChart, redAdvantageLabel } from "./EvaluationTrendChart";
@@ -41,6 +41,8 @@ export type ReviewWorkspaceProps = {
   positionAnalysisError?: string;
   positionAnalysisFen?: string;
   engineHintRequest: number;
+  showAnnotations?: boolean;
+  onAnnotationVisibilityChange?(visible: boolean): void;
   showMoveThoughts?: boolean;
   onMoveThoughtVisibilityChange?(visible: boolean): void;
   routePoppedOut?: boolean;
@@ -162,7 +164,7 @@ function IssueCard({ issue, index, active, expanded, engineExpanded, analysisDep
 
 export function ReviewWorkspace({
   board, report, reportBusy, reportExporting, reportProgress, engineReady, libraryFolder, playedAt, libraryFolders, games = [], libraryOpen: controlledLibraryOpen, onLibraryOpenChange, favorite, libraryTags, flyknifePlanCount, trainingTasks, trainingGenerating, trainingGeneration, analysisConfig,
-  positionAnalysis, positionAnalysisBusy, positionAnalysisError, positionAnalysisFen, engineHintRequest, showMoveThoughts: controlledShowMoveThoughts, onMoveThoughtVisibilityChange, routePoppedOut = false, onPopOutRoute,
+  positionAnalysis, positionAnalysisBusy, positionAnalysisError, positionAnalysisFen, engineHintRequest, showAnnotations: controlledShowAnnotations, onAnnotationVisibilityChange, showMoveThoughts: controlledShowMoveThoughts, onMoveThoughtVisibilityChange, routePoppedOut = false, onPopOutRoute,
   onClose, onNavigate, onSaveComment, onMakeMainline, onReorderBranches, onRemoveBranch, onGenerateReport, onCancelReport, onExportReport, onOpenReport, onImport, onImportScreenshot, onPaste, onManualRecord, onOpenGame, onShareGame, onReorderLibraryGame, onRefreshLibrary, onDeleteGames, onSaveLibrary, onOpenFlyknife, onGenerateTraining, onOpenTraining, onCompleteTraining, onStudyIssue, onStartU10, onRunPositionAnalysis,
 }: ReviewWorkspaceProps) {
   const [tab, setTab] = useState<InsightTab>("report");
@@ -176,6 +178,7 @@ export function ReviewWorkspace({
   const [expandedEngineLine, setExpandedEngineLine] = useState<string>();
   const [expandedEngineIssue, setExpandedEngineIssue] = useState<string>();
   const [showInsights, setShowInsights] = useState(false);
+  const [internalShowAnnotations, setInternalShowAnnotations] = useState(true);
   const [internalShowMoveThoughts, setInternalShowMoveThoughts] = useState(true);
   const [expandedThoughtMove, setExpandedThoughtMove] = useState<string>();
   const [archiveExpanded, setArchiveExpanded] = useState(false);
@@ -194,6 +197,7 @@ export function ReviewWorkspace({
   const [workflowFocus, setWorkflowFocus] = useState<string>();
   const currentRoundMoveRef = useRef<HTMLDivElement>(null);
   const [thoughtPortalTarget, setThoughtPortalTarget] = useState<HTMLElement>();
+  const showAnnotations = controlledShowAnnotations ?? internalShowAnnotations;
   const showMoveThoughts = controlledShowMoveThoughts ?? internalShowMoveThoughts;
   useEffect(() => {
     if (typeof document === "undefined") return;
@@ -350,6 +354,10 @@ export function ReviewWorkspace({
     onMoveThoughtVisibilityChange?.(visible);
     if (!visible) setExpandedThoughtMove(undefined);
   }
+  function setAnnotationVisibility(visible: boolean) {
+    if (controlledShowAnnotations == null) setInternalShowAnnotations(visible);
+    onAnnotationVisibilityChange?.(visible);
+  }
   function selectWorkflowStep(label: string) {
     setWorkflowFocus(label);
     if (label === "录谱") {
@@ -392,6 +400,7 @@ export function ReviewWorkspace({
       <ol className="review-header-workflow" aria-label="复盘进度">{workflow.map((item, index) => <li key={item.label} className={`${item.complete ? "complete" : ""} ${(workflowFocus ?? guide.step) === item.label ? "current" : ""} ${item.stale ? "stale" : ""}`}><button type="button" aria-label={item.label} title={`打开${item.label}`} onClick={() => selectWorkflowStep(item.label)}><i>{item.complete ? <CheckCircle2 size={12}/> : index + 1}</i><span>{item.label}</span></button></li>)}</ol>
       <div className="review-workbench-header-actions">
         <button type="button" className="review-workbench-library" onClick={() => setLibraryOpen(true)}><BookOpen size={15}/>棋谱库</button>
+        <button type="button" className="review-workbench-annotations" aria-pressed={showAnnotations} onClick={() => setAnnotationVisibility(!showAnnotations)}><MessageSquareText size={15}/>{showAnnotations ? "隐藏注释" : "显示注释"}</button>
         <button type="button" className="review-workbench-thoughts" aria-pressed={showMoveThoughts} onClick={() => setMoveThoughtVisibility(!showMoveThoughts)}><Lightbulb size={15}/>{showMoveThoughts ? "隐藏思路" : "显示思路"}</button>
         <button type="button" className="review-workbench-insights" aria-label="查看复盘洞察" title="查看复盘洞察" onClick={() => setShowInsights((open) => !open)}><Eye size={15}/>洞察</button>
         <button type="button" className="review-workbench-close" aria-label="返回研究模式" title="返回研究模式" onClick={closeReview}><X size={17}/></button>
@@ -425,7 +434,7 @@ export function ReviewWorkspace({
       <div className="review-config" aria-label="整局分析配置"><span>深度 {analysisConfig.reportDepth}</span><span>PV {analysisConfig.multipv}</span><span>{analysisConfig.threads} 线程</span><span>Hash {analysisConfig.hashMb} MB</span></div>
       <section className={`review-move-list ${routeView === "tree" ? "tree-mode" : "rounds-mode"} ${routeCollapsed || routePoppedOut ? "collapsed" : ""}`} aria-label="复盘棋谱路线">
         <header><div className="review-route-title"><strong>棋谱路线</strong>{routePoppedOut && <small>独立窗口中</small>}</div><div className="review-move-view-actions">{!routePoppedOut && !routeCollapsed && <><div role="group" aria-label="棋谱视图"><button type="button" aria-pressed={routeView === "tree"} className={routeView === "tree" ? "active" : ""} onClick={() => setRouteView("tree")}><GitBranch size={12}/>分支树</button><button type="button" aria-pressed={routeView === "rounds"} className={routeView === "rounds" ? "active" : ""} onClick={() => setRouteView("rounds")}><List size={12}/>回合列表</button></div>{routeView === "tree" ? <button type="button" className={branchEditing ? "active" : ""} aria-pressed={branchEditing} onClick={() => setBranchEditing((editing) => !editing)}><Settings2 size={12}/>{branchEditing ? "完成管理" : "管理分支"}</button> : <div role="group" aria-label="棋谱范围"><button type="button" className={moveScope === "all" ? "active" : ""} title="浏览完整棋谱，不删除后续着法" onClick={() => setMoveScope("all")}>完整棋谱</button><button type="button" className={moveScope === "issues" ? "active" : ""} disabled={!activeReport} onClick={() => setMoveScope("issues")}>关键着法</button></div>}</>}{onPopOutRoute && <button type="button" title={routePoppedOut ? "将棋谱路线独立窗口置前" : "弹出棋谱路线独立窗口"} aria-label={routePoppedOut ? "置前棋谱路线独立窗口" : "弹出棋谱路线独立窗口"} onClick={onPopOutRoute}><Maximize2 size={12}/>{routePoppedOut ? "置前" : "弹出"}</button>}<button type="button" title={routeCollapsed ? "展开棋谱路线" : "收起棋谱路线"} aria-label={routeCollapsed ? "展开棋谱路线" : "收起棋谱路线"} aria-expanded={!routeCollapsed} disabled={routePoppedOut} onClick={() => setRouteCollapsed((collapsed) => !collapsed)}><ChevronDown className={routeCollapsed ? "collapsed-icon" : undefined} size={13}/></button></div></header>
-        {!thoughtPortalTarget && hasCurrentAnnotation && <aside className="review-route-annotations" aria-label="当前局面注解">
+        {showAnnotations && !thoughtPortalTarget && hasCurrentAnnotation && <aside className="review-route-annotations" aria-label="当前局面注解">
           <TtxqAnnotationCard
             value={currentAnnotationValue}
             editable={Boolean(currentMoveComment && currentMoveId && onSaveComment)}

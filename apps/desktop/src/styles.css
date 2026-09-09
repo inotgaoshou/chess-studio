@@ -3199,9 +3199,9 @@ body.analysis-reopen-dragging * {
 .review-workbench-header strong { overflow: hidden; color: #f0f8f2; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
 .review-workbench-header small { overflow: hidden; color: #a6bbb0; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
 .review-workbench-header-actions { display: flex; align-items: center; gap: 6px; }
-.review-workbench-close, .review-workbench-thoughts { width: 30px; height: 30px; flex: 0 0 auto; border: 1px solid #527062; border-radius: 5px; background: #183127; color: #d0e3d6; display: grid; place-items: center; }
+.review-workbench-close, .review-workbench-annotations, .review-workbench-thoughts { width: 30px; height: 30px; flex: 0 0 auto; border: 1px solid #527062; border-radius: 5px; background: #183127; color: #d0e3d6; display: grid; place-items: center; }
 .review-workbench-insights { display: none; min-height: 30px; padding: 0 8px; border: 1px solid #527062; border-radius: 5px; background: #183127; color: #d0e3d6; align-items: center; gap: 4px; font-size: 11px; }
-.review-workbench-thoughts { width: auto; min-height: 30px; padding: 0 8px; display: inline-flex; align-items: center; gap: 4px; font-size: 11px; white-space: nowrap; }
+.review-workbench-annotations, .review-workbench-thoughts { width: auto; min-height: 30px; padding: 0 8px; display: inline-flex; align-items: center; gap: 4px; font-size: 11px; white-space: nowrap; }
 .review-route { min-width: 0; min-height: 0; border-right: 1px solid #416052; background: #193027; display: grid; grid-template-rows: auto auto auto auto minmax(0, 1fr); overflow: hidden; }
 .review-route-heading { min-height: 37px; padding: 0 11px; border-bottom: 1px solid #385447; color: #cde4d4; display: flex; align-items: center; gap: 7px; font-size: 12px; }
 .review-stage-list { margin: 0; padding: 9px 11px; border-bottom: 1px solid #385447; display: grid; gap: 5px; list-style: none; }
@@ -3230,7 +3230,7 @@ body.analysis-reopen-dragging * {
 .review-workbench-header > div > span { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); background: var(--accent-surface); color: var(--text-primary); }
 .review-workbench-header strong { color: var(--text-primary); }
 .review-workbench-header small { color: var(--text-muted); }
-.review-workbench-close, .review-workbench-insights, .review-workbench-thoughts { border-color: var(--border); background: var(--surface-2); color: var(--text-secondary); }
+.review-workbench-close, .review-workbench-annotations, .review-workbench-insights, .review-workbench-thoughts { border-color: var(--border); background: var(--surface-2); color: var(--text-secondary); }
 .review-route { border-color: var(--border); background: var(--surface-1); }
 .review-route-heading, .review-stage-list, .review-config, .review-route .playback-controls, .review-move-list > header { border-color: var(--border); background: var(--surface-1); color: var(--text-secondary); }
 .review-stage-list li { color: var(--text-muted); }

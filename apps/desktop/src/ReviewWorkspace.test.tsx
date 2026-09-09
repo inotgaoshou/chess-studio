@@ -410,6 +410,15 @@ describe("ReviewWorkspace", () => {
     expect(screen.getByText("马8进7屏风马是最常见的。")).toBeTruthy();
   });
 
+  it("reports annotation visibility changes when controlled by the app", async () => {
+    const onAnnotationVisibilityChange = vi.fn();
+    renderWorkspace({ showAnnotations: true, onAnnotationVisibilityChange });
+
+    await userEvent.click(screen.getByRole("button", { name: "隐藏注释" }));
+
+    expect(onAnnotationVisibilityChange).toHaveBeenCalledWith(false);
+  });
+
   it("keeps a single-line source annotation visible and edits only the local note", async () => {
     const onSaveComment = vi.fn().mockResolvedValue(true);
     renderWorkspace({

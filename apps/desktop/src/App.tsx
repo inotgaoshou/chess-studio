@@ -1295,6 +1295,7 @@ export default function App() {
   const [board, setBoard] = useState<BoardState>(fallback);
   const [selected, setSelected] = useState<{ row: number; col: number } | null>(null);
   const [selectedPieceInspection, setSelectedPieceInspection] = useState<PieceThoughtSelection>();
+  const [showReviewAnnotations, setShowReviewAnnotations] = useState(true);
   const [showMoveThoughts, setShowMoveThoughts] = useState(true);
   const [reversed, setReversed] = useState(false);
   const [fenInput, setFenInput] = useState(startingFen);
@@ -6479,7 +6480,7 @@ export default function App() {
       qualityByMoveId: reportByMoveId,
     };
     return <div className={`manual-review-content ${desktopPreferences.manualViewMode === "tree" ? "tree-mode" : "track-mode"}`}>
-      {workspaceMode === "review" && <TtxqAnnotationCard
+      {workspaceMode === "review" && showReviewAnnotations && <TtxqAnnotationCard
         value={annotationValue}
         compact
         editable
@@ -7385,7 +7386,7 @@ export default function App() {
             <strong>{boardEvaluationRailText.side}</strong><span>{boardEvaluationRailText.score}</span>
             <button type="button" title="收起局势评分条" aria-label="收起局势评分条" onClick={() => setMobileEvaluationVisible(false)}><ChevronDown size={15}/></button>
           </section>}
-          <div className={`board-stage ${(reviewModeOpen || boardHasAnnotation) ? "has-side-note" : ""}`}>
+          <div className={`board-stage ${(reviewModeOpen || (showReviewAnnotations && boardHasAnnotation)) ? "has-side-note" : ""}`}>
             <div className={`board-stage-inner ${isMasterLibraryGame ? "has-master-identity" : ""}`}>
             {isMasterLibraryGame ? <section className="master-game-identity side" aria-label="当前大师棋谱信息">
               <nav aria-label="大师棋谱快捷操作">
@@ -7519,8 +7520,8 @@ export default function App() {
               </div>
             </aside>
             </div>
-            {workspaceMode === "review" && (reviewModeOpen || boardHasAnnotation) && <div id="board-current-thought-slot" className={`board-current-thought-slot ${boardHasAnnotation ? "has-annotation" : ""}`} aria-live="polite">
-              {boardHasAnnotation && <TtxqAnnotationCard
+            {workspaceMode === "review" && (reviewModeOpen || (showReviewAnnotations && boardHasAnnotation)) && <div id="board-current-thought-slot" className={`board-current-thought-slot ${showReviewAnnotations && boardHasAnnotation ? "has-annotation" : ""}`} aria-live="polite">
+              {showReviewAnnotations && boardHasAnnotation && <TtxqAnnotationCard
                 value={boardAnnotationValue}
                 compact
                 editable
@@ -7711,6 +7712,8 @@ export default function App() {
             positionAnalysisError={analysisError}
             positionAnalysisFen={analysisFen}
             engineHintRequest={reviewEngineHintRequest}
+            showAnnotations={showReviewAnnotations}
+            onAnnotationVisibilityChange={setShowReviewAnnotations}
             showMoveThoughts={showMoveThoughts}
             onMoveThoughtVisibilityChange={setShowMoveThoughts}
             routePoppedOut={compactPoppedOutPanels.manual}
