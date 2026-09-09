@@ -2,9 +2,9 @@ use super::*;
 use crate::engine_service::rule_mode_from_code;
 
 pub(crate) const BUILTIN_ENGINE_PATH: &str = "builtin:pikafish";
-pub(crate) const PIKAFISH_260720_NNUE_SHA256: &str =
-    "3cd15292bf8c979884262f57fc723959fc0dea43b4d8d544f88db5ceb2479e24";
-pub(crate) const PIKAFISH_260720_NNUE_LABEL: &str = "权重260720";
+pub(crate) const PIKAFISH_20260906_NNUE_SHA256: &str =
+    "7d13d73569a9b571ba0eb20cf1596247bc2a42738967e61afef6482b231e900e";
+pub(crate) const PIKAFISH_20260906_NNUE_LABEL: &str = "Pikafish 2026-09-06 随附 NNUE";
 pub(crate) const THEORY_COURSE_ROOTS: [(&str, &str, &str); 3] = [
     (
         "opening",
@@ -1654,6 +1654,127 @@ pub(crate) fn install_document(
     model.source_format = source_format;
     model.playable = playable;
     Ok(())
+}
+
+pub(crate) fn import_document_into_library(
+    model: &mut AppModel,
+    document: ManualDocument,
+    source_path: Option<&str>,
+    source_format: Option<&str>,
+    library_folder: Option<&str>,
+) -> Result<Uuid, String> {
+    let board = Board::from_fen(&document.starting_fen).map_err(|error| error.to_string())?;
+    let playable = position_is_playable(&board);
+    let game_id = Uuid::new_v4();
+    let root_id = document.tree.root_id();
+    let nodes = collect_nodes(&document.tree)?;
+    let mut operations = Vec::with_capacity(nodes.len() + 2);
+    model.lamport += 1;
+    operations.push(Operation {
+        op_id: Uuid::new_v4(),
+        device_id: model.device_id,
+        entity_id: game_id,
+        game_id,
+        kind: OperationKind::CreateGame,
+        payload: serde_json::to_value(CreateGamePayload {
+            title: document.metadata.title.clone(),
+            fen: document.starting_fen.clone(),
+            root_id,
+            external_source: None,
+        })
+        .map_err(|error| error.to_string())?,
+        lamport: model.lamport,
+        created_at: Utc::now(),
+    });
+    model.lamport += 1;
+    operations.push(Operation {
+        op_id: Uuid::new_v4(),
+        device_id: model.device_id,
+        entity_id: game_id,
+        game_id,
+        kind: OperationKind::UpdateGameMetadata,
+        payload: serde_json::to_value(metadata_payload(&document.metadata, &document.note))
+            .map_err(|error| error.to_string())?,
+        lamport: model.lamport,
+        created_at: Utc::now(),
+    });
+    for node in &nodes {
+        model.lamport += 1;
+        operations.push(Operation {
+            op_id: Uuid::new_v4(),
+            device_id: model.device_id,
+            entity_id: node.id,
+            game_id,
+            kind: OperationKind::AddMove,
+            payload: serde_json::to_value(AddMovePayload {
+                node_id: node.id,
+                parent_id: node.parent_id,
+                move_iccs: node.mv.to_iccs(),
+                order_key: node.order_key,
+                is_mainline: node.is_mainline,
+            })
+            .map_err(|error| error.to_string())?,
+            lamport: model.lamport,
+            created_at: Utc::now(),
+        });
+        if !node.comment.is_empty() {
+            model.lamport += 1;
+            operations.push(Operation {
+                op_id: Uuid::new_v4(),
+                device_id: model.device_id,
+                entity_id: node.id,
+                game_id,
+                kind: OperationKind::UpdateComment,
+                payload: serde_json::to_value(UpdateCommentPayload {
+                    node_id: node.id,
+                    comment: node.comment.clone(),
+                })
+                .map_err(|error| error.to_string())?,
+                lamport: model.lamport,
+                created_at: Utc::now(),
+            });
+        }
+    }
+    let metadata_json =
+        serde_json::to_string(&document.metadata).map_err(|error| error.to_string())?;
+    model
+        .store
+        .import_game_with_operations(
+            ImportedGame {
+                id: game_id,
+                title: &document.metadata.title,
+                starting_fen: &document.starting_fen,
+                root_id,
+                current_node_id: None,
+                note: &document.note,
+                source_path,
+                source_format,
+                playable,
+                metadata_json: &metadata_json,
+            },
+            &nodes,
+            &operations,
+        )
+        .map_err(|error| error.to_string())?;
+    if let Some(folder) = library_folder {
+        let operation = next_operation_for_game(
+            model,
+            game_id,
+            OperationKind::UpdateGameMetadata,
+            serde_json::to_value(UpdateGameMetadataPayload {
+                library_folder: Some(folder.to_owned()),
+                favorite: Some(false),
+                tags: Some(Vec::new()),
+                ..UpdateGameMetadataPayload::default()
+            })
+            .map_err(|error| error.to_string())?,
+        );
+        model
+            .store
+            .update_game_library_with_operation(game_id, Some(folder), false, &[], &operation)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(game_id)
 }
 
 pub(crate) fn collect_nodes(tree: &ManualTree) -> Result<Vec<xiangqi_manual::MoveNode>, String> {

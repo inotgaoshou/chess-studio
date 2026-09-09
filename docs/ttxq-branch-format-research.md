@@ -114,6 +114,20 @@ absoluteAfterPly    = parentPrefixBeforeRoute + localAfterPly
 `comment18_6`。先前将其换算为 `route=P-1 / ply=R+1` 的
 `legacy-step-route` 规则会稳定产生路线不存在或位置越界，已废弃。
 
+`get-qipu` 响应里的 `commentV2` 是另一种明确可区分的来源。主线仍使用纯数字
+绝对半回合，例如 `"0"`、`"21"`；分支键 `R-P` 的 `P` 却是从 1 开始的
+节点位置，归一化为本地 `absoluteAfterPly` 时仅对该容器的非零路线执行 `P - 1`。
+例如实测 `move_0_41_1` 有 3 着分支，末节点绝对半回合为 43，而接口用
+`commentV2["1-44"]` 指向该节点。此规则不能套用于旧版页面挂载的
+`msgContainer`，桥接 DTO 以 `ttxq-comment-v2-route-ply` 保留来源差异。
+
+当前 H5 版本并不保证把 `get-qipu.data.commentV2` 长期挂在 `QipuModel` 或棋盘控制器上；
+右侧已经显示注解时，模型对象仍可能只留下着法和路线。因此桥接在调用
+`jumpQipuGame` 前同时安装受限的 `fetch` / `XMLHttpRequest` 响应观察器，只处理
+`get-qipu` 响应，并按 `qipuId` 暂存经过裁剪的 `commentV2`。暂存内容只保留正文、
+显示作者和时间，不保留 `uUin`、Cookie、令牌或完整响应；组装当前棋谱时仍要求
+响应 `qipuId` 与目标棋谱一致，避免切盘过程中串入上一盘注解。
+
 桥接继续兼容 `R_P`、主线纯步号和起始局面别名；所有格式必须先转换为
 `sourceRouteId + absoluteAfterPly`，再通过已经解码的完整路线节点路径定位。
 普通社交评论列表没有位置键，不进入棋谱节点。

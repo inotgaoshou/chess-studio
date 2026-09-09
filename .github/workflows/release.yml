@@ -20,7 +20,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  TAURI_WINDOWS_RESOURCE_CONFIG_JSON: '{"bundle":{"resources":["../../../THIRD_PARTY_NOTICES.md","resources/fonts/OFL.txt","resources/pikafish/pikafish.exe","resources/pikafish/pikafish.nnue","resources/pikafish/Copying.txt","resources/pikafish/Pikafish-README.md","resources/pikafish/RESOURCE-MANIFEST.txt","resources/link-vision","resources/master-style","resources/flyknife-library","resources/book-topics"]}}'
+  TAURI_WINDOWS_RESOURCE_CONFIG_JSON: '{"bundle":{"resources":["../../../THIRD_PARTY_NOTICES.md","resources/fonts/OFL.txt","resources/pikafish/pikafish.exe","resources/pikafish/pikafish.nnue","resources/pikafish/Copying.txt","resources/pikafish/NNUE-License.md","resources/pikafish/Pikafish-README.md","resources/pikafish/RESOURCE-MANIFEST.txt","resources/link-vision","resources/master-style","resources/flyknife-library","resources/book-topics"]}}'
 
 jobs:
   build_windows:
@@ -30,6 +30,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          submodules: recursive
 
       - name: Install Windows 7z
         shell: pwsh
@@ -57,30 +59,21 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
-      - name: Setup Windows engine build toolchain
+      - name: Setup Windows engine resource shell
         uses: msys2/setup-msys2@v2
         with:
           msystem: clang64
-          install: mingw-w64-clang-x86_64-clang make git
+          install: git
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: . -> target
 
-      - name: Build Windows engine resources from pinned Pikafish source
+      - name: Prepare verified Windows engine resources
         shell: msys2 {0}
         run: |
-          PIKAFISH_SOURCE_REVISION=b97ef0f9eb15bd99899b272e0236bfebf86313b6
-          git clone https://github.com/official-pikafish/Pikafish.git "$RUNNER_TEMP/pikafish-source"
-          git -C "$RUNNER_TEMP/pikafish-source" checkout --detach "$PIKAFISH_SOURCE_REVISION"
-          cp apps/desktop/src-tauri/resources/pikafish/pikafish.nnue "$RUNNER_TEMP/pikafish-source/src/pikafish.nnue"
-          cd "$RUNNER_TEMP/pikafish-source/src"
-          make -j4 build ARCH=x86-64-universal COMP=clang EXE=pikafish.exe
-          make strip COMP=clang EXE=pikafish.exe
-          cp pikafish.exe "$GITHUB_WORKSPACE/apps/desktop/src-tauri/resources/pikafish/pikafish.exe"
-          rm -f "$GITHUB_WORKSPACE/apps/desktop/src-tauri/resources/pikafish/pikafish"
-          cd "$GITHUB_WORKSPACE"
+          ./scripts/prepare-pikafish-resource.sh windows-x64
           ./scripts/verify-embedded-engine-resources.sh windows-x64
 
       - name: Smoke test Pikafish NNUE

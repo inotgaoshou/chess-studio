@@ -7,22 +7,26 @@ cd "$ROOT_DIR"
 PNPM_BIN="${PNPM_BIN:-pnpm}"
 EMBED_PIKAFISH="${EMBED_PIKAFISH:-1}"
 SIGN_AND_NOTARIZE="${SIGN_AND_NOTARIZE:-1}"
-PIKAFISH_RELEASE_DIR="${PIKAFISH_RELEASE_DIR:-$ROOT_DIR/../Pikafish.2026-01-02}"
+PIKAFISH_RELEASE_DIR="${PIKAFISH_RELEASE_DIR:-$ROOT_DIR/../Pikafish.2026-09-06}"
 PIKAFISH_ENGINE_SOURCE="${PIKAFISH_ENGINE_SOURCE:-}"
 PIKAFISH_NNUE_SOURCE="${PIKAFISH_NNUE_SOURCE:-}"
 PIKAFISH_METADATA_DIR="${PIKAFISH_METADATA_DIR:-}"
 PIKAFISH_RESOURCE_DIR="apps/desktop/src-tauri/resources/pikafish"
-TAURI_RESOURCE_CONFIG='{"bundle":{"resources":["../../../THIRD_PARTY_NOTICES.md","resources/fonts/OFL.txt","resources/pikafish/pikafish","resources/pikafish/pikafish.nnue","resources/pikafish/Copying.txt","resources/pikafish/Pikafish-README.md","resources/pikafish/RESOURCE-MANIFEST.txt","resources/link-vision","resources/master-style","resources/flyknife-library","resources/book-topics"]}}'
+TAURI_RESOURCE_CONFIG='{"bundle":{"resources":["../../../THIRD_PARTY_NOTICES.md","resources/fonts/OFL.txt","resources/pikafish/pikafish","resources/pikafish/pikafish.nnue","resources/pikafish/Copying.txt","resources/pikafish/NNUE-License.md","resources/pikafish/Pikafish-README.md","resources/pikafish/RESOURCE-MANIFEST.txt","resources/link-vision","resources/master-style","resources/flyknife-library","resources/book-topics"]}}'
 
 if [[ "$EMBED_PIKAFISH" == "1" ]]; then
   PIKAFISH_RESOURCE_ENGINE="$PIKAFISH_RESOURCE_DIR/pikafish"
   PIKAFISH_RESOURCE_NNUE="$PIKAFISH_RESOURCE_DIR/pikafish.nnue"
 
+  if [[ -z "$PIKAFISH_ENGINE_SOURCE" && -z "$PIKAFISH_NNUE_SOURCE" && ! -f "$PIKAFISH_RESOURCE_ENGINE" ]]; then
+    ./scripts/prepare-pikafish-resource.sh macos-arm64
+  fi
+
   if [[ -z "$PIKAFISH_ENGINE_SOURCE" && -z "$PIKAFISH_NNUE_SOURCE" && -f "$PIKAFISH_RESOURCE_ENGINE" && -f "$PIKAFISH_RESOURCE_NNUE" ]]; then
-    echo "Using committed Pikafish resources from $PIKAFISH_RESOURCE_DIR"
+    echo "Using prepared local Pikafish resources from $PIKAFISH_RESOURCE_DIR"
   else
     if [[ -z "$PIKAFISH_ENGINE_SOURCE" ]]; then
-      PIKAFISH_ENGINE_SOURCE="$PIKAFISH_RELEASE_DIR/MacOS/pikafish-apple-silicon"
+      PIKAFISH_ENGINE_SOURCE="$PIKAFISH_RELEASE_DIR/Pikafish-MacOS-universal"
     fi
     if [[ -z "$PIKAFISH_NNUE_SOURCE" ]]; then
       PIKAFISH_NNUE_SOURCE="$PIKAFISH_RELEASE_DIR/pikafish.nnue"
@@ -64,9 +68,9 @@ fi
 
 if [[ "$SIGN_AND_NOTARIZE" == "1" ]]; then
   : "${APPLE_SIGNING_IDENTITY:?Set APPLE_SIGNING_IDENTITY to your Developer ID Application identity.}"
-  if [[ -z "${APPLE_API_ISSUER:-}" || -z "${APPLE_API_KEY:-}" || -z "${APPLE_API_KEY_PATH:-}" ]]; then
+  if [[ -z "${APPLE_NOTARY_PROFILE:-}" && ( -z "${APPLE_API_ISSUER:-}" || -z "${APPLE_API_KEY:-}" || -z "${APPLE_API_KEY_PATH:-}" ) ]]; then
     if [[ -z "${APPLE_ID:-}" || -z "${APPLE_PASSWORD:-}" || -z "${APPLE_TEAM_ID:-}" ]]; then
-      echo "Set either APPLE_API_ISSUER/APPLE_API_KEY/APPLE_API_KEY_PATH or APPLE_ID/APPLE_PASSWORD/APPLE_TEAM_ID for notarization." >&2
+      echo "Set APPLE_NOTARY_PROFILE, APPLE_API_ISSUER/APPLE_API_KEY/APPLE_API_KEY_PATH, or APPLE_ID/APPLE_PASSWORD/APPLE_TEAM_ID for notarization." >&2
       exit 1
     fi
   fi

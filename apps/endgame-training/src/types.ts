@@ -36,7 +36,7 @@ export type TrainingProblem = CblProblem & {
 export type Attempt = {
   id: string;
   problemId: string;
-  mode: "solver" | "replay" | "free";
+  mode: "cloud" | "ai" | "solver" | "replay" | "free";
   elapsedMs: number;
   hintsUsed: number;
   mistakes: number;
@@ -45,4 +45,4 @@ export type Attempt = {
 };
 
 export type BoardPiece = { row: number; col: number; color: "red" | "black"; kind: string; label: string };
-export type BoardState = { pieces: BoardPiece[]; sideToMove: string };
+export type BoardState = { fen: string; pieces: BoardPiece[]; sideToMove: string; status: string };

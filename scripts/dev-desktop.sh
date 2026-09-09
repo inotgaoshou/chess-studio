@@ -33,6 +33,9 @@ done
 
 cd "$ROOT"
 export PATH="$NODE_BIN:$HOME/.local/bin:$PATH"
+if [[ ! -x apps/desktop/src-tauri/resources/pikafish/pikafish ]]; then
+  ./scripts/prepare-pikafish-resource.sh macos-arm64
+fi
 if [[ -x "$NODE_BIN/corepack" ]]; then
   # Invoke Corepack through the selected runtime explicitly. The shim's
   # `#!/usr/bin/env node` otherwise resolves to whatever Node is in the caller

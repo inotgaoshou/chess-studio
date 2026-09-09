@@ -8,8 +8,12 @@
 
 ## Bundled engine
 
-桌面包随应用分发 `apps/desktop/src-tauri/resources/pikafish/` 中的 Pikafish 与固定版本 `pikafish.nnue`。发布时必须保留 Pikafish 的 `Copying.txt`、本通知和对应 NNUE 的来源与哈希记录，不能混入其他引擎或网络文件。Fairy-Stockfish、象棋旋风、象眼及其他第三方引擎不随应用分发。
+桌面包随应用分发 `apps/desktop/src-tauri/resources/pikafish/` 中的 Pikafish 与固定版本 `pikafish.nnue`；棋研 Android arm64 APK 也随包分发 `apps/endgame-training/android/app/src/main/` 中的对应引擎和 NNUE。当前固定发布为 `Pikafish-2026-09-06`，源码提交为 `4c17cee11f888ae1d48a9494f2e2239f019f0a1f`，Android arm64 引擎 SHA-256 为 `6c06b8752e10c1ed605fa836d2c9bbf885e9c402b216023040ddf4586f4320b1`，NNUE SHA-256 为 `7d13d73569a9b571ba0eb20cf1596247bc2a42738967e61afef6482b231e900e`。发布时必须保留 Pikafish 的 `Copying.txt`、`NNUE-License.md`、本通知和对应 NNUE 的来源与哈希记录，不能混入其他引擎或网络文件。Fairy-Stockfish、象棋旋风、象眼及其他第三方引擎不随应用分发。
 
 ## Built-in opening reference
 
 `apps/desktop/src-tauri/resources/openings/xiangqi-openings-v1.json` 是本项目整理的离线开局识别种子库，采用 CC0-1.0 方式提供。首版包含 30 个常见布局分类和 120 条短线路；内容仅包含传统公开象棋布局名称和经 `xiangqi-core` 校验的 ICCS 着法序列，不包含第三方专有注释、评分或云端开局库数据。
+
+## Move feedback audio
+
+行棋、吃子与鼓点/破风提示音由应用运行时通过 Web Audio API 合成。`apps/desktop/public/audio/move.wav`、`capture.wav`、`check.wav` 和 `checkmate.wav` 是 Xiangqi Studio 分发的原创反馈资源；其中后 3 段使用本机离线语音合成生成“吃！”、“将军！”与“绝杀！”，不是从其他应用或游戏复制的录音。上述素材均不包含第三方音频素材。

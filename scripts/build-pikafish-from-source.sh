@@ -3,9 +3,9 @@ set -euo pipefail
 
 TARGET="${1:?Usage: build-pikafish-from-source.sh <macos-universal|windows-x64>}"
 PIKAFISH_REPOSITORY="https://github.com/official-pikafish/Pikafish.git"
-PIKAFISH_SOURCE_REVISION="b97ef0f9eb15bd99899b272e0236bfebf86313b6"
+PIKAFISH_SOURCE_REVISION="4c17cee11f888ae1d48a9494f2e2239f019f0a1f"
 RESOURCE_DIR="apps/desktop/src-tauri/resources/pikafish"
-SOURCE_DIR="${PIKAFISH_SOURCE_DIR:-}"
+SOURCE_DIR="${PIKAFISH_SOURCE_DIR:-third_party/pikafish}"
 TEMP_SOURCE_DIR=""
 
 cleanup() {
@@ -15,7 +15,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [[ -z "$SOURCE_DIR" ]]; then
+if [[ ! -e "$SOURCE_DIR/.git" ]]; then
   TEMP_SOURCE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/pikafish-source.XXXXXX")"
   SOURCE_DIR="$TEMP_SOURCE_DIR"
   git clone "$PIKAFISH_REPOSITORY" "$SOURCE_DIR"

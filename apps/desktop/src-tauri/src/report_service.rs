@@ -196,12 +196,14 @@ pub(crate) fn decorate_known_pikafish_nnue_version(
     runtime_version: Option<String>,
 ) -> Option<String> {
     match (nnue_sha256, runtime_version) {
-        (Some(PIKAFISH_260720_NNUE_SHA256), Some(version))
-            if !version.contains(PIKAFISH_260720_NNUE_LABEL) =>
+        (Some(PIKAFISH_20260906_NNUE_SHA256), Some(version))
+            if !version.contains(PIKAFISH_20260906_NNUE_LABEL) =>
         {
-            Some(format!("{PIKAFISH_260720_NNUE_LABEL} · {version}"))
+            Some(format!("{PIKAFISH_20260906_NNUE_LABEL} · {version}"))
         }
-        (Some(PIKAFISH_260720_NNUE_SHA256), None) => Some(PIKAFISH_260720_NNUE_LABEL.to_owned()),
+        (Some(PIKAFISH_20260906_NNUE_SHA256), None) => {
+            Some(PIKAFISH_20260906_NNUE_LABEL.to_owned())
+        }
         (_, version) => version,
     }
 }

@@ -97,6 +97,10 @@ pub enum StoreError {
     Sql(#[from] rusqlite::Error),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+    #[error("当前目录中已存在“{name}”")]
+    EndgameFolderAlreadyExists { name: String },
+    #[error("目录“{name}”包含子目录，请先移动或删除子目录")]
+    EndgameFolderHasChildren { name: String },
     #[error("本地棋谱库已绑定账号 {email}，不能切换到其他账号")]
     AccountAlreadyBound { email: String },
 }
@@ -184,6 +188,12 @@ pub struct DesktopPreferences {
     pub link_confidence_threshold: u8,
     #[serde(default = "default_link_animation_confirmation")]
     pub link_animation_confirmation: bool,
+    #[serde(default = "default_move_animation_enabled")]
+    pub move_animation_enabled: bool,
+    #[serde(default = "default_move_sound_enabled")]
+    pub move_sound_enabled: bool,
+    #[serde(default = "default_move_sound_volume")]
+    pub move_sound_volume: u8,
     #[serde(default = "default_game_mirror_enabled")]
     pub game_mirror_enabled: bool,
     #[serde(default)]
@@ -233,6 +243,15 @@ fn default_link_confidence_threshold() -> u8 {
 fn default_link_animation_confirmation() -> bool {
     true
 }
+fn default_move_animation_enabled() -> bool {
+    true
+}
+fn default_move_sound_enabled() -> bool {
+    true
+}
+fn default_move_sound_volume() -> u8 {
+    70
+}
 fn default_game_mirror_enabled() -> bool {
     true
 }
@@ -250,11 +269,11 @@ fn default_manual_view_mode() -> String {
 }
 
 fn default_board_skin() -> String {
-    "default".into()
+    "qingxin-zhuyun".into()
 }
 
 fn default_piece_skin() -> String {
-    "default".into()
+    "qingxin-zhuyun".into()
 }
 
 fn default_report_depth() -> u32 {
@@ -327,6 +346,9 @@ impl Default for DesktopPreferences {
             link_stable_frames: default_link_stable_frames(),
             link_confidence_threshold: default_link_confidence_threshold(),
             link_animation_confirmation: default_link_animation_confirmation(),
+            move_animation_enabled: default_move_animation_enabled(),
+            move_sound_enabled: default_move_sound_enabled(),
+            move_sound_volume: default_move_sound_volume(),
             game_mirror_enabled: default_game_mirror_enabled(),
             game_mirror_root: String::new(),
             server_url: "http://127.0.0.1:8080".into(),
@@ -577,6 +599,7 @@ pub struct TrainingAttempt {
 #[serde(rename_all = "camelCase")]
 pub struct EndgameLibrary {
     pub id: Uuid,
+    pub folder_id: Option<Uuid>,
     pub title: String,
     pub source_path: String,
     pub fingerprint: String,
@@ -584,6 +607,15 @@ pub struct EndgameLibrary {
     pub problem_count: u32,
     pub completed_count: u32,
     pub imported_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EndgameFolder {
+    pub id: Uuid,
+    pub parent_id: Option<Uuid>,
+    pub name: String,
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -853,7 +885,9 @@ impl LocalStore {
         title: &str,
         parser_version: u32,
         problems: &[EndgameProblemImport],
+        folder_id: Option<Uuid>,
     ) -> Result<EndgameLibrary, StoreError> {
+        self.require_endgame_folder(folder_id)?;
         if let Some(existing) = self
             .connection
             .query_row(
@@ -865,8 +899,8 @@ impl LocalStore {
         {
             let transaction = self.connection.transaction()?;
             transaction.execute(
-                "UPDATE endgame_libraries SET source_path=?1, title=?2, parser_version=?3 WHERE id=?4",
-                params![source_path, title, parser_version, existing],
+                "UPDATE endgame_libraries SET source_path=?1, title=?2, parser_version=?3, folder_id=?4 WHERE id=?5",
+                params![source_path, title, parser_version, folder_id.map(|id| id.to_string()), existing],
             )?;
             transaction.execute(
                 "UPDATE endgame_problems SET active=0 WHERE library_id=?1",
@@ -891,8 +925,9 @@ impl LocalStore {
         }
         let id = Uuid::new_v4();
         let imported_at = chrono::Utc::now().to_rfc3339();
+        let sort_order = self.next_endgame_library_sort_order(folder_id)?;
         let transaction = self.connection.transaction()?;
-        transaction.execute("INSERT INTO endgame_libraries (id, title, source_path, fingerprint, parser_version, imported_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![id.to_string(), title, source_path, fingerprint, parser_version, imported_at])?;
+        transaction.execute("INSERT INTO endgame_libraries (id, folder_id, title, source_path, fingerprint, parser_version, sort_order, imported_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)", params![id.to_string(), folder_id.map(|id| id.to_string()), title, source_path, fingerprint, parser_version, sort_order, imported_at])?;
         for problem in problems {
             transaction.execute("INSERT INTO endgame_problems (id, library_id, source_index, title, category, starting_fen, note, solution_json, active) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1)", params![Uuid::new_v4().to_string(), id.to_string(), problem.source_index, problem.title, problem.category, problem.starting_fen, problem.note, problem.solution_json])?;
         }
@@ -902,22 +937,24 @@ impl LocalStore {
     }
 
     pub fn endgame_libraries(&self) -> Result<Vec<EndgameLibrary>, StoreError> {
-        let mut statement = self.connection.prepare("SELECT id, title, source_path, fingerprint, parser_version, imported_at FROM endgame_libraries ORDER BY imported_at DESC")?;
+        let mut statement = self.connection.prepare("SELECT id, folder_id, title, source_path, fingerprint, parser_version, imported_at FROM endgame_libraries ORDER BY COALESCE(folder_id, ''), sort_order, imported_at DESC, id")?;
         statement
             .query_map([], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(1)?,
                     row.get::<_, String>(2)?,
                     row.get::<_, String>(3)?,
-                    row.get::<_, u32>(4)?,
-                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, u32>(5)?,
+                    row.get::<_, String>(6)?,
                 ))
             })?
             .map(|row| {
-                let (id, title, path, fingerprint, parser_version, imported_at) = row?;
+                let (id, folder_id, title, path, fingerprint, parser_version, imported_at) = row?;
                 self.endgame_library_from_values(
                     id,
+                    folder_id,
                     title,
                     path,
                     fingerprint,
@@ -932,22 +969,24 @@ impl LocalStore {
         &self,
         parser_version: u32,
     ) -> Result<Vec<EndgameLibrary>, StoreError> {
-        let mut statement = self.connection.prepare("SELECT id, title, source_path, fingerprint, parser_version, imported_at FROM endgame_libraries WHERE parser_version < ?1 ORDER BY imported_at DESC")?;
+        let mut statement = self.connection.prepare("SELECT id, folder_id, title, source_path, fingerprint, parser_version, imported_at FROM endgame_libraries WHERE parser_version < ?1 ORDER BY imported_at DESC")?;
         statement
             .query_map([parser_version], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(1)?,
                     row.get::<_, String>(2)?,
                     row.get::<_, String>(3)?,
-                    row.get::<_, u32>(4)?,
-                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, u32>(5)?,
+                    row.get::<_, String>(6)?,
                 ))
             })?
             .map(|row| {
-                let (id, title, path, fingerprint, parser_version, imported_at) = row?;
+                let (id, folder_id, title, path, fingerprint, parser_version, imported_at) = row?;
                 self.endgame_library_from_values(
                     id,
+                    folder_id,
                     title,
                     path,
                     fingerprint,
@@ -959,13 +998,14 @@ impl LocalStore {
     }
 
     pub fn endgame_library(&self, id: Uuid) -> Result<Option<EndgameLibrary>, StoreError> {
-        self.connection.query_row("SELECT id, title, source_path, fingerprint, parser_version, imported_at FROM endgame_libraries WHERE id=?1", [id.to_string()], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, u32>(4)?, row.get::<_, String>(5)?))).optional()?
-            .map(|(id, title, path, fingerprint, parser_version, imported_at)| self.endgame_library_from_values(id, title, path, fingerprint, parser_version, imported_at)).transpose()
+        self.connection.query_row("SELECT id, folder_id, title, source_path, fingerprint, parser_version, imported_at FROM endgame_libraries WHERE id=?1", [id.to_string()], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, String>(4)?, row.get::<_, u32>(5)?, row.get::<_, String>(6)?))).optional()?
+            .map(|(id, folder_id, title, path, fingerprint, parser_version, imported_at)| self.endgame_library_from_values(id, folder_id, title, path, fingerprint, parser_version, imported_at)).transpose()
     }
 
     fn endgame_library_from_values(
         &self,
         id: String,
+        folder_id: Option<String>,
         title: String,
         source_path: String,
         fingerprint: String,
@@ -980,6 +1020,9 @@ impl LocalStore {
         let completed_count: u32 = self.connection.query_row("SELECT COUNT(DISTINCT problem_id) FROM endgame_attempts WHERE outcome='completed' AND problem_id IN (SELECT id FROM endgame_problems WHERE library_id=?1 AND active=1)", [id.as_str()], |row| row.get(0))?;
         Ok(EndgameLibrary {
             id: Uuid::parse_str(&id).map_err(json_error)?,
+            folder_id: folder_id
+                .map(|value| Uuid::parse_str(&value).map_err(json_error))
+                .transpose()?,
             title,
             source_path,
             fingerprint,
@@ -988,6 +1031,287 @@ impl LocalStore {
             completed_count,
             imported_at,
         })
+    }
+
+    pub fn endgame_folders(&self) -> Result<Vec<EndgameFolder>, StoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, parent_id, name, created_at FROM endgame_folders ORDER BY COALESCE(parent_id, ''), sort_order, name COLLATE NOCASE, id",
+        )?;
+        statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })?
+            .map(|row| {
+                let (id, parent_id, name, created_at) = row?;
+                Ok(EndgameFolder {
+                    id: Uuid::parse_str(&id).map_err(json_error)?,
+                    parent_id: parent_id
+                        .map(|value| Uuid::parse_str(&value).map_err(json_error))
+                        .transpose()?,
+                    name,
+                    created_at,
+                })
+            })
+            .collect()
+    }
+
+    pub fn create_endgame_folder(
+        &mut self,
+        parent_id: Option<Uuid>,
+        name: &str,
+    ) -> Result<EndgameFolder, StoreError> {
+        let name = normalized_endgame_folder_name(name)?;
+        self.require_endgame_folder(parent_id)?;
+        let exists = self.connection.query_row(
+            "SELECT 1 FROM endgame_folders WHERE COALESCE(parent_id, '')=COALESCE(?1, '') AND name=?2 COLLATE NOCASE",
+            params![parent_id.map(|id| id.to_string()), name],
+            |_| Ok(()),
+        ).optional()?.is_some();
+        if exists {
+            return Err(StoreError::EndgameFolderAlreadyExists { name });
+        }
+        let sort_order = self.next_endgame_folder_sort_order(parent_id)?;
+        let folder = EndgameFolder {
+            id: Uuid::new_v4(),
+            parent_id,
+            name,
+            created_at: chrono::Utc::now().to_rfc3339(),
+        };
+        self.connection.execute(
+            "INSERT INTO endgame_folders (id, parent_id, name, sort_order, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![folder.id.to_string(), folder.parent_id.map(|id| id.to_string()), folder.name, sort_order, folder.created_at],
+        )?;
+        Ok(folder)
+    }
+
+    pub fn move_endgame_folder(
+        &mut self,
+        id: Uuid,
+        parent_id: Option<Uuid>,
+    ) -> Result<(), StoreError> {
+        let folder = self
+            .endgame_folder(id)?
+            .ok_or_else(|| StoreError::Sql(rusqlite::Error::QueryReturnedNoRows))?;
+        if parent_id == Some(id) {
+            return Err(StoreError::Sql(rusqlite::Error::InvalidQuery));
+        }
+        let mut cursor = parent_id;
+        while let Some(candidate) = cursor {
+            if candidate == id {
+                return Err(StoreError::Sql(rusqlite::Error::InvalidQuery));
+            }
+            cursor = self
+                .endgame_folder(candidate)?
+                .ok_or_else(|| StoreError::Sql(rusqlite::Error::InvalidQuery))?
+                .parent_id;
+        }
+        let sort_order = self.next_endgame_folder_sort_order(parent_id)?;
+        self.connection.execute(
+            "UPDATE endgame_folders SET parent_id=?1, sort_order=?2 WHERE id=?3",
+            params![
+                parent_id.map(|value| value.to_string()),
+                sort_order,
+                folder.id.to_string()
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Remove only the directory node. Its direct books are promoted to the
+    /// parent directory so a navigation cleanup can never discard practice data.
+    pub fn delete_endgame_folder(&mut self, id: Uuid) -> Result<(), StoreError> {
+        let folder = self
+            .endgame_folder(id)?
+            .ok_or_else(|| StoreError::Sql(rusqlite::Error::QueryReturnedNoRows))?;
+        let has_children = self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM endgame_folders WHERE parent_id=?1)",
+            [folder.id.to_string()],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if has_children {
+            return Err(StoreError::EndgameFolderHasChildren { name: folder.name });
+        }
+        let transaction = self.connection.transaction()?;
+        transaction.execute(
+            "UPDATE endgame_libraries SET folder_id=?1 WHERE folder_id=?2",
+            params![
+                folder.parent_id.map(|value| value.to_string()),
+                folder.id.to_string()
+            ],
+        )?;
+        transaction.execute(
+            "DELETE FROM endgame_folders WHERE id=?1",
+            [folder.id.to_string()],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn move_endgame_libraries(
+        &mut self,
+        ids: &[Uuid],
+        folder_id: Option<Uuid>,
+    ) -> Result<usize, StoreError> {
+        self.require_endgame_folder(folder_id)?;
+        let mut sort_order = self.next_endgame_library_sort_order(folder_id)?;
+        let transaction = self.connection.transaction()?;
+        let mut moved = 0;
+        for id in ids {
+            moved += transaction.execute(
+                "UPDATE endgame_libraries SET folder_id=?1, sort_order=?2 WHERE id=?3",
+                params![
+                    folder_id.map(|value| value.to_string()),
+                    sort_order,
+                    id.to_string()
+                ],
+            )?;
+            sort_order += 1;
+        }
+        transaction.commit()?;
+        Ok(moved)
+    }
+
+    pub fn reorder_endgame_folder(&mut self, id: Uuid, move_up: bool) -> Result<bool, StoreError> {
+        let folder = self
+            .endgame_folder(id)?
+            .ok_or_else(|| StoreError::Sql(rusqlite::Error::QueryReturnedNoRows))?;
+        let mut ids = self.endgame_folder_sibling_ids(folder.parent_id)?;
+        let Some(index) = ids.iter().position(|candidate| *candidate == id) else {
+            return Ok(false);
+        };
+        let target = if move_up {
+            index.checked_sub(1)
+        } else {
+            (index + 1 < ids.len()).then_some(index + 1)
+        };
+        let Some(target) = target else {
+            return Ok(false);
+        };
+        ids.swap(index, target);
+        let transaction = self.connection.transaction()?;
+        for (sort_order, sibling_id) in ids.iter().enumerate() {
+            transaction.execute(
+                "UPDATE endgame_folders SET sort_order=?1 WHERE id=?2",
+                params![sort_order as i64, sibling_id.to_string()],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(true)
+    }
+
+    pub fn reorder_endgame_library(&mut self, id: Uuid, move_up: bool) -> Result<bool, StoreError> {
+        let library = self
+            .endgame_library(id)?
+            .ok_or_else(|| StoreError::Sql(rusqlite::Error::QueryReturnedNoRows))?;
+        let mut ids = self.endgame_library_sibling_ids(library.folder_id)?;
+        let Some(index) = ids.iter().position(|candidate| *candidate == id) else {
+            return Ok(false);
+        };
+        let target = if move_up {
+            index.checked_sub(1)
+        } else {
+            (index + 1 < ids.len()).then_some(index + 1)
+        };
+        let Some(target) = target else {
+            return Ok(false);
+        };
+        ids.swap(index, target);
+        let transaction = self.connection.transaction()?;
+        for (sort_order, sibling_id) in ids.iter().enumerate() {
+            transaction.execute(
+                "UPDATE endgame_libraries SET sort_order=?1 WHERE id=?2",
+                params![sort_order as i64, sibling_id.to_string()],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(true)
+    }
+
+    fn endgame_folder(&self, id: Uuid) -> Result<Option<EndgameFolder>, StoreError> {
+        self.connection
+            .query_row(
+                "SELECT id, parent_id, name, created_at FROM endgame_folders WHERE id=?1",
+                [id.to_string()],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                },
+            )
+            .optional()?
+            .map(|(id, parent_id, name, created_at)| {
+                Ok(EndgameFolder {
+                    id: Uuid::parse_str(&id).map_err(json_error)?,
+                    parent_id: parent_id
+                        .map(|value| Uuid::parse_str(&value).map_err(json_error))
+                        .transpose()?,
+                    name,
+                    created_at,
+                })
+            })
+            .transpose()
+    }
+
+    fn require_endgame_folder(&self, id: Option<Uuid>) -> Result<(), StoreError> {
+        if let Some(folder_id) = id {
+            if self.endgame_folder(folder_id)?.is_none() {
+                return Err(StoreError::Sql(rusqlite::Error::InvalidQuery));
+            }
+        }
+        Ok(())
+    }
+
+    fn next_endgame_folder_sort_order(&self, parent_id: Option<Uuid>) -> Result<i64, StoreError> {
+        self.connection.query_row(
+            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM endgame_folders WHERE COALESCE(parent_id, '')=COALESCE(?1, '')",
+            [parent_id.map(|id| id.to_string())],
+            |row| row.get(0),
+        ).map_err(StoreError::from)
+    }
+
+    fn next_endgame_library_sort_order(&self, folder_id: Option<Uuid>) -> Result<i64, StoreError> {
+        self.connection.query_row(
+            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM endgame_libraries WHERE COALESCE(folder_id, '')=COALESCE(?1, '')",
+            [folder_id.map(|id| id.to_string())],
+            |row| row.get(0),
+        ).map_err(StoreError::from)
+    }
+
+    fn endgame_folder_sibling_ids(&self, parent_id: Option<Uuid>) -> Result<Vec<Uuid>, StoreError> {
+        let mut statement = self.connection.prepare("SELECT id FROM endgame_folders WHERE COALESCE(parent_id, '')=COALESCE(?1, '') ORDER BY sort_order, name COLLATE NOCASE, id")?;
+        statement
+            .query_map([parent_id.map(|id| id.to_string())], |row| {
+                row.get::<_, String>(0)
+            })?
+            .map(|row| {
+                let value = row?;
+                Uuid::parse_str(&value).map_err(|error| StoreError::Json(json_error(error)))
+            })
+            .collect()
+    }
+
+    fn endgame_library_sibling_ids(
+        &self,
+        folder_id: Option<Uuid>,
+    ) -> Result<Vec<Uuid>, StoreError> {
+        let mut statement = self.connection.prepare("SELECT id FROM endgame_libraries WHERE COALESCE(folder_id, '')=COALESCE(?1, '') ORDER BY sort_order, imported_at DESC, id")?;
+        statement
+            .query_map([folder_id.map(|id| id.to_string())], |row| {
+                row.get::<_, String>(0)
+            })?
+            .map(|row| {
+                let value = row?;
+                Uuid::parse_str(&value).map_err(|error| StoreError::Json(json_error(error)))
+            })
+            .collect()
     }
 
     pub fn endgame_problems(&self, library_id: Uuid) -> Result<Vec<EndgameProblem>, StoreError> {
@@ -3663,10 +3987,18 @@ impl LocalStore {
                mastered INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL
              );
              CREATE TABLE IF NOT EXISTS endgame_libraries (
-               id TEXT PRIMARY KEY, title TEXT NOT NULL, source_path TEXT NOT NULL,
+               id TEXT PRIMARY KEY, folder_id TEXT, title TEXT NOT NULL, source_path TEXT NOT NULL,
                fingerprint TEXT NOT NULL UNIQUE, parser_version INTEGER NOT NULL DEFAULT 0,
-               imported_at TEXT NOT NULL
+               sort_order INTEGER NOT NULL DEFAULT 0,
+               imported_at TEXT NOT NULL,
+               FOREIGN KEY(folder_id) REFERENCES endgame_folders(id) ON DELETE SET NULL
              );
+             CREATE TABLE IF NOT EXISTS endgame_folders (
+               id TEXT PRIMARY KEY, parent_id TEXT, name TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL,
+               FOREIGN KEY(parent_id) REFERENCES endgame_folders(id) ON DELETE RESTRICT
+             );
+             CREATE UNIQUE INDEX IF NOT EXISTS idx_endgame_folders_parent_name
+               ON endgame_folders(COALESCE(parent_id, ''), name COLLATE NOCASE);
              CREATE TABLE IF NOT EXISTS endgame_problems (
                id TEXT PRIMARY KEY, library_id TEXT NOT NULL, source_index INTEGER NOT NULL,
                title TEXT NOT NULL, category TEXT NOT NULL, starting_fen TEXT NOT NULL,
@@ -3688,6 +4020,19 @@ impl LocalStore {
             &connection,
             "endgame_libraries",
             "parser_version",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
+        ensure_column(&connection, "endgame_libraries", "folder_id", "TEXT")?;
+        ensure_column(
+            &connection,
+            "endgame_libraries",
+            "sort_order",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
+        ensure_column(
+            &connection,
+            "endgame_folders",
+            "sort_order",
             "INTEGER NOT NULL DEFAULT 0",
         )?;
         ensure_column(
@@ -4065,6 +4410,19 @@ fn ensure_column(
         )?;
     }
     Ok(())
+}
+
+fn normalized_endgame_folder_name(name: &str) -> Result<String, StoreError> {
+    let normalized = name.trim();
+    if normalized.is_empty()
+        || normalized == "."
+        || normalized == ".."
+        || normalized.contains('/')
+        || normalized.contains('\\')
+    {
+        return Err(StoreError::Sql(rusqlite::Error::InvalidQuery));
+    }
+    Ok(normalized.to_owned())
 }
 
 fn metadata_json_with_payload(
@@ -5961,6 +6319,9 @@ mod tests {
             link_stable_frames: 2,
             link_confidence_threshold: 70,
             link_animation_confirmation: true,
+            move_animation_enabled: true,
+            move_sound_enabled: true,
+            move_sound_volume: 70,
             game_mirror_enabled: true,
             game_mirror_root: "/tmp/棋研棋谱".into(),
             server_url: "https://sync.example.com".into(),
@@ -5987,6 +6348,8 @@ mod tests {
         assert_eq!(preferences.layout_mode, "compact");
         assert_eq!(preferences.manual_view_mode, "track");
         assert_eq!(preferences.color_theme, "dark");
+        assert_eq!(preferences.board_skin, "qingxin-zhuyun");
+        assert_eq!(preferences.piece_skin, "qingxin-zhuyun");
         assert_eq!(preferences.branch_arrow_color, "#f45d0b");
         assert_eq!(preferences.branch_arrow_badge_color, "#4aa51c");
         assert_eq!(preferences.branch_arrow_style_version, 0);
@@ -5996,6 +6359,9 @@ mod tests {
         assert!(preferences.builtin_opening_book_enabled);
         assert_eq!(preferences.active_builtin_opening_book_id, "learning-top3");
         assert!(preferences.cloud_book_enabled);
+        assert!(preferences.move_animation_enabled);
+        assert!(preferences.move_sound_enabled);
+        assert_eq!(preferences.move_sound_volume, 70);
         assert_eq!(
             preferences.cloud_book_url,
             "https://www.chessdb.cn/chessdb.php"
@@ -6110,10 +6476,17 @@ mod tests {
             solution_json: "[]".into(),
         }];
         let first = store
-            .import_endgame_library("/tmp/book.cbl", "sha256:one", "残局", 1, &problems)
+            .import_endgame_library("/tmp/book.cbl", "sha256:one", "残局", 1, &problems, None)
             .unwrap();
         let repeated = store
-            .import_endgame_library("/tmp/moved-book.cbl", "sha256:one", "残局", 1, &problems)
+            .import_endgame_library(
+                "/tmp/moved-book.cbl",
+                "sha256:one",
+                "残局",
+                1,
+                &problems,
+                None,
+            )
             .unwrap();
         assert_eq!(first.id, repeated.id);
         let problem = store.endgame_problems(first.id).unwrap().pop().unwrap();
@@ -6147,7 +6520,7 @@ mod tests {
             },
         ];
         let library = store
-            .import_endgame_library("/tmp/book.cbl", "sha256:one", "残局", 1, &initial)
+            .import_endgame_library("/tmp/book.cbl", "sha256:one", "残局", 1, &initial, None)
             .unwrap();
         let retained = store.endgame_problems(library.id).unwrap().remove(0);
         store
@@ -6162,7 +6535,7 @@ mod tests {
             solution_json: "[\"f8e6\"]".into(),
         }];
         let refreshed = store
-            .import_endgame_library("/tmp/book.cbl", "sha256:one", "残局", 2, &corrected)
+            .import_endgame_library("/tmp/book.cbl", "sha256:one", "残局", 2, &corrected, None)
             .unwrap();
         assert_eq!(library.id, refreshed.id);
         assert_eq!(refreshed.parser_version, 2);
@@ -6171,6 +6544,163 @@ mod tests {
         assert_eq!(visible[0].id, retained.id);
         assert_eq!(visible[0].title, "马取单士");
         assert_eq!(visible[0].total_elapsed_ms, 4_000);
+    }
+
+    #[test]
+    fn endgame_folders_support_nesting_moves_and_reimport_without_losing_attempts() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let root = store.create_endgame_folder(None, "基础残局").unwrap();
+        let child = store.create_endgame_folder(Some(root.id), "马类").unwrap();
+        assert_eq!(
+            store
+                .create_endgame_folder(Some(root.id), "马类")
+                .unwrap_err()
+                .to_string(),
+            "当前目录中已存在“马类”"
+        );
+        assert!(store.move_endgame_folder(root.id, Some(child.id)).is_err());
+
+        let problems = vec![EndgameProblemImport {
+            source_index: 3,
+            title: "马取单士".into(),
+            category: "马类".into(),
+            starting_fen: "9/3kan3/9/9/9/9/9/9/9/4K4 w - - 0 1".into(),
+            note: String::new(),
+            solution_json: "[\"f8e6\"]".into(),
+        }];
+        let library = store
+            .import_endgame_library(
+                "/tmp/horse.cbl",
+                "sha256:horse",
+                "陈松顺残局",
+                1,
+                &problems,
+                Some(child.id),
+            )
+            .unwrap();
+        let original_problem = store.endgame_problems(library.id).unwrap().pop().unwrap();
+        store
+            .save_endgame_attempt(original_problem.id, "solver", 3_500, 0, 1, "completed")
+            .unwrap();
+
+        assert_eq!(
+            store
+                .move_endgame_libraries(&[library.id], Some(root.id))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            store
+                .endgame_library(library.id)
+                .unwrap()
+                .unwrap()
+                .folder_id,
+            Some(root.id)
+        );
+
+        let reimported = store
+            .import_endgame_library(
+                "/tmp/renamed-horse.cbl",
+                "sha256:horse",
+                "陈松顺残局（修订）",
+                2,
+                &problems,
+                Some(child.id),
+            )
+            .unwrap();
+        let retained_problem = store
+            .endgame_problems(reimported.id)
+            .unwrap()
+            .pop()
+            .unwrap();
+        assert_eq!(library.id, reimported.id);
+        assert_eq!(reimported.folder_id, Some(child.id));
+        assert_eq!(retained_problem.id, original_problem.id);
+        assert_eq!(retained_problem.total_elapsed_ms, 3_500);
+
+        assert_eq!(
+            store
+                .delete_endgame_folder(root.id)
+                .unwrap_err()
+                .to_string(),
+            "目录“基础残局”包含子目录，请先移动或删除子目录"
+        );
+        store.delete_endgame_folder(child.id).unwrap();
+        assert_eq!(
+            store
+                .endgame_library(library.id)
+                .unwrap()
+                .unwrap()
+                .folder_id,
+            Some(root.id)
+        );
+        assert_eq!(
+            store.endgame_problems(library.id).unwrap()[0].total_elapsed_ms,
+            3_500
+        );
+        store.delete_endgame_folder(root.id).unwrap();
+        assert_eq!(
+            store
+                .endgame_library(library.id)
+                .unwrap()
+                .unwrap()
+                .folder_id,
+            None
+        );
+    }
+
+    #[test]
+    fn endgame_sibling_order_can_be_rearranged_without_changing_its_parent() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let _first_folder = store.create_endgame_folder(None, "马类").unwrap();
+        let second_folder = store.create_endgame_folder(None, "车类").unwrap();
+        assert!(
+            store
+                .reorder_endgame_folder(second_folder.id, true)
+                .unwrap()
+        );
+        assert_eq!(
+            store
+                .endgame_folders()
+                .unwrap()
+                .into_iter()
+                .map(|folder| folder.name)
+                .collect::<Vec<_>>(),
+            vec!["车类", "马类"]
+        );
+
+        let first_book = store
+            .import_endgame_library("/tmp/first.cbl", "sha256:first", "第一册", 1, &[], None)
+            .unwrap();
+        let second_book = store
+            .import_endgame_library("/tmp/second.cbl", "sha256:second", "第二册", 1, &[], None)
+            .unwrap();
+        assert!(store.reorder_endgame_library(second_book.id, true).unwrap());
+        assert_eq!(
+            store
+                .endgame_libraries()
+                .unwrap()
+                .into_iter()
+                .map(|library| library.title)
+                .collect::<Vec<_>>(),
+            vec!["第二册", "第一册"]
+        );
+        assert_eq!(
+            store
+                .endgame_library(first_book.id)
+                .unwrap()
+                .unwrap()
+                .folder_id,
+            None
+        );
+        assert_eq!(
+            store
+                .endgame_library(second_book.id)
+                .unwrap()
+                .unwrap()
+                .folder_id,
+            None
+        );
     }
 
     #[test]

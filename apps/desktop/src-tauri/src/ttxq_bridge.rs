@@ -476,6 +476,176 @@ pub(crate) fn collect_ttxq_h5_history_impl(
       let completed = 0;
       let failed = 0;
       await invoke('report_ttxq_read_progress', { attemptId: __TTXQ_ATTEMPT_ID__, total, completed, failed, scanned, current: 0, phase: 'reading', bridgeVersion: __TTXQ_BRIDGE_VERSION__, sourceList, discoveredCount: total, ignoredStaleCount: 0 });
+      const getQipuCapture = (() => {
+        const stateKey = Symbol.for('cn.xiangqi.studio.ttxq.getQipuCapture');
+        let state;
+        try { state = window[stateKey]; } catch (_) { state = null; }
+        if (!state || typeof state !== 'object') {
+          state = { responses: new Map(), installed: false, accept: null };
+          try { window[stateKey] = state; } catch (_) { /* One read still works without a persistent cache. */ }
+        }
+        if (!(state.responses instanceof Map)) state.responses = new Map();
+        else state.responses.clear();
+        const endpoint = (value) => /(?:^|[\/_-])get[-_]?qipu(?:$|[/?#&])/i.test(String(value || ''));
+        const boundedText = (value, limit) => {
+          if (typeof value !== 'string' && typeof value !== 'number') return '';
+          return String(value).slice(0, limit);
+        };
+        const sanitizeRow = (row) => {
+          if (typeof row === 'string' || typeof row === 'number') return boundedText(row, 16 * 1024);
+          if (!row || typeof row !== 'object') return null;
+          const result = {};
+          for (const key of ['msg', 'comment', 'remark', 'note', 'content', 'text', 'body', 'time', 'date', 'timestamp', 'createTime', 'uname', 'userName', 'nickName', 'author']) {
+            let text = '';
+            try { text = boundedText(row[key], key === 'msg' || key === 'content' || key === 'text' || key === 'body' ? 16 * 1024 : 240); } catch (_) { text = ''; }
+            if (text) result[key] = text;
+          }
+          return Object.keys(result).length ? result : null;
+        };
+        const sanitizeCommentV2 = (value) => {
+          if (!value || typeof value !== 'object') return null;
+          const result = {};
+          let count = 0;
+          for (const key of Object.keys(value)) {
+            if (count >= 1024 || !/^(?:\d+|\d+[-_]\d+|(?:DhtmlXQ_)?comment\d+[_-]\d+)$/.test(key)) continue;
+            let rawRows;
+            try { rawRows = value[key]; } catch (_) { continue; }
+            const rows = (Array.isArray(rawRows) ? rawRows : [rawRows])
+              .slice(0, 64)
+              .map(sanitizeRow)
+              .filter(Boolean);
+            if (!rows.length) continue;
+            result[key] = rows;
+            count += 1;
+          }
+          return count ? result : null;
+        };
+        const qipuIdOf = (value) => {
+          if (!value || typeof value !== 'object') return '';
+          for (const key of ['qipuId', '_qipuId', 'qipu_id', 'qipuID', '_qipuID']) {
+            try {
+              const text = boundedText(value[key], 160).trim();
+              if (text) return text;
+            } catch (_) { /* Ignore response wrappers with transient getters. */ }
+          }
+          return '';
+        };
+        const qipuIdFromRequest = (url, body) => {
+          const readParams = (text) => {
+            try {
+              const params = new URLSearchParams(String(text || '').replace(/^\?/, ''));
+              for (const key of ['qipuId', '_qipuId', 'qipu_id', 'qipuID', '_qipuID']) {
+                const value = boundedText(params.get(key), 160).trim();
+                if (value) return value;
+              }
+            } catch (_) { /* Not a query/form payload. */ }
+            return '';
+          };
+          try {
+            const parsed = new URL(String(url || ''), 'https://h5.qqchess.qq.com/');
+            const id = readParams(parsed.search);
+            if (id) return id;
+          } catch (_) { /* A relative or opaque request URL is still allowed below. */ }
+          if (typeof body === 'string') {
+            const formId = readParams(body);
+            if (formId) return formId;
+            try {
+              const parsed = JSON.parse(body);
+              const id = qipuIdOf(parsed) || qipuIdOf(parsed && parsed.data);
+              if (id) return id;
+            } catch (_) { /* Not JSON. */ }
+          }
+          try {
+            if (body && typeof body.get === 'function') {
+              for (const key of ['qipuId', '_qipuId', 'qipu_id', 'qipuID', '_qipuID']) {
+                const value = boundedText(body.get(key), 160).trim();
+                if (value) return value;
+              }
+            }
+          } catch (_) { /* Ignore protected request bodies. */ }
+          return '';
+        };
+        const responseParts = (payload) => [
+          payload,
+          payload && payload.data,
+          payload && payload.data && payload.data.data,
+          payload && payload.result,
+          payload && payload.result && payload.result.data,
+        ].filter(value => value && typeof value === 'object');
+        state.accept = (payload, url, body) => {
+          if (!endpoint(url)) return;
+          const parts = responseParts(payload);
+          let qipuId = '';
+          let commentV2 = null;
+          for (const part of parts) {
+            if (!qipuId) qipuId = qipuIdOf(part);
+            const candidates = [
+              part.commentV2,
+              part.qipuData && part.qipuData.commentV2,
+              part.qipuInfo && part.qipuInfo.commentV2,
+              part.qipu && part.qipu.commentV2,
+            ];
+            for (const candidate of candidates) {
+              commentV2 = sanitizeCommentV2(candidate);
+              if (commentV2) break;
+            }
+            if (commentV2) break;
+          }
+          if (!qipuId) qipuId = qipuIdFromRequest(url, body);
+          if (!qipuId || !commentV2) return;
+          state.responses.set(qipuId, commentV2);
+          while (state.responses.size > 64) state.responses.delete(state.responses.keys().next().value);
+        };
+        if (!state.installed && typeof window.fetch === 'function') {
+          const nativeFetch = window.fetch;
+          const wrappedFetch = function(input, init) {
+            const result = nativeFetch.apply(this, arguments);
+            let url = '';
+            try { url = typeof input === 'string' ? input : input && input.url || String(input || ''); } catch (_) { url = ''; }
+            if (endpoint(url)) {
+              Promise.resolve(result).then(response => {
+                let clone;
+                try { clone = response && response.clone(); } catch (_) { clone = null; }
+                if (!clone || typeof clone.json !== 'function') return;
+                clone.json().then(payload => state.accept(payload, url, init && init.body)).catch(() => undefined);
+              }).catch(() => undefined);
+            }
+            return result;
+          };
+          try { window.fetch = wrappedFetch; state.installed = true; } catch (_) { /* XHR capture may still be available. */ }
+        }
+        if (!state.xhrInstalled && typeof window.XMLHttpRequest === 'function') {
+          try {
+            const prototype = window.XMLHttpRequest.prototype;
+            const nativeOpen = prototype.open;
+            const nativeSend = prototype.send;
+            const requests = new WeakMap();
+            prototype.open = function(method, url) {
+              requests.set(this, { url: String(url || ''), body: null });
+              return nativeOpen.apply(this, arguments);
+            };
+            prototype.send = function(body) {
+              const request = requests.get(this) || { url: '', body: null };
+              request.body = body;
+              requests.set(this, request);
+              if (endpoint(request.url) && typeof this.addEventListener === 'function') {
+                this.addEventListener('load', () => {
+                  let payload = null;
+                  try { payload = this.responseType === 'json' ? this.response : JSON.parse(this.responseText); } catch (_) { payload = null; }
+                  if (payload) state.accept(payload, request.url, request.body);
+                }, { once: true });
+              }
+              return nativeSend.apply(this, arguments);
+            };
+            state.xhrInstalled = true;
+          } catch (_) { /* Fetch capture may still be available. */ }
+        }
+        return {
+          commentV2For(qipuId) {
+            return state.responses.get(String(qipuId || '').trim()) || null;
+          },
+        };
+      })();
       // The current QQ H5 has shipped both the original `fdk.NOTIFY_QIPU_DATA`
       // layout and a model-owned layout. Keep this traversal narrow: it only
       // reads known chess-view roots and never serializes page state.
@@ -1215,6 +1385,7 @@ pub(crate) fn collect_ttxq_h5_history_impl(
             [property, root && root[property]],
             ['msgContainer', root && root.msgContainer],
             ['msg', root && root.msg],
+            ['commentV2', root && root.commentV2],
             ['Eb.wn.msgContainer', root && root.Eb && root.Eb.wn && root.Eb.wn.msgContainer],
             ['Eb.msgContainer', root && root.Eb && root.Eb.msgContainer],
             ['wn.msgContainer', root && root.wn && root.wn.msgContainer],
@@ -1255,7 +1426,7 @@ pub(crate) fn collect_ttxq_h5_history_impl(
               let child; try { child = value[key]; } catch (_) { continue; }
               if (!child || typeof child !== 'object') continue;
               const childPath = `${path}.${key}`;
-              if (/^(?:msg|msgContainer|comments?|annotation(?:s|Container)?|message(?:s|Container)?)$/i.test(String(key))) {
+              if (/^(?:msg|msgContainer|commentV2|comments?|annotation(?:s|Container)?|message(?:s|Container)?)$/i.test(String(key))) {
                 if (!returned.has(child)) {
                   returned.add(child);
                   containers.push({ value: child, path: childPath });
@@ -1272,6 +1443,27 @@ pub(crate) fn collect_ttxq_h5_history_impl(
                 stack.push({ value: child, path: childPath, depth: depth + 1 });
               }
             }
+          }
+          return containers;
+        };
+        const directCommentV2Containers = (root, rootPath) => {
+          if (!root || typeof root !== 'object') return [];
+          const containers = [];
+          const returned = new WeakSet();
+          const candidates = [
+            ['commentV2', () => root.commentV2],
+            ['data.commentV2', () => root.data && root.data.commentV2],
+            ['_qipuData.commentV2', () => root._qipuData && root._qipuData.commentV2],
+            ['_qipuInfo.commentV2', () => root._qipuInfo && root._qipuInfo.commentV2],
+            ['qipuData.commentV2', () => root.qipuData && root.qipuData.commentV2],
+            ['qipuInfo.commentV2', () => root.qipuInfo && root.qipuInfo.commentV2],
+          ];
+          for (const [suffix, read] of candidates) {
+            let value;
+            try { value = read(); } catch (_) { continue; }
+            if (!value || typeof value !== 'object' || returned.has(value)) continue;
+            returned.add(value);
+            containers.push({ value, path: `${rootPath}.${suffix}` });
           }
           return containers;
         };
@@ -1460,6 +1652,61 @@ pub(crate) fn collect_ttxq_h5_history_impl(
             }
           }
         }
+        if (collectAnnotationData && preferredControl) {
+          const expectedQipuId = String(branchPayload.expectedQipuId || '').trim();
+          if (expectedQipuId && typeof getQipuCapture !== 'undefined') {
+            const capturedCommentV2 = getQipuCapture.commentV2For(expectedQipuId);
+            if (capturedCommentV2) {
+              referenceContainers.push({
+                value: capturedCommentV2,
+                path: `get-qipu[${expectedQipuId}].data.commentV2`,
+              });
+            }
+          }
+          const annotationRootQipuId = (root) => {
+            const directId = (value) => {
+              if (!value || typeof value !== 'object') return '';
+              for (const key of ['qipuId', '_qipuId', 'qipu_id', 'qipuID', '_qipuID']) {
+                try {
+                  const text = String(value[key] == null ? '' : value[key]).trim();
+                  if (text && text.length <= 160) return text;
+                } catch (_) { /* Detail response objects can be replaced mid-read. */ }
+              }
+              return '';
+            };
+            const rootId = directId(root);
+            if (rootId) return rootId;
+            for (const key of ['data', '_qipuData', '_qipuInfo', 'qipuData', 'qipuInfo']) {
+              try {
+                const childId = directId(root && root[key]);
+                if (childId) return childId;
+              } catch (_) { /* Ignore transient response wrappers. */ }
+            }
+            return '';
+          };
+          const ownedRoots = controls.flatMap(control => [
+            control && control._qipuData,
+            control && control._qipuInfo,
+            control && control.qipuData,
+            control && control.qipuInfo,
+          ]);
+          const currentRoots = [
+            model && model.currentQipu,
+            model && model._qipuData,
+            model && model._qipuInfo,
+            model && model._qipuView,
+          ].filter(root => expectedQipuId && annotationRootQipuId(root) === expectedQipuId);
+          const annotationRoots = [...new Set([...ownedRoots, ...currentRoots].filter(Boolean))];
+          for (const [index, root] of annotationRoots.entries()) {
+            // get-qipu detail responses can retain the entire FDK renderer
+            // graph. Walking those roots blocks the page thread long enough
+            // to trip the native progress watchdog. commentV2 has stable,
+            // shallow response paths, so inspect only those paths here.
+            for (const container of directCommentV2Containers(root, `targetDetailRoot[${index}]`)) {
+              referenceContainers.push(container);
+            }
+          }
+        }
           const collectAnnotations = (containers) => {
             const annotations = [];
             const signatures = new Set();
@@ -1467,7 +1714,7 @@ pub(crate) fn collect_ttxq_h5_history_impl(
             const keySamples = [];
             let complete = true;
             const metadataByKey = new Map();
-          const annotationPosition = (rawKey) => {
+          const annotationPosition = (rawKey, sourcePath = '') => {
             const key = String(rawKey || '').trim();
             let match = key.match(/^(?:DhtmlXQ_)?comment(\d+)[_-](\d+)$/i);
             if (match) return { sourceRouteId: Number(match[1]), absoluteAfterPly: Number(match[2]), keyFormat: 'dhtml-comment' };
@@ -1475,11 +1722,22 @@ pub(crate) fn collect_ttxq_h5_history_impl(
             if (match) return { sourceRouteId: Number(match[1]), absoluteAfterPly: Number(match[2]), keyFormat: 'dhtml-compact' };
             if (/^\d+$/.test(key)) return { sourceRouteId: 0, absoluteAfterPly: Number(key), keyFormat: 'mainline-ply' };
             match = key.match(/^(\d+)-(\d+)$/);
-            if (match) return {
-              sourceRouteId: Number(match[1]),
-              absoluteAfterPly: Number(match[2]),
-              keyFormat: 'ttxq-route-ply',
-            };
+            if (match) {
+              const sourceRouteId = Number(match[1]);
+              const sourcePosition = Number(match[2]);
+              // get-qipu's commentV2 uses a one-based node position for
+              // branch routes, while the older mounted msgContainer exposes
+              // the absolute after-ply directly. Keep the container origin in
+              // the normalized format so the two wire conventions can coexist.
+              const commentV2Branch = sourceRouteId > 0
+                && sourcePosition > 0
+                && /(?:^|\.)commentV2(?:\.|$)/i.test(String(sourcePath));
+              return {
+                sourceRouteId,
+                absoluteAfterPly: commentV2Branch ? sourcePosition - 1 : sourcePosition,
+                keyFormat: commentV2Branch ? 'ttxq-comment-v2-route-ply' : 'ttxq-route-ply',
+              };
+            }
             if (/^(?:root|start|initial)$/i.test(key)) return { sourceRouteId: 0, absoluteAfterPly: 0, keyFormat: 'root-alias' };
             return null;
           };
@@ -1537,7 +1795,7 @@ pub(crate) fn collect_ttxq_h5_history_impl(
             }
             // Only follow annotation-shaped wrappers. This avoids walking the
             // renderer graph while still finding msg/time/uname siblings.
-            for (const field of ['msg', 'msgContainer', 'comments', 'annotation', 'annotations', 'Eb', 'wn']) {
+            for (const field of ['msg', 'msgContainer', 'commentV2', 'comments', 'annotation', 'annotations', 'Eb', 'wn']) {
               let child;
               try { child = value[field]; } catch (_) { child = null; }
               if (child && typeof child === 'object') collectCompanionMetadata(child, depth + 1);
@@ -1562,19 +1820,19 @@ pub(crate) fn collect_ttxq_h5_history_impl(
             }
             return null;
           };
-          const rowPositionKey = (row) => {
+          const rowPositionKey = (row, sourcePath = '') => {
             if (!row || typeof row !== 'object') return '';
             for (const field of ['sourceKey', 'key', 'position', 'location', 'name', 'id']) {
               let value; try { value = row[field]; } catch (_) { continue; }
               if (typeof value === 'string' || typeof value === 'number') {
                 const text = String(value).trim();
                 if (!text || (field === 'id' && /^\d+$/.test(text))) continue;
-                if (annotationPosition(text)) return text;
+                if (annotationPosition(text, sourcePath)) return text;
               }
             }
             return '';
           };
-          const rowAnnotationPosition = (row) => {
+          const rowAnnotationPosition = (row, sourcePath = '') => {
             if (!row || typeof row !== 'object') return null;
             // A keyed msgContainer can group several independent annotation
             // rows under the position that happened to be mounted first. The
@@ -1586,7 +1844,7 @@ pub(crate) fn collect_ttxq_h5_history_impl(
               if (typeof value !== 'string' && typeof value !== 'number') continue;
               const key = String(value).trim();
               if (!key || (field === 'id' && /^\d+$/.test(key))) continue;
-              const position = annotationPosition(key);
+              const position = annotationPosition(key, sourcePath);
               if (position) return { key, position };
             }
             return null;
@@ -1624,13 +1882,13 @@ pub(crate) fn collect_ttxq_h5_history_impl(
             // `comments` object may hold social/game comments; parse keys that
             // are explicitly route-addressable there, but do not reject a
             // record merely because an unrelated comment key is present.
-            const strictContainer = /(?:^|\.)(?:msg|msgContainer)(?:\.|$)/i.test(path);
+            const strictContainer = /(?:^|\.)(?:msg|msgContainer|commentV2)(?:\.|$)/i.test(path);
             // Some Tencent revisions expose msgContainer as an array of rows
             // (`[{ key: '11-2', msg: '...' }]`) instead of a keyed map. Handle
             // that shape explicitly so the array index never becomes ply 0.
             if (Array.isArray(value)) {
               value.slice(0, 32).forEach((row, index) => {
-                const rowLocation = rowAnnotationPosition(row);
+                const rowLocation = rowAnnotationPosition(row, path);
                 // Array-form rows have no enclosing route/ply property. They
                 // must carry an explicit position themselves; a numeric row
                 // id is not a move index and cannot be guessed safely.
@@ -1677,12 +1935,12 @@ pub(crate) fn collect_ttxq_h5_history_impl(
                 // A generic `comments`/`messages` collection is commonly a
                 // social or review feed. Only the constrained msg/msgContainer
                 // path is authoritative for route annotations.
-                if (!strictContainer && !hasRouteAnnotationKey(key) && !rows.some(row => hasRouteAnnotationKey(rowPositionKey(row)))) continue;
+                if (!strictContainer && !hasRouteAnnotationKey(key) && !rows.some(row => hasRouteAnnotationKey(rowPositionKey(row, path)))) continue;
                 const containerKey = hasRouteAnnotationKey(key)
                   ? key
-                  : rowPositionKey(rows[0]) || routeKeyFromPath(path);
-                const position = annotationPosition(containerKey);
-                const rowLocations = rows.slice(0, 32).map(row => rowAnnotationPosition(row));
+                  : rowPositionKey(rows[0], path) || routeKeyFromPath(path);
+                const position = annotationPosition(containerKey, path);
+                const rowLocations = rows.slice(0, 32).map(row => rowAnnotationPosition(row, path));
                 const sampleRowLocation = rowLocations.find(Boolean);
                 const hasExplicitRowPosition = Boolean(sampleRowLocation);
                 if (keySamples.length < 24) keySamples.push({
@@ -2301,6 +2559,7 @@ pub(crate) fn collect_ttxq_h5_history_impl(
           if (typeof branchPayload === 'function') {
             branchPayload.routeControls = null;
             branchPayload.routeControlOwner = null;
+            branchPayload.expectedQipuId = '';
           }
           const beforeCandidate = directNotifyMove() || directModelMove() || readRawMoves([info]);
           const beforeSignature = `${beforeCandidate.path}:${beforeCandidate.type}:${beforeCandidate.text}`;
@@ -2781,6 +3040,7 @@ pub(crate) fn collect_ttxq_h5_history_impl(
           if (typeof branchPayload === 'function') {
             branchPayload.routeControls = null;
             branchPayload.routeControlOwner = null;
+            branchPayload.expectedQipuId = qipuId;
           }
           const passiveBranch = branchPayload(raw.owner || null);
           readBranchRoutes.deadline = gameDeadline;

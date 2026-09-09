@@ -628,9 +628,9 @@ pub(crate) async fn configure_engine_nnue(
         return Ok(None);
     };
     let nnue_sha256 = file_sha256(&nnue_path)?;
-    if nnue_sha256 != PIKAFISH_260720_NNUE_SHA256 {
+    if nnue_sha256 != PIKAFISH_20260906_NNUE_SHA256 {
         return Err(format!(
-            "Pikafish NNUE 哈希不匹配：期望 {PIKAFISH_260720_NNUE_SHA256}，实际 {nnue_sha256}"
+            "Pikafish NNUE 哈希不匹配：期望 {PIKAFISH_20260906_NNUE_SHA256}，实际 {nnue_sha256}"
         ));
     }
     session
@@ -999,6 +999,7 @@ pub(crate) fn validate_server_url(value: &str) -> Result<(), String> {
 }
 
 pub(crate) fn normalize_desktop_preferences(preferences: &mut DesktopPreferences) {
+    preferences.move_sound_volume = preferences.move_sound_volume.min(100);
     if preferences.branch_arrow_style_version < 1 {
         if preferences.branch_arrow_color == "#2f80ed" {
             preferences.branch_arrow_color = "#f45d0b".into();
@@ -1056,7 +1057,7 @@ pub(crate) fn normalize_desktop_preferences(preferences: &mut DesktopPreferences
 pub(crate) fn normalize_skin_id(value: &str) -> String {
     match value {
         "default" | "hongmu" | "jingdian" | "xinghe" | "qingxin-zhuyun" => value.to_owned(),
-        _ => "default".into(),
+        _ => "qingxin-zhuyun".into(),
     }
 }
 

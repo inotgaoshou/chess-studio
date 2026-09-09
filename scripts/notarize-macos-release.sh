@@ -10,13 +10,14 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
 fi
 
 : "${APPLE_SIGNING_IDENTITY:?Set APPLE_SIGNING_IDENTITY to your Developer ID Application identity.}"
+APPLE_NOTARY_PROFILE="${APPLE_NOTARY_PROFILE:-}"
 
 has_api_key=0
 if [[ -n "${APPLE_API_ISSUER:-}" && -n "${APPLE_API_KEY:-}" && -n "${APPLE_API_KEY_PATH:-}" ]]; then
   has_api_key=1
 fi
 
-if [[ "$has_api_key" != "1" ]]; then
+if [[ -z "$APPLE_NOTARY_PROFILE" && "$has_api_key" != "1" ]]; then
   : "${APPLE_ID:?Set APPLE_ID or APPLE_API_ISSUER/APPLE_API_KEY/APPLE_API_KEY_PATH for notarization.}"
   : "${APPLE_PASSWORD:?Set APPLE_PASSWORD to an app-specific password for notarization.}"
   : "${APPLE_TEAM_ID:?Set APPLE_TEAM_ID for notarization.}"
@@ -30,7 +31,11 @@ fi
 
 submit_with_notarytool() {
   local dmg_path="$1"
-  if [[ "$has_api_key" == "1" ]]; then
+  if [[ -n "$APPLE_NOTARY_PROFILE" ]]; then
+    xcrun notarytool submit "$dmg_path" \
+      --keychain-profile "$APPLE_NOTARY_PROFILE" \
+      --wait
+  elif [[ "$has_api_key" == "1" ]]; then
     xcrun notarytool submit "$dmg_path" \
       --key "$APPLE_API_KEY_PATH" \
       --key-id "$APPLE_API_KEY" \

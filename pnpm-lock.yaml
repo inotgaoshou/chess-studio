@@ -89,6 +89,9 @@ importers:
       '@capacitor/core':
         specifier: ^7.6.8
         version: 7.6.8
+      '@capacitor/ios':
+        specifier: ^7.6.8
+        version: 7.6.8(@capacitor/core@7.6.8)
       lucide-react:
         specifier: ^0.468.0
         version: 0.468.0(react@19.2.8)

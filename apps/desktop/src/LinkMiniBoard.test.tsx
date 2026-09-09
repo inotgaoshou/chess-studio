@@ -240,6 +240,22 @@ describe("LinkMiniBoard", () => {
     expect(view.container.querySelectorAll(".link-mini-board-grid g").length).toBeGreaterThan(0);
   });
 
+  it("replaces the default river labels with a custom board caption", () => {
+    render(
+      <LinkMiniBoard
+        pieces={pieces}
+        arrows={[]}
+        sideToMove="黑方"
+        riverText="广东御圣俱乐部"
+        pieceAsset={() => "/piece.png"}
+      />,
+    );
+
+    expect(screen.getByText("广东御圣俱乐部")).toBeTruthy();
+    expect(screen.queryByText("楚河")).toBeNull();
+    expect(screen.queryByText("汉界")).toBeNull();
+  });
+
   it("uses the supplied board skin without drawing a second fallback grid or enlarging pieces", () => {
     const view = render(
       <LinkMiniBoard

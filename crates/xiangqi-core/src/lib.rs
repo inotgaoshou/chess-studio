@@ -1014,6 +1014,17 @@ mod tests {
     }
 
     #[test]
+    fn black_is_stalemated_after_red_king_advances_in_single_horse_endgame() {
+        // Screenshot regression: red horse on b7, black king on d7 and red king on e1.
+        // The horse covers d8/d6 and moving to e7 exposes the two kings to each other.
+        let board = Board::from_fen("9/9/1N1k5/9/9/9/9/9/4K4/9 b - - 1 1").unwrap();
+
+        assert_eq!(board.side_to_move(), Color::Black);
+        assert!(board.legal_moves().is_empty());
+        assert_eq!(board.status(), GameStatus::Stalemate);
+    }
+
+    #[test]
     fn formats_the_opening_line_with_traditional_chinese_numerals() {
         let mut board = Board::from_fen(STARTING_FEN).unwrap();
         for (iccs, notation) in [

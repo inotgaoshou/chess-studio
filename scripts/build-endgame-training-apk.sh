@@ -49,12 +49,43 @@ if [[ -z "${ANDROID_HOME:-}" && -z "${ANDROID_SDK_ROOT:-}" && ! -f "$app_dir/and
   echo "Android SDK not found. Set ANDROID_HOME (or ANDROID_SDK_ROOT), or set sdk.dir in apps/endgame-training/android/local.properties." >&2
   exit 1
 fi
-export ANDROID_VERSION_NAME="${ANDROID_VERSION_NAME:-1.0.1}"
-export ANDROID_VERSION_CODE="${ANDROID_VERSION_CODE:-10001}"
+engine_path="$app_dir/android/app/src/main/jniLibs/arm64-v8a/libpikafish.so"
+nnue_path="$app_dir/android/app/src/main/assets/pikafish/pikafish.nnue"
+expected_engine_sha256="6c06b8752e10c1ed605fa836d2c9bbf885e9c402b216023040ddf4586f4320b1"
+expected_nnue_sha256="7d13d73569a9b571ba0eb20cf1596247bc2a42738967e61afef6482b231e900e"
+
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
+for resource in "$engine_path" "$nnue_path"; do
+  if [[ ! -f "$resource" ]]; then
+    echo "Missing Android Pikafish resource: $resource" >&2
+    exit 1
+  fi
+done
+if [[ "$(sha256_file "$engine_path")" != "$expected_engine_sha256" ]]; then
+  echo "Android Pikafish executable SHA-256 mismatch." >&2
+  exit 1
+fi
+if [[ "$(sha256_file "$nnue_path")" != "$expected_nnue_sha256" ]]; then
+  echo "Android Pikafish NNUE SHA-256 mismatch." >&2
+  exit 1
+fi
+
+export ANDROID_VERSION_NAME="${ANDROID_VERSION_NAME:-1.0.0.14}"
+export ANDROID_VERSION_CODE="${ANDROID_VERSION_CODE:-10014}"
 
 cd "$app_dir/android"
 ./gradlew :app:assembleRelease
 
 apk_path="$app_dir/android/app/build/outputs/apk/release/app-release.apk"
 test -f "$apk_path"
+versioned_apk_path="$app_dir/android/app/build/outputs/apk/release/app-release-${ANDROID_VERSION_NAME}.apk"
+cp "$apk_path" "$versioned_apk_path"
 echo "Signed training APK: $apk_path"
+echo "Versioned training APK: $versioned_apk_path"

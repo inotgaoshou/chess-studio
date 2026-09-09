@@ -108,6 +108,7 @@ import { U10TrainingDialog } from "./U10TrainingDialog";
 import { EndgameTrainingDialog } from "./EndgameTrainingDialog";
 import { UserManualDialog } from "./UserManualDialog";
 import { boardCellStyle, boardIntersectionPoint } from "./boardGeometry";
+import { MainBoardMoveFeedback, createMoveFeedback, playMoveFeedbackSound, type MoveFeedback } from "./MainBoardMoveFeedback";
 import { PositionEditorBoard } from "./PositionEditorBoard";
 import { buildSelectedPieceThought, type PieceThoughtSelection } from "./pieceThoughtModel";
 import userManualMarkdown from "../../../docs/USER_MANUAL.zh-CN.md?raw";
@@ -719,8 +720,8 @@ const defaultDesktopPreferences: DesktopPreferencesDto = {
   layoutMode: "compact",
   manualViewMode: "track",
   colorTheme: "dark",
-  boardSkin: "default",
-  pieceSkin: "default",
+  boardSkin: "qingxin-zhuyun",
+  pieceSkin: "qingxin-zhuyun",
   reportDepth: DEFAULT_REPORT_DEPTH,
   builtinOpeningBookEnabled: true,
   activeBuiltinOpeningBookId: DEFAULT_BUILTIN_OPENING_BOOK_ID,
@@ -736,6 +737,9 @@ const defaultDesktopPreferences: DesktopPreferencesDto = {
   linkStableFrames: 2,
   linkConfidenceThreshold: 55,
   linkAnimationConfirmation: true,
+  moveAnimationEnabled: true,
+  moveSoundEnabled: true,
+  moveSoundVolume: 70,
   gameMirrorEnabled: true,
   gameMirrorRoot: "",
   serverUrl: "http://127.0.0.1:8080",
@@ -747,6 +751,11 @@ const defaultSyncAccount: SyncAccountDto = {
 
 // Kept only as a migration sentinel for preferences written by older releases.
 const LEGACY_BUILTIN_FAIRY_ENGINE_PATH = "builtin:fairy-stockfish";
+const RIVER_TEXT_STORAGE_KEY = "xiangqi-studio-river-text";
+const RIVER_TEXT_COLOR_STORAGE_KEY = "xiangqi-studio-river-text-color";
+const RIVER_TEXT_SIZE_STORAGE_KEY = "xiangqi-studio-river-text-size";
+const DEFAULT_RIVER_TEXT_COLOR = "#657b48";
+const DEFAULT_RIVER_TEXT_SIZE = 29;
 
 function migrateDesktopPreferences(preferences: DesktopPreferencesDto): DesktopPreferencesDto {
   const legacyAnalysisDefaults = ((preferences.searchMode === "time" || preferences.searchMode === "infinite") && preferences.searchValue === 1500)
@@ -777,6 +786,9 @@ function migrateDesktopPreferences(preferences: DesktopPreferencesDto): DesktopP
     builtinOpeningBookEnabled: preferences.builtinOpeningBookEnabled ?? true,
     activeBuiltinOpeningBookId: preferences.activeBuiltinOpeningBookId || DEFAULT_BUILTIN_OPENING_BOOK_ID,
     ruleMode: preferences.ruleMode === "asianAxf" ? "asianAxf" : defaultRuleMode,
+    moveAnimationEnabled: preferences.moveAnimationEnabled ?? true,
+    moveSoundEnabled: preferences.moveSoundEnabled ?? true,
+    moveSoundVolume: Number.isFinite(preferences.moveSoundVolume) ? Math.min(100, Math.max(0, Math.round(preferences.moveSoundVolume))) : 70,
   };
 }
 
@@ -1364,6 +1376,8 @@ export default function App() {
   const [ponderMove, setPonderMove] = useState<string | undefined>();
   const [engineRuntimeState, setEngineRuntimeState] = useState<EngineRuntimeState>("idle");
   const [desktopPreferences, setDesktopPreferences] = useState(defaultDesktopPreferences);
+  const [moveFeedback, setMoveFeedback] = useState<MoveFeedback>();
+
   const [builtinOpeningBookManifest, setBuiltinOpeningBookManifest] = useState<BuiltinOpeningBookManifestDto>(FALLBACK_BUILTIN_OPENING_BOOK_MANIFEST);
   const [libraryCollapsed, setLibraryCollapsed] = useState(true);
   const [colorTheme, setColorTheme] = useState<ColorTheme>(() => initialColorTheme(chessPlatform.kind));
@@ -1378,6 +1392,9 @@ export default function App() {
   const [skinMenuOpen, setSkinMenuOpen] = useState(false);
   const [skinShopOpen, setSkinShopOpen] = useState(false);
   const [skinHoverPreview, setSkinHoverPreview] = useState<Pick<DesktopPreferencesDto, "boardSkin" | "pieceSkin">>();
+  const [riverText, setRiverText] = useState(() => localStorage.getItem(RIVER_TEXT_STORAGE_KEY) ?? "");
+  const [riverTextColor, setRiverTextColor] = useState(() => localStorage.getItem(RIVER_TEXT_COLOR_STORAGE_KEY) ?? DEFAULT_RIVER_TEXT_COLOR);
+  const [riverTextSize, setRiverTextSize] = useState(() => Number(localStorage.getItem(RIVER_TEXT_SIZE_STORAGE_KEY)) || DEFAULT_RIVER_TEXT_SIZE);
   const [manualExporting, setManualExporting] = useState(false);
   const [analysisHelpOpen, setAnalysisHelpOpen] = useState(false);
   const [trendCursorIndex, setTrendCursorIndex] = useState<number | undefined>();
@@ -3014,6 +3031,23 @@ export default function App() {
     }
   }
 
+  function updateRiverText(next: string) {
+    const value = next.slice(0, 16);
+    localStorage.setItem(RIVER_TEXT_STORAGE_KEY, value);
+    setRiverText(value);
+  }
+
+  function updateRiverTextColor(next: string) {
+    localStorage.setItem(RIVER_TEXT_COLOR_STORAGE_KEY, next);
+    setRiverTextColor(next);
+  }
+
+  function updateRiverTextSize(next: number) {
+    const value = Math.max(16, Math.min(42, next));
+    localStorage.setItem(RIVER_TEXT_SIZE_STORAGE_KEY, String(value));
+    setRiverTextSize(value);
+  }
+
   async function updateBoardSkin(patch: Pick<DesktopPreferencesDto, "boardSkin" | "pieceSkin">) {
     if (syncAccount.status !== "signedIn" && requiresSignInForSkinPatch(desktopPreferences, patch)) {
       setNotice("登录同步账号后才能使用登录专享皮肤");
@@ -3269,6 +3303,13 @@ export default function App() {
     await cancelRunningAnalysis("正在停止旧局面分析，准备切换到新局面…", { keepHints: true, forceBackendStop: true });
   }
 
+  function triggerMoveFeedback(before: BoardState, next: BoardState) {
+    const feedback = createMoveFeedback(before, next);
+    if (!feedback) return;
+    if (desktopPreferencesRef.current.moveAnimationEnabled) setMoveFeedback(feedback);
+    playMoveFeedbackSound(feedback.kind, desktopPreferencesRef.current.moveSoundEnabled, desktopPreferencesRef.current.moveSoundVolume);
+  }
+
   async function playIccsMove(iccs: string, expectedFen?: string, sourceEngineName?: string, options: { stopEngineFirst?: boolean } = {}) {
     stopPlayback();
     if (!ensureBoardChangeAllowed()) return;
@@ -3302,11 +3343,13 @@ export default function App() {
       if (chessPlatform.kind === "desktop") {
         await chessPlatform.previewLine(boardRef.current.fen, [iccs]);
       }
+      const beforeMove = boardRef.current;
       let next = normalizeBoardState(await enqueueBoardOperation(() => chessPlatform.playMove(iccs)));
       if (sourceEngineName && next.currentNode) {
         next = normalizeBoardState(await enqueueBoardOperation(() => chessPlatform.updateComment(next.currentNode!, `引擎来源：${sourceEngineName}`)));
       }
       applyBoard(next);
+      triggerMoveFeedback(beforeMove, next);
       await loadGameReport();
       const ruleBlocked = next.ruleVerdict && engineBlockingRuleVerdicts.has(next.ruleVerdict);
       const practiceResult = practiceAtMoveStart && practiceAtMoveStart.fen === moveStartFen && practiceAtMoveStart.ply === moveStartPly
@@ -3970,6 +4013,7 @@ export default function App() {
     try {
       const result = await enqueueBoardOperation(() => chessPlatform.playEngineMove({ enginePath, moveTimeMs, threads, hashMb, ponder: ponderEnabled }));
       applyBoard(result.board);
+      triggerMoveFeedback(state, result.board);
       await loadGameReport();
       setPonderMove(result.ponder);
       if (result.board.ruleVerdict && engineBlockingRuleVerdicts.has(result.board.ruleVerdict)) {
@@ -4525,7 +4569,10 @@ export default function App() {
       setAnalysisArrowFen(undefined);
     }
     clearCandidatePreviews();
-    if (positionChanged) setSelectedPieceInspection(undefined);
+    if (positionChanged) {
+      setSelectedPieceInspection(undefined);
+      setMoveFeedback(undefined);
+    }
     setBoard(next);
     setFenInput(next.fen);
   }
@@ -4961,14 +5008,20 @@ export default function App() {
       return;
     }
     const next = preferredContinuation(board);
-    if (next) await navigateTo(next.id);
+    if (next) {
+      const before = boardRef.current;
+      const navigated = await navigateTo(next.id);
+      if (navigated) triggerMoveFeedback(before, navigated);
+    }
   }
 
   async function selectBranchChoice(nodeId: string) {
     setBranchEditing(false);
     setBranchEditNodeId(undefined);
     setBranchPickerOpen(false);
+    const before = boardRef.current;
     const next = await navigateTo(nodeId);
+    if (next) triggerMoveFeedback(before, next);
     if (next && (next.branches?.length ?? 0) > 1) {
       setBranchPickerOpen(true);
       setNotice(`已进入 ${next.history?.length ?? 0} 半回合位置，请继续选择下一步`);
@@ -5348,8 +5401,12 @@ export default function App() {
         activeBuiltinOpeningBookId: preferences.activeBuiltinOpeningBookId,
         disabledXqbBookPaths: preferences.disabledXqbBookPaths,
         disabledEleeyeBookPaths: preferences.disabledEleeyeBookPaths,
+        moveAnimationEnabled: preferences.moveAnimationEnabled,
+        moveSoundEnabled: preferences.moveSoundEnabled,
+        moveSoundVolume: preferences.moveSoundVolume,
       });
       applyDesktopPreferences(saved);
+      if (!saved.moveAnimationEnabled) setMoveFeedback(undefined);
       if (localOpeningBookSettingsChanged) {
         await chessPlatform.initialize().then(applyBoard).catch(() => undefined);
       }
@@ -7112,7 +7169,7 @@ export default function App() {
         onRebuildMirrors={rebuildGameMirrors}
       />}
       {userManualOpen && <UserManualDialog appVersion={appInfo?.version ?? "1.0.0"} markdown={userManualMarkdown} onClose={() => setUserManualOpen(false)}/>}
-      {endgameTrainingOpen && <EndgameTrainingDialog onClose={() => setEndgameTrainingOpen(false)}/>}
+      {endgameTrainingOpen && <EndgameTrainingDialog preferences={desktopPreferences} riverText={riverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} onClose={() => setEndgameTrainingOpen(false)}/>}
       {aboutOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setAboutOpen(false); }}>
         <section className="about-dialog" role="dialog" aria-modal="true" aria-labelledby="about-title">
           <header><span><Info size={18}/><strong id="about-title">关于棋研</strong></span><button className="tool-button" title="关闭" onClick={() => setAboutOpen(false)}><X size={16}/></button></header>
@@ -7212,10 +7269,23 @@ export default function App() {
           <button className={`tool-button ${skinMenuOpen ? "active" : ""}`} title="棋盘皮肤" aria-label="棋盘皮肤" aria-expanded={skinMenuOpen} onClick={() => setSkinMenuOpen((open) => !open)}><Palette size={16}/></button>
           {skinMenuOpen && <section className="skin-menu-popup" aria-label="棋盘皮肤设置" onPointerLeave={() => setSkinHoverPreview(undefined)}>
             <header><strong>皮肤选择</strong><button className="tool-button" title="关闭皮肤选择" aria-label="关闭皮肤选择" onClick={() => { setSkinHoverPreview(undefined); setSkinMenuOpen(false); }}><X size={15}/></button></header>
-            <div><span>棋盘</span><button className={activeBoardSkin === "default" && activePieceSkin === "default" ? "active" : ""} onPointerEnter={() => setSkinHoverPreview({ boardSkin: "default", pieceSkin: "default" })} onClick={() => void updateBoardSkin({ boardSkin: "default", pieceSkin: "default" })}><i className="skin-choice-preview board default"/><b>默认</b></button></div>
-            <div><span>棋子</span><button className={activePieceSkin === "default" ? "active" : ""} onPointerEnter={() => setSkinHoverPreview({ boardSkin: activeBoardSkin, pieceSkin: "default" })} onClick={() => void updateBoardSkin({ boardSkin: desktopPreferences.boardSkin, pieceSkin: "default" })}><i className="skin-choice-preview piece default">将</i><b>默认</b></button></div>
+            <div><span>棋盘</span><button className={activeBoardSkin === "qingxin-zhuyun" && activePieceSkin === "qingxin-zhuyun" ? "active" : ""} onPointerEnter={() => setSkinHoverPreview({ boardSkin: "qingxin-zhuyun", pieceSkin: "qingxin-zhuyun" })} onClick={() => void updateBoardSkin({ boardSkin: "qingxin-zhuyun", pieceSkin: "qingxin-zhuyun" })}><i className="skin-choice-preview board qingxin-zhuyun"/><b>默认</b></button></div>
+            <div><span>棋子</span><button className={activePieceSkin === "qingxin-zhuyun" ? "active" : ""} onPointerEnter={() => setSkinHoverPreview({ boardSkin: activeBoardSkin, pieceSkin: "qingxin-zhuyun" })} onClick={() => void updateBoardSkin({ boardSkin: desktopPreferences.boardSkin, pieceSkin: "qingxin-zhuyun" })}><i className="skin-choice-preview piece qingxin-zhuyun">将</i><b>默认</b></button></div>
             <div className="skin-menu-featured"><span>红木鎏金</span><button className={activeBoardSkin === "hongmu" ? "active" : ""} onPointerEnter={() => setSkinHoverPreview({ boardSkin: "hongmu", pieceSkin: activePieceSkin })} onClick={() => void updateBoardSkin({ boardSkin: "hongmu", pieceSkin: desktopPreferences.pieceSkin })}><i className="skin-choice-preview board hongmu"/><b>棋盘</b></button><button className={activePieceSkin === "hongmu" ? "active" : ""} onPointerEnter={() => setSkinHoverPreview({ boardSkin: activeBoardSkin, pieceSkin: "hongmu" })} onClick={() => void updateBoardSkin({ boardSkin: desktopPreferences.boardSkin, pieceSkin: "hongmu" })}><i className="skin-choice-preview piece hongmu">帅</i><b>棋子</b></button></div>
             {syncAccount.status === "signedIn" && <><div className="skin-menu-featured"><span>经典雅致</span><button className={activeBoardSkin === "jingdian" ? "active" : ""} onPointerEnter={() => setSkinHoverPreview({ boardSkin: "jingdian", pieceSkin: activePieceSkin })} onClick={() => void updateBoardSkin({ boardSkin: "jingdian", pieceSkin: desktopPreferences.pieceSkin })}><i className="skin-choice-preview board jingdian"/><b>棋盘</b></button><button className={activePieceSkin === "jingdian" ? "active" : ""} onPointerEnter={() => setSkinHoverPreview({ boardSkin: activeBoardSkin, pieceSkin: "jingdian" })} onClick={() => void updateBoardSkin({ boardSkin: desktopPreferences.boardSkin, pieceSkin: "jingdian" })}><i className="skin-choice-preview piece jingdian"/><b>棋子</b></button></div><div className="skin-menu-featured"><span>霓虹星河</span><button className={activeBoardSkin === "xinghe" ? "active" : ""} onPointerEnter={() => setSkinHoverPreview({ boardSkin: "xinghe", pieceSkin: activePieceSkin })} onClick={() => void updateBoardSkin({ boardSkin: "xinghe", pieceSkin: desktopPreferences.pieceSkin })}><i className="skin-choice-preview board xinghe"/><b>棋盘</b></button><button className={activePieceSkin === "xinghe" ? "active" : ""} onPointerEnter={() => setSkinHoverPreview({ boardSkin: activeBoardSkin, pieceSkin: "xinghe" })} onClick={() => void updateBoardSkin({ boardSkin: desktopPreferences.boardSkin, pieceSkin: "xinghe" })}><i className="skin-choice-preview piece xinghe">将</i><b>棋子</b></button></div></>}
+            <label className="skin-menu-river-text">
+              <span>河界文案</span>
+              <input value={riverText} maxLength={16} placeholder="默认：楚河汉界" onChange={(event) => updateRiverText(event.target.value)} />
+              <small>留空恢复皮肤默认文字</small>
+            </label>
+            <label className="skin-menu-river-color">
+              <span>字体颜色</span>
+              <input type="color" value={riverTextColor} aria-label="河界字体颜色" onChange={(event) => updateRiverTextColor(event.target.value)} />
+            </label>
+            <label className="skin-menu-river-size">
+              <span>字体大小 <b>{riverTextSize}px</b></span>
+              <input type="range" min="16" max="42" value={riverTextSize} aria-label="河界字体大小" onChange={(event) => updateRiverTextSize(Number(event.target.value))} />
+            </label>
             <button className="skin-shop-launch" onClick={() => { setSkinMenuOpen(false); setSkinShopOpen(true); }}>打开装扮坊</button>
           </section>}
         </div>
@@ -7332,9 +7402,17 @@ export default function App() {
                 </span>
               )}
             </aside>}
-            <div className="board" aria-label="中国象棋棋盘">
+            <div className={`board ${displayedBoardSkin === "qingxin-zhuyun" && riverText ? "board-river-text-custom" : ""}`} aria-label="中国象棋棋盘">
               <div className="board-art" />
+              {displayedBoardSkin === "qingxin-zhuyun" && riverText && <span className="board-river-custom-label" style={{ "--river-text-color": riverTextColor, "--river-text-size": `${riverTextSize}px` } as CSSProperties}>{riverText}</span>}
               <MainBoardLastMoveOverlay move={mainBoardMarkerMove} reversed={boardDisplayReversed} boardSkin={displayedBoardSkin} />
+              <MainBoardMoveFeedback
+                feedback={moveFeedback}
+                reversed={boardDisplayReversed}
+                boardSkin={displayedBoardSkin}
+                pieceAsset={(piece) => pieceAsset(piece, displayedPieceSkin)}
+                onComplete={(id) => setMoveFeedback((current) => current?.id === id ? undefined : current)}
+              />
               {cells.map(({ row, col }) => {
                 const piece = pieceMap.get(`${row}-${col}`);
                 const isSelected = selected?.row === row && selected?.col === col;
@@ -7347,7 +7425,7 @@ export default function App() {
                 return (
                   <button
                     key={`${row}-${col}`}
-                    className={`board-square piece-${piece?.color ?? "empty"} ${candidatePreview ? "previewing" : ""} ${isSelected ? "selected" : ""} ${isThoughtPiece ? "thought-selected" : ""}`}
+                    className={`board-square piece-${piece?.color ?? "empty"} ${candidatePreview ? "previewing" : ""} ${isSelected ? "selected" : ""} ${isThoughtPiece ? "thought-selected" : ""} ${moveFeedback && moveFeedback.move.to.row === row && moveFeedback.move.to.col === col ? "move-feedback-target" : ""}`}
                     style={style}
                     disabled={isPlaying || !board.playable || !!candidatePreview}
                     onClick={() => void selectSquare(row, col)}
@@ -8171,8 +8249,10 @@ export default function App() {
         onResolveScreenshotMove={() => chessPlatform.resolveScreenshotMove()}
         onConfirmMarkedMove={async (iccs) => {
           try {
+            const beforeMove = boardRef.current;
             const next = normalizeBoardState(await chessPlatform.confirmRecognizedMove(iccs));
             applyBoard(next);
+            triggerMoveFeedback(beforeMove, next);
             closeLinkSessionDialog({ cleanupFileSession: true });
             setNotice("已确认写入当前棋谱变例，原有后续棋谱已保留");
           } catch (error) {

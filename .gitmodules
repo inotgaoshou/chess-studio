@@ -1,0 +1,3 @@
+[submodule "official-pikafish"]
+	path = third_party/pikafish
+	url = https://github.com/official-pikafish/Pikafish.git

@@ -32,7 +32,7 @@ pub(crate) fn collect_ttxq_h5_history(
 }
 
 const TTXQ_WINDOW_LABEL: &str = "ttxq-sync";
-const BRIDGE_VERSION: u32 = 12;
+const BRIDGE_VERSION: u32 = 15;
 const MAX_GAMES: usize = 20_000;
 const MAX_SCAN_NODES: usize = 20_000;
 const MAX_MOVES_PER_GAME: usize = 1_000;
@@ -2414,6 +2414,77 @@ mod tests {
         let cleared = model.store.load_move_nodes(game_id).unwrap().remove(0);
         assert!(cleared.comment.contains(TTXQ_ANNOTATION_BEGIN));
         assert!(cleared.comment.contains("我的本地备注"));
+    }
+
+    #[test]
+    fn imports_real_get_qipu_ubb_with_mainline_branch_and_comment_v2_annotations() {
+        let starting_fen = "2bak4/4a4/9/4pNpNp/6b2/9/4P4/3p5/crR1K3C/2nr5 w - - 0 1";
+        let mut record = ttxq_record("borrow-cannon-use-horse-2");
+        record.title = "借炮使马（2）".into();
+        record.starting_fen = starting_fen.into();
+        record.raw_moves = "736140508858415253655241655741525776524176554152554352414355415255345241345341525332524161534152536552416557415257765241765541525563524163514152513052413051415251725241725341525365524165574152573852412820".into();
+        record.raw_move_path = "NOTIFY_QIPU_DATA[0].thisObj._boardControl.getQipuMoveStep".into();
+        record.raw_move_type = "array<number>".into();
+        record.branch_complete = false;
+        record.branch_data = serde_json::json!({
+            "candidates": [{
+                "path": "boardControl[0].getMoveBranchKey.0-41-1",
+                "raw": "517052417062",
+                "valueType": "string"
+            }]
+        })
+        .to_string();
+        record.annotations = vec![
+            TtxqAnnotationDto {
+                source_route_id: 0,
+                absolute_after_ply: 0,
+                text: "借炮使马二".into(),
+                author: String::new(),
+                created_at: String::new(),
+                source_key: "commentV2.0[0]".into(),
+                key_format: "mainline-ply".into(),
+            },
+            TtxqAnnotationDto {
+                source_route_id: 0,
+                absolute_after_ply: 21,
+                text: "换岗".into(),
+                author: String::new(),
+                created_at: String::new(),
+                source_key: "commentV2.21[0]".into(),
+                key_format: "mainline-ply".into(),
+            },
+            TtxqAnnotationDto {
+                source_route_id: 1,
+                absolute_after_ply: 43,
+                text: "红可简胜".into(),
+                author: String::new(),
+                created_at: String::new(),
+                source_key: "commentV2.1-44[0]".into(),
+                key_format: "ttxq-comment-v2-route-ply".into(),
+            },
+        ];
+
+        let prepared = prepare_import_record(&record, starting_fen).unwrap();
+        assert_eq!(prepared.moves.len(), 51);
+        assert_eq!(prepared.variations.len(), 1);
+        assert_eq!(prepared.variations[0].after_ply, 40);
+        assert_eq!(prepared.variations[0].moves.len(), 3);
+
+        let mut model = test_app_model();
+        let game_id = import_game(
+            &mut model,
+            &prepared,
+            "sha256:borrow-cannon-use-horse-2",
+            "2026-09-09T00:00:00Z",
+            0,
+            TTXQ_BACKUP_FOLDER,
+        )
+        .unwrap();
+        let game = model.store.load_game(game_id).unwrap().unwrap();
+        assert!(game.note.contains("借炮使马二"));
+        let nodes = model.store.load_move_nodes(game_id).unwrap();
+        assert!(nodes.iter().any(|node| node.comment.contains("换岗")));
+        assert!(nodes.iter().any(|node| node.comment.contains("红可简胜")));
     }
 
     #[test]
@@ -4956,6 +5027,204 @@ if (JSON.stringify(payload.annotations).includes('48477741')) throw new Error('p
         assert!(
             output.status.success(),
             "collector did not map Dhtml annotation positions: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn collector_reads_get_qipu_comment_v2_rows() {
+        let branch_source = collector_source_between(
+            "      const branchPayload = (preferredControl = null) => {",
+            "      const liveLoadedId = () => {",
+        );
+        let harness = format!(
+            r#"(() => {{
+const propertyNames = value => Object.getOwnPropertyNames(value);
+const stringifyMoveValue = value => ({{ status: 'empty', text: '', length: 0 }});
+const safeMoveText = /^[0-9,\s\[\]]+$/;
+const findObjectWithOwnProperty = (root, property) => Object.prototype.hasOwnProperty.call(root, property) ? root : null;
+const control = {{
+  getMoveBranchKey: {{ '0-41-1': '517052417062' }},
+}};
+const model = {{
+  currentQipu: {{ qipuId: 'borrow-cannon-use-horse-2', data: {{ commentV2: {{
+    '0': [{{ msg: '借炮使马二', uname: '', time: '', uUin: 0 }}],
+    '21': [{{ msg: '换岗', uname: '', time: '', uUin: 0 }}],
+    '1-44': [{{ msg: '红可简胜', uname: '', time: '', uUin: 0 }}],
+  }} }} }},
+  _qipuData: {{ qipuId: 'previous-game', commentV2: {{
+    '0': [{{ msg: '上一盘注释，不得串入' }}],
+  }} }},
+}};
+const boardControls = () => [control];
+{branch_source}
+branchPayload.expectedQipuId = 'borrow-cannon-use-horse-2';
+const branch = branchPayload(control);
+const payload = JSON.parse(branch.data);
+if (payload.annotationsComplete !== true) throw new Error(`commentV2 was marked incomplete: ${{branch.data}}`);
+if (!payload.annotations || payload.annotations.length !== 3) throw new Error(`commentV2 rows were not collected: ${{branch.data}}`);
+const positions = payload.annotations.map(annotation => `${{annotation.sourceRouteId}}:${{annotation.absoluteAfterPly}}:${{annotation.text}}:${{annotation.keyFormat}}`).sort();
+if (positions.join('|') !== '0:0:借炮使马二:mainline-ply|0:21:换岗:mainline-ply|1:43:红可简胜:ttxq-comment-v2-route-ply') throw new Error(`commentV2 positions were mapped incorrectly: ${{JSON.stringify(payload.annotations)}}`);
+if (JSON.stringify(payload.annotations).includes('uUin')) throw new Error('private account fields leaked into commentV2 annotations');
+}})();"#
+        );
+        let output = std::process::Command::new("node")
+            .arg("-e")
+            .arg(harness)
+            .output()
+            .expect("Node.js is required to exercise commentV2 annotations");
+        assert!(
+            output.status.success(),
+            "collector skipped get-qipu commentV2 annotations: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn collector_reads_target_comment_v2_without_walking_the_detail_graph() {
+        let branch_source = collector_source_between(
+            "      const branchPayload = (preferredControl = null) => {",
+            "      const liveLoadedId = () => {",
+        );
+        let harness = format!(
+            r#"(() => {{
+let targetDetailRoot = null;
+const propertyNames = value => {{
+  if (value === targetDetailRoot) throw new Error('target detail graph was traversed');
+  return Object.getOwnPropertyNames(value);
+}};
+const stringifyMoveValue = value => ({{ status: 'empty', text: '', length: 0 }});
+const safeMoveText = /^[0-9,\s\[\]]+$/;
+const findObjectWithOwnProperty = (root, property) => Object.prototype.hasOwnProperty.call(root, property) ? root : null;
+const control = {{ getMoveBranchKey: {{}} }};
+targetDetailRoot = {{
+  qipuId: 'target-game',
+  data: {{ commentV2: {{
+    '0': [{{ msg: '整谱说明' }}],
+    '12': [{{ msg: '第十二回合说明' }}],
+  }} }},
+}};
+const model = {{ currentQipu: targetDetailRoot }};
+const boardControls = () => [control];
+{branch_source}
+branchPayload.expectedQipuId = 'target-game';
+const branch = branchPayload(control);
+const payload = JSON.parse(branch.data);
+if (!payload.annotations || payload.annotations.length !== 2) throw new Error(`direct commentV2 was not collected: ${{branch.data}}`);
+}})();"#
+        );
+        let output = std::process::Command::new("node")
+            .arg("-e")
+            .arg(harness)
+            .output()
+            .expect("Node.js is required to exercise bounded commentV2 collection");
+        assert!(
+            output.status.success(),
+            "collector walked the target detail object graph: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn collector_captures_comment_v2_from_get_qipu_fetch_response() {
+        let capture_source = collector_source_between(
+            "      const getQipuCapture = (() => {",
+            "      const bridgeRoots = () => [",
+        );
+        let branch_source = collector_source_between(
+            "      const branchPayload = (preferredControl = null) => {",
+            "      const liveLoadedId = () => {",
+        );
+        let harness = format!(
+            r#"(async () => {{
+const responsePayload = {{
+  ret: 0,
+  data: {{
+    qipuId: '71003870534',
+    commentV2: {{
+      '0': [{{ msg: '整谱说明', uname: '曹振华', time: '23-08-17 15:20', uUin: 48477741 }}],
+      '2': [{{ msg: '马8进7屏风马是最常见的。', uname: '曹振华', time: '23-08-17 15:22', uUin: 48477741 }}],
+    }},
+  }},
+}};
+const window = {{
+  fetch: async () => new Response(JSON.stringify(responsePayload), {{ headers: {{ 'content-type': 'application/json' }} }}),
+}};
+{capture_source}
+await window.fetch('https://h5.qqchess.qq.com/api/get-qipu', {{
+  method: 'POST',
+  body: JSON.stringify({{ qipuId: '71003870534' }}),
+}});
+await new Promise(resolve => setTimeout(resolve, 0));
+const captured = getQipuCapture.commentV2For('71003870534');
+if (!captured || captured['0'][0].msg !== '整谱说明' || captured['2'][0].msg !== '马8进7屏风马是最常见的。') throw new Error(`get-qipu commentV2 was not captured: ${{JSON.stringify(captured)}}`);
+if (JSON.stringify(captured).includes('48477741') || JSON.stringify(captured).includes('uUin')) throw new Error('private account fields leaked into the captured annotation response');
+const propertyNames = value => Object.getOwnPropertyNames(value);
+const stringifyMoveValue = value => ({{ status: 'empty', text: '', length: 0 }});
+const safeMoveText = /^[0-9,\s\[\]]+$/;
+const findObjectWithOwnProperty = (root, property) => Object.prototype.hasOwnProperty.call(root, property) ? root : null;
+const control = {{ getMoveBranchKey: {{}} }};
+const model = {{}};
+const boardControls = () => [control];
+{branch_source}
+branchPayload.expectedQipuId = '71003870534';
+const branch = branchPayload(control);
+const envelope = JSON.parse(branch.data);
+const positions = envelope.annotations.map(annotation => `${{annotation.sourceRouteId}}:${{annotation.absoluteAfterPly}}:${{annotation.text}}`).sort();
+if (positions.join('|') !== '0:0:整谱说明|0:2:马8进7屏风马是最常见的。') throw new Error(`captured annotations did not reach branch payload: ${{JSON.stringify(envelope.annotations)}}`);
+}})().catch(error => {{ console.error(error.message); process.exitCode = 1; }});"#
+        );
+        let output = std::process::Command::new("node")
+            .arg("-e")
+            .arg(harness)
+            .output()
+            .expect("Node.js is required to exercise get-qipu response capture");
+        assert!(
+            output.status.success(),
+            "collector missed get-qipu response annotations: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn collector_captures_comment_v2_from_get_qipu_xhr_response() {
+        let capture_source = collector_source_between(
+            "      const getQipuCapture = (() => {",
+            "      const bridgeRoots = () => [",
+        );
+        let harness = format!(
+            r#"(async () => {{
+const responsePayload = {{ data: {{ commentV2: {{
+  '3': [{{ msg: '第三局面说明', uname: '曹振华', time: '23-08-17 13:50', uUin: 48477741 }}],
+}} }} }};
+class FakeXMLHttpRequest {{
+  constructor() {{ this.listeners = new Map(); this.responseType = ''; this.responseText = ''; }}
+  addEventListener(type, listener) {{ this.listeners.set(type, listener); }}
+  open() {{}}
+  send() {{
+    this.responseText = JSON.stringify(responsePayload);
+    queueMicrotask(() => this.listeners.get('load')?.call(this));
+  }}
+}}
+const window = {{ XMLHttpRequest: FakeXMLHttpRequest }};
+{capture_source}
+const xhr = new window.XMLHttpRequest();
+xhr.open('POST', 'https://h5.qqchess.qq.com/api/get-qipu');
+xhr.send(JSON.stringify({{ qipuId: '43156805249' }}));
+await new Promise(resolve => setTimeout(resolve, 0));
+const captured = getQipuCapture.commentV2For('43156805249');
+if (!captured || captured['3'][0].msg !== '第三局面说明') throw new Error(`XHR commentV2 was not captured: ${{JSON.stringify(captured)}}`);
+if (JSON.stringify(captured).includes('48477741') || JSON.stringify(captured).includes('uUin')) throw new Error('private account fields leaked into the captured XHR response');
+}})().catch(error => {{ console.error(error.message); process.exitCode = 1; }});"#
+        );
+        let output = std::process::Command::new("node")
+            .arg("-e")
+            .arg(harness)
+            .output()
+            .expect("Node.js is required to exercise get-qipu XHR capture");
+        assert!(
+            output.status.success(),
+            "collector missed get-qipu XHR annotations: {}",
             String::from_utf8_lossy(&output.stderr)
         );
     }

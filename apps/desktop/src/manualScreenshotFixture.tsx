@@ -22,6 +22,7 @@ const preferences: DesktopPreferencesDto = {
   layoutMode: "compact", manualViewMode: "track", colorTheme: "light", boardSkin: "default", pieceSkin: "default",
   reportDepth: 22, builtinOpeningBookEnabled: true, activeBuiltinOpeningBookId: "learning-top3",
   ruleMode: "domestic2020", cloudBookEnabled: true, cloudBookUrl: "https://www.chessdb.cn/chessdb.php",
+  moveAnimationEnabled: true, moveSoundEnabled: true, moveSoundVolume: 70,
   serverUrl: "http://127.0.0.1:8080",
 };
 const account: SyncAccountDto = { serverUrl: preferences.serverUrl, status: "unbound" };

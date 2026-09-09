@@ -160,6 +160,9 @@ function sanitizeEnginePreferences(preferences: DesktopPreferencesDto): DesktopP
     branchArrowBadgeColor: branchArrowColors.some(([value]) => value === migrated.branchArrowBadgeColor) ? migrated.branchArrowBadgeColor : "#4aa51c",
     branchArrowStyleVersion: 1,
     ruleMode: migrated.ruleMode === "asianAxf" ? "asianAxf" : "domestic2020",
+    moveAnimationEnabled: migrated.moveAnimationEnabled ?? true,
+    moveSoundEnabled: migrated.moveSoundEnabled ?? true,
+    moveSoundVolume: clampInteger(migrated.moveSoundVolume ?? 70, 0, 100),
   };
 }
 
@@ -331,6 +334,21 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
               <span><strong>后台思考</strong><small>人机对弈预测下一手；局面变化会取消旧思考</small></span>
               <input type="checkbox" role="switch" checked={draft.ponder} onChange={(event) => setDraft({ ...draft, ponder: event.target.checked })}/>
             </label>
+            <section className="engine-feedback-settings" aria-label="行棋音画反馈">
+              <header><strong>行棋反馈</strong><small>仅在真实落子后播放，不影响棋谱跳转和候选推演。</small></header>
+              <label className="engine-ponder-switch">
+                <span><strong>动画效果</strong><small>显示走子、吃子与将军提示动画</small></span>
+                <input type="checkbox" role="switch" checked={draft.moveAnimationEnabled} onChange={(event) => setDraft({ ...draft, moveAnimationEnabled: event.target.checked })}/>
+              </label>
+              <label className="engine-ponder-switch">
+                <span><strong>声音效果</strong><small>走子、吃子和将军使用不同提示音</small></span>
+                <input type="checkbox" role="switch" checked={draft.moveSoundEnabled} onChange={(event) => setDraft({ ...draft, moveSoundEnabled: event.target.checked })}/>
+              </label>
+              <label className="engine-feedback-volume">
+                <span>音量 <strong>{draft.moveSoundVolume}%</strong></span>
+                <input aria-label="行棋声音音量" type="range" min="0" max="100" step="5" value={draft.moveSoundVolume} disabled={!draft.moveSoundEnabled} onChange={(event) => setDraft({ ...draft, moveSoundVolume: clampInteger(Number(event.target.value), 0, 100) })}/>
+              </label>
+            </section>
             <label className="engine-rule-quick">
               <span>棋规</span>
               <select value={draft.ruleMode ?? "domestic2020"} onChange={(event) => setDraft({ ...draft, ruleMode: event.target.value as DesktopPreferencesDto["ruleMode"] })}>{ruleModeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>

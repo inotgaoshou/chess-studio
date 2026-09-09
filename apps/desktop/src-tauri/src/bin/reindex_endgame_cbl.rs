@@ -1,5 +1,5 @@
 use local_store::{EndgameProblemImport, LocalStore};
-use manual_format::{import_cbl_library, CBL_PARSER_VERSION};
+use manual_format::{CBL_PARSER_VERSION, import_cbl_library};
 use sha2::{Digest, Sha256};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -20,6 +20,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let bytes = std::fs::read(&cbl_path)?;
     let parsed = import_cbl_library(&bytes)?;
+    if parsed.problems.is_empty() {
+        let title = if parsed.title.trim().is_empty() {
+            "这个 CBL 文件"
+        } else {
+            parsed.title.trim()
+        };
+        return Err(format!(
+            "《{title}》没有可导入的残局题目。这个入口只导入非标准开局、有题解着法的残局 CBL；整局棋谱库请从棋谱导入入口导入。"
+        )
+        .into());
+    }
     let problems = parsed
         .problems
         .iter()
@@ -42,6 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &parsed.title,
         CBL_PARSER_VERSION,
         &problems,
+        None,
     )?;
 
     println!(

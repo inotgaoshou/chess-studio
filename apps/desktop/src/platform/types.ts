@@ -493,6 +493,9 @@ export type DesktopPreferencesDto = {
   linkStableFrames?: number;
   linkConfidenceThreshold?: number;
   linkAnimationConfirmation?: boolean;
+  moveAnimationEnabled: boolean;
+  moveSoundEnabled: boolean;
+  moveSoundVolume: number;
   gameMirrorEnabled?: boolean;
   gameMirrorRoot?: string;
   serverUrl: string;
@@ -617,11 +620,13 @@ export type TrainingGenerationResultDto = {
   criticalCount: number;
   reinforcementCount: number;
 };
-export type EndgameLibraryDto = { id: string; title: string; sourcePath: string; fingerprint: string; parserVersion: number; problemCount: number; completedCount: number; importedAt: string };
+export type EndgameFolderDto = { id: string; parentId?: string | null; name: string; createdAt: string };
+export type EndgameLibraryDto = { id: string; folderId?: string | null; title: string; sourcePath: string; fingerprint: string; parserVersion: number; problemCount: number; completedCount: number; importedAt: string };
 export type EndgameProblemDto = { id: string; libraryId: string; sourceIndex: number; title: string; category: string; startingFen: string; note: string; solutionJson: string; completedAttempts: number; totalElapsedMs: number };
 export type EndgameImportResultDto = { library: EndgameLibraryDto; warnings: string[] };
+export type EndgameBatchImportItemDto = { path: string; library?: EndgameLibraryDto; warnings: string[]; error?: string };
+export type EndgameBatchImportResultDto = { items: EndgameBatchImportItemDto[] };
 export type EndgameRefreshResultDto = { warnings: string[] };
-export type EndgameFreePracticeMoveDto = { fen: string; notation: string; terminal: boolean };
 export type CblGameLibraryImportResultDto = {
   title: string;
   folder: string;
@@ -750,6 +755,8 @@ export type ReferenceGameDocumentDto = { game: ReferenceGameSummaryDto; document
 export type ReferencePublishResultDto = { status: string; inserted: number; duplicates: number; removed?: number };
 export type ReferenceOfflinePackageResultDto = { sha256: string; compressedBytes: number; gameCount: number };
 export type ReferenceOfflinePackageManifestDto = { version: string; packageUrl: string; sha256: string; gameCount: number; publishedAt?: string };
+export type EndgameFreePracticeMoveDto = { fen: string; notation: string; terminal: boolean; captured: boolean; check: boolean; checkmate: boolean };
+export type EndgameMoveFeedbackDto = { terminal: boolean; captured: boolean; check: boolean; checkmate: boolean };
 export type EndgameAttemptDto = { id: string; mode: string; elapsedMs: number; hintsUsed: number; mistakes: number; outcome: string; createdAt: string };
 export type LearningProfile = {
   id: string;
@@ -1088,16 +1095,25 @@ export interface ChessPlatform {
   inferOpeningRepertoire(): Promise<OpeningRepertoire>;
   getTrainingSummary(): Promise<TrainingSummaryDto>;
   importEndgameCbl(): Promise<EndgameImportResultDto | undefined>;
+  importEndgameCblBatch(folderId?: string): Promise<EndgameBatchImportResultDto | undefined>;
   importEndgameCblFromPath(path: string): Promise<EndgameImportResultDto>;
   refreshEndgameLibraries(): Promise<EndgameRefreshResultDto>;
   listEndgameLibraries(): Promise<EndgameLibraryDto[]>;
+  listEndgameFolders(): Promise<EndgameFolderDto[]>;
+  createEndgameFolder(parentId: string | undefined, name: string): Promise<EndgameFolderDto>;
+  moveEndgameFolder(folderId: string, parentId: string | undefined): Promise<void>;
+  deleteEndgameFolder(folderId: string): Promise<void>;
+  reorderEndgameFolder(folderId: string, moveUp: boolean): Promise<boolean>;
+  moveEndgameLibraries(libraryIds: string[], folderId: string | undefined): Promise<number>;
+  reorderEndgameLibrary(libraryId: string, moveUp: boolean): Promise<boolean>;
   listEndgameProblems(libraryId: string): Promise<EndgameProblemDto[]>;
   listEndgameAttempts(problemId: string): Promise<EndgameAttemptDto[]>;
-  saveEndgameAttempt(request: { problemId: string; mode: "solver" | "replay" | "free"; elapsedMs: number; hintsUsed: number; mistakes: number; outcome: "completed" | "revealed" | "abandoned" | "free_finished" }): Promise<void>;
+  saveEndgameAttempt(request: { problemId: string; mode: "cloud" | "solver" | "replay" | "free"; elapsedMs: number; hintsUsed: number; mistakes: number; outcome: "completed" | "revealed" | "abandoned" | "free_finished" }): Promise<void>;
   deleteEndgameLibrary(libraryId: string): Promise<void>;
   deleteEndgameProblem(problemId: string): Promise<void>;
   endgameChineseMainline(startingFen: string, moves: string[]): Promise<string[]>;
   endgameFreePracticeMove(startingFen: string, previousMoves: string[], iccs: string): Promise<EndgameFreePracticeMoveDto>;
+  endgameMoveFeedback(startingFen: string, previousMoves: string[], iccs: string): Promise<EndgameMoveFeedbackDto>;
   listStudySessions(): Promise<StudySessionDto[]>;
   saveStudySession(reflection: string, tags: string[]): Promise<StudySessionDto>;
   scanTheoryLibrary(): Promise<TheoryLibraryDto>;

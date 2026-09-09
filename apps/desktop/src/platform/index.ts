@@ -6,7 +6,7 @@ import { isMobileBuild } from "../mobileEnvironment";
 import { webDatabase, type SyncOperation, type WebGameRecord } from "./indexedDb";
 import { CLOUD_ENGINE_VERSION, CLOUD_NNUE_VERSION, runCloudAnalysisJob } from "./cloudAnalysisJobs";
 import { BUILTIN_ENGINE_PATH, FALLBACK_BUILTIN_OPENING_BOOK_MANIFEST } from "./types";
-import type { AnalysisLine, AnalysisOptions, AppInfoDto, BoardState, BookImportDraft, BookTopicDetail, BuiltinOpeningBookManifestDto, CaptureSource, CblGameLibraryImportResultDto, ChessPlatform, CloudAnalysisPreferences, CloudAuthDto, CloudBookCandidate, CloudGuestAuthDto, DesktopPreferencesDto, EndgameAttemptDto, EndgameFreePracticeMoveDto, EndgameImportResultDto, EndgameLibraryDto, EndgameProblemDto, EndgameRefreshResultDto, EngineArenaOptionsDto, EngineArenaResultDto, EngineMoveResult, EnginePlayOptions, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, ExportFormat, FlyknifeCandidate, FlyknifePlan, FlyknifeTemplate, FlyknifeTopic, GameMetadata, GameMirrorStatus, GameReportDatasetDto, GameReportOptionsDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, GenerateFlyknifeRequest, LibraryFolder, LibraryMoveResult, LinkAutoSide, LinkObservation, LinkSessionStatus, LinkTargetWindow, MasterGameDetailDto, MasterLibraryStatsDto, MasterGameSummaryDto, MasterLibraryFilters, MasterOpeningProfileDto, MasterPlayerDto, MasterStyleHintDto, MasterStyleImportResultDto, MasterStyleProfileDto, OpeningCategoryDto, OpeningMatchDto, PositionExplorerRequest, PositionMoveStatDto, PreviewLineStep, ReferenceGameDocumentDto, ReferenceGameFilters, ReferenceGameSummaryDto, ReferenceImportBatchDto, ReferenceOfflinePackageManifestDto, ReferenceOfflinePackageResultDto, ReferencePublishResultDto, ReferenceReviewIssueDto, ReferenceSourceDto, RelatedMasterGame, ReplayExportScope, ScreenshotMoveResolution, StartLinkSessionRequest, StudySessionDto, SubscriptionDto, SyncAccountDto, SyncResult, TheoryCardDto, TheoryCardFeedbackDto, TheoryLibraryDto, TrainingGenerationResultDto, TrainingSummaryDto, TrainingTaskDto, TtxqDiagnosticSample, TtxqGamePreview, TtxqSyncProgress } from "./types";
+import type { AnalysisLine, AnalysisOptions, AppInfoDto, BoardState, BookImportDraft, BookTopicDetail, BuiltinOpeningBookManifestDto, CaptureSource, CblGameLibraryImportResultDto, ChessPlatform, CloudAnalysisPreferences, CloudAuthDto, CloudBookCandidate, CloudGuestAuthDto, DesktopPreferencesDto, EndgameAttemptDto, EndgameBatchImportResultDto, EndgameFolderDto, EndgameFreePracticeMoveDto, EndgameImportResultDto, EndgameLibraryDto, EndgameMoveFeedbackDto, EndgameProblemDto, EndgameRefreshResultDto, EngineArenaOptionsDto, EngineArenaResultDto, EngineMoveResult, EnginePlayOptions, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, ExportFormat, FlyknifeCandidate, FlyknifePlan, FlyknifeTemplate, FlyknifeTopic, GameMetadata, GameMirrorStatus, GameReportDatasetDto, GameReportOptionsDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, GenerateFlyknifeRequest, LibraryFolder, LibraryMoveResult, LinkAutoSide, LinkObservation, LinkSessionStatus, LinkTargetWindow, MasterGameDetailDto, MasterLibraryStatsDto, MasterGameSummaryDto, MasterLibraryFilters, MasterOpeningProfileDto, MasterPlayerDto, MasterStyleHintDto, MasterStyleImportResultDto, MasterStyleProfileDto, OpeningCategoryDto, OpeningMatchDto, PositionExplorerRequest, PositionMoveStatDto, PreviewLineStep, ReferenceGameDocumentDto, ReferenceGameFilters, ReferenceGameSummaryDto, ReferenceImportBatchDto, ReferenceOfflinePackageManifestDto, ReferenceOfflinePackageResultDto, ReferencePublishResultDto, ReferenceReviewIssueDto, ReferenceSourceDto, RelatedMasterGame, ReplayExportScope, ScreenshotMoveResolution, StartLinkSessionRequest, StudySessionDto, SubscriptionDto, SyncAccountDto, SyncResult, TheoryCardDto, TheoryCardFeedbackDto, TheoryLibraryDto, TrainingGenerationResultDto, TrainingSummaryDto, TrainingTaskDto, TtxqDiagnosticSample, TtxqGamePreview, TtxqSyncProgress } from "./types";
 import type { ChineseLineParseResult, DailyTrainingPlan, GuidedAnalysisStart, GuidedAnalysisSubmission, GuidedAnalysisSubmissionResult, GuidedEngineLine, LearningProfile, OpeningRepertoire, WeeklyLearningReport } from "./types";
 
 type WebGameInstance = {
@@ -339,16 +339,25 @@ class DesktopPlatform implements ChessPlatform {
   inferOpeningRepertoire() { return invoke<OpeningRepertoire>("infer_opening_repertoire_command"); }
   getTrainingSummary() { return invoke<TrainingSummaryDto>("get_training_summary"); }
   async importEndgameCbl() { const path = await open({ multiple: false, directory: false, filters: [{ name: "CCBridge 残局题库", extensions: ["cbl"] }] }); if (!path || Array.isArray(path)) return undefined; return invoke<EndgameImportResultDto>("import_endgame_cbl", { path }); }
+  async importEndgameCblBatch(folderId?: string) { const selection = await open({ multiple: true, directory: false, filters: [{ name: "CCBridge 残局题库", extensions: ["cbl"] }] }); if (!selection) return undefined; const paths = Array.isArray(selection) ? selection : [selection]; return invoke<EndgameBatchImportResultDto>("import_endgame_cbl_batch", { paths, folderId: folderId ?? null }); }
   importEndgameCblFromPath(path: string) { return invoke<EndgameImportResultDto>("import_endgame_cbl", { path }); }
   refreshEndgameLibraries() { return invoke<EndgameRefreshResultDto>("refresh_endgame_libraries"); }
   listEndgameLibraries() { return invoke<EndgameLibraryDto[]>("list_endgame_libraries"); }
+  listEndgameFolders() { return invoke<EndgameFolderDto[]>("list_endgame_folders"); }
+  createEndgameFolder(parentId: string | undefined, name: string) { return invoke<EndgameFolderDto>("create_endgame_folder", { parentId: parentId ?? null, name }); }
+  moveEndgameFolder(folderId: string, parentId: string | undefined) { return invoke<void>("move_endgame_folder", { folderId, parentId: parentId ?? null }); }
+  deleteEndgameFolder(folderId: string) { return invoke<void>("delete_endgame_folder", { folderId }); }
+  reorderEndgameFolder(folderId: string, moveUp: boolean) { return invoke<boolean>("reorder_endgame_folder", { folderId, moveUp }); }
+  moveEndgameLibraries(libraryIds: string[], folderId: string | undefined) { return invoke<number>("move_endgame_libraries", { libraryIds, folderId: folderId ?? null }); }
+  reorderEndgameLibrary(libraryId: string, moveUp: boolean) { return invoke<boolean>("reorder_endgame_library", { libraryId, moveUp }); }
   listEndgameProblems(libraryId: string) { return invoke<EndgameProblemDto[]>("list_endgame_problems", { libraryId }); }
   listEndgameAttempts(problemId: string) { return invoke<EndgameAttemptDto[]>("list_endgame_attempts", { problemId }); }
-  saveEndgameAttempt(request: { problemId: string; mode: "solver" | "replay" | "free"; elapsedMs: number; hintsUsed: number; mistakes: number; outcome: "completed" | "revealed" | "abandoned" | "free_finished" }) { return invoke<void>("save_endgame_attempt", request); }
+  saveEndgameAttempt(request: { problemId: string; mode: "cloud" | "solver" | "replay" | "free"; elapsedMs: number; hintsUsed: number; mistakes: number; outcome: "completed" | "revealed" | "abandoned" | "free_finished" }) { return invoke<void>("save_endgame_attempt", request); }
   deleteEndgameLibrary(libraryId: string) { return invoke<void>("delete_endgame_library", { libraryId }); }
   deleteEndgameProblem(problemId: string) { return invoke<void>("delete_endgame_problem", { problemId }); }
   endgameChineseMainline(startingFen: string, moves: string[]) { return invoke<string[]>("endgame_chinese_mainline", { startingFen, moves }); }
   endgameFreePracticeMove(startingFen: string, previousMoves: string[], iccs: string) { return invoke<EndgameFreePracticeMoveDto>("endgame_free_practice_move", { startingFen, previousMoves, iccs }); }
+  endgameMoveFeedback(startingFen: string, previousMoves: string[], iccs: string) { return invoke<EndgameMoveFeedbackDto>("endgame_move_feedback", { startingFen, previousMoves, iccs }); }
   listStudySessions() { return invoke<StudySessionDto[]>("list_study_sessions"); }
   saveStudySession(reflection: string, tags: string[]) { return invoke<StudySessionDto>("save_study_session", { reflection, tags }); }
   scanTheoryLibrary() { return invoke<TheoryLibraryDto>("scan_theory_library"); }
@@ -1050,6 +1059,7 @@ class WebPlatform implements ChessPlatform {
   async inferOpeningRepertoire(): Promise<OpeningRepertoire> { throw new Error("Web 端暂不支持 U10 布局画像"); }
   async getTrainingSummary(): Promise<TrainingSummaryDto> { throw new Error("Web 端暂不支持训练总结"); }
   async importEndgameCbl(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
+  async importEndgameCblBatch(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
   async importEndgameCblFromPath(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
   async importCblGameLibrary(): Promise<never> { throw new Error("Web 端不支持本地 CBL 棋谱库"); }
   async chooseReferenceSource(): Promise<never> { throw new Error("Web 端不支持本地参考实战库"); }
@@ -1098,6 +1108,13 @@ class WebPlatform implements ChessPlatform {
   async installReferenceOfflinePackage(): Promise<never> { throw new Error("Web 端不支持安装桌面离线参考库"); }
   async refreshEndgameLibraries(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
   async listEndgameLibraries(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
+  async listEndgameFolders(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
+  async createEndgameFolder(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
+  async moveEndgameFolder(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
+  async deleteEndgameFolder(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
+  async reorderEndgameFolder(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
+  async moveEndgameLibraries(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
+  async reorderEndgameLibrary(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
   async listEndgameProblems(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
   async listEndgameAttempts(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
   async saveEndgameAttempt(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
@@ -1105,6 +1122,7 @@ class WebPlatform implements ChessPlatform {
   async deleteEndgameProblem(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
   async endgameChineseMainline(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
   async endgameFreePracticeMove(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
+  async endgameMoveFeedback(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
   async listStudySessions(): Promise<StudySessionDto[]> { throw new Error("Web 端暂不支持训练总结"); }
   async saveStudySession(): Promise<StudySessionDto> { throw new Error("Web 端暂不支持训练总结"); }
   async scanTheoryLibrary(): Promise<TheoryLibraryDto> { throw new Error("Web 端暂不支持本地棋理库"); }

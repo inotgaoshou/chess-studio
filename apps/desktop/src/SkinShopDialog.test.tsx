@@ -7,9 +7,9 @@ afterEach(cleanup);
 
 const preferences: DesktopPreferencesDto = {
   enginePath: "", threads: 2, hashMb: 256, multipv: 2, candidateLineMoves: 16, searchMode: "depth", searchValue: 30,
-  moveTimeMs: 1000, ponder: false, autoAnalyze: true, boardSkin: "default", pieceSkin: "default",
+  moveTimeMs: 1000, ponder: false, autoAnalyze: true, boardSkin: "qingxin-zhuyun", pieceSkin: "qingxin-zhuyun",
   colorTheme: "dark", activeEngineId: undefined, libraryCollapsed: true, candidateRailCollapsed: false,
-  analysisPanelCollapsed: false, evaluationCollapsed: true, branchArrowColor: "#2f80ed", analysisEngineMode: "single", parallelEngineIds: [], workspacePanel: "moves", layoutMode: "studio", manualViewMode: "track", reportDepth: 18, builtinOpeningBookEnabled: true, activeBuiltinOpeningBookId: "learning-top3", ruleMode: "domestic2020", serverUrl: "http://127.0.0.1:8080",
+  analysisPanelCollapsed: false, evaluationCollapsed: true, branchArrowColor: "#2f80ed", analysisEngineMode: "single", parallelEngineIds: [], workspacePanel: "moves", layoutMode: "studio", manualViewMode: "track", reportDepth: 18, builtinOpeningBookEnabled: true, activeBuiltinOpeningBookId: "learning-top3", ruleMode: "domestic2020", moveAnimationEnabled: true, moveSoundEnabled: true, moveSoundVolume: 70, serverUrl: "http://127.0.0.1:8080",
 };
 
 function renderShop(signedIn = false, overrides: Partial<DesktopPreferencesDto> = {}) {
@@ -20,7 +20,7 @@ function renderShop(signedIn = false, overrides: Partial<DesktopPreferencesDto> 
 }
 
 describe("SkinShopDialog", () => {
-  it("labels the compatible original skin slot as the default skin", () => {
+  it("labels the bundled bamboo skin as the default skin", () => {
     renderShop();
     const defaultBoard = screen.getByText("默认棋盘").closest("article")!;
     expect(defaultBoard.querySelector("button")?.disabled).toBe(true);
@@ -52,7 +52,7 @@ describe("SkinShopDialog", () => {
     expect(screen.getByText("经典雅致")).toBeTruthy();
     expect(screen.getByText("霓虹星河")).toBeTruthy();
     fireEvent.click(screen.getAllByRole("button", { name: "使用" })[0]);
-    expect(onEquip).toHaveBeenCalledWith({ boardSkin: "default", pieceSkin: "jingdian" });
+    expect(onEquip).toHaveBeenCalledWith({ boardSkin: "qingxin-zhuyun", pieceSkin: "jingdian" });
   });
 
   it("previews and clears a base board skin on hover", () => {
@@ -60,19 +60,19 @@ describe("SkinShopDialog", () => {
     const card = screen.getByText("红木鎏金").closest("article")!;
     fireEvent.pointerEnter(card);
     fireEvent.pointerLeave(card);
-    expect(onPreview).toHaveBeenNthCalledWith(1, { boardSkin: "hongmu", pieceSkin: "default" });
+    expect(onPreview).toHaveBeenNthCalledWith(1, { boardSkin: "hongmu", pieceSkin: "qingxin-zhuyun" });
     expect(onPreview).toHaveBeenLastCalledWith();
   });
 
-  it("uses the complete default skin instead of retaining the current piece skin", () => {
+  it("uses the complete bamboo default skin instead of retaining the current piece skin", () => {
     const { onPreview, onEquip } = renderShop(false, { boardSkin: "hongmu", pieceSkin: "hongmu" });
     const defaultBoard = screen.getByText("默认棋盘").closest("article")!;
 
     fireEvent.pointerEnter(defaultBoard);
     fireEvent.click(defaultBoard.querySelector("button")!);
 
-    expect(onPreview).toHaveBeenLastCalledWith({ boardSkin: "default", pieceSkin: "default" });
-    expect(onEquip).toHaveBeenCalledWith({ boardSkin: "default", pieceSkin: "default" });
+    expect(onPreview).toHaveBeenLastCalledWith({ boardSkin: "qingxin-zhuyun", pieceSkin: "qingxin-zhuyun" });
+    expect(onEquip).toHaveBeenCalledWith({ boardSkin: "qingxin-zhuyun", pieceSkin: "qingxin-zhuyun" });
   });
 
 });

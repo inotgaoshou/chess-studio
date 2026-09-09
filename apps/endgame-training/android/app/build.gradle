@@ -3,12 +3,15 @@ apply plugin: 'com.android.application'
 android {
     namespace "cn.xiangqi.endgame.training"
     compileSdk rootProject.ext.compileSdkVersion
+    buildFeatures {
+        buildConfig true
+    }
     defaultConfig {
         applicationId "cn.xiangqi.endgame.training"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode Integer.parseInt(System.getenv("ANDROID_VERSION_CODE") ?: "10001")
-        versionName System.getenv("ANDROID_VERSION_NAME") ?: "1.0.1"
+        versionCode Integer.parseInt(System.getenv("ANDROID_VERSION_CODE") ?: "10014")
+        versionName System.getenv("ANDROID_VERSION_NAME") ?: "1.0.0.14"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -37,6 +40,11 @@ android {
                 signingConfig signingConfigs.release
             }
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging true
         }
     }
 }

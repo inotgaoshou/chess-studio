@@ -391,6 +391,25 @@ describe("ReviewWorkspace", () => {
     expect(within(screen.getByLabelText("当前着法思路")).queryByText("进边兵制马，针锋相对。")).toBeNull();
   });
 
+  it("hides and restores imported annotations without changing their content", async () => {
+    renderWorkspace({
+      board: {
+        ...board,
+        currentNode: "move-1",
+        history: [{
+          ...board.history[0],
+          comment: "【天天象棋注解】\n曹振华 · 23-08-17 15:22\n马8进7屏风马是最常见的。\n【天天象棋注解结束】",
+        }],
+      },
+    });
+
+    expect(screen.getByLabelText("天天象棋注解")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "隐藏注释" }));
+    expect(screen.queryByLabelText("天天象棋注解")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "显示注释" }));
+    expect(screen.getByText("马8进7屏风马是最常见的。")).toBeTruthy();
+  });
+
   it("keeps a single-line source annotation visible and edits only the local note", async () => {
     const onSaveComment = vi.fn().mockResolvedValue(true);
     renderWorkspace({

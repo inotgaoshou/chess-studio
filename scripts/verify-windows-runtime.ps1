@@ -78,6 +78,7 @@ try {
   Require-PayloadFile "pikafish.exe" | Out-Null
   Require-PayloadFile "pikafish.nnue" | Out-Null
   $pikafishManifest = Require-PayloadFile "RESOURCE-MANIFEST.txt"
+  Require-PayloadFile "NNUE-License.md" | Out-Null
   Require-PayloadFile "Pikafish-README.md" | Out-Null
   Require-PayloadFile "yolov11.onnx" | Out-Null
   Require-UniquePayloadPath '(^|/)master-style/seed-manifest\.json$' "master-style seed manifest" | Out-Null
@@ -94,8 +95,8 @@ try {
     throw "The installer is missing the application-level Pikafish third-party notice."
   }
   $manifestText = Get-Content -LiteralPath $pikafishManifest.FullName -Raw
-  if ($manifestText -notmatch "Pikafish NNUE source label: pikafish权重260720" -or
-      $manifestText -notmatch "Pikafish NNUE SHA256: 3cd15292bf8c979884262f57fc723959fc0dea43b4d8d544f88db5ceb2479e24") {
+  if ($manifestText -notmatch "Pikafish release tag: Pikafish-2026-09-06" -or
+      $manifestText -notmatch "Pikafish NNUE SHA256: 7d13d73569a9b571ba0eb20cf1596247bc2a42738967e61afef6482b231e900e") {
     throw "The packaged Pikafish resource manifest does not retain the pinned NNUE source and hash."
   }
 

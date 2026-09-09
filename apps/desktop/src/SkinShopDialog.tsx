@@ -1,7 +1,7 @@
 import { LockKeyhole, Palette, ShoppingBag, X } from "lucide-react";
 import { useState } from "react";
 import type { DesktopPreferencesDto } from "./platform";
-import { normalizeSkinId, skinAssetFolder, skinCatalogFor } from "./skinAccess";
+import { DEFAULT_SKIN, normalizeSkinId, skinAssetFolder, skinCatalogFor } from "./skinAccess";
 
 type Skin = DesktopPreferencesDto["boardSkin"];
 type SkinTab = "board" | "piece";
@@ -16,8 +16,8 @@ export function SkinShopDialog({ preferences, signedIn, onClose, onPreview, onEq
   const currentPieceSkin = normalizeSkinId(preferences.pieceSkin);
   const items = skinCatalogFor(isBoard ? "board" : "piece").filter((skin) => memberSkin ? skin.memberOnly : !skin.memberOnly);
   const patchFor = (skin: Skin): SkinPatch => isBoard
-    ? skin === "default"
-      ? { boardSkin: "default", pieceSkin: "default" }
+    ? skin === DEFAULT_SKIN
+      ? { boardSkin: DEFAULT_SKIN, pieceSkin: DEFAULT_SKIN }
       : { boardSkin: skin, pieceSkin: currentPieceSkin }
     : { boardSkin: currentBoardSkin, pieceSkin: skin };
   const cards = items.map(({ folder, title, detail }) => {

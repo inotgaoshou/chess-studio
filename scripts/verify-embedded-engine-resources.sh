@@ -3,10 +3,11 @@ set -euo pipefail
 
 TARGET_PLATFORM="${1:?Usage: verify-embedded-engine-resources.sh <macos-arm64|macos-x64|windows-x64|linux-x64>}"
 PIKAFISH_RESOURCE_DIR="apps/desktop/src-tauri/resources/pikafish"
-EXPECTED_PIKAFISH_SOURCE_REVISION="b97ef0f9eb15bd99899b272e0236bfebf86313b6"
-EXPECTED_PIKAFISH_SOURCE_SHORT_REVISION="b97ef0f9"
-EXPECTED_PIKAFISH_NNUE_LABEL="pikafish权重260720"
-EXPECTED_PIKAFISH_NNUE_SHA256="3cd15292bf8c979884262f57fc723959fc0dea43b4d8d544f88db5ceb2479e24"
+EXPECTED_PIKAFISH_RELEASE_TAG="Pikafish-2026-09-06"
+EXPECTED_PIKAFISH_SOURCE_REVISION="4c17cee11f888ae1d48a9494f2e2239f019f0a1f"
+EXPECTED_PIKAFISH_RUNTIME_VERSION="Pikafish 2026-09-06"
+EXPECTED_PIKAFISH_NNUE_LABEL="Pikafish 2026-09-06 bundled NNUE (64 MiB)"
+EXPECTED_PIKAFISH_NNUE_SHA256="7d13d73569a9b571ba0eb20cf1596247bc2a42738967e61afef6482b231e900e"
 EXPECTED_PIKAFISH_NNUE_RUNTIME_MARKER="NNUE evaluation using pikafish.nnue"
 
 require_file() {
@@ -60,8 +61,9 @@ require_pikafish_runtime_metadata() {
     cd "$PIKAFISH_RESOURCE_DIR"
     "./$engine_name" bench 1 2>/dev/null || true
   )"
-  if [[ "$output" != *"Pikafish dev-"*"-$EXPECTED_PIKAFISH_SOURCE_SHORT_REVISION"* ]]; then
+  if [[ "$output" != *"$EXPECTED_PIKAFISH_RUNTIME_VERSION"* ]]; then
     echo "Pikafish runtime version mismatch for $TARGET_PLATFORM." >&2
+    echo "Expected release tag: $EXPECTED_PIKAFISH_RELEASE_TAG" >&2
     echo "Expected source revision: $EXPECTED_PIKAFISH_SOURCE_REVISION" >&2
     echo "First output lines:" >&2
     printf '%s\n' "$output" | sed -n '1,8p' >&2
@@ -104,6 +106,7 @@ case "$TARGET_PLATFORM" in
 esac
 
 require_file "$PIKAFISH_RESOURCE_DIR/pikafish.nnue" "Pikafish NNUE"
+require_file "$PIKAFISH_RESOURCE_DIR/NNUE-License.md" "Pikafish NNUE license"
 require_sha256 "$PIKAFISH_RESOURCE_DIR/pikafish.nnue" "$EXPECTED_PIKAFISH_NNUE_SHA256" "Pikafish NNUE $EXPECTED_PIKAFISH_NNUE_LABEL"
 require_pikafish_runtime_metadata "$PIKAFISH_EXECUTABLE"
 reject_mixed_nnue "$PIKAFISH_RESOURCE_DIR" 'xiangqi-*.nnue' "Pikafish"
@@ -129,6 +132,7 @@ if [[ "$TARGET_PLATFORM" == "windows-x64" ]]; then
 fi
 
 echo "Verified embedded engines and NNUE resources for $TARGET_PLATFORM:"
+echo "  Pikafish release tag: $EXPECTED_PIKAFISH_RELEASE_TAG"
 echo "  Pikafish source revision: $EXPECTED_PIKAFISH_SOURCE_REVISION"
 echo "  Pikafish NNUE: $EXPECTED_PIKAFISH_NNUE_LABEL ($EXPECTED_PIKAFISH_NNUE_SHA256)"
 find "$PIKAFISH_RESOURCE_DIR" -maxdepth 1 -type f -print

@@ -34,6 +34,9 @@ const preferences: DesktopPreferencesDto = {
   builtinOpeningBookEnabled: true,
   activeBuiltinOpeningBookId: "learning-top3",
   ruleMode: "domestic2020",
+  moveAnimationEnabled: true,
+  moveSoundEnabled: true,
+  moveSoundVolume: 70,
   serverUrl: "http://127.0.0.1:8080",
 };
 

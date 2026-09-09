@@ -10,19 +10,20 @@ export type SkinCatalogItem = {
 };
 
 export const SKIN_CATALOG: SkinCatalogItem[] = [
-  { folder: "default", title: "默认", boardDetail: "默认棋盘文件夹", pieceDetail: "默认棋子文件夹" },
+  { folder: "default", title: "经典", boardDetail: "经典木纹棋盘", pieceDetail: "经典红黑棋子" },
   { folder: "hongmu", title: "红木鎏金", boardDetail: "深色红木与金色棋线", pieceDetail: "金色立体红黑棋子" },
   { folder: "qingxin-zhuyun", title: "清新竹韵", boardDetail: "竹纹浅色棋盘与清爽绿意", pieceDetail: "清新竹韵红黑棋子" },
   { folder: "jingdian", title: "经典雅致", boardDetail: "传统棋盘与经典棋子", pieceDetail: "传统棋盘与经典棋子", memberOnly: true },
   { folder: "xinghe", title: "霓虹星河", boardDetail: "赛博星空与蓝紫棋线", pieceDetail: "赛博蓝光与红蓝棋子", memberOnly: true },
 ];
 
+export const DEFAULT_SKIN: SkinFolder = "qingxin-zhuyun";
 export const SKIN_FOLDERS = SKIN_CATALOG.map((skin) => skin.folder);
 export const ACCOUNT_SKINS: SkinFolder[] = SKIN_CATALOG.filter((skin) => skin.memberOnly).map((skin) => skin.folder);
 export const ASSET_SKINS: SkinFolder[] = SKIN_FOLDERS;
 
 export function normalizeSkinId(skin: SkinId): SkinFolder {
-  return SKIN_FOLDERS.includes(skin as SkinFolder) ? skin as SkinFolder : "default";
+  return SKIN_FOLDERS.includes(skin as SkinFolder) ? skin as SkinFolder : DEFAULT_SKIN;
 }
 
 export function skinAssetFolder(skin: SkinId) {
@@ -32,7 +33,7 @@ export function skinAssetFolder(skin: SkinId) {
 export function skinCatalogFor(scope: SkinScope) {
   return SKIN_CATALOG.map((skin) => ({
     folder: skin.folder,
-    title: skin.folder === "default" ? scope === "board" ? "默认棋盘" : "默认棋子" : skin.title,
+    title: skin.folder === DEFAULT_SKIN ? scope === "board" ? "默认棋盘" : "默认棋子" : skin.title,
     detail: scope === "board" ? skin.boardDetail : skin.pieceDetail,
     memberOnly: Boolean(skin.memberOnly),
   }));

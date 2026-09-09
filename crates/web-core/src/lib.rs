@@ -1,7 +1,7 @@
+use manual_format::import_cbl_library;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use wasm_bindgen::prelude::*;
-use manual_format::import_cbl_library;
 use xiangqi_core::{Board, Color, GameStatus, Move, PieceKind, STARTING_FEN, Square};
 use xiangqi_manual::{ManualTree, MoveNode};
 
@@ -126,8 +126,7 @@ pub fn parse_cbl_library(bytes: &[u8]) -> Result<String, JsValue> {
 #[wasm_bindgen(js_name = chineseLine)]
 pub fn chinese_line(starting_fen: &str, moves: Vec<String>) -> Result<String, JsValue> {
     let board = Board::from_fen(starting_fen).map_err(js_error)?;
-    serde_json::to_string(&board.chinese_pv_notation(&moves).map_err(js_error)?)
-        .map_err(js_error)
+    serde_json::to_string(&board.chinese_pv_notation(&moves).map_err(js_error)?).map_err(js_error)
 }
 
 #[wasm_bindgen]

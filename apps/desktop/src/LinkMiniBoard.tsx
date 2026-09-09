@@ -53,6 +53,10 @@ type Props = {
   boardAriaLabel?: string;
   pieceAsset(piece: Piece): string;
   boardAsset?: string;
+  /** Replaces the board skin's built-in 楚河汉界 text when supplied. */
+  riverText?: string;
+  riverTextColor?: string;
+  riverTextSize?: number;
   pieceScale?: number;
   markerScale?: number;
   arrowVisualScale?: number;
@@ -332,7 +336,7 @@ export function reconcileLinkMiniPieces(
   return { pieces: rendered, capturedPieces, nextId };
 }
 
-export function LinkMiniBoard({ pieces, arrows, lastMove, sideToMove, reversed = false, presentation = "link", markerStyle = "arrow", selectedSquare, boardAriaLabel, pieceAsset, boardAsset, pieceScale = 1, markerScale = 1, arrowVisualScale = 1, animateMoves = true }: Props) {
+export function LinkMiniBoard({ pieces, arrows, lastMove, sideToMove, reversed = false, presentation = "link", markerStyle = "arrow", selectedSquare, boardAriaLabel, pieceAsset, boardAsset, riverText, riverTextColor, riverTextSize, pieceScale = 1, markerScale = 1, arrowVisualScale = 1, animateMoves = true }: Props) {
   const arrowFlowIdPrefix = useId().replace(/:/g, "");
   // An empty asset path is not a usable skin. Resolve it once so the visual
   // background and the fallback grid cannot disagree about which board owns
@@ -461,9 +465,10 @@ export function LinkMiniBoard({ pieces, arrows, lastMove, sideToMove, reversed =
           ? <line key={`v-${col}`} x1={BOARD_INTERSECTION_ORIGIN + col * BOARD_INTERSECTION_STEP} y1={BOARD_INTERSECTION_ORIGIN} x2={BOARD_INTERSECTION_ORIGIN + col * BOARD_INTERSECTION_STEP} y2={boardEndY}/>
           : <g key={`v-${col}`}><line x1={BOARD_INTERSECTION_ORIGIN + col * BOARD_INTERSECTION_STEP} y1={BOARD_INTERSECTION_ORIGIN} x2={BOARD_INTERSECTION_ORIGIN + col * BOARD_INTERSECTION_STEP} y2={riverTop}/><line x1={BOARD_INTERSECTION_ORIGIN + col * BOARD_INTERSECTION_STEP} y1={riverBottom} x2={BOARD_INTERSECTION_ORIGIN + col * BOARD_INTERSECTION_STEP} y2={boardEndY}/></g>)}
         <path d={`M ${palaceLeft} ${palaceTop} L ${palaceRight} ${palaceTop + 2 * BOARD_INTERSECTION_STEP} M ${palaceRight} ${palaceTop} L ${palaceLeft} ${palaceTop + 2 * BOARD_INTERSECTION_STEP} M ${palaceLeft} ${palaceBottom} L ${palaceRight} ${boardEndY} M ${palaceRight} ${palaceBottom} L ${palaceLeft} ${boardEndY}`}/>
-        <text className="link-mini-river-text chu" x={BOARD_INTERSECTION_ORIGIN + 2.25 * BOARD_INTERSECTION_STEP} y={(riverTop + riverBottom) / 2 + 6}>楚河</text>
-        <text className="link-mini-river-text han" x={BOARD_INTERSECTION_ORIGIN + 5.75 * BOARD_INTERSECTION_STEP} y={(riverTop + riverBottom) / 2 + 6}>汉界</text>
+        {!riverText && <><text className="link-mini-river-text chu" x={BOARD_INTERSECTION_ORIGIN + 2.25 * BOARD_INTERSECTION_STEP} y={(riverTop + riverBottom) / 2 + 6}>楚河</text>
+        <text className="link-mini-river-text han" x={BOARD_INTERSECTION_ORIGIN + 5.75 * BOARD_INTERSECTION_STEP} y={(riverTop + riverBottom) / 2 + 6}>汉界</text></>}
       </svg>}
+      {riverText && <span className="link-mini-river-custom-label" style={{ "--river-text-color": riverTextColor, "--river-text-size": `${riverTextSize ?? 29}px` } as CSSProperties}>{riverText}</span>}
       <svg
         className="link-mini-board-arrows"
         viewBox={`0 0 ${BOARD_ART_WIDTH} ${BOARD_ART_HEIGHT}`}

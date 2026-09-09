@@ -2,8 +2,10 @@
 set -euo pipefail
 
 TARGET_PLATFORM="${1:?Usage: prepare-pikafish-resource.sh <macos-arm64|macos-x64|linux-x64|windows-x64>}"
-PIKAFISH_VERSION="${PIKAFISH_VERSION:-latest}"
-PIKAFISH_TAG="${PIKAFISH_TAG:-}"
+PIKAFISH_VERSION="${PIKAFISH_VERSION:-2026-09-06}"
+PIKAFISH_TAG="${PIKAFISH_TAG:-Pikafish-2026-09-06}"
+PIKAFISH_SOURCE_REVISION="${PIKAFISH_SOURCE_REVISION:-4c17cee11f888ae1d48a9494f2e2239f019f0a1f}"
+PIKAFISH_RELEASE_ARCHIVE_SHA256="${PIKAFISH_RELEASE_ARCHIVE_SHA256:-41952bbfe2520faceb5902c69e6ab4845cc999841d2b49a95cc1be7867a25e5b}"
 PIKAFISH_ENGINE_SOURCE="${PIKAFISH_ENGINE_SOURCE:-}"
 PIKAFISH_NNUE_SOURCE="${PIKAFISH_NNUE_SOURCE:-}"
 PIKAFISH_NNUE_URL="${PIKAFISH_NNUE_URL:-}"
@@ -13,6 +15,14 @@ TEMP_ROOT="${RUNNER_TEMP:-/tmp}"
 if command -v cygpath >/dev/null 2>&1; then
   TEMP_ROOT="$(cygpath --unix "$TEMP_ROOT")"
 fi
+
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
 WORK_DIR="$TEMP_ROOT/pikafish-${PIKAFISH_VERSION}-${TARGET_PLATFORM}"
 ARCHIVE_DIR="$WORK_DIR/archive"
 EXTRACT_DIR="$WORK_DIR/extract"
@@ -46,18 +56,11 @@ if [[ -z "$PIKAFISH_ENGINE_SOURCE" || -z "$PIKAFISH_NNUE_SOURCE" || -z "$SOURCE_
     echo "GitHub CLI 'gh' is required to download Pikafish release assets." >&2
     exit 1
   fi
-  if ! command -v 7z >/dev/null 2>&1; then
-    echo "7z is required to extract Pikafish release assets." >&2
+  if ! command -v 7z >/dev/null 2>&1 && ! command -v bsdtar >/dev/null 2>&1; then
+    echo "7z or bsdtar is required to extract Pikafish release assets." >&2
     exit 1
   fi
 
-  if [[ -z "$PIKAFISH_TAG" ]]; then
-    if [[ "$PIKAFISH_VERSION" == "latest" ]]; then
-      PIKAFISH_TAG="$(gh release view --repo official-pikafish/Pikafish --json tagName --jq '.tagName')"
-    else
-      PIKAFISH_TAG="Pikafish-${PIKAFISH_VERSION}"
-    fi
-  fi
   echo "Using Pikafish release tag: $PIKAFISH_TAG"
 
   gh release download "$PIKAFISH_TAG" \
@@ -73,11 +76,23 @@ if [[ -z "$PIKAFISH_ENGINE_SOURCE" || -z "$PIKAFISH_NNUE_SOURCE" || -z "$SOURCE_
     exit 1
   fi
 
-  SEVEN_ZIP_EXTRACT_DIR="$EXTRACT_DIR"
-  if command -v cygpath >/dev/null 2>&1; then
-    SEVEN_ZIP_EXTRACT_DIR="$(cygpath --windows "$EXTRACT_DIR")"
+  ARCHIVE_SHA256="$(sha256_file "$ARCHIVE_PATH")"
+  if [[ "$ARCHIVE_SHA256" != "$PIKAFISH_RELEASE_ARCHIVE_SHA256" ]]; then
+    echo "Pikafish release archive SHA256 mismatch." >&2
+    echo "  expected: $PIKAFISH_RELEASE_ARCHIVE_SHA256" >&2
+    echo "  actual:   $ARCHIVE_SHA256" >&2
+    exit 1
   fi
-  7z x "$ARCHIVE_PATH" -o"$SEVEN_ZIP_EXTRACT_DIR" -y >/dev/null
+
+  if command -v 7z >/dev/null 2>&1; then
+    SEVEN_ZIP_EXTRACT_DIR="$EXTRACT_DIR"
+    if command -v cygpath >/dev/null 2>&1; then
+      SEVEN_ZIP_EXTRACT_DIR="$(cygpath --windows "$EXTRACT_DIR")"
+    fi
+    7z x "$ARCHIVE_PATH" -o"$SEVEN_ZIP_EXTRACT_DIR" -y >/dev/null
+  else
+    bsdtar -xf "$ARCHIVE_PATH" -C "$EXTRACT_DIR"
+  fi
   SOURCE_ROOT="${SOURCE_ROOT:-$EXTRACT_DIR}"
 fi
 
@@ -163,14 +178,22 @@ COPYING_SOURCE="$(first_existing "$(find_by_name "$SOURCE_ROOT" 'Copying.txt')" 
 NNUE_LICENSE_SOURCE="$(find_by_name "$SOURCE_ROOT" 'NNUE-License.md')"
 README_SOURCE="$(find_by_name "$SOURCE_ROOT" 'README.md')"
 
-if [[ -n "$COPYING_SOURCE" ]]; then
-  cp "$COPYING_SOURCE" "$RESOURCE_DIR/Copying.txt"
+if [[ -z "$COPYING_SOURCE" || -z "$NNUE_LICENSE_SOURCE" || -z "$README_SOURCE" ]]; then
+  echo "Pikafish release metadata is incomplete." >&2
+  exit 1
 fi
-if [[ -n "$NNUE_LICENSE_SOURCE" ]]; then
-  cp "$NNUE_LICENSE_SOURCE" "$RESOURCE_DIR/NNUE-License.md"
-fi
-if [[ -n "$README_SOURCE" ]]; then
-  cp "$README_SOURCE" "$RESOURCE_DIR/Pikafish-README.md"
-fi
+cp "$COPYING_SOURCE" "$RESOURCE_DIR/Copying.txt"
+cp "$NNUE_LICENSE_SOURCE" "$RESOURCE_DIR/NNUE-License.md"
+cp "$README_SOURCE" "$RESOURCE_DIR/Pikafish-README.md"
+
+cat > "$RESOURCE_DIR/RESOURCE-MANIFEST.txt" <<EOF
+Pikafish official source repository: https://github.com/official-pikafish/Pikafish
+Pikafish release tag: $PIKAFISH_TAG
+Pikafish source revision: $PIKAFISH_SOURCE_REVISION
+Pikafish release archive SHA256: $PIKAFISH_RELEASE_ARCHIVE_SHA256
+Pikafish executable SHA256: $(sha256_file "$ENGINE_TARGET")
+Pikafish NNUE bundled file: pikafish.nnue
+Pikafish NNUE SHA256: $(sha256_file "$RESOURCE_DIR/pikafish.nnue")
+EOF
 
 find "$RESOURCE_DIR" -maxdepth 1 -type f -print

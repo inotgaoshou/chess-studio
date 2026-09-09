@@ -13,3 +13,11 @@ apps/desktop/dist/
 apps/desktop/src-tauri/gen/
 mobile-package-size-report.*
 apps/desktop/mobile-package-size-report.*
+
+# Downloaded Pikafish release payloads are reconstructed locally from the
+# pinned source submodule and scripts/prepare-pikafish-resource.sh.
+/apps/desktop/src-tauri/resources/pikafish/
+
+# Local planning artifacts; product documentation remains versioned normally.
+/docs/FEATURE_MAP.zh-CN.md
+/docs/FEATURE_DEVELOPMENT_LOG.zh-CN.md

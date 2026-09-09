@@ -37,6 +37,37 @@ mod tests {
     fn local_desktop_permission_allows_library_game_reorder() {
         let permissions = include_str!("../permissions/desktop.toml");
         assert!(permissions.contains("\"reorder_library_game\""));
+        assert!(permissions.contains("\"import_cbl_game_library\""));
+        assert!(permissions.contains("\"get_reference_offline_package_manifest\""));
+        for command in [
+            "list_reference_batch_issues",
+            "update_reference_game_identity",
+            "override_reference_game_opening",
+            "resolve_reference_duplicate",
+        ] {
+            assert!(permissions.contains(&format!("\"{command}\"")));
+        }
+    }
+
+    #[test]
+    fn local_desktop_permission_allows_endgame_directory_commands() {
+        let permissions = include_str!("../permissions/desktop.toml");
+        for command in [
+            "import_endgame_cbl_batch",
+            "list_endgame_folders",
+            "create_endgame_folder",
+            "move_endgame_folder",
+            "delete_endgame_folder",
+            "reorder_endgame_folder",
+            "move_endgame_libraries",
+            "reorder_endgame_library",
+            "endgame_move_feedback",
+        ] {
+            assert!(
+                permissions.contains(&format!("\"{command}\"")),
+                "missing {command}"
+            );
+        }
     }
 
     fn desktop_state_for_link_tests() -> DesktopState {
@@ -1575,11 +1606,11 @@ mod tests {
         );
         assert_eq!(
             decorate_known_pikafish_nnue_version(
-                Some(PIKAFISH_260720_NNUE_SHA256),
+                Some(PIKAFISH_20260906_NNUE_SHA256),
                 Some("(64MiB, (62083, 1024, 32, 32, 1))".into())
             )
             .as_deref(),
-            Some("权重260720 · (64MiB, (62083, 1024, 32, 32, 1))")
+            Some("Pikafish 2026-09-06 随附 NNUE · (64MiB, (62083, 1024, 32, 32, 1))")
         );
     }
 
