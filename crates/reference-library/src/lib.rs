@@ -121,6 +121,8 @@ pub struct OpeningCategory {
     pub red_wins: u64,
     pub draws: u64,
     pub black_wins: u64,
+    pub first_year: Option<u16>,
+    pub last_year: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -134,6 +136,17 @@ pub struct OpeningMatch {
     pub matched_plies: u32,
     pub classifier_version: i64,
     pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OpeningCatalogBuildResult {
+    pub classifier_version: i64,
+    pub category_count: u64,
+    pub alias_count: u64,
+    pub pattern_count: u64,
+    pub classified_games: u64,
+    pub pending_games: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -645,6 +658,11 @@ impl ReferenceLibrary {
             "UPDATE reference_sources SET last_scanned_at=?1, updated_at=?1 WHERE id=?2",
             params![completed_at, source_id],
         )?;
+        if counts.changed_files > 0 {
+            self.classify_batch(&batch_id)?;
+        } else if removed_files > 0 {
+            rebuild_opening_category_stats(&self.connection)?;
+        }
         self.batch(&batch_id)
     }
 
@@ -681,6 +699,7 @@ impl ReferenceLibrary {
     }
 
     pub fn classify_batch(&mut self, batch_id: &str) -> Result<Vec<OpeningMatch>> {
+        seed_opening_catalog(&self.connection)?;
         self.batch(batch_id)?;
         let classifier_version: i64 = self.connection.query_row(
             "SELECT id FROM opening_classifier_versions WHERE active=1 ORDER BY id DESC LIMIT 1",
@@ -730,7 +749,63 @@ impl ReferenceLibrary {
             "UPDATE reference_import_batches SET unclassified_records=?1 WHERE id=?2",
             params![unclassified, batch_id],
         )?;
+        rebuild_opening_category_stats(&self.connection)?;
         Ok(matches)
+    }
+
+    pub fn rebuild_opening_catalog(&mut self) -> Result<OpeningCatalogBuildResult> {
+        seed_opening_catalog(&self.connection)?;
+        seed_opening_alias_candidates(&self.connection)?;
+        rebuild_opening_category_stats(&self.connection)?;
+        opening_catalog_build_result(&self.connection)
+    }
+
+    pub fn classify_library(&mut self, limit: Option<usize>) -> Result<OpeningCatalogBuildResult> {
+        seed_opening_catalog(&self.connection)?;
+        let classifier_version: i64 = self.connection.query_row(
+            "SELECT id FROM opening_classifier_versions WHERE active=1 ORDER BY id DESC LIMIT 1",
+            [],
+            |row| row.get(0),
+        )?;
+        let mut statement = self.connection.prepare(
+            "SELECT id, opening, starting_fen, moves_json
+             FROM reference_games
+             WHERE active=1 AND validation_status='valid'
+             ORDER BY updated_at DESC, id DESC LIMIT ?1",
+        )?;
+        let games = statement
+            .query_map(
+                [limit.unwrap_or(usize::MAX).min(i64::MAX as usize) as i64],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                },
+            )?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        drop(statement);
+        let standard_key = Board::from_fen(xiangqi_core::STARTING_FEN)
+            .map_err(|error| ReferenceLibraryError::InvalidData(error.to_string()))?
+            .rule_position_key();
+        for (game_id, raw_opening, starting_fen, moves_json) in games {
+            let moves: Vec<String> = serde_json::from_str(&moves_json).unwrap_or_default();
+            let is_standard_start = Board::from_fen(&starting_fen)
+                .map(|board| board.rule_position_key() == standard_key)
+                .unwrap_or(false);
+            classify_game(
+                &self.connection,
+                &game_id,
+                &raw_opening,
+                &moves,
+                is_standard_start,
+                classifier_version,
+            )?;
+        }
+        rebuild_opening_category_stats(&self.connection)?;
+        opening_catalog_build_result(&self.connection)
     }
 
     pub fn batch_review_issues(&self, batch_id: &str) -> Result<Vec<ReferenceReviewIssue>> {
@@ -1185,12 +1260,46 @@ impl ReferenceLibrary {
         excluded_fingerprints: Option<&Arc<[String]>>,
     ) -> Result<Vec<OpeningCategory>> {
         self.replace_query_exclusions(excluded_fingerprints)?;
+        if excluded_fingerprints.is_none() {
+            let mut statement = self.connection.prepare(
+                "SELECT c.code, c.series_code, c.parent_code, c.name, c.sort_order,
+                        COALESCE(s.game_count,0), COALESCE(s.red_wins,0),
+                        COALESCE(s.draws,0), COALESCE(s.black_wins,0),
+                        s.first_year, s.last_year
+                 FROM opening_categories c
+                 LEFT JOIN opening_category_stats s ON s.category_code=c.code
+                 WHERE c.active=1 AND ((?1 IS NULL AND c.parent_code IS NULL) OR c.parent_code=?1)
+                 ORDER BY c.sort_order, c.code",
+            )?;
+            let base = statement
+                .query_map([parent_code], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, i32>(4)?,
+                        row.get::<_, i64>(5)?.max(0) as u64,
+                        row.get::<_, i64>(6)?.max(0) as u64,
+                        row.get::<_, i64>(7)?.max(0) as u64,
+                        row.get::<_, i64>(8)?.max(0) as u64,
+                        row.get::<_, Option<i64>>(9)?
+                            .and_then(|value| u16::try_from(value).ok()),
+                        row.get::<_, Option<i64>>(10)?
+                            .and_then(|value| u16::try_from(value).ok()),
+                    ))
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            return self.opening_categories_with_aliases(base);
+        }
         let mut statement = self.connection.prepare(
             "SELECT c.code, c.series_code, c.parent_code, c.name, c.sort_order,
                     COUNT(DISTINCT CASE WHEN x.is_primary=1 AND x.status='classified' AND g.active=1 AND g.validation_status='valid' AND e.canonical_fingerprint IS NULL THEN x.game_id END),
                     COALESCE(SUM(CASE WHEN x.is_primary=1 AND x.status='classified' AND g.active=1 AND g.validation_status='valid' AND e.canonical_fingerprint IS NULL AND g.result='1-0' THEN 1 ELSE 0 END),0),
                     COALESCE(SUM(CASE WHEN x.is_primary=1 AND x.status='classified' AND g.active=1 AND g.validation_status='valid' AND e.canonical_fingerprint IS NULL AND g.result='1/2-1/2' THEN 1 ELSE 0 END),0),
-                    COALESCE(SUM(CASE WHEN x.is_primary=1 AND x.status='classified' AND g.active=1 AND g.validation_status='valid' AND e.canonical_fingerprint IS NULL AND g.result='0-1' THEN 1 ELSE 0 END),0)
+                    COALESCE(SUM(CASE WHEN x.is_primary=1 AND x.status='classified' AND g.active=1 AND g.validation_status='valid' AND e.canonical_fingerprint IS NULL AND g.result='0-1' THEN 1 ELSE 0 END),0),
+                    MIN(CASE WHEN x.is_primary=1 AND x.status='classified' AND g.active=1 AND g.validation_status='valid' AND e.canonical_fingerprint IS NULL THEN CAST(substr(g.game_date,1,4) AS INTEGER) END),
+                    MAX(CASE WHEN x.is_primary=1 AND x.status='classified' AND g.active=1 AND g.validation_status='valid' AND e.canonical_fingerprint IS NULL THEN CAST(substr(g.game_date,1,4) AS INTEGER) END)
              FROM opening_categories c
              LEFT JOIN game_opening_classifications x
                ON (x.category_code=c.code OR (length(c.code)=1 AND x.category_code LIKE c.code || '%'))
@@ -1212,9 +1321,32 @@ impl ReferenceLibrary {
                     row.get::<_, i64>(6)?.max(0) as u64,
                     row.get::<_, i64>(7)?.max(0) as u64,
                     row.get::<_, i64>(8)?.max(0) as u64,
+                    row.get::<_, Option<i64>>(9)?
+                        .and_then(|value| u16::try_from(value).ok()),
+                    row.get::<_, Option<i64>>(10)?
+                        .and_then(|value| u16::try_from(value).ok()),
                 ))
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
+        self.opening_categories_with_aliases(base)
+    }
+
+    fn opening_categories_with_aliases(
+        &self,
+        base: Vec<(
+            String,
+            String,
+            Option<String>,
+            String,
+            i32,
+            u64,
+            u64,
+            u64,
+            u64,
+            Option<u16>,
+            Option<u16>,
+        )>,
+    ) -> Result<Vec<OpeningCategory>> {
         let mut result = Vec::with_capacity(base.len());
         for (
             code,
@@ -1226,6 +1358,8 @@ impl ReferenceLibrary {
             red_wins,
             draws,
             black_wins,
+            first_year,
+            last_year,
         ) in base
         {
             let mut aliases_statement = self.connection.prepare(
@@ -1245,6 +1379,8 @@ impl ReferenceLibrary {
                 red_wins,
                 draws,
                 black_wins,
+                first_year,
+                last_year,
             });
         }
         Ok(result)
@@ -1405,11 +1541,12 @@ impl ReferenceLibrary {
                     "SELECT g.id, g.title, g.red_player, g.black_player, g.result, g.event_name,
                             g.round_name, g.game_date, g.opening, NULL,
                             g.canonical_fingerprint,g.move_count
-                     FROM reference_game_moves m INDEXED BY idx_reference_moves_stat_rollup
-                     JOIN reference_games g ON g.id=m.game_id
-                     WHERE m.position_hash=?1 AND m.position_key=?2
-                       AND g.active=1 AND g.validation_status='valid'
+                     FROM reference_games g INDEXED BY idx_reference_games_valid_date
+                     WHERE g.active=1 AND g.validation_status='valid'
                        AND NOT EXISTS (SELECT 1 FROM temp_reference_exclusions e WHERE e.canonical_fingerprint=g.canonical_fingerprint)
+                       AND EXISTS (SELECT 1 FROM reference_game_moves m INDEXED BY idx_reference_moves_position_game
+                            WHERE m.position_hash=?1 AND m.position_key=?2 AND m.game_id=g.id)
+                     ORDER BY g.game_date DESC, g.created_at DESC, g.id DESC
                      LIMIT ?3 OFFSET ?4",
                 )?;
                 let rows = statement.query_map(
@@ -2501,6 +2638,78 @@ fn rebuild_position_statistics(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn rebuild_opening_category_stats(connection: &Connection) -> Result<()> {
+    connection.execute("DELETE FROM opening_category_stats", [])?;
+    connection.execute(
+        "INSERT INTO opening_category_stats
+         (category_code,game_count,red_wins,draws,black_wins,first_year,last_year,updated_at)
+         SELECT c.code,
+                COUNT(DISTINCT CASE WHEN x.is_primary=1 AND x.status='classified'
+                       AND g.active=1 AND g.validation_status='valid' THEN x.game_id END),
+                COALESCE(SUM(CASE WHEN x.is_primary=1 AND x.status='classified'
+                       AND g.active=1 AND g.validation_status='valid' AND g.result='1-0' THEN 1 ELSE 0 END),0),
+                COALESCE(SUM(CASE WHEN x.is_primary=1 AND x.status='classified'
+                       AND g.active=1 AND g.validation_status='valid' AND g.result='1/2-1/2' THEN 1 ELSE 0 END),0),
+                COALESCE(SUM(CASE WHEN x.is_primary=1 AND x.status='classified'
+                       AND g.active=1 AND g.validation_status='valid' AND g.result='0-1' THEN 1 ELSE 0 END),0),
+                MIN(CASE WHEN x.is_primary=1 AND x.status='classified'
+                       AND g.active=1 AND g.validation_status='valid' THEN CAST(substr(g.game_date,1,4) AS INTEGER) END),
+                MAX(CASE WHEN x.is_primary=1 AND x.status='classified'
+                       AND g.active=1 AND g.validation_status='valid' THEN CAST(substr(g.game_date,1,4) AS INTEGER) END),
+                ?1
+         FROM opening_categories c
+         LEFT JOIN game_opening_classifications x
+           ON ((c.parent_code IS NULL AND (x.category_code=c.code OR x.category_code LIKE c.code || '%'))
+             OR (c.parent_code IS NOT NULL AND x.category_code=c.code))
+          AND x.classifier_version_id=(SELECT id FROM opening_classifier_versions WHERE active=1 ORDER BY id DESC LIMIT 1)
+         LEFT JOIN reference_games g ON g.id=x.game_id
+         WHERE c.active=1
+         GROUP BY c.code",
+        [now()],
+    )?;
+    Ok(())
+}
+
+fn opening_catalog_build_result(connection: &Connection) -> Result<OpeningCatalogBuildResult> {
+    let classifier_version: i64 = connection.query_row(
+        "SELECT id FROM opening_classifier_versions WHERE active=1 ORDER BY id DESC LIMIT 1",
+        [],
+        |row| row.get(0),
+    )?;
+    let category_count: i64 = connection.query_row(
+        "SELECT COUNT(*) FROM opening_categories WHERE active=1",
+        [],
+        |row| row.get(0),
+    )?;
+    let alias_count: i64 =
+        connection.query_row("SELECT COUNT(*) FROM opening_aliases", [], |row| row.get(0))?;
+    let pattern_count: i64 = connection.query_row(
+        "SELECT COUNT(*) FROM opening_patterns WHERE classifier_version_id=?1",
+        [classifier_version],
+        |row| row.get(0),
+    )?;
+    let classified_games: i64 = connection.query_row(
+        "SELECT COUNT(DISTINCT game_id) FROM game_opening_classifications
+         WHERE classifier_version_id=?1 AND is_primary=1 AND status='classified'",
+        [classifier_version],
+        |row| row.get(0),
+    )?;
+    let pending_games: i64 = connection.query_row(
+        "SELECT COUNT(DISTINCT game_id) FROM game_opening_classifications
+         WHERE classifier_version_id=?1 AND status='pending'",
+        [classifier_version],
+        |row| row.get(0),
+    )?;
+    Ok(OpeningCatalogBuildResult {
+        classifier_version,
+        category_count: category_count.max(0) as u64,
+        alias_count: alias_count.max(0) as u64,
+        pattern_count: pattern_count.max(0) as u64,
+        classified_games: classified_games.max(0) as u64,
+        pending_games: pending_games.max(0) as u64,
+    })
+}
+
 fn find_move_duplicate_candidates(
     connection: &Connection,
     starting_fen: &str,
@@ -2587,7 +2796,7 @@ fn matching_position_patterns(
 
 fn seed_opening_catalog(connection: &Connection) -> Result<()> {
     for (index, (code, name)) in [
-        ("A", "非中炮类"),
+        ("A", "非中炮类开局"),
         ("B", "中炮对反宫马及其他"),
         ("C", "中炮对屏风马"),
         ("D", "顺炮与列炮"),
@@ -2606,12 +2815,195 @@ fn seed_opening_catalog(connection: &Connection) -> Result<()> {
             params![code, name, index as i32],
         )?;
     }
+    for (code, series, name, sort_order) in [
+        ("A01", "A", "飞相局", 101),
+        ("A02", "A", "起马局", 102),
+        ("A03", "A", "仕角炮与过宫炮", 103),
+        ("B01", "B", "中炮类开局", 201),
+        ("B02", "B", "中炮对反宫马及其他", 202),
+        ("C01", "C", "中炮对屏风马", 301),
+        ("D01", "D", "顺炮与列炮", 401),
+        ("E01", "E", "仙人指路与挺兵局", 501),
+    ] {
+        connection.execute(
+            "INSERT OR IGNORE INTO opening_categories
+             (code,series_code,parent_code,name,sort_order,active) VALUES (?1,?2,?2,?3,?4,1)",
+            params![code, series, name, sort_order],
+        )?;
+    }
     connection.execute(
         "INSERT OR IGNORE INTO opening_classifier_versions
-         (id,name,status,active,created_at) VALUES (1,'builtin-ae-v1','active',1,?1)",
+         (id,name,status,active,created_at) VALUES (1,'builtin-ae-v1','active',0,?1)",
         [now()],
     )?;
+    connection.execute(
+        "INSERT INTO opening_classifier_versions (name,status,active,created_at)
+         VALUES ('builtin-practical-v1','active',1,?1)
+         ON CONFLICT(name) DO UPDATE SET status='active', active=1",
+        [now()],
+    )?;
+    connection.execute(
+        "UPDATE opening_classifier_versions SET active=0 WHERE name<>'builtin-practical-v1'",
+        [],
+    )?;
+    let version: i64 = connection.query_row(
+        "SELECT id FROM opening_classifier_versions WHERE name='builtin-practical-v1'",
+        [],
+        |row| row.get(0),
+    )?;
+    connection.execute(
+        "DELETE FROM opening_patterns WHERE classifier_version_id=?1",
+        [version],
+    )?;
+    for (code, aliases) in [
+        ("A01", &["飞相局", "飞相"] as &[&str]),
+        ("A02", &["起马局", "起马"]),
+        ("A03", &["仕角炮", "过宫炮", "仕角炮局", "过宫炮局"]),
+        ("B01", &["中炮", "中炮局", "当头炮"]),
+        ("B02", &["中炮对反宫马", "反宫马"]),
+        ("C01", &["中炮对屏风马", "屏风马"]),
+        ("D01", &["顺炮", "列炮", "顺炮局", "列炮局"]),
+        ("E01", &["仙人指路", "进兵局", "挺兵局", "对兵局"]),
+    ] {
+        for alias in aliases {
+            connection.execute(
+                "INSERT OR IGNORE INTO opening_aliases (alias,category_code,reviewed,source)
+                 VALUES (?1,?2,1,'builtin-practical-v1')",
+                params![alias, code],
+            )?;
+        }
+    }
+    for (code, priority, prefix) in [
+        ("C01", 200, &["h2e2", "b9c7"] as &[&str]),
+        ("C01", 200, &["h2e2", "h9g7"]),
+        ("C01", 200, &["b2e2", "b9c7"]),
+        ("C01", 200, &["b2e2", "h9g7"]),
+        ("D01", 190, &["h2e2", "b7e7"]),
+        ("D01", 190, &["h2e2", "h7e7"]),
+        ("D01", 190, &["b2e2", "b7e7"]),
+        ("D01", 190, &["b2e2", "h7e7"]),
+        ("B01", 100, &["h2e2"]),
+        ("B01", 100, &["b2e2"]),
+        ("A01", 100, &["g0e2"]),
+        ("A01", 100, &["c0e2"]),
+        ("A02", 100, &["b0c2"]),
+        ("A02", 100, &["h0g2"]),
+        ("A02", 100, &["b0a2"]),
+        ("A02", 100, &["h0i2"]),
+        ("A03", 100, &["h2f2"]),
+        ("A03", 100, &["b2d2"]),
+        ("A03", 100, &["h2d2"]),
+        ("A03", 100, &["b2f2"]),
+        ("E01", 100, &["c3c4"]),
+        ("E01", 100, &["g3g4"]),
+        ("E01", 100, &["a3a4"]),
+        ("E01", 100, &["i3i4"]),
+        ("E01", 100, &["e3e4"]),
+    ] {
+        insert_move_prefix_pattern(connection, version, code, prefix, priority)?;
+    }
     Ok(())
+}
+
+fn insert_move_prefix_pattern(
+    connection: &Connection,
+    version: i64,
+    code: &str,
+    prefix: &[&str],
+    priority: i32,
+) -> Result<()> {
+    let moves = prefix
+        .iter()
+        .map(|item| item.to_string())
+        .collect::<Vec<_>>();
+    connection.execute(
+        "INSERT INTO opening_patterns
+         (classifier_version_id,category_code,pattern_type,move_prefix_json,position_key,match_depth,priority,support_count)
+         VALUES (?1,?2,'move_prefix',?3,NULL,?4,?5,0)",
+        params![
+            version,
+            code,
+            serde_json::to_string(&moves)
+                .map_err(|error| ReferenceLibraryError::InvalidData(error.to_string()))?,
+            moves.len() as i64,
+            priority
+        ],
+    )?;
+    Ok(())
+}
+
+fn seed_opening_alias_candidates(connection: &Connection) -> Result<()> {
+    let mut statement = connection.prepare(
+        "SELECT opening, COUNT(*) FROM reference_games
+         WHERE active=1 AND validation_status='valid' AND trim(opening)<>''
+         GROUP BY opening HAVING COUNT(*)>=3 ORDER BY COUNT(*) DESC LIMIT 5000",
+    )?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    drop(statement);
+    for (alias, _count) in rows {
+        let alias = alias.trim();
+        if looks_like_event_name(alias) {
+            continue;
+        }
+        if let Some(code) = practical_alias_category(alias) {
+            connection.execute(
+                "INSERT OR IGNORE INTO opening_aliases (alias,category_code,reviewed,source)
+                 VALUES (?1,?2,0,'auto-candidate')",
+                params![alias, code],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn looks_like_event_name(value: &str) -> bool {
+    let value = value.trim();
+    let has_digit = value.chars().any(|character| character.is_ascii_digit());
+    has_digit
+        && [
+            "年",
+            "届",
+            "杯",
+            "赛",
+            "联赛",
+            "团体",
+            "个人",
+            "锦标赛",
+            "智运会",
+            "棋甲",
+        ]
+        .iter()
+        .any(|token| value.contains(token))
+}
+
+fn practical_alias_category(value: &str) -> Option<&'static str> {
+    if value.contains("中炮") && value.contains("屏风马") {
+        Some("C01")
+    } else if value.contains("顺炮") || value.contains("列炮") {
+        Some("D01")
+    } else if value.contains("飞相") {
+        Some("A01")
+    } else if value.contains("起马") {
+        Some("A02")
+    } else if value.contains("仕角炮") || value.contains("过宫炮") {
+        Some("A03")
+    } else if value.contains("反宫马") {
+        Some("B02")
+    } else if value.contains("仙人指路")
+        || value.contains("进兵")
+        || value.contains("挺兵")
+        || value.contains("对兵")
+    {
+        Some("E01")
+    } else if value.contains("中炮") || value.contains("当头炮") {
+        Some("B01")
+    } else {
+        None
+    }
 }
 
 fn is_publishable_license(value: &str) -> bool {
@@ -2830,6 +3222,8 @@ CREATE TABLE IF NOT EXISTS reference_games (
 );
 CREATE INDEX IF NOT EXISTS idx_reference_games_start_moves_active
   ON reference_games(starting_fen,moves_hash,active);
+CREATE INDEX IF NOT EXISTS idx_reference_games_valid_date
+  ON reference_games(active,validation_status,game_date DESC,created_at DESC,id DESC);
 CREATE TABLE IF NOT EXISTS reference_game_documents (
   game_id TEXT PRIMARY KEY REFERENCES reference_games(id), document_json TEXT NOT NULL,
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL
@@ -2882,6 +3276,8 @@ CREATE INDEX IF NOT EXISTS idx_reference_moves_position ON reference_game_moves(
 CREATE INDEX IF NOT EXISTS idx_reference_moves_key ON reference_game_moves(position_key,move_iccs);
 CREATE INDEX IF NOT EXISTS idx_reference_moves_stat_rollup
   ON reference_game_moves(position_hash,position_key,move_iccs,game_id);
+CREATE INDEX IF NOT EXISTS idx_reference_moves_position_game
+  ON reference_game_moves(position_hash,position_key,game_id);
 CREATE TABLE IF NOT EXISTS reference_position_move_stats (
   position_key TEXT NOT NULL, position_hash TEXT NOT NULL, move_iccs TEXT NOT NULL, notation TEXT NOT NULL,
   samples INTEGER NOT NULL, red_wins INTEGER NOT NULL, draws INTEGER NOT NULL, black_wins INTEGER NOT NULL,
@@ -2909,6 +3305,12 @@ CREATE TABLE IF NOT EXISTS opening_aliases (
   alias TEXT NOT NULL, category_code TEXT NOT NULL REFERENCES opening_categories(code),
   reviewed INTEGER NOT NULL DEFAULT 0, source TEXT NOT NULL DEFAULT 'migration',
   PRIMARY KEY(alias,category_code)
+);
+CREATE TABLE IF NOT EXISTS opening_category_stats (
+  category_code TEXT PRIMARY KEY REFERENCES opening_categories(code),
+  game_count INTEGER NOT NULL DEFAULT 0, red_wins INTEGER NOT NULL DEFAULT 0,
+  draws INTEGER NOT NULL DEFAULT 0, black_wins INTEGER NOT NULL DEFAULT 0,
+  first_year INTEGER, last_year INTEGER, updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS opening_classifier_versions (
   id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, status TEXT NOT NULL,
@@ -3041,10 +3443,20 @@ fn migrate_local_schema(connection: &Connection) -> Result<()> {
            ON reference_games(dedupe_key);
          CREATE INDEX IF NOT EXISTS idx_reference_games_start_moves_active
            ON reference_games(starting_fen,moves_hash,active);
+         CREATE INDEX IF NOT EXISTS idx_reference_games_valid_date
+           ON reference_games(active,validation_status,game_date DESC,created_at DESC,id DESC);
          CREATE INDEX IF NOT EXISTS idx_reference_records_hash
            ON reference_import_records(source_id,relative_path,record_index,record_hash);
          CREATE INDEX IF NOT EXISTS idx_reference_moves_stat_rollup
-           ON reference_game_moves(position_hash,position_key,move_iccs,game_id);",
+           ON reference_game_moves(position_hash,position_key,move_iccs,game_id);
+         CREATE INDEX IF NOT EXISTS idx_reference_moves_position_game
+           ON reference_game_moves(position_hash,position_key,game_id);
+         CREATE TABLE IF NOT EXISTS opening_category_stats (
+           category_code TEXT PRIMARY KEY REFERENCES opening_categories(code),
+           game_count INTEGER NOT NULL DEFAULT 0, red_wins INTEGER NOT NULL DEFAULT 0,
+           draws INTEGER NOT NULL DEFAULT 0, black_wins INTEGER NOT NULL DEFAULT 0,
+           first_year INTEGER, last_year INTEGER, updated_at TEXT NOT NULL
+         );",
     )?;
     Ok(())
 }
@@ -3145,7 +3557,7 @@ mod tests {
         assert_eq!(first.discovered_files, 1);
         assert_eq!(first.imported_records, 1);
         assert_eq!(first.invalid_records, 0);
-        assert_eq!(first.unclassified_records, 1);
+        assert_eq!(first.unclassified_records, 0);
 
         let stats = library
             .query_position(xiangqi_core::STARTING_FEN, 10)
@@ -3161,9 +3573,9 @@ mod tests {
                 black_wins: 0,
                 first_year: Some(2026),
                 last_year: Some(2026),
-                opening_code: None,
-                opening_name: None,
-                opening_confidence: None,
+                opening_code: Some("B01".into()),
+                opening_name: Some("中炮类开局".into()),
+                opening_confidence: Some(100),
                 representative_game_id: Some(
                     library.list_games(None, None, 1, 0).unwrap()[0].id.clone()
                 ),
@@ -3229,6 +3641,110 @@ mod tests {
         assert_eq!(second.changed_files, 0);
         assert_eq!(second.imported_records, 0);
         assert_eq!(CBL_PARSER_VERSION, 3);
+    }
+
+    #[test]
+    fn position_game_matches_are_newest_first() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_dir = temp.path().join("赛事");
+        fs::create_dir(&source_dir).unwrap();
+        fs::write(source_dir.join("2026-09-08.CBL"), one_game_cbl()).unwrap();
+        let mut newer = one_game_cbl();
+        let record = &mut newer[101_952..];
+        record[180..308].fill(0);
+        write_utf16z(&mut record[180..308], "广东 新红方 胜 江苏 新黑方");
+        record[884..948].fill(0);
+        write_utf16z(&mut record[884..948], "2026-09-09");
+        record[1076..1140].fill(0);
+        write_utf16z(&mut record[1076..1140], "新红方");
+        record[1300..1364].fill(0);
+        write_utf16z(&mut record[1300..1364], "新黑方");
+        fs::write(source_dir.join("2026-09-09.CBL"), newer).unwrap();
+
+        let mut library = ReferenceLibrary::open_in_memory().unwrap();
+        let source = library
+            .register_source(&source_dir, "赛事", true, "local-only")
+            .unwrap();
+        library.scan_source(&source.id).unwrap();
+
+        let games = library
+            .list_games_filtered(
+                None,
+                None,
+                &ReferenceGameFilters {
+                    position_fen: Some(xiangqi_core::STARTING_FEN.into()),
+                    ..ReferenceGameFilters::default()
+                },
+                10,
+                0,
+            )
+            .unwrap();
+
+        assert_eq!(games.len(), 2);
+        assert_eq!(games[0].game_date, "2026-09-09");
+        assert_eq!(games[1].game_date, "2026-09-08");
+    }
+
+    #[test]
+    fn practical_opening_catalog_is_idempotent_and_ignores_event_aliases() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_dir = temp.path().join("赛事");
+        fs::create_dir(&source_dir).unwrap();
+        fs::write(source_dir.join("第01轮.CBL"), one_game_cbl()).unwrap();
+        let mut library = ReferenceLibrary::open_in_memory().unwrap();
+        let source = library
+            .register_source(&source_dir, "赛事", true, "local-only")
+            .unwrap();
+        library.scan_source(&source.id).unwrap();
+
+        let first = library.rebuild_opening_catalog().unwrap();
+        let second = library.rebuild_opening_catalog().unwrap();
+        assert_eq!(first.category_count, second.category_count);
+        assert_eq!(first.pattern_count, second.pattern_count);
+        assert_eq!(first.pattern_count, 25);
+        assert_eq!(
+            library
+                .connection
+                .query_row(
+                    "SELECT COUNT(*) FROM opening_aliases WHERE alias LIKE '%测试赛%'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn practical_opening_classification_populates_category_stats() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_dir = temp.path().join("赛事");
+        fs::create_dir(&source_dir).unwrap();
+        fs::write(source_dir.join("第01轮.CBL"), one_game_cbl()).unwrap();
+        let mut library = ReferenceLibrary::open_in_memory().unwrap();
+        let source = library
+            .register_source(&source_dir, "赛事", true, "local-only")
+            .unwrap();
+        library.scan_source(&source.id).unwrap();
+
+        let result = library.classify_library(None).unwrap();
+        assert_eq!(result.classified_games, 1);
+        assert_eq!(result.pending_games, 0);
+        let classified: String = library
+            .connection
+            .query_row(
+                "SELECT category_code FROM game_opening_classifications
+                 WHERE is_primary=1 AND status='classified'
+                 ORDER BY id DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(classified, "B01");
+        let openings = library.browse_openings(Some("B")).unwrap();
+        let central_cannon = openings.iter().find(|item| item.code == "B01").unwrap();
+        assert_eq!(central_cannon.game_count, 1);
+        assert_eq!(central_cannon.red_wins, 1);
     }
 
     #[test]
@@ -3708,17 +4224,26 @@ mod tests {
         library
             .connection
             .execute(
-                "INSERT INTO opening_classifier_versions (id,name,status,active,created_at)
-             VALUES (2,'test-v2','active',1,?1)",
+                "INSERT INTO opening_classifier_versions (name,status,active,created_at)
+             VALUES ('test-v2','active',1,?1)",
                 [now()],
+            )
+            .unwrap();
+        let test_version: i64 = library
+            .connection
+            .query_row(
+                "SELECT id FROM opening_classifier_versions WHERE name='test-v2'",
+                [],
+                |row| row.get(0),
             )
             .unwrap();
         library.connection.execute(
             "INSERT INTO game_opening_classifications
              (game_id,category_code,candidate_codes_json,method,confidence,matched_plies,classifier_version_id,is_primary,status,created_at)
-             VALUES (?1,'C03','[\"C03\"]','test',1,1,2,1,'classified',?2)",
-            params![game_id, now()],
+             VALUES (?1,'C03','[\"C03\"]','test',1,1,?2,1,'classified',?3)",
+            params![game_id, test_version, now()],
         ).unwrap();
+        rebuild_opening_category_stats(&library.connection).unwrap();
 
         let series = library.browse_openings(None).unwrap();
         assert_eq!(

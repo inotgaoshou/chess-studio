@@ -116,6 +116,19 @@ CREATE TABLE IF NOT EXISTS opening_aliases (
   CONSTRAINT fk_opening_alias_reviewer FOREIGN KEY (reviewed_by) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='原始布局名称到规范编码的映射';
 
+CREATE TABLE IF NOT EXISTS opening_category_stats (
+  category_code VARCHAR(8) PRIMARY KEY,
+  game_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  red_wins BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  draws BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  black_wins BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  first_year SMALLINT UNSIGNED NULL,
+  last_year SMALLINT UNSIGNED NULL,
+  updated_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  KEY idx_opening_category_stats_games (game_count),
+  CONSTRAINT fk_opening_category_stats_category FOREIGN KEY (category_code) REFERENCES opening_categories(code)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='布局分类预聚合统计';
+
 CREATE TABLE IF NOT EXISTS opening_classifier_versions (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(80) NOT NULL UNIQUE,

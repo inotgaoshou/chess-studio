@@ -692,6 +692,14 @@ export type OpeningMatchDto = {
   classifierVersion: number;
   status: string;
 };
+export type OpeningCatalogBuildResultDto = {
+  classifierVersion: number;
+  categoryCount: number;
+  aliasCount: number;
+  patternCount: number;
+  classifiedGames: number;
+  pendingGames: number;
+};
 export type ReferenceReviewIssueDto = {
   id: string;
   kind: "identity" | "opening" | "duplicate" | string;
@@ -1042,6 +1050,8 @@ export interface ChessPlatform {
   listReferenceImportBatches(sourceId?: string, limit?: number): Promise<ReferenceImportBatchDto[]>;
   reviewReferenceBatch(batchId: string, approved: boolean, note: string): Promise<ReferenceImportBatchDto>;
   classifyReferenceBatch(batchId: string): Promise<OpeningMatchDto[]>;
+  rebuildReferenceOpeningCatalog(): Promise<OpeningCatalogBuildResultDto>;
+  classifyReferenceLibrary(limit?: number): Promise<OpeningCatalogBuildResultDto>;
   listReferenceBatchIssues(batchId: string): Promise<ReferenceReviewIssueDto[]>;
   updateReferenceGameIdentity(gameId: string, redPlayer: string, blackPlayer: string, gameDate: string): Promise<void>;
   overrideReferenceGameOpening(gameId: string, categoryCode: string, reviewedAlias?: string): Promise<void>;

@@ -180,6 +180,8 @@ fn main() {
             reference_service::list_reference_import_batches,
             reference_service::review_reference_batch,
             reference_service::classify_reference_batch,
+            reference_service::rebuild_reference_opening_catalog,
+            reference_service::classify_reference_library,
             reference_service::list_reference_batch_issues,
             reference_service::update_reference_game_identity,
             reference_service::override_reference_game_opening,

@@ -22,7 +22,7 @@ commands.allow = [
   "open_game", "play_move", "confirm_recognized_move", "preview_recognized_move_from_current",
   "resolve_screenshot_move", "preview_line", "parse_chinese_line", "new_game", "open_document", "import_cbl_game_library",
   "register_reference_source", "list_reference_sources", "scan_reference_source", "list_reference_import_batches",
-  "review_reference_batch", "classify_reference_batch", "list_reference_batch_issues",
+  "review_reference_batch", "classify_reference_batch", "rebuild_reference_opening_catalog", "classify_reference_library", "list_reference_batch_issues",
   "update_reference_game_identity", "override_reference_game_opening", "resolve_reference_duplicate",
   "query_reference_position", "browse_reference_openings",
   "list_reference_games", "get_reference_game_document",

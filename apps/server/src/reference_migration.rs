@@ -62,6 +62,20 @@ pub(crate) async fn migrate_reference_library(pool: &MySqlPool) -> Result<(), sq
     )
     .await?;
     add_index(pool, "master_game_moves", "idx_master_moves_position_move", "ALTER TABLE master_game_moves ADD KEY idx_master_moves_position_move (position_hash,move_iccs)").await?;
+    add_index(
+        pool,
+        "master_games",
+        "idx_master_games_valid_date",
+        "ALTER TABLE master_games ADD KEY idx_master_games_valid_date (validation_status, game_date, created_at, id)",
+    )
+    .await?;
+    add_index(
+        pool,
+        "master_game_moves",
+        "idx_master_moves_position_game",
+        "ALTER TABLE master_game_moves ADD KEY idx_master_moves_position_game (position_hash, position_key, game_id)",
+    )
+    .await?;
     sqlx::raw_sql(include_str!("../migrations/0004_reference_library_v2.sql"))
         .execute(pool)
         .await?;

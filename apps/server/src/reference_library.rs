@@ -5,7 +5,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use sqlx::{MySql, Transaction};
+use sqlx::{MySql, MySqlPool, Transaction};
 use url::Url;
 use uuid::Uuid;
 use xiangqi_core::{Board, Color, Move};
@@ -33,6 +33,8 @@ pub(crate) struct OpeningCategoryDto {
     red_wins: u64,
     draws: u64,
     black_wins: u64,
+    first_year: Option<u16>,
+    last_year: Option<u16>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -167,21 +169,26 @@ pub(crate) async fn list_openings(
         i64,
         i64,
         i64,
+        Option<i64>,
+        Option<i64>,
     );
     let rows: Vec<Row> = sqlx::query_as(
         "SELECT c.code,c.series_code,c.parent_code,c.name,c.sort_order,
-                COUNT(DISTINCT CASE WHEN x.is_primary=1 AND x.status='classified' AND g.validation_status='valid' THEN x.game_id END),
-                CAST(SUM(CASE WHEN x.is_primary=1 AND x.status='classified' AND g.validation_status='valid' AND g.result='1-0' THEN 1 ELSE 0 END) AS SIGNED),
-                CAST(SUM(CASE WHEN x.is_primary=1 AND x.status='classified' AND g.validation_status='valid' AND g.result='1/2-1/2' THEN 1 ELSE 0 END) AS SIGNED),
-                CAST(SUM(CASE WHEN x.is_primary=1 AND x.status='classified' AND g.validation_status='valid' AND g.result='0-1' THEN 1 ELSE 0 END) AS SIGNED)
+                CAST(COALESCE(s.game_count,0) AS SIGNED),
+                CAST(COALESCE(s.red_wins,0) AS SIGNED),
+                CAST(COALESCE(s.draws,0) AS SIGNED),
+                CAST(COALESCE(s.black_wins,0) AS SIGNED),
+                CAST(s.first_year AS SIGNED),
+                CAST(s.last_year AS SIGNED)
          FROM opening_categories c
-         LEFT JOIN game_opening_classifications x
-           ON (x.category_code=c.code OR (CHAR_LENGTH(c.code)=1 AND x.category_code LIKE CONCAT(c.code,'%')))
-          AND x.classifier_version_id=(SELECT id FROM opening_classifier_versions WHERE active=1 ORDER BY id DESC LIMIT 1)
-         LEFT JOIN master_games g ON g.id=x.game_id
+         LEFT JOIN opening_category_stats s ON s.category_code=c.code
          WHERE c.active=1 AND ((? IS NULL AND c.parent_code IS NULL) OR c.parent_code=?)
-         GROUP BY c.code,c.series_code,c.parent_code,c.name,c.sort_order ORDER BY c.sort_order,c.code",
-    ).bind(&query.parent_code).bind(&query.parent_code).fetch_all(&state.pool).await?;
+         ORDER BY c.sort_order,c.code",
+    )
+    .bind(&query.parent_code)
+    .bind(&query.parent_code)
+    .fetch_all(&state.pool)
+    .await?;
     let mut result = Vec::with_capacity(rows.len());
     for row in rows {
         let aliases: Vec<String> = sqlx::query_scalar(
@@ -201,6 +208,8 @@ pub(crate) async fn list_openings(
             red_wins: nonnegative(row.6),
             draws: nonnegative(row.7),
             black_wins: nonnegative(row.8),
+            first_year: row.9.and_then(|value| u16::try_from(value).ok()),
+            last_year: row.10.and_then(|value| u16::try_from(value).ok()),
         });
     }
     Ok(Json(result))
@@ -287,9 +296,13 @@ pub(crate) async fn list_reference_games(
             let rows: Vec<FastRow> = sqlx::query_as(
                 "SELECT g.id,g.title,g.red_player,g.black_player,g.event_name,g.round_name,g.game_date,
                         g.result,g.opening,g.canonical_fingerprint,CAST(g.move_count AS SIGNED)
-                 FROM master_game_moves m
-                 JOIN master_games g ON g.id=m.game_id
-                 WHERE m.position_hash=? AND m.position_key=? AND g.validation_status='valid'
+                 FROM master_games g FORCE INDEX (idx_master_games_valid_date)
+                 WHERE g.validation_status='valid'
+                   AND EXISTS (
+                     SELECT 1 FROM master_game_moves m FORCE INDEX (idx_master_moves_position_game)
+                     WHERE m.position_hash=? AND m.position_key=? AND m.game_id=g.id
+                   )
+                 ORDER BY g.game_date DESC,g.created_at DESC,g.id DESC
                  LIMIT ? OFFSET ?",
             )
             .bind(position_hash)
@@ -904,7 +917,42 @@ pub(crate) async fn confirm_reference_batch(
     .bind(batch_id)
     .execute(&state.pool)
     .await?;
+    rebuild_opening_category_stats(&state.pool).await?;
     Ok(Json(serde_json::json!({"status":"completed"})))
+}
+
+async fn rebuild_opening_category_stats(pool: &MySqlPool) -> Result<(), ApiError> {
+    sqlx::query("DELETE FROM opening_category_stats")
+        .execute(pool)
+        .await?;
+    sqlx::query(
+        "INSERT INTO opening_category_stats
+         (category_code,game_count,red_wins,draws,black_wins,first_year,last_year)
+         SELECT c.code,
+                COUNT(DISTINCT CASE WHEN x.is_primary=1 AND x.status='classified'
+                  AND g.validation_status='valid' THEN x.game_id END),
+                COALESCE(SUM(CASE WHEN x.is_primary=1 AND x.status='classified'
+                  AND g.validation_status='valid' AND g.result='1-0' THEN 1 ELSE 0 END),0),
+                COALESCE(SUM(CASE WHEN x.is_primary=1 AND x.status='classified'
+                  AND g.validation_status='valid' AND g.result='1/2-1/2' THEN 1 ELSE 0 END),0),
+                COALESCE(SUM(CASE WHEN x.is_primary=1 AND x.status='classified'
+                  AND g.validation_status='valid' AND g.result='0-1' THEN 1 ELSE 0 END),0),
+                MIN(CASE WHEN x.is_primary=1 AND x.status='classified'
+                  AND g.validation_status='valid' THEN YEAR(g.game_date) END),
+                MAX(CASE WHEN x.is_primary=1 AND x.status='classified'
+                  AND g.validation_status='valid' THEN YEAR(g.game_date) END)
+         FROM opening_categories c
+         LEFT JOIN game_opening_classifications x
+           ON ((c.parent_code IS NULL AND (x.category_code=c.code OR x.category_code LIKE CONCAT(c.code,'%')))
+             OR (c.parent_code IS NOT NULL AND x.category_code=c.code))
+          AND x.classifier_version_id=(SELECT id FROM opening_classifier_versions WHERE active=1 ORDER BY id DESC LIMIT 1)
+         LEFT JOIN master_games g ON g.id=x.game_id
+         WHERE c.active=1
+         GROUP BY c.code",
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 async fn require_admin(state: &AppState, headers: &HeaderMap) -> Result<Uuid, ApiError> {

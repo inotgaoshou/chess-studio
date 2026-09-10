@@ -118,7 +118,7 @@ function ReviewIssueRow({ issue, categories, busy, onIdentity, onOpening, onDupl
 
 export function ReferenceLibraryDialog({ platform, currentFen, onClose }: Props) {
   const desktop = platform.kind === "desktop";
-  const [tab, setTab] = useState<Tab>("games");
+  const [tab, setTab] = useState<Tab>("openings");
   const [openings, setOpenings] = useState<OpeningCategoryDto[]>([]);
   const [openingChildren, setOpeningChildren] = useState<Record<string, OpeningCategoryDto[]>>({});
   const [selectedCode, setSelectedCode] = useState<string>();
@@ -183,6 +183,12 @@ export function ReferenceLibraryDialog({ platform, currentFen, onClose }: Props)
       .slice(0, 5)
     : [], [openingChildren, openings, selected]);
   const openingOptions = useMemo(() => [...openings, ...Object.values(openingChildren).flat()], [openingChildren, openings]);
+  const childOpenings = useMemo(() => Object.values(openingChildren).flat(), [openingChildren]);
+  const hotOpenings = useMemo(() => childOpenings
+    .filter((item) => item.gameCount > 0)
+    .sort((left, right) => right.gameCount - left.gameCount || left.code.localeCompare(right.code))
+    .slice(0, 12), [childOpenings]);
+  const hasClassifiedOpenings = childOpenings.some((item) => item.gameCount > 0);
 
   async function refresh() {
     setBusy(true); setError("");
@@ -299,6 +305,18 @@ export function ReferenceLibraryDialog({ platform, currentFen, onClose }: Props)
     catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); setBusy(false); }
   }
 
+  async function buildOpeningCatalog() {
+    setBusy(true); setError(""); setNotice("");
+    try {
+      await platform.rebuildReferenceOpeningCatalog();
+      const result = await platform.classifyReferenceLibrary();
+      setNotice(`布局分类已生成：已归类 ${result.classifiedGames.toLocaleString()} 盘，待分类 ${result.pendingGames.toLocaleString()} 盘，规则 ${result.patternCount.toLocaleString()} 条。`);
+      await refresh();
+      setTab("openings");
+    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setBusy(false); }
+  }
+
   async function loadIssues(batchId: string) {
     if (issuesByBatch[batchId]) {
       setIssuesByBatch((current) => { const next = { ...current }; delete next[batchId]; return next; });
@@ -407,6 +425,18 @@ export function ReferenceLibraryDialog({ platform, currentFen, onClose }: Props)
       {tab === "openings" && <div className="reference-opening-body">
         <aside>{openings.map((item) => <div className="reference-opening-group" key={item.code}><button className={item.code === selectedCode ? "active" : ""} onClick={() => setSelectedCode(item.code)}><b>{item.code}</b><span>{item.name}<small>{item.gameCount.toLocaleString()} 局</small></span></button>{openingChildren[item.code]?.map((child) => <button key={child.code} className={`child ${child.code === selectedCode ? "active" : ""}`} onClick={() => setSelectedCode(child.code)}><b>{child.code}</b><span>{child.name}<small>{child.gameCount.toLocaleString()} 局</small></span></button>)}</div>)}</aside>
         <main>
+          <section className="reference-opening-hero">
+            <div><small>XIANGQI OPENINGS</small><strong>象棋布局探索</strong><span>基于本机参考实战库自动归类，支持按布局、棋手、赛事和年份筛选。</span></div>
+            <nav><button type="button" onClick={() => setSelectedCode(undefined)}>布局总览</button>{desktop && <button type="button" disabled={busy} onClick={() => void buildOpeningCatalog()}>{hasClassifiedOpenings ? "重建分类" : "一键生成本地布局分类"}</button>}</nav>
+          </section>
+          <section className="reference-hot-openings">
+            <header><strong>热门布局</strong><small>{hasClassifiedOpenings ? "按本地归类局数推荐" : "尚未生成分类，点击上方按钮后显示"}</small></header>
+            <div>{hotOpenings.length === 0 ? <p>暂无热门布局统计。</p> : hotOpenings.map((item, index) => <button type="button" key={item.code} className={item.code === selectedCode ? "active" : ""} onClick={() => setSelectedCode(item.code)}><i>{index + 1}</i><span><strong>{item.code} · {item.name}</strong><small>{item.gameCount.toLocaleString()} 局</small></span><b>›</b></button>)}</div>
+          </section>
+          <section className="reference-opening-series-cards">
+            <header><strong>开局系列</strong><small>进入系列页浏览该系全部布局</small></header>
+            <div>{openings.map((item) => <button type="button" key={item.code} className={item.code === selectedCode ? "active" : ""} onClick={() => setSelectedCode(item.code)}><b>{item.code}</b><strong>{item.code}. {item.name}</strong><small>{(openingChildren[item.code]?.length ?? 0).toLocaleString()} 布局 · {item.gameCount.toLocaleString()} 局</small></button>)}</div>
+          </section>
           <header><div><strong>{selected ? `${selected.code} · ${selected.name}` : "布局目录"}</strong><small>{selected?.aliases.join("、") || "规范分类与已审核别名"}</small></div><label><Search size={14}/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="棋手、赛事或标题"/></label></header>
           <div className="reference-opening-filters">
             <div className="reference-scope-toggle" role="group" aria-label="实战范围"><button className={!masterOnly ? "active" : ""} onClick={() => setMasterOnly(false)}>全部实战</button><button className={masterOnly ? "active" : ""} onClick={() => setMasterOnly(true)}>大师实战</button></div>

@@ -28,7 +28,7 @@ const game: ReferenceGameSummaryDto = {
   roundName: "第1轮", gameDate: "2026-09-08", opening: "中炮", moveCount: 60,
 };
 
-function platform(games: ReferenceGameSummaryDto[] = []) {
+function platform(games: ReferenceGameSummaryDto[] = [], openingChild: OpeningCategoryDto = child) {
   const publishReferenceBatch = vi.fn(async () => ({ status: "completed", inserted: 1, duplicates: 0 }));
   const listReferenceGames = vi.fn(async () => games);
   const queryReferencePosition = vi.fn(async () => [{
@@ -61,9 +61,17 @@ function platform(games: ReferenceGameSummaryDto[] = []) {
     redPlayer: "", blackPlayer: "黑方", gameDate: "2026", opening: "", detail: "棋手或完整日期缺失",
   }]);
   const updateReferenceGameIdentity = vi.fn(async () => undefined);
+  const rebuildReferenceOpeningCatalog = vi.fn(async () => ({
+    classifierVersion: 2, categoryCount: 13, aliasCount: 8, patternCount: 25,
+    classifiedGames: 100, pendingGames: 20,
+  }));
+  const classifyReferenceLibrary = vi.fn(async () => ({
+    classifierVersion: 2, categoryCount: 13, aliasCount: 8, patternCount: 25,
+    classifiedGames: 100, pendingGames: 20,
+  }));
   const value = {
     kind: "desktop" as const,
-    browseReferenceOpenings: vi.fn(async (parentCode?: string) => parentCode === "A" ? [child] : parentCode ? [] : [series]),
+    browseReferenceOpenings: vi.fn(async (parentCode?: string) => parentCode === "A" ? [openingChild] : parentCode ? [] : [series]),
     listReferenceSources: vi.fn(async () => [source]),
     listReferenceImportBatches: vi.fn(async () => [batch]),
     listReferenceGames,
@@ -74,8 +82,10 @@ function platform(games: ReferenceGameSummaryDto[] = []) {
     publishReferenceBatch,
     listReferenceBatchIssues,
     updateReferenceGameIdentity,
+    rebuildReferenceOpeningCatalog,
+    classifyReferenceLibrary,
   } as unknown as ChessPlatform;
-  return { value, getReferenceGameDocument, getReferenceOfflinePackageManifest, listReferenceBatchIssues, listReferenceGames, publishReferenceBatch, queryReferencePosition, updateReferenceGameIdentity };
+  return { value, classifyReferenceLibrary, getReferenceGameDocument, getReferenceOfflinePackageManifest, listReferenceBatchIssues, listReferenceGames, publishReferenceBatch, queryReferencePosition, rebuildReferenceOpeningCatalog, updateReferenceGameIdentity };
 }
 
 describe("ReferenceLibraryDialog", () => {
@@ -117,6 +127,7 @@ describe("ReferenceLibraryDialog", () => {
   it("shows all reference games and can filter pending classifications", async () => {
     const { value, getReferenceGameDocument, listReferenceGames } = platform([game]);
     render(<ReferenceLibraryDialog platform={value} onClose={() => undefined}/>);
+    fireEvent.click(screen.getByRole("button", { name: /实战检索/ }));
 
     expect((await screen.findAllByText("王天一 胜 郑惟桐")).length).toBeGreaterThan(0);
     expect(await screen.findByDisplayValue("本地只读参考文档")).toBeTruthy();
@@ -133,6 +144,7 @@ describe("ReferenceLibraryDialog", () => {
     const { value, queryReferencePosition } = platform([game]);
     render(<ReferenceLibraryDialog platform={value} currentFen="fen w - - 0 1" onClose={() => undefined}/>);
 
+    fireEvent.click(screen.getByRole("button", { name: /实战检索/ }));
     fireEvent.click(screen.getByRole("button", { name: "局面搜索" }));
 
     await waitFor(() => expect(queryReferencePosition).toHaveBeenCalledWith(expect.objectContaining({
@@ -140,6 +152,17 @@ describe("ReferenceLibraryDialog", () => {
       limit: 24,
     })));
     expect(await screen.findByText("炮二平五")).toBeTruthy();
+  });
+
+  it("can rebuild the practical opening catalog from the opening portal", async () => {
+    const { value, classifyReferenceLibrary, rebuildReferenceOpeningCatalog } = platform([], { ...child, gameCount: 0 });
+    render(<ReferenceLibraryDialog platform={value} onClose={() => undefined}/>);
+
+    fireEvent.click(await screen.findByRole("button", { name: /一键生成本地布局分类/ }));
+
+    await waitFor(() => expect(rebuildReferenceOpeningCatalog).toHaveBeenCalled());
+    await waitFor(() => expect(classifyReferenceLibrary).toHaveBeenCalled());
+    expect(await screen.findByText(/布局分类已生成/)).toBeTruthy();
   });
 
   it("loads the versioned offline package manifest from the configured server", async () => {

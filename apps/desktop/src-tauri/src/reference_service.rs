@@ -1,8 +1,8 @@
 use crate::app_state::DesktopState;
 use reference_library::{
-    OpeningCategory, OpeningMatch, PositionExplorerRequest, PositionMoveStat,
-    ReferenceGameDocument, ReferenceGameFilters, ReferenceGameSummary, ReferenceImportBatch,
-    ReferenceReviewIssue, ReferenceSource,
+    OpeningCatalogBuildResult, OpeningCategory, OpeningMatch, PositionExplorerRequest,
+    PositionMoveStat, ReferenceGameDocument, ReferenceGameFilters, ReferenceGameSummary,
+    ReferenceImportBatch, ReferenceReviewIssue, ReferenceSource,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -155,6 +155,21 @@ pub(crate) fn classify_reference_batch(
     state: State<'_, DesktopState>,
 ) -> Result<Vec<OpeningMatch>, String> {
     with_library(state, |library| library.classify_batch(&batch_id))
+}
+
+#[tauri::command]
+pub(crate) fn rebuild_reference_opening_catalog(
+    state: State<'_, DesktopState>,
+) -> Result<OpeningCatalogBuildResult, String> {
+    with_library(state, |library| library.rebuild_opening_catalog())
+}
+
+#[tauri::command]
+pub(crate) fn classify_reference_library(
+    limit: Option<usize>,
+    state: State<'_, DesktopState>,
+) -> Result<OpeningCatalogBuildResult, String> {
+    with_library(state, |library| library.classify_library(limit))
 }
 
 #[tauri::command]
@@ -522,6 +537,13 @@ pub(crate) async fn list_reference_games(
         }
         if filters.master_only.unwrap_or(false) {
             pairs.append_pair("masterOnly", "true");
+        }
+        if let Some(classification_status) = filters
+            .classification_status
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            pairs.append_pair("classificationStatus", classification_status);
         }
         if let Some(position_fen) = filters
             .position_fen
@@ -942,6 +964,16 @@ fn merge_openings(
                 current.red_wins += item.red_wins;
                 current.draws += item.draws;
                 current.black_wins += item.black_wins;
+                current.first_year = match (current.first_year, item.first_year) {
+                    (Some(left), Some(right)) => Some(left.min(right)),
+                    (None, right) => right,
+                    (left, None) => left,
+                };
+                current.last_year = match (current.last_year, item.last_year) {
+                    (Some(left), Some(right)) => Some(left.max(right)),
+                    (None, right) => right,
+                    (left, None) => left,
+                };
                 current.aliases.extend(item.aliases);
                 current.aliases.sort();
                 current.aliases.dedup();
