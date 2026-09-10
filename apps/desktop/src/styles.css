@@ -648,6 +648,16 @@ button:disabled { cursor: default; opacity: .45; }
   background: #255f7e;
   color: #fff;
 }
+.mode-tool.position-search-shortcut {
+  min-width: 86px;
+  border-color: #6d8757;
+  color: #eff8dc;
+}
+.mode-tool.position-search-shortcut.active {
+  border-color: #d6ad46;
+  background: #66542b;
+  color: #fff7d8;
+}
 .mode-tool.ttxq-import-shortcut { min-width: 104px; border-color: #5b8170; background: #365446; color: #edf8f0; }
 .mode-tool.ttxq-import-shortcut { flex: 0 0 auto; }
 .mode-tool.ttxq-import-shortcut:hover { border-color: #72b28c; background: #426852; color: #fff; }
@@ -6489,12 +6499,13 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 .floating-panel-link .floating-link-body {
   height: 100%;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: 44px 54px 28px minmax(0, 1fr);
+  grid-template-rows: 44px 54px 28px minmax(150px, .78fr) minmax(116px, .5fr);
   grid-template-areas:
     "control"
     "eval"
     "actions"
-    "mini";
+    "mini"
+    "reference";
   align-content: stretch;
   overflow: hidden;
   gap: 5px;
@@ -6592,6 +6603,69 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
   grid-area: actions;
   align-self: start;
   grid-template-columns: repeat(auto-fit, minmax(70px, 1fr));
+}
+.floating-panel-link .reference-position-panel {
+  grid-area: reference;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 28px auto minmax(0, 1fr);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  overflow: hidden;
+  background: var(--surface-1);
+}
+.floating-panel-link .reference-position-panel > header {
+  height: 28px;
+  padding: 0 5px 0 7px;
+}
+.floating-panel-link .reference-position-panel > header span {
+  gap: 4px;
+}
+.floating-panel-link .reference-position-panel > header strong,
+.floating-panel-link .reference-position-panel > header small {
+  font-size: 10px;
+}
+.floating-panel-link .reference-position-panel nav {
+  gap: 1px;
+}
+.floating-panel-link .reference-position-panel button {
+  min-width: 22px;
+  height: 22px;
+  padding: 0 4px;
+}
+.floating-panel-link .reference-position-opening {
+  min-height: 28px;
+  padding: 4px 7px;
+}
+.floating-panel-link .reference-position-opening b,
+.floating-panel-link .reference-position-opening span {
+  font-size: 9px;
+}
+.floating-panel-link .reference-position-panel > p {
+  padding: 8px;
+  font-size: 10px;
+}
+.floating-panel-link .reference-position-panel ol {
+  min-height: 0;
+  max-height: none;
+  padding: 0 5px 5px;
+  overflow: auto;
+}
+.floating-panel-link .reference-position-panel li {
+  min-height: 39px;
+  grid-template-columns: minmax(0, 1fr) 24px 24px;
+}
+.floating-panel-link .reference-position-panel .reference-move-main {
+  min-height: 37px;
+  grid-template-columns: minmax(44px, auto) 44px minmax(0, 1fr);
+  gap: 1px 5px;
+}
+.floating-panel-link .reference-move-main strong,
+.floating-panel-link .reference-move-main span {
+  font-size: 10px;
+}
+.floating-panel-link .reference-move-main small {
+  font-size: 9px;
 }
 .link-control-card {
   min-height: 42px;
@@ -6979,6 +7053,29 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 .reference-review-controls.duplicate { grid-template-columns: minmax(0,1fr) auto auto; align-items: center; }
 .reference-review-controls input, .reference-review-controls select { min-width: 0; height: 28px; padding: 0 7px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-0); color: var(--text-primary); }
 
+.board-reference-search-dock {
+  flex: 0 0 auto;
+  width: min(calc(100% - 24px), 690px);
+  margin: 2px auto 7px;
+}
+.board-reference-search-dock .reference-position-panel {
+  border: 1px solid color-mix(in srgb, #d6ad46 48%, var(--border));
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, .18);
+}
+.board-reference-search-dock .reference-position-panel > header {
+  background: linear-gradient(180deg, color-mix(in srgb, #fff8dd 72%, var(--surface-1)), var(--surface-1));
+}
+.board-reference-search-dock .reference-position-panel ol {
+  max-height: 224px;
+}
+.board-reference-search-dock .reference-position-panel li {
+  min-height: 46px;
+}
+.board-reference-search-dock .reference-position-panel .reference-move-main {
+  min-height: 44px;
+}
 .reference-position-panel { flex: 0 0 auto; min-width: 0; border-top: 1px solid var(--border); background: var(--surface-0); }
 .reference-position-panel > header { height: 34px; padding: 0 8px 0 10px; display: flex; align-items: center; justify-content: space-between; }
 .reference-position-panel > header span { display: flex; align-items: center; gap: 6px; }

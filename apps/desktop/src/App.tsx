@@ -1417,6 +1417,7 @@ export default function App() {
   );
   const [masterLibraryOpen, setMasterLibraryOpen] = useState(false);
   const [referenceLibraryOpen, setReferenceLibraryOpen] = useState(false);
+  const [referencePositionSearchOpen, setReferencePositionSearchOpen] = useState(false);
   const [ttxqImportOpen, setTtxqImportOpen] = useState(false);
   const [game53StudyOpen, setGame53StudyOpen] = useState(false);
   const [engineProbe, setEngineProbe] = useState<EngineProbeDto>();
@@ -2675,6 +2676,7 @@ export default function App() {
 
   const linkHasObservedPosition = ((linkSessionStatus.state === "tracking" || linkSessionStatus.state === "paused") || linkSessionStatus.initialPositionSeen === true)
     && linkSessionStatus.latestFen === board.fen;
+  const linkReferenceFen = linkSessionStatus.latestFen?.trim();
   const linkShouldShowMiniBoard = shouldShowLinkMiniBoard(linkSessionStatus, board.fen);
   const boardDisplayReversed = effectiveBoardReversedForLink(linkSessionStatus, board.fen, reversed);
   const boardPerspectiveLabel = boardDisplayReversed ? "黑方视角" : "红方视角";
@@ -5783,6 +5785,14 @@ export default function App() {
     await runAnalysis();
   }
 
+  function toggleReferencePositionSearch() {
+    setReferencePositionSearchOpen((open) => {
+      const next = !open;
+      setNotice(next ? "已开启局面搜索：当前局面变化后自动匹配本地参考实战库" : "已隐藏局面搜索");
+      return next;
+    });
+  }
+
   async function executeMenuCommand(command: MenuCommand) {
     switch (command) {
       case "newGame": await createGame(startingFen); break;
@@ -5808,7 +5818,7 @@ export default function App() {
         setMasterLibraryOpen(true);
         break;
       case "referenceLibrary":
-        setReferenceLibraryOpen(true);
+        toggleReferencePositionSearch();
         break;
       case "flyknifeLab": setFlyknifeOpen(true); break;
       case "nextBranch": await goToNextBranchPoint(); break;
@@ -6921,6 +6931,14 @@ export default function App() {
                   ? <CompactEngineAnalysisList busy={analysisBusy} rows={compactEngineRows} onPlayMove={() => undefined}/>
                   : <p>{linkHasObservedPosition ? "当前局面已同步，等待引擎返回候选线路。" : "识别并同步局面后，在此显示当前设置的引擎候选线。"}</p>}
             </div>
+            <ReferencePositionPanel
+              fen={linkReferenceFen ?? ""}
+              enabled={chessPlatform.kind === "desktop" && linkSessionStatus.state !== "stopped" && !!linkReferenceFen}
+              query={(fen) => chessPlatform.queryReferencePosition({ fen, limit: 6 })}
+              onPreview={(iccs, notation) => void previewCandidateLine({ multipv: 1, pv: [iccs], notation: [notation] }, linkReferenceFen ?? board.fen, { id: "reference-library", name: "实战库" })}
+              onAdd={(iccs) => void playIccsMove(iccs, linkReferenceFen ?? board.fen)}
+              onOpenExplorer={() => setReferenceLibraryOpen(true)}
+            />
             <div className="link-float-actions">
               {linkSessionStatus.mode === "confirmPlay" && <button type="button" title={linkConfirmMove ? `确认执行箭头1：${linkConfirmMoveDisplay ?? linkConfirmMove}` : "等待箭头1候选"} disabled={linkConfirmingMove || linkSessionStatus.state !== "tracking" || analysisIsStale || !linkConfirmMove || linkSessionStatus.clickAvailable === false} onClick={() => { const move = linkConfirmMove; if (!move || linkConfirmingMove) return; setLinkConfirmingMove(true); void chessPlatform.confirmLinkEngineMove(move).then(async () => { const status = await chessPlatform.getLinkSessionStatus(); setLinkSessionStatus(status); setNotice(status.targetWindow ? `已向 ${status.targetWindow.processName.replace(".exe", "")} 窗口点击 ${linkConfirmMoveDisplay ?? move} 的起点和终点，等待局面回读` : `已按箭头1选中 ${linkConfirmMoveDisplay ?? move} 的起始棋子，请在网页棋盘确认落点`); }).catch((error) => setNotice(friendlyError(error))).finally(() => setLinkConfirmingMove(false)); }}><Play size={14}/>{linkConfirmingMove ? "正在核对…" : linkConfirmMoveLabel ? `确认首选 ${linkConfirmMoveLabel}` : "确认走子"}</button>}
               <button type="button" disabled={linkSessionStatus.state === "stopped"} onClick={() => void chessPlatform.setLinkSideToMove(board.sideToMove === "红方" ? "black" : "red").then((next) => { applyBoard(next); return chessPlatform.getLinkSessionStatus(); }).then((status) => { setLinkSessionStatus(status); analysisHintsEnabledRef.current = true; setAnalysisHintsEnabled(true); window.setTimeout(() => void runAnalysis(true), 0); setNotice(`已校正为${board.sideToMove === "红方" ? "黑方" : "红方"}行棋`); }).catch((error) => setNotice(friendlyError(error)))}>{board.sideToMove === "红方" ? "改黑走" : "改红走"}</button>
@@ -7299,7 +7317,7 @@ export default function App() {
         ><Link size={15}/>连线</button>}
         {chessPlatform.kind === "desktop" && workspaceMode === "research" && <button className="tool-button flyknife-tool-button" title="飞刀库 / 专题库" onClick={() => setFlyknifeOpen(true)}><Zap size={16}/><span>飞刀库</span></button>}
         {chessPlatform.kind === "desktop" && workspaceMode !== "training" && <button className="tool-button" title="大师棋谱" aria-label="大师棋谱" onClick={() => setMasterLibraryOpen(true)}><Database size={16}/></button>}
-        {chessPlatform.kind === "desktop" && workspaceMode !== "training" && <button className="tool-button" title="参考实战库与布局探索" aria-label="参考实战库与布局探索" onClick={() => setReferenceLibraryOpen(true)}><BookOpen size={16}/></button>}
+        {chessPlatform.kind === "desktop" && workspaceMode !== "training" && <button className={`mode-tool position-search-shortcut ${referencePositionSearchOpen ? "active" : ""}`} title={referencePositionSearchOpen ? "隐藏当前局面实战搜索" : "开启当前局面实战搜索"} aria-label={referencePositionSearchOpen ? "隐藏当前局面实战搜索" : "开启当前局面实战搜索"} onClick={toggleReferencePositionSearch}><BookOpen size={15}/>局面搜索</button>}
       </div>
 
       <main className={`workspace workspace-mode-${workspaceMode} layout-${desktopPreferences.layoutMode} ${reviewModeOpen ? "review-mode-active" : ""} ${libraryCollapsed ? "library-collapsed" : ""} ${candidateRailCollapsed ? "candidate-rail-collapsed" : ""} ${analysisPanelCollapsed ? "analysis-panel-collapsed" : ""} ${compactDockMinimized ? "compact-dock-minimized" : ""} ${compactHasSystemPopout ? "compact-system-popout" : ""} ${desktopPreferences.layoutMode === "compact" && cloudBookCollapsed ? "compact-cloud-collapsed" : ""}`}>
@@ -7553,6 +7571,16 @@ export default function App() {
               {selectedPieceThought.confidenceNote && <small>{selectedPieceThought.confidenceNote}</small>}
             </section>}
           </div>
+          {referencePositionSearchOpen && chessPlatform.kind === "desktop" && workspaceMode !== "training" && <div className="board-reference-search-dock">
+            <ReferencePositionPanel
+              fen={board.fen}
+              enabled={!candidatePreview}
+              query={(fen) => chessPlatform.queryReferencePosition({ fen, limit: 8 })}
+              onPreview={(iccs, notation) => void previewCandidateLine({ multipv: 1, pv: [iccs], notation: [notation] }, board.fen, { id: "reference-library", name: "实战库" })}
+              onAdd={(iccs) => void playIccsMove(iccs, board.fen)}
+              onOpenExplorer={() => setReferenceLibraryOpen(true)}
+            />
+          </div>}
           {candidatePreview && previewStep && (
             <div className="candidate-preview-bar" style={{ "--pv-color": candidatePreview.color } as CSSProperties}>
               <div className="candidate-preview-main">
@@ -7758,14 +7786,6 @@ export default function App() {
               ><ChevronLeft size={16}/></button>
             : null}
           {(!analysisPanelCollapsed || desktopPreferences.layoutMode === "compact") && <>
-            <ReferencePositionPanel
-              fen={board.fen}
-              enabled={chessPlatform.kind === "desktop" && !candidatePreview}
-              query={(fen) => chessPlatform.queryReferencePosition({ fen, limit: 8 })}
-              onPreview={(iccs, notation) => void previewCandidateLine({ multipv: 1, pv: [iccs], notation: [notation] }, board.fen, { id: "reference-library", name: "实战库" })}
-              onAdd={(iccs) => void playIccsMove(iccs, board.fen)}
-              onOpenExplorer={() => setReferenceLibraryOpen(true)}
-            />
             {desktopPreferences.layoutMode === "compact" && workspaceMode === "research" ? <div className="research-reference-stack">
               {compactReferencePanels()}
               {compactManualDock("research-manual-panel")}
