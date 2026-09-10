@@ -1,15 +1,16 @@
-import { Activity, BookOpen, FlaskConical, GraduationCap } from "lucide-react";
+import { Activity, BookOpen, Database, FlaskConical, GraduationCap } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { WorkspaceLayoutMode } from "./platform";
 import { WorkspaceLayoutSwitch } from "./WorkspaceLayoutSwitch";
 
-export const workspaceModes = ["review", "research", "training"] as const;
+export const workspaceModes = ["review", "research", "training", "opening"] as const;
 export type WorkspaceMode = typeof workspaceModes[number];
 
 const modes = [
   ["review", "复盘", "赛后录谱、报告与归档", BookOpen],
   ["research", "研究", "分支、引擎、开局与实验", FlaskConical],
   ["training", "训练", "拆棋、复练与学习档案", GraduationCap],
+  ["opening", "大师开局", "按当前局面匹配参考实战与候选着法", Database],
 ] as const;
 
 export function WorkspaceModeSwitch({
@@ -61,7 +62,9 @@ export function WorkspaceModeSwitch({
     ? engineReady ? "引擎就绪" : "需配置引擎"
     : active === "training"
       ? "本地训练可用"
-      : "本地复盘可用";
+      : active === "opening"
+        ? "本地实战库可用"
+        : "本地复盘可用";
 
   function selectMode(mode: WorkspaceMode) {
     onChange(mode);

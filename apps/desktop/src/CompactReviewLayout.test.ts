@@ -18,8 +18,8 @@ function declarationsFor(selector: string) {
 }
 
 describe("compact board-first workspace layout", () => {
-  it("gives review, research, and training the same full-height board work area", () => {
-    const workspaceModes = ["review", "research", "training"];
+  it("gives review, research, training, and opening the same full-height board work area", () => {
+    const workspaceModes = ["review", "research", "training", "opening"];
 
     for (const mode of workspaceModes) {
       const section = `.workspace.layout-compact.workspace-mode-${mode} > .board-section`;
@@ -37,7 +37,7 @@ describe("compact board-first workspace layout", () => {
   });
 
   it("sizes the board from its stage container instead of a viewport height guess", () => {
-    const stageInner = declarationsFor(".workspace.layout-compact.workspace-mode-training .board-stage-inner");
+    const stageInner = styles.match(/workspace-mode-training \.board-stage-inner[\s\S]*?\{([^}]*)\}/)?.[1] ?? "";
 
     expect(stageInner).toMatch(/100cqw/);
     expect(stageInner).toMatch(/100cqh/);

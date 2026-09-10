@@ -94,6 +94,7 @@ import { FlyknifeDialog } from "./FlyknifeDialog";
 import { mobileWorkbenchMediaQuery, shouldUseMobileWorkbench } from "./mobileEnvironment";
 import { MasterLibraryDialog } from "./MasterLibraryDialog";
 import { ReferenceLibraryDialog } from "./ReferenceLibraryDialog";
+import { MasterOpeningPanel } from "./MasterOpeningPanel";
 import { ReferencePositionPanel } from "./ReferencePositionPanel";
 import { Game53StudyDialog } from "./Game53StudyDialog";
 import { TtxqImportDialog } from "./TtxqImportDialog";
@@ -1417,7 +1418,6 @@ export default function App() {
   );
   const [masterLibraryOpen, setMasterLibraryOpen] = useState(false);
   const [referenceLibraryOpen, setReferenceLibraryOpen] = useState(false);
-  const [referencePositionSearchOpen, setReferencePositionSearchOpen] = useState(false);
   const [ttxqImportOpen, setTtxqImportOpen] = useState(false);
   const [game53StudyOpen, setGame53StudyOpen] = useState(false);
   const [engineProbe, setEngineProbe] = useState<EngineProbeDto>();
@@ -5786,11 +5786,7 @@ export default function App() {
   }
 
   function toggleReferencePositionSearch() {
-    setReferencePositionSearchOpen((open) => {
-      const next = !open;
-      setNotice(next ? "已开启局面搜索：当前局面变化后自动匹配本地参考实战库" : "已隐藏局面搜索");
-      return next;
-    });
+    void selectWorkspaceMode(workspaceMode === "opening" ? "review" : "opening");
   }
 
   async function executeMenuCommand(command: MenuCommand) {
@@ -6011,7 +6007,7 @@ export default function App() {
     }
   }
 
-  async function openReviewMode(mode: Extract<WorkspaceMode, "review" | "training"> = "review") {
+  async function openReviewMode(mode: Exclude<WorkspaceMode, "research"> = "review") {
     setReviewModeOpen(true);
     setWorkspaceMode(mode);
     await setWorkspaceLayout("compact");
@@ -6027,6 +6023,9 @@ export default function App() {
     setCompactPoppedOutPanels((panels) => ({ ...panels, engine: false }));
     setCompactDetachedPanels((panels) => ({ ...panels, engine: false }));
     setCompactWindowPositions((positions) => ({ ...positions, engine: compactEngineDefaultPosition() }));
+    if (mode === "opening") {
+      setNotice("已进入大师开局：当前局面会自动匹配本地参考实战库");
+    }
   }
 
   async function exitReviewMode() {
@@ -6382,10 +6381,10 @@ export default function App() {
         </div>
         {showReferenceSearchShortcut && <button
           type="button"
-          className={`position-search-control ${referencePositionSearchOpen ? "active" : ""}`}
-          title={referencePositionSearchOpen ? "隐藏当前局面实战搜索" : "显示当前局面实战搜索"}
-          aria-label={referencePositionSearchOpen ? "隐藏当前局面实战搜索" : "显示当前局面实战搜索"}
-          aria-pressed={referencePositionSearchOpen}
+          className={`position-search-control ${workspaceMode === "opening" ? "active" : ""}`}
+          title={workspaceMode === "opening" ? "返回复盘模式" : "进入大师开局局面搜索"}
+          aria-label={workspaceMode === "opening" ? "返回复盘模式" : "进入大师开局局面搜索"}
+          aria-pressed={workspaceMode === "opening"}
           onClick={toggleReferencePositionSearch}
         ><Database size={13}/><span>局面</span></button>}
         <div className="playback-tail">
@@ -7053,6 +7052,7 @@ export default function App() {
   );
   const boardAnnotationParts = splitTtxqComment(boardAnnotationValue);
   const boardHasAnnotation = Boolean(boardAnnotationParts.sourceText || boardAnnotationParts.localText);
+  const referencePositionSearchActive = chessPlatform.kind === "desktop" && workspaceMode === "opening";
 
   return (
     <div className={`app-shell ${chessPlatform.kind}-shell theme-${effectiveColorTheme} layout-${desktopPreferences.layoutMode} board-skin-${displayedBoardSkin} piece-skin-${displayedPieceSkin}`}>
@@ -7285,7 +7285,6 @@ export default function App() {
           onChange={(mode) => void selectWorkspaceMode(mode)}
           onLayoutChange={(mode) => void setWorkspaceLayout(mode)}
         />
-        {chessPlatform.kind === "desktop" && workspaceMode !== "training" && <button className={`mode-tool position-search-shortcut ${referencePositionSearchOpen ? "active" : ""}`} title={referencePositionSearchOpen ? "隐藏大师开局局面搜索" : "开启大师开局局面搜索"} aria-label={referencePositionSearchOpen ? "隐藏大师开局局面搜索" : "开启大师开局局面搜索"} onClick={toggleReferencePositionSearch}><BookOpen size={15}/>大师开局</button>}
         <button
           className={`mode-tool ${analysisHintsEnabled ? "active" : ""}`}
           title={analysisHintsEnabled ? "停止自动分析并隐藏 MultiPV 提示" : "开启自动分析与 MultiPV 提示"}
@@ -7329,7 +7328,7 @@ export default function App() {
         {chessPlatform.kind === "desktop" && workspaceMode !== "training" && <button className="tool-button" title="大师棋谱" aria-label="大师棋谱" onClick={() => setMasterLibraryOpen(true)}><Database size={16}/></button>}
       </div>
 
-      <main className={`workspace workspace-mode-${workspaceMode} layout-${desktopPreferences.layoutMode} ${reviewModeOpen ? "review-mode-active" : ""} ${libraryCollapsed ? "library-collapsed" : ""} ${candidateRailCollapsed ? "candidate-rail-collapsed" : ""} ${analysisPanelCollapsed ? "analysis-panel-collapsed" : ""} ${compactDockMinimized ? "compact-dock-minimized" : ""} ${compactHasSystemPopout ? "compact-system-popout" : ""} ${desktopPreferences.layoutMode === "compact" && cloudBookCollapsed ? "compact-cloud-collapsed" : ""}`}>
+      <main className={`workspace workspace-mode-${workspaceMode} layout-${desktopPreferences.layoutMode} ${referencePositionSearchActive ? "reference-search-active" : ""} ${reviewModeOpen ? "review-mode-active" : ""} ${libraryCollapsed ? "library-collapsed" : ""} ${candidateRailCollapsed ? "candidate-rail-collapsed" : ""} ${analysisPanelCollapsed ? "analysis-panel-collapsed" : ""} ${compactDockMinimized ? "compact-dock-minimized" : ""} ${compactHasSystemPopout ? "compact-system-popout" : ""} ${desktopPreferences.layoutMode === "compact" && cloudBookCollapsed ? "compact-cloud-collapsed" : ""}`}>
         <aside className={`library-panel ${libraryCollapsed && mobilePanel !== "library" ? "collapsed" : ""} ${mobilePanel === "library" ? "mobile-visible" : ""}`}>
           <div className="pane-title">
             <strong>{libraryCollapsed ? <Library size={16}/> : "棋谱库"}</strong>
@@ -7580,16 +7579,6 @@ export default function App() {
               {selectedPieceThought.confidenceNote && <small>{selectedPieceThought.confidenceNote}</small>}
             </section>}
           </div>
-          {referencePositionSearchOpen && chessPlatform.kind === "desktop" && workspaceMode !== "training" && <div className="board-reference-search-dock">
-            <ReferencePositionPanel
-              fen={board.fen}
-              enabled={!candidatePreview}
-              query={(fen) => chessPlatform.queryReferencePosition({ fen, limit: 8, includeDetails: false })}
-              onPreview={(iccs, notation) => void previewCandidateLine({ multipv: 1, pv: [iccs], notation: [notation] }, board.fen, { id: "reference-library", name: "实战库" })}
-              onAdd={(iccs) => void playIccsMove(iccs, board.fen)}
-              onOpenExplorer={() => setReferenceLibraryOpen(true)}
-            />
-          </div>}
           {candidatePreview && previewStep && (
             <div className="candidate-preview-bar" style={{ "--pv-color": candidatePreview.color } as CSSProperties}>
               <div className="candidate-preview-main">
@@ -7723,7 +7712,15 @@ export default function App() {
           {!reviewModeOpen && candidateLinesView("board-candidate-rail", workspaceMode !== "research")}
         </section>
 
-        <aside className={`analysis-panel ${reviewModeOpen ? "review-mode-panel" : ""} ${analysisPanelCollapsed && desktopPreferences.layoutMode !== "compact" ? "collapsed" : ""} ${mobilePanel === "analysis" ? "mobile-visible" : ""}`}>
+        {referencePositionSearchActive ? <MasterOpeningPanel
+          fen={board.fen}
+          enabled={referencePositionSearchActive}
+          queryMoves={(fen) => chessPlatform.queryReferencePosition({ fen, limit: 8, includeDetails: false })}
+          queryGames={(fen) => chessPlatform.listReferenceGames(undefined, undefined, 16, 0, { positionFen: fen })}
+          onPreviewMove={(iccs, notation) => void previewCandidateLine({ multipv: 1, pv: [iccs], notation: [notation] }, board.fen, { id: "reference-library", name: "大师开局" })}
+          onAddMove={(iccs) => void playIccsMove(iccs, board.fen)}
+          onOpenExplorer={() => setReferenceLibraryOpen(true)}
+        /> : <aside className={`analysis-panel ${reviewModeOpen ? "review-mode-panel" : ""} ${analysisPanelCollapsed && desktopPreferences.layoutMode !== "compact" ? "collapsed" : ""} ${mobilePanel === "analysis" ? "mobile-visible" : ""}`}>
           {reviewModeOpen ? <ReviewWorkspace
             board={board}
             report={reportPresentation}
@@ -8034,7 +8031,7 @@ export default function App() {
           </div>
           </>}
           </>}
-        </aside>
+        </aside>}
       </main>
       {skinShopOpen && (
         <SkinShopDialog preferences={desktopPreferences} signedIn={syncAccount.status === "signedIn"} onClose={() => { setSkinHoverPreview(undefined); setSkinShopOpen(false); }} onPreview={setSkinHoverPreview} onEquip={(patch) => void updateBoardSkin(patch)}/>

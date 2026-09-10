@@ -12,17 +12,22 @@ function Harness() {
 }
 
 describe("WorkspaceModeSwitch", () => {
-  it("keeps review as the default and exposes the three task-oriented modes", () => {
+  it("keeps review as the default and exposes the four task-oriented modes", () => {
     render(<Harness/>);
     expect(screen.getByRole("group", { name: "工作模式" }).className).toContain("workspace-mode-menu");
     expect(screen.getByRole("button", { name: "复盘" }).getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getAllByRole("button")).toHaveLength(3);
+    expect(screen.getAllByRole("button")).toHaveLength(4);
 
     fireEvent.click(screen.getByRole("button", { name: "研究" }));
     expect(screen.getByRole("button", { name: "研究" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByRole("region", { name: "研究布局" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "简洁" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByText("需配置引擎")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "大师开局" }));
+    expect(screen.getByRole("button", { name: "复盘" }).getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByRole("button", { name: "大师开局" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByText("本地实战库可用")).toBeTruthy();
   });
 
   it("closes the research layout menu after selection, outside click, or Escape", () => {

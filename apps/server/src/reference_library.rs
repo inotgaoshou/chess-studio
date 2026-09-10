@@ -52,6 +52,8 @@ pub(crate) struct ReferenceGameQuery {
     master_only: Option<bool>,
     #[serde(alias = "classificationStatus")]
     classification_status: Option<String>,
+    #[serde(alias = "positionFen")]
+    position_fen: Option<String>,
     limit: Option<u32>,
     offset: Option<u32>,
 }
@@ -249,6 +251,73 @@ pub(crate) async fn list_reference_games(
             "classificationStatus must be classified or pending".into(),
         ));
     }
+    let position_filter = match query.position_fen.as_deref() {
+        Some(fen) if !fen.trim().is_empty() => {
+            let board =
+                Board::from_fen(fen).map_err(|error| ApiError::Invalid(error.to_string()))?;
+            let key = board.rule_position_key();
+            Some((short_hash(&key), key))
+        }
+        _ => None,
+    };
+    if let Some((position_hash, position_key)) = position_filter.as_ref() {
+        let fast_position_only = query.opening_code.is_none()
+            && search.is_empty()
+            && player.is_empty()
+            && event.is_empty()
+            && query.year_from.is_none()
+            && query.year_to.is_none()
+            && side.is_empty()
+            && classification_status.is_empty()
+            && !query.master_only.unwrap_or(false);
+        if fast_position_only {
+            type FastRow = (
+                String,
+                String,
+                String,
+                String,
+                Option<String>,
+                Option<String>,
+                Option<chrono::NaiveDate>,
+                String,
+                Option<String>,
+                Option<String>,
+                i64,
+            );
+            let rows: Vec<FastRow> = sqlx::query_as(
+                "SELECT g.id,g.title,g.red_player,g.black_player,g.event_name,g.round_name,g.game_date,
+                        g.result,g.opening,g.canonical_fingerprint,CAST(g.move_count AS SIGNED)
+                 FROM master_game_moves m
+                 JOIN master_games g ON g.id=m.game_id
+                 WHERE m.position_hash=? AND m.position_key=? AND g.validation_status='valid'
+                 LIMIT ? OFFSET ?",
+            )
+            .bind(position_hash)
+            .bind(position_key)
+            .bind(query.limit.unwrap_or(50).clamp(1, 200))
+            .bind(query.offset.unwrap_or(0))
+            .fetch_all(&state.pool)
+            .await?;
+            return Ok(Json(
+                rows.into_iter()
+                    .map(|row| ReferenceGameSummaryDto {
+                        id: row.0,
+                        title: row.1,
+                        red_player: row.2,
+                        black_player: row.3,
+                        event_name: row.4.unwrap_or_default(),
+                        round_name: row.5.unwrap_or_default(),
+                        game_date: row.6,
+                        result: row.7,
+                        opening: row.8.unwrap_or_default(),
+                        opening_code: None,
+                        canonical_fingerprint: row.9.unwrap_or_default(),
+                        move_count: nonnegative(row.10),
+                    })
+                    .collect(),
+            ));
+        }
+    }
     type Row = (
         String,
         String,
@@ -290,6 +359,8 @@ pub(crate) async fn list_reference_games(
 	                AND EXISTS (SELECT 1 FROM game_opening_classifications c
 	                WHERE c.game_id=g.id AND c.is_primary=1 AND c.status='pending'
 	                  AND c.classifier_version_id=(SELECT id FROM opening_classifier_versions WHERE active=1 ORDER BY id DESC LIMIT 1))))
+             AND (? IS NULL OR EXISTS (SELECT 1 FROM master_game_moves m
+                  WHERE m.game_id=g.id AND m.position_hash=? AND m.position_key=?))
 	         ORDER BY g.game_date DESC,g.created_at DESC,g.id DESC LIMIT ? OFFSET ?",
     ).bind(&query.opening_code).bind(&query.opening_code).bind(&query.opening_code).bind(&query.opening_code)
       .bind(search).bind(search).bind(search).bind(search).bind(search)
@@ -298,6 +369,9 @@ pub(crate) async fn list_reference_games(
 	      .bind(side).bind(side).bind(player).bind(side).bind(player)
 	      .bind(query.master_only.unwrap_or(false))
 	      .bind(classification_status).bind(classification_status).bind(classification_status)
+      .bind(position_filter.as_ref().map(|(hash, _)| hash.as_str()))
+      .bind(position_filter.as_ref().map(|(hash, _)| hash.as_str()))
+      .bind(position_filter.as_ref().map(|(_, key)| key.as_str()))
 	      .bind(query.limit.unwrap_or(50).clamp(1,200))
 	      .bind(query.offset.unwrap_or(0)).fetch_all(&state.pool).await?;
     Ok(Json(

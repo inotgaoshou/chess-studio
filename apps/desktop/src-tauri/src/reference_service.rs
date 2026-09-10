@@ -402,6 +402,7 @@ pub(crate) async fn list_reference_games(
     side: Option<String>,
     master_only: Option<bool>,
     classification_status: Option<String>,
+    position_fen: Option<String>,
     limit: Option<usize>,
     offset: Option<usize>,
     state: State<'_, DesktopState>,
@@ -417,6 +418,7 @@ pub(crate) async fn list_reference_games(
         side,
         master_only,
         classification_status,
+        position_fen,
     };
     let (working, working_count) = {
         let library = state
@@ -520,6 +522,13 @@ pub(crate) async fn list_reference_games(
         }
         if filters.master_only.unwrap_or(false) {
             pairs.append_pair("masterOnly", "true");
+        }
+        if let Some(position_fen) = filters
+            .position_fen
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            pairs.append_pair("positionFen", position_fen);
         }
     }
     let client = reqwest::Client::builder()

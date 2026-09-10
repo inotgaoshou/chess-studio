@@ -738,6 +738,7 @@ export type ReferenceGameFilters = {
   side?: "red" | "black";
   masterOnly?: boolean;
   classificationStatus?: "classified" | "pending";
+  positionFen?: string;
 };
 export type ReferenceGameSummaryDto = {
   id: string;

@@ -105,6 +105,7 @@ pub struct ReferenceGameFilters {
     pub side: Option<String>,
     pub master_only: Option<bool>,
     pub classification_status: Option<String>,
+    pub position_fen: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1367,6 +1368,15 @@ impl ReferenceLibrary {
                 "side must be red or black".into(),
             ));
         }
+        let position_filter = match filters.position_fen.as_deref() {
+            Some(fen) if !fen.trim().is_empty() => {
+                let board = Board::from_fen(fen)
+                    .map_err(|error| ReferenceLibraryError::InvalidData(error.to_string()))?;
+                let key = board.rule_position_key();
+                Some((short_hash(&key), key))
+            }
+            _ => None,
+        };
         if filters.master_only.unwrap_or(false) {
             return Ok(Vec::new());
         }
@@ -1379,6 +1389,40 @@ impl ReferenceLibrary {
             return Err(ReferenceLibraryError::InvalidData(
                 "classificationStatus must be classified or pending".into(),
             ));
+        }
+        if let Some((position_hash, position_key)) = position_filter.as_ref() {
+            let fast_position_only = opening_code.is_none()
+                && query.is_empty()
+                && player.is_empty()
+                && event.is_empty()
+                && filters.year_from.is_none()
+                && filters.year_to.is_none()
+                && side.is_empty()
+                && classification_status.is_empty()
+                && !filters.master_only.unwrap_or(false);
+            if fast_position_only {
+                let mut statement = self.connection.prepare(
+                    "SELECT g.id, g.title, g.red_player, g.black_player, g.result, g.event_name,
+                            g.round_name, g.game_date, g.opening, NULL,
+                            g.canonical_fingerprint,g.move_count
+                     FROM reference_game_moves m INDEXED BY idx_reference_moves_stat_rollup
+                     JOIN reference_games g ON g.id=m.game_id
+                     WHERE m.position_hash=?1 AND m.position_key=?2
+                       AND g.active=1 AND g.validation_status='valid'
+                       AND NOT EXISTS (SELECT 1 FROM temp_reference_exclusions e WHERE e.canonical_fingerprint=g.canonical_fingerprint)
+                     LIMIT ?3 OFFSET ?4",
+                )?;
+                let rows = statement.query_map(
+                    params![
+                        position_hash,
+                        position_key,
+                        limit.min(i64::MAX as usize).max(1) as i64,
+                        offset.min(i64::MAX as usize) as i64
+                    ],
+                    map_game,
+                )?;
+                return Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?);
+            }
         }
         let mut statement = self.connection.prepare(
             "SELECT g.id, g.title, g.red_player, g.black_player, g.result, g.event_name,
@@ -1411,8 +1455,14 @@ impl ReferenceLibrary {
                     AND EXISTS (SELECT 1 FROM game_opening_classifications c
                     WHERE c.game_id=g.id AND c.is_primary=1 AND c.status='pending'
                       AND c.classifier_version_id=(SELECT id FROM opening_classifier_versions WHERE active=1 ORDER BY id DESC LIMIT 1))))
-             ORDER BY g.game_date DESC, g.created_at DESC LIMIT ?9 OFFSET ?10",
+               AND (?9 IS NULL OR EXISTS (SELECT 1 FROM reference_game_moves m
+                    WHERE m.game_id=g.id AND m.position_hash=?9 AND m.position_key=?10))
+             ORDER BY g.game_date DESC, g.created_at DESC LIMIT ?11 OFFSET ?12",
         )?;
+        let (position_hash, position_key) = position_filter
+            .as_ref()
+            .map(|(hash, key)| (Some(hash.as_str()), Some(key.as_str())))
+            .unwrap_or((None, None));
         let rows = statement.query_map(
             params![
                 opening_code,
@@ -1423,6 +1473,8 @@ impl ReferenceLibrary {
                 filters.year_to,
                 side,
                 classification_status,
+                position_hash,
+                position_key,
                 limit.min(i64::MAX as usize).max(1) as i64,
                 offset.min(i64::MAX as usize) as i64
             ],
@@ -3131,6 +3183,7 @@ mod tests {
                         side: Some("red".into()),
                         master_only: Some(false),
                         classification_status: None,
+                        position_fen: None,
                     },
                     10,
                     0,
@@ -3154,6 +3207,22 @@ mod tests {
                 )
                 .unwrap()
                 .is_empty()
+        );
+        assert_eq!(
+            library
+                .list_games_filtered(
+                    None,
+                    None,
+                    &ReferenceGameFilters {
+                        position_fen: Some(xiangqi_core::STARTING_FEN.into()),
+                        ..ReferenceGameFilters::default()
+                    },
+                    10,
+                    0,
+                )
+                .unwrap()
+                .len(),
+            1
         );
 
         let second = library.scan_source(&source.id).unwrap();
