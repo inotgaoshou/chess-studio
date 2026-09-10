@@ -1,12 +1,87 @@
 import { useEffect, useMemo, useState } from "react";
-import { BookOpen, Check, Database, Download, FolderOpen, ListChecks, RefreshCw, Search, ShieldCheck, Upload, X } from "lucide-react";
-import type { ChessPlatform, OpeningCategoryDto, ReferenceGameFilters, ReferenceGameSummaryDto, ReferenceImportBatchDto, ReferenceReviewIssueDto, ReferenceSourceDto } from "./platform/types";
+import { BookOpen, Check, Database, Download, Eye, FileText, FolderOpen, ListChecks, RefreshCw, Search, ShieldCheck, Upload, X } from "lucide-react";
+import type { ChessPlatform, OpeningCategoryDto, PositionMoveStatDto, ReferenceGameDocumentDto, ReferenceGameFilters, ReferenceGameSummaryDto, ReferenceImportBatchDto, ReferenceReviewIssueDto, ReferenceSourceDto } from "./platform/types";
 
-type Props = { platform: ChessPlatform; onClose(): void };
-type Tab = "openings" | "sources" | "batches";
+type Props = { platform: ChessPlatform; currentFen?: string; onClose(): void };
+type Tab = "openings" | "games" | "sources" | "batches";
+type ClassificationStatus = "all" | "classified" | "pending";
+type SearchMode = "match" | "position";
 
 function resultLabel(result: string) {
   return result === "1-0" ? "红胜" : result === "0-1" ? "黑胜" : result === "1/2-1/2" ? "和棋" : "未知";
+}
+
+function percent(value: number, total: number) {
+  return total > 0 ? Math.round(value * 100 / total) : 0;
+}
+
+type ReferenceRawMove = { row?: number; col?: number };
+type ReferenceRawNode = {
+  id?: string;
+  parent_id?: string;
+  parentId?: string;
+  mv?: { from?: ReferenceRawMove; to?: ReferenceRawMove };
+  comment?: string;
+  is_mainline?: boolean;
+  isMainline?: boolean;
+  deleted?: boolean;
+  order_key?: number;
+  orderKey?: number;
+};
+type ReferenceDocumentPreview = {
+  startingFen: string;
+  note: string;
+  mainline: string[];
+  commentCount: number;
+  branchCount: number;
+};
+
+function squareLabel(square?: ReferenceRawMove) {
+  if (typeof square?.row !== "number" || typeof square.col !== "number") return "?";
+  const file = "abcdefghi"[square.col] ?? "?";
+  return `${file}${9 - square.row}`;
+}
+
+function moveLabel(node: ReferenceRawNode) {
+  return `${squareLabel(node.mv?.from)}-${squareLabel(node.mv?.to)}`;
+}
+
+function referenceDocumentPreview(documentJson: string): ReferenceDocumentPreview {
+  const parsed = JSON.parse(documentJson) as {
+    startingFen?: string;
+    note?: string;
+    tree?: { root_id?: string; rootId?: string; nodes?: Record<string, ReferenceRawNode> };
+  };
+  const nodes = Object.values(parsed.tree?.nodes ?? {});
+  const byParent = new Map<string, ReferenceRawNode[]>();
+  for (const node of nodes) {
+    if (node.deleted) continue;
+    const parent = node.parent_id ?? node.parentId;
+    if (!parent) continue;
+    const siblings = byParent.get(parent) ?? [];
+    siblings.push(node);
+    byParent.set(parent, siblings);
+  }
+  for (const siblings of byParent.values()) {
+    siblings.sort((left, right) => (left.order_key ?? left.orderKey ?? 0) - (right.order_key ?? right.orderKey ?? 0));
+  }
+  const mainline: string[] = [];
+  let cursor = parsed.tree?.root_id ?? parsed.tree?.rootId;
+  const seen = new Set<string>();
+  while (cursor && !seen.has(cursor) && mainline.length < 80) {
+    seen.add(cursor);
+    const next = (byParent.get(cursor) ?? []).find((node) => node.is_mainline ?? node.isMainline) ?? byParent.get(cursor)?.[0];
+    if (!next?.id) break;
+    mainline.push(moveLabel(next));
+    cursor = next.id;
+  }
+  return {
+    startingFen: parsed.startingFen ?? "",
+    note: parsed.note ?? "",
+    mainline,
+    commentCount: nodes.filter((node) => node.comment?.trim()).length,
+    branchCount: [...byParent.values()].filter((siblings) => siblings.length > 1).length,
+  };
 }
 
 type ReviewIssueRowProps = {
@@ -41,7 +116,7 @@ function ReviewIssueRow({ issue, categories, busy, onIdentity, onOpening, onDupl
   </div>;
 }
 
-export function ReferenceLibraryDialog({ platform, onClose }: Props) {
+export function ReferenceLibraryDialog({ platform, currentFen, onClose }: Props) {
   const desktop = platform.kind === "desktop";
   const [tab, setTab] = useState<Tab>("openings");
   const [openings, setOpenings] = useState<OpeningCategoryDto[]>([]);
@@ -58,6 +133,15 @@ export function ReferenceLibraryDialog({ platform, onClose }: Props) {
   const [yearTo, setYearTo] = useState("");
   const [side, setSide] = useState<"" | "red" | "black">("");
   const [masterOnly, setMasterOnly] = useState(false);
+  const [searchMode, setSearchMode] = useState<SearchMode>("match");
+  const [classificationStatus, setClassificationStatus] = useState<ClassificationStatus>("all");
+  const [selectedGameId, setSelectedGameId] = useState<string>();
+  const [selectedDocument, setSelectedDocument] = useState<ReferenceGameDocumentDto>();
+  const [documentError, setDocumentError] = useState("");
+  const [documentLoading, setDocumentLoading] = useState(false);
+  const [positionMoves, setPositionMoves] = useState<PositionMoveStatDto[]>([]);
+  const [positionLoading, setPositionLoading] = useState(false);
+  const [positionError, setPositionError] = useState("");
   const [licenseStatus, setLicenseStatus] = useState("local-only");
   const [serverSourceId, setServerSourceId] = useState("");
   const [serverUrl, setServerUrl] = useState("");
@@ -80,6 +164,10 @@ export function ReferenceLibraryDialog({ platform, onClose }: Props) {
     side: player.trim() ? side || undefined : undefined,
     masterOnly,
   }), [eventName, masterOnly, player, side, yearFrom, yearTo]);
+  const activeGameFilters = useMemo<ReferenceGameFilters>(() => tab === "games" && classificationStatus !== "all"
+    ? { ...gameFilters, classificationStatus }
+    : gameFilters, [classificationStatus, gameFilters, tab]);
+  const activeOpeningCode = tab === "openings" ? selectedCode : undefined;
   const commonPlayers = useMemo(() => {
     const counts = new Map<string, number>();
     for (const game of games) {
@@ -118,12 +206,73 @@ export function ReferenceLibraryDialog({ platform, onClose }: Props) {
 
   useEffect(() => { void refresh(); }, []);
   useEffect(() => {
+    if (tab !== "openings" && tab !== "games") return;
+    if (tab === "games" && searchMode !== "match") return;
     let disposed = false;
-    void platform.listReferenceGames(selectedCode, query, 100, 0, gameFilters)
+    void platform.listReferenceGames(activeOpeningCode, query, 100, 0, activeGameFilters)
       .then((items) => { if (!disposed) setGames(items); })
       .catch((cause) => { if (!disposed) setError(cause instanceof Error ? cause.message : String(cause)); });
     return () => { disposed = true; };
-  }, [gameFilters, platform, query, selectedCode]);
+  }, [activeGameFilters, activeOpeningCode, platform, query, searchMode, tab]);
+  useEffect(() => {
+    if (tab !== "games" || searchMode !== "position" || !currentFen) {
+      setPositionMoves([]);
+      setPositionError("");
+      setPositionLoading(false);
+      return;
+    }
+    let disposed = false;
+    setPositionLoading(true);
+    setPositionError("");
+    void platform.queryReferencePosition({
+      fen: currentFen,
+      limit: 24,
+      player: gameFilters.player,
+      event: gameFilters.event,
+      yearFrom: gameFilters.yearFrom,
+      yearTo: gameFilters.yearTo,
+      side: gameFilters.side,
+      masterOnly: gameFilters.masterOnly,
+    }).then((items) => { if (!disposed) setPositionMoves(items); })
+      .catch((cause) => {
+        if (!disposed) {
+          setPositionMoves([]);
+          setPositionError(cause instanceof Error ? cause.message : String(cause));
+        }
+      })
+      .finally(() => { if (!disposed) setPositionLoading(false); });
+    return () => { disposed = true; };
+  }, [currentFen, gameFilters, platform, searchMode, tab]);
+  useEffect(() => {
+    if (tab !== "games" || searchMode !== "match") return;
+    setSelectedGameId((current) => current && games.some((game) => game.id === current) ? current : games[0]?.id);
+  }, [games, searchMode, tab]);
+  useEffect(() => {
+    if (tab !== "games" || !selectedGameId) {
+      setSelectedDocument(undefined);
+      setDocumentError("");
+      setDocumentLoading(false);
+      return;
+    }
+    let disposed = false;
+    setDocumentLoading(true);
+    setDocumentError("");
+    void platform.getReferenceGameDocument(selectedGameId)
+      .then((document) => {
+        if (!disposed) {
+          setSelectedDocument(document);
+          if (!document) setDocumentError("未找到该棋局的完整文档。");
+        }
+      })
+      .catch((cause) => {
+        if (!disposed) {
+          setSelectedDocument(undefined);
+          setDocumentError(cause instanceof Error ? cause.message : String(cause));
+        }
+      })
+      .finally(() => { if (!disposed) setDocumentLoading(false); });
+    return () => { disposed = true; };
+  }, [platform, selectedGameId, tab]);
 
   async function addSource() {
     const path = await platform.chooseReferenceSource();
@@ -236,11 +385,19 @@ export function ReferenceLibraryDialog({ platform, onClose }: Props) {
     finally { setBusy(false); }
   }
 
+  const selectedGame = games.find((game) => game.id === selectedGameId) ?? selectedDocument?.game;
+  const documentPreview = useMemo(() => {
+    if (!selectedDocument) return undefined;
+    try { return referenceDocumentPreview(selectedDocument.documentJson); }
+    catch { return undefined; }
+  }, [selectedDocument]);
+
   return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="reference-library-dialog" role="dialog" aria-modal="true" aria-label="参考实战库与布局探索">
       <header><span><Database size={18}/><strong>参考实战库</strong><small>布局体系、局面统计与资料源审核</small></span><button type="button" title="关闭" aria-label="关闭" onClick={onClose}><X size={17}/></button></header>
       <nav className="reference-tabs" aria-label="参考库视图">
         <button className={tab === "openings" ? "active" : ""} onClick={() => setTab("openings")}><BookOpen size={14}/>布局探索</button>
+        <button className={tab === "games" ? "active" : ""} onClick={() => setTab("games")}><FileText size={14}/>实战检索</button>
         {desktop && <button className={tab === "sources" ? "active" : ""} onClick={() => setTab("sources")}><FolderOpen size={14}/>资料源</button>}
         {desktop && <button className={tab === "batches" ? "active" : ""} onClick={() => setTab("batches")}><ShieldCheck size={14}/>导入批次</button>}
         <button className="icon" type="button" title="刷新" aria-label="刷新" disabled={busy} onClick={() => void refresh()}><RefreshCw size={14}/></button>
@@ -265,6 +422,55 @@ export function ReferenceLibraryDialog({ platform, onClose }: Props) {
           <div className="reference-opening-stats"><span>棋局 <b>{selected?.gameCount ?? 0}</b></span><span className="red">红胜 <b>{selected?.redWins ?? 0}</b></span><span>和棋 <b>{selected?.draws ?? 0}</b></span><span>黑胜 <b>{selected?.blackWins ?? 0}</b></span></div>
           <div className="reference-game-table"><div className="head"><span>对局</span><span>赛事 / 日期</span><span>结果</span><span>手数</span></div>{games.length === 0 ? <p>该分类暂无已归类棋局。</p> : games.map((game) => <div key={game.id}><span><b>{game.redPlayer || "红方未知"}</b><small>对 {game.blackPlayer || "黑方未知"}</small></span><span><b>{game.eventName || game.title}</b><small>{game.gameDate || "日期未知"} {game.roundName}</small></span><span>{resultLabel(game.result)}</span><span>{game.moveCount}</span></div>)}</div>
         </main>
+      </div>}
+      {tab === "games" && <div className="reference-game-search-body">
+        <aside>
+          <header><strong>实战仓库</strong><small>全部参考棋局、待分类棋局都能直接查看</small></header>
+          <div className="reference-search-mode" role="group" aria-label="检索方式"><button className={searchMode === "match" ? "active" : ""} type="button" onClick={() => setSearchMode("match")}>对阵搜索</button><button className={searchMode === "position" ? "active" : ""} type="button" onClick={() => setSearchMode("position")} title={currentFen ? "按当前棋盘局面查询本地实战候选" : "当前没有可用棋盘局面"}>局面搜索</button></div>
+          <label><Search size={14}/><input aria-label="实战检索关键词" value={query} disabled={searchMode === "position"} onChange={(event) => setQuery(event.target.value)} placeholder={searchMode === "position" ? "局面搜索按当前棋盘 FEN" : "标题、棋手、赛事"}/></label>
+          <label>棋手<input value={player} onChange={(change) => setPlayer(change.target.value)} placeholder="王天一 / 许银川"/></label>
+          <label>赛事<input value={eventName} onChange={(change) => setEventName(change.target.value)} placeholder="全国大赛"/></label>
+          <label>年份<span><input aria-label="实战起始年份" inputMode="numeric" maxLength={4} value={yearFrom} onChange={(change) => setYearFrom(change.target.value.replace(/\D/g, ""))} placeholder="起始"/><input aria-label="实战结束年份" inputMode="numeric" maxLength={4} value={yearTo} onChange={(change) => setYearTo(change.target.value.replace(/\D/g, ""))} placeholder="结束"/></span></label>
+          <label>执方<select value={side} disabled={!player.trim()} onChange={(change) => setSide(change.target.value as "" | "red" | "black")}><option value="">不限</option><option value="red">执红</option><option value="black">执黑</option></select></label>
+          <div className="reference-classification-toggle" role="group" aria-label="分类状态">
+            <button type="button" className={classificationStatus === "all" ? "active" : ""} onClick={() => setClassificationStatus("all")}>全部</button>
+            <button type="button" className={classificationStatus === "classified" ? "active" : ""} onClick={() => setClassificationStatus("classified")}>已归类</button>
+            <button type="button" className={classificationStatus === "pending" ? "active" : ""} onClick={() => setClassificationStatus("pending")}>待分类</button>
+          </div>
+          <div className="reference-game-search-hint"><b>{searchMode === "position" ? `候选 ${positionMoves.length.toLocaleString()} 着` : `已加载 ${games.length.toLocaleString()} 盘`}</b><span>筛选会同时查本机参考库和可用离线包；预览只读，不改当前棋谱。</span></div>
+        </aside>
+        <main>
+          <header><span><strong>{searchMode === "position" ? "当前局面候选" : classificationStatus === "pending" ? "待分类棋局" : classificationStatus === "classified" ? "已归类棋局" : "全部参考棋局"}</strong><small>{searchMode === "position" ? "按当前棋盘 FEN 聚合实战走法" : query.trim() || player.trim() || eventName.trim() ? "当前筛选结果" : "最近导入和最新日期优先"}</small></span></header>
+          {searchMode === "match" ? <div className="reference-game-search-list" role="listbox" aria-label="参考棋局列表">
+            {games.length === 0 ? <p>没有匹配棋局。可以换个棋手、赛事或切到“全部”。</p> : games.map((game) => <button key={game.id} type="button" role="option" aria-selected={game.id === selectedGameId} className={game.id === selectedGameId ? "active" : ""} onClick={() => setSelectedGameId(game.id)}>
+              <span><b>{game.title || `${game.redPlayer || "红方未知"} 对 ${game.blackPlayer || "黑方未知"}`}</b><small>{game.redPlayer || "红方未知"} vs {game.blackPlayer || "黑方未知"}</small></span>
+              <span><b>{game.eventName || "赛事未知"}</b><small>{game.gameDate || "日期未知"} {game.roundName}</small></span>
+              <em>{game.openingCode ?? "待分类"}</em><i>{game.moveCount} 手</i>
+            </button>)}
+          </div> : <div className="reference-position-search-list">
+            {!currentFen ? <p>当前没有可用棋盘局面，打开一盘棋后再试。</p> : positionLoading ? <p>正在聚合当前局面实战…</p> : positionError ? <p className="error">{positionError}</p> : positionMoves.length === 0 ? <p>当前局面暂无本地实战样本。</p> : positionMoves.map((move) => {
+              const total = move.redWins + move.draws + move.blackWins;
+              return <button key={move.iccs} type="button" disabled={!move.representativeGameId} onClick={() => move.representativeGameId && setSelectedGameId(move.representativeGameId)}>
+                <span><b>{move.notation}</b><small>{move.iccs} · {move.samples.toLocaleString()} 局</small></span>
+                <span><b>{move.openingCode ? `${move.openingCode} · ${move.openingName ?? ""}` : "未归类"}</b><small>{move.firstYear ?? "年份未知"}{move.lastYear && move.lastYear !== move.firstYear ? `–${move.lastYear}` : ""}</small></span>
+                <i className="reference-result-bar" aria-label={`红胜 ${percent(move.redWins, total)}%，和棋 ${percent(move.draws, total)}%，黑胜 ${percent(move.blackWins, total)}%`}><b className="red" style={{ width: `${percent(move.redWins, total)}%` }}/><b className="draw" style={{ width: `${percent(move.draws, total)}%` }}/><b className="black" style={{ width: `${percent(move.blackWins, total)}%` }}/></i>
+                <em>{move.representativeGameTitle ? "看代表局" : "无代表局"}</em>
+              </button>;
+            })}
+          </div>}
+        </main>
+        <section className="reference-game-preview" aria-label="参考棋局预览">
+          {!selectedGame ? <p>选择左侧棋局后查看来源文档摘要。</p> : <>
+            <header><span><Eye size={14}/><strong>{selectedGame.title || "未命名棋局"}</strong><small>{selectedGame.redPlayer || "红方未知"} vs {selectedGame.blackPlayer || "黑方未知"} · {resultLabel(selectedGame.result)}</small></span></header>
+            <dl><div><dt>布局</dt><dd>{selectedGame.openingCode ? `${selectedGame.openingCode} · ${selectedGame.opening || "未命名"}` : selectedGame.opening || "待分类"}</dd></div><div><dt>赛事</dt><dd>{selectedGame.eventName || "未知"}</dd></div><div><dt>日期</dt><dd>{selectedGame.gameDate || "未知"}</dd></div><div><dt>手数</dt><dd>{selectedGame.moveCount}</dd></div></dl>
+            {documentLoading ? <p>正在读取完整棋谱文档…</p> : documentError ? <p className="error">{documentError}</p> : documentPreview ? <>
+              <div className="reference-game-preview-stats"><span>分支点 <b>{documentPreview.branchCount}</b></span><span>注释 <b>{documentPreview.commentCount}</b></span></div>
+              <label>起始 FEN<textarea readOnly value={documentPreview.startingFen}/></label>
+              {documentPreview.note && <label>资料备注<textarea readOnly value={documentPreview.note}/></label>}
+              <div className="reference-game-mainline"><strong>主线预览</strong><ol>{documentPreview.mainline.slice(0, 40).map((move, index) => <li key={`${move}-${index}`}><span>{index + 1}</span>{move}</li>)}</ol>{documentPreview.mainline.length > 40 && <small>仅显示前 40 手，完整 UUID 树已保存在本地参考库。</small>}</div>
+            </> : <p className="error">完整文档 JSON 暂时无法解析。</p>}
+          </>}
+        </section>
       </div>}
       {tab === "sources" && <div className="reference-source-body"><header><div><strong>登记 CBL 资料源</strong><small>启动与手动刷新时按文件指纹扫描；本地绝对路径不会上传。</small></div><label>许可状态<input value={licenseStatus} onChange={(event) => setLicenseStatus(event.target.value)} placeholder="local-only / authorized"/></label><button disabled={busy} onClick={() => void addSource()}><FolderOpen size={14}/>添加目录</button></header><div className="reference-source-list">{sources.length === 0 ? <p>尚未登记资料源。</p> : sources.map((source) => <div key={source.id}><span><strong>{source.displayName}</strong><small>{source.rootPath}</small></span><em>{source.licenseStatus}</em><small>{source.lastScannedAt ? new Date(source.lastScannedAt).toLocaleString() : "尚未扫描"}</small><button disabled={busy} title="扫描新增和修订" onClick={() => void scan(source.id)}><RefreshCw size={14}/>扫描</button></div>)}</div><div className="reference-publish-settings"><label>离线包地址<input value={packageUrl} onChange={(event) => setPackageUrl(event.target.value)} placeholder="https://example.com/reference-library-v2.sqlite.zst"/></label><label>SHA-256<input value={packageSha256} onChange={(event) => setPackageSha256(event.target.value)} placeholder="64 位校验值"/></label><button disabled={busy} title="从同步服务获取最新版离线库信息" onClick={() => void loadOfflinePackageManifest()}><RefreshCw size={14}/>获取最新版</button><button disabled={busy} title="校验并原子替换本地参考库" onClick={() => void installOfflinePackage()}><Download size={14}/>安装离线包</button></div></div>}
       {tab === "batches" && <div className="reference-batch-body">

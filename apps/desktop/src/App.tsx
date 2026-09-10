@@ -6984,7 +6984,7 @@ export default function App() {
           onStudyGame={chessPlatform.kind === "desktop" ? () => { setMasterLibraryOpen(false); setGame53StudyOpen(true); } : undefined}
           onClose={() => setMasterLibraryOpen(false)}
         />}
-        {referenceLibraryOpen && <ReferenceLibraryDialog platform={chessPlatform} onClose={() => setReferenceLibraryOpen(false)}/>}
+        {referenceLibraryOpen && <ReferenceLibraryDialog platform={chessPlatform} currentFen={board.fen} onClose={() => setReferenceLibraryOpen(false)}/>}
       </div>
     );
   }
@@ -7215,7 +7215,7 @@ export default function App() {
         onStudyGame={chessPlatform.kind === "desktop" ? () => { setMasterLibraryOpen(false); setGame53StudyOpen(true); } : undefined}
         onClose={() => setMasterLibraryOpen(false)}
       />}
-      {referenceLibraryOpen && <ReferenceLibraryDialog platform={chessPlatform} onClose={() => setReferenceLibraryOpen(false)}/>}
+      {referenceLibraryOpen && <ReferenceLibraryDialog platform={chessPlatform} currentFen={board.fen} onClose={() => setReferenceLibraryOpen(false)}/>}
       {coachProfileOpen && <CoachProfileView
         reports={coachReports}
         masterStyleProfiles={masterStyleProfiles}

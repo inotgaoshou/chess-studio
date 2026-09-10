@@ -736,6 +736,7 @@ export type ReferenceGameFilters = {
   yearTo?: number;
   side?: "red" | "black";
   masterOnly?: boolean;
+  classificationStatus?: "classified" | "pending";
 };
 export type ReferenceGameSummaryDto = {
   id: string;

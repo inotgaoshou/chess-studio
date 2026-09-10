@@ -103,6 +103,7 @@ pub struct ReferenceGameFilters {
     pub year_to: Option<i32>,
     pub side: Option<String>,
     pub master_only: Option<bool>,
+    pub classification_status: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -606,9 +607,11 @@ impl ReferenceLibrary {
             counts.merge(per_file);
         }
         let transaction = self.connection.transaction()?;
-        deactivate_missing_files(&transaction, source_id, &batch_id, &seen)?;
-        reconcile_active_games(&transaction)?;
-        rebuild_position_statistics(&transaction)?;
+        let removed_files = deactivate_missing_files(&transaction, source_id, &batch_id, &seen)?;
+        if counts.changed_files > 0 || removed_files > 0 {
+            reconcile_active_games(&transaction)?;
+            rebuild_position_statistics(&transaction)?;
+        }
         transaction.commit()?;
 
         let status = if counts.invalid_records > 0 {
@@ -1349,6 +1352,16 @@ impl ReferenceLibrary {
         if filters.master_only.unwrap_or(false) {
             return Ok(Vec::new());
         }
+        let classification_status = filters
+            .classification_status
+            .as_deref()
+            .unwrap_or_default()
+            .trim();
+        if !matches!(classification_status, "" | "classified" | "pending") {
+            return Err(ReferenceLibraryError::InvalidData(
+                "classificationStatus must be classified or pending".into(),
+            ));
+        }
         let mut statement = self.connection.prepare(
             "SELECT g.id, g.title, g.red_player, g.black_player, g.result, g.event_name,
                     g.round_name, g.game_date, g.opening,
@@ -1371,7 +1384,16 @@ impl ReferenceLibrary {
                AND (?5 IS NULL OR CAST(substr(g.game_date,1,4) AS INTEGER)>=?5)
                AND (?6 IS NULL OR CAST(substr(g.game_date,1,4) AS INTEGER)<=?6)
                AND (?7='' OR (?7='red' AND g.red_player LIKE '%' || ?3 || '%') OR (?7='black' AND g.black_player LIKE '%' || ?3 || '%'))
-             ORDER BY g.game_date DESC, g.created_at DESC LIMIT ?8 OFFSET ?9",
+               AND (?8='' OR (?8='classified' AND EXISTS (SELECT 1 FROM game_opening_classifications c
+                    WHERE c.game_id=g.id AND c.is_primary=1 AND c.status='classified'
+                      AND c.classifier_version_id=(SELECT id FROM opening_classifier_versions WHERE active=1 ORDER BY id DESC LIMIT 1)))
+                 OR (?8='pending' AND NOT EXISTS (SELECT 1 FROM game_opening_classifications c
+                    WHERE c.game_id=g.id AND c.is_primary=1 AND c.status='classified'
+                      AND c.classifier_version_id=(SELECT id FROM opening_classifier_versions WHERE active=1 ORDER BY id DESC LIMIT 1))
+                    AND EXISTS (SELECT 1 FROM game_opening_classifications c
+                    WHERE c.game_id=g.id AND c.is_primary=1 AND c.status='pending'
+                      AND c.classifier_version_id=(SELECT id FROM opening_classifier_versions WHERE active=1 ORDER BY id DESC LIMIT 1))))
+             ORDER BY g.game_date DESC, g.created_at DESC LIMIT ?9 OFFSET ?10",
         )?;
         let rows = statement.query_map(
             params![
@@ -1382,6 +1404,7 @@ impl ReferenceLibrary {
                 filters.year_from,
                 filters.year_to,
                 side,
+                classification_status,
                 limit.min(i64::MAX as usize).max(1) as i64,
                 offset.min(i64::MAX as usize) as i64
             ],
@@ -2320,7 +2343,7 @@ fn deactivate_missing_files(
     source_id: &str,
     batch_id: &str,
     seen: &BTreeSet<String>,
-) -> Result<()> {
+) -> Result<u32> {
     let mut statement = connection.prepare(
         "SELECT id, relative_path FROM reference_import_files WHERE source_id=?1 AND active=1",
     )?;
@@ -2330,8 +2353,10 @@ fn deactivate_missing_files(
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     drop(statement);
+    let mut removed_files = 0;
     for (id, relative_path) in rows {
         if !seen.contains(&relative_path) {
+            removed_files += 1;
             let mut sources = connection.prepare(
                 "SELECT s.record_index,s.record_hash,g.canonical_fingerprint
                  FROM reference_game_sources s JOIN reference_games g ON g.id=s.game_id
@@ -2375,7 +2400,7 @@ fn deactivate_missing_files(
             )?;
         }
     }
-    Ok(())
+    Ok(removed_files)
 }
 
 fn reconcile_active_games(connection: &Connection) -> Result<()> {
@@ -2730,6 +2755,8 @@ CREATE TABLE IF NOT EXISTS reference_games (
   active INTEGER NOT NULL DEFAULT 1,
   ingestion_version INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_reference_games_start_moves_active
+  ON reference_games(starting_fen,moves_hash,active);
 CREATE TABLE IF NOT EXISTS reference_game_documents (
   game_id TEXT PRIMARY KEY REFERENCES reference_games(id), document_json TEXT NOT NULL,
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL
@@ -2780,6 +2807,8 @@ CREATE TABLE IF NOT EXISTS reference_game_moves (
 );
 CREATE INDEX IF NOT EXISTS idx_reference_moves_position ON reference_game_moves(position_hash,move_iccs);
 CREATE INDEX IF NOT EXISTS idx_reference_moves_key ON reference_game_moves(position_key,move_iccs);
+CREATE INDEX IF NOT EXISTS idx_reference_moves_stat_rollup
+  ON reference_game_moves(position_hash,position_key,move_iccs,game_id);
 CREATE TABLE IF NOT EXISTS reference_position_move_stats (
   position_key TEXT NOT NULL, position_hash TEXT NOT NULL, move_iccs TEXT NOT NULL, notation TEXT NOT NULL,
   samples INTEGER NOT NULL, red_wins INTEGER NOT NULL, draws INTEGER NOT NULL, black_wins INTEGER NOT NULL,
@@ -2937,8 +2966,12 @@ fn migrate_local_schema(connection: &Connection) -> Result<()> {
            ON reference_games(canonical_fingerprint);
          CREATE UNIQUE INDEX IF NOT EXISTS idx_reference_games_dedupe
            ON reference_games(dedupe_key);
+         CREATE INDEX IF NOT EXISTS idx_reference_games_start_moves_active
+           ON reference_games(starting_fen,moves_hash,active);
          CREATE INDEX IF NOT EXISTS idx_reference_records_hash
-           ON reference_import_records(source_id,relative_path,record_index,record_hash);",
+           ON reference_import_records(source_id,relative_path,record_index,record_hash);
+         CREATE INDEX IF NOT EXISTS idx_reference_moves_stat_rollup
+           ON reference_game_moves(position_hash,position_key,move_iccs,game_id);",
     )?;
     Ok(())
 }
@@ -3076,6 +3109,7 @@ mod tests {
                         year_to: Some(2026),
                         side: Some("red".into()),
                         master_only: Some(false),
+                        classification_status: None,
                     },
                     10,
                     0,

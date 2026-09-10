@@ -271,6 +271,7 @@ class DesktopPlatform implements ChessPlatform {
       yearTo: filters.yearTo ?? null,
       side: filters.side ?? null,
       masterOnly: filters.masterOnly ?? false,
+      classificationStatus: filters.classificationStatus ?? null,
       limit,
       offset,
     });
@@ -1094,6 +1095,7 @@ class WebPlatform implements ChessPlatform {
     if (filters.yearTo) endpoint.searchParams.set("yearTo", String(filters.yearTo));
     if (filters.side) endpoint.searchParams.set("side", filters.side);
     if (filters.masterOnly) endpoint.searchParams.set("masterOnly", "true");
+    if (filters.classificationStatus) endpoint.searchParams.set("classificationStatus", filters.classificationStatus);
     endpoint.searchParams.set("limit", String(limit));
     endpoint.searchParams.set("offset", String(offset));
     return readJsonResponse<ReferenceGameSummaryDto[]>(await fetch(endpoint));

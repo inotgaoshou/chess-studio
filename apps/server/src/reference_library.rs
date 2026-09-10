@@ -38,14 +38,20 @@ pub(crate) struct OpeningCategoryDto {
 #[derive(Debug, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ReferenceGameQuery {
+    #[serde(alias = "openingCode")]
     opening_code: Option<String>,
     query: Option<String>,
     player: Option<String>,
     event: Option<String>,
     side: Option<String>,
+    #[serde(alias = "yearFrom")]
     year_from: Option<u16>,
+    #[serde(alias = "yearTo")]
     year_to: Option<u16>,
+    #[serde(alias = "masterOnly")]
     master_only: Option<bool>,
+    #[serde(alias = "classificationStatus")]
+    classification_status: Option<String>,
     limit: Option<u32>,
     offset: Option<u32>,
 }
@@ -229,8 +235,18 @@ pub(crate) async fn list_reference_games(
     let player = query.player.as_deref().unwrap_or_default().trim();
     let event = query.event.as_deref().unwrap_or_default().trim();
     let side = query.side.as_deref().unwrap_or_default().trim();
+    let classification_status = query
+        .classification_status
+        .as_deref()
+        .unwrap_or_default()
+        .trim();
     if !matches!(side, "" | "red" | "black") {
         return Err(ApiError::Invalid("side must be red or black".into()));
+    }
+    if !matches!(classification_status, "" | "classified" | "pending") {
+        return Err(ApiError::Invalid(
+            "classificationStatus must be classified or pending".into(),
+        ));
     }
     type Row = (
         String,
@@ -261,17 +277,28 @@ pub(crate) async fn list_reference_games(
            AND (?='' OR g.title LIKE CONCAT('%',?,'%') OR g.red_player LIKE CONCAT('%',?,'%') OR g.black_player LIKE CONCAT('%',?,'%') OR g.event_name LIKE CONCAT('%',?,'%'))
            AND (?='' OR g.red_player LIKE CONCAT('%',?,'%') OR g.black_player LIKE CONCAT('%',?,'%'))
            AND (?='' OR g.event_name LIKE CONCAT('%',?,'%'))
-           AND (? IS NULL OR YEAR(g.game_date)>=?) AND (? IS NULL OR YEAR(g.game_date)<=?)
-           AND (?='' OR (?='red' AND g.red_player LIKE CONCAT('%',?,'%')) OR (?='black' AND g.black_player LIKE CONCAT('%',?,'%')))
-           AND (?=0 OR g.master_player_id IS NOT NULL OR EXISTS (SELECT 1 FROM master_game_player_refs mr WHERE mr.game_id=g.id))
-         ORDER BY g.game_date DESC,g.created_at DESC,g.id DESC LIMIT ? OFFSET ?",
+	           AND (? IS NULL OR YEAR(g.game_date)>=?) AND (? IS NULL OR YEAR(g.game_date)<=?)
+	           AND (?='' OR (?='red' AND g.red_player LIKE CONCAT('%',?,'%')) OR (?='black' AND g.black_player LIKE CONCAT('%',?,'%')))
+	           AND (?=0 OR g.master_player_id IS NOT NULL OR EXISTS (SELECT 1 FROM master_game_player_refs mr WHERE mr.game_id=g.id))
+	           AND (?='' OR (?='classified' AND EXISTS (SELECT 1 FROM game_opening_classifications c
+	                WHERE c.game_id=g.id AND c.is_primary=1 AND c.status='classified'
+	                  AND c.classifier_version_id=(SELECT id FROM opening_classifier_versions WHERE active=1 ORDER BY id DESC LIMIT 1)))
+	             OR (?='pending' AND NOT EXISTS (SELECT 1 FROM game_opening_classifications c
+	                WHERE c.game_id=g.id AND c.is_primary=1 AND c.status='classified'
+	                  AND c.classifier_version_id=(SELECT id FROM opening_classifier_versions WHERE active=1 ORDER BY id DESC LIMIT 1))
+	                AND EXISTS (SELECT 1 FROM game_opening_classifications c
+	                WHERE c.game_id=g.id AND c.is_primary=1 AND c.status='pending'
+	                  AND c.classifier_version_id=(SELECT id FROM opening_classifier_versions WHERE active=1 ORDER BY id DESC LIMIT 1))))
+	         ORDER BY g.game_date DESC,g.created_at DESC,g.id DESC LIMIT ? OFFSET ?",
     ).bind(&query.opening_code).bind(&query.opening_code).bind(&query.opening_code).bind(&query.opening_code)
       .bind(search).bind(search).bind(search).bind(search).bind(search)
       .bind(player).bind(player).bind(player).bind(event).bind(event)
-      .bind(query.year_from).bind(query.year_from).bind(query.year_to).bind(query.year_to)
-      .bind(side).bind(side).bind(player).bind(side).bind(player)
-      .bind(query.master_only.unwrap_or(false)).bind(query.limit.unwrap_or(50).clamp(1,200))
-      .bind(query.offset.unwrap_or(0)).fetch_all(&state.pool).await?;
+	      .bind(query.year_from).bind(query.year_from).bind(query.year_to).bind(query.year_to)
+	      .bind(side).bind(side).bind(player).bind(side).bind(player)
+	      .bind(query.master_only.unwrap_or(false))
+	      .bind(classification_status).bind(classification_status).bind(classification_status)
+	      .bind(query.limit.unwrap_or(50).clamp(1,200))
+	      .bind(query.offset.unwrap_or(0)).fetch_all(&state.pool).await?;
     Ok(Json(
         rows.into_iter()
             .map(|row| ReferenceGameSummaryDto {

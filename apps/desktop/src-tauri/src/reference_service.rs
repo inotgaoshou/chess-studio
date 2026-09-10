@@ -395,6 +395,7 @@ pub(crate) async fn list_reference_games(
     year_to: Option<i32>,
     side: Option<String>,
     master_only: Option<bool>,
+    classification_status: Option<String>,
     limit: Option<usize>,
     offset: Option<usize>,
     state: State<'_, DesktopState>,
@@ -409,6 +410,7 @@ pub(crate) async fn list_reference_games(
         year_to,
         side,
         master_only,
+        classification_status,
     };
     let (working, working_count) = {
         let library = state

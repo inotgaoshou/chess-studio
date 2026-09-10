@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ReferenceLibraryDialog } from "./ReferenceLibraryDialog";
-import type { ChessPlatform, OpeningCategoryDto, ReferenceImportBatchDto, ReferenceSourceDto } from "./platform/types";
+import type { ChessPlatform, OpeningCategoryDto, ReferenceGameSummaryDto, ReferenceImportBatchDto, ReferenceSourceDto } from "./platform/types";
 
 afterEach(cleanup);
 
@@ -22,10 +22,36 @@ const batch: ReferenceImportBatchDto = {
   duplicateRecords: 0, invalidRecords: 0, emptyFiles: 0, unclassifiedRecords: 0,
   warnings: [], createdAt: "2026-09-08T00:00:00Z", completedAt: "2026-09-08T00:00:01Z",
 };
+const game: ReferenceGameSummaryDto = {
+  id: "game-1", canonicalFingerprint: "fingerprint-1", title: "王天一 胜 郑惟桐",
+  redPlayer: "王天一", blackPlayer: "郑惟桐", result: "1-0", eventName: "全国大赛",
+  roundName: "第1轮", gameDate: "2026-09-08", opening: "中炮", moveCount: 60,
+};
 
-function platform() {
+function platform(games: ReferenceGameSummaryDto[] = []) {
   const publishReferenceBatch = vi.fn(async () => ({ status: "completed", inserted: 1, duplicates: 0 }));
-  const listReferenceGames = vi.fn(async () => []);
+  const listReferenceGames = vi.fn(async () => games);
+  const queryReferencePosition = vi.fn(async () => [{
+    iccs: "h2e2", notation: "炮二平五", samples: 12, redWins: 6, draws: 3, blackWins: 3,
+    firstYear: 2020, lastYear: 2026, representativeGameId: games[0]?.id,
+    representativeGameTitle: games[0]?.title,
+  }]);
+  const getReferenceGameDocument = vi.fn(async (gameId: string) => {
+    const found = games.find((item) => item.id === gameId);
+    return found ? {
+      game: found,
+      documentJson: JSON.stringify({
+        startingFen: "startpos",
+        note: "本地只读参考文档",
+        tree: {
+          root_id: "root",
+          nodes: {
+            n1: { id: "n1", parent_id: "root", mv: { from: { row: 9, col: 7 }, to: { row: 7, col: 7 } }, comment: "首着", is_mainline: true, deleted: false, order_key: 0 },
+          },
+        },
+      }),
+    } : undefined;
+  });
   const getReferenceOfflinePackageManifest = vi.fn(async () => ({
     version: "2026.09", packageUrl: "https://example.com/reference.sqlite.zst",
     sha256: "a".repeat(64), gameCount: 147_994,
@@ -41,13 +67,15 @@ function platform() {
     listReferenceSources: vi.fn(async () => [source]),
     listReferenceImportBatches: vi.fn(async () => [batch]),
     listReferenceGames,
+    queryReferencePosition,
+    getReferenceGameDocument,
     getSyncAccount: vi.fn(async () => ({ serverUrl: "http://127.0.0.1:8080", status: "signedIn" as const })),
     getReferenceOfflinePackageManifest,
     publishReferenceBatch,
     listReferenceBatchIssues,
     updateReferenceGameIdentity,
   } as unknown as ChessPlatform;
-  return { value, getReferenceOfflinePackageManifest, listReferenceBatchIssues, listReferenceGames, publishReferenceBatch, updateReferenceGameIdentity };
+  return { value, getReferenceGameDocument, getReferenceOfflinePackageManifest, listReferenceBatchIssues, listReferenceGames, publishReferenceBatch, queryReferencePosition, updateReferenceGameIdentity };
 }
 
 describe("ReferenceLibraryDialog", () => {
@@ -82,6 +110,39 @@ describe("ReferenceLibraryDialog", () => {
       "A", "", 100, 0,
       { player: "王天一", event: "全国象棋甲级联赛", yearFrom: 2020, yearTo: 2026, side: "red", masterOnly: true },
     ));
+  });
+
+  it("shows all reference games and can filter pending classifications", async () => {
+    const { value, getReferenceGameDocument, listReferenceGames } = platform([game]);
+    render(<ReferenceLibraryDialog platform={value} onClose={() => undefined}/>);
+    await screen.findByText("测试布局");
+
+    fireEvent.click(screen.getByRole("button", { name: /实战检索/ }));
+
+    expect((await screen.findAllByText("王天一 胜 郑惟桐")).length).toBeGreaterThan(0);
+    expect(await screen.findByDisplayValue("本地只读参考文档")).toBeTruthy();
+    await waitFor(() => expect(getReferenceGameDocument).toHaveBeenCalledWith("game-1"));
+
+    fireEvent.click(screen.getByRole("button", { name: "待分类" }));
+    await waitFor(() => expect(listReferenceGames).toHaveBeenLastCalledWith(
+      undefined, "", 100, 0,
+      expect.objectContaining({ classificationStatus: "pending" }),
+    ));
+  });
+
+  it("queries current-position moves from the game search view", async () => {
+    const { value, queryReferencePosition } = platform([game]);
+    render(<ReferenceLibraryDialog platform={value} currentFen="fen w - - 0 1" onClose={() => undefined}/>);
+    await screen.findByText("测试布局");
+
+    fireEvent.click(screen.getByRole("button", { name: /实战检索/ }));
+    fireEvent.click(screen.getByRole("button", { name: "局面搜索" }));
+
+    await waitFor(() => expect(queryReferencePosition).toHaveBeenCalledWith(expect.objectContaining({
+      fen: "fen w - - 0 1",
+      limit: 24,
+    })));
+    expect(await screen.findByText("炮二平五")).toBeTruthy();
   });
 
   it("loads the versioned offline package manifest from the configured server", async () => {
