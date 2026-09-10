@@ -244,6 +244,9 @@ pub(crate) async fn query_reference_position(
     let local = merge_position_stats(working, offline);
     let has_local_games = working_count + offline_count > 0;
     let master_only = request.master_only.unwrap_or(false);
+    if has_local_games && !master_only {
+        return Ok(local);
+    }
     let server_url = reference_server_url(state.clone())?;
     if let Err(error) = crate::engine_service::validate_server_url(&server_url) {
         return if master_only {
@@ -337,6 +340,9 @@ pub(crate) async fn browse_reference_openings(
     };
     let local = merge_openings(working, offline);
     let has_local_games = working_count + offline_count > 0;
+    if has_local_games {
+        return Ok(local);
+    }
     let server_url = reference_server_url(state.clone())?;
     if let Err(error) = crate::engine_service::validate_server_url(&server_url) {
         return if has_local_games {
@@ -463,6 +469,9 @@ pub(crate) async fn list_reference_games(
     let local = merge_games(working, offline, limit, offset);
     let has_local_games = working_count + offline_count > 0;
     let master_only = filters.master_only.unwrap_or(false);
+    if has_local_games && !master_only {
+        return Ok(local);
+    }
     let server_url = reference_server_url(state.clone())?;
     if let Err(error) = crate::engine_service::validate_server_url(&server_url) {
         return if master_only {

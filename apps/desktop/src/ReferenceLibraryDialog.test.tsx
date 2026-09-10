@@ -83,6 +83,7 @@ describe("ReferenceLibraryDialog", () => {
     const { value, publishReferenceBatch } = platform();
     render(<ReferenceLibraryDialog platform={value} onClose={() => undefined}/>);
 
+    fireEvent.click(screen.getByRole("button", { name: /布局探索/ }));
     expect(await screen.findByText("测试布局")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /导入批次/ }));
     fireEvent.change(screen.getByLabelText("服务端来源 ID"), { target: { value: "server-source" } });
@@ -97,6 +98,7 @@ describe("ReferenceLibraryDialog", () => {
   it("passes the opening explorer filters through to the reference query", async () => {
     const { value, listReferenceGames } = platform();
     render(<ReferenceLibraryDialog platform={value} onClose={() => undefined}/>);
+    fireEvent.click(screen.getByRole("button", { name: /布局探索/ }));
     await screen.findByText("测试布局");
 
     fireEvent.change(screen.getByLabelText("棋手"), { target: { value: "王天一" } });
@@ -115,9 +117,6 @@ describe("ReferenceLibraryDialog", () => {
   it("shows all reference games and can filter pending classifications", async () => {
     const { value, getReferenceGameDocument, listReferenceGames } = platform([game]);
     render(<ReferenceLibraryDialog platform={value} onClose={() => undefined}/>);
-    await screen.findByText("测试布局");
-
-    fireEvent.click(screen.getByRole("button", { name: /实战检索/ }));
 
     expect((await screen.findAllByText("王天一 胜 郑惟桐")).length).toBeGreaterThan(0);
     expect(await screen.findByDisplayValue("本地只读参考文档")).toBeTruthy();
@@ -133,9 +132,7 @@ describe("ReferenceLibraryDialog", () => {
   it("queries current-position moves from the game search view", async () => {
     const { value, queryReferencePosition } = platform([game]);
     render(<ReferenceLibraryDialog platform={value} currentFen="fen w - - 0 1" onClose={() => undefined}/>);
-    await screen.findByText("测试布局");
 
-    fireEvent.click(screen.getByRole("button", { name: /实战检索/ }));
     fireEvent.click(screen.getByRole("button", { name: "局面搜索" }));
 
     await waitFor(() => expect(queryReferencePosition).toHaveBeenCalledWith(expect.objectContaining({
@@ -148,8 +145,8 @@ describe("ReferenceLibraryDialog", () => {
   it("loads the versioned offline package manifest from the configured server", async () => {
     const { value, getReferenceOfflinePackageManifest } = platform();
     render(<ReferenceLibraryDialog platform={value} onClose={() => undefined}/>);
-    await screen.findByText("测试布局");
     fireEvent.click(screen.getByRole("button", { name: /资料源/ }));
+    await screen.findByText("授权库");
     fireEvent.click(screen.getByRole("button", { name: /获取最新版/ }));
 
     await waitFor(() => expect(getReferenceOfflinePackageManifest).toHaveBeenCalledWith("http://127.0.0.1:8080"));
@@ -160,8 +157,8 @@ describe("ReferenceLibraryDialog", () => {
   it("opens batch issues and submits an identity correction", async () => {
     const { value, updateReferenceGameIdentity } = platform();
     render(<ReferenceLibraryDialog platform={value} onClose={() => undefined}/>);
-    await screen.findByText("测试布局");
     fireEvent.click(screen.getByRole("button", { name: /导入批次/ }));
+    await screen.findByText("新增");
     fireEvent.click(screen.getByRole("button", { name: /审核问题/ }));
     expect(await screen.findByText("待审核棋局")).toBeTruthy();
     fireEvent.change(screen.getByLabelText("红方姓名"), { target: { value: "红方" } });

@@ -118,7 +118,7 @@ function ReviewIssueRow({ issue, categories, busy, onIdentity, onOpening, onDupl
 
 export function ReferenceLibraryDialog({ platform, currentFen, onClose }: Props) {
   const desktop = platform.kind === "desktop";
-  const [tab, setTab] = useState<Tab>("openings");
+  const [tab, setTab] = useState<Tab>("games");
   const [openings, setOpenings] = useState<OpeningCategoryDto[]>([]);
   const [openingChildren, setOpeningChildren] = useState<Record<string, OpeningCategoryDto[]>>({});
   const [selectedCode, setSelectedCode] = useState<string>();
