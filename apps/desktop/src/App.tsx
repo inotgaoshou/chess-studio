@@ -2257,6 +2257,11 @@ export default function App() {
     currentMove: currentMoveForThought,
     currentMoveIssue: currentMoveIssueForThought,
   }) : undefined, [analysisFen, analysisIsStale, board, currentMoveForThought, currentMoveIssueForThought, orderedAnalysis, selectedPieceInspection]);
+  useEffect(() => {
+    if (workspaceMode === "opening") {
+      setSelectedPieceInspection(undefined);
+    }
+  }, [workspaceMode]);
   const bestMoveHint = useMemo<BestMoveHint | undefined>(() => {
     if (analysisFen !== board.fen || analysisIsStale || orderedAnalysis.length === 0) return undefined;
     const seen = new Set<string>();
@@ -3576,6 +3581,11 @@ export default function App() {
     if (reviewBoardMoveClickTimerRef.current != null) {
       window.clearTimeout(reviewBoardMoveClickTimerRef.current);
       reviewBoardMoveClickTimerRef.current = undefined;
+    }
+    if (workspaceMode === "opening") {
+      setSelectedPieceInspection(undefined);
+      setNotice("大师开局模式默认隐藏选子思路，右侧显示当前局面实战匹配");
+      return;
     }
     if (!reviewModeOpen) {
       setNotice("进入复盘模式后，可双击当前行棋方的棋子查看这枚子的思路");
@@ -7443,7 +7453,7 @@ export default function App() {
               {cells.map(({ row, col }) => {
                 const piece = pieceMap.get(`${row}-${col}`);
                 const isSelected = selected?.row === row && selected?.col === col;
-                const isThoughtPiece = showMoveThoughts && selectedPieceThought?.square.row === row && selectedPieceThought.square.col === col;
+                const isThoughtPiece = workspaceMode !== "opening" && showMoveThoughts && selectedPieceThought?.square.row === row && selectedPieceThought.square.col === col;
                 const cellStyle = boardCellStyle({ row, col }, boardDisplayReversed, displayedBoardSkin);
                 const style = {
                   "--piece-left": cellStyle.left,
@@ -7554,7 +7564,7 @@ export default function App() {
                 onSaveLocal={board.currentNode ? (value) => saveCommentForNode(board.currentNode!, value) : saveRootLocalNote}
               />}
             </div>}
-            {showMoveThoughts && selectedPieceThought && <section className={`selected-piece-thought-card source-${selectedPieceThought.source}`} aria-label="选中棋子思路">
+            {workspaceMode !== "opening" && showMoveThoughts && selectedPieceThought && <section className={`selected-piece-thought-card source-${selectedPieceThought.source}`} aria-label="选中棋子思路">
               <header>
                 <div>
                   <small>选中棋子思路 · {selectedPieceThought.sourceLabel}</small>
