@@ -84,6 +84,7 @@ pub(crate) struct PositionExplorerRequest {
     year_to: Option<u16>,
     side: Option<String>,
     master_only: Option<bool>,
+    include_details: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -408,6 +409,9 @@ pub(crate) async fn query_position(
             representative_game_title: None,
         })
         .collect::<Vec<_>>();
+    if !request.include_details.unwrap_or(true) {
+        return Ok(Json(result));
+    }
     let player = request.player.as_deref().unwrap_or_default().trim();
     let event = request.event.as_deref().unwrap_or_default().trim();
     let side = request.side.as_deref().unwrap_or_default().trim();

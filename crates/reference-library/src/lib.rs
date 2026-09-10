@@ -92,6 +92,7 @@ pub struct PositionExplorerRequest {
     pub year_to: Option<i32>,
     pub side: Option<String>,
     pub master_only: Option<bool>,
+    pub include_details: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -1069,6 +1070,8 @@ impl ReferenceLibrary {
         let board = Board::from_fen(&request.fen)
             .map_err(|error| ReferenceLibraryError::InvalidData(error.to_string()))?;
         let key = board.rule_position_key();
+        let position_hash = short_hash(&key);
+        let include_details = request.include_details.unwrap_or(true);
         let side = request.side.as_deref().unwrap_or_default().trim();
         if !matches!(side, "" | "red" | "black") {
             return Err(ReferenceLibraryError::InvalidData(
@@ -1096,15 +1099,27 @@ impl ReferenceLibrary {
         if no_filters && excluded_fingerprints.is_none() {
             let mut statement = self.connection.prepare(
                 "SELECT move_iccs, notation, samples, red_wins, draws, black_wins, first_year, last_year
-                 FROM reference_position_move_stats WHERE position_key=?1
-                 ORDER BY samples DESC, move_iccs LIMIT ?2",
+                 FROM reference_position_move_stats WHERE position_hash=?1 AND position_key=?2
+                 ORDER BY samples DESC, move_iccs LIMIT ?3",
             )?;
             let rows = statement.query_map(
-                params![key, request.limit.unwrap_or(20).clamp(1, 100) as i64],
+                params![
+                    position_hash,
+                    key,
+                    request.limit.unwrap_or(20).clamp(1, 100) as i64
+                ],
                 map_move_stat,
             )?;
             let mut result = rows.collect::<std::result::Result<Vec<_>, _>>()?;
-            enrich_position_stats(&self.connection, &key, request, &mut result)?;
+            if include_details {
+                enrich_position_stats(
+                    &self.connection,
+                    &key,
+                    &position_hash,
+                    request,
+                    &mut result,
+                )?;
+            }
             return Ok(result);
         }
         let player = request.player.as_deref().unwrap_or_default().trim();
@@ -1114,17 +1129,18 @@ impl ReferenceLibrary {
                     SUM(g.result='1-0'), SUM(g.result='1/2-1/2'), SUM(g.result='0-1'),
                     MIN(CAST(substr(g.game_date,1,4) AS INTEGER)),MAX(CAST(substr(g.game_date,1,4) AS INTEGER))
              FROM reference_game_moves m JOIN reference_games g ON g.id=m.game_id
-             WHERE m.position_key=?1 AND g.active=1 AND g.validation_status='valid'
+             WHERE m.position_hash=?1 AND m.position_key=?2 AND g.active=1 AND g.validation_status='valid'
                AND NOT EXISTS (SELECT 1 FROM temp_reference_exclusions e WHERE e.canonical_fingerprint=g.canonical_fingerprint)
-               AND (?2='' OR g.red_player LIKE '%' || ?2 || '%' OR g.black_player LIKE '%' || ?2 || '%')
-               AND (?3='' OR g.event_name LIKE '%' || ?3 || '%')
-               AND (?4 IS NULL OR CAST(substr(g.game_date,1,4) AS INTEGER)>=?4)
-               AND (?5 IS NULL OR CAST(substr(g.game_date,1,4) AS INTEGER)<=?5)
-               AND (?6='' OR (?6='red' AND g.red_player LIKE '%' || ?2 || '%') OR (?6='black' AND g.black_player LIKE '%' || ?2 || '%'))
-             GROUP BY m.move_iccs ORDER BY COUNT(*) DESC, m.move_iccs LIMIT ?7",
+               AND (?3='' OR g.red_player LIKE '%' || ?3 || '%' OR g.black_player LIKE '%' || ?3 || '%')
+               AND (?4='' OR g.event_name LIKE '%' || ?4 || '%')
+               AND (?5 IS NULL OR CAST(substr(g.game_date,1,4) AS INTEGER)>=?5)
+               AND (?6 IS NULL OR CAST(substr(g.game_date,1,4) AS INTEGER)<=?6)
+               AND (?7='' OR (?7='red' AND g.red_player LIKE '%' || ?3 || '%') OR (?7='black' AND g.black_player LIKE '%' || ?3 || '%'))
+             GROUP BY m.move_iccs ORDER BY COUNT(*) DESC, m.move_iccs LIMIT ?8",
         )?;
         let rows = statement.query_map(
             params![
+                position_hash,
                 key,
                 player,
                 event,
@@ -1136,7 +1152,9 @@ impl ReferenceLibrary {
             map_move_stat,
         )?;
         let mut result = rows.collect::<std::result::Result<Vec<_>, _>>()?;
-        enrich_position_stats(&self.connection, &key, request, &mut result)?;
+        if include_details {
+            enrich_position_stats(&self.connection, &key, &position_hash, request, &mut result)?;
+        }
         Ok(result)
     }
 
@@ -2604,6 +2622,7 @@ fn map_move_stat(row: &rusqlite::Row<'_>) -> rusqlite::Result<PositionMoveStat> 
 fn enrich_position_stats(
     connection: &Connection,
     position_key: &str,
+    position_hash: &str,
     request: &PositionExplorerRequest,
     stats: &mut [PositionMoveStat],
 ) -> Result<()> {
@@ -2621,18 +2640,19 @@ fn enrich_position_stats(
            AND c.is_primary=1 AND c.status='classified'
            AND c.classifier_version_id=(SELECT id FROM opening_classifier_versions WHERE active=1 ORDER BY id DESC LIMIT 1)
          JOIN opening_categories o ON o.code=c.category_code
-         WHERE m.position_key=?1 AND g.active=1 AND g.validation_status='valid'
+         WHERE m.position_hash=?1 AND m.position_key=?2 AND g.active=1 AND g.validation_status='valid'
            AND NOT EXISTS (SELECT 1 FROM temp_reference_exclusions e WHERE e.canonical_fingerprint=g.canonical_fingerprint)
-           AND (?2='' OR g.red_player LIKE '%' || ?2 || '%' OR g.black_player LIKE '%' || ?2 || '%')
-           AND (?3='' OR g.event_name LIKE '%' || ?3 || '%')
-           AND (?4 IS NULL OR CAST(substr(g.game_date,1,4) AS INTEGER)>=?4)
-           AND (?5 IS NULL OR CAST(substr(g.game_date,1,4) AS INTEGER)<=?5)
-           AND (?6='' OR (?6='red' AND g.red_player LIKE '%' || ?2 || '%') OR (?6='black' AND g.black_player LIKE '%' || ?2 || '%'))
+           AND (?3='' OR g.red_player LIKE '%' || ?3 || '%' OR g.black_player LIKE '%' || ?3 || '%')
+           AND (?4='' OR g.event_name LIKE '%' || ?4 || '%')
+           AND (?5 IS NULL OR CAST(substr(g.game_date,1,4) AS INTEGER)>=?5)
+           AND (?6 IS NULL OR CAST(substr(g.game_date,1,4) AS INTEGER)<=?6)
+           AND (?7='' OR (?7='red' AND g.red_player LIKE '%' || ?3 || '%') OR (?7='black' AND g.black_player LIKE '%' || ?3 || '%'))
          GROUP BY c.category_code,o.name ORDER BY COUNT(DISTINCT g.id) DESC,c.category_code",
     )?;
     let opening_rows = opening_statement
         .query_map(
             params![
+                position_hash,
                 position_key,
                 player,
                 event,
@@ -2667,16 +2687,17 @@ fn enrich_position_stats(
                     "SELECT g.id,g.title
                      FROM reference_game_moves m
                      JOIN reference_games g ON g.id=m.game_id
-                     WHERE m.position_key=?1 AND m.move_iccs=?2
+                     WHERE m.position_hash=?1 AND m.position_key=?2 AND m.move_iccs=?3
                        AND g.active=1 AND g.validation_status='valid'
                        AND NOT EXISTS (SELECT 1 FROM temp_reference_exclusions e WHERE e.canonical_fingerprint=g.canonical_fingerprint)
-                       AND (?3='' OR g.red_player LIKE '%' || ?3 || '%' OR g.black_player LIKE '%' || ?3 || '%')
-                       AND (?4='' OR g.event_name LIKE '%' || ?4 || '%')
-                       AND (?5 IS NULL OR CAST(substr(g.game_date,1,4) AS INTEGER)>=?5)
-                       AND (?6 IS NULL OR CAST(substr(g.game_date,1,4) AS INTEGER)<=?6)
-                       AND (?7='' OR (?7='red' AND g.red_player LIKE '%' || ?3 || '%') OR (?7='black' AND g.black_player LIKE '%' || ?3 || '%'))
+                       AND (?4='' OR g.red_player LIKE '%' || ?4 || '%' OR g.black_player LIKE '%' || ?4 || '%')
+                       AND (?5='' OR g.event_name LIKE '%' || ?5 || '%')
+                       AND (?6 IS NULL OR CAST(substr(g.game_date,1,4) AS INTEGER)>=?6)
+                       AND (?7 IS NULL OR CAST(substr(g.game_date,1,4) AS INTEGER)<=?7)
+                       AND (?8='' OR (?8='red' AND g.red_player LIKE '%' || ?4 || '%') OR (?8='black' AND g.black_player LIKE '%' || ?4 || '%'))
                      ORDER BY g.game_date DESC,g.created_at DESC LIMIT 1",
                     params![
+                        position_hash,
                         position_key,
                         stat.iccs,
                         player,

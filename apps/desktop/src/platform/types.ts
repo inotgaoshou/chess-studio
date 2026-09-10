@@ -713,6 +713,7 @@ export type PositionExplorerRequest = {
   yearTo?: number;
   side?: "red" | "black";
   masterOnly?: boolean;
+  includeDetails?: boolean;
 };
 export type PositionMoveStatDto = {
   iccs: string;

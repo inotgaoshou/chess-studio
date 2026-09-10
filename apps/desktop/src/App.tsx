@@ -6943,7 +6943,7 @@ export default function App() {
             <ReferencePositionPanel
               fen={linkReferenceFen ?? ""}
               enabled={chessPlatform.kind === "desktop" && linkSessionStatus.state !== "stopped" && !!linkReferenceFen}
-              query={(fen) => chessPlatform.queryReferencePosition({ fen, limit: 6 })}
+              query={(fen) => chessPlatform.queryReferencePosition({ fen, limit: 6, includeDetails: false })}
               onPreview={(iccs, notation) => void previewCandidateLine({ multipv: 1, pv: [iccs], notation: [notation] }, linkReferenceFen ?? board.fen, { id: "reference-library", name: "实战库" })}
               onAdd={(iccs) => void playIccsMove(iccs, linkReferenceFen ?? board.fen)}
               onOpenExplorer={() => setReferenceLibraryOpen(true)}
@@ -7285,6 +7285,7 @@ export default function App() {
           onChange={(mode) => void selectWorkspaceMode(mode)}
           onLayoutChange={(mode) => void setWorkspaceLayout(mode)}
         />
+        {chessPlatform.kind === "desktop" && workspaceMode !== "training" && <button className={`mode-tool position-search-shortcut ${referencePositionSearchOpen ? "active" : ""}`} title={referencePositionSearchOpen ? "隐藏大师开局局面搜索" : "开启大师开局局面搜索"} aria-label={referencePositionSearchOpen ? "隐藏大师开局局面搜索" : "开启大师开局局面搜索"} onClick={toggleReferencePositionSearch}><BookOpen size={15}/>大师开局</button>}
         <button
           className={`mode-tool ${analysisHintsEnabled ? "active" : ""}`}
           title={analysisHintsEnabled ? "停止自动分析并隐藏 MultiPV 提示" : "开启自动分析与 MultiPV 提示"}
@@ -7326,7 +7327,6 @@ export default function App() {
         ><Link size={15}/>连线</button>}
         {chessPlatform.kind === "desktop" && workspaceMode === "research" && <button className="tool-button flyknife-tool-button" title="飞刀库 / 专题库" onClick={() => setFlyknifeOpen(true)}><Zap size={16}/><span>飞刀库</span></button>}
         {chessPlatform.kind === "desktop" && workspaceMode !== "training" && <button className="tool-button" title="大师棋谱" aria-label="大师棋谱" onClick={() => setMasterLibraryOpen(true)}><Database size={16}/></button>}
-        {chessPlatform.kind === "desktop" && workspaceMode !== "training" && <button className={`mode-tool position-search-shortcut ${referencePositionSearchOpen ? "active" : ""}`} title={referencePositionSearchOpen ? "隐藏当前局面实战搜索" : "开启当前局面实战搜索"} aria-label={referencePositionSearchOpen ? "隐藏当前局面实战搜索" : "开启当前局面实战搜索"} onClick={toggleReferencePositionSearch}><BookOpen size={15}/>局面搜索</button>}
       </div>
 
       <main className={`workspace workspace-mode-${workspaceMode} layout-${desktopPreferences.layoutMode} ${reviewModeOpen ? "review-mode-active" : ""} ${libraryCollapsed ? "library-collapsed" : ""} ${candidateRailCollapsed ? "candidate-rail-collapsed" : ""} ${analysisPanelCollapsed ? "analysis-panel-collapsed" : ""} ${compactDockMinimized ? "compact-dock-minimized" : ""} ${compactHasSystemPopout ? "compact-system-popout" : ""} ${desktopPreferences.layoutMode === "compact" && cloudBookCollapsed ? "compact-cloud-collapsed" : ""}`}>
@@ -7584,7 +7584,7 @@ export default function App() {
             <ReferencePositionPanel
               fen={board.fen}
               enabled={!candidatePreview}
-              query={(fen) => chessPlatform.queryReferencePosition({ fen, limit: 8 })}
+              query={(fen) => chessPlatform.queryReferencePosition({ fen, limit: 8, includeDetails: false })}
               onPreview={(iccs, notation) => void previewCandidateLine({ multipv: 1, pv: [iccs], notation: [notation] }, board.fen, { id: "reference-library", name: "实战库" })}
               onAdd={(iccs) => void playIccsMove(iccs, board.fen)}
               onOpenExplorer={() => setReferenceLibraryOpen(true)}
