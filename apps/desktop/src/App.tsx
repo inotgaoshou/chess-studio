@@ -6368,6 +6368,7 @@ export default function App() {
   function playbackControls(className: string) {
     const mobile = className.includes("mobile-playback");
     const showManualPopout = desktopPreferences.layoutMode === "compact" && !floatingPanel && className.includes("compact-playback") && chessPlatform.kind === "desktop";
+    const showReferenceSearchShortcut = !mobile && !floatingPanel && chessPlatform.kind === "desktop" && workspaceMode !== "training";
     return <div className={`playback-controls ${className}`} aria-label="棋谱播放控制">
       <button title="回到开局" disabled={!board.currentNode} onClick={() => void navigateTo()}><ChevronsLeft size={15}/></button>
       <button title="上一着（只浏览，不删除棋谱）" aria-label="上一着（只浏览，不删除棋谱）" disabled={!board.currentNode} onClick={() => void goPrevious()}><ChevronLeft size={15}/></button>
@@ -6379,6 +6380,14 @@ export default function App() {
           <button className={`variation-jump ${branchPickerOpen ? "active" : ""}`} aria-label={hasVisibleBranchChoices ? "选择当前局面的变招" : "跳到下一个分支点"} title={hasVisibleBranchChoices ? "选择当前局面的变招" : hasUpcomingBranch ? "跳到下一个分支点" : "后续没有分支点"} aria-expanded={hasVisibleBranchChoices ? branchPickerOpen : undefined} disabled={!hasVisibleBranchChoices && !hasUpcomingBranch} onPointerDown={(event) => event.stopPropagation()} onClick={() => hasVisibleBranchChoices ? setBranchPickerOpen((open) => !open) : void goToNextBranchPoint()}><GitFork size={14}/>{hasVisibleBranchChoices && <small>{branchChoices.length}</small>}</button>
           {showManualPopout && <button className="compact-manual-popout" type="button" title="弹出棋谱独立窗口" aria-label="弹出棋谱独立窗口" onClick={() => void openCompactFloatingPanel("manual")}><Maximize2 size={14}/></button>}
         </div>
+        {showReferenceSearchShortcut && <button
+          type="button"
+          className={`position-search-control ${referencePositionSearchOpen ? "active" : ""}`}
+          title={referencePositionSearchOpen ? "隐藏当前局面实战搜索" : "显示当前局面实战搜索"}
+          aria-label={referencePositionSearchOpen ? "隐藏当前局面实战搜索" : "显示当前局面实战搜索"}
+          aria-pressed={referencePositionSearchOpen}
+          onClick={toggleReferencePositionSearch}
+        ><Database size={13}/><span>局面</span></button>}
         <div className="playback-tail">
           <span>第 <strong>{board.history.length}</strong> 着</span>
         </div>
