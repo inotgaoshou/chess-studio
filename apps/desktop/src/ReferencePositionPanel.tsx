@@ -9,6 +9,8 @@ type Props = {
   onPreview(iccs: string, notation: string): void;
   onAdd(iccs: string): void;
   onOpenExplorer(): void;
+  onFocusMove?(move: PositionMoveStatDto): void;
+  selectedMoveIccs?: string;
   title?: string;
   subtitle?: string;
   maxMoves?: number;
@@ -19,7 +21,7 @@ function percent(value: number, total: number) {
   return total > 0 ? Math.round(value * 100 / total) : 0;
 }
 
-export function ReferencePositionPanel({ fen, enabled, query, onPreview, onAdd, onOpenExplorer, title = "实战库", subtitle = "当前局面", maxMoves = 8, className = "" }: Props) {
+export function ReferencePositionPanel({ fen, enabled, query, onPreview, onAdd, onOpenExplorer, onFocusMove, selectedMoveIccs, title = "实战库", subtitle = "当前局面", maxMoves = 8, className = "" }: Props) {
   const generation = useRef(0);
   const [moves, setMoves] = useState<PositionMoveStatDto[]>([]);
   const [loading, setLoading] = useState(false);
@@ -57,17 +59,26 @@ export function ReferencePositionPanel({ fen, enabled, query, onPreview, onAdd, 
     {loading ? <p>正在查询本地实战…</p> : error ? <p className="error">{error}</p> : moves.length === 0 ? <p>当前局面暂无本地实战样本。</p> : <ol>
       {moves.slice(0, maxMoves).map((move) => {
         const decided = move.redWins + move.draws + move.blackWins;
+        const redRate = percent(move.redWins, decided);
+        const drawRate = percent(move.draws, decided);
+        const blackRate = percent(move.blackWins, decided);
+        const selected = selectedMoveIccs === move.iccs;
+        const focusAndPreview = () => {
+          onFocusMove?.(move);
+          onPreview(move.iccs, move.notation);
+        };
         return <li key={move.iccs}>
-          <button className="reference-move-main" type="button" onClick={() => onPreview(move.iccs, move.notation)} title="临时预览，不写入棋谱">
+          <button className={`reference-move-main ${selected ? "active" : ""}`.trim()} type="button" onClick={focusAndPreview} title="临时预览，不写入棋谱">
             <strong>{move.notation}</strong><span>{move.samples.toLocaleString()} 局</span>
             {move.representativeGameTitle && <small title={move.representativeGameTitle}>代表：{move.representativeGameTitle}{move.firstYear ? ` · ${move.firstYear}${move.lastYear && move.lastYear !== move.firstYear ? `–${move.lastYear}` : ""}` : ""}</small>}
-            <i className="reference-result-bar" aria-label={`红胜 ${percent(move.redWins, decided)}%，和棋 ${percent(move.draws, decided)}%，黑胜 ${percent(move.blackWins, decided)}%`}>
-              <b className="red" style={{ width: `${percent(move.redWins, decided)}%` }}/>
-              <b className="draw" style={{ width: `${percent(move.draws, decided)}%` }}/>
-              <b className="black" style={{ width: `${percent(move.blackWins, decided)}%` }}/>
+            <em className="reference-rate-labels"><b>红 {redRate}%</b><b>和 {drawRate}%</b><b>黑 {blackRate}%</b></em>
+            <i className="reference-result-bar" aria-label={`红胜 ${redRate}%，和棋 ${drawRate}%，黑胜 ${blackRate}%`}>
+              <b className="red" style={{ width: `${redRate}%` }}/>
+              <b className="draw" style={{ width: `${drawRate}%` }}/>
+              <b className="black" style={{ width: `${blackRate}%` }}/>
             </i>
           </button>
-          <button type="button" title="临时预览" aria-label={`预览 ${move.notation}`} onClick={() => onPreview(move.iccs, move.notation)}><Eye size={14}/></button>
+          <button type="button" title="临时预览" aria-label={`预览 ${move.notation}`} onClick={focusAndPreview}><Eye size={14}/></button>
           <button type="button" title="加入当前棋谱" aria-label={`加入棋谱 ${move.notation}`} onClick={() => onAdd(move.iccs)}><Plus size={14}/></button>
         </li>;
       })}

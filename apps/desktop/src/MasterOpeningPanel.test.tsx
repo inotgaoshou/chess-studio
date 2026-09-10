@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MasterOpeningPanel } from "./MasterOpeningPanel";
 
@@ -23,6 +23,7 @@ describe("MasterOpeningPanel", () => {
   it("loads matching games for the current position and previews candidate moves", async () => {
     const queryMoves = vi.fn(async () => [move]);
     const queryGames = vi.fn(async () => [game]);
+    const resolveMoveFen = vi.fn(async () => "after-h2e2");
     const onPreviewMove = vi.fn();
     const onAddMove = vi.fn();
 
@@ -31,6 +32,7 @@ describe("MasterOpeningPanel", () => {
       enabled
       queryMoves={queryMoves}
       queryGames={queryGames}
+      resolveMoveFen={resolveMoveFen}
       onPreviewMove={onPreviewMove}
       onAddMove={onAddMove}
       onOpenExplorer={() => undefined}
@@ -41,6 +43,9 @@ describe("MasterOpeningPanel", () => {
     fireEvent.click(await screen.findByText("炮二平五"));
 
     expect(onPreviewMove).toHaveBeenCalledWith("h2e2", "炮二平五");
+    expect(resolveMoveFen).toHaveBeenCalledWith("start", "h2e2");
+    expect(await screen.findByText(/走 炮二平五 后/)).toBeTruthy();
+    await waitFor(() => expect(queryGames).toHaveBeenLastCalledWith("after-h2e2"));
     expect(onAddMove).not.toHaveBeenCalled();
   });
 });

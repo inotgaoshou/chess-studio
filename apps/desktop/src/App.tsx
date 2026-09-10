@@ -7727,6 +7727,7 @@ export default function App() {
           enabled={referencePositionSearchActive}
           queryMoves={(fen) => chessPlatform.queryReferencePosition({ fen, limit: 8, includeDetails: false })}
           queryGames={(fen) => chessPlatform.listReferenceGames(undefined, undefined, 16, 0, { positionFen: fen })}
+          resolveMoveFen={async (fen, iccs) => (await chessPlatform.previewLine(fen, [iccs]))[0]?.fen}
           onPreviewMove={(iccs, notation) => void previewCandidateLine({ multipv: 1, pv: [iccs], notation: [notation] }, board.fen, { id: "reference-library", name: "大师开局" })}
           onAddMove={(iccs) => void playIccsMove(iccs, board.fen)}
           onOpenExplorer={() => setReferenceLibraryOpen(true)}
