@@ -2650,14 +2650,14 @@ button:disabled { cursor: default; opacity: .45; }
   inset: -3%;
   border-radius: 16%;
   background:
-    linear-gradient(#43a36a, #43a36a) left top / 19% 3px no-repeat,
-    linear-gradient(#43a36a, #43a36a) left top / 3px 19% no-repeat,
-    linear-gradient(#43a36a, #43a36a) right top / 19% 3px no-repeat,
-    linear-gradient(#43a36a, #43a36a) right top / 3px 19% no-repeat,
-    linear-gradient(#43a36a, #43a36a) left bottom / 19% 3px no-repeat,
-    linear-gradient(#43a36a, #43a36a) left bottom / 3px 19% no-repeat,
-    linear-gradient(#43a36a, #43a36a) right bottom / 19% 3px no-repeat,
-    linear-gradient(#43a36a, #43a36a) right bottom / 3px 19% no-repeat;
+    linear-gradient(#d41136, #d41136) left top / 19% 3px no-repeat,
+    linear-gradient(#d41136, #d41136) left top / 3px 19% no-repeat,
+    linear-gradient(#d41136, #d41136) right top / 19% 3px no-repeat,
+    linear-gradient(#d41136, #d41136) right top / 3px 19% no-repeat,
+    linear-gradient(#d41136, #d41136) left bottom / 19% 3px no-repeat,
+    linear-gradient(#d41136, #d41136) left bottom / 3px 19% no-repeat,
+    linear-gradient(#d41136, #d41136) right bottom / 19% 3px no-repeat,
+    linear-gradient(#d41136, #d41136) right bottom / 3px 19% no-repeat;
   filter: drop-shadow(0 0 2px rgba(255, 255, 255, .68));
 }
 .board-square.thought-selected {
