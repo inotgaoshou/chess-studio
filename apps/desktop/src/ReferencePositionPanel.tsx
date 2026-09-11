@@ -78,8 +78,8 @@ export function ReferencePositionPanel({ fen, enabled, query, onPreview, onAdd, 
               <b className="black" style={{ width: `${blackRate}%` }}/>
             </i>
           </button>
-          <button type="button" title="临时预览" aria-label={`预览 ${move.notation}`} onClick={focusAndPreview}><Eye size={14}/></button>
-          <button type="button" title="加入当前棋谱" aria-label={`加入棋谱 ${move.notation}`} onClick={() => onAdd(move.iccs)}><Plus size={14}/></button>
+          <button type="button" className="reference-move-preview" title="临时预览，不写入棋谱" aria-label={`预览 ${move.notation}`} onClick={focusAndPreview}><Eye size={14}/><span>预览</span></button>
+          <button type="button" className="reference-move-add" title="把这步真正加入当前棋谱" aria-label={`加入棋谱 ${move.notation}`} onClick={() => onAdd(move.iccs)}><Plus size={14}/><span>加入</span></button>
         </li>;
       })}
     </ol>}

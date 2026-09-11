@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     cell::RefCell,
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs::{self, File},
     io::Read,
     path::{Path, PathBuf},
@@ -706,6 +706,8 @@ impl ReferenceLibrary {
             [],
             |row| row.get(0),
         )?;
+        let classifier_runtime =
+            load_opening_classifier_runtime(&self.connection, classifier_version)?;
         let mut statement = self.connection.prepare(
             "SELECT DISTINCT g.id, g.opening, g.starting_fen, g.moves_json
              FROM reference_import_records r JOIN reference_games g ON g.id=r.game_id
@@ -728,9 +730,7 @@ impl ReferenceLibrary {
             .rule_position_key();
         for (game_id, raw_opening, starting_fen, moves_json) in games {
             let moves: Vec<String> = serde_json::from_str(&moves_json).unwrap_or_default();
-            let is_standard_start = Board::from_fen(&starting_fen)
-                .map(|board| board.rule_position_key() == standard_key)
-                .unwrap_or(false);
+            let is_standard_start = is_standard_starting_fen(&starting_fen, &standard_key);
             let opening_match = classify_game(
                 &self.connection,
                 &game_id,
@@ -738,6 +738,7 @@ impl ReferenceLibrary {
                 &moves,
                 is_standard_start,
                 classifier_version,
+                &classifier_runtime,
             )?;
             matches.push(opening_match);
         }
@@ -767,44 +768,138 @@ impl ReferenceLibrary {
             [],
             |row| row.get(0),
         )?;
-        let mut statement = self.connection.prepare(
-            "SELECT id, opening, starting_fen, moves_json
-             FROM reference_games
-             WHERE active=1 AND validation_status='valid'
-             ORDER BY updated_at DESC, id DESC LIMIT ?1",
-        )?;
-        let games = statement
-            .query_map(
-                [limit.unwrap_or(usize::MAX).min(i64::MAX as usize) as i64],
-                |row| {
+        let classifier_runtime =
+            load_opening_classifier_runtime(&self.connection, classifier_version)?;
+        let limit = limit.unwrap_or(usize::MAX).min(i64::MAX as usize) as i64;
+        let games = if classifier_runtime.has_position_patterns {
+            let mut statement = self.connection.prepare(
+                "SELECT id, opening, starting_fen, moves_json
+                 FROM reference_games
+                 WHERE active=1 AND validation_status='valid'
+                 ORDER BY updated_at DESC, id DESC LIMIT ?1",
+            )?;
+            let games = statement
+                .query_map([limit], |row| {
+                    let moves_json: String = row.get(3)?;
                     Ok((
                         row.get::<_, String>(0)?,
                         row.get::<_, String>(1)?,
                         row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
+                        serde_json::from_str(&moves_json).unwrap_or_default(),
                     ))
-                },
-            )?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        drop(statement);
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            drop(statement);
+            games
+        } else {
+            let max_prefix_depth = classifier_runtime
+                .move_prefix_patterns
+                .iter()
+                .map(|pattern| pattern.prefix.len())
+                .max()
+                .unwrap_or(0);
+            let move_columns = (0..max_prefix_depth)
+                .map(|index| format!("json_extract(moves_json,'$[{index}]')"))
+                .collect::<Vec<_>>();
+            let select_moves = if move_columns.is_empty() {
+                String::new()
+            } else {
+                format!(", {}", move_columns.join(", "))
+            };
+            let sql = format!(
+                "SELECT id, opening, starting_fen{select_moves}
+                 FROM reference_games
+                 WHERE active=1 AND validation_status='valid'
+                 ORDER BY updated_at DESC, id DESC LIMIT ?1"
+            );
+            let mut statement = self.connection.prepare(&sql)?;
+            let games = statement
+                .query_map([limit], |row| {
+                    let mut moves = Vec::with_capacity(max_prefix_depth);
+                    for index in 0..max_prefix_depth {
+                        if let Some(iccs) = row.get::<_, Option<String>>(3 + index)? {
+                            moves.push(iccs);
+                        }
+                    }
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        moves,
+                    ))
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            drop(statement);
+            games
+        };
         let standard_key = Board::from_fen(xiangqi_core::STARTING_FEN)
             .map_err(|error| ReferenceLibraryError::InvalidData(error.to_string()))?
             .rule_position_key();
-        for (game_id, raw_opening, starting_fen, moves_json) in games {
-            let moves: Vec<String> = serde_json::from_str(&moves_json).unwrap_or_default();
-            let is_standard_start = Board::from_fen(&starting_fen)
-                .map(|board| board.rule_position_key() == standard_key)
-                .unwrap_or(false);
-            classify_game(
-                &self.connection,
+        let transaction = self.connection.transaction()?;
+        let mut delete_statement = transaction.prepare(
+            "DELETE FROM game_opening_classifications
+             WHERE game_id=?1 AND classifier_version_id=?2 AND method<>'manual_override'",
+        )?;
+        let mut pending_statement = transaction.prepare(
+            "INSERT INTO game_opening_classifications
+             (game_id, category_code, candidate_codes_json, method, confidence, matched_plies,
+              classifier_version_id, is_primary, status, created_at)
+             VALUES (?1,NULL,'[]',?2,?3,?4,?5,0,'pending',?6)",
+        )?;
+        let mut classified_statement = transaction.prepare(
+            "INSERT INTO game_opening_classifications
+             (game_id, category_code, candidate_codes_json, method, confidence, matched_plies,
+              classifier_version_id, is_primary, status, created_at)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+        )?;
+        for (game_id, raw_opening, starting_fen, moves) in games {
+            let is_standard_start = is_standard_starting_fen(&starting_fen, &standard_key);
+            let draft = classify_game_draft(
+                &transaction,
                 &game_id,
                 &raw_opening,
                 &moves,
                 is_standard_start,
-                classifier_version,
+                &classifier_runtime,
             )?;
+            if draft.method == "manual_override" {
+                continue;
+            }
+            delete_statement.execute(params![game_id, classifier_version])?;
+            let created_at = now();
+            if draft.candidates.is_empty() {
+                pending_statement.execute(params![
+                    game_id,
+                    draft.method,
+                    draft.confidence,
+                    draft.matched_plies,
+                    classifier_version,
+                    created_at,
+                ])?;
+            } else {
+                let candidates_json =
+                    serde_json::to_string(&draft.candidates).unwrap_or_else(|_| "[]".into());
+                for code in &draft.candidates {
+                    classified_statement.execute(params![
+                        game_id,
+                        code,
+                        candidates_json.as_str(),
+                        draft.method.as_str(),
+                        draft.confidence,
+                        draft.matched_plies,
+                        classifier_version,
+                        i64::from(draft.primary_code.as_deref() == Some(code.as_str())),
+                        draft.status.as_str(),
+                        created_at,
+                    ])?;
+                }
+            }
         }
-        rebuild_opening_category_stats(&self.connection)?;
+        drop(classified_statement);
+        drop(pending_statement);
+        drop(delete_statement);
+        rebuild_opening_category_stats(&transaction)?;
+        transaction.commit()?;
         opening_catalog_build_result(&self.connection)
     }
 
@@ -2172,6 +2267,113 @@ fn mainline_iccs(document: &manual_format::ManualDocument) -> Result<Vec<String>
     Ok(result)
 }
 
+struct MovePrefixPattern {
+    category_code: String,
+    prefix: Vec<String>,
+    depth: u32,
+}
+
+struct OpeningClassifierRuntime {
+    version: i64,
+    category_codes: BTreeSet<String>,
+    reviewed_aliases: BTreeMap<String, Vec<String>>,
+    move_prefix_patterns: Vec<MovePrefixPattern>,
+    manual_overrides: BTreeMap<String, String>,
+    has_position_patterns: bool,
+}
+
+fn load_opening_classifier_runtime(
+    connection: &Connection,
+    version: i64,
+) -> Result<OpeningClassifierRuntime> {
+    let mut category_statement =
+        connection.prepare("SELECT code FROM opening_categories WHERE active=1")?;
+    let category_codes = category_statement
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<std::result::Result<BTreeSet<_>, _>>()?;
+    drop(category_statement);
+
+    let mut alias_statement = connection.prepare(
+        "SELECT alias, category_code FROM opening_aliases WHERE reviewed=1 ORDER BY alias, category_code",
+    )?;
+    let alias_rows = alias_statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    drop(alias_statement);
+    let mut reviewed_aliases = BTreeMap::<String, Vec<String>>::new();
+    for (alias, category_code) in alias_rows {
+        reviewed_aliases
+            .entry(alias)
+            .or_default()
+            .push(category_code);
+    }
+
+    let mut pattern_statement = connection.prepare(
+        "SELECT category_code, move_prefix_json, match_depth
+         FROM opening_patterns WHERE classifier_version_id=?1 AND pattern_type='move_prefix'
+         ORDER BY match_depth DESC, priority DESC, category_code",
+    )?;
+    let move_prefix_patterns = pattern_statement
+        .query_map([version], |row| {
+            let prefix_json: String = row.get(1)?;
+            let prefix = serde_json::from_str(&prefix_json).unwrap_or_default();
+            Ok(MovePrefixPattern {
+                category_code: row.get(0)?,
+                prefix,
+                depth: row.get(2)?,
+            })
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    drop(pattern_statement);
+
+    let mut manual_statement = connection.prepare(
+        "SELECT game_id, category_code FROM game_opening_classifications
+         WHERE classifier_version_id=?1 AND is_primary=1 AND status='classified'
+           AND method='manual_override' AND category_code IS NOT NULL",
+    )?;
+    let manual_overrides = manual_statement
+        .query_map([version], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<std::result::Result<BTreeMap<_, _>, _>>()?;
+    drop(manual_statement);
+
+    Ok(OpeningClassifierRuntime {
+        version,
+        category_codes,
+        reviewed_aliases,
+        move_prefix_patterns,
+        manual_overrides,
+        has_position_patterns: has_position_patterns(connection, version)?,
+    })
+}
+
+struct OpeningClassificationDraft {
+    primary_code: Option<String>,
+    candidates: Vec<String>,
+    method: String,
+    confidence: f64,
+    matched_plies: u32,
+    status: String,
+}
+
+impl OpeningClassificationDraft {
+    fn into_match(self, game_id: &str, version: i64) -> OpeningMatch {
+        OpeningMatch {
+            game_id: game_id.into(),
+            primary_code: self.primary_code,
+            candidates: self.candidates,
+            method: self.method,
+            confidence: self.confidence,
+            matched_plies: self.matched_plies,
+            classifier_version: version,
+            status: self.status,
+        }
+    }
+}
+
 fn classify_game(
     connection: &Connection,
     game_id: &str,
@@ -2179,51 +2381,66 @@ fn classify_game(
     moves: &[String],
     is_standard_start: bool,
     version: i64,
+    runtime: &OpeningClassifierRuntime,
 ) -> Result<OpeningMatch> {
+    let draft = classify_game_draft(
+        connection,
+        game_id,
+        raw_opening,
+        moves,
+        is_standard_start,
+        runtime,
+    )?;
+    write_opening_classification(connection, game_id, version, &draft)?;
+    Ok(draft.into_match(game_id, version))
+}
+
+fn classify_game_draft(
+    connection: &Connection,
+    game_id: &str,
+    raw_opening: &str,
+    moves: &[String],
+    is_standard_start: bool,
+    runtime: &OpeningClassifierRuntime,
+) -> Result<OpeningClassificationDraft> {
+    if let Some(code) = runtime.manual_overrides.get(game_id) {
+        return Ok(OpeningClassificationDraft {
+            primary_code: Some(code.clone()),
+            candidates: vec![code.clone()],
+            method: "manual_override".into(),
+            confidence: 1.0,
+            matched_plies: 0,
+            status: "classified".into(),
+        });
+    }
     let mut candidates = Vec::new();
     let mut method = "unclassified".to_owned();
     let mut matched_plies = 0u32;
     if is_standard_start && let Some(code) = trusted_opening_code(raw_opening) {
-        if category_exists(connection, &code)? {
+        if runtime.category_codes.contains(&code) {
             candidates.push(code);
             method = "trusted_code".into();
         }
     }
     if is_standard_start && candidates.is_empty() && !raw_opening.trim().is_empty() {
-        let mut statement = connection.prepare(
-            "SELECT category_code FROM opening_aliases WHERE alias=?1 AND reviewed=1 ORDER BY category_code",
-        )?;
-        candidates = statement
-            .query_map([raw_opening.trim()], |row| row.get(0))?
-            .collect::<std::result::Result<Vec<String>, _>>()?;
+        candidates = runtime
+            .reviewed_aliases
+            .get(raw_opening.trim())
+            .cloned()
+            .unwrap_or_default();
         if !candidates.is_empty() {
             method = "reviewed_alias".into();
         }
     }
     if is_standard_start && candidates.is_empty() {
-        let mut statement = connection.prepare(
-            "SELECT category_code, move_prefix_json, match_depth, priority
-             FROM opening_patterns WHERE classifier_version_id=?1 AND pattern_type='move_prefix'
-             ORDER BY match_depth DESC, priority DESC",
-        )?;
-        let patterns = statement
-            .query_map([version], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, u32>(2)?,
-                ))
-            })?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
         let mut deepest = 0u32;
-        for (code, json, depth) in patterns {
-            let prefix: Vec<String> = serde_json::from_str(&json).unwrap_or_default();
-            if depth >= deepest && moves.starts_with(&prefix) {
-                if depth > deepest {
+        for pattern in &runtime.move_prefix_patterns {
+            if pattern.depth >= deepest && moves.starts_with(&pattern.prefix) {
+                if pattern.depth > deepest {
                     candidates.clear();
-                    deepest = depth;
+                    deepest = pattern.depth;
                 }
-                candidates.push(code);
+                candidates.push(pattern.category_code.clone());
             }
         }
         if !candidates.is_empty() {
@@ -2231,8 +2448,8 @@ fn classify_game(
             matched_plies = deepest;
         }
     }
-    if is_standard_start && candidates.is_empty() {
-        let position_matches = matching_position_patterns(connection, moves, version)?;
+    if is_standard_start && candidates.is_empty() && runtime.has_position_patterns {
+        let position_matches = matching_position_patterns(connection, moves, runtime.version)?;
         if !position_matches.is_empty() {
             let deepest = position_matches[0].1;
             candidates = position_matches
@@ -2259,20 +2476,47 @@ fn classify_game(
         "deepest_position" if primary_code.is_some() => 0.88,
         _ => 0.0,
     };
+    Ok(OpeningClassificationDraft {
+        primary_code,
+        candidates,
+        method,
+        confidence,
+        matched_plies,
+        status: status.into(),
+    })
+}
+
+fn write_opening_classification(
+    connection: &Connection,
+    game_id: &str,
+    version: i64,
+    draft: &OpeningClassificationDraft,
+) -> Result<()> {
+    if draft.method == "manual_override" {
+        return Ok(());
+    }
     connection.execute(
-        "UPDATE game_opening_classifications SET is_primary=0 WHERE game_id=?1 AND classifier_version_id=?2",
+        "DELETE FROM game_opening_classifications
+         WHERE game_id=?1 AND classifier_version_id=?2 AND method<>'manual_override'",
         params![game_id, version],
     )?;
-    if candidates.is_empty() {
+    if draft.candidates.is_empty() {
         connection.execute(
             "INSERT INTO game_opening_classifications
              (game_id, category_code, candidate_codes_json, method, confidence, matched_plies,
               classifier_version_id, is_primary, status, created_at)
              VALUES (?1,NULL,'[]',?2,?3,?4,?5,0,'pending',?6)",
-            params![game_id, method, confidence, matched_plies, version, now()],
+            params![
+                game_id,
+                draft.method,
+                draft.confidence,
+                draft.matched_plies,
+                version,
+                now()
+            ],
         )?;
     } else {
-        for code in &candidates {
+        for code in &draft.candidates {
             connection.execute(
                 "INSERT INTO game_opening_classifications
                  (game_id, category_code, candidate_codes_json, method, confidence, matched_plies,
@@ -2281,28 +2525,27 @@ fn classify_game(
                 params![
                     game_id,
                     code,
-                    serde_json::to_string(&candidates).unwrap_or_else(|_| "[]".into()),
-                    method,
-                    confidence,
-                    matched_plies,
+                    serde_json::to_string(&draft.candidates).unwrap_or_else(|_| "[]".into()),
+                    draft.method,
+                    draft.confidence,
+                    draft.matched_plies,
                     version,
-                    i64::from(primary_code.as_deref() == Some(code.as_str())),
-                    status,
+                    i64::from(draft.primary_code.as_deref() == Some(code.as_str())),
+                    draft.status,
                     now()
                 ],
             )?;
         }
     }
-    Ok(OpeningMatch {
-        game_id: game_id.into(),
-        primary_code,
-        candidates,
-        method,
-        confidence,
-        matched_plies,
-        classifier_version: version,
-        status: status.into(),
-    })
+    Ok(())
+}
+
+fn is_standard_starting_fen(fen: &str, standard_key: &str) -> bool {
+    let fen = fen.trim();
+    fen == xiangqi_core::STARTING_FEN
+        || Board::from_fen(fen)
+            .map(|board| board.rule_position_key() == standard_key)
+            .unwrap_or(false)
 }
 
 fn raw_opening(game: &CblGame) -> String {
@@ -2708,6 +2951,19 @@ fn opening_catalog_build_result(connection: &Connection) -> Result<OpeningCatalo
         classified_games: classified_games.max(0) as u64,
         pending_games: pending_games.max(0) as u64,
     })
+}
+
+fn has_position_patterns(connection: &Connection, version: i64) -> Result<bool> {
+    connection
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM opening_patterns
+                WHERE classifier_version_id=?1 AND pattern_type='position' AND position_key IS NOT NULL
+             )",
+            [version],
+            |row| row.get(0),
+        )
+        .map_err(Into::into)
 }
 
 fn find_move_duplicate_candidates(
@@ -3330,6 +3586,7 @@ CREATE TABLE IF NOT EXISTS game_opening_classifications (
   is_primary INTEGER NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_game_opening_primary ON game_opening_classifications(category_code,is_primary,status);
+CREATE INDEX IF NOT EXISTS idx_game_opening_current ON game_opening_classifications(game_id,classifier_version_id,is_primary);
 "#;
 
 fn migrate_local_schema(connection: &Connection) -> Result<()> {
@@ -3451,6 +3708,8 @@ fn migrate_local_schema(connection: &Connection) -> Result<()> {
            ON reference_game_moves(position_hash,position_key,move_iccs,game_id);
          CREATE INDEX IF NOT EXISTS idx_reference_moves_position_game
            ON reference_game_moves(position_hash,position_key,game_id);
+         CREATE INDEX IF NOT EXISTS idx_game_opening_current
+           ON game_opening_classifications(game_id,classifier_version_id,is_primary);
          CREATE TABLE IF NOT EXISTS opening_category_stats (
            category_code TEXT PRIMARY KEY REFERENCES opening_categories(code),
            game_count INTEGER NOT NULL DEFAULT 0, red_wins INTEGER NOT NULL DEFAULT 0,
@@ -4292,6 +4551,7 @@ mod tests {
             &["h2e2".into()],
             false,
             1,
+            &load_opening_classifier_runtime(&library.connection, 1).unwrap(),
         )
         .unwrap();
         assert_eq!(result.primary_code, None);
@@ -4334,8 +4594,17 @@ mod tests {
             )
             .unwrap();
 
-        let result =
-            classify_game(&library.connection, &game_id, "", &["h2e2".into()], true, 1).unwrap();
+        let runtime = load_opening_classifier_runtime(&library.connection, 1).unwrap();
+        let result = classify_game(
+            &library.connection,
+            &game_id,
+            "",
+            &["h2e2".into()],
+            true,
+            1,
+            &runtime,
+        )
+        .unwrap();
         assert_eq!(result.primary_code.as_deref(), Some("C03"));
         assert_eq!(result.method, "deepest_position");
         assert_eq!(result.matched_plies, 1);

@@ -7113,6 +7113,16 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 .reference-position-panel li { min-height: 50px; display: grid; grid-template-columns: minmax(0,1fr) 28px 28px; align-items: center; gap: 2px; border-top: 1px solid var(--border); }
 .reference-position-panel .reference-move-main { min-height: 48px; display: grid; grid-template-columns: minmax(62px,auto) 52px minmax(70px,1fr); justify-content: start; gap: 2px 7px; text-align: left; }
 .reference-position-panel .reference-move-main.active { border-color: color-mix(in srgb, #d6ad46 62%, var(--border-strong)); background: color-mix(in srgb, #fff8dd 60%, var(--surface-1)); color: var(--text-primary); }
+.reference-position-panel .reference-move-preview,
+.reference-position-panel .reference-move-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.reference-position-panel .reference-move-preview span,
+.reference-position-panel .reference-move-add span { display: none; }
 .reference-move-main span { color: var(--text-muted); font-size: 11px; }
 .reference-move-main small { grid-column: 1 / -1; min-width: 0; overflow: hidden; color: var(--text-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .reference-rate-labels { grid-column: 1 / -1; display: flex; justify-content: space-between; gap: 5px; color: var(--text-muted); font-size: 10px; font-style: normal; }
@@ -7134,7 +7144,7 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr);
   overflow: hidden;
   background: var(--surface-0);
 }
@@ -7170,6 +7180,23 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
   border-bottom: 1px solid var(--border);
 }
 .master-opening-panel .reference-position-panel > header nav button:last-child { display: none; }
+.master-opening-panel .reference-position-panel li {
+  grid-template-columns: minmax(0, 1fr) 42px 66px;
+  gap: 4px;
+}
+.master-opening-panel .reference-position-panel .reference-move-add {
+  padding-inline: 7px;
+  border-color: color-mix(in srgb, #d6ad46 42%, var(--border));
+  background: color-mix(in srgb, #fff8dd 58%, var(--surface-1));
+  color: var(--text-primary);
+  font-weight: 800;
+}
+.master-opening-panel .reference-position-panel .reference-move-add span,
+.master-opening-panel .reference-position-panel .reference-move-preview span {
+  display: inline;
+  font-size: 11px;
+}
+.master-opening-panel .reference-position-panel .reference-move-preview span { display: none; }
 .master-opening-moves ol { max-height: 286px; }
 .master-opening-matches {
   min-width: 0;
@@ -7271,14 +7298,16 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
   text-align: left;
 }
 .master-opening-game-list.compact button {
-  min-height: 72px;
+  min-height: 58px;
   grid-template-columns: 74px minmax(0, 1fr) auto;
   align-items: center;
   gap: 2px 9px;
 }
 .master-opening-game-list.detail button {
+  min-height: 92px;
   grid-template-columns: 64px minmax(0, 1fr);
 }
+.master-opening-game-list.detail .master-opening-versus { grid-row: 1 / span 4; }
 .master-opening-game-list button:hover,
 .master-opening-game-list button.active {
   border-color: color-mix(in srgb, #d6ad46 52%, var(--border-strong));
@@ -7347,9 +7376,12 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
   font-style: normal;
   font-weight: 800;
 }
-.master-opening-game-list.compact strong { grid-column: 2; font-size: 14px; }
+.master-opening-game-list.compact strong { grid-column: 2; font-size: 13px; }
 .master-opening-game-list.compact span { grid-column: 2; }
 .master-opening-game-list.compact small { grid-column: 2; }
+.master-opening-game-list.detail strong,
+.master-opening-game-list.detail span,
+.master-opening-game-list.detail small { grid-column: 2; }
 .master-opening-preview-label {
   grid-column: 3;
   grid-row: 1 / span 3;
@@ -7357,6 +7389,12 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
   color: var(--text-muted);
   font-size: 11px;
   font-style: normal;
+}
+.master-opening-game-list.detail .master-opening-preview-label {
+  grid-column: 2;
+  grid-row: auto;
+  justify-self: end;
+  align-self: center;
 }
 .master-opening-game-list small {
   min-width: 0;

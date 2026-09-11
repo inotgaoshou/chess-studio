@@ -96,7 +96,6 @@ export function MasterOpeningPanel({ fen, enabled, queryMoves, queryGames, resol
   }
 
   if (!enabled) return null;
-  const selectedGame = games.find((game) => game.id === selectedGameId);
   const decided = selectedMove ? selectedMove.redWins + selectedMove.draws + selectedMove.blackWins : 0;
   return <aside className="master-opening-side-panel" aria-label="大师开局局面搜索">
     <section className="master-opening-panel">
@@ -161,26 +160,17 @@ export function MasterOpeningPanel({ fen, enabled, queryMoves, queryGames, resol
             >
               <i className="master-opening-versus" aria-hidden="true"><b className="red">{playerMark(game.redPlayer, "红")}</b><em>VS</em><b className="black">{playerMark(game.blackPlayer, "黑")}</b></i>
               <strong>{game.title || `${game.redPlayer || "红方"} 对 ${game.blackPlayer || "黑方"}`}</strong>
-              <span>{game.redPlayer || "红方未详"} <b>{resultLabel(game.result)}</b> {game.blackPlayer || "黑方未详"} <em>{openingLabel(game)}</em></span>
-              {viewMode === "detail" && <small><Trophy size={11}/>{game.eventName || "赛事不详"}{game.roundName ? ` · ${game.roundName}` : ""}</small>}
-              {viewMode === "detail" && <small><CalendarDays size={11}/>{gameDateLabel(game.gameDate)} · {game.moveCount} 手</small>}
-              {viewMode === "compact" && <small>{resultLabel(game.result)} · {openingLabel(game)} · {gameDateLabel(game.gameDate)}</small>}
-              {viewMode === "compact" && <em className="master-opening-preview-label">预览</em>}
+              {viewMode === "detail" ? <>
+                <span>{game.redPlayer || "红方未详"} <b>{resultLabel(game.result)}</b> {game.blackPlayer || "黑方未详"} <em>{openingLabel(game)}</em></span>
+                <small><Trophy size={11}/>{game.eventName || "赛事不详"}{game.roundName ? ` · ${game.roundName}` : ""}</small>
+                <small><CalendarDays size={11}/>{gameDateLabel(game.gameDate)} · {game.moveCount} 手</small>
+              </> : <>
+                <span>{game.redPlayer || "红方未详"} <b>{resultLabel(game.result)}</b> {game.blackPlayer || "黑方未详"}</span>
+                <small>{openingLabel(game)} · {gameDateLabel(game.gameDate)}</small>
+              </>}
+              <em className="master-opening-preview-label">查看</em>
             </button>)}
           </div>}
-      </section>
-
-      <section className="master-opening-preview" aria-label="对局台预览">
-        {selectedGame ? <>
-          <small>对局台待命</small>
-          <strong>{selectedGame.redPlayer || "红方"} vs {selectedGame.blackPlayer || "黑方"}</strong>
-          <span>{selectedGame.eventName || "赛事不详"} · {gameDateLabel(selectedGame.gameDate)} · {resultLabel(selectedGame.result)}</span>
-          <em>当前先显示快速摘要；需要完整分支和注释时点右上角资料库进入完整探索。</em>
-        </> : <>
-          <small>对局台待命</small>
-          <strong>选择命中棋谱查看摘要</strong>
-          <span>这里不自动写入棋谱，也不加载完整注释树。</span>
-        </>}
       </section>
     </section>
   </aside>;

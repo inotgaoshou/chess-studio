@@ -47,5 +47,28 @@ describe("MasterOpeningPanel", () => {
     expect(await screen.findByText(/走 炮二平五 后/)).toBeTruthy();
     await waitFor(() => expect(queryGames).toHaveBeenLastCalledWith("after-h2e2"));
     expect(onAddMove).not.toHaveBeenCalled();
+    expect(screen.queryByText("对局台待命")).toBeNull();
+  });
+
+  it("keeps compact mode minimal and detail mode expanded", async () => {
+    render(<MasterOpeningPanel
+      fen="start"
+      enabled
+      queryMoves={async () => [move]}
+      queryGames={async () => [game]}
+      resolveMoveFen={async () => "after-h2e2"}
+      onPreviewMove={() => undefined}
+      onAddMove={() => undefined}
+      onOpenExplorer={() => undefined}
+    />);
+
+    expect(await screen.findByText("广东 陈松顺 胜 江苏 惠颂祥")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "简洁" }).className).toContain("active");
+    expect(screen.queryByText(/测试赛/)).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "详细" }));
+
+    expect(screen.getByRole("button", { name: "详细" }).className).toContain("active");
+    expect(screen.getByText(/测试赛/)).toBeTruthy();
   });
 });
