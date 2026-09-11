@@ -265,6 +265,21 @@ describe("App U10 close", () => {
     expect(screen.queryByLabelText("选中棋子思路")).toBeNull();
   });
 
+  it("renders the main board selected piece with the CSS ring marker instead of the skin mask image", async () => {
+    configurePlatform({
+      ...board,
+      pieces: [{ row: 9, col: 1, color: "red", kind: "horse", label: "马" }],
+    });
+    render(<App/>);
+
+    const horseSquare = await screen.findByRole("button", { name: /b0 红马/ });
+    fireEvent.click(horseSquare);
+
+    expect(horseSquare.className).toContain("selected");
+    expect(horseSquare.querySelector(".selection-ring")).toBeTruthy();
+    expect(horseSquare.querySelector(".selection-mask")).toBeNull();
+  });
+
   it("cancels a pending review move when the destination is double-clicked for inspection", async () => {
     configurePlatform({
       ...board,

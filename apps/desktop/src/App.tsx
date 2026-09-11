@@ -7532,7 +7532,7 @@ export default function App() {
                       <img src={pieceAsset(piece, displayedPieceSkin)} alt={piece.label} draggable={false} onError={(event) => handlePieceAssetError(event, piece)} />
                       <span className="board-piece-label" aria-hidden="true">{piece.label}</span>
                     </>}
-                    {isSelected && <img className="selection-mask" src={`/skins/${displayedBoardSkin}/mask2.png`} alt="" />}
+                    {isSelected && <span className="selection-ring" aria-hidden="true" />}
                   </button>
                 );
               })}
