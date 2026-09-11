@@ -133,6 +133,12 @@ describe("ReferenceLibraryDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: /实战检索/ }));
 
     expect((await screen.findAllByText("王天一 胜 郑惟桐")).length).toBeGreaterThan(0);
+    expect(await screen.findByLabelText("布局分类筛选")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("布局分类筛选"), { target: { value: "A01" } });
+    await waitFor(() => expect(listReferenceGames).toHaveBeenLastCalledWith(
+      "A01", "", 100, 0,
+      expect.objectContaining({}),
+    ));
     expect(await screen.findByDisplayValue("本地只读参考文档")).toBeTruthy();
     await waitFor(() => expect(getReferenceGameDocument).toHaveBeenCalledWith("game-1"));
     expect((await screen.findAllByText("C01 · 中炮对屏风马")).length).toBeGreaterThan(0);
@@ -164,7 +170,7 @@ describe("ReferenceLibraryDialog", () => {
     render(<ReferenceLibraryDialog platform={value} initialGameId="game-1" onOpenReferenceGame={onOpenReferenceGame} onClose={() => undefined}/>);
 
     await screen.findByText("炮二平五");
-    fireEvent.click(screen.getByRole("button", { name: /载入到棋盘/ }));
+    fireEvent.click(screen.getByRole("button", { name: /查看棋谱/ }));
 
     await waitFor(() => expect(onOpenReferenceGame).toHaveBeenCalledWith("game-1"));
   });

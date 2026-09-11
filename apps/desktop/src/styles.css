@@ -7002,10 +7002,13 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 .reference-opening-stats b { color: var(--text-primary); }
 .reference-opening-stats .red b { color: #c9564e; }
 .reference-game-table { min-height: 0; overflow: auto; }
-.reference-game-table > div { min-height: 46px; padding: 6px 14px; display: grid; grid-template-columns: minmax(190px,1fr) minmax(220px,1.2fr) 70px 48px; align-items: center; gap: 10px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.reference-game-table > div,
+.reference-game-table > button { min-height: 46px; padding: 6px 14px; display: grid; grid-template-columns: minmax(170px,1fr) minmax(200px,1.2fr) 64px 46px 48px; align-items: center; gap: 10px; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; color: inherit; text-align: left; font-size: 12px; }
 .reference-game-table > div.head { position: sticky; top: 0; z-index: 1; min-height: 32px; background: var(--surface-1); color: var(--text-muted); }
+.reference-game-table > button:hover { background: color-mix(in srgb, var(--accent-surface) 38%, transparent); }
 .reference-game-table span { min-width: 0; display: grid; gap: 2px; }
 .reference-game-table small { overflow: hidden; color: var(--text-muted); text-overflow: ellipsis; white-space: nowrap; }
+.reference-game-table em { color: var(--accent); font-style: normal; font-weight: 800; }
 .reference-game-table > p, .reference-source-list > p, .reference-batch-list > p { margin: 28px; color: var(--text-muted); text-align: center; }
 .reference-game-search-body { min-height: 0; display: grid; grid-template-columns: 270px minmax(360px,1fr) 330px; overflow: hidden; }
 .reference-game-search-body > aside { min-height: 0; padding: 10px; display: grid; align-content: start; gap: 9px; overflow: auto; border-right: 1px solid var(--border); background: var(--surface-1); }

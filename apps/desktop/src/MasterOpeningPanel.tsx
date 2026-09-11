@@ -32,9 +32,43 @@ function playerMark(name: string, fallback: string) {
   return (name || fallback).trim().slice(0, 1) || fallback.slice(0, 1);
 }
 
+function cleanPlayerText(value: string) {
+  return value
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, "")
+    .replace(/\^[A-Za-z]/g, "")
+    .replace(/[□?]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const ORGANIZATION_PREFIX = /^(?:[\u4e00-\u9fffA-Za-z0-9·（）()]+?(?:大学|学院|学校|中学|棋院|俱乐部|协会|代表队|队|省|市|县|区))+/;
+
+function personName(value: string | undefined, fallback: string) {
+  const cleaned = cleanPlayerText(value || "");
+  if (!cleaned) return fallback;
+  const parts = cleaned.split(/\s+/).filter(Boolean);
+  if (parts.length > 1) return parts[parts.length - 1] || fallback;
+  const withoutOrganization = cleaned.replace(ORGANIZATION_PREFIX, "").trim();
+  return withoutOrganization || cleaned || fallback;
+}
+
+function outcomeFromTitle(game: ReferenceGameSummaryDto) {
+  const title = cleanPlayerText(game.title || "");
+  const match = title.match(/^(.+?)\s*(胜|负|和)\s*(.+)$/);
+  if (!match) return undefined;
+  const left = personName(match[1], "红方未详");
+  const result = match[2];
+  const right = personName(match[3], "黑方未详");
+  if (result === "胜") return `${left} 胜 ${right}`;
+  if (result === "负") return `${right} 胜 ${left}`;
+  return `${left} 和 ${right}`;
+}
+
 function outcomeLabel(game: ReferenceGameSummaryDto) {
-  const red = game.redPlayer || "红方未详";
-  const black = game.blackPlayer || "黑方未详";
+  const titleOutcome = outcomeFromTitle(game);
+  if (titleOutcome) return titleOutcome;
+  const red = personName(game.redPlayer, "红方未详");
+  const black = personName(game.blackPlayer, "黑方未详");
   if (game.result === "1-0") return `${red} 胜 ${black}`;
   if (game.result === "0-1") return `${black} 胜 ${red}`;
   if (game.result === "1/2-1/2") return `${red} 和 ${black}`;

@@ -146,6 +146,7 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
   const [masterOnly, setMasterOnly] = useState(false);
   const [searchMode, setSearchMode] = useState<SearchMode>("match");
   const [classificationStatus, setClassificationStatus] = useState<ClassificationStatus>("all");
+  const [gameOpeningCode, setGameOpeningCode] = useState("");
   const [selectedGameId, setSelectedGameId] = useState<string | undefined>(initialGameId);
   const [selectedDocument, setSelectedDocument] = useState<ReferenceGameDocumentDto>();
   const [documentError, setDocumentError] = useState("");
@@ -178,7 +179,7 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
   const activeGameFilters = useMemo<ReferenceGameFilters>(() => tab === "games" && classificationStatus !== "all"
     ? { ...gameFilters, classificationStatus }
     : gameFilters, [classificationStatus, gameFilters, tab]);
-  const activeOpeningCode = tab === "openings" ? selectedCode : undefined;
+  const activeOpeningCode = tab === "openings" ? selectedCode : tab === "games" && searchMode === "match" ? gameOpeningCode || undefined : undefined;
   const commonPlayers = useMemo(() => {
     const counts = new Map<string, number>();
     for (const game of games) {
@@ -194,6 +195,10 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
       .slice(0, 5)
     : [], [openingChildren, openings, selected]);
   const openingOptions = useMemo(() => [...openings, ...Object.values(openingChildren).flat()], [openingChildren, openings]);
+  const selectedGameOpening = useMemo(
+    () => openingOptions.find((item) => item.code === gameOpeningCode),
+    [gameOpeningCode, openingOptions],
+  );
   const childOpenings = useMemo(() => Object.values(openingChildren).flat(), [openingChildren]);
   const hotOpenings = useMemo(() => childOpenings
     .filter((item) => item.gameCount > 0)
@@ -485,7 +490,7 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
             {similarOpenings.length > 0 && <span><small>相近布局</small>{similarOpenings.map((item) => <button key={item.code} onClick={() => setSelectedCode(item.code)}>{item.code}</button>)}</span>}
           </div>}
           <div className="reference-opening-stats"><span>棋局 <b>{selected?.gameCount ?? 0}</b></span><span className="red">红胜 <b>{selected?.redWins ?? 0}</b></span><span>和棋 <b>{selected?.draws ?? 0}</b></span><span>黑胜 <b>{selected?.blackWins ?? 0}</b></span></div>
-          <div className="reference-game-table"><div className="head"><span>对局</span><span>赛事 / 日期</span><span>结果</span><span>手数</span></div>{games.length === 0 ? <p>该分类暂无已归类棋局。</p> : games.map((game) => <div key={game.id}><span><b>{game.redPlayer || "红方未知"}</b><small>对 {game.blackPlayer || "黑方未知"}</small></span><span><b>{game.eventName || game.title}</b><small>{game.gameDate || "日期未知"} {game.roundName}</small></span><span>{resultLabel(game.result)}</span><span>{game.moveCount}</span></div>)}</div>
+          <div className="reference-game-table"><div className="head"><span>对局</span><span>赛事 / 日期</span><span>结果</span><span>手数</span><span>操作</span></div>{games.length === 0 ? <p>该分类暂无已归类棋局。</p> : games.map((game) => <button type="button" key={game.id} title="查看棋谱详情" onClick={() => { setSelectedGameId(game.id); setSearchMode("match"); setTab("games"); }}><span><b>{game.redPlayer || "红方未知"}</b><small>对 {game.blackPlayer || "黑方未知"}</small></span><span><b>{game.eventName || game.title}</b><small>{game.gameDate || "日期未知"} {game.roundName}</small></span><span>{resultLabel(game.result)}</span><span>{game.moveCount}</span><em>查看</em></button>)}</div>
         </main>
       </div>}
       {tab === "games" && <div className="reference-game-search-body">
@@ -497,15 +502,25 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
           <label>赛事<input value={eventName} onChange={(change) => setEventName(change.target.value)} placeholder="全国大赛"/></label>
           <label>年份<span><input aria-label="实战起始年份" inputMode="numeric" maxLength={4} value={yearFrom} onChange={(change) => setYearFrom(change.target.value.replace(/\D/g, ""))} placeholder="起始"/><input aria-label="实战结束年份" inputMode="numeric" maxLength={4} value={yearTo} onChange={(change) => setYearTo(change.target.value.replace(/\D/g, ""))} placeholder="结束"/></span></label>
           <label>执方<select value={side} disabled={!player.trim()} onChange={(change) => setSide(change.target.value as "" | "red" | "black")}><option value="">不限</option><option value="red">执红</option><option value="black">执黑</option></select></label>
+          <label>布局分类<select aria-label="布局分类筛选" value={gameOpeningCode} disabled={searchMode === "position" || classificationStatus === "pending"} onChange={(change) => {
+            setGameOpeningCode(change.target.value);
+            if (change.target.value) setClassificationStatus("classified");
+          }}>
+            <option value="">全部布局</option>
+            {openings.map((series) => <optgroup key={series.code} label={`${series.code} · ${series.name}`}>
+              <option value={series.code}>{series.code} · 全部{series.name}</option>
+              {(openingChildren[series.code] ?? []).map((item) => <option key={item.code} value={item.code}>{item.code} · {item.name}（{item.gameCount.toLocaleString()}）</option>)}
+            </optgroup>)}
+          </select></label>
           <div className="reference-classification-toggle" role="group" aria-label="分类状态">
             <button type="button" className={classificationStatus === "all" ? "active" : ""} onClick={() => setClassificationStatus("all")}>全部</button>
             <button type="button" className={classificationStatus === "classified" ? "active" : ""} onClick={() => setClassificationStatus("classified")}>已归类</button>
-            <button type="button" className={classificationStatus === "pending" ? "active" : ""} onClick={() => setClassificationStatus("pending")}>待分类</button>
+            <button type="button" className={classificationStatus === "pending" ? "active" : ""} onClick={() => { setClassificationStatus("pending"); setGameOpeningCode(""); }}>待分类</button>
           </div>
-          <div className="reference-game-search-hint"><b>{searchMode === "position" ? `候选 ${positionMoves.length.toLocaleString()} 着` : `已加载 ${games.length.toLocaleString()} 盘`}</b><span>筛选会同时查本机参考库和可用离线包；预览只读，不改当前棋谱。</span></div>
+          <div className="reference-game-search-hint"><b>{searchMode === "position" ? `候选 ${positionMoves.length.toLocaleString()} 着` : `已加载 ${games.length.toLocaleString()} 盘`}</b><span>{selectedGameOpening ? `当前布局：${selectedGameOpening.code} · ${selectedGameOpening.name}` : "可按布局分类、棋手、赛事、年份筛选；预览只读，不改当前棋谱。"}</span></div>
         </aside>
         <main>
-          <header><span><strong>{searchMode === "position" ? "当前局面候选" : classificationStatus === "pending" ? "待分类棋局" : classificationStatus === "classified" ? "已归类棋局" : "全部参考棋局"}</strong><small>{searchMode === "position" ? "按当前棋盘 FEN 聚合实战走法" : query.trim() || player.trim() || eventName.trim() ? "当前筛选结果" : "最近导入和最新日期优先"}</small></span></header>
+          <header><span><strong>{searchMode === "position" ? "当前局面候选" : selectedGameOpening ? `${selectedGameOpening.code} · ${selectedGameOpening.name}` : classificationStatus === "pending" ? "待分类棋局" : classificationStatus === "classified" ? "已归类棋局" : "全部参考棋局"}</strong><small>{searchMode === "position" ? "按当前棋盘 FEN 聚合实战走法" : query.trim() || player.trim() || eventName.trim() || gameOpeningCode ? "当前筛选结果" : "最近导入和最新日期优先"}</small></span></header>
           {searchMode === "match" ? <div className="reference-game-search-list" role="listbox" aria-label="参考棋局列表">
             {games.length === 0 ? <p>没有匹配棋局。可以换个棋手、赛事或切到“全部”。</p> : games.map((game) => <button key={game.id} type="button" role="option" aria-selected={game.id === selectedGameId} className={game.id === selectedGameId ? "active" : ""} onClick={() => setSelectedGameId(game.id)}>
               <span><b>{game.title || `${game.redPlayer || "红方未知"} 对 ${game.blackPlayer || "黑方未知"}`}</b><small>{game.redPlayer || "红方未知"} vs {game.blackPlayer || "黑方未知"}</small></span>
@@ -526,7 +541,7 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
         </main>
         <section className="reference-game-preview" aria-label="参考棋局预览">
           {!selectedGame ? <p>选择左侧棋局后查看来源文档摘要。</p> : <>
-            <header><span><Eye size={14}/><strong>{selectedGame.title || "未命名棋局"}</strong><small>{selectedGame.redPlayer || "红方未知"} vs {selectedGame.blackPlayer || "黑方未知"} · {resultLabel(selectedGame.result)}</small></span>{onOpenReferenceGame && <button type="button" disabled={busy} onClick={() => void openSelectedReferenceGame()}><BookOpen size={13}/>载入到棋盘</button>}</header>
+            <header><span><Eye size={14}/><strong>{selectedGame.title || "未命名棋局"}</strong><small>{selectedGame.redPlayer || "红方未知"} vs {selectedGame.blackPlayer || "黑方未知"} · {resultLabel(selectedGame.result)}</small></span>{onOpenReferenceGame && <button type="button" disabled={busy} title="载入到棋盘查看完整棋谱" onClick={() => void openSelectedReferenceGame()}><BookOpen size={13}/>查看棋谱</button>}</header>
             <dl><div><dt>布局</dt><dd>{gameOpeningLabel(selectedGame)}</dd></div><div><dt>赛事</dt><dd>{selectedGame.eventName || "未知"}</dd></div><div><dt>日期</dt><dd>{selectedGame.gameDate || "未知"}</dd></div><div><dt>手数</dt><dd>{selectedGame.moveCount}</dd></div>{selectedGame.opening && <div><dt>原始标注</dt><dd>{selectedGame.opening}</dd></div>}</dl>
             {documentLoading ? <p>正在读取完整棋谱文档…</p> : documentError ? <p className="error">{documentError}</p> : documentPreview ? <>
               <div className="reference-game-preview-stats"><span>分支点 <b>{documentPreview.branchCount}</b></span><span>注释 <b>{documentPreview.commentCount}</b></span></div>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analysisPassPlan, canRequestEngineMoveNow, clampAnalysisPanelReopenTop, compactBoardEvaluationRailText, compactEngineDefaultPosition, effectiveBoardReversedForLink, engineBranchActionPresentation, evaluateBestMovePractice, linkAnalysisStatusText, linkMiniBoardHintText, linkMoveDisplayText, linkPhaseLabel, linkSessionStateLabel, linkStatusRenderKey, mainBoardLastMoveOverlayPoints, nextStableLinkMiniPieceState, selectAnalysisArrowLines, selectLinkDisplayedLastMove, shouldAutoGenerateMasterGameReport, shouldRefreshAnalysisAfterEngineSettingsSave, shouldRefreshAnalysisAfterMove, shouldRestartAnalysisWhenNoCandidates, shouldShowLinkMiniBoard, stableLinkMiniPiecesForMove } from "./App";
+import { analysisPassPlan, canRequestEngineMoveNow, clampAnalysisPanelReopenTop, compactBoardEvaluationRailText, compactEngineDefaultPosition, effectiveBoardReversedForLink, engineBranchActionPresentation, evaluateBestMovePractice, isAnalysisControlActive, linkAnalysisStatusText, linkMiniBoardHintText, linkMoveDisplayText, linkPhaseLabel, linkSessionStateLabel, linkStatusRenderKey, mainBoardLastMoveOverlayPoints, nextStableLinkMiniPieceState, selectAnalysisArrowLines, selectLinkDisplayedLastMove, shouldAutoGenerateMasterGameReport, shouldAwaitAnalysisBackendStop, shouldRefreshAnalysisAfterEngineSettingsSave, shouldRefreshAnalysisAfterMove, shouldRestartAnalysisWhenNoCandidates, shouldShowLinkMiniBoard, stableLinkMiniPiecesForMove } from "./App";
 import type { LinkSessionStatus, Piece } from "./platform";
 
 function status(overrides: Partial<LinkSessionStatus> = {}): LinkSessionStatus {
@@ -405,6 +405,19 @@ describe("link floating status helpers", () => {
       boardFen: "current-fen",
       engineAnalyses: {},
     })).toBe(false);
+  });
+
+  it("keeps manual stop-analysis interactions responsive while preserving guarded stops", () => {
+    expect(shouldAwaitAnalysisBackendStop("user")).toBe(false);
+    expect(shouldAwaitAnalysisBackendStop("engine-change")).toBe(true);
+    expect(shouldAwaitAnalysisBackendStop("move-gate")).toBe(true);
+    expect(shouldAwaitAnalysisBackendStop("settings")).toBe(true);
+  });
+
+  it("keeps the main analysis control in stop mode while the engine is busy", () => {
+    expect(isAnalysisControlActive(true, false)).toBe(true);
+    expect(isAnalysisControlActive(false, true)).toBe(true);
+    expect(isAnalysisControlActive(false, false)).toBe(false);
   });
 
   it("keeps all fresh arrow candidates when multipv is configured above five", () => {

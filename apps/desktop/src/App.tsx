@@ -518,6 +518,14 @@ export function shouldQueueWebAnalysisReplacement(platformKind: "desktop" | "web
   return platformKind === "web" && analysisBusy;
 }
 
+export function shouldAwaitAnalysisBackendStop(intent: "user" | "engine-change" | "move-gate" | "settings") {
+  return intent !== "user";
+}
+
+export function isAnalysisControlActive(analysisBusy: boolean, analysisHintsEnabled: boolean) {
+  return analysisBusy || analysisHintsEnabled;
+}
+
 export function normalizeMobileCloudAnalysisPreferences(preferences: CloudAnalysisPreferences, mobile: boolean) {
   if (!mobile || preferences.mobileDefaultDepthVersion === MOBILE_DEFAULT_DEPTH_PREFERENCE_VERSION) return preferences;
   return preferences.searchMode === "depth" && preferences.searchValue === 30
@@ -3308,7 +3316,7 @@ export default function App() {
     }, 260);
   }
 
-  async function cancelRunningAnalysis(reason?: string, options: { keepHints?: boolean; forceBackendStop?: boolean } = {}) {
+  async function cancelRunningAnalysis(reason?: string, options: { keepHints?: boolean; forceBackendStop?: boolean; awaitBackendStop?: boolean } = {}) {
     const wasBusy = analysisBusyRef.current;
     if (!wasBusy && !options.forceBackendStop) return;
     pendingAutoAnalysis.current = false;
@@ -3323,11 +3331,20 @@ export default function App() {
       setAnalysisArrowFen(undefined);
     }
     if (reason) setNotice(reason);
-    await chessPlatform.stopAnalysis(true).catch(() => undefined);
+    const stopRequest = chessPlatform.stopAnalysis(true).catch(() => undefined);
+    if (options.awaitBackendStop === false) {
+      void stopRequest;
+      return;
+    }
+    await stopRequest;
   }
 
   async function stopRunningAnalysisBeforeMove() {
-    await cancelRunningAnalysis("正在停止旧局面分析，准备切换到新局面…", { keepHints: true, forceBackendStop: true });
+    await cancelRunningAnalysis("正在停止旧局面分析，准备切换到新局面…", {
+      keepHints: true,
+      forceBackendStop: true,
+      awaitBackendStop: shouldAwaitAnalysisBackendStop("move-gate"),
+    });
   }
 
   function triggerMoveFeedback(before: BoardState, next: BoardState) {
@@ -4563,13 +4580,18 @@ export default function App() {
     }
   }
 
-  async function stopAnalysis() {
+  async function stopAnalysis(options: { intent?: "user" | "engine-change" } = {}) {
+    const awaitBackendStop = shouldAwaitAnalysisBackendStop(options.intent ?? "user");
     pendingAutoAnalysis.current = false;
     analysisHintsEnabledRef.current = false;
     setAnalysisHintsEnabled(false);
     setAnalysisArrowFen(undefined);
     try {
-      await cancelRunningAnalysis(`正在停止 ${currentEngineLabel}`, { keepHints: false, forceBackendStop: true });
+      await cancelRunningAnalysis(`正在停止 ${currentEngineLabel}`, {
+        keepHints: false,
+        forceBackendStop: true,
+        awaitBackendStop,
+      });
       setNotice(`正在停止 ${currentEngineLabel}`);
     } catch (error) {
       setNotice(friendlyError(error));
@@ -5485,7 +5507,7 @@ export default function App() {
   async function selectEngineProfile(id: string) {
     if (id === desktopPreferences.activeEngineId) return desktopPreferencesRef.current;
     try {
-      await stopAnalysis();
+      await stopAnalysis({ intent: "engine-change" });
       await stopEnginePlay();
       const saved = await chessPlatform.setActiveEngineProfile(id);
       applyDesktopPreferences(saved);
@@ -5503,7 +5525,7 @@ export default function App() {
   async function removeEngineProfile(id = desktopPreferences.activeEngineId) {
     if (!id) return desktopPreferencesRef.current;
     try {
-      await stopAnalysis();
+      await stopAnalysis({ intent: "engine-change" });
       await stopEnginePlay();
       const saved = await chessPlatform.deleteEngineProfile(id);
       applyDesktopPreferences(saved);
@@ -7082,6 +7104,7 @@ export default function App() {
   const boardAnnotationParts = splitTtxqComment(boardAnnotationValue);
   const boardHasAnnotation = Boolean(boardAnnotationParts.sourceText || boardAnnotationParts.localText);
   const referencePositionSearchActive = chessPlatform.kind === "desktop" && workspaceMode === "opening";
+  const analysisControlActive = isAnalysisControlActive(analysisBusy, analysisHintsEnabled);
 
   return (
     <div className={`app-shell ${chessPlatform.kind}-shell theme-${effectiveColorTheme} layout-${desktopPreferences.layoutMode} board-skin-${displayedBoardSkin} piece-skin-${displayedPieceSkin}`}>
@@ -7315,11 +7338,11 @@ export default function App() {
           onLayoutChange={(mode) => void setWorkspaceLayout(mode)}
         />
         <button
-          className={`mode-tool ${analysisHintsEnabled ? "active" : ""}`}
-          title={analysisHintsEnabled ? "停止自动分析并隐藏 MultiPV 提示" : "开启自动分析与 MultiPV 提示"}
-          onClick={() => void (reviewModeOpen ? runReviewPositionAnalysis() : analysisHintsEnabled ? stopAnalysis() : runAnalysis())}
-          disabled={!analysisHintsEnabled && (!board.playable || isPlaying)}
-        ><Zap size={15}/>{analysisHintsEnabled ? "停止分析" : "分析"}</button>
+          className={`mode-tool ${analysisControlActive ? "active" : ""}`}
+          title={analysisControlActive ? "停止当前分析并隐藏 MultiPV 提示" : "开启自动分析与 MultiPV 提示"}
+          onClick={() => void (reviewModeOpen ? runReviewPositionAnalysis() : analysisControlActive ? stopAnalysis() : runAnalysis())}
+          disabled={!analysisControlActive && (!board.playable || isPlaying)}
+        ><Zap size={15}/>{analysisControlActive ? "停止分析" : "分析"}</button>
         <button className="mode-tool move-now-tool" title={analysisIsStale ? "候选线路已过期，请等待当前局面重新分析" : primaryAnalysis?.pv[0] ? (engineSide !== "none" || engineStarting || engineThinking ? "停止人机搜索并采用当前第一候选着" : "采用当前第一候选着") : "请先完成当前局面分析"} disabled={chessPlatform.kind !== "desktop" || !primaryAnalysis?.pv[0] || analysisIsStale} onClick={() => void playPrimaryAnalysisMove()}><Zap size={15}/>引擎出招</button>
         <button className="tool-button" title="引擎设置" onClick={() => setDesktopDialog("engine")}><Settings2 size={16}/></button>
         <div className="skin-menu">

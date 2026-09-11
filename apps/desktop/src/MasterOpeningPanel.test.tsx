@@ -84,4 +84,31 @@ describe("MasterOpeningPanel", () => {
     expect(screen.getByText("C01 · 中炮对屏风马")).toBeTruthy();
     expect(screen.queryByText(/C01 · 2026年全国/)).toBeNull();
   });
+
+  it("uses title text to show compact person-level winner labels", async () => {
+    const schoolGame = {
+      ...game,
+      id: "school-game",
+      title: "上海财经大学 沈思凡 胜 安徽财经大学 陈思源",
+      redPlayer: "上海财经大学沈?",
+      blackPlayer: "安徽财经大学陈?",
+      result: "1-0",
+    };
+
+    render(<MasterOpeningPanel
+      fen="start"
+      enabled
+      queryMoves={async () => [move]}
+      queryGames={async () => [schoolGame]}
+      resolveMoveFen={async () => "after-h2e2"}
+      onPreviewMove={() => undefined}
+      onAddMove={() => undefined}
+      onOpenExplorer={() => undefined}
+      onOpenGame={() => undefined}
+    />);
+
+    expect(await screen.findByText("沈思凡 胜 陈思源")).toBeTruthy();
+    expect(screen.queryByText(/上海财经大学沈/)).toBeNull();
+    expect(screen.queryByText(/安徽财经大学陈/)).toBeNull();
+  });
 });
