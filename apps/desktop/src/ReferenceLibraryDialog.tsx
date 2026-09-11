@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Activity, BarChart3, BookOpen, Check, Database, Download, Eye, FileText, FolderOpen, ListChecks, RefreshCw, Search, ShieldCheck, Upload, X } from "lucide-react";
 import type { ChessPlatform, OpeningCategoryDto, PositionMoveStatDto, ReferenceGameDocumentDto, ReferenceGameFilters, ReferenceGameSummaryDto, ReferenceImportBatchDto, ReferenceReviewIssueDto, ReferenceSourceDto } from "./platform/types";
 
@@ -14,6 +14,9 @@ type Props = {
 type Tab = "openings" | "games" | "sources" | "batches";
 type ClassificationStatus = "all" | "classified" | "pending";
 type SearchMode = "match" | "position";
+
+const REFERENCE_GAME_PAGE_SIZE = 100;
+const REFERENCE_GAME_QUERY_DEBOUNCE_MS = 160;
 
 function resultLabel(result: string) {
   return result === "1-0" ? "红胜" : result === "0-1" ? "黑胜" : result === "1/2-1/2" ? "和棋" : "未知";
@@ -131,6 +134,8 @@ function ReviewIssueRow({ issue, categories, busy, onIdentity, onOpening, onDupl
 
 export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, onOpenReferenceGame, onClose }: Props) {
   const desktop = platform.kind === "desktop";
+  const gameListRequest = useRef(0);
+  const selectedGameRow = useRef<HTMLButtonElement | null>(null);
   const [tab, setTab] = useState<Tab>(initialGameId ? "games" : "openings");
   const [openings, setOpenings] = useState<OpeningCategoryDto[]>([]);
   const [openingChildren, setOpeningChildren] = useState<Record<string, OpeningCategoryDto[]>>({});
@@ -153,6 +158,11 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
   const [selectedDocument, setSelectedDocument] = useState<ReferenceGameDocumentDto>();
   const [documentError, setDocumentError] = useState("");
   const [documentLoading, setDocumentLoading] = useState(false);
+  const [gamesLoading, setGamesLoading] = useState(false);
+  const [gamesLoadingMore, setGamesLoadingMore] = useState(false);
+  const [hasMoreGames, setHasMoreGames] = useState(false);
+  const [referenceAction, setReferenceAction] = useState<ReferenceGameOpenMode | undefined>();
+  const [mainlineExpanded, setMainlineExpanded] = useState(false);
   const [positionMoves, setPositionMoves] = useState<PositionMoveStatDto[]>([]);
   const [positionLoading, setPositionLoading] = useState(false);
   const [positionError, setPositionError] = useState("");
@@ -208,6 +218,37 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
     .slice(0, 12), [childOpenings]);
   const hasClassifiedOpenings = childOpenings.some((item) => item.gameCount > 0);
 
+  async function loadGamePage(offset: number, append: boolean) {
+    const request = ++gameListRequest.current;
+    if (append) setGamesLoadingMore(true);
+    else setGamesLoading(true);
+    setError("");
+    try {
+      const items = await platform.listReferenceGames(activeOpeningCode, query, REFERENCE_GAME_PAGE_SIZE, offset, activeGameFilters);
+      if (request !== gameListRequest.current) return;
+      setHasMoreGames(items.length === REFERENCE_GAME_PAGE_SIZE);
+      setGames((current) => {
+        if (!append) return items;
+        const known = new Set(current.map((game) => game.id));
+        return [...current, ...items.filter((game) => !known.has(game.id))];
+      });
+    } catch (cause) {
+      if (request !== gameListRequest.current) return;
+      setError(cause instanceof Error ? cause.message : String(cause));
+      setHasMoreGames(false);
+      if (!append) setGames([]);
+    } finally {
+      if (request === gameListRequest.current) {
+        setGamesLoading(false);
+        setGamesLoadingMore(false);
+      }
+    }
+  }
+
+  function loadMoreGames() {
+    void loadGamePage(games.length, true);
+  }
+
   async function refresh() {
     setBusy(true); setError("");
     try {
@@ -238,11 +279,19 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
   useEffect(() => {
     if (tab !== "openings" && tab !== "games") return;
     if (tab === "games" && searchMode !== "match") return;
+    gameListRequest.current += 1;
     let disposed = false;
-    void platform.listReferenceGames(activeOpeningCode, query, 100, 0, activeGameFilters)
-      .then((items) => { if (!disposed) setGames(items); })
-      .catch((cause) => { if (!disposed) setError(cause instanceof Error ? cause.message : String(cause)); });
-    return () => { disposed = true; };
+    setGames([]);
+    setHasMoreGames(false);
+    setGamesLoading(true);
+    setGamesLoadingMore(false);
+    const timer = window.setTimeout(() => {
+      if (!disposed) void loadGamePage(0, false);
+    }, REFERENCE_GAME_QUERY_DEBOUNCE_MS);
+    return () => {
+      disposed = true;
+      window.clearTimeout(timer);
+    };
   }, [activeGameFilters, activeOpeningCode, platform, query, searchMode, tab]);
   useEffect(() => {
     if (tab !== "games" || searchMode !== "position" || !currentFen) {
@@ -277,10 +326,12 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
     if (tab !== "games" || searchMode !== "match") return;
     setSelectedGameId((current) => {
       if (current && games.some((game) => game.id === current)) return current;
+      if (current && selectedDocument?.game.id === current) return current;
+      if (current && (gamesLoading || games.length === 0)) return current;
       if (current && current === initialGameId) return current;
       return games[0]?.id;
     });
-  }, [games, initialGameId, searchMode, tab]);
+  }, [games, gamesLoading, initialGameId, searchMode, selectedDocument?.game.id, tab]);
   useEffect(() => {
     if (tab !== "games" || !selectedGameId) {
       setSelectedDocument(undefined);
@@ -291,6 +342,7 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
     let disposed = false;
     setDocumentLoading(true);
     setDocumentError("");
+    setSelectedDocument(undefined);
     void platform.getReferenceGameDocument(selectedGameId)
       .then((document) => {
         if (!disposed) {
@@ -307,6 +359,18 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
       .finally(() => { if (!disposed) setDocumentLoading(false); });
     return () => { disposed = true; };
   }, [platform, selectedGameId, tab]);
+  useEffect(() => {
+    setMainlineExpanded(false);
+  }, [selectedGameId]);
+  useEffect(() => {
+    if (tab !== "games" || !selectedGameId) return;
+    const frame = window.requestAnimationFrame(() => {
+      if (typeof selectedGameRow.current?.scrollIntoView === "function") {
+        selectedGameRow.current.scrollIntoView({ block: "nearest" });
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [games, selectedDocument?.game.id, selectedGameId, tab]);
 
   async function addSource() {
     const path = await platform.chooseReferenceSource();
@@ -419,12 +483,14 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
   async function openSelectedReferenceGame(mode: ReferenceGameOpenMode) {
     if (!selectedGame?.id || !onOpenReferenceGame) return;
     setBusy(true);
+    setReferenceAction(mode);
     setError("");
     try {
       await onOpenReferenceGame(selectedGame.id, mode);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
+      setReferenceAction(undefined);
       setBusy(false);
     }
   }
@@ -444,13 +510,43 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
     finally { setBusy(false); }
   }
 
-  const selectedGame = games.find((game) => game.id === selectedGameId) ?? selectedDocument?.game;
+  const selectedDocumentGame = selectedDocument && selectedDocument.game.id === selectedGameId ? selectedDocument.game : undefined;
+  const selectedGame = games.find((game) => game.id === selectedGameId) ?? selectedDocumentGame;
+  const pinnedSelectedGame = selectedDocumentGame && !games.some((game) => game.id === selectedDocumentGame.id)
+    ? selectedDocumentGame
+    : undefined;
   const documentPreview = useMemo(() => {
     if (!selectedDocument) return undefined;
     try { return referenceDocumentPreview(selectedDocument.documentJson); }
     catch { return undefined; }
   }, [selectedDocument]);
   const previewMainline = selectedDocument?.mainlineNotation?.length ? selectedDocument.mainlineNotation : documentPreview?.mainline ?? [];
+  const visibleMainline = mainlineExpanded ? previewMainline : previewMainline.slice(0, 40);
+
+  function selectedRowRef(gameId: string) {
+    return (node: HTMLButtonElement | null) => {
+      if (gameId === selectedGameId) selectedGameRow.current = node;
+    };
+  }
+
+  function renderGameSearchRow(game: ReferenceGameSummaryDto, pinned = false) {
+    const opening = gameOpeningLabel(game);
+    const title = game.title || `${game.redPlayer || "红方未知"} 对 ${game.blackPlayer || "黑方未知"}`;
+    return <button
+      key={pinned ? `pinned-${game.id}` : game.id}
+      ref={selectedRowRef(game.id)}
+      type="button"
+      role="option"
+      aria-selected={game.id === selectedGameId}
+      className={`${game.id === selectedGameId ? "active" : ""} ${pinned ? "pinned" : ""}`.trim()}
+      onClick={() => setSelectedGameId(game.id)}
+      title={`${title} · ${opening}`}
+    >
+      <span><b>{pinned ? "当前预览棋局" : title}</b><small>{game.redPlayer || "红方未知"} vs {game.blackPlayer || "黑方未知"}</small></span>
+      <span><b>{game.eventName || "赛事未知"}</b><small>{game.gameDate || "日期未知"} {game.roundName}</small></span>
+      <em title={opening}>{opening}</em><i>{game.moveCount} 手</i>
+    </button>;
+  }
 
   return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="reference-library-dialog" role="dialog" aria-modal="true" aria-label="参考实战库与布局探索">
@@ -492,7 +588,10 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
             {similarOpenings.length > 0 && <span><small>相近布局</small>{similarOpenings.map((item) => <button key={item.code} onClick={() => setSelectedCode(item.code)}>{item.code}</button>)}</span>}
           </div>}
           <div className="reference-opening-stats"><span>棋局 <b>{selected?.gameCount ?? 0}</b></span><span className="red">红胜 <b>{selected?.redWins ?? 0}</b></span><span>和棋 <b>{selected?.draws ?? 0}</b></span><span>黑胜 <b>{selected?.blackWins ?? 0}</b></span></div>
-          <div className="reference-game-table"><div className="head"><span>对局</span><span>赛事 / 日期</span><span>结果</span><span>手数</span><span>操作</span></div>{games.length === 0 ? <p>该分类暂无已归类棋局。</p> : games.map((game) => <button type="button" key={game.id} title="查看棋谱详情" onClick={() => { setSelectedGameId(game.id); setSearchMode("match"); setTab("games"); }}><span><b>{game.redPlayer || "红方未知"}</b><small>对 {game.blackPlayer || "黑方未知"}</small></span><span><b>{game.eventName || game.title}</b><small>{game.gameDate || "日期未知"} {game.roundName}</small></span><span>{resultLabel(game.result)}</span><span>{game.moveCount}</span><em>查看</em></button>)}</div>
+          <div className="reference-game-table"><div className="head"><span>对局</span><span>赛事 / 日期</span><span>结果</span><span>手数</span><span>操作</span></div>{gamesLoading && games.length === 0 ? <p>正在加载棋局列表…</p> : games.length === 0 ? <p>该分类暂无已归类棋局。</p> : <>
+            {games.map((game) => <button ref={selectedRowRef(game.id)} type="button" key={game.id} className={game.id === selectedGameId ? "active" : ""} title={`查看棋谱详情：${gameOpeningLabel(game)}`} onClick={() => { setSelectedGameId(game.id); setSearchMode("match"); setTab("games"); }}><span><b>{game.redPlayer || "红方未知"}</b><small>对 {game.blackPlayer || "黑方未知"}</small></span><span><b>{game.eventName || game.title}</b><small>{game.gameDate || "日期未知"} {game.roundName}</small></span><span>{resultLabel(game.result)}</span><span>{game.moveCount}</span><em>查看</em></button>)}
+            {hasMoreGames && <button type="button" className="reference-load-more" disabled={gamesLoadingMore} onClick={loadMoreGames}>{gamesLoadingMore ? "正在加载更多…" : "查看更多"}</button>}
+          </>}</div>
         </main>
       </div>}
       {tab === "games" && <div className="reference-game-search-body">
@@ -519,20 +618,24 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
             <button type="button" className={classificationStatus === "classified" ? "active" : ""} onClick={() => setClassificationStatus("classified")}>已归类</button>
             <button type="button" className={classificationStatus === "pending" ? "active" : ""} onClick={() => { setClassificationStatus("pending"); setGameOpeningCode(""); }}>待分类</button>
           </div>
-          <div className="reference-game-search-hint"><b>{searchMode === "position" ? `候选 ${positionMoves.length.toLocaleString()} 着` : `已加载 ${games.length.toLocaleString()} 盘`}</b><span>{selectedGameOpening ? `当前布局：${selectedGameOpening.code} · ${selectedGameOpening.name}` : "可按布局分类、棋手、赛事、年份筛选；预览只读，不改当前棋谱。"}</span></div>
+          <div className="reference-game-search-hint"><b>{searchMode === "position" ? `候选 ${positionMoves.length.toLocaleString()} 着` : `${gamesLoading ? "更新中 · " : ""}已加载 ${games.length.toLocaleString()} 盘`}</b><span>{selectedGameOpening ? `当前布局：${selectedGameOpening.code} · ${selectedGameOpening.name}` : "可按布局分类、棋手、赛事、年份筛选；预览只读，不改当前棋谱。"}</span></div>
         </aside>
         <main>
           <header><span><strong>{searchMode === "position" ? "当前局面候选" : selectedGameOpening ? `${selectedGameOpening.code} · ${selectedGameOpening.name}` : classificationStatus === "pending" ? "待分类棋局" : classificationStatus === "classified" ? "已归类棋局" : "全部参考棋局"}</strong><small>{searchMode === "position" ? "按当前棋盘 FEN 聚合实战走法" : query.trim() || player.trim() || eventName.trim() || gameOpeningCode ? "当前筛选结果" : "最近导入和最新日期优先"}</small></span></header>
-          {searchMode === "match" ? <div className="reference-game-search-list" role="listbox" aria-label="参考棋局列表">
-            {games.length === 0 ? <p>没有匹配棋局。可以换个棋手、赛事或切到“全部”。</p> : games.map((game) => <button key={game.id} type="button" role="option" aria-selected={game.id === selectedGameId} className={game.id === selectedGameId ? "active" : ""} onClick={() => setSelectedGameId(game.id)}>
-              <span><b>{game.title || `${game.redPlayer || "红方未知"} 对 ${game.blackPlayer || "黑方未知"}`}</b><small>{game.redPlayer || "红方未知"} vs {game.blackPlayer || "黑方未知"}</small></span>
-              <span><b>{game.eventName || "赛事未知"}</b><small>{game.gameDate || "日期未知"} {game.roundName}</small></span>
-              <em title={gameOpeningLabel(game)}>{gameOpeningLabel(game)}</em><i>{game.moveCount} 手</i>
-            </button>)}
-          </div> : <div className="reference-position-search-list">
-            {!currentFen ? <p>当前没有可用棋盘局面，打开一盘棋后再试。</p> : positionLoading ? <p>正在聚合当前局面实战…</p> : positionError ? <p className="error">{positionError}</p> : positionMoves.length === 0 ? <p>当前局面暂无本地实战样本。</p> : positionMoves.map((move) => {
+          {searchMode === "match" ? <div className="reference-game-search-list" role="listbox" aria-label="参考棋局列表" aria-busy={gamesLoading || gamesLoadingMore}>
+            {pinnedSelectedGame && renderGameSearchRow(pinnedSelectedGame, true)}
+            {gamesLoading && games.length === 0 && !pinnedSelectedGame ? <p>正在加载参考棋局…</p> : games.length === 0 && !pinnedSelectedGame ? <p>没有匹配棋局。可以换个棋手、赛事或切到“全部”。</p> : games.map((game) => renderGameSearchRow(game))}
+            {hasMoreGames && <button type="button" className="reference-load-more" disabled={gamesLoadingMore} onClick={loadMoreGames}>{gamesLoadingMore ? "正在加载更多…" : "查看更多"}</button>}
+          </div> : <div className={`reference-position-search-list ${positionLoading ? "is-refreshing" : ""}`.trim()} aria-busy={positionLoading}>
+            {!currentFen ? <p>当前没有可用棋盘局面，打开一盘棋后再试。</p> : positionLoading && positionMoves.length === 0 ? <p>正在聚合当前局面实战…</p> : positionError && positionMoves.length === 0 ? <p className="error">{positionError}</p> : positionMoves.length === 0 ? <p>当前局面暂无本地实战样本。</p> : positionMoves.map((move) => {
               const total = move.redWins + move.draws + move.blackWins;
-              return <button key={move.iccs} type="button" disabled={!move.representativeGameId} onClick={() => move.representativeGameId && setSelectedGameId(move.representativeGameId)}>
+              return <button key={move.iccs} type="button" disabled={!move.representativeGameId} onClick={() => {
+                if (!move.representativeGameId) return;
+                setSelectedGameId(move.representativeGameId);
+                setSearchMode("match");
+                setClassificationStatus("all");
+                setGameOpeningCode("");
+              }}>
                 <span><b>{move.notation}</b><small>{move.iccs} · {move.samples.toLocaleString()} 局</small></span>
                 <span><b>{move.openingCode ? `${move.openingCode} · ${move.openingName ?? ""}` : "未归类"}</b><small>{move.firstYear ?? "年份未知"}{move.lastYear && move.lastYear !== move.firstYear ? `–${move.lastYear}` : ""}</small></span>
                 <i className="reference-result-bar" aria-label={`红胜 ${percent(move.redWins, total)}%，和棋 ${percent(move.draws, total)}%，黑胜 ${percent(move.blackWins, total)}%`}><b className="red" style={{ width: `${percent(move.redWins, total)}%` }}/><b className="draw" style={{ width: `${percent(move.draws, total)}%` }}/><b className="black" style={{ width: `${percent(move.blackWins, total)}%` }}/></i>
@@ -546,17 +649,18 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
             <header>
               <span><Eye size={14}/><strong>{selectedGame.title || "未命名棋局"}</strong><small>{selectedGame.redPlayer || "红方未知"} vs {selectedGame.blackPlayer || "黑方未知"} · {resultLabel(selectedGame.result)}</small></span>
               {onOpenReferenceGame && <nav className="reference-game-preview-actions" aria-label="参考棋局操作">
-                <button type="button" disabled={busy} title="载入到棋盘查看完整棋谱" onClick={() => void openSelectedReferenceGame("view")}><BookOpen size={13}/>查看棋谱</button>
-                <button type="button" disabled={busy} title="载入后进入复盘学习工作台，并分析当前局面" onClick={() => void openSelectedReferenceGame("study")}><Activity size={13}/>学习分析</button>
-                <button type="button" disabled={busy} title="载入后生成整局 AI 打分报告" onClick={() => void openSelectedReferenceGame("score")}><BarChart3 size={13}/>AI打分</button>
+                <button type="button" disabled={busy} title="载入到棋盘查看完整棋谱" onClick={() => void openSelectedReferenceGame("view")}><BookOpen size={13}/>{referenceAction === "view" ? "载入中" : "查看棋谱"}</button>
+                <button type="button" disabled={busy} title="载入后进入复盘学习工作台，并分析当前局面" onClick={() => void openSelectedReferenceGame("study")}><Activity size={13}/>{referenceAction === "study" ? "分析中" : "学习分析"}</button>
+                <button type="button" disabled={busy} title="载入后生成整局 AI 打分报告" onClick={() => void openSelectedReferenceGame("score")}><BarChart3 size={13}/>{referenceAction === "score" ? "打分中" : "AI打分"}</button>
               </nav>}
             </header>
-            <dl><div><dt>布局</dt><dd>{gameOpeningLabel(selectedGame)}</dd></div><div><dt>赛事</dt><dd>{selectedGame.eventName || "未知"}</dd></div><div><dt>日期</dt><dd>{selectedGame.gameDate || "未知"}</dd></div><div><dt>手数</dt><dd>{selectedGame.moveCount}</dd></div>{selectedGame.opening && <div><dt>原始标注</dt><dd>{selectedGame.opening}</dd></div>}</dl>
+            {onOpenReferenceGame && <p className="reference-game-action-help">查看棋谱会从开局载入完整主线；学习分析会进入复盘并分析当前局面；AI打分会重新生成整局报告。</p>}
+            <dl><div><dt>布局</dt><dd className="full" title={gameOpeningLabel(selectedGame)}>{gameOpeningLabel(selectedGame)}</dd></div><div><dt>赛事</dt><dd>{selectedGame.eventName || "未知"}</dd></div><div><dt>日期</dt><dd>{selectedGame.gameDate || "未知"}</dd></div><div><dt>手数</dt><dd>{selectedGame.moveCount}</dd></div>{selectedGame.opening && <div><dt>原始标注</dt><dd title={selectedGame.opening}>{selectedGame.opening}</dd></div>}</dl>
             {documentLoading ? <p>正在读取完整棋谱文档…</p> : documentError ? <p className="error">{documentError}</p> : documentPreview ? <>
               <div className="reference-game-preview-stats"><span>分支点 <b>{documentPreview.branchCount}</b></span><span>注释 <b>{documentPreview.commentCount}</b></span></div>
               <label>起始 FEN<textarea readOnly value={documentPreview.startingFen}/></label>
               {documentPreview.note && <label>资料备注<textarea readOnly value={documentPreview.note}/></label>}
-              <div className="reference-game-mainline"><strong>中文主线预览</strong><ol>{previewMainline.slice(0, 40).map((move, index) => <li key={`${move}-${index}`}><span>{index + 1}</span>{move}</li>)}</ol>{previewMainline.length > 40 && <small>仅显示前 40 手，完整 UUID 树已保存在本地参考库。</small>}</div>
+              <div className="reference-game-mainline"><header><strong>中文主线预览</strong>{previewMainline.length > 40 && <button type="button" onClick={() => setMainlineExpanded((expanded) => !expanded)}>{mainlineExpanded ? "收起" : "展开完整主线"}</button>}</header>{previewMainline.length === 0 ? <p className="error">该参考局没有可播放主线。</p> : <ol>{visibleMainline.map((move, index) => <li key={`${move}-${index}`}><span>{index + 1}</span>{move}</li>)}</ol>}{previewMainline.length > 40 && !mainlineExpanded && <small>已显示前 40 手，点击“展开完整主线”查看全部。</small>}</div>
             </> : <p className="error">完整文档 JSON 暂时无法解析。</p>}
           </>}
         </section>

@@ -3,6 +3,8 @@ import { BookOpen, CalendarDays, Database, RefreshCw, ShieldCheck, Trophy, Undo2
 import { ReferencePositionPanel } from "./ReferencePositionPanel";
 import type { PositionMoveStatDto, ReferenceGameSummaryDto } from "./platform/types";
 
+const MASTER_OPENING_QUERY_DEBOUNCE_MS = 180;
+
 type Props = {
   fen: string;
   enabled: boolean;
@@ -91,24 +93,29 @@ export function MasterOpeningPanel({ fen, enabled, queryMoves, queryGames, resol
   const [viewMode, setViewMode] = useState<"compact" | "detail">("compact");
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled) {
+      generation.current += 1;
+      setLoading(false);
+      return;
+    }
     const request = ++generation.current;
-    setLoading(true);
-    setError("");
-    setSelectedMove(undefined);
-    setMatchScope("当前局面");
-    void queryGames(fen).then((items) => {
-      if (request !== generation.current) return;
-      setGames(items);
-      setSelectedGameId((selected) => selected && items.some((item) => item.id === selected) ? selected : items[0]?.id);
-    }).catch((cause) => {
-      if (request !== generation.current) return;
-      setGames([]);
-      setSelectedGameId(undefined);
-      setError(cause instanceof Error ? cause.message : String(cause));
-    }).finally(() => {
-      if (request === generation.current) setLoading(false);
-    });
+    const timer = window.setTimeout(() => {
+      setLoading(true);
+      setError("");
+      setSelectedMove(undefined);
+      setMatchScope("当前局面");
+      void queryGames(fen).then((items) => {
+        if (request !== generation.current) return;
+        setGames(items);
+        setSelectedGameId((selected) => selected && items.some((item) => item.id === selected) ? selected : items[0]?.id);
+      }).catch((cause) => {
+        if (request !== generation.current) return;
+        setError(cause instanceof Error ? cause.message : String(cause));
+      }).finally(() => {
+        if (request === generation.current) setLoading(false);
+      });
+    }, MASTER_OPENING_QUERY_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
   }, [enabled, fen, refresh]);
 
   async function focusMove(move: PositionMoveStatDto) {
@@ -127,8 +134,6 @@ export function MasterOpeningPanel({ fen, enabled, queryMoves, queryGames, resol
       setSelectedGameId((selected) => selected && items.some((item) => item.id === selected) ? selected : items[0]?.id);
     } catch (cause) {
       if (request !== generation.current) return;
-      setGames([]);
-      setSelectedGameId(undefined);
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       if (request === generation.current) setLoading(false);
@@ -171,9 +176,9 @@ export function MasterOpeningPanel({ fen, enabled, queryMoves, queryGames, resol
         className="master-opening-moves"
       />
 
-      <section className="master-opening-matches" aria-label="命中棋谱">
+      <section className={`master-opening-matches ${loading ? "is-refreshing" : ""}`.trim()} aria-label="命中棋谱" aria-busy={loading}>
         <header>
-          <span><ShieldCheck size={14}/><strong>命中棋谱</strong><small>{loading ? `${matchScope} · 查询中` : `${matchScope} · ${games.length} 条摘要`}</small></span>
+          <span><ShieldCheck size={14}/><strong>命中棋谱</strong><small>{loading ? `${matchScope} · 更新中` : `${matchScope} · ${games.length} 条摘要`}</small></span>
           {selectedMove && <button type="button" title="回到当前局面匹配" aria-label="回到当前局面匹配" onClick={resetMoveScope}><Undo2 size={13}/>当前局面</button>}
         </header>
         {selectedMove && <div className="master-opening-selected-move">
@@ -216,7 +221,7 @@ export function MasterOpeningPanel({ fen, enabled, queryMoves, queryGames, resol
                 <i className="master-opening-versus compact" aria-hidden="true"><b className="red">{playerMark(game.redPlayer, "红")}</b><b className="black">{playerMark(game.blackPlayer, "黑")}</b></i>
                 <strong>{outcomeLabel(game)}</strong>
               </>}
-              <em className="master-opening-preview-label">查看</em>
+              {viewMode === "detail" && <em className="master-opening-preview-label">预览</em>}
             </button>)}
           </div>}
       </section>

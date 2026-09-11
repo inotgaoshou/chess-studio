@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { BookOpen, Eye, Plus, RefreshCw } from "lucide-react";
 import type { PositionMoveStatDto } from "./platform/types";
 
+const REFERENCE_POSITION_QUERY_DEBOUNCE_MS = 180;
+
 type Props = {
   fen: string;
   enabled: boolean;
@@ -30,20 +32,26 @@ export function ReferencePositionPanel({ fen, enabled, query, onPreview, onAdd, 
   const [refresh, setRefresh] = useState(0);
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled) {
+      generation.current += 1;
+      setLoading(false);
+      return;
+    }
     const request = ++generation.current;
-    setLoading(true);
-    setError("");
-    void query(fen).then((items) => {
-      if (request === generation.current) setMoves(items);
-    }).catch((cause) => {
-      if (request === generation.current) {
-        setMoves([]);
-        setError(cause instanceof Error ? cause.message : String(cause));
-      }
-    }).finally(() => {
-      if (request === generation.current) setLoading(false);
-    });
+    const timer = window.setTimeout(() => {
+      setLoading(true);
+      setError("");
+      void query(fen).then((items) => {
+        if (request === generation.current) setMoves(items);
+      }).catch((cause) => {
+        if (request === generation.current) {
+          setError(cause instanceof Error ? cause.message : String(cause));
+        }
+      }).finally(() => {
+        if (request === generation.current) setLoading(false);
+      });
+    }, REFERENCE_POSITION_QUERY_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
   }, [enabled, fen, refresh, refreshToken]);
 
   if (!enabled) return null;

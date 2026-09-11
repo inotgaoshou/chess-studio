@@ -29,9 +29,20 @@ const game: ReferenceGameSummaryDto = {
   openingCode: "C01", openingName: "中炮对屏风马", moveCount: 60,
 };
 
+function makeGame(index: number): ReferenceGameSummaryDto {
+  return {
+    ...game,
+    id: `game-${index}`,
+    canonicalFingerprint: `fingerprint-${index}`,
+    title: `测试棋局 ${index}`,
+    redPlayer: `红方${index}`,
+    blackPlayer: `黑方${index}`,
+  };
+}
+
 function platform(games: ReferenceGameSummaryDto[] = [], openingChild: OpeningCategoryDto = child) {
   const publishReferenceBatch = vi.fn(async () => ({ status: "completed", inserted: 1, duplicates: 0 }));
-  const listReferenceGames = vi.fn(async () => games);
+  const listReferenceGames = vi.fn<ChessPlatform["listReferenceGames"]>(async () => games);
   const queryReferencePosition = vi.fn(async () => [{
     iccs: "h2e2", notation: "炮二平五", samples: 12, redWins: 6, draws: 3, blackWins: 3,
     firstYear: 2020, lastYear: 2026, representativeGameId: games[0]?.id,
@@ -152,6 +163,53 @@ describe("ReferenceLibraryDialog", () => {
     ));
   });
 
+  it("loads additional reference game pages without replacing the current list", async () => {
+    const firstPage = Array.from({ length: 100 }, (_, index) => makeGame(index + 1));
+    const secondPage = [makeGame(101)];
+    const { value, listReferenceGames } = platform(firstPage);
+    listReferenceGames.mockImplementation(async (_openingCode, _query, _limit, offset) => offset === 0 ? firstPage : secondPage);
+    render(<ReferenceLibraryDialog platform={value} onClose={() => undefined}/>);
+    fireEvent.click(screen.getByRole("button", { name: /实战检索/ }));
+
+    expect(await screen.findByText("测试棋局 1")).toBeTruthy();
+    await waitFor(() => expect(listReferenceGames).toHaveBeenLastCalledWith(
+      undefined, "", 100, 0, expect.objectContaining({}),
+    ));
+
+    fireEvent.click(screen.getByRole("button", { name: "查看更多" }));
+
+    expect(await screen.findByText("测试棋局 101")).toBeTruthy();
+    expect(screen.getAllByText("测试棋局 1").length).toBeGreaterThan(0);
+    await waitFor(() => expect(listReferenceGames).toHaveBeenLastCalledWith(
+      undefined, "", 100, 100, expect.objectContaining({}),
+    ));
+  });
+
+  it("pins a representative game when it is not in the current match page", async () => {
+    const representative = { ...game, id: "representative-game", title: "局面代表局" };
+    const { value, getReferenceGameDocument, listReferenceGames, queryReferencePosition } = platform([]);
+    listReferenceGames.mockResolvedValue([]);
+    queryReferencePosition.mockResolvedValue([{
+      iccs: "h2e2", notation: "炮二平五", samples: 12, redWins: 6, draws: 3, blackWins: 3,
+      firstYear: 2020, lastYear: 2026, representativeGameId: representative.id,
+      representativeGameTitle: representative.title,
+    }]);
+    getReferenceGameDocument.mockResolvedValue({
+      game: representative,
+      mainlineNotation: ["炮二平五"],
+      documentJson: JSON.stringify({ startingFen: "startpos", note: "代表局说明", tree: { root_id: "root", nodes: {} } }),
+    });
+    render(<ReferenceLibraryDialog platform={value} currentFen="fen w - - 0 1" onClose={() => undefined}/>);
+    fireEvent.click(screen.getByRole("button", { name: /实战检索/ }));
+    fireEvent.click(screen.getByRole("button", { name: "局面搜索" }));
+
+    fireEvent.click(await screen.findByRole("button", { name: /看代表局/ }));
+
+    expect(await screen.findByText("当前预览棋局")).toBeTruthy();
+    expect(await screen.findByDisplayValue("代表局说明")).toBeTruthy();
+    await waitFor(() => expect(getReferenceGameDocument).toHaveBeenCalledWith(representative.id));
+  });
+
   it("opens directly to a matched reference game when an initial game id is provided", async () => {
     const { value, getReferenceGameDocument } = platform([game]);
     render(<ReferenceLibraryDialog platform={value} initialGameId="game-1" onClose={() => undefined}/>);
@@ -162,6 +220,24 @@ describe("ReferenceLibraryDialog", () => {
     expect(await screen.findByText("中文主线预览")).toBeTruthy();
     expect(await screen.findByText("炮二平五")).toBeTruthy();
     expect(screen.queryByText("h0-h2")).toBeNull();
+  });
+
+  it("can expand the full mainline from the reference preview", async () => {
+    const { value, getReferenceGameDocument } = platform([game]);
+    getReferenceGameDocument.mockResolvedValue({
+      game,
+      mainlineNotation: Array.from({ length: 45 }, (_, index) => `着法${index + 1}`),
+      documentJson: JSON.stringify({ startingFen: "startpos", note: "本地只读参考文档", tree: { root_id: "root", nodes: {} } }),
+    });
+    render(<ReferenceLibraryDialog platform={value} initialGameId="game-1" onClose={() => undefined}/>);
+
+    expect(await screen.findByText("着法1")).toBeTruthy();
+    expect(screen.queryByText("着法45")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "展开完整主线" }));
+
+    expect(await screen.findByText("着法45")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "收起" }));
+    expect(screen.queryByText("着法45")).toBeNull();
   });
 
   it("loads a selected reference game into the board only from the explicit action", async () => {

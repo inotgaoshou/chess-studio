@@ -1454,24 +1454,37 @@ export default function App() {
   }
 
   async function loadReferenceLibraryGame(gameId: string, mode: ReferenceGameOpenMode = "view") {
+    if (!ensureBoardChangeAllowed()) return;
+    stopPlayback();
+    stopEnginePlay();
+    await cancelAnalysisForDocumentChange();
+    await cancelGameReportForStructureChange();
+    setReportDialogOpen(false);
+    setGameReport(undefined);
+    setReportProgress(undefined);
     const next = await chessPlatform.openReferenceGame(gameId);
     applyBoard(next);
+    setAutosave({ status: "saved" });
+    clearAnalysisState();
+    await refreshGames();
     setReferenceLibraryOpen(false);
     setReferenceLibraryInitialGameId(undefined);
+    const hasPlayableMainline = (next.branches?.length ?? 0) > 0 || (next.continuation?.length ?? 0) > 0;
     if (mode === "study") {
       await openReviewMode("review");
       selectWorkspacePanel("analysis");
-      setNotice("已载入参考棋局，进入学习分析模式");
+      setNotice(hasPlayableMainline ? "已载入参考棋局，进入学习分析模式" : "已载入参考棋局，但没有可播放主线；正在分析起始局面");
       await runReviewPositionAnalysis();
       return;
     }
     if (mode === "score") {
       await openReviewMode("review");
-      setNotice("已载入参考棋局，正在生成 AI 打分报告");
+      setNotice(hasPlayableMainline ? "已载入参考棋局，正在生成 AI 打分报告" : "已载入参考棋局，但没有可播放主线；正在生成起始局面报告");
       await openAnalysisReportPanel();
       return;
     }
-    setNotice("已载入参考棋局到棋盘");
+    selectWorkspacePanel("moves");
+    setNotice(hasPlayableMainline ? "已载入参考棋局到棋盘，可点击下一步播放主线" : "已载入参考棋局，但该参考局没有可播放主线");
   }
   const [compactEngineCollapsed, setCompactEngineCollapsed] = useState(false);
   const [compactManualCollapsed, setCompactManualCollapsed] = useState(false);
@@ -6432,12 +6445,16 @@ export default function App() {
     const mobile = className.includes("mobile-playback");
     const showManualPopout = desktopPreferences.layoutMode === "compact" && !floatingPanel && className.includes("compact-playback") && chessPlatform.kind === "desktop";
     const showReferenceSearchShortcut = !mobile && !floatingPanel && chessPlatform.kind === "desktop" && workspaceMode !== "training";
+    const nextContinuation = preferredContinuation(board);
+    const nextTitle = nextContinuation
+      ? hasVisibleBranchChoices ? "下一着（选择变招）" : "下一着"
+      : board.history.length === 0 ? "当前棋局没有可播放主线" : "后续没有主线着法";
     return <div className={`playback-controls ${className}`} aria-label="棋谱播放控制">
       <button title="回到开局" disabled={!board.currentNode} onClick={() => void navigateTo()}><ChevronsLeft size={15}/></button>
       <button title="上一着（只浏览，不删除棋谱）" aria-label="上一着（只浏览，不删除棋谱）" disabled={!board.currentNode} onClick={() => void goPrevious()}><ChevronLeft size={15}/></button>
       <button className={isPlaying ? "active" : ""} title={isPlaying ? "暂停播放" : "播放主线"} disabled={board.history.length === 0 && board.branches.length === 0} onClick={() => void togglePlayback()}>{isPlaying ? <Pause size={14}/> : <Play size={14}/>}</button>
-      <button title={hasVisibleBranchChoices ? "下一着（选择变招）" : "下一着"} aria-label={hasVisibleBranchChoices ? "下一着（选择变招）" : "下一着"} aria-expanded={hasVisibleBranchChoices ? branchPickerOpen : undefined} disabled={!preferredContinuation(board)} onPointerDown={(event) => event.stopPropagation()} onClick={() => void goNext()}><ChevronRight size={15}/></button>
-      <button title="前往主线终局" disabled={!preferredContinuation(board)} onClick={() => void goToEnd()}><ChevronsRight size={15}/></button>
+      <button title={nextTitle} aria-label={nextTitle} aria-expanded={hasVisibleBranchChoices ? branchPickerOpen : undefined} disabled={!nextContinuation} onPointerDown={(event) => event.stopPropagation()} onClick={() => void goNext()}><ChevronRight size={15}/></button>
+      <button title={nextContinuation ? "前往主线终局" : "后续没有主线着法"} disabled={!nextContinuation} onClick={() => void goToEnd()}><ChevronsRight size={15}/></button>
       {!mobile && <>
         <div className="branch-picker-anchor">
           <button className={`variation-jump ${branchPickerOpen ? "active" : ""}`} aria-label={hasVisibleBranchChoices ? "选择当前局面的变招" : "跳到下一个分支点"} title={hasVisibleBranchChoices ? "选择当前局面的变招" : hasUpcomingBranch ? "跳到下一个分支点" : "后续没有分支点"} aria-expanded={hasVisibleBranchChoices ? branchPickerOpen : undefined} disabled={!hasVisibleBranchChoices && !hasUpcomingBranch} onPointerDown={(event) => event.stopPropagation()} onClick={() => hasVisibleBranchChoices ? setBranchPickerOpen((open) => !open) : void goToNextBranchPoint()}><GitFork size={14}/>{hasVisibleBranchChoices && <small>{branchChoices.length}</small>}</button>
