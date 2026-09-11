@@ -30,6 +30,15 @@ function playerMark(name: string, fallback: string) {
   return (name || fallback).trim().slice(0, 1) || fallback.slice(0, 1);
 }
 
+function outcomeLabel(game: ReferenceGameSummaryDto) {
+  const red = game.redPlayer || "红方未详";
+  const black = game.blackPlayer || "黑方未详";
+  if (game.result === "1-0") return `${red} 胜 ${black}`;
+  if (game.result === "0-1") return `${black} 胜 ${red}`;
+  if (game.result === "1/2-1/2") return `${red} 和 ${black}`;
+  return `${red} 对 ${black}`;
+}
+
 function percent(value: number, total: number) {
   return total > 0 ? Math.round(value * 100 / total) : 0;
 }
@@ -158,15 +167,17 @@ export function MasterOpeningPanel({ fen, enabled, queryMoves, queryGames, resol
               onClick={() => setSelectedGameId(game.id)}
               title={`${game.redPlayer || "红方"} - ${game.blackPlayer || "黑方"}`}
             >
-              <i className="master-opening-versus" aria-hidden="true"><b className="red">{playerMark(game.redPlayer, "红")}</b><em>VS</em><b className="black">{playerMark(game.blackPlayer, "黑")}</b></i>
-              <strong>{game.title || `${game.redPlayer || "红方"} 对 ${game.blackPlayer || "黑方"}`}</strong>
               {viewMode === "detail" ? <>
+                <i className="master-opening-versus" aria-hidden="true"><b className="red">{playerMark(game.redPlayer, "红")}</b><em>VS</em><b className="black">{playerMark(game.blackPlayer, "黑")}</b></i>
+                <strong>{game.title || `${game.redPlayer || "红方"} 对 ${game.blackPlayer || "黑方"}`}</strong>
                 <span>{game.redPlayer || "红方未详"} <b>{resultLabel(game.result)}</b> {game.blackPlayer || "黑方未详"} <em>{openingLabel(game)}</em></span>
                 <small><Trophy size={11}/>{game.eventName || "赛事不详"}{game.roundName ? ` · ${game.roundName}` : ""}</small>
                 <small><CalendarDays size={11}/>{gameDateLabel(game.gameDate)} · {game.moveCount} 手</small>
               </> : <>
-                <span>{game.redPlayer || "红方未详"} <b>{resultLabel(game.result)}</b> {game.blackPlayer || "黑方未详"}</span>
-                <small>{openingLabel(game)} · {gameDateLabel(game.gameDate)}</small>
+                <i className="master-opening-versus compact" aria-hidden="true"><b className="red">{playerMark(game.redPlayer, "红")}</b><b className="black">{playerMark(game.blackPlayer, "黑")}</b></i>
+                <strong>{outcomeLabel(game)}</strong>
+                <span><em>{openingLabel(game)}</em>{game.eventName || "赛事不详"}</span>
+                <small>{gameDateLabel(game.gameDate)}{game.moveCount ? ` · ${game.moveCount} 手` : ""}</small>
               </>}
               <em className="master-opening-preview-label">查看</em>
             </button>)}

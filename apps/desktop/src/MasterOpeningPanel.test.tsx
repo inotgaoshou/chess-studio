@@ -38,7 +38,7 @@ describe("MasterOpeningPanel", () => {
       onOpenExplorer={() => undefined}
     />);
 
-    expect(await screen.findByText("广东 陈松顺 胜 江苏 惠颂祥")).toBeTruthy();
+    expect(await screen.findByText("陈松顺 胜 惠颂祥")).toBeTruthy();
     expect(queryGames).toHaveBeenCalledWith("start");
     fireEvent.click(await screen.findByText("炮二平五"));
 
@@ -62,13 +62,15 @@ describe("MasterOpeningPanel", () => {
       onOpenExplorer={() => undefined}
     />);
 
-    expect(await screen.findByText("广东 陈松顺 胜 江苏 惠颂祥")).toBeTruthy();
+    expect(await screen.findByText("陈松顺 胜 惠颂祥")).toBeTruthy();
     expect(screen.getByRole("button", { name: "简洁" }).className).toContain("active");
-    expect(screen.queryByText(/测试赛/)).toBeNull();
+    expect(screen.queryByText("广东 陈松顺 胜 江苏 惠颂祥")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "详细" }));
 
     expect(screen.getByRole("button", { name: "详细" }).className).toContain("active");
+    expect(screen.getByText("广东 陈松顺 胜 江苏 惠颂祥")).toBeTruthy();
     expect(screen.getByText(/测试赛/)).toBeTruthy();
+    expect(screen.getByText(/72 手/)).toBeTruthy();
   });
 });
