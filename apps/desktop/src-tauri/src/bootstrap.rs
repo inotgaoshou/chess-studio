@@ -27,14 +27,9 @@ pub(crate) fn initialize(app: &mut tauri::App) -> Result<(), Box<dyn std::error:
         window.set_title(title)?;
     }
     let production_data_dir = app.path().app_data_dir()?;
-    // Tauri keeps the production bundle identifier during `tauri dev`, so its
-    // default app-data directory would otherwise be the user's real library.
-    // Keep development runs in an explicit sibling directory instead.
-    let data_dir = if cfg!(debug_assertions) {
-        production_data_dir.with_file_name("cn.xiangqi.studio.dev")
-    } else {
-        production_data_dir
-    };
+    // Development and production builds intentionally share the same data
+    // directory so they read one canonical xiangqi.sqlite3 and reference library.
+    let data_dir = production_data_dir;
     std::fs::create_dir_all(&data_dir)?;
     let mut store = LocalStore::open(data_dir.join("xiangqi.sqlite3"))?;
     let reference_library = ReferenceLibrary::open(data_dir.join("reference-library.sqlite"))?;
