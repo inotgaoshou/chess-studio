@@ -140,6 +140,15 @@ describe("ReferenceLibraryDialog", () => {
     ));
   });
 
+  it("opens directly to a matched reference game when an initial game id is provided", async () => {
+    const { value, getReferenceGameDocument } = platform([game]);
+    render(<ReferenceLibraryDialog platform={value} initialGameId="game-1" onClose={() => undefined}/>);
+
+    expect(await screen.findByText("全部参考棋局")).toBeTruthy();
+    await waitFor(() => expect(getReferenceGameDocument).toHaveBeenCalledWith("game-1"));
+    expect(await screen.findByDisplayValue("本地只读参考文档")).toBeTruthy();
+  });
+
   it("queries current-position moves from the game search view", async () => {
     const { value, queryReferencePosition } = platform([game]);
     render(<ReferenceLibraryDialog platform={value} currentFen="fen w - - 0 1" onClose={() => undefined}/>);

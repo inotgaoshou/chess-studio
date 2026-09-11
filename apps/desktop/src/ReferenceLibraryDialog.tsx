@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { BookOpen, Check, Database, Download, Eye, FileText, FolderOpen, ListChecks, RefreshCw, Search, ShieldCheck, Upload, X } from "lucide-react";
 import type { ChessPlatform, OpeningCategoryDto, PositionMoveStatDto, ReferenceGameDocumentDto, ReferenceGameFilters, ReferenceGameSummaryDto, ReferenceImportBatchDto, ReferenceReviewIssueDto, ReferenceSourceDto } from "./platform/types";
 
-type Props = { platform: ChessPlatform; currentFen?: string; onClose(): void };
+type Props = { platform: ChessPlatform; currentFen?: string; initialGameId?: string; onClose(): void };
 type Tab = "openings" | "games" | "sources" | "batches";
 type ClassificationStatus = "all" | "classified" | "pending";
 type SearchMode = "match" | "position";
@@ -116,9 +116,9 @@ function ReviewIssueRow({ issue, categories, busy, onIdentity, onOpening, onDupl
   </div>;
 }
 
-export function ReferenceLibraryDialog({ platform, currentFen, onClose }: Props) {
+export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, onClose }: Props) {
   const desktop = platform.kind === "desktop";
-  const [tab, setTab] = useState<Tab>("openings");
+  const [tab, setTab] = useState<Tab>(initialGameId ? "games" : "openings");
   const [openings, setOpenings] = useState<OpeningCategoryDto[]>([]);
   const [openingChildren, setOpeningChildren] = useState<Record<string, OpeningCategoryDto[]>>({});
   const [selectedCode, setSelectedCode] = useState<string>();
@@ -135,7 +135,7 @@ export function ReferenceLibraryDialog({ platform, currentFen, onClose }: Props)
   const [masterOnly, setMasterOnly] = useState(false);
   const [searchMode, setSearchMode] = useState<SearchMode>("match");
   const [classificationStatus, setClassificationStatus] = useState<ClassificationStatus>("all");
-  const [selectedGameId, setSelectedGameId] = useState<string>();
+  const [selectedGameId, setSelectedGameId] = useState<string | undefined>(initialGameId);
   const [selectedDocument, setSelectedDocument] = useState<ReferenceGameDocumentDto>();
   const [documentError, setDocumentError] = useState("");
   const [documentLoading, setDocumentLoading] = useState(false);
@@ -212,6 +212,12 @@ export function ReferenceLibraryDialog({ platform, currentFen, onClose }: Props)
 
   useEffect(() => { void refresh(); }, []);
   useEffect(() => {
+    if (!initialGameId) return;
+    setTab("games");
+    setSearchMode("match");
+    setSelectedGameId(initialGameId);
+  }, [initialGameId]);
+  useEffect(() => {
     if (tab !== "openings" && tab !== "games") return;
     if (tab === "games" && searchMode !== "match") return;
     let disposed = false;
@@ -251,8 +257,12 @@ export function ReferenceLibraryDialog({ platform, currentFen, onClose }: Props)
   }, [currentFen, gameFilters, platform, searchMode, tab]);
   useEffect(() => {
     if (tab !== "games" || searchMode !== "match") return;
-    setSelectedGameId((current) => current && games.some((game) => game.id === current) ? current : games[0]?.id);
-  }, [games, searchMode, tab]);
+    setSelectedGameId((current) => {
+      if (current && games.some((game) => game.id === current)) return current;
+      if (current && current === initialGameId) return current;
+      return games[0]?.id;
+    });
+  }, [games, initialGameId, searchMode, tab]);
   useEffect(() => {
     if (tab !== "games" || !selectedGameId) {
       setSelectedDocument(undefined);

@@ -1418,6 +1418,7 @@ export default function App() {
   );
   const [masterLibraryOpen, setMasterLibraryOpen] = useState(false);
   const [referenceLibraryOpen, setReferenceLibraryOpen] = useState(false);
+  const [referenceLibraryInitialGameId, setReferenceLibraryInitialGameId] = useState<string>();
   const [ttxqImportOpen, setTtxqImportOpen] = useState(false);
   const [game53StudyOpen, setGame53StudyOpen] = useState(false);
   const [engineProbe, setEngineProbe] = useState<EngineProbeDto>();
@@ -1433,6 +1434,16 @@ export default function App() {
   const [floatingEvaluationCollapsed, setFloatingEvaluationCollapsed] = useState(false);
   const [cloudBookPosition, setCloudBookPosition] = useState<{ left: number; top: number }>();
   const [cloudBookHeight, setCloudBookHeight] = useState<number>();
+
+  function openReferenceLibraryExplorer() {
+    setReferenceLibraryInitialGameId(undefined);
+    setReferenceLibraryOpen(true);
+  }
+
+  function openReferenceLibraryGame(gameId: string) {
+    setReferenceLibraryInitialGameId(gameId);
+    setReferenceLibraryOpen(true);
+  }
   const [compactEngineCollapsed, setCompactEngineCollapsed] = useState(false);
   const [compactManualCollapsed, setCompactManualCollapsed] = useState(false);
   const [multiEngineComparisonCollapsed, setMultiEngineComparisonCollapsed] = useState(false);
@@ -3720,7 +3731,7 @@ export default function App() {
         setNotice("已取消导入 CBL 棋谱库");
         return;
       }
-      setReferenceLibraryOpen(true);
+      openReferenceLibraryExplorer();
       setNotice(`《${result.title}》已进入参考实战库：新增 ${result.imported}、修订 ${result.revised}、重复 ${result.duplicates}、非法 ${result.invalid}、待分类 ${result.unclassified}`);
     } catch (error) {
       setNotice(friendlyError(error));
@@ -6955,7 +6966,7 @@ export default function App() {
               query={(fen) => chessPlatform.queryReferencePosition({ fen, limit: 6, includeDetails: false })}
               onPreview={(iccs, notation) => void previewCandidateLine({ multipv: 1, pv: [iccs], notation: [notation] }, linkReferenceFen ?? board.fen, { id: "reference-library", name: "实战库" })}
               onAdd={(iccs) => void playIccsMove(iccs, linkReferenceFen ?? board.fen)}
-              onOpenExplorer={() => setReferenceLibraryOpen(true)}
+              onOpenExplorer={openReferenceLibraryExplorer}
             />
             <div className="link-float-actions">
               {linkSessionStatus.mode === "confirmPlay" && <button type="button" title={linkConfirmMove ? `确认执行箭头1：${linkConfirmMoveDisplay ?? linkConfirmMove}` : "等待箭头1候选"} disabled={linkConfirmingMove || linkSessionStatus.state !== "tracking" || analysisIsStale || !linkConfirmMove || linkSessionStatus.clickAvailable === false} onClick={() => { const move = linkConfirmMove; if (!move || linkConfirmingMove) return; setLinkConfirmingMove(true); void chessPlatform.confirmLinkEngineMove(move).then(async () => { const status = await chessPlatform.getLinkSessionStatus(); setLinkSessionStatus(status); setNotice(status.targetWindow ? `已向 ${status.targetWindow.processName.replace(".exe", "")} 窗口点击 ${linkConfirmMoveDisplay ?? move} 的起点和终点，等待局面回读` : `已按箭头1选中 ${linkConfirmMoveDisplay ?? move} 的起始棋子，请在网页棋盘确认落点`); }).catch((error) => setNotice(friendlyError(error))).finally(() => setLinkConfirmingMove(false)); }}><Play size={14}/>{linkConfirmingMove ? "正在核对…" : linkConfirmMoveLabel ? `确认首选 ${linkConfirmMoveLabel}` : "确认走子"}</button>}
@@ -7020,7 +7031,7 @@ export default function App() {
           onStudyGame={chessPlatform.kind === "desktop" ? () => { setMasterLibraryOpen(false); setGame53StudyOpen(true); } : undefined}
           onClose={() => setMasterLibraryOpen(false)}
         />}
-        {referenceLibraryOpen && <ReferenceLibraryDialog platform={chessPlatform} currentFen={board.fen} onClose={() => setReferenceLibraryOpen(false)}/>}
+        {referenceLibraryOpen && <ReferenceLibraryDialog platform={chessPlatform} currentFen={board.fen} initialGameId={referenceLibraryInitialGameId} onClose={() => { setReferenceLibraryOpen(false); setReferenceLibraryInitialGameId(undefined); }}/>}
       </div>
     );
   }
@@ -7252,7 +7263,7 @@ export default function App() {
         onStudyGame={chessPlatform.kind === "desktop" ? () => { setMasterLibraryOpen(false); setGame53StudyOpen(true); } : undefined}
         onClose={() => setMasterLibraryOpen(false)}
       />}
-      {referenceLibraryOpen && <ReferenceLibraryDialog platform={chessPlatform} currentFen={board.fen} onClose={() => setReferenceLibraryOpen(false)}/>}
+      {referenceLibraryOpen && <ReferenceLibraryDialog platform={chessPlatform} currentFen={board.fen} initialGameId={referenceLibraryInitialGameId} onClose={() => { setReferenceLibraryOpen(false); setReferenceLibraryInitialGameId(undefined); }}/>}
       {coachProfileOpen && <CoachProfileView
         reports={coachReports}
         masterStyleProfiles={masterStyleProfiles}
@@ -7730,7 +7741,8 @@ export default function App() {
           resolveMoveFen={async (fen, iccs) => (await chessPlatform.previewLine(fen, [iccs]))[0]?.fen}
           onPreviewMove={(iccs, notation) => void previewCandidateLine({ multipv: 1, pv: [iccs], notation: [notation] }, board.fen, { id: "reference-library", name: "大师开局" })}
           onAddMove={(iccs) => void playIccsMove(iccs, board.fen)}
-          onOpenExplorer={() => setReferenceLibraryOpen(true)}
+          onOpenExplorer={openReferenceLibraryExplorer}
+          onOpenGame={openReferenceLibraryGame}
         /> : <aside className={`analysis-panel ${reviewModeOpen ? "review-mode-panel" : ""} ${analysisPanelCollapsed && desktopPreferences.layoutMode !== "compact" ? "collapsed" : ""} ${mobilePanel === "analysis" ? "mobile-visible" : ""}`}>
           {reviewModeOpen ? <ReviewWorkspace
             board={board}

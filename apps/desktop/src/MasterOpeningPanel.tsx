@@ -12,6 +12,7 @@ type Props = {
   onPreviewMove(iccs: string, notation: string): void;
   onAddMove(iccs: string): void;
   onOpenExplorer(): void;
+  onOpenGame(gameId: string): void;
 };
 
 function resultLabel(result: string) {
@@ -43,7 +44,7 @@ function percent(value: number, total: number) {
   return total > 0 ? Math.round(value * 100 / total) : 0;
 }
 
-export function MasterOpeningPanel({ fen, enabled, queryMoves, queryGames, resolveMoveFen, onPreviewMove, onAddMove, onOpenExplorer }: Props) {
+export function MasterOpeningPanel({ fen, enabled, queryMoves, queryGames, resolveMoveFen, onPreviewMove, onAddMove, onOpenExplorer, onOpenGame }: Props) {
   const generation = useRef(0);
   const [games, setGames] = useState<ReferenceGameSummaryDto[]>([]);
   const [loading, setLoading] = useState(false);
@@ -164,7 +165,10 @@ export function MasterOpeningPanel({ fen, enabled, queryMoves, queryGames, resol
               type="button"
               key={game.id}
               className={game.id === selectedGameId ? "active" : ""}
-              onClick={() => setSelectedGameId(game.id)}
+              onClick={() => {
+                setSelectedGameId(game.id);
+                onOpenGame(game.id);
+              }}
               title={`${game.redPlayer || "红方"} - ${game.blackPlayer || "黑方"}`}
             >
               {viewMode === "detail" ? <>

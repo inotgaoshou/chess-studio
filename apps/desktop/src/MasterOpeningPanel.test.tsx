@@ -26,6 +26,7 @@ describe("MasterOpeningPanel", () => {
     const resolveMoveFen = vi.fn(async () => "after-h2e2");
     const onPreviewMove = vi.fn();
     const onAddMove = vi.fn();
+    const onOpenGame = vi.fn();
 
     render(<MasterOpeningPanel
       fen="start"
@@ -36,6 +37,7 @@ describe("MasterOpeningPanel", () => {
       onPreviewMove={onPreviewMove}
       onAddMove={onAddMove}
       onOpenExplorer={() => undefined}
+      onOpenGame={onOpenGame}
     />);
 
     expect(await screen.findByText("陈松顺 胜 惠颂祥")).toBeTruthy();
@@ -48,6 +50,8 @@ describe("MasterOpeningPanel", () => {
     await waitFor(() => expect(queryGames).toHaveBeenLastCalledWith("after-h2e2"));
     expect(onAddMove).not.toHaveBeenCalled();
     expect(screen.queryByText("对局台待命")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /陈松顺 胜 惠颂祥/ }));
+    expect(onOpenGame).toHaveBeenCalledWith("game-1");
   });
 
   it("keeps compact mode minimal and detail mode expanded", async () => {
@@ -60,6 +64,7 @@ describe("MasterOpeningPanel", () => {
       onPreviewMove={() => undefined}
       onAddMove={() => undefined}
       onOpenExplorer={() => undefined}
+      onOpenGame={() => undefined}
     />);
 
     expect(await screen.findByText("陈松顺 胜 惠颂祥")).toBeTruthy();
