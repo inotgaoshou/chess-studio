@@ -3978,7 +3978,7 @@ body.analysis-reopen-dragging * {
 .playback-controls button:hover { color: #fff; background: #424c47; }
 .playback-controls button.active { border-color: #a97832; color: #f0b55d; background: #51452f; }
 .playback-controls .variation-jump { width: 42px; display: flex; gap: 2px; color: #a9c8b5; }
-.playback-controls .position-search-control { width: 32px; display: inline-flex; gap: 3px; color: #e2d3a6; font-size: 10px; font-weight: 800; }
+.playback-controls .position-search-control { width: 32px; justify-self: center; display: grid; place-items: center; gap: 3px; line-height: 1; color: #e2d3a6; font-size: 10px; font-weight: 800; }
 .playback-controls .position-search-control.active { border-color: #d6ad46; color: #ffe6a3; background: #5d4a24; }
 .playback-controls .variation-jump small { font-size: 11px; }
 .playback-controls > span { min-width: 0; color: #7f8a84; text-align: right; font-size: 11px; white-space: nowrap; }
@@ -6210,7 +6210,7 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 .playback-controls { min-height: 38px; grid-template-columns: repeat(5, 34px) 48px 58px minmax(0, 1fr); }
 .playback-controls button { width: 32px; height: 32px; border-color: var(--border); background: var(--surface-3); color: var(--text-secondary); }
 .playback-controls .variation-jump { width: 46px; }
-.playback-controls .position-search-control { width: 56px; border-color: color-mix(in srgb, #d6ad46 46%, var(--border)); color: #d8b35a; background: color-mix(in srgb, #d6ad46 10%, var(--surface-3)); }
+.playback-controls .position-search-control { width: 56px; justify-self: center; display: grid; place-items: center; line-height: 1; border-color: color-mix(in srgb, #d6ad46 46%, var(--border)); color: #d8b35a; background: color-mix(in srgb, #d6ad46 10%, var(--surface-3)); }
 .playback-controls .position-search-control:hover { border-color: #d6ad46; color: #ffe1a1; }
 .playback-controls .position-search-control.active { border-color: #d6ad46; color: #fff1c4; background: color-mix(in srgb, #d6ad46 28%, var(--surface-3)); }
 .playback-controls > span,
@@ -8866,9 +8866,16 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
   }
   .app-shell.layout-compact .compact-manual-panel .playback-controls .position-search-control {
     width: 34px;
+    justify-self: center;
+    display: grid;
+    place-items: center;
+    line-height: 1;
     color: #9d6b14;
     background: #fff7e4;
     border-color: #efd19c;
+  }
+  .app-shell.layout-compact .compact-manual-panel .playback-controls .position-search-control svg {
+    display: block;
   }
   .app-shell.layout-compact .compact-manual-panel .playback-controls .position-search-control.active {
     color: #7c4c04;
@@ -9790,7 +9797,7 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
   .playback-controls { grid-template-columns: repeat(5, 36px) 52px 40px minmax(0, 1fr); padding-inline: 10px; }
   .playback-controls button { width: 34px; height: 34px; }
   .playback-controls .variation-jump { width: 50px; }
-  .playback-controls .position-search-control { width: 38px; }
+  .playback-controls .position-search-control { width: 38px; justify-self: center; display: grid; place-items: center; line-height: 1; }
   .playback-controls .variation-jump small { font-size: 11px; }
   .move-review-pane { grid-template-rows: minmax(100px, 1fr) auto minmax(64px, .55fr); }
   .tree-review-pane { grid-template-rows: minmax(0, 1fr) auto auto; }
@@ -10649,7 +10656,14 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 .playback-controls { grid-template-columns: repeat(7, 34px) minmax(0, 1fr); }
 .branch-picker-anchor, .playback-controls .variation-jump { width: 32px; }
 .playback-controls .variation-jump { display: grid; place-items: center; }
-.playback-controls .position-search-control { width: 32px; }
+.playback-controls .position-search-control {
+  width: 32px;
+  justify-self: center;
+  display: grid;
+  place-items: center;
+  line-height: 1;
+}
+.playback-controls .position-search-control svg { display: block; }
 .playback-controls .position-search-control span { display: none; }
 .playback-controls .variation-jump small { display: none; }
 .playback-controls .variation-jump.active { border-color: var(--accent); color: var(--accent); background: var(--accent-surface); }

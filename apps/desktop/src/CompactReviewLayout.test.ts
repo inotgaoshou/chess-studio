@@ -50,4 +50,17 @@ describe("compact board-first workspace layout", () => {
     expect(app).toContain('compactManualDock("research-manual-panel")');
     expect(styles).toMatch(/workspace-mode-research \.research-reference-stack[\s\S]*?grid-template-rows:minmax\(260px, 1fr\) minmax\(280px, 1fr\)/);
   });
+
+  it("centers the compact playback position-search icon inside its button cell", () => {
+    const base = declarationsFor(".playback-controls .position-search-control");
+    const compact = declarationsFor(".app-shell.layout-compact .compact-manual-panel .playback-controls .position-search-control");
+    const icon = declarationsFor(".playback-controls .position-search-control svg");
+
+    expect(base).toContain("justify-self: center");
+    expect(base).toContain("display: grid");
+    expect(base).toContain("place-items: center");
+    expect(compact).toContain("justify-self: center");
+    expect(compact).toContain("place-items: center");
+    expect(icon).toContain("display: block");
+  });
 });
