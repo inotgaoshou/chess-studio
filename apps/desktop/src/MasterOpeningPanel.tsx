@@ -80,9 +80,9 @@ function playerOutcome(game: ReferenceGameSummaryDto) {
 function renderPlayerOutcome(game: ReferenceGameSummaryDto, opening?: string) {
   const outcome = playerOutcome(game);
   return <span className="reference-player-pair master-opening-player-outcome" aria-label={`${outcome.red} ${outcome.result} ${outcome.black}`}>
-    <i className="reference-player red"><mark aria-hidden="true"/>{outcome.red}</i>
+    <i className="reference-player red" title={`红方：${outcome.red}`}><mark aria-hidden="true">红</mark>{outcome.red}</i>
     {" "}<em className={`reference-result ${outcome.tone}`}>{outcome.result}</em>{" "}
-    <i className="reference-player black"><mark aria-hidden="true"/>{outcome.black}</i>
+    <i className="reference-player black" title={`黑方：${outcome.black}`}><mark aria-hidden="true">黑</mark>{outcome.black}</i>
     {opening && <em className="reference-opening-label" title={opening}>{opening}</em>}
   </span>;
 }

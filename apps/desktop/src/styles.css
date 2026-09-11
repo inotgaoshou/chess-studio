@@ -7046,7 +7046,7 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 .reference-opening-stats .red b { color: #c9564e; }
 .reference-game-table { min-height: 0; overflow: auto; }
 .reference-game-table > div,
-.reference-game-table > button { min-height: 46px; padding: 6px 14px; display: grid; grid-template-columns: minmax(170px,1fr) minmax(200px,1.2fr) 64px 46px 48px; align-items: center; gap: 10px; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; color: inherit; text-align: left; font-size: 12px; }
+.reference-game-table > button { min-height: 50px; padding: 7px 14px; display: grid; grid-template-columns: minmax(260px,1.45fr) minmax(170px,.95fr) 64px 46px 48px; align-items: center; gap: 10px; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; color: inherit; text-align: left; font-size: 12px; }
 .reference-game-table > div.head { position: sticky; top: 0; z-index: 1; min-height: 32px; background: var(--surface-1); color: var(--text-muted); }
 .reference-game-table > button:hover,
 .reference-game-table > button.active { background: color-mix(in srgb, var(--accent-surface) 38%, transparent); }
@@ -7072,7 +7072,7 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 .reference-game-search-body > main > header small { color: var(--text-muted); font-size: 11px; }
 .reference-game-search-list { min-height: 0; overflow: auto; }
 .reference-game-search-list > p, .reference-game-preview > p { margin: 26px 18px; color: var(--text-muted); text-align: center; }
-.reference-game-search-list > button { width: 100%; min-height: 58px; padding: 7px 10px; display: grid; grid-template-columns: minmax(170px,1.1fr) minmax(150px,.9fr) 62px 54px; align-items: center; gap: 8px; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; text-align: left; }
+.reference-game-search-list > button { width: 100%; min-height: 62px; padding: 7px 10px; display: grid; grid-template-columns: minmax(250px,1.45fr) minmax(140px,.75fr) 70px 48px; align-items: center; gap: 8px; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; text-align: left; }
 .reference-game-search-list > button:hover, .reference-game-search-list > button.active { background: color-mix(in srgb, var(--accent-surface) 42%, transparent); }
 .reference-game-search-list > button.active { box-shadow: inset 3px 0 0 var(--accent); }
 .reference-game-search-list > button.pinned { position: sticky; top: 0; z-index: 2; border-bottom-color: color-mix(in srgb, var(--accent) 44%, var(--border)); background: color-mix(in srgb, var(--accent-surface) 62%, var(--surface-1)); }
@@ -7097,24 +7097,33 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
   min-width: 0;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   overflow: hidden;
   font-style: normal;
+  font-weight: 800;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .reference-player mark {
   flex: 0 0 auto;
-  width: 8px;
-  height: 8px;
+  width: 18px;
+  height: 16px;
   margin: 0;
   padding: 0;
-  border-radius: 2px;
-  background: currentColor;
-  box-shadow: 0 0 0 1px color-mix(in srgb, currentColor 18%, var(--surface-0)), 0 1px 2px rgba(0,0,0,.14);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 900;
+  line-height: 1;
+  box-shadow: 0 0 0 1px rgba(255,255,255,.55), 0 1px 3px rgba(0,0,0,.18);
 }
 .reference-player.red { color: #bf4c42; }
 .reference-player.black { color: #2e3542; }
+.reference-player.red mark { background: linear-gradient(180deg, #ef6b5e, #bd3832); }
+.reference-player.black mark { background: linear-gradient(180deg, #445063, #172131); }
 .reference-player-pair .reference-result {
   flex: 0 0 auto;
   padding: 0;
@@ -7137,7 +7146,7 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 .reference-game-table .reference-player-pair,
 .reference-game-search-list .reference-player-pair { max-width: 100%; }
 .reference-game-table .reference-player,
-.reference-game-search-list .reference-player { max-width: 46%; }
+.reference-game-search-list .reference-player { max-width: 48%; }
 .reference-load-more { width: calc(100% - 12px); min-height: 34px !important; margin: 6px; padding: 0 12px !important; display: inline-flex !important; align-items: center !important; justify-content: center !important; grid-template-columns: none !important; border: 1px solid var(--border) !important; border-radius: 999px !important; background: var(--surface-1) !important; color: var(--accent) !important; font-size: 12px !important; font-weight: 800 !important; text-align: center !important; }
 .reference-load-more:hover:not(:disabled) { border-color: var(--accent) !important; background: var(--accent-surface) !important; }
 .reference-position-search-list { min-height: 0; overflow: auto; }
@@ -7574,8 +7583,9 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
   max-width: 42%;
 }
 .master-opening-game-list .reference-player mark {
-  width: 7px;
-  height: 7px;
+  width: 16px;
+  height: 14px;
+  font-size: 8px;
 }
 .master-opening-game-list .reference-player-pair .reference-result {
   color: var(--text-muted);

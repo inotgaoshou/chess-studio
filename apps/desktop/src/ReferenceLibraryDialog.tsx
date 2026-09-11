@@ -45,9 +45,9 @@ function renderPlayerPair(game: ReferenceGameSummaryDto, className = "") {
   const black = playerName(game.blackPlayer, "black");
   const word = resultWord(game.result);
   return <span className={`reference-player-pair ${className}`.trim()} aria-label={`${red} ${word} ${black}`}>
-    <i className="reference-player red"><mark aria-hidden="true"/>{red}</i>
+    <i className="reference-player red" title={`红方：${red}`}><mark aria-hidden="true">红</mark>{red}</i>
     {" "}<em className={`reference-result ${resultTone(game.result)}`}>{word}</em>{" "}
-    <i className="reference-player black"><mark aria-hidden="true"/>{black}</i>
+    <i className="reference-player black" title={`黑方：${black}`}><mark aria-hidden="true">黑</mark>{black}</i>
   </span>;
 }
 
@@ -566,7 +566,7 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
       onClick={() => setSelectedGameId(game.id)}
       title={`${title} · ${opening}`}
     >
-      <span><b>{pinned ? "当前预览棋局" : title}</b>{renderPlayerPair(game, "compact")}</span>
+      <span><b title={title}>{pinned ? "当前预览棋局" : title}</b>{renderPlayerPair(game, "compact")}</span>
       <span><b>{game.eventName || "赛事未知"}</b><small>{game.gameDate || "日期未知"} {game.roundName}</small></span>
       <em title={opening}>{opening}</em><i>{game.moveCount} 手</i>
     </button>;
@@ -613,7 +613,7 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
           </div>}
           <div className="reference-opening-stats"><span>棋局 <b>{selected?.gameCount ?? 0}</b></span><span className="red">红胜 <b>{selected?.redWins ?? 0}</b></span><span>和棋 <b>{selected?.draws ?? 0}</b></span><span>黑胜 <b>{selected?.blackWins ?? 0}</b></span></div>
           <div className="reference-game-table"><div className="head"><span>对局</span><span>赛事 / 日期</span><span>结果</span><span>手数</span><span>操作</span></div>{gamesLoading && games.length === 0 ? <p>正在加载棋局列表…</p> : games.length === 0 ? <p>该分类暂无已归类棋局。</p> : <>
-            {games.map((game) => <button ref={selectedRowRef(game.id)} type="button" key={game.id} className={game.id === selectedGameId ? "active" : ""} title={`查看棋谱详情：${gameOpeningLabel(game)}`} onClick={() => { setSelectedGameId(game.id); setSearchMode("match"); setTab("games"); }}><span><b>{game.title || "未命名棋局"}</b>{renderPlayerPair(game, "compact")}</span><span><b>{game.eventName || game.title}</b><small>{game.gameDate || "日期未知"} {game.roundName}</small></span><span>{resultLabel(game.result)}</span><span>{game.moveCount}</span><em>查看</em></button>)}
+            {games.map((game) => <button ref={selectedRowRef(game.id)} type="button" key={game.id} className={game.id === selectedGameId ? "active" : ""} title={`查看棋谱详情：${gameOpeningLabel(game)}`} onClick={() => { setSelectedGameId(game.id); setSearchMode("match"); setTab("games"); }}><span><b title={game.title || "未命名棋局"}>{game.title || "未命名棋局"}</b>{renderPlayerPair(game, "compact")}</span><span><b>{game.eventName || game.title}</b><small>{game.gameDate || "日期未知"} {game.roundName}</small></span><span>{resultLabel(game.result)}</span><span>{game.moveCount}</span><em>查看</em></button>)}
             {hasMoreGames && <button type="button" className="reference-load-more" disabled={gamesLoadingMore} onClick={loadMoreGames}>{gamesLoadingMore ? "正在加载更多…" : "查看更多"}</button>}
           </>}</div>
         </main>

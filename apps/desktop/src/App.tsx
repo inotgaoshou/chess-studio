@@ -1330,6 +1330,7 @@ export default function App() {
   const [autoAnalyze, setAutoAnalyze] = useState(initialAutoAnalysis);
   const [autoRetry, setAutoRetry] = useState(0);
   const [analysisBusy, setAnalysisBusy] = useState(false);
+  const [analysisStopping, setAnalysisStopping] = useState(false);
   const [analysisError, setAnalysisError] = useState<string>();
   const [cloudAnalysisProgress, setCloudAnalysisProgress] = useState<CloudAnalysisProgress>();
   const [reviewEngineHintRequest, setReviewEngineHintRequest] = useState(0);
@@ -4460,6 +4461,7 @@ export default function App() {
       setAnalysisHintsEnabled(true);
     }
     analysisBusyRef.current = true;
+    setAnalysisStopping(false);
     analysisLoadRevision.current += 1;
     if (analysisFen !== analyzedFen) {
       setAnalysisArrowFen(undefined);
@@ -4607,20 +4609,25 @@ export default function App() {
   }
 
   async function stopAnalysis(options: { intent?: "user" | "engine-change" } = {}) {
-    const awaitBackendStop = shouldAwaitAnalysisBackendStop(options.intent ?? "user");
+    if (analysisStopping) return;
+    const stopIntent = options.intent ?? "user";
+    const awaitBackendStop = stopIntent === "user" ? true : shouldAwaitAnalysisBackendStop(stopIntent);
     pendingAutoAnalysis.current = false;
     analysisHintsEnabledRef.current = false;
     setAnalysisHintsEnabled(false);
     setAnalysisArrowFen(undefined);
+    setAnalysisStopping(true);
+    setNotice(`正在停止 ${currentEngineLabel}`);
     try {
       await cancelRunningAnalysis(`正在停止 ${currentEngineLabel}`, {
         keepHints: false,
         forceBackendStop: true,
         awaitBackendStop,
       });
-      setNotice(`正在停止 ${currentEngineLabel}`);
     } catch (error) {
       setNotice(friendlyError(error));
+    } finally {
+      setAnalysisStopping(false);
     }
   }
 
@@ -6740,7 +6747,7 @@ export default function App() {
           : <button className="panel-collapse-button" title="收起棋盘候选" aria-label="收起棋盘候选" onClick={() => void setCandidateRailVisibility(true)}><ChevronRight size={16}/></button>}
       </div>
       {compactLayout && <div className="compact-engine-strip" aria-label="简洁布局引擎状态">
-        <span className={analysisBusy ? "running" : ""}><Activity size={14}/><strong>引擎：</strong></span>
+        <span className={analysisBusy || analysisStopping ? "running" : ""}><Activity size={14}/><strong>引擎：</strong></span>
         <div className="compact-engine-config" title={currentEngineTitle}>
           <button type="button" onClick={() => chessPlatform.kind === "desktop" ? setDesktopDialog("engine") : selectWorkspacePanel("analysis")}>{currentEngineVersionLabel}</button>
           <small title={`${threads} 线程 · Hash ${hashMb} MB`}>{threads}T/{hashMb}M</small>
@@ -6748,8 +6755,8 @@ export default function App() {
           <i aria-hidden="true"/>
         </div>
         <button type="button" title="引擎设置" aria-label="引擎设置" onClick={() => chessPlatform.kind === "desktop" ? setDesktopDialog("engine") : selectWorkspacePanel("analysis")}><Settings2 size={14}/></button>
-        {analysisBusy
-          ? <button type="button" className="stop" onClick={() => void stopAnalysis()}><Square size={12}/>停止</button>
+        {analysisBusy || analysisStopping
+          ? <button type="button" className="stop" disabled={analysisStopping} onClick={() => void stopAnalysis()}><Square size={12}/>{analysisStopping ? "停止中" : "停止"}</button>
           : <button type="button" disabled={!board.playable || isPlaying} onClick={() => void runAnalysis()}><Play size={13}/>分析</button>}
       </div>}
       <div className="analysis-lines">
@@ -6918,14 +6925,14 @@ export default function App() {
       <div className={`floating-panel-shell theme-${effectiveColorTheme} board-skin-${displayedBoardSkin} piece-skin-${displayedPieceSkin} floating-panel-${floatingPanel} ${floatingPanelInteracting ? "interacting" : ""}`}>
         <header className="floating-panel-titlebar" onPointerDown={startFloatingWindowDrag}>
           <span>{floatingPanel === "engine" ? <Activity size={16}/> : floatingPanel === "cloud" ? <Database size={16}/> : floatingPanel === "link" ? <Link size={16}/> : <ClipboardList size={16}/>}<strong>{floatingPanel === "engine" ? "引擎分析" : floatingPanel === "cloud" ? "云库 / 评估信息" : floatingPanel === "link" ? "连线提示" : "棋谱"}</strong></span>
-          <small>{floatingPanel === "engine" ? (analysisBusy ? `${currentEngineVersionLabel} 正在计算…` : analysisIsStale ? "旧候选保留中" : "系统独立窗口") : floatingPanel === "cloud" ? (cloudBookLoading ? "查询中…" : cloudBookError ?? `${compactBookRows.length} 条候选`) : floatingPanel === "link" ? `${linkSessionStateLabel(linkSessionStatus.state, linkSessionStatus.mode, linkSessionStatus.pendingExternalMove, linkPendingMoveDisplay)} · ${board.sideToMove}` : `主引擎：${currentEngineVersionLabel} · ${board.history.length} 着${board.continuation.length ? ` · 后续 ${board.continuation.length} 着` : ""}`}</small>
+          <small>{floatingPanel === "engine" ? (analysisStopping ? `${currentEngineVersionLabel} 正在停止…` : analysisBusy ? `${currentEngineVersionLabel} 正在计算…` : analysisIsStale ? "旧候选保留中" : "系统独立窗口") : floatingPanel === "cloud" ? (cloudBookLoading ? "查询中…" : cloudBookError ?? `${compactBookRows.length} 条候选`) : floatingPanel === "link" ? `${linkSessionStateLabel(linkSessionStatus.state, linkSessionStatus.mode, linkSessionStatus.pendingExternalMove, linkPendingMoveDisplay)} · ${board.sideToMove}` : `主引擎：${currentEngineVersionLabel} · ${board.history.length} 着${board.continuation.length ? ` · 后续 ${board.continuation.length} 着` : ""}`}</small>
           {floatingPanel === "link" && <span className="floating-panel-drag-pill" aria-hidden="true"><GripVertical size={13}/>拖动</span>}
           <button className="floating-panel-return" type="button" title="关闭浮窗并回到主窗口停靠显示" onClick={() => void returnFloatingPanelToMain()}><ChevronLeft size={15}/>回主窗口</button>
         </header>
         {floatingPanel === "engine" ? (
           <section className="floating-panel-body floating-engine-body">
             <div className="compact-engine-strip" aria-label="浮动窗口引擎状态">
-              <span className={analysisBusy ? "running" : ""}><Activity size={14}/><strong>引擎：</strong></span>
+              <span className={analysisBusy || analysisStopping ? "running" : ""}><Activity size={14}/><strong>引擎：</strong></span>
               <div className="compact-engine-config" title={currentEngineTitle}>
                 <button type="button" onClick={() => chessPlatform.kind === "desktop" ? setDesktopDialog("engine") : selectWorkspacePanel("analysis")}>{currentEngineVersionLabel}</button>
                 <small title={`${threads} 线程 · Hash ${hashMb} MB`}>{threads}T/{hashMb}M</small>
@@ -6933,8 +6940,8 @@ export default function App() {
                 <i aria-hidden="true"/>
               </div>
               <button type="button" title="引擎设置" aria-label="引擎设置" onClick={() => chessPlatform.kind === "desktop" ? setDesktopDialog("engine") : selectWorkspacePanel("analysis")}><Settings2 size={14}/></button>
-              {analysisBusy
-                ? <button type="button" className="stop" onClick={() => void stopAnalysis()}><Square size={12}/>停止</button>
+              {analysisBusy || analysisStopping
+                ? <button type="button" className="stop" disabled={analysisStopping} onClick={() => void stopAnalysis()}><Square size={12}/>{analysisStopping ? "停止中" : "停止"}</button>
                 : <button type="button" disabled={!board.playable || isPlaying} onClick={() => void runAnalysis()}><Play size={13}/>分析</button>}
             </div>
             <div className="analysis-lines">
@@ -7134,7 +7141,7 @@ export default function App() {
   const boardAnnotationParts = splitTtxqComment(boardAnnotationValue);
   const boardHasAnnotation = Boolean(boardAnnotationParts.sourceText || boardAnnotationParts.localText);
   const referencePositionSearchActive = chessPlatform.kind === "desktop" && workspaceMode === "opening";
-  const analysisControlActive = isAnalysisControlActive(analysisBusy, analysisHintsEnabled);
+  const analysisControlActive = analysisStopping || isAnalysisControlActive(analysisBusy, analysisHintsEnabled);
 
   return (
     <div className={`app-shell ${chessPlatform.kind}-shell theme-${effectiveColorTheme} layout-${desktopPreferences.layoutMode} board-skin-${displayedBoardSkin} piece-skin-${displayedPieceSkin}`}>
@@ -7176,7 +7183,7 @@ export default function App() {
             <button type="button" className="mobile-drawer-command" title="复制局面或下载棋谱" onClick={() => { setMobileDrawerOpen(false); setMobileExportOpen(true); }}><Copy size={18}/><span><strong>复制与导出</strong><small>复制 FEN 或下载</small></span></button>
           </div></section>
           <section><small>分析</small><div>
-            <button type="button" className="mobile-drawer-command" title={analysisBusy ? "停止当前引擎分析" : "向云端引擎请求当前局面的候选着法"} disabled={!analysisBusy && (!board.playable || isPlaying || reportBusy || engineSide !== "none" || engineThinking || !online)} onClick={() => void (analysisBusy ? stopAnalysis() : runAnalysis())}><Activity size={18}/><span><strong>{analysisBusy ? "停止分析" : "分析局面"}</strong><small>{analysisBusy ? "停止当前搜索" : "请求引擎推荐"}</small></span></button>
+            <button type="button" className="mobile-drawer-command" title={analysisStopping ? "正在停止当前引擎分析" : analysisBusy ? "停止当前引擎分析" : "向云端引擎请求当前局面的候选着法"} disabled={analysisStopping || (!analysisBusy && (!board.playable || isPlaying || reportBusy || engineSide !== "none" || engineThinking || !online))} onClick={() => void (analysisBusy || analysisStopping ? stopAnalysis() : runAnalysis())}><Activity size={18}/><span><strong>{analysisStopping ? "停止中" : analysisBusy ? "停止分析" : "分析局面"}</strong><small>{analysisStopping ? "请稍候" : analysisBusy ? "停止当前搜索" : "请求引擎推荐"}</small></span></button>
             <button type="button" className="mobile-drawer-command" title="采用当前引擎第一候选；没有候选时先分析再走" disabled={!board.playable || isPlaying || reportBusy || (chessPlatform.kind === "web" && !online)} onClick={() => void playMobileBestMoveNow()}><Zap size={18}/><span><strong>立即出招</strong><small>走当前最优解</small></span></button>
             <button type="button" className="mobile-drawer-command" title="切换到下一条引擎候选 PV" onClick={() => void advanceMobileForcedVariation()}><ForceVariationIcon size={18}/><span><strong>强变招</strong><small>预览下一候选 PV</small></span></button>
             <label className="mobile-drawer-toggle"><input type="checkbox" checked={autoAnalyze} onChange={(event) => setAutoAnalyze(event.target.checked)}/><span>自动分析</span></label>
@@ -7368,11 +7375,11 @@ export default function App() {
           onLayoutChange={(mode) => void setWorkspaceLayout(mode)}
         />
         <button
-          className={`mode-tool ${analysisControlActive ? "active" : ""}`}
-          title={analysisControlActive ? "停止当前分析并隐藏 MultiPV 提示" : "开启自动分析与 MultiPV 提示"}
-          onClick={() => void (reviewModeOpen ? runReviewPositionAnalysis() : analysisControlActive ? stopAnalysis() : runAnalysis())}
-          disabled={!analysisControlActive && (!board.playable || isPlaying)}
-        ><Zap size={15}/>{analysisControlActive ? "停止分析" : "分析"}</button>
+          className={`mode-tool ${analysisControlActive ? "active" : ""} ${analysisStopping ? "is-stopping" : ""}`}
+          title={analysisStopping ? "正在停止当前分析" : analysisControlActive ? "停止当前分析并隐藏 MultiPV 提示" : "开启自动分析与 MultiPV 提示"}
+          onClick={() => void (analysisControlActive ? stopAnalysis() : reviewModeOpen ? runReviewPositionAnalysis() : runAnalysis())}
+          disabled={analysisStopping || (!analysisControlActive && (!board.playable || isPlaying))}
+        ><Zap size={15}/>{analysisStopping ? "停止中" : analysisControlActive ? "停止分析" : "分析"}</button>
         <button className="mode-tool move-now-tool" title={analysisIsStale ? "候选线路已过期，请等待当前局面重新分析" : primaryAnalysis?.pv[0] ? (engineSide !== "none" || engineStarting || engineThinking ? "停止人机搜索并采用当前第一候选着" : "采用当前第一候选着") : "请先完成当前局面分析"} disabled={chessPlatform.kind !== "desktop" || !primaryAnalysis?.pv[0] || analysisIsStale} onClick={() => void playPrimaryAnalysisMove()}><Zap size={15}/>引擎出招</button>
         <button className="tool-button" title="引擎设置" onClick={() => setDesktopDialog("engine")}><Settings2 size={16}/></button>
         <div className="skin-menu">
@@ -7937,8 +7944,8 @@ export default function App() {
                 {chessPlatform.kind === "desktop" && <button className={searchMode === "infinite" ? "active" : ""} onClick={() => setSearchMode("infinite")}>持续</button>}
                 <input type="number" aria-label="搜索限制" disabled={searchMode === "infinite"} min={searchMode === "depth" ? 1 : searchMode === "nodes" ? 1000 : 100} max={searchMode === "depth" ? 100 : searchMode === "nodes" ? 100000000 : 30000} value={searchValue} onChange={(event) => setSearchValue(Number(event.target.value))}/>
               </div>
-              {analysisBusy
-                ? <button className="analysis-action stop" onClick={() => void stopAnalysis()} title="停止分析"><Square size={13}/><span>停止</span></button>
+              {analysisBusy || analysisStopping
+                ? <button className="analysis-action stop" disabled={analysisStopping} onClick={() => void stopAnalysis()} title={analysisStopping ? "正在停止分析" : "停止分析"}><Square size={13}/><span>{analysisStopping ? "停止中" : "停止"}</span></button>
                 : <button className="analysis-action" disabled={!board.playable || isPlaying} onClick={() => void runAnalysis()} title="分析当前局面"><Play size={14}/><span>分析</span></button>}
             </div>
             <button className="force-alternative" disabled={analysisBusy || !primaryAnalysis?.pv[0] || !board.playable} onClick={() => void runAnalysis(false, primaryAnalysis?.pv[0])}><GitFork size={12}/>强制变招：排除当前第一候选并重搜</button>

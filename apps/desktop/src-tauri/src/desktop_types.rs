@@ -1550,6 +1550,7 @@ pub(crate) fn install_document(
     source_path: Option<String>,
     source_format: Option<String>,
 ) -> Result<(), String> {
+    let document = reassign_document_tree_ids(document)?;
     let board = Board::from_fen(&document.starting_fen).map_err(|error| error.to_string())?;
     let playable = position_is_playable(&board);
     let game_id = Uuid::new_v4();
@@ -1663,6 +1664,7 @@ pub(crate) fn import_document_into_library(
     source_format: Option<&str>,
     library_folder: Option<&str>,
 ) -> Result<Uuid, String> {
+    let document = reassign_document_tree_ids(document)?;
     let board = Board::from_fen(&document.starting_fen).map_err(|error| error.to_string())?;
     let playable = position_is_playable(&board);
     let game_id = Uuid::new_v4();
@@ -1775,6 +1777,47 @@ pub(crate) fn import_document_into_library(
             .map_err(|error| error.to_string())?;
     }
     Ok(game_id)
+}
+
+fn reassign_document_tree_ids(document: ManualDocument) -> Result<ManualDocument, String> {
+    let old_root_id = document.tree.root_id();
+    let nodes = collect_nodes(&document.tree)?;
+    let new_root_id = Uuid::new_v4();
+    let mut id_map = HashMap::with_capacity(nodes.len() + 1);
+    id_map.insert(old_root_id, new_root_id);
+    for node in &nodes {
+        id_map.insert(node.id, Uuid::new_v4());
+    }
+    let mut tree = ManualTree::with_root(new_root_id);
+    let mapped_nodes = nodes
+        .into_iter()
+        .map(|node| {
+            let id = *id_map
+                .get(&node.id)
+                .ok_or_else(|| format!("棋谱节点缺少新 ID 映射：{}", node.id))?;
+            let parent_id = *id_map
+                .get(&node.parent_id)
+                .ok_or_else(|| format!("棋谱节点缺少父节点新 ID 映射：{}", node.parent_id))?;
+            Ok(MoveNode {
+                id,
+                parent_id,
+                mv: node.mv,
+                comment: node.comment,
+                is_mainline: node.is_mainline,
+                deleted: node.deleted,
+                order_key: node.order_key,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    tree.restore_nodes(mapped_nodes)
+        .map_err(|error| error.to_string())?;
+    Ok(ManualDocument {
+        metadata: document.metadata,
+        starting_fen: document.starting_fen,
+        note: document.note,
+        tree,
+        warnings: document.warnings,
+    })
 }
 
 pub(crate) fn collect_nodes(tree: &ManualTree) -> Result<Vec<xiangqi_manual::MoveNode>, String> {
@@ -1984,5 +2027,90 @@ pub(crate) fn next_operation_for_game(
         payload,
         lamport: model.lamport,
         created_at: Utc::now(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_model() -> AppModel {
+        AppModel {
+            board: Board::from_fen(STARTING_FEN).unwrap(),
+            starting_fen: STARTING_FEN.into(),
+            tree: ManualTree::new(),
+            current_node: None,
+            game_id: Uuid::new_v4(),
+            device_id: Uuid::new_v4(),
+            lamport: 1,
+            store: LocalStore::open_in_memory().unwrap(),
+            metadata: ManualMetadata::default(),
+            note: String::new(),
+            source_path: None,
+            source_format: None,
+            playable: true,
+        }
+    }
+
+    fn reference_like_document() -> ManualDocument {
+        let mut document = ManualDocument::new(STARTING_FEN).unwrap();
+        document.metadata.title = "重复载入参考棋谱".into();
+        let first = document
+            .tree
+            .add_move(
+                document.tree.root_id(),
+                Move::from_iccs("h2e2").unwrap(),
+                "首着",
+            )
+            .unwrap();
+        document
+            .tree
+            .add_move(first, Move::from_iccs("h9g7").unwrap(), "应着")
+            .unwrap();
+        document
+    }
+
+    #[test]
+    fn installing_same_document_twice_generates_fresh_move_node_ids() {
+        let mut model = test_model();
+        let document = reference_like_document();
+        let original_root = document.tree.root_id();
+        let original_nodes = collect_nodes(&document.tree).unwrap();
+
+        install_document(
+            &mut model,
+            document.clone(),
+            Some("reference:first".into()),
+            Some("reference-library".into()),
+        )
+        .unwrap();
+        let first_game_id = model.game_id;
+        let first_root = model.tree.root_id();
+        let first_nodes = model.store.load_move_nodes(first_game_id).unwrap();
+
+        install_document(
+            &mut model,
+            document,
+            Some("reference:second".into()),
+            Some("reference-library".into()),
+        )
+        .unwrap();
+        let second_game_id = model.game_id;
+        let second_root = model.tree.root_id();
+        let second_nodes = model.store.load_move_nodes(second_game_id).unwrap();
+
+        assert_ne!(first_game_id, second_game_id);
+        assert_ne!(first_root, original_root);
+        assert_ne!(second_root, original_root);
+        assert_ne!(first_root, second_root);
+        assert_eq!(first_nodes.len(), original_nodes.len());
+        assert_eq!(second_nodes.len(), original_nodes.len());
+        for original in &original_nodes {
+            assert!(first_nodes.iter().all(|node| node.id != original.id));
+            assert!(second_nodes.iter().all(|node| node.id != original.id));
+        }
+        for first in &first_nodes {
+            assert!(second_nodes.iter().all(|node| node.id != first.id));
+        }
     }
 }

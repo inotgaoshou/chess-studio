@@ -300,4 +300,32 @@ describe("App U10 close", () => {
     expect((platformMock as { playMove?: ReturnType<typeof vi.fn> }).playMove).not.toHaveBeenCalled();
     expect(screen.queryByLabelText("选中棋子思路")).toBeNull();
   });
+
+  it("shows immediate feedback while stopping analysis", async () => {
+    configurePlatform();
+    let resolveStop: (() => void) | undefined;
+    const target = platformMock as Record<string, ReturnType<typeof vi.fn> | string>;
+    target.analyze = vi.fn(() => new Promise(() => undefined));
+    target.stopAnalysis = vi.fn(() => new Promise<void>((resolve) => { resolveStop = resolve; }));
+    const view = render(<App/>);
+
+    await screen.findByTestId("review-workspace");
+    const analysisButton = [...view.container.querySelectorAll<HTMLButtonElement>("button.mode-tool")]
+      .find((button) => button.textContent?.trim() === "分析");
+    expect(analysisButton).toBeTruthy();
+
+    fireEvent.click(analysisButton!);
+    await waitFor(() => expect(analysisButton!.textContent).toContain("停止分析"));
+
+    fireEvent.click(analysisButton!);
+
+    expect(target.stopAnalysis).toHaveBeenCalledWith(true);
+    await waitFor(() => {
+      expect(analysisButton!.textContent).toContain("停止中");
+      expect(analysisButton!.disabled).toBe(true);
+    });
+
+    resolveStop?.();
+    await waitFor(() => expect(analysisButton!.textContent).toBe("分析"));
+  });
 });
