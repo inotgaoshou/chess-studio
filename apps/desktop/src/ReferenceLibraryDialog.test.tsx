@@ -140,10 +140,12 @@ describe("ReferenceLibraryDialog", () => {
 
   it("shows all reference games and can filter pending classifications", async () => {
     const { value, getReferenceGameDocument, listReferenceGames } = platform([game]);
-    render(<ReferenceLibraryDialog platform={value} onClose={() => undefined}/>);
+    const { container } = render(<ReferenceLibraryDialog platform={value} onClose={() => undefined}/>);
     fireEvent.click(screen.getByRole("button", { name: /实战检索/ }));
 
     expect((await screen.findAllByText("王天一 胜 郑惟桐")).length).toBeGreaterThan(0);
+    expect(container.querySelector(".reference-game-search-list .reference-player.red mark")).toBeTruthy();
+    expect(container.querySelector(".reference-game-search-list .reference-player.black mark")).toBeTruthy();
     expect(await screen.findByLabelText("布局分类筛选")).toBeTruthy();
     fireEvent.change(screen.getByLabelText("布局分类筛选"), { target: { value: "A01" } });
     await waitFor(() => expect(listReferenceGames).toHaveBeenLastCalledWith(
@@ -153,6 +155,8 @@ describe("ReferenceLibraryDialog", () => {
     expect(await screen.findByDisplayValue("本地只读参考文档")).toBeTruthy();
     await waitFor(() => expect(getReferenceGameDocument).toHaveBeenCalledWith("game-1"));
     expect((await screen.findAllByText("C01 · 中炮对屏风马")).length).toBeGreaterThan(0);
+    expect(container.querySelector(".reference-game-preview .reference-player.red mark")).toBeTruthy();
+    expect(container.querySelector(".reference-game-preview .reference-player.black mark")).toBeTruthy();
     expect(await screen.findByText("原始标注")).toBeTruthy();
     expect(await screen.findByText("2026年全国象棋锦标赛（团体）")).toBeTruthy();
 
@@ -183,6 +187,19 @@ describe("ReferenceLibraryDialog", () => {
     await waitFor(() => expect(listReferenceGames).toHaveBeenLastCalledWith(
       undefined, "", 100, 100, expect.objectContaining({}),
     ));
+  });
+
+  it("shows red and black side markers in the opening game table including unknown players", async () => {
+    const unknownGame = { ...game, id: "unknown-game", title: "未知对局", redPlayer: "", blackPlayer: "", result: "" };
+    const { value } = platform([unknownGame]);
+    const { container } = render(<ReferenceLibraryDialog platform={value} onClose={() => undefined}/>);
+    fireEvent.click(screen.getByRole("button", { name: /布局探索/ }));
+    await screen.findByText("测试布局");
+
+    expect(await screen.findByText("未知对局")).toBeTruthy();
+    expect(await screen.findByLabelText("红方未知 对 黑方未知")).toBeTruthy();
+    expect(container.querySelector(".reference-game-table .reference-player.red mark")).toBeTruthy();
+    expect(container.querySelector(".reference-game-table .reference-player.black mark")).toBeTruthy();
   });
 
   it("pins a representative game when it is not in the current match page", async () => {

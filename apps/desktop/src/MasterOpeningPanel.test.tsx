@@ -30,7 +30,7 @@ describe("MasterOpeningPanel", () => {
     const onAddMove = vi.fn();
     const onOpenGame = vi.fn();
 
-    render(<MasterOpeningPanel
+    const { container } = render(<MasterOpeningPanel
       fen="start"
       enabled
       queryMoves={queryMoves}
@@ -42,7 +42,10 @@ describe("MasterOpeningPanel", () => {
       onOpenGame={onOpenGame}
     />);
 
-    expect(await screen.findByText("陈松顺 胜 惠颂祥")).toBeTruthy();
+    expect(await screen.findByLabelText("陈松顺 胜 惠颂祥")).toBeTruthy();
+    expect(container.querySelector(".reference-player.red mark")).toBeTruthy();
+    expect(container.querySelector(".reference-player.black mark")).toBeTruthy();
+    expect(container.querySelector(".reference-result.win")?.textContent).toBe("胜");
     expect(queryGames).toHaveBeenCalledWith("start");
     fireEvent.click(await screen.findByText("炮二平五"));
 
@@ -52,12 +55,12 @@ describe("MasterOpeningPanel", () => {
     await waitFor(() => expect(queryGames).toHaveBeenLastCalledWith("after-h2e2"));
     expect(onAddMove).not.toHaveBeenCalled();
     expect(screen.queryByText("对局台待命")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: /陈松顺 胜 惠颂祥/ }));
+    fireEvent.click(screen.getByLabelText("陈松顺 胜 惠颂祥").closest("button")!);
     expect(onOpenGame).toHaveBeenCalledWith("game-1");
   });
 
   it("keeps compact mode minimal and detail mode expanded", async () => {
-    render(<MasterOpeningPanel
+    const { container } = render(<MasterOpeningPanel
       fen="start"
       enabled
       queryMoves={async () => [move]}
@@ -69,7 +72,7 @@ describe("MasterOpeningPanel", () => {
       onOpenGame={() => undefined}
     />);
 
-    expect(await screen.findByText("陈松顺 胜 惠颂祥")).toBeTruthy();
+    expect(await screen.findByLabelText("陈松顺 胜 惠颂祥")).toBeTruthy();
     expect(screen.getByRole("button", { name: "简洁" }).className).toContain("active");
     expect(screen.queryByText("广东 陈松顺 胜 江苏 惠颂祥")).toBeNull();
     expect(screen.queryByText(/测试赛/)).toBeNull();
@@ -82,6 +85,8 @@ describe("MasterOpeningPanel", () => {
     expect(screen.getByText(/测试赛/)).toBeTruthy();
     expect(screen.getByText(/72 手/)).toBeTruthy();
     expect(screen.getByText("C01 · 中炮对屏风马")).toBeTruthy();
+    expect(container.querySelector(".master-opening-player-outcome .reference-player.red mark")).toBeTruthy();
+    expect(container.querySelector(".master-opening-player-outcome .reference-player.black mark")).toBeTruthy();
     expect(screen.queryByText(/C01 · 2026年全国/)).toBeNull();
   });
 
@@ -107,8 +112,35 @@ describe("MasterOpeningPanel", () => {
       onOpenGame={() => undefined}
     />);
 
-    expect(await screen.findByText("沈思凡 胜 陈思源")).toBeTruthy();
+    expect(await screen.findByLabelText("沈思凡 胜 陈思源")).toBeTruthy();
     expect(screen.queryByText(/上海财经大学沈/)).toBeNull();
     expect(screen.queryByText(/安徽财经大学陈/)).toBeNull();
+  });
+
+  it("keeps side markers when player names are unknown", async () => {
+    const unknownGame = {
+      ...game,
+      id: "unknown-game",
+      title: "",
+      redPlayer: "",
+      blackPlayer: "",
+      result: "",
+    };
+    const { container } = render(<MasterOpeningPanel
+      fen="start"
+      enabled
+      queryMoves={async () => [move]}
+      queryGames={async () => [unknownGame]}
+      resolveMoveFen={async () => "after-h2e2"}
+      onPreviewMove={() => undefined}
+      onAddMove={() => undefined}
+      onOpenExplorer={() => undefined}
+      onOpenGame={() => undefined}
+    />);
+
+    expect(await screen.findByLabelText("红方未详 对 黑方未详")).toBeTruthy();
+    expect(container.querySelector(".reference-player.red mark")).toBeTruthy();
+    expect(container.querySelector(".reference-player.black mark")).toBeTruthy();
+    expect(container.querySelector(".reference-result.unknown")?.textContent).toBe("对");
   });
 });

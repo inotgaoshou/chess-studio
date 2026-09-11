@@ -27,6 +27,30 @@ function gameOpeningLabel(game: ReferenceGameSummaryDto) {
   return game.openingName ? `${game.openingCode} · ${game.openingName}` : game.openingCode;
 }
 
+function playerName(name: string | undefined, side: "red" | "black") {
+  const fallback = side === "red" ? "红方未知" : "黑方未知";
+  return name?.trim() || fallback;
+}
+
+function resultWord(result: string) {
+  return result === "1-0" ? "胜" : result === "0-1" ? "负" : result === "1/2-1/2" ? "和" : "对";
+}
+
+function resultTone(result: string) {
+  return result === "1-0" ? "win" : result === "0-1" ? "loss" : result === "1/2-1/2" ? "draw" : "unknown";
+}
+
+function renderPlayerPair(game: ReferenceGameSummaryDto, className = "") {
+  const red = playerName(game.redPlayer, "red");
+  const black = playerName(game.blackPlayer, "black");
+  const word = resultWord(game.result);
+  return <span className={`reference-player-pair ${className}`.trim()} aria-label={`${red} ${word} ${black}`}>
+    <i className="reference-player red"><mark aria-hidden="true"/>{red}</i>
+    {" "}<em className={`reference-result ${resultTone(game.result)}`}>{word}</em>{" "}
+    <i className="reference-player black"><mark aria-hidden="true"/>{black}</i>
+  </span>;
+}
+
 function percent(value: number, total: number) {
   return total > 0 ? Math.round(value * 100 / total) : 0;
 }
@@ -542,7 +566,7 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
       onClick={() => setSelectedGameId(game.id)}
       title={`${title} · ${opening}`}
     >
-      <span><b>{pinned ? "当前预览棋局" : title}</b><small>{game.redPlayer || "红方未知"} vs {game.blackPlayer || "黑方未知"}</small></span>
+      <span><b>{pinned ? "当前预览棋局" : title}</b>{renderPlayerPair(game, "compact")}</span>
       <span><b>{game.eventName || "赛事未知"}</b><small>{game.gameDate || "日期未知"} {game.roundName}</small></span>
       <em title={opening}>{opening}</em><i>{game.moveCount} 手</i>
     </button>;
@@ -589,7 +613,7 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
           </div>}
           <div className="reference-opening-stats"><span>棋局 <b>{selected?.gameCount ?? 0}</b></span><span className="red">红胜 <b>{selected?.redWins ?? 0}</b></span><span>和棋 <b>{selected?.draws ?? 0}</b></span><span>黑胜 <b>{selected?.blackWins ?? 0}</b></span></div>
           <div className="reference-game-table"><div className="head"><span>对局</span><span>赛事 / 日期</span><span>结果</span><span>手数</span><span>操作</span></div>{gamesLoading && games.length === 0 ? <p>正在加载棋局列表…</p> : games.length === 0 ? <p>该分类暂无已归类棋局。</p> : <>
-            {games.map((game) => <button ref={selectedRowRef(game.id)} type="button" key={game.id} className={game.id === selectedGameId ? "active" : ""} title={`查看棋谱详情：${gameOpeningLabel(game)}`} onClick={() => { setSelectedGameId(game.id); setSearchMode("match"); setTab("games"); }}><span><b>{game.redPlayer || "红方未知"}</b><small>对 {game.blackPlayer || "黑方未知"}</small></span><span><b>{game.eventName || game.title}</b><small>{game.gameDate || "日期未知"} {game.roundName}</small></span><span>{resultLabel(game.result)}</span><span>{game.moveCount}</span><em>查看</em></button>)}
+            {games.map((game) => <button ref={selectedRowRef(game.id)} type="button" key={game.id} className={game.id === selectedGameId ? "active" : ""} title={`查看棋谱详情：${gameOpeningLabel(game)}`} onClick={() => { setSelectedGameId(game.id); setSearchMode("match"); setTab("games"); }}><span><b>{game.title || "未命名棋局"}</b>{renderPlayerPair(game, "compact")}</span><span><b>{game.eventName || game.title}</b><small>{game.gameDate || "日期未知"} {game.roundName}</small></span><span>{resultLabel(game.result)}</span><span>{game.moveCount}</span><em>查看</em></button>)}
             {hasMoreGames && <button type="button" className="reference-load-more" disabled={gamesLoadingMore} onClick={loadMoreGames}>{gamesLoadingMore ? "正在加载更多…" : "查看更多"}</button>}
           </>}</div>
         </main>
@@ -647,7 +671,7 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
         <section className="reference-game-preview" aria-label="参考棋局预览">
           {!selectedGame ? <p>选择左侧棋局后查看来源文档摘要。</p> : <>
             <header>
-              <span><Eye size={14}/><strong>{selectedGame.title || "未命名棋局"}</strong><small>{selectedGame.redPlayer || "红方未知"} vs {selectedGame.blackPlayer || "黑方未知"} · {resultLabel(selectedGame.result)}</small></span>
+              <span><Eye size={14}/><strong>{selectedGame.title || "未命名棋局"}</strong>{renderPlayerPair(selectedGame, "preview")}</span>
               {onOpenReferenceGame && <nav className="reference-game-preview-actions" aria-label="参考棋局操作">
                 <button type="button" disabled={busy} title="载入到棋盘查看完整棋谱" onClick={() => void openSelectedReferenceGame("view")}><BookOpen size={13}/>{referenceAction === "view" ? "载入中" : "查看棋谱"}</button>
                 <button type="button" disabled={busy} title="载入后进入复盘学习工作台，并分析当前局面" onClick={() => void openSelectedReferenceGame("study")}><Activity size={13}/>{referenceAction === "study" ? "分析中" : "学习分析"}</button>

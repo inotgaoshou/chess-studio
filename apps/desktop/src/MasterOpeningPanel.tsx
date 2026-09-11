@@ -17,8 +17,12 @@ type Props = {
   onOpenGame(gameId: string): void;
 };
 
-function resultLabel(result: string) {
-  return result === "1-0" ? "红胜" : result === "0-1" ? "黑胜" : result === "1/2-1/2" ? "和棋" : "结果未知";
+function resultWord(result: string) {
+  return result === "1-0" ? "胜" : result === "0-1" ? "负" : result === "1/2-1/2" ? "和" : "对";
+}
+
+function resultTone(result: string) {
+  return result === "1-0" ? "win" : result === "0-1" ? "loss" : result === "1/2-1/2" ? "draw" : "unknown";
 }
 
 function gameDateLabel(value: string) {
@@ -54,27 +58,33 @@ function personName(value: string | undefined, fallback: string) {
   return withoutOrganization || cleaned || fallback;
 }
 
-function outcomeFromTitle(game: ReferenceGameSummaryDto) {
+function playerOutcome(game: ReferenceGameSummaryDto) {
   const title = cleanPlayerText(game.title || "");
   const match = title.match(/^(.+?)\s*(胜|负|和)\s*(.+)$/);
-  if (!match) return undefined;
-  const left = personName(match[1], "红方未详");
-  const result = match[2];
-  const right = personName(match[3], "黑方未详");
-  if (result === "胜") return `${left} 胜 ${right}`;
-  if (result === "负") return `${right} 胜 ${left}`;
-  return `${left} 和 ${right}`;
+  if (match) {
+    return {
+      red: personName(match[1], "红方未详"),
+      black: personName(match[3], "黑方未详"),
+      result: match[2],
+      tone: match[2] === "胜" ? "win" : match[2] === "负" ? "loss" : "draw",
+    };
+  }
+  return {
+    red: personName(game.redPlayer, "红方未详"),
+    black: personName(game.blackPlayer, "黑方未详"),
+    result: resultWord(game.result),
+    tone: resultTone(game.result),
+  };
 }
 
-function outcomeLabel(game: ReferenceGameSummaryDto) {
-  const titleOutcome = outcomeFromTitle(game);
-  if (titleOutcome) return titleOutcome;
-  const red = personName(game.redPlayer, "红方未详");
-  const black = personName(game.blackPlayer, "黑方未详");
-  if (game.result === "1-0") return `${red} 胜 ${black}`;
-  if (game.result === "0-1") return `${black} 胜 ${red}`;
-  if (game.result === "1/2-1/2") return `${red} 和 ${black}`;
-  return `${red} 对 ${black}`;
+function renderPlayerOutcome(game: ReferenceGameSummaryDto, opening?: string) {
+  const outcome = playerOutcome(game);
+  return <span className="reference-player-pair master-opening-player-outcome" aria-label={`${outcome.red} ${outcome.result} ${outcome.black}`}>
+    <i className="reference-player red"><mark aria-hidden="true"/>{outcome.red}</i>
+    {" "}<em className={`reference-result ${outcome.tone}`}>{outcome.result}</em>{" "}
+    <i className="reference-player black"><mark aria-hidden="true"/>{outcome.black}</i>
+    {opening && <em className="reference-opening-label" title={opening}>{opening}</em>}
+  </span>;
 }
 
 function percent(value: number, total: number) {
@@ -214,12 +224,12 @@ export function MasterOpeningPanel({ fen, enabled, queryMoves, queryGames, resol
               {viewMode === "detail" ? <>
                 <i className="master-opening-versus" aria-hidden="true"><b className="red">{playerMark(game.redPlayer, "红")}</b><em>VS</em><b className="black">{playerMark(game.blackPlayer, "黑")}</b></i>
                 <strong>{game.title || `${game.redPlayer || "红方"} 对 ${game.blackPlayer || "黑方"}`}</strong>
-                <span>{game.redPlayer || "红方未详"} <b>{resultLabel(game.result)}</b> {game.blackPlayer || "黑方未详"} <em>{openingLabel(game)}</em></span>
+                {renderPlayerOutcome(game, openingLabel(game))}
                 <small><Trophy size={11}/>{game.eventName || "赛事不详"}{game.roundName ? ` · ${game.roundName}` : ""}</small>
                 <small><CalendarDays size={11}/>{gameDateLabel(game.gameDate)} · {game.moveCount} 手</small>
               </> : <>
                 <i className="master-opening-versus compact" aria-hidden="true"><b className="red">{playerMark(game.redPlayer, "红")}</b><b className="black">{playerMark(game.blackPlayer, "黑")}</b></i>
-                <strong>{outcomeLabel(game)}</strong>
+                {renderPlayerOutcome(game)}
               </>}
               {viewMode === "detail" && <em className="master-opening-preview-label">预览</em>}
             </button>)}
