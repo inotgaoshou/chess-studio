@@ -172,7 +172,20 @@ describe("ReferenceLibraryDialog", () => {
     await screen.findByText("炮二平五");
     fireEvent.click(screen.getByRole("button", { name: /查看棋谱/ }));
 
-    await waitFor(() => expect(onOpenReferenceGame).toHaveBeenCalledWith("game-1"));
+    await waitFor(() => expect(onOpenReferenceGame).toHaveBeenCalledWith("game-1", "view"));
+  });
+
+  it("offers study analysis and AI scoring actions for a reference game", async () => {
+    const { value } = platform([game]);
+    const onOpenReferenceGame = vi.fn(async () => undefined);
+    render(<ReferenceLibraryDialog platform={value} initialGameId="game-1" onOpenReferenceGame={onOpenReferenceGame} onClose={() => undefined}/>);
+
+    await screen.findByText("炮二平五");
+    fireEvent.click(screen.getByRole("button", { name: /学习分析/ }));
+    await waitFor(() => expect(onOpenReferenceGame).toHaveBeenCalledWith("game-1", "study"));
+
+    fireEvent.click(screen.getByRole("button", { name: /AI打分/ }));
+    await waitFor(() => expect(onOpenReferenceGame).toHaveBeenCalledWith("game-1", "score"));
   });
 
   it("queries current-position moves from the game search view", async () => {

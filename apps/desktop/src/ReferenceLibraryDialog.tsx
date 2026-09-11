@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
-import { BookOpen, Check, Database, Download, Eye, FileText, FolderOpen, ListChecks, RefreshCw, Search, ShieldCheck, Upload, X } from "lucide-react";
+import { Activity, BarChart3, BookOpen, Check, Database, Download, Eye, FileText, FolderOpen, ListChecks, RefreshCw, Search, ShieldCheck, Upload, X } from "lucide-react";
 import type { ChessPlatform, OpeningCategoryDto, PositionMoveStatDto, ReferenceGameDocumentDto, ReferenceGameFilters, ReferenceGameSummaryDto, ReferenceImportBatchDto, ReferenceReviewIssueDto, ReferenceSourceDto } from "./platform/types";
+
+export type ReferenceGameOpenMode = "view" | "study" | "score";
 
 type Props = {
   platform: ChessPlatform;
   currentFen?: string;
   initialGameId?: string;
-  onOpenReferenceGame?(gameId: string): void | Promise<void>;
+  onOpenReferenceGame?(gameId: string, mode?: ReferenceGameOpenMode): void | Promise<void>;
   onClose(): void;
 };
 type Tab = "openings" | "games" | "sources" | "batches";
@@ -414,12 +416,12 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); setBusy(false); }
   }
 
-  async function openSelectedReferenceGame() {
+  async function openSelectedReferenceGame(mode: ReferenceGameOpenMode) {
     if (!selectedGame?.id || !onOpenReferenceGame) return;
     setBusy(true);
     setError("");
     try {
-      await onOpenReferenceGame(selectedGame.id);
+      await onOpenReferenceGame(selectedGame.id, mode);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -541,7 +543,14 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
         </main>
         <section className="reference-game-preview" aria-label="参考棋局预览">
           {!selectedGame ? <p>选择左侧棋局后查看来源文档摘要。</p> : <>
-            <header><span><Eye size={14}/><strong>{selectedGame.title || "未命名棋局"}</strong><small>{selectedGame.redPlayer || "红方未知"} vs {selectedGame.blackPlayer || "黑方未知"} · {resultLabel(selectedGame.result)}</small></span>{onOpenReferenceGame && <button type="button" disabled={busy} title="载入到棋盘查看完整棋谱" onClick={() => void openSelectedReferenceGame()}><BookOpen size={13}/>查看棋谱</button>}</header>
+            <header>
+              <span><Eye size={14}/><strong>{selectedGame.title || "未命名棋局"}</strong><small>{selectedGame.redPlayer || "红方未知"} vs {selectedGame.blackPlayer || "黑方未知"} · {resultLabel(selectedGame.result)}</small></span>
+              {onOpenReferenceGame && <nav className="reference-game-preview-actions" aria-label="参考棋局操作">
+                <button type="button" disabled={busy} title="载入到棋盘查看完整棋谱" onClick={() => void openSelectedReferenceGame("view")}><BookOpen size={13}/>查看棋谱</button>
+                <button type="button" disabled={busy} title="载入后进入复盘学习工作台，并分析当前局面" onClick={() => void openSelectedReferenceGame("study")}><Activity size={13}/>学习分析</button>
+                <button type="button" disabled={busy} title="载入后生成整局 AI 打分报告" onClick={() => void openSelectedReferenceGame("score")}><BarChart3 size={13}/>AI打分</button>
+              </nav>}
+            </header>
             <dl><div><dt>布局</dt><dd>{gameOpeningLabel(selectedGame)}</dd></div><div><dt>赛事</dt><dd>{selectedGame.eventName || "未知"}</dd></div><div><dt>日期</dt><dd>{selectedGame.gameDate || "未知"}</dd></div><div><dt>手数</dt><dd>{selectedGame.moveCount}</dd></div>{selectedGame.opening && <div><dt>原始标注</dt><dd>{selectedGame.opening}</dd></div>}</dl>
             {documentLoading ? <p>正在读取完整棋谱文档…</p> : documentError ? <p className="error">{documentError}</p> : documentPreview ? <>
               <div className="reference-game-preview-stats"><span>分支点 <b>{documentPreview.branchCount}</b></span><span>注释 <b>{documentPreview.commentCount}</b></span></div>

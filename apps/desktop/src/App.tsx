@@ -93,7 +93,7 @@ import { LinkMiniBoard, type LinkMiniArrow } from "./LinkMiniBoard";
 import { FlyknifeDialog } from "./FlyknifeDialog";
 import { mobileWorkbenchMediaQuery, shouldUseMobileWorkbench } from "./mobileEnvironment";
 import { MasterLibraryDialog } from "./MasterLibraryDialog";
-import { ReferenceLibraryDialog } from "./ReferenceLibraryDialog";
+import { ReferenceLibraryDialog, type ReferenceGameOpenMode } from "./ReferenceLibraryDialog";
 import { MasterOpeningPanel } from "./MasterOpeningPanel";
 import { ReferencePositionPanel } from "./ReferencePositionPanel";
 import { Game53StudyDialog } from "./Game53StudyDialog";
@@ -1453,11 +1453,24 @@ export default function App() {
     setReferenceLibraryOpen(true);
   }
 
-  async function loadReferenceLibraryGame(gameId: string) {
+  async function loadReferenceLibraryGame(gameId: string, mode: ReferenceGameOpenMode = "view") {
     const next = await chessPlatform.openReferenceGame(gameId);
     applyBoard(next);
     setReferenceLibraryOpen(false);
     setReferenceLibraryInitialGameId(undefined);
+    if (mode === "study") {
+      await openReviewMode("review");
+      selectWorkspacePanel("analysis");
+      setNotice("已载入参考棋局，进入学习分析模式");
+      await runReviewPositionAnalysis();
+      return;
+    }
+    if (mode === "score") {
+      await openReviewMode("review");
+      setNotice("已载入参考棋局，正在生成 AI 打分报告");
+      await openAnalysisReportPanel();
+      return;
+    }
     setNotice("已载入参考棋局到棋盘");
   }
   const [compactEngineCollapsed, setCompactEngineCollapsed] = useState(false);
