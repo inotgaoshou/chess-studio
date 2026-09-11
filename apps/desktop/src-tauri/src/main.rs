@@ -190,6 +190,7 @@ fn main() {
             reference_service::browse_reference_openings,
             reference_service::list_reference_games,
             reference_service::get_reference_game_document,
+            reference_service::open_reference_game,
             reference_service::create_server_reference_source,
             reference_service::publish_reference_batch,
             reference_service::get_reference_offline_package_manifest,

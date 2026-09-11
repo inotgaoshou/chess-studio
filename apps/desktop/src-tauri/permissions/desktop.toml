@@ -25,7 +25,7 @@ commands.allow = [
   "review_reference_batch", "classify_reference_batch", "rebuild_reference_opening_catalog", "classify_reference_library", "list_reference_batch_issues",
   "update_reference_game_identity", "override_reference_game_opening", "resolve_reference_duplicate",
   "query_reference_position", "browse_reference_openings",
-  "list_reference_games", "get_reference_game_document",
+  "list_reference_games", "get_reference_game_document", "open_reference_game",
   "create_server_reference_source", "publish_reference_batch", "get_reference_offline_package_manifest", "install_reference_offline_package",
   "import_xqb_opening_book", "import_eleeye_opening_book", "import_text", "export_text",
   "export_document_text", "export_document_file", "export_replay_gif", "export_mind_map_svg",

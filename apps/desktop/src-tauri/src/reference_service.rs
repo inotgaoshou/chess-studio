@@ -1,4 +1,8 @@
-use crate::app_state::DesktopState;
+use crate::{
+    app_state::DesktopState,
+    desktop_types::{BoardDto, board_dto, install_document},
+};
+use manual_format::ManualDocument;
 use reference_library::{
     OpeningCatalogBuildResult, OpeningCategory, OpeningMatch, PositionExplorerRequest,
     PositionMoveStat, ReferenceGameDocument, ReferenceGameFilters, ReferenceGameSummary,
@@ -625,6 +629,7 @@ struct ServerReferenceGameSummary {
     game_date: Option<String>,
     opening: String,
     opening_code: Option<String>,
+    opening_name: Option<String>,
     move_count: u32,
 }
 
@@ -642,6 +647,7 @@ impl From<ServerReferenceGameSummary> for ReferenceGameSummary {
             game_date: value.game_date.unwrap_or_default(),
             opening: value.opening,
             opening_code: value.opening_code,
+            opening_name: value.opening_name,
             move_count: value.move_count,
         }
     }
@@ -905,6 +911,28 @@ pub(crate) fn get_reference_game_document(
         .transpose()
         .map_err(|error| error.to_string())
         .map(Option::flatten)
+}
+
+#[tauri::command]
+pub(crate) fn open_reference_game(
+    game_id: String,
+    state: State<'_, DesktopState>,
+) -> Result<BoardDto, String> {
+    let document = get_reference_game_document(game_id.clone(), state.clone())?
+        .ok_or_else(|| "未找到该参考棋局。".to_owned())?;
+    let manual = serde_json::from_str::<ManualDocument>(&document.document_json)
+        .map_err(|error| format!("参考棋局文档无法解析：{error}"))?;
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    install_document(
+        &mut model,
+        manual,
+        Some(format!("reference-library:{game_id}")),
+        Some("reference-library".into()),
+    )?;
+    board_dto(&model)
 }
 
 fn merge_position_stats(
@@ -1175,6 +1203,7 @@ mod tests {
             game_date: format!("2026-{:02}-{:02}", index / 28 + 1, index % 28 + 1),
             opening: String::new(),
             opening_code: None,
+            opening_name: None,
             move_count: 1,
         }
     }

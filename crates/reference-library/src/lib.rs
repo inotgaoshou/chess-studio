@@ -178,6 +178,7 @@ pub struct ReferenceGameSummary {
     pub game_date: String,
     pub opening: String,
     pub opening_code: Option<String>,
+    pub opening_name: Option<String>,
     pub move_count: u32,
 }
 
@@ -186,6 +187,7 @@ pub struct ReferenceGameSummary {
 pub struct ReferenceGameDocument {
     pub game: ReferenceGameSummary,
     pub document_json: String,
+    pub mainline_notation: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1298,7 +1300,12 @@ impl ReferenceLibrary {
         let mut statement = self.connection.prepare(
             "SELECT m.move_iccs, MAX(m.notation), COUNT(*),
                     SUM(g.result='1-0'), SUM(g.result='1/2-1/2'), SUM(g.result='0-1'),
-                    MIN(CAST(substr(g.game_date,1,4) AS INTEGER)),MAX(CAST(substr(g.game_date,1,4) AS INTEGER))
+                    MIN(CASE WHEN substr(g.game_date,1,4) GLOB '[0-9][0-9][0-9][0-9]'
+                         AND CAST(substr(g.game_date,1,4) AS INTEGER) BETWEEN 1000 AND 3000
+                         THEN CAST(substr(g.game_date,1,4) AS INTEGER) END),
+                    MAX(CASE WHEN substr(g.game_date,1,4) GLOB '[0-9][0-9][0-9][0-9]'
+                         AND CAST(substr(g.game_date,1,4) AS INTEGER) BETWEEN 1000 AND 3000
+                         THEN CAST(substr(g.game_date,1,4) AS INTEGER) END)
              FROM reference_game_moves m JOIN reference_games g ON g.id=m.game_id
              WHERE m.position_hash=?1 AND m.position_key=?2 AND g.active=1 AND g.validation_status='valid'
                AND NOT EXISTS (SELECT 1 FROM temp_reference_exclusions e WHERE e.canonical_fingerprint=g.canonical_fingerprint)
@@ -1393,8 +1400,14 @@ impl ReferenceLibrary {
                     COALESCE(SUM(CASE WHEN x.is_primary=1 AND x.status='classified' AND g.active=1 AND g.validation_status='valid' AND e.canonical_fingerprint IS NULL AND g.result='1-0' THEN 1 ELSE 0 END),0),
                     COALESCE(SUM(CASE WHEN x.is_primary=1 AND x.status='classified' AND g.active=1 AND g.validation_status='valid' AND e.canonical_fingerprint IS NULL AND g.result='1/2-1/2' THEN 1 ELSE 0 END),0),
                     COALESCE(SUM(CASE WHEN x.is_primary=1 AND x.status='classified' AND g.active=1 AND g.validation_status='valid' AND e.canonical_fingerprint IS NULL AND g.result='0-1' THEN 1 ELSE 0 END),0),
-                    MIN(CASE WHEN x.is_primary=1 AND x.status='classified' AND g.active=1 AND g.validation_status='valid' AND e.canonical_fingerprint IS NULL THEN CAST(substr(g.game_date,1,4) AS INTEGER) END),
-                    MAX(CASE WHEN x.is_primary=1 AND x.status='classified' AND g.active=1 AND g.validation_status='valid' AND e.canonical_fingerprint IS NULL THEN CAST(substr(g.game_date,1,4) AS INTEGER) END)
+                    MIN(CASE WHEN x.is_primary=1 AND x.status='classified' AND g.active=1 AND g.validation_status='valid' AND e.canonical_fingerprint IS NULL
+                         AND substr(g.game_date,1,4) GLOB '[0-9][0-9][0-9][0-9]'
+                         AND CAST(substr(g.game_date,1,4) AS INTEGER) BETWEEN 1000 AND 3000
+                         THEN CAST(substr(g.game_date,1,4) AS INTEGER) END),
+                    MAX(CASE WHEN x.is_primary=1 AND x.status='classified' AND g.active=1 AND g.validation_status='valid' AND e.canonical_fingerprint IS NULL
+                         AND substr(g.game_date,1,4) GLOB '[0-9][0-9][0-9][0-9]'
+                         AND CAST(substr(g.game_date,1,4) AS INTEGER) BETWEEN 1000 AND 3000
+                         THEN CAST(substr(g.game_date,1,4) AS INTEGER) END)
              FROM opening_categories c
              LEFT JOIN game_opening_classifications x
                ON (x.category_code=c.code OR (length(c.code)=1 AND x.category_code LIKE c.code || '%'))
@@ -1634,7 +1647,16 @@ impl ReferenceLibrary {
             if fast_position_only {
                 let mut statement = self.connection.prepare(
                     "SELECT g.id, g.title, g.red_player, g.black_player, g.result, g.event_name,
-                            g.round_name, g.game_date, g.opening, NULL,
+                            g.round_name, g.game_date, g.opening,
+                            (SELECT c.category_code FROM game_opening_classifications c
+                             WHERE c.game_id=g.id AND c.is_primary=1 AND c.status='classified'
+                               AND c.classifier_version_id=(SELECT id FROM opening_classifier_versions WHERE active=1 ORDER BY id DESC LIMIT 1)
+                             ORDER BY c.id DESC LIMIT 1),
+                            (SELECT o.name FROM game_opening_classifications c
+                             JOIN opening_categories o ON o.code=c.category_code
+                             WHERE c.game_id=g.id AND c.is_primary=1 AND c.status='classified'
+                               AND c.classifier_version_id=(SELECT id FROM opening_classifier_versions WHERE active=1 ORDER BY id DESC LIMIT 1)
+                             ORDER BY c.id DESC LIMIT 1),
                             g.canonical_fingerprint,g.move_count
                      FROM reference_games g INDEXED BY idx_reference_games_valid_date
                      WHERE g.active=1 AND g.validation_status='valid'
@@ -1657,20 +1679,17 @@ impl ReferenceLibrary {
             }
         }
         let mut statement = self.connection.prepare(
-            "SELECT g.id, g.title, g.red_player, g.black_player, g.result, g.event_name,
-                    g.round_name, g.game_date, g.opening,
-                    (SELECT category_code FROM game_opening_classifications c
-                     WHERE c.game_id=g.id AND c.is_primary=1 AND c.status='classified'
-                       AND c.classifier_version_id=(SELECT id FROM opening_classifier_versions WHERE active=1 ORDER BY id DESC LIMIT 1)
-                     ORDER BY c.id DESC LIMIT 1),
+                    "SELECT g.id, g.title, g.red_player, g.black_player, g.result, g.event_name,
+                    g.round_name, g.game_date, g.opening, c.category_code, o.name,
                     g.canonical_fingerprint,g.move_count
              FROM reference_games g
+             LEFT JOIN game_opening_classifications c
+               ON c.game_id=g.id AND c.is_primary=1 AND c.status='classified'
+              AND c.classifier_version_id=(SELECT id FROM opening_classifier_versions WHERE active=1 ORDER BY id DESC LIMIT 1)
+             LEFT JOIN opening_categories o ON o.code=c.category_code
              WHERE g.active=1 AND g.validation_status='valid'
                AND NOT EXISTS (SELECT 1 FROM temp_reference_exclusions e WHERE e.canonical_fingerprint=g.canonical_fingerprint)
-               AND (?1 IS NULL OR EXISTS (SELECT 1 FROM game_opening_classifications c
-                    WHERE c.game_id=g.id AND c.is_primary=1 AND c.status='classified'
-                      AND c.classifier_version_id=(SELECT id FROM opening_classifier_versions WHERE active=1 ORDER BY id DESC LIMIT 1)
-                      AND (c.category_code=?1 OR (length(?1)=1 AND c.category_code LIKE ?1 || '%'))))
+               AND (?1 IS NULL OR (c.category_code=?1 OR (length(?1)=1 AND c.category_code LIKE ?1 || '%')))
                AND (?2='' OR g.title LIKE '%' || ?2 || '%' OR g.red_player LIKE '%' || ?2 || '%'
                     OR g.black_player LIKE '%' || ?2 || '%' OR g.event_name LIKE '%' || ?2 || '%')
                AND (?3='' OR g.red_player LIKE '%' || ?3 || '%' OR g.black_player LIKE '%' || ?3 || '%')
@@ -1723,12 +1742,20 @@ impl ReferenceLibrary {
             .query_row(
                 "SELECT document_json FROM reference_game_documents WHERE game_id=?1",
                 [game_id],
-                |row| row.get(0),
+                |row| row.get::<_, String>(0),
             )
             .optional()?;
-        Ok(document_json.map(|document_json| ReferenceGameDocument {
-            game,
-            document_json,
+        Ok(document_json.map(|document_json| {
+            let mainline_notation =
+                serde_json::from_str::<manual_format::ManualDocument>(&document_json)
+                    .ok()
+                    .and_then(|document| mainline_chinese_notation(&document).ok())
+                    .unwrap_or_default();
+            ReferenceGameDocument {
+                game,
+                document_json,
+                mainline_notation,
+            }
         }))
     }
 
@@ -1842,6 +1869,11 @@ impl ReferenceLibrary {
                 "SELECT g.id, g.title, g.red_player, g.black_player, g.result, g.event_name,
                     g.round_name, g.game_date, g.opening,
                     (SELECT category_code FROM game_opening_classifications c
+                     WHERE c.game_id=g.id AND c.is_primary=1 AND c.status='classified'
+                       AND c.classifier_version_id=(SELECT id FROM opening_classifier_versions WHERE active=1 ORDER BY id DESC LIMIT 1)
+                     ORDER BY c.id DESC LIMIT 1),
+                    (SELECT o.name FROM game_opening_classifications c
+                     JOIN opening_categories o ON o.code=c.category_code
                      WHERE c.game_id=g.id AND c.is_primary=1 AND c.status='classified'
                        AND c.classifier_version_id=(SELECT id FROM opening_classifier_versions WHERE active=1 ORDER BY id DESC LIMIT 1)
                      ORDER BY c.id DESC LIMIT 1),
@@ -2263,6 +2295,35 @@ fn mainline_iccs(document: &manual_format::ManualDocument) -> Result<Vec<String>
         return Err(ReferenceLibraryError::InvalidData(
             "棋谱没有主线着法".into(),
         ));
+    }
+    Ok(result)
+}
+
+fn mainline_chinese_notation(document: &manual_format::ManualDocument) -> Result<Vec<String>> {
+    let mut board = Board::from_fen(&document.starting_fen)
+        .map_err(|error| ReferenceLibraryError::InvalidData(error.to_string()))?;
+    let mut parent = document.tree.root_id();
+    let mut result = Vec::new();
+    loop {
+        let branches = document
+            .tree
+            .branches(parent)
+            .map_err(|error| ReferenceLibraryError::InvalidData(error.to_string()))?;
+        let Some(node) = branches
+            .iter()
+            .find(|node| node.is_mainline)
+            .or_else(|| branches.first())
+        else {
+            break;
+        };
+        let notation = board
+            .chinese_move_notation(node.mv)
+            .map_err(|error| ReferenceLibraryError::InvalidData(error.to_string()))?;
+        result.push(notation);
+        board = board
+            .apply_move(node.mv)
+            .map_err(|error| ReferenceLibraryError::InvalidData(error.to_string()))?;
+        parent = node.id;
     }
     Ok(result)
 }
@@ -2871,7 +2932,12 @@ fn rebuild_position_statistics(connection: &Connection) -> Result<()> {
          (position_key,position_hash,move_iccs,notation,samples,red_wins,draws,black_wins,first_year,last_year)
          SELECT m.position_key,m.position_hash,m.move_iccs,MAX(m.notation),COUNT(*),
                 SUM(g.result='1-0'),SUM(g.result='1/2-1/2'),SUM(g.result='0-1'),
-                MIN(CAST(substr(g.game_date,1,4) AS INTEGER)),MAX(CAST(substr(g.game_date,1,4) AS INTEGER))
+                MIN(CASE WHEN substr(g.game_date,1,4) GLOB '[0-9][0-9][0-9][0-9]'
+                      AND CAST(substr(g.game_date,1,4) AS INTEGER) BETWEEN 1000 AND 3000
+                      THEN CAST(substr(g.game_date,1,4) AS INTEGER) END),
+                MAX(CASE WHEN substr(g.game_date,1,4) GLOB '[0-9][0-9][0-9][0-9]'
+                      AND CAST(substr(g.game_date,1,4) AS INTEGER) BETWEEN 1000 AND 3000
+                      THEN CAST(substr(g.game_date,1,4) AS INTEGER) END)
          FROM reference_game_moves m
          JOIN reference_games g ON g.id=m.game_id
          WHERE g.active=1 AND g.validation_status='valid'
@@ -2896,9 +2962,15 @@ fn rebuild_opening_category_stats(connection: &Connection) -> Result<()> {
                 COALESCE(SUM(CASE WHEN x.is_primary=1 AND x.status='classified'
                        AND g.active=1 AND g.validation_status='valid' AND g.result='0-1' THEN 1 ELSE 0 END),0),
                 MIN(CASE WHEN x.is_primary=1 AND x.status='classified'
-                       AND g.active=1 AND g.validation_status='valid' THEN CAST(substr(g.game_date,1,4) AS INTEGER) END),
+                       AND g.active=1 AND g.validation_status='valid'
+                       AND substr(g.game_date,1,4) GLOB '[0-9][0-9][0-9][0-9]'
+                       AND CAST(substr(g.game_date,1,4) AS INTEGER) BETWEEN 1000 AND 3000
+                       THEN CAST(substr(g.game_date,1,4) AS INTEGER) END),
                 MAX(CASE WHEN x.is_primary=1 AND x.status='classified'
-                       AND g.active=1 AND g.validation_status='valid' THEN CAST(substr(g.game_date,1,4) AS INTEGER) END),
+                       AND g.active=1 AND g.validation_status='valid'
+                       AND substr(g.game_date,1,4) GLOB '[0-9][0-9][0-9][0-9]'
+                       AND CAST(substr(g.game_date,1,4) AS INTEGER) BETWEEN 1000 AND 3000
+                       THEN CAST(substr(g.game_date,1,4) AS INTEGER) END),
                 ?1
          FROM opening_categories c
          LEFT JOIN game_opening_classifications x
@@ -3062,28 +3134,43 @@ fn seed_opening_catalog(connection: &Connection) -> Result<()> {
     .enumerate()
     {
         connection.execute(
-            "INSERT OR IGNORE INTO opening_series (code,name,sort_order) VALUES (?1,?2,?3)",
+            "INSERT INTO opening_series (code,name,sort_order) VALUES (?1,?2,?3)
+             ON CONFLICT(code) DO UPDATE SET name=excluded.name,sort_order=excluded.sort_order",
             params![code, name, index as i32],
         )?;
         connection.execute(
-            "INSERT OR IGNORE INTO opening_categories
-             (code,series_code,parent_code,name,sort_order,active) VALUES (?1,?1,NULL,?2,?3,1)",
+            "INSERT INTO opening_categories
+             (code,series_code,parent_code,name,sort_order,active) VALUES (?1,?1,NULL,?2,?3,1)
+             ON CONFLICT(code) DO UPDATE SET
+               series_code=excluded.series_code,parent_code=excluded.parent_code,
+               name=excluded.name,sort_order=excluded.sort_order,active=1",
             params![code, name, index as i32],
         )?;
     }
     for (code, series, name, sort_order) in [
         ("A01", "A", "飞相局", 101),
         ("A02", "A", "起马局", 102),
-        ("A03", "A", "仕角炮与过宫炮", 103),
+        ("A03", "A", "仕角炮", 103),
+        ("A04", "A", "过宫炮", 104),
         ("B01", "B", "中炮类开局", 201),
-        ("B02", "B", "中炮对反宫马及其他", 202),
+        ("B02", "B", "中炮对反宫马", 202),
+        ("B03", "B", "中炮对单提马", 203),
         ("C01", "C", "中炮对屏风马", 301),
-        ("D01", "D", "顺炮与列炮", 401),
-        ("E01", "E", "仙人指路与挺兵局", 501),
+        ("C02", "C", "五七炮对屏风马", 302),
+        ("C03", "C", "五六炮对屏风马", 303),
+        ("C04", "C", "中炮过河车对屏风马", 304),
+        ("D01", "D", "顺炮", 401),
+        ("D02", "D", "列炮", 402),
+        ("E01", "E", "仙人指路", 501),
+        ("E02", "E", "对兵局", 502),
+        ("E03", "E", "边兵局", 503),
     ] {
         connection.execute(
-            "INSERT OR IGNORE INTO opening_categories
-             (code,series_code,parent_code,name,sort_order,active) VALUES (?1,?2,?2,?3,?4,1)",
+            "INSERT INTO opening_categories
+             (code,series_code,parent_code,name,sort_order,active) VALUES (?1,?2,?2,?3,?4,1)
+             ON CONFLICT(code) DO UPDATE SET
+               series_code=excluded.series_code,parent_code=excluded.parent_code,
+               name=excluded.name,sort_order=excluded.sort_order,active=1",
             params![code, series, name, sort_order],
         )?;
     }
@@ -3094,16 +3181,16 @@ fn seed_opening_catalog(connection: &Connection) -> Result<()> {
     )?;
     connection.execute(
         "INSERT INTO opening_classifier_versions (name,status,active,created_at)
-         VALUES ('builtin-practical-v1','active',1,?1)
+         VALUES ('builtin-practical-v2','active',1,?1)
          ON CONFLICT(name) DO UPDATE SET status='active', active=1",
         [now()],
     )?;
     connection.execute(
-        "UPDATE opening_classifier_versions SET active=0 WHERE name<>'builtin-practical-v1'",
+        "UPDATE opening_classifier_versions SET active=0 WHERE name<>'builtin-practical-v2'",
         [],
     )?;
     let version: i64 = connection.query_row(
-        "SELECT id FROM opening_classifier_versions WHERE name='builtin-practical-v1'",
+        "SELECT id FROM opening_classifier_versions WHERE name='builtin-practical-v2'",
         [],
         |row| row.get(0),
     )?;
@@ -3111,33 +3198,50 @@ fn seed_opening_catalog(connection: &Connection) -> Result<()> {
         "DELETE FROM opening_patterns WHERE classifier_version_id=?1",
         [version],
     )?;
+    connection.execute(
+        "DELETE FROM opening_aliases
+         WHERE source IN ('builtin-practical-v1','builtin-practical-v2')",
+        [],
+    )?;
     for (code, aliases) in [
         ("A01", &["飞相局", "飞相"] as &[&str]),
         ("A02", &["起马局", "起马"]),
-        ("A03", &["仕角炮", "过宫炮", "仕角炮局", "过宫炮局"]),
+        ("A03", &["仕角炮", "仕角炮局"]),
+        ("A04", &["过宫炮", "过宫炮局"]),
         ("B01", &["中炮", "中炮局", "当头炮"]),
         ("B02", &["中炮对反宫马", "反宫马"]),
+        ("B03", &["中炮对单提马", "单提马"]),
         ("C01", &["中炮对屏风马", "屏风马"]),
-        ("D01", &["顺炮", "列炮", "顺炮局", "列炮局"]),
-        ("E01", &["仙人指路", "进兵局", "挺兵局", "对兵局"]),
+        ("C02", &["五七炮对屏风马", "五七炮", "中炮七路马"]),
+        ("C03", &["五六炮对屏风马", "五六炮"]),
+        ("C04", &["中炮过河车对屏风马", "过河车"]),
+        ("D01", &["顺炮", "顺炮局"]),
+        ("D02", &["列炮", "列炮局"]),
+        ("E01", &["仙人指路", "进兵局", "挺兵局"]),
+        ("E02", &["对兵局", "对兵"]),
+        ("E03", &["边兵局", "进边兵"]),
     ] {
         for alias in aliases {
             connection.execute(
                 "INSERT OR IGNORE INTO opening_aliases (alias,category_code,reviewed,source)
-                 VALUES (?1,?2,1,'builtin-practical-v1')",
+                 VALUES (?1,?2,1,'builtin-practical-v2')",
                 params![alias, code],
             )?;
         }
     }
     for (code, priority, prefix) in [
-        ("C01", 200, &["h2e2", "b9c7"] as &[&str]),
-        ("C01", 200, &["h2e2", "h9g7"]),
-        ("C01", 200, &["b2e2", "b9c7"]),
-        ("C01", 200, &["b2e2", "h9g7"]),
-        ("D01", 190, &["h2e2", "b7e7"]),
-        ("D01", 190, &["h2e2", "h7e7"]),
-        ("D01", 190, &["b2e2", "b7e7"]),
-        ("D01", 190, &["b2e2", "h7e7"]),
+        ("C01", 260, &["h2e2", "b9c7", "h0g2", "h9g7"] as &[&str]),
+        ("C01", 260, &["h2e2", "h9g7", "h0g2", "b9c7"]),
+        ("C01", 260, &["b2e2", "h9g7", "b0c2", "b9c7"]),
+        ("C01", 260, &["b2e2", "b9c7", "b0c2", "h9g7"]),
+        ("C02", 280, &["h2e2", "b9c7", "h0g2", "h9g7", "b2c2"]),
+        ("C02", 280, &["b2e2", "h9g7", "b0c2", "b9c7", "h2g2"]),
+        ("C03", 280, &["h2e2", "b9c7", "h0g2", "h9g7", "b2d2"]),
+        ("C03", 280, &["b2e2", "h9g7", "b0c2", "b9c7", "h2f2"]),
+        ("D01", 220, &["h2e2", "h7e7"]),
+        ("D01", 220, &["b2e2", "b7e7"]),
+        ("D02", 220, &["h2e2", "b7e7"]),
+        ("D02", 220, &["b2e2", "h7e7"]),
         ("B01", 100, &["h2e2"]),
         ("B01", 100, &["b2e2"]),
         ("A01", 100, &["g0e2"]),
@@ -3148,16 +3252,17 @@ fn seed_opening_catalog(connection: &Connection) -> Result<()> {
         ("A02", 100, &["h0i2"]),
         ("A03", 100, &["h2f2"]),
         ("A03", 100, &["b2d2"]),
-        ("A03", 100, &["h2d2"]),
-        ("A03", 100, &["b2f2"]),
+        ("A04", 100, &["h2d2"]),
+        ("A04", 100, &["b2f2"]),
         ("E01", 100, &["c3c4"]),
         ("E01", 100, &["g3g4"]),
-        ("E01", 100, &["a3a4"]),
-        ("E01", 100, &["i3i4"]),
+        ("E03", 100, &["a3a4"]),
+        ("E03", 100, &["i3i4"]),
         ("E01", 100, &["e3e4"]),
     ] {
         insert_move_prefix_pattern(connection, version, code, prefix, priority)?;
     }
+    rebuild_opening_category_stats(connection)?;
     Ok(())
 }
 
@@ -3237,24 +3342,40 @@ fn looks_like_event_name(value: &str) -> bool {
 }
 
 fn practical_alias_category(value: &str) -> Option<&'static str> {
-    if value.contains("中炮") && value.contains("屏风马") {
+    if value.contains("五七炮") {
+        Some("C02")
+    } else if value.contains("五六炮") {
+        Some("C03")
+    } else if value.contains("中炮") && value.contains("过河车") && value.contains("屏风马")
+    {
+        Some("C04")
+    } else if value.contains("中炮") && value.contains("屏风马") {
         Some("C01")
     } else if value.contains("顺炮") || value.contains("列炮") {
-        Some("D01")
+        if value.contains("列炮") {
+            Some("D02")
+        } else {
+            Some("D01")
+        }
     } else if value.contains("飞相") {
         Some("A01")
     } else if value.contains("起马") {
         Some("A02")
-    } else if value.contains("仕角炮") || value.contains("过宫炮") {
+    } else if value.contains("仕角炮") {
         Some("A03")
+    } else if value.contains("过宫炮") {
+        Some("A04")
     } else if value.contains("反宫马") {
         Some("B02")
-    } else if value.contains("仙人指路")
-        || value.contains("进兵")
-        || value.contains("挺兵")
-        || value.contains("对兵")
+    } else if value.contains("单提马") {
+        Some("B03")
+    } else if value.contains("仙人指路") || value.contains("进兵") || value.contains("挺兵")
     {
         Some("E01")
+    } else if value.contains("对兵") {
+        Some("E02")
+    } else if value.contains("边兵") {
+        Some("E03")
     } else if value.contains("中炮") || value.contains("当头炮") {
         Some("B01")
     } else {
@@ -3433,8 +3554,9 @@ fn map_game(row: &rusqlite::Row<'_>) -> rusqlite::Result<ReferenceGameSummary> {
         game_date: row.get(7)?,
         opening: row.get(8)?,
         opening_code: row.get(9)?,
-        canonical_fingerprint: row.get(10)?,
-        move_count: row.get::<_, i64>(11)?.max(0) as u32,
+        opening_name: row.get(10)?,
+        canonical_fingerprint: row.get(11)?,
+        move_count: row.get::<_, i64>(12)?.max(0) as u32,
     })
 }
 
@@ -3960,7 +4082,7 @@ mod tests {
         let second = library.rebuild_opening_catalog().unwrap();
         assert_eq!(first.category_count, second.category_count);
         assert_eq!(first.pattern_count, second.pattern_count);
-        assert_eq!(first.pattern_count, 25);
+        assert_eq!(first.pattern_count, 29);
         assert_eq!(
             library
                 .connection
@@ -4000,10 +4122,75 @@ mod tests {
             )
             .unwrap();
         assert_eq!(classified, "B01");
+        let summary = library.list_games(None, None, 1, 0).unwrap().remove(0);
+        assert_eq!(summary.opening_code.as_deref(), Some("B01"));
+        assert_eq!(summary.opening_name.as_deref(), Some("中炮类开局"));
+        assert_ne!(
+            summary.opening_name.as_deref(),
+            Some(summary.opening.as_str())
+        );
         let openings = library.browse_openings(Some("B")).unwrap();
         let central_cannon = openings.iter().find(|item| item.code == "B01").unwrap();
         assert_eq!(central_cannon.game_count, 1);
         assert_eq!(central_cannon.red_wins, 1);
+        assert_eq!(central_cannon.first_year, Some(2026));
+        assert_eq!(central_cannon.last_year, Some(2026));
+
+        library
+            .connection
+            .execute("UPDATE reference_games SET game_date=''", [])
+            .unwrap();
+        let result = library.classify_library(None).unwrap();
+        assert_eq!(result.classified_games, 1);
+        let openings = library.browse_openings(Some("B")).unwrap();
+        let central_cannon = openings.iter().find(|item| item.code == "B01").unwrap();
+        assert_eq!(central_cannon.game_count, 1);
+        assert_eq!(central_cannon.first_year, None);
+        assert_eq!(central_cannon.last_year, None);
+    }
+
+    #[test]
+    fn practical_opening_v2_uses_moves_instead_of_event_titles() {
+        let library = ReferenceLibrary::open_in_memory().unwrap();
+        let version: i64 = library
+            .connection
+            .query_row(
+                "SELECT id FROM opening_classifier_versions WHERE name='builtin-practical-v2' AND active=1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let runtime = load_opening_classifier_runtime(&library.connection, version).unwrap();
+        let classify = |raw_opening: &str, moves: &[&str]| {
+            let moves = moves
+                .iter()
+                .map(|item| item.to_string())
+                .collect::<Vec<_>>();
+            classify_game_draft(
+                &library.connection,
+                "game",
+                raw_opening,
+                &moves,
+                true,
+                &runtime,
+            )
+            .unwrap()
+        };
+
+        let screen_horse = classify(
+            "2026年全国象棋锦标赛（团体）",
+            &["h2e2", "b9c7", "h0g2", "h9g7"],
+        );
+        assert_eq!(screen_horse.primary_code.as_deref(), Some("C01"));
+
+        let central_cannon = classify("2026年全国象棋锦标赛（团体）", &["h2e2", "b9c7"]);
+        assert_eq!(central_cannon.primary_code.as_deref(), Some("B01"));
+
+        let same_side_cannon = classify("2026年全国象棋锦标赛（团体）", &["h2e2", "h7e7"]);
+        assert_eq!(same_side_cannon.primary_code.as_deref(), Some("D01"));
+
+        let opposite_cannon = classify("2026年全国象棋锦标赛（团体）", &["h2e2", "b7e7"]);
+        assert_eq!(opposite_cannon.primary_code.as_deref(), Some("D02"));
     }
 
     #[test]
@@ -4466,14 +4653,14 @@ mod tests {
             .execute(
                 "INSERT INTO opening_categories
              (code,series_code,parent_code,name,sort_order,active)
-             VALUES ('C03','C','C','测试布局',3,1)",
+             VALUES ('C99','C','C','测试布局',3,1)",
                 [],
             )
             .unwrap();
         library.connection.execute(
             "INSERT INTO game_opening_classifications
              (game_id,category_code,candidate_codes_json,method,confidence,matched_plies,classifier_version_id,is_primary,status,created_at)
-             VALUES (?1,'C03','[\"C03\"]','test',1,1,1,1,'classified',?2)",
+             VALUES (?1,'C99','[\"C99\"]','test',1,1,1,1,'classified',?2)",
             params![game_id, now()],
         ).unwrap();
         library
@@ -4499,7 +4686,7 @@ mod tests {
         library.connection.execute(
             "INSERT INTO game_opening_classifications
              (game_id,category_code,candidate_codes_json,method,confidence,matched_plies,classifier_version_id,is_primary,status,created_at)
-             VALUES (?1,'C03','[\"C03\"]','test',1,1,?2,1,'classified',?3)",
+             VALUES (?1,'C99','[\"C99\"]','test',1,1,?2,1,'classified',?3)",
             params![game_id, test_version, now()],
         ).unwrap();
         rebuild_opening_category_stats(&library.connection).unwrap();
@@ -4547,7 +4734,7 @@ mod tests {
         let result = classify_game(
             &library.connection,
             &game_id,
-            "C03 测试布局",
+            "C99 测试布局",
             &["h2e2".into()],
             false,
             1,
@@ -4575,7 +4762,7 @@ mod tests {
             .execute(
                 "INSERT INTO opening_categories
                  (code,series_code,parent_code,name,sort_order,active)
-                 VALUES ('C03','C','C','测试布局',3,1)",
+                 VALUES ('C99','C','C','测试布局',3,1)",
                 [],
             )
             .unwrap();
@@ -4589,7 +4776,7 @@ mod tests {
             .execute(
                 "INSERT INTO opening_patterns
                  (classifier_version_id,category_code,pattern_type,position_key,match_depth)
-                 VALUES (1,'C03','position',?1,1)",
+                 VALUES (1,'C99','position',?1,1)",
                 [position_key],
             )
             .unwrap();
@@ -4605,7 +4792,7 @@ mod tests {
             &runtime,
         )
         .unwrap();
-        assert_eq!(result.primary_code.as_deref(), Some("C03"));
+        assert_eq!(result.primary_code.as_deref(), Some("C99"));
         assert_eq!(result.method, "deepest_position");
         assert_eq!(result.matched_plies, 1);
     }
@@ -4613,7 +4800,7 @@ mod tests {
     #[test]
     fn position_pattern_prefers_the_largest_rule_match_depth() {
         let library = ReferenceLibrary::open_in_memory().unwrap();
-        for (code, name) in [("C03", "浅规则"), ("C04", "深规则")] {
+        for (code, name) in [("C98", "浅规则"), ("C99", "深规则")] {
             library
                 .connection
                 .execute(
@@ -4637,12 +4824,12 @@ mod tests {
             .execute(
                 "INSERT INTO opening_patterns
              (classifier_version_id,category_code,pattern_type,position_key,match_depth)
-             VALUES (1,'C03','position',?1,1),(1,'C04','position',?2,8)",
+             VALUES (1,'C98','position',?1,1),(1,'C99','position',?2,8)",
                 params![after_key, start_key],
             )
             .unwrap();
 
         let matches = matching_position_patterns(&library.connection, &["h2e2".into()], 1).unwrap();
-        assert_eq!(matches[0], ("C04".into(), 8));
+        assert_eq!(matches[0], ("C99".into(), 8));
     }
 }

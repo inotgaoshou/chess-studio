@@ -24,7 +24,8 @@ function gameDateLabel(value: string) {
 }
 
 function openingLabel(game: ReferenceGameSummaryDto) {
-  return (game.openingCode ?? game.opening) || "待分类";
+  if (!game.openingCode) return "待分类";
+  return game.openingName ? `${game.openingCode} · ${game.openingName}` : game.openingCode;
 }
 
 function playerMark(name: string, fallback: string) {
@@ -121,7 +122,6 @@ export function MasterOpeningPanel({ fen, enabled, queryMoves, queryGames, resol
       </header>
 
       <ReferencePositionPanel
-        key={`${fen}:${refresh}`}
         fen={fen}
         enabled={enabled}
         query={queryMoves}
@@ -133,6 +133,7 @@ export function MasterOpeningPanel({ fen, enabled, queryMoves, queryGames, resol
         title="候选着法"
         subtitle="样本胜率"
         maxMoves={8}
+        refreshToken={refresh}
         className="master-opening-moves"
       />
 
@@ -157,8 +158,8 @@ export function MasterOpeningPanel({ fen, enabled, queryMoves, queryGames, resol
             <button type="button" className={viewMode === "compact" ? "active" : ""} onClick={() => setViewMode("compact")}>简洁</button>
           </nav>
         </div>
-        {loading ? <p>正在匹配当前局面的实战棋谱…</p>
-          : error ? <p className="error">{error}</p>
+        {loading && games.length === 0 ? <p>正在匹配当前局面的实战棋谱…</p>
+          : error && games.length === 0 ? <p className="error">{error}</p>
           : games.length === 0 ? <p>当前局面暂无命中棋谱；可继续走几步后自动缩小范围。</p>
           : <div className={`master-opening-game-list ${viewMode}`}>
             {games.map((game) => <button
@@ -180,8 +181,6 @@ export function MasterOpeningPanel({ fen, enabled, queryMoves, queryGames, resol
               </> : <>
                 <i className="master-opening-versus compact" aria-hidden="true"><b className="red">{playerMark(game.redPlayer, "红")}</b><b className="black">{playerMark(game.blackPlayer, "黑")}</b></i>
                 <strong>{outcomeLabel(game)}</strong>
-                <span><em>{openingLabel(game)}</em>{game.eventName || "赛事不详"}</span>
-                <small>{gameDateLabel(game.gameDate)}{game.moveCount ? ` · ${game.moveCount} 手` : ""}</small>
               </>}
               <em className="master-opening-preview-label">查看</em>
             </button>)}

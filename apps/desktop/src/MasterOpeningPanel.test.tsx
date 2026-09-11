@@ -13,7 +13,9 @@ const game = {
   eventName: "测试赛",
   roundName: "第1轮",
   gameDate: "2026-01-01",
-  opening: "中炮",
+  opening: "2026年全国象棋锦标赛（团体）",
+  openingCode: "C01",
+  openingName: "中炮对屏风马",
   moveCount: 72,
 };
 
@@ -70,6 +72,8 @@ describe("MasterOpeningPanel", () => {
     expect(await screen.findByText("陈松顺 胜 惠颂祥")).toBeTruthy();
     expect(screen.getByRole("button", { name: "简洁" }).className).toContain("active");
     expect(screen.queryByText("广东 陈松顺 胜 江苏 惠颂祥")).toBeNull();
+    expect(screen.queryByText(/测试赛/)).toBeNull();
+    expect(screen.queryByText(/72 手/)).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "详细" }));
 
@@ -77,5 +81,7 @@ describe("MasterOpeningPanel", () => {
     expect(screen.getByText("广东 陈松顺 胜 江苏 惠颂祥")).toBeTruthy();
     expect(screen.getByText(/测试赛/)).toBeTruthy();
     expect(screen.getByText(/72 手/)).toBeTruthy();
+    expect(screen.getByText("C01 · 中炮对屏风马")).toBeTruthy();
+    expect(screen.queryByText(/C01 · 2026年全国/)).toBeNull();
   });
 });

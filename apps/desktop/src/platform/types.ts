@@ -760,9 +760,10 @@ export type ReferenceGameSummaryDto = {
   gameDate: string;
   opening: string;
   openingCode?: string;
+  openingName?: string;
   moveCount: number;
 };
-export type ReferenceGameDocumentDto = { game: ReferenceGameSummaryDto; documentJson: string };
+export type ReferenceGameDocumentDto = { game: ReferenceGameSummaryDto; documentJson: string; mainlineNotation?: string[] };
 export type ReferencePublishResultDto = { status: string; inserted: number; duplicates: number; removed?: number };
 export type ReferenceOfflinePackageResultDto = { sha256: string; compressedBytes: number; gameCount: number };
 export type ReferenceOfflinePackageManifestDto = { version: string; packageUrl: string; sha256: string; gameCount: number; publishedAt?: string };
@@ -1060,6 +1061,7 @@ export interface ChessPlatform {
   browseReferenceOpenings(parentCode?: string): Promise<OpeningCategoryDto[]>;
   listReferenceGames(openingCode?: string, query?: string, limit?: number, offset?: number, filters?: ReferenceGameFilters): Promise<ReferenceGameSummaryDto[]>;
   getReferenceGameDocument(gameId: string): Promise<ReferenceGameDocumentDto | undefined>;
+  openReferenceGame(gameId: string): Promise<Partial<BoardState>>;
   createServerReferenceSource(displayName: string, licenseStatus: string, licenseNote: string, publicLocator: string | undefined, serverUrl: string): Promise<string>;
   publishReferenceBatch(batchId: string, serverSourceId: string, serverUrl: string): Promise<ReferencePublishResultDto>;
   getReferenceOfflinePackageManifest(serverUrl: string): Promise<ReferenceOfflinePackageManifestDto>;

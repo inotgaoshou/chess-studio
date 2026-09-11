@@ -46,6 +46,7 @@ mod tests {
             "resolve_reference_duplicate",
             "rebuild_reference_opening_catalog",
             "classify_reference_library",
+            "open_reference_game",
         ] {
             assert!(permissions.contains(&format!("\"{command}\"")));
         }

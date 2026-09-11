@@ -2,13 +2,24 @@ import { useEffect, useMemo, useState } from "react";
 import { BookOpen, Check, Database, Download, Eye, FileText, FolderOpen, ListChecks, RefreshCw, Search, ShieldCheck, Upload, X } from "lucide-react";
 import type { ChessPlatform, OpeningCategoryDto, PositionMoveStatDto, ReferenceGameDocumentDto, ReferenceGameFilters, ReferenceGameSummaryDto, ReferenceImportBatchDto, ReferenceReviewIssueDto, ReferenceSourceDto } from "./platform/types";
 
-type Props = { platform: ChessPlatform; currentFen?: string; initialGameId?: string; onClose(): void };
+type Props = {
+  platform: ChessPlatform;
+  currentFen?: string;
+  initialGameId?: string;
+  onOpenReferenceGame?(gameId: string): void | Promise<void>;
+  onClose(): void;
+};
 type Tab = "openings" | "games" | "sources" | "batches";
 type ClassificationStatus = "all" | "classified" | "pending";
 type SearchMode = "match" | "position";
 
 function resultLabel(result: string) {
   return result === "1-0" ? "红胜" : result === "0-1" ? "黑胜" : result === "1/2-1/2" ? "和棋" : "未知";
+}
+
+function gameOpeningLabel(game: ReferenceGameSummaryDto) {
+  if (!game.openingCode) return "待分类";
+  return game.openingName ? `${game.openingCode} · ${game.openingName}` : game.openingCode;
 }
 
 function percent(value: number, total: number) {
@@ -116,7 +127,7 @@ function ReviewIssueRow({ issue, categories, busy, onIdentity, onOpening, onDupl
   </div>;
 }
 
-export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, onClose }: Props) {
+export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, onOpenReferenceGame, onClose }: Props) {
   const desktop = platform.kind === "desktop";
   const [tab, setTab] = useState<Tab>(initialGameId ? "games" : "openings");
   const [openings, setOpenings] = useState<OpeningCategoryDto[]>([]);
@@ -398,6 +409,19 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); setBusy(false); }
   }
 
+  async function openSelectedReferenceGame() {
+    if (!selectedGame?.id || !onOpenReferenceGame) return;
+    setBusy(true);
+    setError("");
+    try {
+      await onOpenReferenceGame(selectedGame.id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function loadOfflinePackageManifest() {
     if (!serverUrl.trim()) {
       setError("请先填写同步服务地址。");
@@ -419,6 +443,7 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
     try { return referenceDocumentPreview(selectedDocument.documentJson); }
     catch { return undefined; }
   }, [selectedDocument]);
+  const previewMainline = selectedDocument?.mainlineNotation?.length ? selectedDocument.mainlineNotation : documentPreview?.mainline ?? [];
 
   return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="reference-library-dialog" role="dialog" aria-modal="true" aria-label="参考实战库与布局探索">
@@ -485,7 +510,7 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
             {games.length === 0 ? <p>没有匹配棋局。可以换个棋手、赛事或切到“全部”。</p> : games.map((game) => <button key={game.id} type="button" role="option" aria-selected={game.id === selectedGameId} className={game.id === selectedGameId ? "active" : ""} onClick={() => setSelectedGameId(game.id)}>
               <span><b>{game.title || `${game.redPlayer || "红方未知"} 对 ${game.blackPlayer || "黑方未知"}`}</b><small>{game.redPlayer || "红方未知"} vs {game.blackPlayer || "黑方未知"}</small></span>
               <span><b>{game.eventName || "赛事未知"}</b><small>{game.gameDate || "日期未知"} {game.roundName}</small></span>
-              <em>{game.openingCode ?? "待分类"}</em><i>{game.moveCount} 手</i>
+              <em title={gameOpeningLabel(game)}>{gameOpeningLabel(game)}</em><i>{game.moveCount} 手</i>
             </button>)}
           </div> : <div className="reference-position-search-list">
             {!currentFen ? <p>当前没有可用棋盘局面，打开一盘棋后再试。</p> : positionLoading ? <p>正在聚合当前局面实战…</p> : positionError ? <p className="error">{positionError}</p> : positionMoves.length === 0 ? <p>当前局面暂无本地实战样本。</p> : positionMoves.map((move) => {
@@ -501,13 +526,13 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
         </main>
         <section className="reference-game-preview" aria-label="参考棋局预览">
           {!selectedGame ? <p>选择左侧棋局后查看来源文档摘要。</p> : <>
-            <header><span><Eye size={14}/><strong>{selectedGame.title || "未命名棋局"}</strong><small>{selectedGame.redPlayer || "红方未知"} vs {selectedGame.blackPlayer || "黑方未知"} · {resultLabel(selectedGame.result)}</small></span></header>
-            <dl><div><dt>布局</dt><dd>{selectedGame.openingCode ? `${selectedGame.openingCode} · ${selectedGame.opening || "未命名"}` : selectedGame.opening || "待分类"}</dd></div><div><dt>赛事</dt><dd>{selectedGame.eventName || "未知"}</dd></div><div><dt>日期</dt><dd>{selectedGame.gameDate || "未知"}</dd></div><div><dt>手数</dt><dd>{selectedGame.moveCount}</dd></div></dl>
+            <header><span><Eye size={14}/><strong>{selectedGame.title || "未命名棋局"}</strong><small>{selectedGame.redPlayer || "红方未知"} vs {selectedGame.blackPlayer || "黑方未知"} · {resultLabel(selectedGame.result)}</small></span>{onOpenReferenceGame && <button type="button" disabled={busy} onClick={() => void openSelectedReferenceGame()}><BookOpen size={13}/>载入到棋盘</button>}</header>
+            <dl><div><dt>布局</dt><dd>{gameOpeningLabel(selectedGame)}</dd></div><div><dt>赛事</dt><dd>{selectedGame.eventName || "未知"}</dd></div><div><dt>日期</dt><dd>{selectedGame.gameDate || "未知"}</dd></div><div><dt>手数</dt><dd>{selectedGame.moveCount}</dd></div>{selectedGame.opening && <div><dt>原始标注</dt><dd>{selectedGame.opening}</dd></div>}</dl>
             {documentLoading ? <p>正在读取完整棋谱文档…</p> : documentError ? <p className="error">{documentError}</p> : documentPreview ? <>
               <div className="reference-game-preview-stats"><span>分支点 <b>{documentPreview.branchCount}</b></span><span>注释 <b>{documentPreview.commentCount}</b></span></div>
               <label>起始 FEN<textarea readOnly value={documentPreview.startingFen}/></label>
               {documentPreview.note && <label>资料备注<textarea readOnly value={documentPreview.note}/></label>}
-              <div className="reference-game-mainline"><strong>主线预览</strong><ol>{documentPreview.mainline.slice(0, 40).map((move, index) => <li key={`${move}-${index}`}><span>{index + 1}</span>{move}</li>)}</ol>{documentPreview.mainline.length > 40 && <small>仅显示前 40 手，完整 UUID 树已保存在本地参考库。</small>}</div>
+              <div className="reference-game-mainline"><strong>中文主线预览</strong><ol>{previewMainline.slice(0, 40).map((move, index) => <li key={`${move}-${index}`}><span>{index + 1}</span>{move}</li>)}</ol>{previewMainline.length > 40 && <small>仅显示前 40 手，完整 UUID 树已保存在本地参考库。</small>}</div>
             </> : <p className="error">完整文档 JSON 暂时无法解析。</p>}
           </>}
         </section>

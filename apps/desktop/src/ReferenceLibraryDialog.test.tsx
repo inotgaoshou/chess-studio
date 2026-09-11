@@ -25,7 +25,8 @@ const batch: ReferenceImportBatchDto = {
 const game: ReferenceGameSummaryDto = {
   id: "game-1", canonicalFingerprint: "fingerprint-1", title: "王天一 胜 郑惟桐",
   redPlayer: "王天一", blackPlayer: "郑惟桐", result: "1-0", eventName: "全国大赛",
-  roundName: "第1轮", gameDate: "2026-09-08", opening: "中炮", moveCount: 60,
+  roundName: "第1轮", gameDate: "2026-09-08", opening: "2026年全国象棋锦标赛（团体）",
+  openingCode: "C01", openingName: "中炮对屏风马", moveCount: 60,
 };
 
 function platform(games: ReferenceGameSummaryDto[] = [], openingChild: OpeningCategoryDto = child) {
@@ -40,6 +41,7 @@ function platform(games: ReferenceGameSummaryDto[] = [], openingChild: OpeningCa
     const found = games.find((item) => item.id === gameId);
     return found ? {
       game: found,
+      mainlineNotation: ["炮二平五"],
       documentJson: JSON.stringify({
         startingFen: "startpos",
         note: "本地只读参考文档",
@@ -77,6 +79,7 @@ function platform(games: ReferenceGameSummaryDto[] = [], openingChild: OpeningCa
     listReferenceGames,
     queryReferencePosition,
     getReferenceGameDocument,
+    openReferenceGame: vi.fn(async () => ({ fen: "loaded-reference-fen" })),
     getSyncAccount: vi.fn(async () => ({ serverUrl: "http://127.0.0.1:8080", status: "signedIn" as const })),
     getReferenceOfflinePackageManifest,
     publishReferenceBatch,
@@ -132,6 +135,9 @@ describe("ReferenceLibraryDialog", () => {
     expect((await screen.findAllByText("王天一 胜 郑惟桐")).length).toBeGreaterThan(0);
     expect(await screen.findByDisplayValue("本地只读参考文档")).toBeTruthy();
     await waitFor(() => expect(getReferenceGameDocument).toHaveBeenCalledWith("game-1"));
+    expect((await screen.findAllByText("C01 · 中炮对屏风马")).length).toBeGreaterThan(0);
+    expect(await screen.findByText("原始标注")).toBeTruthy();
+    expect(await screen.findByText("2026年全国象棋锦标赛（团体）")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "待分类" }));
     await waitFor(() => expect(listReferenceGames).toHaveBeenLastCalledWith(
@@ -147,6 +153,20 @@ describe("ReferenceLibraryDialog", () => {
     expect(await screen.findByText("全部参考棋局")).toBeTruthy();
     await waitFor(() => expect(getReferenceGameDocument).toHaveBeenCalledWith("game-1"));
     expect(await screen.findByDisplayValue("本地只读参考文档")).toBeTruthy();
+    expect(await screen.findByText("中文主线预览")).toBeTruthy();
+    expect(await screen.findByText("炮二平五")).toBeTruthy();
+    expect(screen.queryByText("h0-h2")).toBeNull();
+  });
+
+  it("loads a selected reference game into the board only from the explicit action", async () => {
+    const { value } = platform([game]);
+    const onOpenReferenceGame = vi.fn(async () => undefined);
+    render(<ReferenceLibraryDialog platform={value} initialGameId="game-1" onOpenReferenceGame={onOpenReferenceGame} onClose={() => undefined}/>);
+
+    await screen.findByText("炮二平五");
+    fireEvent.click(screen.getByRole("button", { name: /载入到棋盘/ }));
+
+    await waitFor(() => expect(onOpenReferenceGame).toHaveBeenCalledWith("game-1"));
   });
 
   it("queries current-position moves from the game search view", async () => {

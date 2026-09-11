@@ -280,6 +280,7 @@ class DesktopPlatform implements ChessPlatform {
     });
   }
   getReferenceGameDocument(gameId: string) { return invoke<ReferenceGameDocumentDto | undefined>("get_reference_game_document", { gameId }); }
+  openReferenceGame(gameId: string) { return invoke<Partial<BoardState>>("open_reference_game", { gameId }); }
   createServerReferenceSource(displayName: string, licenseStatus: string, licenseNote: string, publicLocator: string | undefined, serverUrl: string) { return invoke<string>("create_server_reference_source", { displayName, licenseStatus, licenseNote, publicLocator: publicLocator ?? null, serverUrl }); }
   publishReferenceBatch(batchId: string, serverSourceId: string, serverUrl: string) { return invoke<ReferencePublishResultDto>("publish_reference_batch", { batchId, serverSourceId, serverUrl }); }
   getReferenceOfflinePackageManifest(serverUrl: string) { return invoke<ReferenceOfflinePackageManifestDto>("get_reference_offline_package_manifest", { serverUrl }); }
@@ -1107,6 +1108,7 @@ class WebPlatform implements ChessPlatform {
     return readJsonResponse<ReferenceGameSummaryDto[]>(await fetch(endpoint));
   }
   async getReferenceGameDocument(): Promise<never> { throw new Error("当前设备没有可用的离线参考实战库"); }
+  async openReferenceGame(): Promise<never> { throw new Error("当前设备没有可用的离线参考实战库"); }
   async createServerReferenceSource(): Promise<never> { throw new Error("Web 端不支持登记本地参考实战来源"); }
   async publishReferenceBatch(): Promise<never> { throw new Error("Web 端不支持发布本地参考实战批次"); }
   async getReferenceOfflinePackageManifest(serverUrl: string): Promise<ReferenceOfflinePackageManifestDto> {

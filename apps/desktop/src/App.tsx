@@ -1444,6 +1444,14 @@ export default function App() {
     setReferenceLibraryInitialGameId(gameId);
     setReferenceLibraryOpen(true);
   }
+
+  async function loadReferenceLibraryGame(gameId: string) {
+    const next = await chessPlatform.openReferenceGame(gameId);
+    applyBoard(next);
+    setReferenceLibraryOpen(false);
+    setReferenceLibraryInitialGameId(undefined);
+    setNotice("已载入参考棋局到棋盘");
+  }
   const [compactEngineCollapsed, setCompactEngineCollapsed] = useState(false);
   const [compactManualCollapsed, setCompactManualCollapsed] = useState(false);
   const [multiEngineComparisonCollapsed, setMultiEngineComparisonCollapsed] = useState(false);
@@ -6407,7 +6415,7 @@ export default function App() {
           aria-label={workspaceMode === "opening" ? "返回复盘模式" : "进入大师开局局面搜索"}
           aria-pressed={workspaceMode === "opening"}
           onClick={toggleReferencePositionSearch}
-        ><Database size={13}/><span>局面</span></button>}
+        ><Database size={15}/></button>}
         <div className="playback-tail">
           <span>第 <strong>{board.history.length}</strong> 着</span>
         </div>
@@ -7031,7 +7039,7 @@ export default function App() {
           onStudyGame={chessPlatform.kind === "desktop" ? () => { setMasterLibraryOpen(false); setGame53StudyOpen(true); } : undefined}
           onClose={() => setMasterLibraryOpen(false)}
         />}
-        {referenceLibraryOpen && <ReferenceLibraryDialog platform={chessPlatform} currentFen={board.fen} initialGameId={referenceLibraryInitialGameId} onClose={() => { setReferenceLibraryOpen(false); setReferenceLibraryInitialGameId(undefined); }}/>}
+        {referenceLibraryOpen && <ReferenceLibraryDialog platform={chessPlatform} currentFen={board.fen} initialGameId={referenceLibraryInitialGameId} onOpenReferenceGame={loadReferenceLibraryGame} onClose={() => { setReferenceLibraryOpen(false); setReferenceLibraryInitialGameId(undefined); }}/>}
       </div>
     );
   }
@@ -7263,7 +7271,7 @@ export default function App() {
         onStudyGame={chessPlatform.kind === "desktop" ? () => { setMasterLibraryOpen(false); setGame53StudyOpen(true); } : undefined}
         onClose={() => setMasterLibraryOpen(false)}
       />}
-      {referenceLibraryOpen && <ReferenceLibraryDialog platform={chessPlatform} currentFen={board.fen} initialGameId={referenceLibraryInitialGameId} onClose={() => { setReferenceLibraryOpen(false); setReferenceLibraryInitialGameId(undefined); }}/>}
+      {referenceLibraryOpen && <ReferenceLibraryDialog platform={chessPlatform} currentFen={board.fen} initialGameId={referenceLibraryInitialGameId} onOpenReferenceGame={loadReferenceLibraryGame} onClose={() => { setReferenceLibraryOpen(false); setReferenceLibraryInitialGameId(undefined); }}/>}
       {coachProfileOpen && <CoachProfileView
         reports={coachReports}
         masterStyleProfiles={masterStyleProfiles}

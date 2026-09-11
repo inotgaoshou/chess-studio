@@ -74,6 +74,7 @@ pub(crate) struct ReferenceGameSummaryDto {
     result: String,
     opening: String,
     opening_code: Option<String>,
+    opening_name: Option<String>,
     move_count: u64,
 }
 
@@ -291,11 +292,23 @@ pub(crate) async fn list_reference_games(
                 String,
                 Option<String>,
                 Option<String>,
+                Option<String>,
+                Option<String>,
                 i64,
             );
             let rows: Vec<FastRow> = sqlx::query_as(
                 "SELECT g.id,g.title,g.red_player,g.black_player,g.event_name,g.round_name,g.game_date,
-                        g.result,g.opening,g.canonical_fingerprint,CAST(g.move_count AS SIGNED)
+                        g.result,g.opening,
+                        (SELECT c.category_code FROM game_opening_classifications c
+                         WHERE c.game_id=g.id AND c.is_primary=1 AND c.status='classified'
+                           AND c.classifier_version_id=(SELECT id FROM opening_classifier_versions WHERE active=1 ORDER BY id DESC LIMIT 1)
+                         ORDER BY c.id DESC LIMIT 1),
+                        (SELECT o.name FROM game_opening_classifications c
+                         JOIN opening_categories o ON o.code=c.category_code
+                         WHERE c.game_id=g.id AND c.is_primary=1 AND c.status='classified'
+                           AND c.classifier_version_id=(SELECT id FROM opening_classifier_versions WHERE active=1 ORDER BY id DESC LIMIT 1)
+                         ORDER BY c.id DESC LIMIT 1),
+                        g.canonical_fingerprint,CAST(g.move_count AS SIGNED)
                  FROM master_games g FORCE INDEX (idx_master_games_valid_date)
                  WHERE g.validation_status='valid'
                    AND EXISTS (
@@ -323,9 +336,10 @@ pub(crate) async fn list_reference_games(
                         game_date: row.6,
                         result: row.7,
                         opening: row.8.unwrap_or_default(),
-                        opening_code: None,
-                        canonical_fingerprint: row.9.unwrap_or_default(),
-                        move_count: nonnegative(row.10),
+                        opening_code: row.9,
+                        opening_name: row.10,
+                        canonical_fingerprint: row.11.unwrap_or_default(),
+                        move_count: nonnegative(row.12),
                     })
                     .collect(),
             ));
@@ -343,11 +357,17 @@ pub(crate) async fn list_reference_games(
         Option<String>,
         Option<String>,
         Option<String>,
+        Option<String>,
         i64,
     );
     let rows: Vec<Row> = sqlx::query_as(
         "SELECT g.id,g.title,g.red_player,g.black_player,g.event_name,g.round_name,g.game_date,
                 g.result,g.opening,(SELECT category_code FROM game_opening_classifications c
+                  WHERE c.game_id=g.id AND c.is_primary=1 AND c.status='classified'
+                    AND c.classifier_version_id=(SELECT id FROM opening_classifier_versions WHERE active=1 ORDER BY id DESC LIMIT 1)
+                  ORDER BY c.id DESC LIMIT 1),
+                (SELECT o.name FROM game_opening_classifications c
+                  JOIN opening_categories o ON o.code=c.category_code
                   WHERE c.game_id=g.id AND c.is_primary=1 AND c.status='classified'
                     AND c.classifier_version_id=(SELECT id FROM opening_classifier_versions WHERE active=1 ORDER BY id DESC LIMIT 1)
                   ORDER BY c.id DESC LIMIT 1),
@@ -400,8 +420,9 @@ pub(crate) async fn list_reference_games(
                 result: row.7,
                 opening: row.8.unwrap_or_default(),
                 opening_code: row.9,
-                canonical_fingerprint: row.10.unwrap_or_default(),
-                move_count: nonnegative(row.11),
+                opening_name: row.10,
+                canonical_fingerprint: row.11.unwrap_or_default(),
+                move_count: nonnegative(row.12),
             })
             .collect(),
     ))
