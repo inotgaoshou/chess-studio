@@ -3,7 +3,8 @@ import { BookOpen, CalendarDays, Database, RefreshCw, ShieldCheck, Trophy, Undo2
 import { ReferencePositionPanel } from "./ReferencePositionPanel";
 import type { PositionMoveStatDto, ReferenceGameSummaryDto } from "./platform/types";
 
-const MASTER_OPENING_QUERY_DEBOUNCE_MS = 520;
+const MASTER_OPENING_QUERY_DEBOUNCE_MS = 220;
+const MASTER_OPENING_FOCUS_DEBOUNCE_MS = 120;
 
 type Props = {
   fen: string;
@@ -93,6 +94,9 @@ function percent(value: number, total: number) {
 
 export function MasterOpeningPanel({ fen, enabled, queryMoves, queryGames, resolveMoveFen, onPreviewMove, onAddMove, onOpenExplorer, onOpenGame }: Props) {
   const generation = useRef(0);
+  const gameCache = useRef(new Map<string, ReferenceGameSummaryDto[]>());
+  const focusTimer = useRef<number | undefined>(undefined);
+  const lastRefresh = useRef(0);
   const [games, setGames] = useState<ReferenceGameSummaryDto[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -105,17 +109,30 @@ export function MasterOpeningPanel({ fen, enabled, queryMoves, queryGames, resol
   useEffect(() => {
     if (!enabled) {
       generation.current += 1;
+      if (focusTimer.current) window.clearTimeout(focusTimer.current);
       setLoading(false);
       return;
     }
     const request = ++generation.current;
+    if (focusTimer.current) window.clearTimeout(focusTimer.current);
+    const forceRefresh = refresh !== lastRefresh.current;
+    lastRefresh.current = refresh;
+    const cached = gameCache.current.get(fen);
+    setSelectedMove(undefined);
+    setMatchScope("当前局面");
+    if (cached && !forceRefresh) {
+      setGames(cached);
+      setSelectedGameId((selected) => selected && cached.some((item) => item.id === selected) ? selected : cached[0]?.id);
+      setError("");
+      setLoading(false);
+      return;
+    }
     const timer = window.setTimeout(() => {
       setLoading(true);
       setError("");
-      setSelectedMove(undefined);
-      setMatchScope("当前局面");
       void queryGames(fen).then((items) => {
         if (request !== generation.current) return;
+        gameCache.current.set(fen, items);
         setGames(items);
         setSelectedGameId((selected) => selected && items.some((item) => item.id === selected) ? selected : items[0]?.id);
       }).catch((cause) => {
@@ -125,7 +142,10 @@ export function MasterOpeningPanel({ fen, enabled, queryMoves, queryGames, resol
         if (request === generation.current) setLoading(false);
       });
     }, MASTER_OPENING_QUERY_DEBOUNCE_MS);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      if (focusTimer.current) window.clearTimeout(focusTimer.current);
+    };
   }, [enabled, fen, refresh]);
 
   async function focusMove(move: PositionMoveStatDto) {
@@ -133,21 +153,34 @@ export function MasterOpeningPanel({ fen, enabled, queryMoves, queryGames, resol
     setMatchScope(`走 ${move.notation} 后`);
     onPreviewMove(move.iccs, move.notation);
     const request = ++generation.current;
-    setLoading(true);
     setError("");
-    try {
-      const nextFen = await resolveMoveFen(fen, move.iccs);
-      if (request !== generation.current) return;
-      const items = await queryGames(nextFen || fen);
-      if (request !== generation.current) return;
-      setGames(items);
-      setSelectedGameId((selected) => selected && items.some((item) => item.id === selected) ? selected : items[0]?.id);
-    } catch (cause) {
-      if (request !== generation.current) return;
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      if (request === generation.current) setLoading(false);
-    }
+    if (focusTimer.current) window.clearTimeout(focusTimer.current);
+    focusTimer.current = window.setTimeout(() => {
+      setLoading(true);
+      void (async () => {
+        try {
+          const nextFen = await resolveMoveFen(fen, move.iccs);
+          if (request !== generation.current) return;
+          const queryFen = nextFen || fen;
+          const cached = gameCache.current.get(queryFen);
+          if (cached) {
+            setGames(cached);
+            setSelectedGameId((selected) => selected && cached.some((item) => item.id === selected) ? selected : cached[0]?.id);
+            return;
+          }
+          const items = await queryGames(queryFen);
+          if (request !== generation.current) return;
+          gameCache.current.set(queryFen, items);
+          setGames(items);
+          setSelectedGameId((selected) => selected && items.some((item) => item.id === selected) ? selected : items[0]?.id);
+        } catch (cause) {
+          if (request !== generation.current) return;
+          setError(cause instanceof Error ? cause.message : String(cause));
+        } finally {
+          if (request === generation.current) setLoading(false);
+        }
+      })();
+    }, MASTER_OPENING_FOCUS_DEBOUNCE_MS);
   }
 
   function resetMoveScope() {

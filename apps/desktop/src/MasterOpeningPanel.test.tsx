@@ -50,8 +50,8 @@ describe("MasterOpeningPanel", () => {
     fireEvent.click(await screen.findByText("炮二平五"));
 
     expect(onPreviewMove).toHaveBeenCalledWith("h2e2", "炮二平五");
-    expect(resolveMoveFen).toHaveBeenCalledWith("start", "h2e2");
     expect(await screen.findByText(/走 炮二平五 后/)).toBeTruthy();
+    await waitFor(() => expect(resolveMoveFen).toHaveBeenCalledWith("start", "h2e2"));
     await waitFor(() => expect(queryGames).toHaveBeenLastCalledWith("after-h2e2"));
     expect(onAddMove).not.toHaveBeenCalled();
     expect(screen.queryByText("对局台待命")).toBeNull();

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { BookOpen, Eye, Plus, RefreshCw } from "lucide-react";
 import type { PositionMoveStatDto } from "./platform/types";
 
-const REFERENCE_POSITION_QUERY_DEBOUNCE_MS = 320;
+const REFERENCE_POSITION_QUERY_DEBOUNCE_MS = 180;
 
 type Props = {
   fen: string;
@@ -26,6 +26,8 @@ function percent(value: number, total: number) {
 
 export function ReferencePositionPanel({ fen, enabled, query, onPreview, onAdd, onOpenExplorer, onFocusMove, selectedMoveIccs, title = "实战库", subtitle = "当前局面", maxMoves = 8, refreshToken = 0, className = "" }: Props) {
   const generation = useRef(0);
+  const moveCache = useRef(new Map<string, PositionMoveStatDto[]>());
+  const lastRefreshKey = useRef(`${refreshToken}:0`);
   const [moves, setMoves] = useState<PositionMoveStatDto[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -38,11 +40,24 @@ export function ReferencePositionPanel({ fen, enabled, query, onPreview, onAdd, 
       return;
     }
     const request = ++generation.current;
+    const refreshKey = `${refreshToken}:${refresh}`;
+    const forceRefresh = refreshKey !== lastRefreshKey.current;
+    lastRefreshKey.current = refreshKey;
+    const cached = moveCache.current.get(fen);
+    if (cached && !forceRefresh) {
+      setMoves(cached);
+      setError("");
+      setLoading(false);
+      return;
+    }
     const timer = window.setTimeout(() => {
       setLoading(true);
       setError("");
       void query(fen).then((items) => {
-        if (request === generation.current) setMoves(items);
+        if (request === generation.current) {
+          moveCache.current.set(fen, items);
+          setMoves(items);
+        }
       }).catch((cause) => {
         if (request === generation.current) {
           setError(cause instanceof Error ? cause.message : String(cause));

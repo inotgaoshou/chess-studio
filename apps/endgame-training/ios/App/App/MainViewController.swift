@@ -14,5 +14,6 @@ final class MainViewController: CAPBridgeViewController {
         bridge?.registerPluginInstance(TrainingStorePlugin())
         bridge?.registerPluginInstance(ScreenOrientationPlugin())
         bridge?.registerPluginInstance(CloudBookPlugin())
+        bridge?.registerPluginInstance(PikafishPlugin())
     }
 }

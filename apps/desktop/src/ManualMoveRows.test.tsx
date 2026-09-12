@@ -49,4 +49,18 @@ describe("ManualMoveRows", () => {
     fireEvent.click(screen.getByText("车8进6"));
     expect(onNavigate).toHaveBeenCalledWith("main");
   });
+
+  it("marks the AI recommended correct move beside inferior recorded moves", () => {
+    render(<div role="table"><ManualMoveRows
+      history={[move("one", "炮二进七", "红方")]}
+      continuation={[]}
+      currentNode="one"
+      qualityByMoveId={new Map([["one", { score: 18, grade: "错", bestNotation: "马二进三" }]])}
+      formatScore={() => ""}
+      onNavigate={vi.fn()}
+    /></div>);
+
+    expect(screen.getByText("正 马二进三")).toBeTruthy();
+    expect(screen.getByTitle("AI 推荐正着：马二进三")).toBeTruthy();
+  });
 });

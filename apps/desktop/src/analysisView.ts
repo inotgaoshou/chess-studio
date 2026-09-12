@@ -65,8 +65,17 @@ export type TrendTurningPoint = TrendSample & {
   deltaCp: number;
   severity: "major" | "critical";
 };
+export type TrendChartBounds = {
+  width: number;
+  height: number;
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+  middle: number;
+};
 
-export const trendChart = {
+export const trendChart: TrendChartBounds = {
   width: 360,
   height: 180,
   left: 30,
@@ -400,18 +409,18 @@ export function positionEvaluation(board: BoardState, analysis: AnalysisLine[]):
   };
 }
 
-export function trendPoints(samples: TrendSample[], totalMoves = samples.length): TrendPoint[] {
+export function trendPoints(samples: TrendSample[], totalMoves = samples.length, chart: TrendChartBounds = trendChart): TrendPoint[] {
   if (samples.length === 0) return [];
   const lastMoveIndex = Math.max(totalMoves - 1, ...samples.map((sample) => sample.moveIndex ?? 0));
-  const horizontalRange = trendChart.right - trendChart.left;
-  const verticalRange = (trendChart.bottom - trendChart.top) / 2;
+  const horizontalRange = chart.right - chart.left;
+  const verticalRange = (chart.bottom - chart.top) / 2;
   return samples.map((sample, index) => ({
     ...sample,
     x: samples.length === 1
-      ? (trendChart.left + trendChart.right) / 2
-      : trendChart.left + (sample.moveIndex ?? index) * (horizontalRange / Math.max(1, lastMoveIndex)),
+      ? (chart.left + chart.right) / 2
+      : chart.left + (sample.moveIndex ?? index) * (horizontalRange / Math.max(1, lastMoveIndex)),
     // Compress decisive evaluations while expanding ordinary +/-100 to +/-300cp swings.
-    y: trendChart.middle - Math.tanh(sample.scoreCp / 180) * verticalRange,
+    y: chart.middle - Math.tanh(sample.scoreCp / 180) * verticalRange,
   }));
 }
 

@@ -116,9 +116,16 @@ export function buildHistoryLineRows(history: MoveItem[], options: ManualLineSco
   return rows;
 }
 
+function recommendedBestMove(quality?: MoveQuality) {
+  const bestMove = quality?.bestNotation?.trim();
+  if (!bestMove) return undefined;
+  return quality?.missedMate || quality?.grade === "中" || quality?.grade === "差" || quality?.grade === "错" ? bestMove : undefined;
+}
+
 function formatLineMoveText(item?: ManualLineMove) {
   if (!item) return "";
-  return `${item.move.notation}${item.score ? `（${item.score}）` : ""}`;
+  const bestMove = recommendedBestMove(item.quality);
+  return `${item.move.notation}${item.score ? `（${item.score}）` : ""}${bestMove ? `（正着：${bestMove}）` : ""}`;
 }
 
 export function formatHistoryLine(history: MoveItem[], options: ManualLineScoreOptions = {}) {
@@ -370,11 +377,11 @@ export function ManualLineDialog({ history, currentLabel, currentMove, qualityBy
               <span className="manual-line-turn">{row.turn}.</span>
               <span className="manual-line-side red">红</span>
               {row.red
-                ? <span className="manual-line-move"><strong>{row.red.move.notation}</strong><em className={row.red.quality?.grade ? `grade-${row.red.quality.grade}` : ""}>{row.red.score}</em></span>
+                ? <span className="manual-line-move"><strong>{row.red.move.notation}</strong><em className={row.red.quality?.grade ? `grade-${row.red.quality.grade}` : ""}>{row.red.score}</em>{recommendedBestMove(row.red.quality) && <small className="manual-line-best">正着 {recommendedBestMove(row.red.quality)}</small>}</span>
                 : <span className="manual-line-move empty">--</span>}
               <span className="manual-line-side black">黑</span>
               {row.black
-                ? <span className="manual-line-move"><strong>{row.black.move.notation}</strong><em className={row.black.quality?.grade ? `grade-${row.black.quality.grade}` : ""}>{row.black.score}</em></span>
+                ? <span className="manual-line-move"><strong>{row.black.move.notation}</strong><em className={row.black.quality?.grade ? `grade-${row.black.quality.grade}` : ""}>{row.black.score}</em>{recommendedBestMove(row.black.quality) && <small className="manual-line-best">正着 {recommendedBestMove(row.black.quality)}</small>}</span>
                 : <span className="manual-line-move empty">--</span>}
             </li>)}
           </ol>}
@@ -395,8 +402,10 @@ function BranchTreeRow({ row, editing, onNavigate, onMakeMainline, onRemove, onT
   activePath: ReadonlySet<string>;
 }) {
   const flyknife = flyknifeMarker(row.move.comment);
+  const bestMove = recommendedBestMove(row.quality);
   const meta = [
     row.quality?.grade && row.quality.score != null ? `${row.quality.grade}${row.quality.score}` : undefined,
+    bestMove ? `正着 ${bestMove}` : undefined,
     !row.quality?.grade && row.score ? row.score : undefined,
     row.mainline ? "主线" : "分支",
     row.engineSource ? `对比 ${row.engineSource}` : undefined,
@@ -452,6 +461,7 @@ function BranchTreeRow({ row, editing, onNavigate, onMakeMainline, onRemove, onT
           <strong>{row.label}</strong>
         </button>
         {row.quality?.grade && <em className={`move-quality-mini grade-${row.quality.grade}`}>{row.quality.grade}</em>}
+        {bestMove && <em className="manual-best-move-tag" title={`AI 推荐正着：${bestMove}`}>正 {bestMove}</em>}
         {row.move.comment && <MessageSquare className="comment-marker" size={12}/>} 
         {flyknife && <em className="manual-flyknife-marker" title={flyknife.intent || `${flyknife.label}飞刀标注`}><Swords size={11}/>飞刀 · {flyknife.label}</em>}
         {row.active && <em className="manual-current-node-badge">当前局面</em>}

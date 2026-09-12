@@ -77,8 +77,8 @@ if [[ "$(sha256_file "$nnue_path")" != "$expected_nnue_sha256" ]]; then
   exit 1
 fi
 
-export ANDROID_VERSION_NAME="${ANDROID_VERSION_NAME:-1.0.0.14}"
-export ANDROID_VERSION_CODE="${ANDROID_VERSION_CODE:-10014}"
+export ANDROID_VERSION_NAME="${ANDROID_VERSION_NAME:-1.0.1}"
+export ANDROID_VERSION_CODE="${ANDROID_VERSION_CODE:-10015}"
 
 cd "$app_dir/android"
 ./gradlew :app:assembleRelease

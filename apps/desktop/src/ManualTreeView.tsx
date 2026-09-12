@@ -4,7 +4,7 @@ import { BranchSelector } from "./BranchSelector";
 import { flyknifeMarker, hasReviewMarker } from "./reviewMarker";
 import type { ManualTreeNode, MoveItem, QualityGrade } from "./platform";
 
-type MoveQuality = { score?: number; grade?: QualityGrade };
+type MoveQuality = { score?: number; grade?: QualityGrade; bestNotation?: string; bestIccs?: string; missedMate?: boolean };
 
 type Props = {
   nodes: ManualTreeNode[];
@@ -32,6 +32,12 @@ function engineSource(comment: string) {
   return match?.[1]?.trim();
 }
 
+function recommendedBestMove(quality?: MoveQuality) {
+  const bestMove = quality?.bestNotation?.trim();
+  if (!bestMove) return undefined;
+  return quality?.missedMate || quality?.grade === "中" || quality?.grade === "差" || quality?.grade === "错" ? bestMove : undefined;
+}
+
 function preferredChild(nodes: ManualTreeNode[]) {
   return nodes.find((node) => node.move.isMainline) ?? nodes[0];
 }
@@ -51,6 +57,7 @@ function TreeLine({ node, depth, props, siblings, siblingIndex }: {
   const source = engineSource(move.comment);
   const flyknife = flyknifeMarker(move.comment);
   const active = move.id === props.currentNode;
+  const bestMove = recommendedBestMove(quality);
   const mainChild = preferredChild(node.children);
   const variationChildren = node.children.filter((child) => child.move.id !== mainChild?.move.id);
   return <Fragment>
@@ -66,11 +73,12 @@ function TreeLine({ node, depth, props, siblings, siblingIndex }: {
         {hasChildren
           ? <button type="button" className="manual-tree-toggle" title={expanded ? "收起后续分支" : "展开后续分支"} onClick={() => props.onToggle(move.id)}>{expanded ? <ChevronDown size={13}/> : <ChevronRight size={13}/>}</button>
           : <span className="manual-tree-toggle placeholder" />}
-        <button type="button" className="manual-tree-move" onClick={() => props.onNavigate(move.id)} aria-current={active ? "step" : undefined} title={`${label ? `${label} · ` : ""}${move.notation}，点击定位到此分支`}>
+        <button type="button" className="manual-tree-move" onClick={() => props.onNavigate(move.id)} aria-current={active ? "step" : undefined} title={`${label ? `${label} · ` : ""}${move.notation}${bestMove ? ` · AI 推荐正着 ${bestMove}` : ""}，点击定位到此分支`}>
           <span className={`manual-tree-number ${label ? "branch" : ""}`}>{label || "·"}</span>
           <i className={move.movedBy === "红方" ? "red" : "black"}/>
           <strong>{move.notation}</strong>
           {quality?.grade && <em className={`move-quality-mini grade-${quality.grade}`}>{quality.grade}</em>}
+          {bestMove && <em className="manual-best-move-tag" title={`AI 推荐正着：${bestMove}`}>正 {bestMove}</em>}
           {source && <em className="manual-engine-source" title={`这步采用自对比引擎：${source}`}><span>对比</span>{source}</em>}
           {move.comment && <MessageSquare className="comment-marker" size={11}/>} 
           {hasReviewMarker(move.comment) && <em className="manual-review-marker">复盘</em>}

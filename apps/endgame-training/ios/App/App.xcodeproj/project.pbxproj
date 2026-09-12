@@ -19,6 +19,8 @@
 		91F3B3C30000000100000003 /* TrainingStorePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91F3B3C30000000100000004 /* TrainingStorePlugin.swift */; };
 		91F3B3C30000000100000007 /* ScreenOrientationPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91F3B3C30000000100000008 /* ScreenOrientationPlugin.swift */; };
 		91F3B3C30000000100000009 /* CloudBookPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91F3B3C30000000100000010 /* CloudBookPlugin.swift */; };
+		91F3B3C30000000100000011 /* PikafishPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91F3B3C30000000100000012 /* PikafishPlugin.swift */; };
+		91F3B3C30000000100000014 /* PFPikafishEngine.mm in Sources */ = {isa = PBXBuildFile; fileRef = 91F3B3C30000000100000015 /* PFPikafishEngine.mm */; };
 		91F3B3C30000000100000005 /* libsqlite3.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 91F3B3C30000000100000006 /* libsqlite3.tbd */; };
 /* End PBXBuildFile section */
 
@@ -36,6 +38,10 @@
 		91F3B3C30000000100000004 /* TrainingStorePlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrainingStorePlugin.swift; sourceTree = "<group>"; };
 		91F3B3C30000000100000008 /* ScreenOrientationPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenOrientationPlugin.swift; sourceTree = "<group>"; };
 		91F3B3C30000000100000010 /* CloudBookPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudBookPlugin.swift; sourceTree = "<group>"; };
+		91F3B3C30000000100000012 /* PikafishPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PikafishPlugin.swift; sourceTree = "<group>"; };
+		91F3B3C30000000100000015 /* PFPikafishEngine.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = PFPikafishEngine.mm; sourceTree = "<group>"; };
+		91F3B3C30000000100000016 /* PFPikafishEngine.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PFPikafishEngine.h; sourceTree = "<group>"; };
+		91F3B3C30000000100000017 /* Pikafish-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Pikafish-Bridging-Header.h"; sourceTree = "<group>"; };
 		91F3B3C30000000100000006 /* libsqlite3.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libsqlite3.tbd; path = usr/lib/libsqlite3.tbd; sourceTree = SDKROOT; };
 		958DCC722DB07C7200EA8C5F /* debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = debug.xcconfig; path = ../debug.xcconfig; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
@@ -80,6 +86,8 @@
 				91F3B3C30000000100000004 /* TrainingStorePlugin.swift */,
 				91F3B3C30000000100000008 /* ScreenOrientationPlugin.swift */,
 				91F3B3C30000000100000010 /* CloudBookPlugin.swift */,
+				91F3B3C30000000100000012 /* PikafishPlugin.swift */,
+				91F3B3C30000000100000013 /* Pikafish */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
 				504EC30E1FED79650016851F /* Assets.xcassets */,
 				504EC3101FED79650016851F /* LaunchScreen.storyboard */,
@@ -90,6 +98,16 @@
 			path = App;
 			sourceTree = "<group>";
 		};
+		91F3B3C30000000100000013 /* Pikafish */ = {
+			isa = PBXGroup;
+			children = (
+				91F3B3C30000000100000015 /* PFPikafishEngine.mm */,
+				91F3B3C30000000100000016 /* PFPikafishEngine.h */,
+				91F3B3C30000000100000017 /* Pikafish-Bridging-Header.h */,
+			);
+			path = Pikafish;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -97,9 +115,11 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 504EC3161FED79650016851F /* Build configuration list for PBXNativeTarget "App" */;
 			buildPhases = (
+				91F3B3C30000000100000018 /* Build Pikafish Engine */,
 				504EC3001FED79650016851F /* Sources */,
 				504EC3011FED79650016851F /* Frameworks */,
 				504EC3021FED79650016851F /* Resources */,
+				91F3B3C30000000100000019 /* Embed Pikafish Resources */,
 			);
 			buildRules = (
 			);
@@ -166,6 +186,41 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		91F3B3C30000000100000018 /* Build Pikafish Engine */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = ();
+			inputPaths = ();
+			name = "Build Pikafish Engine";
+			outputPaths = (
+				"$(PIKAFISH_IOS_ROOT)/.build/engine/$(PIKAFISH_TAG)/$(PLATFORM_NAME)-arm64/libpikafish.a",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "\"$SRCROOT/scripts/build-pikafish-engine.sh\"\n";
+		};
+		91F3B3C30000000100000019 /* Embed Pikafish Resources */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = ();
+			inputPaths = ();
+			name = "Embed Pikafish Resources";
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/pikafish.nnue",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Pikafish-GPLv3.txt",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/NNUE-License.md",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Pikafish-README.md",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Pikafish-AUTHORS",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "\"$SRCROOT/scripts/embed-pikafish-resources.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		504EC3001FED79650016851F /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -176,6 +231,8 @@
 				91F3B3C30000000100000003 /* TrainingStorePlugin.swift in Sources */,
 				91F3B3C30000000100000007 /* ScreenOrientationPlugin.swift in Sources */,
 				91F3B3C30000000100000009 /* CloudBookPlugin.swift in Sources */,
+				91F3B3C30000000100000011 /* PikafishPlugin.swift in Sources */,
+				91F3B3C30000000100000014 /* PFPikafishEngine.mm in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -208,7 +265,7 @@
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
-				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++17";
 				CLANG_CXX_LIBRARY = "libc++";
 				CLANG_ENABLE_MODULES = YES;
 				CLANG_ENABLE_OBJC_ARC = YES;
@@ -251,6 +308,8 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
+				PIKAFISH_IOS_ROOT = "$(SRCROOT)/../../../../../pikafish-ios";
+				PIKAFISH_TAG = "Pikafish-2026-09-06";
 				MTL_ENABLE_DEBUG_INFO = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
@@ -265,7 +324,7 @@
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
-				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++17";
 				CLANG_CXX_LIBRARY = "libc++";
 				CLANG_ENABLE_MODULES = YES;
 				CLANG_ENABLE_OBJC_ARC = YES;
@@ -302,6 +361,8 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
+				PIKAFISH_IOS_ROOT = "$(SRCROOT)/../../../../../pikafish-ios";
+				PIKAFISH_TAG = "Pikafish-2026-09-06";
 				MTL_ENABLE_DEBUG_INFO = NO;
 				SDKROOT = iphoneos;
 				SWIFT_COMPILATION_MODE = wholemodule;
@@ -316,19 +377,28 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 10010;
+				CURRENT_PROJECT_VERSION = 10011;
 				DEVELOPMENT_TEAM = US68YTUSG4;
 				INFOPLIST_FILE = App/Info.plist;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
+				HEADER_SEARCH_PATHS = "$(inherited) $(PIKAFISH_IOS_ROOT)/.build/releases/$(PIKAFISH_TAG)/source/src";
 				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
+				LIBRARY_SEARCH_PATHS = "$(inherited) $(PIKAFISH_IOS_ROOT)/.build/engine/$(PIKAFISH_TAG)/$(PLATFORM_NAME)-arm64";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.0;
+				MARKETING_VERSION = 1.0.1;
 				OTHER_SWIFT_FLAGS = "$(inherited) \"-D\" \"COCOAPODS\" \"-DDEBUG\"";
+				OTHER_CPLUSPLUSFLAGS = "$(inherited) -DIS_64BIT -DUSE_NEON=8 -DARCH=armv8";
+				OTHER_LDFLAGS = "$(inherited) -lpikafish -lc++";
+				PIKAFISH_IOS_ROOT = "$(SRCROOT)/../../../../../pikafish-ios";
+				PIKAFISH_TAG = "Pikafish-2026-09-06";
 				PRODUCT_BUNDLE_IDENTIFIER = cn.xiangqi.endgame.training;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OBJC_BRIDGING_HEADER = "$(SRCROOT)/App/Pikafish/Pikafish-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -339,18 +409,27 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 10010;
+				CURRENT_PROJECT_VERSION = 10011;
 				DEVELOPMENT_TEAM = US68YTUSG4;
 				INFOPLIST_FILE = App/Info.plist;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
+				HEADER_SEARCH_PATHS = "$(inherited) $(PIKAFISH_IOS_ROOT)/.build/releases/$(PIKAFISH_TAG)/source/src";
 				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
+				LIBRARY_SEARCH_PATHS = "$(inherited) $(PIKAFISH_IOS_ROOT)/.build/engine/$(PIKAFISH_TAG)/$(PLATFORM_NAME)-arm64";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.0;
+				MARKETING_VERSION = 1.0.1;
+				OTHER_CPLUSPLUSFLAGS = "$(inherited) -DIS_64BIT -DUSE_NEON=8 -DARCH=armv8";
+				OTHER_LDFLAGS = "$(inherited) -lpikafish -lc++";
+				PIKAFISH_IOS_ROOT = "$(SRCROOT)/../../../../../pikafish-ios";
+				PIKAFISH_TAG = "Pikafish-2026-09-06";
 				PRODUCT_BUNDLE_IDENTIFIER = cn.xiangqi.endgame.training;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "";
+				SWIFT_OBJC_BRIDGING_HEADER = "$(SRCROOT)/App/Pikafish/Pikafish-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};

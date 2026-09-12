@@ -6,7 +6,7 @@ Android 目标为 Android 10+ 的 `arm64-v8a` 平板和手机，首要验收设�
 
 无论 Android 还是 iOS，题库、题目、答案树、答题记录和累计用时都存于应用私有 SQLite。APK/IPA 不包含 CBL 或这些本地数据；卸载应用会清除它们。
 
-Android APK 内置 Pikafish 2026-09-06 arm64 引擎和固定 `pikafish.nnue`。默认“云库 + 皮卡鱼”模式优先使用 ChessDB，未命中或网络失败时由本地 Pikafish 应手；“本地 AI 对练”模式全程离线调用 Pikafish。切题、重来、结束和退出会取消仍在运行的引擎搜索。
+Android APK 与 iPhone/iPad IPA 都内置 Pikafish 2026-09-06 arm64 引擎和固定 `pikafish.nnue`。默认“云库 + 皮卡鱼”模式优先使用 ChessDB，未命中或网络失败时由本地 Pikafish 应手；“本地 AI 对练”模式全程离线调用 Pikafish。切题、重来、结束和退出会取消仍在运行的引擎搜索。
 
 Android 版还提供“AI 拆棋”：对当前局面进行本地 MultiPV 分析，候选数量可在 1–4 条之间选择，并以红方视角显示编号箭头、深度、节点、NPS、局面分和中文后续变化。拆棋结果仅用于临时预览，不会落子、写入 SQLite、修改题解树或生成真实变招；局面变化后旧结果会自动清除。
 
@@ -39,6 +39,8 @@ pnpm --dir apps/endgame-training android:apk
 ## iPhone / iPad
 
 iOS 工程位于 `ios/App/App.xcodeproj`，采用 Swift Package Manager，不依赖 Android SQLite 插件或 CocoaPods。`TrainingStorePlugin.swift` 用 iOS 系统 `SQLite3`，并保持与 Android 相同的 `TrainingStore` 接口。
+
+iOS 版将 Pikafish 静态链接到 App 进程，绝不启动子进程或下载/替换可执行代码。引擎源工程默认位于仓库同级的 `../pikafish-ios`，也可在 Xcode 构建时设置 `PIKAFISH_IOS_ROOT` 覆盖；该工程会校验并构建固定版本，再将 NNUE、GPLv3、NNUE 许可证、README 和作者信息放进 IPA。Pikafish 为 GPLv3，向用户分发 IPA 前必须按 GPLv3 提供对应源代码与许可文本。
 
 开发机需要完整 Xcode（Command Line Tools 不足）：
 

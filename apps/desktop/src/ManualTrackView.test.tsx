@@ -28,6 +28,7 @@ function renderTrack(options: {
   onStartBestMovePractice?: () => void;
   previewBranch?: Parameters<typeof ManualTrackView>[0]["previewBranch"];
   previewBranches?: Parameters<typeof ManualTrackView>[0]["previewBranches"];
+  qualityByMoveId?: Parameters<typeof ManualTrackView>[0]["qualityByMoveId"];
   strategyInsight?: Parameters<typeof ManualTrackView>[0]["strategyInsight"];
 } = {}) {
   const red = move("r1", "马八进七", "红方");
@@ -53,7 +54,7 @@ function renderTrack(options: {
     previewBranch={options.previewBranch}
     previewBranches={options.previewBranches}
     strategyInsight={options.strategyInsight}
-    qualityByMoveId={new Map([["b1", { score: 88, grade: "优" }]])}
+    qualityByMoveId={options.qualityByMoveId ?? new Map([["b1", { score: 88, grade: "优" }]])}
     viewMode="track"
   />);
   return { onNavigate, onViewModeChange };
@@ -119,6 +120,16 @@ describe("ManualTrackView", () => {
     expect(within(dialog).getByText("+0.23")).toBeTruthy();
     expect(within(dialog).getByText("马8进7")).toBeTruthy();
     expect(within(dialog).getByText("优88分")).toBeTruthy();
+  });
+
+  it("shows the AI recommended correct move in the branch tree and complete line", () => {
+    renderTrack({ qualityByMoveId: new Map([["b1", { score: 18, grade: "错", bestNotation: "马二进三" }]]) });
+
+    expect(screen.getByText("正 马二进三")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "完整棋谱" }));
+
+    const dialog = screen.getByRole("dialog", { name: "当前局面完整棋谱" });
+    expect(within(dialog).getByText("正着 马二进三")).toBeTruthy();
   });
 
   it("shows a directly viewable chess record image", () => {

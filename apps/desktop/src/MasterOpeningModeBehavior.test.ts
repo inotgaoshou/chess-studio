@@ -28,7 +28,26 @@ describe("master opening workspace behavior", () => {
 
   it("keeps master opening navigation light and adds a compact board situation brief", () => {
     expect(app).toContain('const boardEvaluationBlackShare = 100 - boardEvaluationRedShare');
+    expect(app).toContain('const openingCompactMode = workspaceMode === "opening" && desktopPreferences.layoutMode === "compact"');
+    expect(app).toContain('const showBoardEvaluationRail = !openingCompactMode || openingEvaluationRailVisible');
+    expect(app).toContain('setOpeningEvaluationRailVisible(false)');
     expect(app).toContain('aria-label="棋盘红黑局势分析"');
+    expect(app).toContain('aria-pressed={openingEvaluationRailVisible}');
+    expect(app).toContain('const [openingBriefTab, setOpeningBriefTab] = useState<"trend" | "report" | "issues">("trend")');
+    expect(app).toContain('setOpeningBriefTab("report")');
+    expect(app).toContain('setOpeningBriefTab("issues")');
+    expect(app).toContain('opening-brief-scoreline');
+    expect(app).toContain('opening-brief-phase-table');
+    expect(app).toContain('opening-brief-issue-switch');
+    expect(app).toContain('opening-brief-issue-list');
+    expect(app).toContain('"显示柱状"');
+    expect(app).toContain('"隐藏柱状"');
+    expect(app).toContain('showBoardEvaluationRail && <aside className={`board-eval-rail');
+    expect(app).toContain('trend-scale-label trend-axis-label');
+    expect(app).toContain("openingTrendChart.left - 46");
+    expect(app).toContain('preserveAspectRatio="xMinYMid meet"');
+    expect(app).toContain(">均势</text>");
+    expect(app).toContain('"muted"');
     expect(app).toContain('reportTrendSamples.length > 1');
     expect(app).toContain(': (evaluation?.samples ?? [])');
     expect(app).toContain('reportProgressTrendSamples.length > 1');

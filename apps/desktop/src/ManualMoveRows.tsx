@@ -3,7 +3,7 @@ import { MessageSquare } from "lucide-react";
 import { flyknifeMarker, hasReviewMarker } from "./reviewMarker";
 import type { MoveItem, QualityGrade } from "./platform";
 
-type MoveQuality = { score?: number; grade?: QualityGrade };
+type MoveQuality = { score?: number; grade?: QualityGrade; bestNotation?: string; bestIccs?: string; missedMate?: boolean };
 
 type Props = {
   history: MoveItem[];
@@ -28,12 +28,14 @@ function MoveRow({ move, number, current, continuation, branchLabel, quality, ac
   onNavigate(nodeId: string): void;
 }) {
   const flyknife = flyknifeMarker(move.comment);
+  const bestMove = quality?.bestNotation?.trim();
+  const showBestMove = !!bestMove && !continuation && (quality?.missedMate || quality?.grade === "中" || quality?.grade === "差" || quality?.grade === "错");
   return <button
     ref={current ? activeMoveRef : undefined}
     className={`move-table-row ${continuation ? "continuation" : ""} ${branchLabel ? "branch" : ""} ${quality?.grade ? `grade-${quality.grade}` : ""} ${current ? "active" : ""}`}
     aria-current={current ? "step" : undefined}
     role="row"
-    title={`${continuation ? "后续保留 · " : ""}${move.movedBy} · ICCS ${move.iccs}${quality?.score != null ? ` · 质量 ${quality.score} 分 ${quality.grade}` : ""}`}
+    title={`${continuation ? "后续保留 · " : ""}${move.movedBy} · ICCS ${move.iccs}${quality?.score != null ? ` · 质量 ${quality.score} 分 ${quality.grade}` : ""}${showBestMove ? ` · 正着 ${bestMove}` : ""}`}
     onClick={() => onNavigate(move.id)}
   >
     <span role="cell">{number}</span>
@@ -41,6 +43,7 @@ function MoveRow({ move, number, current, continuation, branchLabel, quality, ac
       <i className={move.movedBy === "红方" ? "red" : "black"}/>
       <strong>{move.notation}</strong>
       {!continuation && quality?.grade && <em className={`move-quality-mini grade-${quality.grade}`}>{quality.grade}</em>}
+      {showBestMove && <em className="manual-best-move-tag" title={`AI 推荐正着：${bestMove}`}>正 {bestMove}</em>}
       {move.comment && <MessageSquare className="comment-marker" size={11}/>} 
       {hasReviewMarker(move.comment) && <em className="manual-review-marker">复盘</em>}
       {flyknife && <em className="manual-flyknife-marker" title={flyknife.intent || `${flyknife.label}飞刀标注`}>飞刀 · {flyknife.label}</em>}

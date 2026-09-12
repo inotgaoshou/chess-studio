@@ -2,7 +2,7 @@ import type { ManualTreeNode, MoveItem, QualityGrade, Side } from "./platform";
 
 export type ManualViewMode = "track" | "tree";
 
-export type MoveQuality = { score?: number; grade?: QualityGrade };
+export type MoveQuality = { score?: number; grade?: QualityGrade; bestNotation?: string; bestIccs?: string; missedMate?: boolean };
 
 export type TrackMoveCell = {
   move: MoveItem;

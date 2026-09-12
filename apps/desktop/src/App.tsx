@@ -54,7 +54,7 @@ import {
   Zap,
 } from "lucide-react";
 import { BUILTIN_ENGINE_PATH, DEFAULT_BUILTIN_OPENING_BOOK_ID, FALLBACK_BUILTIN_OPENING_BOOK_MANIFEST, chessPlatform, type AnalysisLine, type BoardState, type CloudBookCandidate, type EngineProbeDto, type EngineProfileDto, type EngineRuntimeState, type ExportFormat, type GameReportDatasetDto, type GameReportProgressDto, type GameSummary, type LibraryFolder, type MasterStyleProfileDto, type MoveItem, type Piece, type PreviewLineStep, type ReplayExportScope, type StudySessionDto, type TheoryLibraryDto, type TrainingGenerationResultDto, type TrainingSummaryDto, type TrainingTaskDto } from "./platform";
-import { evaluationRedShare, moveQualityFeedback, moveReports, positionEvaluation, redAnalysisScoreText, trendChart, trendPoints, trendTurningPoints, type TrendPoint, type TrendSample } from "./analysisView";
+import { evaluationRedShare, moveQualityFeedback, moveReports, positionEvaluation, redAnalysisScoreText, trendChart, trendPoints, trendTurningPoints, type TrendChartBounds, type TrendPoint, type TrendSample } from "./analysisView";
 import { CandidateLine } from "./CandidateLine";
 import { hasEngineDivergence, MultiEngineComparison, type EngineComparisonGroup } from "./MultiEngineComparison";
 import { DesktopMenuBar, type MenuCommand } from "./DesktopMenuBar";
@@ -1257,6 +1257,46 @@ function smoothTrendPath(points: Pick<TrendPoint, "x" | "y">[]) {
   return commands.join(" ");
 }
 
+type TrendSegment = { from: TrendPoint; to: TrendPoint; side: "red" | "black" };
+
+function splitTrendSegments(points: TrendPoint[], chart: Pick<TrendChartBounds, "middle">): TrendSegment[] {
+  return points.slice(1).flatMap((point, index) => {
+    const previous = points[index];
+    if ((previous.scoreCp >= 0 && point.scoreCp >= 0) || (previous.scoreCp <= 0 && point.scoreCp <= 0)) {
+      return [{ from: previous, to: point, side: previous.scoreCp >= 0 || point.scoreCp >= 0 ? "red" : "black" }];
+    }
+    const ratio = Math.abs(previous.scoreCp) / (Math.abs(previous.scoreCp) + Math.abs(point.scoreCp));
+    const zero = {
+      ...point,
+      x: previous.x + (point.x - previous.x) * ratio,
+      y: chart.middle,
+      scoreCp: 0,
+    };
+    return [
+      { from: previous, to: zero, side: previous.scoreCp > 0 ? "red" : "black" },
+      { from: zero, to: point, side: point.scoreCp > 0 ? "red" : "black" },
+    ];
+  });
+}
+
+function smoothTrendSegmentPaths(segments: TrendSegment[]) {
+  const groups: Array<{ side: "red" | "black"; points: TrendPoint[] }> = [];
+  for (const segment of segments) {
+    const current = groups.at(-1);
+    const lastPoint = current?.points.at(-1);
+    if (current && current.side === segment.side && lastPoint && Math.abs(lastPoint.x - segment.from.x) < 0.01 && Math.abs(lastPoint.y - segment.from.y) < 0.01) {
+      current.points.push(segment.to);
+    } else {
+      groups.push({ side: segment.side, points: [segment.from, segment.to] });
+    }
+  }
+  return groups.map((group, index) => ({
+    key: `${group.side}-${index}`,
+    side: group.side,
+    d: smoothTrendPath(group.points),
+  }));
+}
+
 function formatScoreDelta(scoreCp?: number) {
   if (scoreCp == null) return "缺少相邻局面分数";
   const score = Math.round(scoreCp);
@@ -1492,6 +1532,9 @@ export default function App() {
   const [cloudBookLoading, setCloudBookLoading] = useState(false);
   const [cloudBookVisible, setCloudBookVisible] = useState(false);
   const [mobileEvaluationVisible, setMobileEvaluationVisible] = useState(true);
+  const [openingEvaluationRailVisible, setOpeningEvaluationRailVisible] = useState(false);
+  const [openingBriefTab, setOpeningBriefTab] = useState<"trend" | "report" | "issues">("trend");
+  const [openingIssueSide, setOpeningIssueSide] = useState<"red" | "black">("red");
   const [cloudBookCollapsed, setCloudBookCollapsed] = useState(false);
   const [floatingEvaluationCollapsed, setFloatingEvaluationCollapsed] = useState(false);
   const [cloudBookPosition, setCloudBookPosition] = useState<{ left: number; top: number }>();
@@ -2264,44 +2307,24 @@ export default function App() {
     : reportProgressTrendSamples.length > 1
       ? reportProgressTrendSamples
       : (evaluation?.samples ?? []), [evaluation, reportProgressTrendSamples, reportTrendSamples]);
+  const trendTotalMoves = Math.max(
+    trendSourceSamples.length,
+    board.history.length + (reportTrendSamples.length > 1 || reportProgressTrendSamples.length > 1 ? 1 : 0),
+  );
   const evaluationTrend = useMemo(() => trendPoints(
     trendSourceSamples,
-    Math.max(trendSourceSamples.length, board.history.length + (reportTrendSamples.length > 1 || reportProgressTrendSamples.length > 1 ? 1 : 0)),
-  ), [board.history.length, reportProgressTrendSamples.length, reportTrendSamples.length, trendSourceSamples]);
-  const trendSegments = useMemo(() => evaluationTrend.slice(1).flatMap((point, index) => {
-    const previous = evaluationTrend[index];
-    if ((previous.scoreCp >= 0 && point.scoreCp >= 0) || (previous.scoreCp <= 0 && point.scoreCp <= 0)) {
-      return [{ from: previous, to: point, side: previous.scoreCp >= 0 || point.scoreCp >= 0 ? "red" : "black" }];
-    }
-    const ratio = Math.abs(previous.scoreCp) / (Math.abs(previous.scoreCp) + Math.abs(point.scoreCp));
-    const zero = {
-      ...point,
-      x: previous.x + (point.x - previous.x) * ratio,
-      y: trendChart.middle,
-      scoreCp: 0,
-    };
-    return [
-      { from: previous, to: zero, side: previous.scoreCp > 0 ? "red" : "black" },
-      { from: zero, to: point, side: point.scoreCp > 0 ? "red" : "black" },
-    ];
-  }), [evaluationTrend]);
-  const smoothTrendSegments = useMemo(() => {
-    const groups: Array<{ side: "red" | "black"; points: TrendPoint[] }> = [];
-    for (const segment of trendSegments) {
-      const current = groups.at(-1);
-      const lastPoint = current?.points.at(-1);
-      if (current && current.side === segment.side && lastPoint && Math.abs(lastPoint.x - segment.from.x) < 0.01 && Math.abs(lastPoint.y - segment.from.y) < 0.01) {
-        current.points.push(segment.to);
-      } else {
-        groups.push({ side: segment.side as "red" | "black", points: [segment.from, segment.to] });
-      }
-    }
-    return groups.map((group, index) => ({
-      key: `${group.side}-${index}`,
-      side: group.side,
-      d: smoothTrendPath(group.points),
-    }));
-  }, [trendSegments]);
+    trendTotalMoves,
+  ), [trendSourceSamples, trendTotalMoves]);
+  const openingTrendChart = useMemo<TrendChartBounds>(() => ({ ...trendChart, left: 52, right: 348 }), []);
+  const openingEvaluationTrend = useMemo(() => trendPoints(
+    trendSourceSamples,
+    trendTotalMoves,
+    openingTrendChart,
+  ), [openingTrendChart, trendSourceSamples, trendTotalMoves]);
+  const trendSegments = useMemo(() => splitTrendSegments(evaluationTrend, trendChart), [evaluationTrend]);
+  const smoothTrendSegments = useMemo(() => smoothTrendSegmentPaths(trendSegments), [trendSegments]);
+  const openingTrendSegments = useMemo(() => splitTrendSegments(openingEvaluationTrend, openingTrendChart), [openingEvaluationTrend, openingTrendChart]);
+  const openingSmoothTrendSegments = useMemo(() => smoothTrendSegmentPaths(openingTrendSegments), [openingTrendSegments]);
   const activeTrendPoint = trendCursorIndex == null ? undefined : evaluationTrend[trendCursorIndex];
   const activeTrendDelta = trendCursorIndex == null || trendCursorIndex <= 0 ? undefined : evaluationTrend[trendCursorIndex].scoreCp - evaluationTrend[trendCursorIndex - 1].scoreCp;
   const currentTrendPoint = useMemo(() => {
@@ -2312,6 +2335,9 @@ export default function App() {
     return evaluationTrend.find((point) => point.moveIndex === syncedMoveIndex) ?? evaluationTrend.at(-1);
   }, [board.currentNode, board.history.length, evaluationTrend, reportProgressTrendSamples.length, reportTrendSamples.length]);
   const visibleTrendPoint = activeTrendPoint ?? currentTrendPoint;
+  const visibleOpeningTrendPoint = visibleTrendPoint
+    ? openingEvaluationTrend.find((point) => (visibleTrendPoint.nodeId ? point.nodeId === visibleTrendPoint.nodeId : point.moveIndex === visibleTrendPoint.moveIndex)) ?? openingEvaluationTrend[trendCursorIndex ?? Math.max(0, openingEvaluationTrend.length - 1)]
+    : undefined;
   const visibleTrendDelta = activeTrendPoint ? activeTrendDelta : undefined;
   const trendMarkerOnLeft = (visibleTrendPoint?.x ?? 0) > trendChart.width / 2;
   const trendMarkerX = visibleTrendPoint ? visibleTrendPoint.x + (trendMarkerOnLeft ? -88 : 4) : 0;
@@ -2404,6 +2430,8 @@ export default function App() {
     || board.sourceFormat === "reference-library"
     || board.note.includes("用途：本地学习、拆棋和 Pikafish 分析。");
   const showMasterGameSidePanel = isMasterLibraryGame && desktopPreferences.layoutMode !== "compact";
+  const openingCompactMode = workspaceMode === "opening" && desktopPreferences.layoutMode === "compact";
+  const showBoardEvaluationRail = !openingCompactMode || openingEvaluationRailVisible;
   const isGame53MasterGame = isMasterLibraryGame
     && manualMeta.red.includes("洪智")
     && manualMeta.black.includes("黄仕清")
@@ -2440,6 +2468,11 @@ export default function App() {
       setSelectedPieceInspection(undefined);
     }
   }, [workspaceMode]);
+  useEffect(() => {
+    if (openingCompactMode) {
+      setOpeningEvaluationRailVisible(false);
+    }
+  }, [openingCompactMode]);
   const bestMoveHint = useMemo<BestMoveHint | undefined>(() => {
     if (analysisFen !== board.fen || analysisIsStale || orderedAnalysis.length === 0) return undefined;
     const seen = new Set<string>();
@@ -5174,19 +5207,19 @@ export default function App() {
     }
   }
 
-  function trendIndexFromPointer(event: PointerEvent<SVGSVGElement>) {
-    if (evaluationTrend.length === 0) return undefined;
+  function trendIndexFromPointer(event: PointerEvent<SVGSVGElement>, points = evaluationTrend, chart = trendChart) {
+    if (points.length === 0) return undefined;
     const rect = event.currentTarget.getBoundingClientRect();
-    const x = (event.clientX - rect.left) / rect.width * trendChart.width;
+    const x = (event.clientX - rect.left) / rect.width * chart.width;
     let nearest = 0;
-    for (let index = 1; index < evaluationTrend.length; index += 1) {
-      if (Math.abs(evaluationTrend[index].x - x) < Math.abs(evaluationTrend[nearest].x - x)) nearest = index;
+    for (let index = 1; index < points.length; index += 1) {
+      if (Math.abs(points[index].x - x) < Math.abs(points[nearest].x - x)) nearest = index;
     }
     return nearest;
   }
 
-  function updateTrendCursor(event: PointerEvent<SVGSVGElement>) {
-    const index = trendIndexFromPointer(event);
+  function updateTrendCursor(event: PointerEvent<SVGSVGElement>, points = evaluationTrend, chart = trendChart) {
+    const index = trendIndexFromPointer(event, points, chart);
     if (index != null) setTrendCursorIndex(index);
   }
 
@@ -6979,67 +7012,133 @@ export default function App() {
         ? `整局报告 · ${reportPresentation.trend.length} 个局面 · 深度 ${reportPresentation.analysisDepth ?? desktopPreferences.reportDepth}`
         : "点击生成整局走势";
     const reportActionText = reportBusy ? "取消整局分析" : reportPresentation ? "重新精准分析" : "生成整局走势";
+    const redIssues = reportPresentation?.issues.filter((issue) => issue.movedBy === "红方") ?? [];
+    const blackIssues = reportPresentation?.issues.filter((issue) => issue.movedBy === "黑方") ?? [];
+    const shownIssues = openingIssueSide === "red" ? redIssues : blackIssues;
+    const redIssueCount = redIssues.length;
+    const blackIssueCount = blackIssues.length;
     return <aside className={`board-position-brief ${boardEvaluationScore == null ? "pending" : boardEvaluationScore < -50 ? "black" : boardEvaluationScore > 50 ? "red" : "balanced"}`} aria-label="棋盘红黑局势分析">
-      <header><BarChart3 size={14}/><strong>局势分析</strong><small>{reportProgressText}</small></header>
+      <header>
+        <BarChart3 size={14}/>
+        <strong>局势分析</strong>
+        <button
+          className="board-position-brief-rail-toggle"
+          type="button"
+          aria-pressed={openingEvaluationRailVisible}
+          onClick={() => setOpeningEvaluationRailVisible((visible) => !visible)}
+        >
+          {openingEvaluationRailVisible ? "隐藏柱状" : "显示柱状"}
+        </button>
+        <small>{reportProgressText}</small>
+      </header>
       <div className="board-position-brief-tabs" aria-label="局势分析视图">
-        <b>局势图</b><span>报告</span><span>错误</span>
+        <button type="button" className={openingBriefTab === "trend" ? "active" : ""} onClick={() => setOpeningBriefTab("trend")}>局势图</button>
+        <button type="button" className={openingBriefTab === "report" ? "active" : ""} onClick={() => setOpeningBriefTab("report")}>报告</button>
+        <button type="button" className={openingBriefTab === "issues" ? "active" : ""} onClick={() => setOpeningBriefTab("issues")}>错误</button>
       </div>
-      <div className="board-position-brief-score">
-        <strong>{boardEvaluationSide}</strong>
-        <span>{boardEvaluationScoreText ?? "--"}</span>
-      </div>
-      <div className="board-position-brief-bar" aria-label={`红方 ${Math.round(boardEvaluationRedShare)}%，黑方 ${Math.round(boardEvaluationBlackShare)}%`}>
-        <i className="red" style={{ width: `${boardEvaluationRedShare}%` } as CSSProperties}/>
-        <i className="black" style={{ width: `${boardEvaluationBlackShare}%` } as CSSProperties}/>
-      </div>
-      <p><span className="red">红 {Math.round(boardEvaluationRedShare)}%</span><span className="black">黑 {Math.round(boardEvaluationBlackShare)}%</span></p>
-      {evaluationTrend.length > 1 ? <svg
-        className="board-position-brief-trend"
-        viewBox={`0 0 ${trendChart.width} ${trendChart.height}`}
-        preserveAspectRatio="none"
-        role="group"
-        aria-label="同步当前棋谱的红黑局势走势图"
-        tabIndex={0}
-        onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); updateTrendCursor(event); }}
-        onPointerMove={(event) => { if (event.buttons) updateTrendCursor(event); }}
-        onPointerUp={() => releaseTrendCursor()}
-        onKeyDown={trendKeyDown}
-      >
-        <rect className="trend-equal-band" x={trendChart.left} y={trendChart.middle - 4} width={trendChart.right - trendChart.left} height="8"/>
-        <line className="trend-grid top" x1={trendChart.left} y1={trendChart.top} x2={trendChart.right} y2={trendChart.top}/>
-        <line className="trend-grid upper" x1={trendChart.left} y1="54" x2={trendChart.right} y2="54"/>
-        <line className="trend-grid middle" x1={trendChart.left} y1={trendChart.middle} x2={trendChart.right} y2={trendChart.middle}/>
-        <line className="trend-grid lower" x1={trendChart.left} y1="126" x2={trendChart.right} y2="126"/>
-        <line className="trend-grid bottom" x1={trendChart.left} y1={trendChart.bottom} x2={trendChart.right} y2={trendChart.bottom}/>
-        <text className="trend-scale-label" x="2" y={trendChart.top + 3}>红优</text>
-        <text className="trend-scale-label" x="2" y={trendChart.middle + 3}>0</text>
-        <text className="trend-scale-label" x="2" y={trendChart.bottom + 3}>黑优</text>
-        {smoothTrendSegments.map((segment) => <path key={segment.key} className={`trend-segment ${segment.side}`} d={segment.d} fill="none"/>)}
-        {evaluationTrend.map((point, index) => {
-          const turn = trendTurnsByNode.get(point.nodeId);
-          return <circle
-            key={`${point.label}-${index}`}
-            className={`${point.nodeId === board.currentNode ? "current" : ""} ${turn ? `turning ${turn.severity}` : ""}`.trim()}
-            cx={point.x}
-            cy={point.y}
-            r={point.nodeId === board.currentNode ? 5 : turn ? 4 : 2.6}
-            role={point.nodeId ? "button" : undefined}
-            tabIndex={point.nodeId ? 0 : undefined}
-            aria-label={point.nodeId ? `${point.label}，红方视角 ${formatRedScore(point.scoreCp)}，点击同步定位棋谱` : undefined}
-            onClick={() => point.nodeId && void navigateTo(point.nodeId)}
-            onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && point.nodeId) void navigateTo(point.nodeId); }}
-          ><title>{point.label}：{formatRedScore(point.scoreCp)}</title></circle>;
-        })}
-        {visibleTrendPoint && <>
-          <line className="trend-current-line" x1={visibleTrendPoint.x} y1={trendChart.top - 6} x2={visibleTrendPoint.x} y2={trendChart.bottom + 6}/>
-          <circle className="trend-current-halo" cx={visibleTrendPoint.x} cy={visibleTrendPoint.y} r="7"/>
-          <circle className="trend-current-node" cx={visibleTrendPoint.x} cy={visibleTrendPoint.y} r="3.5"/>
-        </>}
-      </svg> : <div className="board-position-brief-empty">
-        <strong>暂无走势</strong>
-        <span>点击生成整局走势，Pikafish 会分析每一步，并把曲线点同步到棋谱节点。</span>
+      {openingBriefTab === "trend" && <div className="board-position-brief-page trend">
+        <div className="board-position-brief-score">
+          <strong>{boardEvaluationSide}</strong>
+          <span>{boardEvaluationScoreText ?? "--"}</span>
+        </div>
+        <div className="board-position-brief-bar" aria-label={`红方 ${Math.round(boardEvaluationRedShare)}%，黑方 ${Math.round(boardEvaluationBlackShare)}%`}>
+          <i className="red" style={{ width: `${boardEvaluationRedShare}%` } as CSSProperties}/>
+          <i className="black" style={{ width: `${boardEvaluationBlackShare}%` } as CSSProperties}/>
+        </div>
+        <p><span className="red">红 {Math.round(boardEvaluationRedShare)}%</span><span className="black">黑 {Math.round(boardEvaluationBlackShare)}%</span></p>
+        {evaluationTrend.length > 1 ? <svg
+          className="board-position-brief-trend"
+          viewBox={`0 0 ${openingTrendChart.width} ${openingTrendChart.height}`}
+          preserveAspectRatio="xMinYMid meet"
+          role="group"
+          aria-label="同步当前棋谱的红黑局势走势图"
+          tabIndex={0}
+          onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); updateTrendCursor(event, openingEvaluationTrend, openingTrendChart); }}
+          onPointerMove={(event) => { if (event.buttons) updateTrendCursor(event, openingEvaluationTrend, openingTrendChart); }}
+          onPointerUp={() => releaseTrendCursor()}
+          onKeyDown={trendKeyDown}
+        >
+          <rect className="trend-equal-band" x={openingTrendChart.left} y={openingTrendChart.middle - 4} width={openingTrendChart.right - openingTrendChart.left} height="8"/>
+          <line className="trend-grid top" x1={openingTrendChart.left} y1={openingTrendChart.top} x2={openingTrendChart.right} y2={openingTrendChart.top}/>
+          <line className="trend-grid upper" x1={openingTrendChart.left} y1="54" x2={openingTrendChart.right} y2="54"/>
+          <line className="trend-grid middle" x1={openingTrendChart.left} y1={openingTrendChart.middle} x2={openingTrendChart.right} y2={openingTrendChart.middle}/>
+          <line className="trend-grid lower" x1={openingTrendChart.left} y1="126" x2={openingTrendChart.right} y2="126"/>
+          <line className="trend-grid bottom" x1={openingTrendChart.left} y1={openingTrendChart.bottom} x2={openingTrendChart.right} y2={openingTrendChart.bottom}/>
+          <text className="trend-scale-label trend-axis-label" x={openingTrendChart.left - 46} y={openingTrendChart.top + 12}>红优</text>
+          <text className="trend-scale-label trend-axis-label" x={openingTrendChart.left - 46} y={openingTrendChart.middle - 5}>均势</text>
+          <text className="trend-scale-label trend-axis-label" x={openingTrendChart.left - 46} y={openingTrendChart.bottom - 8}>黑优</text>
+          {openingSmoothTrendSegments.map((segment) => <path key={segment.key} className={`trend-segment ${segment.side}`} d={segment.d} fill="none"/>)}
+          {openingEvaluationTrend.map((point, index) => {
+            const turn = trendTurnsByNode.get(point.nodeId);
+            const isCurrentTrendPoint = point.nodeId === board.currentNode;
+            return <circle
+              key={`${point.label}-${index}`}
+              className={isCurrentTrendPoint ? "current" : turn ? `turning ${turn.severity}` : "muted"}
+              cx={point.x}
+              cy={point.y}
+              r={isCurrentTrendPoint ? 5.6 : turn ? 4.3 : 2.1}
+              role={point.nodeId ? "button" : undefined}
+              tabIndex={point.nodeId ? 0 : undefined}
+              aria-label={point.nodeId ? `${point.label}，红方视角 ${formatRedScore(point.scoreCp)}，点击同步定位棋谱` : undefined}
+              onClick={() => point.nodeId && void navigateTo(point.nodeId)}
+              onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && point.nodeId) void navigateTo(point.nodeId); }}
+            ><title>{point.label}：{formatRedScore(point.scoreCp)}</title></circle>;
+          })}
+          {visibleOpeningTrendPoint && <>
+            <line className="trend-current-line" x1={visibleOpeningTrendPoint.x} y1={openingTrendChart.top - 6} x2={visibleOpeningTrendPoint.x} y2={openingTrendChart.bottom + 6}/>
+            <circle className="trend-current-halo" cx={visibleOpeningTrendPoint.x} cy={visibleOpeningTrendPoint.y} r="7"/>
+            <circle className="trend-current-node" cx={visibleOpeningTrendPoint.x} cy={visibleOpeningTrendPoint.y} r="3.5"/>
+          </>}
+        </svg> : <div className="board-position-brief-empty">
+          <strong>暂无走势</strong>
+          <span>点击生成整局走势，Pikafish 会分析每一步，并把曲线点同步到棋谱节点。</span>
+        </div>}
+        {visibleTrendPoint && <p className="board-position-brief-current"><span>{visibleTrendPoint.label}</span><b>{formatRedScore(visibleTrendPoint.scoreCp)}</b></p>}
       </div>}
-      {visibleTrendPoint && <p className="board-position-brief-current"><span>{visibleTrendPoint.label}</span><b>{formatRedScore(visibleTrendPoint.scoreCp)}</b></p>}
+      {openingBriefTab === "report" && <div className="board-position-brief-page report">
+        {reportPresentation ? <>
+          <div className="opening-brief-scoreline">
+            <article className="red"><b>{scoreDisplay(reportPresentation.red.overall)}</b><span>{manualMeta.red}</span></article>
+            <strong>{sideResultText(manualMeta.result)}</strong>
+            <article className="black"><b>{scoreDisplay(reportPresentation.black.overall)}</b><span>{manualMeta.black}</span></article>
+          </div>
+          <div className="opening-brief-phase-table">
+            <div><span>{scoreDisplay(reportPresentation.red.phases.opening)}</span><b>开局评分</b><span>{scoreDisplay(reportPresentation.black.phases.opening)}</span></div>
+            <div><span>{scoreDisplay(reportPresentation.red.phases.middle)}</span><b>中局评分</b><span>{scoreDisplay(reportPresentation.black.phases.middle)}</span></div>
+            <div><span>{scoreDisplay(reportPresentation.red.phases.endgame)}</span><b>残局评分</b><span>{scoreDisplay(reportPresentation.black.phases.endgame)}</span></div>
+            <div><span>{scoreDisplay(reportPresentation.red.dimensions.accuracy)}</span><b>准确评分</b><span>{scoreDisplay(reportPresentation.black.dimensions.accuracy)}</span></div>
+            <div><span>{scoreDisplay(reportPresentation.red.dimensions.stability)}</span><b>稳定评分</b><span>{scoreDisplay(reportPresentation.black.dimensions.stability)}</span></div>
+            <div><button type="button" onClick={() => setOpeningBriefTab("issues")}>{redIssueCount}</button><b>失误</b><button type="button" onClick={() => { setOpeningIssueSide("black"); setOpeningBriefTab("issues"); }}>{blackIssueCount}</button></div>
+          </div>
+        </> : <div className="board-position-brief-empty">
+          <strong>暂无报告</strong>
+          <span>点击下方“生成整局走势”，完成后这里会显示双方综合评分、阶段评分和失误数量。</span>
+        </div>}
+      </div>}
+      {openingBriefTab === "issues" && <div className="board-position-brief-page issues">
+        {reportPresentation ? <>
+          <div className="opening-brief-issue-switch" aria-label="错误方选择">
+            <button type="button" className={openingIssueSide === "red" ? "active red" : "red"} onClick={() => setOpeningIssueSide("red")}>红方错误 <b>{redIssueCount}</b></button>
+            <button type="button" className={openingIssueSide === "black" ? "active black" : "black"} onClick={() => setOpeningIssueSide("black")}>黑方错误 <b>{blackIssueCount}</b></button>
+          </div>
+          {shownIssues.length ? <ol className="opening-brief-issue-list">
+            {shownIssues.slice(0, 8).map((issue, index) => <li key={`${issue.nodeId}-${index}`}>
+              <button type="button" onClick={() => void navigateTo(issue.nodeId)}>
+                <span>{board.history.findIndex((move) => move.id === issue.nodeId) + 1 || index + 1}</span>
+                <strong>{issue.notation}</strong>
+                <em>{issue.missedMate ? "漏杀" : `亏${issue.lossCp}`}</em>
+                <small>{issue.bestNotation ? `建议 ${issue.bestNotation}` : `${issue.grade} · 损失 ${issue.lossCp}cp`}</small>
+              </button>
+            </li>)}
+          </ol> : <div className="board-position-brief-empty compact">
+            <strong>{openingIssueSide === "red" ? "红方" : "黑方"}暂无明显错误</strong>
+            <span>当前报告没有差、错或漏杀记录。</span>
+          </div>}
+        </> : <div className="board-position-brief-empty">
+          <strong>暂无错误统计</strong>
+          <span>先生成整局报告，再按红方/黑方查看问题着法。</span>
+        </div>}
+      </div>}
       <button
         className="board-position-brief-action"
         type="button"
@@ -7708,7 +7807,7 @@ export default function App() {
             <button type="button" title="收起局势评分条" aria-label="收起局势评分条" onClick={() => setMobileEvaluationVisible(false)}><ChevronDown size={15}/></button>
           </section>}
           <div className={`board-stage ${(reviewModeOpen || (showReviewAnnotations && boardHasAnnotation) || (workspaceMode === "opening" && desktopPreferences.layoutMode === "compact")) ? "has-side-note" : ""}`}>
-            <div className={`board-stage-inner ${showMasterGameSidePanel ? "has-master-identity" : ""}`}>
+            <div className={`board-stage-inner ${showMasterGameSidePanel ? "has-master-identity" : ""} ${!showBoardEvaluationRail ? "eval-rail-hidden" : ""}`}>
             {showMasterGameSidePanel ? <section className="master-game-identity side" aria-label="当前大师棋谱信息">
               <div>
                 <strong title={`${manualMeta.red} vs ${manualMeta.black}`}>{manualMeta.red} vs {manualMeta.black}</strong>
@@ -7833,7 +7932,7 @@ export default function App() {
                 </>
               )}
             </div>
-            <aside className={`board-eval-rail ${boardEvaluationScore == null ? "pending" : boardEvaluationScore < -50 ? "black" : boardEvaluationScore > 50 ? "red" : "balanced"}`} aria-label="棋盘局势评分条">
+            {showBoardEvaluationRail && <aside className={`board-eval-rail ${boardEvaluationScore == null ? "pending" : boardEvaluationScore < -50 ? "black" : boardEvaluationScore > 50 ? "red" : "balanced"}`} aria-label="棋盘局势评分条">
               <button className="board-eval-help" type="button" title="查看棋谱分析说明" aria-label="查看棋谱分析说明" onClick={() => setAnalysisHelpOpen(true)}>?</button>
               <div className="board-eval-track" aria-hidden="true">
                 <span style={{ height: `${boardEvaluationRedShare}%` } as CSSProperties}/>
@@ -7844,7 +7943,7 @@ export default function App() {
                   : <strong>{boardEvaluationRailText.side}</strong>}
                 <span>{boardEvaluationRailText.score}</span>
               </div>
-            </aside>
+            </aside>}
             </div>
             {openingPositionBrief()}
             {workspaceMode === "review" && (reviewModeOpen || (showReviewAnnotations && boardHasAnnotation)) && <div id="board-current-thought-slot" className={`board-current-thought-slot ${showReviewAnnotations && boardHasAnnotation ? "has-annotation" : ""}`} aria-live="polite">
