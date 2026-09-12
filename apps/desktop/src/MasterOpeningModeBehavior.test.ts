@@ -32,7 +32,7 @@ describe("master opening workspace behavior", () => {
     expect(app).toContain('reportTrendSamples.length > 1');
     expect(app).toContain(': (evaluation?.samples ?? [])');
     expect(app).toContain('reportProgressTrendSamples.length > 1');
-    expect(app).toContain('reportProgressTrendSample(progress, boardRef.current.history)');
+    expect(app).toContain('reportProgressTrendSample(progress, boardRef.current)');
     expect(app).toContain('onClick={() => reportBusy ? void cancelGameReport() : void generateGameReport()}');
     expect(app).toContain('"生成整局走势"');
     expect(app).toContain('chessPlatform.listReferenceGames(undefined, undefined, 10, 0, { positionFen: fen })');

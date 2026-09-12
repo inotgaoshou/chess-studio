@@ -79,9 +79,10 @@ describe("compact board-first workspace layout", () => {
   });
 
   it("keeps master opening board geometry aligned with review and uses the side-note slot for situation analysis", () => {
-    expect(styles).toContain("grid-template-columns: minmax(760px, 1fr) minmax(300px, 340px)");
+    expect(styles).toContain("grid-template-columns: minmax(900px, 1fr) minmax(280px, 320px)");
     expect(styles).toContain("grid-template-columns:minmax(0, 1fr) 54px");
-    expect(styles).toContain("grid-template-columns:minmax(0, 1fr) minmax(340px, 420px)");
+    expect(styles).toContain("grid-template-columns:max-content minmax(500px, 620px)");
+    expect(styles).toContain("justify-content:start");
     expect(styles).toContain("justify-self:start");
     expect(styles).toContain("workspace-mode-opening > .board-section");
     expect(styles).toContain("display:block");

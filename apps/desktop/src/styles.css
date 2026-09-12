@@ -8211,7 +8211,7 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
   .workspace.layout-compact.workspace-mode-opening.library-collapsed.reference-search-active,
   .workspace.layout-compact.workspace-mode-opening.reference-search-active.analysis-panel-collapsed,
   .workspace.layout-compact.workspace-mode-opening.library-collapsed.reference-search-active.analysis-panel-collapsed {
-    grid-template-columns: minmax(760px, 1fr) minmax(300px, 340px);
+    grid-template-columns: minmax(900px, 1fr) minmax(280px, 320px);
   }
   .workspace.layout-compact.workspace-mode-opening .board-candidate-rail { display:none; }
   .workspace.layout-compact.compact-dock-minimized,
@@ -11977,14 +11977,18 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
   .workspace.layout-compact.workspace-mode-opening .board-position-brief {
     min-height:0;
     height:100%;
+    width:100%;
     margin:0;
+    padding:12px 14px;
+    grid-template-rows:auto 38px auto auto auto minmax(260px, 1fr) auto auto;
     border-radius:8px;
   }
   .workspace.layout-compact.workspace-mode-opening .board-stage.has-side-note {
-    grid-template-columns:minmax(0, 1fr) minmax(340px, 420px);
+    grid-template-columns:max-content minmax(500px, 620px);
     column-gap:14px;
     padding-left:8px;
     padding-right:10px;
+    justify-content:start;
   }
   .workspace.layout-compact.workspace-mode-opening .board-stage.has-side-note .board-stage-inner {
     justify-self:start;

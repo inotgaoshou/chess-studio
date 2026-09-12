@@ -1212,13 +1212,14 @@ function redScoreFromReportProgress(progress: GameReportProgressDto) {
   return progress.scoreCp == null ? undefined : progress.scoreCp * side;
 }
 
-function reportProgressTrendSample(progress: GameReportProgressDto, history: MoveItem[]): TrendSample | undefined {
+function reportProgressTrendSample(progress: GameReportProgressDto, board: BoardState): TrendSample | undefined {
   const scoreCp = redScoreFromReportProgress(progress);
   if (scoreCp == null) return undefined;
+  const moves = [...board.history, ...(board.continuation ?? [])];
   const moveIndex = progress.nodeId
-    ? Math.max(0, history.findIndex((move) => move.id === progress.nodeId) + 1)
+    ? Math.max(0, moves.findIndex((move) => move.id === progress.nodeId) + 1)
     : 0;
-  const move = progress.nodeId ? history.find((candidate) => candidate.id === progress.nodeId) : undefined;
+  const move = progress.nodeId ? moves.find((candidate) => candidate.id === progress.nodeId) : undefined;
   return {
     label: move ? `第 ${moveIndex} 着 ${move.notation}` : "初始局面",
     scoreCp,
@@ -2088,7 +2089,7 @@ export default function App() {
       if (disposed) return;
       setReportProgress(progress);
       setReportBusy(progress.state === "running");
-      const sample = reportProgressTrendSample(progress, boardRef.current.history);
+      const sample = reportProgressTrendSample(progress, boardRef.current);
       if (sample) {
         setReportProgressTrendSamples((current) => mergeReportProgressTrendSample(current, sample));
       }
