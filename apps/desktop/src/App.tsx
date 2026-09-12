@@ -7013,7 +7013,7 @@ export default function App() {
         <text className="trend-scale-label" x="2" y={trendChart.top + 3}>红优</text>
         <text className="trend-scale-label" x="2" y={trendChart.middle + 3}>0</text>
         <text className="trend-scale-label" x="2" y={trendChart.bottom + 3}>黑优</text>
-        {trendSegments.map((segment, index) => <line key={index} className={`trend-segment ${segment.side}`} x1={segment.from.x} y1={segment.from.y} x2={segment.to.x} y2={segment.to.y}/>)}
+        {smoothTrendSegments.map((segment) => <path key={segment.key} className={`trend-segment ${segment.side}`} d={segment.d} fill="none"/>)}
         {evaluationTrend.map((point, index) => {
           const turn = trendTurnsByNode.get(point.nodeId);
           return <circle
@@ -7946,7 +7946,7 @@ export default function App() {
                 <text className="trend-scale-label" x="2" y={trendChart.top + 3}>红优</text>
                 <text className="trend-scale-label" x="2" y={trendChart.middle + 3}>均势</text>
                 <text className="trend-scale-label" x="2" y={trendChart.bottom + 3}>黑优</text>
-                {trendSegments.map((segment, index) => <line key={index} className={`trend-segment ${segment.side}`} x1={segment.from.x} y1={segment.from.y} x2={segment.to.x} y2={segment.to.y}/>)}
+                {smoothTrendSegments.map((segment) => <path key={segment.key} className={`trend-segment ${segment.side}`} d={segment.d} fill="none"/>)}
                 {evaluationTrend.map((point, index) => {
                   const turn = trendTurnsByNode.get(point.nodeId);
                   return <circle
@@ -8219,7 +8219,7 @@ export default function App() {
                     <text className="trend-scale-label" x="2" y={trendChart.middle + 3}>均势</text>
                     <text className="trend-scale-label" x="2" y="129">-100</text>
                     <text className="trend-scale-label" x="2" y={trendChart.bottom + 3}>胜势</text>
-                    {trendSegments.map((segment, index) => <line key={index} className={`trend-segment ${segment.side}`} x1={segment.from.x} y1={segment.from.y} x2={segment.to.x} y2={segment.to.y}/>)}
+                    {smoothTrendSegments.map((segment) => <path key={segment.key} className={`trend-segment ${segment.side}`} d={segment.d} fill="none"/>)}
                     {evaluationTrend.map((point, index) => {
                       const turn = trendTurnsByNode.get(point.nodeId);
                       return (
