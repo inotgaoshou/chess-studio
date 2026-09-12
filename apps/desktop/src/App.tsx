@@ -2284,6 +2284,23 @@ export default function App() {
       { from: zero, to: point, side: point.scoreCp > 0 ? "red" : "black" },
     ];
   }), [evaluationTrend]);
+  const smoothTrendSegments = useMemo(() => {
+    const groups: Array<{ side: "red" | "black"; points: TrendPoint[] }> = [];
+    for (const segment of trendSegments) {
+      const current = groups.at(-1);
+      const lastPoint = current?.points.at(-1);
+      if (current && current.side === segment.side && lastPoint && Math.abs(lastPoint.x - segment.from.x) < 0.01 && Math.abs(lastPoint.y - segment.from.y) < 0.01) {
+        current.points.push(segment.to);
+      } else {
+        groups.push({ side: segment.side as "red" | "black", points: [segment.from, segment.to] });
+      }
+    }
+    return groups.map((group, index) => ({
+      key: `${group.side}-${index}`,
+      side: group.side,
+      d: smoothTrendPath(group.points),
+    }));
+  }, [trendSegments]);
   const activeTrendPoint = trendCursorIndex == null ? undefined : evaluationTrend[trendCursorIndex];
   const activeTrendDelta = trendCursorIndex == null || trendCursorIndex <= 0 ? undefined : evaluationTrend[trendCursorIndex].scoreCp - evaluationTrend[trendCursorIndex - 1].scoreCp;
   const currentTrendPoint = useMemo(() => {
