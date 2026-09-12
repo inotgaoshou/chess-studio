@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="ink" x1="34" y1="28" x2="218" y2="224" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#e04b38"/>
+      <stop offset=".5" stop-color="#bb2c24"/>
+      <stop offset="1" stop-color="#981d1d"/>
+    </linearGradient>
+    <filter id="rough" x="-20%" y="-20%" width="140%" height="140%">
+      <feTurbulence type="fractalNoise" baseFrequency=".025 .11" numOctaves="2" seed="19" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="7" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+  </defs>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round" filter="url(#rough)">
+    <path d="M45 70C72 27 143 16 193 47C237 75 245 139 216 184C184 234 111 244 62 208C18 177 13 113 45 70Z" stroke="url(#ink)" stroke-width="15" stroke-dasharray="335 18 58 12"/>
+    <path d="M39 77C67 34 139 19 190 48C231 72 242 132 219 176" stroke="#d43e2f" stroke-width="5" stroke-dasharray="87 8 45 13 72 7" opacity=".72"/>
+    <path d="M61 211C48 202 36 190 29 177M55 217C43 213 34 208 24 200M203 50C214 57 222 66 228 76" stroke="#b62822" stroke-width="6" opacity=".82"/>
+    <path d="M34 159L19 166M45 188L27 194M83 226L70 239M218 151L239 147M215 91L237 84" stroke="#c63328" stroke-width="3" opacity=".66"/>
+  </g>
+  <g fill="#c33228" opacity=".72" filter="url(#rough)">
+    <circle cx="29" cy="84" r="4"/><circle cx="21" cy="97" r="2.5"/><circle cx="34" cy="204" r="3"/>
+    <circle cx="72" cy="235" r="2.5"/><circle cx="222" cy="68" r="3"/><circle cx="232" cy="83" r="2"/>
+    <path d="M31 175c-11 2-18 8-24 15 11-4 21-4 31-8zM48 214c-13 4-21 10-29 18 13-5 24-5 35-10z"/>
+  </g>
+</svg>
