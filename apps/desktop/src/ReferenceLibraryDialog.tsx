@@ -178,6 +178,7 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
   const [searchMode, setSearchMode] = useState<SearchMode>("match");
   const [classificationStatus, setClassificationStatus] = useState<ClassificationStatus>("all");
   const [gameOpeningCode, setGameOpeningCode] = useState("");
+  const [filtersCollapsed, setFiltersCollapsed] = useState(false);
   const [selectedGameId, setSelectedGameId] = useState<string | undefined>(initialGameId);
   const [selectedDocument, setSelectedDocument] = useState<ReferenceGameDocumentDto>();
   const [documentError, setDocumentError] = useState("");
@@ -618,9 +619,19 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
           </>}</div>
         </main>
       </div>}
-      {tab === "games" && <div className="reference-game-search-body">
-        <aside>
-          <header><strong>实战仓库</strong><small>全部参考棋局、待分类棋局都能直接查看</small></header>
+      {tab === "games" && <div className={`reference-game-search-body ${filtersCollapsed ? "filters-collapsed" : ""}`.trim()}>
+        <aside className={filtersCollapsed ? "collapsed" : ""}>
+          <header className="reference-search-filter-header">
+            <span><strong>{filtersCollapsed ? "筛选" : "实战仓库"}</strong><small>全部参考棋局、待分类棋局都能直接查看</small></span>
+            <button
+              type="button"
+              className="reference-filter-collapse"
+              aria-expanded={!filtersCollapsed}
+              title={filtersCollapsed ? "展开筛选条件" : "收起筛选条件，给棋谱列表和预览区让出空间"}
+              onClick={() => setFiltersCollapsed((collapsed) => !collapsed)}
+            >{filtersCollapsed ? "展开筛选" : "收起筛选"}</button>
+          </header>
+          {!filtersCollapsed && <>
           <div className="reference-search-mode" role="group" aria-label="检索方式"><button className={searchMode === "match" ? "active" : ""} type="button" onClick={() => setSearchMode("match")}>对阵搜索</button><button className={searchMode === "position" ? "active" : ""} type="button" onClick={() => setSearchMode("position")} title={currentFen ? "按当前棋盘局面查询本地实战候选" : "当前没有可用棋盘局面"}>局面搜索</button></div>
           <label><Search size={14}/><input aria-label="实战检索关键词" value={query} disabled={searchMode === "position"} onChange={(event) => setQuery(event.target.value)} placeholder={searchMode === "position" ? "局面搜索按当前棋盘 FEN" : "标题、棋手、赛事"}/></label>
           <label>棋手<input value={player} onChange={(change) => setPlayer(change.target.value)} placeholder="王天一 / 许银川"/></label>
@@ -643,6 +654,7 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
             <button type="button" className={classificationStatus === "pending" ? "active" : ""} onClick={() => { setClassificationStatus("pending"); setGameOpeningCode(""); }}>待分类</button>
           </div>
           <div className="reference-game-search-hint"><b>{searchMode === "position" ? `候选 ${positionMoves.length.toLocaleString()} 着` : `${gamesLoading ? "更新中 · " : ""}已加载 ${games.length.toLocaleString()} 盘`}</b><span>{selectedGameOpening ? `当前布局：${selectedGameOpening.code} · ${selectedGameOpening.name}` : "可按布局分类、棋手、赛事、年份筛选；预览只读，不改当前棋谱。"}</span></div>
+          </>}
         </aside>
         <main>
           <header><span><strong>{searchMode === "position" ? "当前局面候选" : selectedGameOpening ? `${selectedGameOpening.code} · ${selectedGameOpening.name}` : classificationStatus === "pending" ? "待分类棋局" : classificationStatus === "classified" ? "已归类棋局" : "全部参考棋局"}</strong><small>{searchMode === "position" ? "按当前棋盘 FEN 聚合实战走法" : query.trim() || player.trim() || eventName.trim() || gameOpeningCode ? "当前筛选结果" : "最近导入和最新日期优先"}</small></span></header>
@@ -671,7 +683,7 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
         <section className="reference-game-preview" aria-label="参考棋局预览">
           {!selectedGame ? <p>选择左侧棋局后查看来源文档摘要。</p> : <>
             <header>
-              <span><Eye size={14}/><strong>{selectedGame.title || "未命名棋局"}</strong>{renderPlayerPair(selectedGame, "preview")}</span>
+              <span className="reference-game-preview-title"><Eye size={14}/><strong title={selectedGame.title || "未命名棋局"}>{selectedGame.title || "未命名棋局"}</strong>{renderPlayerPair(selectedGame, "preview")}</span>
               {onOpenReferenceGame && <nav className="reference-game-preview-actions" aria-label="参考棋局操作">
                 <button type="button" disabled={busy} title="载入到棋盘查看完整棋谱" onClick={() => void openSelectedReferenceGame("view")}><BookOpen size={13}/>{referenceAction === "view" ? "载入中" : "查看棋谱"}</button>
                 <button type="button" disabled={busy} title="载入后进入复盘学习工作台，并分析当前局面" onClick={() => void openSelectedReferenceGame("study")}><Activity size={13}/>{referenceAction === "study" ? "分析中" : "学习分析"}</button>

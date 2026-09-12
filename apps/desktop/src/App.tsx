@@ -54,7 +54,7 @@ import {
   Zap,
 } from "lucide-react";
 import { BUILTIN_ENGINE_PATH, DEFAULT_BUILTIN_OPENING_BOOK_ID, FALLBACK_BUILTIN_OPENING_BOOK_MANIFEST, chessPlatform, type AnalysisLine, type BoardState, type CloudBookCandidate, type EngineProbeDto, type EngineProfileDto, type EngineRuntimeState, type ExportFormat, type GameReportDatasetDto, type GameReportProgressDto, type GameSummary, type LibraryFolder, type MasterStyleProfileDto, type MoveItem, type Piece, type PreviewLineStep, type ReplayExportScope, type StudySessionDto, type TheoryLibraryDto, type TrainingGenerationResultDto, type TrainingSummaryDto, type TrainingTaskDto } from "./platform";
-import { evaluationRedShare, moveQualityFeedback, moveReports, positionEvaluation, redAnalysisScoreText, trendChart, trendPoints, trendTurningPoints } from "./analysisView";
+import { evaluationRedShare, moveQualityFeedback, moveReports, positionEvaluation, redAnalysisScoreText, trendChart, trendPoints, trendTurningPoints, type TrendPoint, type TrendSample } from "./analysisView";
 import { CandidateLine } from "./CandidateLine";
 import { hasEngineDivergence, MultiEngineComparison, type EngineComparisonGroup } from "./MultiEngineComparison";
 import { DesktopMenuBar, type MenuCommand } from "./DesktopMenuBar";
@@ -1205,6 +1205,57 @@ function formatRedScore(scoreCp?: number) {
   return score > 0 ? `+${score}` : `${score}`;
 }
 
+function redScoreFromReportProgress(progress: GameReportProgressDto) {
+  if (!progress.sideToMove) return undefined;
+  const side = progress.sideToMove === "红方" ? 1 : -1;
+  if (progress.mate != null) return (progress.mate === 0 ? -1 : Math.sign(progress.mate)) * side * 1000;
+  return progress.scoreCp == null ? undefined : progress.scoreCp * side;
+}
+
+function reportProgressTrendSample(progress: GameReportProgressDto, history: MoveItem[]): TrendSample | undefined {
+  const scoreCp = redScoreFromReportProgress(progress);
+  if (scoreCp == null) return undefined;
+  const moveIndex = progress.nodeId
+    ? Math.max(0, history.findIndex((move) => move.id === progress.nodeId) + 1)
+    : 0;
+  const move = progress.nodeId ? history.find((candidate) => candidate.id === progress.nodeId) : undefined;
+  return {
+    label: move ? `第 ${moveIndex} 着 ${move.notation}` : "初始局面",
+    scoreCp,
+    nodeId: progress.nodeId,
+    moveIndex,
+  };
+}
+
+function mergeReportProgressTrendSample(samples: TrendSample[], sample: TrendSample) {
+  const key = sample.nodeId ? `node:${sample.nodeId}` : `index:${sample.moveIndex ?? 0}`;
+  const next = samples.filter((current) => {
+    const currentKey = current.nodeId ? `node:${current.nodeId}` : `index:${current.moveIndex ?? 0}`;
+    return currentKey !== key;
+  });
+  next.push(sample);
+  next.sort((left, right) => (left.moveIndex ?? 0) - (right.moveIndex ?? 0));
+  return next;
+}
+
+function smoothTrendPath(points: Pick<TrendPoint, "x" | "y">[]) {
+  if (points.length === 0) return "";
+  const round = (value: number) => Number(value.toFixed(2));
+  if (points.length === 1) return `M ${round(points[0].x)} ${round(points[0].y)}`;
+  if (points.length === 2) return `M ${round(points[0].x)} ${round(points[0].y)} L ${round(points[1].x)} ${round(points[1].y)}`;
+  const commands = [`M ${round(points[0].x)} ${round(points[0].y)}`];
+  for (let index = 1; index < points.length - 1; index += 1) {
+    const current = points[index];
+    const next = points[index + 1];
+    const midX = (current.x + next.x) / 2;
+    const midY = (current.y + next.y) / 2;
+    commands.push(`Q ${round(current.x)} ${round(current.y)} ${round(midX)} ${round(midY)}`);
+  }
+  const last = points.at(-1)!;
+  commands.push(`Q ${round(last.x)} ${round(last.y)} ${round(last.x)} ${round(last.y)}`);
+  return commands.join(" ");
+}
+
 function formatScoreDelta(scoreCp?: number) {
   if (scoreCp == null) return "缺少相邻局面分数";
   const score = Math.round(scoreCp);
@@ -1395,6 +1446,7 @@ export default function App() {
   const effectiveColorTheme: ColorTheme = desktopPreferences.layoutMode === "compact" ? "light" : "dark";
   const [gameReport, setGameReport] = useState<GameReportDatasetDto>();
   const [reportProgress, setReportProgress] = useState<GameReportProgressDto>();
+  const [reportProgressTrendSamples, setReportProgressTrendSamples] = useState<TrendSample[]>([]);
   const [reportBusy, setReportBusy] = useState(false);
   const [reportDialogOpen, setReportDialogOpen] = useState(false);
   const [masterAnalysisDialogOpen, setMasterAnalysisDialogOpen] = useState(false);
@@ -1463,6 +1515,7 @@ export default function App() {
     setReportDialogOpen(false);
     setGameReport(undefined);
     setReportProgress(undefined);
+    setReportProgressTrendSamples([]);
     const next = await chessPlatform.openReferenceGame(gameId);
     applyBoard(next);
     setAutosave({ status: "saved" });
@@ -2035,6 +2088,10 @@ export default function App() {
       if (disposed) return;
       setReportProgress(progress);
       setReportBusy(progress.state === "running");
+      const sample = reportProgressTrendSample(progress, boardRef.current.history);
+      if (sample) {
+        setReportProgressTrendSamples((current) => mergeReportProgressTrendSample(current, sample));
+      }
     }).then((stop) => {
       if (disposed) stop();
       else unsubscribe = stop;
@@ -2194,7 +2251,22 @@ export default function App() {
   const currentAnalysis = useMemo(() => analysisIsStale ? [] : analysis, [analysis, analysisIsStale]);
   const evaluation = useMemo(() => positionEvaluation(board, currentAnalysis), [board, currentAnalysis]);
   const boardRailEvaluation = useMemo(() => positionEvaluation(board, currentAnalysis), [board, currentAnalysis]);
-  const evaluationTrend = useMemo(() => trendPoints(evaluation?.samples ?? [], board.history.length), [board.history.length, evaluation]);
+  const reportPresentation = useMemo(() => gameReport ? buildGameReportPresentation(board.title, gameReport) : undefined, [board.title, gameReport]);
+  const reportTrendSamples = useMemo<TrendSample[]>(() => reportPresentation?.trend.map((point, index) => ({
+    label: index === 0 ? "初始局面" : point.label,
+    scoreCp: point.scoreCp,
+    nodeId: point.nodeId,
+    moveIndex: index,
+  })) ?? [], [reportPresentation]);
+  const trendSourceSamples = useMemo(() => reportTrendSamples.length > 1
+    ? reportTrendSamples
+    : reportProgressTrendSamples.length > 1
+      ? reportProgressTrendSamples
+      : (evaluation?.samples ?? []), [evaluation, reportProgressTrendSamples, reportTrendSamples]);
+  const evaluationTrend = useMemo(() => trendPoints(
+    trendSourceSamples,
+    Math.max(trendSourceSamples.length, board.history.length + (reportTrendSamples.length > 1 || reportProgressTrendSamples.length > 1 ? 1 : 0)),
+  ), [board.history.length, reportProgressTrendSamples.length, reportTrendSamples.length, trendSourceSamples]);
   const trendSegments = useMemo(() => evaluationTrend.slice(1).flatMap((point, index) => {
     const previous = evaluationTrend[index];
     if ((previous.scoreCp >= 0 && point.scoreCp >= 0) || (previous.scoreCp <= 0 && point.scoreCp <= 0)) {
@@ -2216,16 +2288,38 @@ export default function App() {
   const activeTrendDelta = trendCursorIndex == null || trendCursorIndex <= 0 ? undefined : evaluationTrend[trendCursorIndex].scoreCp - evaluationTrend[trendCursorIndex - 1].scoreCp;
   const currentTrendPoint = useMemo(() => {
     if (evaluationTrend.length === 0) return undefined;
-    return evaluationTrend.find((point) => point.nodeId === board.currentNode) ?? evaluationTrend.at(-1);
-  }, [board.currentNode, evaluationTrend]);
+    const byNode = evaluationTrend.find((point) => point.nodeId === board.currentNode);
+    if (byNode) return byNode;
+    const syncedMoveIndex = reportTrendSamples.length > 1 || reportProgressTrendSamples.length > 1 ? board.history.length : Math.max(0, board.history.length - 1);
+    return evaluationTrend.find((point) => point.moveIndex === syncedMoveIndex) ?? evaluationTrend.at(-1);
+  }, [board.currentNode, board.history.length, evaluationTrend, reportProgressTrendSamples.length, reportTrendSamples.length]);
   const visibleTrendPoint = activeTrendPoint ?? currentTrendPoint;
   const visibleTrendDelta = activeTrendPoint ? activeTrendDelta : undefined;
   const trendMarkerOnLeft = (visibleTrendPoint?.x ?? 0) > trendChart.width / 2;
   const trendMarkerX = visibleTrendPoint ? visibleTrendPoint.x + (trendMarkerOnLeft ? -88 : 4) : 0;
   const trendMarkerY = visibleTrendPoint ? Math.max(12, visibleTrendPoint.y - 16) : 0;
   const trendMarkerText = visibleTrendPoint ? `${visibleTrendPoint.label.replace("第 ", "")} · ${formatRedScore(visibleTrendPoint.scoreCp)}` : "";
-  const trendTurns = useMemo(() => trendTurningPoints(evaluation?.samples ?? []), [evaluation]);
+  const trendTurns = useMemo(() => trendTurningPoints(trendSourceSamples), [trendSourceSamples]);
   const trendTurnsByNode = useMemo(() => new Map(trendTurns.map((turn) => [turn.nodeId, turn])), [trendTurns]);
+  const reportCurrentPosition = useMemo(() => {
+    if (!gameReport?.positions.length) return undefined;
+    if (board.history.length === 0) return gameReport.positions[0];
+    return gameReport.positions.find((position) => position.move?.nodeId === board.currentNode);
+  }, [board.currentNode, board.history.length, gameReport]);
+  const reportCurrentRedScore = useMemo(() => {
+    if (!reportCurrentPosition) return undefined;
+    const side = reportCurrentPosition.sideToMove === "红方" ? 1 : -1;
+    if (reportCurrentPosition.mate != null) {
+      return (reportCurrentPosition.mate === 0 ? -1 : Math.sign(reportCurrentPosition.mate)) * side * 1000;
+    }
+    return reportCurrentPosition.scoreCp == null ? undefined : reportCurrentPosition.scoreCp * side;
+  }, [reportCurrentPosition]);
+  const reportCurrentMateSide = useMemo(() => {
+    if (!reportCurrentPosition || reportCurrentPosition.mate == null) return undefined;
+    const side = reportCurrentPosition.sideToMove === "红方" ? 1 : -1;
+    const redMateSide = (reportCurrentPosition.mate === 0 ? -1 : Math.sign(reportCurrentPosition.mate)) * side;
+    return redMateSide > 0 ? "红方" : "黑方";
+  }, [reportCurrentPosition]);
   const reportPositionByNode = useMemo(() => new Map((gameReport?.positions ?? []).flatMap((position, index, positions) => {
     if (!position.move?.nodeId) return [];
     return [[position.move.nodeId, { position, before: positions[index - 1] }]] as const;
@@ -2240,46 +2334,58 @@ export default function App() {
   }, [board.history, board.rootMate, board.rootScoreCp, board.rootSideToMove, gameReport]);
   const overviewReport = useMemo(() => reports.find((report) => report.move.id === board.currentNode), [board.currentNode, reports]);
   const reportByMoveId = useMemo(() => new Map(reports.map((report) => [report.move.id, report])), [reports]);
-  const boardEvaluationScore = boardRailEvaluation?.samples.at(-1)?.scoreCp;
+  const boardEvaluationScore = reportCurrentRedScore ?? boardRailEvaluation?.samples.at(-1)?.scoreCp;
+  const boardEvaluationScoreText = reportCurrentRedScore == null ? boardRailEvaluation?.scoreText : formatRedScore(reportCurrentRedScore);
+  const boardEvaluationMateSide = reportCurrentMateSide ?? boardRailEvaluation?.mateSide;
   const professionalEvaluationScore = evaluation?.samples.at(-1)?.scoreCp;
   const professionalEvaluationTone = professionalEvaluationScore == null
     ? "pending"
     : professionalEvaluationScore < -50 ? "black" : professionalEvaluationScore > 50 ? "red" : "balanced";
-  const boardEvaluationSide = boardRailEvaluation?.mateSide
-    ? `${boardRailEvaluation.mateSide}${boardRailEvaluation.isCheckmate ? "绝杀胜" : "绝杀"}`
+  const boardEvaluationSide = boardEvaluationMateSide
+    ? `${boardEvaluationMateSide}${reportCurrentPosition?.mate === 0 || boardRailEvaluation?.isCheckmate ? "绝杀胜" : "绝杀"}`
     : boardEvaluationScore == null || Math.abs(boardEvaluationScore) <= 50
       ? "均势"
       : boardEvaluationScore > 0 ? "红优" : "黑优";
-  const boardEvaluationBalanced = boardRailEvaluation?.mateSide == null
+  const boardEvaluationBalanced = boardEvaluationMateSide == null
     && boardEvaluationScore != null
     && Math.abs(boardEvaluationScore) <= 50;
   const boardEvaluationRedShare = boardEvaluationScore == null
     ? 50
-    : boardRailEvaluation?.mateSide === "红方"
+    : boardEvaluationMateSide === "红方"
       ? 95
-      : boardRailEvaluation?.mateSide === "黑方"
+      : boardEvaluationMateSide === "黑方"
         ? 5
         : evaluationRedShare(boardEvaluationScore);
+  const boardEvaluationBlackShare = 100 - boardEvaluationRedShare;
   const boardEvaluationRailText = compactBoardEvaluationRailText({
     sideText: boardEvaluationSide,
-    scoreText: boardRailEvaluation?.scoreText,
-    mateSide: boardRailEvaluation?.mateSide,
-    mateIn: boardRailEvaluation?.mateIn,
-    isCheckmate: boardRailEvaluation?.isCheckmate,
+    scoreText: boardEvaluationScoreText,
+    mateSide: boardEvaluationMateSide,
+    mateIn: boardEvaluationMateSide ? Math.abs(reportCurrentPosition?.mate ?? boardRailEvaluation?.mateIn ?? 0) : boardRailEvaluation?.mateIn,
+    isCheckmate: reportCurrentPosition?.mate === 0 || boardRailEvaluation?.isCheckmate,
     balanced: boardEvaluationBalanced,
   });
-  const boardEvaluationRailTitle = `${boardEvaluationSide} · ${boardRailEvaluation?.scoreText ?? "--"}`;
-  const reportPresentation = useMemo(() => gameReport ? buildGameReportPresentation(board.title, gameReport) : undefined, [board.title, gameReport]);
+  const boardEvaluationRailTitle = `${boardEvaluationSide} · ${boardEvaluationScoreText ?? "--"}`;
+  const openingBoardBriefText = boardEvaluationScore == null
+    ? "点击生成整局走势后，Pikafish 会逐步分析整局并同步棋谱节点。"
+    : reportCurrentRedScore != null
+      ? `整局报告已同步当前节点，红方视角 ${boardEvaluationScoreText ?? "--"}。`
+    : boardEvaluationBalanced
+      ? "双方接近均势，可重点比较候选着法样本。"
+      : `${boardEvaluationSide}，评分 ${boardEvaluationScoreText ?? "--"}。`;
   const manualMeta = useMemo(() => ({
     red: noteField(board.note, "红方") || "红方",
     black: noteField(board.note, "黑方") || "黑方",
     event: noteField(board.note, "比赛") || "赛事未知",
     date: noteField(board.note, "日期") || "日期未知",
     result: noteField(board.note, "结果") || "*",
+    opening: noteField(board.note, "布局"),
     moveCount: noteField(board.note, "手数") || `${board.history.length}`,
   }), [board.history.length, board.note]);
   const isMasterLibraryGame = board.sourceFormat === "server-master-pgn"
+    || board.sourceFormat === "reference-library"
     || board.note.includes("用途：本地学习、拆棋和 Pikafish 分析。");
+  const showMasterGameSidePanel = isMasterLibraryGame && desktopPreferences.layoutMode !== "compact";
   const isGame53MasterGame = isMasterLibraryGame
     && manualMeta.red.includes("洪智")
     && manualMeta.black.includes("黄仕清")
@@ -3211,6 +3317,7 @@ export default function App() {
     await cancelAnalysisForDocumentChange();
     selectWorkspacePanel("report");
     setReportBusy(true);
+    setReportProgressTrendSamples([]);
     setReportProgress({
       completed: 0,
       total: Math.max(1, boardRef.current.history.length + 1),
@@ -6846,6 +6953,87 @@ export default function App() {
     />;
   }
 
+  function openingPositionBrief() {
+    if (workspaceMode !== "opening" || desktopPreferences.layoutMode !== "compact") return null;
+    const reportProgressText = reportBusy
+      ? `Pikafish 分析中 · ${reportProgress?.completed ?? 0}/${reportProgress?.total ?? Math.max(1, board.history.length + 1)} · 深度 ${reportProgress?.currentDepth ?? reportProgress?.targetDepth ?? desktopPreferences.reportDepth}`
+      : reportPresentation
+        ? `整局报告 · ${reportPresentation.trend.length} 个局面 · 深度 ${reportPresentation.analysisDepth ?? desktopPreferences.reportDepth}`
+        : "点击生成整局走势";
+    const reportActionText = reportBusy ? "取消整局分析" : reportPresentation ? "重新精准分析" : "生成整局走势";
+    return <aside className={`board-position-brief ${boardEvaluationScore == null ? "pending" : boardEvaluationScore < -50 ? "black" : boardEvaluationScore > 50 ? "red" : "balanced"}`} aria-label="棋盘红黑局势分析">
+      <header><BarChart3 size={14}/><strong>局势分析</strong><small>{reportProgressText}</small></header>
+      <div className="board-position-brief-tabs" aria-label="局势分析视图">
+        <b>局势图</b><span>报告</span><span>错误</span>
+      </div>
+      <div className="board-position-brief-score">
+        <strong>{boardEvaluationSide}</strong>
+        <span>{boardEvaluationScoreText ?? "--"}</span>
+      </div>
+      <div className="board-position-brief-bar" aria-label={`红方 ${Math.round(boardEvaluationRedShare)}%，黑方 ${Math.round(boardEvaluationBlackShare)}%`}>
+        <i className="red" style={{ width: `${boardEvaluationRedShare}%` } as CSSProperties}/>
+        <i className="black" style={{ width: `${boardEvaluationBlackShare}%` } as CSSProperties}/>
+      </div>
+      <p><span className="red">红 {Math.round(boardEvaluationRedShare)}%</span><span className="black">黑 {Math.round(boardEvaluationBlackShare)}%</span></p>
+      {evaluationTrend.length > 1 ? <svg
+        className="board-position-brief-trend"
+        viewBox={`0 0 ${trendChart.width} ${trendChart.height}`}
+        preserveAspectRatio="none"
+        role="group"
+        aria-label="同步当前棋谱的红黑局势走势图"
+        tabIndex={0}
+        onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); updateTrendCursor(event); }}
+        onPointerMove={(event) => { if (event.buttons) updateTrendCursor(event); }}
+        onPointerUp={() => releaseTrendCursor()}
+        onKeyDown={trendKeyDown}
+      >
+        <rect className="trend-equal-band" x={trendChart.left} y={trendChart.middle - 4} width={trendChart.right - trendChart.left} height="8"/>
+        <line className="trend-grid top" x1={trendChart.left} y1={trendChart.top} x2={trendChart.right} y2={trendChart.top}/>
+        <line className="trend-grid upper" x1={trendChart.left} y1="54" x2={trendChart.right} y2="54"/>
+        <line className="trend-grid middle" x1={trendChart.left} y1={trendChart.middle} x2={trendChart.right} y2={trendChart.middle}/>
+        <line className="trend-grid lower" x1={trendChart.left} y1="126" x2={trendChart.right} y2="126"/>
+        <line className="trend-grid bottom" x1={trendChart.left} y1={trendChart.bottom} x2={trendChart.right} y2={trendChart.bottom}/>
+        <text className="trend-scale-label" x="2" y={trendChart.top + 3}>红优</text>
+        <text className="trend-scale-label" x="2" y={trendChart.middle + 3}>0</text>
+        <text className="trend-scale-label" x="2" y={trendChart.bottom + 3}>黑优</text>
+        {trendSegments.map((segment, index) => <line key={index} className={`trend-segment ${segment.side}`} x1={segment.from.x} y1={segment.from.y} x2={segment.to.x} y2={segment.to.y}/>)}
+        {evaluationTrend.map((point, index) => {
+          const turn = trendTurnsByNode.get(point.nodeId);
+          return <circle
+            key={`${point.label}-${index}`}
+            className={`${point.nodeId === board.currentNode ? "current" : ""} ${turn ? `turning ${turn.severity}` : ""}`.trim()}
+            cx={point.x}
+            cy={point.y}
+            r={point.nodeId === board.currentNode ? 5 : turn ? 4 : 2.6}
+            role={point.nodeId ? "button" : undefined}
+            tabIndex={point.nodeId ? 0 : undefined}
+            aria-label={point.nodeId ? `${point.label}，红方视角 ${formatRedScore(point.scoreCp)}，点击同步定位棋谱` : undefined}
+            onClick={() => point.nodeId && void navigateTo(point.nodeId)}
+            onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && point.nodeId) void navigateTo(point.nodeId); }}
+          ><title>{point.label}：{formatRedScore(point.scoreCp)}</title></circle>;
+        })}
+        {visibleTrendPoint && <>
+          <line className="trend-current-line" x1={visibleTrendPoint.x} y1={trendChart.top - 6} x2={visibleTrendPoint.x} y2={trendChart.bottom + 6}/>
+          <circle className="trend-current-halo" cx={visibleTrendPoint.x} cy={visibleTrendPoint.y} r="7"/>
+          <circle className="trend-current-node" cx={visibleTrendPoint.x} cy={visibleTrendPoint.y} r="3.5"/>
+        </>}
+      </svg> : <div className="board-position-brief-empty">
+        <strong>暂无走势</strong>
+        <span>点击生成整局走势，Pikafish 会分析每一步，并把曲线点同步到棋谱节点。</span>
+      </div>}
+      {visibleTrendPoint && <p className="board-position-brief-current"><span>{visibleTrendPoint.label}</span><b>{formatRedScore(visibleTrendPoint.scoreCp)}</b></p>}
+      <button
+        className="board-position-brief-action"
+        type="button"
+        disabled={!board.playable || isPlaying}
+        onClick={() => reportBusy ? void cancelGameReport() : void generateGameReport()}
+      >
+        {reportActionText}
+      </button>
+      <small>{reportBusy ? "正在生成整局红黑走势；可取消，已完成节点缓存会保留。" : openingBoardBriefText}</small>
+    </aside>;
+  }
+
   function startCloudBookDrag(event: PointerEvent<HTMLDivElement>) {
     if (event.button !== 0) return;
     const panel = event.currentTarget.closest<HTMLElement>(".cloud-book-float");
@@ -7490,9 +7678,9 @@ export default function App() {
           <div className="board-main-stack">
           {desktopPreferences.layoutMode === "compact" && <div className="compact-board-heading">
             <span className="compact-board-title"><LayoutGrid size={15}/><strong>棋盘</strong></span>
-            {isMasterLibraryGame && <span className="compact-board-master-info" title={`${manualMeta.red} vs ${manualMeta.black} · ${manualMeta.event} · ${manualMeta.date} · ${manualMeta.moveCount}手 · ${sideResultText(manualMeta.result)}`}>
+            {isMasterLibraryGame && <span className="compact-board-master-info" title={`${manualMeta.red} vs ${manualMeta.black} · ${manualMeta.event} · ${manualMeta.date}${manualMeta.opening ? ` · ${manualMeta.opening}` : ""} · ${manualMeta.moveCount}手 · ${sideResultText(manualMeta.result)}`}>
               <strong><em className="red">红：{manualMeta.red}</em><i>vs</i><em className="black">黑：{manualMeta.black}</em></strong>
-              <small>{manualMeta.event} · {manualMeta.date} · {manualMeta.moveCount}手 · {sideResultText(manualMeta.result)}</small>
+              <small>{manualMeta.event} · {manualMeta.date}{manualMeta.opening ? ` · ${manualMeta.opening}` : ""} · {manualMeta.moveCount}手 · {sideResultText(manualMeta.result)}</small>
             </span>}
             <small>{board.sideToMove}行棋 · {boardPerspectiveLabel}</small>
           </div>}
@@ -7501,9 +7689,14 @@ export default function App() {
             <strong>{boardEvaluationRailText.side}</strong><span>{boardEvaluationRailText.score}</span>
             <button type="button" title="收起局势评分条" aria-label="收起局势评分条" onClick={() => setMobileEvaluationVisible(false)}><ChevronDown size={15}/></button>
           </section>}
-          <div className={`board-stage ${(reviewModeOpen || (showReviewAnnotations && boardHasAnnotation)) ? "has-side-note" : ""}`}>
-            <div className={`board-stage-inner ${isMasterLibraryGame ? "has-master-identity" : ""}`}>
-            {isMasterLibraryGame ? <section className="master-game-identity side" aria-label="当前大师棋谱信息">
+          <div className={`board-stage ${(reviewModeOpen || (showReviewAnnotations && boardHasAnnotation) || (workspaceMode === "opening" && desktopPreferences.layoutMode === "compact")) ? "has-side-note" : ""}`}>
+            <div className={`board-stage-inner ${showMasterGameSidePanel ? "has-master-identity" : ""}`}>
+            {showMasterGameSidePanel ? <section className="master-game-identity side" aria-label="当前大师棋谱信息">
+              <div>
+                <strong title={`${manualMeta.red} vs ${manualMeta.black}`}>{manualMeta.red} vs {manualMeta.black}</strong>
+                <small title={`${manualMeta.event} · ${manualMeta.date} · ${manualMeta.moveCount}手 · ${sideResultText(manualMeta.result)}`}>{manualMeta.event} · {manualMeta.date} · {manualMeta.moveCount}手 · {sideResultText(manualMeta.result)}</small>
+                {manualMeta.opening && <small title={`布局：${manualMeta.opening}`}>布局：{manualMeta.opening}</small>}
+              </div>
               <nav aria-label="大师棋谱快捷操作">
                 <button type="button" onClick={() => void openMasterManualPanel()}><BookOpen size={14}/>棋谱</button>
                 {isGame53MasterGame && <button type="button" onClick={() => setGame53StudyOpen(true)}><Swords size={14}/>拆解</button>}
@@ -7635,6 +7828,7 @@ export default function App() {
               </div>
             </aside>
             </div>
+            {openingPositionBrief()}
             {workspaceMode === "review" && (reviewModeOpen || (showReviewAnnotations && boardHasAnnotation)) && <div id="board-current-thought-slot" className={`board-current-thought-slot ${showReviewAnnotations && boardHasAnnotation ? "has-annotation" : ""}`} aria-live="polite">
               {showReviewAnnotations && boardHasAnnotation && <TtxqAnnotationCard
                 value={boardAnnotationValue}
@@ -7805,7 +7999,7 @@ export default function App() {
           fen={board.fen}
           enabled={referencePositionSearchActive}
           queryMoves={(fen) => chessPlatform.queryReferencePosition({ fen, limit: 8, includeDetails: false })}
-          queryGames={(fen) => chessPlatform.listReferenceGames(undefined, undefined, 16, 0, { positionFen: fen })}
+          queryGames={(fen) => chessPlatform.listReferenceGames(undefined, undefined, 10, 0, { positionFen: fen })}
           resolveMoveFen={async (fen, iccs) => (await chessPlatform.previewLine(fen, [iccs]))[0]?.fen}
           onPreviewMove={(iccs, notation) => void previewCandidateLine({ multipv: 1, pv: [iccs], notation: [notation] }, board.fen, { id: "reference-library", name: "大师开局" })}
           onAddMove={(iccs) => void playIccsMove(iccs, board.fen)}
@@ -8174,7 +8368,7 @@ export default function App() {
           <header>
             <div>
               <strong>{manualMeta.red} vs {manualMeta.black}</strong>
-              <small>{manualMeta.event} · {manualMeta.date} · {manualMeta.moveCount}手 · {sideResultText(manualMeta.result)}</small>
+              <small>{manualMeta.event} · {manualMeta.date}{manualMeta.opening ? ` · ${manualMeta.opening}` : ""} · {manualMeta.moveCount}手 · {sideResultText(manualMeta.result)}</small>
             </div>
             <button className="icon-button" type="button" aria-label="关闭分析" onClick={() => setMasterAnalysisDialogOpen(false)}><X size={17}/></button>
           </header>

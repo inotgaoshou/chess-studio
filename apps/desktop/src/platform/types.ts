@@ -276,6 +276,9 @@ export type GameReportProgressDto = {
   completed: number;
   total: number;
   nodeId?: string;
+  sideToMove?: Side;
+  scoreCp?: number;
+  mate?: number;
   elapsedMs: number;
   targetDepth?: number;
   currentDepth?: number;

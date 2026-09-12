@@ -920,8 +920,52 @@ pub(crate) fn open_reference_game(
 ) -> Result<BoardDto, String> {
     let document = get_reference_game_document(game_id.clone(), state.clone())?
         .ok_or_else(|| "未找到该参考棋局。".to_owned())?;
-    let manual = serde_json::from_str::<ManualDocument>(&document.document_json)
+    let mut manual = serde_json::from_str::<ManualDocument>(&document.document_json)
         .map_err(|error| format!("参考棋局文档无法解析：{error}"))?;
+    manual.metadata.title = if document.game.title.trim().is_empty() {
+        format!(
+            "{} vs {}",
+            non_empty_reference_text(&document.game.red_player, "红方未知"),
+            non_empty_reference_text(&document.game.black_player, "黑方未知")
+        )
+    } else {
+        document.game.title.clone()
+    };
+    manual.metadata.event = non_empty_reference_text(&document.game.event_name, "赛事未知");
+    manual.metadata.date = non_empty_reference_text(&document.game.game_date, "日期未知");
+    manual.metadata.red = non_empty_reference_text(&document.game.red_player, "红方未知");
+    manual.metadata.black = non_empty_reference_text(&document.game.black_player, "黑方未知");
+    manual.metadata.result = if document.game.result.trim().is_empty() {
+        "*".into()
+    } else {
+        document.game.result.clone()
+    };
+    let opening = match (
+        document.game.opening_code.as_deref(),
+        document.game.opening_name.as_deref(),
+    ) {
+        (Some(code), Some(name)) if !name.trim().is_empty() => format!("{} · {}", code, name),
+        (Some(code), _) => code.to_owned(),
+        _ => "待分类".into(),
+    };
+    let mut note_lines = vec![
+        format!("红方：{}", manual.metadata.red),
+        format!("黑方：{}", manual.metadata.black),
+        format!("比赛：{}", manual.metadata.event),
+        format!("日期：{}", manual.metadata.date),
+        format!("结果：{}", manual.metadata.result),
+        format!("手数：{}", document.game.move_count),
+        format!("布局：{}", opening),
+        "来源：本地参考实战库".into(),
+        "用途：本地学习、拆棋和 Pikafish 分析。".into(),
+    ];
+    if !document.game.opening.trim().is_empty() {
+        note_lines.push(format!("原始标注：{}", document.game.opening.trim()));
+    }
+    if !manual.note.trim().is_empty() {
+        note_lines.push(format!("原谱备注：{}", manual.note.trim()));
+    }
+    manual.note = note_lines.join("\n");
     let mut model = state
         .model
         .lock()
@@ -933,6 +977,15 @@ pub(crate) fn open_reference_game(
         Some("reference-library".into()),
     )?;
     board_dto(&model)
+}
+
+fn non_empty_reference_text(value: &str, fallback: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        fallback.into()
+    } else {
+        trimmed.into()
+    }
 }
 
 fn merge_position_stats(

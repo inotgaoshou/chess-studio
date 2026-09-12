@@ -167,6 +167,22 @@ describe("ReferenceLibraryDialog", () => {
     ));
   });
 
+  it("can collapse and reopen the reference game filters to free list width", async () => {
+    const { value } = platform([game]);
+    const { container } = render(<ReferenceLibraryDialog platform={value} onClose={() => undefined}/>);
+    fireEvent.click(screen.getByRole("button", { name: /实战检索/ }));
+
+    expect(await screen.findByText("实战仓库")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "收起筛选" }));
+
+    expect(container.querySelector(".reference-game-search-body.filters-collapsed")).toBeTruthy();
+    expect(screen.queryByLabelText("实战检索关键词")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "展开筛选" }));
+
+    expect(container.querySelector(".reference-game-search-body.filters-collapsed")).toBeNull();
+    expect(await screen.findByLabelText("实战检索关键词")).toBeTruthy();
+  });
+
   it("loads additional reference game pages without replacing the current list", async () => {
     const firstPage = Array.from({ length: 100 }, (_, index) => makeGame(index + 1));
     const secondPage = [makeGame(101)];

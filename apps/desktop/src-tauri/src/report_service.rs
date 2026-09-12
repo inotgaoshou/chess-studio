@@ -443,6 +443,23 @@ pub(crate) async fn generate_game_report_inner(
                 position.depth = Some(0);
                 position.elapsed_ms = Some(0);
                 completed += 1;
+                emit_report_progress(
+                    app,
+                    GameReportProgressDto {
+                        completed,
+                        total,
+                        node_id: position.move_.as_ref().map(|mv| mv.node_id),
+                        side_to_move: Some(position.side_to_move.clone()),
+                        score_cp: None,
+                        mate: position.mate,
+                        elapsed_ms: started.elapsed().as_millis() as u64,
+                        target_depth: Some(report_depth),
+                        current_depth: Some(0),
+                        cached: cached_count,
+                        estimated_remaining_ms: None,
+                        state: "running",
+                    },
+                );
                 continue;
             }
             let node_id = position.move_.as_ref().map(|mv| mv.node_id);
@@ -457,6 +474,23 @@ pub(crate) async fn generate_game_report_inner(
                 apply_report_line_to_position(position, primary, true)?;
                 completed += 1;
                 cached_count += 1;
+                emit_report_progress(
+                    app,
+                    GameReportProgressDto {
+                        completed,
+                        total,
+                        node_id,
+                        side_to_move: Some(position.side_to_move.clone()),
+                        score_cp: position.score_cp,
+                        mate: position.mate,
+                        elapsed_ms: started.elapsed().as_millis() as u64,
+                        target_depth: Some(report_depth),
+                        current_depth: position.depth,
+                        cached: cached_count,
+                        estimated_remaining_ms: None,
+                        state: "running",
+                    },
+                );
             }
         }
     }
@@ -469,6 +503,9 @@ pub(crate) async fn generate_game_report_inner(
                 completed,
                 total,
                 node_id: None,
+                side_to_move: None,
+                score_cp: None,
+                mate: None,
                 elapsed_ms: started.elapsed().as_millis() as u64,
                 target_depth: Some(report_depth),
                 current_depth: None,
@@ -486,6 +523,9 @@ pub(crate) async fn generate_game_report_inner(
             completed,
             total,
             node_id: None,
+            side_to_move: None,
+            score_cp: None,
+            mate: None,
             elapsed_ms: started.elapsed().as_millis() as u64,
             target_depth: Some(report_depth),
             current_depth: None,
@@ -534,6 +574,9 @@ pub(crate) async fn generate_game_report_inner(
                             completed,
                             total,
                             node_id: position.move_.as_ref().map(|mv| mv.node_id),
+                            side_to_move: None,
+                            score_cp: None,
+                            mate: None,
                             elapsed_ms: started.elapsed().as_millis() as u64,
                             target_depth: Some(report_depth),
                             current_depth: None,
@@ -560,15 +603,21 @@ pub(crate) async fn generate_game_report_inner(
                             if info.multipv == 1
                                 && (!info.pv.is_empty() || info.mate.is_some()) =>
                         {
+                            let position_board = Board::from_fen(&position.fen)
+                                .map_err(|error| error.to_string())?;
+                            let line = analysis_line_from_engine_info(&position_board, info);
                             emit_report_progress(
                                 app,
                                 GameReportProgressDto {
                                     completed,
                                     total,
                                     node_id: position.move_.as_ref().map(|mv| mv.node_id),
+                                    side_to_move: Some(position.side_to_move.clone()),
+                                    score_cp: line.score_cp,
+                                    mate: line.mate,
                                     elapsed_ms: started.elapsed().as_millis() as u64,
                                     target_depth: Some(report_depth),
-                                    current_depth: info.depth,
+                                    current_depth: line.depth,
                                     cached: cached_count,
                                     estimated_remaining_ms: report_estimated_remaining_ms(
                                         started.elapsed().as_millis() as u64,
@@ -579,9 +628,7 @@ pub(crate) async fn generate_game_report_inner(
                                     state: "running",
                                 },
                             );
-                            let position_board = Board::from_fen(&position.fen)
-                                .map_err(|error| error.to_string())?;
-                            primary = Some(analysis_line_from_engine_info(&position_board, info));
+                            primary = Some(line);
                         }
                         Ok(EngineEvent::BestMove { .. }) => break,
                         Ok(_) => {}
@@ -595,6 +642,9 @@ pub(crate) async fn generate_game_report_inner(
                             completed,
                             total,
                             node_id: position.move_.as_ref().map(|mv| mv.node_id),
+                            side_to_move: None,
+                            score_cp: None,
+                            mate: None,
                             elapsed_ms: started.elapsed().as_millis() as u64,
                             target_depth: Some(report_depth),
                             current_depth: None,
@@ -644,6 +694,9 @@ pub(crate) async fn generate_game_report_inner(
                         completed,
                         total,
                         node_id,
+                        side_to_move: Some(position.side_to_move.clone()),
+                        score_cp: line.score_cp,
+                        mate: line.mate,
                         elapsed_ms: started.elapsed().as_millis() as u64,
                         target_depth: Some(report_depth),
                         current_depth: line.depth,
@@ -729,6 +782,9 @@ pub(crate) async fn generate_game_report_inner(
                 completed,
                 total,
                 node_id: None,
+                side_to_move: None,
+                score_cp: None,
+                mate: None,
                 elapsed_ms: started.elapsed().as_millis() as u64,
                 target_depth: Some(report_depth),
                 current_depth: None,
@@ -784,6 +840,9 @@ pub(crate) async fn generate_game_report_inner(
             completed: total,
             total,
             node_id: None,
+            side_to_move: None,
+            score_cp: None,
+            mate: None,
             elapsed_ms: started.elapsed().as_millis() as u64,
             target_depth: Some(report_depth),
             current_depth: Some(report_depth),

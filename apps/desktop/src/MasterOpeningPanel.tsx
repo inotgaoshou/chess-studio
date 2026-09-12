@@ -3,7 +3,7 @@ import { BookOpen, CalendarDays, Database, RefreshCw, ShieldCheck, Trophy, Undo2
 import { ReferencePositionPanel } from "./ReferencePositionPanel";
 import type { PositionMoveStatDto, ReferenceGameSummaryDto } from "./platform/types";
 
-const MASTER_OPENING_QUERY_DEBOUNCE_MS = 180;
+const MASTER_OPENING_QUERY_DEBOUNCE_MS = 520;
 
 type Props = {
   fen: string;

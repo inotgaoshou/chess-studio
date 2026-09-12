@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { BookOpen, Eye, Plus, RefreshCw } from "lucide-react";
 import type { PositionMoveStatDto } from "./platform/types";
 
-const REFERENCE_POSITION_QUERY_DEBOUNCE_MS = 180;
+const REFERENCE_POSITION_QUERY_DEBOUNCE_MS = 320;
 
 type Props = {
   fen: string;

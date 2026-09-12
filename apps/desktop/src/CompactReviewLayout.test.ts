@@ -63,4 +63,30 @@ describe("compact board-first workspace layout", () => {
     expect(compact).toContain("place-items: center");
     expect(icon).toContain("display: block");
   });
+
+  it("keeps reference preview actions from covering the selected game title", () => {
+    const previewHeader = declarationsFor(".reference-game-preview > header");
+    const previewActions = declarationsFor(".reference-game-preview-actions");
+    const openingPill = declarationsFor(".reference-game-search-list em");
+    const collapsedBody = declarationsFor(".reference-game-search-body.filters-collapsed");
+
+    expect(previewHeader).toContain("display: grid");
+    expect(previewHeader).toContain("grid-template-columns: minmax(0,1fr)");
+    expect(previewActions).toContain("justify-content: flex-start");
+    expect(openingPill).toContain("text-overflow: ellipsis");
+    expect(openingPill).toContain("white-space: nowrap");
+    expect(collapsedBody).toContain("grid-template-columns: 68px");
+  });
+
+  it("keeps master opening board geometry aligned with review and uses the side-note slot for situation analysis", () => {
+    expect(styles).toContain("grid-template-columns: minmax(760px, 1fr) minmax(300px, 340px)");
+    expect(styles).toContain("grid-template-columns:minmax(0, 1fr) 54px");
+    expect(styles).toContain("grid-template-columns:minmax(0, 1fr) minmax(340px, 420px)");
+    expect(styles).toContain("justify-self:start");
+    expect(styles).toContain("workspace-mode-opening > .board-section");
+    expect(styles).toContain("display:block");
+    expect(styles).toContain(".board-position-brief");
+    expect(styles).toContain(".board-position-brief-trend");
+    expect(styles).toContain(".board-position-brief-tabs");
+  });
 });
