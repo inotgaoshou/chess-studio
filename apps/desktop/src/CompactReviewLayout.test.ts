@@ -18,8 +18,8 @@ function declarationsFor(selector: string) {
 }
 
 describe("compact board-first workspace layout", () => {
-  it("gives review, research, training, and opening the same full-height board work area", () => {
-    const workspaceModes = ["review", "research", "training", "opening"];
+  it("gives review, research, training, opening, and sparring the same full-height board work area", () => {
+    const workspaceModes = ["review", "research", "training", "opening", "sparring"];
 
     for (const mode of workspaceModes) {
       const section = `.workspace.layout-compact.workspace-mode-${mode} > .board-section`;
@@ -89,6 +89,7 @@ describe("compact board-first workspace layout", () => {
     expect(styles).toContain("justify-content:start");
     expect(styles).toContain("justify-self:start");
     expect(styles).toContain("workspace-mode-opening > .board-section");
+    expect(styles).toContain("workspace-mode-sparring > .board-section");
     expect(styles).toContain("display:block");
     expect(styles).toContain(".board-position-brief");
     expect(styles).toContain(".board-position-brief-trend");
@@ -103,8 +104,11 @@ describe("compact board-first workspace layout", () => {
     expect(styles).toContain(".board-position-brief-rail-toggle");
     expect(styles).toContain("margin-right: 18px");
     expect(styles).toContain(".board-position-brief-trend .trend-axis-label");
-    expect(styles).toContain("font-size: 10px");
-    expect(styles).toContain("letter-spacing: .04em");
+    expect(styles).toContain("font: 800 8.5px ui-monospace");
+    expect(styles).toContain("letter-spacing: -.02em");
+    expect(styles).toContain(".board-position-brief-trend .trend-point-tooltip");
+    expect(styles).toContain("font: 800 7.8px ui-monospace");
+    expect(styles).toContain("letter-spacing: .035em");
     expect(styles).toContain(".board-position-brief-trend circle.muted");
     expect(styles).toContain("grid-template-columns: auto auto auto");
     expect(styles).toContain("letter-spacing: -.08em");

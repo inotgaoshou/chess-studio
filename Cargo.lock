@@ -1297,7 +1297,7 @@ dependencies = [
 
 [[package]]
 name = "engine-protocol"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "async-trait",
  "serde",
@@ -2800,7 +2800,7 @@ dependencies = [
 
 [[package]]
 name = "link-core"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "serde",
  "thiserror 2.0.19",
@@ -2821,7 +2821,7 @@ checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 
 [[package]]
 name = "local-store"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "chrono",
  "rusqlite",
@@ -2886,7 +2886,7 @@ checksum = "e20f57f9918e5bd7bc58c22cdd70a6afc7375d4dd9683af5f2b34bd3d2bba619"
 
 [[package]]
 name = "manual-format"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "encoding_rs",
  "serde",
@@ -4288,7 +4288,7 @@ dependencies = [
 
 [[package]]
 name = "reference-library"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "chrono",
  "manual-format",
@@ -5595,7 +5595,7 @@ dependencies = [
 
 [[package]]
 name = "sync-protocol"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "chrono",
  "serde",
@@ -7844,7 +7844,7 @@ checksum = "ea6fc2961e4ef194dcbfe56bb845534d0dc8098940c7e5c012a258bfec6701bd"
 
 [[package]]
 name = "xiangqi-core"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "serde",
  "thiserror 2.0.19",
@@ -7852,7 +7852,7 @@ dependencies = [
 
 [[package]]
 name = "xiangqi-desktop"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "ab_glyph",
  "base64 0.22.1",
@@ -7892,7 +7892,7 @@ dependencies = [
 
 [[package]]
 name = "xiangqi-manual"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "serde",
  "thiserror 2.0.19",
@@ -7902,7 +7902,7 @@ dependencies = [
 
 [[package]]
 name = "xiangqi-server"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "anyhow",
  "argon2",
@@ -7929,7 +7929,7 @@ dependencies = [
 
 [[package]]
 name = "xiangqi-web-core"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "manual-format",
  "serde",

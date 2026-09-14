@@ -6669,6 +6669,71 @@ const delay = async () => undefined;
     }
 
     #[test]
+    fn collector_rejects_visible_empty_list_before_stale_model_cache() {
+        let source = include_str!("ttxq_bridge.rs");
+        let traversal_start = source
+            .find("      const qipuIdOf = (value) => {")
+            .expect("qipu-list traversal must exist");
+        let traversal_end = source[traversal_start..]
+            .find("      if (!found.size) {")
+            .expect("qipu list traversal must terminate")
+            + traversal_start;
+        let traversal_source = source[traversal_start..traversal_end]
+            .replace("__TTXQ_ATTEMPT_ID__", "1")
+            .replace("__TTXQ_BRIDGE_VERSION__", &BRIDGE_VERSION.to_string());
+        let harness = format!(
+            r#"(async () => {{
+const staleRows = Array.from({{ length: 18 }}, () => Object.defineProperty({{}}, 'qipuId', {{
+  get() {{ throw new Error('stale cache was read'); }}
+}}));
+const model = {{ _qipuRecentView: {{ records: staleRows }} }};
+const emptyNode = {{
+  innerText: '暂无数据 请稍后轻触重试',
+  getBoundingClientRect: () => ({{ width: 160, height: 36 }}),
+}};
+const document = {{
+  body: {{ nodeName: 'BODY' }},
+  documentElement: {{ nodeName: 'HTML' }},
+  querySelectorAll: (selector) => selector === '*' ? [emptyNode] : [],
+}};
+const invoke = async () => undefined;
+const delay = async () => undefined;
+let message = '';
+try {{
+{traversal_source}
+}} catch (error) {{
+  message = String(error && error.message || error);
+}}
+if (!message.includes('授权窗口当前列表为空或加载失败')) {{
+  throw new Error(`collector did not reject the visible empty list before stale cache: ${{message}}`);
+}}
+}})().catch(error => {{ console.error(error.message); process.exitCode = 1; }});
+"#
+        );
+        let mut child = std::process::Command::new("node")
+            .arg("-")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("Node.js is required to exercise visible empty-list rejection");
+        child
+            .stdin
+            .as_mut()
+            .expect("visible empty-list checker stdin")
+            .write_all(harness.as_bytes())
+            .expect("write visible empty-list harness to Node.js");
+        let output = child
+            .wait_with_output()
+            .expect("run visible empty-list harness");
+        assert!(
+            output.status.success(),
+            "collector read a stale qipu cache while the visible list was empty: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
     fn collector_uses_the_populated_shared_root_for_a_visible_self_recorded_list() {
         let source = include_str!("ttxq_bridge.rs");
         let traversal_start = source

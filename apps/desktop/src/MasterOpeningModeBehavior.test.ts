@@ -13,10 +13,11 @@ const app = readFileSync(`${nodeProcess.cwd()}/src/App.tsx`, "utf8");
 
 describe("master opening workspace behavior", () => {
   it("hides selected piece thought cards while the master opening mode is active", () => {
-    expect(app).toContain('if (workspaceMode === "opening")');
+    expect(app).toContain('if (referencePracticeMode)');
     expect(app).toContain('setSelectedPieceInspection(undefined);');
-    expect(app).toContain('workspaceMode !== "opening" && showMoveThoughts && selectedPieceThought');
-    expect(app).toContain('workspaceMode !== "opening" && showMoveThoughts && selectedPieceThought?.square.row');
+    expect(app).toContain('const referencePracticeMode = workspaceMode === "opening" || workspaceMode === "sparring"');
+    expect(app).toContain('!referencePracticeMode && showMoveThoughts && selectedPieceThought');
+    expect(app).toContain('!referencePracticeMode && showMoveThoughts && selectedPieceThought?.square.row');
   });
 
   it("treats local reference library games as master/reference games on the board", () => {
@@ -29,8 +30,10 @@ describe("master opening workspace behavior", () => {
   it("keeps master opening navigation light and adds a compact board situation brief", () => {
     expect(app).toContain('const boardEvaluationBlackShare = 100 - boardEvaluationRedShare');
     expect(app).toContain('const openingCompactMode = workspaceMode === "opening" && desktopPreferences.layoutMode === "compact"');
-    expect(app).toContain('const showBoardEvaluationRail = !openingCompactMode || openingEvaluationRailVisible');
+    expect(app).toContain('const showBoardEvaluationRail = workspaceMode === "sparring" ? false : (!openingCompactMode || openingEvaluationRailVisible)');
     expect(app).toContain('setOpeningEvaluationRailVisible(false)');
+    expect(app).toContain('if (workspaceMode !== "opening" || desktopPreferences.layoutMode !== "compact") return null;');
+    expect(app).toContain('workspaceMode !== "sparring" && (reviewModeOpen || (showReviewAnnotations && boardHasAnnotation) || openingCompactMode)');
     expect(app).toContain('aria-label="棋盘红黑局势分析"');
     expect(app).toContain('aria-pressed={openingEvaluationRailVisible}');
     expect(app).toContain('const [openingBriefTab, setOpeningBriefTab] = useState<"trend" | "report" | "issues">("trend")');
@@ -46,7 +49,20 @@ describe("master opening workspace behavior", () => {
     expect(app).toContain('trend-scale-label trend-axis-label');
     expect(app).toContain("openingTrendChart.left - 46");
     expect(app).toContain('preserveAspectRatio="xMinYMid meet"');
-    expect(app).toContain(">均势</text>");
+    expect(app).toContain(">1000</text>");
+    expect(app).toContain(">0</text>");
+    expect(app).not.toContain("红 {Math.round(boardEvaluationRedShare)}%");
+    expect(app).toContain("trend-point-tooltip");
+    expect(app).toContain("function formatTrendAdvantage");
+    expect(app).toContain("红优${score}分");
+    expect(app).toContain("黑优${score}分");
+    expect(app).toContain("formatTrendTooltipText(openingTrendTooltipPoint)");
+    expect(app).toContain("const openingTrendTooltipWidth = openingTrendTooltipText.length > 10 ? 94 : openingTrendTooltipText.length > 8 ? 86 : 78");
+    expect(app).toContain("const openingTrendTooltipHeight = 15");
+    expect(app).toContain("const visibleOpeningTrendPoint = activeOpeningTrendPoint ?? currentOpeningTrendPoint");
+    expect(app).toContain("trendCursorIndexRef.current = index");
+    expect(app).toContain("const targetPoint = cursorIndex == null ? activeTrendPoint : evaluationTrend[cursorIndex] ?? activeTrendPoint");
+    expect(app).toContain('className={isCurrentTrendPoint ? "current" : "muted"}');
     expect(app).toContain('"muted"');
     expect(app).toContain('reportTrendSamples.length > 1');
     expect(app).toContain(': (evaluation?.samples ?? [])');
@@ -54,6 +70,6 @@ describe("master opening workspace behavior", () => {
     expect(app).toContain('reportProgressTrendSample(progress, boardRef.current)');
     expect(app).toContain('onClick={() => reportBusy ? void cancelGameReport() : void generateGameReport()}');
     expect(app).toContain('"生成整局走势"');
-    expect(app).toContain('chessPlatform.listReferenceGames(undefined, undefined, 10, 0, { positionFen: fen })');
+    expect(app).toContain('queryGames={(fen, options) => chessPlatform.listReferenceGames(undefined, options?.query, options?.limit ?? 10, options?.offset ?? 0, { positionFen: fen })}');
   });
 });

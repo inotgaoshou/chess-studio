@@ -584,9 +584,9 @@ export function ReviewGameLibrary({ games, folders, onOpen, onShare, onDelete, o
               <input autoFocus name="folderName" placeholder={folderCreate.parent ? "如：第1轮" : "如：比赛复盘"}/>
             </label>
             <small>目录名可用 / 一次创建多级；创建后会自动切换到该目录。</small>
-            <div>
+            <div className="review-library-create-actions">
               <button type="button" disabled={creatingFolder} onClick={() => setFolderCreate(null)}>取消</button>
-              <button type="submit" className="primary" disabled={creatingFolder}>{creatingFolder ? "创建中…" : "创建"}</button>
+              <button type="submit" className="primary" title="确认创建目录" disabled={creatingFolder}>{creatingFolder ? "创建中…" : "创建"}</button>
             </div>
           </form>}
         </aside>

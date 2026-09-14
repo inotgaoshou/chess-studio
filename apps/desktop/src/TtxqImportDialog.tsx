@@ -115,7 +115,7 @@ export function TtxqImportDialog({ progress, preview, diagnostics, folders, targ
           <Database size={19}/>
           <span>
             <strong>天天象棋棋谱导入</strong>
-            <small>读取授权窗口当前打开的最近、收藏或自建列表</small>
+            <small>读取授权窗口当前打开的列表（最近棋谱 / 我的收藏 / 我的记谱等）</small>
           </span>
         </div>
         <button type="button" className="tool-button" title="关闭天天象棋棋谱导入" aria-label="关闭天天象棋棋谱导入" disabled={busy} onClick={onClose}><X size={16}/></button>
@@ -194,7 +194,7 @@ export function TtxqImportDialog({ progress, preview, diagnostics, folders, targ
 
         <ol className="ttxq-import-steps">
           <li>打开授权窗口后，在天天象棋网页中自行登录。</li>
-          <li>进入“最近对局”页面，保持授权窗口打开。</li>
+          <li>进入“最近棋谱 / 我的收藏 / 我的记谱”等目标列表，保持授权窗口打开。</li>
           <li>回到这里开始读取；应用会自动加载可访问的历史棋谱。</li>
         </ol>
 

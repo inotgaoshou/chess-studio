@@ -95,6 +95,16 @@ import { mobileWorkbenchMediaQuery, shouldUseMobileWorkbench } from "./mobileEnv
 import { MasterLibraryDialog } from "./MasterLibraryDialog";
 import { ReferenceLibraryDialog, type ReferenceGameOpenMode } from "./ReferenceLibraryDialog";
 import { MasterOpeningPanel } from "./MasterOpeningPanel";
+import {
+  chooseReferenceSparringMove,
+  fallbackReferenceSparringChoice,
+  referenceSparringLevelLabel,
+  referenceSparringLevelProfile,
+  type ReferenceSparringOptions,
+  type ReferenceSparringChoice,
+  type ReferenceSparringSide,
+  type ReferenceSparringState,
+} from "./ReferenceSparring";
 import { ReferencePositionPanel } from "./ReferencePositionPanel";
 import { Game53StudyDialog } from "./Game53StudyDialog";
 import { TtxqImportDialog } from "./TtxqImportDialog";
@@ -126,6 +136,7 @@ const COMPACT_ENGINE_LIBRARY_CANDIDATE_COUNT = 5;
 const DEFAULT_BRANCH_ARROW_COLOR = "#f45d0b";
 const DEFAULT_BRANCH_ARROW_BADGE_COLOR = "#4aa51c";
 const DEFAULT_ENGINE_MOVE_TIME_MS = 1000;
+const DEFAULT_REFERENCE_SPARRING_DELAY_MS = 600;
 const DEFAULT_ANALYSIS_DEPTH = 24;
 const MOBILE_DEFAULT_ANALYSIS_DEPTH = 20;
 const MOBILE_DEFAULT_DEPTH_PREFERENCE_VERSION = 1;
@@ -1205,6 +1216,23 @@ function formatRedScore(scoreCp?: number) {
   return score > 0 ? `+${score}` : `${score}`;
 }
 
+function formatTrendAdvantage(scoreCp: number) {
+  const score = Math.round(Math.abs(scoreCp));
+  if (scoreCp > 0) return `红优${score}分`;
+  if (scoreCp < 0) return `黑优${score}分`;
+  return "均势0分";
+}
+
+function formatTrendMoveIndex(point: TrendPoint) {
+  if (point.moveIndex != null) return point.moveIndex > 0 ? `${point.moveIndex}` : "初始";
+  const matched = point.label.match(/第\s*(\d+)\s*着/);
+  return matched?.[1] ?? (point.label.replace(/^第\s*/, "").replace(/\s*着.*/, "") || "当前");
+}
+
+function formatTrendTooltipText(point: TrendPoint) {
+  return `${formatTrendMoveIndex(point)}-${formatTrendAdvantage(point.scoreCp)}`;
+}
+
 function redScoreFromReportProgress(progress: GameReportProgressDto) {
   if (!progress.sideToMove) return undefined;
   const side = progress.sideToMove === "红方" ? 1 : -1;
@@ -1502,6 +1530,7 @@ export default function App() {
   const [manualExporting, setManualExporting] = useState(false);
   const [analysisHelpOpen, setAnalysisHelpOpen] = useState(false);
   const [trendCursorIndex, setTrendCursorIndex] = useState<number | undefined>();
+  const trendCursorIndexRef = useRef<number | undefined>(undefined);
   const [candidatePreview, setCandidatePreview] = useState<CandidatePreviewState>();
   const [candidatePreviewBranches, setCandidatePreviewBranches] = useState<ManualPreviewBranch[]>([]);
   const [syncAccount, setSyncAccount] = useState(defaultSyncAccount);
@@ -1535,6 +1564,13 @@ export default function App() {
   const [openingEvaluationRailVisible, setOpeningEvaluationRailVisible] = useState(false);
   const [openingBriefTab, setOpeningBriefTab] = useState<"trend" | "report" | "issues">("trend");
   const [openingIssueSide, setOpeningIssueSide] = useState<"red" | "black">("red");
+  const [referenceSparring, setReferenceSparring] = useState<ReferenceSparringState>({
+    status: "idle",
+    userSide: "red",
+    level: "ye6",
+    delayMs: DEFAULT_REFERENCE_SPARRING_DELAY_MS,
+    autoReport: false,
+  });
   const [cloudBookCollapsed, setCloudBookCollapsed] = useState(false);
   const [floatingEvaluationCollapsed, setFloatingEvaluationCollapsed] = useState(false);
   const [cloudBookPosition, setCloudBookPosition] = useState<{ left: number; top: number }>();
@@ -1672,6 +1708,9 @@ export default function App() {
   const analysisFirstCandidateWatchdogRef = useRef<string | undefined>(undefined);
   const linkAutoMoveRef = useRef<string | undefined>(undefined);
   const linkConfirmSelectRef = useRef<string | undefined>(undefined);
+  const referenceSparringRef = useRef<ReferenceSparringState>(referenceSparring);
+  const referenceSparringGenerationRef = useRef(0);
+  const referenceSparringTimerRef = useRef<number | undefined>(undefined);
   const linkStatusRefreshRef = useRef<{ inFlight: boolean; queued: boolean; lastRun: number; timer?: number }>({ inFlight: false, queued: false, lastRun: 0 });
   const primaryAnalysisEngineRef = useRef<string>("primary");
   const bestMovePracticeRef = useRef<BestMovePractice | undefined>(undefined);
@@ -1729,6 +1768,10 @@ export default function App() {
   useEffect(() => {
     engineAnalysesRef.current = engineAnalyses;
   }, [engineAnalyses]);
+
+  useEffect(() => {
+    referenceSparringRef.current = referenceSparring;
+  }, [referenceSparring]);
 
   useEffect(() => {
     setCompactEngineSize((size) => {
@@ -2081,7 +2124,7 @@ export default function App() {
       if (disposed) return;
       applyBoard(normalizeBoardState(event.payload));
       setSelected(null);
-      setTrendCursorIndex(undefined);
+      setSyncedTrendCursorIndex(undefined);
     }).then((unlisten) => {
       if (disposed) unlisten();
       else cleanup = unlisten;
@@ -2315,7 +2358,7 @@ export default function App() {
     trendSourceSamples,
     trendTotalMoves,
   ), [trendSourceSamples, trendTotalMoves]);
-  const openingTrendChart = useMemo<TrendChartBounds>(() => ({ ...trendChart, left: 52, right: 348 }), []);
+  const openingTrendChart = useMemo<TrendChartBounds>(() => ({ ...trendChart, left: 52, right: 348, top: 20, bottom: 148, middle: 84 }), []);
   const openingEvaluationTrend = useMemo(() => trendPoints(
     trendSourceSamples,
     trendTotalMoves,
@@ -2326,7 +2369,10 @@ export default function App() {
   const openingTrendSegments = useMemo(() => splitTrendSegments(openingEvaluationTrend, openingTrendChart), [openingEvaluationTrend, openingTrendChart]);
   const openingSmoothTrendSegments = useMemo(() => smoothTrendSegmentPaths(openingTrendSegments), [openingTrendSegments]);
   const activeTrendPoint = trendCursorIndex == null ? undefined : evaluationTrend[trendCursorIndex];
-  const activeTrendDelta = trendCursorIndex == null || trendCursorIndex <= 0 ? undefined : evaluationTrend[trendCursorIndex].scoreCp - evaluationTrend[trendCursorIndex - 1].scoreCp;
+  const activeOpeningTrendPoint = trendCursorIndex == null ? undefined : openingEvaluationTrend[trendCursorIndex];
+  const activeTrendDelta = trendCursorIndex == null || trendCursorIndex <= 0 || !evaluationTrend[trendCursorIndex] || !evaluationTrend[trendCursorIndex - 1]
+    ? undefined
+    : evaluationTrend[trendCursorIndex].scoreCp - evaluationTrend[trendCursorIndex - 1].scoreCp;
   const currentTrendPoint = useMemo(() => {
     if (evaluationTrend.length === 0) return undefined;
     const byNode = evaluationTrend.find((point) => point.nodeId === board.currentNode);
@@ -2335,14 +2381,22 @@ export default function App() {
     return evaluationTrend.find((point) => point.moveIndex === syncedMoveIndex) ?? evaluationTrend.at(-1);
   }, [board.currentNode, board.history.length, evaluationTrend, reportProgressTrendSamples.length, reportTrendSamples.length]);
   const visibleTrendPoint = activeTrendPoint ?? currentTrendPoint;
-  const visibleOpeningTrendPoint = visibleTrendPoint
-    ? openingEvaluationTrend.find((point) => (visibleTrendPoint.nodeId ? point.nodeId === visibleTrendPoint.nodeId : point.moveIndex === visibleTrendPoint.moveIndex)) ?? openingEvaluationTrend[trendCursorIndex ?? Math.max(0, openingEvaluationTrend.length - 1)]
+  const currentOpeningTrendPoint = currentTrendPoint
+    ? openingEvaluationTrend.find((point) => (currentTrendPoint.nodeId ? point.nodeId === currentTrendPoint.nodeId : point.moveIndex === currentTrendPoint.moveIndex)) ?? openingEvaluationTrend.at(-1)
     : undefined;
+  const visibleOpeningTrendPoint = activeOpeningTrendPoint ?? currentOpeningTrendPoint;
   const visibleTrendDelta = activeTrendPoint ? activeTrendDelta : undefined;
   const trendMarkerOnLeft = (visibleTrendPoint?.x ?? 0) > trendChart.width / 2;
   const trendMarkerX = visibleTrendPoint ? visibleTrendPoint.x + (trendMarkerOnLeft ? -88 : 4) : 0;
   const trendMarkerY = visibleTrendPoint ? Math.max(12, visibleTrendPoint.y - 16) : 0;
   const trendMarkerText = visibleTrendPoint ? `${visibleTrendPoint.label.replace("第 ", "")} · ${formatRedScore(visibleTrendPoint.scoreCp)}` : "";
+  const openingTrendTooltipPoint = activeOpeningTrendPoint;
+  const openingTrendTooltipText = openingTrendTooltipPoint ? formatTrendTooltipText(openingTrendTooltipPoint) : "";
+  const openingTrendTooltipWidth = openingTrendTooltipText.length > 10 ? 94 : openingTrendTooltipText.length > 8 ? 86 : 78;
+  const openingTrendTooltipHeight = 15;
+  const openingTrendTooltipOnLeft = (openingTrendTooltipPoint?.x ?? 0) > openingTrendChart.width - openingTrendTooltipWidth - 10;
+  const openingTrendTooltipX = openingTrendTooltipPoint ? openingTrendTooltipPoint.x + (openingTrendTooltipOnLeft ? -openingTrendTooltipWidth - 6 : 6) : 0;
+  const openingTrendTooltipY = openingTrendTooltipPoint ? Math.max(openingTrendChart.top + 4, openingTrendTooltipPoint.y - 14) : 0;
   const trendTurns = useMemo(() => trendTurningPoints(trendSourceSamples), [trendSourceSamples]);
   const trendTurnsByNode = useMemo(() => new Map(trendTurns.map((turn) => [turn.nodeId, turn])), [trendTurns]);
   const reportCurrentPosition = useMemo(() => {
@@ -2430,8 +2484,9 @@ export default function App() {
     || board.sourceFormat === "reference-library"
     || board.note.includes("用途：本地学习、拆棋和 Pikafish 分析。");
   const showMasterGameSidePanel = isMasterLibraryGame && desktopPreferences.layoutMode !== "compact";
+  const referencePracticeMode = workspaceMode === "opening" || workspaceMode === "sparring";
   const openingCompactMode = workspaceMode === "opening" && desktopPreferences.layoutMode === "compact";
-  const showBoardEvaluationRail = !openingCompactMode || openingEvaluationRailVisible;
+  const showBoardEvaluationRail = workspaceMode === "sparring" ? false : (!openingCompactMode || openingEvaluationRailVisible);
   const isGame53MasterGame = isMasterLibraryGame
     && manualMeta.red.includes("洪智")
     && manualMeta.black.includes("黄仕清")
@@ -2464,10 +2519,10 @@ export default function App() {
     currentMoveIssue: currentMoveIssueForThought,
   }) : undefined, [analysisFen, analysisIsStale, board, currentMoveForThought, currentMoveIssueForThought, orderedAnalysis, selectedPieceInspection]);
   useEffect(() => {
-    if (workspaceMode === "opening") {
+    if (referencePracticeMode) {
       setSelectedPieceInspection(undefined);
     }
-  }, [workspaceMode]);
+  }, [referencePracticeMode]);
   useEffect(() => {
     if (openingCompactMode) {
       setOpeningEvaluationRailVisible(false);
@@ -3334,6 +3389,291 @@ export default function App() {
     });
   }
 
+  function referenceSparringOpponentSide(userSide: ReferenceSparringSide): ReferenceSparringSide {
+    return userSide === "red" ? "black" : "red";
+  }
+
+  function boardSideKey(side: BoardState["sideToMove"]): ReferenceSparringSide {
+    return side === "红方" ? "red" : "black";
+  }
+
+  function isReferenceSparringReferenceTurn(state: ReferenceSparringState, sideToMove = boardRef.current.sideToMove) {
+    return boardSideKey(sideToMove) === referenceSparringOpponentSide(state.userSide);
+  }
+
+  function nextReferenceSparringStatus(state: ReferenceSparringState, sideToMove = boardRef.current.sideToMove): ReferenceSparringState["status"] {
+    return isReferenceSparringReferenceTurn(state, sideToMove) ? "reference_thinking" : "user_turn";
+  }
+
+  function referenceSparringTimestamp() {
+    const value = new Date();
+    const pad = (part: number) => String(part).padStart(2, "0");
+    return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())} ${pad(value.getHours())}:${pad(value.getMinutes())}`;
+  }
+
+  function updateReferenceSparring(options: Partial<ReferenceSparringOptions>) {
+    setReferenceSparring((current) => ({ ...current, ...options }));
+  }
+
+  function currentPikafishSparringChoice(fen: string, level: ReferenceSparringState["level"], reason: string): ReferenceSparringChoice | undefined {
+    const lines = analysisStreamRef.current?.fen === fen ? analysisStreamRef.current.lines : [];
+    const line = lines.slice().sort((left, right) => left.multipv - right.multipv)[0];
+    const iccs = line?.pv[0];
+    if (!iccs) return undefined;
+    return fallbackReferenceSparringChoice(
+      { iccs, notation: line.notation?.[0] ?? iccs },
+      level,
+      "engine",
+      { fallbackReason: reason },
+    );
+  }
+
+  async function chooseCloudSparringFallback(fen: string, level: ReferenceSparringState["level"], reason: string) {
+    if (!desktopPreferencesRef.current.cloudBookEnabled) return undefined;
+    const candidates = await chessPlatform.queryCloudOpeningBook(fen);
+    const ranked = candidates
+      .filter((candidate) => candidate.iccs.trim())
+      .map((candidate, index) => ({ candidate, index }))
+      .sort((left, right) => {
+        const leftRank = left.candidate.rank ?? Number.POSITIVE_INFINITY;
+        const rightRank = right.candidate.rank ?? Number.POSITIVE_INFINITY;
+        if (leftRank !== rightRank) return leftRank - rightRank;
+        if (left.candidate.score !== right.candidate.score) return right.candidate.score - left.candidate.score;
+        return left.index - right.index;
+      });
+    const selected = ranked[0]?.candidate;
+    if (!selected) return undefined;
+    const winRate = selected.winRate == null
+      ? undefined
+      : selected.winRate > 1
+        ? selected.winRate / 100
+        : selected.winRate;
+    return fallbackReferenceSparringChoice(
+      { iccs: selected.iccs, notation: selected.notation || selected.iccs },
+      level,
+      "cloud",
+      { candidateCount: ranked.length, winRate, fallbackReason: reason },
+    );
+  }
+
+  async function choosePikafishSparringFallback(fen: string, level: ReferenceSparringState["level"], reason: string) {
+    const cached = currentPikafishSparringChoice(fen, level, reason);
+    if (cached) return cached;
+    if (analysisBusyRef.current) return undefined;
+    const latestPreferences = desktopPreferencesRef.current;
+    const fallbackEnginePath = enginePath.trim() || latestPreferences.enginePath.trim() || BUILTIN_ENGINE_PATH;
+    if (!fallbackEnginePath.trim()) return undefined;
+    const activeProfile = engineProfiles.find((profile) => profile.id === latestPreferences.activeEngineId || profile.executablePath === fallbackEnginePath);
+    const lines = await chessPlatform.analyze({
+      enginePath: fallbackEnginePath,
+      engineId: "reference-sparring-fallback",
+      engineName: `${activeProfile?.name ?? engineDisplayName(fallbackEnginePath)} · 随机对练兜底`,
+      analysisSessionId: 800_000_000 + referenceSparringGenerationRef.current,
+      fen,
+      searchMode: "time",
+      searchValue: QUICK_ANALYSIS_TIME_MS,
+      threads: Math.min(64, Math.max(1, latestPreferences.threads || threads)),
+      hashMb: Math.min(4096, Math.max(16, latestPreferences.hashMb || hashMb)),
+      multipv: 1,
+      serverUrl,
+      token,
+    });
+    const line = lines.slice().sort((left, right) => left.multipv - right.multipv)[0];
+    const iccs = line?.pv[0];
+    if (!iccs) return undefined;
+    return fallbackReferenceSparringChoice(
+      { iccs, notation: line.notation?.[0] ?? iccs },
+      level,
+      "engine",
+      { fallbackReason: reason },
+    );
+  }
+
+  async function startReferenceSparring(options: ReferenceSparringOptions) {
+    if (chessPlatform.kind !== "desktop") {
+      setNotice("参考库随机对练首版仅支持桌面版");
+      return;
+    }
+    if (!ensureBoardChangeAllowed()) return;
+    referenceSparringGenerationRef.current += 1;
+    if (referenceSparringTimerRef.current) window.clearTimeout(referenceSparringTimerRef.current);
+    stopPlayback();
+    await stopEnginePlay();
+    await cancelAnalysisForDocumentChange();
+    await cancelGameReportForStructureChange();
+    const label = referenceSparringLevelLabel(options.level);
+    const title = `参考库随机对练 · ${label} · ${referenceSparringTimestamp()}`;
+    const note = [
+      `模拟等级：${label}`,
+      `用户执方：${options.userSide === "red" ? "红方" : "黑方"}`,
+      "系统出招来源：优先本地参考实战库局面样本；无候选时依次兜底云库、Pikafish。",
+      "策略说明：按样本数、执方胜率和等级随机扰动选择候选着法；不等同天天象棋官方评测算法。",
+    ].join("\n");
+    try {
+      await openReviewMode("sparring");
+      const next = normalizeBoardState(await enqueueBoardOperation(() => chessPlatform.newGame(startingFen, title, note)));
+      applyBoard(next);
+      setGameTitle(next.title);
+      setGameNote(next.note);
+      setAutosave({ status: "saved" });
+      await refreshGames();
+      clearAnalysisState();
+      setGameReport(undefined);
+      setReportProgress(undefined);
+      setReportProgressTrendSamples([]);
+      const baseState: ReferenceSparringState = {
+        ...options,
+        status: nextReferenceSparringStatus({ ...referenceSparringRef.current, ...options }, next.sideToMove),
+        lastChoice: undefined,
+        message: options.userSide === "red" ? "已开始，你执红先走。" : "已开始，你执黑，参考库先走。",
+      };
+      setReferenceSparring(baseState);
+      setNotice(baseState.message ?? "参考库随机对练已开始");
+    } catch (error) {
+      setNotice(friendlyError(error));
+    }
+  }
+
+  function pauseReferenceSparring() {
+    referenceSparringGenerationRef.current += 1;
+    if (referenceSparringTimerRef.current) window.clearTimeout(referenceSparringTimerRef.current);
+    setReferenceSparring((current) => ({ ...current, status: "paused", message: "随机对练已暂停，可继续或结束后复盘。" }));
+    setNotice("参考库随机对练已暂停");
+  }
+
+  function resumeReferenceSparring() {
+    setReferenceSparring((current) => {
+      const status = nextReferenceSparringStatus(current);
+      return { ...current, status, message: status === "reference_thinking" ? "继续对练，参考库正在选招…" : "继续对练，轮到你走。" };
+    });
+    setNotice("参考库随机对练已继续");
+  }
+
+  async function stopReferenceSparring(score = false) {
+    referenceSparringGenerationRef.current += 1;
+    if (referenceSparringTimerRef.current) window.clearTimeout(referenceSparringTimerRef.current);
+    const shouldScore = score || referenceSparringRef.current.autoReport;
+    setReferenceSparring((current) => ({ ...current, status: "finished", message: shouldScore ? "对练已结束，正在准备 AI 打分。" : "对练已结束，可继续复盘或生成 AI 打分。" }));
+    setNotice(shouldScore ? "参考库随机对练已结束，正在生成 AI 打分报告…" : "参考库随机对练已结束");
+    if (shouldScore) await openAnalysisReportPanel();
+  }
+
+  useEffect(() => {
+    const current = referenceSparring;
+    if (current.status === "user_turn" && isReferenceSparringReferenceTurn(current, board.sideToMove)) {
+      setReferenceSparring({ ...current, status: "reference_thinking", message: "轮到参考库，正在按当前等级选择实战着法…" });
+    } else if (current.status === "reference_thinking" && !isReferenceSparringReferenceTurn(current, board.sideToMove)) {
+      setReferenceSparring({ ...current, status: "user_turn", message: "轮到你走。" });
+    }
+  }, [board.sideToMove, board.fen, referenceSparring]);
+
+  useEffect(() => {
+    if (referenceSparring.status !== "reference_thinking") return;
+    if (!isReferenceSparringReferenceTurn(referenceSparring, board.sideToMove)) return;
+    if (chessPlatform.kind !== "desktop") return;
+    const request = ++referenceSparringGenerationRef.current;
+    const profile = referenceSparringLevelProfile(referenceSparring.level);
+    if (referenceSparringTimerRef.current) window.clearTimeout(referenceSparringTimerRef.current);
+    referenceSparringTimerRef.current = window.setTimeout(() => {
+      void (async () => {
+        const before = boardRef.current;
+        const state = referenceSparringRef.current;
+        if (request !== referenceSparringGenerationRef.current || state.status !== "reference_thinking") return;
+        if (!isReferenceSparringReferenceTurn(state, before.sideToMove)) return;
+        try {
+          let choice: ReferenceSparringChoice | undefined;
+          let referenceReason = "本地参考实战库无候选";
+          let cloudReason = desktopPreferencesRef.current.cloudBookEnabled ? "云库无候选" : "云库未开启";
+          try {
+            const candidates = await chessPlatform.queryReferencePosition({
+              fen: before.fen,
+              limit: profile.maxCandidates,
+              includeDetails: false,
+            });
+            if (request !== referenceSparringGenerationRef.current) return;
+            choice = chooseReferenceSparringMove(candidates, before.sideToMove, state.level);
+          } catch (error) {
+            referenceReason = `本地参考库查询失败：${friendlyError(error)}`;
+          }
+          if (request !== referenceSparringGenerationRef.current) return;
+
+          if (!choice) {
+            setReferenceSparring((current) => ({
+              ...current,
+              message: desktopPreferencesRef.current.cloudBookEnabled
+                ? `${referenceReason}，正在尝试云库…`
+                : `${referenceReason}；云库未开启，正在尝试 Pikafish…`,
+            }));
+            if (desktopPreferencesRef.current.cloudBookEnabled) {
+              try {
+                choice = await chooseCloudSparringFallback(before.fen, state.level, referenceReason);
+              } catch (error) {
+                cloudReason = `云库查询失败：${friendlyError(error)}`;
+              }
+            }
+          }
+          if (request !== referenceSparringGenerationRef.current) return;
+
+          if (!choice) {
+            setReferenceSparring((current) => ({
+              ...current,
+              message: `${referenceReason}；${cloudReason}，正在尝试 Pikafish…`,
+            }));
+            try {
+              choice = await choosePikafishSparringFallback(before.fen, state.level, `${referenceReason}；${cloudReason}`);
+            } catch (error) {
+              cloudReason = `${cloudReason}；Pikafish 兜底失败：${friendlyError(error)}`;
+            }
+          }
+          if (request !== referenceSparringGenerationRef.current) return;
+
+          if (!choice) {
+            setReferenceSparring((current) => ({
+              ...current,
+              status: "paused",
+              message: `当前局面本地参考库、云库和 Pikafish 都没有可用候选；${cloudReason}。可配置引擎、手动走棋、切换局面或结束对练。`,
+            }));
+            setNotice("当前局面三层来源都没有可用候选，随机对练已暂停");
+            return;
+          }
+          const moveText = choice.move.notation || choice.move.iccs;
+          setReferenceSparring((current) => ({
+            ...current,
+            lastChoice: choice,
+            message: `${referenceSparringLevelLabel(current.level)} · ${choice.sourceLabel}选招：${moveText}，正在落子…`,
+          }));
+          if (choice.warningMessage) setNotice(choice.warningMessage);
+          await playIccsMove(choice.move.iccs, before.fen, undefined, { stopEngineFirst: true });
+          if (request !== referenceSparringGenerationRef.current) return;
+          const after = boardRef.current;
+          setReferenceSparring((current) => {
+            if (current.status === "paused" || current.status === "finished") return current;
+            const status = nextReferenceSparringStatus(current, after.sideToMove);
+            return {
+              ...current,
+              status,
+              lastChoice: choice,
+              message: status === "user_turn"
+                ? `${choice.sourceLabel}走 ${moveText}，轮到你。`
+                : `${choice.sourceLabel}走 ${moveText}，继续匹配下一手。`,
+            };
+          });
+        } catch (error) {
+          if (request !== referenceSparringGenerationRef.current) return;
+          setReferenceSparring((current) => ({
+            ...current,
+            status: "paused",
+            message: `随机对练出招失败：${friendlyError(error)}`,
+          }));
+          setNotice(friendlyError(error));
+        }
+      })();
+    }, referenceSparring.delayMs);
+    return () => {
+      if (referenceSparringTimerRef.current) window.clearTimeout(referenceSparringTimerRef.current);
+    };
+  }, [board.fen, board.sideToMove, referenceSparring.status, referenceSparring.level, referenceSparring.delayMs, referenceSparring.userSide]);
+
   async function loadGameReport() {
     if (chessPlatform.kind !== "desktop") return;
     const loadRevision = ++reportLoadRevision.current;
@@ -3776,6 +4116,10 @@ export default function App() {
       setNotice(engineThinking ? `${currentEngineLabel} 正在思考` : `当前轮到 ${currentEngineLabel} 行棋`);
       return;
     }
+    if (referenceSparringRef.current.status === "reference_thinking" && isReferenceSparringReferenceTurn(referenceSparringRef.current, board.sideToMove)) {
+      setNotice("参考库随机对练正在选招，请稍等一下");
+      return;
+    }
     const piece = pieceMap.get(`${row}-${col}`);
     if (!selected) {
       if (piece) setSelected({ row, col });
@@ -3803,9 +4147,9 @@ export default function App() {
       window.clearTimeout(reviewBoardMoveClickTimerRef.current);
       reviewBoardMoveClickTimerRef.current = undefined;
     }
-    if (workspaceMode === "opening") {
+    if (referencePracticeMode) {
       setSelectedPieceInspection(undefined);
-      setNotice("大师开局模式默认隐藏选子思路，右侧显示当前局面实战匹配");
+      setNotice(workspaceMode === "sparring" ? "随机对练模式默认隐藏选子思路，右侧显示对练控制" : "大师开局模式默认隐藏选子思路，右侧显示当前局面实战匹配");
       return;
     }
     if (!reviewModeOpen) {
@@ -5139,7 +5483,7 @@ export default function App() {
       if (playbackToken != null && playbackToken !== playbackRevision.current) return null;
       applyBoard(next);
       setSelected(null);
-      setTrendCursorIndex(undefined);
+      setSyncedTrendCursorIndex(undefined);
       await loadSavedAnalysis(next.fen ?? board.fen, { keepPreviousOnMiss: true });
       await loadGameReport();
       setNotice(playbackToken == null ? nodeId ? "已切换棋谱节点" : "已回到根局面" : "正在播放主线棋谱");
@@ -5218,13 +5562,20 @@ export default function App() {
     return nearest;
   }
 
+  function setSyncedTrendCursorIndex(index: number | undefined) {
+    trendCursorIndexRef.current = index;
+    setTrendCursorIndex(index);
+  }
+
   function updateTrendCursor(event: PointerEvent<SVGSVGElement>, points = evaluationTrend, chart = trendChart) {
     const index = trendIndexFromPointer(event, points, chart);
-    if (index != null) setTrendCursorIndex(index);
+    if (index != null) setSyncedTrendCursorIndex(index);
   }
 
   function releaseTrendCursor() {
-    if (activeTrendPoint?.nodeId) void navigateTo(activeTrendPoint.nodeId);
+    const cursorIndex = trendCursorIndexRef.current ?? trendCursorIndex;
+    const targetPoint = cursorIndex == null ? activeTrendPoint : evaluationTrend[cursorIndex] ?? activeTrendPoint;
+    if (targetPoint?.nodeId) void navigateTo(targetPoint.nodeId);
   }
 
   function trendKeyDown(event: KeyboardEvent<SVGSVGElement>) {
@@ -5233,7 +5584,7 @@ export default function App() {
       event.preventDefault();
       const current = trendCursorIndex ?? Math.max(0, evaluationTrend.findIndex((point) => point.nodeId === board.currentNode));
       const next = event.key === "ArrowLeft" ? Math.max(0, current - 1) : Math.min(evaluationTrend.length - 1, current + 1);
-      setTrendCursorIndex(next);
+      setSyncedTrendCursorIndex(next);
     }
     if (event.key === "Enter" && activeTrendPoint?.nodeId) {
       event.preventDefault();
@@ -6267,6 +6618,8 @@ export default function App() {
     setCompactWindowPositions((positions) => ({ ...positions, engine: compactEngineDefaultPosition() }));
     if (mode === "opening") {
       setNotice("已进入大师开局：当前局面会自动匹配本地参考实战库");
+    } else if (mode === "sparring") {
+      setNotice("已进入随机对练：选择执方和等级后，用本地参考库样本开始对练");
     }
   }
 
@@ -7045,7 +7398,6 @@ export default function App() {
           <i className="red" style={{ width: `${boardEvaluationRedShare}%` } as CSSProperties}/>
           <i className="black" style={{ width: `${boardEvaluationBlackShare}%` } as CSSProperties}/>
         </div>
-        <p><span className="red">红 {Math.round(boardEvaluationRedShare)}%</span><span className="black">黑 {Math.round(boardEvaluationBlackShare)}%</span></p>
         {evaluationTrend.length > 1 ? <svg
           className="board-position-brief-trend"
           viewBox={`0 0 ${openingTrendChart.width} ${openingTrendChart.height}`}
@@ -7054,29 +7406,31 @@ export default function App() {
           aria-label="同步当前棋谱的红黑局势走势图"
           tabIndex={0}
           onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); updateTrendCursor(event, openingEvaluationTrend, openingTrendChart); }}
-          onPointerMove={(event) => { if (event.buttons) updateTrendCursor(event, openingEvaluationTrend, openingTrendChart); }}
+          onPointerMove={(event) => updateTrendCursor(event, openingEvaluationTrend, openingTrendChart)}
+          onPointerLeave={() => setSyncedTrendCursorIndex(undefined)}
           onPointerUp={() => releaseTrendCursor()}
           onKeyDown={trendKeyDown}
         >
           <rect className="trend-equal-band" x={openingTrendChart.left} y={openingTrendChart.middle - 4} width={openingTrendChart.right - openingTrendChart.left} height="8"/>
           <line className="trend-grid top" x1={openingTrendChart.left} y1={openingTrendChart.top} x2={openingTrendChart.right} y2={openingTrendChart.top}/>
-          <line className="trend-grid upper" x1={openingTrendChart.left} y1="54" x2={openingTrendChart.right} y2="54"/>
+          <line className="trend-grid upper" x1={openingTrendChart.left} y1="52" x2={openingTrendChart.right} y2="52"/>
           <line className="trend-grid middle" x1={openingTrendChart.left} y1={openingTrendChart.middle} x2={openingTrendChart.right} y2={openingTrendChart.middle}/>
-          <line className="trend-grid lower" x1={openingTrendChart.left} y1="126" x2={openingTrendChart.right} y2="126"/>
+          <line className="trend-grid lower" x1={openingTrendChart.left} y1="118" x2={openingTrendChart.right} y2="118"/>
           <line className="trend-grid bottom" x1={openingTrendChart.left} y1={openingTrendChart.bottom} x2={openingTrendChart.right} y2={openingTrendChart.bottom}/>
-          <text className="trend-scale-label trend-axis-label" x={openingTrendChart.left - 46} y={openingTrendChart.top + 12}>红优</text>
-          <text className="trend-scale-label trend-axis-label" x={openingTrendChart.left - 46} y={openingTrendChart.middle - 5}>均势</text>
-          <text className="trend-scale-label trend-axis-label" x={openingTrendChart.left - 46} y={openingTrendChart.bottom - 8}>黑优</text>
+          <text className="trend-scale-label trend-axis-label" x={openingTrendChart.left - 46} y={openingTrendChart.top + 4}>1000</text>
+          <text className="trend-scale-label trend-axis-label" x={openingTrendChart.left - 46} y="56">400</text>
+          <text className="trend-scale-label trend-axis-label middle" x={openingTrendChart.left - 46} y={openingTrendChart.middle + 4}>0</text>
+          <text className="trend-scale-label trend-axis-label" x={openingTrendChart.left - 46} y="122">-400</text>
+          <text className="trend-scale-label trend-axis-label" x={openingTrendChart.left - 46} y={openingTrendChart.bottom + 4}>-1000</text>
           {openingSmoothTrendSegments.map((segment) => <path key={segment.key} className={`trend-segment ${segment.side}`} d={segment.d} fill="none"/>)}
           {openingEvaluationTrend.map((point, index) => {
-            const turn = trendTurnsByNode.get(point.nodeId);
             const isCurrentTrendPoint = point.nodeId === board.currentNode;
             return <circle
               key={`${point.label}-${index}`}
-              className={isCurrentTrendPoint ? "current" : turn ? `turning ${turn.severity}` : "muted"}
+              className={isCurrentTrendPoint ? "current" : "muted"}
               cx={point.x}
               cy={point.y}
-              r={isCurrentTrendPoint ? 5.6 : turn ? 4.3 : 2.1}
+              r={isCurrentTrendPoint ? 5.6 : 2.1}
               role={point.nodeId ? "button" : undefined}
               tabIndex={point.nodeId ? 0 : undefined}
               aria-label={point.nodeId ? `${point.label}，红方视角 ${formatRedScore(point.scoreCp)}，点击同步定位棋谱` : undefined}
@@ -7089,11 +7443,14 @@ export default function App() {
             <circle className="trend-current-halo" cx={visibleOpeningTrendPoint.x} cy={visibleOpeningTrendPoint.y} r="7"/>
             <circle className="trend-current-node" cx={visibleOpeningTrendPoint.x} cy={visibleOpeningTrendPoint.y} r="3.5"/>
           </>}
+          {openingTrendTooltipPoint && <g className={`trend-point-tooltip ${openingTrendTooltipPoint.scoreCp >= 0 ? "red" : "black"}`} transform={`translate(${openingTrendTooltipX} ${openingTrendTooltipY})`}>
+            <rect width={openingTrendTooltipWidth} height={openingTrendTooltipHeight} rx="4.5"/>
+            <text x="6" y="10.5">{openingTrendTooltipText}</text>
+          </g>}
         </svg> : <div className="board-position-brief-empty">
           <strong>暂无走势</strong>
           <span>点击生成整局走势，Pikafish 会分析每一步，并把曲线点同步到棋谱节点。</span>
         </div>}
-        {visibleTrendPoint && <p className="board-position-brief-current"><span>{visibleTrendPoint.label}</span><b>{formatRedScore(visibleTrendPoint.scoreCp)}</b></p>}
       </div>}
       {openingBriefTab === "report" && <div className="board-position-brief-page report">
         {reportPresentation ? <>
@@ -7446,6 +7803,8 @@ export default function App() {
   const boardAnnotationParts = splitTtxqComment(boardAnnotationValue);
   const boardHasAnnotation = Boolean(boardAnnotationParts.sourceText || boardAnnotationParts.localText);
   const referencePositionSearchActive = chessPlatform.kind === "desktop" && workspaceMode === "opening";
+  const referenceSparringActive = chessPlatform.kind === "desktop" && workspaceMode === "sparring";
+  const referenceSidePanelActive = referencePositionSearchActive || referenceSparringActive;
   const analysisControlActive = analysisStopping || isAnalysisControlActive(analysisBusy, analysisHintsEnabled);
 
   return (
@@ -7722,7 +8081,7 @@ export default function App() {
         {chessPlatform.kind === "desktop" && workspaceMode !== "training" && <button className="tool-button" title="大师棋谱" aria-label="大师棋谱" onClick={() => setMasterLibraryOpen(true)}><Database size={16}/></button>}
       </div>
 
-      <main className={`workspace workspace-mode-${workspaceMode} layout-${desktopPreferences.layoutMode} ${referencePositionSearchActive ? "reference-search-active" : ""} ${reviewModeOpen ? "review-mode-active" : ""} ${libraryCollapsed ? "library-collapsed" : ""} ${candidateRailCollapsed ? "candidate-rail-collapsed" : ""} ${analysisPanelCollapsed ? "analysis-panel-collapsed" : ""} ${compactDockMinimized ? "compact-dock-minimized" : ""} ${compactHasSystemPopout ? "compact-system-popout" : ""} ${desktopPreferences.layoutMode === "compact" && cloudBookCollapsed ? "compact-cloud-collapsed" : ""}`}>
+      <main className={`workspace workspace-mode-${workspaceMode} layout-${desktopPreferences.layoutMode} ${referenceSidePanelActive ? "reference-search-active" : ""} ${reviewModeOpen ? "review-mode-active" : ""} ${libraryCollapsed ? "library-collapsed" : ""} ${candidateRailCollapsed ? "candidate-rail-collapsed" : ""} ${analysisPanelCollapsed ? "analysis-panel-collapsed" : ""} ${compactDockMinimized ? "compact-dock-minimized" : ""} ${compactHasSystemPopout ? "compact-system-popout" : ""} ${desktopPreferences.layoutMode === "compact" && cloudBookCollapsed ? "compact-cloud-collapsed" : ""}`}>
         <aside className={`library-panel ${libraryCollapsed && mobilePanel !== "library" ? "collapsed" : ""} ${mobilePanel === "library" ? "mobile-visible" : ""}`}>
           <div className="pane-title">
             <strong>{libraryCollapsed ? <Library size={16}/> : "棋谱库"}</strong>
@@ -7806,7 +8165,7 @@ export default function App() {
             <strong>{boardEvaluationRailText.side}</strong><span>{boardEvaluationRailText.score}</span>
             <button type="button" title="收起局势评分条" aria-label="收起局势评分条" onClick={() => setMobileEvaluationVisible(false)}><ChevronDown size={15}/></button>
           </section>}
-          <div className={`board-stage ${(reviewModeOpen || (showReviewAnnotations && boardHasAnnotation) || (workspaceMode === "opening" && desktopPreferences.layoutMode === "compact")) ? "has-side-note" : ""}`}>
+          <div className={`board-stage ${workspaceMode !== "sparring" && (reviewModeOpen || (showReviewAnnotations && boardHasAnnotation) || openingCompactMode) ? "has-side-note" : ""}`}>
             <div className={`board-stage-inner ${showMasterGameSidePanel ? "has-master-identity" : ""} ${!showBoardEvaluationRail ? "eval-rail-hidden" : ""}`}>
             {showMasterGameSidePanel ? <section className="master-game-identity side" aria-label="当前大师棋谱信息">
               <div>
@@ -7842,7 +8201,7 @@ export default function App() {
               {cells.map(({ row, col }) => {
                 const piece = pieceMap.get(`${row}-${col}`);
                 const isSelected = selected?.row === row && selected?.col === col;
-                const isThoughtPiece = workspaceMode !== "opening" && showMoveThoughts && selectedPieceThought?.square.row === row && selectedPieceThought.square.col === col;
+                const isThoughtPiece = !referencePracticeMode && showMoveThoughts && selectedPieceThought?.square.row === row && selectedPieceThought.square.col === col;
                 const cellStyle = boardCellStyle({ row, col }, boardDisplayReversed, displayedBoardSkin);
                 const style = {
                   "--piece-left": cellStyle.left,
@@ -7954,7 +8313,7 @@ export default function App() {
                 onSaveLocal={board.currentNode ? (value) => saveCommentForNode(board.currentNode!, value) : saveRootLocalNote}
               />}
             </div>}
-            {workspaceMode !== "opening" && showMoveThoughts && selectedPieceThought && <section className={`selected-piece-thought-card source-${selectedPieceThought.source}`} aria-label="选中棋子思路">
+            {!referencePracticeMode && showMoveThoughts && selectedPieceThought && <section className={`selected-piece-thought-card source-${selectedPieceThought.source}`} aria-label="选中棋子思路">
               <header>
                 <div>
                   <small>选中棋子思路 · {selectedPieceThought.sourceLabel}</small>
@@ -8112,16 +8471,24 @@ export default function App() {
           {!reviewModeOpen && candidateLinesView("board-candidate-rail", workspaceMode !== "research")}
         </section>
 
-        {referencePositionSearchActive ? <MasterOpeningPanel
+        {referenceSidePanelActive ? <MasterOpeningPanel
           fen={board.fen}
-          enabled={referencePositionSearchActive}
+          enabled={referenceSidePanelActive}
+          panelMode={referenceSparringActive ? "sparring" : "opening"}
           queryMoves={(fen) => chessPlatform.queryReferencePosition({ fen, limit: 8, includeDetails: false })}
-          queryGames={(fen) => chessPlatform.listReferenceGames(undefined, undefined, 10, 0, { positionFen: fen })}
+          queryGames={(fen, options) => chessPlatform.listReferenceGames(undefined, options?.query, options?.limit ?? 10, options?.offset ?? 0, { positionFen: fen })}
           resolveMoveFen={async (fen, iccs) => (await chessPlatform.previewLine(fen, [iccs]))[0]?.fen}
           onPreviewMove={(iccs, notation) => void previewCandidateLine({ multipv: 1, pv: [iccs], notation: [notation] }, board.fen, { id: "reference-library", name: "大师开局" })}
           onAddMove={(iccs) => void playIccsMove(iccs, board.fen)}
           onOpenExplorer={openReferenceLibraryExplorer}
           onOpenGame={openReferenceLibraryGame}
+          sparring={referenceSparring}
+          onUpdateSparring={updateReferenceSparring}
+          onStartSparring={(options) => void startReferenceSparring(options)}
+          onPauseSparring={pauseReferenceSparring}
+          onResumeSparring={resumeReferenceSparring}
+          onStopSparring={() => void stopReferenceSparring(false)}
+          onScoreSparring={() => void stopReferenceSparring(true)}
         /> : <aside className={`analysis-panel ${reviewModeOpen ? "review-mode-panel" : ""} ${analysisPanelCollapsed && desktopPreferences.layoutMode !== "compact" ? "collapsed" : ""} ${mobilePanel === "analysis" ? "mobile-visible" : ""}`}>
           {reviewModeOpen ? <ReviewWorkspace
             board={board}
@@ -8134,7 +8501,7 @@ export default function App() {
             playedAt={currentLibraryGame?.playedAt || currentLibraryGame?.date}
             libraryFolders={libraryFolders}
             games={games}
-            libraryOpen={reviewGameLibraryOpen}
+            libraryOpen={false}
             onLibraryOpenChange={setReviewGameLibraryOpen}
             favorite={currentLibraryGame?.favorite ?? false}
             libraryTags={currentLibraryGame?.tags ?? []}
@@ -8762,7 +9129,7 @@ export default function App() {
         onShowDiagnostics={() => void refreshTtxqDiagnostics()}
         onClearDiagnostics={() => void clearTtxqDiagnostics()}
       />}
-      {!reviewModeOpen && reviewGameLibraryOpen && <ReviewGameLibrary
+      {reviewGameLibraryOpen && <ReviewGameLibrary
         games={games}
         folders={libraryFolders}
         onOpen={(gameId) => void openGame(gameId)}

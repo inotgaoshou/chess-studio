@@ -1,21 +1,39 @@
-import { useEffect, useRef, useState } from "react";
-import { BookOpen, CalendarDays, Database, RefreshCw, ShieldCheck, Trophy, Undo2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { BookOpen, Bot, CalendarDays, Database, Pause, Play, RefreshCw, ShieldCheck, Square, Trophy, Undo2, Zap } from "lucide-react";
 import { ReferencePositionPanel } from "./ReferencePositionPanel";
 import type { PositionMoveStatDto, ReferenceGameSummaryDto } from "./platform/types";
+import {
+  referenceSparringLevelLabel,
+  referenceSparringLevelProfile,
+  referenceSparringLevels,
+  type ReferenceSparringOptions,
+  type ReferenceSparringState,
+} from "./ReferenceSparring";
 
 const MASTER_OPENING_QUERY_DEBOUNCE_MS = 220;
 const MASTER_OPENING_FOCUS_DEBOUNCE_MS = 120;
+const MASTER_OPENING_DEFAULT_GAME_LIMIT = 10;
+const MASTER_OPENING_FILTERED_GAME_LIMIT = 50;
+const MASTER_FILTER_PRESETS = ["特大", "大师"] as const;
 
 type Props = {
   fen: string;
   enabled: boolean;
+  panelMode?: "opening" | "sparring";
   queryMoves(fen: string): Promise<PositionMoveStatDto[]>;
-  queryGames(fen: string): Promise<ReferenceGameSummaryDto[]>;
+  queryGames(fen: string, options?: { query?: string; limit?: number; offset?: number }): Promise<ReferenceGameSummaryDto[]>;
   resolveMoveFen(fen: string, iccs: string): Promise<string | undefined>;
   onPreviewMove(iccs: string, notation: string): void;
   onAddMove(iccs: string): void;
   onOpenExplorer(): void;
   onOpenGame(gameId: string): void;
+  sparring?: ReferenceSparringState;
+  onUpdateSparring?(options: Partial<ReferenceSparringOptions>): void;
+  onStartSparring?(options: ReferenceSparringOptions): void;
+  onPauseSparring?(): void;
+  onResumeSparring?(): void;
+  onStopSparring?(): void;
+  onScoreSparring?(): void;
 };
 
 function resultWord(result: string) {
@@ -46,6 +64,31 @@ function cleanPlayerText(value: string) {
     .replace(/[□?]/g, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function normalizeSearchText(value: string) {
+  return cleanPlayerText(value).toLocaleLowerCase().replace(/\s+/g, "");
+}
+
+function filterAliases(token: string) {
+  if (token === "特大") return ["特大", "特级", "特级大师", "象棋特级大师"];
+  if (token === "大师") return ["大师", "象棋大师", "国家大师", "特大", "特级大师"];
+  return [token];
+}
+
+function filterTokens(keyword: string) {
+  return cleanPlayerText(keyword)
+    .toLocaleLowerCase()
+    .split(/[\s，,、;；|]+/)
+    .map((token) => normalizeSearchText(token))
+    .filter(Boolean);
+}
+
+function databaseQueryForMasterFilter(keyword: string) {
+  const first = filterTokens(keyword)[0];
+  if (!first) return undefined;
+  if (first === "特大") return "特级";
+  return first;
 }
 
 const ORGANIZATION_PREFIX = /^(?:[\u4e00-\u9fffA-Za-z0-9·（）()]+?(?:大学|学院|学校|中学|棋院|俱乐部|协会|代表队|队|省|市|县|区))+/;
@@ -88,26 +131,94 @@ function renderPlayerOutcome(game: ReferenceGameSummaryDto, opening?: string) {
   </span>;
 }
 
+function gameSearchText(game: ReferenceGameSummaryDto) {
+  const outcome = playerOutcome(game);
+  return normalizeSearchText([
+    outcome.red,
+    outcome.black,
+    game.redPlayer,
+    game.blackPlayer,
+    game.title,
+    game.eventName,
+    game.roundName,
+    game.opening,
+    game.openingCode,
+    game.openingName,
+  ].filter(Boolean).join(" "));
+}
+
+function filterGamesByMasterKeyword(games: ReferenceGameSummaryDto[], keyword: string) {
+  const tokens = filterTokens(keyword);
+  if (tokens.length === 0) return games;
+  return games.filter((game) => {
+    const haystack = gameSearchText(game);
+    return tokens.every((token) => filterAliases(token).some((alias) => haystack.includes(normalizeSearchText(alias))));
+  });
+}
+
 function percent(value: number, total: number) {
   return total > 0 ? Math.round(value * 100 / total) : 0;
 }
 
-export function MasterOpeningPanel({ fen, enabled, queryMoves, queryGames, resolveMoveFen, onPreviewMove, onAddMove, onOpenExplorer, onOpenGame }: Props) {
+function sparringStatusLabel(state: ReferenceSparringState) {
+  switch (state.status) {
+    case "user_turn": return "轮到你";
+    case "reference_thinking": return "参考库思考中";
+    case "paused": return "已暂停";
+    case "finished": return "已结束";
+    default: return "未开始";
+  }
+}
+
+function sparringSideLabel(side: "red" | "black") {
+  return side === "red" ? "红方" : "黑方";
+}
+
+export function MasterOpeningPanel({
+  fen,
+  enabled,
+  panelMode = "opening",
+  queryMoves,
+  queryGames,
+  resolveMoveFen,
+  onPreviewMove,
+  onAddMove,
+  onOpenExplorer,
+  onOpenGame,
+  sparring,
+  onUpdateSparring,
+  onStartSparring,
+  onPauseSparring,
+  onResumeSparring,
+  onStopSparring,
+  onScoreSparring,
+}: Props) {
   const generation = useRef(0);
   const gameCache = useRef(new Map<string, ReferenceGameSummaryDto[]>());
   const focusTimer = useRef<number | undefined>(undefined);
+  const levelHelpRef = useRef<HTMLLabelElement>(null);
   const lastRefresh = useRef(0);
+  const gameQueryFenRef = useRef(fen);
   const [games, setGames] = useState<ReferenceGameSummaryDto[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
   const [refresh, setRefresh] = useState(0);
   const [selectedGameId, setSelectedGameId] = useState<string>();
   const [selectedMove, setSelectedMove] = useState<PositionMoveStatDto>();
   const [matchScope, setMatchScope] = useState("当前局面");
   const [viewMode, setViewMode] = useState<"compact" | "detail">("compact");
+  const [masterFilter, setMasterFilter] = useState("");
+  const [hasMoreGames, setHasMoreGames] = useState(false);
+  const [levelHelpOpen, setLevelHelpOpen] = useState(false);
+  const filteredGames = useMemo(() => filterGamesByMasterKeyword(games, masterFilter), [games, masterFilter]);
+  const hasMasterFilter = normalizeSearchText(masterFilter).length > 0;
+  const gamePageLimit = hasMasterFilter ? MASTER_OPENING_FILTERED_GAME_LIMIT : MASTER_OPENING_DEFAULT_GAME_LIMIT;
+  const gameDatabaseQuery = databaseQueryForMasterFilter(masterFilter);
+  const matchCountLabel = hasMasterFilter ? `${filteredGames.length}/${games.length}` : `${games.length}`;
 
   useEffect(() => {
-    if (!enabled) {
+    if (!enabled || panelMode !== "opening") {
       generation.current += 1;
       if (focusTimer.current) window.clearTimeout(focusTimer.current);
       setLoading(false);
@@ -117,12 +228,15 @@ export function MasterOpeningPanel({ fen, enabled, queryMoves, queryGames, resol
     if (focusTimer.current) window.clearTimeout(focusTimer.current);
     const forceRefresh = refresh !== lastRefresh.current;
     lastRefresh.current = refresh;
-    const cached = gameCache.current.get(fen);
+    const cacheKey = `${fen}|${normalizeSearchText(masterFilter)}|${gamePageLimit}|0`;
+    const cached = gameCache.current.get(cacheKey);
     setSelectedMove(undefined);
     setMatchScope("当前局面");
+    gameQueryFenRef.current = fen;
     if (cached && !forceRefresh) {
       setGames(cached);
       setSelectedGameId((selected) => selected && cached.some((item) => item.id === selected) ? selected : cached[0]?.id);
+      setHasMoreGames(cached.length === gamePageLimit);
       setError("");
       setLoading(false);
       return;
@@ -130,10 +244,12 @@ export function MasterOpeningPanel({ fen, enabled, queryMoves, queryGames, resol
     const timer = window.setTimeout(() => {
       setLoading(true);
       setError("");
-      void queryGames(fen).then((items) => {
+      setHasMoreGames(false);
+      void queryGames(fen, { query: gameDatabaseQuery, limit: gamePageLimit, offset: 0 }).then((items) => {
         if (request !== generation.current) return;
-        gameCache.current.set(fen, items);
+        gameCache.current.set(cacheKey, items);
         setGames(items);
+        setHasMoreGames(items.length === gamePageLimit);
         setSelectedGameId((selected) => selected && items.some((item) => item.id === selected) ? selected : items[0]?.id);
       }).catch((cause) => {
         if (request !== generation.current) return;
@@ -146,7 +262,23 @@ export function MasterOpeningPanel({ fen, enabled, queryMoves, queryGames, resol
       window.clearTimeout(timer);
       if (focusTimer.current) window.clearTimeout(focusTimer.current);
     };
-  }, [enabled, fen, refresh]);
+  }, [enabled, panelMode, fen, refresh, masterFilter, gamePageLimit, gameDatabaseQuery]);
+
+  useEffect(() => {
+    if (!levelHelpOpen) return;
+    function closeFromOutside(event: PointerEvent) {
+      if (!levelHelpRef.current?.contains(event.target as Node)) setLevelHelpOpen(false);
+    }
+    function closeFromKeyboard(event: KeyboardEvent) {
+      if (event.key === "Escape") setLevelHelpOpen(false);
+    }
+    document.addEventListener("pointerdown", closeFromOutside);
+    document.addEventListener("keydown", closeFromKeyboard);
+    return () => {
+      document.removeEventListener("pointerdown", closeFromOutside);
+      document.removeEventListener("keydown", closeFromKeyboard);
+    };
+  }, [levelHelpOpen]);
 
   async function focusMove(move: PositionMoveStatDto) {
     setSelectedMove(move);
@@ -162,16 +294,20 @@ export function MasterOpeningPanel({ fen, enabled, queryMoves, queryGames, resol
           const nextFen = await resolveMoveFen(fen, move.iccs);
           if (request !== generation.current) return;
           const queryFen = nextFen || fen;
-          const cached = gameCache.current.get(queryFen);
+          gameQueryFenRef.current = queryFen;
+          const cacheKey = `${queryFen}|${normalizeSearchText(masterFilter)}|${gamePageLimit}|0`;
+          const cached = gameCache.current.get(cacheKey);
           if (cached) {
             setGames(cached);
+            setHasMoreGames(cached.length === gamePageLimit);
             setSelectedGameId((selected) => selected && cached.some((item) => item.id === selected) ? selected : cached[0]?.id);
             return;
           }
-          const items = await queryGames(queryFen);
+          const items = await queryGames(queryFen, { query: gameDatabaseQuery, limit: gamePageLimit, offset: 0 });
           if (request !== generation.current) return;
-          gameCache.current.set(queryFen, items);
+          gameCache.current.set(cacheKey, items);
           setGames(items);
+          setHasMoreGames(items.length === gamePageLimit);
           setSelectedGameId((selected) => selected && items.some((item) => item.id === selected) ? selected : items[0]?.id);
         } catch (cause) {
           if (request !== generation.current) return;
@@ -188,22 +324,149 @@ export function MasterOpeningPanel({ fen, enabled, queryMoves, queryGames, resol
     setRefresh((value) => value + 1);
   }
 
+  async function loadMoreGames() {
+    if (loading || loadingMore) return;
+    const request = ++generation.current;
+    setLoadingMore(true);
+    setError("");
+    try {
+      const items = await queryGames(gameQueryFenRef.current, { query: gameDatabaseQuery, limit: gamePageLimit, offset: games.length });
+      if (request !== generation.current) return;
+      setGames((current) => {
+        const known = new Set(current.map((item) => item.id));
+        return [...current, ...items.filter((item) => !known.has(item.id))];
+      });
+      setHasMoreGames(items.length === gamePageLimit);
+    } catch (cause) {
+      if (request !== generation.current) return;
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      if (request === generation.current) setLoadingMore(false);
+    }
+  }
+
   if (!enabled) return null;
   const decided = selectedMove ? selectedMove.redWins + selectedMove.draws + selectedMove.blackWins : 0;
+  const sparringBusy = sparring?.status === "user_turn" || sparring?.status === "reference_thinking";
+  const sparringOptions = sparring ? {
+    userSide: sparring.userSide,
+    level: sparring.level,
+    delayMs: sparring.delayMs,
+    autoReport: sparring.autoReport,
+  } : undefined;
+  const sparringProfile = sparring ? referenceSparringLevelProfile(sparring.level) : undefined;
+  const showOpeningTools = panelMode === "opening";
+  const showSparringTools = panelMode === "sparring" && sparring;
   return <aside className="master-opening-side-panel" aria-label="大师开局局面搜索">
-    <section className="master-opening-panel">
+    <section className={`master-opening-panel mode-${panelMode}`}>
       <header className="master-opening-header">
         <div>
-          <span><BookOpen size={16}/><strong>大师开局</strong></span>
-          <small>当前局面自动匹配本地参考实战库</small>
+          <span>{panelMode === "sparring" ? <Bot size={16}/> : <BookOpen size={16}/>}<strong>{panelMode === "sparring" ? "随机对练" : "大师开局"}</strong></span>
+          <small>{panelMode === "sparring" ? "参考库按等级随机出招，棋谱可复盘和 AI 打分" : "当前局面自动匹配本地参考实战库"}</small>
         </div>
         <nav>
-          <button type="button" title="刷新当前局面" aria-label="刷新当前局面" onClick={() => setRefresh((value) => value + 1)}><RefreshCw size={14}/></button>
+          {showOpeningTools && <button type="button" title="刷新当前局面" aria-label="刷新当前局面" onClick={() => setRefresh((value) => value + 1)}><RefreshCw size={14}/></button>}
           <button type="button" title="打开完整布局探索" aria-label="打开完整布局探索" onClick={onOpenExplorer}><Database size={14}/></button>
         </nav>
       </header>
 
-      <ReferencePositionPanel
+      {showSparringTools && <section className={`master-opening-sparring standalone ${sparring.status}`.trim()} aria-label="参考库随机对练">
+        <header>
+          <span><Bot size={14}/><strong>随机对练</strong><small>{sparringStatusLabel(sparring)}</small></span>
+          <em>{referenceSparringLevelLabel(sparring.level)}</em>
+        </header>
+        <div className="master-opening-sparring-controls">
+          <label>我执
+            <select
+              value={sparring.userSide}
+              disabled={sparringBusy}
+              onChange={(event) => onUpdateSparring?.({ userSide: event.currentTarget.value as "red" | "black" })}
+            >
+              <option value="red">红方</option>
+              <option value="black">黑方</option>
+            </select>
+          </label>
+          <label className="sparring-level-field" ref={levelHelpRef}><span className="sparring-field-heading">等级
+            <button
+              type="button"
+              className="sparring-level-help-button"
+              aria-label="查看随机对练等级说明"
+              aria-expanded={levelHelpOpen}
+              onClick={(event) => {
+                event.preventDefault();
+                setLevelHelpOpen((open) => !open);
+              }}
+            >?</button>
+          </span>
+            <select
+              value={sparring.level}
+              disabled={sparringBusy}
+              title={sparringProfile?.description}
+              onChange={(event) => onUpdateSparring?.({ level: event.currentTarget.value as ReferenceSparringState["level"] })}
+            >
+              {referenceSparringLevels.map((level) => <option key={level} value={level}>{referenceSparringLevelLabel(level)}</option>)}
+            </select>
+            {levelHelpOpen && <div className="sparring-level-help-popover" role="dialog" aria-label="随机对练等级说明">
+              <strong>模拟等级说明</strong>
+              <ul>
+                {referenceSparringLevels.map((level) => {
+                  const profile = referenceSparringLevelProfile(level);
+                  return <li key={level}><b>{profile.label}</b><span>{profile.description}</span></li>;
+                })}
+              </ul>
+            </div>}
+          </label>
+          <label>延迟
+            <select
+              value={sparring.delayMs}
+              disabled={sparringBusy}
+              onChange={(event) => onUpdateSparring?.({ delayMs: Number(event.currentTarget.value) })}
+            >
+              <option value={250}>快</option>
+              <option value={600}>正常</option>
+              <option value={1000}>慢</option>
+            </select>
+          </label>
+          <label className="auto-report">
+            <input
+              type="checkbox"
+              checked={sparring.autoReport}
+              disabled={sparringBusy}
+              onChange={(event) => onUpdateSparring?.({ autoReport: event.currentTarget.checked })}
+            />
+            结束打分
+          </label>
+        </div>
+        <p>{sparring.message || `${sparringSideLabel(sparring.userSide)}由你走，系统用本地参考库样本随机应招。`}</p>
+        {sparring.lastChoice && <small
+          className={`sparring-choice-summary source-${sparring.lastChoice.source}`}
+          title={[
+            `来源：${sparring.lastChoice.sourceLabel}`,
+            sparring.lastChoice.source === "reference" ? "执方胜率按当前走子方统计，和棋按收益折算；不是样本占比或引擎评分。" : undefined,
+            sparring.lastChoice.fallbackReason,
+          ].filter(Boolean).join(" · ")}
+        >
+          <span className="sparring-choice-source">来源：{sparring.lastChoice.sourceLabel}</span>
+          <span>上步：{sparring.lastChoice.move.notation || sparring.lastChoice.move.iccs}</span>
+          {sparring.lastChoice.source === "reference"
+            ? <span>{sparring.lastChoice.move.samples.toLocaleString()} 样本 · 执方胜率 {Math.round(sparring.lastChoice.winRate * 100)}%</span>
+            : sparring.lastChoice.source === "cloud" && sparring.lastChoice.winRate !== .5
+              ? <span>云库参考胜率 {Math.round(sparring.lastChoice.winRate * 100)}%</span>
+              : <span>{sparring.lastChoice.sourceLabel}首选着</span>}
+        </small>}
+        {sparring.lastChoice?.warningMessage && <p className="sparring-fallback-warning">{sparring.lastChoice.warningMessage}</p>}
+        <footer>
+          {sparring.status === "idle" || sparring.status === "finished"
+            ? <button type="button" className="primary" onClick={() => sparringOptions && onStartSparring?.(sparringOptions)}><Play size={13}/>开始</button>
+            : sparring.status === "paused"
+              ? <button type="button" className="primary" onClick={onResumeSparring}><Play size={13}/>继续</button>
+              : <button type="button" onClick={onPauseSparring}><Pause size={13}/>暂停</button>}
+          <button type="button" disabled={sparring.status === "idle"} onClick={onStopSparring}><Square size={12}/>结束</button>
+          <button type="button" disabled={sparring.status === "idle"} onClick={onScoreSparring}><Zap size={13}/>AI 打分</button>
+        </footer>
+      </section>}
+
+      {showOpeningTools && <ReferencePositionPanel
         fen={fen}
         enabled={enabled}
         query={queryMoves}
@@ -217,11 +480,11 @@ export function MasterOpeningPanel({ fen, enabled, queryMoves, queryGames, resol
         maxMoves={8}
         refreshToken={refresh}
         className="master-opening-moves"
-      />
+      />}
 
-      <section className={`master-opening-matches ${loading ? "is-refreshing" : ""}`.trim()} aria-label="命中棋谱" aria-busy={loading}>
+      {showOpeningTools && <section className={`master-opening-matches ${loading ? "is-refreshing" : ""}`.trim()} aria-label="命中棋谱" aria-busy={loading}>
         <header>
-          <span><ShieldCheck size={14}/><strong>命中棋谱</strong><small>{loading ? `${matchScope} · 更新中` : `${matchScope} · ${games.length} 条摘要`}</small></span>
+          <span><ShieldCheck size={14}/><strong>命中棋谱</strong><small>{loading ? `${matchScope} · 更新中` : `${matchScope} · ${matchCountLabel} 条摘要`}</small></span>
           {selectedMove && <button type="button" title="回到当前局面匹配" aria-label="回到当前局面匹配" onClick={resetMoveScope}><Undo2 size={13}/>当前局面</button>}
         </header>
         {selectedMove && <div className="master-opening-selected-move">
@@ -240,11 +503,29 @@ export function MasterOpeningPanel({ fen, enabled, queryMoves, queryGames, resol
             <button type="button" className={viewMode === "compact" ? "active" : ""} onClick={() => setViewMode("compact")}>简洁</button>
           </nav>
         </div>
+        <div className="master-opening-filter-bar" aria-label="大师棋谱筛选">
+          <input
+            value={masterFilter}
+            onChange={(event) => setMasterFilter(event.currentTarget.value)}
+            placeholder="筛选大师/棋手名"
+            aria-label="按大师或棋手名字筛选命中棋谱"
+          />
+          <nav aria-label="大师快捷筛选">
+            {MASTER_FILTER_PRESETS.map((preset) => <button
+              type="button"
+              key={preset}
+              className={normalizeSearchText(masterFilter) === normalizeSearchText(preset) ? "active" : ""}
+              onClick={() => setMasterFilter((value) => normalizeSearchText(value) === normalizeSearchText(preset) ? "" : preset)}
+            >{preset}</button>)}
+            {hasMasterFilter && <button type="button" className="clear" onClick={() => setMasterFilter("")}>清除</button>}
+          </nav>
+        </div>
         {loading && games.length === 0 ? <p>正在匹配当前局面的实战棋谱…</p>
           : error && games.length === 0 ? <p className="error">{error}</p>
           : games.length === 0 ? <p>当前局面暂无命中棋谱；可继续走几步后自动缩小范围。</p>
+          : filteredGames.length === 0 ? <p>没有匹配“{masterFilter}”的棋谱；可换大师名字，或清除筛选查看全部 {games.length} 条。</p>
           : <div className={`master-opening-game-list ${viewMode}`}>
-            {games.map((game) => <button
+            {filteredGames.map((game) => <button
               type="button"
               key={game.id}
               className={game.id === selectedGameId ? "active" : ""}
@@ -266,8 +547,11 @@ export function MasterOpeningPanel({ fen, enabled, queryMoves, queryGames, resol
               </>}
               {viewMode === "detail" && <em className="master-opening-preview-label">预览</em>}
             </button>)}
+            {hasMoreGames && <button type="button" className="master-opening-load-more" disabled={loadingMore} onClick={() => void loadMoreGames()}>
+              {loadingMore ? "正在加载更多…" : hasMasterFilter ? "继续搜索数据库" : "查看更多命中棋谱"}
+            </button>}
           </div>}
-      </section>
+      </section>}
     </section>
   </aside>;
 }

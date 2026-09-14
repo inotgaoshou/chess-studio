@@ -334,6 +334,41 @@ pub(crate) fn collect_ttxq_h5_history_impl(
         if (!/^[1-9]\d{4,}$/.test(id)) return '';
         return id;
       };
+      const visibleQipuListEmptyState = () => {
+        if (typeof document === 'undefined' || !document.querySelectorAll) return '';
+        const visible = (element) => {
+          if (!element) return false;
+          try {
+            if (element === document.body || element === document.documentElement) return false;
+          } catch (_) { /* Some harnesses do not expose body/documentElement. */ }
+          try {
+            if (typeof window !== 'undefined' && window.getComputedStyle) {
+              const style = window.getComputedStyle(element);
+              if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+            }
+          } catch (_) { /* Keep probing text-only harness elements. */ }
+          try {
+            if (element.getBoundingClientRect) {
+              const rect = element.getBoundingClientRect();
+              if (rect && rect.width === 0 && rect.height === 0) return false;
+            }
+          } catch (_) { /* Detached Tencent nodes can throw while routing. */ }
+          return true;
+        };
+        const texts = [];
+        try {
+          for (const element of Array.from(document.querySelectorAll('*')).slice(0, 1600)) {
+            if (!visible(element)) continue;
+            const text = String(element.innerText || element.textContent || '').replace(/\s+/g, '');
+            if (!text || text.length > 120) continue;
+            if (/(?:暂无数据|暂无棋谱|暂无收藏|请稍后轻触重试|请稍后重试|加载失败)/.test(text)) texts.push(text);
+          }
+        } catch (_) { return ''; }
+        const joined = texts.join(' ');
+        return /(?:暂无数据|暂无棋谱|暂无收藏)/.test(joined) || /(?:请稍后轻触重试|请稍后重试|加载失败)/.test(joined)
+          ? '授权窗口当前列表为空或加载失败，请在天天象棋里刷新/切换列表后重试。'
+          : '';
+      };
       const qipuListRoots = () => {
         const activeListKind = () => {
         const selectedText = [];
@@ -430,6 +465,8 @@ pub(crate) fn collect_ttxq_h5_history_impl(
       // data source. Its
       // parent/stage/event branches can be effectively unbounded, so only follow
       // data-shaped children and always retain records discovered before a limit.
+      const visibleEmptyState = visibleQipuListEmptyState();
+      if (visibleEmptyState) throw new Error(visibleEmptyState);
       const selectedListRoots = qipuListRoots();
       const selectedList = selectedListRoots[0];
       const sourceList = selectedList ? selectedList.label : '';
