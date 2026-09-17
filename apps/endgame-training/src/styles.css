@@ -114,9 +114,14 @@
 .analysis-panel>header button:disabled { opacity:.42; cursor:default; }
 .analysis-header-controls { min-width:0; display:flex; align-items:center; justify-content:flex-end; gap:5px; }
 .analysis-multipv-picker { min-width:0; display:flex; align-items:center; gap:4px; color:#6a8273; font-size:9px; font-weight:700; }
-.analysis-multipv-picker > input { width:52px; height:30px; min-height:30px; padding:0 4px 0 8px; border:1px solid #9dbda6; border-radius:4px; background:#fff; color:#315d45; font-size:16px; font-weight:800; text-align:center; font-variant-numeric:tabular-nums; }
-.analysis-multipv-picker > input:focus { border-color:#397951; outline:2px solid #39795124; }
-.analysis-multipv-picker > input:disabled { opacity:.48; }
+.multipv-stepper { display:grid; grid-template-columns:30px 42px 30px; align-items:center; }
+.multipv-stepper > button { width:30px; height:30px; min-height:30px !important; padding:0 !important; border-color:#9dbda6 !important; border-radius:0 !important; }
+.multipv-stepper > button:first-child { border-radius:4px 0 0 4px !important; }
+.multipv-stepper > button:last-child { border-radius:0 4px 4px 0 !important; }
+.multipv-stepper > button svg { width:14px; height:14px; }
+.multipv-stepper > input { width:42px; height:30px; min-height:30px; margin:0 -1px; padding:0 3px; border:1px solid #9dbda6; border-radius:0; background:#fff; color:#315d45; font-size:16px; font-weight:800; text-align:center; font-variant-numeric:tabular-nums; }
+.multipv-stepper > input:focus { position:relative; z-index:1; border-color:#397951; outline:2px solid #39795124; }
+.multipv-stepper > input:disabled { opacity:.48; }
 .analysis-working,.analysis-empty { min-height:30px; margin:0; display:flex; align-items:center; color:#6a8273; font-size:10px; line-height:1.4; }
 .analysis-winrate {
   min-width:0;
@@ -875,19 +880,14 @@
 .study-panel-tabs button svg { width:15px; height:15px; }
 .study-panel-tabs button.active { background:#e9f4ec; color:#397951; box-shadow:inset 0 -3px #397951; font-weight:800; }
 .study-cloud-panel { min-width:0; border:1px solid #c8ded0; border-radius:6px; background:#f4faf5; overflow:hidden; }
-.study-cloud-panel > header { min-height:40px; padding:0 8px; border-bottom:1px solid #d6e4d9; display:flex; align-items:center; justify-content:space-between; gap:6px; }
-.study-cloud-panel > header span { min-width:0; display:flex; align-items:center; gap:5px; color:#315d45; font-size:11px; }
-.study-cloud-panel > header svg { width:15px; height:15px; }
-.study-cloud-panel > header button { min-height:28px; padding:0 8px; border:1px solid #9dbda6; border-radius:4px; background:#fff; color:#397951; font-size:10px; font-weight:800; }
-.study-cloud-panel > header button:disabled { opacity:.48; }
 .study-cloud-list { max-height:320px; overflow:auto; }
-.study-cloud-list button { width:100%; min-width:0; min-height:52px; padding:6px 8px; border:0; border-bottom:1px solid #dce7df; background:#fff; color:#365949; display:grid; grid-template-columns:23px minmax(0,1fr) auto; grid-template-rows:auto auto; align-items:center; gap:2px 6px; text-align:left; }
+.study-cloud-list button { width:100%; min-width:0; min-height:40px; padding:5px 8px; border:0; border-bottom:1px solid #dce7df; background:#fff; color:#365949; display:grid; grid-template-columns:23px minmax(68px,1fr) auto auto; align-items:center; gap:6px; text-align:left; }
 .study-cloud-list button:last-child { border-bottom:0; }
 .study-cloud-list button:hover,.study-cloud-list button:focus-visible { background:#e9f4ec; }
 .study-cloud-list button > b { width:21px; height:21px; border-radius:50%; background:#397951; color:#fff; display:grid; place-items:center; font-size:10px; }
 .study-cloud-list button > strong { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
 .study-cloud-list button > em { color:#9b6728; font-size:9px; font-style:normal; font-weight:800; white-space:nowrap; }
-.study-cloud-list button > small { grid-column:2 / -1; min-width:0; overflow:hidden; color:#60796a; text-overflow:ellipsis; white-space:nowrap; font-size:9px; font-variant-numeric:tabular-nums; }
+.study-cloud-list button > small { min-width:0; overflow:hidden; color:#60796a; text-overflow:ellipsis; white-space:nowrap; font-size:9px; font-variant-numeric:tabular-nums; }
 .study-cloud-empty { min-height:70px; margin:0; padding:12px; color:#71877a; display:grid; place-items:center; text-align:center; font-size:10px; line-height:1.45; }
 .study-fen-dialog { width:min(520px,100%) !important; }
 .study-fen-dialog > header { min-width:0; display:flex; align-items:center; gap:9px; }
@@ -927,7 +927,7 @@
   .study-evaluation-toggle { min-height:22px; }
   .analysis-panel { padding:4px 6px; gap:3px; }
   .analysis-panel>header button,
-  .analysis-multipv-picker > input { height:30px; min-height:30px; }
+  .multipv-stepper > input { height:30px; min-height:30px; }
   .study-notice,.study-unavailable { padding:5px 7px; }
 }
 
@@ -988,7 +988,7 @@
   .study-sidebar { padding-inline:7px; }
   .study-move-nav { gap:4px; }
   .analysis-panel>header small,.analysis-multipv-picker > span { display:none; }
-  .analysis-multipv-picker > input { width:48px; }
+  .analysis-multipv-picker > span { display:none; }
 }
 
 /* Portrait training is document flow; do not inherit the constrained-height
