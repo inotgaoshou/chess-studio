@@ -75,14 +75,14 @@ const pieceCodes: Record<string, string> = {
 };
 
 function readStoredStudyState(): StudyStateSnapshot {
-  const fallback: StudyStateSnapshot = { enabled: false, tab: "engine", startingFen: STANDARD_STARTING_FEN, moves: [], cursor: 0, branches: [], showMoveText: false, fenEditorExpanded: false };
+  const fallback: StudyStateSnapshot = { enabled: false, tab: "manual", startingFen: STANDARD_STARTING_FEN, moves: [], cursor: 0, branches: [], showMoveText: false, fenEditorExpanded: false };
   try {
     const raw = localStorage.getItem(STUDY_STATE_KEY);
     if (!raw) return fallback;
     const parsed = JSON.parse(raw) as Partial<StudyStateSnapshot>;
     const moves = Array.isArray(parsed.moves) ? parsed.moves.filter((move): move is string => typeof move === "string" && /^[a-i][0-9][a-i][0-9]$/.test(move)) : [];
     const cursor = Math.max(0, Math.min(moves.length, Math.floor(Number(parsed.cursor) || 0)));
-    const tab = parsed.tab === "cloud" || parsed.tab === "manual" || parsed.tab === "engine" ? parsed.tab : "engine";
+    const tab = parsed.tab === "cloud" || parsed.tab === "manual" || parsed.tab === "engine" ? parsed.tab : "manual";
     const startingFen = typeof parsed.startingFen === "string" && parsed.startingFen.trim() ? parsed.startingFen : STANDARD_STARTING_FEN;
     const branches = Array.isArray(parsed.branches) ? parsed.branches.flatMap((branch): StudyBranch[] => {
       const value = branch as Partial<StudyBranch>;
@@ -1019,7 +1019,7 @@ export function App() {
   const studyScoreSide = sideToMove(studyStartingFen, currentStudyMoves);
   const studySummaryLine = studyAnalysisLines[0];
   const studyEvaluationLabel = studySummaryLine ? analysisScore(studySummaryLine, studyScoreSide) : "--";
-  const studyPanelItems = ([["engine", "引擎", BrainCircuit], ["cloud", "云库", Database], ["manual", "棋谱", ClipboardList]] as const);
+  const studyPanelItems = ([["manual", "棋谱", ClipboardList], ["cloud", "云库", Database], ["engine", "引擎", BrainCircuit]] as const);
   const studyArrowMoves = studyPanelTab === "cloud" ? studyCloudMoves.slice(0, 4).map((item) => item.iccs) : studyAnalysisLines.map((item) => item.pv[0]);
 
   return <div className="training-app"><header className={`app-header ${studyMode ? "study-mode-header" : ""}`}><span><BookOpen/><strong>棋研</strong><small>{studyMode ? "自由拆棋" : library?.title ?? "本地 CBL 题库"}</small></span><div><nav className="workspace-switcher" aria-label="训练与拆棋切换"><button className={!studyMode ? "active" : ""} aria-current={!studyMode ? "page" : undefined} aria-label="题库" data-tooltip="题库" onClick={() => { if (studyMode) void closeStudyMode(); else { setCatalogueOpen((open) => !open); setControlsOpen(false); } }}><BookOpen/><span>题库</span></button><button className={studyMode ? "active" : ""} aria-current={studyMode ? "page" : undefined} aria-label="拆棋" data-tooltip="拆棋" onClick={() => { if (!studyMode) void openStudyMode(); }}><BrainCircuit/><span>拆棋</span></button></nav><button className="mobile-drawer-toggle catalogue-toggle" aria-label={catalogueOpen ? "收起题库目录" : "打开题库目录"} data-tooltip={catalogueOpen ? "收起题库目录" : "题库目录"} aria-expanded={catalogueOpen} onClick={() => { setCatalogueOpen((open) => !open); setControlsOpen(false); }}><BookOpen/><span>目录</span></button><button className="import-cbl-action" aria-label="导入 CBL" data-tooltip="导入 CBL" onClick={openImportPanel}><FileUp/><span>导入 CBL</span></button><button className="mobile-drawer-toggle controls-toggle" aria-label={controlsOpen ? "收起训练控制" : "打开训练控制"} data-tooltip={controlsOpen ? "收起训练控制" : "训练控制"} aria-expanded={controlsOpen} onClick={() => { setControlsOpen((open) => !open); setCatalogueOpen(false); }}><Clock3/><span>控制</span></button><button className="about-trigger" aria-label="关于棋研" data-tooltip="关于棋研" onClick={() => setShowAbout(true)}><CircleHelp/></button></div><input ref={input} type="file" accept=".cbl,application/octet-stream" onChange={(event) => { const file = event.target.files?.[0]; event.currentTarget.value = ""; void importFile(file); }}/></header><div className="training-layout">

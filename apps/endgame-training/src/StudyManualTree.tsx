@@ -1,4 +1,5 @@
 import { ArrowDown, ArrowUp, GitBranch, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 
 export type StudyManualBranch = {
   id: string;
@@ -20,66 +21,85 @@ type Props = {
   onMove(id: string, direction: -1 | 1): void;
 };
 
-function moveLabel(notation: string | undefined, iccs: string | undefined) {
-  return notation || iccs || "--";
-}
+const MAINLINE_ID = "__mainline__";
+const moveLabel = (notation: string | undefined, iccs: string | undefined) => notation || iccs || "--";
 
 export function StudyManualTree({ moves, notation, cursor, branches, onNavigate, onAdopt, onDelete, onMove }: Props) {
-  const branchesAt = new Map<number, StudyManualBranch[]>();
-  for (const branch of branches) {
-    if (moves.slice(0, branch.parentCursor).join(",") !== branch.parentPath.join(",")) continue;
-    const items = branchesAt.get(branch.parentCursor) ?? [];
-    items.push(branch);
-    branchesAt.set(branch.parentCursor, items);
+  const branchesAt = useMemo(() => {
+    const result = new Map<number, StudyManualBranch[]>();
+    for (const branch of branches) {
+      if (moves.slice(0, branch.parentCursor).join(",") !== branch.parentPath.join(",")) continue;
+      const items = result.get(branch.parentCursor) ?? [];
+      items.push(branch);
+      result.set(branch.parentCursor, items);
+    }
+    return result;
+  }, [branches, moves]);
+  const forkCursors = useMemo(() => [...branchesAt.keys()].sort((left, right) => left - right), [branchesAt]);
+  const [selectedFork, setSelectedFork] = useState(0);
+  const [selectedBranchId, setSelectedBranchId] = useState(MAINLINE_ID);
+
+  useEffect(() => {
+    if (!forkCursors.length) return;
+    const nearest = [...forkCursors].reverse().find((fork) => fork <= cursor) ?? forkCursors[0];
+    setSelectedFork(nearest);
+    setSelectedBranchId(MAINLINE_ID);
+  }, [cursor, forkCursors.join(",")]);
+
+  const activeBranches = branchesAt.get(selectedFork) ?? [];
+  const selectedBranch = activeBranches.find((branch) => branch.id === selectedBranchId);
+  const mainlineMove = moves[selectedFork];
+  const mainlineNotation = notation[selectedFork];
+
+  function chooseBranch(id: string) {
+    setSelectedBranchId(id);
+    if (id === MAINLINE_ID) {
+      onNavigate(mainlineMove ? selectedFork + 1 : selectedFork);
+      return;
+    }
+    const branch = activeBranches.find((item) => item.id === id);
+    if (branch) onAdopt(branch);
   }
 
   return <section className="study-manual-tree" aria-label="棋谱分支树">
-    <header>
-      <span><GitBranch/><strong>棋谱树</strong></span>
-      <small>{moves.length} 手 · {branches.length} 条变招</small>
-    </header>
-    <button type="button" className={`study-tree-root ${cursor === 0 ? "active" : ""}`} onClick={() => onNavigate(0)}>
-      <b>== 开局 ==</b><small>起始局面</small>
-    </button>
-    {(branchesAt.get(0) ?? []).map((branch, branchIndex, siblings) => <article className="study-tree-branch root-branch" key={branch.id}>
-      <div className="study-tree-branch-head">
-        <button type="button" className="study-tree-adopt" onClick={() => onAdopt(branch)}><GitBranch/><span><b>变招 {String.fromCharCode(65 + branchIndex)}</b><small>第 1 手起</small></span></button>
-        <nav aria-label="变招操作"><button type="button" disabled={branchIndex === 0} aria-label="上移变招" onClick={() => onMove(branch.id, -1)}><ArrowUp/></button><button type="button" disabled={branchIndex === siblings.length - 1} aria-label="下移变招" onClick={() => onMove(branch.id, 1)}><ArrowDown/></button><button type="button" className="danger" aria-label="删除变招" onClick={() => onDelete(branch.id)}><Trash2/></button></nav>
+    <header><span><GitBranch/><strong>棋谱</strong></span><small>{moves.length} 手 · {branches.length} 条变招</small></header>
+    <div className="study-manual-layout">
+      <div className="study-mainline-column">
+        <button type="button" className={`study-tree-root ${cursor === 0 ? "active" : ""}`} onClick={() => onNavigate(0)}><b>== 开局 ==</b></button>
+        {!moves.length ? <p className="study-tree-empty">走棋后生成主线；回退后改走会保留原线路。</p> : <ol>
+          {Array.from({ length: Math.ceil(moves.length / 2) }, (_, turnIndex) => {
+            const redIndex = turnIndex * 2;
+            const blackIndex = redIndex + 1;
+            return <li key={turnIndex}>
+              <b>{turnIndex + 1}.</b>
+              {[redIndex, blackIndex].map((index) => moves[index] ? <button type="button" key={index} className={cursor === index + 1 ? "active" : ""} onClick={() => onNavigate(index + 1)}>
+                <i className={index % 2 === 0 ? "red" : "black"}/><span>{moveLabel(notation[index], moves[index])}</span>
+                {(branchesAt.get(index) ?? []).length > 0 && <em><GitBranch/>{(branchesAt.get(index) ?? []).length + 1}</em>}
+              </button> : <span className="empty" key={index}>--</span>)}
+            </li>;
+          })}
+        </ol>}
       </div>
-      <button type="button" className="study-tree-variation" onClick={() => onAdopt(branch)}>{branch.moves.map((branchMove, moveIndex) => <span key={`${branchMove}-${moveIndex}`}><i className={moveIndex % 2 === 0 ? "red" : "black"}/><b>{moveLabel(branch.notation[moveIndex], branchMove)}</b><small>{branchMove}</small></span>)}</button>
-    </article>)}
-    {!moves.length && !branches.length ? <p className="study-tree-empty">走棋后将在这里生成主线；回退后改走会自动保留原线路为变招。</p> : <div className="study-tree-lines">
-      {moves.map((move, index) => {
-        const ply = index + 1;
-        const forkBranches = branchesAt.get(ply) ?? [];
-        return <div className="study-tree-ply" key={`${move}-${index}`}>
-          <button type="button" className={`study-tree-main ${cursor === ply ? "active" : ""}`} onClick={() => onNavigate(ply)}>
-            <span className={`study-tree-dot ${index % 2 === 0 ? "red" : "black"}`}/>
-            <em>{Math.floor(index / 2) + 1}{index % 2 === 0 ? "." : "…"}</em>
-            <strong>{moveLabel(notation[index], move)}</strong>
-            <small>{move}</small>
-          </button>
-          {forkBranches.map((branch, branchIndex) => <article className="study-tree-branch" key={branch.id}>
-            <div className="study-tree-branch-head">
-              <button type="button" className="study-tree-adopt" onClick={() => onAdopt(branch)}>
-                <GitBranch/><span><b>变招 {String.fromCharCode(65 + branchIndex)}</b><small>第 {branch.parentCursor + 1} 手起</small></span>
-              </button>
-              <nav aria-label="变招操作">
-                <button type="button" disabled={branchIndex === 0} aria-label="上移变招" onClick={() => onMove(branch.id, -1)}><ArrowUp/></button>
-                <button type="button" disabled={branchIndex === forkBranches.length - 1} aria-label="下移变招" onClick={() => onMove(branch.id, 1)}><ArrowDown/></button>
-                <button type="button" className="danger" aria-label="删除变招" onClick={() => onDelete(branch.id)}><Trash2/></button>
-              </nav>
-            </div>
-            <button type="button" className="study-tree-variation" onClick={() => onAdopt(branch)}>
-              {branch.moves.map((branchMove, moveIndex) => <span key={`${branchMove}-${moveIndex}`}>
-                <i className={(branch.parentCursor + moveIndex) % 2 === 0 ? "red" : "black"}/>
-                <b>{moveLabel(branch.notation[moveIndex], branchMove)}</b>
-                <small>{branchMove}</small>
-              </span>)}
-            </button>
-          </article>)}
-        </div>;
-      })}
-    </div>}
+      <aside className="study-variation-column">
+        {activeBranches.length ? <>
+          <header>
+            <label><span>变招：</span><select value={selectedBranchId} onChange={(event) => chooseBranch(event.target.value)}>
+              {mainlineMove && <option value={MAINLINE_ID}>A. {moveLabel(mainlineNotation, mainlineMove)}（主线）</option>}
+              {activeBranches.map((branch, index) => <option value={branch.id} key={branch.id}>{String.fromCharCode(66 + index)}. {moveLabel(branch.notation[0], branch.moves[0])}</option>)}
+            </select></label>
+            <nav aria-label="变招操作">
+              <button type="button" className="danger" disabled={!selectedBranch} aria-label="删除变招" onClick={() => selectedBranch && onDelete(selectedBranch.id)}><Trash2/></button>
+              <button type="button" disabled={!selectedBranch || activeBranches[0]?.id === selectedBranch.id} aria-label="上移变招" onClick={() => selectedBranch && onMove(selectedBranch.id, -1)}><ArrowUp/></button>
+              <button type="button" disabled={!selectedBranch || activeBranches.at(-1)?.id === selectedBranch.id} aria-label="下移变招" onClick={() => selectedBranch && onMove(selectedBranch.id, 1)}><ArrowDown/></button>
+            </nav>
+          </header>
+          <div className="study-variation-options">
+            {mainlineMove && <button type="button" className={selectedBranchId === MAINLINE_ID ? "active" : ""} onClick={() => chooseBranch(MAINLINE_ID)}><b>A.</b><span>{moveLabel(mainlineNotation, mainlineMove)}</span><small>主线</small></button>}
+            {activeBranches.map((branch, index) => <button type="button" className={selectedBranchId === branch.id ? "active" : ""} key={branch.id} onClick={() => chooseBranch(branch.id)}><b>{String.fromCharCode(66 + index)}.</b><span>{moveLabel(branch.notation[0], branch.moves[0])}</span><small>{branch.moves.length} 手</small></button>)}
+          </div>
+          <div className="study-variation-line">{selectedBranch ? selectedBranch.notation.map((item, index) => <span key={`${item}-${index}`}><i className={(selectedBranch.parentCursor + index) % 2 === 0 ? "red" : "black"}/>{item}</span>) : <p>当前选择主线。</p>}</div>
+        </> : <p className="study-variation-empty">当前线路没有变招。回退到旧节点后改走，即可生成分支。</p>}
+      </aside>
+    </div>
   </section>;
 }
