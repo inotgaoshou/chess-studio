@@ -1,22 +1,17 @@
-import { Activity, BookOpen, BrainCircuit, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, CircleHelp, ClipboardCopy, Clock3, Database, Ellipsis, FilePenLine, FileUp, FlipVertical2, Lightbulb, ListRestart, Minus, Pause, Pencil, Play, Plus, RotateCcw, Search, Settings2, Square as StopIcon, Trash2, Undo2, X, Zap } from "lucide-react";
+import { BookOpen, BrainCircuit, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, CircleHelp, ClipboardCopy, ClipboardList, Clock3, Database, Ellipsis, FilePenLine, FileUp, FlipVertical2, Lightbulb, ListRestart, Minus, Pause, Pencil, Play, Plus, RotateCcw, Search, Settings2, Square as StopIcon, Trash2, Undo2, X, Zap } from "lucide-react";
 import { type CSSProperties, useEffect, useId, useMemo, useRef, useState } from "react";
 import { trainingStore } from "./store";
 import type { Attempt, BoardPiece, BoardState, SolutionMove, TrainingLibrary, TrainingProblem } from "./types";
 import { acceptsMove, boardAt, cancelPikafishSearch, chineseLine, hasLocalPikafish, parseCbl, queryCloudBook, queryPikafishAnalysis, queryPikafishReply, type CloudBookMove, type PikafishAnalysisLine } from "./wasm";
 import { deriveTrainingFeedback, playTrainingFeedback, TRAINING_FEEDBACK_PACK, type TrainingFeedbackKind } from "./moveFeedback";
 import { setPreferredOrientation, type PreferredOrientation } from "./orientation";
+import { StudyManualTree, type StudyManualBranch } from "./StudyManualTree";
 
 type Mode = "cloud" | "ai" | "solver" | "replay" | "free";
-type StudyPanelTab = "engine" | "cloud";
+type StudyPanelTab = "engine" | "cloud" | "manual";
 type Square = { row: number; col: number };
 type AnalysisLine = PikafishAnalysisLine & { notation: string[] };
-type StudyBranch = {
-  id: string;
-  parentCursor: number;
-  moves: string[];
-  notation: string[];
-  createdAt: number;
-};
+type StudyBranch = StudyManualBranch;
 type PendingAutoReply = {
   problemId: string;
   activeMode: "cloud" | "ai";
@@ -87,7 +82,7 @@ function readStoredStudyState(): StudyStateSnapshot {
     const parsed = JSON.parse(raw) as Partial<StudyStateSnapshot>;
     const moves = Array.isArray(parsed.moves) ? parsed.moves.filter((move): move is string => typeof move === "string" && /^[a-i][0-9][a-i][0-9]$/.test(move)) : [];
     const cursor = Math.max(0, Math.min(moves.length, Math.floor(Number(parsed.cursor) || 0)));
-    const tab = parsed.tab === "cloud" || parsed.tab === "engine" ? parsed.tab : "engine";
+    const tab = parsed.tab === "cloud" || parsed.tab === "manual" || parsed.tab === "engine" ? parsed.tab : "engine";
     const startingFen = typeof parsed.startingFen === "string" && parsed.startingFen.trim() ? parsed.startingFen : STANDARD_STARTING_FEN;
     const branches = Array.isArray(parsed.branches) ? parsed.branches.flatMap((branch): StudyBranch[] => {
       const value = branch as Partial<StudyBranch>;
@@ -96,11 +91,12 @@ function readStoredStudyState(): StudyStateSnapshot {
       return [{
         id: typeof value.id === "string" && value.id ? value.id : `branch-${Date.now()}-${branchMoves.join("-")}`,
         parentCursor: Math.max(0, Math.min(moves.length, Math.floor(Number(value.parentCursor) || 0))),
+        parentPath: Array.isArray(value.parentPath) ? value.parentPath.filter((move): move is string => typeof move === "string" && /^[a-i][0-9][a-i][0-9]$/.test(move)) : moves.slice(0, Math.max(0, Math.min(moves.length, Math.floor(Number(value.parentCursor) || 0)))),
         moves: branchMoves,
         notation: Array.isArray(value.notation) ? value.notation.filter((item): item is string => typeof item === "string") : branchMoves,
         createdAt: Number(value.createdAt) || Date.now(),
       }];
-    }).slice(0, 20) : [];
+    }) : [];
     return { enabled: parsed.enabled === true, tab, startingFen, moves, cursor, branches, showMoveText: parsed.showMoveText === true, fenEditorExpanded: parsed.fenEditorExpanded === true };
   } catch {
     return fallback;
@@ -277,7 +273,7 @@ export function App() {
   const [studyFenError, setStudyFenError] = useState<string>();
   const [studyMoveTextOpen, setStudyMoveTextOpen] = useState(initialStudyState.showMoveText === true);
   const [boardFlipped, setBoardFlipped] = useState(() => localStorage.getItem("xiangqi-training-board-flipped") === "true");
-  const [studyEvaluationVisible, setStudyEvaluationVisible] = useState(() => localStorage.getItem("xiangqi-training-study-evaluation") !== "false");
+  const [studyEvaluationVisible, setStudyEvaluationVisible] = useState(() => localStorage.getItem("xiangqi-training-study-evaluation") === "true");
   const [importPanelOpen, setImportPanelOpen] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
   const [riverText, setRiverText] = useState(() => localStorage.getItem("xiangqi-training-river-text") ?? "");
@@ -357,7 +353,7 @@ export function App() {
       startingFen: studyStartingFen,
       moves: studyMoves,
       cursor: Math.max(0, Math.min(studyCursor, studyMoves.length)),
-      branches: studyBranches.slice(0, 20),
+      branches: studyBranches,
       showMoveText: studyMoveTextOpen,
       fenEditorExpanded: studyFenEditorOpen,
     };
@@ -790,26 +786,37 @@ export function App() {
     setStudyNotice("已撤销一步。");
     invalidateStudyCloud(state.fen);
   }
-  function rememberStudyBranch(parentCursor: number, branchMoves: string[], branchNotation: string[]) {
+  function rememberStudyBranch(parentCursor: number, branchMoves: string[], branchNotation: string[], parentPath = studyMoves.slice(0, parentCursor)) {
     if (!branchMoves.length) return;
     setStudyBranches((items) => {
-      const key = `${parentCursor}:${branchMoves.join(",")}`;
-      if (items.some((item) => `${item.parentCursor}:${item.moves.join(",")}` === key)) return items;
+      const key = `${parentPath.join(",")}|${branchMoves.join(",")}`;
+      if (items.some((item) => `${item.parentPath.join(",")}|${item.moves.join(",")}` === key)) return items;
       const id = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `branch-${Date.now()}`;
-      return [{ id, parentCursor, moves: branchMoves, notation: branchNotation.length ? branchNotation : branchMoves, createdAt: Date.now() }, ...items].slice(0, 20);
+      return [{ id, parentCursor, parentPath, moves: branchMoves, notation: branchNotation.length ? branchNotation : branchMoves, createdAt: Date.now() }, ...items];
     });
   }
   async function adoptStudyBranch(branch: StudyBranch) {
     const generation = ++studyGeneration.current;
     await resetAnalysis("study");
     if (generation !== studyGeneration.current) return;
-    const prefix = studyMoves.slice(0, Math.max(0, Math.min(branch.parentCursor, studyMoves.length)));
+    const prefix = branch.parentPath;
     const nextMoves = [...prefix, ...branch.moves];
+    const previousContinuation = studyMoves.slice(branch.parentCursor);
+    const previousNotation = studyNotation.slice(branch.parentCursor);
     const [state, notation] = await Promise.all([
       boardAt(studyStartingFen, nextMoves),
       chineseLine(studyStartingFen, nextMoves).catch(() => nextMoves),
     ]);
     if (generation !== studyGeneration.current) return;
+    setStudyBranches((items) => {
+      const remaining = items.filter((item) => item.id !== branch.id);
+      if (!previousContinuation.length || previousContinuation.join(",") === branch.moves.join(",")) return remaining;
+      const previousParentPath = studyMoves.slice(0, branch.parentCursor);
+      const duplicate = remaining.some((item) => item.parentPath.join(",") === previousParentPath.join(",") && item.moves.join(",") === previousContinuation.join(","));
+      if (duplicate) return remaining;
+      const id = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `branch-${Date.now()}`;
+      return [{ id, parentCursor: branch.parentCursor, parentPath: previousParentPath, moves: previousContinuation, notation: previousNotation, createdAt: Date.now() }, ...remaining];
+    });
     setStudyMoves(nextMoves);
     setStudyCursor(nextMoves.length);
     setStudyNotation(notation);
@@ -823,6 +830,20 @@ export function App() {
   function deleteStudyBranch(id: string) {
     setStudyBranches((items) => items.filter((item) => item.id !== id));
     setStudyNotice("已移除临时分支。");
+  }
+  function moveStudyBranch(id: string, direction: -1 | 1) {
+    setStudyBranches((items) => {
+      const index = items.findIndex((item) => item.id === id);
+      if (index < 0) return items;
+      const parentKey = items[index].parentPath.join(",");
+      const siblings = items.map((item, itemIndex) => ({ item, itemIndex })).filter(({ item }) => item.parentPath.join(",") === parentKey);
+      const siblingIndex = siblings.findIndex(({ item }) => item.id === id);
+      const target = siblings[siblingIndex + direction];
+      if (!target) return items;
+      const next = [...items];
+      [next[index], next[target.itemIndex]] = [next[target.itemIndex], next[index]];
+      return next;
+    });
   }
   async function moveStudy(to: Square) {
     if (studyTerminal) return;
@@ -998,7 +1019,7 @@ export function App() {
   const studyScoreSide = sideToMove(studyStartingFen, currentStudyMoves);
   const studySummaryLine = studyAnalysisLines[0];
   const studyEvaluationLabel = studySummaryLine ? analysisScore(studySummaryLine, studyScoreSide) : "--";
-  const studyPanelItems = ([["engine", "引擎", BrainCircuit], ["cloud", "云库", Database]] as const);
+  const studyPanelItems = ([["engine", "引擎", BrainCircuit], ["cloud", "云库", Database], ["manual", "棋谱", ClipboardList]] as const);
   const studyArrowMoves = studyPanelTab === "cloud" ? studyCloudMoves.slice(0, 4).map((item) => item.iccs) : studyAnalysisLines.map((item) => item.pv[0]);
 
   return <div className="training-app"><header className={`app-header ${studyMode ? "study-mode-header" : ""}`}><span><BookOpen/><strong>棋研</strong><small>{studyMode ? "自由拆棋" : library?.title ?? "本地 CBL 题库"}</small></span><div><nav className="workspace-switcher" aria-label="训练与拆棋切换"><button className={!studyMode ? "active" : ""} aria-current={!studyMode ? "page" : undefined} aria-label="题库" data-tooltip="题库" onClick={() => { if (studyMode) void closeStudyMode(); else { setCatalogueOpen((open) => !open); setControlsOpen(false); } }}><BookOpen/><span>题库</span></button><button className={studyMode ? "active" : ""} aria-current={studyMode ? "page" : undefined} aria-label="拆棋" data-tooltip="拆棋" onClick={() => { if (!studyMode) void openStudyMode(); }}><BrainCircuit/><span>拆棋</span></button></nav><button className="mobile-drawer-toggle catalogue-toggle" aria-label={catalogueOpen ? "收起题库目录" : "打开题库目录"} data-tooltip={catalogueOpen ? "收起题库目录" : "题库目录"} aria-expanded={catalogueOpen} onClick={() => { setCatalogueOpen((open) => !open); setControlsOpen(false); }}><BookOpen/><span>目录</span></button><button className="import-cbl-action" aria-label="导入 CBL" data-tooltip="导入 CBL" onClick={openImportPanel}><FileUp/><span>导入 CBL</span></button><button className="mobile-drawer-toggle controls-toggle" aria-label={controlsOpen ? "收起训练控制" : "打开训练控制"} data-tooltip={controlsOpen ? "收起训练控制" : "训练控制"} aria-expanded={controlsOpen} onClick={() => { setControlsOpen((open) => !open); setCatalogueOpen(false); }}><Clock3/><span>控制</span></button><button className="about-trigger" aria-label="关于棋研" data-tooltip="关于棋研" onClick={() => setShowAbout(true)}><CircleHelp/></button></div><input ref={input} type="file" accept=".cbl,application/octet-stream" onChange={(event) => { const file = event.target.files?.[0]; event.currentTarget.value = ""; void importFile(file); }}/></header><div className="training-layout">
@@ -1006,14 +1027,12 @@ export function App() {
     <main className="training-stage">{problem ? <><header className="problem-heading"><small>第 {problem.sourceIndex + 1}/{problems.length} 题</small><strong>{problem.title}</strong><button title="移除当前残局" onClick={() => setDeleteTarget({ type: "problem", id: problem.id, title: problem.title })}><Trash2/></button></header><Board pieces={pieces} selected={selected} lastMove={lastMove} hintMove={hints >= 2 ? line[0]?.iccs : undefined} analysisMoves={trainingAnalysisLines.map((item) => item.pv[0])} activeAnalysis={trainingActiveAnalysis} flipped={boardFlipped} feedback={moveFeedback} riverText={riverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} onSquare={(square) => void move(square)}/><p className="board-tip">{mode === "cloud" ? "云库优先应手；未收录时由本地 Pikafish 接手。" : mode === "ai" ? "本地 Pikafish 离线应手，不访问云库。" : "选棋子，再点目标点。错误走法不会改变局面。"}</p></> : <div className="empty"><BookOpen/><strong>导入并选择一道残局</strong><span>题库和练习记录仅保存在这台手机或平板。</span></div>}</main>
     <aside className={`controls ${controlsOpen ? "drawer-open" : ""}`}>{problem ? <><section className="clock"><Clock3/><small>本题用时</small><strong>{fmt(elapsed)}</strong><span>累计用时 {fmt(problem.totalElapsedMs)}</span><button onClick={() => { setShowHistory((value) => !value); void trainingStore.attempts(problem.id).then(setAttempts); }}>记录</button></section><section className="modes">{(["cloud", ...(LOCAL_PIKAFISH_AVAILABLE ? ["ai" as const] : []), "solver", "replay", "free"] as Mode[]).map((value) => <label key={value}><input type="radio" checked={mode === value} disabled={attemptStarted || ended} onChange={() => changeMode(value)}/>{modeLabel[value]}{value === "cloud" && (LOCAL_PIKAFISH_AVAILABLE ? "（云库优先）" : "（云库应手）")}{value === "ai" && "（纯离线）"}{value === "replay" && "（按题解）"}</label>)}</section>{LOCAL_PIKAFISH_AVAILABLE && <AnalysisPanel lines={trainingAnalysisLines} pending={analysisPending && !studyMode} activeIndex={trainingActiveAnalysis} disabled={autoReplyPending || revealed || ended} multiPv={analysisMultiPv} scoreSide={sideToMove(problem.startingFen, moves)} onToggle={() => void (analysisPending ? stopAnalysis() : startAnalysis())} onSelect={setTrainingActiveAnalysis} onMultiPvChange={(value) => void changeAnalysisMultiPv(value)}/>}<section className="actions"><button className="primary" disabled={ended} onClick={() => void giveHint()}><Lightbulb/>提示 {hints}/3</button><button disabled={ended || (!startedAt && !elapsedSaved)} onClick={pause}>{startedAt ? <Pause/> : <Play/>}{startedAt ? "暂停" : "继续"}</button><button onClick={() => void restart()}><RotateCcw/>重来</button>{mode === "free" || mode === "cloud" || mode === "ai" ? <button disabled={ended} onClick={() => void finish("free_finished")}>{mode === "free" ? "结束实战" : "结束对练"}</button> : <button disabled={ended} onClick={() => void reveal()}><ListRestart/>看答案</button>}</section><section className="notice"><b>错误 {mistakes} 次</b><p>{renderNote(notice)}</p></section>{showHistory ? <section className="history"><b>答题记录</b>{attempts.length ? attempts.slice(0, 30).map((item) => <p key={item.id}><strong>{item.outcome === "completed" ? "解出" : item.outcome === "revealed" ? "看答案" : item.outcome === "free_finished" ? "实战结束" : "已放弃"}</strong><span>{modeLabel[item.mode]} · {fmt(item.elapsedMs)} · 错 {item.mistakes} · 提示 {item.hintsUsed}</span></p>) : <p>还没有答题记录</p>}</section> : revealed && <section className="answer"><header><b>题解回合</b><small>{answerStep}/{answer.length} 手</small></header>{Array.from({ length: Math.ceil(answer.length / 2) }, (_, index) => <p key={index}><b>第 {index + 1} 回合</b><span>红方 {answer[index * 2]}{answer[index * 2 + 1] ? ` · 黑方 ${answer[index * 2 + 1]}` : ""}</span></p>)}<footer><button disabled={answerStep >= answer.length} onClick={() => setDemoPlaying((value) => !value)}>{demoPlaying ? <Pause/> : <Play/>}{demoPlaying ? "暂停演示" : "演示答案"}</button><button onClick={() => { setAnswerStep(0); setDemoPlaying(false); void boardAt(problem.startingFen, []).then((state) => setPieces(state.pieces)); }}><RotateCcw/>从头</button></footer></section>}<footer className="navigate"><button disabled={currentIndex <= 0} onClick={() => void selectProblem(visible[currentIndex - 1])}><ChevronLeft/></button><button disabled={currentIndex >= visible.length - 1} onClick={() => void selectProblem(visible[currentIndex + 1])}><ChevronRight/></button></footer></> : <p>从目录选择题目。</p>}</aside>
   </div>{studyMode && <div className="study-workspace">
-    <main className="study-stage"><header className="study-toolbar"><nav className="study-command-bar" aria-label="拆棋工具栏">
+    <main className={`study-stage${studyEvaluationVisible ? "" : " evaluation-hidden"}`}><header className="study-toolbar"><nav className="study-command-bar" aria-label="拆棋工具栏">
       <button className={studyMenuOpen ? "active" : ""} aria-label="更多功能" title="更多功能" aria-expanded={studyMenuOpen} onClick={() => setStudyMenuOpen((open) => !open)}><Ellipsis/><span>更多</span></button>
       <button aria-label="新建标准棋局" title="新建标准棋局" onClick={() => runStudyMenuAction("standard")}><Plus/><span>新局</span></button>
-      <button aria-label="导入 CBL 题库" title="导入 CBL 题库" onClick={() => runStudyMenuAction("import")}><FileUp/><span>导入</span></button>
-      <button aria-label="复制当前局面" title="复制当前局面" onClick={() => runStudyMenuAction("copyFen")}><ClipboardCopy/><span>复制</span></button>
       <button aria-label="编辑 FEN 局面" title="编辑 FEN 局面" onClick={() => runStudyMenuAction("edit")}><Pencil/><span>编辑</span></button>
       <button className={boardFlipped ? "active" : ""} aria-label="翻转棋盘" title="翻转棋盘" onClick={() => runStudyMenuAction("flip")}><FlipVertical2/><span>翻转</span></button>
-      <button className={analysisPending ? "active" : ""} disabled={Boolean(studyTerminal)} aria-label={analysisPending ? "停止引擎分析" : "分析当前局面"} title={analysisPending ? "停止引擎分析" : "分析当前局面"} onClick={() => void (analysisPending ? stopAnalysis() : startAnalysis())}>{analysisPending ? <StopIcon/> : <Activity/>}<span>{analysisPending ? "停止" : "分析"}</span></button>
+      <button className={analysisPending ? "active" : ""} disabled={Boolean(studyTerminal)} aria-label={analysisPending ? "停止引擎分析" : "分析当前局面"} title={analysisPending ? "停止引擎分析" : "分析当前局面"} onClick={() => void (analysisPending ? stopAnalysis() : startAnalysis())}>{analysisPending ? <StopIcon/> : <Search/>}<span>{analysisPending ? "停止" : "分析"}</span></button>
       <button className={studyPanelTab === "engine" ? "active" : ""} aria-label="打开引擎面板" title="打开引擎面板" onClick={() => setStudyPanelTab("engine")}><BrainCircuit/><span>引擎</span></button>
       {studyMenuOpen && <section className="study-menu" aria-label="拆棋功能菜单">
         <header><strong>拆棋功能</strong><small>临时拆棋，不写题解树</small></header>
@@ -1023,15 +1042,16 @@ export function App() {
         <div className="study-menu-group study-menu-secondary"><button onClick={() => runStudyMenuAction("engine")}><BrainCircuit/><span>引擎分析</span></button><button onClick={() => runStudyMenuAction("cloud")}><Database/><span>云库面板</span></button><button onClick={() => runStudyMenuAction("copyManual")}><ClipboardCopy/><span>复制棋谱</span></button></div>
         {studyFenEditorOpen && <section className="study-fen-inline" aria-label="编辑拆棋局面"><header><strong>编辑 FEN</strong><button type="button" onClick={() => setStudyFenEditorOpen(false)}>收起</button></header><textarea value={studyFenDraft} rows={3} autoCapitalize="none" autoCorrect="off" spellCheck={false} onChange={(event) => { setStudyFenDraft(event.target.value); setStudyFenError(undefined); }}/>{studyFenError && <p className="study-fen-error">{studyFenError}</p>}<footer><button type="button" onClick={() => setStudyFenEditorOpen(false)}>取消</button><button type="button" className="primary" onClick={() => void applyStudyFen()}>载入局面</button></footer></section>}
         {studyMoveTextOpen && <section className="study-moves study-moves-inline" aria-label="棋谱与临时分支"><header><b>棋谱与分支</b><button type="button" onClick={() => void copyStudyText(studyManualText(), "文字棋谱")}><ClipboardCopy/>复制</button></header>{studyMoves.length ? <div className="study-move-text"><button className={`start ${studyCursor === 0 ? "active" : ""}`} onClick={() => void navigateStudyMove(0)}><b>起始局面</b><small>FEN</small></button>{Array.from({ length: Math.ceil(studyMoves.length / 2) }, (_, index) => { const redIndex = index * 2; const blackIndex = redIndex + 1; return <div key={index} className="study-move-round"><span>{index + 1}</span><button className={studyCursor === redIndex + 1 ? "active" : ""} disabled={!studyMoves[redIndex]} onClick={() => void navigateStudyMove(redIndex + 1)}><b>{studyNotation[redIndex] ?? studyMoves[redIndex]}</b><small>{studyMoves[redIndex]}</small></button><button className={studyCursor === blackIndex + 1 ? "active" : ""} disabled={!studyMoves[blackIndex]} onClick={() => void navigateStudyMove(blackIndex + 1)}><b>{studyNotation[blackIndex] ?? studyMoves[blackIndex]}</b><small>{studyMoves[blackIndex]}</small></button></div>; })}</div> : <p>还没有主线走法。</p>}{studyBranches.length > 0 && <div className="study-branches" aria-label="临时分支"><header><b>临时分支</b><span>{studyBranches.length} 条</span></header>{studyBranches.map((branch, index) => <div key={branch.id} className="study-branch-row"><b>{index + 1}</b><span><strong>第 {branch.parentCursor} 手后</strong><small>{branch.notation.slice(0, 4).join(" ") || branch.moves.slice(0, 4).join(" ")}</small></span><div><button type="button" onClick={() => void adoptStudyBranch(branch)}>采用</button><button type="button" aria-label="删除临时分支" onClick={() => deleteStudyBranch(branch.id)}><Trash2/></button></div></div>)}</div>}</section>}
-        <label className="study-menu-check"><input type="checkbox" checked={studyEvaluationVisible} onChange={toggleStudyEvaluation}/><span>箭头提示 / 当前评估</span></label>
+        <label className="study-menu-check"><input type="checkbox" checked={studyEvaluationVisible} onChange={toggleStudyEvaluation}/><span>顶部评估</span></label>
         <button className="study-menu-settings" onClick={() => runStudyMenuAction("settings")}><Settings2/><span>更多设置</span></button>
       </section>}
-    </nav></header><section className="study-engine-strip"><div><span>深度 {studySummaryLine?.depth ?? "--"}</span><span>节点 {studySummaryLine ? compactNumber(studySummaryLine.nodes) : "--"}</span><span>速度 {studySummaryLine ? `${compactNumber(studySummaryLine.nps)}/s` : "--"}</span></div>{studyEvaluationVisible && <button className="study-evaluation-toggle" type="button" aria-label="隐藏当前评估" onClick={toggleStudyEvaluation}>当前评估 {studyEvaluationLabel}</button>}</section><Board pieces={studyPieces} selected={studySelected} lastMove={studyLastMove} analysisMoves={studyArrowMoves} activeAnalysis={studyPanelTab === "engine" ? studyActiveAnalysis : 0} flipped={boardFlipped} feedback={moveFeedback} riverText={riverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} onSquare={(square) => void moveStudy(square)}/><footer className="study-board-status"><b>{studyScoreSide === "red" ? "红方" : "黑方"}行棋</b><span>{studyMoves.length ? `第 ${studyCursor}/${studyMoves.length} 手` : "初始局面"}</span><span>{boardFlipped ? "黑方视角" : "红方视角"}</span></footer></main>
+    </nav></header>{studyEvaluationVisible && <section className="study-engine-strip"><div><span>深度 {studySummaryLine?.depth ?? "--"}</span><span>节点 {studySummaryLine ? compactNumber(studySummaryLine.nodes) : "--"}</span><span>速度 {studySummaryLine ? `${compactNumber(studySummaryLine.nps)}/s` : "--"}</span></div><button className="study-evaluation-toggle" type="button" aria-label="隐藏顶部评估" onClick={toggleStudyEvaluation}>当前评估 {studyEvaluationLabel}</button></section>}<Board pieces={studyPieces} selected={studySelected} lastMove={studyLastMove} analysisMoves={studyArrowMoves} activeAnalysis={studyPanelTab === "engine" ? studyActiveAnalysis : 0} flipped={boardFlipped} feedback={moveFeedback} riverText={riverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} onSquare={(square) => void moveStudy(square)}/><footer className="study-board-status"><b>{studyScoreSide === "red" ? "红方" : "黑方"}行棋</b><span>{studyMoves.length ? `第 ${studyCursor}/${studyMoves.length} 手` : "初始局面"}</span><span>{boardFlipped ? "黑方视角" : "红方视角"}</span></footer></main>
     <aside className="study-sidebar">
       <nav className="study-move-nav" aria-label="拆棋着法导航"><button disabled={!studyCursor} aria-label="回到开始" title="回到开始" onClick={() => void navigateStudyMove(0)}><ChevronsLeft/></button><button disabled={!studyCursor} aria-label="上一步" title="上一步" onClick={() => void navigateStudyMove(studyCursor - 1)}><ChevronLeft/></button><button disabled aria-label="播放棋谱" title="播放棋谱"><Play/></button><button disabled={studyCursor >= studyMoves.length} aria-label="下一步" title="下一步" onClick={() => void navigateStudyMove(studyCursor + 1)}><ChevronRight/></button><button disabled={studyCursor >= studyMoves.length} aria-label="最后一步" title="最后一步" onClick={() => void navigateStudyMove(studyMoves.length)}><ChevronsRight/></button></nav>
       <nav className="study-panel-tabs" role="tablist" aria-label="拆棋研究面板">{studyPanelItems.map(([value, label, Icon]) => <button key={value} role="tab" aria-selected={studyPanelTab === value} className={studyPanelTab === value ? "active" : ""} onClick={() => setStudyPanelTab(value)}><Icon/><span>{label}</span></button>)}</nav>
       {studyPanelTab === "engine" && (LOCAL_PIKAFISH_AVAILABLE ? <AnalysisPanel lines={studyAnalysisLines} pending={analysisPending && studyMode} activeIndex={studyActiveAnalysis} disabled={Boolean(studyTerminal)} multiPv={analysisMultiPv} scoreSide={studyScoreSide} onToggle={() => void (analysisPending ? stopAnalysis() : startAnalysis())} onSelect={setStudyActiveAnalysis} onMultiPvChange={(value) => void changeAnalysisMultiPv(value)}/> : <section className="study-unavailable">本地 Pikafish 仅在 Android 或 iOS 版可用。</section>)}
       {studyPanelTab === "cloud" && <section className="study-cloud-panel">{studyCloudPending ? <p className="study-cloud-empty">正在查询当前局面…</p> : studyCloudMoves.length ? <div className="study-cloud-list">{studyCloudMoves.map((item, index) => { const evaluation = cloudEvaluation(item, studyScoreSide); return <button key={item.iccs} onClick={() => void playStudyMove(item.iccs)}><b>{index + 1}</b><strong>{item.notation}</strong><em>红分 {evaluation.redScore > 0 ? "+" : ""}{evaluation.redScore}</em><small>红 {evaluation.redRate.toFixed(1)}% · 黑 {evaluation.blackRate.toFixed(1)}%</small></button>; })}</div> : <p className="study-cloud-empty">{studyCloudError ?? "当前局面暂无云库着法。"}</p>}</section>}
+      {studyPanelTab === "manual" && <StudyManualTree moves={studyMoves} notation={studyNotation} cursor={studyCursor} branches={studyBranches} onNavigate={(cursor) => void navigateStudyMove(cursor)} onAdopt={(branch) => void adoptStudyBranch(branch)} onDelete={deleteStudyBranch} onMove={moveStudyBranch}/>}
       <section className="study-notice"><b>局面状态</b><p>{studyNotice}</p></section>
     </aside>
     {studyMenuOpen && <button className="study-menu-scrim" aria-label="关闭拆棋菜单" onClick={() => setStudyMenuOpen(false)}/>}
