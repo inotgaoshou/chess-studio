@@ -11,7 +11,7 @@ type NativePikafish = {
   cancel(): Promise<void>;
 };
 const nativePikafish = registerPlugin<NativePikafish>("Pikafish");
-export type CloudBookMove = { iccs: string; notation: string; score: number };
+export type CloudBookMove = { iccs: string; notation: string; score: number; winRate: number };
 export type EngineReply = { iccs: string; notation: string };
 export type PikafishAnalysisLine = { multipv: number; depth: number; scoreCp?: number; mate?: number; nodes: number; nps: number; pv: string[] };
 export type PikafishAnalysis = { bestMove: string; lines: PikafishAnalysisLine[] };
@@ -81,7 +81,10 @@ export async function queryCloudBook(fen: string): Promise<CloudBookMove[]> {
     if (!iccs || unique.has(iccs)) continue;
     try {
       await boardAt(fen, [iccs]);
-      unique.set(iccs, { iccs, notation: (await chineseLine(fen, [iccs])).at(-1) ?? iccs, score: Number(row.score) || 0 });
+      const score = Number(row.score) || 0;
+      const parsedWinRate = Number(row.winrate);
+      const winRate = Number.isFinite(parsedWinRate) ? parsedWinRate : 100 / (1 + Math.exp(-score / 330));
+      unique.set(iccs, { iccs, notation: (await chineseLine(fen, [iccs])).at(-1) ?? iccs, score, winRate: Math.max(0, Math.min(100, winRate)) });
     } catch { /* Ignore invalid candidates returned by the public cloud book. */ }
   }
   return [...unique.values()].sort((left, right) => right.score - left.score || left.iccs.localeCompare(right.iccs));

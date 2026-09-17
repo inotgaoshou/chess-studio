@@ -883,12 +883,13 @@
 .study-cloud-panel > header button { min-height:28px; padding:0 8px; border:1px solid #9dbda6; border-radius:4px; background:#fff; color:#397951; font-size:10px; font-weight:800; }
 .study-cloud-panel > header button:disabled { opacity:.48; }
 .study-cloud-list { max-height:320px; overflow:auto; }
-.study-cloud-list button { width:100%; min-width:0; min-height:40px; padding:6px 8px; border:0; border-bottom:1px solid #dce7df; background:#fff; color:#365949; display:grid; grid-template-columns:23px minmax(0,1fr) auto; align-items:center; gap:6px; text-align:left; }
+.study-cloud-list button { width:100%; min-width:0; min-height:52px; padding:6px 8px; border:0; border-bottom:1px solid #dce7df; background:#fff; color:#365949; display:grid; grid-template-columns:23px minmax(0,1fr) auto; grid-template-rows:auto auto; align-items:center; gap:2px 6px; text-align:left; }
 .study-cloud-list button:last-child { border-bottom:0; }
 .study-cloud-list button:hover,.study-cloud-list button:focus-visible { background:#e9f4ec; }
 .study-cloud-list button > b { width:21px; height:21px; border-radius:50%; background:#397951; color:#fff; display:grid; place-items:center; font-size:10px; }
 .study-cloud-list button > strong { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
 .study-cloud-list button > em { color:#9b6728; font-size:9px; font-style:normal; font-weight:800; white-space:nowrap; }
+.study-cloud-list button > small { grid-column:2 / -1; min-width:0; overflow:hidden; color:#60796a; text-overflow:ellipsis; white-space:nowrap; font-size:9px; font-variant-numeric:tabular-nums; }
 .study-cloud-empty { min-height:70px; margin:0; padding:12px; color:#71877a; display:grid; place-items:center; text-align:center; font-size:10px; line-height:1.45; }
 .study-fen-dialog { width:min(520px,100%) !important; }
 .study-fen-dialog > header { min-width:0; display:flex; align-items:center; gap:9px; }
