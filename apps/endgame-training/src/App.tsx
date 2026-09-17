@@ -26,6 +26,7 @@ type StudyStateSnapshot = {
   moves: string[];
   cursor: number;
   branches?: StudyBranch[];
+  comments?: Record<string, string>;
   showMoveText?: boolean;
   fenEditorExpanded?: boolean;
 };
@@ -75,7 +76,7 @@ const pieceCodes: Record<string, string> = {
 };
 
 function readStoredStudyState(): StudyStateSnapshot {
-  const fallback: StudyStateSnapshot = { enabled: false, tab: "manual", startingFen: STANDARD_STARTING_FEN, moves: [], cursor: 0, branches: [], showMoveText: false, fenEditorExpanded: false };
+  const fallback: StudyStateSnapshot = { enabled: false, tab: "manual", startingFen: STANDARD_STARTING_FEN, moves: [], cursor: 0, branches: [], comments: {}, showMoveText: false, fenEditorExpanded: false };
   try {
     const raw = localStorage.getItem(STUDY_STATE_KEY);
     if (!raw) return fallback;
@@ -97,7 +98,8 @@ function readStoredStudyState(): StudyStateSnapshot {
         createdAt: Number(value.createdAt) || Date.now(),
       }];
     }) : [];
-    return { enabled: parsed.enabled === true, tab, startingFen, moves, cursor, branches, showMoveText: parsed.showMoveText === true, fenEditorExpanded: parsed.fenEditorExpanded === true };
+    const comments = parsed.comments && typeof parsed.comments === "object" ? Object.fromEntries(Object.entries(parsed.comments).filter((entry): entry is [string, string] => typeof entry[1] === "string")) : {};
+    return { enabled: parsed.enabled === true, tab, startingFen, moves, cursor, branches, comments, showMoveText: parsed.showMoveText === true, fenEditorExpanded: parsed.fenEditorExpanded === true };
   } catch {
     return fallback;
   }
@@ -256,6 +258,7 @@ export function App() {
   const [studyCurrentFen, setStudyCurrentFen] = useState(initialStudyState.startingFen);
   const [studyMoves, setStudyMoves] = useState<string[]>(initialStudyState.moves);
   const [studyBranches, setStudyBranches] = useState<StudyBranch[]>(initialStudyState.branches ?? []);
+  const [studyComments, setStudyComments] = useState<Record<string, string>>(initialStudyState.comments ?? {});
   const [studyCursor, setStudyCursor] = useState(initialStudyState.cursor);
   const [studyNotation, setStudyNotation] = useState<string[]>([]);
   const [studyPieces, setStudyPieces] = useState<BoardPiece[]>([]);
@@ -354,11 +357,12 @@ export function App() {
       moves: studyMoves,
       cursor: Math.max(0, Math.min(studyCursor, studyMoves.length)),
       branches: studyBranches,
+      comments: studyComments,
       showMoveText: studyMoveTextOpen,
       fenEditorExpanded: studyFenEditorOpen,
     };
     localStorage.setItem(STUDY_STATE_KEY, JSON.stringify(snapshot));
-  }, [studyMode, studyPanelTab, studyStartingFen, studyMoves, studyCursor, studyBranches, studyMoveTextOpen, studyFenEditorOpen]);
+  }, [studyMode, studyPanelTab, studyStartingFen, studyMoves, studyCursor, studyBranches, studyComments, studyMoveTextOpen, studyFenEditorOpen]);
   useEffect(() => {
     void setPreferredOrientation(preferredOrientation).catch(() => {
       setNotice("无法恢复屏幕方向设置，已使用系统自动旋转。");
@@ -704,6 +708,7 @@ export function App() {
     setStudyStartingFen(state.fen);
     setStudyMoves([]);
     setStudyBranches([]);
+    setStudyComments({});
     setStudyCursor(0);
     setStudyNotation([]);
     setStudyPieces(state.pieces);
@@ -1051,7 +1056,7 @@ export function App() {
       <nav className="study-panel-tabs" role="tablist" aria-label="拆棋研究面板">{studyPanelItems.map(([value, label, Icon]) => <button key={value} role="tab" aria-selected={studyPanelTab === value} className={studyPanelTab === value ? "active" : ""} onClick={() => setStudyPanelTab(value)}><Icon/><span>{label}</span></button>)}</nav>
       {studyPanelTab === "engine" && (LOCAL_PIKAFISH_AVAILABLE ? <AnalysisPanel lines={studyAnalysisLines} pending={analysisPending && studyMode} activeIndex={studyActiveAnalysis} disabled={Boolean(studyTerminal)} multiPv={analysisMultiPv} scoreSide={studyScoreSide} onToggle={() => void (analysisPending ? stopAnalysis() : startAnalysis())} onSelect={setStudyActiveAnalysis} onMultiPvChange={(value) => void changeAnalysisMultiPv(value)}/> : <section className="study-unavailable">本地 Pikafish 仅在 Android 或 iOS 版可用。</section>)}
       {studyPanelTab === "cloud" && <section className="study-cloud-panel">{studyCloudPending ? <p className="study-cloud-empty">正在查询当前局面…</p> : studyCloudMoves.length ? <div className="study-cloud-list">{studyCloudMoves.map((item, index) => { const evaluation = cloudEvaluation(item, studyScoreSide); return <button key={item.iccs} onClick={() => void playStudyMove(item.iccs)}><b>{index + 1}</b><strong>{item.notation}</strong><em>红分 {evaluation.redScore > 0 ? "+" : ""}{evaluation.redScore}</em><small>红 {evaluation.redRate.toFixed(1)}% · 黑 {evaluation.blackRate.toFixed(1)}%</small></button>; })}</div> : <p className="study-cloud-empty">{studyCloudError ?? "当前局面暂无云库着法。"}</p>}</section>}
-      {studyPanelTab === "manual" && <StudyManualTree moves={studyMoves} notation={studyNotation} cursor={studyCursor} branches={studyBranches} onNavigate={(cursor) => void navigateStudyMove(cursor)} onAdopt={(branch) => void adoptStudyBranch(branch)} onDelete={deleteStudyBranch} onMove={moveStudyBranch}/>}
+      {studyPanelTab === "manual" && <StudyManualTree moves={studyMoves} notation={studyNotation} cursor={studyCursor} branches={studyBranches} comments={studyComments} onCommentChange={(key, comment) => setStudyComments((current) => ({ ...current, [key]: comment }))} onNavigate={(cursor) => void navigateStudyMove(cursor)} onAdopt={(branch) => void adoptStudyBranch(branch)} onDelete={deleteStudyBranch} onMove={moveStudyBranch}/>}
       <section className="study-notice"><b>局面状态</b><p>{studyNotice}</p></section>
     </aside>
     {studyMenuOpen && <button className="study-menu-scrim" aria-label="关闭拆棋菜单" onClick={() => setStudyMenuOpen(false)}/>}
