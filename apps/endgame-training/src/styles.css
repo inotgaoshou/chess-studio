@@ -113,12 +113,10 @@
 .analysis-panel>header button { min-height:30px; padding:0 7px; border:1px solid #8db69a; border-radius:5px; background:#fff; color:#326547; display:flex; align-items:center; justify-content:center; gap:4px; font-size:10px; font-weight:800; white-space:nowrap; }
 .analysis-panel>header button:disabled { opacity:.42; cursor:default; }
 .analysis-header-controls { min-width:0; display:flex; align-items:center; justify-content:flex-end; gap:5px; }
-.analysis-multipv-picker { position:relative; min-width:0; display:flex; align-items:center; gap:3px; color:#6a8273; font-size:9px; font-weight:700; }
-.analysis-multipv-picker > button { width:92px; height:30px; min-height:30px; padding:0 6px; border:1px solid #c7d9cc; border-radius:4px; background:#fff; color:#365949; display:flex; align-items:center; justify-content:space-between; gap:2px; font-size:10px; font-weight:800; }
-.analysis-multipv-picker > button svg { width:13px; height:13px; }
-.analysis-multipv-options { position:absolute; z-index:18; top:calc(100% + 4px); right:0; width:112px; padding:4px; border:1px solid #bfd4c5; border-radius:5px; background:#fff; box-shadow:0 10px 24px #18352633; display:grid; gap:2px; }
-.analysis-multipv-options button { width:100%; min-height:30px; padding:0 8px; border:0; border-radius:4px; background:transparent; color:#365949; justify-content:flex-start; font-size:11px; }
-.analysis-multipv-options button.active { background:#397951; color:#fff; }
+.analysis-multipv-picker { min-width:0; display:flex; align-items:center; gap:4px; color:#6a8273; font-size:9px; font-weight:700; }
+.analysis-multipv-picker > input { width:52px; height:30px; min-height:30px; padding:0 4px 0 8px; border:1px solid #9dbda6; border-radius:4px; background:#fff; color:#315d45; font-size:16px; font-weight:800; text-align:center; font-variant-numeric:tabular-nums; }
+.analysis-multipv-picker > input:focus { border-color:#397951; outline:2px solid #39795124; }
+.analysis-multipv-picker > input:disabled { opacity:.48; }
 .analysis-working,.analysis-empty { min-height:30px; margin:0; display:flex; align-items:center; color:#6a8273; font-size:10px; line-height:1.4; }
 .analysis-winrate {
   min-width:0;
@@ -929,7 +927,7 @@
   .study-evaluation-toggle { min-height:22px; }
   .analysis-panel { padding:4px 6px; gap:3px; }
   .analysis-panel>header button,
-  .analysis-multipv-picker > button { height:26px; min-height:26px; }
+  .analysis-multipv-picker > input { height:30px; min-height:30px; }
   .study-notice,.study-unavailable { padding:5px 7px; }
 }
 
@@ -990,7 +988,7 @@
   .study-sidebar { padding-inline:7px; }
   .study-move-nav { gap:4px; }
   .analysis-panel>header small,.analysis-multipv-picker > span { display:none; }
-  .analysis-multipv-picker > button { width:78px; }
+  .analysis-multipv-picker > input { width:48px; }
 }
 
 /* Portrait training is document flow; do not inherit the constrained-height

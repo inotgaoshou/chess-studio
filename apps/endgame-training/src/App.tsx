@@ -193,11 +193,10 @@ function Board({ pieces, selected, lastMove, hintMove, analysisMoves = [], activ
 
 function AnalysisPanel({ lines, pending, activeIndex, disabled, multiPv, scoreSide, onToggle, onSelect, onMultiPvChange }: { lines: AnalysisLine[]; pending: boolean; activeIndex: number; disabled: boolean; multiPv: number; scoreSide: "red" | "black"; onToggle(): void; onSelect(index: number): void; onMultiPvChange(value: number): void }) {
   const summary = lines[0];
-  const [multiPvOpen, setMultiPvOpen] = useState(false);
   const multiPvDisabled = disabled || pending;
   const summaryRedRate = redWinRate(summary, scoreSide);
   return <section className="analysis-panel">
-    <header><span><BrainCircuit/><b>AI 拆棋</b><small>固定时间 2 秒</small></span><div className="analysis-header-controls"><div className="analysis-multipv-picker"><span>候选</span><button type="button" aria-haspopup="listbox" aria-expanded={multiPvOpen} disabled={multiPvDisabled} onClick={() => setMultiPvOpen((open) => !open)}>MultiPV {multiPv}<ChevronDown/></button>{multiPvOpen && !multiPvDisabled && <div className="analysis-multipv-options" role="listbox" aria-label="AI 拆棋候选数量">{[1, 2, 3, 4].map((value) => <button key={value} type="button" role="option" aria-selected={multiPv === value} className={multiPv === value ? "active" : ""} onClick={() => { setMultiPvOpen(false); onMultiPvChange(value); }}>MultiPV {value}</button>)}</div>}</div><button disabled={disabled} onClick={onToggle}>{pending ? <><StopIcon/>停止</> : <><BrainCircuit/>{lines.length ? "重新分析" : "开始分析"}</>}</button></div></header>
+    <header><span><BrainCircuit/><b>AI 拆棋</b><small>固定时间 2 秒</small></span><div className="analysis-header-controls"><label className="analysis-multipv-picker"><span>候选</span><input type="number" inputMode="numeric" min={1} max={4} step={1} value={multiPv} disabled={multiPvDisabled} aria-label="AI 拆棋候选数量，范围一到四" onChange={(event) => { const value = Number(event.target.value); if (Number.isInteger(value) && value >= 1 && value <= 4) onMultiPvChange(value); }}/></label><button disabled={disabled} onClick={onToggle}>{pending ? <><StopIcon/>停止</> : <><BrainCircuit/>{lines.length ? "重新分析" : "开始分析"}</>}</button></div></header>
     {pending ? <p className="analysis-working">Pikafish 正在分析当前局面…</p> : summary ? <>
       <div className="analysis-winrate" style={{ "--red-win-rate": `${summaryRedRate}%` } as CSSProperties}><span>红 {summaryRedRate}%</span><i aria-hidden="true"><b/></i><span>黑 {100 - summaryRedRate}%</span></div>
       <div className="analysis-summary"><span>深度 {summary.depth}</span><span>节点 {compactNumber(summary.nodes)}</span><span>{compactNumber(summary.nps)}/s</span></div>
@@ -409,6 +408,11 @@ export function App() {
       previous?.focus({ preventScroll: true });
     };
   }, [showAbout]);
+  useEffect(() => {
+    if (!studyMode || !LOCAL_PIKAFISH_AVAILABLE || studyTerminal) return;
+    const timer = window.setTimeout(() => void startAnalysis(analysisMultiPv), 300);
+    return () => window.clearTimeout(timer);
+  }, [analysisMultiPv, studyCurrentFen, studyMode, studyTerminal]);
   useEffect(() => () => { analysisGeneration.current += 1; void cancelPikafishSearch(); }, []);
 
   async function importFile(file?: File) {
@@ -429,7 +433,7 @@ export function App() {
     }
     return state;
   }
-  async function startAnalysis() {
+  async function startAnalysis(requestedMultiPv = analysisMultiPv) {
     const standalone = studyMode;
     if (!LOCAL_PIKAFISH_AVAILABLE || (standalone && studyTerminal) || (!standalone && (!problem || autoReplyPending || revealed))) return;
     const startingFen = standalone ? studyStartingFen : problem!.startingFen;
@@ -440,7 +444,7 @@ export function App() {
     else { setTrainingAnalysisLines([]); setTrainingActiveAnalysis(0); }
     try {
       const position = await boardAt(startingFen, currentMoves);
-      const result = await queryPikafishAnalysis(position.fen, 2000, analysisMultiPv);
+      const result = await queryPikafishAnalysis(position.fen, 2000, requestedMultiPv);
       const translated = await Promise.all(result.lines.filter((item) => item.pv.length > 0).map(async (item) => ({ ...item, notation: await chineseLine(position.fen, item.pv).catch(() => item.pv) })));
       if (request !== analysisGeneration.current) return;
       const sorted = translated.sort((left, right) => left.multipv - right.multipv);
@@ -1022,7 +1026,7 @@ export function App() {
         <label className="study-menu-check"><input type="checkbox" checked={studyEvaluationVisible} onChange={toggleStudyEvaluation}/><span>箭头提示 / 当前评估</span></label>
         <button className="study-menu-settings" onClick={() => runStudyMenuAction("settings")}><Settings2/><span>更多设置</span></button>
       </section>}
-    </nav></header><section className="study-engine-strip"><div><span>深度 {studySummaryLine?.depth ?? 0}</span><span>节点 {studySummaryLine ? compactNumber(studySummaryLine.nodes) : 0}</span><span>速度 {studySummaryLine ? `${compactNumber(studySummaryLine.nps)}/s` : "0/s"}</span></div>{studyEvaluationVisible && <button className="study-evaluation-toggle" type="button" aria-label="隐藏当前评估" onClick={toggleStudyEvaluation}>当前评估 {studyEvaluationLabel}</button>}</section><Board pieces={studyPieces} selected={studySelected} lastMove={studyLastMove} analysisMoves={studyArrowMoves} activeAnalysis={studyPanelTab === "engine" ? studyActiveAnalysis : 0} flipped={boardFlipped} feedback={moveFeedback} riverText={riverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} onSquare={(square) => void moveStudy(square)}/><footer className="study-board-status"><b>{studyScoreSide === "red" ? "红方" : "黑方"}行棋</b><span>{studyMoves.length ? `第 ${studyCursor}/${studyMoves.length} 手` : "初始局面"}</span><span>{boardFlipped ? "黑方视角" : "红方视角"}</span></footer></main>
+    </nav></header><section className="study-engine-strip"><div><span>深度 {studySummaryLine?.depth ?? "--"}</span><span>节点 {studySummaryLine ? compactNumber(studySummaryLine.nodes) : "--"}</span><span>速度 {studySummaryLine ? `${compactNumber(studySummaryLine.nps)}/s` : "--"}</span></div>{studyEvaluationVisible && <button className="study-evaluation-toggle" type="button" aria-label="隐藏当前评估" onClick={toggleStudyEvaluation}>当前评估 {studyEvaluationLabel}</button>}</section><Board pieces={studyPieces} selected={studySelected} lastMove={studyLastMove} analysisMoves={studyArrowMoves} activeAnalysis={studyPanelTab === "engine" ? studyActiveAnalysis : 0} flipped={boardFlipped} feedback={moveFeedback} riverText={riverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} onSquare={(square) => void moveStudy(square)}/><footer className="study-board-status"><b>{studyScoreSide === "red" ? "红方" : "黑方"}行棋</b><span>{studyMoves.length ? `第 ${studyCursor}/${studyMoves.length} 手` : "初始局面"}</span><span>{boardFlipped ? "黑方视角" : "红方视角"}</span></footer></main>
     <aside className="study-sidebar">
       <nav className="study-move-nav" aria-label="拆棋着法导航"><button disabled={!studyCursor} aria-label="回到开始" title="回到开始" onClick={() => void navigateStudyMove(0)}><ChevronsLeft/></button><button disabled={!studyCursor} aria-label="上一步" title="上一步" onClick={() => void navigateStudyMove(studyCursor - 1)}><ChevronLeft/></button><button disabled aria-label="播放棋谱" title="播放棋谱"><Play/></button><button disabled={studyCursor >= studyMoves.length} aria-label="下一步" title="下一步" onClick={() => void navigateStudyMove(studyCursor + 1)}><ChevronRight/></button><button disabled={studyCursor >= studyMoves.length} aria-label="最后一步" title="最后一步" onClick={() => void navigateStudyMove(studyMoves.length)}><ChevronsRight/></button></nav>
       <nav className="study-panel-tabs" role="tablist" aria-label="拆棋研究面板">{studyPanelItems.map(([value, label, Icon]) => <button key={value} role="tab" aria-selected={studyPanelTab === value} className={studyPanelTab === value ? "active" : ""} onClick={() => setStudyPanelTab(value)}><Icon/><span>{label}</span></button>)}</nav>
