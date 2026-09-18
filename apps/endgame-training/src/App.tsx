@@ -1,5 +1,5 @@
 import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, CircleCheckBig, CircleHelp, ClipboardCopy, ClipboardList, Clock3, Cpu, Database, Ellipsis, Eye, EyeOff, FilePenLine, FileUp, FlipVertical2, Lightbulb, Link, ListRestart, Minus, Pause, Pencil, Play, Plus, RotateCcw, Search, Settings2, Square as StopIcon, Trash2, Undo2, X } from "lucide-react";
-import { type CSSProperties, useEffect, useId, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type PointerEvent as ReactPointerEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import { trainingStore } from "./store";
 import type { Attempt, BoardPiece, BoardState, RuleMode, SolutionMove, TrainingLibrary, TrainingProblem } from "./types";
 import { acceptsMove, boardAt, cancelPikafishSearch, chineseLine, hasLocalPikafish, parseCbl, queryCloudBook, queryPikafishAnalysis, queryPikafishReply, type CloudBookMove, type PikafishAnalysisLine } from "./wasm";
@@ -12,6 +12,8 @@ type StudyPanelTab = "engine" | "cloud" | "manual";
 type Square = { row: number; col: number };
 type AnalysisLine = PikafishAnalysisLine & { notation: string[] };
 type StudyBranch = StudyManualBranch;
+type BoardDragState = { from: Square; piece: BoardPiece; x: number; y: number; target?: Square };
+type BoardDragCandidate = { pointerId: number; from: Square; piece: BoardPiece; startX: number; startY: number; active: boolean };
 type PendingAutoReply = {
   problemId: string;
   activeMode: "cloud" | "ai";
@@ -165,6 +167,9 @@ function renderNote(value: string) {
 }
 
 const displaySquare = (square: Square, flipped: boolean): Square => flipped ? { row: 9 - square.row, col: 8 - square.col } : square;
+const sameSquare = (left?: Square, right?: Square) => Boolean(left && right && left.row === right.row && left.col === right.col);
+const nearestIndex = (values: number[], target: number) => values.reduce((best, value, index) => Math.abs(value - target) < Math.abs(values[best] - target) ? index : best, 0);
+const ALL_SQUARES = Array.from({ length: 90 }, (_, index) => ({ row: Math.floor(index / 9), col: index % 9 }));
 
 function BoardMarkerLayer({ selected, lastMove, flipped = false }: { selected?: Square; lastMove?: { from: Square; to: Square }; flipped?: boolean }) {
   const point = (square: Square) => { const shown = displaySquare(square, flipped); return `${QINGXIN_COLUMNS[shown.col]} ${QINGXIN_ROWS[shown.row]}`; };
@@ -213,15 +218,71 @@ function AnalysisArrowLayer({ moves, activeIndex, flipped = false }: { moves: st
   </svg>;
 }
 
-function Board({ pieces, selected, lastMove, hintMove, analysisMoves = [], activeAnalysis = 0, flipped = false, feedback, riverText, riverTextColor, riverTextSize, onSquare }: { pieces: BoardPiece[]; selected?: Square; lastMove?: string; hintMove?: string; analysisMoves?: string[]; activeAnalysis?: number; flipped?: boolean; feedback?: TrainingFeedbackKind; riverText: string; riverTextColor: string; riverTextSize: number; onSquare(square: Square): void }) {
+function Board({ pieces, selected, legalTargets = [], lastMove, hintMove, analysisMoves = [], activeAnalysis = 0, flipped = false, feedback, riverText, riverTextColor, riverTextSize, onSquare, onMove }: { pieces: BoardPiece[]; selected?: Square; legalTargets?: Square[]; lastMove?: string; hintMove?: string; analysisMoves?: string[]; activeAnalysis?: number; flipped?: boolean; feedback?: TrainingFeedbackKind; riverText: string; riverTextColor: string; riverTextSize: number; onSquare(square: Square): void; onMove?(from: Square, to: Square): void }) {
+  const boardRef = useRef<HTMLDivElement | null>(null);
+  const dragCandidate = useRef<BoardDragCandidate | undefined>(undefined);
+  const suppressNextClick = useRef(false);
+  const [dragging, setDragging] = useState<BoardDragState>();
   const hint = hintMove ? iccsSquares(hintMove).from : undefined;
   const last = lastMove ? iccsSquares(lastMove) : undefined;
   const boardStyle = { backgroundImage: `url("/skins/qingxin-zhuyun/${riverText ? "board-river-blank.png" : "board.png"}")` } as CSSProperties;
-  return <div className="board-shell"><div className={`xiangqi-board ${feedback ? `move-feedback ${feedback}` : ""}`} style={boardStyle} aria-label="残局棋盘">
+  const squareFromPoint = (clientX: number, clientY: number): Square | undefined => {
+    const rect = boardRef.current?.getBoundingClientRect();
+    if (!rect || rect.width <= 0 || rect.height <= 0) return undefined;
+    const artX = Math.max(0, Math.min(BOARD_ART_WIDTH, (clientX - rect.left) / rect.width * BOARD_ART_WIDTH));
+    const artY = Math.max(0, Math.min(BOARD_ART_HEIGHT, (clientY - rect.top) / rect.height * BOARD_ART_HEIGHT));
+    const shown = { row: nearestIndex(QINGXIN_ROWS, artY), col: nearestIndex(QINGXIN_COLUMNS, artX) };
+    return displaySquare(shown, flipped);
+  };
+  const dragPoint = (clientX: number, clientY: number) => {
+    const rect = boardRef.current?.getBoundingClientRect();
+    if (!rect || rect.width <= 0 || rect.height <= 0) return { x: 50, y: 50 };
+    return {
+      x: Math.max(0, Math.min(100, (clientX - rect.left) / rect.width * 100)),
+      y: Math.max(0, Math.min(100, (clientY - rect.top) / rect.height * 100)),
+    };
+  };
+  const finishDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const candidate = dragCandidate.current;
+    if (!candidate || candidate.pointerId !== event.pointerId) return;
+    dragCandidate.current = undefined;
+    if (!candidate.active) {
+      setDragging(undefined);
+      return;
+    }
+    event.preventDefault();
+    suppressNextClick.current = true;
+    const target = squareFromPoint(event.clientX, event.clientY) ?? candidate.from;
+    setDragging(undefined);
+    if (sameSquare(candidate.from, target)) onSquare(candidate.from);
+    else if (onMove) onMove(candidate.from, target);
+    else onSquare(target);
+  };
+  return <div className="board-shell"><div ref={boardRef} className={`xiangqi-board ${feedback ? `move-feedback ${feedback}` : ""} ${dragging ? "dragging-piece" : ""}`} style={boardStyle} aria-label="残局棋盘" onPointerMove={(event) => {
+    const candidate = dragCandidate.current;
+    if (!candidate || candidate.pointerId !== event.pointerId) return;
+    const distance = Math.hypot(event.clientX - candidate.startX, event.clientY - candidate.startY);
+    if (!candidate.active && distance < 7) return;
+    candidate.active = true;
+    event.preventDefault();
+    const point = dragPoint(event.clientX, event.clientY);
+    setDragging({ from: candidate.from, piece: candidate.piece, ...point, target: squareFromPoint(event.clientX, event.clientY) });
+  }} onPointerUp={finishDrag} onPointerCancel={() => { dragCandidate.current = undefined; setDragging(undefined); }}>
     {riverText && <span className="river-custom-label" style={{ "--river-text-color": riverTextColor, "--river-text-size": `${riverTextSize}px` } as CSSProperties}>{riverText}</span>}
     {analysisMoves.length > 0 && <AnalysisArrowLayer moves={analysisMoves} activeIndex={activeAnalysis} flipped={flipped}/>}
     <BoardMarkerLayer selected={selected} lastMove={last} flipped={flipped}/>
-    {Array.from({ length: 90 }, (_, index) => { const square = { row: Math.floor(index / 9), col: index % 9 }; const shown = displaySquare(square, flipped); const piece = pieces.find((item) => item.row === square.row && item.col === square.col); const isSelected = selected?.row === square.row && selected.col === square.col; const isLastFrom = last?.from.row === square.row && last.from.col === square.col; const isLastTo = last?.to.row === square.row && last.to.col === square.col; const highlighted = hint?.row === square.row && hint.col === square.col; const position = { "--piece-left": `${QINGXIN_COLUMNS[shown.col] / BOARD_ART_WIDTH * 100}%`, "--piece-top": `${QINGXIN_ROWS[shown.row] / BOARD_ART_HEIGHT * 100}%` } as CSSProperties; return <button key={index} style={position} className={`board-square ${isSelected ? "selected" : ""} ${isLastFrom ? "last-from" : ""} ${isLastTo ? "last-to" : ""} ${highlighted ? "hint" : ""}`} onClick={() => onSquare(square)} aria-label={`${squareName(square)}${piece ? ` ${piece.color === "red" ? "红" : "黑"}${piece.label}` : ""}`}>{piece && <img className="piece" src={trainingPieceAsset(piece)} alt={piece.label} draggable={false}/>}</button>; })}
+    {ALL_SQUARES.map((square, index) => { const shown = displaySquare(square, flipped); const piece = pieces.find((item) => item.row === square.row && item.col === square.col); const isSelected = sameSquare(selected, square); const isLegalTarget = legalTargets.some((target) => sameSquare(target, square)); const isDraggingOrigin = sameSquare(dragging?.from, square); const isDragTarget = sameSquare(dragging?.target, square); const isLastFrom = last?.from.row === square.row && last.from.col === square.col; const isLastTo = last?.to.row === square.row && last.to.col === square.col; const highlighted = hint?.row === square.row && hint.col === square.col; const position = { "--piece-left": `${QINGXIN_COLUMNS[shown.col] / BOARD_ART_WIDTH * 100}%`, "--piece-top": `${QINGXIN_ROWS[shown.row] / BOARD_ART_HEIGHT * 100}%` } as CSSProperties; return <button key={index} style={position} className={`board-square ${isSelected ? "selected" : ""} ${isLegalTarget ? "legal-target" : ""} ${isDraggingOrigin ? "drag-origin" : ""} ${isDragTarget ? "drag-target" : ""} ${isLastFrom ? "last-from" : ""} ${isLastTo ? "last-to" : ""} ${highlighted ? "hint" : ""}`} onPointerDown={(event) => {
+      if (!piece || event.button !== 0) return;
+      dragCandidate.current = { pointerId: event.pointerId, from: square, piece, startX: event.clientX, startY: event.clientY, active: false };
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+    }} onClick={() => {
+      if (suppressNextClick.current) {
+        suppressNextClick.current = false;
+        return;
+      }
+      onSquare(square);
+    }} aria-label={`${squareName(square)}${piece ? ` ${piece.color === "red" ? "红" : "黑"}${piece.label}` : ""}`}>{piece && <img className="piece" src={trainingPieceAsset(piece)} alt={piece.label} draggable={false}/>}</button>; })}
+    {dragging && <img className="piece board-drag-ghost" style={{ "--drag-x": `${dragging.x}%`, "--drag-y": `${dragging.y}%` } as CSSProperties} src={trainingPieceAsset(dragging.piece)} alt="" aria-hidden="true" draggable={false}/>}
     {feedback === "capture" && <span className="capture-feedback"><span>吃</span></span>}
     {(feedback === "check" || feedback === "checkmate" || feedback === "stalemate") && <span className={`ink-feedback ${feedback}`}><span>{TRAINING_FEEDBACK_PACK.labels[feedback]}</span></span>}
   </div></div>;
@@ -285,6 +346,7 @@ export function App() {
   const [moves, setMoves] = useState<string[]>([]);
   const [pieces, setPieces] = useState<BoardPiece[]>([]);
   const [selected, setSelected] = useState<Square>();
+  const [legalTargets, setLegalTargets] = useState<Square[]>([]);
   const [lastMove, setLastMove] = useState<string>();
   const [startedAt, setStartedAt] = useState<number>();
   const [elapsedSaved, setElapsedSaved] = useState(0);
@@ -327,6 +389,7 @@ export function App() {
   const [studyNotation, setStudyNotation] = useState<string[]>([]);
   const [studyPieces, setStudyPieces] = useState<BoardPiece[]>([]);
   const [studySelected, setStudySelected] = useState<Square>();
+  const [studyLegalTargets, setStudyLegalTargets] = useState<Square[]>([]);
   const [studyLastMove, setStudyLastMove] = useState<string>();
   const [studyNotice, setStudyNotice] = useState(initialStudyState.moves.length ? "已恢复上次自由拆棋，可继续导航、落子或分析。" : "标准局面已就绪，可自由走棋或开始分析。");
   const [studyNoticeVisible, setStudyNoticeVisible] = useState(true);
@@ -365,6 +428,52 @@ export function App() {
   const expected = useMemo(() => line.map((item) => item.iccs), [line]);
   const currentStudyMoves = useMemo(() => studyMoves.slice(0, Math.min(studyCursor, studyMoves.length)), [studyCursor, studyMoves]);
   const studyNoticePersistent = persistentStudyNotice(studyNotice);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!problem || !selected || revealed || ended || autoReplyPending) {
+      setLegalTargets([]);
+      return () => { cancelled = true; };
+    }
+    const movingSide = sideToMove(problem.startingFen, moves);
+    const source = pieces.find((piece) => piece.row === selected.row && piece.col === selected.col);
+    if (source?.color !== movingSide) {
+      setLegalTargets([]);
+      return () => { cancelled = true; };
+    }
+    void Promise.all(ALL_SQUARES.map(async (target) => {
+      if (sameSquare(selected, target)) return undefined;
+      const targetPiece = pieces.find((piece) => piece.row === target.row && piece.col === target.col);
+      if (targetPiece?.color === movingSide) return undefined;
+      return (await acceptsMove(problem.startingFen, moves, `${squareName(selected)}${squareName(target)}`)) ? target : undefined;
+    })).then((targets) => {
+      if (!cancelled) setLegalTargets(targets.filter((target): target is Square => Boolean(target)));
+    });
+    return () => { cancelled = true; };
+  }, [autoReplyPending, ended, moves, pieces, problem, revealed, selected]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!studySelected || studyTerminal) {
+      setStudyLegalTargets([]);
+      return () => { cancelled = true; };
+    }
+    const movingSide = sideToMove(studyStartingFen, currentStudyMoves);
+    const source = studyPieces.find((piece) => piece.row === studySelected.row && piece.col === studySelected.col);
+    if (source?.color !== movingSide) {
+      setStudyLegalTargets([]);
+      return () => { cancelled = true; };
+    }
+    void Promise.all(ALL_SQUARES.map(async (target) => {
+      if (sameSquare(studySelected, target)) return undefined;
+      const targetPiece = studyPieces.find((piece) => piece.row === target.row && piece.col === target.col);
+      if (targetPiece?.color === movingSide) return undefined;
+      return (await acceptsMove(studyStartingFen, currentStudyMoves, `${squareName(studySelected)}${squareName(target)}`, studyRuleMode)) ? target : undefined;
+    })).then((targets) => {
+      if (!cancelled) setStudyLegalTargets(targets.filter((target): target is Square => Boolean(target)));
+    });
+    return () => { cancelled = true; };
+  }, [currentStudyMoves, studyPieces, studyRuleMode, studySelected, studyStartingFen, studyTerminal]);
 
   async function refresh() { setLibraries(await trainingStore.libraries()); }
   async function resetAnalysis(workspace: "training" | "study" = studyMode ? "study" : "training", clear = true) {
@@ -730,8 +839,26 @@ export function App() {
       else if (pieceAtTarget) setNotice(`当前轮到${movingSide === "red" ? "红" : "黑"}方走棋，请先选择己方棋子。`);
       return;
     }
+    if (sameSquare(selected, to)) { setSelected(undefined); return; }
     if (pieceAtTarget?.color === movingSide) { setSelected(to); return; }
-    const iccs = `${squareName(selected)}${squareName(to)}`; setSelected(undefined);
+    await playTrainingMove(`${squareName(selected)}${squareName(to)}`);
+  }
+  async function moveFromTo(from: Square, to: Square) {
+    if (!problem || revealed || ended || autoReplyPending) return;
+    const movingSide = sideToMove(problem.startingFen, moves);
+    const pieceAtSource = pieces.find((piece) => piece.row === from.row && piece.col === from.col);
+    const pieceAtTarget = pieces.find((piece) => piece.row === to.row && piece.col === to.col);
+    if (sameSquare(from, to)) { setSelected((current) => sameSquare(current, from) ? undefined : from); return; }
+    if (pieceAtSource?.color !== movingSide) {
+      if (pieceAtSource) setNotice(`当前轮到${movingSide === "red" ? "红" : "黑"}方走棋，请拖动己方棋子。`);
+      return;
+    }
+    if (pieceAtTarget?.color === movingSide) { setSelected(to); return; }
+    await playTrainingMove(`${squareName(from)}${squareName(to)}`);
+  }
+  async function playTrainingMove(iccs: string) {
+    if (!problem || revealed || ended || autoReplyPending) return;
+    setSelected(undefined);
     const moveSession = ++session.current;
     if (mode === "free") {
       const accepted = await acceptsMove(problem.startingFen, moves, iccs);
@@ -1101,9 +1228,23 @@ export function App() {
       else if (pieceAtTarget) setStudyNotice(`当前轮到${movingSide === "red" ? "红" : "黑"}方走棋。`);
       return;
     }
+    if (sameSquare(studySelected, to)) { setStudySelected(undefined); return; }
     if (pieceAtTarget?.color === movingSide) { setStudySelected(to); return; }
     const iccs = `${squareName(studySelected)}${squareName(to)}`;
     await playStudyMove(iccs);
+  }
+  async function moveStudyFromTo(from: Square, to: Square) {
+    if (studyTerminal) return;
+    const movingSide = sideToMove(studyStartingFen, currentStudyMoves);
+    const pieceAtSource = studyPieces.find((piece) => piece.row === from.row && piece.col === from.col);
+    const pieceAtTarget = studyPieces.find((piece) => piece.row === to.row && piece.col === to.col);
+    if (sameSquare(from, to)) { setStudySelected((current) => sameSquare(current, from) ? undefined : from); return; }
+    if (pieceAtSource?.color !== movingSide) {
+      if (pieceAtSource) setStudyNotice(`当前轮到${movingSide === "red" ? "红" : "黑"}方走棋，请拖动己方棋子。`);
+      return;
+    }
+    if (pieceAtTarget?.color === movingSide) { setStudySelected(to); return; }
+    await playStudyMove(`${squareName(from)}${squareName(to)}`);
   }
   async function playStudyMove(iccs: string) {
     if (studyTerminal) return;
@@ -1115,9 +1256,7 @@ export function App() {
     const movingSide = sideToMove(studyStartingFen, currentStudyMoves);
     setStudySelected(undefined);
     const generation = ++studyGeneration.current;
-    await resetAnalysis();
-    if (generation !== studyGeneration.current) return;
-    if (!(await acceptsMove(studyStartingFen, currentStudyMoves, iccs))) {
+    if (!(await acceptsMove(studyStartingFen, currentStudyMoves, iccs, studyRuleMode))) {
       if (generation === studyGeneration.current) setStudyNotice("该走法不合法，局面没有改变。");
       return;
     }
@@ -1141,6 +1280,7 @@ export function App() {
     setStudyTerminal(terminal);
     setStudyNotice(terminal ? `当前局面：${terminal}。` : `${movingSide === "red" ? "红" : "黑"}方已走 ${notation.at(-1) ?? iccs}。`);
     invalidateStudyCloud(state.fen);
+    void resetAnalysis("study");
   }
 
   async function navigateStudyMove(cursor: number, fromAutoPlay = false) {
@@ -1308,7 +1448,7 @@ export function App() {
 
   return <div className={`training-app ${studyMode ? "study-active" : ""}`}><header className={`app-header ${studyMode ? "study-mode-header" : ""}`}><span><BookOpen/><strong>棋研</strong><small>{studyMode ? `自由拆棋 · ${studyRuleLabel(studyRuleMode)}` : library?.title ?? "本地 CBL 题库"}</small></span><div><nav className="workspace-switcher" aria-label="训练与拆棋切换"><button className={!studyMode ? "active" : ""} aria-current={!studyMode ? "page" : undefined} aria-label="题库" data-tooltip="题库" onClick={() => { if (studyMode) void closeStudyMode(); else { setCatalogueOpen((open) => !open); setControlsOpen(false); } }}><BookOpen/><span>题库</span></button><button className={studyMode ? "active" : ""} aria-current={studyMode ? "page" : undefined} aria-label="拆棋" data-tooltip="拆棋" onClick={() => { if (!studyMode) void openStudyMode(); }}><Cpu/><span>拆棋</span></button></nav><button className="mobile-drawer-toggle catalogue-toggle" aria-label={catalogueOpen ? "收起题库目录" : "打开题库目录"} data-tooltip={catalogueOpen ? "收起题库目录" : "题库目录"} aria-expanded={catalogueOpen} onClick={() => { setCatalogueOpen((open) => !open); setControlsOpen(false); }}><BookOpen/><span>目录</span></button><button className="import-cbl-action" aria-label="导入 CBL" data-tooltip="导入 CBL" onClick={openImportPanel}><FileUp/><span>导入 CBL</span></button><button className="mobile-drawer-toggle controls-toggle" aria-label={controlsOpen ? "收起训练控制" : "打开训练控制"} data-tooltip={controlsOpen ? "收起训练控制" : "训练控制"} aria-expanded={controlsOpen} onClick={() => { setControlsOpen((open) => !open); setCatalogueOpen(false); }}><Clock3/><span>控制</span></button><button className="about-trigger" aria-label="关于棋研" data-tooltip="关于棋研" onClick={() => setShowAbout(true)}><CircleHelp/></button></div><input ref={input} type="file" accept=".cbl,application/octet-stream" onChange={(event) => { const file = event.target.files?.[0]; event.currentTarget.value = ""; void importFile(file); }}/></header><div className="training-layout">
     <aside className={`catalogue ${catalogueOpen ? "drawer-open" : ""}`}><header className="catalogue-heading"><span><strong>题库目录</strong><small>{libraries.length} 本本地题库</small></span>{library && <button className="catalogue-delete" title="删除当前题库" onClick={() => setDeleteTarget({ type: "library", id: library.id, title: library.title })}><Trash2/></button>}</header><div className="library-list">{libraries.map((item) => <section key={item.id}><button className={`library-row ${expanded === item.id ? "expanded" : ""}`} onClick={() => expanded === item.id ? setExpanded(undefined) : void selectLibrary(item)}><BookOpen/><span><b>{item.title}</b><small>{item.completedCount}/{item.problemCount} 已完成</small></span>{expanded === item.id ? <ChevronDown/> : <ChevronRight/>}</button>{expanded === item.id && <div className="problem-area"><div className="filters"><div className="problem-search"><Search/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索残局题名或分类" aria-label="搜索残局题名或分类" autoComplete="off"/>{query && <button type="button" aria-label="清除搜索" title="清除搜索" onClick={() => setQuery("")}><X/></button>}</div><select value={category} onChange={(event) => setCategory(event.target.value)} aria-label="按残局分类筛选">{categories.map((value) => <option key={value}>{value}</option>)}</select></div>{visible.length ? visible.map((item) => <button key={item.id} className={`problem-row ${problem?.id === item.id ? "active" : ""}`} onClick={() => void selectProblem(item)}><b>{item.sourceIndex + 1}</b><span>{item.title}<small>{item.category} · {item.completedAttempts ? `累计 ${fmt(item.totalElapsedMs)}` : "未练"}</small></span></button>) : <p className="problem-empty">没有找到匹配的残局</p>}</div>}</section>)}</div></aside>
-    <main className="training-stage">{problem ? <><header className="problem-heading"><small>第 {problem.sourceIndex + 1}/{problems.length} 题</small><strong>{problem.title}</strong><button title="移除当前残局" onClick={() => setDeleteTarget({ type: "problem", id: problem.id, title: problem.title })}><Trash2/></button></header><Board pieces={pieces} selected={selected} lastMove={lastMove} hintMove={hints >= 2 ? line[0]?.iccs : undefined} analysisMoves={analysisArrowsVisible ? trainingAnalysisLines.map((item) => item.pv[0]) : []} activeAnalysis={trainingActiveAnalysis} flipped={boardFlipped} feedback={moveFeedback} riverText={riverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} onSquare={(square) => void move(square)}/><p className="board-tip">{mode === "cloud" ? "云库优先应手；未收录时由本地 Pikafish 接手。" : mode === "ai" ? "本地 Pikafish 离线应手，不访问云库。" : "选棋子，再点目标点。错误走法不会改变局面。"}</p></> : <div className="empty"><BookOpen/><strong>导入并选择一道残局</strong><span>题库和练习记录仅保存在这台手机或平板。</span></div>}</main>
+    <main className="training-stage">{problem ? <><header className="problem-heading"><small>第 {problem.sourceIndex + 1}/{problems.length} 题</small><strong>{problem.title}</strong><button title="移除当前残局" onClick={() => setDeleteTarget({ type: "problem", id: problem.id, title: problem.title })}><Trash2/></button></header><Board pieces={pieces} selected={selected} legalTargets={legalTargets} lastMove={lastMove} hintMove={hints >= 2 ? line[0]?.iccs : undefined} analysisMoves={analysisArrowsVisible ? trainingAnalysisLines.map((item) => item.pv[0]) : []} activeAnalysis={trainingActiveAnalysis} flipped={boardFlipped} feedback={moveFeedback} riverText={riverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} onSquare={(square) => void move(square)} onMove={(from, to) => void moveFromTo(from, to)}/><p className="board-tip">{mode === "cloud" ? "云库优先应手；未收录时由本地 Pikafish 接手。" : mode === "ai" ? "本地 Pikafish 离线应手，不访问云库。" : "选棋子或拖动棋子到目标点。错误走法不会改变局面。"}</p></> : <div className="empty"><BookOpen/><strong>导入并选择一道残局</strong><span>题库和练习记录仅保存在这台手机或平板。</span></div>}</main>
     <aside className={`controls ${controlsOpen ? "drawer-open" : ""}`}>{problem ? <><section className="clock"><Clock3/><small>本题用时</small><strong>{fmt(elapsed)}</strong><span>累计用时 {fmt(problem.totalElapsedMs)}</span><button onClick={() => { setShowHistory((value) => !value); void trainingStore.attempts(problem.id).then(setAttempts); }}>记录</button></section><section className="modes">{(["cloud", ...(LOCAL_PIKAFISH_AVAILABLE ? ["ai" as const] : []), "solver", "replay", "free"] as Mode[]).map((value) => <label key={value}><input type="radio" checked={mode === value} disabled={attemptStarted || ended} onChange={() => changeMode(value)}/>{modeLabel[value]}{value === "cloud" && (LOCAL_PIKAFISH_AVAILABLE ? "（云库优先）" : "（云库应手）")}{value === "ai" && "（纯离线）"}{value === "replay" && "（按题解）"}</label>)}</section>{LOCAL_PIKAFISH_AVAILABLE && <AnalysisPanel lines={trainingAnalysisLines} pending={analysisPending && !studyMode} activeIndex={trainingActiveAnalysis} disabled={autoReplyPending || revealed || ended} enabled={true} multiPv={analysisMultiPv} moveTimeSec={analysisMoveTimeSec} scoreSide={sideToMove(problem.startingFen, moves)} arrowsVisible={analysisArrowsVisible} onToggle={() => void (analysisPending ? stopAnalysis() : startAnalysis())} onToggleArrows={toggleAnalysisArrows} onSelect={setTrainingActiveAnalysis} onMultiPvChange={(value) => void changeAnalysisMultiPv(value)} onMoveTimeChange={(value) => void changeAnalysisMoveTimeSec(value)}/>}<section className="actions"><button className="primary" disabled={ended} onClick={() => void giveHint()}><Lightbulb/>提示 {hints}/3</button><button disabled={ended || (!startedAt && !elapsedSaved)} onClick={pause}>{startedAt ? <Pause/> : <Play/>}{startedAt ? "暂停" : "继续"}</button><button onClick={() => void restart()}><RotateCcw/>重来</button>{mode === "free" || mode === "cloud" || mode === "ai" ? <button disabled={ended} onClick={() => void finish("free_finished")}>{mode === "free" ? "结束实战" : "结束对练"}</button> : <button disabled={ended} onClick={() => void reveal()}><ListRestart/>看答案</button>}</section><section className="notice"><b>错误 {mistakes} 次</b><p>{renderNote(notice)}</p></section>{showHistory ? <section className="history"><b>答题记录</b>{attempts.length ? attempts.slice(0, 30).map((item) => <p key={item.id}><strong>{item.outcome === "completed" ? "解出" : item.outcome === "revealed" ? "看答案" : item.outcome === "free_finished" ? "实战结束" : "已放弃"}</strong><span>{modeLabel[item.mode]} · {fmt(item.elapsedMs)} · 错 {item.mistakes} · 提示 {item.hintsUsed}</span></p>) : <p>还没有答题记录</p>}</section> : revealed && <section className="answer"><header><b>题解回合</b><small>{answerStep}/{answer.length} 手</small></header>{Array.from({ length: Math.ceil(answer.length / 2) }, (_, index) => <p key={index}><b>第 {index + 1} 回合</b><span>红方 {answer[index * 2]}{answer[index * 2 + 1] ? ` · 黑方 ${answer[index * 2 + 1]}` : ""}</span></p>)}<footer><button disabled={answerStep >= answer.length} onClick={() => setDemoPlaying((value) => !value)}>{demoPlaying ? <Pause/> : <Play/>}{demoPlaying ? "暂停演示" : "演示答案"}</button><button onClick={() => { setAnswerStep(0); setDemoPlaying(false); void boardAt(problem.startingFen, []).then((state) => setPieces(state.pieces)); }}><RotateCcw/>从头</button></footer></section>}<footer className="navigate"><button disabled={currentIndex <= 0} onClick={() => void selectProblem(visible[currentIndex - 1])}><ChevronLeft/></button><button disabled={currentIndex >= visible.length - 1} onClick={() => void selectProblem(visible[currentIndex + 1])}><ChevronRight/></button></footer></> : <p>从目录选择题目。</p>}</aside>
   </div>{studyMode && <div className="study-workspace">
     <main className={`study-stage${studyEvaluationVisible ? "" : " evaluation-hidden"}`}><header className="study-toolbar"><nav className="study-command-bar" aria-label="拆棋工具栏">
@@ -1332,7 +1472,7 @@ export function App() {
         <label className="study-menu-check"><input type="checkbox" checked={studyEvaluationVisible} onChange={toggleStudyEvaluation}/><span>顶部评估</span></label>
         <button className="study-menu-settings" onClick={() => runStudyMenuAction("settings")}><Settings2/><span>更多设置</span></button>
       </section>}
-    </nav></header>{studyEvaluationVisible && <section className="study-engine-strip"><div><span>深度 {studySummaryLine?.depth ?? "--"}</span><span>节点 {studySummaryLine ? compactNumber(studySummaryLine.nodes) : "--"}</span><span>速度 {studySummaryLine ? `${compactNumber(studySummaryLine.nps)}/s` : "--"}</span></div><button className="study-evaluation-toggle" type="button" aria-label="隐藏顶部评估" onClick={toggleStudyEvaluation}>当前评估 {studyEvaluationLabel}</button></section>}<Board pieces={studyPieces} selected={studySelected} lastMove={studyLastMove} analysisMoves={studyArrowMoves} activeAnalysis={studyArrowActiveIndex} flipped={boardFlipped} feedback={moveFeedback} riverText={riverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} onSquare={(square) => void moveStudy(square)}/></main>
+    </nav></header>{studyEvaluationVisible && <section className="study-engine-strip"><div><span>深度 {studySummaryLine?.depth ?? "--"}</span><span>节点 {studySummaryLine ? compactNumber(studySummaryLine.nodes) : "--"}</span><span>速度 {studySummaryLine ? `${compactNumber(studySummaryLine.nps)}/s` : "--"}</span></div><button className="study-evaluation-toggle" type="button" aria-label="隐藏顶部评估" onClick={toggleStudyEvaluation}>当前评估 {studyEvaluationLabel}</button></section>}<Board pieces={studyPieces} selected={studySelected} legalTargets={studyLegalTargets} lastMove={studyLastMove} analysisMoves={studyArrowMoves} activeAnalysis={studyArrowActiveIndex} flipped={boardFlipped} feedback={moveFeedback} riverText={riverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} onSquare={(square) => void moveStudy(square)} onMove={(from, to) => void moveStudyFromTo(from, to)}/></main>
     <aside className="study-sidebar">
       <nav className="study-move-nav" aria-label="拆棋着法导航"><button disabled={!studyCursor} aria-label="回到开始" title="回到开始" onClick={() => void navigateStudyMove(0)}><ChevronsLeft/></button><button disabled={!studyCursor} aria-label="上一步" title="上一步" onClick={() => void navigateStudyMove(studyCursor - 1)}><ChevronLeft/></button><button className={studyAutoPlaying ? "active" : ""} disabled={!studyMoves.length} aria-label={studyAutoPlaying ? "暂停播放棋谱" : "自动播放棋谱"} title={studyAutoPlaying ? "暂停播放棋谱" : "自动播放棋谱"} onClick={() => void toggleStudyAutoPlay()}>{studyAutoPlaying ? <Pause/> : <Play/>}</button><button disabled={studyCursor >= studyMoves.length} aria-label="下一步" title="下一步" onClick={() => void navigateStudyMove(studyCursor + 1)}><ChevronRight/></button><button disabled={studyCursor >= studyMoves.length} aria-label="最后一步" title="最后一步" onClick={() => void navigateStudyMove(studyMoves.length)}><ChevronsRight/></button></nav>
       <nav className="study-panel-tabs" role="tablist" aria-label="拆棋研究面板">{studyPanelItems.map(([value, label, Icon]) => <button key={value} role="tab" aria-selected={studyPanelTab === value} className={studyPanelTab === value ? "active" : ""} onClick={() => setStudyPanelTab(value)}><Icon/><span>{label}</span></button>)}</nav>

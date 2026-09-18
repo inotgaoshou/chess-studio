@@ -75,6 +75,26 @@
   pointer-events: none;
 }
 .board-square.hint::after { width: auto; aspect-ratio: auto; inset: 9%; }
+.board-square.legal-target::before {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  inset: 34%;
+  border-radius: 50%;
+  background: rgba(47, 143, 97, .42);
+  box-shadow: 0 0 0 6px rgba(47, 143, 97, .12);
+  pointer-events: none;
+}
+.board-square.drag-target::before {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  inset: 13%;
+  border: 3px solid #2f8f61;
+  border-radius: 50%;
+  background: rgba(47, 143, 97, .16);
+  pointer-events: none;
+}
 .piece {
   position: relative;
   z-index: 1;
@@ -92,6 +112,25 @@
   object-fit: contain;
   -webkit-backface-visibility: hidden;
   backface-visibility: hidden;
+}
+.xiangqi-board.dragging-piece {
+  cursor: grabbing;
+}
+.xiangqi-board.dragging-piece .board-square.drag-origin .piece {
+  opacity: .36;
+  transform: scale(.94);
+}
+.board-drag-ghost {
+  position: absolute;
+  z-index: 9;
+  left: var(--drag-x);
+  top: var(--drag-y);
+  width: 9.2%;
+  height: auto;
+  opacity: .86;
+  pointer-events: none;
+  transform: translate(-50%, -50%) scale(1.06);
+  filter: drop-shadow(0 8px 14px rgba(0, 0, 0, .28));
 }
 .board-square.selected::after,
 .board-square.last-from::before,
@@ -1217,6 +1256,27 @@ select,
   min-height:100dvh;
   overflow:hidden;
   overscroll-behavior:none;
+}
+
+html.touch-webview .board-shell,
+html.touch-webview .xiangqi-board,
+html.touch-webview .board-square,
+html.touch-webview .piece {
+  touch-action:none;
+}
+
+html.touch-webview .board-square {
+  min-width:44px;
+  min-height:44px;
+}
+
+html.touch-webview .study-command-bar > button,
+html.touch-webview .study-move-nav button,
+html.touch-webview .study-panel-tabs button,
+html.touch-webview .analysis-panel button,
+html.touch-webview .study-cloud-list button,
+html.touch-webview .study-move-cell {
+  touch-action:manipulation;
 }
 .training-layout,
 .study-workspace {

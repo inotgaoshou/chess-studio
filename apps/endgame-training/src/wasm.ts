@@ -49,9 +49,9 @@ export async function boardAt(fen: string, moves: string[], ruleMode: RuleMode =
   return { fen: state.fen, pieces: state.pieces, sideToMove: state.sideToMove ?? state.side_to_move ?? "", status: state.status, ruleMode: state.ruleMode, ruleStatus: state.ruleStatus, ruleReason: state.ruleReason };
 }
 
-export async function acceptsMove(fen: string, moves: string[], move: string) {
+export async function acceptsMove(fen: string, moves: string[], move: string, ruleMode: RuleMode = "domestic2020") {
   try {
-    await boardAt(fen, [...moves, move]);
+    await boardAt(fen, [...moves, move], ruleMode);
     return true;
   } catch {
     return false;
