@@ -1053,15 +1053,15 @@ class WebPlatform implements ChessPlatform {
   async generateGameReport(): Promise<GameReportDatasetDto> { throw new Error("Web 端不支持本地整局分析报告"); }
   async listTrainingTasks(): Promise<TrainingTaskDto[]> { throw new Error("Web 端暂不支持训练任务"); }
   async generateTrainingTasks(): Promise<TrainingGenerationResultDto> { throw new Error("Web 端暂不支持训练任务"); }
-  async getLearningProfile(): Promise<LearningProfile> { throw new Error("Web 端暂不支持 U10 学习档案"); }
-  async saveLearningProfile(): Promise<LearningProfile> { throw new Error("Web 端暂不支持 U10 学习档案"); }
-  async startGuidedAnalysis(): Promise<GuidedAnalysisStart> { throw new Error("Web 端暂不支持 U10 拆棋"); }
+  async getLearningProfile(): Promise<LearningProfile> { throw new Error("Web 端暂不支持专1学习档案"); }
+  async saveLearningProfile(): Promise<LearningProfile> { throw new Error("Web 端暂不支持专1学习档案"); }
+  async startGuidedAnalysis(): Promise<GuidedAnalysisStart> { throw new Error("Web 端暂不支持专1拆棋"); }
   async parseChineseLine(): Promise<ChineseLineParseResult> { throw new Error("Web 端暂不支持中文线路解析"); }
-  async submitGuidedAnalysis(): Promise<GuidedAnalysisSubmissionResult> { throw new Error("Web 端暂不支持 U10 拆棋"); }
-  async cancelGuidedAnalysis(): Promise<void> { throw new Error("Web 端暂不支持 U10 拆棋"); }
-  async generateDailyTrainingPlan(): Promise<DailyTrainingPlan> { throw new Error("Web 端暂不支持 U10 训练计划"); }
-  async getWeeklyLearningReport(): Promise<WeeklyLearningReport> { throw new Error("Web 端暂不支持 U10 周报"); }
-  async inferOpeningRepertoire(): Promise<OpeningRepertoire> { throw new Error("Web 端暂不支持 U10 布局画像"); }
+  async submitGuidedAnalysis(): Promise<GuidedAnalysisSubmissionResult> { throw new Error("Web 端暂不支持专1拆棋"); }
+  async cancelGuidedAnalysis(): Promise<void> { throw new Error("Web 端暂不支持专1拆棋"); }
+  async generateDailyTrainingPlan(): Promise<DailyTrainingPlan> { throw new Error("Web 端暂不支持专1训练计划"); }
+  async getWeeklyLearningReport(): Promise<WeeklyLearningReport> { throw new Error("Web 端暂不支持专1周报"); }
+  async inferOpeningRepertoire(): Promise<OpeningRepertoire> { throw new Error("Web 端暂不支持专1布局画像"); }
   async getTrainingSummary(): Promise<TrainingSummaryDto> { throw new Error("Web 端暂不支持训练总结"); }
   async importEndgameCbl(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
   async importEndgameCblBatch(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }

@@ -22,7 +22,7 @@ mod sync_service;
 mod training_service;
 mod ttxq_decoder;
 mod ttxq_sync;
-mod u10_learning;
+mod guided_learning;
 mod window_service;
 #[cfg(target_os = "windows")]
 mod windows_link;
@@ -72,7 +72,7 @@ use tauri::{Emitter, Manager, State};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::time::timeout;
-use u10_learning::{
+use guided_learning::{
     DailyTrainingPlanDto, GuidedAnalysisResultDto, GuidedEngineLine, OpeningRepertoireDto,
     OpeningSample, WeeklyLearningReportDto, classify_submission, daily_plan,
     infer_opening_repertoire, weekly_report,

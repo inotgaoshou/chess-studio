@@ -23,6 +23,8 @@ export const BOARD_PIECE_SCALE = 0.86;
 export const BOARD_PIECE_DIAMETER = BOARD_CELL_WIDTH * BOARD_PIECE_SCALE;
 export const BOARD_INTERSECTION_COUNT_ROWS = 10;
 export const BOARD_INTERSECTION_COUNT_COLS = 9;
+export const MAIN_BOARD_ART_INSET_X = 0;
+export const MAIN_BOARD_ART_INSET_Y = 0;
 
 export type BoardPoint = { x: number; y: number };
 export type BoardPercentPosition = { left: string; top: string };
@@ -54,8 +56,8 @@ const BOARD_INTERSECTION_LAYOUTS: Readonly<Record<BoardGeometrySkin, BoardInters
     rows: [67, 196, 319, 437, 558, 678, 798, 917, 1041, 1170],
   },
   "qingxin-zhuyun": {
-    columns: [87, 205, 326, 443, 560, 679, 795, 915, 1031],
-    rows: [85, 201, 317, 435, 554, 680, 795, 910, 1028, 1145],
+    columns: [83, 213, 330, 444, 559, 675, 789, 906, 1035],
+    rows: [82, 192, 306, 425, 546, 676, 791, 909, 1023, 1136],
   },
 };
 
@@ -108,6 +110,33 @@ export function boardIntersectionStyle(square: BoardSquare, reversed = false, sk
  */
 export function boardCellStyle(square: BoardSquare, reversed = false, skin?: string): BoardPercentPosition {
   const point = boardIntersectionPoint(square, reversed, skin);
+  return {
+    left: `${(point.x - BOARD_CELL_WIDTH / 2) / BOARD_ART_WIDTH * 100}%`,
+    top: `${(point.y - BOARD_CELL_HEIGHT / 2) / BOARD_ART_HEIGHT * 100}%`,
+  };
+}
+
+function insetMainBoardPoint(point: BoardPoint): BoardPoint {
+  return {
+    x: MAIN_BOARD_ART_INSET_X + point.x * (BOARD_ART_WIDTH - MAIN_BOARD_ART_INSET_X * 2) / BOARD_ART_WIDTH,
+    y: MAIN_BOARD_ART_INSET_Y + point.y * (BOARD_ART_HEIGHT - MAIN_BOARD_ART_INSET_Y * 2) / BOARD_ART_HEIGHT,
+  };
+}
+
+export function mainBoardIntersectionPoint(square: BoardSquare, reversed = false, skin?: string): BoardPoint {
+  return insetMainBoardPoint(boardIntersectionPoint(square, reversed, skin));
+}
+
+export function mainBoardIntersectionStyle(square: BoardSquare, reversed = false, skin?: string): BoardPercentPosition {
+  const point = mainBoardIntersectionPoint(square, reversed, skin);
+  return {
+    left: `${point.x / BOARD_ART_WIDTH * 100}%`,
+    top: `${point.y / BOARD_ART_HEIGHT * 100}%`,
+  };
+}
+
+export function mainBoardCellStyle(square: BoardSquare, reversed = false, skin?: string): BoardPercentPosition {
+  const point = mainBoardIntersectionPoint(square, reversed, skin);
   return {
     left: `${(point.x - BOARD_CELL_WIDTH / 2) / BOARD_ART_WIDTH * 100}%`,
     top: `${(point.y - BOARD_CELL_HEIGHT / 2) / BOARD_ART_HEIGHT * 100}%`,

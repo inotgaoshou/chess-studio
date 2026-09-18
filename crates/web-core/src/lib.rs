@@ -2,7 +2,10 @@ use manual_format::import_cbl_library;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use wasm_bindgen::prelude::*;
-use xiangqi_core::{Board, Color, GameStatus, Move, PieceKind, STARTING_FEN, Square};
+use xiangqi_core::{
+    Board, Color, DomesticRuleState, GameStatus, Move, PieceKind, RuleMode, RuleVerdict, Square,
+    STARTING_FEN,
+};
 use xiangqi_manual::{ManualTree, MoveNode};
 
 #[derive(Debug, Deserialize)]
@@ -82,6 +85,9 @@ struct BoardDto {
     fen: String,
     side_to_move: &'static str,
     status: &'static str,
+    rule_mode: &'static str,
+    rule_status: String,
+    rule_reason: String,
     pieces: Vec<PieceDto>,
     history: Vec<MoveDto>,
     continuation: Vec<MoveDto>,
@@ -113,6 +119,7 @@ pub struct WebGame {
     starting_fen: String,
     tree: ManualTree,
     current_node: Option<Uuid>,
+    rule_mode: RuleMode,
 }
 
 /// Parse a local CCBridge library in the browser/native WebView. The caller is
@@ -132,7 +139,7 @@ pub fn chinese_line(starting_fen: &str, moves: Vec<String>) -> Result<String, Js
 #[wasm_bindgen]
 impl WebGame {
     #[wasm_bindgen(constructor)]
-    pub fn new(fen: Option<String>) -> Result<WebGame, JsValue> {
+    pub fn new(fen: Option<String>, rule_mode: Option<String>) -> Result<WebGame, JsValue> {
         let starting_fen = fen.unwrap_or_else(|| STARTING_FEN.to_owned());
         let board = Board::from_fen(&starting_fen).map_err(js_error)?;
         Ok(Self {
@@ -140,6 +147,7 @@ impl WebGame {
             starting_fen,
             tree: ManualTree::new(),
             current_node: None,
+            rule_mode: parse_rule_mode(rule_mode.as_deref()),
         })
     }
 
@@ -151,6 +159,7 @@ impl WebGame {
             starting_fen: fen,
             tree: ManualTree::with_root(parse_uuid(root_id)?),
             current_node: None,
+            rule_mode: RuleMode::Domestic2020,
         })
     }
 
@@ -168,6 +177,7 @@ impl WebGame {
             starting_fen: snapshot.starting_fen,
             tree: snapshot.tree,
             current_node: snapshot.current_node,
+            rule_mode: RuleMode::Domestic2020,
         })
     }
 
@@ -330,6 +340,13 @@ fn js_error(error: impl std::fmt::Display) -> JsValue {
     JsValue::from_str(&error.to_string())
 }
 
+fn parse_rule_mode(value: Option<&str>) -> RuleMode {
+    match value {
+        Some("asianAxf") => RuleMode::AsianAxf,
+        _ => RuleMode::Domestic2020,
+    }
+}
+
 fn board_at(starting_fen: &str, tree: &ManualTree, node_id: Option<Uuid>) -> Result<Board, String> {
     let mut board = Board::from_fen(starting_fen).map_err(|error| error.to_string())?;
     if let Some(node_id) = node_id {
@@ -338,6 +355,74 @@ fn board_at(starting_fen: &str, tree: &ManualTree, node_id: Option<Uuid>) -> Res
         }
     }
     Ok(board)
+}
+
+fn rule_verdict_for(game: &WebGame) -> Result<RuleVerdict, String> {
+    let moves = if let Some(node_id) = game.current_node {
+        game.tree
+            .line_to(node_id)
+            .map_err(|error| error.to_string())?
+    } else {
+        Vec::new()
+    };
+    let (state, board) = DomesticRuleState::from_fen_and_moves(&game.starting_fen, &moves)
+        .map_err(|error| error.to_string())?;
+    Ok(state.evaluate_with_mode(&board, game.rule_mode))
+}
+
+fn side_label(side: Color) -> &'static str {
+    match side {
+        Color::Red => "红方",
+        Color::Black => "黑方",
+    }
+}
+
+fn rule_status_label(verdict: RuleVerdict) -> String {
+    match verdict {
+        RuleVerdict::Ongoing => "进行中".into(),
+        RuleVerdict::Check => "将军".into(),
+        RuleVerdict::Checkmate { loser } => format!("{}被将死", side_label(loser)),
+        RuleVerdict::Stalemate { loser } => format!("{}困毙", side_label(loser)),
+        RuleVerdict::DrawByNaturalLimit => "自然限着和棋".into(),
+        RuleVerdict::PendingRepetition => "重复待判".into(),
+        RuleVerdict::PendingAsianRepetition => "亚洲规则复杂重复待判".into(),
+        RuleVerdict::LossByPerpetualCheck { loser } => {
+            format!("{}长将判负", side_label(loser))
+        }
+        RuleVerdict::LossByPerpetualChase { loser } => {
+            format!("{}长捉判负", side_label(loser))
+        }
+        RuleVerdict::DrawByRepetitionMvp => "重复局面和棋".into(),
+    }
+}
+
+fn rule_reason(verdict: RuleVerdict, mode: RuleMode) -> String {
+    let rule_name = mode.name();
+    match verdict {
+        RuleVerdict::Ongoing => format!("{rule_name}：对局进行中"),
+        RuleVerdict::Check => format!("{rule_name}：当前为将军局面"),
+        RuleVerdict::Checkmate { loser } => {
+            format!("{}被将死，按{rule_name}判负", side_label(loser))
+        }
+        RuleVerdict::Stalemate { loser } => format!("{}无合法着法，被困毙判负", side_label(loser)),
+        RuleVerdict::DrawByNaturalLimit => "连续60回合未吃子，按自然限着判和".into(),
+        RuleVerdict::PendingRepetition => {
+            "重复局面达到三次，进入待判局面；复杂棋例建议变着或交由裁判判定".into()
+        }
+        RuleVerdict::PendingAsianRepetition => {
+            "亚洲规则复杂重复待判；当前版本不细分有根、假根与联合捉子".into()
+        }
+        RuleVerdict::LossByPerpetualCheck { loser } => {
+            format!("{}单方长将，按{rule_name}判负", side_label(loser))
+        }
+        RuleVerdict::LossByPerpetualChase { loser } => {
+            format!(
+                "{}稳定长捉同一无保护子，按{rule_name}判负",
+                side_label(loser)
+            )
+        }
+        RuleVerdict::DrawByRepetitionMvp => "重复局面双方不变，按当前规则判和".into(),
+    }
 }
 
 fn move_dto(node: &MoveNode, board: &Board) -> Result<MoveDto, String> {
@@ -487,6 +572,7 @@ fn board_dto(game: &WebGame) -> Result<BoardDto, String> {
     } else {
         Vec::new()
     };
+    let verdict = rule_verdict_for(game)?;
     Ok(BoardDto {
         fen: game.board.to_fen(),
         side_to_move: if game.board.side_to_move() == Color::Red {
@@ -500,6 +586,9 @@ fn board_dto(game: &WebGame) -> Result<BoardDto, String> {
             GameStatus::Checkmate => "将死",
             GameStatus::Stalemate => "困毙",
         },
+        rule_mode: game.rule_mode.code(),
+        rule_status: rule_status_label(verdict),
+        rule_reason: rule_reason(verdict, game.rule_mode),
         pieces,
         history,
         continuation,
@@ -516,7 +605,7 @@ mod tests {
 
     #[test]
     fn game_round_trips_with_variations_and_comments() {
-        let mut game = WebGame::new(None).unwrap();
+        let mut game = WebGame::new(None, None).unwrap();
         let first: serde_json::Value =
             serde_json::from_str(&game.play_move("a0a1").unwrap()).unwrap();
         let first_id = first["currentNode"].as_str().unwrap();
@@ -540,7 +629,7 @@ mod tests {
 
     #[test]
     fn state_json_exposes_chinese_notation_and_last_move_metadata() {
-        let mut game = WebGame::new(None).unwrap();
+        let mut game = WebGame::new(None, None).unwrap();
         game.play_move("h2e2").unwrap();
         let state: serde_json::Value = serde_json::from_str(&game.state_json().unwrap()).unwrap();
         let mv = &state["history"][0];
@@ -553,8 +642,20 @@ mod tests {
     }
 
     #[test]
+    fn state_json_exposes_rule_mode_status_and_reason() {
+        let game = WebGame::new(None, Some("asianAxf".into())).unwrap();
+        let state: serde_json::Value = serde_json::from_str(&game.state_json().unwrap()).unwrap();
+        assert_eq!(state["ruleMode"], "asianAxf");
+        assert_eq!(state["ruleStatus"], "进行中");
+        assert!(state["ruleReason"]
+            .as_str()
+            .unwrap()
+            .contains("亚洲象棋规则"));
+    }
+
+    #[test]
     fn state_json_keeps_mainline_continuation_after_navigation() {
-        let mut game = WebGame::new(None).unwrap();
+        let mut game = WebGame::new(None, None).unwrap();
         let first: serde_json::Value =
             serde_json::from_str(&game.play_move("h2e2").unwrap()).unwrap();
         let first_id = first["currentNode"].as_str().unwrap().to_owned();
@@ -588,7 +689,7 @@ mod tests {
 
     #[test]
     fn remote_moves_are_projected_with_their_original_ids() {
-        let mut game = WebGame::new(None).unwrap();
+        let mut game = WebGame::new(None, None).unwrap();
         let node_id = Uuid::new_v4();
         let payload = serde_json::json!({
             "nodeId": node_id,
@@ -611,7 +712,7 @@ mod tests {
 
     #[test]
     fn concurrent_remote_move_is_appended_after_reordered_branches() {
-        let mut game = WebGame::new(None).unwrap();
+        let mut game = WebGame::new(None, None).unwrap();
         let root_id = game.tree.root_id();
         let first = Uuid::new_v4();
         let second = Uuid::new_v4();
@@ -659,7 +760,7 @@ mod tests {
     #[cfg(target_arch = "wasm32")]
     #[wasm_bindgen_test::wasm_bindgen_test]
     fn illegal_moves_are_rejected_without_changing_state() {
-        let mut game = WebGame::new(None).unwrap();
+        let mut game = WebGame::new(None, None).unwrap();
         let before = game.state_json().unwrap();
         assert!(game.play_move("b0d1").is_err());
         assert_eq!(game.state_json().unwrap(), before);

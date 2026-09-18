@@ -9,6 +9,8 @@ import {
   boardCanonicalSquare,
   boardDisplaySquare,
   boardSkinFromAssetPath,
+  mainBoardCellStyle,
+  mainBoardIntersectionPoint,
 } from "./boardGeometry";
 
 describe("boardGeometry", () => {
@@ -41,8 +43,19 @@ describe("boardGeometry", () => {
     const intersection = boardIntersectionPoint(square, false, "qingxin-zhuyun");
     const cell = boardCellStyle(square, false, "qingxin-zhuyun");
 
-    expect(intersection).toEqual({ x: 205, y: 85 });
-    expect(boardIntersectionPoint(square, true, "qingxin-zhuyun")).toEqual({ x: 915, y: 1145 });
+    expect(intersection).toEqual({ x: 213, y: 82 });
+    expect(boardIntersectionPoint(square, true, "qingxin-zhuyun")).toEqual({ x: 906, y: 1136 });
+    expect(Number.parseFloat(cell.left) / 100 * BOARD_ART_WIDTH + BOARD_CELL_WIDTH / 2).toBeCloseTo(intersection.x, 8);
+    expect(Number.parseFloat(cell.top) / 100 * BOARD_ART_HEIGHT + BOARD_CELL_WIDTH / 2).toBeCloseTo(intersection.y, 8);
+  });
+
+  it("keeps main-board pieces, hit cells, and visual markers on the same intersections", () => {
+    const square = { row: 0, col: 0 };
+    const native = boardIntersectionPoint(square, false, "qingxin-zhuyun");
+    const intersection = mainBoardIntersectionPoint(square, false, "qingxin-zhuyun");
+    const cell = mainBoardCellStyle(square, false, "qingxin-zhuyun");
+
+    expect(intersection).toEqual(native);
     expect(Number.parseFloat(cell.left) / 100 * BOARD_ART_WIDTH + BOARD_CELL_WIDTH / 2).toBeCloseTo(intersection.x, 8);
     expect(Number.parseFloat(cell.top) / 100 * BOARD_ART_HEIGHT + BOARD_CELL_WIDTH / 2).toBeCloseTo(intersection.y, 8);
   });

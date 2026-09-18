@@ -157,15 +157,15 @@ describe("LinkSessionDialog", () => {
     expect(props.onStart).not.toHaveBeenCalled();
   });
 
-  it("offers U10 training only after a screenshot position has been recognized", async () => {
+  it("offers professional-level training only after a screenshot position has been recognized", async () => {
     const { props, user } = renderLinkDialog();
 
     await user.click(screen.getByRole("button", { name: /截图\/照片/ }));
-    expect(screen.queryByRole("button", { name: "导入并开始 U10 拆棋" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "导入并开始专1拆棋" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "选择图片识别" }));
 
-    expect(await screen.findByRole("button", { name: "导入并开始 U10 拆棋" })).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "导入并开始 U10 拆棋" }));
+    expect(await screen.findByRole("button", { name: "导入并开始专1拆棋" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "导入并开始专1拆棋" }));
     expect(props.onStartTraining).toHaveBeenCalledWith(expect.any(String), "天天象棋截图拆棋", false);
   });
 
@@ -333,7 +333,7 @@ describe("LinkSessionDialog", () => {
     expect(screen.getByRole("button", { name: "黑方在下" }).className).toContain("active");
   });
 
-  it("passes the selected screenshot view into U10 training", async () => {
+  it("passes the selected screenshot view into professional-level training", async () => {
     const { props, user } = renderLinkDialog();
     props.pieceAsset = () => "/skins/default/rn.png";
     props.onResolveScreenshotMove = vi.fn(async () => ({ status: "unique" as const, orientation: "blackAtBottom" as const, currentPieces: [], currentSideToMove: "红方" as const, candidates: [{ beforeFen: "before", afterFen: "after", sideToMove: "黑方" as const, captured: false, fen: "after", notation: "马八进七", movedBy: "红方" as const, from: { row: 9, col: 1 }, to: { row: 7, col: 2 }, pieces: [], status: "进行中" }] }));
@@ -341,7 +341,7 @@ describe("LinkSessionDialog", () => {
     render(<LinkSessionDialog {...props} initialSource="imageImport"/>);
 
     await user.click(screen.getByRole("button", { name: "选择图片识别" }));
-    await user.click(await screen.findByRole("button", { name: "导入并开始 U10 拆棋" }));
+    await user.click(await screen.findByRole("button", { name: "导入并开始专1拆棋" }));
 
     expect(props.onStartTraining).toHaveBeenCalledWith(expect.any(String), "天天象棋截图拆棋", true);
   });

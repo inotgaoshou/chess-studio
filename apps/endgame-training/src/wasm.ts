@@ -1,5 +1,5 @@
 import { Capacitor, registerPlugin } from "@capacitor/core";
-import type { BoardState, CblLibrary } from "./types";
+import type { BoardState, CblLibrary, RuleMode } from "./types";
 
 type NativeCloudBook = {
   query(options: { fen: string }): Promise<{ payload: string }>;
@@ -20,7 +20,7 @@ type Core = {
   default(): Promise<void>;
   parseCblLibrary(bytes: Uint8Array): string;
   chineseLine(fen: string, moves: string[]): string;
-  WebGame: { new(fen?: string): { playMove(iccs: string): string; stateJson(): string } };
+  WebGame: { new(fen?: string, ruleMode?: RuleMode): { playMove(iccs: string): string; stateJson(): string } };
 };
 
 let corePromise: Promise<Core> | undefined;
@@ -41,12 +41,12 @@ export async function chineseLine(fen: string, moves: string[]) {
   return JSON.parse((await trainingCore()).chineseLine(fen, moves)) as string[];
 }
 
-export async function boardAt(fen: string, moves: string[]): Promise<BoardState> {
+export async function boardAt(fen: string, moves: string[], ruleMode: RuleMode = "domestic2020"): Promise<BoardState> {
   const core = await trainingCore();
-  const game = new core.WebGame(fen);
+  const game = new core.WebGame(fen, ruleMode);
   for (const move of moves) game.playMove(move);
-  const state = JSON.parse(game.stateJson()) as { fen: string; pieces: BoardState["pieces"]; side_to_move: string; status: string };
-  return { fen: state.fen, pieces: state.pieces, sideToMove: state.side_to_move, status: state.status };
+  const state = JSON.parse(game.stateJson()) as { fen: string; pieces: BoardState["pieces"]; sideToMove?: string; side_to_move?: string; status: string; ruleMode?: RuleMode; ruleStatus?: string; ruleReason?: string };
+  return { fen: state.fen, pieces: state.pieces, sideToMove: state.sideToMove ?? state.side_to_move ?? "", status: state.status, ruleMode: state.ruleMode, ruleStatus: state.ruleStatus, ruleReason: state.ruleReason };
 }
 
 export async function acceptsMove(fen: string, moves: string[], move: string) {

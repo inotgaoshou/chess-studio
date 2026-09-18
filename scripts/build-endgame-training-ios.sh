@@ -7,6 +7,10 @@ pnpm_bin="${PNPM_BIN:-pnpm}"
 action="${1:-open}"
 project="$app_dir/ios/App/App.xcodeproj"
 scheme="App"
+pikafish_ios_root="${PIKAFISH_IOS_ROOT:-$root_dir/../pikafish-ios}"
+expected_pikafish_tag="${PIKAFISH_TAG:-Pikafish-2026-09-06}"
+expected_pikafish_source_revision="4c17cee11f888ae1d48a9494f2e2239f019f0a1f"
+expected_pikafish_nnue_sha256="7d13d73569a9b571ba0eb20cf1596247bc2a42738967e61afef6482b231e900e"
 
 case "$action" in
   open|check|signed-build|archive|ipa) ;;
@@ -32,6 +36,53 @@ require_full_xcode() {
 sync_web_assets() {
   "$pnpm_bin" --dir "$app_dir" mobile:build
   "$pnpm_bin" --dir "$app_dir" exec cap sync ios
+}
+
+require_file() {
+  local path="$1"
+  local description="$2"
+  if [[ ! -f "$path" ]]; then
+    echo "Missing $description: $path" >&2
+    exit 1
+  fi
+}
+
+require_executable() {
+  local path="$1"
+  local description="$2"
+  require_file "$path" "$description"
+  if [[ ! -x "$path" ]]; then
+    echo "$description is not executable: $path" >&2
+    exit 1
+  fi
+}
+
+require_text() {
+  local path="$1"
+  local expected="$2"
+  local description="$3"
+  if ! grep -Fq "$expected" "$path"; then
+    echo "$description does not mention expected text." >&2
+    echo "  file: $path" >&2
+    echo "  expected text: $expected" >&2
+    exit 1
+  fi
+}
+
+require_pikafish_ios_distribution_materials() {
+  require_executable "$pikafish_ios_root/scripts/xcode-build-engine.sh" "Pikafish iOS engine build script"
+  require_executable "$pikafish_ios_root/scripts/xcode-embed-resources.sh" "Pikafish iOS resource embed script"
+  require_file "$root_dir/THIRD_PARTY_NOTICES.md" "third-party notices"
+  require_file "$app_dir/README.md" "endgame training release notes"
+  require_text "$pikafish_ios_root/scripts/xcode-build-engine.sh" "$expected_pikafish_source_revision" "Pikafish iOS engine build script"
+  require_text "$pikafish_ios_root/scripts/xcode-embed-resources.sh" "Copying.txt" "Pikafish iOS resource embed script"
+  require_text "$pikafish_ios_root/scripts/xcode-embed-resources.sh" "NNUE-License" "Pikafish iOS resource embed script"
+  require_text "$pikafish_ios_root/scripts/xcode-embed-resources.sh" "RESOURCE-MANIFEST" "Pikafish iOS resource embed script"
+  require_text "$root_dir/THIRD_PARTY_NOTICES.md" "$expected_pikafish_source_revision" "third-party notices"
+  require_text "$root_dir/THIRD_PARTY_NOTICES.md" "$expected_pikafish_nnue_sha256" "third-party notices"
+  require_text "$app_dir/README.md" "GPLv3" "endgame training release notes"
+  export PIKAFISH_TAG="$expected_pikafish_tag"
+  export PIKAFISH_IOS_ROOT="$pikafish_ios_root"
 }
 
 archive_app() {
@@ -83,6 +134,11 @@ export_ipa() {
 }
 
 require_full_xcode
+case "$action" in
+  signed-build|archive|ipa)
+    require_pikafish_ios_distribution_materials
+    ;;
+esac
 sync_web_assets
 
 case "$action" in

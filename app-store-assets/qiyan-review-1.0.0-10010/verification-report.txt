@@ -1,0 +1,42 @@
+Qiyan 1.0.0 (10010) review-packet verification
+Verified: 2026-09-09 Asia/Shanghai
+
+Submitted archive
+- Marketing version: 1.0.0
+- Build: 10010
+- Bundle ID: cn.xiangqi.endgame.training
+- Platform: physical iPhone/iPad arm64
+- Minimum OS: iOS 14.0
+
+Physical recording
+- Device: iPhone 14
+- OS: iOS 26.6.1
+- Duration: 165.592993 seconds
+- Video: H.264, 1170x2532, 30 fps
+- Audio: AAC
+- File size: 14,237,196 bytes
+- SHA-256: b449306f8b6b76f80acb370f6972cb1c4b30444f9899401a997db4650ee96153
+
+Review CBL attachment
+- Library title: 象棋实用残局第二辑
+- Declared records: 512
+- Importable endgame problems: 300
+- Parser warnings: 0
+- First problem: 第1局 兵士巧胜单士
+- File size: 1,436,736 bytes
+- SHA-256: aefa4dadeb5141af2d6389198869f24e84124e9321b5b15a0b8fe75058dbf56e
+
+Public pages
+- HTTP 200: https://inotgaoshou.github.io/chess-studio/
+- HTTP 200: https://inotgaoshou.github.io/chess-studio/privacy.html
+
+Commands completed
+- cargo test -p manual-format: 20 passed
+- pnpm --dir apps/endgame-training build: passed
+- verify-review-packet.sh: passed
+
+Manual blockers before submission
+- Confirm authorization to provide the selected CBL file to Apple for review.
+- Complete physical iPad QA because build 10010 supports iPad.
+- Confirm App Store privacy answers and screenshots.
+- Paste the response, attach both files, and submit only after final user confirmation.

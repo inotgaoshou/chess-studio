@@ -526,12 +526,12 @@ pub struct LearningProfile {
 }
 
 impl LearningProfile {
-    pub fn u10_default() -> Self {
+    pub fn guided_default() -> Self {
         let now = chrono::Utc::now().to_rfc3339();
         Self {
             id: "default".into(),
             child_name: "棋手".into(),
-            level: "成人业余".into(),
+            level: "专1".into(),
             age_group: "成人".into(),
             session_minutes: 40,
             coach_mode: "自我复盘".into(),
@@ -3130,7 +3130,7 @@ impl LocalStore {
         Ok(stored
             .as_deref()
             .and_then(|json| serde_json::from_str(json).ok())
-            .unwrap_or_else(LearningProfile::u10_default))
+            .unwrap_or_else(LearningProfile::guided_default))
     }
 
     pub fn save_learning_profile(
@@ -7040,9 +7040,9 @@ mod tests {
     }
 
     #[test]
-    fn u10_profile_and_guided_attempts_survive_storage_round_trips() {
+    fn guided_profile_and_attempts_survive_storage_round_trips() {
         let mut store = LocalStore::open_in_memory().unwrap();
-        let mut profile = LearningProfile::u10_default();
+        let mut profile = LearningProfile::guided_default();
         profile.child_name = "小明".into();
         store.save_learning_profile(&profile).unwrap();
         assert_eq!(store.learning_profile().unwrap().child_name, "小明");
@@ -7080,7 +7080,7 @@ mod tests {
                 &submission,
                 84,
                 "direction",
-                "家长已陪练",
+                "教练已陪练",
             )
             .unwrap();
         assert_eq!(attempt.review_round, 1);
@@ -7090,7 +7090,7 @@ mod tests {
     }
 
     #[test]
-    fn u10_mastery_requires_three_high_scores_and_two_hint_free_retests() {
+    fn guided_mastery_requires_three_high_scores_and_two_hint_free_retests() {
         let mut store = LocalStore::open_in_memory().unwrap();
         let task_id = Uuid::new_v4();
         let mut submission = GuidedAnalysisSubmission::default();

@@ -417,7 +417,7 @@ export const FALLBACK_BUILTIN_OPENING_BOOK_MANIFEST: BuiltinOpeningBookManifestD
       shortName: "学习精选",
       kind: "learning",
       fileName: "02_learning_top3.pfBook",
-      description: "每个局面最多保留 3 个候选，默认用于孩子复盘和背布局。",
+      description: "每个局面最多保留 3 个候选，默认用于专1复盘和背布局。",
       rowCount: 2148653,
       positionCount: 2120232,
       maxCandidatesPerPosition: 3,
@@ -777,7 +777,7 @@ export type LearningProfile = {
   id: string;
   childName: string;
   level: string;
-  ageGroup: "U10" | string;
+  ageGroup: "U10" | "成人" | string;
   sessionMinutes: number;
   coachMode: string;
   cycleWeeks: number;

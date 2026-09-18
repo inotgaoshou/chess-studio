@@ -1029,13 +1029,13 @@ describe("ReviewWorkspace", () => {
   });
 
   it("opens training and records a completed task", async () => {
-    const onStartU10 = vi.fn();
-    const props = renderWorkspace({ trainingTasks: [trainingTask], onStartU10 });
+    const onStartGuidedTraining = vi.fn();
+    const props = renderWorkspace({ trainingTasks: [trainingTask], onStartGuidedTraining });
     await userEvent.click(screen.getByRole("tab", { name: "训练" }));
     expect(screen.getByText("这几题怎样选出来？")).toBeTruthy();
     expect(screen.getByText(/本着使己方局面下降至少 0.80 分/)).toBeTruthy();
-    await userEvent.click(screen.getByRole("button", { name: "开始拆棋" }));
-    expect(onStartU10).toHaveBeenCalledWith("move-1");
+    await userEvent.click(screen.getByRole("button", { name: "专1拆棋" }));
+    expect(onStartGuidedTraining).toHaveBeenCalledWith("move-1");
     await userEvent.click(screen.getByRole("checkbox", { name: /复练中路出子/ }));
     expect(props.onCompleteTraining).toHaveBeenCalledWith("task-1", true);
   });

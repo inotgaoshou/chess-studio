@@ -1451,7 +1451,7 @@ pub(crate) fn submit_guided_analysis(
     if session.game_id != model.game_id
         || session.report_signature != report_line_signature(&model.tree, model.current_node)?
     {
-        return Err("棋谱已变化，请从当前问题局面重新开始 U10 拆棋".into());
+        return Err("棋谱已变化，请从当前问题局面重新开始专1拆棋".into());
     }
     let result = classify_submission(request.session_id, &request.submission, request.lines);
     let result_json = serde_json::to_string(&result).map_err(|error| error.to_string())?;
@@ -1465,7 +1465,7 @@ pub(crate) fn submit_guided_analysis(
                     game_id,
                     &session.report_signature,
                     node_id,
-                    "U10 引导拆棋",
+                    "专1拆棋",
                     "先独立判断威胁、强制着和走一思三候选，再用 Pikafish 核对。",
                     Some(&session.phase),
                     &result.theory_signals,

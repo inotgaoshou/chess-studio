@@ -172,12 +172,12 @@ describe("LinkMiniBoard", () => {
         selectedSquare={{ row: 6, col: 4 }}
         pieces={pieces}
         arrows={[]}
-        boardAriaLabel="U10 临时推演棋盘"
+        boardAriaLabel="专1临时推演棋盘"
         pieceAsset={() => "/piece.png"}
       />,
     );
 
-    expect(screen.getByLabelText("U10 临时推演棋盘")).toBeTruthy();
+    expect(screen.getByLabelText("专1临时推演棋盘")).toBeTruthy();
     expect(screen.getByLabelText("已选起点")).toBeTruthy();
     expect(view.container.querySelector(".link-mini-selected-square")).not.toBeNull();
     expect(view.container.querySelector(".link-mini-last-arrow")).toBeNull();

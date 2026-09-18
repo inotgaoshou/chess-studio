@@ -82,7 +82,7 @@ export function UserManualDialog({ appVersion = "1.0.0", markdown, onClose }: Pr
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           components={{
-            h1: ({ children }) => <div className="user-manual-hero"><span>XIANGQI STUDIO</span><h1>{children}</h1><p>从一盘真实棋谱开始，把分析结果变成孩子能够复练的任务。</p></div>,
+            h1: ({ children }) => <div className="user-manual-hero"><span>XIANGQI STUDIO</span><h1>{children}</h1><p>从一盘真实棋谱开始，把分析结果变成棋手能够复练的任务。</p></div>,
             h2: ({ children }) => {
               const title = textFromChildren(children);
               return <h2 id={headingId(title)} tabIndex={-1}>{children}</h2>;

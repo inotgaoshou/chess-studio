@@ -1,0 +1,8 @@
+Pikafish release: 2026-09-06
+Source commit: 4c17cee11f888ae1d48a9494f2e2239f019f0a1f
+Android ABI: arm64-v8a
+Original executable: Pikafish-Android-arm64-universal
+Packaged executable: lib/arm64-v8a/libpikafish.so
+Executable SHA-256: 6c06b8752e10c1ed605fa836d2c9bbf885e9c402b216023040ddf4586f4320b1
+NNUE file: pikafish.nnue
+NNUE SHA-256: 7d13d73569a9b571ba0eb20cf1596247bc2a42738967e61afef6482b231e900e

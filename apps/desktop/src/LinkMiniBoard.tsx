@@ -352,7 +352,7 @@ export function LinkMiniBoard({ pieces, arrows, lastMove, sideToMove, reversed =
   const safeArrowVisualScale = Number.isFinite(arrowVisualScale) ? clamp(arrowVisualScale, .55, 1.2) : 1;
   const lastSideClass = lastMove?.movedBy === "黑方" ? "black" : lastMove?.movedBy === "红方" ? "red" : "";
   // Corner markers identify squares, not the side that moved. Keeping them
-  // red in screenshot/U10 previews matches the main board and avoids a black
+  // red in screenshot/guided previews matches the main board and avoids a black
   // move silently switching the source/target affordance to blue.
   const markerColorClass = markerStyle === "corner" ? "red" : markerStyle === "tiantian" ? "tiantian" : lastSideClass;
   const markerStyleClass = markerStyle === "corner" ? "corner-marker" : markerStyle === "tiantian" ? "tiantian-marker" : "";

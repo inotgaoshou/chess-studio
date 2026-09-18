@@ -12,6 +12,8 @@ Android 版还提供“AI 拆棋”：对当前局面进行本地 MultiPV 分析
 
 内置资源位于 `android/app/src/main/jniLibs/arm64-v8a/libpikafish.so` 和 `android/app/src/main/assets/pikafish/`。发布脚本会校验固定 SHA-256，许可证和资源清单随 APK 分发。由于引擎仅提供 arm64 版本，纯 32 位 ARM 设备与 x86 模拟器不受支持。
 
+分发任何内置 Pikafish/NNUE 的 APK 或 IPA 前，必须补齐并核对 GPLv3 材料：Pikafish `Copying.txt`、`NNUE-License.md`、`RESOURCE-MANIFEST.txt`、`THIRD_PARTY_NOTICES.md`、Pikafish 版本、源码提交、对应源码获取方式、构建脚本说明和资源 SHA-256。发布说明、支持页和应用内关于信息应与这些材料保持一致。不能混入 Fairy-Stockfish、其他 NNUE、未知来源引擎或构建时网络下载的替换引擎。
+
 ## 开发
 
 需要 Node 22+、Rust/WASM 工具链、Android SDK API 35，以及 JDK 21：

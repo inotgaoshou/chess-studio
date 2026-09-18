@@ -2,7 +2,7 @@
 
 > 混合分析迁移状态见 [`pikafish-hybrid-analysis.md`](pikafish-hybrid-analysis.md)。当前主应用发布包仍执行本文件的云端分析边界；在 JNI/iOS 原生库、Tauri mobile bridge 和真机资源校验全部通过前，不把 Android 训练应用里的 ELF 可执行文件视为主应用原生引擎。
 
-本项目的移动端是轻量版：复用现有 Web/PWA 工作台，不把桌面 Tauri/Rust 后端、Pikafish、NNUE、YOLO 连线模型或系统窗口能力搬到手机里。这样 APK/IPA 的体积和审核风险都可控，手机端主要承担打谱、分支树、IndexedDB 离线缓存、云端分析、同步和大师棋谱查询。
+本项目的主应用移动端是轻量版：复用现有 Web/PWA 工作台，不把桌面 Tauri/Rust 后端、Pikafish、NNUE、YOLO 连线模型或系统窗口能力搬到手机里。这样 APK/IPA 的体积和审核风险都可控，手机端主要承担随身打谱、分支树、IndexedDB 离线缓存、云端分析、同步和大师棋谱查询。独立残局训练 App 是另一条发布线，可内置移动端 Pikafish 做本地专项训练，但必须按 GPLv3 完成源码、许可、哈希和构建材料校验。
 
 本轮选择 Capacitor 作为移动壳，而不是直接启用 Tauri mobile。原因是当前桌面后端已经绑定 SQLite、本地 keyring、ONNX/YOLO、截图/窗口控制、PDF/GIF、本地引擎进程等桌面能力；移动端目标是复用 Web/PWA，而不是把这些 Rust 桌面能力裁剪到 iOS/Android。等后端领域拆分稳定后，如果确实需要原生移动 Rust 能力，再评估 Tauri mobile。
 
@@ -23,6 +23,8 @@
 - YOLO 连线识别模型；
 - 桌面截图、外部窗口点击和系统级浮窗；
 - NSIS/DMG 桌面打包资源。
+
+因此主应用移动 V1.1 不宣称本地 Pikafish、整局本地复盘或桌面 PDF/GIF 能力；这些能力要么留在桌面端，要么走服务端异步分析/服务端导出。独立残局训练 App V1.1 的本地 Pikafish 仅服务残局专项训练，不代表主应用移动端也内置引擎。
 
 移动端不展示桌面 PDF/GIF 导出入口；当前保留文本、棋谱文件、FEN 和变招 SVG 等浏览器下载能力。若后续要在手机生成 PDF/GIF，应接服务端生成或浏览器原生下载流程，而不是调用桌面 Rust 导出命令。
 
@@ -143,6 +145,13 @@ Android 手动 workflow：
 进入 GitHub Actions 后运行 `Mobile`，可选择 `apk`、`aab` 或 `both`。iOS 暂不新增 GitHub macOS runner，因为 TestFlight/App Store 需要开发者账号与签名材料。
 
 ## 验收清单
+
+发布前合规：
+
+- 主应用移动 APK/AAB/IPA：确认 `mobile-package-size-report.md` 中没有 Pikafish、NNUE、YOLO、桌面安装包或系统窗口资源；
+- 独立残局训练 APK/IPA：确认安装包、发布说明、支持页和 `THIRD_PARTY_NOTICES.md` 使用同一组 Pikafish 版本、源码提交、构建脚本说明和 SHA-256；
+- 内置 Pikafish/NNUE 的任何包：必须随附 GPLv3、Pikafish `Copying.txt`、`NNUE-License.md`、`RESOURCE-MANIFEST.txt`、源码获取方式和构建脚本说明；
+- 禁止混入 Fairy-Stockfish、其他 NNUE、未知来源引擎或构建时网络下载的替换引擎。
 
 移动 Web：
 

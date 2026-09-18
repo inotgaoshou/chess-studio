@@ -1,0 +1,130 @@
+{
+  "appPath": "target/release/bundle/macos/Xiangqi Studio.app",
+  "dmgPath": "target/release/bundle/dmg/Xiangqi Studio_1.0.2_aarch64.dmg",
+  "dmgBytes": 128426575,
+  "extractedBytes": 194496956,
+  "categories": [
+    {
+      "name": "application",
+      "bytes": 112415936,
+      "files": 2
+    },
+    {
+      "name": "pikafish-nnue",
+      "bytes": 50706378,
+      "files": 1
+    },
+    {
+      "name": "business-data",
+      "bytes": 12143551,
+      "files": 21
+    },
+    {
+      "name": "link-vision-model",
+      "bytes": 10575683,
+      "files": 1
+    },
+    {
+      "name": "pikafish-engine",
+      "bytes": 6380096,
+      "files": 1
+    },
+    {
+      "name": "other",
+      "bytes": 2188710,
+      "files": 4
+    },
+    {
+      "name": "licenses-and-notices",
+      "bytes": 82215,
+      "files": 6
+    },
+    {
+      "name": "fonts",
+      "bytes": 4387,
+      "files": 1
+    }
+  ],
+  "largestFiles": [
+    {
+      "path": "Contents/MacOS/xiangqi-desktop",
+      "bytes": 110030688
+    },
+    {
+      "path": "Contents/Resources/resources/pikafish/pikafish.nnue",
+      "bytes": 50706378
+    },
+    {
+      "path": "Contents/Resources/resources/link-vision/yolov11.onnx",
+      "bytes": 10575683
+    },
+    {
+      "path": "Contents/Resources/resources/master-style/master-style-samples.jsonl",
+      "bytes": 10414784
+    },
+    {
+      "path": "Contents/Resources/resources/pikafish/pikafish",
+      "bytes": 6380096
+    },
+    {
+      "path": "Contents/MacOS/reindex_endgame_cbl",
+      "bytes": 2385248
+    },
+    {
+      "path": "Contents/Resources/icon.icns",
+      "bytes": 2185979
+    },
+    {
+      "path": "Contents/Resources/resources/master-style/master-style-analysis.jsonl",
+      "bytes": 1394795
+    },
+    {
+      "path": "Contents/Resources/resources/book-topics/game-53/page-82.jpg",
+      "bytes": 204937
+    },
+    {
+      "path": "Contents/Resources/resources/book-topics/game-53/page-83-source.jpg",
+      "bytes": 80758
+    },
+    {
+      "path": "Contents/Resources/resources/link-vision/LICENSE-GPL-3.0.txt",
+      "bytes": 35149
+    },
+    {
+      "path": "Contents/Resources/resources/pikafish/Copying.txt",
+      "bytes": 35149
+    },
+    {
+      "path": "Contents/Resources/resources/master-style/master-style-profiles.json",
+      "bytes": 33652
+    },
+    {
+      "path": "Contents/Resources/resources/pikafish/Pikafish-README.md",
+      "bytes": 7805
+    },
+    {
+      "path": "Contents/Resources/resources/book-topics/game-53/detail.json",
+      "bytes": 5903
+    },
+    {
+      "path": "Contents/Resources/resources/fonts/OFL.txt",
+      "bytes": 4387
+    },
+    {
+      "path": "Contents/Resources/_up_/_up_/_up_/THIRD_PARTY_NOTICES.md",
+      "bytes": 2282
+    },
+    {
+      "path": "Contents/Resources/resources/link-vision/MODEL-MANIFEST.json",
+      "bytes": 1237
+    },
+    {
+      "path": "Contents/Resources/resources/master-style/seed-manifest.json",
+      "bytes": 1200
+    },
+    {
+      "path": "Contents/Resources/resources/book-topics/game-53/game-53.pgn",
+      "bytes": 1084
+    }
+  ]
+}

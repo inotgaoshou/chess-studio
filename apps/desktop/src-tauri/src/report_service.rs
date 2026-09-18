@@ -1286,7 +1286,7 @@ pub(crate) fn training_system_seed_cards() -> Vec<ImportedTheoryCard> {
             phase: "middle",
             title: "慢棋训练：把时间花在变化点",
             summary: "慢棋题重点训练计算深度，遇到将军、吃子、弃子、兵形变化和评价摆动时主动减速。",
-            applies_when: "限时训练、比赛复盘或孩子出现随手棋时。",
+            applies_when: "限时训练、比赛复盘或棋手出现随手棋时。",
             risk: "每步都长考会拖垮节奏；熟悉定式仍要做最短防漏检查。",
             tags: &["慢棋训练", "随手棋", "变化点", "比赛纪律"],
             engine_correlations: &["time-management", "evaluation-swing", "blunder"],

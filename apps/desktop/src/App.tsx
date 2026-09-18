@@ -100,6 +100,7 @@ import {
   fallbackReferenceSparringChoice,
   referenceSparringLevelLabel,
   referenceSparringLevelProfile,
+  type ReferenceSparringEngineHint,
   type ReferenceSparringOptions,
   type ReferenceSparringChoice,
   type ReferenceSparringSide,
@@ -115,10 +116,10 @@ import { FloatingManualRoundList } from "./FloatingManualRoundList";
 import { TtxqAnnotationCard } from "./TtxqAnnotationCard";
 import { currentTtxqAnnotationValueForNode, mergeTtxqLocalComment, splitTtxqComment } from "./ttxqAnnotations";
 import { HorizontalScrollArea } from "./HorizontalScrollArea";
-import { U10TrainingDialog } from "./U10TrainingDialog";
+import { GuidedTrainingDialog } from "./GuidedTrainingDialog";
 import { EndgameTrainingDialog } from "./EndgameTrainingDialog";
 import { UserManualDialog } from "./UserManualDialog";
-import { boardCellStyle, boardIntersectionPoint } from "./boardGeometry";
+import { mainBoardCellStyle, mainBoardIntersectionPoint } from "./boardGeometry";
 import { MainBoardMoveFeedback, createMoveFeedback, playMoveFeedbackSound, type MoveFeedback } from "./MainBoardMoveFeedback";
 import { PositionEditorBoard } from "./PositionEditorBoard";
 import { buildSelectedPieceThought, type PieceThoughtSelection } from "./pieceThoughtModel";
@@ -1115,8 +1116,8 @@ export function mainBoardLastMoveOverlayPoints(
 ) {
   if (!move) return undefined;
   return {
-    from: boardIntersectionPoint(move.from, reversed, boardSkin),
-    to: boardIntersectionPoint(move.to, reversed, boardSkin),
+    from: mainBoardIntersectionPoint(move.from, reversed, boardSkin),
+    to: mainBoardIntersectionPoint(move.to, reversed, boardSkin),
   };
 }
 
@@ -1671,14 +1672,14 @@ export default function App() {
   const [trainingSummary, setTrainingSummary] = useState<TrainingSummaryDto>();
   const [endgameTrainingOpen, setEndgameTrainingOpen] = useState(false);
   const [studySessions, setStudySessions] = useState<StudySessionDto[]>([]);
-  const [u10Start, setU10Start] = useState<GuidedAnalysisStart>();
-  const [u10InitialReversed, setU10InitialReversed] = useState(false);
-  const [u10Profile, setU10Profile] = useState<LearningProfile>();
-  const [u10DailyPlan, setU10DailyPlan] = useState<DailyTrainingPlan>();
-  const [u10WeeklyReport, setU10WeeklyReport] = useState<WeeklyLearningReport>();
-  const [u10Repertoire, setU10Repertoire] = useState<OpeningRepertoire>();
-  const [u10Busy, setU10Busy] = useState(false);
-  const [u10Error, setU10Error] = useState<string>();
+  const [guidedTrainingStart, setGuidedTrainingStart] = useState<GuidedAnalysisStart>();
+  const [guidedTrainingInitialReversed, setGuidedTrainingInitialReversed] = useState(false);
+  const [guidedTrainingProfile, setGuidedTrainingProfile] = useState<LearningProfile>();
+  const [guidedTrainingDailyPlan, setGuidedTrainingDailyPlan] = useState<DailyTrainingPlan>();
+  const [guidedTrainingWeeklyReport, setGuidedTrainingWeeklyReport] = useState<WeeklyLearningReport>();
+  const [guidedTrainingRepertoire, setGuidedTrainingRepertoire] = useState<OpeningRepertoire>();
+  const [guidedTrainingBusy, setGuidedTrainingBusy] = useState(false);
+  const [guidedTrainingError, setGuidedTrainingError] = useState<string>();
   const [engineArenaBusy, setEngineArenaBusy] = useState(false);
   const [dialogBusy, setDialogBusy] = useState(false);
   const [online, setOnline] = useState(typeof navigator === "undefined" ? true : navigator.onLine);
@@ -2995,8 +2996,8 @@ export default function App() {
       return [{
         rank: line.multipv,
         color: analysisArrowColors[(line.multipv - 1) % analysisArrowColors.length] ?? analysisArrowColors[0],
-        from: boardIntersectionPoint(from, boardDisplayReversed, displayedBoardSkin),
-        to: boardIntersectionPoint(to, boardDisplayReversed, displayedBoardSkin),
+        from: mainBoardIntersectionPoint(from, boardDisplayReversed, displayedBoardSkin),
+        to: mainBoardIntersectionPoint(to, boardDisplayReversed, displayedBoardSkin),
       }];
     });
   }, [analysisArrowFen, analysisFen, analysisIsStale, board.fen, boardDisplayReversed, desktopPreferences.multipv, displayedBoardSkin, orderedAnalysis]);
@@ -3027,8 +3028,8 @@ export default function App() {
       return [{
         rank,
         color: analysisArrowColors[(rank - 1) % analysisArrowColors.length] ?? analysisArrowColors[0],
-        from: boardIntersectionPoint(from, boardDisplayReversed, displayedBoardSkin),
-        to: boardIntersectionPoint(to, boardDisplayReversed, displayedBoardSkin),
+        from: mainBoardIntersectionPoint(from, boardDisplayReversed, displayedBoardSkin),
+        to: mainBoardIntersectionPoint(to, boardDisplayReversed, displayedBoardSkin),
       }];
     });
   }, [analysisFen, analysisIsStale, board.fen, boardDisplayReversed, compactBookRows, currentEngineAnalyses, displayedBoardSkin, mobileArrowFocus, multipv, orderedAnalysis]);
@@ -3109,8 +3110,8 @@ export default function App() {
     badgeColor: branchArrowBadgeColor,
     kind: "branch" as const,
     label: move.notation,
-    from: boardIntersectionPoint(move.from, boardDisplayReversed, displayedBoardSkin),
-    to: boardIntersectionPoint(move.to, boardDisplayReversed, displayedBoardSkin),
+    from: mainBoardIntersectionPoint(move.from, boardDisplayReversed, displayedBoardSkin),
+    to: mainBoardIntersectionPoint(move.to, boardDisplayReversed, displayedBoardSkin),
   })) : [], [boardDisplayReversed, branchArrowBadgeColor, branchArrowColor, directBranchChoices, displayedBoardSkin, hasVisibleBranchChoices]);
   const boardArrows = useMemo(() => {
     // Preview already marks the simulated from/to squares. Hide route arrows
@@ -3123,7 +3124,7 @@ export default function App() {
   const mainBoardMarkerMove = displayedLastMove ?? lastMove;
   const mainBoardMoveGradeStyle = mainBoardMarkerMove && !candidatePreview && board.currentNode === lastMove?.id && overviewReport?.grade && overviewReport.score != null
     ? (() => {
-        const cellStyle = boardCellStyle(mainBoardMarkerMove.to, boardDisplayReversed, displayedBoardSkin);
+        const cellStyle = mainBoardCellStyle(mainBoardMarkerMove.to, boardDisplayReversed, displayedBoardSkin);
         return {
           "--piece-left": cellStyle.left,
           "--piece-top": cellStyle.top,
@@ -3412,7 +3413,7 @@ export default function App() {
   }
 
   function updateReferenceSparring(options: Partial<ReferenceSparringOptions>) {
-    setReferenceSparring((current) => ({ ...current, ...options }));
+    setReferenceSparring((current) => ({ ...current, ...options, pauseReason: undefined }));
   }
 
   function currentPikafishSparringChoice(fen: string, level: ReferenceSparringState["level"], reason: string): ReferenceSparringChoice | undefined {
@@ -3426,6 +3427,20 @@ export default function App() {
       "engine",
       { fallbackReason: reason },
     );
+  }
+
+  function currentPikafishSparringHints(fen: string): ReferenceSparringEngineHint[] {
+    const lines = analysisStreamRef.current?.fen === fen
+      ? analysisStreamRef.current.lines
+      : analysisHistoryRef.current?.fen === fen
+        ? analysisHistoryRef.current.lines
+        : [];
+    return lines
+      .slice()
+      .sort((left, right) => left.multipv - right.multipv)
+      .map((line, index) => ({ iccs: line.pv[0]?.trim() ?? "", rank: line.multipv || index + 1 }))
+      .filter((hint) => hint.iccs)
+      .slice(0, 3);
   }
 
   async function chooseCloudSparringFallback(fen: string, level: ReferenceSparringState["level"], reason: string) {
@@ -3507,7 +3522,7 @@ export default function App() {
       `模拟等级：${label}`,
       `用户执方：${options.userSide === "red" ? "红方" : "黑方"}`,
       "系统出招来源：优先本地参考实战库局面样本；无候选时依次兜底云库、Pikafish。",
-      "策略说明：按样本数、执方胜率和等级随机扰动选择候选着法；不等同天天象棋官方评测算法。",
+      "策略说明：按样本数、执方胜率和等级随机扰动选择候选着法；高等级会轻量参考当前 Pikafish 候选做智能校正，但不等待引擎、不等同天天象棋官方评测算法。",
     ].join("\n");
     try {
       await openReviewMode("sparring");
@@ -3524,6 +3539,8 @@ export default function App() {
       const baseState: ReferenceSparringState = {
         ...options,
         status: nextReferenceSparringStatus({ ...referenceSparringRef.current, ...options }, next.sideToMove),
+        phase: undefined,
+        pauseReason: undefined,
         lastChoice: undefined,
         message: options.userSide === "red" ? "已开始，你执红先走。" : "已开始，你执黑，参考库先走。",
       };
@@ -3537,33 +3554,57 @@ export default function App() {
   function pauseReferenceSparring() {
     referenceSparringGenerationRef.current += 1;
     if (referenceSparringTimerRef.current) window.clearTimeout(referenceSparringTimerRef.current);
-    setReferenceSparring((current) => ({ ...current, status: "paused", message: "随机对练已暂停，可继续或结束后复盘。" }));
+    setReferenceSparring((current) => ({ ...current, status: "paused", phase: undefined, pauseReason: undefined, message: "随机对练已暂停，可继续或结束后复盘。" }));
     setNotice("参考库随机对练已暂停");
   }
 
   function resumeReferenceSparring() {
     setReferenceSparring((current) => {
       const status = nextReferenceSparringStatus(current);
-      return { ...current, status, message: status === "reference_thinking" ? "继续对练，参考库正在选招…" : "继续对练，轮到你走。" };
+      return { ...current, status, phase: status === "reference_thinking" ? "local" : undefined, pauseReason: undefined, message: status === "reference_thinking" ? "继续对练，参考库正在选招…" : "继续对练，轮到你走。" };
     });
     setNotice("参考库随机对练已继续");
+  }
+
+  function retryReferenceSparring() {
+    resumeReferenceSparring();
+    setNotice("正在重试当前局面随机对练候选");
+  }
+
+  function manualContinueReferenceSparring() {
+    referenceSparringGenerationRef.current += 1;
+    if (referenceSparringTimerRef.current) window.clearTimeout(referenceSparringTimerRef.current);
+    setReferenceSparring((current) => ({
+      ...current,
+      status: "paused",
+      phase: undefined,
+      pauseReason: undefined,
+      message: "已切到手动继续：请直接在棋盘上替当前方走一手，之后点继续恢复自动对练。",
+    }));
+    setNotice("已允许手动继续，请在棋盘上走当前方这一手");
   }
 
   async function stopReferenceSparring(score = false) {
     referenceSparringGenerationRef.current += 1;
     if (referenceSparringTimerRef.current) window.clearTimeout(referenceSparringTimerRef.current);
     const shouldScore = score || referenceSparringRef.current.autoReport;
-    setReferenceSparring((current) => ({ ...current, status: "finished", message: shouldScore ? "对练已结束，正在准备 AI 打分。" : "对练已结束，可继续复盘或生成 AI 打分。" }));
+    setReferenceSparring((current) => ({ ...current, status: "finished", phase: undefined, pauseReason: undefined, message: shouldScore ? "对练已结束，正在准备 AI 打分。" : "对练已结束，可继续复盘或生成 AI 打分。" }));
     setNotice(shouldScore ? "参考库随机对练已结束，正在生成 AI 打分报告…" : "参考库随机对练已结束");
-    if (shouldScore) await openAnalysisReportPanel();
+    if (shouldScore) {
+      setReportDialogOpen(false);
+      setGameReport(undefined);
+      setReportProgress(undefined);
+      setReportProgressTrendSamples([]);
+      await openAnalysisReportPanel();
+    }
   }
 
   useEffect(() => {
     const current = referenceSparring;
     if (current.status === "user_turn" && isReferenceSparringReferenceTurn(current, board.sideToMove)) {
-      setReferenceSparring({ ...current, status: "reference_thinking", message: "轮到参考库，正在按当前等级选择实战着法…" });
+      setReferenceSparring({ ...current, status: "reference_thinking", phase: "local", pauseReason: undefined, message: "轮到参考库，正在按当前等级选择实战着法…" });
     } else if (current.status === "reference_thinking" && !isReferenceSparringReferenceTurn(current, board.sideToMove)) {
-      setReferenceSparring({ ...current, status: "user_turn", message: "轮到你走。" });
+      setReferenceSparring({ ...current, status: "user_turn", phase: undefined, pauseReason: undefined, message: "轮到你走。" });
     }
   }, [board.sideToMove, board.fen, referenceSparring]);
 
@@ -3581,6 +3622,12 @@ export default function App() {
         if (request !== referenceSparringGenerationRef.current || state.status !== "reference_thinking") return;
         if (!isReferenceSparringReferenceTurn(state, before.sideToMove)) return;
         try {
+          setReferenceSparring((current) => ({
+            ...current,
+            phase: "local",
+            pauseReason: undefined,
+            message: "参考库思考中：正在查询本地参考实战库…",
+          }));
           let choice: ReferenceSparringChoice | undefined;
           let referenceReason = "本地参考实战库无候选";
           let cloudReason = desktopPreferencesRef.current.cloudBookEnabled ? "云库无候选" : "云库未开启";
@@ -3591,7 +3638,9 @@ export default function App() {
               includeDetails: false,
             });
             if (request !== referenceSparringGenerationRef.current) return;
-            choice = chooseReferenceSparringMove(candidates, before.sideToMove, state.level);
+            choice = chooseReferenceSparringMove(candidates, before.sideToMove, state.level, Math.random, {
+              engineHints: currentPikafishSparringHints(before.fen),
+            });
           } catch (error) {
             referenceReason = `本地参考库查询失败：${friendlyError(error)}`;
           }
@@ -3600,8 +3649,9 @@ export default function App() {
           if (!choice) {
             setReferenceSparring((current) => ({
               ...current,
+              phase: desktopPreferencesRef.current.cloudBookEnabled ? "cloud" : "engine",
               message: desktopPreferencesRef.current.cloudBookEnabled
-                ? `${referenceReason}，正在尝试云库…`
+                ? "本地无候选，正在查云库…"
                 : `${referenceReason}；云库未开启，正在尝试 Pikafish…`,
             }));
             if (desktopPreferencesRef.current.cloudBookEnabled) {
@@ -3617,7 +3667,8 @@ export default function App() {
           if (!choice) {
             setReferenceSparring((current) => ({
               ...current,
-              message: `${referenceReason}；${cloudReason}，正在尝试 Pikafish…`,
+              phase: "engine",
+              message: "云库无候选，正在用 Pikafish…",
             }));
             try {
               choice = await choosePikafishSparringFallback(before.fen, state.level, `${referenceReason}；${cloudReason}`);
@@ -3628,10 +3679,13 @@ export default function App() {
           if (request !== referenceSparringGenerationRef.current) return;
 
           if (!choice) {
+            const pauseReason = `当前局面本地参考库、云库和 Pikafish 都没有可用候选；${cloudReason}。`;
             setReferenceSparring((current) => ({
               ...current,
               status: "paused",
-              message: `当前局面本地参考库、云库和 Pikafish 都没有可用候选；${cloudReason}。可配置引擎、手动走棋、切换局面或结束对练。`,
+              phase: undefined,
+              pauseReason,
+              message: `${pauseReason}可手动继续、重试、切换局面或结束对练。`,
             }));
             setNotice("当前局面三层来源都没有可用候选，随机对练已暂停");
             return;
@@ -3639,6 +3693,8 @@ export default function App() {
           const moveText = choice.move.notation || choice.move.iccs;
           setReferenceSparring((current) => ({
             ...current,
+            phase: undefined,
+            pauseReason: undefined,
             lastChoice: choice,
             message: `${referenceSparringLevelLabel(current.level)} · ${choice.sourceLabel}选招：${moveText}，正在落子…`,
           }));
@@ -3652,6 +3708,8 @@ export default function App() {
             return {
               ...current,
               status,
+              phase: status === "reference_thinking" ? "local" : undefined,
+              pauseReason: undefined,
               lastChoice: choice,
               message: status === "user_turn"
                 ? `${choice.sourceLabel}走 ${moveText}，轮到你。`
@@ -3663,6 +3721,8 @@ export default function App() {
           setReferenceSparring((current) => ({
             ...current,
             status: "paused",
+            phase: undefined,
+            pauseReason: `随机对练出招失败：${friendlyError(error)}`,
             message: `随机对练出招失败：${friendlyError(error)}`,
           }));
           setNotice(friendlyError(error));
@@ -6212,17 +6272,17 @@ export default function App() {
     }
   }
 
-  async function startU10Analysis(nodeId?: string, initialReversed = reversed) {
+  async function startGuidedTrainingAnalysis(nodeId?: string, initialReversed = reversed) {
     if (chessPlatform.kind !== "desktop") {
-      setNotice("引导拆棋需要在桌面版使用");
+      setNotice("专1拆棋需要在桌面版使用");
       return;
     }
     if (!enginePath.trim()) {
-      setNotice("请先配置 Pikafish，再开始引导拆棋");
+      setNotice("请先配置 Pikafish，再开始专1拆棋");
       return;
     }
-    setU10Busy(true);
-    setU10Error(undefined);
+    setGuidedTrainingBusy(true);
+    setGuidedTrainingError(undefined);
     try {
       const [start, profile, dailyPlan, weeklyReport, repertoire] = await Promise.all([
         chessPlatform.startGuidedAnalysis(nodeId),
@@ -6231,29 +6291,29 @@ export default function App() {
         chessPlatform.getWeeklyLearningReport(),
         chessPlatform.inferOpeningRepertoire(),
       ]);
-      setU10Start(start);
-      setU10InitialReversed(initialReversed);
-      setU10Profile(profile);
-      setU10DailyPlan(dailyPlan);
-      setU10WeeklyReport(weeklyReport);
-      setU10Repertoire(repertoire);
-      setNotice("引导拆棋已开始：提交前引擎答案保持隐藏");
+      setGuidedTrainingStart(start);
+      setGuidedTrainingInitialReversed(initialReversed);
+      setGuidedTrainingProfile(profile);
+      setGuidedTrainingDailyPlan(dailyPlan);
+      setGuidedTrainingWeeklyReport(weeklyReport);
+      setGuidedTrainingRepertoire(repertoire);
+      setNotice("专1拆棋已开始：提交前引擎答案保持隐藏");
     } catch (error) {
-      setU10Error(friendlyError(error));
+      setGuidedTrainingError(friendlyError(error));
       setNotice(friendlyError(error));
     } finally {
-      setU10Busy(false);
+      setGuidedTrainingBusy(false);
     }
   }
 
-  async function submitU10Analysis(submission: GuidedAnalysisSubmission) {
-    if (!u10Start) throw new Error("拆棋会话尚未开始");
-    setU10Busy(true);
-    setU10Error(undefined);
+  async function submitGuidedTrainingAnalysis(submission: GuidedAnalysisSubmission) {
+    if (!guidedTrainingStart) throw new Error("拆棋会话尚未开始");
+    setGuidedTrainingBusy(true);
+    setGuidedTrainingError(undefined);
     try {
       const lines = await chessPlatform.analyze({
         enginePath,
-        fen: u10Start.session.fen,
+        fen: guidedTrainingStart.session.fen,
         searchMode: "depth",
         searchValue: Math.min(22, Math.max(16, desktopPreferences.reportDepth)),
         threads,
@@ -6263,54 +6323,54 @@ export default function App() {
         token,
       });
       if (lines.length === 0) throw new Error("Pikafish 没有返回候选线路，请重试");
-      const task = trainingTasks.find((item) => item.gameId === u10Start.session.gameId && item.nodeId === u10Start.session.problemNodeId);
+      const task = trainingTasks.find((item) => item.gameId === guidedTrainingStart.session.gameId && item.nodeId === guidedTrainingStart.session.problemNodeId);
       const submitted = await chessPlatform.submitGuidedAnalysis({
-        sessionId: u10Start.session.id,
+        sessionId: guidedTrainingStart.session.id,
         submission,
         lines,
         taskId: task?.id,
       });
-      setU10WeeklyReport(await chessPlatform.getWeeklyLearningReport());
-      setU10DailyPlan(await chessPlatform.generateDailyTrainingPlan());
+      setGuidedTrainingWeeklyReport(await chessPlatform.getWeeklyLearningReport());
+      setGuidedTrainingDailyPlan(await chessPlatform.generateDailyTrainingPlan());
       return submitted;
     } catch (error) {
       const message = friendlyError(error);
-      setU10Error(message);
+      setGuidedTrainingError(message);
       throw new Error(message);
     } finally {
-      setU10Busy(false);
+      setGuidedTrainingBusy(false);
     }
   }
 
-  async function saveU10Profile(profile: LearningProfile) {
-    setU10Busy(true);
-    setU10Error(undefined);
+  async function saveGuidedTrainingProfile(profile: LearningProfile) {
+    setGuidedTrainingBusy(true);
+    setGuidedTrainingError(undefined);
     try {
       const saved = await chessPlatform.saveLearningProfile(profile);
-      setU10Profile(saved);
+      setGuidedTrainingProfile(saved);
       const [dailyPlan, repertoire] = await Promise.all([
         chessPlatform.generateDailyTrainingPlan(),
         chessPlatform.inferOpeningRepertoire(),
       ]);
-      setU10DailyPlan(dailyPlan);
-      setU10Repertoire(repertoire);
+      setGuidedTrainingDailyPlan(dailyPlan);
+      setGuidedTrainingRepertoire(repertoire);
       setNotice("个人训练档案已保存");
     } catch (error) {
-      setU10Error(friendlyError(error));
+      setGuidedTrainingError(friendlyError(error));
     } finally {
-      setU10Busy(false);
+      setGuidedTrainingBusy(false);
     }
   }
 
-  async function saveU10Variation(moves: string[]) {
-    if (!u10Start || moves.length === 0) return;
-    setU10Busy(true);
-    setU10Error(undefined);
+  async function saveGuidedTrainingVariation(moves: string[]) {
+    if (!guidedTrainingStart || moves.length === 0) return;
+    setGuidedTrainingBusy(true);
+    setGuidedTrainingError(undefined);
     try {
       await stopEnginePlay();
       await cancelRunningAnalysis(undefined, { forceBackendStop: true });
       await cancelGameReportForStructureChange();
-      let next = normalizeBoardState(await chessPlatform.navigateTo(u10Start.session.startNodeId));
+      let next = normalizeBoardState(await chessPlatform.navigateTo(guidedTrainingStart.session.startNodeId));
       applyBoard(next);
       for (const move of moves) {
         await chessPlatform.previewLine(next.fen, [move]);
@@ -6318,23 +6378,23 @@ export default function App() {
         applyBoard(next);
       }
       if (next.currentNode) {
-        next = normalizeBoardState(await enqueueBoardOperation(() => chessPlatform.updateComment(next.currentNode!, "引导拆棋变例：独立预测线路")));
+        next = normalizeBoardState(await enqueueBoardOperation(() => chessPlatform.updateComment(next.currentNode!, "专1拆棋变例：独立预测线路")));
         applyBoard(next);
       }
-      setNotice("引导拆棋临时线路已保存为普通变例；原主线未改变");
+      setNotice("专1拆棋临时线路已保存为普通变例；原主线未改变");
     } catch (error) {
       const message = friendlyError(error);
-      setU10Error(message);
+      setGuidedTrainingError(message);
       throw new Error(message);
     } finally {
-      setU10Busy(false);
+      setGuidedTrainingBusy(false);
     }
   }
 
-  function closeU10Analysis() {
-    setU10Start(undefined);
-    setU10Error(undefined);
-    // U10 belongs to training. Returning to the review workbench keeps the
+  function closeGuidedTrainingAnalysis() {
+    setGuidedTrainingStart(undefined);
+    setGuidedTrainingError(undefined);
+    // Guided analysis belongs to training. Returning to the review workbench keeps the
     // current report and its task progress visible after the overlay closes.
     setReviewModeOpen(true);
     setWorkspaceMode("training");
@@ -7966,24 +8026,24 @@ export default function App() {
           <footer><button onClick={() => setAboutOpen(false)}>关闭</button></footer>
         </section>
       </div>}
-      {u10Start && u10Profile && <U10TrainingDialog
-        start={u10Start}
-        profile={u10Profile}
-        dailyPlan={u10DailyPlan}
-        weeklyReport={u10WeeklyReport}
-        repertoire={u10Repertoire}
-        busy={u10Busy}
-        error={u10Error}
-        onClose={closeU10Analysis}
+      {guidedTrainingStart && guidedTrainingProfile && <GuidedTrainingDialog
+        start={guidedTrainingStart}
+        profile={guidedTrainingProfile}
+        dailyPlan={guidedTrainingDailyPlan}
+        weeklyReport={guidedTrainingWeeklyReport}
+        repertoire={guidedTrainingRepertoire}
+        busy={guidedTrainingBusy}
+        error={guidedTrainingError}
+        onClose={closeGuidedTrainingAnalysis}
         onCancel={(sessionId) => void chessPlatform.cancelGuidedAnalysis(sessionId)}
-        onPreview={(moves) => chessPlatform.previewLine(u10Start.session.fen, moves)}
-        onParseChineseLine={(notation) => chessPlatform.parseChineseLine(u10Start.session.fen, notation)}
-        initialReversed={u10InitialReversed}
+        onPreview={(moves) => chessPlatform.previewLine(guidedTrainingStart.session.fen, moves)}
+        onParseChineseLine={(notation) => chessPlatform.parseChineseLine(guidedTrainingStart.session.fen, notation)}
+        initialReversed={guidedTrainingInitialReversed}
         pieceAsset={(piece) => pieceAsset(piece, displayedPieceSkin)}
         boardAsset={`/skins/${skinAssetFolder(displayedBoardSkin)}/board.png`}
-        onSubmit={submitU10Analysis}
-        onSaveProfile={saveU10Profile}
-        onSaveVariation={saveU10Variation}
+        onSubmit={submitGuidedTrainingAnalysis}
+        onSaveProfile={saveGuidedTrainingProfile}
+        onSaveVariation={saveGuidedTrainingVariation}
       />}
       {masterLibraryOpen && <MasterLibraryDialog
         account={syncAccount}
@@ -8202,7 +8262,7 @@ export default function App() {
                 const piece = pieceMap.get(`${row}-${col}`);
                 const isSelected = selected?.row === row && selected?.col === col;
                 const isThoughtPiece = !referencePracticeMode && showMoveThoughts && selectedPieceThought?.square.row === row && selectedPieceThought.square.col === col;
-                const cellStyle = boardCellStyle({ row, col }, boardDisplayReversed, displayedBoardSkin);
+                const cellStyle = mainBoardCellStyle({ row, col }, boardDisplayReversed, displayedBoardSkin);
                 const style = {
                   "--piece-left": cellStyle.left,
                   "--piece-top": cellStyle.top,
@@ -8489,6 +8549,8 @@ export default function App() {
           onResumeSparring={resumeReferenceSparring}
           onStopSparring={() => void stopReferenceSparring(false)}
           onScoreSparring={() => void stopReferenceSparring(true)}
+          onRetrySparring={retryReferenceSparring}
+          onManualContinueSparring={manualContinueReferenceSparring}
         /> : <aside className={`analysis-panel ${reviewModeOpen ? "review-mode-panel" : ""} ${analysisPanelCollapsed && desktopPreferences.layoutMode !== "compact" ? "collapsed" : ""} ${mobilePanel === "analysis" ? "mobile-visible" : ""}`}>
           {reviewModeOpen ? <ReviewWorkspace
             board={board}
@@ -8546,7 +8608,7 @@ export default function App() {
             onOpenTraining={() => setDesktopDialog("training")}
             onCompleteTraining={(taskId, completed) => void completeTrainingTask(taskId, completed)}
             onStudyIssue={(nodeId) => void startCoachStudy(nodeId)}
-            onStartU10={(nodeId) => void startU10Analysis(nodeId)}
+            onStartGuidedTraining={(nodeId) => void startGuidedTrainingAnalysis(nodeId)}
             onRunPositionAnalysis={() => void runReviewPositionAnalysis()}
           /> : <>
           {analysisPanelCollapsed && desktopPreferences.layoutMode !== "compact"
@@ -9020,8 +9082,8 @@ export default function App() {
             const next = normalizeBoardState(await chessPlatform.importRecognizedPosition(fen, title));
             applyBoard(next);
             closeLinkSessionDialog({ cleanupFileSession: true });
-            setNotice("天天象棋截图局面已保存为独立练习棋谱，正在进入 U10 拆棋");
-            await startU10Analysis(undefined, initialReversed);
+            setNotice("天天象棋截图局面已保存为独立练习棋谱，正在进入专1拆棋");
+            await startGuidedTrainingAnalysis(undefined, initialReversed);
           } catch (error) {
             setNotice(friendlyError(error));
           }

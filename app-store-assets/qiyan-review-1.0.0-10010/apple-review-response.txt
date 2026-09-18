@@ -1,0 +1,52 @@
+Hello App Review Team,
+
+Thank you for your message. We have completed our own quality-assurance testing of Qiyan 1.0.0 (build 10010) on a physical iPhone 14 running iOS 26.6.1.
+
+1. Physical-device screen recording
+
+Attached: qiyan-review-10010.mov
+
+Recorded on: iPhone 14, iOS 26.6.1
+
+The recording starts by launching the app and demonstrates importing the attached sample CBL file, selecting an endgame problem, making moves, using hints, replaying the solution, viewing the locally stored practice record, and opening the local-library deletion control.
+
+Attached sample ZIP file: qiyan-review-sample-cbl.zip
+The ZIP contains qiyan-review-sample.cbl, the sample CBL file used in the recording.
+
+2. App purpose and target audience
+
+Qiyan is a Chinese chess endgame training app for Chinese chess learners, players, and coaches. It imports CBL endgame files, presents playable positions and solution branches, records practice progress locally, and provides several training modes. It helps users repeatedly study and solve endgame positions on an iPhone or iPad.
+
+3. Access and setup instructions
+
+No account, registration, login, or demo credentials are required.
+
+a. Launch Qiyan.
+b. Tap \"导入 CBL\" (Import CBL).
+c. Extract the attached qiyan-review-sample-cbl.zip file, then select qiyan-review-sample.cbl from the iOS Files picker.
+d. Select the imported library and choose a problem.
+e. Choose a training mode and move a piece by tapping its source and destination squares.
+
+4. External services, tools, and platforms
+
+- ChessDB (https://www.chessdb.cn/) is used by Cloud Practice to obtain move suggestions. Only the current board position in FEN format is sent.
+- Users may optionally enter their own AI service URL. This field is empty by default.
+- Apple's Files picker and on-device SQLite storage are used for importing and storing libraries and practice records.
+- The app uses the open-source Capacitor, React, and Lucide software libraries under their applicable licenses.
+
+The app has no advertising, analytics SDK, authentication provider, payment processor, in-app purchases, subscriptions, or paid content.
+
+5. Regional differences
+
+The app provides the same features and content in every region where it is available. Cloud Practice requires network access to ChessDB. Imported libraries, solution practice, replay, and free-play functions remain available without that cloud request.
+
+6. Regulated services and third-party material
+
+The app does not operate in a regulated industry. The app binary does not include or distribute any CBL library or commercial game database. Users import files they are authorized to use. The attached sample file is provided by the developer specifically for App Review, and the developer is authorized to provide it for this purpose. Application assets are either created for the project or used under their applicable open-source licenses.
+
+The app does not support accounts, public user-generated content, social sharing, purchases, or paid content. Therefore, account deletion, content reporting and blocking, and purchase demonstrations are not applicable.
+
+Support: https://inotgaoshou.github.io/chess-studio/
+Privacy Policy: https://inotgaoshou.github.io/chess-studio/privacy.html
+
+Please let us know if any additional information is required.

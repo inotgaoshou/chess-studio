@@ -217,6 +217,8 @@ describe("MasterOpeningPanel", () => {
     const onStartSparring = vi.fn();
     const onPauseSparring = vi.fn();
     const onScoreSparring = vi.fn();
+    const onRetrySparring = vi.fn();
+    const onManualContinueSparring = vi.fn();
 
     const { rerender } = render(<MasterOpeningPanel
       fen="start"
@@ -234,11 +236,14 @@ describe("MasterOpeningPanel", () => {
       onStartSparring={onStartSparring}
       onPauseSparring={onPauseSparring}
       onScoreSparring={onScoreSparring}
+      onRetrySparring={onRetrySparring}
+      onManualContinueSparring={onManualContinueSparring}
     />);
 
     expect(await screen.findByLabelText("参考库随机对练")).toBeTruthy();
     expect(screen.queryByText("候选着法")).toBeNull();
     expect(screen.queryByText("命中棋谱")).toBeNull();
+    expect(screen.queryByLabelText("打开完整布局探索")).toBeNull();
     fireEvent.change(screen.getByDisplayValue("业6"), { target: { value: "pro1" } });
     expect(onUpdateSparring).toHaveBeenCalledWith({ level: "pro1" });
     fireEvent.click(screen.getByLabelText("查看随机对练等级说明"));
@@ -270,12 +275,15 @@ describe("MasterOpeningPanel", () => {
       onStartSparring={onStartSparring}
       onPauseSparring={onPauseSparring}
       onScoreSparring={onScoreSparring}
+      onRetrySparring={onRetrySparring}
+      onManualContinueSparring={onManualContinueSparring}
     />);
 
     expect(screen.getByText("参考库正在选招…")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /暂停/ }));
     expect(onPauseSparring).toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: /AI 打分/ }));
+    expect(screen.getByRole("button", { name: /专1我执黑方快结束打分/ }).getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(screen.getByRole("button", { name: /结束并打分/ }));
     expect(onScoreSparring).toHaveBeenCalled();
 
     rerender(<MasterOpeningPanel
@@ -313,6 +321,8 @@ describe("MasterOpeningPanel", () => {
       onStartSparring={onStartSparring}
       onPauseSparring={onPauseSparring}
       onScoreSparring={onScoreSparring}
+      onRetrySparring={onRetrySparring}
+      onManualContinueSparring={onManualContinueSparring}
     />);
 
     expect(screen.getByText("来源：云库")).toBeTruthy();
@@ -341,6 +351,7 @@ describe("MasterOpeningPanel", () => {
           level: "ye6",
           source: "reference",
           sourceLabel: "参考库实战",
+          intelligenceNote: "智能校正：已参考当前 Pikafish 候选，不等待引擎、不覆盖实战随机。",
           candidateCount: 3,
           totalWeight: 1,
           chosenWeight: 1,
@@ -351,9 +362,12 @@ describe("MasterOpeningPanel", () => {
       onStartSparring={onStartSparring}
       onPauseSparring={onPauseSparring}
       onScoreSparring={onScoreSparring}
+      onRetrySparring={onRetrySparring}
+      onManualContinueSparring={onManualContinueSparring}
     />);
 
     expect(screen.getByText("10 样本 · 执方胜率 9%")).toBeTruthy();
+    expect(screen.getByText("智能校正")).toBeTruthy();
     expect(screen.getByText("10 样本 · 执方胜率 9%").closest("small")?.getAttribute("title")).toContain("执方胜率按当前走子方统计");
 
     rerender(<MasterOpeningPanel
@@ -389,9 +403,44 @@ describe("MasterOpeningPanel", () => {
       onStartSparring={onStartSparring}
       onPauseSparring={onPauseSparring}
       onScoreSparring={onScoreSparring}
+      onRetrySparring={onRetrySparring}
+      onManualContinueSparring={onManualContinueSparring}
     />);
 
-    expect(screen.getByText("Pikafish首选着")).toBeTruthy();
+    expect(screen.getByText("引擎首选着")).toBeTruthy();
     expect(screen.queryByText(/Pikafish.*胜率/)).toBeNull();
+
+    rerender(<MasterOpeningPanel
+      fen="start"
+      enabled
+      panelMode="sparring"
+      queryMoves={async () => [move]}
+      queryGames={async () => [game]}
+      resolveMoveFen={async () => "after-h2e2"}
+      onPreviewMove={() => undefined}
+      onAddMove={() => undefined}
+      onOpenExplorer={() => undefined}
+      onOpenGame={() => undefined}
+      sparring={{
+        status: "paused",
+        userSide: "red",
+        level: "ye7",
+        delayMs: 600,
+        autoReport: false,
+        pauseReason: "当前局面本地参考库、云库和 Pikafish 都没有可用候选。",
+        message: "当前局面本地参考库、云库和 Pikafish 都没有可用候选。可手动继续、重试、切换局面或结束对练。",
+      }}
+      onUpdateSparring={onUpdateSparring}
+      onStartSparring={onStartSparring}
+      onPauseSparring={onPauseSparring}
+      onScoreSparring={onScoreSparring}
+      onRetrySparring={onRetrySparring}
+      onManualContinueSparring={onManualContinueSparring}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: /手动继续/ }));
+    expect(onManualContinueSparring).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /重试/ }));
+    expect(onRetrySparring).toHaveBeenCalled();
   });
 });

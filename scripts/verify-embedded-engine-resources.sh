@@ -9,6 +9,7 @@ EXPECTED_PIKAFISH_RUNTIME_VERSION="Pikafish 2026-09-06"
 EXPECTED_PIKAFISH_NNUE_LABEL="Pikafish 2026-09-06 bundled NNUE (64 MiB)"
 EXPECTED_PIKAFISH_NNUE_SHA256="7d13d73569a9b571ba0eb20cf1596247bc2a42738967e61afef6482b231e900e"
 EXPECTED_PIKAFISH_NNUE_RUNTIME_MARKER="NNUE evaluation using pikafish.nnue"
+EXPECTED_PIKAFISH_SOURCE_URL="https://github.com/official-pikafish/Pikafish"
 
 require_file() {
   local path="$1"
@@ -48,6 +49,18 @@ require_sha256() {
     echo "$description SHA256 mismatch." >&2
     echo "  expected: $expected" >&2
     echo "  actual:   $actual" >&2
+    exit 1
+  fi
+}
+
+require_text() {
+  local path="$1"
+  local expected="$2"
+  local description="$3"
+  if ! grep -Fq "$expected" "$path"; then
+    echo "$description does not mention expected text." >&2
+    echo "  file: $path" >&2
+    echo "  expected text: $expected" >&2
     exit 1
   fi
 }
@@ -106,7 +119,20 @@ case "$TARGET_PLATFORM" in
 esac
 
 require_file "$PIKAFISH_RESOURCE_DIR/pikafish.nnue" "Pikafish NNUE"
+require_file "$PIKAFISH_RESOURCE_DIR/Copying.txt" "Pikafish GPLv3 license"
 require_file "$PIKAFISH_RESOURCE_DIR/NNUE-License.md" "Pikafish NNUE license"
+require_file "$PIKAFISH_RESOURCE_DIR/Pikafish-README.md" "Pikafish README and source pointer"
+require_file "$PIKAFISH_RESOURCE_DIR/RESOURCE-MANIFEST.txt" "Pikafish resource manifest"
+require_file "THIRD_PARTY_NOTICES.md" "third-party notices"
+require_file "scripts/build-pikafish-from-source.sh" "Pikafish source build script"
+require_file "scripts/prepare-pikafish-resource.sh" "Pikafish resource preparation script"
+require_text "$PIKAFISH_RESOURCE_DIR/RESOURCE-MANIFEST.txt" "$EXPECTED_PIKAFISH_SOURCE_URL" "Pikafish resource manifest"
+require_text "$PIKAFISH_RESOURCE_DIR/RESOURCE-MANIFEST.txt" "$EXPECTED_PIKAFISH_SOURCE_REVISION" "Pikafish resource manifest"
+require_text "$PIKAFISH_RESOURCE_DIR/RESOURCE-MANIFEST.txt" "$EXPECTED_PIKAFISH_NNUE_SHA256" "Pikafish resource manifest"
+require_text "$PIKAFISH_RESOURCE_DIR/Pikafish-README.md" "GNU General Public License version 3" "Pikafish README"
+require_text "THIRD_PARTY_NOTICES.md" "$EXPECTED_PIKAFISH_SOURCE_REVISION" "third-party notices"
+require_text "THIRD_PARTY_NOTICES.md" "$EXPECTED_PIKAFISH_NNUE_SHA256" "third-party notices"
+require_text "scripts/build-pikafish-from-source.sh" "$EXPECTED_PIKAFISH_SOURCE_REVISION" "Pikafish source build script"
 require_sha256 "$PIKAFISH_RESOURCE_DIR/pikafish.nnue" "$EXPECTED_PIKAFISH_NNUE_SHA256" "Pikafish NNUE $EXPECTED_PIKAFISH_NNUE_LABEL"
 require_pikafish_runtime_metadata "$PIKAFISH_EXECUTABLE"
 reject_mixed_nnue "$PIKAFISH_RESOURCE_DIR" 'xiangqi-*.nnue' "Pikafish"

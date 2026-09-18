@@ -45,4 +45,5 @@ export type Attempt = {
 };
 
 export type BoardPiece = { row: number; col: number; color: "red" | "black"; kind: string; label: string };
-export type BoardState = { fen: string; pieces: BoardPiece[]; sideToMove: string; status: string };
+export type RuleMode = "domestic2020" | "asianAxf";
+export type BoardState = { fen: string; pieces: BoardPiece[]; sideToMove: string; status: string; ruleMode?: RuleMode; ruleStatus?: string; ruleReason?: string };

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { BookOpen, Bot, CalendarDays, Database, Pause, Play, RefreshCw, ShieldCheck, Square, Trophy, Undo2, Zap } from "lucide-react";
+import { BookOpen, Bot, CalendarDays, ChevronDown, Database, Hand, Pause, Play, RefreshCw, ShieldCheck, Square, Trophy, Undo2, Zap } from "lucide-react";
 import { ReferencePositionPanel } from "./ReferencePositionPanel";
 import type { PositionMoveStatDto, ReferenceGameSummaryDto } from "./platform/types";
 import {
@@ -34,6 +34,8 @@ type Props = {
   onResumeSparring?(): void;
   onStopSparring?(): void;
   onScoreSparring?(): void;
+  onRetrySparring?(): void;
+  onManualContinueSparring?(): void;
 };
 
 function resultWord(result: string) {
@@ -163,7 +165,10 @@ function percent(value: number, total: number) {
 function sparringStatusLabel(state: ReferenceSparringState) {
   switch (state.status) {
     case "user_turn": return "轮到你";
-    case "reference_thinking": return "参考库思考中";
+    case "reference_thinking":
+      if (state.phase === "cloud") return "云库兜底中";
+      if (state.phase === "engine") return "Pikafish 兜底中";
+      return "参考库思考中";
     case "paused": return "已暂停";
     case "finished": return "已结束";
     default: return "未开始";
@@ -172,6 +177,24 @@ function sparringStatusLabel(state: ReferenceSparringState) {
 
 function sparringSideLabel(side: "red" | "black") {
   return side === "red" ? "红方" : "黑方";
+}
+
+function sparringDelayLabel(delayMs: number) {
+  if (delayMs <= 300) return "快";
+  if (delayMs >= 900) return "慢";
+  return "正常";
+}
+
+function sparringChoiceDetail(state: ReferenceSparringState) {
+  const choice = state.lastChoice;
+  if (!choice) return undefined;
+  if (choice.source === "reference") {
+    return `${choice.move.samples.toLocaleString()} 样本 · 执方胜率 ${Math.round(choice.winRate * 100)}%`;
+  }
+  if (choice.source === "cloud" && choice.winRate !== .5) {
+    return `云库参考胜率 ${Math.round(choice.winRate * 100)}%`;
+  }
+  return "引擎首选着";
 }
 
 export function MasterOpeningPanel({
@@ -192,6 +215,8 @@ export function MasterOpeningPanel({
   onResumeSparring,
   onStopSparring,
   onScoreSparring,
+  onRetrySparring,
+  onManualContinueSparring,
 }: Props) {
   const generation = useRef(0);
   const gameCache = useRef(new Map<string, ReferenceGameSummaryDto[]>());
@@ -211,6 +236,7 @@ export function MasterOpeningPanel({
   const [masterFilter, setMasterFilter] = useState("");
   const [hasMoreGames, setHasMoreGames] = useState(false);
   const [levelHelpOpen, setLevelHelpOpen] = useState(false);
+  const [sparringSettingsOpen, setSparringSettingsOpen] = useState(true);
   const filteredGames = useMemo(() => filterGamesByMasterKeyword(games, masterFilter), [games, masterFilter]);
   const hasMasterFilter = normalizeSearchText(masterFilter).length > 0;
   const gamePageLimit = hasMasterFilter ? MASTER_OPENING_FILTERED_GAME_LIMIT : MASTER_OPENING_DEFAULT_GAME_LIMIT;
@@ -279,6 +305,15 @@ export function MasterOpeningPanel({
       document.removeEventListener("keydown", closeFromKeyboard);
     };
   }, [levelHelpOpen]);
+
+  useEffect(() => {
+    if (!sparring) return;
+    if (sparring.status === "idle" || sparring.status === "finished") {
+      setSparringSettingsOpen(true);
+    } else {
+      setSparringSettingsOpen(false);
+    }
+  }, [sparring?.status]);
 
   async function focusMove(move: PositionMoveStatDto) {
     setSelectedMove(move);
@@ -355,6 +390,9 @@ export function MasterOpeningPanel({
     autoReport: sparring.autoReport,
   } : undefined;
   const sparringProfile = sparring ? referenceSparringLevelProfile(sparring.level) : undefined;
+  const sparringChoiceDetailText = sparring ? sparringChoiceDetail(sparring) : undefined;
+  const sparringSettingsExpanded = !!sparring && (sparring.status === "idle" || sparring.status === "finished" || sparringSettingsOpen);
+  const showSparringPauseActions = !!sparring?.pauseReason && sparring.status === "paused";
   const showOpeningTools = panelMode === "opening";
   const showSparringTools = panelMode === "sparring" && sparring;
   return <aside className="master-opening-side-panel" aria-label="大师开局局面搜索">
@@ -366,7 +404,7 @@ export function MasterOpeningPanel({
         </div>
         <nav>
           {showOpeningTools && <button type="button" title="刷新当前局面" aria-label="刷新当前局面" onClick={() => setRefresh((value) => value + 1)}><RefreshCw size={14}/></button>}
-          <button type="button" title="打开完整布局探索" aria-label="打开完整布局探索" onClick={onOpenExplorer}><Database size={14}/></button>
+          {showOpeningTools && <button type="button" title="打开完整布局探索" aria-label="打开完整布局探索" onClick={onOpenExplorer}><Database size={14}/></button>}
         </nav>
       </header>
 
@@ -375,86 +413,103 @@ export function MasterOpeningPanel({
           <span><Bot size={14}/><strong>随机对练</strong><small>{sparringStatusLabel(sparring)}</small></span>
           <em>{referenceSparringLevelLabel(sparring.level)}</em>
         </header>
-        <div className="master-opening-sparring-controls">
-          <label>我执
-            <select
-              value={sparring.userSide}
-              disabled={sparringBusy}
-              onChange={(event) => onUpdateSparring?.({ userSide: event.currentTarget.value as "red" | "black" })}
-            >
-              <option value="red">红方</option>
-              <option value="black">黑方</option>
-            </select>
-          </label>
-          <label className="sparring-level-field" ref={levelHelpRef}><span className="sparring-field-heading">等级
-            <button
-              type="button"
-              className="sparring-level-help-button"
-              aria-label="查看随机对练等级说明"
-              aria-expanded={levelHelpOpen}
-              onClick={(event) => {
-                event.preventDefault();
-                setLevelHelpOpen((open) => !open);
-              }}
-            >?</button>
-          </span>
-            <select
-              value={sparring.level}
-              disabled={sparringBusy}
-              title={sparringProfile?.description}
-              onChange={(event) => onUpdateSparring?.({ level: event.currentTarget.value as ReferenceSparringState["level"] })}
-            >
-              {referenceSparringLevels.map((level) => <option key={level} value={level}>{referenceSparringLevelLabel(level)}</option>)}
-            </select>
-            {levelHelpOpen && <div className="sparring-level-help-popover" role="dialog" aria-label="随机对练等级说明">
-              <strong>模拟等级说明</strong>
-              <ul>
-                {referenceSparringLevels.map((level) => {
-                  const profile = referenceSparringLevelProfile(level);
-                  return <li key={level}><b>{profile.label}</b><span>{profile.description}</span></li>;
-                })}
-              </ul>
-            </div>}
-          </label>
-          <label>延迟
-            <select
-              value={sparring.delayMs}
-              disabled={sparringBusy}
-              onChange={(event) => onUpdateSparring?.({ delayMs: Number(event.currentTarget.value) })}
-            >
-              <option value={250}>快</option>
-              <option value={600}>正常</option>
-              <option value={1000}>慢</option>
-            </select>
-          </label>
-          <label className="auto-report">
-            <input
-              type="checkbox"
-              checked={sparring.autoReport}
-              disabled={sparringBusy}
-              onChange={(event) => onUpdateSparring?.({ autoReport: event.currentTarget.checked })}
-            />
-            结束打分
-          </label>
+        <button
+          type="button"
+          className="sparring-settings-summary"
+          aria-expanded={sparringSettingsExpanded}
+          onClick={() => setSparringSettingsOpen((open) => !open)}
+        >
+          <span>{referenceSparringLevelLabel(sparring.level)}</span>
+          <span>我执{sparringSideLabel(sparring.userSide)}</span>
+          <span>{sparringDelayLabel(sparring.delayMs)}</span>
+          {sparring.autoReport && <span>结束打分</span>}
+          <ChevronDown size={13}/>
+        </button>
+        {sparringSettingsExpanded && <div className="master-opening-sparring-controls">
+            <label>我执
+              <select
+                value={sparring.userSide}
+                disabled={sparringBusy}
+                onChange={(event) => onUpdateSparring?.({ userSide: event.currentTarget.value as "red" | "black" })}
+              >
+                <option value="red">红方</option>
+                <option value="black">黑方</option>
+              </select>
+            </label>
+            <label className="sparring-level-field" ref={levelHelpRef}><span className="sparring-field-heading">等级
+              <button
+                type="button"
+                className="sparring-level-help-button"
+                aria-label="查看随机对练等级说明"
+                aria-expanded={levelHelpOpen}
+                onClick={(event) => {
+                  event.preventDefault();
+                  setLevelHelpOpen((open) => !open);
+                }}
+              >?</button>
+            </span>
+              <select
+                value={sparring.level}
+                disabled={sparringBusy}
+                title={sparringProfile?.description}
+                onChange={(event) => onUpdateSparring?.({ level: event.currentTarget.value as ReferenceSparringState["level"] })}
+              >
+                {referenceSparringLevels.map((level) => <option key={level} value={level}>{referenceSparringLevelLabel(level)}</option>)}
+              </select>
+              {levelHelpOpen && <div className="sparring-level-help-popover" role="dialog" aria-label="随机对练等级说明">
+                <strong>模拟等级说明</strong>
+                <ul>
+                  {referenceSparringLevels.map((level) => {
+                    const profile = referenceSparringLevelProfile(level);
+                    return <li key={level}><b>{profile.label}</b><span>{profile.description}</span></li>;
+                  })}
+                </ul>
+              </div>}
+            </label>
+            <label>延迟
+              <select
+                value={sparring.delayMs}
+                disabled={sparringBusy}
+                onChange={(event) => onUpdateSparring?.({ delayMs: Number(event.currentTarget.value) })}
+              >
+                <option value={250}>快</option>
+                <option value={600}>正常</option>
+                <option value={1000}>慢</option>
+              </select>
+            </label>
+            <label className="auto-report">
+              <input
+                type="checkbox"
+                checked={sparring.autoReport}
+                disabled={sparringBusy}
+                onChange={(event) => onUpdateSparring?.({ autoReport: event.currentTarget.checked })}
+              />
+              结束打分
+            </label>
+          </div>}
+        <div className="sparring-turn-card" data-phase={sparring.phase ?? "idle"}>
+          <strong>{sparringStatusLabel(sparring)}</strong>
+          <p>{sparring.message || `${sparringSideLabel(sparring.userSide)}由你走，系统用本地参考库样本随机应招。`}</p>
         </div>
-        <p>{sparring.message || `${sparringSideLabel(sparring.userSide)}由你走，系统用本地参考库样本随机应招。`}</p>
         {sparring.lastChoice && <small
           className={`sparring-choice-summary source-${sparring.lastChoice.source}`}
           title={[
             `来源：${sparring.lastChoice.sourceLabel}`,
             sparring.lastChoice.source === "reference" ? "执方胜率按当前走子方统计，和棋按收益折算；不是样本占比或引擎评分。" : undefined,
+            sparring.lastChoice.intelligenceNote,
             sparring.lastChoice.fallbackReason,
           ].filter(Boolean).join(" · ")}
         >
           <span className="sparring-choice-source">来源：{sparring.lastChoice.sourceLabel}</span>
           <span>上步：{sparring.lastChoice.move.notation || sparring.lastChoice.move.iccs}</span>
-          {sparring.lastChoice.source === "reference"
-            ? <span>{sparring.lastChoice.move.samples.toLocaleString()} 样本 · 执方胜率 {Math.round(sparring.lastChoice.winRate * 100)}%</span>
-            : sparring.lastChoice.source === "cloud" && sparring.lastChoice.winRate !== .5
-              ? <span>云库参考胜率 {Math.round(sparring.lastChoice.winRate * 100)}%</span>
-              : <span>{sparring.lastChoice.sourceLabel}首选着</span>}
+          {sparringChoiceDetailText && <span>{sparringChoiceDetailText}</span>}
+          {sparring.lastChoice.intelligenceNote && <span className="sparring-choice-intelligence">智能校正</span>}
         </small>}
         {sparring.lastChoice?.warningMessage && <p className="sparring-fallback-warning">{sparring.lastChoice.warningMessage}</p>}
+        {showSparringPauseActions && <div className="sparring-paused-actions" role="group" aria-label="无候选后的操作">
+          <button type="button" onClick={onManualContinueSparring}><Hand size={12}/>手动继续</button>
+          <button type="button" onClick={onRetrySparring}><RefreshCw size={12}/>重试</button>
+        </div>}
         <footer>
           {sparring.status === "idle" || sparring.status === "finished"
             ? <button type="button" className="primary" onClick={() => sparringOptions && onStartSparring?.(sparringOptions)}><Play size={13}/>开始</button>
@@ -462,7 +517,7 @@ export function MasterOpeningPanel({
               ? <button type="button" className="primary" onClick={onResumeSparring}><Play size={13}/>继续</button>
               : <button type="button" onClick={onPauseSparring}><Pause size={13}/>暂停</button>}
           <button type="button" disabled={sparring.status === "idle"} onClick={onStopSparring}><Square size={12}/>结束</button>
-          <button type="button" disabled={sparring.status === "idle"} onClick={onScoreSparring}><Zap size={13}/>AI 打分</button>
+          <button type="button" disabled={sparring.status === "idle"} onClick={onScoreSparring}><Zap size={13}/>{sparring.status === "finished" ? "AI 打分" : "结束并打分"}</button>
         </footer>
       </section>}
 
