@@ -146,8 +146,11 @@ private final class TrainingDatabase {
 
     func problems(libraryId: String) throws -> String {
         try queue.sync {
-            let rows = try query("SELECT p.id,p.library_id,p.source_index,p.title,p.category,p.starting_fen,p.note,p.solution_json,COUNT(a.id),COALESCE(SUM(a.elapsed_ms),0) FROM problems p LEFT JOIN attempts a ON a.problem_id=p.id WHERE p.library_id=? AND p.active=1 GROUP BY p.id ORDER BY p.source_index", [libraryId]) { statement in
-                ["id": text(statement, 0), "libraryId": text(statement, 1), "sourceIndex": integer(statement, 2), "title": text(statement, 3), "category": text(statement, 4), "startingFen": text(statement, 5), "note": text(statement, 6), "solution": try jsonValue(text(statement, 7)), "completedAttempts": integer(statement, 8), "totalElapsedMs": integer(statement, 9)]
+            let rows = try query("SELECT p.id,p.library_id,p.source_index,p.title,p.category,p.starting_fen,p.note,p.solution_json,p.logic_json,COUNT(a.id),COALESCE(SUM(a.elapsed_ms),0) FROM problems p LEFT JOIN attempts a ON a.problem_id=p.id WHERE p.library_id=? AND p.active=1 GROUP BY p.id ORDER BY p.source_index", [libraryId]) { statement in
+                var row: [String: Any] = ["id": text(statement, 0), "libraryId": text(statement, 1), "sourceIndex": integer(statement, 2), "title": text(statement, 3), "category": text(statement, 4), "startingFen": text(statement, 5), "note": text(statement, 6), "solution": try jsonValue(text(statement, 7)), "completedAttempts": integer(statement, 9), "totalElapsedMs": integer(statement, 10)]
+                let logic = text(statement, 8)
+                if !logic.isEmpty { row["logic"] = try jsonValue(logic) }
+                return row
             }
             return try json(rows)
         }
@@ -190,7 +193,8 @@ private final class TrainingDatabase {
         guard sqlite3_open_v2(path, &db, SQLITE_OPEN_CREATE | SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK else { throw databaseError() }
         try execute("PRAGMA foreign_keys=ON")
         try execute("CREATE TABLE IF NOT EXISTS libraries (id TEXT PRIMARY KEY, title TEXT NOT NULL, fingerprint TEXT NOT NULL, parser_version INTEGER NOT NULL, imported_at TEXT NOT NULL)")
-        try execute("CREATE TABLE IF NOT EXISTS problems (id TEXT PRIMARY KEY, library_id TEXT NOT NULL, source_index INTEGER NOT NULL, title TEXT NOT NULL, category TEXT NOT NULL, starting_fen TEXT NOT NULL, note TEXT NOT NULL, solution_json TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1)")
+        try execute("CREATE TABLE IF NOT EXISTS problems (id TEXT PRIMARY KEY, library_id TEXT NOT NULL, source_index INTEGER NOT NULL, title TEXT NOT NULL, category TEXT NOT NULL, starting_fen TEXT NOT NULL, note TEXT NOT NULL, solution_json TEXT NOT NULL, logic_json TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1)")
+        do { try execute("ALTER TABLE problems ADD COLUMN logic_json TEXT NOT NULL DEFAULT ''") } catch { }
         try execute("CREATE TABLE IF NOT EXISTS attempts (id TEXT PRIMARY KEY, problem_id TEXT NOT NULL, mode TEXT NOT NULL, elapsed_ms INTEGER NOT NULL, hints_used INTEGER NOT NULL, mistakes INTEGER NOT NULL, outcome TEXT NOT NULL, created_at TEXT NOT NULL)")
         try execute("CREATE INDEX IF NOT EXISTS attempts_problem_idx ON attempts(problem_id, created_at DESC)")
     }
@@ -199,7 +203,14 @@ private final class TrainingDatabase {
         guard let solution = problem["solution"] else { throw TrainingStoreError.invalidInput("solution") }
         let solutionData = try JSONSerialization.data(withJSONObject: solution)
         let solutionJson = String(decoding: solutionData, as: UTF8.self)
-        try execute("INSERT INTO problems (id,library_id,source_index,title,category,starting_fen,note,solution_json,active) VALUES (?,?,?,?,?,?,?,?,1) ON CONFLICT(id) DO UPDATE SET library_id=excluded.library_id,source_index=excluded.source_index,title=excluded.title,category=excluded.category,starting_fen=excluded.starting_fen,note=excluded.note,solution_json=excluded.solution_json,active=1", [try value(problem, "id"), try value(problem, "libraryId"), try number(problem, "sourceIndex"), try value(problem, "title"), try value(problem, "category"), try value(problem, "startingFen"), (problem["note"] as? String) ?? "", solutionJson])
+        let logicJson: String
+        if let logic = problem["logic"] {
+            let logicData = try JSONSerialization.data(withJSONObject: logic)
+            logicJson = String(decoding: logicData, as: UTF8.self)
+        } else {
+            logicJson = ""
+        }
+        try execute("INSERT INTO problems (id,library_id,source_index,title,category,starting_fen,note,solution_json,logic_json,active) VALUES (?,?,?,?,?,?,?,?,?,1) ON CONFLICT(id) DO UPDATE SET library_id=excluded.library_id,source_index=excluded.source_index,title=excluded.title,category=excluded.category,starting_fen=excluded.starting_fen,note=excluded.note,solution_json=excluded.solution_json,logic_json=excluded.logic_json,active=1", [try value(problem, "id"), try value(problem, "libraryId"), try number(problem, "sourceIndex"), try value(problem, "title"), try value(problem, "category"), try value(problem, "startingFen"), (problem["note"] as? String) ?? "", solutionJson, logicJson])
     }
 
     private func transaction(_ operation: () throws -> Void) throws {

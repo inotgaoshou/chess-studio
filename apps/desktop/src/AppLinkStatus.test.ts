@@ -112,8 +112,8 @@ describe("link floating status helpers", () => {
       to: { x: 800, y: 320 },
     });
     expect(mainBoardLastMoveOverlayPoints(move, false, "qingxin-zhuyun")).toEqual({
-      from: { x: 205, y: 1145 },
-      to: { x: 326, y: 910 },
+      from: { x: 213, y: 1136 },
+      to: { x: 330, y: 909 },
     });
     expect(mainBoardLastMoveOverlayPoints(undefined, false)).toBeUndefined();
   });

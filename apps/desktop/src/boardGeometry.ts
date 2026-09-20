@@ -28,7 +28,22 @@ export const MAIN_BOARD_ART_INSET_Y = 0;
 
 export type BoardPoint = { x: number; y: number };
 export type BoardPercentPosition = { left: string; top: string };
-export type BoardGeometrySkin = "default" | "hongmu" | "jingdian" | "xinghe" | "qingxin-zhuyun";
+export type BoardGeometrySkin =
+  | "default"
+  | "hongmu"
+  | "jingdian"
+  | "xinghe"
+  | "qingxin-zhuyun"
+  | "skin-bb439484"
+  | "skin-8b6b4eeb"
+  | "skin-8871865b"
+  | "skin-efb016e6"
+  | "skin-f71dbfdb"
+  | "skin-a84084f7"
+  | "skin-a48d1624"
+  | "skin-ca04de9d"
+  | "skin-da64d5ba"
+  | "skin-bad031d6";
 
 type BoardIntersectionLayout = {
   columns: readonly number[];
@@ -59,6 +74,46 @@ const BOARD_INTERSECTION_LAYOUTS: Readonly<Record<BoardGeometrySkin, BoardInters
     columns: [83, 213, 330, 444, 559, 675, 789, 906, 1035],
     rows: [82, 192, 306, 425, 546, 676, 791, 909, 1023, 1136],
   },
+  "skin-bb439484": {
+    columns: [83, 203, 324, 442, 561, 678, 796, 913, 1034],
+    rows: [82, 200, 317, 433, 554, 679, 793, 910, 1027, 1148],
+  },
+  "skin-8b6b4eeb": {
+    columns: [79, 197, 314, 434, 556, 675, 796, 914, 1040],
+    rows: [64, 189, 304, 419, 537, 655, 769, 886, 1002, 1135],
+  },
+  "skin-8871865b": {
+    columns: [85, 206, 323, 442, 558, 677, 796, 911, 1033],
+    rows: [79, 197, 318, 436, 559, 685, 801, 920, 1040, 1163],
+  },
+  "skin-efb016e6": {
+    columns: [83, 205, 327, 444, 558, 678, 796, 913, 1034],
+    rows: [82, 199, 316, 433, 554, 679, 796, 911, 1028, 1148],
+  },
+  "skin-f71dbfdb": {
+    columns: [83, 206, 327, 444, 558, 678, 794, 913, 1034],
+    rows: [82, 200, 317, 432, 555, 679, 796, 909, 1028, 1148],
+  },
+  "skin-a84084f7": {
+    columns: [91, 204, 323, 442, 559, 676, 795, 912, 1039],
+    rows: [78, 195, 311, 426, 547, 677, 795, 913, 1032, 1153],
+  },
+  "skin-a48d1624": {
+    columns: [83, 205, 326, 443, 558, 678, 794, 913, 1034],
+    rows: [82, 200, 316, 435, 555, 680, 793, 911, 1028, 1148],
+  },
+  "skin-ca04de9d": {
+    columns: [83, 206, 327, 443, 561, 679, 793, 913, 1034],
+    rows: [82, 199, 318, 433, 556, 679, 793, 909, 1028, 1148],
+  },
+  "skin-da64d5ba": {
+    columns: [83, 206, 327, 444, 558, 678, 796, 913, 1034],
+    rows: [82, 199, 315, 433, 553, 679, 794, 908, 1027, 1148],
+  },
+  "skin-bad031d6": {
+    columns: [63, 191, 309, 431, 551, 671, 790, 908, 1026],
+    rows: [69, 187, 309, 432, 556, 673, 793, 919, 1042, 1169],
+  },
 };
 
 function boardIntersectionLayout(skin?: string): BoardIntersectionLayout | undefined {
@@ -68,7 +123,7 @@ function boardIntersectionLayout(skin?: string): BoardIntersectionLayout | undef
 }
 
 export function boardSkinFromAssetPath(boardAsset?: string): BoardGeometrySkin | undefined {
-  const skin = boardAsset?.match(/\/skins\/(default|hongmu|jingdian|xinghe|qingxin-zhuyun)\/board\.png(?:[?#].*)?$/)?.[1];
+  const skin = boardAsset?.match(/\/skins\/([^/]+)\/board\.png(?:[?#].*)?$/)?.[1];
   return boardIntersectionLayout(skin) ? skin as BoardGeometrySkin : undefined;
 }
 

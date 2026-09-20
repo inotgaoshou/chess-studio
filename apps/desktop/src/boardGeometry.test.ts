@@ -73,6 +73,7 @@ describe("boardGeometry", () => {
 
   it("derives measured geometry only from a bundled board asset path", () => {
     expect(boardSkinFromAssetPath("/skins/qingxin-zhuyun/board.png")).toBe("qingxin-zhuyun");
+    expect(boardSkinFromAssetPath("/skins/skin-8b6b4eeb/board.png")).toBe("skin-8b6b4eeb");
     expect(boardSkinFromAssetPath("/skins/default/board.png?rev=3")).toBe("default");
     expect(boardSkinFromAssetPath("/skins/qingxin-zhuyun/mask2.png")).toBeUndefined();
   });

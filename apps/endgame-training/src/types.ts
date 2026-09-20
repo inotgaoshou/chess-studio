@@ -7,6 +7,18 @@ export type CblProblem = {
   startingFen: string;
   note: string;
   solution: SolutionMove[];
+  logic?: TrainingProblemLogic;
+};
+
+export type TrainingProblemLogic = {
+  themes?: string[];
+  goal?: string;
+  firstMoveIdea?: string;
+  keyDefense?: string;
+  failureReason?: string;
+  review?: string;
+  hints?: string[];
+  mistakes?: Record<string, string>;
 };
 
 export type CblLibrary = {

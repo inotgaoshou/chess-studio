@@ -372,7 +372,22 @@ export const DEFAULT_BUILTIN_OPENING_BOOK_ID = "learning-top3";
 export type WorkspaceLayoutMode = "studio" | "compact";
 export type ManualViewMode = "track" | "tree";
 export type RuleMode = "domestic2020" | "asianAxf";
-export type SkinFolder = "default" | "hongmu" | "jingdian" | "xinghe" | "qingxin-zhuyun";
+export type SkinFolder =
+  | "default"
+  | "hongmu"
+  | "jingdian"
+  | "xinghe"
+  | "qingxin-zhuyun"
+  | "skin-bb439484"
+  | "skin-8b6b4eeb"
+  | "skin-8871865b"
+  | "skin-efb016e6"
+  | "skin-f71dbfdb"
+  | "skin-a84084f7"
+  | "skin-a48d1624"
+  | "skin-ca04de9d"
+  | "skin-da64d5ba"
+  | "skin-bad031d6";
 export type LegacySkinId = "original" | "classic" | "neon" | "jade" | "imperial";
 export type SkinId = SkinFolder | LegacySkinId;
 export type BuiltinOpeningBookVerificationDto = {

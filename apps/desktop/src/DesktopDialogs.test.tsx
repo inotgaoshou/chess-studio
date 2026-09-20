@@ -417,13 +417,14 @@ describe("DesktopDialogs", () => {
     expect(redeem).toHaveBeenCalledWith("PRO-2026");
   });
 
-  it("marks a locally persisted training task complete", async () => {
+  it("shows that review training is paused for the current version", async () => {
     const complete = vi.fn(async () => undefined);
     const { user } = renderDialog("training", {
       trainingTasks: [{ id: "task-1", gameId: "game-1", nodeId: "node-1", title: "复盘第 12 手", detail: "比较候选着法", taskType: "critical", createdAt: "2026-01-01T00:00:00Z" }],
       onCompleteTraining: complete,
     });
-    await user.click(screen.getByRole("checkbox"));
-    expect(complete).toHaveBeenCalledWith("task-1", true);
+    await user.click(screen.getByRole("button", { name: /复盘训练/ }));
+    expect(screen.getByText(/复盘训练会在后续版本恢复/)).toBeTruthy();
+    expect(complete).not.toHaveBeenCalled();
   });
 });

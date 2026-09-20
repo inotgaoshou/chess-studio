@@ -61,15 +61,17 @@ public class TrainingStorePlugin extends Plugin {
     }
 
     private final class TrainingDatabase extends SQLiteOpenHelper {
-        TrainingDatabase() { super(getContext(), "endgame-training.sqlite", null, 1); }
+        TrainingDatabase() { super(getContext(), "endgame-training.sqlite", null, 2); }
 
         @Override public void onCreate(SQLiteDatabase db) {
             db.execSQL("CREATE TABLE libraries (id TEXT PRIMARY KEY, title TEXT NOT NULL, fingerprint TEXT NOT NULL, parser_version INTEGER NOT NULL, imported_at TEXT NOT NULL)");
-            db.execSQL("CREATE TABLE problems (id TEXT PRIMARY KEY, library_id TEXT NOT NULL, source_index INTEGER NOT NULL, title TEXT NOT NULL, category TEXT NOT NULL, starting_fen TEXT NOT NULL, note TEXT NOT NULL, solution_json TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1)");
+            db.execSQL("CREATE TABLE problems (id TEXT PRIMARY KEY, library_id TEXT NOT NULL, source_index INTEGER NOT NULL, title TEXT NOT NULL, category TEXT NOT NULL, starting_fen TEXT NOT NULL, note TEXT NOT NULL, solution_json TEXT NOT NULL, logic_json TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1)");
             db.execSQL("CREATE TABLE attempts (id TEXT PRIMARY KEY, problem_id TEXT NOT NULL, mode TEXT NOT NULL, elapsed_ms INTEGER NOT NULL, hints_used INTEGER NOT NULL, mistakes INTEGER NOT NULL, outcome TEXT NOT NULL, created_at TEXT NOT NULL)");
             db.execSQL("CREATE INDEX attempts_problem_idx ON attempts(problem_id, created_at DESC)");
         }
-        @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) { }
+        @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+            if (oldVersion < 2) db.execSQL("ALTER TABLE problems ADD COLUMN logic_json TEXT NOT NULL DEFAULT ''");
+        }
 
         void replaceLibrary(JSONObject library, JSONArray problems) throws Exception {
             SQLiteDatabase db = getWritableDatabase(); db.beginTransaction();
@@ -83,7 +85,7 @@ public class TrainingStorePlugin extends Plugin {
         }
 
         private void saveProblem(SQLiteDatabase db, JSONObject problem) throws Exception {
-            ContentValues values = new ContentValues(); values.put("id", problem.getString("id")); values.put("library_id", problem.getString("libraryId")); values.put("source_index", problem.getInt("sourceIndex")); values.put("title", problem.getString("title")); values.put("category", problem.getString("category")); values.put("starting_fen", problem.getString("startingFen")); values.put("note", problem.optString("note")); values.put("solution_json", problem.getJSONArray("solution").toString()); values.put("active", 1);
+            ContentValues values = new ContentValues(); values.put("id", problem.getString("id")); values.put("library_id", problem.getString("libraryId")); values.put("source_index", problem.getInt("sourceIndex")); values.put("title", problem.getString("title")); values.put("category", problem.getString("category")); values.put("starting_fen", problem.getString("startingFen")); values.put("note", problem.optString("note")); values.put("solution_json", problem.getJSONArray("solution").toString()); values.put("logic_json", problem.has("logic") && !problem.isNull("logic") ? problem.getJSONObject("logic").toString() : ""); values.put("active", 1);
             db.insertWithOnConflict("problems", null, values, SQLiteDatabase.CONFLICT_REPLACE);
         }
 
@@ -93,8 +95,8 @@ public class TrainingStorePlugin extends Plugin {
         }
 
         JSONArray problems(String libraryId) {
-            JSONArray result = new JSONArray(); Cursor cursor = getReadableDatabase().rawQuery("SELECT p.id,p.library_id,p.source_index,p.title,p.category,p.starting_fen,p.note,p.solution_json,COUNT(a.id),COALESCE(SUM(a.elapsed_ms),0) FROM problems p LEFT JOIN attempts a ON a.problem_id=p.id WHERE p.library_id=? AND p.active=1 GROUP BY p.id ORDER BY p.source_index", new String[] { libraryId });
-            while (cursor.moveToNext()) { JSONObject row = new JSONObject(); try { row.put("id", cursor.getString(0)); row.put("libraryId", cursor.getString(1)); row.put("sourceIndex", cursor.getInt(2)); row.put("title", cursor.getString(3)); row.put("category", cursor.getString(4)); row.put("startingFen", cursor.getString(5)); row.put("note", cursor.getString(6)); row.put("solution", new JSONArray(cursor.getString(7))); row.put("completedAttempts", cursor.getInt(8)); row.put("totalElapsedMs", cursor.getLong(9)); result.put(row); } catch (Exception ignored) {} } cursor.close(); return result;
+            JSONArray result = new JSONArray(); Cursor cursor = getReadableDatabase().rawQuery("SELECT p.id,p.library_id,p.source_index,p.title,p.category,p.starting_fen,p.note,p.solution_json,p.logic_json,COUNT(a.id),COALESCE(SUM(a.elapsed_ms),0) FROM problems p LEFT JOIN attempts a ON a.problem_id=p.id WHERE p.library_id=? AND p.active=1 GROUP BY p.id ORDER BY p.source_index", new String[] { libraryId });
+            while (cursor.moveToNext()) { JSONObject row = new JSONObject(); try { row.put("id", cursor.getString(0)); row.put("libraryId", cursor.getString(1)); row.put("sourceIndex", cursor.getInt(2)); row.put("title", cursor.getString(3)); row.put("category", cursor.getString(4)); row.put("startingFen", cursor.getString(5)); row.put("note", cursor.getString(6)); row.put("solution", new JSONArray(cursor.getString(7))); String logic = cursor.getString(8); if (logic != null && !logic.isEmpty()) row.put("logic", new JSONObject(logic)); row.put("completedAttempts", cursor.getInt(9)); row.put("totalElapsedMs", cursor.getLong(10)); result.put(row); } catch (Exception ignored) {} } cursor.close(); return result;
         }
 
         JSONArray attempts(String problemId) {
