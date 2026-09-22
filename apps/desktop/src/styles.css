@@ -12489,14 +12489,26 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 }
 .endgame-tree-row {
   display:grid;
-  grid-template-columns:minmax(0, 1fr) 27px 27px;
+  grid-template-columns:minmax(0, 1fr) auto 27px;
   gap:4px;
   align-items:stretch;
 }
-.endgame-tree-row.with-library-order { grid-template-columns:minmax(0, 1fr) repeat(3, 27px); }
-.endgame-tree-row.with-folder-order { grid-template-columns:minmax(0, 1fr) repeat(4, 27px); }
 .endgame-tree-row .endgame-library-parent {
   min-width:0;
+}
+.endgame-tree-move {
+  min-height:27px;
+  padding:0 6px;
+  border:1px solid #d2e0d7;
+  border-radius:4px;
+  background:#fff;
+  color:#527664;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:3px;
+  font:700 9px "PingFang SC", sans-serif;
+  white-space:nowrap;
 }
 .endgame-tree-action {
   width:27px;
@@ -12517,6 +12529,38 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 .endgame-tree-action.danger { color:#ad5751; }
 .endgame-tree-action.danger:hover { border-color:#d9908b; background:#fff1f0; }
 .endgame-tree-action:disabled { color:#a6b4ab; border-color:#e1e9e4; background:#f8fbf9; cursor:not-allowed; }
+.endgame-tree-more { position:relative; min-width:27px; }
+.endgame-tree-menu {
+  position:absolute;
+  z-index:40;
+  right:0;
+  top:30px;
+  min-width:76px;
+  padding:4px;
+  border:1px solid #c7d7cd;
+  border-radius:5px;
+  background:#fff;
+  box-shadow:0 8px 22px rgb(34 64 45 / 18%);
+  display:grid;
+  gap:3px;
+}
+.endgame-tree-menu button {
+  min-height:25px;
+  padding:0 6px;
+  border:0;
+  border-radius:4px;
+  background:transparent;
+  color:#426052;
+  display:flex;
+  align-items:center;
+  gap:4px;
+  font-size:10px;
+  font-weight:700;
+  white-space:nowrap;
+}
+.endgame-tree-menu button:hover { background:#edf8ef; }
+.endgame-tree-menu button.danger { color:#ad5751; }
+.endgame-tree-menu button:disabled { color:#a6b4ab; cursor:not-allowed; }
 .endgame-global-search {
   min-width:0;
   height:27px;
@@ -12572,13 +12616,15 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
  * to the full dialog height. Let only the tree/results consume spare height. */
 @media (min-width:761px) {
   .endgame-training-layout > .endgame-library-rail {
-    display:flex;
-    flex-direction:column;
-    align-items:stretch;
+    display:grid;
+    grid-template-rows:auto auto auto minmax(96px, var(--endgame-directory-ratio, 40fr)) 8px minmax(120px, var(--endgame-problem-ratio, 60fr)) auto auto;
+    align-content:stretch;
   }
   .endgame-library-tree,
   .endgame-global-results {
-    flex:1 1 auto;
+    min-height:0;
+  }
+  .endgame-selected-problems {
     min-height:0;
   }
 }
@@ -12613,6 +12659,129 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
   background:#fff;
   color:#294838;
   font:600 12px "PingFang SC", sans-serif;
+}
+.endgame-directory-dialog { width:min(430px, calc(100vw - 32px)); }
+.endgame-target-picker {
+  display:grid;
+  gap:6px;
+}
+.endgame-target-picker p {
+  margin:0;
+  color:#53685d;
+  font-size:11px;
+  line-height:1.35;
+}
+.endgame-target-tree {
+  max-height:260px;
+  overflow:auto;
+  padding:6px;
+  border:1px solid #d6e2db;
+  border-radius:5px;
+  background:#f8fbf9;
+  display:grid;
+  align-content:start;
+  gap:4px;
+}
+.endgame-target-tree button,
+.endgame-target-node button {
+  min-height:28px;
+  border:1px solid #d2e0d7;
+  border-radius:4px;
+  background:#fff;
+  color:#315a3f;
+  display:flex;
+  align-items:center;
+  gap:5px;
+  font:700 11px "PingFang SC", sans-serif;
+  text-align:left;
+}
+.endgame-target-tree button.active,
+.endgame-target-node button.active {
+  border-color:#4b9364;
+  background:#eaf6ec;
+}
+.endgame-target-node { display:grid; gap:4px; }
+.endgame-target-node > div {
+  display:grid;
+  grid-template-columns:24px minmax(0, 1fr);
+  gap:4px;
+}
+.endgame-target-node .endgame-target-toggle {
+  min-width:0;
+  padding:0;
+  justify-content:center;
+}
+.endgame-target-node .endgame-target-toggle:disabled {
+  opacity:.45;
+}
+.endgame-library-splitter {
+  height:8px;
+  border-block:1px solid #d6e2db;
+  background:
+    linear-gradient(90deg, transparent, #b8d1c2 35%, #b8d1c2 65%, transparent);
+  cursor:row-resize;
+}
+.endgame-selected-problems {
+  min-height:0;
+  display:grid;
+  grid-template-rows:auto auto minmax(0, 1fr);
+  gap:6px;
+  overflow:hidden;
+}
+.endgame-selected-problems > header {
+  display:grid;
+  gap:2px;
+}
+.endgame-selected-problems > header strong {
+  overflow:hidden;
+  color:#244739;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  font-size:11px;
+}
+.endgame-selected-problems > header small {
+  color:#71877d;
+}
+.endgame-selected-problems .endgame-problem-list {
+  min-height:0;
+}
+.endgame-problem-list button,
+.endgame-global-results button {
+  position:relative;
+  grid-template-columns:21px minmax(0, 1fr) auto;
+}
+.endgame-problem-list em,
+.endgame-global-results em {
+  align-self:center;
+  padding:2px 5px;
+  border-radius:999px;
+  background:#eef3ef;
+  color:#71877d;
+  font-style:normal;
+  font-size:8px;
+  font-weight:800;
+  white-space:nowrap;
+}
+.endgame-problem-list button.tried em,
+.endgame-global-results button.tried em {
+  background:#fff2d9;
+  color:#9a6718;
+}
+.endgame-problem-list button.done em,
+.endgame-global-results button.done em {
+  background:#e5f6e9;
+  color:#287140;
+}
+.endgame-problem-list button.done b,
+.endgame-global-results button.done b {
+  background:#dff3e6;
+  color:#287140;
+}
+.endgame-problem-list button.done b::after {
+  content:"✓";
+  position:absolute;
+  transform:translate(9px, -9px);
+  font-size:9px;
 }
 .endgame-import-summary {
   margin:0;

@@ -605,6 +605,7 @@ pub struct EndgameLibrary {
     pub fingerprint: String,
     pub parser_version: u32,
     pub problem_count: u32,
+    pub attempted_count: u32,
     pub completed_count: u32,
     pub imported_at: String,
 }
@@ -629,6 +630,7 @@ pub struct EndgameProblem {
     pub starting_fen: String,
     pub note: String,
     pub solution_json: String,
+    pub attempt_count: u32,
     pub completed_attempts: u32,
     pub total_elapsed_ms: u64,
 }
@@ -937,7 +939,17 @@ impl LocalStore {
     }
 
     pub fn endgame_libraries(&self) -> Result<Vec<EndgameLibrary>, StoreError> {
-        let mut statement = self.connection.prepare("SELECT id, folder_id, title, source_path, fingerprint, parser_version, imported_at FROM endgame_libraries ORDER BY COALESCE(folder_id, ''), sort_order, imported_at DESC, id")?;
+        let mut statement = self.connection.prepare(
+            "SELECT l.id, l.folder_id, l.title, l.source_path, l.fingerprint, l.parser_version, l.imported_at,
+                    COUNT(p.id) AS problem_count,
+                    COUNT(DISTINCT a.problem_id) AS attempted_count,
+                    COUNT(DISTINCT CASE WHEN a.outcome='completed' THEN a.problem_id END) AS completed_count
+             FROM endgame_libraries l
+             LEFT JOIN endgame_problems p ON p.library_id=l.id AND p.active=1
+             LEFT JOIN endgame_attempts a ON a.problem_id=p.id
+             GROUP BY l.id
+             ORDER BY COALESCE(l.folder_id, ''), l.sort_order, l.imported_at DESC, l.id",
+        )?;
         statement
             .query_map([], |row| {
                 Ok((
@@ -948,17 +960,34 @@ impl LocalStore {
                     row.get::<_, String>(4)?,
                     row.get::<_, u32>(5)?,
                     row.get::<_, String>(6)?,
+                    row.get::<_, u32>(7)?,
+                    row.get::<_, u32>(8)?,
+                    row.get::<_, u32>(9)?,
                 ))
             })?
             .map(|row| {
-                let (id, folder_id, title, path, fingerprint, parser_version, imported_at) = row?;
-                self.endgame_library_from_values(
+                let (
                     id,
                     folder_id,
                     title,
                     path,
                     fingerprint,
                     parser_version,
+                    imported_at,
+                    problem_count,
+                    attempted_count,
+                    completed_count,
+                ) = row?;
+                self.endgame_library_from_values_with_counts(
+                    id,
+                    folder_id,
+                    title,
+                    path,
+                    fingerprint,
+                    parser_version,
+                    problem_count,
+                    attempted_count,
+                    completed_count,
                     imported_at,
                 )
             })
@@ -1017,7 +1046,35 @@ impl LocalStore {
             [id.as_str()],
             |row| row.get(0),
         )?;
+        let attempted_count: u32 = self.connection.query_row("SELECT COUNT(DISTINCT problem_id) FROM endgame_attempts WHERE problem_id IN (SELECT id FROM endgame_problems WHERE library_id=?1 AND active=1)", [id.as_str()], |row| row.get(0))?;
         let completed_count: u32 = self.connection.query_row("SELECT COUNT(DISTINCT problem_id) FROM endgame_attempts WHERE outcome='completed' AND problem_id IN (SELECT id FROM endgame_problems WHERE library_id=?1 AND active=1)", [id.as_str()], |row| row.get(0))?;
+        self.endgame_library_from_values_with_counts(
+            id,
+            folder_id,
+            title,
+            source_path,
+            fingerprint,
+            parser_version,
+            problem_count,
+            attempted_count,
+            completed_count,
+            imported_at,
+        )
+    }
+
+    fn endgame_library_from_values_with_counts(
+        &self,
+        id: String,
+        folder_id: Option<String>,
+        title: String,
+        source_path: String,
+        fingerprint: String,
+        parser_version: u32,
+        problem_count: u32,
+        attempted_count: u32,
+        completed_count: u32,
+        imported_at: String,
+    ) -> Result<EndgameLibrary, StoreError> {
         Ok(EndgameLibrary {
             id: Uuid::parse_str(&id).map_err(json_error)?,
             folder_id: folder_id
@@ -1028,6 +1085,7 @@ impl LocalStore {
             fingerprint,
             parser_version,
             problem_count,
+            attempted_count,
             completed_count,
             imported_at,
         })
@@ -1315,9 +1373,75 @@ impl LocalStore {
     }
 
     pub fn endgame_problems(&self, library_id: Uuid) -> Result<Vec<EndgameProblem>, StoreError> {
+        let mut stats_statement = self.connection.prepare(
+            "SELECT p.id,
+                    COUNT(a.id) AS attempt_count,
+                    SUM(CASE WHEN a.outcome='completed' THEN 1 ELSE 0 END) AS completed_attempts,
+                    COALESCE(SUM(CASE WHEN a.outcome='completed' THEN a.elapsed_ms ELSE 0 END), 0) AS total_elapsed_ms
+             FROM endgame_problems p
+             LEFT JOIN endgame_attempts a ON a.problem_id=p.id
+             WHERE p.library_id=?1 AND p.active=1
+             GROUP BY p.id",
+        )?;
+        let stats = stats_statement
+            .query_map([library_id.to_string()], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, u32>(1)?,
+                    row.get::<_, u32>(2)?,
+                    row.get::<_, u64>(3)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .map(
+                |(id, attempt_count, completed_attempts, total_elapsed_ms)| {
+                    (id, (attempt_count, completed_attempts, total_elapsed_ms))
+                },
+            )
+            .collect::<std::collections::HashMap<_, _>>();
         let mut statement = self.connection.prepare("SELECT id, library_id, source_index, title, category, starting_fen, note, solution_json FROM endgame_problems WHERE library_id=?1 AND active=1 ORDER BY source_index")?;
-        statement.query_map([library_id.to_string()], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, u32>(2)?, row.get::<_, String>(3)?, row.get::<_, String>(4)?, row.get::<_, String>(5)?, row.get::<_, String>(6)?, row.get::<_, String>(7)?)))?
-            .map(|row| { let (id, library_id, source_index, title, category, starting_fen, note, solution_json) = row?; let completed_attempts = self.connection.query_row("SELECT COUNT(*) FROM endgame_attempts WHERE problem_id=?1 AND outcome='completed'", [id.as_str()], |r| r.get(0))?; let total_elapsed_ms = self.connection.query_row("SELECT COALESCE(SUM(elapsed_ms), 0) FROM endgame_attempts WHERE problem_id=?1 AND outcome='completed'", [id.as_str()], |r| r.get(0))?; Ok(EndgameProblem { id: Uuid::parse_str(&id).map_err(json_error)?, library_id: Uuid::parse_str(&library_id).map_err(json_error)?, source_index, title, category, starting_fen, note, solution_json, completed_attempts, total_elapsed_ms }) }).collect()
+        statement
+            .query_map([library_id.to_string()], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, u32>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
+                ))
+            })?
+            .map(|row| {
+                let (
+                    id,
+                    library_id,
+                    source_index,
+                    title,
+                    category,
+                    starting_fen,
+                    note,
+                    solution_json,
+                ) = row?;
+                let (attempt_count, completed_attempts, total_elapsed_ms) =
+                    stats.get(&id).copied().unwrap_or((0, 0, 0));
+                Ok(EndgameProblem {
+                    id: Uuid::parse_str(&id).map_err(json_error)?,
+                    library_id: Uuid::parse_str(&library_id).map_err(json_error)?,
+                    source_index,
+                    title,
+                    category,
+                    starting_fen,
+                    note,
+                    solution_json,
+                    attempt_count,
+                    completed_attempts,
+                    total_elapsed_ms,
+                })
+            })
+            .collect()
     }
 
     pub fn save_endgame_attempt(

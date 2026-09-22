@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, BookOpen, ChevronDown, ChevronLeft, ChevronRight, Folder, FolderInput, FolderPlus, History, Lightbulb, ListRestart, Pause, Play, RotateCcw, Search, Sparkles, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, BookOpen, ChevronDown, ChevronLeft, ChevronRight, Folder, FolderInput, FolderPlus, History, Lightbulb, ListRestart, MoreVertical, Pause, Play, RotateCcw, Search, Sparkles, Trash2, X } from "lucide-react";
 import { type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { LinkMiniBoard } from "./LinkMiniBoard";
 import { boardIntersectionStyle } from "./boardGeometry";
@@ -19,6 +19,8 @@ const sq = (value: Square) => `${String.fromCharCode(97 + value.col)}${9 - value
 const attemptModeLabel: Record<string, string> = { cloud: "云库对练", solver: "只走解题方", replay: "双方复现", free: "自由实战" };
 const attemptOutcomeLabel: Record<string, string> = { completed: "解出", revealed: "已看答案", abandoned: "已放弃", free_finished: "自由对局结束" };
 const terminalResultLabel = (checkmate: boolean) => checkmate ? "绝杀（将死）" : "困毙";
+const progressFilters = ["全部", "未做", "做过未对", "做对"] as const;
+type ProgressFilter = typeof progressFilters[number];
 const AUTO_REPLY_DELAY_MS = 650;
 const MIN_LIBRARY_RAIL_WIDTH = 168;
 const MAX_LIBRARY_RAIL_WIDTH = 320;
@@ -95,11 +97,13 @@ export function EndgameTrainingDialog({ onClose, preferences: preferenceInput, r
   const [expandedFolderIds, setExpandedFolderIds] = useState<Set<string>>(() => new Set());
   const [rootExpanded, setRootExpanded] = useState(true);
   const [libraryRailWidth, setLibraryRailWidth] = useState(184);
+  const [directoryTreeRatio, setDirectoryTreeRatio] = useState(40);
   const [library, setLibrary] = useState<EndgameLibraryDto>();
   const [expandedLibraryId, setExpandedLibraryId] = useState<string>();
   const [problems, setProblems] = useState<EndgameProblemDto[]>([]);
   const [problem, setProblem] = useState<EndgameProblemDto>();
   const [category, setCategory] = useState("全部");
+  const [progressFilter, setProgressFilter] = useState<ProgressFilter>("全部");
   const [query, setQuery] = useState("");
   const [globalQuery, setGlobalQuery] = useState("");
   const [globalResults, setGlobalResults] = useState<Array<{ library: EndgameLibraryDto; problem: EndgameProblemDto }>>([]);
@@ -139,11 +143,19 @@ export function EndgameTrainingDialog({ onClose, preferences: preferenceInput, r
   const [directoryAction, setDirectoryAction] = useState<{ kind: "create"; parentId?: string } | { kind: "move-folder"; folder: EndgameFolderDto } | { kind: "move-library"; library: EndgameLibraryDto }>();
   const [directoryName, setDirectoryName] = useState("");
   const [directoryTargetId, setDirectoryTargetId] = useState("");
+  const [directoryTargetExpandedIds, setDirectoryTargetExpandedIds] = useState<Set<string>>(() => new Set());
+  const [openTreeMenu, setOpenTreeMenu] = useState<string>();
   const trainingSession = useRef(0);
   const finishingAttempt = useRef(false);
   const elapsed = elapsedBeforePause + (startedAt ? Date.now() - startedAt : 0);
   const categories = useMemo(() => ["全部", ...Array.from(new Set(problems.map((item) => item.category))).sort()], [problems]);
-  const visibleProblems = useMemo(() => problems.filter((item) => (category === "全部" || item.category === category) && (!query.trim() || `${item.title} ${item.category}`.includes(query.trim()))), [category, problems, query]);
+  const problemProgress = (item: EndgameProblemDto) => item.completedAttempts > 0 ? "done" : item.attemptCount > 0 ? "tried" : "new";
+  const visibleProblems = useMemo(() => problems.filter((item) => {
+    const status = problemProgress(item);
+    return (category === "全部" || item.category === category)
+      && (progressFilter === "全部" || (progressFilter === "未做" && status === "new") || (progressFilter === "做过未对" && status === "tried") || (progressFilter === "做对" && status === "done"))
+      && (!query.trim() || `${item.title} ${item.category}`.includes(query.trim()));
+  }), [category, problems, progressFilter, query]);
   const index = problem ? visibleProblems.findIndex((item) => item.id === problem.id) : -1;
   const hintSquare = hints >= 2 && line[0] ? moveSquares(line[0].iccs).from : undefined;
   const answerMoves = useMemo(() => problem ? mainline(JSON.parse(problem.solutionJson)) : [], [problem]);
@@ -233,6 +245,7 @@ export function EndgameTrainingDialog({ onClose, preferences: preferenceInput, r
   }, [answerMoves, demoPlaying, problem, revealed]);
 
   async function selectLibrary(item: EndgameLibraryDto, availableFolders = folders) {
+    if (item.id !== library?.id) await saveUnfinishedAttempt();
     setLibrary(item);
     setRootExpanded(true);
     setSelectedFolderId(normalizedFolderId(item.folderId));
@@ -253,6 +266,7 @@ export function EndgameTrainingDialog({ onClose, preferences: preferenceInput, r
     setAttempts([]);
     setShowAttempts(false);
     setCategory("全部");
+    setProgressFilter("全部");
     setQuery("");
   }
 
@@ -264,11 +278,29 @@ export function EndgameTrainingDialog({ onClose, preferences: preferenceInput, r
     void selectLibrary(item);
   }
 
-  function start(item: EndgameProblemDto) {
+  function hasAttemptProgress() {
+    return Boolean(problem && !attemptFinished && (hasAdvanced || startedAt || elapsedBeforePause > 0 || hints > 0 || mistakes > 0 || revealed || freeMoves.length > 0 || playedMoves.length > 0));
+  }
+
+  async function saveUnfinishedAttempt() {
+    if (!hasAttemptProgress()) return;
+    await finish("abandoned");
+  }
+
+  function startFresh(item: EndgameProblemDto) {
     trainingSession.current += 1;
     finishingAttempt.current = false;
     setProblem(item); setLine(JSON.parse(item.solutionJson)); setPieces(readFen(item.startingFen)); setSelected(undefined); setLast(undefined); setMode("cloud");
     setStartedAt(undefined); setElapsedBeforePause(0); setClock(0); setHints(0); setMistakes(0); setHasAdvanced(false); setNotice("选中棋子后再点目标点。第一步开始计时。"); setRevealed(false); setAttemptFinished(false); setAutoReplyPending(false); setTerminalFeedback(undefined); setPlayedMoves([]); setAnswerNotation([]); setAnswerStep(0); setDemoPlaying(false); setFreeMoves([]); setFreeMovePending(false); setShowAttempts(false); void loadAttempts(item.id);
+  }
+
+  async function start(item: EndgameProblemDto) {
+    if (!hasAttemptProgress()) {
+      startFresh(item);
+      return;
+    }
+    await saveUnfinishedAttempt();
+    startFresh(item);
   }
 
   function stopClock() {
@@ -281,14 +313,23 @@ export function EndgameTrainingDialog({ onClose, preferences: preferenceInput, r
   async function finish(outcome: "completed" | "revealed" | "abandoned" | "free_finished", duration = elapsed) {
     if (!problem || attemptFinished || finishingAttempt.current) return;
     finishingAttempt.current = true;
-    setAttemptFinished(true);
     setAutoReplyPending(false);
     setElapsedBeforePause(duration);
     setStartedAt(undefined);
-    await chessPlatform.saveEndgameAttempt({ problemId: problem.id, mode, elapsedMs: duration, hintsUsed: hints, mistakes, outcome });
-    setRevealed(outcome === "revealed");
-    void loadAttempts(problem.id);
-    void refresh();
+    try {
+      await chessPlatform.saveEndgameAttempt({ problemId: problem.id, mode, elapsedMs: duration, hintsUsed: hints, mistakes, outcome });
+      setAttemptFinished(true);
+      setRevealed(outcome === "revealed");
+      void loadAttempts(problem.id);
+      const [updatedLibraries, updatedProblems] = await Promise.all([chessPlatform.listEndgameLibraries(), chessPlatform.listEndgameProblems(problem.libraryId)]);
+      setLibraries(updatedLibraries);
+      setProblems(updatedProblems);
+      setLibrary((current) => updatedLibraries.find((item) => item.id === (current?.id ?? problem.libraryId)) ?? current);
+      setProblem((current) => updatedProblems.find((item) => item.id === (current?.id ?? problem.id)) ?? current);
+    } catch (error) {
+      finishingAttempt.current = false;
+      setNotice(`保存答题记录失败：${error instanceof Error ? error.message : String(error)}。请稍后重试。`);
+    }
   }
 
   async function importCbl() {
@@ -319,6 +360,22 @@ export function EndgameTrainingDialog({ onClose, preferences: preferenceInput, r
     });
   }
 
+  function showDirectoryTarget() {
+    setSelectedFolderId(directoryTargetId || undefined);
+    setRootExpanded(true);
+    setExpandedFolderIds((current) => {
+      const next = new Set(current);
+      let targetId = directoryTargetId || undefined;
+      const visited = new Set<string>();
+      while (targetId && !visited.has(targetId)) {
+        visited.add(targetId);
+        next.add(targetId);
+        targetId = normalizedFolderId(folders.find((folder) => folder.id === targetId)?.parentId);
+      }
+      return next;
+    });
+  }
+
   async function confirmDirectoryAction() {
     const action = directoryAction;
     if (!action) return;
@@ -336,14 +393,15 @@ export function EndgameTrainingDialog({ onClose, preferences: preferenceInput, r
         const folder = await chessPlatform.createEndgameFolder(action.parentId, directoryName);
         setExpandedFolderIds((current) => new Set(current).add(folder.parentId ?? folder.id));
         setSelectedFolderId(folder.id);
+        setRootExpanded(true);
         setNotice(`已创建目录：${folder.name}`);
       } else if (action.kind === "move-folder") {
         await chessPlatform.moveEndgameFolder(action.folder.id, directoryTargetId || undefined);
-        setSelectedFolderId(directoryTargetId || undefined);
+        showDirectoryTarget();
         setNotice(`已移动目录：${action.folder.name}`);
       } else {
         await chessPlatform.moveEndgameLibraries([action.library.id], directoryTargetId || undefined);
-        setSelectedFolderId(directoryTargetId || undefined);
+        showDirectoryTarget();
         setNotice(`已移动题库：${action.library.title}`);
       }
       setDirectoryAction(undefined); setDirectoryName(""); setDirectoryTargetId("");
@@ -483,7 +541,7 @@ export function EndgameTrainingDialog({ onClose, preferences: preferenceInput, r
       setPieces(readFen(player.fen)); setFreeMoves((moves) => [...moves, iccs]); setLast({ from, to }); setHasAdvanced(true);
       if (!startedAt) setStartedAt(Date.now());
       playMoveFeedbackSound(player.terminal ? (player.checkmate ? "checkmate" : "stalemate") : player.check ? "check" : player.captured ? "capture" : "move", preferences.moveSoundEnabled, preferences.moveSoundVolume);
-      if (player.terminal) { setTerminalFeedback(player.checkmate ? "checkmate" : "stalemate"); setNotice(`云库对练：${player.notation}。${terminalResultLabel(player.checkmate)}，对局结束。`); await finish("free_finished", duration); return; }
+      if (player.terminal) { setTerminalFeedback(player.checkmate ? "checkmate" : "stalemate"); setNotice(`云库对练：${player.notation}。${terminalResultLabel(player.checkmate)}，获胜，已保存为做对。`); await finish("completed", duration); return; }
       setAutoReplyPending(true); setNotice("正在查询云库应手…");
       const reply = (await chessPlatform.queryCloudOpeningBook(player.fen))[0];
       if (!reply) { continueOffline("云库当前局面没有可用应手"); return; }
@@ -609,8 +667,8 @@ export function EndgameTrainingDialog({ onClose, preferences: preferenceInput, r
     if (startedAt) { stopClock(); setNotice("已暂停，暂停时间不会计入本题用时。"); }
     else if (elapsedBeforePause > 0 && !revealed) { setStartedAt(Date.now()); setNotice("继续作答。"); }
   }
-  async function restart() { if (!problem) return; if (!attemptFinished && (startedAt || elapsedBeforePause || hints || mistakes)) await finish("abandoned"); start(problem); }
-  const next = (offset: number) => { const item = visibleProblems[index + offset]; if (item) start(item); };
+  async function restart() { if (!problem) return; await saveUnfinishedAttempt(); startFresh(problem); }
+  const next = (offset: number) => { const item = visibleProblems[index + offset]; if (item) void start(item); };
   const descendantFolderIds = (folderId: string): Set<string> => {
     const ids = new Set<string>();
     const collect = (parentId: string) => folders.filter((folder) => normalizedFolderId(folder.parentId) === parentId).forEach((folder) => { ids.add(folder.id); collect(folder.id); });
@@ -623,6 +681,22 @@ export function EndgameTrainingDialog({ onClose, preferences: preferenceInput, r
     const startX = event.clientX;
     const startWidth = libraryRailWidth;
     const move = (moveEvent: PointerEvent) => setClampedLibraryRailWidth(startWidth + moveEvent.clientX - startX);
+    const finish = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", finish);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", finish, { once: true });
+  };
+  const beginDirectorySplitResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const rail = event.currentTarget.closest(".endgame-library-rail");
+    if (!(rail instanceof HTMLElement)) return;
+    const bounds = rail.getBoundingClientRect();
+    const move = (moveEvent: PointerEvent) => {
+      const next = Math.round(((moveEvent.clientY - bounds.top) / Math.max(1, bounds.height)) * 100);
+      setDirectoryTreeRatio(Math.min(68, Math.max(28, next)));
+    };
     const finish = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", finish);
@@ -647,13 +721,34 @@ export function EndgameTrainingDialog({ onClose, preferences: preferenceInput, r
     }
     return names.join(" / ");
   };
+  const folderNameById = (folderId?: string) => folderId ? folderPath(folders.find((folder) => folder.id === folderId) ?? { id: folderId, name: "未知目录", createdAt: "" }) : "根目录";
+  const openMoveDialog = (action: { kind: "move-folder"; folder: EndgameFolderDto } | { kind: "move-library"; library: EndgameLibraryDto }, currentFolderId?: string | null) => {
+    const targetId = currentFolderId ?? "";
+    setDirectoryTargetId(targetId);
+    setDirectoryTargetExpandedIds(new Set(targetId ? [targetId] : []));
+    setDirectoryAction(action);
+    setOpenTreeMenu(undefined);
+  };
+  const problemProgressMeta = (item: EndgameProblemDto) => {
+    const status = problemProgress(item);
+    if (status === "done") return { className: "done", label: "做对", detail: `累计 ${fmt(item.totalElapsedMs)}` };
+    if (status === "tried") return { className: "tried", label: "做过", detail: `${item.attemptCount} 次尝试` };
+    return { className: "new", label: "未做", detail: "未练" };
+  };
+  const renderProblemButton = (problemItem: EndgameProblemDto, source?: EndgameLibraryDto) => {
+    const progress = problemProgressMeta(problemItem);
+    return <button className={`${problemItem.id === problem?.id ? "active" : ""} ${progress.className}`} key={problemItem.id} onClick={() => void (async () => {
+      if (source && source.id !== library?.id) await selectLibrary(source);
+      await start(problemItem);
+      if (source) setGlobalQuery("");
+    })()}><b>{problemItem.sourceIndex + 1}</b><span><strong>{problemItem.title}</strong><small>{source ? `${source.title} · ${problemItem.category}` : `${problemItem.category} · ${progress.detail}`}</small></span><em>{progress.label}</em></button>;
+  };
   const renderLibrary = (item: EndgameLibraryDto, depth: number) => {
     const expanded = item.id === expandedLibraryId;
     const siblings = libraries.filter((candidate) => normalizedFolderId(candidate.folderId) === normalizedFolderId(item.folderId));
     const siblingIndex = siblings.findIndex((candidate) => candidate.id === item.id);
     return <section className={`endgame-library-group ${expanded ? "expanded" : ""}`} key={item.id} style={{ marginLeft: `${depth * 16}px` }}>
-      <div className={`endgame-tree-row ${expanded ? "with-library-order" : ""}`}><button className={`endgame-library-parent ${expanded ? "active" : ""}`} aria-expanded={expanded} onClick={() => toggleLibrary(item)}><BookOpen size={15}/><span><strong>{item.title}</strong><small>{item.completedCount}/{item.problemCount} 已完成</small></span>{expanded ? <ChevronDown size={15}/> : <ChevronRight size={15}/>}</button><button className="endgame-tree-action" aria-label="移动题库" title={`移动题库 ${item.title}`} onClick={() => { setDirectoryTargetId(item.folderId ?? ""); setDirectoryAction({ kind: "move-library", library: item }); }}><FolderInput size={14}/></button>{expanded && <><button className="endgame-tree-action" disabled={siblingIndex <= 0} aria-label="上移题库" title={`上移题库 ${item.title}`} onClick={() => void reorderLibrary(item, true)}><ArrowUp size={14}/></button><button className="endgame-tree-action" disabled={siblingIndex < 0 || siblingIndex >= siblings.length - 1} aria-label="下移题库" title={`下移题库 ${item.title}`} onClick={() => void reorderLibrary(item, false)}><ArrowDown size={14}/></button></>}</div>
-      {expanded && <div className="endgame-library-children"><div className="endgame-filters"><label><Search size={13}/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索题名"/></label><select value={category} onChange={(event) => setCategory(event.target.value)}>{categories.map((categoryItem) => <option key={categoryItem}>{categoryItem}</option>)}</select></div><div className="endgame-problem-list">{visibleProblems.map((problemItem) => <button className={problemItem.id === problem?.id ? "active" : ""} key={problemItem.id} onClick={() => start(problemItem)}><b>{problemItem.sourceIndex + 1}</b><span><strong>{problemItem.title}</strong><small>{problemItem.category} · {problemItem.completedAttempts ? `累计 ${fmt(problemItem.totalElapsedMs)}` : "未练"}</small></span></button>)}{visibleProblems.length === 0 && <p className="endgame-no-problems">没有匹配题目</p>}</div></div>}
+      <div className="endgame-tree-row"><button className={`endgame-library-parent ${expanded ? "active" : ""}`} aria-expanded={expanded} onClick={() => toggleLibrary(item)}><BookOpen size={15}/><span><strong>{item.title}</strong><small>做过 {item.attemptedCount}/{item.problemCount} · 做对 {item.completedCount}</small></span>{expanded ? <ChevronDown size={15}/> : <ChevronRight size={15}/>}</button><button className="endgame-tree-move" title={`移动题库 ${item.title}`} onClick={() => openMoveDialog({ kind: "move-library", library: item }, item.folderId)}><FolderInput size={13}/>移动</button><div className="endgame-tree-more"><button className="endgame-tree-action" title={`更多：${item.title}`} aria-label="更多操作" onClick={() => setOpenTreeMenu(openTreeMenu === `library:${item.id}` ? undefined : `library:${item.id}`)}><MoreVertical size={14}/></button>{openTreeMenu === `library:${item.id}` && <div className="endgame-tree-menu"><button disabled={siblingIndex <= 0} onClick={() => { setOpenTreeMenu(undefined); void reorderLibrary(item, true); }}><ArrowUp size={13}/>上移</button><button disabled={siblingIndex < 0 || siblingIndex >= siblings.length - 1} onClick={() => { setOpenTreeMenu(undefined); void reorderLibrary(item, false); }}><ArrowDown size={13}/>下移</button></div>}</div></div>
     </section>;
   };
   const renderFolderChildren = (parentId: string | undefined, depth: number): ReactNode => <>{folders.filter((folder) => normalizedFolderId(folder.parentId) === parentId).map((folder) => {
@@ -662,16 +757,26 @@ export function EndgameTrainingDialog({ onClose, preferences: preferenceInput, r
     const siblings = folders.filter((candidate) => normalizedFolderId(candidate.parentId) === parentId);
     const siblingIndex = siblings.findIndex((candidate) => candidate.id === folder.id);
     const selected = selectedFolderId === folder.id;
-    return <section className={`endgame-folder-group ${expanded ? "expanded" : ""}`} key={folder.id} style={{ marginLeft: `${depth * 16}px` }}><div className={`endgame-tree-row ${selected ? "with-folder-order" : ""}`}><button className={`endgame-folder-parent ${selected ? "active" : ""}`} aria-expanded={expanded} onClick={() => toggleFolder(folder.id)}><Folder size={15}/><span>{folder.name}</span>{expanded ? <ChevronDown size={15}/> : <ChevronRight size={15}/>}</button><button className="endgame-tree-action" aria-label="移动目录" title={`移动目录 ${folder.name}`} onClick={() => { setDirectoryTargetId(folder.parentId ?? ""); setDirectoryAction({ kind: "move-folder", folder }); }}><FolderInput size={14}/></button>{selected && <><button className="endgame-tree-action" disabled={siblingIndex <= 0} aria-label="上移目录" title={`上移目录 ${folder.name}`} onClick={() => void reorderFolder(folder, true)}><ArrowUp size={14}/></button><button className="endgame-tree-action" disabled={siblingIndex < 0 || siblingIndex >= siblings.length - 1} aria-label="下移目录" title={`下移目录 ${folder.name}`} onClick={() => void reorderFolder(folder, false)}><ArrowDown size={14}/></button></>}<button className="endgame-tree-action danger" aria-label="删除目录" title={`删除目录 ${folder.name}`} onClick={() => setDeleteTarget({ kind: "folder", id: folder.id, title: folder.name, libraryCount })}><Trash2 size={14}/></button></div>{expanded && <div className="endgame-folder-children">{renderFolderChildren(folder.id, depth + 1)}</div>}</section>;
+    return <section className={`endgame-folder-group ${expanded ? "expanded" : ""}`} key={folder.id} style={{ marginLeft: `${depth * 16}px` }}><div className="endgame-tree-row"><button className={`endgame-folder-parent ${selected ? "active" : ""}`} aria-expanded={expanded} onClick={() => toggleFolder(folder.id)}><Folder size={15}/><span>{folder.name}</span>{expanded ? <ChevronDown size={15}/> : <ChevronRight size={15}/>}</button><button className="endgame-tree-move" title={`移动目录 ${folder.name}`} onClick={() => openMoveDialog({ kind: "move-folder", folder }, folder.parentId)}><FolderInput size={13}/>移动</button><div className="endgame-tree-more"><button className="endgame-tree-action" title={`更多：${folder.name}`} aria-label="更多操作" onClick={() => setOpenTreeMenu(openTreeMenu === `folder:${folder.id}` ? undefined : `folder:${folder.id}`)}><MoreVertical size={14}/></button>{openTreeMenu === `folder:${folder.id}` && <div className="endgame-tree-menu"><button disabled={siblingIndex <= 0} onClick={() => { setOpenTreeMenu(undefined); void reorderFolder(folder, true); }}><ArrowUp size={13}/>上移</button><button disabled={siblingIndex < 0 || siblingIndex >= siblings.length - 1} onClick={() => { setOpenTreeMenu(undefined); void reorderFolder(folder, false); }}><ArrowDown size={13}/>下移</button><button className="danger" onClick={() => { setOpenTreeMenu(undefined); setDeleteTarget({ kind: "folder", id: folder.id, title: folder.name, libraryCount }); }}><Trash2 size={13}/>删除</button></div>}</div></div>{expanded && <div className="endgame-folder-children">{renderFolderChildren(folder.id, depth + 1)}</div>}</section>;
   })}{libraries.filter((item) => normalizedFolderId(item.folderId) === parentId).map((item) => renderLibrary(item, depth))}</>;
+  const renderDirectoryTargetTree = (parentId: string | undefined, moving?: EndgameFolderDto, depth = 0): ReactNode => {
+    const blocked = moving ? new Set([moving.id, ...descendantFolderIds(moving.id)]) : new Set<string>();
+    return <>{folders.filter((folder) => normalizedFolderId(folder.parentId) === parentId && !blocked.has(folder.id)).map((folder) => {
+      const expanded = directoryTargetExpandedIds.has(folder.id);
+      const selected = directoryTargetId === folder.id;
+      const hasChildren = folders.some((child) => normalizedFolderId(child.parentId) === folder.id && !blocked.has(child.id));
+      return <section className="endgame-target-node" key={folder.id} style={{ marginLeft: `${depth * 14}px` }}><div><button type="button" className="endgame-target-toggle" disabled={!hasChildren} onClick={() => setDirectoryTargetExpandedIds((current) => { const next = new Set(current); if (next.has(folder.id)) next.delete(folder.id); else next.add(folder.id); return next; })}>{hasChildren ? expanded ? <ChevronDown size={13}/> : <ChevronRight size={13}/> : <span/>}</button><button type="button" className={selected ? "active" : ""} onClick={() => setDirectoryTargetId(folder.id)}><Folder size={13}/>{folder.name}</button></div>{expanded && renderDirectoryTargetTree(folder.id, moving, depth + 1)}</section>;
+    })}</>;
+  };
+  const closeTraining = () => { void saveUnfinishedAttempt().finally(onClose); };
 
   return <div className="modal-backdrop endgame-backdrop"><section className="endgame-training-dialog" role="dialog" aria-modal="true" aria-label="残局训练工作台">
-    <header className="endgame-topbar"><span><Sparkles size={18}/><strong>残局训练</strong><small>{library?.title ?? "本地题库"}</small></span><div className="endgame-topbar-actions">{library && <button title="删除当前题库" onClick={() => setDeleteTarget({ kind: "library", id: library.id, title: library.title })}><Trash2 size={16}/></button>}<button title="关闭" onClick={onClose}><X size={19}/></button></div></header>
+    <header className="endgame-topbar"><span><Sparkles size={18}/><strong>残局训练</strong><small>{library?.title ?? "本地题库"}</small></span><div className="endgame-topbar-actions">{library && <button title="删除当前题库" onClick={() => setDeleteTarget({ kind: "library", id: library.id, title: library.title })}><Trash2 size={16}/></button>}<button title="关闭" onClick={closeTraining}><X size={19}/></button></div></header>
     {libraries.length === 0 && folders.length === 0 ? <div className="endgame-empty endgame-library-empty"><BookOpen size={32}/><strong>导入本地残局题库</strong><span>选择 CBL 文件后即可按题号练习。</span><div className="endgame-empty-actions"><button className="primary" onClick={() => void importCbl()}>导入 CBL</button><button className="endgame-directory-create" onClick={() => { setDirectoryName(""); setDirectoryAction({ kind: "create" }); }}><FolderPlus size={15}/>新建目录</button></div>{importSummary && <p className="endgame-import-summary">{importSummary}</p>}{importError && <p className="endgame-import-error">导入失败：{importError}</p>}{libraries.map((item) => <button key={item.id} onClick={() => void selectLibrary(item)}>{item.title} · {item.completedCount}/{item.problemCount}</button>)}</div> : <div className="endgame-training-layout" style={{ "--endgame-library-width": `${libraryRailWidth}px` } as CSSProperties}>
-      <aside className="endgame-library-rail"><header><strong>题库目录</strong><small>共 {libraries.length} 本本地题库</small></header><label className="endgame-global-search"><Search size={13}/><input aria-label="搜索全部残局" value={globalQuery} onChange={(event) => setGlobalQuery(event.target.value)} placeholder="搜索全部残局"/></label><div className="endgame-directory-actions"><button className="endgame-import" onClick={() => void importCbl()}>批量导入 CBL</button><button className="endgame-directory-create" title="在当前目录新建子目录" onClick={() => { setDirectoryName(""); setDirectoryAction({ kind: "create", parentId: selectedFolderId }); }}><FolderPlus size={15}/>新建目录</button></div>{globalQuery.trim() ? <div className="endgame-global-results" aria-label="全局残局搜索结果">{globalResults.map(({ library: source, problem: item }) => <button key={item.id} onClick={() => void (async () => { await selectLibrary(source); start(item); setGlobalQuery(""); })()}><b>{item.sourceIndex + 1}</b><span><strong>{item.title}</strong><small>{source.title} · {item.category}</small></span></button>)}{globalResults.length === 0 && <p>未找到匹配残局</p>}</div> : <div className="endgame-library-tree"><div className="endgame-root-row"><button className={!selectedFolderId ? "active" : ""} aria-expanded={rootExpanded} onClick={() => { setSelectedFolderId(undefined); setRootExpanded((expanded) => !expanded); }}><Folder size={15}/><span>残局题库</span>{rootExpanded ? <ChevronDown size={15}/> : <ChevronRight size={15}/>}</button></div>{rootExpanded && <div className="endgame-root-children">{renderFolderChildren(undefined, 0)}</div>}</div>}{importSummary && <p className="endgame-import-summary">{importSummary}</p>}{importError && <p className="endgame-import-error">操作失败：{importError}</p>}</aside>
+      <aside className="endgame-library-rail" style={{ "--endgame-directory-ratio": `${directoryTreeRatio}fr`, "--endgame-problem-ratio": `${100 - directoryTreeRatio}fr` } as CSSProperties}><header><strong>题库目录</strong><small>共 {libraries.length} 本本地题库</small></header><label className="endgame-global-search"><Search size={13}/><input aria-label="搜索全部残局" value={globalQuery} onChange={(event) => setGlobalQuery(event.target.value)} placeholder="搜索全部残局"/></label><div className="endgame-directory-actions"><button className="endgame-import" onClick={() => void importCbl()}>批量导入 CBL</button><button className="endgame-directory-create" title="在根目录新建目录" onClick={() => { setDirectoryName(""); setDirectoryAction({ kind: "create" }); }}><FolderPlus size={15}/>新建目录</button></div>{globalQuery.trim() ? <div className="endgame-global-results" aria-label="全局残局搜索结果">{globalResults.map(({ library: source, problem: item }) => renderProblemButton(item, source))}{globalResults.length === 0 && <p>未找到匹配残局</p>}</div> : <><div className="endgame-library-tree"><div className="endgame-root-row"><button className={!selectedFolderId ? "active" : ""} aria-expanded={rootExpanded} onClick={() => { setSelectedFolderId(undefined); setRootExpanded((expanded) => !expanded); }}><Folder size={15}/><span>残局题库</span>{rootExpanded ? <ChevronDown size={15}/> : <ChevronRight size={15}/>}</button></div>{rootExpanded && <div className="endgame-root-children">{renderFolderChildren(undefined, 0)}</div>}</div><div className="endgame-library-splitter" role="separator" aria-orientation="horizontal" tabIndex={0} onPointerDown={beginDirectorySplitResize} onKeyDown={(event) => { if (event.key === "ArrowUp") { event.preventDefault(); setDirectoryTreeRatio((value) => Math.max(28, value - 5)); } if (event.key === "ArrowDown") { event.preventDefault(); setDirectoryTreeRatio((value) => Math.min(68, value + 5)); } }}/><section className="endgame-selected-problems"><header><strong>{library?.title ?? "未选择题库"}</strong><small>{library ? `做过 ${library.attemptedCount}/${library.problemCount} · 做对 ${library.completedCount}` : "从上方目录选择题库"}</small></header><div className="endgame-filters"><label><Search size={13}/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索题名"/></label><select value={category} onChange={(event) => setCategory(event.target.value)}>{categories.map((categoryItem) => <option key={categoryItem}>{categoryItem}</option>)}</select><select value={progressFilter} onChange={(event) => setProgressFilter(event.target.value as ProgressFilter)}>{progressFilters.map((item) => <option key={item}>{item}</option>)}</select></div><div className="endgame-problem-list">{library ? visibleProblems.map((problemItem) => renderProblemButton(problemItem)) : <p className="endgame-no-problems">还没有选择题库</p>}{library && visibleProblems.length === 0 && <p className="endgame-no-problems">没有匹配题目</p>}</div></section></>}{importSummary && <p className="endgame-import-summary">{importSummary}</p>}{importError && <p className="endgame-import-error">操作失败：{importError}</p>}</aside>
       <div className="endgame-library-resize-handle" role="separator" aria-label="调整题库目录宽度" aria-orientation="vertical" aria-valuemin={MIN_LIBRARY_RAIL_WIDTH} aria-valuemax={MAX_LIBRARY_RAIL_WIDTH} aria-valuenow={libraryRailWidth} tabIndex={0} onPointerDown={beginLibraryResize} onKeyDown={(event) => { if (event.key === "ArrowLeft") { event.preventDefault(); setClampedLibraryRailWidth(libraryRailWidth - 12); } if (event.key === "ArrowRight") { event.preventDefault(); setClampedLibraryRailWidth(libraryRailWidth + 12); } }}/>
       <main className="endgame-board-stage">{!problem ? <div className="endgame-empty"><BookOpen size={28}/><strong>选择一道残局</strong><span>从左侧题号开始，完成进度会自动保存。</span></div> : <><header className="endgame-problem-heading"><span>第 {problem.sourceIndex + 1}/{problems.length} 题</span><strong>{problem.title}</strong><small>{problem.category}</small><button className="endgame-problem-delete" title="从训练目录移除当前残局" onClick={() => setDeleteTarget({ kind: "problem", id: problem.id, libraryId: problem.libraryId, title: problem.title })}><Trash2 size={15}/></button></header><div className="endgame-board-wrap"><LinkMiniBoard presentation="preview" markerStyle="corner" animateMoves={preferences.moveAnimationEnabled} boardAriaLabel="残局训练棋盘" pieces={pieces} arrows={[]} selectedSquare={selected ?? hintSquare} lastMove={last ? { ...last, movedBy: "红方" } : undefined} pieceAsset={(piece) => `/skins/qingxin-zhuyun/${piece.color === "red" ? "r" : "b"}${piece.kind}.png`} boardAsset={riverText ? boardAssetWithoutRiverText : boardAsset} riverText={riverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize}/><div className="endgame-hit-grid">{Array.from({ length: 90 }, (_, squareIndex) => { const square = { row: Math.floor(squareIndex / 9), col: squareIndex % 9 }; return <button key={squareIndex} aria-label={sq(square)} style={boardIntersectionStyle(square, false, "qingxin-zhuyun")} onClick={() => click(square)}/>; })}</div>{terminalFeedback && <div className={`endgame-terminal-feedback ${terminalFeedback}`} aria-hidden="true"><span>{terminalFeedback === "checkmate" ? "绝杀" : "困毙"}</span></div>}</div><p className="endgame-board-tip">{mode === "cloud" ? "云库对练：走出任意合法着法后，云库自动应手。" : mode === "free" ? "自由实战：双方轮流走任意合法着法。" : "选棋子，再点目标点。错误走法不会改变局面。"}</p></>}</main>
       <aside className="endgame-control-rail">{problem ? <><section className="endgame-clock"><span>本题用时</span><strong>{fmt(elapsed)}</strong><small>累计用时 {fmt(problem.totalElapsedMs)}</small><button className="endgame-attempts-trigger" onClick={() => { setShowAttempts((value) => !value); void loadAttempts(problem.id); }}><History size={13}/>记录</button></section><section className="endgame-mode"><label title="双方按中国象棋规则走子，云库自动走首选应手"><input type="radio" checked={mode === "cloud"} disabled={hasAdvanced || revealed || attemptFinished} onChange={() => setMode("cloud")}/>云库对练</label><label title="只输入解题方着法，系统自动走题解中的对方应手"><input type="radio" checked={mode === "solver"} disabled={hasAdvanced || revealed || attemptFinished} onChange={() => setMode("solver")}/>只走解题方</label><label title="红黑双方都必须按题解逐手复现"><input type="radio" checked={mode === "replay"} disabled={hasAdvanced || revealed || attemptFinished} onChange={() => setMode("replay")}/>双方复现（按题解）</label><label title="双方轮流走任意合法着法，不校验是否进入题解分支"><input type="radio" checked={mode === "free"} disabled={hasAdvanced || revealed || attemptFinished} onChange={() => setMode("free")}/>自由实战</label></section><section className="endgame-actions"><button className="endgame-hint" disabled={attemptFinished || autoReplyPending} onClick={() => { void (async () => { const value = Math.min(3, hints + 1); const lead = line[0]?.iccs; setHints(value); if (value === 1) setNotice(problem.note || "先寻找将军、吃子和强制着。"); else if (!lead) setNotice("题解已完成。"); else if (value === 2) setNotice("提示：棋盘上已标出当前应走棋子。"); else { const notation = await chessPlatform.endgameChineseMainline(problem.startingFen, [...playedMoves, lead]).then((items) => items.at(-1)).catch(() => lead); setNotice(`首着：${notation}`); } })(); }}><Lightbulb size={16}/>提示 {hints}/3</button><button disabled={attemptFinished || autoReplyPending || (!startedAt && elapsedBeforePause === 0)} onClick={togglePause}>{startedAt ? <Pause size={16}/> : <Play size={16}/>}{startedAt ? "暂停" : "继续"}</button><button onClick={() => void restart()}><RotateCcw size={16}/>重来</button>{mode === "cloud" || mode === "free" ? <button disabled={attemptFinished} onClick={() => void finish("free_finished")}>{mode === "cloud" ? "结束对练" : "结束实战"}</button> : <button disabled={attemptFinished} onClick={() => void revealAnswer()}><ListRestart size={16}/>看答案</button>}</section><section className="endgame-status"><span>错误 {mistakes} 次</span>{notice && <p>{renderCblText(notice)}</p>}</section>{showAttempts ? <section className="endgame-attempt-history"><header><strong>答题记录</strong><small>最近 {attempts.length} 次</small></header><div>{attempts.length ? attempts.map((attempt) => <p key={attempt.id}><b>{attemptOutcomeLabel[attempt.outcome] ?? attempt.outcome}</b><span>{attemptModeLabel[attempt.mode] ?? attempt.mode} · {fmt(attempt.elapsedMs)} · 错 {attempt.mistakes} · 提示 {attempt.hintsUsed}</span><small>{attempt.createdAt.replace("T", " ").slice(0, 16)}</small></p>) : <p className="endgame-no-attempts">还没有答题记录</p>}</div></section> : revealed && <section className="endgame-answer"><header><strong>题解回合</strong><small>{answerStep}/{answerMoves.length} 手</small></header><div className="endgame-answer-rounds">{rounds.map((round) => <p key={round.round}><b>第 {round.round} 回合</b><span>{round.first}{round.second ? ` · ${round.second}` : ""}</span></p>)}</div><footer className="endgame-answer-demo"><button onClick={() => setDemoPlaying((value) => !value)} disabled={answerStep >= answerMoves.length}>{demoPlaying ? <Pause size={14}/> : <Play size={14}/>} {demoPlaying ? "暂停演示" : answerStep ? "继续演示" : "演示答案"}</button><button onClick={restartAnswerDemo} disabled={answerStep === 0}><RotateCcw size={14}/>从头</button></footer>{demoSummary && <section className="endgame-demo-summary"><strong>演示总结</strong><p>{renderCblText(demoSummary)}</p></section>}</section>}<footer className="endgame-navigation"><button disabled={index <= 0} title="上一题" onClick={() => next(-1)}><ChevronLeft size={17}/></button><button disabled={index >= visibleProblems.length - 1} title="下一题" onClick={() => next(1)}><ChevronRight size={17}/></button></footer></> : <p>从左侧选择题目。</p>}</aside>
-    </div>}{deleteTarget && <div className="endgame-delete-backdrop" role="alertdialog" aria-modal="true" aria-label="确认删除" onMouseDown={() => setDeleteTarget(undefined)}><section className="endgame-delete-confirm" onMouseDown={(event) => event.stopPropagation()}><strong>确认删除</strong><p>{deleteTarget.kind === "library" ? `删除题库《${deleteTarget.title}》及全部本地答题记录？此操作不可恢复。` : deleteTarget.kind === "folder" ? `删除目录“${deleteTarget.title}”？${deleteTarget.libraryCount ? `其中 ${deleteTarget.libraryCount} 本题库会移至上级目录，` : ""}题目与答题记录不会删除。若存在子目录，请先移动或删除子目录。` : `从训练目录移除《${deleteTarget.title}》？已有答题记录会保留在本机。`}</p><footer><button onClick={() => setDeleteTarget(undefined)}>取消</button><button className="danger" onClick={() => void confirmDelete()}>删除</button></footer></section></div>}{directoryAction && <div className="endgame-delete-backdrop" role="dialog" aria-modal="true" aria-label={directoryAction.kind === "create" ? "新建残局目录" : directoryAction.kind === "move-folder" ? "移动残局目录" : "移动残局题库"} onMouseDown={() => setDirectoryAction(undefined)}><section className="endgame-delete-confirm endgame-directory-dialog" onMouseDown={(event) => event.stopPropagation()}><strong>{directoryAction.kind === "create" ? "新建目录" : directoryAction.kind === "move-folder" ? `移动目录：${directoryAction.folder.name}` : `移动题库：${directoryAction.library.title}`}</strong>{directoryAction.kind === "create" ? <label>目录名<input autoFocus value={directoryName} onChange={(event) => setDirectoryName(event.target.value)} placeholder="例如：马类残局"/></label> : <label>移动到<select value={directoryTargetId} onChange={(event) => setDirectoryTargetId(event.target.value)}><option value="">根目录</option>{folderMoveOptions(directoryAction.kind === "move-folder" ? directoryAction.folder : undefined).map((folder) => <option key={folder.id} value={folder.id}>{folderPath(folder)}</option>)}</select></label>}<footer><button onClick={() => setDirectoryAction(undefined)}>取消</button><button className="primary" disabled={directoryAction.kind === "create" ? !directoryName.trim() : directoryAction.kind === "move-folder" && directoryTargetId === (directoryAction.folder.parentId ?? "")} onClick={() => void confirmDirectoryAction()}>{directoryAction.kind === "create" ? "创建" : "确认移动"}</button></footer></section></div>}
+    </div>}{deleteTarget && <div className="endgame-delete-backdrop" role="alertdialog" aria-modal="true" aria-label="确认删除" onMouseDown={() => setDeleteTarget(undefined)}><section className="endgame-delete-confirm" onMouseDown={(event) => event.stopPropagation()}><strong>确认删除</strong><p>{deleteTarget.kind === "library" ? `删除题库《${deleteTarget.title}》及全部本地答题记录？此操作不可恢复。` : deleteTarget.kind === "folder" ? `删除目录“${deleteTarget.title}”？${deleteTarget.libraryCount ? `其中 ${deleteTarget.libraryCount} 本题库会移至上级目录，` : ""}题目与答题记录不会删除。若存在子目录，请先移动或删除子目录。` : `从训练目录移除《${deleteTarget.title}》？已有答题记录会保留在本机。`}</p><footer><button onClick={() => setDeleteTarget(undefined)}>取消</button><button className="danger" onClick={() => void confirmDelete()}>删除</button></footer></section></div>}{directoryAction && <div className="endgame-delete-backdrop" role="dialog" aria-modal="true" aria-label={directoryAction.kind === "create" ? "新建残局目录" : directoryAction.kind === "move-folder" ? "移动残局目录" : "移动残局题库"} onMouseDown={() => setDirectoryAction(undefined)}><section className="endgame-delete-confirm endgame-directory-dialog" onMouseDown={(event) => event.stopPropagation()}><strong>{directoryAction.kind === "create" ? "新建目录" : directoryAction.kind === "move-folder" ? `移动目录：${directoryAction.folder.name}` : `移动题库：${directoryAction.library.title}`}</strong>{directoryAction.kind === "create" ? <label>目录名<input autoFocus value={directoryName} onChange={(event) => setDirectoryName(event.target.value)} placeholder="例如：马类残局"/></label> : <div className="endgame-target-picker"><p>当前位置：{directoryAction.kind === "move-folder" ? folderNameById(directoryAction.folder.parentId ?? undefined) : folderNameById(directoryAction.library.folderId ?? undefined)}</p><p>移动到：{folderNameById(directoryTargetId || undefined)}</p><div className="endgame-target-tree"><button type="button" className={!directoryTargetId ? "active" : ""} onClick={() => setDirectoryTargetId("")}><Folder size={13}/>根目录</button>{renderDirectoryTargetTree(undefined, directoryAction.kind === "move-folder" ? directoryAction.folder : undefined)}</div></div>}<footer><button onClick={() => setDirectoryAction(undefined)}>取消</button><button className="primary" disabled={directoryAction.kind === "create" ? !directoryName.trim() : directoryAction.kind === "move-folder" && directoryTargetId === (directoryAction.folder.parentId ?? "")} onClick={() => void confirmDirectoryAction()}>{directoryAction.kind === "create" ? "创建" : "确认移动"}</button></footer></section></div>}
   </section></div>;
 }

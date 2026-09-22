@@ -639,8 +639,8 @@ export type TrainingGenerationResultDto = {
   reinforcementCount: number;
 };
 export type EndgameFolderDto = { id: string; parentId?: string | null; name: string; createdAt: string };
-export type EndgameLibraryDto = { id: string; folderId?: string | null; title: string; sourcePath: string; fingerprint: string; parserVersion: number; problemCount: number; completedCount: number; importedAt: string };
-export type EndgameProblemDto = { id: string; libraryId: string; sourceIndex: number; title: string; category: string; startingFen: string; note: string; solutionJson: string; completedAttempts: number; totalElapsedMs: number };
+export type EndgameLibraryDto = { id: string; folderId?: string | null; title: string; sourcePath: string; fingerprint: string; parserVersion: number; problemCount: number; attemptedCount: number; completedCount: number; importedAt: string };
+export type EndgameProblemDto = { id: string; libraryId: string; sourceIndex: number; title: string; category: string; startingFen: string; note: string; solutionJson: string; attemptCount: number; completedAttempts: number; totalElapsedMs: number };
 export type EndgameImportResultDto = { library: EndgameLibraryDto; warnings: string[] };
 export type EndgameBatchImportItemDto = { path: string; library?: EndgameLibraryDto; warnings: string[]; error?: string };
 export type EndgameBatchImportResultDto = { items: EndgameBatchImportItemDto[] };

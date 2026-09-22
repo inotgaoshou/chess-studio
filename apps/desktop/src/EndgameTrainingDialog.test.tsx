@@ -4,30 +4,30 @@ import { EndgameTrainingDialog } from "./EndgameTrainingDialog";
 
 const firstBook = {
   id: "book-chen", title: "中国象棋实用残局增订本-陈松顺", sourcePath: "/tmp/chen.cbl",
-  fingerprint: "chen", parserVersion: 2, problemCount: 2, completedCount: 0, importedAt: "2026-09-03T00:00:00Z",
+  fingerprint: "chen", parserVersion: 2, problemCount: 2, attemptedCount: 0, completedCount: 0, importedAt: "2026-09-03T00:00:00Z",
 };
 const secondBook = {
   id: "book-next", title: "第二本残局集", sourcePath: "/tmp/next.cbl",
-  fingerprint: "next", parserVersion: 2, problemCount: 1, completedCount: 0, importedAt: "2026-09-02T00:00:00Z",
+  fingerprint: "next", parserVersion: 2, problemCount: 1, attemptedCount: 0, completedCount: 0, importedAt: "2026-09-02T00:00:00Z",
 };
 const problems = {
   "book-chen": [{
     id: "horse", libraryId: "book-chen", sourceIndex: 48, title: "（一）马取单士--着法1，红先胜", category: "马类",
-    startingFen: "9/3kaN3/9/9/9/9/9/9/9/4K4 w - - 0 1", note: "单马必胜单士", solutionJson: "[{\"iccs\":\"f8e6\",\"comment\":\"\",\"children\":[]}]", completedAttempts: 0, totalElapsedMs: 0,
+    startingFen: "9/3kaN3/9/9/9/9/9/9/9/4K4 w - - 0 1", note: "单马必胜单士", solutionJson: "[{\"iccs\":\"f8e6\",\"comment\":\"\",\"children\":[]}]", attemptCount: 0, completedAttempts: 0, totalElapsedMs: 0,
   }, {
     id: "auto-reply", libraryId: "book-chen", sourceIndex: 49, title: "自动应手演示", category: "马类",
-    startingFen: "9/3kaN3/9/9/9/9/9/9/9/4K4 w - - 0 1", note: "", solutionJson: "[{\"iccs\":\"f8e6\",\"comment\":\"\",\"children\":[{\"iccs\":\"d8d7\",\"comment\":\"\",\"children\":[]}]}]", completedAttempts: 0, totalElapsedMs: 0,
+    startingFen: "9/3kaN3/9/9/9/9/9/9/9/4K4 w - - 0 1", note: "", solutionJson: "[{\"iccs\":\"f8e6\",\"comment\":\"\",\"children\":[{\"iccs\":\"d8d7\",\"comment\":\"\",\"children\":[]}]}]", attemptCount: 0, completedAttempts: 0, totalElapsedMs: 0,
   }, {
     id: "horse-capture", libraryId: "book-chen", sourceIndex: 50, title: "马吃卒", category: "马类",
-    startingFen: "9/3k1N3/3p5/9/9/9/9/9/9/4K4 w - - 0 1", note: "", solutionJson: "[{\"iccs\":\"f8d7\",\"comment\":\"\",\"children\":[]}]", completedAttempts: 0, totalElapsedMs: 0,
+    startingFen: "9/3k1N3/3p5/9/9/9/9/9/9/4K4 w - - 0 1", note: "", solutionJson: "[{\"iccs\":\"f8d7\",\"comment\":\"\",\"children\":[]}]", attemptCount: 0, completedAttempts: 0, totalElapsedMs: 0,
   }],
   "book-next": [{
     id: "next", libraryId: "book-next", sourceIndex: 0, title: "车兵残局", category: "车类",
-    startingFen: "4k4/9/9/9/9/9/9/9/9/4K4 w - - 0 1", note: "", solutionJson: "[]", completedAttempts: 0, totalElapsedMs: 0,
+    startingFen: "4k4/9/9/9/9/9/9/9/9/4K4 w - - 0 1", note: "", solutionJson: "[]", attemptCount: 0, completedAttempts: 0, totalElapsedMs: 0,
   }],
   "book-terminal": [{
     id: "terminal", libraryId: "book-terminal", sourceIndex: 0, title: "将死应立即结束", category: "杀法",
-    startingFen: "9/3kaN3/9/9/9/9/9/9/9/4K4 w - - 0 1", note: "", solutionJson: "[{\"iccs\":\"f8e6\",\"comment\":\"\",\"children\":[{\"iccs\":\"d8d7\",\"comment\":\"\",\"children\":[]}]}]", completedAttempts: 0, totalElapsedMs: 0,
+    startingFen: "9/3kaN3/9/9/9/9/9/9/9/4K4 w - - 0 1", note: "", solutionJson: "[{\"iccs\":\"f8e6\",\"comment\":\"\",\"children\":[{\"iccs\":\"d8d7\",\"comment\":\"\",\"children\":[]}]}]", attemptCount: 0, completedAttempts: 0, totalElapsedMs: 0,
   }],
 };
 
@@ -167,7 +167,7 @@ describe("EndgameTrainingDialog", () => {
     expect(await screen.findByText("困毙", { selector: ".endgame-terminal-feedback span" })).toBeTruthy();
     expect(view.container.querySelector(".endgame-terminal-feedback.stalemate")).not.toBeNull();
     expect(playMoveFeedbackSound).toHaveBeenCalledWith("stalemate", true, 70);
-    await waitFor(() => expect(platform.saveEndgameAttempt).toHaveBeenCalledWith(expect.objectContaining({ outcome: "free_finished" })));
+    await waitFor(() => expect(platform.saveEndgameAttempt).toHaveBeenCalledWith(expect.objectContaining({ outcome: "completed" })));
   });
 
   it("allows a selected solver piece to capture an occupied opponent target", async () => {
@@ -194,10 +194,10 @@ describe("EndgameTrainingDialog", () => {
 
     fireEvent.click(firstParent);
     expect(firstParent.getAttribute("aria-expanded")).toBe("false");
-    expect(screen.queryByText("（一）马取单士--着法1，红先胜")).toBeNull();
+    expect(screen.getByText("（一）马取单士--着法1，红先胜")).toBeTruthy();
 
     fireEvent.click(secondParent);
-    expect(secondParent.getAttribute("aria-expanded")).toBe("true");
+    await waitFor(() => expect(screen.getByRole("button", { name: /第二本残局集/ }).getAttribute("aria-expanded")).toBe("true"));
     expect(await screen.findByText("车兵残局")).toBeTruthy();
     expect(view.container.querySelector(".endgame-library-tree")).not.toBeNull();
   });
@@ -267,7 +267,7 @@ describe("EndgameTrainingDialog", () => {
     render(<EndgameTrainingDialog onClose={vi.fn()}/>);
 
     await screen.findByRole("button", { name: "残局" });
-    fireEvent.click(screen.getByTitle("在当前目录新建子目录"));
+    fireEvent.click(screen.getByTitle("在根目录新建目录"));
     fireEvent.change(screen.getByLabelText("目录名"), { target: { value: "残局" } });
     fireEvent.click(screen.getByRole("button", { name: "创建" }));
 
@@ -294,7 +294,7 @@ describe("EndgameTrainingDialog", () => {
     expect(await screen.findByText(/导入完成：1 本成功，跳过 1 条无效记录；1 本失败：broken\.cbl（不是 CCBridge CBL）/)).toBeTruthy();
   });
 
-  it("creates a nested directory under the selected directory", async () => {
+  it("creates a root directory even when another directory is selected", async () => {
     const folder = { id: "folder-main", name: "基础残局", createdAt: "2026-09-04T00:00:00Z" };
     platform.listEndgameFolders.mockResolvedValue([folder]);
     platform.listEndgameLibraries.mockResolvedValue([{ ...firstBook, folderId: "folder-main" }]);
@@ -302,10 +302,10 @@ describe("EndgameTrainingDialog", () => {
     render(<EndgameTrainingDialog onClose={vi.fn()}/>);
 
     await screen.findByRole("button", { name: "基础残局" });
-    fireEvent.click(screen.getByTitle("在当前目录新建子目录"));
+    fireEvent.click(screen.getByTitle("在根目录新建目录"));
     fireEvent.change(screen.getByLabelText("目录名"), { target: { value: "车类" } });
     fireEvent.click(screen.getByRole("button", { name: "创建" }));
-    expect(platform.createEndgameFolder).toHaveBeenCalledWith("folder-main", "车类");
+    expect(platform.createEndgameFolder).toHaveBeenCalledWith(undefined, "车类");
   });
 
   it("moves a library and prevents its directory from being moved below itself", async () => {
@@ -320,14 +320,37 @@ describe("EndgameTrainingDialog", () => {
     await screen.findByTitle(/移动题库 中国象棋实用残局增订本-陈松顺/);
     fireEvent.click(screen.getByTitle(/移动题库 中国象棋实用残局增订本-陈松顺/));
     const libraryDialog = screen.getByRole("dialog", { name: "移动残局题库" });
-    fireEvent.change(within(libraryDialog).getByLabelText("移动到"), { target: { value: "folder-other" } });
+    fireEvent.click(within(libraryDialog).getByRole("button", { name: "其他" }));
     fireEvent.click(within(libraryDialog).getByRole("button", { name: "确认移动" }));
     expect(platform.moveEndgameLibraries).toHaveBeenCalledWith(["book-chen"], "folder-other");
 
     fireEvent.click(await screen.findByTitle("移动目录 基础残局"));
     const folderDialog = screen.getByRole("dialog", { name: "移动残局目录" });
-    const options = [...within(folderDialog).getByLabelText("移动到").querySelectorAll("option")].map((option) => option.textContent);
-    expect(options).toEqual(["根目录", "其他"]);
+    expect(within(folderDialog).getByRole("button", { name: "根目录" })).toBeTruthy();
+    expect(within(folderDialog).getByRole("button", { name: "其他" })).toBeTruthy();
+    expect(within(folderDialog).queryByRole("button", { name: "马类" })).toBeNull();
+  });
+
+  it.each(["", "folder-other"])("moves a nested directory to destination %s", async (targetId) => {
+    const parent = { id: "folder-main", name: "基础残局", createdAt: "2026-09-04T00:00:00Z" };
+    const child = { id: "folder-horse", parentId: parent.id, name: "马类", createdAt: parent.createdAt };
+    const destination = { id: "folder-other", name: "其他", createdAt: parent.createdAt };
+    platform.listEndgameFolders.mockResolvedValue([parent, child, destination]);
+    platform.listEndgameLibraries.mockResolvedValue([{ ...firstBook, folderId: child.id }]);
+    platform.moveEndgameFolder.mockImplementationOnce(async () => {
+      platform.listEndgameFolders.mockResolvedValue([parent, { ...child, parentId: targetId || undefined }, destination]);
+    });
+    render(<EndgameTrainingDialog onClose={vi.fn()}/>);
+    fireEvent.click(await screen.findByTitle("移动目录 马类"));
+    const dialog = screen.getByRole("dialog", { name: "移动残局目录" });
+    fireEvent.click(within(dialog).getByRole("button", { name: targetId ? "其他" : "根目录" }));
+    const confirm = within(dialog).getByRole("button", { name: "确认移动" });
+    expect(confirm.hasAttribute("disabled")).toBe(false);
+    fireEvent.click(confirm);
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "移动残局目录" })).toBeNull());
+    expect(platform.moveEndgameFolder).toHaveBeenCalledWith(child.id, targetId || undefined);
+    expect(await screen.findByRole("button", { name: "马类" })).toBeTruthy();
+    if (targetId) expect(screen.getByRole("button", { name: "其他" }).getAttribute("aria-expanded")).toBe("true");
   });
 
   it("deletes a selected directory while retaining its direct libraries", async () => {
@@ -338,7 +361,8 @@ describe("EndgameTrainingDialog", () => {
     render(<EndgameTrainingDialog onClose={vi.fn()}/>);
 
     await screen.findByRole("button", { name: "残局" });
-    fireEvent.click(screen.getByTitle("删除目录 残局"));
+    fireEvent.click(screen.getByTitle("更多：残局"));
+    fireEvent.click(screen.getByRole("button", { name: "删除" }));
     expect(screen.getByText(/其中 1 本题库会移至上级目录/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "删除" }));
     await waitFor(() => expect(platform.deleteEndgameFolder).toHaveBeenCalledWith("folder-main"));
@@ -359,8 +383,8 @@ describe("EndgameTrainingDialog", () => {
   it("reorders an opened library within its current directory", async () => {
     render(<EndgameTrainingDialog onClose={vi.fn()}/>);
 
-    const down = await screen.findByTitle(/下移题库 中国象棋实用残局增订本-陈松顺/);
-    fireEvent.click(down);
+    fireEvent.click(await screen.findByTitle(/更多：中国象棋实用残局增订本-陈松顺/));
+    fireEvent.click(screen.getByRole("button", { name: "下移" }));
 
     await waitFor(() => expect(platform.reorderEndgameLibrary).toHaveBeenCalledWith("book-chen", false));
   });
