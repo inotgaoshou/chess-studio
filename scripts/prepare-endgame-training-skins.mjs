@@ -151,6 +151,15 @@ function removeDirectory(target) {
   if (fs.existsSync(target)) fs.rmSync(target, { recursive: true, force: true });
 }
 
+function pruneOutputSkins(items) {
+  const activeIds = new Set([defaultSkin.id, ...items.map((item) => item.id)]);
+  for (const entry of fs.readdirSync(outputRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory() || activeIds.has(entry.name)) continue;
+    removeDirectory(path.join(outputRoot, entry.name));
+    console.log(`removed stale skin ${entry.name}`);
+  }
+}
+
 function copySkin(sourceDirectory, targetDirectory) {
   fs.mkdirSync(targetDirectory, { recursive: true });
   for (const file of [...requiredFiles, ...optionalFiles]) {
@@ -422,6 +431,7 @@ catalog.sort((left, right) => {
   if (right.id === "default") return 1;
   return left.name.localeCompare(right.name, "zh-Hans-CN");
 });
+pruneOutputSkins(catalog);
 writeCatalog(catalog);
 writeStatus(statusRecords);
 console.log(`generated ${catalog.length} skins`);
