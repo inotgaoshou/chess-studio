@@ -321,8 +321,8 @@ describe("EndgameTrainingDialog", () => {
 
     render(<EndgameTrainingDialog onClose={vi.fn()}/>);
 
-    expect(await screen.findByTitle("固定根目录：用户目录和题库可移动到这里")).toBeTruthy();
-    expect(screen.queryByTitle("更多：残局题库")).toBeNull();
+    expect(await screen.findByTitle("固定题库根目录：用户目录和题库可移动到这里")).toBeTruthy();
+    expect(screen.queryByTitle("更多：题库")).toBeNull();
 
     fireEvent.click(screen.getByTitle("更多：基础残局"));
     fireEvent.click(screen.getByRole("button", { name: "重命名" }));
@@ -375,7 +375,7 @@ describe("EndgameTrainingDialog", () => {
     fireEvent.click(confirm);
 
     await waitFor(() => expect(platform.moveEndgameLibraries).toHaveBeenCalledWith(["book-chen"], undefined));
-    expect(await screen.findByTitle("固定根目录：用户目录和题库可移动到这里")).toBeTruthy();
+    expect(await screen.findByTitle("固定题库根目录：用户目录和题库可移动到这里")).toBeTruthy();
   });
 
   it("moves a library and prevents its directory from being moved below itself", async () => {
