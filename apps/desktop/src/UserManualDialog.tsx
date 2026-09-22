@@ -65,7 +65,7 @@ export function UserManualDialog({ appVersion = "1.0.0", markdown, onClose }: Pr
   return <div className="modal-backdrop manual-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="user-manual-dialog" role="dialog" aria-modal="true" aria-labelledby="user-manual-title">
       <header className="user-manual-header">
-        <span><BookOpen size={18}/><strong id="user-manual-title">棋研使用手册</strong><small>复盘 · 拆棋 · 棋理 · 开局训练</small></span>
+        <span><BookOpen size={18}/><strong id="user-manual-title">棋析使用手册</strong><small>复盘 · 拆棋 · 棋理 · 开局训练</small></span>
         <button type="button" aria-label="关闭使用手册" title="关闭" onClick={onClose}><X size={17}/></button>
       </header>
       <aside className="user-manual-sidebar" aria-label="使用手册目录">

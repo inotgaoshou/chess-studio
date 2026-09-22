@@ -1,6 +1,6 @@
 {
-  "name": "棋研 · Xiangqi Studio",
-  "short_name": "棋研",
+  "name": "棋析 · Xiangqi Studio",
+  "short_name": "棋析",
   "description": "离线打谱、棋谱变例与 Pikafish 云端分析",
   "start_url": "/",
   "display": "standalone",

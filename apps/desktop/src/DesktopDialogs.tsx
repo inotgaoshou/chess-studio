@@ -406,7 +406,7 @@ export function DesktopDialogs({ dialog, preferences, account, subscription, tra
         {dialog === "mirrorSettings" && <div className="dialog-form account-form">
           <p className="dialog-hint">SQLite 是唯一可编辑主库。归档后的完整 PGN 会单向镜像到 Finder，外部编辑过的 PGN 请按新棋局导入。</p>
           <label className="check-row full"><input type="checkbox" checked={draft.gameMirrorEnabled ?? true} onChange={(event) => setDraft({ ...draft, gameMirrorEnabled: event.target.checked })}/><span><strong>自动镜像归档棋谱</strong><small>合法走子、评论、变例和飞刀标注会更新同一个 PGN；失败不会影响应用内保存。</small></span></label>
-          <label className="full"><span>Finder 根目录</span><input readOnly value={draft.gameMirrorRoot || "~/Documents/棋研棋谱（默认）"}/></label>
+          <label className="full"><span>Finder 根目录</span><input readOnly value={draft.gameMirrorRoot || "~/Documents/棋析棋谱（默认）"}/></label>
           <div className="dialog-inline-actions full">
             <button type="button" disabled={busy} onClick={() => void onChooseMirrorRoot?.().then((path) => { if (path) setDraft((current) => ({ ...current, gameMirrorRoot: path })); })}><FolderOpen size={13}/>选择目录</button>
             <button type="button" disabled={busy} onClick={() => setDraft((current) => ({ ...current, gameMirrorRoot: "" }))}>恢复默认目录</button>

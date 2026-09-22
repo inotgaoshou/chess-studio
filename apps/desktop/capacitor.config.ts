@@ -2,7 +2,7 @@ import type { CapacitorConfig } from "@capacitor/cli";
 
 const config: CapacitorConfig = {
   appId: "cn.xiangqi.studio",
-  appName: "棋研",
+  appName: "棋析",
   webDir: "dist",
   loggingBehavior: "production",
   backgroundColor: "#171b1a",

@@ -1,4 +1,4 @@
-name: Qiyan iOS TestFlight
+name: Qixi iOS TestFlight
 
 on:
   workflow_dispatch:
@@ -13,7 +13,7 @@ on:
         default: "10008"
 
 concurrency:
-  group: qiyan-ios-testflight-${{ github.event.inputs.marketing_version }}-${{ github.event.inputs.build_number }}
+  group: qixi-ios-testflight-${{ github.event.inputs.marketing_version }}-${{ github.event.inputs.build_number }}
   cancel-in-progress: false
 
 permissions:
@@ -21,7 +21,7 @@ permissions:
 
 jobs:
   upload:
-    name: Build and upload Qiyan to TestFlight
+    name: Build and upload Qixi to TestFlight
     runs-on: macos-26
     timeout-minutes: 60
 
@@ -115,7 +115,7 @@ jobs:
             -scheme App \
             -configuration Release \
             -destination 'generic/platform=iOS' \
-            -archivePath "$RUNNER_TEMP/Qiyan.xcarchive" \
+            -archivePath "$RUNNER_TEMP/Qixi.xcarchive" \
             -allowProvisioningUpdates \
             -authenticationKeyPath "$RUNNER_TEMP/appstoreconnect/AuthKey.p8" \
             -authenticationKeyID "$APP_STORE_CONNECT_API_KEY_ID" \
@@ -151,8 +151,8 @@ jobs:
           PLIST
 
           xcodebuild -exportArchive \
-            -archivePath "$RUNNER_TEMP/Qiyan.xcarchive" \
-            -exportPath "$RUNNER_TEMP/QiyanExport" \
+            -archivePath "$RUNNER_TEMP/Qixi.xcarchive" \
+            -exportPath "$RUNNER_TEMP/QixiExport" \
             -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
             -allowProvisioningUpdates \
             -authenticationKeyPath "$RUNNER_TEMP/appstoreconnect/AuthKey.p8" \

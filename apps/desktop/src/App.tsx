@@ -143,7 +143,6 @@ const MOBILE_DEFAULT_ANALYSIS_DEPTH = 20;
 const MOBILE_DEFAULT_DEPTH_PREFERENCE_VERSION = 1;
 const DEFAULT_REPORT_DEPTH = 24;
 const QUICK_ANALYSIS_TIME_MS = 1200;
-const BOARD_REVIEW_DOUBLE_CLICK_DELAY_MS = 180;
 const COMPACT_ENGINE_MIN_WIDTH = 280;
 const COMPACT_ENGINE_DEFAULT_WIDTH = 344;
 const COMPACT_ENGINE_MIN_HEIGHT = 220;
@@ -914,6 +913,16 @@ function friendlyError(error: unknown): string {
   return message.replace(/^TypeError:\s*/i, "").slice(0, 140) || "操作失败";
 }
 
+export function boardMoveErrorMessage(error: unknown, state: Pick<BoardState, "status" | "ruleReason">) {
+  const message = friendlyError(error);
+  if (/illegal move/i.test(message)) {
+    return /将军/.test(`${state.status} ${state.ruleReason ?? ""}`)
+      ? "当前被将军，必须先解将；这步不能走。"
+      : "这步不符合象棋规则，请重新选择落点。";
+  }
+  return message;
+}
+
 function squareToIccs(row: number, col: number) {
   return `${String.fromCharCode(97 + col)}${9 - row}`;
 }
@@ -1125,10 +1134,12 @@ function MainBoardLastMoveOverlay({
   move,
   reversed,
   boardSkin,
+  selected,
 }: {
   move: Pick<MoveItem, "from" | "to"> | undefined;
   reversed: boolean;
   boardSkin?: string;
+  selected?: { row: number; col: number } | null;
 }) {
   const points = mainBoardLastMoveOverlayPoints(move, reversed, boardSkin);
   if (!points) return null;
@@ -1153,13 +1164,13 @@ function MainBoardLastMoveOverlay({
         pointerEvents: "none",
       }}
     >
-      <g className="main-board-last-move-source">
+      <g className="main-board-last-move-source" visibility={selected && selected.row === move?.from.row && selected.col === move.from.col ? "hidden" : undefined}>
         {/* The source only identifies where the piece left. Keep it compact and
             static so the blue destination remains the visual destination. */}
         <circle className="main-board-last-move-source-ring" cx={points.from.x} cy={points.from.y} r="19" fill="none" stroke="rgba(38, 135, 242, .98)" strokeWidth="3.4" vectorEffect="non-scaling-stroke" filter="drop-shadow(0 0 2px rgba(38, 135, 242, .78))" />
         <circle className="main-board-last-move-source-center" cx={points.from.x} cy={points.from.y} r="7.6" fill="rgba(255, 255, 255, .98)" filter="drop-shadow(0 0 1px rgba(255, 255, 255, .75))" />
       </g>
-      <g className="main-board-last-move-target">
+      <g className="main-board-last-move-target" visibility={selected && selected.row === move?.to.row && selected.col === move.to.col ? "hidden" : undefined}>
         <circle cx={points.to.x} cy={points.to.y} r="54" fill="rgba(40, 132, 255, .05)" stroke="rgba(68, 151, 255, .38)" strokeWidth="8" />
         <circle cx={points.to.x} cy={points.to.y} r="49" fill="none" stroke="#2788f5" strokeWidth="4.5" />
         <circle cx={points.to.x} cy={points.to.y} r="43" fill="none" stroke="rgba(255, 255, 255, .96)" strokeWidth="2.6" strokeLinecap="round" strokeDasharray="17 33" opacity=".98" vectorEffect="non-scaling-stroke" filter="drop-shadow(0 0 2px rgba(255, 255, 255, .92))">
@@ -1733,7 +1744,9 @@ export default function App() {
   const compactWindowSuppressClickRef = useRef<Record<"engine" | "manual", boolean>>({ engine: false, manual: false });
   const bookCandidateAuditRevisionRef = useRef(0);
   const analysisPanelReopenDragRef = useRef<{ startY: number; startTop: number; latestTop: number; moved: boolean } | undefined>(undefined);
-  const reviewBoardMoveClickTimerRef = useRef<number | undefined>(undefined);
+  const boardMovePendingRef = useRef(false);
+  const [boardMoveStatus, setBoardMoveStatus] = useState("");
+  const boardPutDownClickRef = useRef<{ row: number; col: number; at: number } | undefined>(undefined);
   const analysisPanelReopenSuppressClickRef = useRef(false);
   const compactManualResizeRef = useRef<{ startX: number; startWidth: number; maxWidth: number; detached: boolean; startPosition: { x: number; y: number } } | undefined>(undefined);
   const compactEngineResizeRef = useRef<{ startX: number; startY: number; startWidth: number; startHeight: number; maxWidth: number; maxHeight: number } | undefined>(undefined);
@@ -1796,10 +1809,6 @@ export default function App() {
   useEffect(() => () => {
     if (floatingPanelInteractionTimerRef.current != null) {
       window.clearTimeout(floatingPanelInteractionTimerRef.current);
-    }
-    if (reviewBoardMoveClickTimerRef.current != null) {
-      window.clearTimeout(reviewBoardMoveClickTimerRef.current);
-      reviewBoardMoveClickTimerRef.current = undefined;
     }
   }, []);
 
@@ -2951,6 +2960,7 @@ export default function App() {
   const linkReferenceFen = linkSessionStatus.latestFen?.trim();
   const linkShouldShowMiniBoard = shouldShowLinkMiniBoard(linkSessionStatus, board.fen);
   const boardDisplayReversed = effectiveBoardReversedForLink(linkSessionStatus, board.fen, reversed);
+  useEffect(() => { boardPutDownClickRef.current = undefined; setBoardMoveStatus(""); }, [board.fen, board.currentNode, boardDisplayReversed, workspaceMode]);
   const boardPerspectiveLabel = boardDisplayReversed ? "黑方视角" : "红方视角";
 
   useEffect(() => {
@@ -3250,6 +3260,10 @@ export default function App() {
     desktopPreferencesRef.current = optimistic;
     setDesktopPreferences(optimistic);
     const keys = Object.keys(normalizedPatch) as Array<keyof DesktopPreferencesDto>;
+    if (chessPlatform.kind === "web") {
+      persistedPreferencesRef.current = optimistic;
+      return Promise.resolve(optimistic);
+    }
     const operation = preferenceSaveQueue.current.then(async () => {
       const snapshot = { ...persistedPreferencesRef.current, ...normalizedPatch };
       try {
@@ -3967,18 +3981,23 @@ export default function App() {
     setSelectedPieceInspection(undefined);
     clearCandidatePreviews();
     try {
+      setBoardMoveStatus("正在准备走棋…");
       await stopRunningAnalysisBeforeMove();
       await cancelGameReportForStructureChange();
       if (chessPlatform.kind === "desktop") {
+        setBoardMoveStatus("正在校验走法…");
         await chessPlatform.previewLine(boardRef.current.fen, [iccs]);
       }
       const beforeMove = boardRef.current;
+      setBoardMoveStatus("正在保存着法…");
       let next = normalizeBoardState(await enqueueBoardOperation(() => chessPlatform.playMove(iccs)));
       if (sourceEngineName && next.currentNode) {
         next = normalizeBoardState(await enqueueBoardOperation(() => chessPlatform.updateComment(next.currentNode!, `引擎来源：${sourceEngineName}`)));
       }
       applyBoard(next);
+      setSelected(null);
       triggerMoveFeedback(beforeMove, next);
+      setBoardMoveStatus("");
       await loadGameReport();
       const ruleBlocked = next.ruleVerdict && engineBlockingRuleVerdicts.has(next.ruleVerdict);
       const practiceResult = practiceAtMoveStart && practiceAtMoveStart.fen === moveStartFen && practiceAtMoveStart.ply === moveStartPly
@@ -4011,9 +4030,10 @@ export default function App() {
         await requestEngineMove(next);
       }
     } catch (error) {
-      setNotice(friendlyError(error));
+      const message = boardMoveErrorMessage(error, boardRef.current);
+      setNotice(message);
+      setBoardMoveStatus(message);
     }
-    setSelected(null);
   }
 
   async function previewCandidateLine(line: AnalysisLine, expectedFen: string, source?: Pick<EngineComparisonGroup, "id" | "name">) {
@@ -4164,9 +4184,12 @@ export default function App() {
   }
 
   async function selectSquare(row: number, col: number) {
-    if (reviewBoardMoveClickTimerRef.current != null) {
-      window.clearTimeout(reviewBoardMoveClickTimerRef.current);
-      reviewBoardMoveClickTimerRef.current = undefined;
+    if (boardMovePendingRef.current) return;
+    setBoardMoveStatus("");
+    if (selected?.row === row && selected.col === col) {
+      setSelected(null);
+      setSelectedPieceInspection(undefined);
+      return;
     }
     if (!board.playable) {
       setNotice("当前研究局面不可对弈，请先修正局面");
@@ -4182,43 +4205,37 @@ export default function App() {
     }
     const piece = pieceMap.get(`${row}-${col}`);
     if (!selected) {
-      if (piece) setSelected({ row, col });
+      if (piece && pieceSide(piece) === board.sideToMove) { setSelected({ row, col }); setSelectedPieceInspection(undefined); }
       return;
     }
     const selectedPiece = pieceMap.get(`${selected.row}-${selected.col}`);
     if (piece && piece.color === selectedPiece?.color) {
       setSelected({ row, col });
+      setSelectedPieceInspection(undefined);
       return;
     }
     const iccs = `${squareToIccs(selected.row, selected.col)}${squareToIccs(row, col)}`;
-    if (reviewModeOpen) {
-      const expectedFen = board.fen;
-      reviewBoardMoveClickTimerRef.current = window.setTimeout(() => {
-        reviewBoardMoveClickTimerRef.current = undefined;
-        void playIccsMove(iccs, expectedFen);
-      }, BOARD_REVIEW_DOUBLE_CLICK_DELAY_MS);
-      return;
+    boardMovePendingRef.current = true;
+    try {
+      await playIccsMove(iccs);
+    } finally {
+      boardMovePendingRef.current = false;
     }
-    await playIccsMove(iccs);
   }
 
   function inspectPieceThought(row: number, col: number) {
-    if (reviewBoardMoveClickTimerRef.current != null) {
-      window.clearTimeout(reviewBoardMoveClickTimerRef.current);
-      reviewBoardMoveClickTimerRef.current = undefined;
-    }
     if (referencePracticeMode) {
       setSelectedPieceInspection(undefined);
       setNotice(workspaceMode === "sparring" ? "随机对练模式默认隐藏选子思路，右侧显示对练控制" : "大师开局模式默认隐藏选子思路，右侧显示当前局面实战匹配");
       return;
     }
     if (!reviewModeOpen) {
-      setNotice("进入复盘模式后，可双击当前行棋方的棋子查看这枚子的思路");
+      setNotice("进入复盘模式后，选中当前行棋方的棋子，再点“查看棋子思路”");
       return;
     }
     if (candidatePreview) {
       setSelectedPieceInspection(undefined);
-      setNotice("候选推演预览中不记录选子思路，退出预览后再双击棋子");
+      setNotice("候选推演预览中不记录选子思路，退出预览后再选中棋子查看思路");
       return;
     }
     if (!board.playable) {
@@ -4234,7 +4251,7 @@ export default function App() {
     if (!piece) {
       setSelected(null);
       setSelectedPieceInspection(undefined);
-      setNotice("请双击当前行棋方的棋子，查看这枚子的作用和候选方向");
+      setNotice("请选中当前行棋方的棋子，再点“查看棋子思路”");
       return;
     }
     if (pieceSide(piece) !== board.sideToMove) {
@@ -7870,8 +7887,8 @@ export default function App() {
   return (
     <div className={`app-shell ${chessPlatform.kind}-shell theme-${effectiveColorTheme} layout-${desktopPreferences.layoutMode} board-skin-${displayedBoardSkin} piece-skin-${displayedPieceSkin}`}>
       <header className="titlebar">
-        <div className="window-brand"><span className="brand-seal">象</span><strong>棋研</strong><small>XIANGQI STUDIO</small></div>
-        <strong className="window-title">棋研工作台</strong>
+        <div className="window-brand"><span className="brand-seal">象</span><strong>棋析</strong><small>XIANGQI STUDIO</small></div>
+        <strong className="window-title">棋析工作台</strong>
         <button
           className={`autosave-status ${autosave.status}`}
           disabled={autosave.status !== "error"}
@@ -8013,9 +8030,9 @@ export default function App() {
       {endgameTrainingOpen && <EndgameTrainingDialog preferences={desktopPreferences} riverText={riverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} onClose={() => setEndgameTrainingOpen(false)}/>}
       {aboutOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setAboutOpen(false); }}>
         <section className="about-dialog" role="dialog" aria-modal="true" aria-labelledby="about-title">
-          <header><span><Info size={18}/><strong id="about-title">关于棋研</strong></span><button className="tool-button" title="关闭" onClick={() => setAboutOpen(false)}><X size={16}/></button></header>
+          <header><span><Info size={18}/><strong id="about-title">关于棋析</strong></span><button className="tool-button" title="关闭" onClick={() => setAboutOpen(false)}><X size={16}/></button></header>
           <div className="about-dialog-body">
-            <div className="about-brand"><span className="brand-seal">象</span><div><strong>棋研工作台</strong><small>XIANGQI STUDIO</small></div></div>
+            <div className="about-brand"><span className="brand-seal">象</span><div><strong>棋析工作台</strong><small>XIANGQI STUDIO</small></div></div>
             <dl>
               <div><dt>软件版本</dt><dd>{appInfo?.version ? `v${appInfo.version}` : "读取中…"}</dd></div>
               <div><dt>构建时间</dt><dd>{appInfo?.buildTimestamp ? new Date(appInfo.buildTimestamp * 1000).toLocaleString("zh-CN", { hour12: false }) : "读取中…"}</dd></div>
@@ -8247,7 +8264,7 @@ export default function App() {
             <div className={`board ${displayedBoardSkin === "qingxin-zhuyun" && riverText ? "board-river-text-custom" : ""}`} aria-label="中国象棋棋盘">
               <div className="board-art" />
               {displayedBoardSkin === "qingxin-zhuyun" && riverText && <span className="board-river-custom-label" style={{ "--river-text-color": riverTextColor, "--river-text-size": `${riverTextSize}px` } as CSSProperties}>{riverText}</span>}
-              <MainBoardLastMoveOverlay move={mainBoardMarkerMove} reversed={boardDisplayReversed} boardSkin={displayedBoardSkin} />
+              <MainBoardLastMoveOverlay move={mainBoardMarkerMove} reversed={boardDisplayReversed} boardSkin={displayedBoardSkin} selected={selected} />
               <MainBoardMoveFeedback
                 feedback={moveFeedback}
                 reversed={boardDisplayReversed}
@@ -8258,7 +8275,6 @@ export default function App() {
               {cells.map(({ row, col }) => {
                 const piece = pieceMap.get(`${row}-${col}`);
                 const isSelected = selected?.row === row && selected?.col === col;
-                const isThoughtPiece = !referencePracticeMode && showMoveThoughts && selectedPieceThought?.square.row === row && selectedPieceThought.square.col === col;
                 const cellStyle = mainBoardCellStyle({ row, col }, boardDisplayReversed, displayedBoardSkin);
                 const style = {
                   "--piece-left": cellStyle.left,
@@ -8267,22 +8283,27 @@ export default function App() {
                 return (
                   <button
                     key={`${row}-${col}`}
-                    className={`board-square piece-${piece?.color ?? "empty"} ${candidatePreview ? "previewing" : ""} ${isSelected ? "selected" : ""} ${isThoughtPiece ? "thought-selected" : ""} ${moveFeedback && moveFeedback.move.to.row === row && moveFeedback.move.to.col === col ? "move-feedback-target" : ""}`}
+                    className={`board-square main-board-piece-interaction piece-${piece?.color ?? "empty"} ${candidatePreview ? "previewing" : ""} ${isSelected ? "selected" : ""} ${moveFeedback && moveFeedback.move.to.row === row && moveFeedback.move.to.col === col ? "move-feedback-target" : ""}`}
                     style={style}
                     disabled={isPlaying || !board.playable || !!candidatePreview}
-                    onClick={() => void selectSquare(row, col)}
-                    onDoubleClick={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      inspectPieceThought(row, col);
+                    onClick={(event) => {
+                      const previous = boardPutDownClickRef.current;
+                      if (previous && previous.row === row && previous.col === col
+                        && (event.detail >= 2 || event.timeStamp - previous.at < 350)) {
+                        boardPutDownClickRef.current = undefined;
+                        return;
+                      }
+                      boardPutDownClickRef.current = isSelected ? { row, col, at: event.timeStamp } : undefined;
+                      void selectSquare(row, col);
                     }}
+                    aria-pressed={Boolean(piece && isSelected)}
                     aria-label={`${squareToIccs(row, col)}${piece ? ` ${piece.color === "red" ? "红" : "黑"}${piece.label}` : ""}`}
                   >
                     {piece && <>
+                      <span className="main-board-ground-shadow" aria-hidden="true" />
                       <img src={pieceAsset(piece, displayedPieceSkin)} alt={piece.label} draggable={false} onError={(event) => handlePieceAssetError(event, piece)} />
                       <span className="board-piece-label" aria-hidden="true">{piece.label}</span>
                     </>}
-                    {isSelected && <span className="selection-ring" aria-hidden="true" />}
                   </button>
                 );
               })}
@@ -8421,6 +8442,11 @@ export default function App() {
             {branchMapControls()}
           </div>}
           <div className="board-statusbar">
+            {boardMoveStatus && <span role="status" className="board-move-status">{boardMoveStatus}</span>}
+            {reviewModeOpen && selected && !referencePracticeMode && !candidatePreview && board.playable && !isPlaying
+              && !engineThinking && !isEngineTurn(board) && pieceMap.get(`${selected.row}-${selected.col}`)
+              && pieceSide(pieceMap.get(`${selected.row}-${selected.col}`)!) === board.sideToMove
+              && <button type="button" className="board-piece-thought-action" onClick={() => inspectPieceThought(selected.row, selected.col)}>查看棋子思路</button>}
             {candidatePreview && previewStep
               ? <span className="last-move-status">预览着法：<strong>{previewStep.movedBy}</strong> {previewStep.notation}</span>
               : lastMove && <span className="last-move-status">上一着：<strong>{lastMove.movedBy}</strong> {lastMove.notation}</span>}

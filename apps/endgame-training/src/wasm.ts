@@ -18,6 +18,7 @@ export type PikafishAnalysis = { bestMove: string; lines: PikafishAnalysisLine[]
 
 type Core = {
   default(): Promise<void>;
+  exportLocalManual(json: string, format: string): string;
   parseCblLibrary(bytes: Uint8Array): string;
   chineseLine(fen: string, moves: string[]): string;
   WebGame: { new(fen?: string, ruleMode?: RuleMode): { playMove(iccs: string): string; stateJson(): string } };

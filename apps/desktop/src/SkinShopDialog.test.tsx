@@ -64,6 +64,18 @@ describe("SkinShopDialog", () => {
     expect(onPreview).toHaveBeenLastCalledWith();
   });
 
+  it("shows each piece skin on its matching board preview", () => {
+    renderShop(false, { boardSkin: "qingxin-zhuyun", pieceSkin: "qingxin-zhuyun" });
+
+    fireEvent.click(screen.getByRole("button", { name: "将棋子" }));
+
+    const card = screen.getByText("4 竞技 3D").closest("article")!;
+    const preview = card.querySelector(".skin-preview")!;
+    expect(preview.className).toContain("board-skin-skin-efb016e6");
+    expect(preview.className).toContain("piece-skin-skin-efb016e6");
+    expect(preview.className).not.toContain("board-skin-qingxin-zhuyun");
+  });
+
   it("uses the complete bamboo default skin instead of retaining the current piece skin", () => {
     const { onPreview, onEquip } = renderShop(false, { boardSkin: "hongmu", pieceSkin: "hongmu" });
     const defaultBoard = screen.getByText("默认棋盘").closest("article")!;

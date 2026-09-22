@@ -1,10 +1,10 @@
 {
   "name": "xiangqi-endgame-training",
   "private": true,
-  "version": "1.0.1",
+  "version": "1.0.2",
   "type": "module",
   "scripts": {
-    "wasm:build": "wasm-pack build ../../crates/web-core --target web --out-dir public/wasm --out-name xiangqi_web_core",
+    "wasm:build": "wasm-pack build ../../crates/web-core --target web --out-dir ../../apps/endgame-training/public/wasm --out-name xiangqi_web_core",
     "skins:prepare": "node ../../scripts/prepare-endgame-training-skins.mjs",
     "dev": "vite --host 0.0.0.0 --port 1422",
     "build": "tsc && vite build",

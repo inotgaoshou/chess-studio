@@ -1,29 +1,29 @@
 Hello App Review Team,
 
-Thank you for your message. We have completed our own quality-assurance testing of Qiyan 1.0.0 (build 10010) on a physical iPhone 14 running iOS 26.6.1.
+Thank you for your message. We have completed our own quality-assurance testing of Qixi 1.0.0 (build 10010) on a physical iPhone 14 running iOS 26.6.1.
 
 1. Physical-device screen recording
 
-Attached: qiyan-review-10010.mov
+Attached: qixi-review-10010.mov
 
 Recorded on: iPhone 14, iOS 26.6.1
 
 The recording starts by launching the app and demonstrates importing the attached sample CBL file, selecting an endgame problem, making moves, using hints, replaying the solution, viewing the locally stored practice record, and opening the local-library deletion control.
 
-Attached sample ZIP file: qiyan-review-sample-cbl.zip
-The ZIP contains qiyan-review-sample.cbl, the sample CBL file used in the recording.
+Attached sample ZIP file: qixi-review-sample-cbl.zip
+The ZIP contains qixi-review-sample.cbl, the sample CBL file used in the recording.
 
 2. App purpose and target audience
 
-Qiyan is a Chinese chess endgame training app for Chinese chess learners, players, and coaches. It imports CBL endgame files, presents playable positions and solution branches, records practice progress locally, and provides several training modes. It helps users repeatedly study and solve endgame positions on an iPhone or iPad.
+Qixi is a Chinese chess endgame training app for Chinese chess learners, players, and coaches. It imports CBL endgame files, presents playable positions and solution branches, records practice progress locally, and provides several training modes. It helps users repeatedly study and solve endgame positions on an iPhone or iPad.
 
 3. Access and setup instructions
 
 No account, registration, login, or demo credentials are required.
 
-a. Launch Qiyan.
+a. Launch Qixi.
 b. Tap \"导入 CBL\" (Import CBL).
-c. Extract the attached qiyan-review-sample-cbl.zip file, then select qiyan-review-sample.cbl from the iOS Files picker.
+c. Extract the attached qixi-review-sample-cbl.zip file, then select qixi-review-sample.cbl from the iOS Files picker.
 d. Select the imported library and choose a problem.
 e. Choose a training mode and move a piece by tapping its source and destination squares.
 

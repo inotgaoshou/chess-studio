@@ -135,7 +135,7 @@ describe("DesktopMenuBar", () => {
     expect(commands).toEqual(["userManual"]);
 
     await user.click(screen.getByText("帮助", { selector: "summary" }));
-    await user.click(screen.getByRole("button", { name: "关于棋研 · v1.2.0" }));
+    await user.click(screen.getByRole("button", { name: "关于棋析 · v1.2.0" }));
 
     expect(commands).toEqual(["userManual", "about"]);
   });

@@ -1380,6 +1380,39 @@ mod tests {
         assert_eq!(dto.continuation[1].notation, "兵七进一");
     }
 
+
+    #[test]
+    fn capture_regression_black_pawn_horse_checks_and_sqlite() {
+        for checking_move in [true, false] {
+            let state = desktop_state_for_link_tests();
+            let mut model = state.model.lock().unwrap();
+            for iccs in ["h2e2", "h9g7", "g3g4", "i9h9", "h0g2", "c6c5",
+                         "i0h0", "b9c7", "g4g5", "g6g5", "g2f4", "e6e5",
+                         "e3e4", "g5g4"] {
+                commit_move(&mut model, iccs).unwrap();
+            }
+            commit_move(&mut model, if checking_move { "e4e5" } else { "a3a4" }).unwrap();
+            let before = model.board.to_fen();
+            let count = model.store.load_move_nodes(model.game_id).unwrap().len();
+            let preview = preview_line_steps(&before, &["g4f4".to_owned()]);
+            let result = commit_move(&mut model, "g4f4");
+            if checking_move {
+                assert!(preview.is_err());
+                assert!(result.is_err());
+                assert_eq!(model.board.to_fen(), before);
+                assert_eq!(model.store.load_move_nodes(model.game_id).unwrap().len(), count);
+            } else {
+                assert!(preview.is_ok());
+                let result = result.unwrap();
+                assert!(result.pieces.iter().any(|p| p.row == 5 && p.col == 5 && p.label == "卒"));
+                assert!(!result.pieces.iter().any(|p| p.row == 5 && p.col == 6));
+                assert_eq!(model.store.load_move_nodes(model.game_id).unwrap().len(), count + 1);
+                assert!(commit_move(&mut model, "g4f4").is_err());
+                assert_eq!(model.store.load_move_nodes(model.game_id).unwrap().len(), count + 1);
+            }
+        }
+    }
+
     #[test]
     fn preview_line_simulates_moves_without_model_state() {
         let steps =

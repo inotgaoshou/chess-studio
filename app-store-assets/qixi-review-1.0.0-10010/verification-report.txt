@@ -1,4 +1,4 @@
-Qiyan 1.0.0 (10010) review-packet verification
+Qixi 1.0.0 (10010) review-packet verification
 Verified: 2026-09-09 Asia/Shanghai
 
 Submitted archive

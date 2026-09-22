@@ -59,3 +59,58 @@ export type Attempt = {
 export type BoardPiece = { row: number; col: number; color: "red" | "black"; kind: string; label: string };
 export type RuleMode = "domestic2020" | "asianAxf";
 export type BoardState = { fen: string; pieces: BoardPiece[]; sideToMove: string; status: string; ruleMode?: RuleMode; ruleStatus?: string; ruleReason?: string };
+
+export type MobileWorkspaceMode = "training" | "study" | "manual";
+
+export type LocalManualFolder = {
+  path: string;
+  createdAt: string;
+};
+
+export type LocalManualMoveBranch = {
+  id: string;
+  parentCursor: number;
+  parentPath: string[];
+  moves: string[];
+  notation: string[];
+  createdAt: number;
+  branchOrder?: number;
+};
+
+export type LocalManualMetadata = {
+  event: string;
+  redPlayer: string;
+  blackPlayer: string;
+  playedAt: string;
+  gameType: "full" | "middle" | "endgame";
+  result: "unknown" | "first-win" | "first-loss" | "draw" | "multiple";
+};
+
+export type LocalManualGame = {
+  metadata?: LocalManualMetadata;
+  id: string;
+  title: string;
+  note: string;
+  folderPath?: string;
+  startingFen: string;
+  currentNodeId: string;
+  currentFen: string;
+  moves: string[];
+  cursor: number;
+  branches: LocalManualMoveBranch[];
+  comments: Record<string, string>;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type LocalManualAnalysisSummary = {
+  gameId: string;
+  nodeId: string;
+  fen: string;
+  scoreCp?: number;
+  mate?: number;
+  depth: number;
+  bestMove: string;
+  pv: string[];
+  updatedAt: string;
+};

@@ -1,4 +1,4 @@
-# Qiyan 1.0.0 (10010) submission checklist
+# Qixi 1.0.0 (10010) submission checklist
 
 ## Verified locally
 
@@ -11,10 +11,10 @@
 
 ## Attachment gates
 
-- [x] Copy the selected review sample to qiyan-review-sample.cbl.
+- [x] Copy the selected review sample to qixi-review-sample.cbl.
 - [x] Run the review-packet verifier and confirm the CBL contains at least one importable endgame problem.
 - [x] Confirm in writing that the sample and every bundled visual/audio asset are original or used under a valid license.
-- [x] Record the core flow on a physical device and prepare it as qiyan-review-10010.mov.
+- [x] Record the core flow on a physical device and prepare it as qixi-review-10010.mov.
 - [x] Review the full recording for visible personal data; no credentials or account identifiers are displayed.
 - [x] Run the review-packet verifier again and retain its SHA-256 output.
 

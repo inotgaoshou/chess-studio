@@ -163,7 +163,7 @@ fn ensure_matching_elevation(handle: HWND) -> Result<(), String> {
         let target_elevated = token_is_elevated(target, true)?;
         if app_elevated != target_elevated {
             return Err(
-                "棋研与目标浏览器的管理员权限不一致。请以相同权限重启两者后再确认走子。".into(),
+                "棋析与目标浏览器的管理员权限不一致。请以相同权限重启两者后再确认走子。".into(),
             );
         }
     }
@@ -415,7 +415,7 @@ fn send_physical_click(point: (f32, f32)) -> Result<(), String> {
         if sent == inputs.len() as u32 {
             Ok(())
         } else {
-            Err("Windows 拒绝了确认走子的鼠标输入；请确认棋研与浏览器使用相同权限启动".into())
+            Err("Windows 拒绝了确认走子的鼠标输入；请确认棋析与浏览器使用相同权限启动".into())
         }
     }
 }

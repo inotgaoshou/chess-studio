@@ -6323,7 +6323,7 @@ mod tests {
             move_sound_enabled: true,
             move_sound_volume: 70,
             game_mirror_enabled: true,
-            game_mirror_root: "/tmp/棋研棋谱".into(),
+            game_mirror_root: "/tmp/棋析棋谱".into(),
             server_url: "https://sync.example.com".into(),
         };
         {
@@ -7125,7 +7125,7 @@ mod tests {
             store
                 .save_game_mirror_status(&GameMirrorStatus {
                     game_id,
-                    path: Some("/tmp/棋研棋谱/2026/省赛/2026-08-12_省赛_小明_红方.pgn".into()),
+                    path: Some("/tmp/棋析棋谱/2026/省赛/2026-08-12_省赛_小明_红方.pgn".into()),
                     state: "synced".into(),
                     updated_at: Some("2026-08-12T10:00:00Z".into()),
                     error: None,
@@ -7134,7 +7134,7 @@ mod tests {
             store
                 .save_game_mirror_status(&GameMirrorStatus {
                     game_id,
-                    path: Some("/tmp/棋研棋谱/2026/省赛/2026-08-13_省赛_小明_红方.pgn".into()),
+                    path: Some("/tmp/棋析棋谱/2026/省赛/2026-08-13_省赛_小明_红方.pgn".into()),
                     state: "failed".into(),
                     updated_at: Some("2026-08-12T10:01:00Z".into()),
                     error: Some("目录不可写".into()),

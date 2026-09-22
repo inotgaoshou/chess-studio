@@ -3161,7 +3161,7 @@ Start-Sleep -Milliseconds 110
         .status
         .success()
         .then_some(())
-        .ok_or_else(|| "Windows 外部点击失败；请以相同权限运行目标棋局窗口和棋研。".into())
+        .ok_or_else(|| "Windows 外部点击失败；请以相同权限运行目标棋局窗口和棋析。".into())
 }
 
 #[cfg(target_os = "macos")]

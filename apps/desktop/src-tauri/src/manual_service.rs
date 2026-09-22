@@ -312,7 +312,7 @@ pub(crate) fn default_game_mirror_root() -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
         .join("Documents")
-        .join("棋研棋谱")
+        .join("棋析棋谱")
 }
 
 pub(crate) fn configured_game_mirror_root(preferences: &DesktopPreferences) -> PathBuf {

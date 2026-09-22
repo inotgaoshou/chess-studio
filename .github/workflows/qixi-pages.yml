@@ -1,19 +1,19 @@
-name: Qiyan support pages
+name: Qixi support pages
 
 on:
   push:
     branches:
       - main
     paths:
-      - docs/qiyan-site/**
-      - .github/workflows/qiyan-pages.yml
+      - docs/qixi-site/**
+      - .github/workflows/qixi-pages.yml
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: qiyan-pages
+  group: qixi-pages
   cancel-in-progress: false
 
 jobs:
@@ -31,7 +31,7 @@ jobs:
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: docs/qiyan-site
+          path: docs/qixi-site
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v4

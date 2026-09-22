@@ -1,3 +1,4 @@
+mod manual_export;
 use manual_format::import_cbl_library;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;

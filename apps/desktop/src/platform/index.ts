@@ -184,7 +184,7 @@ function safeManualFilename(title: string) {
 function parseWebManualFile(contents: string): WebManualFile {
   const value = JSON.parse(contents) as Partial<WebManualFile>;
   if (value.format !== "xiangqi-assistant" || value.version !== 1 || typeof value.snapshot !== "string") {
-    throw new Error("不是可打开的象棋研习棋谱文件");
+    throw new Error("不是可打开的棋析棋谱文件");
   }
   return {
     format: "xiangqi-assistant",
@@ -233,7 +233,7 @@ class DesktopPlatform implements ChessPlatform {
   updateGameMirror() { return invoke<GameMirrorStatus>("update_game_mirror"); }
   rebuildGameMirrors() { return invoke<GameMirrorStatus[]>("rebuild_game_mirrors"); }
   async chooseGameMirrorRoot() {
-    const path = await open({ multiple: false, directory: true, title: "选择棋研棋谱镜像目录" });
+    const path = await open({ multiple: false, directory: true, title: "选择棋析棋谱镜像目录" });
     return typeof path === "string" ? path : undefined;
   }
   revealGameMirror() { return invoke<void>("reveal_game_mirror"); }

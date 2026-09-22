@@ -1,0 +1,10 @@
+Qixi (棋析), previously named 棋研, adds board/piece skins and local game recording in version 1.0.2.
+
+No sign-in is required for the reviewed workflows.
+1. Tap the game-recording icon in the top mode switcher to open local recording. Open the bottom menu to create a game or set up a position. Record moves, navigate, and edit variations/comments.
+2. Choose Save Game to edit title, event, players, date, game type/result, folder and notes. The local library supports nested folders and search.
+3. Choose Share Game to preview Chinese notation, PGN or Dongping UBB text. Copy is available for all formats; PGN supports file sharing/export. Dongping export currently includes the main line only, excluding variations/comments.
+4. Board/piece skin controls offer alternate appearance options.
+5. Endgame practice uses user-imported CBL files. Local Pikafish analysis is included in the native iOS application. Optional cloud-book requests send the current FEN position to ChessDB.
+
+Game records and practice data are stored locally. No new account or server API is required by the recording/share features.

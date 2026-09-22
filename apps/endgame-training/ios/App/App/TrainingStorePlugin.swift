@@ -15,7 +15,17 @@ final class TrainingStorePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "attempts", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "saveAttempt", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "deleteLibrary", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "hideProblem", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "hideProblem", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "manualFolders", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "createManualFolder", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "renameManualFolder", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "deleteManualFolder", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "manualGames", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "saveManualGame", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "openManualGame", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "deleteManualGame", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "moveManualGame", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "saveManualAnalysis", returnType: CAPPluginReturnPromise)
     ]
 
     private let store = TrainingDatabase()
@@ -67,6 +77,71 @@ final class TrainingStorePlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
+    @objc func manualFolders(_ call: CAPPluginCall) {
+        respond(call, failure: "无法读取录谱目录") { ["items": try self.store.manualFolders()] }
+    }
+
+    @objc func createManualFolder(_ call: CAPPluginCall) {
+        respond(call, failure: "无法创建录谱目录") {
+            try self.store.createManualFolder(Self.normalizePath(call.getString("path")))
+            return [:]
+        }
+    }
+
+    @objc func renameManualFolder(_ call: CAPPluginCall) {
+        respond(call, failure: "无法重命名录谱目录") {
+            try self.store.renameManualFolder(previous: Self.normalizePath(call.getString("previous")), next: Self.normalizePath(call.getString("next")))
+            return [:]
+        }
+    }
+
+    @objc func deleteManualFolder(_ call: CAPPluginCall) {
+        respond(call, failure: "无法删除录谱目录") {
+            try self.store.deleteManualFolder(Self.normalizePath(call.getString("path")))
+            return [:]
+        }
+    }
+
+    @objc func manualGames(_ call: CAPPluginCall) {
+        respond(call, failure: "无法读取本地棋谱") {
+            ["items": try self.store.manualGames(folder: Self.normalizePath(call.getString("folder")), queryText: call.getString("query") ?? "")]
+        }
+    }
+
+    @objc func saveManualGame(_ call: CAPPluginCall) {
+        respond(call, failure: "无法保存本地棋谱") {
+            try self.store.saveManualGame(try Self.object(from: call, key: "game"))
+            return [:]
+        }
+    }
+
+    @objc func openManualGame(_ call: CAPPluginCall) {
+        respond(call, failure: "无法打开本地棋谱") {
+            ["item": try self.store.openManualGame(try Self.requiredString(call, key: "id"))]
+        }
+    }
+
+    @objc func deleteManualGame(_ call: CAPPluginCall) {
+        respond(call, failure: "无法删除本地棋谱") {
+            try self.store.deleteManualGame(try Self.requiredString(call, key: "id"))
+            return [:]
+        }
+    }
+
+    @objc func moveManualGame(_ call: CAPPluginCall) {
+        respond(call, failure: "无法移动本地棋谱") {
+            try self.store.moveManualGame(id: try Self.requiredString(call, key: "id"), folder: Self.normalizePath(call.getString("folder")))
+            return [:]
+        }
+    }
+
+    @objc func saveManualAnalysis(_ call: CAPPluginCall) {
+        respond(call, failure: "无法保存录谱分析") {
+            try self.store.saveManualAnalysis(try Self.object(from: call, key: "summary"))
+            return [:]
+        }
+    }
+
     private func respond(_ call: CAPPluginCall, failure: String, _ action: @escaping () throws -> PluginCallResultData) {
         DispatchQueue.global(qos: .userInitiated).async {
             do {
@@ -81,6 +156,10 @@ final class TrainingStorePlugin: CAPPlugin, CAPBridgedPlugin {
     private static func requiredString(_ call: CAPPluginCall, key: String) throws -> String {
         guard let value = call.getString(key), !value.isEmpty else { throw TrainingStoreError.invalidInput(key) }
         return value
+    }
+
+    private static func normalizePath(_ raw: String?) -> String {
+        (raw ?? "").split(separator: "/").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }.joined(separator: "/")
     }
 
     private static func object(from call: CAPPluginCall, key: String) throws -> [String: Any] {
@@ -185,6 +264,109 @@ private final class TrainingDatabase {
         try queue.sync { try execute("UPDATE problems SET active=0 WHERE id=?", [problemId]) }
     }
 
+    func manualFolders() throws -> String {
+        try queue.sync {
+            try json(try query("SELECT path,created_at FROM manual_folders ORDER BY path COLLATE NOCASE") { statement in
+                ["path": text(statement, 0), "createdAt": text(statement, 1)]
+            })
+        }
+    }
+
+    func createManualFolder(_ path: String) throws {
+        guard !path.isEmpty else { throw TrainingStoreError.invalidInput("path") }
+        try queue.sync { try createFolderPath(path) }
+    }
+
+    func renameManualFolder(previous: String, next: String) throws {
+        guard !previous.isEmpty, !next.isEmpty else { throw TrainingStoreError.invalidInput("path") }
+        try queue.sync {
+            try transaction {
+                try createFolderPath(next)
+                let rows = try query("SELECT path,created_at FROM manual_folders WHERE path=? OR path LIKE ? ORDER BY LENGTH(path)", [previous, "\(previous)/%"]) { statement in
+                    ["path": text(statement, 0), "createdAt": text(statement, 1)]
+                }
+                for row in rows {
+                    let oldPath = row["path"] as? String ?? ""
+                    let newPath = next + String(oldPath.dropFirst(previous.count))
+                    try execute("INSERT INTO manual_folders (path,created_at) VALUES (?,?) ON CONFLICT(path) DO NOTHING", [newPath, row["createdAt"] as? String ?? isoNow()])
+                }
+                try execute("UPDATE manual_games SET folder_path=? || SUBSTR(folder_path, ?), updated_at=? WHERE folder_path=? OR folder_path LIKE ?", [next, NSNumber(value: previous.count + 1), isoNow(), previous, "\(previous)/%"])
+                try execute("DELETE FROM manual_folders WHERE path=? OR path LIKE ?", [previous, "\(previous)/%"])
+            }
+        }
+    }
+
+    func deleteManualFolder(_ path: String) throws {
+        guard !path.isEmpty else { throw TrainingStoreError.invalidInput("path") }
+        try queue.sync {
+            try transaction {
+                let parent = path.contains("/") ? String(path.prefix(upTo: path.lastIndex(of: "/")!)) : ""
+                if !parent.isEmpty { try createFolderPath(parent) }
+                try execute("UPDATE manual_games SET folder_path=?, updated_at=? WHERE folder_path=? OR folder_path LIKE ?", [parent, isoNow(), path, "\(path)/%"])
+                try execute("DELETE FROM manual_folders WHERE path=? OR path LIKE ?", [path, "\(path)/%"])
+            }
+        }
+    }
+
+    func manualGames(folder: String, queryText: String) throws -> String {
+        try queue.sync {
+            var sql = "SELECT game_json FROM manual_games"
+            var clauses = [String]()
+            var values: [Any] = []
+            if !folder.isEmpty {
+                clauses.append("folder_path=?")
+                values.append(folder)
+            }
+            if !queryText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                clauses.append("(title LIKE ? OR note LIKE ? OR folder_path LIKE ?)")
+                let like = "%\(queryText)%"
+                values.append(like); values.append(like); values.append(like)
+            }
+            if !clauses.isEmpty { sql += " WHERE " + clauses.joined(separator: " AND ") }
+            sql += " ORDER BY updated_at DESC"
+            return try json(try query(sql, values) { statement in try jsonValue(text(statement, 0)) as? [String: Any] ?? [:] })
+        }
+    }
+
+    func saveManualGame(_ game: [String: Any]) throws {
+        try queue.sync {
+            let folder = (game["folderPath"] as? String) ?? ""
+            if !folder.isEmpty { try createFolderPath(folder) }
+            let payload = try json(game)
+            try execute("INSERT INTO manual_games (id,title,note,folder_path,starting_fen,current_node_id,tree_json,game_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,note=excluded.note,folder_path=excluded.folder_path,starting_fen=excluded.starting_fen,current_node_id=excluded.current_node_id,tree_json=excluded.tree_json,game_json=excluded.game_json,updated_at=excluded.updated_at", [try value(game, "id"), try value(game, "title"), (game["note"] as? String) ?? "", folder, try value(game, "startingFen"), (game["currentNodeId"] as? String) ?? "", payload, payload, (game["createdAt"] as? String) ?? isoNow(), (game["updatedAt"] as? String) ?? isoNow()])
+        }
+    }
+
+    func openManualGame(_ id: String) throws -> String {
+        try queue.sync {
+            try query("SELECT game_json FROM manual_games WHERE id=? LIMIT 1", [id]) { statement in ["item": text(statement, 0)] }.first?["item"] as? String ?? ""
+        }
+    }
+
+    func deleteManualGame(_ id: String) throws {
+        try queue.sync {
+            try transaction {
+                try execute("DELETE FROM manual_analysis WHERE game_id=?", [id])
+                try execute("DELETE FROM manual_games WHERE id=?", [id])
+            }
+        }
+    }
+
+    func moveManualGame(id: String, folder: String) throws {
+        try queue.sync {
+            if !folder.isEmpty { try createFolderPath(folder) }
+            try execute("UPDATE manual_games SET folder_path=?, updated_at=? WHERE id=?", [folder, isoNow(), id])
+        }
+    }
+
+    func saveManualAnalysis(_ summary: [String: Any]) throws {
+        guard let pv = summary["pv"] else { throw TrainingStoreError.invalidInput("pv") }
+        let pvJson = try json(pv)
+        try queue.sync {
+            try execute("INSERT INTO manual_analysis (game_id,node_id,fen,score_cp,mate,depth,best_move,pv_json,updated_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(game_id,node_id) DO UPDATE SET fen=excluded.fen,score_cp=excluded.score_cp,mate=excluded.mate,depth=excluded.depth,best_move=excluded.best_move,pv_json=excluded.pv_json,updated_at=excluded.updated_at", [try value(summary, "gameId"), try value(summary, "nodeId"), try value(summary, "fen"), (summary["scoreCp"] as? NSNumber) ?? NSNumber(value: 0), (summary["mate"] as? NSNumber) ?? NSNumber(value: 0), (summary["depth"] as? NSNumber) ?? NSNumber(value: 0), (summary["bestMove"] as? String) ?? "", pvJson, (summary["updatedAt"] as? String) ?? isoNow()])
+        }
+    }
+
     private func open() throws {
         let manager = FileManager.default
         let directory = try manager.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
@@ -197,6 +379,21 @@ private final class TrainingDatabase {
         do { try execute("ALTER TABLE problems ADD COLUMN logic_json TEXT NOT NULL DEFAULT ''") } catch { }
         try execute("CREATE TABLE IF NOT EXISTS attempts (id TEXT PRIMARY KEY, problem_id TEXT NOT NULL, mode TEXT NOT NULL, elapsed_ms INTEGER NOT NULL, hints_used INTEGER NOT NULL, mistakes INTEGER NOT NULL, outcome TEXT NOT NULL, created_at TEXT NOT NULL)")
         try execute("CREATE INDEX IF NOT EXISTS attempts_problem_idx ON attempts(problem_id, created_at DESC)")
+        try execute("CREATE TABLE IF NOT EXISTS manual_folders (path TEXT PRIMARY KEY, created_at TEXT NOT NULL)")
+        try execute("CREATE TABLE IF NOT EXISTS manual_games (id TEXT PRIMARY KEY, title TEXT NOT NULL, note TEXT NOT NULL, folder_path TEXT NOT NULL DEFAULT '', starting_fen TEXT NOT NULL, current_node_id TEXT NOT NULL DEFAULT '', tree_json TEXT NOT NULL, game_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)")
+        try execute("CREATE INDEX IF NOT EXISTS manual_games_folder_idx ON manual_games(folder_path, updated_at DESC)")
+        try execute("CREATE TABLE IF NOT EXISTS manual_analysis (game_id TEXT NOT NULL, node_id TEXT NOT NULL, fen TEXT NOT NULL, score_cp INTEGER, mate INTEGER, depth INTEGER NOT NULL DEFAULT 0, best_move TEXT NOT NULL DEFAULT '', pv_json TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(game_id,node_id))")
+    }
+
+    private func isoNow() -> String { ISO8601DateFormatter().string(from: Date()) }
+
+    private func createFolderPath(_ path: String) throws {
+        let parts = path.split(separator: "/").map(String.init)
+        guard !parts.isEmpty else { return }
+        for index in parts.indices {
+            let prefix = parts[...index].joined(separator: "/")
+            try execute("INSERT INTO manual_folders (path,created_at) VALUES (?,?) ON CONFLICT(path) DO NOTHING", [prefix, isoNow()])
+        }
     }
 
     private func saveProblem(_ problem: [String: Any]) throws {

@@ -169,7 +169,7 @@ vi.mock("./GuidedTrainingDialog", () => ({
   ),
 }));
 
-import App from "./App";
+import App, { boardMoveErrorMessage } from "./App";
 
 Object.defineProperty(window, "matchMedia", {
   writable: true,
@@ -202,6 +202,7 @@ function configurePlatform(initialBoard: BoardState = board) {
   target.loadSavedAnalysis = vi.fn(async () => []);
   target.previewLine = vi.fn(async () => []);
   target.playMove = vi.fn(async () => initialBoard);
+  target.stopAnalysis = vi.fn(async () => undefined);
   target.queryCloudOpeningBook = vi.fn(async () => []);
   target.subscribeGameReportProgress = vi.fn(async () => () => undefined);
   target.subscribeEngineEvents = vi.fn(async () => () => undefined);
@@ -239,7 +240,7 @@ describe("App guided-analysis close", () => {
     });
   });
 
-  it("shows selected piece thinking when a side-to-move piece is double-clicked", async () => {
+  it("shows selected piece thinking from the explicit action", async () => {
     configurePlatform({
       ...board,
       pieces: [{ row: 9, col: 1, color: "red", kind: "horse", label: "马" }],
@@ -248,12 +249,13 @@ describe("App guided-analysis close", () => {
     render(<App/>);
 
     const horseSquare = await screen.findByRole("button", { name: /b0 红马/ });
-    fireEvent.doubleClick(horseSquare);
+    await user.click(horseSquare);
+    await user.click(screen.getByRole("button", { name: "查看棋子思路" }));
 
     const card = await screen.findByLabelText("选中棋子思路");
     expect(card.textContent).toContain("红方马");
     expect(card.textContent).toContain("跳点");
-    expect(horseSquare.className).toContain("thought-selected");
+    expect(horseSquare.className).not.toContain("thought-selected");
 
     await user.click(screen.getByRole("button", { name: "隐藏思路" }));
     expect(screen.queryByLabelText("选中棋子思路")).toBeNull();
@@ -265,7 +267,7 @@ describe("App guided-analysis close", () => {
     expect(screen.queryByLabelText("选中棋子思路")).toBeNull();
   });
 
-  it("renders the main board selected piece with the CSS ring marker instead of the skin mask image", async () => {
+  it("renders selected pieces with a ground shadow and no fixed selection ring", async () => {
     configurePlatform({
       ...board,
       pieces: [{ row: 9, col: 1, color: "red", kind: "horse", label: "马" }],
@@ -276,11 +278,12 @@ describe("App guided-analysis close", () => {
     fireEvent.click(horseSquare);
 
     expect(horseSquare.className).toContain("selected");
-    expect(horseSquare.querySelector(".selection-ring")).toBeTruthy();
+    expect(horseSquare.querySelector(".selection-ring")).toBeNull();
+    expect(horseSquare.querySelector(".main-board-ground-shadow")).toBeTruthy();
     expect(horseSquare.querySelector(".selection-mask")).toBeNull();
   });
 
-  it("cancels a pending review move when the destination is double-clicked for inspection", async () => {
+  it("does not trigger inspection or cancel the move on a destination double-click", async () => {
     configurePlatform({
       ...board,
       pieces: [
@@ -294,10 +297,11 @@ describe("App guided-analysis close", () => {
     const emptySquare = screen.getByRole("button", { name: "b1" });
     fireEvent.click(horseSquare);
     fireEvent.click(emptySquare);
+    fireEvent.click(emptySquare, { detail: 2 });
     fireEvent.doubleClick(emptySquare);
 
     await new Promise((resolve) => window.setTimeout(resolve, 240));
-    expect((platformMock as { playMove?: ReturnType<typeof vi.fn> }).playMove).not.toHaveBeenCalled();
+    expect((platformMock as { playMove?: ReturnType<typeof vi.fn> }).playMove).toHaveBeenCalledExactlyOnceWith("b0b1");
     expect(screen.queryByLabelText("选中棋子思路")).toBeNull();
   });
 
@@ -328,4 +332,72 @@ describe("App guided-analysis close", () => {
     resolveStop?.();
     await waitFor(() => expect(analysisButton!.textContent).toBe("分析"));
   });
+});
+
+
+describe("desktop picked-up piece interaction", () => {
+  it("puts down on single/double click, switches selection, and opens thoughts only from the button", async () => {
+    configurePlatform({ ...board, pieces: [
+      { row: 6, col: 4, color: "red", kind: "pawn", label: "兵" },
+      { row: 7, col: 1, color: "red", kind: "cannon", label: "炮" },
+    ] });
+    const user = userEvent.setup();
+    const view = render(<App/>);
+    const pawn = await screen.findByRole("button", { name: "e3 红兵" });
+    const cannon = screen.getByRole("button", { name: "b2 红炮" });
+    await user.click(pawn);
+    expect(pawn.getAttribute("aria-pressed")).toBe("true");
+    await user.click(screen.getByRole("button", { name: "查看棋子思路" }));
+    expect(screen.getByLabelText("选中棋子思路")).toBeTruthy();
+    expect(view.container.querySelector(".thought-selected")).toBeNull();
+    await user.click(cannon);
+    expect(pawn.getAttribute("aria-pressed")).toBe("false");
+    expect(cannon.getAttribute("aria-pressed")).toBe("true");
+    expect(screen.queryByLabelText("选中棋子思路")).toBeNull();
+    await user.dblClick(cannon);
+    expect(cannon.getAttribute("aria-pressed")).toBe("false");
+    expect(screen.queryByRole("button", { name: "查看棋子思路" })).toBeNull();
+    await user.click(pawn);
+    await user.click(pawn);
+    expect(pawn.getAttribute("aria-pressed")).toBe("false");
+    expect((platformMock as { playMove?: ReturnType<typeof vi.fn> }).playMove).not.toHaveBeenCalled();
+  });
+});
+
+describe("desktop capture selection", () => {
+  it("captures the opposing pawn directly while lifted", async () => {
+    configurePlatform({ ...board, fen: "4k4/9/9/9/4pP3/4P4/9/9/9/4K4 b - - 0 1", sideToMove: "黑方", pieces: [
+      { row: 4, col: 4, color: "black", kind: "pawn", label: "卒" },
+      { row: 5, col: 4, color: "red", kind: "pawn", label: "兵" },
+    ] });
+    render(<App/>);
+    fireEvent.click(await screen.findByRole("button", { name: "e5 黑卒" }));
+    fireEvent.click(screen.getByRole("button", { name: "e4 红兵" }));
+    await waitFor(() => expect((platformMock as { playMove?: ReturnType<typeof vi.fn> }).playMove).toHaveBeenCalledExactlyOnceWith("e5e4"));
+  });
+
+  it("retains the lifted piece after a rejected capture so another target can be tried", async () => {
+    configurePlatform({ ...board, fen: "4k4/9/9/9/4pP3/4P4/9/9/9/4K4 b - - 0 1", sideToMove: "黑方", pieces: [
+      { row: 4, col: 4, color: "black", kind: "pawn", label: "卒" },
+      { row: 4, col: 5, color: "red", kind: "pawn", label: "兵" },
+      { row: 5, col: 4, color: "red", kind: "pawn", label: "兵" },
+    ] });
+    const playMove = (platformMock as unknown as { playMove: ReturnType<typeof vi.fn> }).playMove;
+    const previewLine = (platformMock as unknown as { previewLine: ReturnType<typeof vi.fn> }).previewLine;
+    previewLine.mockRejectedValueOnce(new Error("非法走棋"));
+    render(<App/>);
+    const pawn = await screen.findByRole("button", { name: "e5 黑卒" });
+    fireEvent.click(pawn);
+    fireEvent.click(screen.getByRole("button", { name: "f5 红兵" }));
+    await waitFor(() => expect(previewLine).toHaveBeenCalledWith(expect.any(String), ["e5f5"]));
+    await waitFor(() => expect(screen.getAllByText("非法走棋").length).toBeGreaterThan(0));
+    expect(pawn.getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "e4 红兵" }));
+    await waitFor(() => expect(playMove).toHaveBeenLastCalledWith("e5e4"));
+  });
+});
+
+it("explains why capturing a horse cannot ignore a cannon check", () => {
+ expect(boardMoveErrorMessage(new Error("候选线路第 1 步无法生成中文记谱：illegal move"), { status: "将军", ruleReason: "当前为将军局面" })).toContain("必须先解将");
+ expect(boardMoveErrorMessage(new Error("illegal move"), { status: "进行中" })).toContain("不符合象棋规则");
 });

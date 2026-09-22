@@ -3,9 +3,9 @@ set -euo pipefail
 
 packet_dir="$(cd "$(dirname "$0")" && pwd)"
 repo_root="$(cd "$packet_dir/../.." && pwd)"
-cbl="${1:-$packet_dir/qiyan-review-sample.cbl}"
-video="${2:-$packet_dir/qiyan-review-10010.mov}"
-archive="$repo_root/apps/endgame-training/build/Qiyan-1.0.0-10010.xcarchive"
+cbl="${1:-$packet_dir/qixi-review-sample.cbl}"
+video="${2:-$packet_dir/qixi-review-10010.mov}"
+archive="$repo_root/apps/endgame-training/build/Qixi-1.0.0-10010.xcarchive"
 archive_info="$archive/Info.plist"
 app="$archive/Products/Applications/App.app"
 
@@ -50,7 +50,7 @@ if [[ "$video_type" != *"QuickTime"* && "$video_type" != *"ISO Media"* ]]; then
   exit 1
 fi
 
-echo "Archive: Qiyan $version ($build), $bundle_id"
+echo "Archive: Qixi $version ($build), $bundle_id"
 echo "CBL report:"
 echo "$report"
 echo "Video: $video_type"

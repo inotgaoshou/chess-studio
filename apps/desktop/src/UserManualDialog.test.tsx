@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { UserManualDialog } from "./UserManualDialog";
 import bundledManual from "../../../docs/USER_MANUAL.zh-CN.md?raw";
 
-const manual = `# 棋研使用手册
+const manual = `# 棋析使用手册
 
 ## 首次准备
 
@@ -26,7 +26,7 @@ describe("UserManualDialog", () => {
     const user = userEvent.setup();
     render(<UserManualDialog appVersion="1.2.0" markdown={manual} onClose={vi.fn()} />);
 
-    expect(screen.getByRole("dialog", { name: "棋研使用手册" })).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: "棋析使用手册" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "首次准备" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "适用版本 v1.2.0" })).toBeTruthy();
 
@@ -63,7 +63,7 @@ describe("UserManualDialog", () => {
     expect(screen.getByAltText("今日 40 分钟与训练周报").getAttribute("src")).toBe("/manual/07-daily-weekly.png");
     expect(screen.getByRole("heading", { name: "如何备份和恢复本机数据" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "自动镜像没有创建、更新失败或文件被删除" })).toBeTruthy();
-    expect(screen.getByText("~/Documents/棋研棋谱/")).toBeTruthy();
+    expect(screen.getByText("~/Documents/棋析棋谱/")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "云库、同步和窗口连线不可用" })).toBeTruthy();
   });
 });

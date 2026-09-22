@@ -1,6 +1,6 @@
-# 棋研 Android 与 iPhone 应用
+# 棋析 Android 与 iPhone 应用
 
-独立 Android/iOS 应用，显示名称为“棋研”，包名为 `cn.xiangqi.endgame.training`，可与 Xiangqi Studio 主应用并存。它提供离线 CBL 导入与残局训练；题库和答题记录写入该应用的私有 SQLite，安装包不包含任何 CBL 或用户数据。
+独立 Android/iOS 应用，显示名称为“棋析”，包名为 `cn.xiangqi.endgame.training`，可与 Xiangqi Studio 主应用并存。它提供离线 CBL 导入与残局训练；题库和答题记录写入该应用的私有 SQLite，安装包不包含任何 CBL 或用户数据。
 
 Android 目标为 Android 10+ 的 `arm64-v8a` 平板和手机，首要验收设备是荣耀平板 X10 Pro 8GB+128GB。iOS 为 iPhone/iPad 通用包，最低 iOS 14；窄屏时目录和控制栏会变为抽屉，确保棋盘保持完整可点。
 

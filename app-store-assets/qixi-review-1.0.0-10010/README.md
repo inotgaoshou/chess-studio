@@ -1,4 +1,4 @@
-# Qiyan 1.0.0 (10010) App Review Packet
+# Qixi 1.0.0 (10010) App Review Packet
 
 This directory contains the material for responding to Apple's Guideline 2.1 information request.
 
@@ -14,15 +14,15 @@ This directory contains the material for responding to Apple's Guideline 2.1 inf
 
 Place the final attachments in this directory with these names:
 
-- `qiyan-review-sample.cbl`
-- `qiyan-review-10010.mov`
+- `qixi-review-sample.cbl`
+- `qixi-review-10010.mov`
 
 Both attachments are intentionally ignored by Git because the recording may show local device content and the CBL must not be published without a separate rights review.
 
 Then run:
 
 `\`\`bash
-./app-store-assets/qiyan-review-1.0.0-10010/verify-review-packet.sh
+./app-store-assets/qixi-review-1.0.0-10010/verify-review-packet.sh
 `\`\`
 
 The script prints the SHA-256 of both attachments. Do not submit until every unchecked manual gate in `submission-checklist.md` is complete.

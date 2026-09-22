@@ -24,8 +24,9 @@ export function SkinShopDialog({ preferences, signedIn, onClose, onPreview, onEq
     const active = isBoard ? currentBoardSkin === folder : currentPieceSkin === folder;
     const skin = folder as Skin;
     const patch = patchFor(skin);
+    const previewBoardSkin = skin;
     const previewPieceSkin = isBoard ? patch.pieceSkin : skin;
-    return <article className="skin-shop-card" key={skin} onPointerEnter={() => onPreview(patch)} onPointerLeave={() => onPreview()}><div className={`skin-preview board-skin-${isBoard ? skin : currentBoardSkin} piece-skin-${previewPieceSkin}`}><div/>{isBoard ? <span>楚河</span> : <img src={`/skins/${skinAssetFolder(previewPieceSkin)}/rk.png`} alt="棋子预览"/>}</div><strong>{title}</strong><small>{detail}</small><button className={active ? "active" : ""} disabled={active} onClick={() => onEquip(patch)}>{active ? "使用中" : "使用"}</button></article>;
+    return <article className="skin-shop-card" key={skin} onPointerEnter={() => onPreview(patch)} onPointerLeave={() => onPreview()}><div className={`skin-preview board-skin-${previewBoardSkin} piece-skin-${previewPieceSkin}`}><div/>{isBoard ? <span>楚河</span> : <img src={`/skins/${skinAssetFolder(previewPieceSkin)}/rk.png`} alt="棋子预览"/>}</div><strong>{title}</strong><small>{detail}</small><button className={active ? "active" : ""} disabled={active} onClick={() => onEquip(patch)}>{active ? "使用中" : "使用"}</button></article>;
   });
   return <div className="skin-shop-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="skin-shop" role="dialog" aria-modal="true" aria-label="装扮坊">

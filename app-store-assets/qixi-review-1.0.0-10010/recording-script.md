@@ -1,11 +1,11 @@
 # Physical-device recording script
 
-Record one continuous 2-4 minute video on a physical iPhone or iPad running the latest public iOS/iPadOS release. Turn on screen recording before launching Qiyan. Do not show Apple IDs, notifications, email addresses, file-provider accounts, or other personal data.
+Record one continuous 2-4 minute video on a physical iPhone or iPad running the latest public iOS/iPadOS release. Turn on screen recording before launching Qixi. Do not show Apple IDs, notifications, email addresses, file-provider accounts, or other personal data.
 
 ## Before recording
 
-1. Install Qiyan 1.0.0 (10010) from TestFlight.
-2. Delete any existing Qiyan app data, reinstall the build, and place `qiyan-review-sample.cbl` in a neutral folder in the Files app.
+1. Install Qixi 1.0.0 (10010) from TestFlight.
+2. Delete any existing Qixi app data, reinstall the build, and place `qixi-review-sample.cbl` in a neutral folder in the Files app.
 3. Enable Do Not Disturb, disable notification previews, and close unrelated apps.
 4. Confirm the sample contains only material authorized for Apple review.
 5. Confirm Wi-Fi access to ChessDB, then repeat the cloud fallback check once with networking unavailable.
@@ -14,9 +14,9 @@ Record one continuous 2-4 minute video on a physical iPhone or iPad running the 
 
 | Time | Action | Evidence shown |
 | --- | --- | --- |
-| 00:00 | Show the Home Screen and launch Qiyan | Physical-device launch and app identity |
+| 00:00 | Show the Home Screen and launch Qixi | Physical-device launch and app identity |
 | 00:10 | Pause briefly on the empty state | Clean-install behavior; no account or login |
-| 00:20 | Tap `导入 CBL` and select `qiyan-review-sample.cbl` | System Files picker and required setup |
+| 00:20 | Tap `导入 CBL` and select `qixi-review-sample.cbl` | System Files picker and required setup |
 | 00:40 | Open the imported library and select its first problem | Library and problem navigation |
 | 01:00 | Select `只走解题方`, request one hint, and make the demonstrated move | Core training, legal-move validation, and hints |
 | 01:30 | Tap `看答案`, then play the solution from the beginning | Solution and replay flow |
@@ -31,7 +31,7 @@ If ChessDB has no reply for the sample position, keep the resulting fallback mes
 
 ## Output
 
-- Filename: `qiyan-review-10010.mov`
+- Filename: `qixi-review-10010.mov`
 - Keep the original screen-recording resolution and audio setting.
 - Do not edit together simulator footage or add promotional slides.
 - Review the entire video before submission and confirm that every label remains legible.

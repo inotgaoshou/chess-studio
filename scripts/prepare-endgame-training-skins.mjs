@@ -265,7 +265,7 @@ function writeStatus(records) {
   const hidden = records.filter((record) => record.status === "暂不展示");
   const skipped = records.filter((record) => record.status === "跳过" || record.status === "待补全");
   const lines = [
-    "# 棋研皮肤资源状态",
+    "# 棋析皮肤资源状态",
     "",
     `生成时间：${new Date().toISOString()}`,
     "",
