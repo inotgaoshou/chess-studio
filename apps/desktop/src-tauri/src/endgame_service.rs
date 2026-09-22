@@ -267,6 +267,21 @@ pub(crate) fn create_endgame_folder(
 }
 
 #[tauri::command]
+pub(crate) fn rename_endgame_folder(
+    folder_id: Uuid,
+    name: String,
+    state: State<'_, DesktopState>,
+) -> Result<EndgameFolder, String> {
+    state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?
+        .store
+        .rename_endgame_folder(folder_id, &name)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub(crate) fn move_endgame_folder(
     folder_id: Uuid,
     parent_id: Option<Uuid>,

@@ -1125,12 +1125,7 @@ impl LocalStore {
     ) -> Result<EndgameFolder, StoreError> {
         let name = normalized_endgame_folder_name(name)?;
         self.require_endgame_folder(parent_id)?;
-        let exists = self.connection.query_row(
-            "SELECT 1 FROM endgame_folders WHERE COALESCE(parent_id, '')=COALESCE(?1, '') AND name=?2 COLLATE NOCASE",
-            params![parent_id.map(|id| id.to_string()), name],
-            |_| Ok(()),
-        ).optional()?.is_some();
-        if exists {
+        if self.endgame_folder_name_exists(parent_id, &name, None)? {
             return Err(StoreError::EndgameFolderAlreadyExists { name });
         }
         let sort_order = self.next_endgame_folder_sort_order(parent_id)?;
@@ -1144,6 +1139,26 @@ impl LocalStore {
             "INSERT INTO endgame_folders (id, parent_id, name, sort_order, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
             params![folder.id.to_string(), folder.parent_id.map(|id| id.to_string()), folder.name, sort_order, folder.created_at],
         )?;
+        Ok(folder)
+    }
+
+    pub fn rename_endgame_folder(
+        &mut self,
+        id: Uuid,
+        name: &str,
+    ) -> Result<EndgameFolder, StoreError> {
+        let name = normalized_endgame_folder_name(name)?;
+        let mut folder = self
+            .endgame_folder(id)?
+            .ok_or_else(|| StoreError::Sql(rusqlite::Error::QueryReturnedNoRows))?;
+        if self.endgame_folder_name_exists(folder.parent_id, &name, Some(folder.id))? {
+            return Err(StoreError::EndgameFolderAlreadyExists { name });
+        }
+        self.connection.execute(
+            "UPDATE endgame_folders SET name=?1 WHERE id=?2",
+            params![name, folder.id.to_string()],
+        )?;
+        folder.name = name;
         Ok(folder)
     }
 
@@ -1167,6 +1182,9 @@ impl LocalStore {
                 .endgame_folder(candidate)?
                 .ok_or_else(|| StoreError::Sql(rusqlite::Error::InvalidQuery))?
                 .parent_id;
+        }
+        if self.endgame_folder_name_exists(parent_id, &folder.name, Some(folder.id))? {
+            return Err(StoreError::EndgameFolderAlreadyExists { name: folder.name });
         }
         let sort_order = self.next_endgame_folder_sort_order(parent_id)?;
         self.connection.execute(
@@ -1288,6 +1306,27 @@ impl LocalStore {
         }
         transaction.commit()?;
         Ok(true)
+    }
+
+    fn endgame_folder_name_exists(
+        &self,
+        parent_id: Option<Uuid>,
+        name: &str,
+        excluding_id: Option<Uuid>,
+    ) -> Result<bool, StoreError> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT 1 FROM endgame_folders WHERE COALESCE(parent_id, '')=COALESCE(?1, '') AND name=?2 COLLATE NOCASE AND (?3 IS NULL OR id<>?3)",
+                params![
+                    parent_id.map(|id| id.to_string()),
+                    name,
+                    excluding_id.map(|id| id.to_string())
+                ],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some())
     }
 
     fn endgame_folder(&self, id: Uuid) -> Result<Option<EndgameFolder>, StoreError> {
@@ -6769,6 +6808,84 @@ mod tests {
                 .unwrap()
                 .unwrap()
                 .folder_id,
+            None
+        );
+    }
+
+    #[test]
+    fn endgame_folder_rename_keeps_children_libraries_and_attempts() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let root = store.create_endgame_folder(None, "基础残局").unwrap();
+        let child = store.create_endgame_folder(Some(root.id), "马类").unwrap();
+        let sibling = store.create_endgame_folder(Some(root.id), "车类").unwrap();
+        let other_parent = store.create_endgame_folder(None, "杀法").unwrap();
+        let _same_name_elsewhere = store
+            .create_endgame_folder(Some(other_parent.id), "杀法训练")
+            .unwrap();
+        let problems = vec![EndgameProblemImport {
+            source_index: 3,
+            title: "马取单士".into(),
+            category: "马类".into(),
+            starting_fen: "9/3kan3/9/9/9/9/9/9/9/4K4 w - - 0 1".into(),
+            note: String::new(),
+            solution_json: "[\"f8e6\"]".into(),
+        }];
+        let library = store
+            .import_endgame_library(
+                "/tmp/horse.cbl",
+                "sha256:horse",
+                "陈松顺残局",
+                1,
+                &problems,
+                Some(child.id),
+            )
+            .unwrap();
+        let problem = store.endgame_problems(library.id).unwrap().pop().unwrap();
+        store
+            .save_endgame_attempt(problem.id, "solver", 3_500, 0, 1, "completed")
+            .unwrap();
+
+        assert_eq!(
+            store
+                .rename_endgame_folder(sibling.id, "马类")
+                .unwrap_err()
+                .to_string(),
+            "当前目录中已存在“马类”"
+        );
+        let renamed = store.rename_endgame_folder(child.id, "杀法训练").unwrap();
+
+        assert_eq!(renamed.id, child.id);
+        assert_eq!(renamed.parent_id, Some(root.id));
+        assert_eq!(renamed.name, "杀法训练");
+        assert_eq!(
+            store
+                .move_endgame_folder(child.id, Some(other_parent.id))
+                .unwrap_err()
+                .to_string(),
+            "当前目录中已存在“杀法训练”"
+        );
+        assert_eq!(
+            store
+                .endgame_library(library.id)
+                .unwrap()
+                .unwrap()
+                .folder_id,
+            Some(child.id)
+        );
+        assert_eq!(
+            store.endgame_problems(library.id).unwrap()[0].total_elapsed_ms,
+            3_500
+        );
+
+        store.move_endgame_folder(child.id, None).unwrap();
+        assert_eq!(
+            store
+                .endgame_folders()
+                .unwrap()
+                .into_iter()
+                .find(|folder| folder.id == child.id)
+                .unwrap()
+                .parent_id,
             None
         );
     }

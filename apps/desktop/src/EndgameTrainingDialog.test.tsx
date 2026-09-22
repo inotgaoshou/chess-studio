@@ -40,6 +40,7 @@ const platform = vi.hoisted(() => ({
   importEndgameCblBatch: vi.fn(),
   importEndgameCblFromPath: vi.fn(),
   createEndgameFolder: vi.fn(),
+  renameEndgameFolder: vi.fn(),
   moveEndgameFolder: vi.fn(),
   deleteEndgameFolder: vi.fn(),
   reorderEndgameFolder: vi.fn(),
@@ -70,6 +71,7 @@ beforeEach(() => {
   platform.importEndgameCbl.mockResolvedValue(undefined);
   platform.importEndgameCblBatch.mockResolvedValue({ items: [] });
   platform.createEndgameFolder.mockImplementation(async (parentId: string | undefined, name: string) => ({ id: "created-folder", parentId, name, createdAt: "2026-09-04T00:00:00Z" }));
+  platform.renameEndgameFolder.mockImplementation(async (folderId: string, name: string) => ({ id: folderId, name, createdAt: "2026-09-04T00:00:00Z" }));
   platform.moveEndgameFolder.mockResolvedValue(undefined);
   platform.deleteEndgameFolder.mockResolvedValue(undefined);
   platform.reorderEndgameFolder.mockResolvedValue(true);
@@ -306,6 +308,74 @@ describe("EndgameTrainingDialog", () => {
     fireEvent.change(screen.getByLabelText("目录名"), { target: { value: "车类" } });
     fireEvent.click(screen.getByRole("button", { name: "创建" }));
     expect(platform.createEndgameFolder).toHaveBeenCalledWith(undefined, "车类");
+  });
+
+  it("renames a user directory and keeps the virtual root immutable", async () => {
+    const folder = { id: "folder-main", name: "基础残局", createdAt: "2026-09-04T00:00:00Z" };
+    platform.listEndgameFolders.mockResolvedValue([folder]);
+    platform.renameEndgameFolder.mockImplementationOnce(async (folderId: string, name: string) => {
+      const renamed = { ...folder, id: folderId, name };
+      platform.listEndgameFolders.mockResolvedValue([renamed]);
+      return renamed;
+    });
+
+    render(<EndgameTrainingDialog onClose={vi.fn()}/>);
+
+    expect(await screen.findByTitle("固定根目录：用户目录和题库可移动到这里")).toBeTruthy();
+    expect(screen.queryByTitle("更多：残局题库")).toBeNull();
+
+    fireEvent.click(screen.getByTitle("更多：基础残局"));
+    fireEvent.click(screen.getByRole("button", { name: "重命名" }));
+    const dialog = screen.getByRole("dialog", { name: "重命名残局目录" });
+    expect((within(dialog).getByLabelText("目录名") as HTMLInputElement).value).toBe("基础残局");
+    const save = within(dialog).getByRole("button", { name: "保存名称" });
+    expect(save.hasAttribute("disabled")).toBe(true);
+    fireEvent.change(within(dialog).getByLabelText("目录名"), { target: { value: "杀法训练" } });
+    expect(save.hasAttribute("disabled")).toBe(false);
+    fireEvent.click(save);
+
+    await waitFor(() => expect(platform.renameEndgameFolder).toHaveBeenCalledWith("folder-main", "杀法训练"));
+    expect(await screen.findByRole("button", { name: "杀法训练" })).toBeTruthy();
+  });
+
+  it("shows a clear rename error when a sibling directory already has that name", async () => {
+    const folder = { id: "folder-main", name: "基础残局", createdAt: "2026-09-04T00:00:00Z" };
+    platform.listEndgameFolders.mockResolvedValue([folder, { id: "folder-other", name: "杀法训练", createdAt: folder.createdAt }]);
+    platform.renameEndgameFolder.mockRejectedValueOnce(new Error("当前目录中已存在“杀法训练”"));
+
+    render(<EndgameTrainingDialog onClose={vi.fn()}/>);
+
+    await screen.findByRole("button", { name: "基础残局" });
+    fireEvent.click(screen.getByTitle("更多：基础残局"));
+    fireEvent.click(screen.getByRole("button", { name: "重命名" }));
+    const dialog = screen.getByRole("dialog", { name: "重命名残局目录" });
+    fireEvent.change(within(dialog).getByLabelText("目录名"), { target: { value: "杀法训练" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存名称" }));
+
+    await waitFor(() => expect(platform.renameEndgameFolder).toHaveBeenCalledWith("folder-main", "杀法训练"));
+    expect(await screen.findByText(/当前目录中已存在“杀法训练”/)).toBeTruthy();
+  });
+
+  it("moves a nested library back to the virtual root", async () => {
+    const folder = { id: "folder-main", name: "基础残局", createdAt: "2026-09-04T00:00:00Z" };
+    platform.listEndgameFolders.mockResolvedValue([folder]);
+    platform.listEndgameLibraries.mockResolvedValue([{ ...firstBook, folderId: folder.id }]);
+    platform.moveEndgameLibraries.mockImplementationOnce(async () => {
+      platform.listEndgameLibraries.mockResolvedValue([{ ...firstBook, folderId: null }]);
+      return 1;
+    });
+
+    render(<EndgameTrainingDialog onClose={vi.fn()}/>);
+
+    fireEvent.click(await screen.findByTitle(/移动题库 中国象棋实用残局增订本-陈松顺/));
+    const dialog = screen.getByRole("dialog", { name: "移动残局题库" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "根目录" }));
+    const confirm = within(dialog).getByRole("button", { name: "确认移动" });
+    expect(confirm.hasAttribute("disabled")).toBe(false);
+    fireEvent.click(confirm);
+
+    await waitFor(() => expect(platform.moveEndgameLibraries).toHaveBeenCalledWith(["book-chen"], undefined));
+    expect(await screen.findByTitle("固定根目录：用户目录和题库可移动到这里")).toBeTruthy();
   });
 
   it("moves a library and prevents its directory from being moved below itself", async () => {

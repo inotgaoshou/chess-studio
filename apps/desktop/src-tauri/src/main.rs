@@ -269,6 +269,7 @@ fn main() {
             endgame_service::list_endgame_libraries,
             endgame_service::list_endgame_folders,
             endgame_service::create_endgame_folder,
+            endgame_service::rename_endgame_folder,
             endgame_service::move_endgame_folder,
             endgame_service::delete_endgame_folder,
             endgame_service::reorder_endgame_folder,

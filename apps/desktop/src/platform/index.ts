@@ -350,6 +350,7 @@ class DesktopPlatform implements ChessPlatform {
   listEndgameLibraries() { return invoke<EndgameLibraryDto[]>("list_endgame_libraries"); }
   listEndgameFolders() { return invoke<EndgameFolderDto[]>("list_endgame_folders"); }
   createEndgameFolder(parentId: string | undefined, name: string) { return invoke<EndgameFolderDto>("create_endgame_folder", { parentId: parentId ?? null, name }); }
+  renameEndgameFolder(folderId: string, name: string) { return invoke<EndgameFolderDto>("rename_endgame_folder", { folderId, name }); }
   moveEndgameFolder(folderId: string, parentId: string | undefined) { return invoke<void>("move_endgame_folder", { folderId, parentId: parentId ?? null }); }
   deleteEndgameFolder(folderId: string) { return invoke<void>("delete_endgame_folder", { folderId }); }
   reorderEndgameFolder(folderId: string, moveUp: boolean) { return invoke<boolean>("reorder_endgame_folder", { folderId, moveUp }); }
@@ -1120,6 +1121,7 @@ class WebPlatform implements ChessPlatform {
   async listEndgameLibraries(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
   async listEndgameFolders(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
   async createEndgameFolder(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
+  async renameEndgameFolder(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
   async moveEndgameFolder(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
   async deleteEndgameFolder(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
   async reorderEndgameFolder(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }

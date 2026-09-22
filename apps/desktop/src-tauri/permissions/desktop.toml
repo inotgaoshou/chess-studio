@@ -46,7 +46,7 @@ commands.allow = [
   "generate_training_tasks", "complete_training_task", "get_training_summary", "list_study_sessions",
   "save_study_session", "scan_theory_library", "get_theory_library", "review_theory_card",
   "create_theory_card", "save_theory_feedback",
-  "import_endgame_cbl", "import_endgame_cbl_batch", "refresh_endgame_libraries", "list_endgame_libraries", "list_endgame_folders", "create_endgame_folder", "move_endgame_folder", "delete_endgame_folder", "reorder_endgame_folder", "move_endgame_libraries", "reorder_endgame_library", "list_endgame_problems", "list_endgame_attempts",
+  "import_endgame_cbl", "import_endgame_cbl_batch", "refresh_endgame_libraries", "list_endgame_libraries", "list_endgame_folders", "create_endgame_folder", "rename_endgame_folder", "move_endgame_folder", "delete_endgame_folder", "reorder_endgame_folder", "move_endgame_libraries", "reorder_endgame_library", "list_endgame_problems", "list_endgame_attempts",
   "save_endgame_attempt", "delete_endgame_library", "delete_endgame_problem", "endgame_chinese_mainline", "endgame_free_practice_move", "endgame_move_feedback",
   "get_sync_account", "get_subscription",
   "redeem_subscription_code", "list_master_players", "get_master_library_stats", "get_master_opening_profile",

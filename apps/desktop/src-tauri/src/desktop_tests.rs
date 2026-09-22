@@ -59,6 +59,7 @@ mod tests {
             "import_endgame_cbl_batch",
             "list_endgame_folders",
             "create_endgame_folder",
+            "rename_endgame_folder",
             "move_endgame_folder",
             "delete_endgame_folder",
             "reorder_endgame_folder",

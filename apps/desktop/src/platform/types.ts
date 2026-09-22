@@ -1134,6 +1134,7 @@ export interface ChessPlatform {
   listEndgameLibraries(): Promise<EndgameLibraryDto[]>;
   listEndgameFolders(): Promise<EndgameFolderDto[]>;
   createEndgameFolder(parentId: string | undefined, name: string): Promise<EndgameFolderDto>;
+  renameEndgameFolder(folderId: string, name: string): Promise<EndgameFolderDto>;
   moveEndgameFolder(folderId: string, parentId: string | undefined): Promise<void>;
   deleteEndgameFolder(folderId: string): Promise<void>;
   reorderEndgameFolder(folderId: string, moveUp: boolean): Promise<boolean>;
