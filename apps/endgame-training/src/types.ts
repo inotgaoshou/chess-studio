@@ -28,6 +28,25 @@ export type CblLibrary = {
   warnings: string[];
 };
 
+export type CblManualGame = {
+  sourceIndex: number;
+  recordHash: string;
+  title: string;
+  note: string;
+  startingFen: string;
+  moves: string[];
+  branches: LocalManualMoveBranch[];
+  comments: Record<string, string>;
+  metadata: LocalManualMetadata;
+};
+
+export type CblManualLibrary = {
+  title: string;
+  declaredCount: number;
+  games: CblManualGame[];
+  warnings: string[];
+};
+
 export type TrainingLibrary = {
   id: string;
   title: string;

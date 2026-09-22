@@ -1,5 +1,5 @@
 import { Capacitor, registerPlugin } from "@capacitor/core";
-import type { BoardState, CblLibrary, RuleMode } from "./types";
+import type { BoardState, CblLibrary, CblManualLibrary, RuleMode } from "./types";
 
 type NativeCloudBook = {
   query(options: { fen: string }): Promise<{ payload: string }>;
@@ -20,6 +20,7 @@ type Core = {
   default(): Promise<void>;
   exportLocalManual(json: string, format: string): string;
   parseCblLibrary(bytes: Uint8Array): string;
+  parseCblGameLibrary(bytes: Uint8Array): string;
   chineseLine(fen: string, moves: string[]): string;
   WebGame: { new(fen?: string, ruleMode?: RuleMode): { playMove(iccs: string): string; stateJson(): string } };
 };
@@ -36,6 +37,10 @@ export async function trainingCore() {
 
 export async function parseCbl(bytes: Uint8Array): Promise<CblLibrary> {
   return JSON.parse((await trainingCore()).parseCblLibrary(bytes)) as CblLibrary;
+}
+
+export async function parseCblGames(bytes: Uint8Array): Promise<CblManualLibrary> {
+  return JSON.parse((await trainingCore()).parseCblGameLibrary(bytes)) as CblManualLibrary;
 }
 
 export async function chineseLine(fen: string, moves: string[]) {

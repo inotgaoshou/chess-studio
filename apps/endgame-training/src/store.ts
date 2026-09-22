@@ -51,9 +51,10 @@ function ensureMemoryFolder(path?: string) {
 }
 
 async function fingerprint(bytes: Uint8Array) {
-  const copy = new Uint8Array(bytes.length);
-  copy.set(bytes);
-  const digest = await crypto.subtle.digest("SHA-256", copy.buffer);
+  const input = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength && bytes.buffer instanceof ArrayBuffer
+    ? bytes.buffer
+    : bytes.slice().buffer;
+  const digest = await crypto.subtle.digest("SHA-256", input);
   return Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, "0")).join("");
 }
 

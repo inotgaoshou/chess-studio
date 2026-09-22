@@ -69,15 +69,32 @@ require_text() {
   fi
 }
 
+require_json_value() {
+  local path="$1"
+  local key="$2"
+  local expected="$3"
+  local description="$4"
+  require_file "$path" "$description"
+  local actual
+  actual="$(jq -r "$key" "$path")"
+  if [[ "$actual" != "$expected" ]]; then
+    echo "$description does not contain the expected value." >&2
+    echo "  file: $path" >&2
+    echo "  expected: $expected" >&2
+    echo "  actual: $actual" >&2
+    exit 1
+  fi
+}
+
 require_pikafish_ios_distribution_materials() {
   require_executable "$pikafish_ios_root/scripts/xcode-build-engine.sh" "Pikafish iOS engine build script"
   require_executable "$pikafish_ios_root/scripts/xcode-embed-resources.sh" "Pikafish iOS resource embed script"
   require_file "$root_dir/THIRD_PARTY_NOTICES.md" "third-party notices"
   require_file "$app_dir/README.md" "endgame training release notes"
-  require_text "$pikafish_ios_root/scripts/xcode-build-engine.sh" "$expected_pikafish_source_revision" "Pikafish iOS engine build script"
+  require_json_value "$pikafish_ios_root/.build/releases/$expected_pikafish_tag/manifest.json" '.sourceCommit' "$expected_pikafish_source_revision" "Pikafish cached release manifest"
   require_text "$pikafish_ios_root/scripts/xcode-embed-resources.sh" "Copying.txt" "Pikafish iOS resource embed script"
   require_text "$pikafish_ios_root/scripts/xcode-embed-resources.sh" "NNUE-License" "Pikafish iOS resource embed script"
-  require_text "$pikafish_ios_root/scripts/xcode-embed-resources.sh" "RESOURCE-MANIFEST" "Pikafish iOS resource embed script"
+  require_text "$pikafish_ios_root/scripts/xcode-embed-resources.sh" "PikafishBuildInfo.plist" "Pikafish iOS resource embed script"
   require_text "$root_dir/THIRD_PARTY_NOTICES.md" "$expected_pikafish_source_revision" "third-party notices"
   require_text "$root_dir/THIRD_PARTY_NOTICES.md" "$expected_pikafish_nnue_sha256" "third-party notices"
   require_text "$app_dir/README.md" "GPLv3" "endgame training release notes"

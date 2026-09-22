@@ -53,6 +53,7 @@ pub struct CblGame {
     pub round: String,
     pub time_rule: String,
     pub document: ManualDocument,
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -191,6 +192,11 @@ where
         }
         match parse_game_record(&record, index as u32) {
             Ok(game) => {
+                warnings.extend(
+                    game.warnings
+                        .iter()
+                        .map(|warning| format!("第 {} 条记录：{warning}", index + 1)),
+                );
                 on_game(game)?;
                 game_count += 1;
                 if max_games.is_some_and(|limit| game_count as usize >= limit) {
@@ -305,7 +311,23 @@ fn parse_game_record(record: &[u8], source_index: u32) -> Result<CblGame, String
         bytes: &record[RECORD_HEADER_SIZE..],
         at: initial_note_end(&record[RECORD_HEADER_SIZE..])?,
     };
-    let moves = parse_steps(&mut cursor, board.clone())?;
+    let (moves, warnings) = match parse_steps(&mut cursor, board.clone()) {
+        Ok(moves) => (moves, Vec::new()),
+        Err(error) => {
+            cursor.at = initial_note_end(&record[RECORD_HEADER_SIZE..])?;
+            let (moves, partial_error) = parse_steps_lossy(&mut cursor, board.clone());
+            if moves.is_empty() {
+                return Err(error);
+            }
+            (
+                moves,
+                vec![format!(
+                    "棋谱尾部不完整，已保留可验证着法：{}",
+                    partial_error.unwrap_or(error)
+                )],
+            )
+        }
+    };
     if moves.is_empty() {
         return Err("没有可导入的棋谱着法".into());
     }
@@ -330,6 +352,7 @@ fn parse_game_record(record: &[u8], source_index: u32) -> Result<CblGame, String
         round,
         time_rule,
         document,
+        warnings,
     })
 }
 
@@ -425,7 +448,11 @@ fn clean_cbl_date(value: &str) -> String {
 
 fn parse_steps(cursor: &mut Cursor<'_>, board: Board) -> Result<Vec<CblMove>, String> {
     if cursor.remaining() < 4 {
-        return Ok(Vec::new());
+        return if cursor.remaining() == 0 {
+            Ok(Vec::new())
+        } else {
+            Err("题解被截断".into())
+        };
     }
     let step = cursor.take(4)?;
     if step == [0, 0, 0, 0] {
@@ -460,6 +487,61 @@ fn parse_steps(cursor: &mut Cursor<'_>, board: Board) -> Result<Vec<CblMove>, St
         moves.extend(parse_steps(cursor, board)?);
     }
     Ok(moves)
+}
+
+fn parse_steps_lossy(cursor: &mut Cursor<'_>, board: Board) -> (Vec<CblMove>, Option<String>) {
+    if cursor.remaining() < 4 {
+        return (Vec::new(), (cursor.remaining() != 0).then(|| "题解被截断".into()));
+    }
+    let step = match cursor.take(4) {
+        Ok(step) => step,
+        Err(error) => return (Vec::new(), Some(error)),
+    };
+    if step == [0, 0, 0, 0] {
+        return (Vec::new(), None);
+    }
+    let mark = step[0];
+    let comment = if mark & 4 != 0 {
+        let comment_length = match le_u32(cursor.bytes, cursor.at)
+            .and_then(|value| usize::try_from(value).map_err(|_| "题解注释长度非法".into()))
+        {
+            Ok(length) => length,
+            Err(error) => return (Vec::new(), Some(error)),
+        };
+        let Some(total_length) = comment_length.checked_add(4) else {
+            return (Vec::new(), Some("题解注释长度溢出".into()));
+        };
+        match cursor.take(total_length) {
+            Ok(value) => utf16z(value.get(4..).unwrap_or_default()),
+            Err(error) => return (Vec::new(), Some(error)),
+        }
+    } else {
+        String::new()
+    };
+    let mv = match cbl_square(step[2])
+        .and_then(|from| cbl_square(step[3]).map(|to| format!("{from}{to}")))
+        .and_then(|value| Move::from_iccs(&value).map_err(|_| "走子坐标非法".into()))
+    {
+        Ok(mv) => mv,
+        Err(error) => return (Vec::new(), Some(error)),
+    };
+    let iccs = mv.to_iccs();
+    let next_board = match board.apply_move(mv) {
+        Ok(next) => next,
+        Err(_) => return (Vec::new(), Some(format!("非法题解着法 {iccs}"))),
+    };
+    let (children, mut warning) = if mark & 1 == 0 {
+        parse_steps_lossy(cursor, next_board)
+    } else {
+        (Vec::new(), None)
+    };
+    let mut moves = vec![CblMove { iccs, comment, children }];
+    if warning.is_none() && mark & 2 != 0 {
+        let (siblings, sibling_warning) = parse_steps_lossy(cursor, board);
+        moves.extend(siblings);
+        warning = sibling_warning;
+    }
+    (moves, warning)
 }
 
 fn cbl_square(index: u8) -> Result<String, String> {
@@ -761,6 +843,16 @@ mod tests {
             at: 0,
         };
         assert_eq!(parse_steps(&mut cursor, board).unwrap_err(), "走子坐标非法");
+    }
+
+    #[test]
+    fn strict_step_parser_rejects_a_truncated_tail() {
+        let board = Board::from_fen("4k4/9/9/9/9/9/9/9/9/4K4 w - - 0 1").unwrap();
+        let mut cursor = Cursor {
+            bytes: &[1, 2, 3],
+            at: 0,
+        };
+        assert_eq!(parse_steps(&mut cursor, board).unwrap_err(), "题解被截断");
     }
 
     #[test]

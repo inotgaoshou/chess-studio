@@ -1,5 +1,5 @@
 mod manual_export;
-use manual_format::import_cbl_library;
+use manual_format::{import_cbl_game_library, import_cbl_library, ManualDocument};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use wasm_bindgen::prelude::*;
@@ -114,6 +114,52 @@ struct WebGameSnapshot {
     current_node: Option<Uuid>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CblManualImportDto {
+    title: String,
+    declared_count: u32,
+    games: Vec<CblManualGameDto>,
+    warnings: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CblManualGameDto {
+    source_index: u32,
+    record_hash: String,
+    title: String,
+    note: String,
+    starting_fen: String,
+    moves: Vec<String>,
+    branches: Vec<CblManualBranchDto>,
+    comments: std::collections::BTreeMap<String, String>,
+    metadata: CblManualMetadataDto,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CblManualBranchDto {
+    id: String,
+    parent_cursor: usize,
+    parent_path: Vec<String>,
+    moves: Vec<String>,
+    notation: Vec<String>,
+    created_at: u64,
+    branch_order: usize,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CblManualMetadataDto {
+    event: String,
+    red_player: String,
+    black_player: String,
+    played_at: String,
+    game_type: &'static str,
+    result: &'static str,
+}
+
 #[wasm_bindgen]
 pub struct WebGame {
     board: Board,
@@ -129,6 +175,121 @@ pub struct WebGame {
 pub fn parse_cbl_library(bytes: &[u8]) -> Result<String, JsValue> {
     let library = import_cbl_library(bytes).map_err(js_error)?;
     serde_json::to_string(&library).map_err(js_error)
+}
+
+/// Parse a CCBridge library as normal game records for the mobile manual library.
+/// This is used when the endgame parser finds no trainable positions (for example,
+/// a book whose records all start from the standard initial position).
+#[wasm_bindgen(js_name = parseCblGameLibrary)]
+pub fn parse_cbl_game_library(bytes: &[u8]) -> Result<String, JsValue> {
+    let mut games = Vec::new();
+    let summary = import_cbl_game_library(bytes, |game| {
+        games.push(cbl_manual_game(game.source_index, game.record_hash, &game.document)?);
+        Ok(())
+    })
+    .map_err(js_error)?;
+    serde_json::to_string(&CblManualImportDto {
+        title: summary.title,
+        declared_count: summary.declared_count,
+        games,
+        warnings: summary.warnings,
+    })
+    .map_err(js_error)
+}
+
+fn cbl_manual_game(
+    source_index: u32,
+    record_hash: String,
+    document: &ManualDocument,
+) -> Result<CblManualGameDto, String> {
+    let mut moves = Vec::new();
+    let mut comments = std::collections::BTreeMap::new();
+    let mut parent = document.tree.root_id();
+    loop {
+        let children = document.tree.branches(parent).map_err(|error| error.to_string())?;
+        let Some(next) = children.iter().find(|node| node.is_mainline).or(children.first()) else {
+            break;
+        };
+        moves.push(next.mv.to_iccs());
+        parent = next.id;
+    }
+    let mut lines = Vec::new();
+    collect_manual_lines(
+        &document.tree,
+        document.tree.root_id(),
+        &mut Vec::new(),
+        &mut lines,
+        &mut comments,
+    )?;
+    let branches = lines
+        .into_iter()
+        .filter(|line| line != &moves)
+        .enumerate()
+        .map(|(index, line)| {
+            let parent_cursor = line
+                .iter()
+                .zip(&moves)
+                .take_while(|(left, right)| left == right)
+                .count();
+            CblManualBranchDto {
+                id: format!("cbl:{}:{}", record_hash, index),
+                parent_cursor,
+                parent_path: line[..parent_cursor].to_vec(),
+                moves: line[parent_cursor..].to_vec(),
+                notation: Vec::new(),
+                created_at: 0,
+                branch_order: index + 1,
+            }
+        })
+        .collect();
+    Ok(CblManualGameDto {
+        source_index,
+        record_hash,
+        title: document.metadata.title.clone(),
+        note: document.note.clone(),
+        starting_fen: document.starting_fen.clone(),
+        moves,
+        branches,
+        comments,
+        metadata: CblManualMetadataDto {
+            event: document.metadata.event.clone(),
+            red_player: document.metadata.red.clone(),
+            black_player: document.metadata.black.clone(),
+            played_at: document.metadata.date.clone(),
+            game_type: "full",
+            result: match document.metadata.result.as_str() {
+                "1-0" => "first-win",
+                "0-1" => "first-loss",
+                "1/2-1/2" => "draw",
+                _ => "unknown",
+            },
+        },
+    })
+}
+
+fn collect_manual_lines(
+    tree: &ManualTree,
+    parent: Uuid,
+    path: &mut Vec<String>,
+    lines: &mut Vec<Vec<String>>,
+    comments: &mut std::collections::BTreeMap<String, String>,
+) -> Result<(), String> {
+    let children = tree.branches(parent).map_err(|error| error.to_string())?;
+    if children.is_empty() {
+        if !path.is_empty() {
+            lines.push(path.clone());
+        }
+        return Ok(());
+    }
+    for child in children {
+        path.push(child.mv.to_iccs());
+        if !child.comment.trim().is_empty() {
+            comments.insert(path.join(","), child.comment.clone());
+        }
+        collect_manual_lines(tree, child.id, path, lines, comments)?;
+        path.pop();
+    }
+    Ok(())
 }
 
 #[wasm_bindgen(js_name = chineseLine)]

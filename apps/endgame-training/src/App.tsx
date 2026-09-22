@@ -5,7 +5,7 @@ import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, Chevron
 import { type CSSProperties, type PointerEvent as ReactPointerEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import { trainingStore } from "./store";
 import type { Attempt, BoardPiece, BoardState, LocalManualAnalysisSummary, LocalManualFolder, LocalManualGame, MobileWorkspaceMode, RuleMode, SolutionMove, TrainingLibrary, TrainingProblem } from "./types";
-import { acceptsMove, boardAt, cancelPikafishSearch, chineseLine, hasLocalPikafish, parseCbl, queryCloudBook, queryPikafishAnalysis, queryPikafishReply, type CloudBookMove, type PikafishAnalysisLine } from "./wasm";
+import { acceptsMove, boardAt, cancelPikafishSearch, chineseLine, hasLocalPikafish, parseCbl, parseCblGames, queryCloudBook, queryPikafishAnalysis, queryPikafishReply, type CloudBookMove, type PikafishAnalysisLine } from "./wasm";
 import { deriveTrainingFeedback, playTrainingFeedback, TRAINING_FEEDBACK_PACK, type TrainingFeedbackKind } from "./moveFeedback";
 import { setPreferredOrientation, type PreferredOrientation } from "./orientation";
 import { DEFAULT_SKIN_ID, LEGACY_DEFAULT_SKIN_ID, SKIN_CATALOG, normalizeSkinId, skinById, type SkinCatalogItem } from "./skinCatalog";
@@ -97,7 +97,7 @@ const AUTO_REPLY_DELAY_MS = 650;
 const STANDARD_STARTING_FEN = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1";
 const APP_VERSION = __APP_VERSION__;
 const APP_BUILD_TIME = new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short", hour12: false }).format(new Date(__APP_BUILD_TIME__));
-const CBL_IMPORT_MAX_BYTES = 20 * 1024 * 1024;
+const CBL_IMPORT_MAX_BYTES = 50 * 1024 * 1024;
 const STUDY_RULE_MODE_KEY = "xiangqi-training-study-rule-mode";
 const ANALYSIS_ARROWS_VISIBLE_KEY = "xiangqi-training-analysis-arrows-visible";
 const STUDY_ENGINE_ENABLED_KEY = "xiangqi-training-study-engine-enabled";
@@ -799,8 +799,8 @@ function ImportCblPanel({ onBack, onPick, onImportUrl }: { onBack(): void; onPic
     }
   }
   return <section className="import-cbl-panel" role="dialog" aria-modal="true" aria-labelledby="import-cbl-title">
-    <header><button type="button" aria-label="返回棋析" onClick={onBack}><ChevronLeft/><span>返回</span></button><div><b id="import-cbl-title">导入 CBL</b><small>选择本机、网盘或 URL 中的 .CBL 残局题库</small></div></header>
-    <main><FileUp/><strong>导入残局题库</strong><p>电脑本地文件请先通过 AirDrop、iCloud Drive、微信/QQ 文件或系统“文件 App”保存到手机，再点“选择 CBL 文件”。可同时选择同名 .logic.json，为残局附加逻辑提示和错因说明。</p><button type="button" className="primary" onClick={onPick}><FileUp/>选择 CBL 文件</button><div className="import-url-box"><label><span>URL 导入</span><input value={url} inputMode="url" autoCapitalize="none" autoCorrect="off" placeholder="https://example.com/library.cbl" disabled={pending} onChange={(event) => { setUrl(event.target.value); setStatus(""); }}/></label><button type="button" disabled={pending} onClick={() => void submitUrl()}><Link/>{pending ? "导入中" : "下载导入"}</button>{status && <small>{status}</small>}</div><p className="import-cbl-hint">URL 服务器若限制跨域、防盗链或下载权限，请先下载到本机后使用文件导入。单个文件最大 20MB；URL 导入不附加 sidecar。</p></main>
+    <header><button type="button" aria-label="返回棋析" onClick={onBack}><ChevronLeft/><span>返回</span></button><div><b id="import-cbl-title">导入 CBL</b><small>选择本机、网盘或 URL 中的 .CBL 棋库</small></div></header>
+    <main><FileUp/><strong>导入 CBL 棋库</strong><p>电脑本地文件请先通过 AirDrop、iCloud Drive、微信/QQ 文件或系统“文件 App”保存到手机，再点“选择 CBL 文件”。可多选题库；标准开局棋谱会自动进入录谱库。同名 .logic.json 可附加残局提示。</p><button type="button" className="primary" onClick={onPick}><FileUp/>选择 CBL 文件</button><div className="import-url-box"><label><span>URL 导入</span><input value={url} inputMode="url" autoCapitalize="none" autoCorrect="off" placeholder="https://example.com/library.cbl" disabled={pending} onChange={(event) => { setUrl(event.target.value); setStatus(""); }}/></label><button type="button" disabled={pending} onClick={() => void submitUrl()}><Link/>{pending ? "导入中" : "下载导入"}</button>{status && <small>{status}</small>}</div><p className="import-cbl-hint">URL 服务器若限制跨域、防盗链或下载权限，请先下载到本机后使用文件导入。单个文件最大 50MB；URL 导入不附加 sidecar。</p></main>
   </section>;
 }
 
@@ -1308,25 +1308,72 @@ export function App() {
   useEffect(() => () => { analysisGeneration.current += 1; void cancelPikafishSearch(); }, []);
 
   async function importBytes(bytes: Uint8Array, logicJson?: string) {
-    if (bytes.byteLength > CBL_IMPORT_MAX_BYTES) throw new Error("文件超过 20MB，请拆分或改用更小题库。");
+    if (bytes.byteLength > CBL_IMPORT_MAX_BYTES) throw new Error("文件超过 50MB，请拆分或改用更小题库。");
+    setNotice("正在解析 CBL…");
     const parsed = logicJson ? applyTrainingLogicSidecar(await parseCbl(bytes), logicJson) : await parseCbl(bytes);
-    const imported = await trainingStore.importLibrary(bytes, parsed);
-    await refresh();
-    await selectLibrary(imported);
-    setImportPanelOpen(false);
-    const logicCount = parsed.problems.filter((item) => item.logic).length;
-    const suffix = logicCount ? `，已附加 ${logicCount} 条逻辑标注。` : "";
-    setNotice(parsed.warnings.length ? `导入完成，跳过 ${parsed.warnings.length} 条损坏记录${suffix}` : `题库导入完成${suffix || "，选择题目开始训练。"}`);
+    const results: string[] = [];
+    const containsStandardGames = parsed.warnings.some((warning) => warning.includes("标准开局记录不是残局题目"));
+    if (!parsed.problems.length || containsStandardGames) {
+      setNotice(parsed.problems.length ? "发现标准开局记录，正在解析完整棋谱…" : "未发现残局题目，正在按完整棋谱解析…");
+      const manuals = await parseCblGames(bytes);
+      const standardGames = manuals.games.filter((game) => game.startingFen.split(" ")[0] === STANDARD_STARTING_FEN.split(" ")[0]);
+      if (standardGames.length) {
+        const folder = manuals.title.trim() || "导入棋谱";
+        await trainingStore.createManualFolder(folder);
+        const now = new Date().toISOString();
+        for (const game of standardGames) {
+          const ending = await boardAt(game.startingFen, game.moves);
+          await trainingStore.saveManualGame({
+            id: `cbl-game:${game.recordHash}`,
+            title: game.title || `棋谱 ${game.sourceIndex + 1}`,
+            note: game.note,
+            metadata: game.metadata,
+            folderPath: folder,
+            startingFen: game.startingFen,
+            currentNodeId: manualNodeId(game.moves.length),
+            currentFen: ending.fen,
+            moves: game.moves,
+            cursor: game.moves.length,
+            branches: game.branches,
+            comments: game.comments,
+            createdAt: now,
+            updatedAt: now,
+          });
+        }
+        await refreshManualLibrary(folder, "");
+        results.push(`“${folder}”已导入录谱库，共 ${standardGames.length} 盘${manuals.warnings.length ? `；${manuals.warnings.length} 条尾部异常已保留有效着法` : ""}`);
+      }
+    }
+    if (parsed.problems.length) {
+      setNotice(`正在保存 ${parsed.problems.length} 道题…`);
+      const imported = await trainingStore.importLibrary(bytes, parsed);
+      await refresh();
+      await selectLibrary(imported);
+      const logicCount = parsed.problems.filter((item) => item.logic).length;
+      const suffix = logicCount ? `，已附加 ${logicCount} 条逻辑标注` : "";
+      const damaged = parsed.warnings.filter((warning) => !warning.includes("标准开局记录不是残局题目")).length;
+      results.unshift(`“${imported.title}”已导入 ${parsed.problems.length} 题${damaged ? `，跳过 ${damaged} 条损坏记录` : ""}${suffix}`);
+    }
+    if (!results.length) throw new Error("文件中没有可导入的残局题目或完整棋谱。");
+    return results.join("；");
   }
   async function importFiles(files: File[]) {
     if (!files.length) return;
-    try {
-      const cbl = files.find((file) => /\.cbl$/i.test(file.name)) ?? files.find((file) => !/\.json$/i.test(file.name));
-      if (!cbl) throw new Error("请选择 .cbl 残局题库文件。");
-      const sidecar = files.find((file) => /\.logic\.json$/i.test(file.name)) ?? files.find((file) => /\.json$/i.test(file.name));
-      await importBytes(new Uint8Array(await cbl.arrayBuffer()), sidecar ? await sidecar.text() : undefined);
+    const cblFiles = files.filter((file) => /\.cbl$/i.test(file.name));
+    if (!cblFiles.length) { setImportPanelOpen(true); setNotice("导入失败：请选择 .cbl 棋库文件。"); return; }
+    const results: string[] = [];
+    for (const [index, cbl] of cblFiles.entries()) {
+      try {
+        setNotice(`正在读取 ${index + 1}/${cblFiles.length}：${cbl.name}`);
+        const base = cbl.name.replace(/\.cbl$/i, "");
+        const sidecar = files.find((file) => file.name.toLowerCase() === `${base}.logic.json`.toLowerCase());
+        results.push(await importBytes(new Uint8Array(await cbl.arrayBuffer()), sidecar ? await sidecar.text() : undefined));
+      } catch (error) {
+        results.push(`“${cbl.name}”失败：${error instanceof Error ? error.message : String(error)}`);
+      }
     }
-    catch (error) { setImportPanelOpen(true); setNotice(`导入失败：${error instanceof Error ? error.message : String(error)}`); }
+    setImportPanelOpen(false);
+    setNotice(results.join("；"));
   }
   async function importCblUrl(value: string) {
     let url: URL;
@@ -1339,10 +1386,12 @@ export function App() {
     const response = await fetch(url, { headers: { accept: "application/octet-stream,*/*" } });
     if (!response.ok) throw new Error(`下载失败：HTTP ${response.status}`);
     const declaredSize = Number(response.headers.get("content-length"));
-    if (Number.isFinite(declaredSize) && declaredSize > CBL_IMPORT_MAX_BYTES) throw new Error("远程文件超过 20MB。");
+    if (Number.isFinite(declaredSize) && declaredSize > CBL_IMPORT_MAX_BYTES) throw new Error("远程文件超过 50MB。");
     const buffer = await response.arrayBuffer();
-    if (buffer.byteLength > CBL_IMPORT_MAX_BYTES) throw new Error("远程文件超过 20MB。");
-    await importBytes(new Uint8Array(buffer));
+    if (buffer.byteLength > CBL_IMPORT_MAX_BYTES) throw new Error("远程文件超过 50MB。");
+    const result = await importBytes(new Uint8Array(buffer));
+    setImportPanelOpen(false);
+    setNotice(result);
   }
   async function renderBoard(nextMoves: string[], move?: string, expectedSession = session.current) {
     if (!problem || expectedSession !== session.current) return;
