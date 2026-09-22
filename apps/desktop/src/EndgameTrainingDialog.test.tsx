@@ -196,7 +196,7 @@ describe("EndgameTrainingDialog", () => {
 
     fireEvent.click(firstParent);
     expect(firstParent.getAttribute("aria-expanded")).toBe("false");
-    expect(screen.getByText("（一）马取单士--着法1，红先胜")).toBeTruthy();
+    expect(screen.queryByText("（一）马取单士--着法1，红先胜")).toBeNull();
 
     fireEvent.click(secondParent);
     await waitFor(() => expect(screen.getByRole("button", { name: /第二本残局集/ }).getAttribute("aria-expanded")).toBe("true"));
