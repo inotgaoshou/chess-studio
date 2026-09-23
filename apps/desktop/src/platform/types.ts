@@ -658,7 +658,15 @@ export type CblGameLibraryImportResultDto = {
   duplicates: number;
   invalid: number;
   unclassified: number;
+  changedFiles: number;
+  emptyFiles: number;
+  removedRecords: number;
+  totalGames: number;
+  classifiedGames: number;
+  classifications: CblOpeningCountDto[];
 };
+
+export type CblOpeningCountDto = { code: string; name: string; gameCount: number };
 
 export type ReferenceSourceDto = {
   id: string;
@@ -765,7 +773,10 @@ export type ReferenceGameFilters = {
   masterOnly?: boolean;
   classificationStatus?: "classified" | "pending";
   positionFen?: string;
+  sourceId?: string;
+  batchId?: string;
 };
+export type ReferenceOpeningFilters = Pick<ReferenceGameFilters, "sourceId" | "batchId">;
 export type ReferenceGameSummaryDto = {
   id: string;
   canonicalFingerprint: string;
@@ -1076,7 +1087,7 @@ export interface ChessPlatform {
   overrideReferenceGameOpening(gameId: string, categoryCode: string, reviewedAlias?: string): Promise<void>;
   resolveReferenceDuplicate(issueId: string, merge: boolean): Promise<void>;
   queryReferencePosition(request: PositionExplorerRequest): Promise<PositionMoveStatDto[]>;
-  browseReferenceOpenings(parentCode?: string): Promise<OpeningCategoryDto[]>;
+  browseReferenceOpenings(parentCode?: string, filters?: ReferenceOpeningFilters): Promise<OpeningCategoryDto[]>;
   listReferenceGames(openingCode?: string, query?: string, limit?: number, offset?: number, filters?: ReferenceGameFilters): Promise<ReferenceGameSummaryDto[]>;
   getReferenceGameDocument(gameId: string): Promise<ReferenceGameDocumentDto | undefined>;
   openReferenceGame(gameId: string): Promise<Partial<BoardState>>;

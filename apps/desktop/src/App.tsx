@@ -93,7 +93,7 @@ import { LinkMiniBoard, type LinkMiniArrow } from "./LinkMiniBoard";
 import { FlyknifeDialog } from "./FlyknifeDialog";
 import { mobileWorkbenchMediaQuery, shouldUseMobileWorkbench } from "./mobileEnvironment";
 import { MasterLibraryDialog } from "./MasterLibraryDialog";
-import { ReferenceLibraryDialog, type ReferenceGameOpenMode } from "./ReferenceLibraryDialog";
+import { ReferenceLibraryDialog, type ReferenceGameOpenMode, type ReferenceLibraryLaunchContext } from "./ReferenceLibraryDialog";
 import { MasterOpeningPanel } from "./MasterOpeningPanel";
 import {
   chooseReferenceSparringMove,
@@ -1562,6 +1562,7 @@ export default function App() {
   const [masterLibraryOpen, setMasterLibraryOpen] = useState(false);
   const [referenceLibraryOpen, setReferenceLibraryOpen] = useState(false);
   const [referenceLibraryInitialGameId, setReferenceLibraryInitialGameId] = useState<string>();
+  const [referenceLibraryLaunchContext, setReferenceLibraryLaunchContext] = useState<ReferenceLibraryLaunchContext>();
   const [ttxqImportOpen, setTtxqImportOpen] = useState(false);
   const [game53StudyOpen, setGame53StudyOpen] = useState(false);
   const [engineProbe, setEngineProbe] = useState<EngineProbeDto>();
@@ -1590,11 +1591,13 @@ export default function App() {
 
   function openReferenceLibraryExplorer() {
     setReferenceLibraryInitialGameId(undefined);
+    setReferenceLibraryLaunchContext(undefined);
     setReferenceLibraryOpen(true);
   }
 
   function openReferenceLibraryGame(gameId: string) {
     setReferenceLibraryInitialGameId(gameId);
+    setReferenceLibraryLaunchContext(undefined);
     setReferenceLibraryOpen(true);
   }
 
@@ -1615,6 +1618,7 @@ export default function App() {
     await refreshGames();
     setReferenceLibraryOpen(false);
     setReferenceLibraryInitialGameId(undefined);
+    setReferenceLibraryLaunchContext(undefined);
     const hasPlayableMainline = (next.branches?.length ?? 0) > 0 || (next.continuation?.length ?? 0) > 0;
     if (mode === "study") {
       await openReviewMode("review");
@@ -4362,8 +4366,15 @@ export default function App() {
         setNotice("已取消导入 CBL 棋谱库");
         return;
       }
-      openReferenceLibraryExplorer();
-      setNotice(`《${result.title}》已进入参考实战库：新增 ${result.imported}、修订 ${result.revised}、重复 ${result.duplicates}、非法 ${result.invalid}、待分类 ${result.unclassified}`);
+      setReferenceLibraryInitialGameId(undefined);
+      setReferenceLibraryLaunchContext({
+        initialTab: "games",
+        sourceId: result.sourceId,
+        batchId: result.batchId,
+        importResult: result,
+      });
+      setReferenceLibraryOpen(true);
+      setNotice(`${result.title} 已进入参考实战库：新增 ${result.imported}、修订 ${result.revised}、重复 ${result.duplicates}、非法 ${result.invalid}、待分类 ${result.unclassified}`);
     } catch (error) {
       setNotice(friendlyError(error));
     }
@@ -6484,7 +6495,7 @@ export default function App() {
         setMasterLibraryOpen(true);
         break;
       case "referenceLibrary":
-        toggleReferencePositionSearch();
+        openReferenceLibraryExplorer();
         break;
       case "flyknifeLab": setFlyknifeOpen(true); break;
       case "nextBranch": await goToNextBranchPoint(); break;
@@ -7837,7 +7848,18 @@ export default function App() {
           onStudyGame={chessPlatform.kind === "desktop" ? () => { setMasterLibraryOpen(false); setGame53StudyOpen(true); } : undefined}
           onClose={() => setMasterLibraryOpen(false)}
         />}
-        {referenceLibraryOpen && <ReferenceLibraryDialog platform={chessPlatform} currentFen={board.fen} initialGameId={referenceLibraryInitialGameId} onOpenReferenceGame={loadReferenceLibraryGame} onClose={() => { setReferenceLibraryOpen(false); setReferenceLibraryInitialGameId(undefined); }}/>}
+        {referenceLibraryOpen && <ReferenceLibraryDialog
+          platform={chessPlatform}
+          currentFen={board.fen}
+          initialGameId={referenceLibraryInitialGameId}
+          launchContext={referenceLibraryLaunchContext}
+          onOpenReferenceGame={loadReferenceLibraryGame}
+          onClose={() => {
+            setReferenceLibraryOpen(false);
+            setReferenceLibraryInitialGameId(undefined);
+            setReferenceLibraryLaunchContext(undefined);
+          }}
+        />}
       </div>
     );
   }
@@ -8072,7 +8094,18 @@ export default function App() {
         onStudyGame={chessPlatform.kind === "desktop" ? () => { setMasterLibraryOpen(false); setGame53StudyOpen(true); } : undefined}
         onClose={() => setMasterLibraryOpen(false)}
       />}
-      {referenceLibraryOpen && <ReferenceLibraryDialog platform={chessPlatform} currentFen={board.fen} initialGameId={referenceLibraryInitialGameId} onOpenReferenceGame={loadReferenceLibraryGame} onClose={() => { setReferenceLibraryOpen(false); setReferenceLibraryInitialGameId(undefined); }}/>}
+      {referenceLibraryOpen && <ReferenceLibraryDialog
+        platform={chessPlatform}
+        currentFen={board.fen}
+        initialGameId={referenceLibraryInitialGameId}
+        launchContext={referenceLibraryLaunchContext}
+        onOpenReferenceGame={loadReferenceLibraryGame}
+        onClose={() => {
+          setReferenceLibraryOpen(false);
+          setReferenceLibraryInitialGameId(undefined);
+          setReferenceLibraryLaunchContext(undefined);
+        }}
+      />}
       {coachProfileOpen && <CoachProfileView
         reports={coachReports}
         masterStyleProfiles={masterStyleProfiles}

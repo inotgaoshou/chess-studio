@@ -7666,7 +7666,27 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 .reference-game-table em { color: var(--accent); font-style: normal; font-weight: 800; }
 .reference-game-table > p, .reference-source-list > p, .reference-batch-list > p { margin: 28px; color: var(--text-muted); text-align: center; }
 .reference-game-search-body { min-height: 0; display: grid; grid-template-columns: 270px minmax(400px,1fr) minmax(380px,.52fr); overflow: hidden; }
+.reference-game-search-body.has-scope-bar { grid-template-rows: auto minmax(0,1fr); }
+.reference-game-search-body.has-scope-bar > .reference-game-scope-bar { grid-column: 1 / -1; grid-row: 1; }
+.reference-game-search-body.has-scope-bar > aside { grid-column: 1; grid-row: 2; }
+.reference-game-search-body.has-scope-bar > main { grid-column: 2; grid-row: 2; }
+.reference-game-search-body.has-scope-bar > .reference-game-preview { grid-column: 3; grid-row: 2; }
 .reference-game-search-body.filters-collapsed { grid-template-columns: 68px minmax(460px,1fr) minmax(390px,.5fr); }
+.reference-game-scope-bar { display: grid; border-bottom: 1px solid var(--border); background: var(--surface-1); }
+.reference-import-result { padding: 8px 12px; display: grid; grid-template-columns: minmax(260px,.85fr) minmax(320px,1.3fr) auto; align-items: center; gap: 12px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--accent-surface) 42%, var(--surface-1)); }
+.reference-import-result > span { min-width: 0; display: grid; grid-template-columns: 20px minmax(0,1fr); gap: 1px 7px; }
+.reference-import-result > span svg { grid-row: 1 / 4; color: #4b9a74; }
+.reference-import-result > span b { color: var(--text-primary); }
+.reference-import-result > span small { color: var(--text-muted); font-size: 11px; }
+.reference-import-classifications { min-width: 0; display: flex; align-items: center; gap: 5px; overflow-x: auto; }
+.reference-import-classifications button, .reference-import-classifications em { flex: 0 0 auto; min-height: 24px; padding: 3px 7px; border-radius: 999px; font-size: 10px; font-style: normal; }
+.reference-import-classifications em { border: 1px solid color-mix(in srgb, #d79739 55%, var(--border)); color: #b77721; }
+.reference-import-result > nav { display: flex; gap: 5px; }
+.reference-import-result > nav button { min-height: 27px; padding: 0 8px; font-size: 11px; white-space: nowrap; }
+.reference-active-scope { min-height: 32px; padding: 4px 10px; display: flex; align-items: center; gap: 6px; overflow-x: auto; }
+.reference-active-scope > span { flex: 0 0 auto; color: var(--text-muted); font-size: 10px; }
+.reference-active-scope button { flex: 0 0 auto; min-height: 23px; padding: 0 7px; border-radius: 999px; color: var(--accent); font-size: 10px; }
+.reference-opening-body > main > .reference-active-scope { position: sticky; top: 0; z-index: 3; border-bottom: 1px solid var(--border); background: var(--surface-1); }
 .reference-game-search-body > aside { min-height: 0; padding: 10px; display: grid; align-content: start; gap: 9px; overflow: auto; border-right: 1px solid var(--border); background: var(--surface-1); }
 .reference-game-search-body > aside.collapsed { overflow: hidden; justify-items: center; }
 .reference-game-search-body > aside header { display: grid; gap: 3px; }
@@ -7859,10 +7879,12 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 .reference-source-body > header small { color: var(--text-muted); }
 .reference-source-body label { display: grid; gap: 4px; color: var(--text-muted); font-size: 11px; }
 .reference-source-body label input { width: 190px; height: 30px; padding: 0 8px; border: 1px solid var(--border); border-radius: 5px; }
-.reference-source-list > div { min-height: 64px; padding: 9px 14px; display: grid; grid-template-columns: minmax(260px,1fr) 110px 150px 80px; align-items: center; gap: 12px; border-bottom: 1px solid var(--border); }
+.reference-source-list > div { min-height: 64px; padding: 9px 14px; display: grid; grid-template-columns: minmax(260px,1fr) 110px 150px auto; align-items: center; gap: 12px; border-bottom: 1px solid var(--border); }
 .reference-source-list span { min-width: 0; display: grid; gap: 3px; }
 .reference-source-list small { overflow: hidden; color: var(--text-muted); text-overflow: ellipsis; white-space: nowrap; }
 .reference-source-list em { color: #67a88b; font-style: normal; }
+.reference-source-list nav { display: flex; gap: 5px; }
+.reference-source-list nav button { min-height: 28px; padding: 0 8px; white-space: nowrap; }
 .reference-publish-settings { position: sticky; top: 0; z-index: 2; padding: 10px; display: grid; grid-template-columns: minmax(220px,.7fr) minmax(280px,1fr); gap: 10px; border-bottom: 1px solid var(--border); background: var(--surface-0); }
 .reference-publish-settings label { display: grid; gap: 4px; color: var(--text-muted); font-size: 11px; }
 .reference-publish-settings input { min-width: 0; height: 30px; padding: 0 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface-1); color: var(--text-primary); }
@@ -8794,6 +8816,12 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
   .reference-game-table > div { grid-template-columns: minmax(150px,1fr) minmax(150px,1fr) 54px; }
   .reference-game-table > div > span:last-child { display: none; }
   .reference-game-search-body { grid-template-columns: 1fr; grid-template-rows: auto minmax(0,1fr) minmax(220px,.7fr); }
+  .reference-game-search-body.has-scope-bar { grid-template-rows: auto auto minmax(0,1fr) minmax(220px,.7fr); }
+  .reference-game-search-body.has-scope-bar > .reference-game-scope-bar { grid-column: 1; grid-row: 1; }
+  .reference-game-search-body.has-scope-bar > aside { grid-column: 1; grid-row: 2; }
+  .reference-game-search-body.has-scope-bar > main { grid-column: 1; grid-row: 3; }
+  .reference-game-search-body.has-scope-bar > .reference-game-preview { grid-column: 1; grid-row: 4; }
+  .reference-import-result { grid-template-columns: 1fr; }
   .reference-game-search-body > aside, .reference-game-preview { border-left: 0; border-right: 0; border-bottom: 1px solid var(--border); }
   .reference-game-search-list > button { grid-template-columns: minmax(140px,1fr) 58px 48px; }
   .reference-game-search-list > button > span:nth-of-type(2) { display: none; }

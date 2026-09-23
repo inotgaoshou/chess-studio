@@ -82,9 +82,10 @@ function platform(games: ReferenceGameSummaryDto[] = [], openingChild: OpeningCa
     classifierVersion: 2, categoryCount: 13, aliasCount: 8, patternCount: 25,
     classifiedGames: 100, pendingGames: 20,
   }));
+  const browseReferenceOpenings = vi.fn(async (parentCode?: string) => parentCode === "A" ? [openingChild] : parentCode ? [] : [series]);
   const value = {
     kind: "desktop" as const,
-    browseReferenceOpenings: vi.fn(async (parentCode?: string) => parentCode === "A" ? [openingChild] : parentCode ? [] : [series]),
+    browseReferenceOpenings,
     listReferenceSources: vi.fn(async () => [source]),
     listReferenceImportBatches: vi.fn(async () => [batch]),
     listReferenceGames,
@@ -99,10 +100,147 @@ function platform(games: ReferenceGameSummaryDto[] = [], openingChild: OpeningCa
     rebuildReferenceOpeningCatalog,
     classifyReferenceLibrary,
   } as unknown as ChessPlatform;
-  return { value, classifyReferenceLibrary, getReferenceGameDocument, getReferenceOfflinePackageManifest, listReferenceBatchIssues, listReferenceGames, publishReferenceBatch, queryReferencePosition, rebuildReferenceOpeningCatalog, updateReferenceGameIdentity };
+  return { value, browseReferenceOpenings, classifyReferenceLibrary, getReferenceGameDocument, getReferenceOfflinePackageManifest, listReferenceBatchIssues, listReferenceGames, publishReferenceBatch, queryReferencePosition, rebuildReferenceOpeningCatalog, updateReferenceGameIdentity };
 }
 
 describe("ReferenceLibraryDialog", () => {
+  it("opens an imported CBL batch in game search with visible destination and scope", async () => {
+    const { value, listReferenceGames } = platform([game]);
+    render(<ReferenceLibraryDialog
+      platform={value}
+      launchContext={{
+        initialTab: "games",
+        sourceId: source.id,
+        batchId: batch.id,
+        importResult: {
+          title: "《布局飞刀陷阱》杨典",
+          folder: "参考实战库",
+          imported: 25,
+          skipped: 1,
+          warnings: [],
+          sourceId: source.id,
+          batchId: batch.id,
+          revised: 0,
+          duplicates: 1,
+          invalid: 0,
+          unclassified: 0,
+          changedFiles: 1,
+          emptyFiles: 0,
+          removedRecords: 0,
+          totalGames: 25,
+          classifiedGames: 25,
+          classifications: [
+            { code: "B01", name: "中炮类开局", gameCount: 23 },
+            { code: "D01", name: "顺炮", gameCount: 2 },
+          ],
+        },
+      }}
+      onClose={() => undefined}
+    />);
+
+    expect(await screen.findByText("已保存到参考实战库，不在个人本地棋谱库中。" )).toBeTruthy();
+    expect(screen.getByText("B01 · 中炮类开局：23 盘")).toBeTruthy();
+    expect(screen.getByText("疑似重复待审核：1 盘")).toBeTruthy();
+    await waitFor(() => expect(listReferenceGames).toHaveBeenLastCalledWith(
+      undefined,
+      "",
+      100,
+      0,
+      expect.objectContaining({ sourceId: source.id, batchId: batch.id }),
+    ));
+  });
+
+  it("explains an unchanged CBL rescan without implying import failure", async () => {
+    const { value } = platform();
+    render(<ReferenceLibraryDialog
+      platform={value}
+      launchContext={{
+        initialTab: "games",
+        sourceId: source.id,
+        batchId: batch.id,
+        importResult: {
+          title: source.displayName,
+          folder: "参考实战库",
+          imported: 0,
+          skipped: 0,
+          warnings: [],
+          sourceId: source.id,
+          batchId: batch.id,
+          revised: 0,
+          duplicates: 0,
+          invalid: 0,
+          unclassified: 0,
+          changedFiles: 0,
+          emptyFiles: 0,
+          removedRecords: 0,
+          totalGames: 26,
+          classifiedGames: 25,
+          classifications: [{ code: "B01", name: "中炮类开局", gameCount: 23 }],
+        },
+      }}
+      onClose={() => undefined}
+    />);
+
+    expect(await screen.findByText("扫描完成，文件未变化，无需重复导入；资料源现有 26 盘。")).toBeTruthy();
+  });
+
+  it("does not call a changed empty CBL file unchanged", async () => {
+    const { value } = platform();
+    render(<ReferenceLibraryDialog
+      platform={value}
+      launchContext={{
+        initialTab: "games",
+        sourceId: source.id,
+        batchId: batch.id,
+        importResult: {
+          title: source.displayName,
+          folder: "参考实战库",
+          imported: 0,
+          skipped: 0,
+          warnings: [],
+          sourceId: source.id,
+          batchId: batch.id,
+          revised: 0,
+          duplicates: 0,
+          invalid: 0,
+          unclassified: 0,
+          changedFiles: 1,
+          emptyFiles: 1,
+          removedRecords: 2,
+          totalGames: 0,
+          classifiedGames: 0,
+          classifications: [],
+        },
+      }}
+      onClose={() => undefined}
+    />);
+
+    expect(await screen.findByText(/导入完成：新增 0、修订 0、疑似重复 0、非法 0、待分类 0、空库 1、移除 2/)).toBeTruthy();
+    expect(screen.queryByText(/文件未变化/)).toBeNull();
+  });
+
+  it("opens games from a source and a batch with visible removable scope", async () => {
+    const { value, listReferenceGames } = platform([game]);
+    render(<ReferenceLibraryDialog platform={value} onClose={() => undefined}/>);
+
+    fireEvent.click(screen.getByRole("button", { name: /资料源/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /查看棋谱/ }));
+    await waitFor(() => expect(listReferenceGames).toHaveBeenLastCalledWith(
+      undefined, "", 100, 0, expect.objectContaining({ sourceId: source.id, batchId: undefined }),
+    ));
+    expect(screen.getByText(`资料源：${source.displayName}`)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /导入批次/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /查看本批棋谱/ }));
+    await waitFor(() => expect(listReferenceGames).toHaveBeenLastCalledWith(
+      undefined, "", 100, 0, expect.objectContaining({ sourceId: source.id, batchId: batch.id }),
+    ));
+    fireEvent.click(screen.getByTitle("清除批次筛选"));
+    await waitFor(() => expect(listReferenceGames).toHaveBeenLastCalledWith(
+      undefined, "", 100, 0, expect.objectContaining({ sourceId: source.id, batchId: undefined }),
+    ));
+  });
+
   it("renders A-E child categories and publishes an approved authorized batch", async () => {
     const { value, publishReferenceBatch } = platform();
     render(<ReferenceLibraryDialog platform={value} onClose={() => undefined}/>);
@@ -150,6 +288,12 @@ describe("ReferenceLibraryDialog", () => {
     fireEvent.change(screen.getByLabelText("布局分类筛选"), { target: { value: "A01" } });
     await waitFor(() => expect(listReferenceGames).toHaveBeenLastCalledWith(
       "A01", "", 100, 0,
+      expect.objectContaining({}),
+    ));
+    expect(screen.getByText("布局：A01 · 测试布局")).toBeTruthy();
+    fireEvent.click(screen.getByTitle("清除布局筛选"));
+    await waitFor(() => expect(listReferenceGames).toHaveBeenLastCalledWith(
+      undefined, "", 100, 0,
       expect.objectContaining({}),
     ));
     expect(await screen.findByDisplayValue("本地只读参考文档")).toBeTruthy();

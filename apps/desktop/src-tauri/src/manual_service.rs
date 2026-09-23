@@ -1668,6 +1668,20 @@ pub(crate) struct CblGameLibraryImportResultDto {
     pub duplicates: u32,
     pub invalid: u32,
     pub unclassified: u32,
+    pub changed_files: u32,
+    pub empty_files: u32,
+    pub removed_records: u64,
+    pub total_games: u64,
+    pub classified_games: u64,
+    pub classifications: Vec<CblOpeningCountDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CblOpeningCountDto {
+    pub code: String,
+    pub name: String,
+    pub game_count: u64,
 }
 
 #[tauri::command]
@@ -1690,6 +1704,41 @@ pub(crate) fn import_cbl_game_library(
     let batch = library
         .scan_source(&source.id)
         .map_err(|error| error.to_string())?;
+    let filters = reference_library::ReferenceGameFilters {
+        source_id: Some(source.id.clone()),
+        ..reference_library::ReferenceGameFilters::default()
+    };
+    let mut classifications = Vec::new();
+    for series in library
+        .browse_openings_filtered(None, &filters)
+        .map_err(|error| error.to_string())?
+    {
+        classifications.extend(
+            library
+                .browse_openings_filtered(Some(&series.code), &filters)
+                .map_err(|error| error.to_string())?
+                .into_iter()
+                .filter(|opening| opening.game_count > 0)
+                .map(|opening| CblOpeningCountDto {
+                    code: opening.code,
+                    name: opening.name,
+                    game_count: opening.game_count,
+                }),
+        );
+    }
+    classifications.sort_by(|left, right| {
+        right
+            .game_count
+            .cmp(&left.game_count)
+            .then_with(|| left.code.cmp(&right.code))
+    });
+    let total_games = library
+        .source_game_count(&source.id)
+        .map_err(|error| error.to_string())?;
+    let removed_records = library
+        .batch_removal_count(&batch.id)
+        .map_err(|error| error.to_string())?;
+    let classified_games = classifications.iter().map(|item| item.game_count).sum();
     Ok(CblGameLibraryImportResultDto {
         title: source.display_name,
         folder: "参考实战库".into(),
@@ -1703,6 +1752,12 @@ pub(crate) fn import_cbl_game_library(
         duplicates: batch.duplicate_records,
         invalid: batch.invalid_records,
         unclassified: batch.unclassified_records,
+        changed_files: batch.changed_files,
+        empty_files: batch.empty_files,
+        removed_records,
+        total_games,
+        classified_games,
+        classifications,
     })
 }
 

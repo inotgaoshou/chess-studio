@@ -235,7 +235,7 @@ export function DesktopMenuBar({
           <MenuItem command="copyMainline" execute={execute} close={close}><ClipboardList size={14}/>复制当前主线</MenuItem>
           <MenuItem command="pasteTextManual" execute={execute} close={close}><ClipboardPaste size={14}/>粘贴文本棋谱</MenuItem>
           <MenuItem command="masterLibrary" execute={execute} close={close} title={status.syncStatus !== "signedIn" ? "登录后查询服务端大师棋谱" : "查询服务端大师棋谱"}><BookOpen size={14}/>大师棋谱</MenuItem>
-          <MenuItem command="referenceLibrary" execute={execute} close={close} title="快速显示或隐藏当前局面的本地实战候选；完整布局探索可从面板右上角进入"><Database size={14}/>参考实战库</MenuItem>
+          <MenuItem command="referenceLibrary" execute={execute} close={close} title="打开布局探索、实战检索、资料源和导入批次"><Database size={14}/>参考实战库</MenuItem>
           {mode === "research" && <MenuItem command="flyknifeLab" execute={execute} close={close}><Zap size={14}/>飞刀入库 / 设计</MenuItem>}
           <MenuItem command="nextBranch" execute={execute} close={close} disabled={!status.hasContinuation} title={!status.hasContinuation ? "当前节点没有后续着法" : undefined}><GitFork size={14}/>跳到下个分支点</MenuItem>
         </div>}

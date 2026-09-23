@@ -106,6 +106,8 @@ pub struct ReferenceGameFilters {
     pub master_only: Option<bool>,
     pub classification_status: Option<String>,
     pub position_fen: Option<String>,
+    pub source_id: Option<String>,
+    pub batch_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -358,6 +360,28 @@ impl ReferenceLibrary {
             "SELECT COUNT(*) FROM reference_games
              WHERE active=1 AND validation_status='valid'",
             [],
+            |row| row.get(0),
+        )?;
+        Ok(count.max(0) as u64)
+    }
+
+    pub fn source_game_count(&self, source_id: &str) -> Result<u64> {
+        let count: i64 = self.connection.query_row(
+            "SELECT COUNT(DISTINCT g.id)
+             FROM reference_games g
+             JOIN reference_game_sources s ON s.game_id=g.id
+             WHERE g.active=1 AND g.validation_status='valid'
+               AND s.source_id=?1 AND s.active=1",
+            [source_id],
+            |row| row.get(0),
+        )?;
+        Ok(count.max(0) as u64)
+    }
+
+    pub fn batch_removal_count(&self, batch_id: &str) -> Result<u64> {
+        let count: i64 = self.connection.query_row(
+            "SELECT COUNT(*) FROM reference_import_removals WHERE batch_id=?1",
+            [batch_id],
             |row| row.get(0),
         )?;
         Ok(count.max(0) as u64)
@@ -1340,6 +1364,100 @@ impl ReferenceLibrary {
         self.browse_openings_impl(parent_code, None)
     }
 
+    pub fn browse_openings_filtered(
+        &self,
+        parent_code: Option<&str>,
+        filters: &ReferenceGameFilters,
+    ) -> Result<Vec<OpeningCategory>> {
+        let source_id = filters
+            .source_id
+            .as_deref()
+            .filter(|value| !value.trim().is_empty());
+        let batch_id = filters
+            .batch_id
+            .as_deref()
+            .filter(|value| !value.trim().is_empty());
+        if source_id.is_none() && batch_id.is_none() {
+            return self.browse_openings(parent_code);
+        }
+        let mut statement = self.connection.prepare(
+            "SELECT c.code, c.series_code, c.parent_code, c.name, c.sort_order,
+                    COUNT(DISTINCT CASE WHEN x.is_primary=1 AND x.status='classified'
+                         AND g.active=1 AND g.validation_status='valid'
+                         AND (?2 IS NULL OR EXISTS (SELECT 1 FROM reference_game_sources sd
+                              WHERE sd.game_id=g.id AND sd.source_id=?2 AND sd.active=1))
+                         AND (?3 IS NULL OR EXISTS (SELECT 1 FROM reference_import_records ir
+                              WHERE ir.game_id=g.id AND ir.batch_id=?3 AND ir.status IN ('imported','revised')))
+                         THEN x.game_id END),
+                    COALESCE(SUM(CASE WHEN x.is_primary=1 AND x.status='classified'
+                         AND g.active=1 AND g.validation_status='valid' AND g.result='1-0'
+                         AND (?2 IS NULL OR EXISTS (SELECT 1 FROM reference_game_sources sd
+                              WHERE sd.game_id=g.id AND sd.source_id=?2 AND sd.active=1))
+                         AND (?3 IS NULL OR EXISTS (SELECT 1 FROM reference_import_records ir
+                              WHERE ir.game_id=g.id AND ir.batch_id=?3 AND ir.status IN ('imported','revised')))
+                         THEN 1 ELSE 0 END),0),
+                    COALESCE(SUM(CASE WHEN x.is_primary=1 AND x.status='classified'
+                         AND g.active=1 AND g.validation_status='valid' AND g.result='1/2-1/2'
+                         AND (?2 IS NULL OR EXISTS (SELECT 1 FROM reference_game_sources sd
+                              WHERE sd.game_id=g.id AND sd.source_id=?2 AND sd.active=1))
+                         AND (?3 IS NULL OR EXISTS (SELECT 1 FROM reference_import_records ir
+                              WHERE ir.game_id=g.id AND ir.batch_id=?3 AND ir.status IN ('imported','revised')))
+                         THEN 1 ELSE 0 END),0),
+                    COALESCE(SUM(CASE WHEN x.is_primary=1 AND x.status='classified'
+                         AND g.active=1 AND g.validation_status='valid' AND g.result='0-1'
+                         AND (?2 IS NULL OR EXISTS (SELECT 1 FROM reference_game_sources sd
+                              WHERE sd.game_id=g.id AND sd.source_id=?2 AND sd.active=1))
+                         AND (?3 IS NULL OR EXISTS (SELECT 1 FROM reference_import_records ir
+                              WHERE ir.game_id=g.id AND ir.batch_id=?3 AND ir.status IN ('imported','revised')))
+                         THEN 1 ELSE 0 END),0),
+                    MIN(CASE WHEN x.is_primary=1 AND x.status='classified'
+                         AND g.active=1 AND g.validation_status='valid'
+                         AND (?2 IS NULL OR EXISTS (SELECT 1 FROM reference_game_sources sd
+                              WHERE sd.game_id=g.id AND sd.source_id=?2 AND sd.active=1))
+                         AND (?3 IS NULL OR EXISTS (SELECT 1 FROM reference_import_records ir
+                              WHERE ir.game_id=g.id AND ir.batch_id=?3 AND ir.status IN ('imported','revised')))
+                         AND substr(g.game_date,1,4) GLOB '[0-9][0-9][0-9][0-9]'
+                         AND CAST(substr(g.game_date,1,4) AS INTEGER) BETWEEN 1000 AND 3000
+                         THEN CAST(substr(g.game_date,1,4) AS INTEGER) END),
+                    MAX(CASE WHEN x.is_primary=1 AND x.status='classified'
+                         AND g.active=1 AND g.validation_status='valid'
+                         AND (?2 IS NULL OR EXISTS (SELECT 1 FROM reference_game_sources sd
+                              WHERE sd.game_id=g.id AND sd.source_id=?2 AND sd.active=1))
+                         AND (?3 IS NULL OR EXISTS (SELECT 1 FROM reference_import_records ir
+                              WHERE ir.game_id=g.id AND ir.batch_id=?3 AND ir.status IN ('imported','revised')))
+                         AND substr(g.game_date,1,4) GLOB '[0-9][0-9][0-9][0-9]'
+                         AND CAST(substr(g.game_date,1,4) AS INTEGER) BETWEEN 1000 AND 3000
+                         THEN CAST(substr(g.game_date,1,4) AS INTEGER) END)
+             FROM opening_categories c
+             LEFT JOIN game_opening_classifications x
+               ON (x.category_code=c.code OR (length(c.code)=1 AND x.category_code LIKE c.code || '%'))
+              AND x.classifier_version_id=(SELECT id FROM opening_classifier_versions WHERE active=1 ORDER BY id DESC LIMIT 1)
+             LEFT JOIN reference_games g ON g.id=x.game_id
+             WHERE c.active=1 AND ((?1 IS NULL AND c.parent_code IS NULL) OR c.parent_code=?1)
+             GROUP BY c.code ORDER BY c.sort_order, c.code",
+        )?;
+        let base = statement
+            .query_map(params![parent_code, source_id, batch_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, i32>(4)?,
+                    row.get::<_, i64>(5)?.max(0) as u64,
+                    row.get::<_, i64>(6)?.max(0) as u64,
+                    row.get::<_, i64>(7)?.max(0) as u64,
+                    row.get::<_, i64>(8)?.max(0) as u64,
+                    row.get::<_, Option<i64>>(9)?
+                        .and_then(|value| u16::try_from(value).ok()),
+                    row.get::<_, Option<i64>>(10)?
+                        .and_then(|value| u16::try_from(value).ok()),
+                ))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        self.opening_categories_with_aliases(base)
+    }
+
     pub fn browse_openings_excluding(
         &self,
         parent_code: Option<&str>,
@@ -1634,6 +1752,14 @@ impl ReferenceLibrary {
                 "classificationStatus must be classified or pending".into(),
             ));
         }
+        let source_id = filters
+            .source_id
+            .as_deref()
+            .filter(|value| !value.trim().is_empty());
+        let batch_id = filters
+            .batch_id
+            .as_deref()
+            .filter(|value| !value.trim().is_empty());
         if let Some((position_hash, position_key)) = position_filter.as_ref() {
             let fast_position_only = opening_code.is_none()
                 && query.is_empty()
@@ -1643,6 +1769,8 @@ impl ReferenceLibrary {
                 && filters.year_to.is_none()
                 && side.is_empty()
                 && classification_status.is_empty()
+                && source_id.is_none()
+                && batch_id.is_none()
                 && !filters.master_only.unwrap_or(false);
             if fast_position_only {
                 let mut statement = self.connection.prepare(
@@ -1708,7 +1836,11 @@ impl ReferenceLibrary {
                       AND c.classifier_version_id=(SELECT id FROM opening_classifier_versions WHERE active=1 ORDER BY id DESC LIMIT 1))))
                AND (?9 IS NULL OR EXISTS (SELECT 1 FROM reference_game_moves m
                     WHERE m.game_id=g.id AND m.position_hash=?9 AND m.position_key=?10))
-             ORDER BY g.game_date DESC, g.created_at DESC LIMIT ?11 OFFSET ?12",
+               AND (?11 IS NULL OR EXISTS (SELECT 1 FROM reference_game_sources sd
+                    WHERE sd.game_id=g.id AND sd.source_id=?11 AND sd.active=1))
+               AND (?12 IS NULL OR EXISTS (SELECT 1 FROM reference_import_records ir
+                    WHERE ir.game_id=g.id AND ir.batch_id=?12 AND ir.status IN ('imported','revised')))
+             ORDER BY g.game_date DESC, g.created_at DESC LIMIT ?13 OFFSET ?14",
         )?;
         let (position_hash, position_key) = position_filter
             .as_ref()
@@ -1726,6 +1858,8 @@ impl ReferenceLibrary {
                 classification_status,
                 position_hash,
                 position_key,
+                source_id,
+                batch_id,
                 limit.min(i64::MAX as usize).max(1) as i64,
                 offset.min(i64::MAX as usize) as i64
             ],
@@ -3619,6 +3753,8 @@ CREATE TABLE IF NOT EXISTS reference_game_sources (
   first_seen_at TEXT NOT NULL, last_seen_at TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1,
   UNIQUE(source_id,relative_path,record_index,record_hash)
 );
+CREATE INDEX IF NOT EXISTS idx_reference_game_sources_scope
+  ON reference_game_sources(source_id,active,game_id);
 CREATE TABLE IF NOT EXISTS reference_import_records (
   id TEXT PRIMARY KEY, batch_id TEXT NOT NULL REFERENCES reference_import_batches(id),
   file_id TEXT NOT NULL REFERENCES reference_import_files(id), source_id TEXT NOT NULL REFERENCES reference_sources(id),
@@ -3628,6 +3764,7 @@ CREATE TABLE IF NOT EXISTS reference_import_records (
   UNIQUE(source_id,relative_path,record_index,revision)
 );
 CREATE INDEX IF NOT EXISTS idx_reference_records_hash ON reference_import_records(source_id,relative_path,record_index,record_hash);
+CREATE INDEX IF NOT EXISTS idx_reference_records_batch_game ON reference_import_records(batch_id,game_id,status);
 CREATE TABLE IF NOT EXISTS reference_import_removals (
   id TEXT PRIMARY KEY, batch_id TEXT NOT NULL REFERENCES reference_import_batches(id),
   source_id TEXT NOT NULL REFERENCES reference_sources(id), relative_path TEXT NOT NULL,
@@ -3826,6 +3963,10 @@ fn migrate_local_schema(connection: &Connection) -> Result<()> {
            ON reference_games(active,validation_status,game_date DESC,created_at DESC,id DESC);
          CREATE INDEX IF NOT EXISTS idx_reference_records_hash
            ON reference_import_records(source_id,relative_path,record_index,record_hash);
+         CREATE INDEX IF NOT EXISTS idx_reference_records_batch_game
+           ON reference_import_records(batch_id,game_id,status);
+         CREATE INDEX IF NOT EXISTS idx_reference_game_sources_scope
+           ON reference_game_sources(source_id,active,game_id);
          CREATE INDEX IF NOT EXISTS idx_reference_moves_stat_rollup
            ON reference_game_moves(position_hash,position_key,move_iccs,game_id);
          CREATE INDEX IF NOT EXISTS idx_reference_moves_position_game
@@ -3977,6 +4118,8 @@ mod tests {
                         master_only: Some(false),
                         classification_status: None,
                         position_fen: None,
+                        source_id: None,
+                        batch_id: None,
                     },
                     10,
                     0,
@@ -4016,6 +4159,55 @@ mod tests {
                 .unwrap()
                 .len(),
             1
+        );
+        assert_eq!(
+            library
+                .list_games_filtered(
+                    None,
+                    None,
+                    &ReferenceGameFilters {
+                        source_id: Some(source.id.clone()),
+                        batch_id: Some(first.id.clone()),
+                        ..ReferenceGameFilters::default()
+                    },
+                    10,
+                    0,
+                )
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(
+            library
+                .list_games_filtered(
+                    None,
+                    None,
+                    &ReferenceGameFilters {
+                        source_id: Some("other-source".into()),
+                        ..ReferenceGameFilters::default()
+                    },
+                    10,
+                    0,
+                )
+                .unwrap()
+                .is_empty()
+        );
+        let scoped_openings = library
+            .browse_openings_filtered(
+                Some("B"),
+                &ReferenceGameFilters {
+                    source_id: Some(source.id.clone()),
+                    batch_id: Some(first.id.clone()),
+                    ..ReferenceGameFilters::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            scoped_openings
+                .iter()
+                .find(|opening| opening.code == "B01")
+                .map(|opening| opening.game_count),
+            Some(1)
         );
 
         let second = library.scan_source(&source.id).unwrap();
@@ -4401,6 +4593,7 @@ mod tests {
         library.mark_batch_published(&initial_batch.id).unwrap();
         fs::remove_file(&path).unwrap();
         let removed_batch = library.scan_source(&source.id).unwrap();
+        assert_eq!(library.batch_removal_count(&removed_batch.id).unwrap(), 1);
         assert!(
             library
                 .query_position(xiangqi_core::STARTING_FEN, 10)
@@ -4444,6 +4637,53 @@ mod tests {
                 .unwrap()[0]
                 .samples,
             1
+        );
+    }
+
+    #[test]
+    fn source_scope_excludes_removed_records_still_active_in_another_source() {
+        let temp = tempfile::tempdir().unwrap();
+        let first_dir = temp.path().join("来源一");
+        let second_dir = temp.path().join("来源二");
+        fs::create_dir(&first_dir).unwrap();
+        fs::create_dir(&second_dir).unwrap();
+        let first_path = first_dir.join("棋谱.CBL");
+        fs::write(&first_path, one_game_cbl()).unwrap();
+        fs::write(second_dir.join("棋谱.CBL"), one_game_cbl()).unwrap();
+        let mut library = ReferenceLibrary::open_in_memory().unwrap();
+        let first_source = library
+            .register_source(&first_dir, "来源一", true, "local-only")
+            .unwrap();
+        let second_source = library
+            .register_source(&second_dir, "来源二", true, "local-only")
+            .unwrap();
+        library.scan_source(&first_source.id).unwrap();
+        library.scan_source(&second_source.id).unwrap();
+
+        fs::remove_file(first_path).unwrap();
+        library.scan_source(&first_source.id).unwrap();
+
+        assert_eq!(library.game_count().unwrap(), 1);
+        assert_eq!(library.source_game_count(&first_source.id).unwrap(), 0);
+        assert_eq!(library.source_game_count(&second_source.id).unwrap(), 1);
+        let first_scope = ReferenceGameFilters {
+            source_id: Some(first_source.id.clone()),
+            ..ReferenceGameFilters::default()
+        };
+        assert!(
+            library
+                .list_games_filtered(None, None, &first_scope, 10, 0)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            library
+                .browse_openings_filtered(Some("B"), &first_scope)
+                .unwrap()
+                .iter()
+                .find(|opening| opening.code == "B01")
+                .map(|opening| opening.game_count),
+            Some(0)
         );
     }
 

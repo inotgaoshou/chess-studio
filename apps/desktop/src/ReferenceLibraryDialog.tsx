@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Activity, BarChart3, BookOpen, Check, Database, Download, Eye, FileText, FolderOpen, ListChecks, RefreshCw, Search, ShieldCheck, Upload, X } from "lucide-react";
-import type { ChessPlatform, OpeningCategoryDto, PositionMoveStatDto, ReferenceGameDocumentDto, ReferenceGameFilters, ReferenceGameSummaryDto, ReferenceImportBatchDto, ReferenceReviewIssueDto, ReferenceSourceDto } from "./platform/types";
+import type { CblGameLibraryImportResultDto, ChessPlatform, OpeningCategoryDto, PositionMoveStatDto, ReferenceGameDocumentDto, ReferenceGameFilters, ReferenceGameSummaryDto, ReferenceImportBatchDto, ReferenceReviewIssueDto, ReferenceSourceDto } from "./platform/types";
 
 export type ReferenceGameOpenMode = "view" | "study" | "score";
 
@@ -8,15 +8,23 @@ type Props = {
   platform: ChessPlatform;
   currentFen?: string;
   initialGameId?: string;
+  launchContext?: ReferenceLibraryLaunchContext;
   onOpenReferenceGame?(gameId: string, mode?: ReferenceGameOpenMode): void | Promise<void>;
   onClose(): void;
 };
 type Tab = "openings" | "games" | "sources" | "batches";
+export type ReferenceLibraryLaunchContext = {
+  initialTab?: Tab;
+  sourceId?: string;
+  batchId?: string;
+  importResult?: CblGameLibraryImportResultDto;
+};
 type ClassificationStatus = "all" | "classified" | "pending";
 type SearchMode = "match" | "position";
 
 const REFERENCE_GAME_PAGE_SIZE = 100;
 const REFERENCE_GAME_QUERY_DEBOUNCE_MS = 160;
+const REFERENCE_BATCH_PAGE_SIZE = 50;
 
 function resultLabel(result: string) {
   return result === "1-0" ? "红胜" : result === "0-1" ? "黑胜" : result === "1/2-1/2" ? "和棋" : "未知";
@@ -156,17 +164,18 @@ function ReviewIssueRow({ issue, categories, busy, onIdentity, onOpening, onDupl
   </div>;
 }
 
-export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, onOpenReferenceGame, onClose }: Props) {
+export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, launchContext, onOpenReferenceGame, onClose }: Props) {
   const desktop = platform.kind === "desktop";
   const gameListRequest = useRef(0);
   const selectedGameRow = useRef<HTMLButtonElement | null>(null);
-  const [tab, setTab] = useState<Tab>(initialGameId ? "games" : "openings");
+  const [tab, setTab] = useState<Tab>(launchContext?.initialTab ?? (initialGameId ? "games" : "openings"));
   const [openings, setOpenings] = useState<OpeningCategoryDto[]>([]);
   const [openingChildren, setOpeningChildren] = useState<Record<string, OpeningCategoryDto[]>>({});
   const [selectedCode, setSelectedCode] = useState<string>();
   const [games, setGames] = useState<ReferenceGameSummaryDto[]>([]);
   const [sources, setSources] = useState<ReferenceSourceDto[]>([]);
   const [batches, setBatches] = useState<ReferenceImportBatchDto[]>([]);
+  const [hasMoreBatches, setHasMoreBatches] = useState(false);
   const [issuesByBatch, setIssuesByBatch] = useState<Record<string, ReferenceReviewIssueDto[]>>({});
   const [query, setQuery] = useState("");
   const [player, setPlayer] = useState("");
@@ -178,6 +187,8 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
   const [searchMode, setSearchMode] = useState<SearchMode>("match");
   const [classificationStatus, setClassificationStatus] = useState<ClassificationStatus>("all");
   const [gameOpeningCode, setGameOpeningCode] = useState("");
+  const [selectedSourceId, setSelectedSourceId] = useState(launchContext?.sourceId ?? "");
+  const [selectedBatchId, setSelectedBatchId] = useState(launchContext?.batchId ?? "");
   const [filtersCollapsed, setFiltersCollapsed] = useState(false);
   const [selectedGameId, setSelectedGameId] = useState<string | undefined>(initialGameId);
   const [selectedDocument, setSelectedDocument] = useState<ReferenceGameDocumentDto>();
@@ -201,6 +212,7 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const importResult = launchContext?.importResult;
   const selected = useMemo(
     () => [...openings, ...Object.values(openingChildren).flat()].find((item) => item.code === selectedCode),
     [openingChildren, openings, selectedCode],
@@ -212,7 +224,9 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
     yearTo: /^\d{4}$/.test(yearTo) ? Number(yearTo) : undefined,
     side: player.trim() ? side || undefined : undefined,
     masterOnly,
-  }), [eventName, masterOnly, player, side, yearFrom, yearTo]);
+    sourceId: selectedSourceId || undefined,
+    batchId: selectedBatchId || undefined,
+  }), [eventName, masterOnly, player, selectedBatchId, selectedSourceId, side, yearFrom, yearTo]);
   const activeGameFilters = useMemo<ReferenceGameFilters>(() => tab === "games" && classificationStatus !== "all"
     ? { ...gameFilters, classificationStatus }
     : gameFilters, [classificationStatus, gameFilters, tab]);
@@ -242,6 +256,8 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
     .sort((left, right) => right.gameCount - left.gameCount || left.code.localeCompare(right.code))
     .slice(0, 12), [childOpenings]);
   const hasClassifiedOpenings = childOpenings.some((item) => item.gameCount > 0);
+  const selectedSource = sources.find((item) => item.id === selectedSourceId);
+  const selectedBatch = batches.find((item) => item.id === selectedBatchId);
 
   async function loadGamePage(offset: number, append: boolean) {
     const request = ++gameListRequest.current;
@@ -274,22 +290,62 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
     void loadGamePage(games.length, true);
   }
 
+  async function loadOpeningCatalog(sourceId = selectedSourceId, batchId = selectedBatchId) {
+    const scope = { sourceId: sourceId || undefined, batchId: batchId || undefined };
+    const nextOpenings = await platform.browseReferenceOpenings(undefined, scope);
+    const childGroups = await Promise.all(nextOpenings.map(async (opening) => [
+      opening.code,
+      await platform.browseReferenceOpenings(opening.code, scope),
+    ] as const));
+    setOpenings(nextOpenings);
+    setOpeningChildren(Object.fromEntries(childGroups));
+    const allCodes = new Set([...nextOpenings, ...childGroups.flatMap(([, items]) => items)].map((item) => item.code));
+    setSelectedCode((current) => current && allCodes.has(current) ? current : nextOpenings[0]?.code);
+  }
+
   async function refresh() {
     setBusy(true); setError("");
     try {
-      const [nextOpenings, nextSources, nextBatches, account] = await Promise.all([
-        platform.browseReferenceOpenings(), desktop ? platform.listReferenceSources() : Promise.resolve([]), desktop ? platform.listReferenceImportBatches(undefined, 50) : Promise.resolve([]),
+      const [nextSources, nextBatches, account] = await Promise.all([
+        desktop ? platform.listReferenceSources() : Promise.resolve([]),
+        desktop ? platform.listReferenceImportBatches(undefined, REFERENCE_BATCH_PAGE_SIZE + 1) : Promise.resolve([]),
         platform.getSyncAccount().catch(() => undefined),
       ]);
-      const childGroups = await Promise.all(nextOpenings.map(async (opening) => [
-        opening.code,
-        await platform.browseReferenceOpenings(opening.code),
-      ] as const));
-      setOpenings(nextOpenings); setSources(nextSources); setBatches(nextBatches);
-      setOpeningChildren(Object.fromEntries(childGroups));
+      await loadOpeningCatalog();
+      setSources(nextSources);
+      setBatches(nextBatches.slice(0, REFERENCE_BATCH_PAGE_SIZE));
+      setHasMoreBatches(nextBatches.length > REFERENCE_BATCH_PAGE_SIZE);
       setServerUrl((current) => current || account?.serverUrl || "");
-      const allCodes = new Set([...nextOpenings, ...childGroups.flatMap(([, items]) => items)].map((item) => item.code));
-      setSelectedCode((current) => current && allCodes.has(current) ? current : nextOpenings[0]?.code);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setBusy(false); }
+  }
+
+  function applyScope(sourceId: string, batchId = "") {
+    setSelectedSourceId(sourceId);
+    setSelectedBatchId(batchId);
+    setSelectedGameId(undefined);
+    void loadOpeningCatalog(sourceId, batchId).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)));
+  }
+
+  function showSourceGames(sourceId: string) {
+    applyScope(sourceId);
+    setSearchMode("match");
+    setTab("games");
+  }
+
+  function showBatchGames(batch: ReferenceImportBatchDto) {
+    applyScope(batch.sourceId, batch.id);
+    setSearchMode("match");
+    setTab("games");
+  }
+
+  async function loadMoreBatches() {
+    const nextLimit = Math.min(batches.length + REFERENCE_BATCH_PAGE_SIZE, 500);
+    setBusy(true); setError("");
+    try {
+      const items = await platform.listReferenceImportBatches(undefined, Math.min(nextLimit + 1, 500));
+      setBatches(items.slice(0, nextLimit));
+      setHasMoreBatches(items.length > nextLimit);
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
     finally { setBusy(false); }
   }
@@ -588,6 +644,11 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
       {tab === "openings" && <div className="reference-opening-body">
         <aside>{openings.map((item) => <div className="reference-opening-group" key={item.code}><button className={item.code === selectedCode ? "active" : ""} onClick={() => setSelectedCode(item.code)}><b>{item.code}</b><span>{item.name}<small>{item.gameCount.toLocaleString()} 局</small></span></button>{openingChildren[item.code]?.map((child) => <button key={child.code} className={`child ${child.code === selectedCode ? "active" : ""}`} onClick={() => setSelectedCode(child.code)}><b>{child.code}</b><span>{child.name}<small>{child.gameCount.toLocaleString()} 局</small></span></button>)}</div>)}</aside>
         <main>
+          {(selectedSourceId || selectedBatchId) && <div className="reference-active-scope">
+            <span>当前统计范围</span>
+            {selectedSourceId && <button type="button" title="清除资料源筛选" onClick={() => applyScope("")}>资料源：{selectedSource?.displayName ?? importResult?.title ?? selectedSourceId}<X size={12}/></button>}
+            {selectedBatchId && <button type="button" title="清除批次筛选" onClick={() => applyScope(selectedSourceId)}>批次：{selectedBatch ? new Date(selectedBatch.createdAt).toLocaleString() : "本次导入"}<X size={12}/></button>}
+          </div>}
           <section className="reference-opening-hero">
             <div><small>XIANGQI OPENINGS</small><strong>象棋布局探索</strong><span>基于本机参考实战库自动归类，支持按布局、棋手、赛事和年份筛选。</span></div>
             <nav><button type="button" onClick={() => setSelectedCode(undefined)}>布局总览</button>{desktop && <button type="button" disabled={busy} onClick={() => void buildOpeningCatalog()}>{hasClassifiedOpenings ? "重建分类" : "一键生成本地布局分类"}</button>}</nav>
@@ -619,7 +680,20 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
           </>}</div>
         </main>
       </div>}
-      {tab === "games" && <div className={`reference-game-search-body ${filtersCollapsed ? "filters-collapsed" : ""}`.trim()}>
+      {tab === "games" && <div className={`reference-game-search-body ${(importResult || selectedSourceId || selectedBatchId || gameOpeningCode) ? "has-scope-bar" : ""} ${filtersCollapsed ? "filters-collapsed" : ""}`.trim()}>
+        {(importResult || selectedSourceId || selectedBatchId || gameOpeningCode) && <div className="reference-game-scope-bar">
+          {importResult && <section className="reference-import-result" aria-label="CBL 导入结果">
+            <span><Check size={16}/><b>{importResult.title}</b><small>{importResult.changedFiles === 0 && importResult.removedRecords === 0 ? `扫描完成，文件未变化，无需重复导入；资料源现有 ${importResult.totalGames.toLocaleString()} 盘。` : `导入完成：新增 ${importResult.imported}、修订 ${importResult.revised}、疑似重复 ${importResult.duplicates}、非法 ${importResult.invalid}、待分类 ${importResult.unclassified}${importResult.emptyFiles > 0 ? `、空库 ${importResult.emptyFiles}` : ""}${importResult.removedRecords > 0 ? `、移除 ${importResult.removedRecords}` : ""}。`}</small><small>已保存到参考实战库，不在个人本地棋谱库中。</small></span>
+            <div className="reference-import-classifications">{importResult.classifications.map((item) => <button key={item.code} type="button" onClick={() => { setSelectedCode(item.code); setTab("openings"); }}>{item.code} · {item.name}：{item.gameCount.toLocaleString()} 盘</button>)}{importResult.duplicates > 0 && <em>疑似重复待审核：{importResult.duplicates} 盘</em>}</div>
+            <nav><button type="button" onClick={() => { applyScope(importResult.sourceId, importResult.batchId); setTab("games"); }}>查看本次棋谱</button>{importResult.duplicates > 0 && <button type="button" onClick={() => { setTab("batches"); void loadIssues(importResult.batchId); }}>审核疑似重复</button>}<button type="button" onClick={() => { setSelectedCode(importResult.classifications[0]?.code); setTab("openings"); }}>查看分类去向</button></nav>
+          </section>}
+          <div className="reference-active-scope">
+            <span>当前筛选</span>
+            {selectedSourceId && <button type="button" title="清除资料源筛选" onClick={() => applyScope("")}>资料源：{selectedSource?.displayName ?? importResult?.title ?? selectedSourceId}<X size={12}/></button>}
+            {selectedBatchId && <button type="button" title="清除批次筛选" onClick={() => applyScope(selectedSourceId)}>批次：{selectedBatch ? new Date(selectedBatch.createdAt).toLocaleString() : "本次导入"}<X size={12}/></button>}
+            {gameOpeningCode && <button type="button" title="清除布局筛选" onClick={() => setGameOpeningCode("")}>布局：{selectedGameOpening ? `${selectedGameOpening.code} · ${selectedGameOpening.name}` : gameOpeningCode}<X size={12}/></button>}
+          </div>
+        </div>}
         <aside className={filtersCollapsed ? "collapsed" : ""}>
           <header className="reference-search-filter-header">
             <span><strong>{filtersCollapsed ? "筛选" : "实战仓库"}</strong><small>全部参考棋局、待分类棋局都能直接查看</small></span>
@@ -638,6 +712,12 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
           <label>赛事<input value={eventName} onChange={(change) => setEventName(change.target.value)} placeholder="全国大赛"/></label>
           <label>年份<span><input aria-label="实战起始年份" inputMode="numeric" maxLength={4} value={yearFrom} onChange={(change) => setYearFrom(change.target.value.replace(/\D/g, ""))} placeholder="起始"/><input aria-label="实战结束年份" inputMode="numeric" maxLength={4} value={yearTo} onChange={(change) => setYearTo(change.target.value.replace(/\D/g, ""))} placeholder="结束"/></span></label>
           <label>执方<select value={side} disabled={!player.trim()} onChange={(change) => setSide(change.target.value as "" | "red" | "black")}><option value="">不限</option><option value="red">执红</option><option value="black">执黑</option></select></label>
+          <label>资料源<select aria-label="资料源筛选" value={selectedSourceId} onChange={(change) => applyScope(change.target.value)}><option value="">全部资料源</option>{sources.map((source) => <option key={source.id} value={source.id}>{source.displayName}</option>)}</select></label>
+          <label>导入批次<select aria-label="导入批次筛选" value={selectedBatchId} onChange={(change) => {
+            const batch = batches.find((item) => item.id === change.target.value);
+            if (batch) applyScope(batch.sourceId, batch.id);
+            else applyScope(selectedSourceId);
+          }}><option value="">全部批次</option>{batches.filter((batch) => !selectedSourceId || batch.sourceId === selectedSourceId).map((batch) => <option key={batch.id} value={batch.id}>{new Date(batch.createdAt).toLocaleString()} · 新增 {batch.importedRecords}</option>)}</select></label>
           <label>布局分类<select aria-label="布局分类筛选" value={gameOpeningCode} disabled={searchMode === "position" || classificationStatus === "pending"} onChange={(change) => {
             setGameOpeningCode(change.target.value);
             if (change.target.value) setClassificationStatus("classified");
@@ -701,7 +781,7 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
           </>}
         </section>
       </div>}
-      {tab === "sources" && <div className="reference-source-body"><header><div><strong>登记 CBL 资料源</strong><small>启动与手动刷新时按文件指纹扫描；本地绝对路径不会上传。</small></div><label>许可状态<input value={licenseStatus} onChange={(event) => setLicenseStatus(event.target.value)} placeholder="local-only / authorized"/></label><button disabled={busy} onClick={() => void addSource()}><FolderOpen size={14}/>添加目录</button></header><div className="reference-source-list">{sources.length === 0 ? <p>尚未登记资料源。</p> : sources.map((source) => <div key={source.id}><span><strong>{source.displayName}</strong><small>{source.rootPath}</small></span><em>{source.licenseStatus}</em><small>{source.lastScannedAt ? new Date(source.lastScannedAt).toLocaleString() : "尚未扫描"}</small><button disabled={busy} title="扫描新增和修订" onClick={() => void scan(source.id)}><RefreshCw size={14}/>扫描</button></div>)}</div><div className="reference-publish-settings"><label>离线包地址<input value={packageUrl} onChange={(event) => setPackageUrl(event.target.value)} placeholder="https://example.com/reference-library-v2.sqlite.zst"/></label><label>SHA-256<input value={packageSha256} onChange={(event) => setPackageSha256(event.target.value)} placeholder="64 位校验值"/></label><button disabled={busy} title="从同步服务获取最新版离线库信息" onClick={() => void loadOfflinePackageManifest()}><RefreshCw size={14}/>获取最新版</button><button disabled={busy} title="校验并原子替换本地参考库" onClick={() => void installOfflinePackage()}><Download size={14}/>安装离线包</button></div></div>}
+      {tab === "sources" && <div className="reference-source-body"><header><div><strong>登记 CBL 资料源</strong><small>启动与手动刷新时按文件指纹扫描；本地绝对路径不会上传。</small></div><label>许可状态<input value={licenseStatus} onChange={(event) => setLicenseStatus(event.target.value)} placeholder="local-only / authorized"/></label><button disabled={busy} onClick={() => void addSource()}><FolderOpen size={14}/>添加目录</button></header><div className="reference-source-list">{sources.length === 0 ? <p>尚未登记资料源。</p> : sources.map((source) => <div key={source.id}><span><strong>{source.displayName}</strong><small>{source.rootPath}</small></span><em>{source.licenseStatus}</em><small>{source.lastScannedAt ? new Date(source.lastScannedAt).toLocaleString() : "尚未扫描"}</small><nav><button type="button" title="查看此资料源的棋谱" onClick={() => showSourceGames(source.id)}><FileText size={14}/>查看棋谱</button><button disabled={busy} title="扫描新增和修订" onClick={() => void scan(source.id)}><RefreshCw size={14}/>扫描</button></nav></div>)}</div><div className="reference-publish-settings"><label>离线包地址<input value={packageUrl} onChange={(event) => setPackageUrl(event.target.value)} placeholder="https://example.com/reference-library-v2.sqlite.zst"/></label><label>SHA-256<input value={packageSha256} onChange={(event) => setPackageSha256(event.target.value)} placeholder="64 位校验值"/></label><button disabled={busy} title="从同步服务获取最新版离线库信息" onClick={() => void loadOfflinePackageManifest()}><RefreshCw size={14}/>获取最新版</button><button disabled={busy} title="校验并原子替换本地参考库" onClick={() => void installOfflinePackage()}><Download size={14}/>安装离线包</button></div></div>}
       {tab === "batches" && <div className="reference-batch-body">
         <div className="reference-publish-settings"><label>同步服务地址<input value={serverUrl} onChange={(event) => setServerUrl(event.target.value)} placeholder="https://example.com"/></label><label>服务端来源 ID<input value={serverSourceId} onChange={(event) => setServerSourceId(event.target.value)} placeholder="可在下方登记后自动填写"/></label><label>公开来源说明<input value={publicLocator} onChange={(event) => setPublicLocator(event.target.value)} placeholder="公开网页或档案编号，不填本地路径"/></label><label>许可说明<input value={licenseNote} onChange={(event) => setLicenseNote(event.target.value)} placeholder="授权主体、范围或公版依据"/></label></div>
         <div className="reference-batch-list">{batches.length === 0 ? <p>尚无导入批次。</p> : batches.map((batch) => {
@@ -709,7 +789,7 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
           const publishable = batch.reviewStatus === "approved" && ["authorized", "public-domain", "self-owned"].includes(source?.licenseStatus ?? "");
           const issues = issuesByBatch[batch.id];
           return <div key={batch.id}>
-            <header><span><strong>{new Date(batch.createdAt).toLocaleString()}</strong><small>{batch.status} · {batch.reviewStatus}</small></span><nav><button disabled={busy} onClick={() => void classify(batch.id)}><BookOpen size={14}/>归类</button><button disabled={busy} onClick={() => void loadIssues(batch.id)}><ListChecks size={14}/>{issues ? "收起问题" : "审核问题"}</button><button disabled={busy || batch.reviewStatus === "approved"} onClick={() => void approve(batch.id)}><Check size={14}/>审核通过</button><button disabled={busy || !publishable} title={publishable ? "登记服务端来源" : "来源许可不允许共享"} onClick={() => void registerOnServer(source)}><Database size={14}/>登记来源</button><button disabled={busy || !publishable || !serverSourceId.trim()} title={publishable ? "发布已审核主线" : "需审核通过且来源许可允许共享"} onClick={() => void publish(batch.id)}><Upload size={14}/>发布</button></nav></header>
+            <header><span><strong>{source?.displayName ?? "未知资料源"} · {new Date(batch.createdAt).toLocaleString()}</strong><small>{batch.status} · {batch.reviewStatus}</small></span><nav><button type="button" onClick={() => showBatchGames(batch)}><FileText size={14}/>查看本批棋谱</button><button disabled={busy} onClick={() => void classify(batch.id)}><BookOpen size={14}/>归类</button><button disabled={busy} onClick={() => void loadIssues(batch.id)}><ListChecks size={14}/>{issues ? "收起问题" : "审核问题"}</button><button disabled={busy || batch.reviewStatus === "approved"} onClick={() => void approve(batch.id)}><Check size={14}/>审核通过</button><button disabled={busy || !publishable} title={publishable ? "登记服务端来源" : "来源许可不允许共享"} onClick={() => void registerOnServer(source)}><Database size={14}/>登记来源</button><button disabled={busy || !publishable || !serverSourceId.trim()} title={publishable ? "发布已审核主线" : "需审核通过且来源许可允许共享"} onClick={() => void publish(batch.id)}><Upload size={14}/>发布</button></nav></header>
             <dl><div><dt>新增</dt><dd>{batch.importedRecords}</dd></div><div><dt>修订</dt><dd>{batch.revisedRecords}</dd></div><div><dt>重复</dt><dd>{batch.duplicateRecords}</dd></div><div><dt>非法</dt><dd>{batch.invalidRecords}</dd></div><div><dt>待分类</dt><dd>{batch.unclassifiedRecords}</dd></div><div><dt>空库</dt><dd>{batch.emptyFiles}</dd></div></dl>
             {issues && <div className="reference-review-issues">{issues.length === 0 ? <small>没有待人工处理的问题。</small> : issues.map((issue) => <ReviewIssueRow
               key={issue.id}
@@ -722,7 +802,7 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, on
             />)}</div>}
             {batch.warnings.slice(0, 3).map((warning) => <p key={warning}>{warning}</p>)}
           </div>;
-        })}</div>
+        })}{hasMoreBatches && <button type="button" className="reference-load-more" disabled={busy} onClick={() => void loadMoreBatches()}>{busy ? "正在加载更多…" : "查看更多批次"}</button>}</div>
       </div>}
     </section>
   </div>;

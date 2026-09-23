@@ -8,6 +8,7 @@ import { CLOUD_ENGINE_VERSION, CLOUD_NNUE_VERSION, runCloudAnalysisJob } from ".
 import { BUILTIN_ENGINE_PATH, FALLBACK_BUILTIN_OPENING_BOOK_MANIFEST } from "./types";
 import type { AnalysisLine, AnalysisOptions, AppInfoDto, BoardState, BookImportDraft, BookTopicDetail, BuiltinOpeningBookManifestDto, CaptureSource, CblGameLibraryImportResultDto, ChessPlatform, CloudAnalysisPreferences, CloudAuthDto, CloudBookCandidate, CloudGuestAuthDto, DesktopPreferencesDto, EndgameAttemptDto, EndgameBatchImportResultDto, EndgameFolderDto, EndgameFreePracticeMoveDto, EndgameImportResultDto, EndgameLibraryDto, EndgameMoveFeedbackDto, EndgameProblemDto, EndgameRefreshResultDto, EngineArenaOptionsDto, EngineArenaResultDto, EngineMoveResult, EnginePlayOptions, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, ExportFormat, FlyknifeCandidate, FlyknifePlan, FlyknifeTemplate, FlyknifeTopic, GameMetadata, GameMirrorStatus, GameReportDatasetDto, GameReportOptionsDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, GenerateFlyknifeRequest, LibraryFolder, LibraryMoveResult, LinkAutoSide, LinkObservation, LinkSessionStatus, LinkTargetWindow, MasterGameDetailDto, MasterLibraryStatsDto, MasterGameSummaryDto, MasterLibraryFilters, MasterOpeningProfileDto, MasterPlayerDto, MasterStyleHintDto, MasterStyleImportResultDto, MasterStyleProfileDto, OpeningCatalogBuildResultDto, OpeningCategoryDto, OpeningMatchDto, PositionExplorerRequest, PositionMoveStatDto, PreviewLineStep, ReferenceGameDocumentDto, ReferenceGameFilters, ReferenceGameSummaryDto, ReferenceImportBatchDto, ReferenceOfflinePackageManifestDto, ReferenceOfflinePackageResultDto, ReferencePublishResultDto, ReferenceReviewIssueDto, ReferenceSourceDto, RelatedMasterGame, ReplayExportScope, ScreenshotMoveResolution, StartLinkSessionRequest, StudySessionDto, SubscriptionDto, SyncAccountDto, SyncResult, TheoryCardDto, TheoryCardFeedbackDto, TheoryLibraryDto, TrainingGenerationResultDto, TrainingSummaryDto, TrainingTaskDto, TtxqDiagnosticSample, TtxqGamePreview, TtxqSyncProgress } from "./types";
 import type { ChineseLineParseResult, DailyTrainingPlan, GuidedAnalysisStart, GuidedAnalysisSubmission, GuidedAnalysisSubmissionResult, GuidedEngineLine, LearningProfile, OpeningRepertoire, WeeklyLearningReport } from "./types";
+import type { ReferenceOpeningFilters } from "./types";
 
 type WebGameInstance = {
   stateJson(): string;
@@ -262,7 +263,13 @@ class DesktopPlatform implements ChessPlatform {
   overrideReferenceGameOpening(gameId: string, categoryCode: string, reviewedAlias?: string) { return invoke<void>("override_reference_game_opening", { gameId, categoryCode, reviewedAlias: reviewedAlias ?? null }); }
   resolveReferenceDuplicate(issueId: string, merge: boolean) { return invoke<void>("resolve_reference_duplicate", { issueId, merge }); }
   queryReferencePosition(request: PositionExplorerRequest) { return invoke<PositionMoveStatDto[]>("query_reference_position", { request }); }
-  browseReferenceOpenings(parentCode?: string) { return invoke<OpeningCategoryDto[]>("browse_reference_openings", { parentCode: parentCode ?? null }); }
+  browseReferenceOpenings(parentCode?: string, filters: ReferenceOpeningFilters = {}) {
+    return invoke<OpeningCategoryDto[]>("browse_reference_openings", {
+      parentCode: parentCode ?? null,
+      sourceId: filters.sourceId ?? null,
+      batchId: filters.batchId ?? null,
+    });
+  }
   listReferenceGames(openingCode?: string, query?: string, limit = 50, offset = 0, filters: ReferenceGameFilters = {}) {
     return invoke<ReferenceGameSummaryDto[]>("list_reference_games", {
       openingCode: openingCode ?? null,
@@ -275,6 +282,8 @@ class DesktopPlatform implements ChessPlatform {
       masterOnly: filters.masterOnly ?? false,
       classificationStatus: filters.classificationStatus ?? null,
       positionFen: filters.positionFen ?? null,
+      sourceId: filters.sourceId ?? null,
+      batchId: filters.batchId ?? null,
       limit,
       offset,
     });
@@ -1087,9 +1096,11 @@ class WebPlatform implements ChessPlatform {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(request),
     }));
   }
-  async browseReferenceOpenings(parentCode?: string): Promise<OpeningCategoryDto[]> {
+  async browseReferenceOpenings(parentCode?: string, filters: ReferenceOpeningFilters = {}): Promise<OpeningCategoryDto[]> {
     const endpoint = await this.serverEndpoint("/api/v1/openings");
     if (parentCode) endpoint.searchParams.set("parentCode", parentCode);
+    if (filters.sourceId) endpoint.searchParams.set("sourceId", filters.sourceId);
+    if (filters.batchId) endpoint.searchParams.set("batchId", filters.batchId);
     return readJsonResponse<OpeningCategoryDto[]>(await fetch(endpoint));
   }
   async listReferenceGames(openingCode?: string, query?: string, limit = 50, offset = 0, filters: ReferenceGameFilters = {}): Promise<ReferenceGameSummaryDto[]> {
@@ -1104,6 +1115,8 @@ class WebPlatform implements ChessPlatform {
     if (filters.masterOnly) endpoint.searchParams.set("masterOnly", "true");
     if (filters.classificationStatus) endpoint.searchParams.set("classificationStatus", filters.classificationStatus);
     if (filters.positionFen) endpoint.searchParams.set("positionFen", filters.positionFen);
+    if (filters.sourceId) endpoint.searchParams.set("sourceId", filters.sourceId);
+    if (filters.batchId) endpoint.searchParams.set("batchId", filters.batchId);
     endpoint.searchParams.set("limit", String(limit));
     endpoint.searchParams.set("offset", String(offset));
     return readJsonResponse<ReferenceGameSummaryDto[]>(await fetch(endpoint));

@@ -320,20 +320,37 @@ pub(crate) async fn query_reference_position(
 #[tauri::command]
 pub(crate) async fn browse_reference_openings(
     parent_code: Option<String>,
+    source_id: Option<String>,
+    batch_id: Option<String>,
     state: State<'_, DesktopState>,
 ) -> Result<Vec<OpeningCategory>, String> {
+    let filters = ReferenceGameFilters {
+        source_id,
+        batch_id,
+        ..ReferenceGameFilters::default()
+    };
+    let local_scope = filters.source_id.is_some() || filters.batch_id.is_some();
     let (working, working_count) = {
         let library = state
             .reference_library
             .lock()
             .map_err(|_| "参考实战库锁已损坏".to_owned())?;
         (
-            library
-                .browse_openings(parent_code.as_deref())
-                .map_err(|error| error.to_string())?,
+            if local_scope {
+                library
+                    .browse_openings_filtered(parent_code.as_deref(), &filters)
+                    .map_err(|error| error.to_string())?
+            } else {
+                library
+                    .browse_openings(parent_code.as_deref())
+                    .map_err(|error| error.to_string())?
+            },
             library.game_count().map_err(|error| error.to_string())?,
         )
     };
+    if local_scope {
+        return Ok(working);
+    }
     let (offline, offline_count) = {
         let library = state
             .offline_reference_library
@@ -422,6 +439,8 @@ pub(crate) async fn list_reference_games(
     master_only: Option<bool>,
     classification_status: Option<String>,
     position_fen: Option<String>,
+    source_id: Option<String>,
+    batch_id: Option<String>,
     limit: Option<usize>,
     offset: Option<usize>,
     state: State<'_, DesktopState>,
@@ -438,7 +457,10 @@ pub(crate) async fn list_reference_games(
         master_only,
         classification_status,
         position_fen,
+        source_id,
+        batch_id,
     };
+    let local_scope = filters.source_id.is_some() || filters.batch_id.is_some();
     let (working, working_count) = {
         let library = state
             .reference_library
@@ -457,6 +479,9 @@ pub(crate) async fn list_reference_games(
             library.game_count().map_err(|error| error.to_string())?,
         )
     };
+    if local_scope {
+        return Ok(merge_games(working, Vec::new(), limit, offset));
+    }
     let (offline, offline_count) = {
         let library = state
             .offline_reference_library

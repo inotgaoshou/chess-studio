@@ -98,8 +98,12 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async () => () => undefi
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ startDragging: vi.fn() }) }));
 
 vi.mock("./DesktopMenuBar", () => ({
-  DesktopMenuBar: ({ execute }: { execute(command: "openLocalLibrary"): void }) => (
-    <button type="button" onClick={() => execute("openLocalLibrary")}>菜单打开本地棋谱库</button>
+  DesktopMenuBar: ({ execute }: { execute(command: "openLocalLibrary" | "referenceLibrary" | "importCblGameLibrary"): void }) => (
+    <>
+      <button type="button" onClick={() => execute("openLocalLibrary")}>菜单打开本地棋谱库</button>
+      <button type="button" onClick={() => execute("referenceLibrary")}>菜单打开参考实战库</button>
+      <button type="button" onClick={() => execute("importCblGameLibrary")}>菜单导入 CBL</button>
+    </>
   ),
 }));
 vi.mock("./DesktopDialogs", () => ({ DesktopDialogs: () => null }));
@@ -118,6 +122,9 @@ vi.mock("./LinkSessionDialog", () => ({ LinkSessionDialog: () => null }));
 vi.mock("./LinkMiniBoard", () => ({ LinkMiniBoard: () => null }));
 vi.mock("./FlyknifeDialog", () => ({ FlyknifeDialog: () => null }));
 vi.mock("./MasterLibraryDialog", () => ({ MasterLibraryDialog: () => null }));
+vi.mock("./ReferenceLibraryDialog", () => ({
+  ReferenceLibraryDialog: ({ launchContext, onClose }: { launchContext?: { initialTab?: string; importResult?: { title: string } }; onClose(): void }) => <section role="dialog" aria-label="参考实战库与布局探索"><strong>参考实战库</strong>{launchContext?.importResult && <span>{launchContext.initialTab} · {launchContext.importResult.title}</span>}<button type="button" onClick={onClose}>关闭参考库</button></section>,
+}));
 vi.mock("./CoachRadar", () => ({ CoachProfileView: () => null }));
 vi.mock("./UserManualDialog", () => ({ UserManualDialog: () => null }));
 vi.mock("./MasterOpeningPanel", () => ({
@@ -216,5 +223,47 @@ describe("App local library", () => {
     await user.click(await screen.findByRole("button", { name: "复盘内打开棋谱库" }));
 
     expect(await screen.findByRole("dialog", { name: "本地棋谱库" })).toBeTruthy();
+  });
+
+  it("opens the complete reference library directly from the menu", async () => {
+    configurePlatform();
+    const user = userEvent.setup();
+    render(<App/>);
+
+    await user.click(await screen.findByRole("button", { name: "菜单打开参考实战库" }));
+
+    expect(await screen.findByRole("dialog", { name: "参考实战库与布局探索" })).toBeTruthy();
+    expect(screen.queryByTestId("master-opening-opening")).toBeNull();
+  });
+
+  it("opens the imported CBL batch in reference game search", async () => {
+    configurePlatform();
+    const target = platformMock as Record<string, ReturnType<typeof vi.fn> | string>;
+    target.importCblGameLibrary = vi.fn(async () => ({
+      title: "《布局飞刀陷阱》杨典",
+      folder: "参考实战库",
+      imported: 25,
+      skipped: 1,
+      warnings: [],
+      sourceId: "source-flyknife",
+      batchId: "batch-flyknife",
+      revised: 0,
+      duplicates: 1,
+      invalid: 0,
+      unclassified: 0,
+      changedFiles: 1,
+      emptyFiles: 0,
+      removedRecords: 0,
+      totalGames: 25,
+      classifiedGames: 25,
+      classifications: [],
+    }));
+    const user = userEvent.setup();
+    render(<App/>);
+
+    await user.click(await screen.findByRole("button", { name: "菜单导入 CBL" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "参考实战库与布局探索" });
+    expect(within(dialog).getByText("games · 《布局飞刀陷阱》杨典")).toBeTruthy();
   });
 });
