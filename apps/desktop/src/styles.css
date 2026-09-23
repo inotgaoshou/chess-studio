@@ -7600,12 +7600,13 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 .reference-dialog-notice { position: absolute; z-index: 2; top: 104px; left: 50%; transform: translateX(-50%); max-width: min(720px,80vw); margin: 0; padding: 7px 12px; border: 1px solid #4f8a70; border-radius: 5px; background: #183a2e; color: #d6f5e6; font-size: 12px; }
 .reference-opening-body { min-height: 0; display: grid; grid-template-columns: 250px minmax(0,1fr); }
 .reference-opening-body > aside { min-height: 0; overflow: auto; padding: 10px; border-right: 1px solid var(--border); background: var(--surface-1); }
-.reference-opening-body > aside button { width: 100%; min-height: 54px; margin-bottom: 5px; padding: 7px 9px; display: grid; grid-template-columns: 34px minmax(0,1fr); text-align: left; }
+.reference-opening-body > aside button { width: 100%; min-height: 62px; margin-bottom: 5px; padding: 7px 9px; display: grid; grid-template-columns: 34px minmax(0,1fr); text-align: left; }
 .reference-opening-body > aside button > b { font-size: 18px; color: var(--accent); }
 .reference-opening-body > aside button > span { display: grid; gap: 3px; }
 .reference-opening-body > aside small { color: var(--text-muted); }
-.reference-opening-group > button.child { min-height: 42px; padding-left: 16px; grid-template-columns: 42px minmax(0,1fr); }
+.reference-opening-group > button.child { min-height: 56px; padding-left: 16px; grid-template-columns: 42px minmax(0,1fr); }
 .reference-opening-group > button.child > b { font-size: 13px; }
+.reference-opening-body .opening-distribution { color: color-mix(in srgb, var(--text-secondary) 86%, transparent); font-size: 10px; line-height: 1.2; }
 .reference-opening-body > main { min-width: 0; min-height: 0; overflow: auto; }
 .reference-opening-hero { margin: 16px 18px 12px; padding: 22px 24px; display: flex; align-items: end; justify-content: space-between; gap: 18px; border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border)); border-radius: 18px; background: radial-gradient(circle at 18% 12%, color-mix(in srgb, var(--accent) 20%, transparent), transparent 34%), var(--surface-1); }
 .reference-opening-hero > div { min-width: 0; display: grid; gap: 7px; }
@@ -7621,14 +7622,14 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 .reference-hot-openings > header small, .reference-opening-series-cards > header small { color: var(--text-muted); }
 .reference-hot-openings > div { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; }
 .reference-hot-openings > div > p { grid-column: 1 / -1; margin: 18px 0; color: var(--text-muted); text-align: center; }
-.reference-hot-openings button { min-height: 86px; padding: 14px; display: grid; grid-template-columns: 42px minmax(0,1fr) 16px; align-items: center; gap: 12px; border-radius: 14px; text-align: left; }
+.reference-hot-openings button { min-height: 96px; padding: 14px; display: grid; grid-template-columns: 42px minmax(0,1fr) 16px; align-items: center; gap: 12px; border-radius: 14px; text-align: left; }
 .reference-hot-openings button i { width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; border-radius: 10px; background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--accent); font-style: normal; font-weight: 800; }
 .reference-hot-openings button span { min-width: 0; display: grid; gap: 6px; }
 .reference-hot-openings button strong { overflow: hidden; color: var(--text-primary); text-overflow: ellipsis; white-space: nowrap; }
 .reference-hot-openings button small { color: var(--text-muted); }
 .reference-hot-openings button > b { color: var(--text-muted); font-size: 22px; }
 .reference-opening-series-cards > div { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 10px; }
-.reference-opening-series-cards button { min-height: 116px; padding: 14px; display: grid; align-content: center; justify-items: start; gap: 9px; border-radius: 14px; text-align: left; }
+.reference-opening-series-cards button { min-height: 136px; padding: 14px; display: grid; align-content: center; justify-items: start; gap: 7px; border-radius: 14px; text-align: left; }
 .reference-opening-series-cards button > b { width: 42px; height: 42px; display: inline-flex; align-items: center; justify-content: center; border-radius: 12px; background: var(--accent); color: var(--accent-contrast); font-size: 20px; }
 .reference-opening-series-cards button strong { color: var(--text-primary); }
 .reference-opening-series-cards button small { color: var(--text-muted); }
@@ -7883,7 +7884,7 @@ button:disabled { color: var(--text-disabled); opacity: .62; }
 .reference-source-list span { min-width: 0; display: grid; gap: 3px; }
 .reference-source-list small { overflow: hidden; color: var(--text-muted); text-overflow: ellipsis; white-space: nowrap; }
 .reference-source-list em { color: #67a88b; font-style: normal; }
-.reference-source-list nav { display: flex; gap: 5px; }
+.reference-source-list nav { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
 .reference-source-list nav button { min-height: 28px; padding: 0 8px; white-space: nowrap; }
 .reference-publish-settings { position: sticky; top: 0; z-index: 2; padding: 10px; display: grid; grid-template-columns: minmax(220px,.7fr) minmax(280px,1fr); gap: 10px; border-bottom: 1px solid var(--border); background: var(--surface-0); }
 .reference-publish-settings label { display: grid; gap: 4px; color: var(--text-muted); font-size: 11px; }

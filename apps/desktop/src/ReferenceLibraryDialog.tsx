@@ -63,6 +63,23 @@ function percent(value: number, total: number) {
   return total > 0 ? Math.round(value * 100 / total) : 0;
 }
 
+function openingYearLabel(item: OpeningCategoryDto) {
+  if (item.firstYear && item.lastYear && item.firstYear !== item.lastYear) return `${item.firstYear}–${item.lastYear}`;
+  return String(item.firstYear ?? item.lastYear ?? "年份未知");
+}
+
+function openingCountAndYearLabel(item: OpeningCategoryDto) {
+  return `${item.gameCount.toLocaleString()} 局 · ${openingYearLabel(item)}`;
+}
+
+function openingDistributionLabel(item: OpeningCategoryDto) {
+  return `红 ${item.redWins.toLocaleString()} · 和 ${item.draws.toLocaleString()} · 黑 ${item.blackWins.toLocaleString()}`;
+}
+
+function openingLinkTitle(item: OpeningCategoryDto) {
+  return `查看 ${item.code} · ${item.name} 关联棋谱 · ${openingCountAndYearLabel(item)} · ${openingDistributionLabel(item)}`;
+}
+
 type ReferenceRawMove = { row?: number; col?: number };
 type ReferenceRawNode = {
   id?: string;
@@ -167,6 +184,7 @@ function ReviewIssueRow({ issue, categories, busy, onIdentity, onOpening, onDupl
 export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, launchContext, onOpenReferenceGame, onClose }: Props) {
   const desktop = platform.kind === "desktop";
   const gameListRequest = useRef(0);
+  const openingCatalogRequest = useRef(0);
   const selectedGameRow = useRef<HTMLButtonElement | null>(null);
   const [tab, setTab] = useState<Tab>(launchContext?.initialTab ?? (initialGameId ? "games" : "openings"));
   const [openings, setOpenings] = useState<OpeningCategoryDto[]>([]);
@@ -291,16 +309,23 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, la
   }
 
   async function loadOpeningCatalog(sourceId = selectedSourceId, batchId = selectedBatchId) {
+    const request = ++openingCatalogRequest.current;
     const scope = { sourceId: sourceId || undefined, batchId: batchId || undefined };
-    const nextOpenings = await platform.browseReferenceOpenings(undefined, scope);
-    const childGroups = await Promise.all(nextOpenings.map(async (opening) => [
-      opening.code,
-      await platform.browseReferenceOpenings(opening.code, scope),
-    ] as const));
-    setOpenings(nextOpenings);
-    setOpeningChildren(Object.fromEntries(childGroups));
-    const allCodes = new Set([...nextOpenings, ...childGroups.flatMap(([, items]) => items)].map((item) => item.code));
-    setSelectedCode((current) => current && allCodes.has(current) ? current : nextOpenings[0]?.code);
+    try {
+      const nextOpenings = await platform.browseReferenceOpenings(undefined, scope);
+      if (request !== openingCatalogRequest.current) return;
+      const childGroups = await Promise.all(nextOpenings.map(async (opening) => [
+        opening.code,
+        await platform.browseReferenceOpenings(opening.code, scope),
+      ] as const));
+      if (request !== openingCatalogRequest.current) return;
+      setOpenings(nextOpenings);
+      setOpeningChildren(Object.fromEntries(childGroups));
+      const allCodes = new Set([...nextOpenings, ...childGroups.flatMap(([, items]) => items)].map((item) => item.code));
+      setSelectedCode((current) => current && allCodes.has(current) ? current : nextOpenings[0]?.code);
+    } catch (cause) {
+      if (request === openingCatalogRequest.current) throw cause;
+    }
   }
 
   async function refresh() {
@@ -331,6 +356,29 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, la
     applyScope(sourceId);
     setSearchMode("match");
     setTab("games");
+  }
+
+  function showSourceOpenings(sourceId: string) {
+    setSelectedCode(undefined);
+    setGameOpeningCode("");
+    setClassificationStatus("all");
+    setSearchMode("match");
+    applyScope(sourceId);
+    setTab("openings");
+  }
+
+  function showOpeningGames(openingCode: string | undefined, gameId?: string) {
+    setSelectedCode(openingCode);
+    setGameOpeningCode(openingCode ?? "");
+    setClassificationStatus(openingCode ? "classified" : "all");
+    setSearchMode("match");
+    setSelectedGameId(gameId);
+    setTab("games");
+  }
+
+  function clearOpeningGameFilter() {
+    setGameOpeningCode("");
+    setClassificationStatus("all");
   }
 
   function showBatchGames(batch: ReferenceImportBatchDto) {
@@ -642,7 +690,7 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, la
       {error && <p className="reference-dialog-error">{error}</p>}
       {notice && <p className="reference-dialog-notice">{notice}</p>}
       {tab === "openings" && <div className="reference-opening-body">
-        <aside>{openings.map((item) => <div className="reference-opening-group" key={item.code}><button className={item.code === selectedCode ? "active" : ""} onClick={() => setSelectedCode(item.code)}><b>{item.code}</b><span>{item.name}<small>{item.gameCount.toLocaleString()} 局</small></span></button>{openingChildren[item.code]?.map((child) => <button key={child.code} className={`child ${child.code === selectedCode ? "active" : ""}`} onClick={() => setSelectedCode(child.code)}><b>{child.code}</b><span>{child.name}<small>{child.gameCount.toLocaleString()} 局</small></span></button>)}</div>)}</aside>
+        <aside>{openings.map((item) => <div className="reference-opening-group" key={item.code}><button className={item.code === selectedCode ? "active" : ""} title={openingLinkTitle(item)} onClick={() => showOpeningGames(item.code)}><b>{item.code}</b><span>{item.name}<small>{openingCountAndYearLabel(item)}</small><small className="opening-distribution">{openingDistributionLabel(item)}</small></span></button>{openingChildren[item.code]?.map((child) => <button key={child.code} className={`child ${child.code === selectedCode ? "active" : ""}`} title={openingLinkTitle(child)} onClick={() => showOpeningGames(child.code)}><b>{child.code}</b><span>{child.name}<small>{openingCountAndYearLabel(child)}</small><small className="opening-distribution">{openingDistributionLabel(child)}</small></span></button>)}</div>)}</aside>
         <main>
           {(selectedSourceId || selectedBatchId) && <div className="reference-active-scope">
             <span>当前统计范围</span>
@@ -655,11 +703,11 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, la
           </section>
           <section className="reference-hot-openings">
             <header><strong>热门布局</strong><small>{hasClassifiedOpenings ? "按本地归类局数推荐" : "尚未生成分类，点击上方按钮后显示"}</small></header>
-            <div>{hotOpenings.length === 0 ? <p>暂无热门布局统计。</p> : hotOpenings.map((item, index) => <button type="button" key={item.code} className={item.code === selectedCode ? "active" : ""} onClick={() => setSelectedCode(item.code)}><i>{index + 1}</i><span><strong>{item.code} · {item.name}</strong><small>{item.gameCount.toLocaleString()} 局</small></span><b>›</b></button>)}</div>
+            <div>{hotOpenings.length === 0 ? <p>暂无热门布局统计。</p> : hotOpenings.map((item, index) => <button type="button" key={item.code} className={item.code === selectedCode ? "active" : ""} title={openingLinkTitle(item)} onClick={() => showOpeningGames(item.code)}><i>{index + 1}</i><span><strong>{item.code} · {item.name}</strong><small>{openingCountAndYearLabel(item)}</small><small className="opening-distribution">{openingDistributionLabel(item)}</small></span><b>›</b></button>)}</div>
           </section>
           <section className="reference-opening-series-cards">
-            <header><strong>开局系列</strong><small>进入系列页浏览该系全部布局</small></header>
-            <div>{openings.map((item) => <button type="button" key={item.code} className={item.code === selectedCode ? "active" : ""} onClick={() => setSelectedCode(item.code)}><b>{item.code}</b><strong>{item.code}. {item.name}</strong><small>{(openingChildren[item.code]?.length ?? 0).toLocaleString()} 布局 · {item.gameCount.toLocaleString()} 局</small></button>)}</div>
+            <header><strong>开局系列</strong><small>点击系列查看该系关联棋谱</small></header>
+            <div>{openings.map((item) => <button type="button" key={item.code} className={item.code === selectedCode ? "active" : ""} title={openingLinkTitle(item)} onClick={() => showOpeningGames(item.code)}><b>{item.code}</b><strong>{item.code}. {item.name}</strong><small>{(openingChildren[item.code]?.length ?? 0).toLocaleString()} 布局 · {openingCountAndYearLabel(item)}</small><small className="opening-distribution">{openingDistributionLabel(item)}</small></button>)}</div>
           </section>
           <header><div><strong>{selected ? `${selected.code} · ${selected.name}` : "布局目录"}</strong><small>{selected?.aliases.join("、") || "规范分类与已审核别名"}</small></div><label><Search size={14}/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="棋手、赛事或标题"/></label></header>
           <div className="reference-opening-filters">
@@ -671,11 +719,11 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, la
           </div>
           {(commonPlayers.length > 0 || similarOpenings.length > 0) && <div className="reference-opening-shortcuts">
             {commonPlayers.length > 0 && <span><small>常用棋手</small>{commonPlayers.map(([name, count]) => <button key={name} className={player === name ? "active" : ""} onClick={() => setPlayer(player === name ? "" : name)}>{name}<i>{count}</i></button>)}</span>}
-            {similarOpenings.length > 0 && <span><small>相近布局</small>{similarOpenings.map((item) => <button key={item.code} onClick={() => setSelectedCode(item.code)}>{item.code}</button>)}</span>}
+            {similarOpenings.length > 0 && <span><small>相近布局</small>{similarOpenings.map((item) => <button key={item.code} title={`查看 ${item.code} · ${item.name} 关联棋谱`} onClick={() => showOpeningGames(item.code)}>{item.code}</button>)}</span>}
           </div>}
           <div className="reference-opening-stats"><span>棋局 <b>{selected?.gameCount ?? 0}</b></span><span className="red">红胜 <b>{selected?.redWins ?? 0}</b></span><span>和棋 <b>{selected?.draws ?? 0}</b></span><span>黑胜 <b>{selected?.blackWins ?? 0}</b></span></div>
           <div className="reference-game-table"><div className="head"><span>对局</span><span>赛事 / 日期</span><span>结果</span><span>手数</span><span>操作</span></div>{gamesLoading && games.length === 0 ? <p>正在加载棋局列表…</p> : games.length === 0 ? <p>该分类暂无已归类棋局。</p> : <>
-            {games.map((game) => <button ref={selectedRowRef(game.id)} type="button" key={game.id} className={game.id === selectedGameId ? "active" : ""} title={`查看棋谱详情：${gameOpeningLabel(game)}`} onClick={() => { setSelectedGameId(game.id); setSearchMode("match"); setTab("games"); }}><span><b title={game.title || "未命名棋局"}>{game.title || "未命名棋局"}</b>{renderPlayerPair(game, "compact")}</span><span><b>{game.eventName || game.title}</b><small>{game.gameDate || "日期未知"} {game.roundName}</small></span><span>{resultLabel(game.result)}</span><span>{game.moveCount}</span><em>查看</em></button>)}
+            {games.map((game) => <button ref={selectedRowRef(game.id)} type="button" key={game.id} className={game.id === selectedGameId ? "active" : ""} title={`查看棋谱详情：${gameOpeningLabel(game)}`} onClick={() => showOpeningGames(selectedCode, game.id)}><span><b title={game.title || "未命名棋局"}>{game.title || "未命名棋局"}</b>{renderPlayerPair(game, "compact")}</span><span><b>{game.eventName || game.title}</b><small>{game.gameDate || "日期未知"} {game.roundName}</small></span><span>{resultLabel(game.result)}</span><span>{game.moveCount}</span><em>查看</em></button>)}
             {hasMoreGames && <button type="button" className="reference-load-more" disabled={gamesLoadingMore} onClick={loadMoreGames}>{gamesLoadingMore ? "正在加载更多…" : "查看更多"}</button>}
           </>}</div>
         </main>
@@ -691,7 +739,7 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, la
             <span>当前筛选</span>
             {selectedSourceId && <button type="button" title="清除资料源筛选" onClick={() => applyScope("")}>资料源：{selectedSource?.displayName ?? importResult?.title ?? selectedSourceId}<X size={12}/></button>}
             {selectedBatchId && <button type="button" title="清除批次筛选" onClick={() => applyScope(selectedSourceId)}>批次：{selectedBatch ? new Date(selectedBatch.createdAt).toLocaleString() : "本次导入"}<X size={12}/></button>}
-            {gameOpeningCode && <button type="button" title="清除布局筛选" onClick={() => setGameOpeningCode("")}>布局：{selectedGameOpening ? `${selectedGameOpening.code} · ${selectedGameOpening.name}` : gameOpeningCode}<X size={12}/></button>}
+            {gameOpeningCode && <button type="button" title="清除布局筛选" onClick={clearOpeningGameFilter}>布局：{selectedGameOpening ? `${selectedGameOpening.code} · ${selectedGameOpening.name}` : gameOpeningCode}<X size={12}/></button>}
           </div>
         </div>}
         <aside className={filtersCollapsed ? "collapsed" : ""}>
@@ -740,7 +788,7 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, la
           <header><span><strong>{searchMode === "position" ? "当前局面候选" : selectedGameOpening ? `${selectedGameOpening.code} · ${selectedGameOpening.name}` : classificationStatus === "pending" ? "待分类棋局" : classificationStatus === "classified" ? "已归类棋局" : "全部参考棋局"}</strong><small>{searchMode === "position" ? "按当前棋盘 FEN 聚合实战走法" : query.trim() || player.trim() || eventName.trim() || gameOpeningCode ? "当前筛选结果" : "最近导入和最新日期优先"}</small></span></header>
           {searchMode === "match" ? <div className="reference-game-search-list" role="listbox" aria-label="参考棋局列表" aria-busy={gamesLoading || gamesLoadingMore}>
             {pinnedSelectedGame && renderGameSearchRow(pinnedSelectedGame, true)}
-            {gamesLoading && games.length === 0 && !pinnedSelectedGame ? <p>正在加载参考棋局…</p> : games.length === 0 && !pinnedSelectedGame ? <p>没有匹配棋局。可以换个棋手、赛事或切到“全部”。</p> : games.map((game) => renderGameSearchRow(game))}
+            {gamesLoading && games.length === 0 && !pinnedSelectedGame ? <p>正在加载参考棋局…</p> : games.length === 0 && !pinnedSelectedGame ? <p>{gameOpeningCode ? "该分类暂无关联棋谱。" : "没有匹配棋局。可以换个棋手、赛事或切到“全部”。"}</p> : games.map((game) => renderGameSearchRow(game))}
             {hasMoreGames && <button type="button" className="reference-load-more" disabled={gamesLoadingMore} onClick={loadMoreGames}>{gamesLoadingMore ? "正在加载更多…" : "查看更多"}</button>}
           </div> : <div className={`reference-position-search-list ${positionLoading ? "is-refreshing" : ""}`.trim()} aria-busy={positionLoading}>
             {!currentFen ? <p>当前没有可用棋盘局面，打开一盘棋后再试。</p> : positionLoading && positionMoves.length === 0 ? <p>正在聚合当前局面实战…</p> : positionError && positionMoves.length === 0 ? <p className="error">{positionError}</p> : positionMoves.length === 0 ? <p>当前局面暂无本地实战样本。</p> : positionMoves.map((move) => {
@@ -781,7 +829,7 @@ export function ReferenceLibraryDialog({ platform, currentFen, initialGameId, la
           </>}
         </section>
       </div>}
-      {tab === "sources" && <div className="reference-source-body"><header><div><strong>登记 CBL 资料源</strong><small>启动与手动刷新时按文件指纹扫描；本地绝对路径不会上传。</small></div><label>许可状态<input value={licenseStatus} onChange={(event) => setLicenseStatus(event.target.value)} placeholder="local-only / authorized"/></label><button disabled={busy} onClick={() => void addSource()}><FolderOpen size={14}/>添加目录</button></header><div className="reference-source-list">{sources.length === 0 ? <p>尚未登记资料源。</p> : sources.map((source) => <div key={source.id}><span><strong>{source.displayName}</strong><small>{source.rootPath}</small></span><em>{source.licenseStatus}</em><small>{source.lastScannedAt ? new Date(source.lastScannedAt).toLocaleString() : "尚未扫描"}</small><nav><button type="button" title="查看此资料源的棋谱" onClick={() => showSourceGames(source.id)}><FileText size={14}/>查看棋谱</button><button disabled={busy} title="扫描新增和修订" onClick={() => void scan(source.id)}><RefreshCw size={14}/>扫描</button></nav></div>)}</div><div className="reference-publish-settings"><label>离线包地址<input value={packageUrl} onChange={(event) => setPackageUrl(event.target.value)} placeholder="https://example.com/reference-library-v2.sqlite.zst"/></label><label>SHA-256<input value={packageSha256} onChange={(event) => setPackageSha256(event.target.value)} placeholder="64 位校验值"/></label><button disabled={busy} title="从同步服务获取最新版离线库信息" onClick={() => void loadOfflinePackageManifest()}><RefreshCw size={14}/>获取最新版</button><button disabled={busy} title="校验并原子替换本地参考库" onClick={() => void installOfflinePackage()}><Download size={14}/>安装离线包</button></div></div>}
+      {tab === "sources" && <div className="reference-source-body"><header><div><strong>登记 CBL 资料源</strong><small>启动与手动刷新时按文件指纹扫描；本地绝对路径不会上传。</small></div><label>许可状态<input value={licenseStatus} onChange={(event) => setLicenseStatus(event.target.value)} placeholder="local-only / authorized"/></label><button disabled={busy} onClick={() => void addSource()}><FolderOpen size={14}/>添加目录</button></header><div className="reference-source-list">{sources.length === 0 ? <p>尚未登记资料源。</p> : sources.map((source) => <div key={source.id}><span><strong>{source.displayName}</strong><small>{source.rootPath}</small></span><em>{source.licenseStatus}</em><small>{source.lastScannedAt ? new Date(source.lastScannedAt).toLocaleString() : "尚未扫描"}</small><nav><button type="button" title="查看此资料源的棋谱" onClick={() => showSourceGames(source.id)}><FileText size={14}/>查看棋谱</button><button type="button" title="查看此资料源的布局分类统计" onClick={() => showSourceOpenings(source.id)}><BookOpen size={14}/>查看分类</button><button disabled={busy} title="扫描新增和修订" onClick={() => void scan(source.id)}><RefreshCw size={14}/>扫描</button></nav></div>)}</div><div className="reference-publish-settings"><label>离线包地址<input value={packageUrl} onChange={(event) => setPackageUrl(event.target.value)} placeholder="https://example.com/reference-library-v2.sqlite.zst"/></label><label>SHA-256<input value={packageSha256} onChange={(event) => setPackageSha256(event.target.value)} placeholder="64 位校验值"/></label><button disabled={busy} title="从同步服务获取最新版离线库信息" onClick={() => void loadOfflinePackageManifest()}><RefreshCw size={14}/>获取最新版</button><button disabled={busy} title="校验并原子替换本地参考库" onClick={() => void installOfflinePackage()}><Download size={14}/>安装离线包</button></div></div>}
       {tab === "batches" && <div className="reference-batch-body">
         <div className="reference-publish-settings"><label>同步服务地址<input value={serverUrl} onChange={(event) => setServerUrl(event.target.value)} placeholder="https://example.com"/></label><label>服务端来源 ID<input value={serverSourceId} onChange={(event) => setServerSourceId(event.target.value)} placeholder="可在下方登记后自动填写"/></label><label>公开来源说明<input value={publicLocator} onChange={(event) => setPublicLocator(event.target.value)} placeholder="公开网页或档案编号，不填本地路径"/></label><label>许可说明<input value={licenseNote} onChange={(event) => setLicenseNote(event.target.value)} placeholder="授权主体、范围或公版依据"/></label></div>
         <div className="reference-batch-list">{batches.length === 0 ? <p>尚无导入批次。</p> : batches.map((batch) => {

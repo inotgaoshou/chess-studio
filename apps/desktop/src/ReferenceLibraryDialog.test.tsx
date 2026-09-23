@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ReferenceLibraryDialog } from "./ReferenceLibraryDialog";
 import type { ChessPlatform, OpeningCategoryDto, ReferenceGameSummaryDto, ReferenceImportBatchDto, ReferenceSourceDto } from "./platform/types";
@@ -7,10 +7,11 @@ afterEach(cleanup);
 
 const series: OpeningCategoryDto = {
   code: "A", seriesCode: "A", name: "非中炮类", aliases: [], sortOrder: 0,
-  gameCount: 1, redWins: 1, draws: 0, blackWins: 0,
+  gameCount: 7, redWins: 3, draws: 2, blackWins: 2, firstYear: 1990, lastYear: 2026,
 };
 const child: OpeningCategoryDto = {
   ...series, code: "A01", parentCode: "A", name: "测试布局",
+  gameCount: 5, redWins: 2, draws: 1, blackWins: 2, firstYear: 2001, lastYear: 2024,
 };
 const source: ReferenceSourceDto = {
   id: "local-source", displayName: "授权库", rootPath: "/private/library",
@@ -82,7 +83,7 @@ function platform(games: ReferenceGameSummaryDto[] = [], openingChild: OpeningCa
     classifierVersion: 2, categoryCount: 13, aliasCount: 8, patternCount: 25,
     classifiedGames: 100, pendingGames: 20,
   }));
-  const browseReferenceOpenings = vi.fn(async (parentCode?: string) => parentCode === "A" ? [openingChild] : parentCode ? [] : [series]);
+  const browseReferenceOpenings = vi.fn<ChessPlatform["browseReferenceOpenings"]>(async (parentCode?: string) => parentCode === "A" ? [openingChild] : parentCode ? [] : [series]);
   const value = {
     kind: "desktop" as const,
     browseReferenceOpenings,
@@ -241,6 +242,148 @@ describe("ReferenceLibraryDialog", () => {
     ));
   });
 
+  it("opens sidebar, hot, and series opening categories in filtered game search", async () => {
+    const { value, listReferenceGames } = platform([game]);
+    const { container } = render(<ReferenceLibraryDialog platform={value} onClose={() => undefined}/>);
+    await screen.findByText("热门布局");
+
+    const sidebarChild = container.querySelector<HTMLButtonElement>(".reference-opening-body > aside .reference-opening-group .child");
+    expect(sidebarChild).toBeTruthy();
+    fireEvent.click(sidebarChild!);
+    await waitFor(() => expect(listReferenceGames).toHaveBeenLastCalledWith(
+      "A01", "", 100, 0, expect.objectContaining({ classificationStatus: "classified" }),
+    ));
+    expect(screen.getByText("布局：A01 · 测试布局")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /布局探索/ }));
+    const hotOpening = container.querySelector<HTMLButtonElement>(".reference-hot-openings button");
+    expect(hotOpening).toBeTruthy();
+    fireEvent.click(hotOpening!);
+    await waitFor(() => expect(listReferenceGames).toHaveBeenLastCalledWith(
+      "A01", "", 100, 0, expect.objectContaining({ classificationStatus: "classified" }),
+    ));
+
+    fireEvent.click(screen.getByRole("button", { name: /布局探索/ }));
+    const seriesCard = container.querySelector<HTMLButtonElement>(".reference-opening-series-cards button");
+    expect(seriesCard).toBeTruthy();
+    fireEvent.click(seriesCard!);
+    await waitFor(() => expect(listReferenceGames).toHaveBeenLastCalledWith(
+      "A", "", 100, 0, expect.objectContaining({ classificationStatus: "classified" }),
+    ));
+    expect(screen.getByText("布局：A · 非中炮类")).toBeTruthy();
+  });
+
+  it("opens source-scoped classification and preserves the source when clearing an opening", async () => {
+    const { value, browseReferenceOpenings, listReferenceGames } = platform([game]);
+    const { container } = render(<ReferenceLibraryDialog platform={value} onClose={() => undefined}/>);
+
+    fireEvent.click(screen.getByRole("button", { name: /资料源/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /查看分类/ }));
+    await waitFor(() => expect(browseReferenceOpenings).toHaveBeenCalledWith(
+      undefined, { sourceId: source.id, batchId: undefined },
+    ));
+    expect(screen.getByText(`资料源：${source.displayName}`)).toBeTruthy();
+    expect(screen.getAllByText("5 局 · 2001–2024").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("红 2 · 和 1 · 黑 2").length).toBeGreaterThan(0);
+
+    const sidebarChild = container.querySelector<HTMLButtonElement>(".reference-opening-body > aside .reference-opening-group .child");
+    expect(sidebarChild).toBeTruthy();
+    fireEvent.click(sidebarChild!);
+    await waitFor(() => expect(listReferenceGames).toHaveBeenLastCalledWith(
+      "A01", "", 100, 0,
+      expect.objectContaining({ sourceId: source.id, batchId: undefined, classificationStatus: "classified" }),
+    ));
+
+    fireEvent.click(screen.getByTitle("清除布局筛选"));
+    await waitFor(() => expect(listReferenceGames).toHaveBeenLastCalledWith(
+      undefined, "", 100, 0,
+      expect.objectContaining({ sourceId: source.id, batchId: undefined }),
+    ));
+    const lastFilters = listReferenceGames.mock.calls.at(-1)?.[4];
+    expect(lastFilters?.classificationStatus).toBeUndefined();
+    expect(screen.getByText(`资料源：${source.displayName}`)).toBeTruthy();
+  });
+
+  it("ignores an older source catalog response after the scope is cleared", async () => {
+    const globalSeries = { ...series, name: "全库系列" };
+    const globalChild = { ...child, name: "全库布局" };
+    const sourceSeries = { ...series, name: "来源系列" };
+    const sourceChild = { ...child, name: "来源布局" };
+    let resolveSourceChildren: ((items: OpeningCategoryDto[]) => void) | undefined;
+    const { value, browseReferenceOpenings } = platform();
+    browseReferenceOpenings.mockImplementation(async (parentCode, filters) => {
+      if (filters?.sourceId === source.id) {
+        if (!parentCode) return [sourceSeries];
+        return new Promise<OpeningCategoryDto[]>((resolve) => { resolveSourceChildren = resolve; });
+      }
+      return parentCode === "A" ? [globalChild] : parentCode ? [] : [globalSeries];
+    });
+    render(<ReferenceLibraryDialog platform={value} onClose={() => undefined}/>);
+    expect(await screen.findByText("全库布局")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /资料源/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /查看分类/ }));
+    await waitFor(() => expect(resolveSourceChildren).toBeTruthy());
+    fireEvent.click(screen.getByTitle("清除资料源筛选"));
+    expect(await screen.findByText("全库系列")).toBeTruthy();
+
+    await act(async () => { resolveSourceChildren?.([sourceChild]); });
+    expect(screen.queryByText("来源系列")).toBeNull();
+    expect(screen.queryByText("来源布局")).toBeNull();
+    expect(screen.getByText("全库布局")).toBeTruthy();
+  });
+
+  it("keeps source and opening filters while loading more category games", async () => {
+    const firstPage = Array.from({ length: 100 }, (_, index) => makeGame(index + 1));
+    const secondPage = [makeGame(101)];
+    const { value, listReferenceGames } = platform(firstPage);
+    listReferenceGames.mockImplementation(async (_openingCode, _query, _limit, offset) => offset === 0 ? firstPage : secondPage);
+    const { container } = render(<ReferenceLibraryDialog platform={value} onClose={() => undefined}/>);
+
+    fireEvent.click(screen.getByRole("button", { name: /资料源/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /查看分类/ }));
+    const sidebarChild = container.querySelector<HTMLButtonElement>(".reference-opening-body > aside .reference-opening-group .child");
+    fireEvent.click(sidebarChild!);
+    await screen.findByText("测试棋局 1");
+    fireEvent.click(screen.getByRole("button", { name: "查看更多" }));
+
+    expect(await screen.findByText("测试棋局 101")).toBeTruthy();
+    await waitFor(() => expect(listReferenceGames).toHaveBeenLastCalledWith(
+      "A01", "", 100, 100,
+      expect.objectContaining({ sourceId: source.id, batchId: undefined, classificationStatus: "classified" }),
+    ));
+  });
+
+  it("preserves batch scope when opening a category from an imported batch", async () => {
+    const { value, listReferenceGames } = platform([game]);
+    const { container } = render(<ReferenceLibraryDialog
+      platform={value}
+      launchContext={{ initialTab: "openings", sourceId: source.id, batchId: batch.id }}
+      onClose={() => undefined}
+    />);
+    await screen.findByText("热门布局");
+
+    const sidebarChild = container.querySelector<HTMLButtonElement>(".reference-opening-body > aside .reference-opening-group .child");
+    fireEvent.click(sidebarChild!);
+
+    await waitFor(() => expect(listReferenceGames).toHaveBeenLastCalledWith(
+      "A01", "", 100, 0,
+      expect.objectContaining({ sourceId: source.id, batchId: batch.id, classificationStatus: "classified" }),
+    ));
+    expect(screen.getByTitle("清除批次筛选")).toBeTruthy();
+  });
+
+  it("shows a category-specific empty state after opening an empty classification", async () => {
+    const { value } = platform([]);
+    const { container } = render(<ReferenceLibraryDialog platform={value} onClose={() => undefined}/>);
+    await screen.findByText("热门布局");
+
+    const sidebarChild = container.querySelector<HTMLButtonElement>(".reference-opening-body > aside .reference-opening-group .child");
+    fireEvent.click(sidebarChild!);
+
+    expect(await screen.findByText("该分类暂无关联棋谱。")).toBeTruthy();
+  });
+
   it("renders A-E child categories and publishes an approved authorized batch", async () => {
     const { value, publishReferenceBatch } = platform();
     render(<ReferenceLibraryDialog platform={value} onClose={() => undefined}/>);
@@ -257,9 +400,9 @@ describe("ReferenceLibraryDialog", () => {
     expect(await screen.findByText(/发布完成/)).toBeTruthy();
   });
 
-  it("passes the opening explorer filters through to the reference query", async () => {
+  it("preserves player, event, and year filters when opening a category", async () => {
     const { value, listReferenceGames } = platform();
-    render(<ReferenceLibraryDialog platform={value} onClose={() => undefined}/>);
+    const { container } = render(<ReferenceLibraryDialog platform={value} onClose={() => undefined}/>);
     fireEvent.click(screen.getByRole("button", { name: /布局探索/ }));
     await screen.findByText("测试布局");
 
@@ -269,11 +412,33 @@ describe("ReferenceLibraryDialog", () => {
     fireEvent.change(screen.getByLabelText("结束年份"), { target: { value: "2026" } });
     fireEvent.change(screen.getByLabelText("执方"), { target: { value: "red" } });
     fireEvent.click(screen.getByRole("button", { name: "大师实战" }));
+    const sidebarChild = container.querySelector<HTMLButtonElement>(".reference-opening-body > aside .reference-opening-group .child");
+    fireEvent.click(sidebarChild!);
 
     await waitFor(() => expect(listReferenceGames).toHaveBeenLastCalledWith(
-      "A", "", 100, 0,
-      { player: "王天一", event: "全国象棋甲级联赛", yearFrom: 2020, yearTo: 2026, side: "red", masterOnly: true },
+      "A01", "", 100, 0,
+      expect.objectContaining({
+        player: "王天一", event: "全国象棋甲级联赛", yearFrom: 2020, yearTo: 2026,
+        side: "red", masterOnly: true, classificationStatus: "classified",
+      }),
     ));
+  });
+
+  it("opens a game from the opening-page table with its category and preview selected", async () => {
+    const { value, getReferenceGameDocument, listReferenceGames } = platform([game]);
+    const { container } = render(<ReferenceLibraryDialog platform={value} onClose={() => undefined}/>);
+    await screen.findByText("热门布局");
+    await waitFor(() => expect(container.querySelector(".reference-game-table > button")).toBeTruthy());
+    const gameRow = container.querySelector<HTMLButtonElement>(".reference-game-table > button")!;
+
+    fireEvent.click(gameRow);
+
+    await waitFor(() => expect(listReferenceGames).toHaveBeenLastCalledWith(
+      "A", "", 100, 0, expect.objectContaining({ classificationStatus: "classified" }),
+    ));
+    await waitFor(() => expect(getReferenceGameDocument).toHaveBeenCalledWith(game.id));
+    expect(await screen.findByDisplayValue("本地只读参考文档")).toBeTruthy();
+    expect(screen.getByText("布局：A · 非中炮类")).toBeTruthy();
   });
 
   it("shows all reference games and can filter pending classifications", async () => {
