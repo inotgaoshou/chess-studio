@@ -13,7 +13,7 @@ const RECORD_SIZE: usize = 4096;
 const RECORD_HEADER_SIZE: usize = 2214;
 const MOVE_SIDE_OFFSET: usize = 2116;
 const STANDARD_STARTING_BOARD: &str = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR";
-pub const CBL_PARSER_VERSION: u32 = 3;
+pub const CBL_PARSER_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -268,9 +268,6 @@ fn parse_record(record: &[u8], source_index: u32) -> Result<CblProblem, String> 
         at: initial_note_end(&record[RECORD_HEADER_SIZE..])?,
     };
     let solution = parse_steps(&mut cursor, board)?;
-    if solution.is_empty() {
-        return Err("没有可验证的题解着法".into());
-    }
     let title = if title.is_empty() {
         format!("残局题 {}", source_index + 1)
     } else {
@@ -491,7 +488,10 @@ fn parse_steps(cursor: &mut Cursor<'_>, board: Board) -> Result<Vec<CblMove>, St
 
 fn parse_steps_lossy(cursor: &mut Cursor<'_>, board: Board) -> (Vec<CblMove>, Option<String>) {
     if cursor.remaining() < 4 {
-        return (Vec::new(), (cursor.remaining() != 0).then(|| "题解被截断".into()));
+        return (
+            Vec::new(),
+            (cursor.remaining() != 0).then(|| "题解被截断".into()),
+        );
     }
     let step = match cursor.take(4) {
         Ok(step) => step,
@@ -535,7 +535,11 @@ fn parse_steps_lossy(cursor: &mut Cursor<'_>, board: Board) -> (Vec<CblMove>, Op
     } else {
         (Vec::new(), None)
     };
-    let mut moves = vec![CblMove { iccs, comment, children }];
+    let mut moves = vec![CblMove {
+        iccs,
+        comment,
+        children,
+    }];
     if warning.is_none() && mark & 2 != 0 {
         let (siblings, sibling_warning) = parse_steps_lossy(cursor, board);
         moves.extend(siblings);
@@ -828,6 +832,22 @@ mod tests {
         let problem = parse_record(&record, 48).unwrap();
         assert_eq!(problem.starting_fen, "9/3kaN3/9/9/9/9/9/9/9/4K4 w - - 0 1");
         assert_eq!(problem.solution[0].iccs, "f8e6");
+    }
+
+    #[test]
+    fn preserves_a_valid_position_when_the_cbl_record_has_no_saved_solution() {
+        let mut record = vec![0u8; RECORD_SIZE];
+        record[..RECORD_MAGIC.len()].copy_from_slice(RECORD_MAGIC);
+        record[MOVE_SIDE_OFFSET] = 1;
+        record[2120 + 12] = 0x25;
+        record[2120 + 13] = 0x24;
+        record[2120 + 14] = 0x12;
+        record[2120 + 85] = 0x15;
+
+        let problem = parse_record(&record, 0).unwrap();
+
+        assert_eq!(problem.title, "残局题 1");
+        assert!(problem.solution.is_empty());
     }
 
     #[test]
