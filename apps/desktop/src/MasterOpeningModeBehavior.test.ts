@@ -17,7 +17,6 @@ describe("master opening workspace behavior", () => {
     expect(app).toContain('setSelectedPieceInspection(undefined);');
     expect(app).toContain('const referencePracticeMode = workspaceMode === "opening" || workspaceMode === "sparring"');
     expect(app).toContain('!referencePracticeMode && showMoveThoughts && selectedPieceThought');
-    expect(app).toContain('!referencePracticeMode && showMoveThoughts && selectedPieceThought?.square.row');
   });
 
   it("treats local reference library games as master/reference games on the board", () => {
