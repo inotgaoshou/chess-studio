@@ -73,6 +73,8 @@ jobs:
 
       - name: Prepare verified Windows engine resources
         shell: msys2 {0}
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           ./scripts/prepare-pikafish-resource.sh windows-x64
           ./scripts/verify-embedded-engine-resources.sh windows-x64
