@@ -664,7 +664,11 @@ fn parse_move_token(board: &Board, token: &str) -> Option<Move> {
                 .is_ok_and(|notation| normalize_chinese_move(&notation) == normalized)
         })
         .collect();
-    (matches.len() == 1).then_some(matches[0])
+    if matches.len() == 1 {
+        matches.first().copied()
+    } else {
+        None
+    }
 }
 
 fn normalize_chinese_move(value: &str) -> String {
@@ -689,6 +693,15 @@ fn normalize_chinese_move(value: &str) -> String {
             '七' => Some('7'),
             '八' => Some('8'),
             '九' => Some('9'),
+            '１' => Some('1'),
+            '２' => Some('2'),
+            '３' => Some('3'),
+            '４' => Some('4'),
+            '５' => Some('5'),
+            '６' => Some('6'),
+            '７' => Some('7'),
+            '８' => Some('8'),
+            '９' => Some('9'),
             value if value.is_whitespace() => None,
             value => Some(value),
         })

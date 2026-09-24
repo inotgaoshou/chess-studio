@@ -4,7 +4,7 @@ use std::io::{Cursor as IoCursor, Read, Seek, SeekFrom};
 use xiangqi_core::{Board, Move};
 use xiangqi_manual::ManualTree;
 
-use crate::{ManualDocument, ManualMetadata};
+use crate::{ManualDocument, ManualMetadata, parse_move_token};
 
 const LIBRARY_MAGIC: &[u8; 16] = b"CCBridgeLibrary\0";
 const RECORD_MAGIC: &[u8; 16] = b"CCBridge Record\0";
@@ -13,7 +13,43 @@ const RECORD_SIZE: usize = 4096;
 const RECORD_HEADER_SIZE: usize = 2214;
 const MOVE_SIDE_OFFSET: usize = 2116;
 const STANDARD_STARTING_BOARD: &str = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR";
-pub const CBL_PARSER_VERSION: u32 = 4;
+pub const CBL_PARSER_VERSION: u32 = 5;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CblSolutionSource {
+    CblTree,
+    NoteText,
+    None,
+}
+
+impl CblSolutionSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::CblTree => "cbl_tree",
+            Self::NoteText => "note_text",
+            Self::None => "none",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CblValidationStatus {
+    Ready,
+    MissingSolution,
+    InvalidPosition,
+}
+
+impl CblValidationStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ready => "ready",
+            Self::MissingSolution => "missing_solution",
+            Self::InvalidPosition => "invalid_position",
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -32,6 +68,8 @@ pub struct CblProblem {
     pub starting_fen: String,
     pub note: String,
     pub solution: Vec<CblMove>,
+    pub solution_source: CblSolutionSource,
+    pub validation_status: CblValidationStatus,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,6 +77,7 @@ pub struct CblProblem {
 pub struct CblLibrary {
     pub title: String,
     pub declared_count: u32,
+    pub skipped_records: u32,
     pub problems: Vec<CblProblem>,
     pub warnings: Vec<String>,
 }
@@ -90,6 +129,7 @@ pub fn import_cbl_library(bytes: &[u8]) -> Result<CblLibrary, String> {
     let mut result = CblLibrary {
         title,
         declared_count,
+        skipped_records: 0,
         problems: Vec::new(),
         warnings: Vec::new(),
     };
@@ -98,10 +138,30 @@ pub fn import_cbl_library(bytes: &[u8]) -> Result<CblLibrary, String> {
             continue;
         }
         match parse_record(record, index as u32) {
-            Ok(problem) => result.problems.push(problem),
-            Err(error) => result
-                .warnings
-                .push(format!("第 {} 条记录已跳过：{error}", index + 1)),
+            Ok(mut problem) => {
+                if problem.solution.is_empty() && !problem.note.trim().is_empty() {
+                    let board = Board::from_fen(&problem.starting_fen)
+                        .expect("parse_record already validated the starting FEN");
+                    match recover_solution_from_note(&problem.note, board) {
+                        Ok(solution) => {
+                            problem.solution = solution;
+                            problem.solution_source = CblSolutionSource::NoteText;
+                            problem.validation_status = CblValidationStatus::Ready;
+                        }
+                        Err(error) => result.warnings.push(format!(
+                            "第 {} 条记录未能从题注恢复题解：{error}",
+                            index + 1
+                        )),
+                    }
+                }
+                result.problems.push(problem);
+            }
+            Err(error) => {
+                result.skipped_records = result.skipped_records.saturating_add(1);
+                result
+                    .warnings
+                    .push(format!("第 {} 条记录已跳过：{error}", index + 1));
+            }
         }
     }
     Ok(result)
@@ -273,6 +333,16 @@ fn parse_record(record: &[u8], source_index: u32) -> Result<CblProblem, String> 
     } else {
         title
     };
+    let solution_source = if solution.is_empty() {
+        CblSolutionSource::None
+    } else {
+        CblSolutionSource::CblTree
+    };
+    let validation_status = if solution.is_empty() {
+        CblValidationStatus::MissingSolution
+    } else {
+        CblValidationStatus::Ready
+    };
     Ok(CblProblem {
         source_index,
         title: title.clone(),
@@ -284,7 +354,164 @@ fn parse_record(record: &[u8], source_index: u32) -> Result<CblProblem, String> 
         starting_fen: fen,
         note,
         solution,
+        solution_source,
+        validation_status,
     })
+}
+
+fn recover_solution_from_note(note: &str, starting_board: Board) -> Result<Vec<CblMove>, String> {
+    let sections = numbered_note_sections(note);
+    if sections.is_empty() {
+        return Err("题注中没有带序号的中文着法".into());
+    }
+    let mut variations = Vec::<Vec<(String, String)>>::new();
+    let mut current = Vec::new();
+    let mut previous_number = 0u32;
+    for (number, text) in sections {
+        if !current.is_empty() && number <= previous_number {
+            variations.push(std::mem::take(&mut current));
+        }
+        let tokens = chinese_move_candidates(text);
+        if tokens.is_empty() {
+            return Err(format!("第 {number} 回合没有可识别着法"));
+        }
+        current.extend(tokens.into_iter().map(|token| (token, String::new())));
+        previous_number = number;
+    }
+    if !current.is_empty() {
+        variations.push(current);
+    }
+
+    let mut roots = Vec::new();
+    for variation in variations {
+        let mut board = starting_board.clone();
+        let mut moves = Vec::with_capacity(variation.len());
+        for (token, comment) in variation {
+            let mv = parse_move_token(&board, &token)
+                .ok_or_else(|| format!("着法“{token}”非法或无法唯一匹配"))?;
+            board = board
+                .apply_move(mv)
+                .map_err(|_| format!("着法“{token}”不符合当前局面"))?;
+            moves.push((mv.to_iccs(), comment));
+        }
+        if let Some(root) = linear_solution_tree(moves) {
+            roots.push(root);
+        }
+    }
+    if roots.is_empty() {
+        Err("题注中没有可恢复的完整题解".into())
+    } else {
+        Ok(roots)
+    }
+}
+
+fn numbered_note_sections(note: &str) -> Vec<(u32, &str)> {
+    let mut markers = Vec::<(usize, usize, u32)>::new();
+    let indexed = note.char_indices().collect::<Vec<_>>();
+    let mut index = 0usize;
+    while index < indexed.len() {
+        let (start, first) = indexed[index];
+        let Some(mut number) = decimal_digit(first) else {
+            index += 1;
+            continue;
+        };
+        let mut cursor = index + 1;
+        while cursor < indexed.len() {
+            let (_, character) = indexed[cursor];
+            let Some(digit) = decimal_digit(character) else {
+                break;
+            };
+            number = number.saturating_mul(10).saturating_add(digit);
+            cursor += 1;
+        }
+        while cursor < indexed.len() && indexed[cursor].1.is_whitespace() {
+            cursor += 1;
+        }
+        if cursor < indexed.len() && matches!(indexed[cursor].1, '.' | '．' | '、') {
+            let end = indexed
+                .get(cursor + 1)
+                .map_or(note.len(), |(offset, _)| *offset);
+            markers.push((start, end, number));
+            index = cursor + 1;
+        } else {
+            index += 1;
+        }
+    }
+    markers
+        .iter()
+        .enumerate()
+        .map(|(index, (_, start, number))| {
+            let end = markers
+                .get(index + 1)
+                .map_or(note.len(), |(offset, _, _)| *offset);
+            (*number, note[*start..end].trim())
+        })
+        .collect()
+}
+
+fn decimal_digit(character: char) -> Option<u32> {
+    match character {
+        '０'..='９' => Some(character as u32 - '０' as u32),
+        value => value.to_digit(10),
+    }
+}
+
+fn chinese_move_candidates(text: &str) -> Vec<String> {
+    let text = text.split(['（', '(', '【', '[']).next().unwrap_or(text);
+    let mut runs = Vec::<String>::new();
+    let mut current = String::new();
+    for character in text.chars() {
+        if is_move_character(character) {
+            current.push(character);
+        } else if !current.is_empty() {
+            runs.push(std::mem::take(&mut current));
+        }
+    }
+    if !current.is_empty() {
+        runs.push(current);
+    }
+    runs.into_iter()
+        .flat_map(|run| split_move_run(&run))
+        .collect()
+}
+
+fn is_move_character(character: char) -> bool {
+    matches!(
+        character,
+        '车' | '車' | '俥'
+            | '马' | '馬' | '傌'
+            | '炮' | '砲'
+            | '兵' | '卒'
+            | '帅' | '帥' | '将' | '將'
+            | '仕' | '士' | '相' | '象'
+            | '前' | '中' | '后' | '後'
+            | '进' | '進' | '退' | '平'
+            | '一' | '二' | '三' | '四' | '五' | '六' | '七' | '八' | '九'
+            | '1'..='9' | '１'..='９'
+    )
+}
+
+fn split_move_run(run: &str) -> Vec<String> {
+    let characters = run.chars().collect::<Vec<_>>();
+    if characters.len() < 4 || characters.len() % 4 != 0 {
+        return Vec::new();
+    }
+    characters
+        .chunks_exact(4)
+        .map(|chunk| chunk.iter().collect())
+        .collect()
+}
+
+fn linear_solution_tree(moves: Vec<(String, String)>) -> Option<CblMove> {
+    let mut child = None;
+    for (iccs, comment) in moves.into_iter().rev() {
+        child = Some(CblMove {
+            iccs,
+            comment,
+            children: child.into_iter().collect(),
+        });
+    }
+    child
 }
 
 fn parse_game_record(record: &[u8], source_index: u32) -> Result<CblGame, String> {
@@ -848,6 +1075,77 @@ mod tests {
 
         assert_eq!(problem.title, "残局题 1");
         assert!(problem.solution.is_empty());
+        assert_eq!(problem.solution_source, CblSolutionSource::None);
+        assert_eq!(
+            problem.validation_status,
+            CblValidationStatus::MissingSolution
+        );
+    }
+
+    #[test]
+    fn recovers_full_width_numbered_traditional_chinese_moves_from_note() {
+        let board = Board::from_fen(xiangqi_core::STARTING_FEN).unwrap();
+        let solution = recover_solution_from_note(
+            "参考答案\n１．砲二平五 馬８進７\n２．馬二進三 車９平８",
+            board,
+        )
+        .unwrap();
+
+        let first = &solution[0];
+        assert_eq!(first.iccs, "h2e2");
+        assert_eq!(first.children[0].iccs, "h9g7");
+        assert_eq!(first.children[0].children[0].iccs, "h0g2");
+        assert_eq!(first.children[0].children[0].children[0].iccs, "i9h9");
+    }
+
+    #[test]
+    fn recovers_multiple_numbered_variations_as_solution_branches() {
+        let board = Board::from_fen(xiangqi_core::STARTING_FEN).unwrap();
+        let solution = recover_solution_from_note(
+            "1. 炮二平五 马8进7\n2. 马二进三\n1．兵七进一 卒7进1",
+            board,
+        )
+        .unwrap();
+
+        assert_eq!(solution.len(), 2);
+        assert_eq!(solution[0].iccs, "h2e2");
+        assert_eq!(solution[1].iccs, "c3c4");
+    }
+
+    #[test]
+    fn rejects_illegal_or_unmatched_note_solution_without_guessing() {
+        let board = Board::from_fen(xiangqi_core::STARTING_FEN).unwrap();
+        let error = recover_solution_from_note("1．车一平五", board).unwrap_err();
+
+        assert!(error.contains("非法或无法唯一匹配"));
+    }
+
+    #[test]
+    fn locally_supplied_note_solutions_are_recovered_and_legal() {
+        let Ok(path) = std::env::var("CBL_NOTE_SAMPLE") else {
+            return;
+        };
+        let library = import_cbl_library(&std::fs::read(path).unwrap()).unwrap();
+        let recovered = library
+            .problems
+            .iter()
+            .filter(|problem| problem.solution_source == CblSolutionSource::NoteText)
+            .count();
+        assert!(recovered >= 700, "只恢复了 {recovered} 道题");
+        for problem in library
+            .problems
+            .iter()
+            .filter(|problem| problem.solution_source == CblSolutionSource::NoteText)
+        {
+            let mut board = Board::from_fen(&problem.starting_fen).unwrap();
+            let mut branch = problem.solution.first();
+            while let Some(item) = branch {
+                board = board
+                    .apply_move(Move::from_iccs(&item.iccs).unwrap())
+                    .unwrap();
+                branch = item.children.first();
+            }
+        }
     }
 
     #[test]
