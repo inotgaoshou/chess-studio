@@ -5284,5 +5284,52 @@ html.phone-webview .answer-preview-controls button {
 .manual-share-body textarea { width: 100%; box-sizing: border-box; height: 36dvh; resize: none; padding: 12px; font: inherit; }
 .manual-share-warning { color: #926226; }
 .manual-share-toast { padding: 10px; background: #e7f4e9; color: #275c3e; border-radius: 8px; }
+
+html.phone-webview .teaching-problem-heading {
+  height:32px;
+  min-height:32px;
+  max-height:32px;
+  grid-template-columns:32px minmax(0,1fr) 0;
+  column-gap:4px;
+}
+
+html.phone-webview .teaching-problem-heading .problem-heading-right {
+  min-width:0;
+}
+
+html.phone-webview .teaching-problem-heading .problem-heading-title {
+  min-width:0;
+  align-items:center;
+  justify-content:flex-start;
+  gap:5px;
+  white-space:nowrap;
+}
+
+html.phone-webview .teaching-problem-heading .problem-heading-title small {
+  flex:0 0 auto;
+}
+
+html.phone-webview .teaching-problem-heading .problem-heading-title strong {
+  display:block;
+  min-width:0;
+  flex:1 1 auto;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  -webkit-line-clamp:unset;
+}
+
+html.phone-webview .teaching-problem-heading .student-assignment-back {
+  width:28px;
+  min-width:28px;
+  height:28px;
+  min-height:28px;
+  padding:0;
+  flex:0 0 28px;
+}
+
+html.phone-webview .teaching-problem-heading .student-assignment-back span {
+  display:none;
+}
 .manual-share-dialog footer { padding-top: 12px; flex-wrap: wrap; }
 .manual-share-dialog footer button { flex: 1; white-space: nowrap; }
