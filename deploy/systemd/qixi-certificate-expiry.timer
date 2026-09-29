@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily Qixi TLS certificate expiry check
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=30m
+
+[Install]
+WantedBy=timers.target

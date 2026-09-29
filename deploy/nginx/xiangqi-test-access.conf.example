@@ -1,0 +1,7 @@
+# Install as /etc/nginx/conf.d/xiangqi-test-access.conf with mode 0644.
+# Replace the example address with the fixed public IP(s) allowed to access the
+# test API. Keep localhost so health checks run on the CVM still work.
+allow 127.0.0.1;
+allow ::1;
+# allow 203.0.113.10;
+deny all;

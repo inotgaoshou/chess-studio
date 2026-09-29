@@ -1,0 +1,6 @@
+[Unit]
+Description=Check Qixi TLS certificate expiry
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/check-qixi-certificate-expiry

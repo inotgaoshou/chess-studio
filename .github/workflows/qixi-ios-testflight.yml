@@ -11,6 +11,10 @@ on:
         description: "App Store Connect build number"
         required: true
         default: "10008"
+      teaching_api_base:
+        description: "HTTPS API base compiled into the mobile app"
+        required: true
+        default: "https://api.qixiapp.cn"
 
 concurrency:
   group: qixi-ios-testflight-${{ github.event.inputs.marketing_version }}-${{ github.event.inputs.build_number }}
@@ -67,6 +71,8 @@ jobs:
           }
 
       - name: Build web assets and sync iOS
+        env:
+          VITE_TEACHING_API_BASE: ${{ github.event.inputs.teaching_api_base }}
         run: |
           pnpm --dir apps/endgame-training mobile:build
           pnpm --dir apps/endgame-training exec cap sync ios

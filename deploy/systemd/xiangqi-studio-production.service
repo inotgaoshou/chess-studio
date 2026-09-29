@@ -1,0 +1,32 @@
+[Unit]
+Description=Xiangqi Studio production API
+After=network-online.target mysqld.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=deploy
+Group=deploy
+WorkingDirectory=/opt/xiangqi-studio/current
+EnvironmentFile=/etc/xiangqi-studio/production.env
+ExecStart=/opt/xiangqi-studio/current/xiangqi-server
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+StandardOutput=append:/var/log/xiangqi-studio/production.log
+StandardError=append:/var/log/xiangqi-studio/production.log
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target
