@@ -2,7 +2,6 @@
 set -euo pipefail
 
 server_ip="${QIXI_SERVER_IP:?Set QIXI_SERVER_IP to the CVM public IP}"
-test_status="${EXPECT_TEST_STATUS:-403}"
 hosts=(qixiapp.cn www.qixiapp.cn admin.qixiapp.cn api.qixiapp.cn api-test.qixiapp.cn)
 
 require_command() {
@@ -34,11 +33,8 @@ www_headers="$(curl --silent --show-error --head --resolve "www.qixiapp.cn:443:$
 grep -Eq '^HTTP/[0-9.]+ 301' <<<"$www_headers"
 grep -Fq 'location: https://qixiapp.cn/' <<<"$(tr '[:upper:]' '[:lower:]' <<<"$www_headers")"
 curl --fail --silent --show-error --resolve "admin.qixiapp.cn:443:$server_ip" "https://admin.qixiapp.cn/health" >/dev/null
-curl --fail --silent --show-error --resolve "api.qixiapp.cn:443:$server_ip" "https://api.qixiapp.cn/health" | grep -Fq '"status":"ok"'
-
-actual_test_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --resolve "api-test.qixiapp.cn:443:$server_ip" "https://api-test.qixiapp.cn/health")"
-[[ "$actual_test_status" == "$test_status" ]] || {
-  echo "api-test expected HTTP $test_status, got $actual_test_status" >&2
-  exit 1
-}
-echo "OK api-test access restriction returned HTTP $actual_test_status"
+for host in api.qixiapp.cn api-test.qixiapp.cn; do
+  curl --fail --silent --show-error --resolve "$host:443:$server_ip" "https://$host/health/live" | grep -Fq '"status":"live"'
+  curl --fail --silent --show-error --resolve "$host:443:$server_ip" "https://$host/health/ready" | grep -Fq '"status":"ready"'
+done
+echo "OK production and test APIs are live and ready"
