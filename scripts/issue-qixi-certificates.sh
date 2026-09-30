@@ -34,6 +34,8 @@ install_certificate() {
 install_certificate qixiapp.cn
 "$acme" --issue --server letsencrypt --dns dns_tencent -d admin.qixiapp.cn
 install_certificate admin.qixiapp.cn
+"$acme" --issue --server letsencrypt --dns dns_tencent -d admin-test.qixiapp.cn
+install_certificate admin-test.qixiapp.cn
 "$acme" --issue --server letsencrypt --dns dns_tencent -d api.qixiapp.cn
 install_certificate api.qixiapp.cn
 "$acme" --issue --server letsencrypt --dns dns_tencent -d api-test.qixiapp.cn

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Run as root on the CVM after /etc/xiangqi-acme/tencent.env is installed.
-# It installs the four certificates and Nginx gateway without modifying the
+# It installs the five certificates and Nginx gateway without modifying the
 # legacy 127.0.0.1:8090 service.
 [[ $EUID -eq 0 ]] || { echo "Run as root." >&2; exit 1; }
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -23,6 +23,7 @@ fi
 install -d -m 0700 \
   /etc/nginx/certs/qixiapp.cn \
   /etc/nginx/certs/admin.qixiapp.cn \
+  /etc/nginx/certs/admin-test.qixiapp.cn \
   /etc/nginx/certs/api.qixiapp.cn \
   /etc/nginx/certs/api-test.qixiapp.cn
 install -m 0750 "$root/scripts/issue-qixi-certificates.sh" /usr/local/sbin/issue-qixi-certificates
