@@ -14,6 +14,10 @@ source "$credentials"
 : "${Tencent_Secret_Id:?Tencent_Secret_Id is required}"
 : "${Tencent_Secret_Key:?Tencent_Secret_Key is required}"
 : "${ACME_CONTACT_EMAIL:?ACME_CONTACT_EMAIL is required}"
+# acme.sh's dns_tencent provider uses this spelling. Keep the deployment file
+# names stable and translate them only for the child acme.sh process.
+export Tencent_SecretId="$Tencent_Secret_Id"
+export Tencent_SecretKey="$Tencent_Secret_Key"
 
 install_certificate() {
   local primary="$1"
