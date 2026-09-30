@@ -86,9 +86,11 @@ public class TrainingStorePlugin extends Plugin {
 
     @PluginMethod
     public void openManualGame(PluginCall call) {
-        JSObject result = new JSObject();
-        result.put("item", database.openManualGame(call.getString("id")));
-        call.resolve(result);
+        try {
+            JSObject result = new JSObject();
+            result.put("item", database.openManualGame(call.getString("id")));
+            call.resolve(result);
+        } catch (Exception error) { call.reject("无法打开本地棋谱", error); }
     }
 
     @PluginMethod
@@ -102,6 +104,9 @@ public class TrainingStorePlugin extends Plugin {
         try { database.moveManualGame(call.getString("id"), normalizePath(call.getString("folder"))); call.resolve(); }
         catch (Exception error) { call.reject("无法移动本地棋谱", error); }
     }
+
+    @PluginMethod
+    public void manualAnalyses(PluginCall call) { resolveJson(call, database.manualAnalyses()); }
 
     @PluginMethod
     public void saveManualAnalysis(PluginCall call) {
@@ -247,8 +252,8 @@ public class TrainingStorePlugin extends Plugin {
                 String like = "%" + queryText + "%";
                 args.add(like); args.add(like); args.add(like);
             }
-            Cursor cursor = getReadableDatabase().query("manual_games", new String[] { "game_json" }, where.length() > 0 ? where.toString() : null, args.toArray(new String[0]), null, null, "updated_at DESC");
-            while (cursor.moveToNext()) { try { result.put(new JSONObject(cursor.getString(0))); } catch (Exception ignored) {} }
+            Cursor cursor = getReadableDatabase().query("manual_games", new String[] { "game_json", "folder_path" }, where.length() > 0 ? where.toString() : null, args.toArray(new String[0]), null, null, "updated_at DESC");
+            while (cursor.moveToNext()) { try { result.put(manualGamePayload(cursor.getString(0), cursor.getString(1))); } catch (Exception ignored) {} }
             cursor.close();
             return result;
         }
@@ -271,12 +276,10 @@ public class TrainingStorePlugin extends Plugin {
             db.insertWithOnConflict("manual_games", null, values, SQLiteDatabase.CONFLICT_REPLACE);
         }
 
-        String openManualGame(String id) {
-            Cursor cursor = getReadableDatabase().query("manual_games", new String[] { "game_json" }, "id=?", new String[] { id }, null, null, null, "1");
-            String result = "";
-            if (cursor.moveToNext()) result = cursor.getString(0);
-            cursor.close();
-            return result;
+        String openManualGame(String id) throws Exception {
+            try (Cursor cursor = getReadableDatabase().query("manual_games", new String[] { "game_json", "folder_path" }, "id=?", new String[] { id }, null, null, null, "1")) {
+                return cursor.moveToNext() ? manualGamePayload(cursor.getString(0), cursor.getString(1)).toString() : "";
+            }
         }
 
         void deleteManualGame(String id) {
@@ -293,6 +296,30 @@ public class TrainingStorePlugin extends Plugin {
             getWritableDatabase().update("manual_games", values, "id=?", new String[] { id });
         }
 
+        JSONArray manualAnalyses() {
+            JSONArray result = new JSONArray();
+            Cursor cursor = getReadableDatabase().query("manual_analysis", null, null, null, null, null, "updated_at DESC");
+            while (cursor.moveToNext()) {
+                JSONObject row = new JSONObject();
+                try {
+                    row.put("gameId", cursor.getString(cursor.getColumnIndexOrThrow("game_id")));
+                    row.put("nodeId", cursor.getString(cursor.getColumnIndexOrThrow("node_id")));
+                    row.put("fen", cursor.getString(cursor.getColumnIndexOrThrow("fen")));
+                    int scoreColumn = cursor.getColumnIndexOrThrow("score_cp");
+                    int mateColumn = cursor.getColumnIndexOrThrow("mate");
+                    if (!cursor.isNull(scoreColumn)) row.put("scoreCp", cursor.getInt(scoreColumn));
+                    if (!cursor.isNull(mateColumn)) row.put("mate", cursor.getInt(mateColumn));
+                    row.put("depth", cursor.getInt(cursor.getColumnIndexOrThrow("depth")));
+                    row.put("bestMove", cursor.getString(cursor.getColumnIndexOrThrow("best_move")));
+                    row.put("pv", new JSONArray(cursor.getString(cursor.getColumnIndexOrThrow("pv_json"))));
+                    row.put("updatedAt", cursor.getString(cursor.getColumnIndexOrThrow("updated_at")));
+                    result.put(row);
+                } catch (Exception ignored) {}
+            }
+            cursor.close();
+            return result;
+        }
+
         void saveManualAnalysis(JSONObject summary) throws Exception {
             ContentValues values = new ContentValues();
             values.put("game_id", summary.getString("gameId"));
@@ -305,6 +332,13 @@ public class TrainingStorePlugin extends Plugin {
             values.put("pv_json", summary.optJSONArray("pv") != null ? summary.optJSONArray("pv").toString() : "[]");
             values.put("updated_at", summary.optString("updatedAt", nowIso()));
             getWritableDatabase().insertWithOnConflict("manual_analysis", null, values, SQLiteDatabase.CONFLICT_REPLACE);
+        }
+
+        private JSONObject manualGamePayload(String raw, String folder) throws Exception {
+            JSONObject payload = new JSONObject(raw);
+            if (folder == null || folder.isEmpty()) payload.remove("folderPath");
+            else payload.put("folderPath", folder);
+            return payload;
         }
 
         private void createFolderPath(SQLiteDatabase db, String path) {

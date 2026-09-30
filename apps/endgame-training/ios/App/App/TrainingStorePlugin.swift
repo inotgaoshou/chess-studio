@@ -25,6 +25,7 @@ final class TrainingStorePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "openManualGame", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "deleteManualGame", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "moveManualGame", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "manualAnalyses", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "saveManualAnalysis", returnType: CAPPluginReturnPromise)
     ]
 
@@ -133,6 +134,10 @@ final class TrainingStorePlugin: CAPPlugin, CAPBridgedPlugin {
             try self.store.moveManualGame(id: try Self.requiredString(call, key: "id"), folder: Self.normalizePath(call.getString("folder")))
             return [:]
         }
+    }
+
+    @objc func manualAnalyses(_ call: CAPPluginCall) {
+        respond(call, failure: "无法读取录谱分析") { ["items": try self.store.manualAnalyses()] }
     }
 
     @objc func saveManualAnalysis(_ call: CAPPluginCall) {
@@ -310,7 +315,7 @@ private final class TrainingDatabase {
 
     func manualGames(folder: String, queryText: String) throws -> String {
         try queue.sync {
-            var sql = "SELECT game_json FROM manual_games"
+            var sql = "SELECT game_json,folder_path FROM manual_games"
             var clauses = [String]()
             var values: [Any] = []
             if !folder.isEmpty {
@@ -324,7 +329,9 @@ private final class TrainingDatabase {
             }
             if !clauses.isEmpty { sql += " WHERE " + clauses.joined(separator: " AND ") }
             sql += " ORDER BY updated_at DESC"
-            return try json(try query(sql, values) { statement in try jsonValue(text(statement, 0)) as? [String: Any] ?? [:] })
+            return try json(try query(sql, values) { statement in
+                try manualGamePayload(text(statement, 0), folder: text(statement, 1))
+            })
         }
     }
 
@@ -339,7 +346,9 @@ private final class TrainingDatabase {
 
     func openManualGame(_ id: String) throws -> String {
         try queue.sync {
-            try query("SELECT game_json FROM manual_games WHERE id=? LIMIT 1", [id]) { statement in ["item": text(statement, 0)] }.first?["item"] as? String ?? ""
+            try query("SELECT game_json,folder_path FROM manual_games WHERE id=? LIMIT 1", [id]) { statement in
+                ["item": try json(manualGamePayload(text(statement, 0), folder: text(statement, 1)))]
+            }.first?["item"] as? String ?? ""
         }
     }
 
@@ -359,12 +368,39 @@ private final class TrainingDatabase {
         }
     }
 
+    func manualAnalyses() throws -> String {
+        try queue.sync {
+            let rows = try query("SELECT game_id,node_id,fen,score_cp,mate,depth,best_move,pv_json,updated_at FROM manual_analysis ORDER BY updated_at DESC") { statement in
+                var row: [String: Any] = [
+                    "gameId": self.text(statement, 0),
+                    "nodeId": self.text(statement, 1),
+                    "fen": self.text(statement, 2),
+                    "depth": self.integer(statement, 5),
+                    "bestMove": self.text(statement, 6),
+                    "pv": try self.jsonValue(self.text(statement, 7)),
+                    "updatedAt": self.text(statement, 8),
+                ]
+                if sqlite3_column_type(statement, 3) != SQLITE_NULL { row["scoreCp"] = self.integer(statement, 3) }
+                if sqlite3_column_type(statement, 4) != SQLITE_NULL { row["mate"] = self.integer(statement, 4) }
+                return row
+            }
+            return try json(rows)
+        }
+    }
+
     func saveManualAnalysis(_ summary: [String: Any]) throws {
         guard let pv = summary["pv"] else { throw TrainingStoreError.invalidInput("pv") }
         let pvJson = try json(pv)
         try queue.sync {
             try execute("INSERT INTO manual_analysis (game_id,node_id,fen,score_cp,mate,depth,best_move,pv_json,updated_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(game_id,node_id) DO UPDATE SET fen=excluded.fen,score_cp=excluded.score_cp,mate=excluded.mate,depth=excluded.depth,best_move=excluded.best_move,pv_json=excluded.pv_json,updated_at=excluded.updated_at", [try value(summary, "gameId"), try value(summary, "nodeId"), try value(summary, "fen"), (summary["scoreCp"] as? NSNumber) ?? NSNumber(value: 0), (summary["mate"] as? NSNumber) ?? NSNumber(value: 0), (summary["depth"] as? NSNumber) ?? NSNumber(value: 0), (summary["bestMove"] as? String) ?? "", pvJson, (summary["updatedAt"] as? String) ?? isoNow()])
         }
+    }
+
+    private func manualGamePayload(_ raw: String, folder: String) throws -> [String: Any] {
+        guard var payload = try jsonValue(raw) as? [String: Any] else { throw TrainingStoreError.invalidInput("game") }
+        if folder.isEmpty { payload.removeValue(forKey: "folderPath") }
+        else { payload["folderPath"] = folder }
+        return payload
     }
 
     private func open() throws {

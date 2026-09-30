@@ -17,6 +17,7 @@
 		50B271D11FEDC1A000F3C39B /* public in Resources */ = {isa = PBXBuildFile; fileRef = 50B271D01FEDC1A000F3C39B /* public */; };
 		91F3B3C30000000100000001 /* MainViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91F3B3C30000000100000002 /* MainViewController.swift */; };
 		91F3B3C30000000100000003 /* TrainingStorePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91F3B3C30000000100000004 /* TrainingStorePlugin.swift */; };
+		91F3B3C3000000010000001A /* SecureSessionPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91F3B3C3000000010000001B /* SecureSessionPlugin.swift */; };
 		91F3B3C30000000100000007 /* ScreenOrientationPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91F3B3C30000000100000008 /* ScreenOrientationPlugin.swift */; };
 		91F3B3C30000000100000009 /* CloudBookPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91F3B3C30000000100000010 /* CloudBookPlugin.swift */; };
 		91F3B3C30000000100000011 /* PikafishPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91F3B3C30000000100000012 /* PikafishPlugin.swift */; };
@@ -36,6 +37,7 @@
 		50B271D01FEDC1A000F3C39B /* public */ = {isa = PBXFileReference; lastKnownFileType = folder; path = public; sourceTree = "<group>"; };
 		91F3B3C30000000100000002 /* MainViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainViewController.swift; sourceTree = "<group>"; };
 		91F3B3C30000000100000004 /* TrainingStorePlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrainingStorePlugin.swift; sourceTree = "<group>"; };
+		91F3B3C3000000010000001B /* SecureSessionPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecureSessionPlugin.swift; sourceTree = "<group>"; };
 		91F3B3C30000000100000008 /* ScreenOrientationPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenOrientationPlugin.swift; sourceTree = "<group>"; };
 		91F3B3C30000000100000010 /* CloudBookPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudBookPlugin.swift; sourceTree = "<group>"; };
 		91F3B3C30000000100000012 /* PikafishPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PikafishPlugin.swift; sourceTree = "<group>"; };
@@ -84,6 +86,7 @@
 				504EC3071FED79650016851F /* AppDelegate.swift */,
 				91F3B3C30000000100000002 /* MainViewController.swift */,
 				91F3B3C30000000100000004 /* TrainingStorePlugin.swift */,
+				91F3B3C3000000010000001B /* SecureSessionPlugin.swift */,
 				91F3B3C30000000100000008 /* ScreenOrientationPlugin.swift */,
 				91F3B3C30000000100000010 /* CloudBookPlugin.swift */,
 				91F3B3C30000000100000012 /* PikafishPlugin.swift */,
@@ -229,6 +232,7 @@
 				504EC3081FED79650016851F /* AppDelegate.swift in Sources */,
 				91F3B3C30000000100000001 /* MainViewController.swift in Sources */,
 				91F3B3C30000000100000003 /* TrainingStorePlugin.swift in Sources */,
+				91F3B3C3000000010000001A /* SecureSessionPlugin.swift in Sources */,
 				91F3B3C30000000100000007 /* ScreenOrientationPlugin.swift in Sources */,
 				91F3B3C30000000100000009 /* CloudBookPlugin.swift in Sources */,
 				91F3B3C30000000100000011 /* PikafishPlugin.swift in Sources */,
@@ -377,7 +381,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 10013;
+				CURRENT_PROJECT_VERSION = 10017;
 				DEVELOPMENT_TEAM = US68YTUSG4;
 				INFOPLIST_FILE = App/Info.plist;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
@@ -389,7 +393,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.2;
+				MARKETING_VERSION = 1.0.3;
 				OTHER_SWIFT_FLAGS = "$(inherited) \"-D\" \"COCOAPODS\" \"-DDEBUG\"";
 				OTHER_CPLUSPLUSFLAGS = "$(inherited) -DIS_64BIT -DUSE_NEON=8 -DARCH=armv8";
 				OTHER_LDFLAGS = "$(inherited) -lpikafish -lc++";
@@ -409,7 +413,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 10013;
+				CURRENT_PROJECT_VERSION = 10017;
 				DEVELOPMENT_TEAM = US68YTUSG4;
 				INFOPLIST_FILE = App/Info.plist;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
@@ -421,7 +425,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.2;
+				MARKETING_VERSION = 1.0.3;
 				OTHER_CPLUSPLUSFLAGS = "$(inherited) -DIS_64BIT -DUSE_NEON=8 -DARCH=armv8";
 				OTHER_LDFLAGS = "$(inherited) -lpikafish -lc++";
 				PIKAFISH_IOS_ROOT = "$(SRCROOT)/../../../../../pikafish-ios";

@@ -18,6 +18,7 @@ type NativeStore = {
   openManualGame(options: { id: string }): Promise<{ item: string }>;
   deleteManualGame(options: { id: string }): Promise<void>;
   moveManualGame(options: { id: string; folder?: string }): Promise<void>;
+  manualAnalyses(): Promise<{ items: string }>;
   saveManualAnalysis(options: { summary: string }): Promise<void>;
 };
 
@@ -59,15 +60,16 @@ async function fingerprint(bytes: Uint8Array) {
 }
 
 export const trainingStore = {
-  async importLibrary(bytes: Uint8Array, parsed: CblLibrary) {
+  async importLibrary(bytes: Uint8Array, parsed: CblLibrary, options: { accessTier?: "public" | "vip" } = {}) {
     const hash = await fingerprint(bytes);
     const id = `cbl:${hash}`;
+    const accessTier = options.accessTier === "vip" ? "vip" : "public";
     const library: TrainingLibrary = {
       id, title: parsed.title || "未命名残局题库", fingerprint: hash, parserVersion: 3,
-      problemCount: parsed.problems.length, completedCount: 0, importedAt: new Date().toISOString(),
+      problemCount: parsed.problems.length, completedCount: 0, importedAt: new Date().toISOString(), accessTier,
     };
     const problems: TrainingProblem[] = parsed.problems.map((problem) => ({
-      ...problem, id: problemId(id, problem.sourceIndex), libraryId: id, completedAttempts: 0, totalElapsedMs: 0,
+      ...problem, id: problemId(id, problem.sourceIndex), libraryId: id, completedAttempts: 0, totalElapsedMs: 0, accessTier,
     }));
     if (isNative()) await nativeStore.replaceLibrary({ library: JSON.stringify(library), problems: JSON.stringify(problems) });
     else {
@@ -151,7 +153,7 @@ export const trainingStore = {
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   },
   async saveManualGame(game: LocalManualGame): Promise<LocalManualGame> {
-    const record: LocalManualGame = { ...game, folderPath: normalizeManualFolderPath(game.folderPath) || undefined, updatedAt: nowIso() };
+    const record: LocalManualGame = { ...game, folderPath: normalizeManualFolderPath(game.folderPath) || undefined };
     if (record.folderPath) ensureMemoryFolder(record.folderPath);
     if (isNative()) await nativeStore.saveManualGame({ game: JSON.stringify(record) });
     else memory.manualGames = [record, ...memory.manualGames.filter((item) => item.id !== record.id)];
@@ -176,6 +178,10 @@ export const trainingStore = {
     if (normalized) ensureMemoryFolder(normalized);
     if (isNative()) await nativeStore.moveManualGame({ id, folder: normalized || undefined });
     else memory.manualGames = memory.manualGames.map((game) => game.id === id ? { ...game, folderPath: normalized || undefined, updatedAt: nowIso() } : game);
+  },
+  async manualAnalyses(): Promise<LocalManualAnalysisSummary[]> {
+    if (isNative()) return JSON.parse((await nativeStore.manualAnalyses()).items) as LocalManualAnalysisSummary[];
+    return [...memory.manualAnalysis].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   },
   async saveManualAnalysis(summary: LocalManualAnalysisSummary) {
     if (isNative()) await nativeStore.saveManualAnalysis({ summary: JSON.stringify(summary) });

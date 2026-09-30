@@ -55,6 +55,12 @@ export type TrainingLibrary = {
   problemCount: number;
   completedCount: number;
   importedAt: string;
+  accessTier?: "public" | "vip" | "vip_or_assignment";
+  source?: "local" | "teaching" | "platform";
+  assignmentId?: string;
+  dueAt?: string | null;
+  isUnread?: boolean;
+  folderPath?: string;
 };
 
 export type TrainingProblem = CblProblem & {
@@ -62,6 +68,10 @@ export type TrainingProblem = CblProblem & {
   libraryId: string;
   completedAttempts: number;
   totalElapsedMs: number;
+  source?: "local" | "teaching" | "platform";
+  assignmentId?: string;
+  serverProblemId?: string;
+  accessTier?: "public" | "vip" | "vip_or_assignment";
 };
 
 export type Attempt = {

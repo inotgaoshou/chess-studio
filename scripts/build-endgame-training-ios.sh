@@ -11,6 +11,11 @@ pikafish_ios_root="${PIKAFISH_IOS_ROOT:-$root_dir/../pikafish-ios}"
 expected_pikafish_tag="${PIKAFISH_TAG:-Pikafish-2026-09-06}"
 expected_pikafish_source_revision="4c17cee11f888ae1d48a9494f2e2239f019f0a1f"
 expected_pikafish_nnue_sha256="7d13d73569a9b571ba0eb20cf1596247bc2a42738967e61afef6482b231e900e"
+export VITE_APP_ENV="${VITE_APP_ENV:-production}"
+case "$VITE_APP_ENV" in
+  test|production) ;;
+  *) echo "VITE_APP_ENV must be test or production" >&2; exit 2 ;;
+esac
 
 case "$action" in
   open|check|signed-build|archive|ipa) ;;
@@ -121,7 +126,7 @@ export_ipa() {
   local temp_dir export_options export_dir ipa_source ipa_name
 
   temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/xiangqi-endgame-ipa.XXXXXX")"
-  trap 'rm -rf "$temp_dir"' EXIT
+  trap "$(printf 'rm -rf -- %q' "$temp_dir")" EXIT
   export_options="$temp_dir/ExportOptions.plist"
   export_dir="$temp_dir/export"
 

@@ -14,6 +14,21 @@ Android 版还提供“AI 拆棋”：对当前局面进行本地 MultiPV 分析
 
 分发任何内置 Pikafish/NNUE 的 APK 或 IPA 前，必须补齐并核对 GPLv3 材料：Pikafish `Copying.txt`、`NNUE-License.md`、`RESOURCE-MANIFEST.txt`、`THIRD_PARTY_NOTICES.md`、Pikafish 版本、源码提交、对应源码获取方式、构建脚本说明和资源 SHA-256。发布说明、支持页和应用内关于信息应与这些材料保持一致。不能混入 Fairy-Stockfish、其他 NNUE、未知来源引擎或构建时网络下载的替换引擎。
 
+## 安装包环境
+
+`VITE_APP_ENV=test|production` 同时决定登录弹窗的“测试版／正式版”标识与默认服务域名。普通构建和本地发行默认 `production`，固定连接 `https://api.qixiapp.cn`，不提供环境切换；测试包默认连接 `https://api-test.qixiapp.cn`，未登录时可选择测试或线上环境，选择会保留。TestFlight 工作流的 `app_env` 默认 `test`。
+
+连接地址不在弹窗中显示，也不能输入自定义域名。切换环境需先退出登录，切换后重新登录；本地棋谱和按服务器隔离的作业缓存保留。旧版未记录服务器归属的安全会话需重新登录。
+
+```bash
+VITE_APP_ENV=test pnpm --dir apps/endgame-training android:apk
+VITE_APP_ENV=test bash scripts/build-endgame-training-ios.sh archive
+```
+
+本地 Vite 开发默认标识为测试版，测试环境使用 `http://127.0.0.1:8090`，可通过 `VITE_TEACHING_API_BASE` 指定开发网关；此变量不影响发行包域名。发行包不再读取 `VITE_ALLOW_TEACHING_SERVER_OVERRIDE` 或旧版自定义地址。
+
+环境与会话回归检查：`node --test scripts/test-mobile-environment.mjs`。
+
 ## 开发
 
 需要 Node 22+、Rust/WASM 工具链、Android SDK API 35，以及 JDK 21：

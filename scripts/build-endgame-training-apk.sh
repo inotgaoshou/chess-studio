@@ -3,6 +3,12 @@ set -euo pipefail
 
 root_dir="$(cd "$(dirname "$0")/.." && pwd)"
 app_dir="$root_dir/apps/endgame-training"
+pnpm_bin="${PNPM_BIN:-pnpm}"
+export VITE_APP_ENV="${VITE_APP_ENV:-production}"
+case "$VITE_APP_ENV" in
+  test|production) ;;
+  *) echo "VITE_APP_ENV must be test or production" >&2; exit 2 ;;
+esac
 signing_dir="${ENDGAME_SIGNING_DIR:-$HOME/.config/xiangqi-endgame-training}"
 keychain_service="${ENDGAME_SIGNING_KEYCHAIN_SERVICE:-Xiangqi Endgame Training Release}"
 
@@ -125,9 +131,11 @@ fi
 reject_forbidden_resource "$(find "$resource_dir" -maxdepth 1 -type f \( -iname '*fairy*' -o -iname '*stockfish*' -o -iname '*.nnue' ! -name 'pikafish.nnue' \) -print -quit 2>/dev/null || true)" "$resource_dir"
 reject_forbidden_resource "$(find "$app_dir/android/app/src/main/jniLibs" -type f \( -iname '*fairy*' -o -iname '*stockfish*' \) -print -quit 2>/dev/null || true)" "jniLibs"
 
-export ANDROID_VERSION_NAME="${ANDROID_VERSION_NAME:-1.0.1}"
-export ANDROID_VERSION_CODE="${ANDROID_VERSION_CODE:-10015}"
+export ANDROID_VERSION_NAME="${ANDROID_VERSION_NAME:-1.0.3}"
+export ANDROID_VERSION_CODE="${ANDROID_VERSION_CODE:-10016}"
 
+"$pnpm_bin" --dir "$app_dir" mobile:build
+"$pnpm_bin" --dir "$app_dir" exec cap sync android
 cd "$app_dir/android"
 ./gradlew :app:assembleRelease
 

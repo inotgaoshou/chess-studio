@@ -1,7 +1,7 @@
 {
   "name": "xiangqi-endgame-training",
   "private": true,
-  "version": "1.0.2",
+  "version": "1.0.3",
   "type": "module",
   "scripts": {
     "wasm:build": "wasm-pack build ../../crates/web-core --target web --out-dir ../../apps/endgame-training/public/wasm --out-name xiangqi_web_core",
@@ -10,7 +10,7 @@
     "build": "tsc && vite build",
     "mobile:build": "pnpm wasm:build && pnpm build",
     "android:sync": "pnpm mobile:build && cap sync android",
-    "android:apk": "pnpm android:sync && bash ../../scripts/build-endgame-training-apk.sh",
+    "android:apk": "bash ../../scripts/build-endgame-training-apk.sh",
     "android:debug": "pnpm android:sync && cd android && ./gradlew :app:assembleDebug",
     "ios:sync": "pnpm mobile:build && cap sync ios",
     "ios:open": "pnpm ios:sync && cap open ios"

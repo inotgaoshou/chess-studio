@@ -1,7 +1,8 @@
+import { MobilePracticeReviewPanel, PracticeAccessPanel, PracticeStatus, PracticeFavoriteButton } from "./PracticePanels";
 import { ManualMoveSuggestion } from "./ManualMoveSuggestion";
 import { ManualShareDialog } from "./ManualShareDialog";
 import { ManualSaveDialog, isImeEnter, type ManualSaveValues } from "./ManualSaveDialog";
-import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, CircleCheckBig, CircleHelp, ClipboardCopy, ClipboardList, Clock3, Cpu, Database, Ellipsis, Eye, EyeOff, FilePenLine, FileUp, FlipVertical2, Folder, Lightbulb, Link, ListRestart, Minus, Palette, Pause, Pencil, Play, Plus, RotateCcw, Search, Settings2, Square as StopIcon, Trash2, Undo2, X } from "lucide-react";
+import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, CircleCheckBig, CircleHelp, ClipboardCopy, ClipboardList, Clock3, CloudUpload, Cpu, Database, Ellipsis, Eye, EyeOff, FilePenLine, FileUp, FlipVertical2, Folder, GraduationCap, Home, Lightbulb, Link, ListRestart, LockKeyhole, LogIn, Minus, Palette, Pause, Pencil, Play, Plus, RefreshCw, RotateCcw, Search, Settings2, Square as StopIcon, Trash2, Undo2, UserRound, X } from "lucide-react";
 import { type CSSProperties, type PointerEvent as ReactPointerEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import { trainingStore } from "./store";
 import type { Attempt, BoardPiece, BoardState, LocalManualAnalysisSummary, LocalManualFolder, LocalManualGame, MobileWorkspaceMode, RuleMode, SolutionMove, TrainingLibrary, TrainingProblem } from "./types";
@@ -11,9 +12,15 @@ import { setPreferredOrientation, type PreferredOrientation } from "./orientatio
 import { DEFAULT_SKIN_ID, LEGACY_DEFAULT_SKIN_ID, SKIN_CATALOG, normalizeSkinId, skinById, type SkinCatalogItem } from "./skinCatalog";
 import { StudyManualTree, type StudyManualBranch } from "./StudyManualTree";
 import { applyTrainingLogicSidecar, trainingLogicHint, trainingLogicMiss } from "./logicSidecar";
+import { allowTeacherNavigation, OrganizationSearchSelect, TeacherMobileWorkspace } from "./TeacherMobileWorkspace";
+import { teachingClient, type PersonalManualSyncStatus as RemoteManualSyncStatus, type PlatformGame, type PlatformGameLibrary, type PracticeHome, type PracticeSession, type PracticeSessionItem, type PracticeTopic, type PracticeTopicDetail, type PracticeSearchResult, type TeachingAssignment, type TeachingAssignmentResults, type TeachingAuth, type TeachingClass, type TeachingOrganization, type TeachingOrganizationJoinRequest, type TeachingStudent } from "./teaching";
+import { packageEnvironment, packageEnvironmentLabel, type AppEnvironment } from "./appEnvironment";
 
 type Mode = "cloud" | "ai" | "solver" | "replay" | "free";
 type StudyPanelTab = "engine" | "cloud" | "manual";
+type MobilePrimaryTab = "home" | "library" | "practice" | "assignments" | "account";
+type TabletNavigationPosition = "sidebar" | "bottom";
+type MobileRoute = MobilePrimaryTab | "library-browse" | "game-browse" | "practice-setup" | "practice-session" | "practice-mistakes" | "practice-favorites" | "practice-result" | "practice-topic" | "practice-search" | "practice-assets" | "onboarding" | "tool-manual" | "tool-study" | "tool-setup" | "tool-sync" | "tool-settings" | "teacher";
 type ManualPanelTab = "moves" | "analysis" | "library";
 type ManualAnalysisView = "trend" | "report" | "issues";
 type Square = { row: number; col: number };
@@ -30,6 +37,11 @@ type PendingAutoReply = {
   playerFen: string;
   durationAfterMove: number;
 };
+type ProblemNavigationStatus = "pending" | "completed" | "revealed";
+type ProblemNavigationItem = { id: string; title: string; status: ProblemNavigationStatus };
+type ProblemNavigator = { items: ProblemNavigationItem[]; index: number; onSelect(index: number): void };
+let pendingAssignmentSequence: TrainingProblem[] = [];
+let pendingAssignmentIndex = -1;
 type StudyStateSnapshot = {
   enabled: boolean;
   tab: StudyPanelTab;
@@ -41,21 +53,101 @@ type StudyStateSnapshot = {
   showMoveText?: boolean;
   fenEditorExpanded?: boolean;
 };
+
+type PlatformManualNode = {
+  id?: string;
+  parent_id?: string;
+  parentId?: string;
+  mv?: { from?: { row?: number; col?: number }; to?: { row?: number; col?: number } };
+  comment?: string;
+  is_mainline?: boolean;
+  isMainline?: boolean;
+  order_key?: number;
+  orderKey?: number;
+  deleted?: boolean;
+};
+
+function platformMoveIccs(move: PlatformManualNode["mv"]) {
+  const from = move?.from;
+  const to = move?.to;
+  if (![from?.row, from?.col, to?.row, to?.col].every(Number.isInteger)) return undefined;
+  const square = (row: number, col: number) => `${String.fromCharCode(97 + col)}${9 - row}`;
+  return square(from!.row!, from!.col!) + square(to!.row!, to!.col!);
+}
+
+function platformGameStudyData(raw: unknown) {
+  const document = raw as {
+    startingFen?: string;
+    note?: string;
+    metadata?: { title?: string };
+    tree?: { root_id?: string; rootId?: string; nodes?: Record<string, PlatformManualNode> | PlatformManualNode[] };
+  };
+  const tree = document?.tree;
+  const nodes = Array.isArray(tree?.nodes) ? tree.nodes : Object.values(tree?.nodes ?? {});
+  const rootId = tree?.root_id ?? tree?.rootId;
+  const childrenOf = (parentId: string | undefined) => nodes
+    .filter((node) => !node.deleted && (node.parent_id ?? node.parentId) === parentId && platformMoveIccs(node.mv))
+    .sort((left, right) => Number(left.order_key ?? left.orderKey ?? 0) - Number(right.order_key ?? right.orderKey ?? 0));
+  const mainline: string[] = [];
+  const comments: Record<string, string> = {};
+  const branches: StudyBranch[] = [];
+  let parentId = rootId;
+  let parentPath: string[] = [];
+  let cursor = 0;
+  while (parentId) {
+    const children = childrenOf(parentId);
+    if (!children.length) break;
+    const current = children.find((node) => node.is_mainline ?? node.isMainline) ?? children[0];
+    const collect = (node: PlatformManualNode) => {
+      const line: string[] = [];
+      let next: PlatformManualNode | undefined = node;
+      while (next) {
+        const move = platformMoveIccs(next.mv);
+        if (!move) break;
+        line.push(move);
+        const candidates: PlatformManualNode[] = childrenOf(next.id);
+        const child: PlatformManualNode | undefined = candidates.find((item) => item.is_mainline ?? item.isMainline) ?? candidates[0];
+        next = child;
+      }
+      return line;
+    };
+    for (const alternative of children) {
+      if (alternative === current) continue;
+      const moves = collect(alternative);
+      if (moves.length) branches.push({ id: alternative.id ?? `platform-branch-${branches.length}`, parentCursor: cursor, parentPath: [...parentPath], moves, notation: [], createdAt: 0, branchOrder: Number(alternative.order_key ?? alternative.orderKey ?? branches.length) });
+    }
+    const move = platformMoveIccs(current.mv)!;
+    mainline.push(move);
+    if (current.comment?.trim()) comments[[...parentPath, move].join(",")] = current.comment;
+    parentPath = [...parentPath, move];
+    parentId = current.id;
+    cursor += 1;
+  }
+  if (!document?.startingFen || !mainline.length) throw new Error("这份平台棋谱缺少可回放的主线数据");
+  return { startingFen: document.startingFen, moves: mainline, branches, comments, title: document.metadata?.title ?? "平台棋谱", note: document.note?.trim() };
+}
 type ManualSheetState =
   | { type: "gameInfo"; title: string; note: string }
+  | { type: "setupSave"; title: string; folder: string }
   | { type: "folderCreate"; parent: string; name: string }
   | { type: "folderRename"; target: string; path: string }
   | { type: "folderDelete"; target: string }
   | { type: "gameMove"; game: LocalManualGame; folder: string }
   | { type: "gameDelete"; game: LocalManualGame };
+type ManualCloudSyncStatus = { at: string; outcome: "success" | "error"; message: string };
+type ManualSetupSnapshot = { pieces: BoardPiece[]; side: "red" | "black" };
 const LOCAL_PIKAFISH_AVAILABLE = hasLocalPikafish();
 const SKIN_DEV_TOOLS_ENABLED = import.meta.env.VITE_ENABLE_SKIN_DEV_TOOLS === "true";
 const SKIN_DEV_TAP_TARGET = 5;
 const SKIN_DEV_UNLOCK_COMMAND = "舒服skin";
 const STUDY_STATE_KEY = "xiangqi-training-study-state";
+const MANUAL_SETUP_DRAFT_KEY = "xiangqi-training-manual-setup-draft-v1";
+const MANUAL_CLOUD_SYNC_STATUS_PREFIX = "xiangqi-training-manual-cloud-sync-status";
 const BOARD_SKIN_KEY = "xiangqi-training-board-skin";
 const PIECE_SKIN_KEY = "xiangqi-training-piece-skin";
 const SKIN_DEFAULT_MIGRATION_KEY = "xiangqi-training-skin-default-migration-v2";
+const MOBILE_ONBOARDING_KEY = "xiangqi-training-mobile-onboarding-v1";
+const TABLET_NAVIGATION_POSITION_KEY = "xiangqi-training-tablet-navigation-position";
 const modeLabel: Record<Mode, string> = { cloud: LOCAL_PIKAFISH_AVAILABLE ? "云库 + 皮卡鱼" : "云库对练", ai: "本地 AI 对练", solver: "只走解题方", replay: "双方复现", free: "自由实战" };
 const fmt = (value: number) => `${String(Math.floor(value / 60000)).padStart(2, "0")}:${String(Math.floor(value / 1000) % 60).padStart(2, "0")}`;
 const compactNumber = (value: number) => value >= 1_000_000 ? `${(value / 1_000_000).toFixed(1)}M` : value >= 1_000 ? `${Math.round(value / 1_000)}K` : String(value);
@@ -108,6 +200,91 @@ const QINGXIN_ROWS = [82, 192, 306, 425, 546, 676, 791, 909, 1023, 1136];
 const BLACK_FILE_LABELS = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
 const RED_FILE_LABELS = ["一", "二", "三", "四", "五", "六", "七", "八", "九"];
 const DEFAULT_BOARD_GEOMETRY: BoardGeometry = { columns: QINGXIN_COLUMNS, rows: QINGXIN_ROWS };
+
+function mobileRouteFromPath(pathname = window.location.pathname): MobileRoute {
+  if (pathname === "/welcome") return "onboarding";
+  if (pathname === "/" || pathname === "/home") return "home";
+  if (pathname === "/teacher" || pathname.startsWith("/teacher/")) return "teacher";
+  if (pathname === "/tools/manual") return "tool-manual";
+  if (pathname === "/tools/study") return "tool-study";
+  if (pathname === "/tools/setup") return "tool-setup";
+  if (pathname === "/tools/sync") return "tool-sync";
+  if (pathname === "/settings") return "tool-settings";
+  if (pathname === "/library/games") return "game-browse";
+  if (pathname === "/library/browse") return "library-browse";
+  if (pathname === "/assignments" || pathname.startsWith("/assignments/")) return "assignments";
+  if (pathname === "/account" || pathname.startsWith("/account/")) return "account";
+  if (pathname === "/practice/setup") return "practice-setup";
+  if (pathname === "/practice/mistakes") return "practice-mistakes";
+  if (pathname === "/practice/favorites") return "practice-favorites";
+  if (pathname === "/practice/search") return "practice-search";
+  if (pathname === "/practice/assets") return "practice-assets";
+  if (pathname.startsWith("/practice/topics/")) return "practice-topic";
+  if (pathname.startsWith("/practice/session/")) return "practice-session";
+  if (pathname.startsWith("/practice/result/")) return "practice-result";
+  if (pathname === "/practice" || pathname.startsWith("/practice/")) return "practice";
+  return "library";
+}
+
+function mobileRoutePath(route: MobileRoute) {
+  if (route === "onboarding") return "/welcome";
+  if (route === "home") return "/";
+  if (route === "teacher") return "/teacher";
+  if (route === "tool-manual") return "/tools/manual";
+  if (route === "tool-study") return "/tools/study";
+  if (route === "tool-setup") return "/tools/setup";
+  if (route === "tool-sync") return "/tools/sync";
+  if (route === "tool-settings") return "/settings";
+  if (route === "game-browse") return "/library/games";
+  if (route === "library-browse") return "/library/browse";
+  if (route === "practice-setup") return "/practice/setup";
+  if (route === "practice-mistakes") return "/practice/mistakes";
+  if (route === "practice-favorites") return "/practice/favorites";
+  if (route === "practice-search") return "/practice/search";
+  if (route === "practice-assets") return "/practice/assets";
+  if (route === "practice-topic") return "/practice/topics";
+  return `/${route}`;
+}
+
+function mobileRouteTab(route: MobileRoute): MobilePrimaryTab {
+  return route === "onboarding" || route === "tool-manual" || route === "tool-study" || route === "tool-setup" || route === "tool-sync" || route === "tool-settings" || route === "teacher" ? "account" : route === "library-browse" || route === "game-browse" ? "library" : route === "practice-setup" || route === "practice-session" || route === "practice-mistakes" || route === "practice-favorites" || route === "practice-result" || route === "practice-topic" || route === "practice-search" || route === "practice-assets" ? "practice" : route;
+}
+
+function practiceProblemToTrainingProblem(problem: PracticeSessionItem["problem"]): TrainingProblem {
+  return {
+    id: `platform:${problem.id}`,
+    libraryId: `platform:${problem.libraryId}`,
+    sourceIndex: problem.sourceIndex,
+    title: problem.title,
+    category: problem.category,
+    startingFen: problem.startingFen,
+    note: problem.note,
+    solution: problem.solution,
+    completedAttempts: 0,
+    totalElapsedMs: 0,
+    source: "platform",
+    serverProblemId: problem.id,
+    accessTier: problem.accessTier,
+  };
+}
+
+function manualCloudSyncStatusKey(auth: TeachingAuth) {
+  return `${MANUAL_CLOUD_SYNC_STATUS_PREFIX}:${encodeURIComponent(teachingClient.serverUrl())}:${auth.user.id}`;
+}
+
+function readManualCloudSyncStatus(auth?: TeachingAuth): ManualCloudSyncStatus | undefined {
+  if (!auth) return undefined;
+  try {
+    const value = JSON.parse(localStorage.getItem(manualCloudSyncStatusKey(auth)) || "null") as ManualCloudSyncStatus | null;
+    return value && typeof value.at === "string" && (value.outcome === "success" || value.outcome === "error") && typeof value.message === "string" ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeManualCloudSyncStatus(auth: TeachingAuth, status: ManualCloudSyncStatus) {
+  localStorage.setItem(manualCloudSyncStatusKey(auth), JSON.stringify(status));
+}
 const BOARD_GEOMETRY_BY_SKIN: Record<string, BoardGeometry> = {
   "qingxin-zhuyun": DEFAULT_BOARD_GEOMETRY,
   "skin-bb439484": {
@@ -173,6 +350,30 @@ const MANUAL_SETUP_ELEPHANT_POINTS = {
 };
 function defaultManualSetupPieces() {
   return MANUAL_SETUP_DEFAULT_PIECES.map((piece) => ({ ...piece }));
+}
+
+function cloneManualSetupSnapshot(snapshot: ManualSetupSnapshot): ManualSetupSnapshot {
+  return { pieces: snapshot.pieces.map((piece) => ({ ...piece })), side: snapshot.side };
+}
+
+function readManualSetupDraft(): { current: ManualSetupSnapshot; history: ManualSetupSnapshot[] } | undefined {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(MANUAL_SETUP_DRAFT_KEY) ?? "") as { current?: ManualSetupSnapshot; history?: ManualSetupSnapshot[] };
+    const normalize = (value: unknown): ManualSetupSnapshot | undefined => {
+      const snapshot = value as ManualSetupSnapshot | undefined;
+      if (!snapshot || (snapshot.side !== "red" && snapshot.side !== "black") || !Array.isArray(snapshot.pieces)) return undefined;
+      const pieces = snapshot.pieces.filter((piece): piece is BoardPiece => Boolean(piece)
+        && Number.isInteger(piece.row) && Number.isInteger(piece.col)
+        && (piece.color === "red" || piece.color === "black")
+        && typeof piece.kind === "string" && typeof piece.label === "string");
+      return pieces.length === snapshot.pieces.length ? { pieces: pieces.map((piece) => ({ ...piece })), side: snapshot.side } : undefined;
+    };
+    const current = normalize(parsed.current);
+    if (!current) return undefined;
+    return { current, history: (parsed.history ?? []).map(normalize).filter((item): item is ManualSetupSnapshot => Boolean(item)).slice(-50) };
+  } catch {
+    return undefined;
+  }
 }
 
 function waitForNextPaint() {
@@ -780,7 +981,7 @@ function ManualTrendChart({ samples, progress, onAnalyze }: { samples: ManualTre
   </section>;
 }
 
-function ImportCblPanel({ onBack, onPick, onImportUrl }: { onBack(): void; onPick(): void; onImportUrl(url: string): Promise<void> }) {
+function ImportCblPanel({ accessTier, onAccessTierChange, onBack, onPick, onImportUrl }: { accessTier: "public" | "vip"; onAccessTierChange(value: "public" | "vip"): void; onBack(): void; onPick(): void; onImportUrl(url: string): Promise<void> }) {
   const [url, setUrl] = useState("");
   const [status, setStatus] = useState("");
   const [pending, setPending] = useState(false);
@@ -800,7 +1001,7 @@ function ImportCblPanel({ onBack, onPick, onImportUrl }: { onBack(): void; onPic
   }
   return <section className="import-cbl-panel" role="dialog" aria-modal="true" aria-labelledby="import-cbl-title">
     <header><button type="button" aria-label="返回棋析" onClick={onBack}><ChevronLeft/><span>返回</span></button><div><b id="import-cbl-title">导入 CBL</b><small>选择本机、网盘或 URL 中的 .CBL 棋库</small></div></header>
-    <main><FileUp/><strong>导入 CBL 棋库</strong><p>电脑本地文件请先通过 AirDrop、iCloud Drive、微信/QQ 文件或系统“文件 App”保存到手机，再点“选择 CBL 文件”。可多选题库；标准开局棋谱会自动进入录谱库。同名 .logic.json 可附加残局提示。</p><button type="button" className="primary" onClick={onPick}><FileUp/>选择 CBL 文件</button><div className="import-url-box"><label><span>URL 导入</span><input value={url} inputMode="url" autoCapitalize="none" autoCorrect="off" placeholder="https://example.com/library.cbl" disabled={pending} onChange={(event) => { setUrl(event.target.value); setStatus(""); }}/></label><button type="button" disabled={pending} onClick={() => void submitUrl()}><Link/>{pending ? "导入中" : "下载导入"}</button>{status && <small>{status}</small>}</div><p className="import-cbl-hint">URL 服务器若限制跨域、防盗链或下载权限，请先下载到本机后使用文件导入。单个文件最大 50MB；URL 导入不附加 sidecar。</p></main>
+    <main><FileUp/><strong>导入 CBL 棋库</strong><p>电脑本地文件请先通过 AirDrop、iCloud Drive、微信/QQ 文件或系统“文件 App”保存到手机，再点“选择 CBL 文件”。可多选题库；标准开局棋谱会自动进入录谱库。同名 .logic.json 可附加残局提示。</p><label className="import-access-toggle"><input type="checkbox" checked={accessTier === "vip"} onChange={(event) => onAccessTierChange(event.target.checked ? "vip" : "public")}/><span><b>设为 VIP 题库</b><small>勾选后，本次导入的残局题发布到作业时会要求学生有有效 VIP/作业权益。</small></span></label><button type="button" className="primary" onClick={onPick}><FileUp/>选择 CBL 文件</button><div className="import-url-box"><label><span>URL 导入</span><input value={url} inputMode="url" autoCapitalize="none" autoCorrect="off" placeholder="https://example.com/library.cbl" disabled={pending} onChange={(event) => { setUrl(event.target.value); setStatus(""); }}/></label><button type="button" disabled={pending} onClick={() => void submitUrl()}><Link/>{pending ? "导入中" : "下载导入"}</button>{status && <small>{status}</small>}</div><p className="import-cbl-hint">URL 服务器若限制跨域、防盗链或下载权限，请先下载到本机后使用文件导入。单个文件最大 50MB；URL 导入不附加 sidecar。</p></main>
   </section>;
 }
 
@@ -837,6 +1038,10 @@ function readSkinPreference(key: string) {
   return normalizeSkinId(saved);
 }
 
+function readTabletNavigationPosition(): TabletNavigationPosition {
+  return localStorage.getItem(TABLET_NAVIGATION_POSITION_KEY) === "bottom" ? "bottom" : "sidebar";
+}
+
 function skinCardName(skin: SkinCatalogItem, index?: number) {
   if (skin.id === DEFAULT_SKIN_ID) return <>默认 {skin.name}</>;
   const fallbackIndex = SKIN_CATALOG.filter((item) => item.id !== DEFAULT_SKIN_ID).findIndex((item) => item.id === skin.id);
@@ -844,8 +1049,8 @@ function skinCardName(skin: SkinCatalogItem, index?: number) {
   return <>{displayIndex}. {skin.group === "3d" && <em>3D</em>}{skin.name}</>;
 }
 
-function StudySkinSettings({ boardSkin, pieceSkin, boardSkinInfo, riverText, riverTextColor, riverTextSize, onBoardSkinChange, onPieceSkinChange, onUseSkinSet, onRiverTextChange, onRiverTextColorChange, onRiverTextSizeChange }: { boardSkin: string; pieceSkin: string; boardSkinInfo: SkinCatalogItem; riverText: string; riverTextColor: string; riverTextSize: number; onBoardSkinChange(id: string): void; onPieceSkinChange(id: string): void; onUseSkinSet(id: string): void; onRiverTextChange(value: string): void; onRiverTextColorChange(value: string): void; onRiverTextSizeChange(value: number): void }) {
-  const [expanded, setExpanded] = useState(false);
+function StudySkinSettings({ boardSkin, pieceSkin, boardSkinInfo, riverText, riverTextColor, riverTextSize, onBoardSkinChange, onPieceSkinChange, onUseSkinSet, onRiverTextChange, onRiverTextColorChange, onRiverTextSizeChange, initiallyExpanded = false }: { boardSkin: string; pieceSkin: string; boardSkinInfo: SkinCatalogItem; riverText: string; riverTextColor: string; riverTextSize: number; onBoardSkinChange(id: string): void; onPieceSkinChange(id: string): void; onUseSkinSet(id: string): void; onRiverTextChange(value: string): void; onRiverTextColorChange(value: string): void; onRiverTextSizeChange(value: number): void; initiallyExpanded?: boolean }) {
+  const [expanded, setExpanded] = useState(initiallyExpanded);
   const board = skinById(boardSkin);
   const piece = skinById(pieceSkin);
   const extraSkins = SKIN_CATALOG.filter((skin) => skin.id !== DEFAULT_SKIN_ID);
@@ -929,10 +1134,1046 @@ function AboutDialog({ preferredOrientation, studyRuleMode, skinDevCommandOpen, 
   </div>;
 }
 
+function roleLabel(role?: string, platformAdmin = false) {
+  return role === "coach" ? "教学老师" : role === "admin" ? (platformAdmin ? "平台管理员" : "机构管理员") : role === "student" ? "学生" : role === "user" ? "个人棋谱账号" : "账号";
+}
+
+function vipStatus(auth?: TeachingAuth) {
+  const user = auth?.user;
+  if (!user || user.role !== "student") return undefined;
+  if (user.vipActive) {
+    return user.vipExpiresAt
+      ? { label: `VIP有效至 ${new Date(user.vipExpiresAt).toLocaleDateString("zh-CN")}`, tone: "active" as const }
+      : { label: "VIP永久有效", tone: "permanent" as const };
+  }
+  return user.vipEnabled
+    ? { label: "作业权益已过期", tone: "expired" as const }
+    : { label: "未开通作业权益", tone: "none" as const };
+}
+
+function vipAccessHint(user: TeachingAuth["user"]) {
+  if (user.vipActive) return "VIP 有效";
+  return user.vipEnabled ? "权益已过期" : "未开通权益";
+}
+
+function syncTimeLabel(value?: string | null) {
+  if (!value) return "尚未同步";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "尚未同步" : `最近同步 ${date.toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}`;
+}
+
+function relativePracticeDate(value?: string | null) {
+  if (!value) return "尚未练习";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "尚未练习";
+  const today = new Date();
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const days = Math.round((startOfToday - startOfDate) / 86_400_000);
+  if (days === 0) return "今天练习";
+  if (days === 1) return "昨天练习";
+  if (days > 1 && days < 7) return `${days} 天前练习`;
+  return `${date.toLocaleDateString("zh-CN")} 练习`;
+}
+
+function MobilePrimaryNavigation({ active, unreadAssignments, onNavigate }: { active: MobilePrimaryTab; unreadAssignments: number; onNavigate(tab: MobilePrimaryTab): void }) {
+  return <nav className="mobile-primary-nav" aria-label="主导航">
+    <button type="button" className={active === "home" ? "active" : ""} aria-current={active === "home" ? "page" : undefined} onClick={() => onNavigate("home")}><Home/><span>首页</span></button>
+    <button type="button" className={active === "library" ? "active" : ""} aria-current={active === "library" ? "page" : undefined} onClick={() => onNavigate("library")}><BookOpen/><span>题库</span></button>
+    <button type="button" className={active === "practice" ? "active" : ""} aria-current={active === "practice" ? "page" : undefined} onClick={() => onNavigate("practice")}><Lightbulb/><span>练习</span></button>
+    <button type="button" className={active === "assignments" ? "active" : ""} aria-current={active === "assignments" ? "page" : undefined} aria-label={unreadAssignments ? `作业，${unreadAssignments} 份未查看` : "作业"} onClick={() => onNavigate("assignments")}><ClipboardList/>{unreadAssignments > 0 && <i className="assignment-unread-dot" aria-hidden="true"/>}<span>作业</span></button>
+    <button type="button" className={active === "account" ? "active" : ""} aria-current={active === "account" ? "page" : undefined} onClick={() => onNavigate("account")}><UserRound/><span>我的</span></button>
+  </nav>;
+}
+
+function MobileHomePanel({ auth, home, libraries, gameLibraries, unreadAssignments, onPractice, onLibrary, onAssignments, onSetup, onTeacher, onLogin }: {
+  auth?: TeachingAuth;
+  home?: PracticeHome;
+  libraries: TrainingLibrary[];
+  gameLibraries: PlatformGameLibrary[];
+  unreadAssignments: number;
+  onPractice(): void;
+  onLibrary(): void;
+  onAssignments(): void;
+  onSetup(): void;
+  onTeacher(): void;
+  onLogin(): void;
+}) {
+  const role = auth?.user.role;
+  const isOperator = role === "coach" || role === "admin";
+  const platformProblems = libraries.filter((item) => item.source === "platform").reduce((total, item) => total + item.problemCount, 0);
+  const resume = home?.resumeSession;
+  const daily = home?.dailyPlan;
+  const today = home?.summary?.todayProgress;
+  const planned = today?.plannedCount ?? daily?.itemCount ?? 0;
+  const completed = today?.completedCount ?? 0;
+  const progress = planned ? Math.min(100, Math.round(completed / planned * 100)) : 0;
+  const title = !auth ? "本地棋谱与练习" : isOperator ? `${auth.user.displayName}的工作台` : `你好，${auth.user.displayName}`;
+  const description = !auth
+    ? "先从本地 CBL、摆棋和拆棋开始；登录后可同步学习进度与机构作业。"
+    : isOperator
+      ? "查看班级、作业与内容待办；学习内容仍按当前账号权益显示。"
+      : resume ? `上次练习还剩 ${resume.items.filter((item) => item.status === "pending").length} 题，随时可以继续。` : "从今日练习或平台专题开始。";
+  return <main className="mobile-home-page">
+    <header className="mobile-home-header">
+      <span className="mobile-home-mark"><Home/></span>
+      <div><strong>{title}</strong><small>{description}</small></div>
+      {!auth && <button type="button" onClick={onLogin}>登录</button>}
+    </header>
+    {isOperator && <section className="mobile-home-operator">
+      <GraduationCap/><div><strong>{role === "admin" ? "机构运营待办" : "教学工作台"}</strong><small>{role === "admin" ? "管理机构内容、练习计划与作业运营。" : "管理本人班级、草稿作业和学生完成情况。"}</small></div><button type="button" onClick={onTeacher}>进入</button>
+    </section>}
+    {!isOperator && <section className="mobile-home-primary">
+      <span><Lightbulb/></span><div><strong>{resume ? "继续上次练习" : daily ? "今日练习" : "开始专项练习"}</strong><small>{resume ? `${resume.items.filter((item) => item.status !== "pending").length}/${resume.items.length} 题已完成` : daily ? `${daily.topic.name} · ${daily.itemCount} 题` : "选择专题、难度和题量，生成固定练习会话。"}</small></div><button type="button" onClick={onPractice}>{resume ? "继续" : "开始"}</button>
+    </section>}
+    {!isOperator && <section className="mobile-home-goal">
+      <div className="mobile-goal-ring" style={{ "--goal-progress": `${progress * 3.6}deg` } as CSSProperties}><b>{completed}</b><small>/{planned || "-"}</small></div>
+      <div><small>今日目标</small><strong>{daily ? daily.topic.name : "完成一组专项练习"}</strong><p>{daily ? `${daily.mode === "learning" ? "学习模式" : "做题训练"} · 已完成 ${completed} 题` : "从一个专题开始，进度会自动同步。"}</p></div>
+      <span><b>{home?.summary?.streakDays ?? 0}</b><small>连练天数</small></span>
+    </section>}
+    <section className="mobile-home-section">
+      <header><strong>快捷入口</strong><small>{auth ? "学习与工具" : "本地可用"}</small></header>
+      <div className="mobile-home-actions">
+        <button type="button" onClick={onLibrary}><BookOpen/><span><b>题库与棋谱</b><small>{platformProblems || gameLibraries.length ? `${platformProblems} 题 · ${gameLibraries.length} 本棋谱` : "本地资料与平台内容"}</small></span><ChevronRight/></button>
+        <button type="button" onClick={onPractice}><Lightbulb/><span><b>练习中心</b><small>日练、专项、错题与收藏</small></span><ChevronRight/></button>
+        <button type="button" onClick={onAssignments}><ClipboardList/><span><b>作业</b><small>{unreadAssignments ? `${unreadAssignments} 份新作业待查看` : "查看待完成与提交记录"}</small></span><ChevronRight/></button>
+        <button type="button" onClick={onSetup}><Plus/><span><b>自由摆棋</b><small>摆设局面后分析或保存到我的棋谱</small></span><ChevronRight/></button>
+      </div>
+    </section>
+    <section className="mobile-home-section mobile-home-progress">
+      <header><strong>学习概览</strong><small>{home?.history?.length ? "近 7 天" : "开始练习后显示"}</small></header>
+      <div>{home?.history?.length ? home.history.slice(0, 7).map((item) => <span key={item.localDate}><b>{item.completedCount}</b><small>{relativePracticeDate(item.localDate)}</small></span>) : <p>完成平台练习后，会在这里显示近 7 天的练习记录和建议。</p>}</div>
+    </section>
+    {!isOperator && home?.topics.length ? <section className="mobile-home-section mobile-home-recommendations"><header><strong>推荐专题</strong><small>已按权益筛选</small></header><div>{home.topics.slice(0, 3).map((topic) => <button type="button" key={topic.id} onClick={onPractice}><FenMiniBoard fen={topic.coverFen} label={`${topic.name}专题封面`} /><span><b>{topic.name}</b><small>{topic.itemCount} 题 · {topic.description || "专项训练"}</small></span><ChevronRight/></button>)}</div></section> : null}
+    {!isOperator && home?.lockedTopics?.length ? <section className="mobile-home-section mobile-vip-locked-section"><header><strong>VIP 专题</strong><small>开通后可练习</small></header><div>{home.lockedTopics.slice(0, 3).map((topic) => <button type="button" key={topic.id} className="mobile-vip-locked-card" onClick={onLogin}><LockKeyhole/><span><b>{topic.name}</b><small>{topic.itemCount} {topic.contentKind === "game" ? "局棋谱" : "题"} · VIP 专属</small></span><ChevronRight/></button>)}</div></section> : null}
+  </main>;
+}
+
+function accessTierLabel(accessTier?: TrainingLibrary["accessTier"]) {
+  return accessTier === "vip" ? "VIP" : accessTier === "vip_or_assignment" ? "VIP或作业" : "";
+}
+
+const FEN_PIECE_LABEL: Record<string, string> = { r: "車", n: "馬", b: "象", a: "士", k: "將", c: "炮", p: "卒", R: "俥", N: "傌", B: "相", A: "仕", K: "帥", C: "炮", P: "兵" };
+
+function FenMiniBoard({ fen, label }: { fen?: string | null; label: string }) {
+  const rows = (fen?.split(" ")[0] ?? "").split("/");
+  const squares = rows.length === 10 ? rows.flatMap((row) => {
+    const cells: string[] = [];
+    for (const char of row) {
+      if (/\d/.test(char)) cells.push(...Array.from({ length: Number(char) }, () => ""));
+      else cells.push(char);
+    }
+    return cells.slice(0, 9);
+  }) : [];
+  return <div className="fen-mini-board" aria-label={label} role="img">
+    {Array.from({ length: 90 }, (_, index) => {
+      const piece = squares[index];
+      return <span className={piece ? (piece === piece.toUpperCase() ? "red" : "black") : ""} key={index}>{piece ? FEN_PIECE_LABEL[piece] ?? "" : ""}</span>;
+    })}
+  </div>;
+}
+
+function MobileTopicDetailPanel({ topicId, busy, message, onBack, onStart, onOpenLibrary }: { busy: boolean; message: string; topicId?: string; onBack(): void; onStart(topic: PracticeTopic): void; onOpenLibrary(libraryId: string, kind: "problem" | "game"): void }) {
+  const [detail, setDetail] = useState<PracticeTopicDetail>();
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [retry, setRetry] = useState(0);
+  useEffect(() => {
+    if (!topicId) { setError("未找到专题。"); setLoading(false); return; }
+    setLoading(true); setError("");
+    let active = true;
+    void teachingClient.practiceTopic(topicId).then((next) => { if (active) setDetail(next); }).catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : "专题暂时不可用"); }).finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [topicId, retry]);
+  const topic = detail?.topic;
+  return <main className="mobile-detail-page mobile-topic-detail-page">
+    <header className="mobile-page-heading"><button type="button" className="mobile-back-button" aria-label="返回练习" onClick={onBack}><ChevronLeft/></button><span><strong>{topic?.name ?? "专题详情"}</strong><small>{topic?.contentKind === "game" ? "棋谱学习" : "专项练习"}</small></span></header>
+    {message && <p role="alert" className="practice-status">{message}</p>}
+    {loading ? <p className="mobile-detail-state">正在读取专题内容…</p> : error ? <PracticeStatus error={error} onRetry={() => setRetry((value) => value + 1)}/> : topic ? <>
+      <section className="mobile-topic-hero">
+        <FenMiniBoard fen={topic.coverFen ?? detail?.chapters[0]?.coverFen} label={`${topic.name}封面局面`} />
+        <div><small>{topic.contentKind === "game" ? "棋谱专题" : "题目专题"}</small><strong>{topic.name}</strong><p>{topic.description || (topic.contentKind === "game" ? "按章节阅读、复盘和拆棋。" : "按自己的节奏完成训练，进度会同步。")}</p><span>{topic.itemCount} {topic.contentKind === "game" ? "局" : "题"}</span></div>
+      </section>
+      {topic.contentKind === "problem" && <button type="button" className="mobile-detail-primary" disabled={busy} onClick={() => onStart(topic)}><Play/>{busy ? "正在创建练习…" : "开始训练"}<small>默认 10 题</small></button>}
+      <section className="mobile-detail-section"><header><strong>学习章节</strong><small>{detail?.chapters.length ?? 0} 个来源</small></header><div className="mobile-chapter-list">{detail?.chapters.map((chapter) => <button type="button" key={chapter.libraryId} onClick={() => onOpenLibrary(chapter.libraryId, topic.contentKind)}><FenMiniBoard fen={chapter.coverFen} label={`${chapter.title}局面`} /><span><b>{chapter.title}</b><small>{chapter.category ? `${chapter.category} · ` : ""}{chapter.completedCount}/{chapter.itemCount} {topic.contentKind === "game" ? "局" : "题"} 已学习</small></span><ChevronRight/></button>)}</div></section>
+    </> : null}
+  </main>;
+}
+
+function MobilePracticeSearchPanel({ message, busy, onBack, onOpenProblem }: { message: string; busy: boolean; onBack(): void; onOpenProblem(problem: TrainingProblem): void }) {
+  const [q, setQ] = useState("");
+  const [category, setCategory] = useState("");
+  const [side, setSide] = useState<"" | "red" | "black">("");
+  const [result, setResult] = useState<PracticeSearchResult>({ items: [] });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const searching = useRef(false);
+  const runSearch = () => {
+    if (searching.current) return;
+    searching.current = true; setError(""); setLoading(true);
+    void teachingClient.practiceSearch({ q, category: category || undefined, sideToMove: side || undefined, limit: 30 }).then(setResult).catch((reason) => setError(reason instanceof Error ? reason.message : "搜索失败")).finally(() => { searching.current = false; setLoading(false); });
+  };
+  return <main className="mobile-detail-page mobile-search-page">
+    <header className="mobile-page-heading"><button type="button" className="mobile-back-button" aria-label="返回练习" onClick={onBack}><ChevronLeft/></button><span><strong>智能搜索</strong><small>仅展示当前账号可练习内容</small></span></header>
+    <label className="mobile-library-search"><Search/><input autoFocus value={q} onChange={(event) => setQ(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") runSearch(); }} placeholder="题名、分类或关键词" aria-label="搜索练习题"/><button type="button" onClick={runSearch} aria-label="开始搜索"><ChevronRight/></button></label>
+    <div className="mobile-search-filter"><select value={category} onChange={(event) => setCategory(event.target.value)}><option value="">全部分类</option><option value="杀法">杀法</option><option value="残局">残局</option><option value="开局">开局</option></select><select value={side} onChange={(event) => setSide(event.target.value as "" | "red" | "black")}><option value="">不限先手</option><option value="red">红方先</option><option value="black">黑方先</option></select></div>
+    {message && <p role="alert" className="practice-status">{message}</p>}<PracticeStatus error={error} onRetry={runSearch}/><section className="mobile-problem-list mobile-search-results">{loading ? <p>正在检索…</p> : error ? null : result.items.length ? result.items.map((item) => <button type="button" disabled={busy} key={item.id} onClick={() => onOpenProblem(practiceProblemToTrainingProblem(item))}><b>{item.sourceIndex + 1}</b><span><strong>{item.title}</strong><small>{item.category || "未分类"} · {item.sideToMove === "black" ? "黑方走" : "红方走"} · {item.solutionLength} 步题解</small></span><ChevronRight/></button>) : <div className="mobile-library-empty"><Search/><strong>{q || category || side ? "没有符合条件的题目" : "输入关键词开始搜索"}</strong><small>搜索会自动按你的权益过滤专题和题目。</small></div>}</section>
+  </main>;
+}
+
+function MobileLearningAssetsPanel({ home, onBack, onMistakes, onFavorites }: { home?: PracticeHome; onBack(): void; onMistakes(): void; onFavorites(): void }) {
+  return <main className="mobile-detail-page mobile-assets-page">
+    <header className="mobile-page-heading"><button type="button" className="mobile-back-button" aria-label="返回练习" onClick={onBack}><ChevronLeft/></button><span><strong>学习资产</strong><small>收藏、错题与练习历史</small></span></header>
+    <section className="mobile-assets-summary"><span><b>{home?.favoriteCount ?? 0}</b><small>收藏题目</small></span><span><b>{home?.wrongCount ?? 0}</b><small>待复习错题</small></span><span><b>{home?.summary?.streakDays ?? 0}</b><small>连续练习</small></span></section>
+    <div className="mobile-home-actions"><button type="button" onClick={onFavorites}><CircleCheckBig/><span><b>收藏题目</b><small>进入后可选择题目进行批量练习</small></span><ChevronRight/></button><button type="button" onClick={onMistakes}><RotateCcw/><span><b>错题本</b><small>根据错误次数和掌握状态复习</small></span><ChevronRight/></button></div>
+    <section className="mobile-detail-section"><header><strong>练习历史</strong><small>最近 7 天</small></header><div className="mobile-history-list">{home?.history.length ? home.history.map((item) => <span key={item.sessionId}><b>{relativePracticeDate(`${item.localDate}T12:00:00Z`)}</b><small>完成 {item.completedCount} 题 · 正确 {item.correctCount} 题</small></span>) : <p>完成平台练习后，历史记录会显示在这里。</p>}</div></section>
+  </main>;
+}
+
+function MobileOnboardingPanel({ onLogin, onLocal }: { onLogin(): void; onLocal(): void }) {
+  return <main className="mobile-detail-page mobile-onboarding-page">
+    <section className="mobile-onboarding-hero"><span><BookOpen/></span><small>棋析学习空间</small><strong>从一局棋开始</strong><p>本地 CBL、自由摆棋和拆棋可离线使用。登录后再同步专题、日练、作业与学习进度。</p></section>
+    <section className="mobile-onboarding-list"><div><Lightbulb/><span><b>个性化训练</b><small>按专题、难度和练习记录安排学习</small></span></div><div><Database/><span><b>本地优先</b><small>导入的 CBL 与练习可保存在当前设备</small></span></div><div><RefreshCw/><span><b>云端同步</b><small>登录后同步日练、作业和跨设备进度</small></span></div></section>
+    <button type="button" className="mobile-detail-primary" onClick={onLogin}><LogIn/>登录并同步</button><button type="button" className="mobile-onboarding-local" onClick={onLocal}>仅本地使用</button>
+  </main>;
+}
+
+const FEATURED_LIBRARY_CATEGORIES = ["A", "B", "C", "E", "N", "S"] as const;
+const LIBRARY_CATEGORY_NAMES: Record<string, string> = { A: "开局", B: "中局", C: "残局", D: "排局", E: "对局", F: "全局", G: "让子", H: "弃子", I: "绝杀", J: "飞刀", K: "陷阱", L: "巧妙", M: "书籍", N: "古谱", O: "布局", P: "棋书", S: "杀法" };
+function libraryCategoryCode(folderPath?: string) {
+  const match = folderPath?.match(/(?:^|\/)([A-S])(?:[\s、._-]|$)/i);
+  return match?.[1]?.toUpperCase();
+}
+
+function MobileLibraryPanel({ libraries, gameLibraries, signedIn, onOpenLibrary, onOpenGameLibrary, onImport, onOpenAssignments }: {
+  libraries: TrainingLibrary[];
+  gameLibraries: PlatformGameLibrary[];
+  signedIn: boolean;
+  onOpenLibrary(library: TrainingLibrary): void;
+  onOpenGameLibrary(library: PlatformGameLibrary): void;
+  onImport(): void;
+  onOpenAssignments(): void;
+}) {
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<"all" | "progress" | "completed">("all");
+  const [category, setCategory] = useState<string>("featured");
+  const localLibraries = libraries.filter((item) => !item.source || item.source === "local");
+  const platformLibraries = libraries.filter((item) => item.source === "platform");
+  const teacherLibraryCount = libraries.filter((item) => item.source === "teaching").length;
+  const visibleLibraries = localLibraries.filter((item) => {
+    const match = item.title.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
+    const matchFilter = filter === "all" || (filter === "progress" ? item.completedCount > 0 && item.completedCount < item.problemCount : item.problemCount > 0 && item.completedCount >= item.problemCount);
+    return match && matchFilter;
+  });
+  const totalProblems = localLibraries.reduce((total, item) => total + item.problemCount, 0);
+  const visiblePlatformLibraries = platformLibraries.filter((item) => {
+    const code = libraryCategoryCode(item.folderPath);
+    const matchesCategory = category === "all" || (category === "featured" ? FEATURED_LIBRARY_CATEGORIES.includes(code as typeof FEATURED_LIBRARY_CATEGORIES[number]) : code === category);
+    return matchesCategory && item.title.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
+  });
+  const categoryCounts = new Map<string, number>();
+  for (const item of platformLibraries) {
+    const code = libraryCategoryCode(item.folderPath);
+    if (code) categoryCounts.set(code, (categoryCounts.get(code) ?? 0) + item.problemCount);
+  }
+  const renderLibraryCard = (item: TrainingLibrary, kind: "platform" | "local") => {
+    const progress = item.problemCount ? Math.min(100, Math.round(item.completedCount / item.problemCount * 100)) : 0;
+    const access = accessTierLabel(item.accessTier);
+    return <button type="button" key={item.id} onClick={() => onOpenLibrary(item)}>
+      <span className={`mobile-library-cover ${kind === "platform" ? "platform" : ""}`}><BookOpen/></span>
+      <span><b>{item.title}</b><small>{item.folderPath && kind === "platform" ? `${item.folderPath} · ` : ""}{item.problemCount} 题{kind === "local" ? ` · 已完成 ${item.completedCount} 题` : " · 专项训练"}{access ? ` · ${access}` : ""}</small>{kind === "local" && <i><em style={{ width: `${progress}%` }}/></i>}</span>
+      {access && <em className="mobile-access-badge">{access}</em>}<ChevronRight/>
+    </button>;
+  };
+
+  return <main className="mobile-library-page">
+    <header className="mobile-page-heading"><span><BookOpen/><strong>题库</strong></span><button type="button" className="mobile-heading-icon" title="导入 CBL 题库" aria-label="导入 CBL 题库" onClick={onImport}><FileUp/></button></header>
+    <label className="mobile-library-search"><Search/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索平台或本地题库" aria-label="搜索题库" autoComplete="off"/>{query && <button type="button" aria-label="清除搜索" onClick={() => setQuery("")}><X/></button>}</label>
+    {signedIn ? <section className="mobile-library-overview platform"><span><Database/></span><div><strong>{platformLibraries.length || gameLibraries.length ? `${platformLibraries.length} 本平台训练题库 · ${gameLibraries.length} 本棋谱学习` : "平台内容待发布"}</strong><small>{platformLibraries.length || gameLibraries.length ? "按专题选择题目练习；完整棋谱仅供阅读、复盘与拆棋。" : "原始 CBL 导入后需经后台审核并发布，才会按账号权益显示在这里。"}</small></div></section> : <section className="mobile-library-overview"><span><UserRound/></span><div><strong>登录后读取平台内容</strong><small>平台训练题与完整棋谱按账号权限加载；本地题库始终可用。</small></div></section>}
+    {platformLibraries.length > 0 && <section className="mobile-library-section"><header><strong>平台训练题库</strong><button type="button" className="mobile-section-link" onClick={() => setCategory(category === "all" ? "featured" : "all")}>{category === "all" ? "收起分类" : "查看全部 17 类"}</button></header><div className="mobile-category-strip" role="tablist" aria-label="平台题库分类">{(category === "all" ? Object.keys(LIBRARY_CATEGORY_NAMES) : FEATURED_LIBRARY_CATEGORIES).map((code) => <button type="button" key={code} className={category === code ? "active" : ""} onClick={() => setCategory(category === code ? (category === "all" ? "all" : "featured") : code)}>{code} {LIBRARY_CATEGORY_NAMES[code]}{categoryCounts.has(code) ? ` ${categoryCounts.get(code)}` : ""}</button>)}</div><div className="mobile-library-list">{visiblePlatformLibraries.map((item) => renderLibraryCard(item, "platform"))}{!visiblePlatformLibraries.length && <div className="mobile-library-empty"><Search/><strong>当前分类暂无可用题库</strong><small>内容发布后会按账号权益自动出现在这里。</small></div>}</div></section>}
+    {gameLibraries.length > 0 && <section className="mobile-library-section"><header><strong>平台棋谱学习</strong><small>{gameLibraries.length} 本</small></header><div className="mobile-library-list">{gameLibraries.filter((item) => item.title.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())).map((item) => <button type="button" key={item.id} onClick={() => onOpenGameLibrary(item)}><span className="mobile-library-cover game"><FilePenLine/></span><span><b>{item.title}</b><small>{item.folderPath ? `${item.folderPath} · ` : ""}{item.gameCount} 局 · 阅读、复盘与拆棋</small></span><ChevronRight/></button>)}</div></section>}
+    <div className="mobile-library-filters" role="tablist" aria-label="题库筛选"><button type="button" className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>全部</button><button type="button" className={filter === "progress" ? "active" : ""} onClick={() => setFilter("progress")}>练习中</button><button type="button" className={filter === "completed" ? "active" : ""} onClick={() => setFilter("completed")}>已完成</button></div>
+    <section className="mobile-library-section"><header><strong>我的本地题库</strong><small>{visibleLibraries.length} 本</small></header>{visibleLibraries.length ? <div className="mobile-library-list">{visibleLibraries.map((item) => renderLibraryCard(item, "local"))}</div> : <div className="mobile-library-empty"><Folder/><strong>{query ? "没有匹配的本地题库" : "还没有本地题库"}</strong><small>{query ? "换个关键词试试。" : totalProblems ? "继续从本地题库练习。" : "导入 CBL 后，带题解的局面可进入本地练习。"}</small>{!query && <button type="button" onClick={onImport}>导入 CBL 题库</button>}</div>}</section>
+    {teacherLibraryCount > 0 && <button type="button" className="mobile-library-assignment-link" onClick={onOpenAssignments}><ClipboardList/><span><b>老师布置的作业</b><small>{teacherLibraryCount} 份作业已同步，可在作业页继续完成。</small></span><ChevronRight/></button>}
+  </main>;
+}
+
+function MobileGameBrowsePanel({ library, games, onBack, onOpenGame }: {
+  library?: PlatformGameLibrary;
+  games: PlatformGame[];
+  onBack(): void;
+  onOpenGame(game: PlatformGame): void;
+}) {
+  const [query, setQuery] = useState("");
+  const visible = games.filter((game) => `${game.title}${game.redPlayer}${game.blackPlayer}${game.eventName}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
+  return <main className="mobile-library-page mobile-library-browse-page">
+    <header className="mobile-page-heading"><button type="button" className="mobile-back-button" aria-label="返回题库" onClick={onBack}><ChevronLeft/></button><span><strong>{library?.title ?? "平台棋谱"}</strong><small>{games.length} 局完整棋谱</small></span></header>
+    <label className="mobile-library-search"><Search/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索棋手、赛事或棋谱名" aria-label="搜索棋谱" autoComplete="off"/>{query && <button type="button" aria-label="清除搜索" onClick={() => setQuery("")}><X/></button>}</label>
+    <section className="mobile-game-guide"><FilePenLine/><span><strong>棋谱学习</strong><small>进入后可逐步复盘、自动播放和自由拆棋；不会记入做题成绩。</small></span></section>
+    <section className="mobile-problem-list mobile-game-list">{visible.length ? visible.map((game) => <button type="button" key={game.id} onClick={() => onOpenGame(game)}><b>{game.sourceIndex + 1}</b><span><strong>{game.title || `${game.redPlayer} 对 ${game.blackPlayer}`}</strong><small>{[game.redPlayer && game.blackPlayer ? `${game.redPlayer} 对 ${game.blackPlayer}` : "", game.eventName, game.moveCount ? `${game.moveCount} 手` : ""].filter(Boolean).join(" · ")}</small></span><i><Play/></i></button>) : <div className="mobile-library-empty"><Search/><strong>没有匹配的棋谱</strong><small>换个棋手、赛事或棋谱名试试。</small></div>}</section>
+  </main>;
+}
+
+function MobileLibraryBrowsePanel({ library, problems, onBack, onOpenProblem }: {
+  library?: TrainingLibrary;
+  problems: TrainingProblem[];
+  onBack(): void;
+  onOpenProblem(problem: TrainingProblem): void;
+}) {
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<"all" | "unpracticed" | "completed">("all");
+  const categories = useMemo(() => ["全部", ...new Set(problems.map((item) => item.category).filter(Boolean))], [problems]);
+  const [category, setCategory] = useState("全部");
+  const visibleProblems = problems.filter((item) => (category === "全部" || item.category === category) && (!query || `${item.title}${item.category}`.includes(query)) && (filter === "all" || (filter === "completed" ? item.completedAttempts > 0 : item.completedAttempts === 0)));
+  const completed = problems.filter((item) => item.completedAttempts > 0).length;
+
+  return <main className="mobile-library-page mobile-library-browse-page">
+    <header className="mobile-page-heading"><button type="button" className="mobile-back-button" aria-label="返回题库" onClick={onBack}><ChevronLeft/></button><span><strong>{library?.title ?? "题库内容"}</strong><small>{completed}/{problems.length} 题已完成</small></span></header>
+    <label className="mobile-library-search"><Search/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索题名或分类" aria-label="搜索题名或分类" autoComplete="off"/>{query && <button type="button" aria-label="清除搜索" onClick={() => setQuery("")}><X/></button>}</label>
+    <div className="mobile-library-filters compact" role="tablist" aria-label="练习状态筛选"><button type="button" className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>全部</button><button type="button" className={filter === "unpracticed" ? "active" : ""} onClick={() => setFilter("unpracticed")}>未练</button><button type="button" className={filter === "completed" ? "active" : ""} onClick={() => setFilter("completed")}>已练</button></div>
+    {categories.length > 1 && <div className="mobile-category-strip">{categories.map((item) => <button type="button" key={item} className={category === item ? "active" : ""} onClick={() => setCategory(item)}>{item}</button>)}</div>}
+    <section className="mobile-problem-list">{visibleProblems.length ? visibleProblems.map((item) => <button type="button" key={item.id} onClick={() => onOpenProblem(item)}><b>{item.sourceIndex + 1}</b><span><strong>{item.title}</strong><small>{item.category || "未分类"} · {item.completedAttempts ? `已练 ${item.completedAttempts} 次` : "未练习"}{accessTierLabel(item.accessTier) ? ` · ${accessTierLabel(item.accessTier)}` : ""}</small></span><i className={item.completedAttempts ? "done" : ""}>{item.completedAttempts ? <CircleCheckBig/> : <ChevronRight/>}</i></button>) : <div className="mobile-library-empty"><Search/><strong>没有符合条件的题目</strong><small>调整分类或练习状态后再试。</small></div>}</section>
+  </main>;
+}
+
+function MobileAccountPanel({ auth, syncing, onLogin, onTeaching, onManual, onStudy, onSetup, onImport, onSync, onSettings, onAbout }: {
+  auth?: TeachingAuth;
+  syncing: boolean;
+  onLogin(): void;
+  onTeaching(): void;
+  onManual(): void;
+  onStudy(): void;
+  onSetup(): void;
+  onImport(): void;
+  onSync(): void;
+  onSettings(): void;
+  onAbout(): void;
+}) {
+  const vip = vipStatus(auth);
+  const canManageTeaching = Boolean(auth && ["coach", "admin"].includes(auth.user.role));
+  const teacherReady = canManageTeaching && Boolean(auth?.user.orgId);
+  return <main className="mobile-account-page">
+    <section className="mobile-account-summary">
+      <span className="mobile-account-avatar"><UserRound/></span><div><strong>{auth?.user.displayName || "未登录"}</strong><span>{auth ? `${roleLabel(auth.user.role, Boolean(auth.user.isPlatformAdmin))}${auth.user.orgName ? ` · ${auth.user.orgName}` : ""}` : "登录后管理账号、作业与个人棋谱"}</span>{vip && <small className={`mobile-vip-status ${vip.tone}`}>{vip.label}</small>}</div>
+      <ChevronRight/>
+      <button type="button" aria-label={auth ? "账号与权益" : "登录"} onClick={onLogin}/>
+    </section>
+    <section className="mobile-account-group">
+      <header><strong>账号与内容</strong><small>只同步你主动选择的个人棋谱</small></header>
+      <button type="button" onClick={canManageTeaching ? onTeaching : onLogin}><UserRound/><span><b>{teacherReady ? "教师工作台" : canManageTeaching ? "申请加入机构" : "账号与机构"}</b><small>{teacherReady ? "布置作业、选择学生并查看完成情况" : canManageTeaching ? "浏览平台机构并提交加入申请" : auth?.user.orgName || "登录后绑定学校或机构"}</small></span><ChevronRight/></button>
+      {auth?.user.organizations?.length ? <div className="mobile-account-organizations"><b>我的所属机构</b>{auth.user.organizations.map((organization) => <span key={organization.id}><i className={organization.id === auth.user.orgId ? "active" : ""}/><strong>{organization.name}</strong><small>{organization.id === auth.user.orgId ? "当前机构" : roleLabel(organization.role)}</small></span>)}</div> : null}
+      <button type="button" onClick={onSync}><CloudUpload/><span><b>我的棋谱云同步</b><small>{syncing ? "正在同步个人棋谱" : auth ? "查看状态并手动同步个人棋谱" : "登录后可手动同步个人棋谱"}</small></span><ChevronRight/></button>
+      <button type="button" onClick={onImport}><FileUp/><span><b>导入题库</b><small>CBL 只保存到本机，不会自动上传</small></span><ChevronRight/></button>
+    </section>
+    <section className="mobile-account-group">
+      <header><strong>工具与设置</strong><button type="button" className="mobile-account-group-action" aria-label="关于与帮助" title="关于与帮助" onClick={onAbout}><CircleHelp/></button></header>
+      <div className="mobile-account-tool-grid">
+        <button type="button" onClick={onManual}><FilePenLine/><span><b>我的棋谱</b><small>录谱、目录与变着</small></span></button>
+        <button type="button" onClick={onStudy}><Cpu/><span><b>拆棋分析</b><small>走棋、引擎与云库</small></span></button>
+        <button type="button" onClick={onSetup}><Pencil/><span><b>摆棋编辑</b><small>摆子、校验与保存</small></span></button>
+        <button type="button" onClick={onSettings}><Settings2/><span><b>设置与外观</b><small>棋盘皮肤与显示</small></span></button>
+      </div>
+    </section>
+  </main>;
+}
+
+function MobileSettingsPanel({ boardSkin, pieceSkin, boardSkinInfo, riverText, riverTextColor, riverTextSize, tabletNavigationPosition, tabletNavigationAvailable, onBack, onBoardSkinChange, onPieceSkinChange, onUseSkinSet, onRiverTextChange, onRiverTextColorChange, onRiverTextSizeChange, onTabletNavigationPositionChange }: {
+  boardSkin: string;
+  pieceSkin: string;
+  boardSkinInfo: SkinCatalogItem;
+  riverText: string;
+  riverTextColor: string;
+  riverTextSize: number;
+  tabletNavigationPosition: TabletNavigationPosition;
+  tabletNavigationAvailable: boolean;
+  onBack(): void;
+  onBoardSkinChange(id: string): void;
+  onPieceSkinChange(id: string): void;
+  onUseSkinSet(id: string): void;
+  onRiverTextChange(value: string): void;
+  onRiverTextColorChange(value: string): void;
+  onRiverTextSizeChange(value: number): void;
+  onTabletNavigationPositionChange(value: TabletNavigationPosition): void;
+}) {
+  return <main className="mobile-account-page mobile-settings-page">
+    <header className="mobile-page-heading"><button type="button" className="mobile-back-button" aria-label="返回我的" onClick={onBack}><ChevronLeft/></button><span><Settings2/><strong>设置与外观</strong></span></header>
+    <section className="mobile-navigation-settings">
+      <header><span><strong>导航布局</strong><small>{tabletNavigationAvailable ? "仅保存在当前平板，不影响其他设备。" : "手机固定使用底部五导航。"}</small></span></header>
+      <div className="mobile-segmented" role="radiogroup" aria-label="平板导航位置">
+        <button type="button" role="radio" aria-checked={tabletNavigationPosition === "sidebar"} className={tabletNavigationPosition === "sidebar" ? "active" : ""} disabled={!tabletNavigationAvailable} onClick={() => onTabletNavigationPositionChange("sidebar")}>左侧</button>
+        <button type="button" role="radio" aria-checked={tabletNavigationPosition === "bottom"} className={tabletNavigationPosition === "bottom" ? "active" : ""} disabled={!tabletNavigationAvailable} onClick={() => onTabletNavigationPositionChange("bottom")}>底部</button>
+      </div>
+    </section>
+    <section className="mobile-settings-intro"><Palette/><span><strong>全局棋盘外观</strong><small>在练习、棋谱学习、拆棋和录谱中同步生效。</small></span></section>
+    <StudySkinSettings boardSkin={boardSkin} pieceSkin={pieceSkin} boardSkinInfo={boardSkinInfo} riverText={riverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} initiallyExpanded onBoardSkinChange={onBoardSkinChange} onPieceSkinChange={onPieceSkinChange} onUseSkinSet={onUseSkinSet} onRiverTextChange={onRiverTextChange} onRiverTextColorChange={onRiverTextColorChange} onRiverTextSizeChange={onRiverTextSizeChange}/>
+  </main>;
+}
+
+function MobileManualSyncPanel({ auth, syncing, stats, status, remoteStatus, onBack, onLogin, onSync }: {
+  auth?: TeachingAuth;
+  syncing: boolean;
+  stats: { games: number; folders: number; analyses: number };
+  status?: ManualCloudSyncStatus;
+  remoteStatus?: RemoteManualSyncStatus;
+  onBack(): void;
+  onLogin(): void;
+  onSync(): void;
+}) {
+  const lastSyncedAt = remoteStatus?.lastSyncedAt ?? status?.at;
+  const lastSynced = lastSyncedAt ? new Date(lastSyncedAt).toLocaleString("zh-CN", { hour12: false }) : "尚未同步";
+  return <main className="mobile-sync-page">
+    <header className="mobile-page-heading"><button type="button" className="mobile-back-button" aria-label="返回我的" onClick={onBack}><ChevronLeft/></button><span><CloudUpload/><strong>我的棋谱云同步</strong></span></header>
+    {!auth ? <section className="mobile-sync-empty">
+      <span className="mobile-sync-hero"><CloudUpload/></span><strong>登录后同步个人棋谱</strong><p>同步由你手动发起，登录不会自动上传本地内容。</p><button type="button" className="primary" onClick={onLogin}><LogIn/>登录账号</button>
+    </section> : <>
+      <section className="mobile-sync-summary">
+        <header><span className="mobile-account-avatar"><CloudUpload/></span><div><strong>{auth.user.displayName}</strong><small>个人棋谱仅归当前账号私有保存</small></div></header>
+        <div className="mobile-sync-stats"><span><b>{stats.games}</b><small>本地棋谱</small></span><span><b>{stats.folders}</b><small>目录</small></span><span><b>{stats.analyses}</b><small>分析摘要</small></span></div>
+      </section>
+      <section className={`mobile-sync-status ${status?.outcome === "error" ? "error" : ""}`} aria-live="polite"><header><span><RefreshCw/><strong>{syncing ? "正在同步" : "上次同步"}</strong></span><small>{syncing ? "请勿关闭应用" : lastSynced}</small></header><p>{syncing ? "正在同步个人录谱、目录、注释与分析摘要。" : status?.message ?? (remoteStatus?.lastSyncedAt ? `云端已保存 ${remoteStatus.gameCount} 份棋谱、${remoteStatus.folderCount} 个目录。` : "尚未同步到云端。")}</p></section>
+      <button type="button" className="mobile-sync-submit" disabled={syncing} onClick={onSync}><CloudUpload/>{syncing ? "正在同步..." : "立即同步"}</button>
+      <section className="mobile-sync-privacy"><Eye/><div><strong>同步范围</strong><p>仅同步个人录谱、目录、注释和分析摘要。不上传 CBL 题库、练习记录或老师作业。</p></div></section>
+    </>}
+  </main>;
+}
+
+function MobilePracticePanel({ auth, loading, error, busy, message, onLogin, onRetry, home, onBrowseLibrary, onStudy, onOpenAssignments, onSetup, onMistakes, onFavorites, onResume, onRandom, onDaily, onTopic, onSearch, onAssets }: {
+  auth?: TeachingAuth;
+  loading: boolean;
+  error: string;
+  busy: boolean;
+  message: string;
+  onLogin(): void;
+  onRetry(): void;
+  libraries?: TrainingLibrary[];
+  home?: PracticeHome;
+  onBrowseLibrary(): void;
+  onImport?(): void;
+  onStudy(): void;
+  onOpenAssignments(): void;
+  onSetup(): void;
+  onMistakes(): void;
+  onFavorites(): void;
+  onResume(): void;
+  onRandom(): void;
+  onDaily(): void;
+  onTopic(topic: PracticeTopic): void;
+  onSearch?(): void;
+  onAssets?(): void;
+}) {
+  const student = auth?.user.role === "student";
+  const hasResume = Boolean(home?.resumeSession);
+  return <main className="mobile-practice-page mobile-practice-home">
+    <header className="mobile-page-heading"><span><Lightbulb/><strong>练习</strong></span>{(onSearch || onAssets) && <div className="mobile-heading-actions">{onSearch && <button type="button" disabled={!student || busy} className="mobile-heading-icon" aria-label="搜索题目" title="搜索题目" onClick={onSearch}><Search/></button>}{onAssets && <button type="button" disabled={!student || busy} className="mobile-heading-icon" aria-label="学习资产" title="学习资产" onClick={onAssets}><Database/></button>}</div>}</header>
+    {!student ? <PracticeAccessPanel signedIn={Boolean(auth)} onLogin={onLogin}/> : <PracticeStatus loading={loading} error={error} onRetry={onRetry}/>}
+    {message && <p role="alert" className="practice-status">{message}</p>}
+    {busy && <p role="status" className="practice-status">正在创建练习…</p>}
+    {home?.pendingAssignmentCount ? <button type="button" className="mobile-practice-assignment-alert" onClick={onOpenAssignments}><ClipboardList/><span><b>有 {home.pendingAssignmentCount} 份作业待完成</b><small>作业按老师设定的时间和规则单独提交</small></span><ChevronRight/></button> : null}
+    <section className="mobile-practice-feature continue">
+      <span className="mobile-practice-icon"><Play/></span>
+      <div><strong>{!student ? "平台练习" : loading ? "正在加载练习" : error ? "练习数据读取失败" : hasResume ? "继续上次练习" : home?.dailyPlan ? "开始今日练习" : home?.topics.length ? "开始专项练习" : "等待平台发布内容"}</strong><p>{!student ? "请使用学生账号进入平台练习。" : loading ? "正在读取平台专题和练习记录。" : error ? "请重试读取练习数据。" : hasResume ? `${home!.resumeSession!.items.length} 题固定练习会话已自动保存，${relativePracticeDate(home!.resumeSession!.updatedAt)}。` : home?.dailyPlan ? `今日 ${home.dailyPlan.topic.name} · ${home.dailyPlan.itemCount} 题，开始后题目顺序固定。` : home?.topics.length ? "从后台配置的专题、错题或随机练习中选择。" : "平台内容需完成审核与发布后才会显示在这里。"}</p></div>
+      <button type="button" className="primary" disabled={busy || !student || (!hasResume && !home?.dailyPlan && !home?.topics.length)} onClick={hasResume ? onResume : home?.dailyPlan ? onDaily : onSetup}>{hasResume ? "继续" : "开始练习"}</button>
+    </section>
+    {home?.dailyPlan ? <section className="mobile-practice-section"><header><strong>今日计划</strong><small>{home.dailyPlan.startedSessionId ? "已保存进度" : "每日固定快照"}</small></header><button type="button" className="mobile-practice-assignment-alert" onClick={onDaily}><Lightbulb/><span><b>{home.dailyPlan.topic.name}</b><small>{home.dailyPlan.itemCount} 题 · {home.dailyPlan.mode === "learning" ? "学习模式" : "做题训练"}</small></span><ChevronRight/></button></section> : null}
+    {home?.topics.length ? <section className="mobile-practice-section"><header><strong>平台专题</strong><small>已发布内容</small></header><div className="mobile-practice-grid">{home.topics.map((topic) => <button type="button" key={topic.id} disabled={busy} onClick={() => onTopic(topic)}><BookOpen/><span><b>{topic.name}</b><small>{topic.itemCount} 题 · {topic.description || "专项练习"}</small></span><ChevronRight/></button>)}</div></section> : null}
+    {home?.lockedTopics?.length ? <section className="mobile-practice-section mobile-vip-locked-section"><header><strong>VIP 专题</strong><small>权益解锁后可开始</small></header><div className="mobile-practice-grid">{home.lockedTopics.map((topic) => <div className="mobile-vip-locked-card" key={topic.id}><LockKeyhole/><span><b>{topic.name}</b><small>{topic.itemCount} {topic.contentKind === "game" ? "局棋谱" : "题"} · 当前账号未开通</small></span></div>)}</div></section> : null}
+    <section className="mobile-practice-section"><header><strong>今日练习</strong><small>按需选择</small></header><div className="mobile-practice-grid" aria-label="练习方式">
+      <button type="button" disabled={busy || !student || !home?.topics.length} onClick={onSetup}><BookOpen/><span><b>自选专项</b><small>{home?.topics.length ? "按后台专题、范围和难度练习" : "暂无已发布专题"}</small></span><ChevronRight/></button>
+      <button type="button" disabled={busy || !student} onClick={onMistakes}><RotateCcw/><span><b>错题复习</b><small>{home?.wrongCount ? `${home.wrongCount} 题待复习` : "暂时没有待复习错题"}</small></span><ChevronRight/></button>
+      <button type="button" disabled={busy || !student} onClick={onFavorites}><CircleCheckBig/><span><b>收藏练习</b><small>{home?.favoriteCount ? `${home.favoriteCount} 题已收藏` : "暂时没有收藏题目"}</small></span><ChevronRight/></button>
+      <button type="button" disabled={busy || !student || !home?.topics.length} onClick={onRandom}><RefreshCw/><span><b>随机练习</b><small>从已发布专题固定抽题</small></span><ChevronRight/></button>
+    </div></section>
+    <section className="mobile-practice-section"><header><strong>棋谱学习</strong><small>不计做题成绩</small></header><div className="mobile-practice-grid compact">
+      <button type="button" disabled={!home?.studyTopics.length} onClick={onBrowseLibrary}><BookOpen/><span><b>棋谱学习</b><small>{home?.studyTopics.length ? `${home.studyTopics.length} 个学习专题` : "暂无已发布完整棋谱"}</small></span><ChevronRight/></button>
+      <button type="button" onClick={onStudy}><FilePenLine/><span><b>自由拆棋</b><small>从局面进入自由对弈</small></span><ChevronRight/></button>
+    </div></section>
+    {home?.history.length ? <section className="mobile-practice-section"><header><strong>近 7 天练习</strong><small>真实练习记录</small></header><div className="mobile-practice-history">{home.history.slice(0, 7).map((item) => <span key={item.sessionId}><b>{relativePracticeDate(`${item.localDate}T12:00:00Z`)}</b><small>{item.completedCount} 题 · 正确 {item.correctCount}</small></span>)}</div></section> : null}
+    <p className="mobile-practice-note">平台题库的练习进度会跨设备同步；本地 CBL 不上传，进度仅保存在当前设备。</p>
+  </main>;
+}
+
+function MobilePracticeSetupPanel({ topics, busy, message, onBack, onStart }: { busy: boolean; message: string; topics: import("./teaching").PracticeTopic[]; onBack(): void; onStart(payload: { topicId?: string; libraryIds: string[]; category?: string; scope: "all" | "unpracticed" | "mistakes"; difficulty?: number; count: 5 | 10 | 20; mode: "solver" | "learning" }): void }) {
+  const [topicId, setTopicId] = useState(topics[0]?.id ?? "");
+  const topic = topics.find((item) => item.id === topicId) ?? topics[0];
+  const [categories, setCategories] = useState<string[]>([]);
+  const [category, setCategory] = useState("全部");
+  const [scope, setScope] = useState<"all" | "unpracticed" | "mistakes">("all");
+  const [difficulty, setDifficulty] = useState<number | undefined>();
+  const [count, setCount] = useState<5 | 10 | 20>(10);
+  const [mode, setMode] = useState<"solver" | "learning">("solver");
+  useEffect(() => { let active = true; setCategory("全部"); setCategories([]); void Promise.all((topic?.sources ?? []).map((source) => teachingClient.platformLibraryProblems(source.libraryId))).then((groups) => { if (active) setCategories([...new Set(groups.flat().map((item) => item.category).filter(Boolean))]); }).catch(() => { if (active) setCategories([]); }); return () => { active = false; }; }, [topicId]);
+  return <main className="mobile-practice-page mobile-practice-setup-page">
+    <header className="mobile-page-heading"><button type="button" className="mobile-back-button" aria-label="返回练习" onClick={onBack}><ChevronLeft/></button><span><strong>专项练习设置</strong><small>选择题目来源与练习方式</small></span></header>
+    <section className="mobile-setup-group"><strong>练习专题</strong><small>仅后台已发布且有验证题解的内容可进入训练</small><div className="mobile-choice-cards">{topics.map((item) => <button type="button" key={item.id} className={topicId === item.id ? "active" : ""} onClick={() => setTopicId(item.id)}><BookOpen/><span><b>{item.name}</b><small>{item.itemCount} 题 · {item.description || "专项练习"}</small></span>{topicId === item.id && <CircleCheckBig/>}</button>)}</div></section>
+    <section className="mobile-setup-group"><strong>题目范围</strong><div className="mobile-segmented">{([ ["all", "全部"], ["unpracticed", "未练过"], ["mistakes", "错题"] ] as const).map(([value, label]) => <button type="button" key={value} className={scope === value ? "active" : ""} onClick={() => setScope(value)}>{label}</button>)}</div>{categories.length ? <div className="mobile-category-strip">{["全部", ...categories].map((value) => <button type="button" key={value} className={category === value ? "active" : ""} onClick={() => setCategory(value)}>{value}</button>)}</div> : null}</section>
+    <section className="mobile-setup-group"><strong>练习数量</strong><div className="mobile-segmented">{([5, 10, 20] as const).map((value) => <button type="button" key={value} className={count === value ? "active" : ""} onClick={() => setCount(value)}>{value} 题</button>)}</div></section>
+    <section className="mobile-setup-group"><strong>筛选难度</strong><div className="mobile-segmented">{[[undefined, "全部"], [1, "初级"], [2, "中级"], [3, "高级"]].map(([value, label]) => <button type="button" key={String(value)} className={difficulty === value ? "active" : ""} onClick={() => setDifficulty(value as number | undefined)}>{label}</button>)}</div></section>
+    <section className="mobile-setup-group"><strong>练习模式</strong><div className="mobile-choice-cards two"><button type="button" className={mode === "solver" ? "active" : ""} onClick={() => setMode("solver")}><Pencil/><span><b>做题训练</b><small>独立思考，完成后评分</small></span>{mode === "solver" && <CircleCheckBig/>}</button><button type="button" className={mode === "learning" ? "active" : ""} onClick={() => setMode("learning")}><BookOpen/><span><b>学习模式</b><small>边看解析，边学习思路</small></span>{mode === "learning" && <CircleCheckBig/>}</button></div></section>
+    <button type="button" className="mobile-practice-start" disabled={!topic || busy} onClick={() => onStart({ topicId: topic?.id, libraryIds: topic?.sources.map((source) => source.libraryId) ?? [], category: category === "全部" ? undefined : category, scope, difficulty, count, mode })}>{busy ? "正在创建练习…" : `开始练习（${count} 题）`}</button>
+    {message && <p role="alert" className="practice-status">{message}</p>}
+  </main>;
+}
+
+function ProblemNavigator({ navigator, open, onClose }: { navigator: ProblemNavigator; open: boolean; onClose(): void }) {
+  return <>
+    {open && (
+      <button type="button" className="mobile-problem-navigator-scrim" aria-label="关闭题目目录" onClick={onClose}/>
+    )}
+    <aside className={`mobile-problem-navigator ${open ? "open" : ""}`} aria-label="题目目录">
+      <header><span><strong>题目目录</strong><small>已完成 {navigator.items.filter((item) => item.status === "completed").length}/{navigator.items.length}</small></span><button type="button" aria-label="关闭题目目录" onClick={onClose}><X/></button></header>
+      <div className="mobile-problem-navigator-legend"><span className="current">当前</span><span className="completed">已完成</span><span className="revealed">已解析</span></div>
+      <div className="mobile-problem-navigator-grid" role="list">
+        {navigator.items.map((item, index) => <button type="button" role="listitem" key={item.id} className={`${item.status} ${index === navigator.index ? "active" : ""}`} aria-current={index === navigator.index ? "step" : undefined} aria-label={`第 ${index + 1} 题：${item.title}，${index === navigator.index ? "当前题" : item.status === "completed" ? "已完成" : item.status === "revealed" ? "已查看解析" : "待完成"}`} title={`第 ${index + 1} 题：${item.title}`} onClick={() => { navigator.onSelect(index); onClose(); }}>{index + 1}</button>)}
+      </div>
+    </aside>
+  </>;
+}
+
+function MobilePracticeSolverPanel({ problem, session, item, navigator, pieces, selected, legalTargets, lastMove, hints, mistakes, elapsed, ended, revealed, notice, boardSkin, pieceSkin, riverText, riverTextColor, riverTextSize, supportsCustomRiverText, feedback, onSquare, onMove, onBack, onHint, onRestart, onReveal, onNext, onPrevious, onFinish, onFavorite, favoriteEnabled }: {
+  problem: TrainingProblem;
+  session?: PracticeSession;
+  item?: PracticeSessionItem;
+  navigator?: ProblemNavigator;
+  pieces: BoardPiece[];
+  selected?: Square;
+  legalTargets: Square[];
+  lastMove?: string;
+  hints: number;
+  mistakes: number;
+  elapsed: string;
+  ended: boolean;
+  revealed: boolean;
+  notice: string;
+  boardSkin: string;
+  pieceSkin: string;
+  riverText: string;
+  riverTextColor: string;
+  riverTextSize: number;
+  supportsCustomRiverText: boolean;
+  feedback?: TrainingFeedbackKind;
+  onSquare(square: Square): void;
+  onMove(from: Square, to: Square): void;
+  onBack(): void;
+  onHint(): void;
+  onRestart(): void;
+  onReveal(): void;
+  onNext(): void;
+  onPrevious(): void;
+  onFinish(): void;
+  onFavorite(): void;
+  favoriteEnabled: boolean;
+}) {
+  const [navigatorOpen, setNavigatorOpen] = useState(false);
+  const index = navigator?.index ?? (session && item ? session.items.findIndex((candidate) => candidate.id === item.id) : -1);
+  const total = navigator?.items.length ?? session?.items.length ?? 1;
+  const canPrevious = index > 0;
+  const canNext = index >= 0 && index < total - 1;
+  const isWrongReview = session?.sourceKind === "mistakes";
+  const selectOffset = (offset: number) => {
+    const target = index + offset;
+    if (navigator && target >= 0 && target < navigator.items.length) navigator.onSelect(target);
+    else if (offset > 0) onNext();
+    else onPrevious();
+  };
+  return <main className="mobile-solver-page">
+    <header className="mobile-solver-heading"><button type="button" className="mobile-back-button" aria-label="返回练习" onClick={onBack}><ChevronLeft/><span>返回练习</span></button><span><small>{isWrongReview ? "练习 / 错题 / 重练" : session ? "练习 / 专项 / 做题" : problem.source === "teaching" ? "作业 / 详情 / 做题" : "题库 / 做题"}</small><strong>{problem.title}</strong></span><em>{item?.problem.sideToMove === "black" ? "黑方走" : "红方走"}</em></header>
+    <section className="mobile-solver-workspace">
+      <div className="mobile-solver-playfield">
+        <section className="mobile-solver-board"><Board key={`mobile-${problem.id}`} pieces={pieces} selected={selected} legalTargets={legalTargets} lastMove={lastMove} hintMove={hints >= 2 ? problem.solution[0]?.iccs : undefined} analysisMoves={[]} activeAnalysis={0} flipped={false} feedback={feedback} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={riverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={supportsCustomRiverText} onSquare={onSquare} onMove={onMove}/></section>
+        <section className="mobile-solver-meta"><span><Clock3/>本题用时 <b>{elapsed}</b></span><span>{isWrongReview ? `上次错误 ${item?.problem ? "需重新掌握" : ""}` : `进度 ${index >= 0 ? index + 1 : 1}/${total}`}</span></section>
+        {isWrongReview && <p className="mobile-solver-warning">错题重练：完成且零错误、零提示才标为已掌握；看解析或放弃会保持待复习。</p>}
+        {ended ? <section className="mobile-solver-result"><strong>{revealed ? "已查看解析" : mistakes || hints ? "本题已完成，可继续巩固" : "解答正确"}</strong><p>{revealed ? "可重来后再次独立完成。" : "练习结果已保存到学习档案。"}</p><div><button type="button" onClick={onRestart}><RotateCcw/>再试一次</button><button type="button" className="primary" onClick={() => canNext ? selectOffset(1) : onNext()}>{canNext ? "下一题" : "查看结果"}<ChevronRight/></button></div></section> : <section className="mobile-solver-actions"><button type="button" className="primary" onClick={onHint}><Lightbulb/>提示 {hints}/3</button><div><button type="button" onClick={onRestart}><RotateCcw/>重来</button><button type="button" onClick={onReveal}><ListRestart/>查看解析</button></div></section>}
+        <section className="mobile-solver-note"><p>{notice}</p>{favoriteEnabled && problem.serverProblemId && <PracticeFavoriteButton key={problem.serverProblemId} problemId={problem.serverProblemId} onSaved={onFavorite}/>}</section>
+      </div>
+      {navigator && (
+        <ProblemNavigator navigator={navigator} open={navigatorOpen} onClose={() => setNavigatorOpen(false)}/>
+      )}
+    </section>
+    {navigator ? <footer className="mobile-solver-nav"><button type="button" disabled={!canPrevious} onClick={() => selectOffset(-1)}><ChevronLeft/>上一题</button><button type="button" className="mobile-problem-navigator-trigger" aria-expanded={navigatorOpen} onClick={() => setNavigatorOpen((open) => !open)}>{index >= 0 ? index + 1 : 1}/{total}<ChevronDown/></button><button type="button" disabled={!canNext && !ended} onClick={() => canNext ? selectOffset(1) : onNext()}>下一题<ChevronRight/></button></footer> : null}
+    {!ended ? <button type="button" className="mobile-solver-finish" onClick={onFinish}>{session ? "放弃本题" : "结束练习"}</button> : null}
+  </main>;
+}
+
+function MobilePracticeResultPanel({ session, message, onBack, onRetryMistakes, onRestart }: {
+  session?: PracticeSession;
+  message?: string;
+  onBack(): void;
+  onRetryMistakes(): void;
+  onRestart(): void;
+}) {
+  const items = session?.items ?? [];
+  const solved = items.filter((item) => item.status === "completed").length;
+  const revealed = items.filter((item) => item.status === "revealed").length;
+  const unfinished = items.filter((item) => item.status === "pending" || item.status === "abandoned").length;
+  return <main className="mobile-practice-page mobile-practice-result-page">
+    <header className="mobile-page-heading"><button type="button" className="mobile-back-button" aria-label="返回练习" onClick={onBack}><ChevronLeft/></button><span><strong>本次练习结果</strong><small>{session ? relativePracticeDate(session.updatedAt) : "练习已保存"}</small></span></header>
+    <section className="mobile-practice-result-summary"><span><CircleCheckBig/></span><strong>{solved === items.length && items.length ? "全部完成，做得不错" : "练习记录已保存"}</strong><p>平台题库进度会同步到当前账号，其他设备登录后也可以继续查看。</p><div><span><b>{items.length}</b><small>题目</small></span><span><b>{solved}</b><small>已完成</small></span><span><b>{revealed}</b><small>查看解析</small></span></div></section>
+    {unfinished > 0 || revealed > 0 ? <section className="mobile-practice-result-tip"><RotateCcw/><span><strong>建议再练一遍</strong><small>{unfinished ? `${unfinished} 题未完成` : "看过解析的题目不会计为独立掌握"}，可在错题复习中继续巩固。</small></span></section> : <section className="mobile-practice-result-tip success"><Lightbulb/><span><strong>查看掌握状态</strong><small>完成且零错误、零提示才标为已掌握，状态以平台记录为准。</small></span></section>}
+    {message ? <p className="mobile-practice-result-message">{message}</p> : null}
+    <section className="mobile-practice-result-actions"><button type="button" onClick={onRetryMistakes}><RotateCcw/>错题复习</button><button type="button" className="primary" onClick={onRestart}><Play/>再练一组</button></section>
+  </main>;
+}
+
+function MobileAssignmentsAccessPanel({ auth, onLogin, onSwitchAccount, onTeacher, onOpenStudent, onBrowseLibrary }: { auth?: TeachingAuth; onLogin(): void; onSwitchAccount(): void; onTeacher(): void; onOpenStudent(): void; onBrowseLibrary(): void }) {
+  const isTeacher = Boolean(auth && ["coach", "admin"].includes(auth.user.role));
+  const isStudent = auth?.user.role === "student";
+  const isPersonalAccount = Boolean(auth && !isTeacher && !isStudent);
+  const primaryAction = isTeacher ? onTeacher : isStudent ? onOpenStudent : auth ? onSwitchAccount : onLogin;
+  const primaryLabel = isTeacher ? "进入教师工作台" : isStudent ? "查看我的作业" : isPersonalAccount ? "切换学生账号" : "登录账号";
+  const title = isTeacher ? "教师工作台" : isStudent ? "我的作业已准备好" : isPersonalAccount ? "当前账号不接收作业" : "登录后查看作业或进入教师工作台";
+  const description = isTeacher
+    ? "布置作业、管理负责班级，并查看学生完成情况。"
+    : isStudent
+      ? "同步老师刚发布的作业，离线答题后可自动补交记录。"
+      : isPersonalAccount
+        ? "个人棋谱账号只用于录谱和云同步。请切换已绑定机构的学生账号查看作业。"
+        : "学生账号可查看和提交作业；教师账号可进入教师工作台布置作业。";
+  return <main className="mobile-practice-page mobile-assignment-access-page">
+    <header className="mobile-page-heading mobile-assignment-access-heading"><span><ClipboardList/><strong>作业</strong></span><small>学校作业与提交记录</small></header>
+    <div className="mobile-assignment-access-workspace">
+      <section className={`mobile-assignment-hero ${isTeacher ? "teacher" : isPersonalAccount ? "account-mismatch" : ""}`}>
+        <span className="mobile-assignment-hero-icon">{isTeacher ? <GraduationCap/> : isPersonalAccount ? <UserRound/> : <ClipboardList/>}</span>
+        <div><strong>{title}</strong><p>{description}</p></div>
+        <button type="button" className="primary" onClick={primaryAction}>{primaryLabel}<ChevronRight/></button>
+      </section>
+      <section className="mobile-assignment-access-side" aria-label="相关操作">
+        <div className="mobile-assignment-access-list">
+          {!isTeacher && <button type="button" onClick={auth ? onSwitchAccount : onLogin}><LogIn/><span><b>{auth ? "切换账号" : "账号登录"}</b><small>{auth ? "学生、教师和个人棋谱账号相互隔离" : "使用学生或教师账号登录"}</small></span><ChevronRight/></button>}
+          {isTeacher && <button type="button" onClick={onTeacher}><GraduationCap/><span><b>班级与学生</b><small>创建班级、加入学生或新建学生账号</small></span><ChevronRight/></button>}
+          <button type="button" onClick={onBrowseLibrary}><BookOpen/><span><b>公开题库练习</b><small>无需机构账号，不计入老师作业</small></span><ChevronRight/></button>
+        </div>
+        {!isTeacher && <p className="mobile-assignment-access-note">飞刀、陷阱和包含 VIP 题目的作业，会在服务端按当前学生权益校验。</p>}
+      </section>
+    </div>
+  </main>;
+}
+
+function teachingOutcomeLabel(outcome?: string | null) {
+  return outcome === "completed" ? "已完成" : outcome === "revealed" ? "看答案" : outcome === "abandoned" ? "已放弃" : "未提交";
+}
+
+function TeacherAssignmentPanel({ onMessage }: { onMessage(message: string): void }) {
+  // Teacher assignment management now lives in the routed mobile workbench.
+  // Keep this compatibility shell empty while desktop account preferences retain this dialog.
+  void onMessage;
+  return null;
+  /*
+  const [students, setStudents] = useState<TeachingStudent[]>([]);
+  const [classes, setClasses] = useState<TeachingClass[]>([]);
+  const [assignments, setAssignments] = useState<TeachingAssignment[]>([]);
+  const [localLibraries, setLocalLibraries] = useState<TrainingLibrary[]>([]);
+  const [libraryId, setLibraryId] = useState("");
+  const [libraryProblems, setLibraryProblems] = useState<TrainingProblem[]>([]);
+  const [selectedProblemIds, setSelectedProblemIds] = useState<string[]>([]);
+  const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
+  const [title, setTitle] = useState("");
+  const [dueDate, setDueDate] = useState("");
+  const [results, setResults] = useState<TeachingAssignmentResults>();
+  const [busy, setBusy] = useState(false);
+
+  async function refreshTeacherData() {
+    const [nextStudents, nextClasses, nextAssignments, nextLibraries] = await Promise.all([
+      teachingClient.students(),
+      teachingClient.classes(),
+      teachingClient.teacherAssignments(),
+      trainingStore.libraries(),
+    ]);
+    setStudents(nextStudents);
+    setClasses(nextClasses);
+    setAssignments(nextAssignments);
+    setLocalLibraries(nextLibraries);
+    if (!libraryId && nextLibraries[0]) setLibraryId(nextLibraries[0].id);
+  }
+
+  useEffect(() => {
+    void refreshTeacherData().catch((error) => onMessage(error instanceof Error ? error.message : String(error)));
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!libraryId) {
+      setLibraryProblems([]);
+      setSelectedProblemIds([]);
+      return () => { cancelled = true; };
+    }
+    void trainingStore.problems(libraryId).then((items) => {
+      if (cancelled) return;
+      setLibraryProblems(items);
+      setSelectedProblemIds((current) => current.filter((id) => items.some((item) => item.id === id)));
+    }).catch((error) => onMessage(error instanceof Error ? error.message : String(error)));
+    return () => { cancelled = true; };
+  }, [libraryId]);
+
+  function toggleProblem(id: string) {
+    setSelectedProblemIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+  }
+
+  function toggleStudent(id: string) {
+    setSelectedStudentIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+  }
+
+  function toggleClass(item: TeachingClass) {
+    const ids = item.students.map((student) => student.id);
+    const allSelected = ids.length > 0 && ids.every((id) => selectedStudentIds.includes(id));
+    setSelectedStudentIds((current) => allSelected ? current.filter((id) => !ids.includes(id)) : [...new Set([...current, ...ids])]);
+  }
+
+  async function publishAssignment() {
+    const selectedProblems = libraryProblems.filter((item) => selectedProblemIds.includes(item.id));
+    if (!selectedProblems.length) { onMessage("请至少选择一道题。"); return; }
+    if (!selectedStudentIds.length) { onMessage("请至少选择一名学生。"); return; }
+    const library = localLibraries.find((item) => item.id === libraryId);
+    setBusy(true);
+    try {
+      const dueAt = dueDate ? new Date(`${dueDate}T23:59:59`).toISOString() : null;
+      const created = await teachingClient.createAssignment({
+        title: (title.trim() || `${library?.title ?? "未命名题库"} 作业`).slice(0, 160),
+        dueAt,
+        targetStudentIds: selectedStudentIds,
+        problems: selectedProblems.map((problem) => ({
+          title: problem.title,
+          category: problem.category,
+          startingFen: problem.startingFen,
+          note: problem.note,
+          solution: problem.solution,
+        })),
+      });
+      onMessage(`已发布《${created.title}》`);
+      setTitle("");
+      setDueDate("");
+      setSelectedProblemIds([]);
+      await refreshTeacherData();
+    } catch (error) {
+      onMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function loadResults(assignmentId: string) {
+    setBusy(true);
+    try {
+      setResults(await teachingClient.assignmentResults(assignmentId));
+    } catch (error) {
+      onMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function closeAssignment(assignmentId: string) {
+    setBusy(true);
+    try {
+      const closed = await teachingClient.closeAssignment(assignmentId);
+      onMessage(`已关闭《${closed.title}》`);
+      await refreshTeacherData();
+      if (results?.assignment.id === assignmentId) setResults(await teachingClient.assignmentResults(assignmentId));
+    } catch (error) {
+      onMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const selectedLibrary = localLibraries.find((item) => item.id === libraryId);
+  return <div className="teacher-assignment-panel">
+    <section>
+      <header><strong>布置作业</strong><small>{selectedProblemIds.length} 题 · {selectedStudentIds.length} 名学生</small></header>
+      <label><span>作业标题</span><input value={title} placeholder={selectedLibrary ? `${selectedLibrary.title} 作业` : "作业标题"} onChange={(event) => setTitle(event.target.value)} /></label>
+      <label><span>截止日期</span><input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} /></label>
+      <label><span>本地题库</span><select value={libraryId} onChange={(event) => setLibraryId(event.target.value)}>{localLibraries.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label>
+      <div className="teacher-picker-list">{libraryProblems.length ? libraryProblems.slice(0, 120).map((problem) => <label key={problem.id}><input type="checkbox" checked={selectedProblemIds.includes(problem.id)} onChange={() => toggleProblem(problem.id)} /><span>{problem.title}<small>{problem.category || "未分类"} · 第 {problem.sourceIndex + 1} 题</small></span></label>) : <p>先导入 CBL 题库，再从这里选择题目。</p>}</div>
+      <div className="teacher-picker-list compact">{classes.length ? classes.map((item) => <div className="teacher-class-group" key={item.id}><button type="button" className="teacher-class-toggle" onClick={() => toggleClass(item)}><strong>{item.name}</strong><small>{item.studentCount} 人 · {item.students.filter((student) => selectedStudentIds.includes(student.id)).length} 人已选</small></button>{item.students.map((student) => <label key={student.id}><input type="checkbox" checked={selectedStudentIds.includes(student.id)} onChange={() => toggleStudent(student.id)} /><span>{student.displayName}<small>{student.loginName}</small></span></label>)}</div>) : students.length ? students.map((student) => <label key={student.id}><input type="checkbox" checked={selectedStudentIds.includes(student.id)} onChange={() => toggleStudent(student.id)} /><span>{student.displayName}<small>{student.loginName}</small></span></label>) : <p>当前机构没有可管理的学生。</p>}</div>
+      <footer><button type="button" disabled={busy || !libraryProblems.length || !students.length} className="primary" onClick={() => void publishAssignment()}>{busy ? "处理中…" : "发布作业"}</button></footer>
+    </section>
+    <section>
+      <header><strong>作业统计</strong><small>{assignments.length} 份</small></header>
+      <div className="teacher-assignment-list">{assignments.length ? assignments.map((assignment) => <article key={assignment.id}>
+        <button type="button" onClick={() => void loadResults(assignment.id)}><b>{assignment.title}</b><small>{assignment.status === "closed" ? "已关闭" : "已发布"} · {assignment.completedCount}/{assignment.targetCount} 提交 · {assignment.dueAt ? `截止 ${new Date(assignment.dueAt).toLocaleDateString("zh-CN")}` : "无截止"}</small></button>
+        {assignment.status !== "closed" && <button type="button" className="danger" disabled={busy} onClick={() => void closeAssignment(assignment.id)}>关闭</button>}
+      </article>) : <p>还没有发布过作业。</p>}</div>
+      {results && <div className="teacher-results">
+        <strong>{results.assignment.title}</strong>
+        <div>{results.students.flatMap((student) => results.problems.map((problem) => {
+          const result = results.results.find((item) => item.studentId === student.id && item.problemId === problem.id);
+          return <p key={`${student.id}-${problem.id}`} className={result?.completed ? "done" : ""}><b>{student.displayName}</b><span>{problem.title}</span><small>{teachingOutcomeLabel(result?.outcome)} · {result?.elapsedMs != null ? fmt(result.elapsedMs) : "--:--"} · 错 {result?.mistakes ?? 0} · 提示 {result?.hintsUsed ?? 0}</small></p>;
+        }))}</div>
+      </div>}
+    </section>
+  </div>; */
+}
+
+function StudentAssignmentsPanel({ auth, syncing, lastSyncAt, message, onSync, onOpenAccount, onOpenPractice, onOpenProblem, onUnreadChange }: {
+  auth: TeachingAuth;
+  syncing: boolean;
+  lastSyncAt: string | null;
+  message: string;
+  onSync(): void;
+  onOpenAccount(): void;
+  onOpenPractice(): void;
+  onOpenProblem(problem: TrainingProblem, sequence: TrainingProblem[], index: number): void;
+  onUnreadChange(count: number): void;
+}) {
+  const [libraries, setLibraries] = useState<TrainingLibrary[]>([]);
+  const [selectedLibrary, setSelectedLibrary] = useState<TrainingLibrary>();
+  const [problems, setProblems] = useState<TrainingProblem[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [actionsOpen, setActionsOpen] = useState(false);
+
+  async function refresh() {
+    try {
+      const nextLibraries = await teachingClient.cachedLibraries();
+      setLibraries(nextLibraries);
+      onUnreadChange(nextLibraries.filter((item) => item.isUnread).length);
+      setError("");
+    } catch (refreshError) {
+      setError(refreshError instanceof Error ? refreshError.message : String(refreshError));
+    }
+  }
+
+  useEffect(() => {
+    void refresh();
+  }, [auth.user.id, auth.user.orgId, auth.user.vipActive, lastSyncAt]);
+
+  async function openAssignment(library: TrainingLibrary) {
+    if (!library.assignmentId) return;
+    setBusy(true);
+    setError("");
+    const viewed = { ...library, isUnread: false };
+    setSelectedLibrary(viewed);
+    setLibraries((current) => current.map((item) => item.id === library.id ? viewed : item));
+    onUnreadChange(libraries.filter((item) => item.id !== library.id && item.isUnread).length);
+    setProblems([]);
+    void teachingClient.markAssignmentViewed(library.assignmentId);
+    try {
+      const nextProblems = await teachingClient.problems(library.assignmentId);
+      setProblems(nextProblems);
+    } catch (openError) {
+      setError(openError instanceof Error ? openError.message : String(openError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const completedCount = (library: TrainingLibrary) => Math.min(library.completedCount, library.problemCount);
+  const completionRate = (library: TrainingLibrary) => library.problemCount ? Math.round(completedCount(library) / library.problemCount * 100) : 0;
+  const closeActions = () => setActionsOpen(false);
+
+  return <section className="student-assignments-workspace" aria-label="我的作业">
+    <header className="student-assignments-header">
+      <div><strong>我的作业</strong><small>{auth.user.orgName ? `当前学校/机构：${auth.user.orgName}` : "当前账号尚未绑定学校/机构"}</small></div>
+      <div className={`student-assignments-actions ${actionsOpen ? "open" : ""}`}><button type="button" className="student-actions-trigger" aria-expanded={actionsOpen} aria-haspopup="dialog" aria-label="更多作业操作" title="更多作业操作" onClick={() => setActionsOpen((open) => !open)}><Ellipsis/></button><div className="student-actions-menu" role="dialog" aria-label="作业操作"><header><strong>作业操作</strong><button type="button" aria-label="关闭作业操作" onClick={closeActions}><X/></button></header><button type="button" onClick={() => { closeActions(); onOpenPractice(); }}><BookOpen/><span><b>平台题库</b><small>浏览公开题目与专项练习</small></span><ChevronRight/></button><button type="button" onClick={() => { closeActions(); onOpenAccount(); }}><UserRound/><span><b>账号与权益</b><small>{auth.user.displayName || auth.user.loginName} · {vipAccessHint(auth.user)}</small></span><ChevronRight/></button><button type="button" disabled={syncing} onClick={() => { closeActions(); onSync(); }}><RefreshCw className={syncing ? "spinning" : undefined}/><span><b>{syncing ? "正在同步" : "重新同步"}</b><small>更新老师刚发布的作业</small></span><ChevronRight/></button></div></div>
+    </header>
+    {actionsOpen && (
+      <button type="button" className="student-actions-scrim" aria-label="关闭作业操作" onClick={closeActions}/>
+    )}
+    <div className="student-assignments-status" aria-live="polite"><span className={syncing ? "syncing" : "synced"}>{syncing ? "正在同步作业" : lastSyncAt ? syncTimeLabel(lastSyncAt) : "尚未同步"}</span>{message && <small>{message}</small>}</div>
+    {!auth.user.vipActive && <p className="student-assignments-access-note">{auth.user.vipEnabled ? "作业权益已过期，请联系老师或管理员续期。公开作业仍可正常完成。" : "未开通作业权益时，公开作业可正常完成；飞刀、陷阱等 VIP 作业需要有效权益。"}</p>}
+    {selectedLibrary ? <div className="student-assignment-detail">
+      <header><button type="button" onClick={() => { setSelectedLibrary(undefined); setProblems([]); }}><ChevronLeft/>返回我的作业</button><div className="student-assignment-detail-title"><strong title={selectedLibrary.title}>{selectedLibrary.title}</strong><small>{completedCount(selectedLibrary)}/{selectedLibrary.problemCount} 题已完成 · {completionRate(selectedLibrary)}%</small></div></header>
+      {error && <p className="student-assignments-error">{error}</p>}{busy ? <p className="student-assignments-loading">正在读取题目…</p> : problems.length ? <div className="student-problem-list">{problems.map((item, index) => <button type="button" key={item.id} aria-label={`第 ${index + 1} 题：${item.title}，${item.completedAttempts ? "已完成" : "待完成"}`} onClick={() => { pendingAssignmentSequence = problems; pendingAssignmentIndex = index; onOpenProblem(item, problems, index); }}><b>{index + 1}</b><span><strong>{item.title}</strong><small>第 {index + 1} 题 · {item.completedAttempts ? "已完成" : "待完成"}</small></span><ChevronRight/></button>)}</div> : <div className="student-assignments-empty"><strong>这个作业暂时没有题目</strong><span>请联系老师检查作业内容。</span></div>}
+    </div> : <div className="student-assignment-list">{error && <p className="student-assignments-error">{error}</p>}{libraries.length ? libraries.map((item) => <button type="button" className={`student-assignment-card ${item.isUnread ? "unread" : ""}`} key={item.id} onClick={() => void openAssignment(item)}>{item.isUnread && <i className="student-assignment-unread-dot" aria-hidden="true"/>}<span className="student-assignment-card-title"><strong>{item.title}</strong><small>{item.dueAt ? `截止 ${new Date(item.dueAt).toLocaleDateString("zh-CN")}` : "无截止日期"}</small></span><span className="student-assignment-card-stats"><b>{completedCount(item)}/{item.problemCount}</b><small>已完成 · {completionRate(item)}%</small></span><ChevronRight/></button>) : <div className="student-assignments-empty"><BookOpen/><strong>暂无老师布置的作业</strong><span>作业发布后会自动同步到这里。</span></div>}</div>}
+  </section>;
+}
+
+function AdminJoinRequestsPanel({ onMessage }: { onMessage(message: string): void }) {
+  const [requests, setRequests] = useState<TeachingOrganizationJoinRequest[]>([]);
+  const [busyId, setBusyId] = useState("");
+  const [error, setError] = useState("");
+  async function refresh() {
+    setError("");
+    try { setRequests(await teachingClient.organizationJoinRequests()); }
+    catch (requestError) { setError(requestError instanceof Error ? requestError.message : String(requestError)); }
+  }
+  useEffect(() => { void refresh(); }, []);
+  async function review(request: TeachingOrganizationJoinRequest, status: "approved" | "rejected") {
+    setBusyId(request.id); setError("");
+    try {
+      await teachingClient.reviewOrganizationJoinRequest(request.id, status);
+      await refresh();
+      onMessage(status === "approved" ? `已通过 ${request.applicantDisplayName || request.applicantLoginName || "账号"} 的加入申请。` : "已驳回加入申请。");
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : String(requestError));
+    } finally {
+      setBusyId("");
+    }
+  }
+  const pending = requests.filter((request) => request.status === "pending");
+  return <section className="teacher-assignment-panel" aria-label="机构申请审批">
+    <header><strong>机构申请</strong><small>{pending.length} 条待处理</small></header>
+    {error && <p className="teaching-account-error">{error}</p>}
+    <div className="teacher-assignment-list">{requests.length ? requests.map((request) => <article key={request.id}>
+      <button type="button" onClick={() => undefined}>
+        <b>{request.applicantDisplayName || request.applicantLoginName || "未命名账号"}</b>
+        <small>{request.orgName} · {roleLabel(request.applicantRole ?? "user")} · {request.status === "pending" ? "待审批" : request.status === "approved" ? "已通过" : "已驳回"}</small>
+      </button>
+      {request.note && <p>{request.note}</p>}
+      {request.status === "pending" && <footer>
+        <button type="button" disabled={Boolean(busyId)} onClick={() => void review(request, "rejected")}>{busyId === request.id ? "处理中…" : "驳回"}</button>
+        <button type="button" className="primary" disabled={Boolean(busyId)} onClick={() => void review(request, "approved")}>{busyId === request.id ? "处理中…" : "通过"}</button>
+      </footer>}
+    </article>) : <p>暂无加入申请。</p>}</div>
+  </section>;
+}
+
+function TeachingAccountDialog({ auth, syncing, lastSyncAt, message, onClose, onLogin, onAuthChange, onLogout, onSync, onMessage }: {
+  auth?: TeachingAuth;
+  syncing: boolean;
+  lastSyncAt: string | null;
+  message: string;
+  onClose(): void;
+  onLogin(auth: TeachingAuth): void;
+  onAuthChange(auth: TeachingAuth): void;
+  onLogout(clearCache: boolean): Promise<void>;
+  onSync(): void;
+  onMessage(message: string): void;
+}) {
+  const [account, setAccount] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [environment, setEnvironment] = useState(teachingClient.environment());
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [logoutBusy, setLogoutBusy] = useState(false);
+  async function changeEnvironment(next: AppEnvironment) {
+    setBusy(true); setError(""); setPassword(""); setShowPassword(false);
+    try {
+      await teachingClient.setEnvironment(next);
+      setEnvironment(teachingClient.environment());
+    } catch (error) { setError(error instanceof Error ? error.message : String(error)); }
+    finally { setBusy(false); }
+  }
+  async function login(event: React.FormEvent) {
+    event.preventDefault(); setBusy(true); setError("");
+    try {
+      onLogin(await teachingClient.login(account, password));
+    } catch (error) { setError(error instanceof Error ? error.message : String(error)); }
+    finally { setBusy(false); }
+  }
+  async function switchOrganization(orgId: string) {
+    if (!auth || orgId === auth.user.orgId) return;
+    setBusy(true); setError("");
+    try {
+      const next = await teachingClient.switchOrganization(orgId);
+      onAuthChange(next);
+    } catch (error) { setError(error instanceof Error ? error.message : String(error)); }
+    finally { setBusy(false); }
+  }
+  async function logout(clearCache: boolean) {
+    if (clearCache) {
+      const pendingCount = await teachingClient.pendingAttemptCount();
+      const detail = pendingCount
+        ? `\n\n当前还有 ${pendingCount} 条答题记录未提交。它们会继续保留，重新登录后联网可补交。`
+        : "";
+      if (!window.confirm(`将清除本机当前账号的作业缓存，但不会删除服务端作业、完成记录或答题历史。${detail}`)) return;
+      setLogoutBusy(true);
+      try {
+        await teachingClient.clearAssignmentCaches();
+        await onLogout(true);
+      } catch (logoutError) {
+        setError(logoutError instanceof Error ? logoutError.message : String(logoutError));
+      } finally {
+        setLogoutBusy(false);
+      }
+      return;
+    }
+    await onLogout(false);
+  }
+  const organizations = auth?.user.organizations ?? [];
+  const accountBusy = busy || syncing || logoutBusy;
+  return <div className="confirm-backdrop teaching-account-backdrop" role="dialog" aria-modal="true" onMouseDown={onClose}><section className="teaching-account-dialog" onMouseDown={(event) => event.stopPropagation()}>
+    <header><div><strong className="teaching-account-title">{auth ? (auth.user.role === "student" ? "我的学习账号" : auth.user.role === "user" ? "我的棋谱账号" : "我的教学账号") : "账号登录"}<span className={`teaching-environment-badge ${packageEnvironment}`}>{packageEnvironmentLabel}</span></strong><small>{auth?.user.role === "user" ? "个人棋谱云同步仅在你手动确认后执行" : auth ? "账号、机构和作业状态" : "登录后可查看作业、进入教师工作台或手动同步个人棋谱"}</small></div><button aria-label="关闭" onClick={onClose}><X /></button></header>
+    {auth ? <><div className="teaching-account-profile"><CircleCheckBig /><div><strong>{auth.user.displayName}</strong><span>{auth.user.loginName} · {roleLabel(auth.user.role, Boolean(auth.user.isPlatformAdmin))}</span><small>{auth.user.orgName ? `${auth.user.orgName} · ` : "未绑定学校/机构 · "}登录有效至 {new Date(auth.expiresAt).toLocaleDateString("zh-CN")}</small>{vipStatus(auth) && <b className={`teaching-vip-status ${vipStatus(auth)!.tone}`}>{vipStatus(auth)!.label}</b>}</div></div>{organizations.length > 1 && <label className="teaching-org-switcher"><span>当前学校/机构</span><select value={auth.user.orgId ?? ""} disabled={accountBusy} onChange={(event) => void switchOrganization(event.target.value)}>{organizations.map((item) => <option key={item.id} value={item.id}>{item.name} · {roleLabel(item.role)}</option>)}</select></label>}{error && <p className="teaching-account-error">{error}</p>}{auth.user.role === "student" && !auth.user.vipActive && <div className="teaching-vip-notice"><strong>{auth.user.vipEnabled ? "作业权益已过期" : "当前账号未开通作业权益"}</strong><span>{auth.user.vipEnabled ? "请联系老师或管理员续期。公开题库和公开作业仍可继续练习。" : "可先练习平台公开题库，联系老师或管理员开通后再同步 VIP 作业。"}</span></div>}<p className="teaching-sync-status">{message || (auth.user.role === "student" ? `作业缓存已按账号和机构隔离 · ${syncTimeLabel(lastSyncAt)}` : auth.user.role === "user" ? "可在本地棋库中手动同步个人录谱、目录和分析摘要。" : auth.user.orgId ? "当前机构内可布置和查看自己负责班级的作业。" : "管理员账号已登录；重启服务并重新登录后会自动补齐默认机构。")} </p>{auth.user.role === "student" ? <><footer><button className="danger" disabled={accountBusy} onClick={() => void logout(false)}>退出登录</button>{auth.user.vipActive && <button className="primary" disabled={accountBusy} onClick={onSync}>{syncing ? "同步中…" : "同步我的作业"}</button>}</footer><div className="teaching-cache-actions"><button type="button" disabled={accountBusy} onClick={() => void logout(true)}>退出并清除本机作业缓存</button><small>只清除本机作业缓存，不删除服务端数据；未提交答题记录会保留。</small></div></> : auth.user.role === "user" ? <footer><button className="danger" disabled={accountBusy} onClick={() => void logout(false)}>退出登录</button></footer> : <>{auth.user.role === "admin" && <AdminJoinRequestsPanel onMessage={onMessage}/>} {auth.user.orgId ? <TeacherAssignmentPanel key={auth.user.orgId ?? auth.user.id} onMessage={onMessage}/> : <div className="teaching-vip-notice"><strong>当前管理员尚未绑定机构</strong><span>请重启同步服务后重新登录，系统会自动创建默认机构并绑定管理员。</span></div>}<footer><button className="danger" disabled={accountBusy} onClick={() => void logout(false)}>退出登录</button></footer></>}</> : <form onSubmit={login}>{packageEnvironment === "test" && <label><span>连接环境</span><select aria-label="连接环境" value={environment} disabled={busy} onChange={(event) => void changeEnvironment(event.target.value as AppEnvironment)}><option value="test">测试环境</option><option value="production">线上环境</option></select></label>}<label><span>账号或登录名</span><input autoFocus autoCapitalize="none" value={account} placeholder="例如：学生账号、教师登录名或账号编号" onChange={(event) => setAccount(event.target.value)} /></label><label><span>登录密码</span><span className="teaching-password-field"><input type={showPassword ? "text" : "password"} value={password} onChange={(event) => setPassword(event.target.value)} /><button type="button" aria-label={showPassword ? "隐藏密码" : "显示密码"} title={showPassword ? "隐藏密码" : "显示密码"} onMouseDown={(event) => event.preventDefault()} onClick={() => setShowPassword((visible) => !visible)}>{showPassword ? <EyeOff /> : <Eye />}</button></span></label>{error && <p className="teaching-account-error">{error}</p>}{message && <p className="teaching-sync-status">{message}</p>}<footer><button type="button" onClick={onClose}>取消</button><button className="primary" disabled={busy || !account || !password}>{busy ? "登录中…" : "登录"}</button></footer></form>}
+  </section></div>;
+}
+
+function UnboundTeachingDialog({ auth, onClose, onLogout }: { auth: TeachingAuth; onClose(): void; onLogout(): void }) {
+  const [query, setQuery] = useState("");
+  const [organizations, setOrganizations] = useState<TeachingOrganization[]>([]);
+  const [selectedOrgId, setSelectedOrgId] = useState("");
+  const [note, setNote] = useState("");
+  const [requests, setRequests] = useState<TeachingOrganizationJoinRequest[]>([]);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function refreshRequests() {
+    try { setRequests(await teachingClient.organizationJoinRequests()); }
+    catch (requestError) { setError(requestError instanceof Error ? requestError.message : String(requestError)); }
+  }
+  useEffect(() => { void refreshRequests(); }, []);
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setBusy(true); setError("");
+      void teachingClient.organizations(query).then(setOrganizations).catch((requestError) => setError(requestError instanceof Error ? requestError.message : String(requestError))).finally(() => setBusy(false));
+    }, query ? 250 : 0);
+    return () => window.clearTimeout(timer);
+  }, [query]);
+  async function submit(event: React.FormEvent) {
+    event.preventDefault(); if (!selectedOrgId) return; setBusy(true); setError("");
+    try { await teachingClient.createOrganizationJoinRequest(selectedOrgId, note.trim() || undefined); setNote(""); await refreshRequests(); }
+    catch (requestError) { setError(requestError instanceof Error ? requestError.message : String(requestError)); }
+    finally { setBusy(false); }
+  }
+  return <div className="confirm-backdrop teaching-account-backdrop" role="dialog" aria-modal="true">
+    <section className="teaching-account-dialog" onMouseDown={(event) => event.stopPropagation()}>
+      <header><div><strong>申请加入学校/机构</strong><small>{auth.user.displayName} · 当前未绑定学校/机构</small></div><button aria-label="关闭" onClick={onClose}><X /></button></header>
+      <form className="teaching-organization-apply" onSubmit={submit}><OrganizationSearchSelect organizations={organizations} query={query} selectedId={selectedOrgId} busy={busy} onQueryChange={setQuery} onSelect={(organization) => setSelectedOrgId(organization?.id ?? "")} /><label><span>申请说明</span><textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="申请说明（可选）" /></label><button className="primary" disabled={busy || !selectedOrgId}>提交申请</button></form>
+      {error && <p className="teaching-account-error">{error}</p>}
+      <div className="teaching-join-status"><strong>我的申请</strong>{requests.map((request) => <p key={request.id}><span>{request.orgName}</span><small>{request.status === "pending" ? "待审批" : request.status === "approved" ? "已通过，请重新登录" : "已驳回"}</small></p>)}{!requests.length && <small>暂无申请记录</small>}</div>
+      <footer><button className="danger" onClick={onLogout}>退出登录</button></footer>
+    </section>
+  </div>;
+}
+
 export function App() {
   const input = useRef<HTMLInputElement>(null);
   const initialStudyState = useMemo(() => readStoredStudyState(), []);
+  const initialManualSetupDraft = useMemo(() => readManualSetupDraft(), []);
   const [libraries, setLibraries] = useState<TrainingLibrary[]>([]);
+  const [platformGameLibraries, setPlatformGameLibraries] = useState<PlatformGameLibrary[]>([]);
+  const [platformGameLibrary, setPlatformGameLibrary] = useState<PlatformGameLibrary>();
+  const [platformGames, setPlatformGames] = useState<PlatformGame[]>([]);
+  const [teachingAuth, setTeachingAuth] = useState<TeachingAuth | undefined>();
+  const [teachingAccountOpen, setTeachingAccountOpen] = useState(false);
+  const [teachingSyncing, setTeachingSyncing] = useState(false);
+  const [teachingLastSyncAt, setTeachingLastSyncAt] = useState<string | null>(() => teachingClient.lastSyncAt());
+  const [teachingMessage, setTeachingMessage] = useState("");
+  const [unreadAssignmentCount, setUnreadAssignmentCount] = useState(0);
+  const [mobileRoute, setMobileRoute] = useState<MobileRoute>(() => {
+    const route = mobileRouteFromPath();
+    return route === "home" && !localStorage.getItem(MOBILE_ONBOARDING_KEY) ? "onboarding" : route;
+  });
+  const [mobileTab, setMobileTab] = useState<MobilePrimaryTab>(() => mobileRouteTab(mobileRouteFromPath()));
+  const [teacherPath, setTeacherPath] = useState(() => window.location.pathname.startsWith("/teacher") ? window.location.pathname : "/teacher");
+  const [mobileLayout, setMobileLayout] = useState(() => window.matchMedia("(max-width: 1199px)").matches || document.documentElement.classList.contains("phone-webview"));
+  const [resumeTeacherAfterLogin, setResumeTeacherAfterLogin] = useState(false);
+  const [studentAssignmentsOpen, setStudentAssignmentsOpen] = useState(() => mobileRouteFromPath() === "assignments");
+  const [practiceHome, setPracticeHome] = useState<PracticeHome>();
+  const [practiceTopicId, setPracticeTopicId] = useState<string | undefined>(() => window.location.pathname.match(/^\/practice\/topics\/([^/]+)/)?.[1]);
+  useEffect(() => {
+    const openTopic = (event: Event) => {
+      const topicId = (event as CustomEvent<string>).detail;
+      if (!topicId) return;
+      setPracticeTopicId(topicId);
+      window.history.pushState({ mobileRoute: "practice-topic", topicId }, "", `/practice/topics/${encodeURIComponent(topicId)}`);
+      setMobileRoute("practice-topic");
+      setMobileTab("practice");
+    };
+    window.addEventListener("xiangqi-open-practice-topic", openTopic);
+    return () => window.removeEventListener("xiangqi-open-practice-topic", openTopic);
+  }, []);
+  const [practiceSession, setPracticeSession] = useState<PracticeSession>();
+  const [practiceItemId, setPracticeItemId] = useState<string>();
+  const [practiceMessage, setPracticeMessage] = useState("");
+  const [practiceHomeLoading, setPracticeHomeLoading] = useState(false);
+  const [practiceHomeError, setPracticeHomeError] = useState("");
+  const [practiceCreating, setPracticeCreating] = useState(false);
+  const practiceCreationLock = useRef(false);
+  const practiceHomeGeneration = useRef(0);
+  const practiceAuthGeneration = useRef(0);
+  const [assignmentSequence, setAssignmentSequence] = useState<TrainingProblem[]>([]);
+  const [assignmentSequenceIndex, setAssignmentSequenceIndex] = useState(-1);
+  const [importAccessTier, setImportAccessTier] = useState<"public" | "vip">("public");
   const [library, setLibrary] = useState<TrainingLibrary>();
   const [expanded, setExpanded] = useState<string>();
   const [problems, setProblems] = useState<TrainingProblem[]>([]);
@@ -978,6 +2219,7 @@ export function App() {
   const [studyEngineEnabled, setStudyEngineEnabled] = useState(false);
   const [manualEngineEnabled, setManualEngineEnabled] = useState(false);
   const [studyRuleMode, setStudyRuleMode] = useState<RuleMode>(() => readStoredStudyRuleMode());
+  const [studyReturnRoute, setStudyReturnRoute] = useState<MobileRoute>("practice");
   const [workspaceMode, setWorkspaceMode] = useState<MobileWorkspaceMode>(initialStudyState.enabled ? "study" : "training");
   const studyMode = workspaceMode === "study";
   const manualMode = workspaceMode === "manual";
@@ -1046,12 +2288,20 @@ export function App() {
   const manualSheetLock = useRef(false);
   const [manualSheetBusy, setManualSheetBusy] = useState(false);
   const [manualSaveStatus, setManualSaveStatus] = useState<"已保存" | "保存中" | "未保存" | "保存失败">("已保存");
-  const [manualSetupPieces, setManualSetupPieces] = useState<BoardPiece[]>([]);
-  const [manualSetupSide, setManualSetupSide] = useState<"red" | "black">("red");
+  const [manualSetupPieces, setManualSetupPieces] = useState<BoardPiece[]>(() => initialManualSetupDraft?.current.pieces.map((piece) => ({ ...piece })) ?? []);
+  const [manualSetupSide, setManualSetupSide] = useState<"red" | "black">(() => initialManualSetupDraft?.current.side ?? "red");
+  const [manualSetupHistory, setManualSetupHistory] = useState<ManualSetupSnapshot[]>(() => initialManualSetupDraft?.history.map(cloneManualSetupSnapshot) ?? []);
+  const [manualSetupDraftActive, setManualSetupDraftActive] = useState(Boolean(initialManualSetupDraft));
+  const [manualSetupActionOpen, setManualSetupActionOpen] = useState(false);
   const [manualSetupTool, setManualSetupTool] = useState<{ color: "red" | "black"; kind: string; label: string } | "erase">({ color: "red", kind: "king", label: "帅" });
   const [manualSetupSelected, setManualSetupSelected] = useState<Square>();
   const [manualFullAnalysisProgress, setManualFullAnalysisProgress] = useState<{ done: number; total: number; running: boolean }>();
   const [manualAnalysisSummaries, setManualAnalysisSummaries] = useState<Record<string, LocalManualAnalysisSummary>>({});
+  const [manualCloudSyncing, setManualCloudSyncing] = useState(false);
+  const [manualCloudSyncMessage, setManualCloudSyncMessage] = useState("仅同步个人录谱、目录和本地分析，不上传 CBL 题库。");
+  const [manualCloudSyncStatus, setManualCloudSyncStatus] = useState<ManualCloudSyncStatus | undefined>(() => readManualCloudSyncStatus(teachingClient.auth()));
+  const [manualCloudSyncStats, setManualCloudSyncStats] = useState({ games: 0, folders: 0, analyses: 0 });
+  const [manualCloudRemoteStatus, setManualCloudRemoteStatus] = useState<RemoteManualSyncStatus>();
   const [manualIssueSide, setManualIssueSide] = useState<"red" | "black">("red");
   const [boardFlipped, setBoardFlipped] = useState(() => localStorage.getItem("xiangqi-training-board-flipped") === "true");
   const [studyEvaluationVisible, setStudyEvaluationVisible] = useState(() => localStorage.getItem("xiangqi-training-study-evaluation") === "true");
@@ -1062,6 +2312,7 @@ export function App() {
   const [riverText, setRiverText] = useState(() => localStorage.getItem("xiangqi-training-river-text") ?? "");
   const [riverTextColor, setRiverTextColor] = useState(() => localStorage.getItem("xiangqi-training-river-text-color") ?? "#657b48");
   const [riverTextSize, setRiverTextSize] = useState(() => Number(localStorage.getItem("xiangqi-training-river-text-size")) || 29);
+  const [tabletNavigationPosition, setTabletNavigationPosition] = useState<TabletNavigationPosition>(() => readTabletNavigationPosition());
   const [skinDevTapCount, setSkinDevTapCount] = useState(0);
   const [skinDevCommandOpen, setSkinDevCommandOpen] = useState(false);
   const [skinDevCommand, setSkinDevCommand] = useState("");
@@ -1076,6 +2327,7 @@ export function App() {
   const studyGeneration = useRef(0);
   const studyCloudGeneration = useRef(0);
   const finishing = useRef(false);
+  const latestTrainingMoves = useRef<string[]>([]);
   const pendingAutoReply = useRef<PendingAutoReply | undefined>(undefined);
   const trainingTimerWasRunning = useRef(false);
   const elapsed = elapsedSaved + (startedAt ? Date.now() - startedAt : 0);
@@ -1091,9 +2343,18 @@ export function App() {
   const boardSkinInfo = skinById(boardSkin);
   const pieceSkinInfo = skinById(pieceSkin);
   const activeRiverText = boardSkinInfo.supportsCustomRiverText ? riverText : "";
+  const tabletNavigationAvailable = !document.documentElement.classList.contains("phone-webview") && (document.documentElement.classList.contains("tablet-webview") || window.matchMedia("(min-width: 600px)").matches);
 
   useEffect(() => {
     localStorage.setItem(SKIN_DEFAULT_MIGRATION_KEY, "done");
+  }, []);
+
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 1199px)");
+    const update = () => setMobileLayout(media.matches || document.documentElement.classList.contains("phone-webview"));
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
   }, []);
 
   useEffect(() => {
@@ -1165,7 +2426,66 @@ export function App() {
     return () => { cancelled = true; };
   }, [currentManualMoves, manualPieces, manualSelected, manualStartingFen, manualTerminal, studyRuleMode]);
 
-  async function refresh() { setLibraries(await trainingStore.libraries()); }
+  async function availableLibraries(authOverride = teachingAuth) {
+    const [local, teaching, platform] = await Promise.all([
+      trainingStore.libraries(),
+      authOverride?.user.role === "student" ? teachingClient.cachedLibraries().catch(() => []) : Promise.resolve([]),
+      authOverride?.user.role === "student" ? teachingClient.platformLibraries().catch(() => []) : Promise.resolve([]),
+    ]);
+    return [...teaching, ...platform, ...local];
+  }
+  async function refreshPlatformGames(authOverride = teachingAuth) {
+    setPlatformGameLibraries(authOverride?.user.role === "student" ? await teachingClient.platformGameLibraries().catch(() => []) : []);
+  }
+  async function refresh(authOverride = teachingAuth) {
+    const [next] = await Promise.all([availableLibraries(authOverride), refreshPlatformGames(authOverride)]);
+    setLibraries(next);
+  }
+  async function syncTeachingAssignments() {
+    setTeachingSyncing(true); setTeachingMessage("");
+    try {
+      const next = await teachingClient.syncAssignments();
+      await refresh();
+      setUnreadAssignmentCount(await teachingClient.unreadAssignmentCount());
+      setTeachingLastSyncAt(teachingClient.lastSyncAt());
+      setTeachingMessage(`已同步 ${next.length} 份作业`);
+    } catch (error) {
+      const cached = await teachingClient.cachedLibraries().catch(() => []);
+      const platform = teachingAuth?.user.role === "student" ? await teachingClient.platformLibraries().catch(() => []) : [];
+      setLibraries([...cached, ...platform, ...await trainingStore.libraries()]);
+      setUnreadAssignmentCount(cached.filter((item) => item.isUnread).length);
+      const detail = error instanceof Error ? error.message : String(error);
+      setTeachingMessage(detail.includes("作业权益") || detail.includes("VIP")
+        ? "作业权益已过期或未开通，请联系老师或管理员续期；当前显示上次缓存，公开题库仍可练习。"
+        : `同步失败，当前显示上次缓存${detail ? `：${detail}` : ""}`);
+    }
+    finally { setTeachingSyncing(false); }
+  }
+  function applyTeachingAuth(auth: TeachingAuth, switched = false) {
+    setTeachingAuth(auth);
+    setTeachingLastSyncAt(teachingClient.lastSyncAt());
+    if (auth.user.role === "student") {
+      setStudentAssignmentsOpen(true);
+      setTeachingMessage(switched ? `已切换到${auth.user.orgName ?? "新机构"}，正在同步作业` : "");
+      void refresh(auth);
+      void syncTeachingAssignments();
+    } else {
+      setTeachingMessage(switched ? `已切换到${auth.user.orgName ?? "新机构"}` : `${roleLabel(auth.user.role)}账号已登录`);
+      void refresh(auth);
+    }
+  }
+  useEffect(() => {
+    let active = true;
+    void teachingClient.restore().then((auth) => { if (active && auth) applyTeachingAuth(auth); });
+    return () => { active = false; };
+  }, []);
+  useEffect(() => {
+    const refreshSession = () => {
+      if (document.visibilityState === "visible") void teachingClient.refreshSession().then((auth) => { if (auth) applyTeachingAuth(auth, true); });
+    };
+    document.addEventListener("visibilitychange", refreshSession);
+    return () => document.removeEventListener("visibilitychange", refreshSession);
+  }, [teachingAuth?.user.id]);
   async function resetAnalysis(workspace: MobileWorkspaceMode = workspaceMode, clear = true) {
     analysisGeneration.current += 1;
     setAnalysisPending(false);
@@ -1184,9 +2504,183 @@ export function App() {
     }
     await resetAnalysis("training");
   }
-  async function selectLibrary(next: TrainingLibrary) { session.current += 1; pendingAutoReply.current = undefined; await resetTrainingAnalysis(); setLibrary(next); setExpanded(next.id); setProblems(await trainingStore.problems(next.id)); setProblem(undefined); setQuery(""); setCategory("全部"); }
-  async function selectProblem(next: TrainingProblem) { session.current += 1; pendingAutoReply.current = undefined; await resetTrainingAnalysis(); finishing.current = false; setProblem(next); setLine(next.solution); setMoves([]); setPieces((await boardAt(next.startingFen, [])).pieces); setSelected(undefined); setLastMove(undefined); setStartedAt(undefined); setElapsedSaved(0); setAttemptStarted(false); setEnded(false); setAutoReplyPending(false); setHints(0); setMistakes(0); setMode("cloud"); setNotice(LOCAL_PIKAFISH_AVAILABLE ? "云库 + 皮卡鱼：云库未收录时由本地 AI 自动应手。" : "云库对练：选中棋子后再点目标点，云库会自动应手。"); setRevealed(false); setAnswer([]); setAnswerStep(0); setDemoPlaying(false); setShowHistory(false); setAttempts(await trainingStore.attempts(next.id)); setCatalogueOpen(false); }
-  useEffect(() => { void refresh().then(async () => { const initial = (await trainingStore.libraries())[0]; if (initial) await selectLibrary(initial); }); }, []);
+  async function selectLibrary(next: TrainingLibrary) {
+    session.current += 1;
+    pendingAutoReply.current = undefined;
+    await resetTrainingAnalysis();
+    setLibrary(next);
+    setExpanded(next.id);
+    const nextProblems = next.source === "teaching" && next.assignmentId
+      ? await teachingClient.problems(next.assignmentId)
+      : next.source === "platform"
+        ? await teachingClient.platformLibraryProblems(next.fingerprint)
+        : await trainingStore.problems(next.id);
+    setProblems(nextProblems);
+    setProblem(undefined);
+    setQuery("");
+    setCategory("全部");
+  }
+  async function selectPlatformGameLibrary(next: PlatformGameLibrary) {
+    setPlatformGameLibrary(next);
+    setPlatformGames(await teachingClient.platformGameLibraryGames(next.id));
+  }
+  async function openPlatformGame(next: PlatformGame) {
+    const raw = await teachingClient.platformGameDetail(next.id);
+    const game = platformGameStudyData(raw);
+    const generation = ++studyGeneration.current;
+    await resetAnalysis("study");
+    const state = await boardAt(game.startingFen, [], studyRuleMode);
+    if (generation !== studyGeneration.current) return;
+    setStudyReturnRoute("game-browse");
+    setStudyStartingFen(game.startingFen);
+    setStudyCurrentFen(state.fen);
+    setStudyMoves(game.moves);
+    setStudyBranches(game.branches);
+    setStudyComments(game.comments);
+    setStudyCursor(0);
+    setStudyNotation(await chineseLine(game.startingFen, game.moves).catch(() => game.moves));
+    setStudyPieces(state.pieces);
+    setStudySelected(undefined);
+    setStudyLastMove(undefined);
+    setStudyTerminal(terminalResult(state.ruleStatus ?? state.status));
+    setStudyPanelTab("manual");
+    setStudyNotice(game.note ? `${game.title}：${game.note}` : `正在学习《${game.title}》，可逐步回放或进入自由拆棋。`);
+    setWorkspaceMode("study");
+    setCatalogueOpen(false);
+    setControlsOpen(false);
+    navigateMobileRoute("tool-study");
+  }
+  async function selectProblem(next: TrainingProblem) { session.current += 1; pendingAutoReply.current = undefined; await resetTrainingAnalysis(); finishing.current = false; latestTrainingMoves.current = []; setProblem(next); setLine(next.solution); setMoves([]); setPieces((await boardAt(next.startingFen, [])).pieces); setSelected(undefined); setLastMove(undefined); setStartedAt(undefined); setElapsedSaved(0); setAttemptStarted(false); setEnded(false); setAutoReplyPending(false); setHints(0); setMistakes(0); setMode(next.source === "teaching" ? "solver" : "cloud"); setNotice(next.source === "teaching" ? "线上作业：按题解完成，结果会自动提交；离线时将在联网后补交。" : LOCAL_PIKAFISH_AVAILABLE ? "云库 + 皮卡鱼：云库未收录时由本地 AI 自动应手。" : "云库对练：选中棋子后再点目标点，云库会自动应手。"); setRevealed(false); setAnswer([]); setAnswerStep(0); setDemoPlaying(false); setShowHistory(false); setAttempts(await trainingStore.attempts(next.id)); setCatalogueOpen(false); }
+  async function openStudentProblem(next: TrainingProblem, sequence: TrainingProblem[] = [], index = -1) {
+    const restoreAuth = teachingClient.auth();
+    const restoreServer = teachingClient.serverUrl();
+    if (!sequence.length && pendingAssignmentSequence.length) { sequence = pendingAssignmentSequence; index = pendingAssignmentIndex; }
+    if (problem?.source === "teaching" && problem.assignmentId && problem.serverProblemId) {
+      await teachingClient.saveAssignmentDraft({ assignmentId: problem.assignmentId, problemId: problem.serverProblemId, moves: [...moves], hints, mistakes, elapsedMs: Math.max(0, Math.round(elapsed)) });
+    }
+    setStudentAssignmentsOpen(false);
+    setMobileTab("assignments");
+    window.history.pushState({ mobileRoute: "assignments" }, "", `/assignments/problems/${encodeURIComponent(next.id)}`);
+    setAssignmentSequence(sequence);
+    setAssignmentSequenceIndex(index);
+    await selectProblem(next);
+    if (restoreServer !== teachingClient.serverUrl()
+      || restoreAuth?.user.id !== teachingClient.auth()?.user.id
+      || restoreAuth?.user.orgId !== teachingClient.auth()?.user.orgId) return;
+    if (next.assignmentId && next.serverProblemId) {
+      const restoreSession = session.current;
+      const stillRestoring = () => restoreSession === session.current
+        && restoreServer === teachingClient.serverUrl()
+        && restoreAuth?.user.id === teachingClient.auth()?.user.id
+        && restoreAuth?.user.orgId === teachingClient.auth()?.user.orgId;
+      const draft = await teachingClient.assignmentDraft(next.assignmentId, next.serverProblemId);
+      if (draft && stillRestoring()) {
+        const restoredMoves = [...draft.moves];
+        let restoredLine = next.solution;
+        for (const move of restoredMoves) {
+          const branch = restoredLine.find((item) => item.iccs === move);
+          if (!branch) { setNotice("保存的进度与当前题解不一致，请从头开始本题。"); return; }
+          restoredLine = branch.children;
+        }
+        let state = await boardAt(next.startingFen, restoredMoves);
+        if (!stillRestoring()) return;
+        // A saved player move may precede the delayed solver reply.
+        if (restoredMoves.length % 2 === 1 && restoredLine.length && !terminalResult(state.status)) {
+          const reply = restoredLine[0];
+          restoredMoves.push(reply.iccs);
+          restoredLine = reply.children;
+          state = await boardAt(next.startingFen, restoredMoves);
+          if (!stillRestoring()) return;
+        }
+        const completed = restoredMoves.length > 0 && (!restoredLine.length || Boolean(terminalResult(state.status)));
+        const duration = Math.max(0, Math.round(draft.elapsedMs));
+        const attempted = restoredMoves.length > 0 || duration > 0 || draft.hints > 0 || draft.mistakes > 0;
+        latestTrainingMoves.current = restoredMoves;
+        setMoves(restoredMoves);
+        setPieces(state.pieces);
+        setLine(restoredLine);
+        setLastMove(restoredMoves.at(-1));
+        setHints(draft.hints);
+        setMistakes(draft.mistakes);
+        setElapsedSaved(duration);
+        setAttemptStarted(attempted);
+        setStartedAt(!completed && attempted ? Date.now() : undefined);
+        setEnded(completed);
+        setNotice(completed ? "已恢复完成的题解。" : "已恢复上次进度，可继续完成题解。");
+        if (completed && !next.completedAttempts && restoreAuth) {
+          finishing.current = true;
+          await trainingStore.saveAttempt({ problemId: next.id, mode: "solver", elapsedMs: duration, hintsUsed: draft.hints, mistakes: draft.mistakes, outcome: "completed" });
+          const submitted = await teachingClient.submit({
+            clientAttemptId: crypto.randomUUID(), assignmentId: next.assignmentId, problemId: next.serverProblemId,
+            elapsedMs: duration, hintsUsed: draft.hints, mistakes: draft.mistakes, moves: restoredMoves,
+            outcome: "completed", completedAt: new Date().toISOString(),
+          }, restoreAuth);
+          if (stillRestoring()) setTeachingMessage(submitted ? "作业结果已提交" : "结果已保存在本机，联网后会补交。");
+        }
+      }
+    }
+  }
+  function returnToStudentAssignments() {
+    if (problem?.source === "teaching" && problem.assignmentId && problem.serverProblemId) {
+      void teachingClient.saveAssignmentDraft({ assignmentId: problem.assignmentId, problemId: problem.serverProblemId, moves: [...moves], hints, mistakes, elapsedMs: Math.max(0, Math.round(elapsed)) });
+    }
+    session.current += 1;
+    setProblem(undefined);
+    setProblems([]);
+    setStudentAssignmentsOpen(true);
+    setAssignmentSequence([]);
+    setAssignmentSequenceIndex(-1);
+    pendingAssignmentSequence = [];
+    pendingAssignmentIndex = -1;
+    setCatalogueOpen(false);
+    setControlsOpen(false);
+    navigateMobileRoute("assignments", true);
+  }
+  function openStudentPractice() {
+    setStudentAssignmentsOpen(false);
+    navigateMobileRoute("practice");
+  }
+  useEffect(() => {
+    if (teachingAuth?.user.role !== "student") return;
+    let cancelled = false;
+    let retrying = false;
+    const retryPending = async () => {
+      if (cancelled || retrying || !navigator.onLine) return;
+      retrying = true;
+      try {
+        const pending = await teachingClient.pendingAttemptCount();
+        await teachingClient.flushPending();
+        const remaining = await teachingClient.pendingAttemptCount();
+        if (!cancelled && pending > remaining) setTeachingMessage(remaining ? `还有 ${remaining} 条结果待提交` : "作业结果已补交");
+      } catch { /* Keep the persisted queue for the next connection attempt. */ }
+      finally { retrying = false; }
+    };
+    const onOnline = () => { void retryPending(); };
+    const onVisible = () => { if (document.visibilityState === "visible") onOnline(); };
+    window.addEventListener("online", onOnline);
+    document.addEventListener("visibilitychange", onVisible);
+    onOnline();
+    return () => {
+      cancelled = true;
+      window.removeEventListener("online", onOnline);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [teachingAuth?.user.id, teachingAuth?.user.orgId, teachingAuth?.user.role]);
+  useEffect(() => {
+    void availableLibraries().then(async (next) => { setLibraries(next); if (next[0]) await selectLibrary(next[0]); });
+    void refreshPlatformGames();
+    void teachingClient.flushPending();
+    if (teachingAuth?.user.role === "student") void syncTeachingAssignments();
+  }, []);
+  useEffect(() => {
+    ++practiceAuthGeneration.current;
+    setPracticeHome(undefined);
+    setPracticeSession(undefined);
+    if (teachingAuth?.user.role === "student") void refreshPracticeHome();
+    else { ++practiceHomeGeneration.current; setPracticeHome(undefined); setPracticeHomeLoading(false); setPracticeHomeError(""); }
+    setPracticeMessage("");
+    return () => { ++practiceHomeGeneration.current; };
+  }, [teachingAuth?.user.id, teachingAuth?.user.role, teachingAuth?.user.orgId]);
   useEffect(() => { void refreshManualLibrary(); void boardAt(STANDARD_STARTING_FEN, [], studyRuleMode).then((state) => { if (!manualPieces.length) setManualPieces(state.pieces); }); }, []);
   useEffect(() => { if (manualMode) void refreshManualLibrary(manualFolder, manualQuery); }, [manualFolder, manualMode, manualQuery]);
   useEffect(() => {
@@ -1231,6 +2725,16 @@ export function App() {
     };
     localStorage.setItem(STUDY_STATE_KEY, JSON.stringify(snapshot));
   }, [studyMode, studyPanelTab, studyStartingFen, studyMoves, studyCursor, studyBranches, studyComments, studyMoveTextOpen, studyFenEditorOpen]);
+  useEffect(() => {
+    if (!manualSetupDraftActive) {
+      localStorage.removeItem(MANUAL_SETUP_DRAFT_KEY);
+      return;
+    }
+    localStorage.setItem(MANUAL_SETUP_DRAFT_KEY, JSON.stringify({
+      current: { pieces: manualSetupPieces, side: manualSetupSide },
+      history: manualSetupHistory.slice(-50),
+    }));
+  }, [manualSetupDraftActive, manualSetupHistory, manualSetupPieces, manualSetupSide]);
   useEffect(() => {
     void setPreferredOrientation(preferredOrientation).catch(() => {
       setNotice("无法恢复屏幕方向设置，已使用系统自动旋转。");
@@ -1307,7 +2811,7 @@ export function App() {
   }, [manualAutoPlaying, manualCursor, manualMoves.length]);
   useEffect(() => () => { analysisGeneration.current += 1; void cancelPikafishSearch(); }, []);
 
-  async function importBytes(bytes: Uint8Array, logicJson?: string) {
+  async function importBytes(bytes: Uint8Array, logicJson?: string, accessTier: "public" | "vip" = "public") {
     if (bytes.byteLength > CBL_IMPORT_MAX_BYTES) throw new Error("文件超过 50MB，请拆分或改用更小题库。");
     setNotice("正在解析 CBL…");
     const parsed = logicJson ? applyTrainingLogicSidecar(await parseCbl(bytes), logicJson) : await parseCbl(bytes);
@@ -1346,13 +2850,13 @@ export function App() {
     }
     if (parsed.problems.length) {
       setNotice(`正在保存 ${parsed.problems.length} 道题…`);
-      const imported = await trainingStore.importLibrary(bytes, parsed);
+      const imported = await trainingStore.importLibrary(bytes, parsed, { accessTier });
       await refresh();
       await selectLibrary(imported);
       const logicCount = parsed.problems.filter((item) => item.logic).length;
       const suffix = logicCount ? `，已附加 ${logicCount} 条逻辑标注` : "";
       const damaged = parsed.warnings.filter((warning) => !warning.includes("标准开局记录不是残局题目")).length;
-      results.unshift(`“${imported.title}”已导入 ${parsed.problems.length} 题${damaged ? `，跳过 ${damaged} 条损坏记录` : ""}${suffix}`);
+      results.unshift(`“${imported.title}”已导入 ${parsed.problems.length} 题${accessTier === "vip" ? "，已设为 VIP 题库" : ""}${damaged ? `，跳过 ${damaged} 条损坏记录` : ""}${suffix}`);
     }
     if (!results.length) throw new Error("文件中没有可导入的残局题目或完整棋谱。");
     return results.join("；");
@@ -1367,7 +2871,7 @@ export function App() {
         setNotice(`正在读取 ${index + 1}/${cblFiles.length}：${cbl.name}`);
         const base = cbl.name.replace(/\.cbl$/i, "");
         const sidecar = files.find((file) => file.name.toLowerCase() === `${base}.logic.json`.toLowerCase());
-        results.push(await importBytes(new Uint8Array(await cbl.arrayBuffer()), sidecar ? await sidecar.text() : undefined));
+        results.push(await importBytes(new Uint8Array(await cbl.arrayBuffer()), sidecar ? await sidecar.text() : undefined, importAccessTier));
       } catch (error) {
         results.push(`“${cbl.name}”失败：${error instanceof Error ? error.message : String(error)}`);
       }
@@ -1389,7 +2893,7 @@ export function App() {
     if (Number.isFinite(declaredSize) && declaredSize > CBL_IMPORT_MAX_BYTES) throw new Error("远程文件超过 50MB。");
     const buffer = await response.arrayBuffer();
     if (buffer.byteLength > CBL_IMPORT_MAX_BYTES) throw new Error("远程文件超过 50MB。");
-    const result = await importBytes(new Uint8Array(buffer));
+    const result = await importBytes(new Uint8Array(buffer), undefined, importAccessTier);
     setImportPanelOpen(false);
     setNotice(result);
   }
@@ -1399,6 +2903,7 @@ export function App() {
     const state = await boardAt(problem.startingFen, nextMoves);
     if (expectedSession !== session.current) return;
     setSelected(undefined);
+    latestTrainingMoves.current = nextMoves;
     setPieces(state.pieces); setMoves(nextMoves); setLastMove(move);
     if (move) {
       const feedback = deriveTrainingFeedback(before, state, move);
@@ -1516,17 +3021,64 @@ export function App() {
     const completedMode = mode;
     const completedHints = hints;
     const completedMistakes = mistakes;
+    const completedMoves = [...latestTrainingMoves.current];
+    const completedTeachingAuth = teachingClient.auth();
+    const completedAuthGeneration = practiceAuthGeneration.current;
     finishing.current = true; pendingAutoReply.current = undefined; setEnded(true); setAutoReplyPending(false); setElapsedSaved(duration); setStartedAt(undefined);
     await resetAnalysis();
     await trainingStore.saveAttempt({ problemId: completedProblem.id, mode: completedMode, elapsedMs: duration, hintsUsed: completedHints, mistakes: completedMistakes, outcome });
+    if (practiceSession && activePracticeItem && completedProblem.source === "platform" && outcome !== "free_finished" && completedAuthGeneration === practiceAuthGeneration.current) {
+      const practiceOutcome = outcome === "completed" ? "completed" : outcome === "revealed" ? "revealed" : "abandoned";
+      const optimisticSession = {
+        ...practiceSession,
+        updatedAt: new Date().toISOString(),
+        items: practiceSession.items.map((item) => item.id === activePracticeItem.id ? { ...item, status: practiceOutcome } : item),
+      } satisfies PracticeSession;
+      setPracticeSession(optimisticSession);
+      try {
+        const updatedSession = await teachingClient.submitPracticeAttempt(practiceSession.id, {
+          itemId: activePracticeItem.id,
+          elapsedMs: Math.max(0, Math.round(duration)),
+          hintsUsed: completedHints,
+          mistakes: completedMistakes,
+          moves: completedMoves,
+          outcome: practiceOutcome,
+          clientAttemptId: crypto.randomUUID(),
+        }, completedTeachingAuth);
+        if (completedAuthGeneration !== practiceAuthGeneration.current) return;
+        setPracticeSession(updatedSession);
+        setPracticeItemId(activePracticeItem.id);
+        void refreshPracticeHome();
+      } catch (error) {
+        setPracticeMessage(`${error instanceof Error ? error.message : "当前离线"} 本次练习已保存在本机，联网后会自动同步。`);
+      }
+    }
+    if (completedProblem.source === "teaching" && completedProblem.assignmentId && completedProblem.serverProblemId && outcome !== "free_finished") {
+      const submitted = await teachingClient.submit({
+        clientAttemptId: crypto.randomUUID(),
+        assignmentId: completedProblem.assignmentId,
+        problemId: completedProblem.serverProblemId,
+        elapsedMs: Math.max(0, Math.round(duration)),
+        hintsUsed: completedHints,
+        mistakes: completedMistakes,
+        moves: completedMoves,
+        outcome,
+        completedAt: new Date().toISOString(),
+      }, completedTeachingAuth);
+      const submitError = teachingClient.lastSubmitError();
+      if (completedAuthGeneration !== practiceAuthGeneration.current) return;
+      setTeachingMessage(submitted ? "作业结果已提交" : submitError.includes("作业权益") ? `${submitError}本次结果已保留，续期后重新同步会继续补交。` : "当前离线，结果已加入待提交队列");
+    }
     const [nextAttempts, updatedProblems, nextLibraries] = await Promise.all([
       trainingStore.attempts(completedProblem.id),
-      trainingStore.problems(completedProblem.libraryId),
-      trainingStore.libraries(),
+      completedProblem.source === "teaching" && completedProblem.assignmentId ? teachingClient.problems(completedProblem.assignmentId) : trainingStore.problems(completedProblem.libraryId),
+      availableLibraries(),
     ]);
     if (expectedSession !== session.current) return;
     setAttempts(nextAttempts);
-    const updated = updatedProblems.find((item) => item.id === completedProblem.id);
+    const updated = completedProblem.source === "platform"
+      ? { ...completedProblem, completedAttempts: completedProblem.completedAttempts + 1, totalElapsedMs: completedProblem.totalElapsedMs + duration }
+      : updatedProblems.find((item) => item.id === completedProblem.id);
     if (updated) setProblem(updated);
     setLibraries(nextLibraries);
   }
@@ -1734,7 +3286,7 @@ export function App() {
   async function reveal() { if (!problem || ended) return; const revealSession = session.current; const activeProblem = problem; const notation = await chineseLine(activeProblem.startingFen, mainline(activeProblem.solution)); if (revealSession !== session.current) return; await finish("revealed", elapsed, revealSession); if (revealSession !== session.current) return; const initialBoard = await boardAt(activeProblem.startingFen, []); if (revealSession !== session.current) return; setAnswer(notation); setRevealed(true); setPieces(initialBoard.pieces); setMoves([]); setLastMove(undefined); setAnswerStep(0); setDemoPlaying(false); setNotice("答案已显示，可预演。"); }
   async function restart() { if (!problem) return; const restartSession = session.current; const activeProblem = problem; if (!ended && (attemptStarted || mistakes || hints)) await finish("abandoned", elapsed, restartSession); if (restartSession !== session.current) return; await selectProblem(activeProblem); }
   function pause() { if (ended) return; if (startedAt) { setElapsedSaved(elapsed); setStartedAt(undefined); setNotice("已暂停，暂停时间不会计入用时。"); } else if (elapsedSaved) { setStartedAt(Date.now()); setNotice("继续作答。"); } }
-  async function confirmDelete() { const target = deleteTarget; if (!target) return; setDeleteTarget(undefined); if (target.type === "library") { await trainingStore.deleteLibrary(target.id); const next = await trainingStore.libraries(); setLibraries(next); if (next[0]) await selectLibrary(next[0]); else { session.current += 1; await resetAnalysis(); setLibrary(undefined); setProblems([]); setProblem(undefined); } } else { await trainingStore.hideProblem(target.id); if (library) await selectLibrary(library); } }
+  async function confirmDelete() { const target = deleteTarget; if (!target) return; setDeleteTarget(undefined); if (target.id.startsWith("teaching:") || target.id.startsWith("platform:")) { setNotice(target.id.startsWith("platform:") ? "平台题库由平台维护，学生端不能删除。" : "线上作业由老师管理，学生端不能删除。"); return; } if (target.type === "library") { await trainingStore.deleteLibrary(target.id); const next = await availableLibraries(); setLibraries(next); if (next[0]) await selectLibrary(next[0]); else { session.current += 1; await resetAnalysis(); setLibrary(undefined); setProblems([]); setProblem(undefined); } } else { await trainingStore.hideProblem(target.id); if (library) await selectLibrary(library); } }
   const giveHint = async () => {
     if (!problem || ended) return;
     const next = Math.min(3, hints + 1) as 1 | 2 | 3;
@@ -1765,6 +3317,10 @@ export function App() {
   function changeRiverText(next: string) { const value = next.slice(0, 16); localStorage.setItem("xiangqi-training-river-text", value); setRiverText(value); }
   function changeRiverTextColor(next: string) { localStorage.setItem("xiangqi-training-river-text-color", next); setRiverTextColor(next); }
   function changeRiverTextSize(next: number) { const value = Math.max(16, Math.min(42, next)); localStorage.setItem("xiangqi-training-river-text-size", String(value)); setRiverTextSize(value); }
+  function changeTabletNavigationPosition(next: TabletNavigationPosition) {
+    localStorage.setItem(TABLET_NAVIGATION_POSITION_KEY, next);
+    setTabletNavigationPosition(next);
+  }
   function changeBoardSkin(next: string) {
     const value = normalizeSkinId(next);
     localStorage.setItem(BOARD_SKIN_KEY, value);
@@ -1945,7 +3501,7 @@ export function App() {
     setStudyFenError(undefined);
     setStudyMoveTextOpen(false);
   }
-  async function openStudyMode() {
+  async function openStudyMode(returnRoute: MobileRoute = "practice") {
     session.current += 1;
     trainingTimerWasRunning.current = Boolean(startedAt);
     setAutoReplyPending(false);
@@ -1953,11 +3509,12 @@ export function App() {
     if (startedAt) { setElapsedSaved(elapsed); setStartedAt(undefined); }
     await resetAnalysis("training", false);
     if (!studyPieces.length) await loadStudyPosition(STANDARD_STARTING_FEN, "标准局面已就绪，可自由走棋或开始分析。");
+    setStudyReturnRoute(returnRoute);
     setWorkspaceMode("study");
     setCatalogueOpen(false);
     setControlsOpen(false);
   }
-  async function closeStudyMode() {
+  async function closeStudyMode(returnRoute: MobileRoute = "account") {
     studyGeneration.current += 1;
     studyCloudGeneration.current += 1;
     setStudyAutoPlaying(false);
@@ -1974,6 +3531,7 @@ export function App() {
       const resumeSession = ++session.current;
       void continueAutoReply(pending, resumeSession);
     }
+    if (mobileRoute === "tool-study") navigateMobileRoute(returnRoute, true);
   }
 
   async function switchFromStudyToManualMode() {
@@ -2003,6 +3561,96 @@ export function App() {
     if (request !== manualLibraryRequest.current) return;
     setManualFolders(folders);
     setManualGames(games);
+  }
+
+  async function refreshManualCloudSyncStats() {
+    const [games, folders, analyses] = await Promise.all([
+      trainingStore.manualGames(),
+      trainingStore.manualFolders(),
+      trainingStore.manualAnalyses(),
+    ]);
+    setManualCloudSyncStats({ games: games.length, folders: folders.length, analyses: analyses.length });
+    const auth = teachingClient.auth();
+    if (!auth) {
+      setManualCloudRemoteStatus(undefined);
+      return;
+    }
+    try {
+      setManualCloudRemoteStatus(await teachingClient.personalManualSyncStatus());
+    } catch {
+      setManualCloudRemoteStatus(undefined);
+    }
+  }
+
+  async function loadManualAnalyses(gameId: string) {
+    const summaries = await trainingStore.manualAnalyses();
+    const next: Record<string, LocalManualAnalysisSummary> = {};
+    for (const summary of summaries) if (summary.gameId === gameId) next[summary.nodeId] = summary;
+    setManualAnalysisSummaries(next);
+  }
+
+  async function syncPersonalManualLibrary() {
+    if (mobileLayout && mobileRoute === "account") {
+      navigateMobileRoute("tool-sync");
+      return;
+    }
+    const auth = teachingClient.auth();
+    if (!auth) {
+      setManualCloudSyncMessage("请先登录账号，再手动同步个人棋谱。");
+      setManualNotice("请先登录账号，再手动同步个人棋谱。");
+      setTeachingAccountOpen(true);
+      return;
+    }
+    setManualCloudSyncing(true);
+    try {
+      const [games, folders, analyses] = await Promise.all([
+        trainingStore.manualGames(),
+        trainingStore.manualFolders(),
+        trainingStore.manualAnalyses(),
+      ]);
+      const localGameIds = new Set(games.map((game) => game.id));
+      const localFolderPaths = new Set(folders.map((folder) => folder.path));
+      const result = await teachingClient.syncPersonalManuals(games, folders, analyses);
+      const active = result.records.filter((record) => !record.deleted);
+      for (const record of active.filter((record) => record.kind === "folder")) {
+        await trainingStore.createManualFolder((record.payload as LocalManualFolder).path);
+      }
+      for (const record of active.filter((record) => record.kind === "game")) {
+        await trainingStore.saveManualGame(record.payload as LocalManualGame);
+      }
+      for (const record of result.records.filter((record) => record.deleted && record.kind === "game" && localGameIds.has(record.id))) {
+        await trainingStore.deleteManualGame(record.id);
+      }
+      for (const record of active.filter((record) => record.kind === "analysis")) {
+        await trainingStore.saveManualAnalysis(record.payload as LocalManualAnalysisSummary);
+      }
+      for (const record of result.records.filter((record) => record.deleted && record.kind === "folder" && localFolderPaths.has(record.id))) {
+        await trainingStore.deleteManualFolder(record.id);
+      }
+      teachingClient.completePersonalManualSync(result);
+      await refreshManualLibrary();
+      if (manualGame) await loadManualAnalyses(manualGame.id);
+      const cloudGames = active.filter((record) => record.kind === "game").length;
+      const cloudFolders = active.filter((record) => record.kind === "folder").length;
+      const conflicts = result.conflictCount ? `，保留 ${result.conflictCount} 份冲突副本` : "";
+      const message = `同步完成：云端 ${cloudGames} 份棋谱、${cloudFolders} 个目录${conflicts}。`;
+      const status = { at: new Date().toISOString(), outcome: "success" as const, message };
+      writeManualCloudSyncStatus(auth, status);
+      setManualCloudSyncStatus(status);
+      setManualCloudRemoteStatus(result.status);
+      setManualCloudSyncMessage(message);
+      setManualNotice(message);
+      await refreshManualCloudSyncStats();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "棋谱同步失败，请检查网络后重试。";
+      const status = { at: new Date().toISOString(), outcome: "error" as const, message };
+      writeManualCloudSyncStatus(auth, status);
+      setManualCloudSyncStatus(status);
+      setManualCloudSyncMessage(message);
+      setManualNotice(message);
+    } finally {
+      setManualCloudSyncing(false);
+    }
   }
 
   function manualPayload(overrides: Partial<LocalManualGame> = {}): LocalManualGame {
@@ -2057,7 +3705,7 @@ export function App() {
     openManualPanel("library");
   }
 
-  async function openManualMode() {
+  async function openManualMode(createInitialManual = true) {
     session.current += 1;
     trainingTimerWasRunning.current = Boolean(startedAt);
     if (startedAt) { setElapsedSaved(elapsed); setStartedAt(undefined); }
@@ -2070,10 +3718,10 @@ export function App() {
     setCatalogueOpen(false);
     setControlsOpen(false);
     await refreshManualLibrary();
-    if (!manualPieces.length) await createManualFromFen(STANDARD_STARTING_FEN, "标准开局");
+    if (createInitialManual && !manualPieces.length) await createManualFromFen(STANDARD_STARTING_FEN, "标准开局");
   }
 
-  async function closeManualMode() {
+  async function closeManualMode(returnRoute: MobileRoute = "account") {
     await resetAnalysis("manual", false);
     setManualSelected(undefined);
     setManualSetupOpen(false);
@@ -2083,6 +3731,7 @@ export function App() {
     setWorkspaceMode("training");
     if (trainingTimerWasRunning.current && problem && !ended && !revealed) setStartedAt(Date.now());
     trainingTimerWasRunning.current = false;
+    if (mobileRoute === "tool-manual" || mobileRoute === "tool-setup") navigateMobileRoute(returnRoute, true);
   }
 
   async function switchFromManualMode(target: MobileWorkspaceMode) {
@@ -2139,6 +3788,7 @@ export function App() {
     setManualLastMove(undefined);
     setManualTerminal(terminalResult(state.ruleStatus ?? state.status));
     setManualAnalysisLines([]);
+    setManualAnalysisSummaries({});
     setManualNotice(`已新建棋谱：${saved.title}`);
     setManualSaveStatus("已保存");
     setManualSetupOpen(false);
@@ -2172,6 +3822,7 @@ export function App() {
     setManualPanelOpen(false);
     setManualAnalysisExpanded(false);
     setManualSetupOpen(false);
+    await loadManualAnalyses(loaded.id);
   }
 
   async function createManualFolder() {
@@ -2211,6 +3862,24 @@ export function App() {
 
   async function commitManualSheet() {
     if (!manualSheet) return;
+    if (manualSheet.type === "setupSave") {
+      const title = manualSheet.title.trim();
+      if (!title) { setManualSheetError("棋谱标题不能为空。"); return; }
+      const validationError = setupValidationError(manualSetupPieces);
+      if (validationError) { setManualSheetError(validationError); setManualSetupError(validationError); return; }
+      const folder = cleanManualFolderPath(manualSheet.folder);
+      const fen = piecesToFen(manualSetupPieces, manualSetupSide);
+      await createManualFromFen(fen, title, folder);
+      setManualFolder(folder);
+      setManualSetupOpen(false);
+      clearManualSetupDraft();
+      setManualNotice(`《${title}》已保存到${folder || "未分类"}。`);
+      setManualSheetError("");
+      setManualSheet(undefined);
+      if (mobileRoute === "tool-setup") navigateMobileRoute("tool-manual", true);
+      openManualPanel("library");
+      return;
+    }
     if (manualSheet.type === "gameInfo") {
       const title = manualSheet.title.trim();
       if (!title) { setManualSheetError("棋谱标题不能为空。"); setManualNotice("棋谱标题不能为空。"); return; }
@@ -2523,18 +4192,48 @@ export function App() {
     await playManualMove(`${squareName(from)}${squareName(to)}`);
   }
 
-  async function openManualSetup() {
-    setManualSetupPieces(defaultManualSetupPieces());
-    setManualSetupSide("red");
+  function manualSetupSnapshot(pieces = manualSetupPieces, side = manualSetupSide): ManualSetupSnapshot {
+    return { pieces: pieces.map((piece) => ({ ...piece })), side };
+  }
+
+  function rememberManualSetup(snapshot = manualSetupSnapshot()) {
+    setManualSetupHistory((history) => [...history, cloneManualSetupSnapshot(snapshot)].slice(-50));
+    setManualSetupDraftActive(true);
+  }
+
+  function clearManualSetupDraft() {
+    setManualSetupDraftActive(false);
+    setManualSetupHistory([]);
+    setManualSetupActionOpen(false);
+    localStorage.removeItem(MANUAL_SETUP_DRAFT_KEY);
+  }
+
+  function openManualSetup(restoreDraft = false) {
+    const restore = restoreDraft && manualSetupDraftActive && manualSetupPieces.length;
+    if (!restore) {
+      setManualSetupPieces(defaultManualSetupPieces());
+      setManualSetupSide("red");
+      setManualSetupHistory([]);
+      setManualSetupDraftActive(true);
+    }
     setManualSetupTool({ color: "red", kind: "pawn", label: "兵" });
     setManualSetupSelected(undefined);
     setManualSetupError("");
-    setManualNotice("默认红先，可切换黑先；选择棋子后点棋盘放置。");
+    setManualSetupActionOpen(false);
+    setManualNotice(restore ? "已恢复未保存的摆棋草稿。" : "默认红先，可切换黑先；选择棋子后点棋盘放置。");
     setManualPanelOpen(false);
     setManualAnalysisExpanded(false);
     setManualMenuOpen(false);
     setManualSelected(undefined);
     setManualSetupOpen(true);
+  }
+
+  function cancelManualSetup() {
+    clearManualSetupDraft();
+    setManualSetupSelected(undefined);
+    setManualSetupError("");
+    setManualSetupOpen(false);
+    if (mobileRoute === "tool-setup") void closeManualMode("account");
   }
 
   async function confirmManualSetup() {
@@ -2547,10 +4246,8 @@ export function App() {
     const fen = piecesToFen(manualSetupPieces, manualSetupSide);
     try {
       await boardAt(fen, [], studyRuleMode);
-      setManualSetupOpen(false);
       setManualSetupError("");
-      await createManualFromFen(fen, "摆棋局面", manualFolder);
-      setManualNotice(`摆棋局面已生成，${manualSetupSide === "red" ? "红方" : "黑方"}先走。`);
+      setManualSetupActionOpen(true);
     } catch (error) {
       const message = `局面不符合当前规则：${error instanceof Error ? error.message : "请检查棋子位置"}`;
       setManualSetupError(message);
@@ -2558,68 +4255,147 @@ export function App() {
     }
   }
 
+  async function startManualSetupAnalysis() {
+    const validationError = setupValidationError(manualSetupPieces);
+    if (validationError) { setManualSetupError(validationError); return; }
+    const fen = piecesToFen(manualSetupPieces, manualSetupSide);
+    try {
+      await boardAt(fen, [], studyRuleMode);
+      setManualSetupActionOpen(false);
+      setManualSetupOpen(false);
+      setStudyReturnRoute("tool-setup");
+      await loadStudyPosition(fen, `摆棋局面已载入，${manualSetupSide === "red" ? "红方" : "黑方"}先走。`);
+      setWorkspaceMode("study");
+      setCatalogueOpen(false);
+      setControlsOpen(false);
+      navigateMobileRoute("tool-study");
+    } catch (error) {
+      setManualSetupError(error instanceof Error ? error.message : "局面无法载入拆棋分析。");
+    }
+  }
+
+  function requestManualSetupSave() {
+    setManualSetupActionOpen(false);
+    setManualSheetError("");
+    setManualSheet({ type: "setupSave", title: "摆棋局面", folder: manualFolder });
+  }
+
+  function undoManualSetup() {
+    const previous = manualSetupHistory.at(-1);
+    if (!previous) { setManualNotice("没有可撤销的摆棋操作。"); return; }
+    setManualSetupPieces(previous.pieces.map((piece) => ({ ...piece })));
+    setManualSetupSide(previous.side);
+    setManualSetupHistory((history) => history.slice(0, -1));
+    setManualSetupSelected(undefined);
+    setManualSetupError("");
+    setManualNotice("已撤销上一步摆棋操作。");
+  }
+
+  async function fillManualSetupStandardPosition() {
+    try {
+      const state = await boardAt(STANDARD_STARTING_FEN, [], studyRuleMode);
+      rememberManualSetup();
+      setManualSetupPieces(state.pieces);
+      setManualSetupSide("red");
+      setManualSetupSelected(undefined);
+      setManualSetupTool({ color: "red", kind: "pawn", label: "兵" });
+      setManualSetupError("");
+      setManualNotice("已摆满标准开局。");
+    } catch (error) {
+      setManualSetupError(error instanceof Error ? error.message : "无法载入标准局面。");
+    }
+  }
+
+  function clearManualSetupBoard() {
+    rememberManualSetup();
+    setManualSetupPieces(defaultManualSetupPieces());
+    setManualSetupSide("red");
+    setManualSetupSelected(undefined);
+    setManualSetupTool({ color: "red", kind: "pawn", label: "兵" });
+    setManualSetupError("");
+    setManualNotice("已清空棋盘，仅保留默认将帅。");
+  }
+
+  async function copyManualSetupFen() {
+    const fen = piecesToFen(manualSetupPieces, manualSetupSide);
+    try {
+      await navigator.clipboard.writeText(fen);
+      setManualNotice("当前 FEN 已复制。");
+    } catch {
+      setManualSetupError("FEN 复制失败，请检查剪贴板权限。");
+    }
+  }
+
   function editManualSetupSquare(square: Square) {
-    setManualSetupPieces((items) => {
-      const existing = items.find((piece) => piece.row === square.row && piece.col === square.col);
-      const selectedPiece = manualSetupSelected ? items.find((piece) => sameSquare(piece, manualSetupSelected)) : undefined;
-      if (selectedPiece && sameSquare(square, manualSetupSelected)) {
-        setManualSetupSelected(undefined);
-        setManualSetupError("");
-        setManualNotice("已取消悬空棋子。");
-        return items;
-      }
-      if (existing) {
-        setManualSetupSelected(square);
-        if (manualSetupTool === "erase" || manualSetupTool.color !== existing.color || manualSetupTool.kind !== existing.kind) setManualSetupTool({ color: existing.color, kind: existing.kind, label: existing.label });
-        setManualSetupError("");
-        setManualNotice(existing.kind === "king"
-          ? `已选中${existing.color === "red" ? "红帅" : "黑将"}，点本方九宫内的空位可移动；不能回收或删除。`
-          : `已悬空${existing.color === "red" ? "红" : "黑"}方${existing.label}，点空位可移动，点托盘同类棋子可收回。`);
-        return items;
-      }
-      if (selectedPiece) {
-        const placementError = setupPiecePlacementError(selectedPiece, square);
-        if (placementError) {
-          setManualSetupError(placementError);
-          setManualNotice(placementError);
-          return items;
-        }
-        setManualSetupSelected(undefined);
-        setManualSetupError("");
-        setManualNotice(`已移动${selectedPiece.color === "red" ? "红" : "黑"}方${selectedPiece.label}。`);
-        return items.map((piece) => sameSquare(piece, manualSetupSelected) ? { ...piece, row: square.row, col: square.col } : piece);
-      }
-      if (manualSetupTool === "erase") { setManualSetupError("请先选择上方或下方棋子。"); return items; }
-      const placementError = setupPiecePlacementError(manualSetupTool, square);
-      if (placementError) {
-        setManualSetupError(placementError);
-        setManualNotice(placementError);
-        return items;
-      }
-      const used = items.filter((piece) => piece.color === manualSetupTool.color && piece.kind === manualSetupTool.kind).length;
-      const limit = MANUAL_SETUP_PIECE_LIMITS[manualSetupTool.kind] ?? 0;
-      if (used >= limit) {
-        const nextTool = firstAvailableManualSetupTool(manualSetupTool.color, items, manualSetupTool.kind) ?? firstAvailableManualSetupTool(manualSetupTool.color === "red" ? "black" : "red", items);
-        if (nextTool) {
-          setManualSetupTool(nextTool);
-          setManualSetupError("");
-          setManualNotice(`${manualSetupTool.color === "red" ? "红" : "黑"}方${manualSetupTool.label}已经摆满，已切换到${nextTool.color === "red" ? "红" : "黑"}方${nextTool.label}。`);
-        } else {
-          const message = `${manualSetupTool.color === "red" ? "红" : "黑"}方${manualSetupTool.label}已经摆满。`;
+    const items = manualSetupPieces;
+    const existing = items.find((piece) => piece.row === square.row && piece.col === square.col);
+    const selectedPiece = manualSetupSelected ? items.find((piece) => sameSquare(piece, manualSetupSelected)) : undefined;
+    if (selectedPiece && sameSquare(square, manualSetupSelected)) {
+      setManualSetupSelected(undefined);
+      setManualSetupError("");
+      setManualNotice("已取消悬空棋子。");
+      return;
+    }
+    if (existing) {
+      if (manualSetupTool === "erase") {
+        if (existing.kind === "king") {
+          const message = `${existing.color === "red" ? "红帅" : "黑将"}必须保留，不能删除。`;
           setManualSetupError(message);
           setManualNotice(message);
+          return;
         }
-        return items;
+        rememberManualSetup();
+        setManualSetupPieces(items.filter((piece) => !sameSquare(piece, square)));
+        setManualSetupSelected(undefined);
+        setManualSetupError("");
+        setManualNotice(`已删除${existing.color === "red" ? "红" : "黑"}方${existing.label}。`);
+        return;
       }
-      const nextItems = [...items, { row: square.row, col: square.col, color: manualSetupTool.color, kind: manualSetupTool.kind, label: manualSetupTool.label }];
-      if (used + 1 >= limit) {
-        const nextTool = firstAvailableManualSetupTool(manualSetupTool.color, nextItems, manualSetupTool.kind) ?? firstAvailableManualSetupTool(manualSetupTool.color === "red" ? "black" : "red", nextItems);
-        if (nextTool) setManualSetupTool(nextTool);
-      }
+      setManualSetupSelected(square);
+      if (manualSetupTool.color !== existing.color || manualSetupTool.kind !== existing.kind) setManualSetupTool({ color: existing.color, kind: existing.kind, label: existing.label });
       setManualSetupError("");
-      setManualNotice(`已放置${manualSetupTool.color === "red" ? "红" : "黑"}方${manualSetupTool.label}。`);
-      return nextItems;
-    });
+      setManualNotice(existing.kind === "king"
+        ? `已选中${existing.color === "red" ? "红帅" : "黑将"}，点本方九宫内的空位可移动；不能回收或删除。`
+        : `已悬空${existing.color === "red" ? "红" : "黑"}方${existing.label}，点空位可移动，点托盘同类棋子可收回。`);
+      return;
+    }
+    if (selectedPiece) {
+      const placementError = setupPiecePlacementError(selectedPiece, square);
+      if (placementError) { setManualSetupError(placementError); setManualNotice(placementError); return; }
+      rememberManualSetup();
+      setManualSetupPieces(items.map((piece) => sameSquare(piece, manualSetupSelected) ? { ...piece, row: square.row, col: square.col } : piece));
+      setManualSetupSelected(undefined);
+      setManualSetupError("");
+      setManualNotice(`已移动${selectedPiece.color === "red" ? "红" : "黑"}方${selectedPiece.label}。`);
+      return;
+    }
+    if (manualSetupTool === "erase") { setManualSetupError("请先选择上方或下方棋子。"); return; }
+    const placementError = setupPiecePlacementError(manualSetupTool, square);
+    if (placementError) { setManualSetupError(placementError); setManualNotice(placementError); return; }
+    const used = items.filter((piece) => piece.color === manualSetupTool.color && piece.kind === manualSetupTool.kind).length;
+    const limit = MANUAL_SETUP_PIECE_LIMITS[manualSetupTool.kind] ?? 0;
+    if (used >= limit) {
+      const nextTool = firstAvailableManualSetupTool(manualSetupTool.color, items, manualSetupTool.kind) ?? firstAvailableManualSetupTool(manualSetupTool.color === "red" ? "black" : "red", items);
+      if (nextTool) {
+        setManualSetupTool(nextTool);
+        setManualSetupError("");
+        setManualNotice(`${manualSetupTool.color === "red" ? "红" : "黑"}方${manualSetupTool.label}已经摆满，已切换到${nextTool.color === "red" ? "红" : "黑"}方${nextTool.label}。`);
+      } else {
+        const message = `${manualSetupTool.color === "red" ? "红" : "黑"}方${manualSetupTool.label}已经摆满。`;
+        setManualSetupError(message);
+        setManualNotice(message);
+      }
+      return;
+    }
+    const nextItems = [...items, { row: square.row, col: square.col, color: manualSetupTool.color, kind: manualSetupTool.kind, label: manualSetupTool.label }];
+    rememberManualSetup();
+    setManualSetupPieces(nextItems);
+    if (used + 1 >= limit) {
+      const nextTool = firstAvailableManualSetupTool(manualSetupTool.color, nextItems, manualSetupTool.kind) ?? firstAvailableManualSetupTool(manualSetupTool.color === "red" ? "black" : "red", nextItems);
+      if (nextTool) setManualSetupTool(nextTool);
+    }
+    setManualSetupError("");
+    setManualNotice(`已放置${manualSetupTool.color === "red" ? "红" : "黑"}方${manualSetupTool.label}。`);
   }
 
   async function analyzeManualMainline() {
@@ -3172,7 +4948,260 @@ export function App() {
       {!manualAnalyzedCount && <button type="button" onClick={() => void analyzeManualMainline()}>开始整局分析</button>}
     </section>}
   </section>;
+  const studyReturnLabel = studyReturnRoute === "game-browse" ? "返回棋谱" : studyReturnRoute === "tool-setup" ? "返回摆棋" : studyReturnRoute === "account" ? "返回我的" : "返回练习";
   const workspaceTitle = studyMode ? `自由拆棋 · ${studyRuleLabel(studyRuleMode)}` : manualMode ? "本地录谱" : library?.title ?? "本地 CBL 题库";
+  const activePracticeItem = useMemo(() => practiceSession?.items.find((item) => item.id === practiceItemId) ?? practiceSession?.items.find((item) => item.id === practiceSession.currentItemId) ?? practiceSession?.items.find((item) => item.status === "pending") ?? practiceSession?.items[0], [practiceItemId, practiceSession]);
+  const activeSolverNavigator = useMemo<ProblemNavigator | undefined>(() => {
+    if (practiceSession && activePracticeItem) {
+      const index = practiceSession.items.findIndex((candidate) => candidate.id === activePracticeItem.id);
+      return {
+        index: Math.max(0, index),
+        items: practiceSession.items.map((candidate) => ({ id: candidate.id, title: candidate.problem.title, status: candidate.status === "completed" ? "completed" : candidate.status === "revealed" ? "revealed" : "pending" })),
+        onSelect: (nextIndex) => { const target = practiceSession.items[nextIndex]; if (target) void selectPracticeSessionItem(target); },
+      };
+    }
+    if (problem?.source === "teaching" && assignmentSequence.length) {
+      return {
+        index: Math.max(0, assignmentSequenceIndex),
+        items: assignmentSequence.map((candidate) => ({ id: candidate.id, title: candidate.title, status: candidate.completedAttempts ? "completed" : "pending" })),
+        onSelect: (nextIndex) => { const target = assignmentSequence[nextIndex]; if (target) void openStudentProblem(target, assignmentSequence, nextIndex); },
+      };
+    }
+    return undefined;
+  }, [activePracticeItem, assignmentSequence, assignmentSequenceIndex, practiceSession, problem]);
+  // An unbound teacher must always be able to leave the application flow, even while
+  // a stale session is being refreshed or the login screen is opening.
+  const unboundTeacherJoin = mobileRoute === "teacher" && teacherPath === "/teacher/join-organization";
+  const mobileSecondaryRoute = ["library-browse", "game-browse", "practice-setup", "practice-session", "practice-mistakes", "practice-favorites", "practice-result", "practice-topic", "practice-search", "practice-assets", "tool-setup", "tool-sync", "tool-settings"].includes(mobileRoute);
+  const mobilePrimaryVisible = !studyMode && !manualMode && !problem && !importPanelOpen && !teachingAccountOpen && !mobileSecondaryRoute && (mobileRoute !== "teacher" || unboundTeacherJoin);
+
+  function updateMobileHistory(route: MobileRoute, replace = false) {
+    const nextPath = mobileRoutePath(route);
+    if (window.location.pathname === nextPath) return;
+    window.history[replace ? "replaceState" : "pushState"]({ mobileRoute: route }, "", nextPath);
+  }
+
+  function navigateMobileRoute(route: MobileRoute, replace = false) {
+    if (!allowTeacherNavigation(route)) return;
+    setMobileRoute(route);
+    setMobileTab(mobileRouteTab(route));
+    updateMobileHistory(route, replace);
+  }
+
+  function navigatePracticeSession(sessionId: string, replace = false) {
+    const path = `/practice/session/${encodeURIComponent(sessionId)}`;
+    window.history[replace ? "replaceState" : "pushState"]({ mobileRoute: "practice-session", sessionId }, "", path);
+    setMobileRoute("practice-session");
+    setMobileTab("practice");
+  }
+
+  async function refreshPracticeHome() {
+    const generation = ++practiceHomeGeneration.current;
+    setPracticeHomeLoading(true); setPracticeHomeError("");
+    try { const next = await teachingClient.practiceHome(); if (generation === practiceHomeGeneration.current) setPracticeHome(next); }
+    catch (error) { if (generation === practiceHomeGeneration.current) setPracticeHomeError(error instanceof Error ? error.message : "练习数据暂时不可用"); }
+    finally { if (generation === practiceHomeGeneration.current) setPracticeHomeLoading(false); }
+  }
+
+  async function openPracticeSession(next: PracticeSession, preferredItemId?: string, replace = false) {
+    const item = next.items.find((candidate) => candidate.id === preferredItemId)
+      ?? next.items.find((candidate) => candidate.id === next.currentItemId)
+      ?? next.items.find((candidate) => candidate.status === "pending")
+      ?? next.items[0];
+    if (!item) throw new Error("当前筛选没有可练习题目，请调整范围后重试");
+    setPracticeSession(next);
+    setPracticeItemId(item.id);
+    setPracticeMessage("");
+    await selectProblem(practiceProblemToTrainingProblem(item.problem));
+    if (item.draft) {
+      setMoves(item.draft.moves ?? []);
+      setHints(item.draft.hints ?? 0);
+      setMistakes(item.draft.mistakes ?? 0);
+      setElapsedSaved(item.draft.elapsedMs ?? 0);
+    }
+    setMode(next.mode === "learning" ? "replay" : "solver");
+    setNotice(next.mode === "learning" ? "学习模式：可查看题解并了解关键思路。" : "按题解完成本题，提示和错误会记录到练习档案。 ");
+    navigatePracticeSession(next.id, replace);
+    void teachingClient.updatePracticeSession(next.id, item.id).catch(() => undefined);
+  }
+
+  function openPracticeResult(next = practiceSession, replace = false) {
+    if (!next) { navigateMobileRoute("practice", replace); return; }
+    session.current += 1;
+    setProblem(undefined);
+    setPieces([]);
+    setSelected(undefined);
+    setPracticeSession(next);
+    const path = `/practice/result/${encodeURIComponent(next.id)}`;
+    window.history[replace ? "replaceState" : "pushState"]({ mobileRoute: "practice-result", sessionId: next.id }, "", path);
+    setMobileRoute("practice-result");
+    setMobileTab("practice");
+    void refreshPracticeHome();
+  }
+
+  async function createPracticeSession(payload: Parameters<typeof teachingClient.createPracticeSession>[0], dailyId?: string) {
+    if (practiceCreationLock.current || teachingAuth?.user.role !== "student") return;
+    practiceCreationLock.current = true; setPracticeCreating(true); setPracticeMessage("");
+    const generation = practiceAuthGeneration.current;
+    try {
+      const next = dailyId ? await teachingClient.startDailyPractice(dailyId) : await teachingClient.createPracticeSession(payload);
+      if (generation !== practiceAuthGeneration.current) return;
+      await openPracticeSession(next);
+      void refreshPracticeHome();
+    } catch (error) { if (generation === practiceAuthGeneration.current) setPracticeMessage(error instanceof Error ? error.message : "无法创建练习"); }
+    finally { practiceCreationLock.current = false; setPracticeCreating(false); }
+  }
+
+  function leavePracticeSession() {
+    session.current += 1;
+    setProblem(undefined);
+    setPieces([]);
+    setSelected(undefined);
+    navigateMobileRoute("practice", true);
+    void refreshPracticeHome();
+  }
+
+  async function selectPracticeSessionItem(item: PracticeSessionItem) {
+    if (!practiceSession) return;
+    const current = activePracticeItem;
+    if (current) {
+      void teachingClient.updatePracticeSession(practiceSession.id, current.id, { moves, hints, mistakes, elapsedMs: elapsed }).catch(() => undefined);
+    }
+    await openPracticeSession(practiceSession, item.id, true);
+  }
+
+  function navigateTeacher(path = "/teacher", replace = false) {
+    const nextPath = path.startsWith("/teacher") ? path : "/teacher";
+    if (!allowTeacherNavigation(nextPath)) return;
+    window.history[replace ? "replaceState" : "pushState"]({ mobileRoute: "teacher" }, "", nextPath);
+    setTeacherPath(nextPath);
+    setMobileRoute("teacher");
+    setMobileTab("account");
+  }
+
+  async function applyMobileRoute(route: MobileRoute) {
+    setMobileTab(mobileRouteTab(route));
+    if (route === "tool-setup") {
+      if (!manualMode) await openManualMode(false);
+      openManualSetup(true);
+      return;
+    }
+    if (route === "tool-manual") {
+      if (!manualMode) await openManualMode();
+      return;
+    }
+    if (route === "tool-study") {
+      if (!studyMode) await openStudyMode("account");
+      return;
+    }
+    if (studyMode) await closeStudyMode();
+    if (manualMode) await closeManualMode();
+    if (route === "home" || route === "library") {
+      setStudentAssignmentsOpen(false);
+      setCatalogueOpen(false);
+      setControlsOpen(false);
+      return;
+    }
+    if (route === "library-browse") {
+      setStudentAssignmentsOpen(false);
+      setCatalogueOpen(false);
+      setControlsOpen(false);
+      return;
+    }
+    if (route === "game-browse") {
+      setStudentAssignmentsOpen(false);
+      setCatalogueOpen(false);
+      setControlsOpen(false);
+      return;
+    }
+    if (route === "practice") {
+      setStudentAssignmentsOpen(false);
+      setCatalogueOpen(false);
+      setControlsOpen(false);
+      return;
+    }
+    if (route === "practice-result") {
+      setStudentAssignmentsOpen(false);
+      setCatalogueOpen(false);
+      setControlsOpen(false);
+      const sessionId = window.location.pathname.split("/")[3];
+      if (sessionId && practiceSession?.id !== sessionId) {
+        void teachingClient.practiceSession(sessionId).then(setPracticeSession).catch((error) => setPracticeMessage(error instanceof Error ? error.message : "练习结果不可用"));
+      }
+      return;
+    }
+    if (route === "assignments") {
+      setCatalogueOpen(false);
+      setControlsOpen(false);
+      if (teachingAuth?.user.role === "student") setStudentAssignmentsOpen(true);
+      else setTeachingAccountOpen(false);
+      return;
+    }
+    if (route === "teacher") {
+      setStudentAssignmentsOpen(false);
+      setCatalogueOpen(false);
+      setControlsOpen(false);
+      setTeachingAccountOpen(false);
+      return;
+    }
+    if (route === "tool-sync") {
+      setStudentAssignmentsOpen(false);
+      setCatalogueOpen(false);
+      setControlsOpen(false);
+      return;
+    }
+    if (route === "tool-settings") {
+      setStudentAssignmentsOpen(false);
+      setCatalogueOpen(false);
+      setControlsOpen(false);
+      return;
+    }
+    setStudentAssignmentsOpen(false);
+    setCatalogueOpen(false);
+    setControlsOpen(false);
+  }
+
+  function openMobileTab(tab: MobilePrimaryTab) {
+    if (mobileRoute === "onboarding") localStorage.setItem(MOBILE_ONBOARDING_KEY, "done");
+    if (tab === "assignments" && teachingAuth && ["coach", "admin"].includes(teachingAuth.user.role)) {
+      navigateTeacher(teachingAuth.user.orgId ? "/teacher" : "/teacher/join-organization");
+      return;
+    }
+    navigateMobileRoute(tab);
+  }
+
+  useEffect(() => {
+    const onPopState = () => {
+      if (!allowTeacherNavigation(window.location.pathname)) {
+        window.history.pushState({ mobileRoute: "teacher" }, "", "/teacher/assignments/new");
+        return;
+      }
+      const route = mobileRouteFromPath();
+      setMobileRoute(route);
+      setMobileTab(mobileRouteTab(route));
+      if (route === "teacher") setTeacherPath(window.location.pathname);
+      if (route === "practice-session") {
+        const sessionId = window.location.pathname.split("/")[3];
+        if (sessionId) void teachingClient.practiceSession(sessionId).then((next) => openPracticeSession(next, undefined, true)).catch((error) => setPracticeMessage(error instanceof Error ? error.message : "练习会话不可用"));
+      }
+      if (route === "practice-result") {
+        const sessionId = window.location.pathname.split("/")[3];
+        if (sessionId) void teachingClient.practiceSession(sessionId).then(setPracticeSession).catch((error) => setPracticeMessage(error instanceof Error ? error.message : "练习结果不可用"));
+      }
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
+  useEffect(() => {
+    void applyMobileRoute(mobileRoute);
+  }, [mobileRoute]);
+
+  useEffect(() => {
+    setManualCloudSyncStatus(readManualCloudSyncStatus(teachingAuth));
+    if (mobileRoute === "tool-sync") void refreshManualCloudSyncStats();
+  }, [mobileRoute, teachingAuth?.expiresAt, teachingAuth?.user.id]);
+
   const manualSetupTrayItems = [
     { kind: "pawn", redLabel: "兵", blackLabel: "卒", count: 5 },
     { kind: "cannon", redLabel: "炮", blackLabel: "炮", count: 2 },
@@ -3218,13 +5247,35 @@ export function App() {
     })}
   </section>;
 
-  return <div className={`training-app ${studyMode ? "study-active" : ""} ${manualMode ? "manual-active" : ""} ${revealed && !studyMode && !manualMode ? "answer-revealed" : ""}`}><header className={`app-header ${studyMode || manualMode ? "study-mode-header" : ""}`}><span><BookOpen/><strong>棋析</strong><small>{workspaceTitle}</small></span><div><nav className="workspace-switcher" aria-label="移动端模式切换"><button className={workspaceMode === "training" ? "active" : ""} aria-current={workspaceMode === "training" ? "page" : undefined} aria-label="残棋" data-tooltip="残棋" onClick={() => { if (studyMode) void closeStudyMode(); else if (manualMode) void closeManualMode(); else { setCatalogueOpen((open) => !open); setControlsOpen(false); } }}><BookOpen/><span>残棋</span></button><button className={studyMode ? "active" : ""} aria-current={studyMode ? "page" : undefined} aria-label="拆棋" data-tooltip="拆棋" onClick={() => { if (!studyMode) void openStudyMode(); }}><Cpu/><span>拆棋</span></button><button className={manualMode ? "active" : ""} aria-current={manualMode ? "page" : undefined} aria-label="录谱" data-tooltip="录谱" onClick={() => { if (!manualMode) void openManualMode(); }}><FilePenLine/><span>录谱</span></button></nav><button className="mobile-drawer-toggle catalogue-toggle" aria-label={catalogueOpen ? "收起题库目录" : "打开题库目录"} data-tooltip={catalogueOpen ? "收起题库目录" : "题库目录"} aria-expanded={catalogueOpen} onClick={() => { setCatalogueOpen((open) => !open); setControlsOpen(false); }}><BookOpen/><span>目录</span></button><button className="import-cbl-action" aria-label="导入 CBL" data-tooltip="导入 CBL" onClick={openImportPanel}><FileUp/><span>导入 CBL</span></button><button className="mobile-drawer-toggle controls-toggle" aria-label={controlsOpen ? "收起训练控制" : "打开训练控制"} data-tooltip={controlsOpen ? "收起训练控制" : "训练控制"} aria-expanded={controlsOpen} onClick={() => { setControlsOpen((open) => !open); setCatalogueOpen(false); }}><Clock3/><span>控制</span></button><button className="about-trigger" aria-label="关于棋析" data-tooltip="关于棋析" onClick={() => setShowAbout(true)}><CircleHelp/></button></div><input ref={input} type="file" multiple accept=".cbl,.json,application/json,application/octet-stream" onChange={(event) => { const files = Array.from(event.target.files ?? []); event.currentTarget.value = ""; void importFiles(files); }}/></header><div className="training-layout">
-    <aside className={`catalogue ${catalogueOpen ? "drawer-open" : ""}`}><header className="catalogue-heading"><span><strong>题库目录</strong><small>{libraries.length} 本本地题库</small></span>{library && <button className="catalogue-delete" title="删除当前题库" onClick={() => setDeleteTarget({ type: "library", id: library.id, title: library.title })}><Trash2/></button>}</header><div className="library-list">{libraries.map((item) => <section key={item.id}><button className={`library-row ${expanded === item.id ? "expanded" : ""}`} onClick={() => expanded === item.id ? setExpanded(undefined) : void selectLibrary(item)}><BookOpen/><span><b>{item.title}</b><small>{item.completedCount}/{item.problemCount} 已完成</small></span>{expanded === item.id ? <ChevronDown/> : <ChevronRight/>}</button>{expanded === item.id && <div className="problem-area"><div className="filters"><div className="problem-search"><Search/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索残局题名或分类" aria-label="搜索残局题名或分类" autoComplete="off"/>{query && <button type="button" aria-label="清除搜索" title="清除搜索" onClick={() => setQuery("")}><X/></button>}</div><select value={category} onChange={(event) => setCategory(event.target.value)} aria-label="按残局分类筛选">{categories.map((value) => <option key={value}>{value}</option>)}</select></div>{visible.length ? visible.map((item) => <button key={item.id} className={`problem-row ${problem?.id === item.id ? "active" : ""}`} onClick={() => void selectProblem(item)}><b>{item.sourceIndex + 1}</b><span>{item.title}<small>{item.category} · {item.completedAttempts ? `累计 ${fmt(item.totalElapsedMs)}` : "未练"}</small></span></button>) : <p className="problem-empty">没有找到匹配的残局</p>}</div>}</section>)}</div></aside>
-    <main className="training-stage">{problem ? <><header className="problem-heading"><small>第 {problem.sourceIndex + 1}/{problems.length} 题</small><strong>{problem.title}</strong><button title="移除当前残局" onClick={() => setDeleteTarget({ type: "problem", id: problem.id, title: problem.title })}><Trash2/></button></header><Board key="training" pieces={pieces} selected={selected} legalTargets={legalTargets} lastMove={lastMove} hintMove={hints >= 2 ? line[0]?.iccs : undefined} analysisMoves={analysisArrowsVisible ? trainingAnalysisLines.map((item) => item.pv[0]) : []} activeAnalysis={trainingActiveAnalysis} flipped={boardFlipped} feedback={moveFeedback} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={(square) => void move(square)} onMove={(from, to) => void moveFromTo(from, to)}/><p className="board-tip">{mode === "cloud" ? "云库优先应手；未收录时由本地 Pikafish 接手。" : mode === "ai" ? "本地 Pikafish 离线应手，不访问云库。" : "选棋子或拖动棋子到目标点。错误走法不会改变局面。"}</p></> : <div className="empty"><BookOpen/><strong>选择CBL文件</strong><span>题库和练习记录仅保存在这台手机或平板。</span></div>}</main>
+  return <div className={`training-app mobile-tab-${mobileTab} tablet-navigation-${tabletNavigationPosition} ${studyMode ? "study-active" : ""} ${manualMode ? "manual-active" : ""} ${revealed && !studyMode && !manualMode ? "answer-revealed" : ""}`}>
+    <header className={`app-header ${studyMode || manualMode ? "study-mode-header" : ""}`}>
+      <span><BookOpen/><strong>棋析</strong><small>{workspaceTitle}</small></span>
+      <div>
+        <nav className="workspace-switcher" aria-label="移动端模式切换"><button className={workspaceMode === "training" ? "active" : ""} aria-current={workspaceMode === "training" ? "page" : undefined} aria-label="残棋" data-tooltip="残棋" onClick={() => { if (studyMode) void closeStudyMode(); else if (manualMode) void closeManualMode(); else { setCatalogueOpen((open) => !open); setControlsOpen(false); } }}><BookOpen/><span>残棋</span></button><button className={studyMode ? "active" : ""} aria-current={studyMode ? "page" : undefined} aria-label="拆棋" data-tooltip="拆棋" onClick={() => { if (!studyMode) void openStudyMode(); }}><Cpu/><span>拆棋</span></button><button className={manualMode ? "active" : ""} aria-current={manualMode ? "page" : undefined} aria-label="录谱" data-tooltip="录谱" onClick={() => { if (!manualMode) void openManualMode(); }}><FilePenLine/><span>录谱</span></button></nav>
+        <button className="mobile-drawer-toggle catalogue-toggle" aria-label={catalogueOpen ? "收起题库目录" : "打开题库目录"} data-tooltip={catalogueOpen ? "收起题库目录" : "题库目录"} aria-expanded={catalogueOpen} onClick={() => { setCatalogueOpen((open) => !open); setControlsOpen(false); }}><BookOpen/><span>目录</span></button>
+        <button className="import-cbl-action" aria-label="导入 CBL" data-tooltip="导入 CBL" onClick={openImportPanel}><FileUp/><span>导入 CBL</span></button>
+        <button className="mobile-drawer-toggle controls-toggle" aria-label={controlsOpen ? "收起训练控制" : "打开训练控制"} data-tooltip={controlsOpen ? "收起训练控制" : "训练控制"} aria-expanded={controlsOpen} onClick={() => { setControlsOpen((open) => !open); setCatalogueOpen(false); }}><Clock3/><span>控制</span></button>
+        <button className={`teaching-account-trigger ${teachingAuth ? "active" : ""}`} aria-label={teachingAuth ? "打开我的作业" : "登录教学平台"} data-tooltip={teachingAuth ? "我的作业" : "登录教学平台"} onClick={() => { if (teachingAuth?.user.role === "student") navigateMobileRoute("assignments"); else if (teachingAuth && ["coach", "admin"].includes(teachingAuth.user.role)) navigateTeacher(teachingAuth.user.orgId ? "/teacher" : "/teacher/join-organization"); else navigateMobileRoute("account"); }}><LogIn/><span>{teachingAuth ? "作业" : "登录"}</span></button>
+        <button className="about-trigger" aria-label="关于棋析" data-tooltip="关于棋析" onClick={() => setShowAbout(true)}><CircleHelp/></button>
+      </div>
+      <input ref={input} type="file" multiple accept=".cbl,.json,application/json,application/octet-stream" onChange={(event) => { const files = Array.from(event.target.files ?? []); event.currentTarget.value = ""; void importFiles(files); }}/>
+    </header>
+    {mobilePrimaryVisible && <MobilePrimaryNavigation active={mobileTab} unreadAssignments={teachingAuth?.user.role === "student" ? unreadAssignmentCount : 0} onNavigate={openMobileTab}/>}
+  {mobileLayout && mobileRoute === "tool-sync" && !studyMode && !manualMode && <MobileManualSyncPanel auth={teachingAuth} syncing={manualCloudSyncing} stats={manualCloudSyncStats} status={manualCloudSyncStatus} remoteStatus={manualCloudRemoteStatus} onBack={() => navigateMobileRoute("account")} onLogin={() => setTeachingAccountOpen(true)} onSync={() => void syncPersonalManualLibrary()}/>}
+    {mobileLayout && mobileRoute === "tool-settings" && !studyMode && !manualMode && (
+      <MobileSettingsPanel boardSkin={boardSkin} pieceSkin={pieceSkin} boardSkinInfo={boardSkinInfo} riverText={riverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} tabletNavigationPosition={tabletNavigationPosition} tabletNavigationAvailable={tabletNavigationAvailable} onBack={() => navigateMobileRoute("account")} onBoardSkinChange={changeBoardSkin} onPieceSkinChange={changePieceSkin} onUseSkinSet={useSkinSet} onRiverTextChange={changeRiverText} onRiverTextColorChange={changeRiverTextColor} onRiverTextSizeChange={changeRiverTextSize} onTabletNavigationPositionChange={changeTabletNavigationPosition}/>
+    )}
+    {mobileLayout && mobileRoute === "onboarding" && !studyMode && !manualMode && <MobileOnboardingPanel onLogin={() => { localStorage.setItem(MOBILE_ONBOARDING_KEY, "done"); navigateMobileRoute("account", true); setTeachingAccountOpen(true); }} onLocal={() => { localStorage.setItem(MOBILE_ONBOARDING_KEY, "done"); navigateMobileRoute("home", true); }} />}
+    {mobileLayout && mobileRoute === "practice-topic" && teachingAuth?.user.role === "student" && !studyMode && !manualMode && <MobileTopicDetailPanel busy={practiceCreating} message={practiceMessage} topicId={practiceTopicId ?? window.location.pathname.match(/^\/practice\/topics\/([^/]+)/)?.[1]} onBack={() => navigateMobileRoute("practice")} onStart={(topic) => void createPracticeSession({ sourceKind: "topic", topicId: topic.id, scope: "all", libraryIds: topic.sources.map((source) => source.libraryId), category: topic.sources[0]?.category ?? undefined, count: 10, mode: "solver" })} onOpenLibrary={(libraryId, kind) => { const source = kind === "problem" ? libraries.find((item) => item.source === "platform" && item.fingerprint === libraryId) : undefined; if (source) void selectLibrary(source).then(() => navigateMobileRoute("library-browse")); else { const gameLibrary = platformGameLibraries.find((item) => item.id === libraryId); if (gameLibrary) void selectPlatformGameLibrary(gameLibrary).then(() => navigateMobileRoute("game-browse")); else navigateMobileRoute("library"); } }} />}
+    {mobileLayout && mobileRoute === "practice-search" && teachingAuth?.user.role === "student" && !studyMode && !manualMode && <MobilePracticeSearchPanel message={practiceMessage} busy={practiceCreating} onBack={() => navigateMobileRoute("practice")} onOpenProblem={(next) => { if (next.serverProblemId) void createPracticeSession({ sourceKind: "random", scope: "all", problemIds: [next.serverProblemId], count: 1 }); }} />}
+    {mobileLayout && mobileRoute === "practice-assets" && teachingAuth?.user.role === "student" && !studyMode && !manualMode && <MobileLearningAssetsPanel home={practiceHome} onBack={() => navigateMobileRoute("practice")} onMistakes={() => navigateMobileRoute("practice-mistakes")} onFavorites={() => navigateMobileRoute("practice-favorites")} />}
+    {mobileLayout && ["practice-setup", "practice-mistakes", "practice-favorites", "practice-topic", "practice-search", "practice-assets", "practice-session", "practice-result"].includes(mobileRoute) && teachingAuth?.user.role !== "student" ? <main className="mobile-practice-page"><PracticeAccessPanel signedIn={Boolean(teachingAuth)} onLogin={() => { if (teachingAuth) { teachingClient.logout(); setTeachingAuth(undefined); } setTeachingAccountOpen(true); }}/></main> : mobileLayout && mobileRoute === "teacher" && teachingAuth && ["coach", "admin"].includes(teachingAuth.user.role) ? <TeacherMobileWorkspace auth={teachingAuth} path={teacherPath} onNavigate={navigateTeacher} onAuthChange={(auth) => applyTeachingAuth(auth, true)} onExit={() => navigateMobileRoute("home", true)} onRelogin={() => { teachingClient.logout(); setTeachingAuth(undefined); setResumeTeacherAfterLogin(true); navigateMobileRoute("account", true); setTeachingAccountOpen(true); }} onLogout={() => { teachingClient.logout(); setTeachingAuth(undefined); navigateMobileRoute("home", true); }}/> : mobileLayout && mobileRoute === "practice-setup" ? <MobilePracticeSetupPanel busy={practiceCreating} message={practiceMessage} topics={practiceHome?.topics ?? []} onBack={() => navigateMobileRoute("practice")} onStart={(payload) => void createPracticeSession({ sourceKind: "topic", topicId: payload.topicId, scope: payload.scope, mode: payload.mode, libraryIds: payload.libraryIds, category: payload.category, difficulty: payload.difficulty, count: payload.count })}/> : mobileLayout && mobileRoute === "practice-mistakes" ? <MobilePracticeReviewPanel busy={practiceCreating} message={practiceMessage} kind="mistakes" onBack={() => navigateMobileRoute("practice")} onStart={(problemIds, state) => void createPracticeSession({ sourceKind: "mistakes", scope: state === "mastered" ? "all" : "mistakes", problemIds, count: problemIds.length })}/> : mobileLayout && mobileRoute === "practice-favorites" ? <MobilePracticeReviewPanel busy={practiceCreating} message={practiceMessage} kind="favorites" onBack={() => navigateMobileRoute("practice")} onStart={(problemIds) => void createPracticeSession({ sourceKind: "favorites", scope: "favorites", problemIds, count: problemIds.length })}/> : mobileLayout && mobileRoute === "practice-result" ? <MobilePracticeResultPanel session={practiceSession} message={practiceMessage} onBack={() => navigateMobileRoute("practice", true)} onRetryMistakes={() => navigateMobileRoute("practice-mistakes")} onRestart={() => navigateMobileRoute("practice-setup")} /> : mobileLayout && problem && !studyMode && !manualMode ? <MobilePracticeSolverPanel problem={problem} session={practiceSession} item={activePracticeItem} navigator={activeSolverNavigator} pieces={pieces} selected={selected} legalTargets={legalTargets} lastMove={lastMove} hints={hints} mistakes={mistakes} elapsed={fmt(elapsed)} ended={ended} revealed={revealed} notice={practiceSession ? practiceMessage || notice : notice} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} feedback={moveFeedback} onSquare={(square) => void move(square)} onMove={(from, to) => void moveFromTo(from, to)} onBack={() => practiceSession ? leavePracticeSession() : problem.source === "teaching" ? returnToStudentAssignments() : navigateMobileRoute("library-browse", true)} onHint={() => void giveHint()} onRestart={() => void restart()} onReveal={() => void reveal()} onPrevious={() => { if (!practiceSession || !activePracticeItem) return; const index = practiceSession.items.findIndex((item) => item.id === activePracticeItem.id); const previous = practiceSession.items[index - 1]; if (previous) void selectPracticeSessionItem(previous); }} onNext={() => { if (!practiceSession || !activePracticeItem) { navigateMobileRoute("practice", true); return; } const index = practiceSession.items.findIndex((item) => item.id === activePracticeItem.id); const next = practiceSession.items[index + 1]; if (next) void selectPracticeSessionItem(next); else openPracticeResult(); }} onFinish={() => void finish("abandoned")} favoriteEnabled={teachingAuth?.user.role === "student"} onFavorite={() => void refreshPracticeHome()}/> : mobileLayout && mobileRoute === "home" && !studyMode && !manualMode ? <MobileHomePanel auth={teachingAuth} home={practiceHome} libraries={libraries} gameLibraries={platformGameLibraries} unreadAssignments={unreadAssignmentCount} onPractice={() => navigateMobileRoute("practice")} onLibrary={() => navigateMobileRoute("library")} onAssignments={() => openMobileTab("assignments")} onSetup={() => navigateMobileRoute("tool-setup")} onTeacher={() => { if (teachingAuth) navigateTeacher(teachingAuth.user.orgId ? "/teacher" : "/teacher/join-organization"); }} onLogin={() => setTeachingAccountOpen(true)}/> : mobileLayout && mobileRoute === "library" && !studyMode && !manualMode ? <MobileLibraryPanel libraries={libraries} gameLibraries={platformGameLibraries} signedIn={Boolean(teachingAuth)} onOpenLibrary={(next) => { void selectLibrary(next).then(() => navigateMobileRoute("library-browse")); }} onOpenGameLibrary={(next) => { void selectPlatformGameLibrary(next).then(() => navigateMobileRoute("game-browse")); }} onImport={openImportPanel} onOpenAssignments={() => openMobileTab("assignments")}/> : mobileLayout && mobileRoute === "library-browse" && !studyMode && !manualMode ? <MobileLibraryBrowsePanel library={library} problems={problems} onBack={() => navigateMobileRoute("library")} onOpenProblem={(next) => { void selectProblem(next).then(() => navigateMobileRoute("practice")); }}/> : mobileLayout && mobileRoute === "game-browse" && !studyMode && !manualMode ? <MobileGameBrowsePanel library={platformGameLibrary} games={platformGames} onBack={() => navigateMobileRoute("library")} onOpenGame={(next) => void openPlatformGame(next)}/> : mobileLayout && mobileTab === "account" && !studyMode && !manualMode ? <MobileAccountPanel auth={teachingAuth} syncing={manualCloudSyncing} onLogin={() => setTeachingAccountOpen(true)} onTeaching={() => { if (!teachingAuth) setTeachingAccountOpen(true); else navigateTeacher(teachingAuth.user.orgId ? "/teacher" : "/teacher/join-organization"); }} onManual={() => navigateMobileRoute("tool-manual")} onStudy={() => navigateMobileRoute("tool-study")} onSetup={() => navigateMobileRoute("tool-setup")} onImport={openImportPanel} onSync={() => void syncPersonalManualLibrary()} onSettings={() => navigateMobileRoute("tool-settings")} onAbout={() => setShowAbout(true)}/> : mobileLayout && mobileTab === "practice" && !studyMode && !manualMode ? <MobilePracticePanel auth={teachingAuth} loading={practiceHomeLoading} error={practiceHomeError} busy={practiceCreating} message={practiceMessage} onRetry={() => void refreshPracticeHome()} onLogin={() => { if (teachingAuth) { teachingClient.logout(); setTeachingAuth(undefined); } setTeachingAccountOpen(true); }} onSearch={() => navigateMobileRoute("practice-search")} onAssets={() => navigateMobileRoute("practice-assets")} libraries={libraries} home={practiceHome} onBrowseLibrary={() => { const first = platformGameLibraries[0]; if (first) void selectPlatformGameLibrary(first).then(() => navigateMobileRoute("game-browse")); else navigateMobileRoute("library"); }} onImport={openImportPanel} onStudy={() => navigateMobileRoute("tool-study")} onOpenAssignments={() => openMobileTab("assignments")} onSetup={() => navigateMobileRoute("practice-setup")} onMistakes={() => navigateMobileRoute("practice-mistakes")} onFavorites={() => navigateMobileRoute("practice-favorites")} onResume={() => { if (practiceHome?.resumeSession) void openPracticeSession(practiceHome.resumeSession); }} onRandom={() => { const ids = practiceHome?.topics.flatMap((topic) => topic.sources.map((source) => source.libraryId)) ?? []; void createPracticeSession({ sourceKind: "random", scope: "random", libraryIds: ids, count: 10, mode: "solver" }); }} onDaily={() => { if (practiceHome?.dailyPlan) void createPracticeSession({}, practiceHome.dailyPlan.id); }} onTopic={(topic) => { setPracticeTopicId(topic.id); navigateMobileRoute("practice-topic"); }}/> : mobileLayout && mobileTab === "assignments" && !studentAssignmentsOpen && !studyMode && !manualMode ? <MobileAssignmentsAccessPanel auth={teachingAuth} onLogin={() => setTeachingAccountOpen(true)} onSwitchAccount={() => { teachingClient.logout(); setTeachingAuth(undefined); setUnreadAssignmentCount(0); setStudentAssignmentsOpen(false); setTeachingAccountOpen(true); }} onTeacher={() => { if (teachingAuth) navigateTeacher(teachingAuth.user.orgId ? "/teacher" : "/teacher/join-organization"); }} onOpenStudent={() => setStudentAssignmentsOpen(true)} onBrowseLibrary={() => navigateMobileRoute("library")}/> : mobileLayout && studentAssignmentsOpen && !studyMode && !manualMode && teachingAuth?.user.role === "student" ? <StudentAssignmentsPanel auth={teachingAuth} syncing={teachingSyncing} lastSyncAt={teachingLastSyncAt} message={teachingMessage} onSync={() => void syncTeachingAssignments()} onOpenAccount={() => setTeachingAccountOpen(true)} onOpenPractice={openStudentPractice} onOpenProblem={(next) => void openStudentProblem(next)} onUnreadChange={setUnreadAssignmentCount} /> : <div className="training-layout">
+    <aside className={`catalogue ${catalogueOpen ? "drawer-open" : ""}`}><header className="catalogue-heading"><span><strong>题库目录</strong><small>{libraries.length} 本题库</small></span>{library && (library.source === "local" || !library.source) && <button className="catalogue-delete" title="删除当前题库" onClick={() => setDeleteTarget({ type: "library", id: library.id, title: library.title })}><Trash2/></button>}</header><div className="library-list">{libraries.map((item) => <section key={item.id}><button className={`library-row ${expanded === item.id ? "expanded" : ""}`} onClick={() => expanded === item.id ? setExpanded(undefined) : void selectLibrary(item)}><BookOpen/><span><b>{item.title}</b><small>{item.completedCount}/{item.problemCount} 已完成{accessTierLabel(item.accessTier) ? ` · ${accessTierLabel(item.accessTier)}` : ""}</small></span>{expanded === item.id ? <ChevronDown/> : <ChevronRight/>}</button>{expanded === item.id && <div className="problem-area"><div className="filters"><div className="problem-search"><Search/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索残局题名或分类" aria-label="搜索残局题名或分类" autoComplete="off"/>{query && <button type="button" aria-label="清除搜索" title="清除搜索" onClick={() => setQuery("")}><X/></button>}</div><select value={category} onChange={(event) => setCategory(event.target.value)} aria-label="按残局分类筛选">{categories.map((value) => <option key={value}>{value}</option>)}</select></div>{visible.length ? visible.map((item) => <button key={item.id} className={`problem-row ${problem?.id === item.id ? "active" : ""}`} onClick={() => { navigateMobileRoute("practice"); void selectProblem(item); }}><b>{item.sourceIndex + 1}</b><span>{item.title}<small>{item.category} · {item.completedAttempts ? `累计 ${fmt(item.totalElapsedMs)}` : "未练"}{accessTierLabel(item.accessTier) ? ` · ${accessTierLabel(item.accessTier)}` : ""}</small></span></button>) : <p className="problem-empty">没有找到匹配的残局</p>}</div>}</section>)}</div></aside>
+    <main className="training-stage">{problem ? <><header className={`problem-heading ${problem.source === "teaching" && teachingAuth?.user.role === "student" ? "teaching-problem-heading" : ""}`}><span className="problem-heading-side problem-heading-left">{problem.source === "teaching" && teachingAuth?.user.role === "student" && <button type="button" className="student-assignment-back" aria-label="返回我的作业" title="返回我的作业" onClick={returnToStudentAssignments}><ChevronLeft/><span>作业</span></button>}</span><span className="problem-heading-title"><small>第 {problem.sourceIndex + 1}/{problems.length} 题</small><strong>{problem.title}</strong></span><span className="problem-heading-side problem-heading-right">{(!problem.source || problem.source === "local") && <button className="problem-delete-button" title="移除当前残局" onClick={() => setDeleteTarget({ type: "problem", id: problem.id, title: problem.title })}><Trash2/></button>}</span></header><Board key="training" pieces={pieces} selected={selected} legalTargets={legalTargets} lastMove={lastMove} hintMove={hints >= 2 ? line[0]?.iccs : undefined} analysisMoves={analysisArrowsVisible ? trainingAnalysisLines.map((item) => item.pv[0]) : []} activeAnalysis={trainingActiveAnalysis} flipped={boardFlipped} feedback={moveFeedback} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={(square) => void move(square)} onMove={(from, to) => void moveFromTo(from, to)}/><p className="board-tip">{mode === "cloud" ? "云库优先应手；未收录时由本地 Pikafish 接手。" : mode === "ai" ? "本地 Pikafish 离线应手，不访问云库。" : problem.source === "teaching" ? "线上作业：按题解完成，完成后自动提交；离线时会暂存并在联网后补交。" : "选棋子或拖动棋子到目标点。错误走法不会改变局面。"}</p></> : <div className="empty"><BookOpen/><strong>选择题库内容</strong><span>登录后可练习平台题库，或导入本地 CBL。</span></div>}</main>
     <aside className={`controls ${controlsOpen ? "drawer-open" : ""} ${revealed ? "answer-revealed" : ""}`}>{problem ? <><section className="clock"><Clock3/><small>本题用时</small><strong>{fmt(elapsed)}</strong><span>累计用时 {fmt(problem.totalElapsedMs)}</span><button onClick={() => { setShowHistory((value) => !value); void trainingStore.attempts(problem.id).then(setAttempts); }}>记录</button></section><section className="modes">{(["cloud", ...(LOCAL_PIKAFISH_AVAILABLE ? ["ai" as const] : []), "solver", "replay", "free"] as Mode[]).map((value) => <label key={value}><input type="radio" checked={mode === value} disabled={attemptStarted || ended} onChange={() => changeMode(value)}/>{modeLabel[value]}{value === "cloud" && (LOCAL_PIKAFISH_AVAILABLE ? "（云库优先）" : "（云库应手）")}{value === "ai" && "（纯离线）"}{value === "replay" && "（按题解）"}</label>)}</section>{LOCAL_PIKAFISH_AVAILABLE && <AnalysisPanel lines={trainingAnalysisLines} pending={analysisPending && !studyMode} activeIndex={trainingActiveAnalysis} disabled={autoReplyPending || revealed || ended} enabled={true} multiPv={analysisMultiPv} moveTimeSec={analysisMoveTimeSec} scoreSide={sideToMove(problem.startingFen, moves)} arrowsVisible={analysisArrowsVisible} onToggle={() => void (analysisPending ? stopAnalysis() : startAnalysis())} onToggleArrows={toggleAnalysisArrows} onSelect={setTrainingActiveAnalysis} onMultiPvChange={(value) => void changeAnalysisMultiPv(value)} onMoveTimeChange={(value) => void changeAnalysisMoveTimeSec(value)}/>}<section className={`actions ${revealed ? "revealed-actions" : ""}`}>{revealed ? <><button className="primary" onClick={toggleAnswerPreview}>{demoPlaying ? <Pause/> : <Play/>}{demoPlaying ? "暂停预演" : answerStep >= answer.length ? "重播答案" : "答案预演"}</button><button onClick={() => void restart()}><RotateCcw/>重来</button></> : <><button className="primary" disabled={ended} onClick={() => void giveHint()}><Lightbulb/>提示 {hints}/3</button><button disabled={ended || (!startedAt && !elapsedSaved)} onClick={pause}>{startedAt ? <Pause/> : <Play/>}{startedAt ? "暂停" : "继续"}</button><button onClick={() => void restart()}><RotateCcw/>重来</button>{mode === "free" || mode === "cloud" || mode === "ai" ? <button disabled={ended} onClick={() => void finish("free_finished")}>{mode === "free" ? "结束实战" : "结束对练"}</button> : <button disabled={ended} onClick={() => void reveal()}><ListRestart/>看答案</button>}</>}</section><section className={`notice ${revealed ? "answer-notice" : ""}`}><b>错误 {mistakes} 次{revealed ? " · 答案已显示，可预演" : ""}</b>{!revealed && <p>{renderNote(notice)}</p>}</section>{showHistory ? <section className="history"><b>答题记录</b>{attempts.length ? attempts.slice(0, 30).map((item) => <p key={item.id}><strong>{item.outcome === "completed" ? "解出" : item.outcome === "revealed" ? "看答案" : item.outcome === "free_finished" ? "实战结束" : "已放弃"}</strong><span>{modeLabel[item.mode]} · {fmt(item.elapsedMs)} · 错 {item.mistakes} · 提示 {item.hintsUsed}</span></p>) : <p>还没有答题记录</p>}</section> : revealed && <section className="answer"><header><b>答案预演</b><small>{answerStep}/{answer.length} 手</small></header><footer className="answer-preview-controls"><button disabled={answerStep <= 0} onClick={() => { setDemoPlaying(false); void previewAnswerStep(answerStep - 1); }}><ChevronLeft/>上一步</button><button disabled={answerStep >= answer.length} onClick={() => { setDemoPlaying(false); void previewAnswerStep(answerStep + 1); }}><ChevronRight/>下一步</button><button disabled={!answer.length} onClick={toggleAnswerPreview}>{demoPlaying ? <Pause/> : <Play/>}{demoPlaying ? "暂停" : answerStep >= answer.length ? "重播" : "继续"}</button><button onClick={() => { setDemoPlaying(false); void previewAnswerStep(0); }}><RotateCcw/>从头</button></footer><div className="answer-move-list">{Array.from({ length: Math.ceil(answer.length / 2) }, (_, index) => <p key={index} className={answerStep > index * 2 ? "active" : ""}><b>第 {index + 1} 回合</b><span>红方 {answer[index * 2]}{answer[index * 2 + 1] ? ` · 黑方 ${answer[index * 2 + 1]}` : ""}</span></p>)}</div></section>}<footer className="navigate"><button disabled={currentIndex <= 0} onClick={() => void selectProblem(visible[currentIndex - 1])}><ChevronLeft/></button><button disabled={currentIndex >= visible.length - 1} onClick={() => void selectProblem(visible[currentIndex + 1])}><ChevronRight/></button></footer></> : <p>从目录选择题目。</p>}</aside>
-  </div>{studyMode && <div className="study-workspace">
+  </div>}{studyMode && <div className="study-workspace">
     <main className={`study-stage${studyEvaluationVisible ? "" : " evaluation-hidden"}`}><header className={`study-toolbar ${studyMenuOpen ? "menu-open" : ""}`}><nav className="study-command-bar" aria-label="拆棋工具栏">
-      <button className="study-return-training" aria-label="返回残局训练" title="返回残局训练" onClick={() => runStudyMenuAction("training")}><BookOpen/><span>训练</span></button>
+      <button className="study-return-training" aria-label={studyReturnLabel} title={studyReturnLabel} onClick={() => void closeStudyMode(studyReturnRoute)}><ChevronLeft/><span>{studyReturnLabel}</span></button>
       <button aria-label="切换到录谱" title="切换到录谱" onClick={() => void switchFromStudyToManualMode()}><FilePenLine/><span>录谱</span></button>
       <button className={studyMenuOpen ? "active" : ""} aria-label="更多功能" title="更多功能" aria-expanded={studyMenuOpen} onClick={() => setStudyMenuOpen((open) => !open)}><Ellipsis/><span>更多</span></button>
       <button aria-label="新建标准棋局" title="新建标准棋局" onClick={() => runStudyMenuAction("standard")}><Plus/><span>新局</span></button>
@@ -3258,10 +5309,10 @@ export function App() {
     {studyMenuOpen && <button className="study-menu-scrim" aria-label="关闭拆棋菜单" onClick={() => setStudyMenuOpen(false)}/>}
   </div>}{manualMode && <div className="manual-workspace study-workspace">
     <main className={`study-stage manual-stage evaluation-hidden ${manualSetupOpen ? "manual-setup-active" : ""} ${manualAnalysisExpanded ? "manual-analysis-expanded" : ""}`}><header className="study-toolbar manual-statusbar" aria-label="录谱状态">
-      <button type="button" aria-label={manualSetupOpen ? "取消设置局面" : "返回残局训练"} onClick={() => manualSetupOpen ? setManualSetupOpen(false) : void closeManualMode()}><ChevronLeft/></button>
+      <button type="button" className="manual-return-button" aria-label={manualSetupOpen ? "取消摆棋" : "返回我的"} title={manualSetupOpen ? "取消摆棋" : "返回我的"} onClick={() => manualSetupOpen ? cancelManualSetup() : void closeManualMode("account")}><ChevronLeft/><span>{manualSetupOpen ? "取消" : "返回我的"}</span></button>
       <div><b>{manualSetupOpen ? `创建局面 · ${manualSetupSide === "red" ? "红先" : "黑先"}` : manualAnalysisExpanded ? "录谱分析" : `录谱 ${manualCursor}/${manualMoves.length}`}</b><small>{manualSetupOpen ? manualNotice : `${manualGame?.title ?? "标准开局"} · ${manualSaveStatus}${manualTerminal ? ` · ${manualTerminal}` : ""}`}</small></div>
       <nav className="manual-mode-switch" aria-label="快捷切换模式"><button type="button" onClick={() => void switchFromManualMode("training")}><BookOpen/><span>残棋</span></button><button type="button" onClick={() => void switchFromManualMode("study")}><Cpu/><span>拆棋</span></button><button type="button" className="active" aria-current="page"><FilePenLine/><span>录谱</span></button></nav>
-      <button type="button" aria-label="打开棋库" onClick={() => openManualPanel("library")}><Database/></button>
+      {manualSetupOpen ? <button type="button" aria-label="复制当前 FEN" title="复制当前 FEN" onClick={() => void copyManualSetupFen()}><ClipboardCopy/></button> : <button type="button" aria-label="打开棋库" onClick={() => openManualPanel("library")}><Database/></button>}
     </header>{manualSetupOpen ? <section className="manual-setup-board-area">{renderManualSetupTray("black")}{manualSetupError && <p className="manual-setup-toast" role="alert" aria-live="assertive">{manualSetupError}</p>}<div className="manual-setup-board-slot"><Board pieces={manualSetupPieces} selected={manualSetupSelected} legalTargets={[]} lastMove={undefined} analysisMoves={[]} activeAnalysis={manualArrowActiveIndex} flipped={boardFlipped} feedback={undefined} setupMode={true} showSideCoordinates={true} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={editManualSetupSquare}/></div>{renderManualSetupTray("red")}</section> : <div className="manual-play-board-area"><Board key="manual" pieces={manualPieces} selected={manualSelected} legalTargets={manualLegalTargets} lastMove={manualLastMove} analysisMoves={manualArrowMoves} activeAnalysis={manualArrowActiveIndex} flipped={boardFlipped} feedback={moveFeedback} setupMode={false} showSideCoordinates={true} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={(square) => void moveManual(square)} onMove={(from, to) => void moveManualFromTo(from, to)}/></div>}
       {manualAnalysisExpanded && <section className="manual-analysis-dock" aria-label="录谱分析面板">
         <header><strong>自我分析</strong><div><button type="button" onClick={() => void analyzeManualMainline()}>整局分析</button><button type="button" onClick={() => { setManualAnalysisExpanded(false); setManualPanelTab("moves"); }}>收起</button></div></header>
@@ -3269,7 +5320,7 @@ export function App() {
       </section>}
       <section className={`manual-bottom-tools ${manualSetupOpen ? "manual-setup-tools" : ""}`} aria-label={manualSetupOpen ? "摆棋工具" : "录谱常用工具"}>
         {manualSetupOpen ? <>
-          <div className="manual-tool-row setup-actions"><button type="button" onClick={() => { setManualSetupSelected(undefined); setManualSetupError(""); setManualSetupTool({ color: "red", kind: "pawn", label: "兵" }); void boardAt(STANDARD_STARTING_FEN, [], studyRuleMode).then((state) => { setManualSetupPieces(state.pieces); setManualNotice("已摆满标准开局。"); }); }}>摆满</button><button type="button" onClick={() => { setManualSetupPieces(defaultManualSetupPieces()); setManualSetupSelected(undefined); setManualSetupTool({ color: "red", kind: "pawn", label: "兵" }); setManualSetupError(""); setManualNotice("已清空棋盘，仅保留默认将帅。"); }}>清空</button><button type="button" onClick={toggleBoardFlipped}>翻转</button><button type="button" onClick={() => setManualSetupSide((side) => { const next = side === "red" ? "black" : "red"; setManualSetupError(""); setManualNotice(`已设置为${next === "red" ? "红方" : "黑方"}先走。`); return next; })}>{manualSetupSide === "red" ? "红先⇄黑先" : "黑先⇄红先"}</button><button type="button" className="primary" onClick={() => void confirmManualSetup()}>完成</button></div>
+          <div className="manual-tool-row setup-actions"><button type="button" onClick={() => void fillManualSetupStandardPosition()}>标准</button><button type="button" onClick={clearManualSetupBoard}>清空</button><button type="button" className={manualSetupTool === "erase" ? "active" : ""} aria-label="删除棋子" title="删除棋子" onClick={() => { setManualSetupTool("erase"); setManualSetupSelected(undefined); setManualSetupError(""); setManualNotice("删除模式：点棋盘上的非将帅棋子即可删除。"); }}><Trash2/></button><button type="button" disabled={!manualSetupHistory.length} onClick={undoManualSetup}><Undo2/>撤销</button><button type="button" onClick={toggleBoardFlipped}>翻转</button><button type="button" onClick={() => { rememberManualSetup(); setManualSetupSide((side) => { const next = side === "red" ? "black" : "red"; setManualSetupError(""); setManualNotice(`已设置为${next === "red" ? "红方" : "黑方"}先走。`); return next; }); }}>{manualSetupSide === "red" ? "红先⇄黑先" : "黑先⇄红先"}</button><button type="button" className="primary" onClick={() => void confirmManualSetup()}>完成</button></div>
         </> : <>
         <div className="manual-tool-row compact-actions">
           <button type="button" className={manualMenuOpen ? "active" : ""} onClick={() => setManualMenuOpen((open) => !open)}><Ellipsis/><span>菜单</span></button>
@@ -3305,7 +5356,8 @@ export function App() {
         {manualPanelTab === "moves" && <StudyManualTree moves={manualMoves} notation={manualNotation} cursor={manualCursor} branches={manualBranches} comments={manualComments} onCommentChange={(key, comment) => { const comments = { ...manualComments, [key]: comment }; setManualComments(comments); void saveManualGame({ comments }); }} onNavigate={(cursor) => void navigateManualMove(cursor)} onAdopt={(branch, focusCursor) => void adoptManualBranch(branch, focusCursor)} onDelete={deleteManualBranch} onDiscardCurrent={() => setManualNotice("主线删除后续首版暂不开放，请使用分支切换。")} onMove={moveManualBranch}/>}
         {manualPanelTab === "analysis" && renderManualAnalysisBody()}
         {manualPanelTab === "library" && <section className="manual-library-panel">
-          <header><button onClick={() => void createManualFolder()}><Folder/>{manualFolderPath ? "新子目录" : "新目录"}</button><button onClick={() => void createManualFromFen(STANDARD_STARTING_FEN, "标准开局")}><Plus/>新谱</button><button disabled={!manualGame} onClick={() => void renameManualGame()}><Pencil/>棋谱信息</button></header>
+          <header><button onClick={() => void createManualFolder()}><Folder/>{manualFolderPath ? "新子目录" : "新目录"}</button><button onClick={() => void createManualFromFen(STANDARD_STARTING_FEN, "标准开局")}><Plus/>新谱</button><button disabled={manualCloudSyncing} onClick={() => void syncPersonalManualLibrary()}><CloudUpload/>{manualCloudSyncing ? "同步中" : "同步"}</button><button disabled={!manualGame} onClick={() => void renameManualGame()}><Pencil/>棋谱信息</button></header>
+          <p className="manual-cloud-sync-status" aria-live="polite">{manualCloudSyncMessage}</p>
           <div className="problem-search"><Search/><input value={manualQuery} placeholder="搜索本地棋谱" onChange={(event) => setManualQuery(event.target.value)}/>{manualQuery && <button type="button" onClick={() => setManualQuery("")}><X/></button>}</div>
           <nav className="manual-folder-breadcrumbs" aria-label="本地棋谱目录路径">{manualBreadcrumbs.map((item) => <button key={item.path || "root"} className={manualFolderPath === item.path ? "active" : ""} onClick={() => setManualFolder(item.path)}>{item.label}</button>)}</nav>
           {manualFolderPath && <div className="manual-folder-actions"><button onClick={() => void renameManualFolder(manualFolderPath)}><Pencil/>重命名当前目录</button><button className="danger" onClick={() => void deleteManualFolder(manualFolderPath)}><Trash2/>删除目录</button></div>}
@@ -3316,6 +5368,11 @@ export function App() {
       <section className="manual-panel-notice" aria-live="polite"><b>{manualGame?.title ?? "本地录谱"}</b><p>{manualNotice}</p></section>
     </aside>}
   </div>}
+  {manualSetupActionOpen && <div className="confirm-backdrop manual-setup-action-dialog" role="dialog" aria-modal="true" onMouseDown={() => setManualSetupActionOpen(false)}><section onMouseDown={(event) => event.stopPropagation()}>
+    <header><strong>摆棋完成</strong><button type="button" aria-label="继续编辑" onClick={() => setManualSetupActionOpen(false)}><X/></button></header>
+    <p>局面已通过校验。可先进行临时拆棋分析，或保存到“我的棋谱”。</p>
+    <footer><button type="button" onClick={() => setManualSetupActionOpen(false)}>继续编辑</button><button type="button" onClick={() => void startManualSetupAnalysis()}><Cpu/>开始拆棋分析</button><button type="button" className="primary" onClick={requestManualSetupSave}><FilePenLine/>保存到我的棋谱</button></footer>
+  </section></div>}
   {manualShareDraft && <ManualShareDialog game={manualShareDraft} onClose={() => setManualShareDraft(undefined)}/> }
   {manualSaveDraft && <ManualSaveDialog
     game={manualSaveDraft}
@@ -3328,8 +5385,9 @@ export function App() {
     }}
   />}
   {manualSheet && <div className="confirm-backdrop manual-sheet-dialog" role="dialog" aria-modal="true" onMouseDown={() => { if (!manualSheetLock.current) { setManualSheetError(""); setManualSheet(undefined); } }}><section onCompositionStart={() => { manualSheetComposing.current = true; }} onCompositionEnd={() => { manualSheetComposing.current = false; }} onMouseDown={(event) => event.stopPropagation()}>
-    <header><strong>{manualSheet.type === "gameInfo" ? "棋谱信息" : manualSheet.type === "folderCreate" ? (manualSheet.parent ? "新建子目录" : "新建目录") : manualSheet.type === "folderRename" ? "重命名目录" : manualSheet.type === "folderDelete" ? "删除目录" : manualSheet.type === "gameMove" ? "移动棋谱" : "删除棋谱"}</strong><button onClick={() => { if (!manualSheetLock.current) { setManualSheetError(""); setManualSheet(undefined); } }}><X/></button></header>
+    <header><strong>{manualSheet.type === "setupSave" ? "保存摆棋局面" : manualSheet.type === "gameInfo" ? "棋谱信息" : manualSheet.type === "folderCreate" ? (manualSheet.parent ? "新建子目录" : "新建目录") : manualSheet.type === "folderRename" ? "重命名目录" : manualSheet.type === "folderDelete" ? "删除目录" : manualSheet.type === "gameMove" ? "移动棋谱" : "删除棋谱"}</strong><button onClick={() => { if (!manualSheetLock.current) { setManualSheetError(""); setManualSheet(undefined); } }}><X/></button></header>
     {manualSheetError && <p className="manual-sheet-error" role="alert" aria-live="assertive">{manualSheetError}</p>}
+    {manualSheet.type === "setupSave" && <><label><span>棋谱名称</span><input autoFocus value={manualSheet.title} onKeyDown={(event) => { if (isImeEnter(event, manualSheetComposing.current)) void applyManualSheet(); }} onChange={(event) => { setManualSheetError(""); setManualSheet({ ...manualSheet, title: event.target.value }); }}/></label><label><span>保存到目录</span><input value={manualSheet.folder} placeholder="留空为未分类" onChange={(event) => { setManualSheetError(""); setManualSheet({ ...manualSheet, folder: event.target.value }); }}/></label>{manualFolders.length > 0 && <div className="manual-sheet-folder-picks">{manualFolders.slice(0, 12).map((folder) => <button key={folder.path} onClick={() => { setManualSheetError(""); setManualSheet({ ...manualSheet, folder: folder.path }); }}>{folder.path}</button>)}</div>}</>}
     {manualSheet.type === "gameInfo" && <><label><span>标题</span><input autoFocus value={manualSheet.title} onChange={(event) => { setManualSheetError(""); setManualSheet({ ...manualSheet, title: event.target.value }); }}/></label><label><span>备注</span><textarea value={manualSheet.note} rows={3} onChange={(event) => { setManualSheetError(""); setManualSheet({ ...manualSheet, note: event.target.value }); }}/></label></>}
     {manualSheet.type === "folderCreate" && <><p>当前位置：{manualSheet.parent || "全部"}</p><label><span>{manualSheet.parent ? "子目录名称" : "目录名称"}</span><input autoFocus value={manualSheet.name} placeholder="例如：第1轮" onKeyDown={(event) => { if (isImeEnter(event, manualSheetComposing.current)) void applyManualSheet(); }} onChange={(event) => { setManualSheetError(""); setManualSheet({ ...manualSheet, name: event.target.value }); }}/></label></>}
     {manualSheet.type === "folderRename" && <><p>原目录：{manualSheet.target}</p><label><span>新目录路径</span><input autoFocus value={manualSheet.path} onKeyDown={(event) => { if (isImeEnter(event, manualSheetComposing.current)) void applyManualSheet(); }} onChange={(event) => { setManualSheetError(""); setManualSheet({ ...manualSheet, path: event.target.value }); }}/></label></>}
@@ -3337,7 +5395,22 @@ export function App() {
     {manualSheet.type === "gameMove" && <><p>移动《{manualSheet.game.title}》</p><label><span>目标目录</span><input autoFocus value={manualSheet.folder} placeholder="留空为未分类" onChange={(event) => { setManualSheetError(""); setManualSheet({ ...manualSheet, folder: event.target.value }); }}/></label>{manualFolders.length > 0 && <div className="manual-sheet-folder-picks">{manualFolders.slice(0, 12).map((folder) => <button key={folder.path} onClick={() => { setManualSheetError(""); setManualSheet({ ...manualSheet, folder: folder.path }); }}>{folder.path}</button>)}</div>}</>}
     {manualSheet.type === "gameDelete" && <p>删除棋谱《{manualSheet.game.title}》？此操作不会影响残棋题库。</p>}
     <footer><button onClick={() => { if (!manualSheetLock.current) { setManualSheetError(""); setManualSheet(undefined); } }}>取消</button><button className={manualSheet.type === "folderDelete" || manualSheet.type === "gameDelete" ? "danger" : "primary"} disabled={manualSheetBusy} onClick={() => void applyManualSheet()}>{manualSheetBusy ? "保存中…" : manualSheet.type === "folderDelete" || manualSheet.type === "gameDelete" ? "删除" : "确定"}</button></footer>
-  </section></div>}{importPanelOpen && <ImportCblPanel onBack={() => setImportPanelOpen(false)} onPick={() => input.current?.click()} onImportUrl={importCblUrl}/>} {(catalogueOpen || controlsOpen) && <button className="drawer-backdrop" aria-label="关闭抽屉" onClick={() => { setCatalogueOpen(false); setControlsOpen(false); }}/>} {deleteTarget && <div className="confirm-backdrop" onMouseDown={() => setDeleteTarget(undefined)}><section onMouseDown={(event) => event.stopPropagation()}><strong>确认删除</strong><p>{deleteTarget.type === "library" ? `删除题库《${deleteTarget.title}》及该应用内的答题记录？` : `从训练目录移除《${deleteTarget.title}》？答题记录会保留。`}</p><footer><button onClick={() => setDeleteTarget(undefined)}>取消</button><button className="danger" onClick={() => void confirmDelete()}>删除</button></footer></section></div>}{showAbout && <AboutDialog
+  </section></div>}
+  {teachingAccountOpen && (!teachingAuth || teachingAuth.user.orgId || teachingAuth.user.role === "admin" || teachingAuth.user.role === "user" || teachingAuth.user.isPlatformAdmin) && <TeachingAccountDialog auth={teachingAuth} syncing={teachingSyncing} lastSyncAt={teachingLastSyncAt} message={teachingMessage} onClose={() => setTeachingAccountOpen(false)} onLogin={(auth) => { applyTeachingAuth(auth); setTeachingAccountOpen(false); if (resumeTeacherAfterLogin) { setResumeTeacherAfterLogin(false); navigateTeacher(auth.user.orgId ? "/teacher" : "/teacher/join-organization", true); } }} onAuthChange={(auth) => applyTeachingAuth(auth, true)} onLogout={async (clearCache) => { teachingClient.logout(); setTeachingAuth(undefined); setUnreadAssignmentCount(0); setStudentAssignmentsOpen(false); setTeachingAccountOpen(false); setTeachingLastSyncAt(null); setTeachingMessage(clearCache ? "已退出，作业缓存已清除；未提交答题记录已保留。" : ""); await refresh(undefined); }} onSync={() => void syncTeachingAssignments()} onMessage={setTeachingMessage} />}
+  {!mobileLayout && teachingAccountOpen && teachingAuth && !teachingAuth.user.orgId && teachingAuth.user.role !== "admin" && teachingAuth.user.role !== "user" && !teachingAuth.user.isPlatformAdmin && <UnboundTeachingDialog auth={teachingAuth} onClose={() => setTeachingAccountOpen(false)} onLogout={() => { teachingClient.logout(); setTeachingAuth(undefined); setUnreadAssignmentCount(0); setStudentAssignmentsOpen(false); setTeachingAccountOpen(false); setTeachingMessage(""); }} />}
+  {importPanelOpen && <ImportCblPanel accessTier={importAccessTier} onAccessTierChange={setImportAccessTier} onBack={() => setImportPanelOpen(false)} onPick={() => input.current?.click()} onImportUrl={importCblUrl}/>}
+  {(catalogueOpen || controlsOpen) && (
+    <button
+      className="drawer-backdrop"
+      aria-label="关闭抽屉"
+      onClick={() => {
+        setCatalogueOpen(false);
+        setControlsOpen(false);
+      }}
+    />
+  )}
+  {deleteTarget && <div className="confirm-backdrop" onMouseDown={() => setDeleteTarget(undefined)}><section onMouseDown={(event) => event.stopPropagation()}><strong>确认删除</strong><p>{deleteTarget.type === "library" ? `删除题库《${deleteTarget.title}》及该应用内的答题记录？` : `从训练目录移除《${deleteTarget.title}》？答题记录会保留。`}</p><footer><button onClick={() => setDeleteTarget(undefined)}>取消</button><button className="danger" onClick={() => void confirmDelete()}>删除</button></footer></section></div>}
+  {showAbout && <AboutDialog
     preferredOrientation={preferredOrientation}
     studyRuleMode={studyRuleMode}
     skinDevCommandOpen={skinDevCommandOpen}

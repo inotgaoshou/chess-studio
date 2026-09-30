@@ -6,15 +6,19 @@ on:
       marketing_version:
         description: "App Store marketing version"
         required: true
-        default: "1.0.0"
+        default: "1.0.3"
       build_number:
         description: "App Store Connect build number"
         required: true
-        default: "10008"
-      teaching_api_base:
-        description: "HTTPS API base compiled into the mobile app"
+        default: "10018"
+      app_env:
+        description: "Package environment (test packages can also connect to production)"
+        type: choice
+        options:
+          - test
+          - production
         required: true
-        default: "https://api.qixiapp.cn"
+        default: "production"
 
 concurrency:
   group: qixi-ios-testflight-${{ github.event.inputs.marketing_version }}-${{ github.event.inputs.build_number }}
@@ -32,6 +36,33 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+
+      - name: Validate production release reference
+        env:
+          APP_ENV: ${{ github.event.inputs.app_env }}
+          MARKETING_VERSION: ${{ github.event.inputs.marketing_version }}
+          BUILD_NUMBER: ${{ github.event.inputs.build_number }}
+        run: |
+          [[ "$MARKETING_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$BUILD_NUMBER" =~ ^[0-9]+$ ]]
+          if [[ "$APP_ENV" == production ]]; then
+            test "$GITHUB_REF" = "refs/tags/qixi-mobile-v$MARKETING_VERSION" || {
+              echo "Production builds must use the matching annotated mobile release tag." >&2
+              exit 1
+            }
+            test "$(git cat-file -t "$GITHUB_REF")" = tag
+            grep -Fq "MARKETING_VERSION = $MARKETING_VERSION;" apps/endgame-training/ios/App/App.xcodeproj/project.pbxproj
+            grep -Fq "CURRENT_PROJECT_VERSION = $BUILD_NUMBER;" apps/endgame-training/ios/App/App.xcodeproj/project.pbxproj
+          fi
+
+      - name: Prepare pinned Pikafish iOS dependency
+        run: |
+          git clone --no-checkout https://github.com/inotgaoshou/pikafish-ios.git "$GITHUB_WORKSPACE/../pikafish-ios"
+          git -C "$GITHUB_WORKSPACE/../pikafish-ios" checkout --detach 3ae61118e64dbc6942d0e255fff60dfcad3aec1e
+          "$GITHUB_WORKSPACE/../pikafish-ios/scripts/fetch-release.sh" Pikafish-2026-09-06
+          manifest="$GITHUB_WORKSPACE/../pikafish-ios/.build/releases/Pikafish-2026-09-06/manifest.json"
+          test "$(jq -r '.sourceCommit' "$manifest")" = 4c17cee11f888ae1d48a9494f2e2239f019f0a1f
+          test "$(jq -r '.nnueSHA256' "$manifest")" = 7d13d73569a9b571ba0eb20cf1596247bc2a42738967e61afef6482b231e900e
 
       - name: Check Xcode and iOS SDK
         run: |
@@ -72,7 +103,7 @@ jobs:
 
       - name: Build web assets and sync iOS
         env:
-          VITE_TEACHING_API_BASE: ${{ github.event.inputs.teaching_api_base }}
+          VITE_APP_ENV: ${{ github.event.inputs.app_env }}
         run: |
           pnpm --dir apps/endgame-training mobile:build
           pnpm --dir apps/endgame-training exec cap sync ios

@@ -12,6 +12,7 @@ final class MainViewController: CAPBridgeViewController {
 
     override func capacitorDidLoad() {
         bridge?.registerPluginInstance(TrainingStorePlugin())
+        bridge?.registerPluginInstance(SecureSessionPlugin())
         bridge?.registerPluginInstance(ScreenOrientationPlugin())
         bridge?.registerPluginInstance(CloudBookPlugin())
         bridge?.registerPluginInstance(PikafishPlugin())

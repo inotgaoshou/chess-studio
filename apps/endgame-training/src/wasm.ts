@@ -28,7 +28,9 @@ type Core = {
 let corePromise: Promise<Core> | undefined;
 
 export async function trainingCore() {
-  const moduleUrl = "/wasm/xiangqi_web_core.js";
+  // Resolve from the app root so a nested mobile route such as /tools/setup
+  // does not turn `wasm` into /tools/wasm.
+  const moduleUrl = new URL(`${import.meta.env.BASE_URL}wasm/xiangqi_web_core.js`, window.location.origin).href;
   corePromise ??= import(/* @vite-ignore */ moduleUrl) as Promise<Core>;
   const core = await corePromise;
   await core.default();
