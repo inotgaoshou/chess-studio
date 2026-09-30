@@ -29,14 +29,20 @@ install_certificate() {
   chmod 0644 "/etc/nginx/certs/$primary/fullchain.pem"
 }
 
+issue_certificate() {
+  local primary="$1"
+  shift
+  # acme.sh returns a non-zero status when an already-valid certificate is
+  # skipped. Avoid that path entirely so adding a new hostname is idempotent.
+  if [[ ! -f "$acme_home/${primary}_ecc/fullchain.cer" ]]; then
+    "$acme" --issue --server letsencrypt --dns dns_tencent "$@"
+  fi
+  install_certificate "$primary"
+}
+
 "$acme" --register-account -m "$ACME_CONTACT_EMAIL" --server letsencrypt
-"$acme" --issue --server letsencrypt --dns dns_tencent -d qixiapp.cn -d www.qixiapp.cn
-install_certificate qixiapp.cn
-"$acme" --issue --server letsencrypt --dns dns_tencent -d admin.qixiapp.cn
-install_certificate admin.qixiapp.cn
-"$acme" --issue --server letsencrypt --dns dns_tencent -d admin-test.qixiapp.cn
-install_certificate admin-test.qixiapp.cn
-"$acme" --issue --server letsencrypt --dns dns_tencent -d api.qixiapp.cn
-install_certificate api.qixiapp.cn
-"$acme" --issue --server letsencrypt --dns dns_tencent -d api-test.qixiapp.cn
-install_certificate api-test.qixiapp.cn
+issue_certificate qixiapp.cn -d qixiapp.cn -d www.qixiapp.cn
+issue_certificate admin.qixiapp.cn -d admin.qixiapp.cn
+issue_certificate admin-test.qixiapp.cn -d admin-test.qixiapp.cn
+issue_certificate api.qixiapp.cn -d api.qixiapp.cn
+issue_certificate api-test.qixiapp.cn -d api-test.qixiapp.cn
