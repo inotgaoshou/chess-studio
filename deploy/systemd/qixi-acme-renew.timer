@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily Qixi TLS certificate renewal
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=45m
+
+[Install]
+WantedBy=timers.target

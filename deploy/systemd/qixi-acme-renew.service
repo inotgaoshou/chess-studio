@@ -1,0 +1,9 @@
+[Unit]
+Description=Renew Qixi TLS certificates through Tencent Cloud DNS
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/xiangqi-acme/tencent.env
+ExecStart=/usr/local/sbin/renew-qixi-certificates
