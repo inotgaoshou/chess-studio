@@ -13,7 +13,10 @@ const RECORD_SIZE: usize = 4096;
 const RECORD_HEADER_SIZE: usize = 2214;
 const MOVE_SIDE_OFFSET: usize = 2116;
 const STANDARD_STARTING_BOARD: &str = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR";
-pub const CBL_PARSER_VERSION: u32 = 5;
+// Version 6 adds record-level routing in the teaching platform. Reparse jobs use
+// this value to distinguish content created before the new classification rules.
+// Version 7 locates records independently of the library's index allocation.
+pub const CBL_PARSER_VERSION: u32 = 7;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -112,17 +115,11 @@ pub fn import_cbl_library(bytes: &[u8]) -> Result<CblLibrary, String> {
     }
     let declared_count = le_u32(bytes, 60)?;
     let title = utf16z(&bytes[64..576]);
-    let data_offset = match declared_count {
-        0..=128 => 101_952,
-        129..=256 => 137_280,
-        257..=384 => 151_080,
-        385..=512 => 207_936,
-        _ => 349_248,
-    };
-    if bytes.len() <= data_offset {
+    if bytes.len() <= HEADER_SIZE {
         return Err("CBL 文件缺少棋谱记录区".into());
     }
-    let start = find_record(bytes, data_offset).ok_or("CBL 文件没有 CCBridge 记录")?;
+    // Index allocation varies between files with the same declared count.
+    let start = find_record(bytes, HEADER_SIZE).ok_or("CBL 文件没有 CCBridge 记录")?;
     if (bytes.len() - start) % RECORD_SIZE != 0 {
         return Err("CBL 记录区长度不是 4096 字节的整数倍".into());
     }
@@ -216,16 +213,9 @@ where
     }
     let declared_count = le_u32(&header, 60)?;
     let title = utf16z(&header[64..576]);
-    let data_offset = match declared_count {
-        0..=128 => 101_952,
-        129..=256 => 137_280,
-        257..=384 => 151_080,
-        385..=512 => 207_936,
-        _ => 349_248,
-    };
     let mut game_count = 0u32;
     let mut warnings = Vec::new();
-    let Some(start) = find_record_in_reader(reader, data_offset as u64, file_len)? else {
+    let Some(start) = find_record_in_reader(reader, HEADER_SIZE as u64, file_len)? else {
         warnings.push("CBL 文件没有棋谱记录".into());
         return Ok(CblGameLibrarySummary {
             title,
@@ -1029,6 +1019,53 @@ mod tests {
         .unwrap();
         assert_eq!(summary.game_count, 0);
         assert_eq!(summary.warnings, vec!["CBL 文件没有棋谱记录"]);
+    }
+
+    fn variable_offset_library(game: bool) -> Vec<u8> {
+        let first_record = 287_424;
+        let count = 20;
+        let mut bytes = vec![0u8; first_record + count * RECORD_SIZE];
+        bytes[..LIBRARY_MAGIC.len()].copy_from_slice(LIBRARY_MAGIC);
+        bytes[60..64].copy_from_slice(&800u32.to_le_bytes());
+        let template = streaming_game_fixture();
+        for index in 0..count {
+            let start = first_record + index * RECORD_SIZE;
+            let record = &mut bytes[start..start + RECORD_SIZE];
+            record.copy_from_slice(&template[101_952..]);
+            if !game {
+                record[2120..2210].fill(0);
+                record[2120 + 12] = 0x25;
+                record[2120 + 13] = 0x24;
+                record[2120 + 14] = 0x12;
+                record[2120 + 85] = 0x15;
+                record[RECORD_HEADER_SIZE..].fill(0);
+            }
+        }
+        bytes
+    }
+
+    #[test]
+    fn puzzle_import_does_not_skip_records_before_legacy_offset() {
+        let library = import_cbl_library(&variable_offset_library(false)).unwrap();
+        assert_eq!(library.problems.len(), 20);
+        assert_eq!(library.problems[0].source_index, 0);
+        assert_eq!(library.skipped_records, 0);
+    }
+
+    #[test]
+    fn streaming_import_does_not_skip_records_before_legacy_offset() {
+        let mut indices = Vec::new();
+        let summary = import_cbl_game_library_reader(
+            &mut IoCursor::new(variable_offset_library(true)),
+            None,
+            |game| {
+                indices.push(game.source_index);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(summary.game_count, 20);
+        assert_eq!(indices, (0..20).collect::<Vec<_>>());
     }
     #[test]
     fn rejects_non_cbl_header() {
