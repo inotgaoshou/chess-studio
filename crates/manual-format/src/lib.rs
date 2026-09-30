@@ -10,6 +10,7 @@ use xiangqi_manual::ManualTree;
 mod cbl;
 pub use cbl::{
     CBL_PARSER_VERSION, CblGame, CblGameLibrarySummary, CblLibrary, CblMove, CblProblem,
+    CblSolutionSource, CblValidationStatus,
     import_cbl_game_library, import_cbl_game_library_reader, import_cbl_game_library_with_limit,
     import_cbl_library,
 };
