@@ -67,6 +67,7 @@ function harness({ packageEnv = "test", native = true, dev = false, configured =
   const environment = load("appEnvironment");
   const { teachingClient } = load("teaching", {
     "./appEnvironment": environment,
+    "./practiceScoring": load("practiceScoring"),
     "./secureSession": {
       isNativeSessionStore: () => native,
       secureSession: {

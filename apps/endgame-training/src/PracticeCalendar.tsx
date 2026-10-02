@@ -1,12 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
-import { teachingClient, type PracticeHistory, type PracticeSession } from "./teaching";
+import { teachingClient, type PracticeHistory, type PracticeSession, type PracticeSessionItem } from "./teaching";
 import { practiceHistoryByDay, recentPracticeDays } from "./practiceHistory";
 
 const weekday = (date: string) => ["日", "一", "二", "三", "四", "五", "六"][new Date(`${date}T12:00:00`).getDay()];
 const shortDate = (date: string) => date.slice(5).replace("-", "/");
 
-export function PracticeCalendar({ history, remote = false }: { history: PracticeHistory[]; remote?: boolean }) {
+export function PracticeCalendar({ history, remote = false, renderProblem }: { history: PracticeHistory[]; remote?: boolean; renderProblem(problem: PracticeSessionItem["problem"]): ReactNode }) {
   const [range, setRange] = useState<7 | 30 | 90>(7);
   const [loaded, setLoaded] = useState<PracticeHistory[]>([]);
   const [loading, setLoading] = useState(false);
@@ -17,6 +17,7 @@ export function PracticeCalendar({ history, remote = false }: { history: Practic
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [detailsError, setDetailsError] = useState("");
   const [detailsRetry, setDetailsRetry] = useState(0);
+  const [selectedProblem, setSelectedProblem] = useState<PracticeSessionItem>();
   useEffect(() => {
     if (range === 7 || !remote) return;
     let active = true;
@@ -39,7 +40,7 @@ export function PracticeCalendar({ history, remote = false }: { history: Practic
     let active = true;
     const records = range === 7 ? history : loaded;
     const ids = [...new Set(records.filter((record) => record.localDate === details).map((record) => record.sessionId))];
-    setDetailsLoading(true); setDetailsError(""); setSessions([]);
+    setDetailsLoading(true); setDetailsError(""); setSessions([]); setSelectedProblem(undefined);
     void Promise.all(ids.map((id) => teachingClient.practiceSession(id))).then((items) => { if (active) setSessions(items); }).catch((reason) => { if (active) setDetailsError(reason instanceof Error ? reason.message : "读取练习详情失败"); }).finally(() => { if (active) setDetailsLoading(false); });
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
     const overflow = document.body.style.overflow;
@@ -65,8 +66,8 @@ export function PracticeCalendar({ history, remote = false }: { history: Practic
     {range > 7 && <div className="practice-calendar-summary"><strong>{shortDate(days[0].localDate)}–{shortDate(today)}</strong><span>累计完成 <b>{totals.completed}</b> 题 · 首次正确 <b>{totals.correct}</b> 题</span></div>}
     </>}
     {details && <div className="assignment-review-backdrop" onClick={() => setDetails(undefined)}><section className="practice-calendar-details" role="dialog" aria-modal="true" aria-label="学习记录详情" onClick={(event) => event.stopPropagation()}>
-      <header className="mobile-page-heading"><button type="button" className="mobile-back-button" aria-label="返回学习日历" title="返回学习日历" onClick={() => setDetails(undefined)}><ChevronLeft/></button><span><strong>学习记录详情</strong><small>{details} · 周{weekday(details)}</small></span></header>
-      {detailsLoading ? <p role="status">正在读取练习详情…</p> : detailsError ? <div role="alert"><p>{detailsError}</p><button type="button" onClick={() => setDetailsRetry((value) => value + 1)}><RefreshCw/>重试</button></div> : sessions.length ? <div className="practice-calendar-session-list">{sessions.map((session, index) => <section key={session.id}><header><strong>练习 {index + 1}</strong><small>{session.items.length} 题 · {session.status === "completed" ? "已结束" : "练习中"}</small></header><ol>{session.items.map((item) => <li key={item.id}><strong>{item.problem.title}</strong><span>{item.status === "completed" ? "已完成" : item.status === "revealed" ? "已看解析" : item.status === "abandoned" ? "未完成" : "待完成"}{item.grade ? ` · ${item.grade.score} 分 / ${item.grade.stars} 星 · 错 ${item.grade.mistakes} 次 · 提示 ${item.grade.hintsUsed} 次` : ""}</span></li>)}</ol></section>)}</div> : <p>当天暂无平台练习记录</p>}
+      <header className="mobile-page-heading"><button type="button" className="mobile-back-button" aria-label={selectedProblem ? "返回当天记录" : "返回学习日历"} title={selectedProblem ? "返回当天记录" : "返回学习日历"} onClick={() => selectedProblem ? setSelectedProblem(undefined) : setDetails(undefined)}><ChevronLeft/></button><span><strong>{selectedProblem ? "题目详情" : "学习记录详情"}</strong><small>{details} · 周{weekday(details)}</small></span></header>
+      {selectedProblem ? <div className="practice-calendar-problem"><h3>{selectedProblem.problem.title}</h3><p>{selectedProblem.problem.category || "未分类"} · {selectedProblem.problem.sideToMove === "black" ? "黑方走" : "红方走"} · {selectedProblem.problem.solutionLength} 手题解</p><div className="practice-calendar-problem-board">{renderProblem(selectedProblem.problem)}</div>{selectedProblem.problem.note && <p>{selectedProblem.problem.note}</p>}{selectedProblem.grade && <p>{selectedProblem.grade.score} 分 · {selectedProblem.grade.stars} 星 · 错 {selectedProblem.grade.mistakes} 次 · 提示 {selectedProblem.grade.hintsUsed} 次</p>}</div> : detailsLoading ? <p role="status">正在读取练习详情…</p> : detailsError ? <div role="alert"><p>{detailsError}</p><button type="button" onClick={() => setDetailsRetry((value) => value + 1)}><RefreshCw/>重试</button></div> : sessions.length ? <div className="practice-calendar-session-list">{sessions.map((session, index) => <section key={session.id}><header><strong>练习 {index + 1}</strong><small>{session.items.length} 题 · {session.status === "completed" ? "已结束" : "练习中"}</small></header><ol>{session.items.map((item) => <li key={item.id}><button type="button" aria-label={`查看题目 ${item.problem.title}`} onClick={() => setSelectedProblem(item)}><span><strong>{item.problem.title}</strong><span>{item.status === "completed" ? "已完成" : item.status === "revealed" ? "已看解析" : item.status === "abandoned" ? "未完成" : "待完成"}{item.grade ? ` · ${item.grade.score} 分 / ${item.grade.stars} 星 · 错 ${item.grade.mistakes} 次 · 提示 ${item.grade.hintsUsed} 次` : ""}</span></span><ChevronRight/></button></li>)}</ol></section>)}</div> : <p>当天暂无平台练习记录</p>}
     </section></div>}
   </div>;
 }

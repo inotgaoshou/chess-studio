@@ -61,9 +61,12 @@ export function AssignmentSubmissionPanel({ assignmentId, auth, problems, onSubm
     finally { lock.current = false; setBusy(false); }
   }
   const submittedCount = problems.filter((problem) => problem.submissionState === "submitted").length;
+  const allSubmitted = submittedCount === problems.length && problems.length > 0 && !answers.length;
+  const graded = problems.filter((problem) => problem.assignmentGrade);
+  const totalScore = graded.reduce((sum, problem) => sum + problem.assignmentGrade!.score, 0);
   return <section className="assignment-submission" aria-label="作业提交">
-    <div><strong>{answers.length ? `${answers.length} 题待提交` : loading ? "正在读取答题记录…" : "暂无待提交记录"}</strong><small>{submittedCount}/{problems.length} 题已交给老师</small></div>
-    <button type="button" disabled={loading || busy || !answers.length} onClick={() => setReviewOpen(true)}><ClipboardCheck/>检查并提交</button>
+    <div><strong>{answers.length ? `${answers.length} 题待提交` : loading ? "正在读取答题记录…" : allSubmitted ? "作业已提交" : "尚无待提交答案"}</strong><small>{submittedCount}/{problems.length} 题已交给老师</small>{graded.length > 0 && <small>当前总分 {totalScore}/{problems.length * 3} 分{graded.length < problems.length ? ` · ${graded.length} 题有成绩` : ""}{answers.length ? " · 含本机待交成绩" : ""}</small>}</div>
+    <button type="button" disabled={loading || busy || !answers.length} onClick={() => setReviewOpen(true)}><ClipboardCheck/>{allSubmitted ? "已提交给老师" : "检查并提交"}</button>
     {message && <p role="status">{message}</p>}
     {reviewOpen && <div className="assignment-review-backdrop">
       <section className="assignment-review-dialog" role="dialog" aria-modal="true" aria-label="检查作业">

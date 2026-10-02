@@ -88,6 +88,14 @@ const topic = { id: 'topic', name: '长标题练习专题与专项训练', descr
       await page.getByRole('button', { name: '查看详情', exact: true }).click();
       await page.getByRole('dialog', { name: '学习记录详情' }).getByText('练习 2', { exact: true }).waitFor();
       assert.match(await page.getByRole('dialog', { name: '学习记录详情' }).textContent(), /2 分 \/ 2 星 · 错 1 次 · 提示 0 次/);
+      await page.getByRole('button', { name: `查看题目 ${problems[0].title}`, exact: true }).first().click();
+      await page.getByText('题目详情', { exact: true }).waitFor();
+      assert.equal(await page.locator('.practice-calendar-problem-board img').count(), 32);
+      await page.waitForFunction(() => Array.from(document.querySelectorAll('.practice-calendar-problem-board img')).every((img) => img.complete && img.naturalWidth > 0));
+      await page.locator('.practice-calendar-problem-board .fen-mini-board').evaluate((board) => new Promise((resolve, reject) => { const img = new Image(); img.onload = resolve; img.onerror = reject; img.src = getComputedStyle(board).backgroundImage.slice(5, -2); }));
+      await page.screenshot({ path: `/tmp/qixi-calendar-problem-${viewport.width}.png` });
+      await page.getByRole('button', { name: '返回当天记录', exact: true }).click();
+      await page.getByText('练习 2', { exact: true }).waitFor();
       await page.getByRole('button', { name: '返回学习日历', exact: true }).click();
       assert.match(await page.locator('.practice-calendar-summary').textContent(), /完成 7 题 · 正确 5 题/);
       for (const [label, count] of [['近 1 个月', 30], ['近 3 个月', 90]]) {
@@ -479,6 +487,9 @@ const topic = { id: 'topic', name: '长标题练习专题与专项训练', descr
       assert.equal(submitted[0].mistakes, 2);
       assert(submitted[0].elapsedMs >= 12000, 'saved elapsed time survives recovery');
       assert.equal(submitted[0].outcome, 'completed');
+      await page.getByText('作业已提交', { exact: true }).waitFor();
+      assert.match(await page.locator('.assignment-submission').textContent(), /当前总分 1\/3 分/);
+      assert.match(await page.locator('.student-problem-list').textContent(), /1 分 · 1 星/);
       assert.deepEqual(errors, []);
       console.log(`${savedMoves.length} saved half-moves: branch, board, last move, timer, delayed reply and completed-path submission passed`);
       await page.close();

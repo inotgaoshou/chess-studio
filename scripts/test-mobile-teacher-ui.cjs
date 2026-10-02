@@ -103,6 +103,7 @@ async function reviewAndPublish(page) {
       if (process.env.TEACHER_SCREENSHOTS) await page.screenshot({ path: process.env.TEACHER_SCREENSHOTS + '/teacher-wizard-' + viewport.width + '.png' });
       if (viewport.width === 390) {
         await page.setViewportSize({ width: 390, height: 460 });
+        await page.waitForFunction(() => Number.parseFloat(document.documentElement.style.getPropertyValue('--app-viewport-height')) <= 460);
         await page.getByRole('textbox', { name: '作业标题', exact: true }).fill('键盘验收');
         await page.locator('.teacher-mobile-page').evaluate(node => { node.scrollTop = node.scrollHeight; });
         const keyboardFooter = await page.locator('.teacher-mobile-wizard-footer').boundingBox();

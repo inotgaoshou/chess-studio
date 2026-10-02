@@ -75,6 +75,7 @@ export type TrainingProblem = CblProblem & {
   serverProblemId?: string;
   difficulty?: number | null;
   submissionState?: "draft" | "queued" | "submitted";
+  assignmentGrade?: { score: number; stars: number; mistakes: number; hintsUsed: number; outcome: string };
   accessTier?: "public" | "vip" | "vip_or_assignment";
 };
 

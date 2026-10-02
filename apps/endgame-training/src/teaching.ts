@@ -1,6 +1,7 @@
 import type { LocalManualAnalysisSummary, LocalManualFolder, LocalManualGame, SolutionMove, TrainingLibrary, TrainingProblem } from "./types";
 import { isNativeSessionStore, secureSession } from "./secureSession";
 import { environmentServerUrl, packageEnvironment, selectEnvironment, selectedEnvironment, type AppEnvironment } from "./appEnvironment";
+import { practiceScore } from "./practiceScoring";
 
 const AUTH_KEY = "xiangqi-teaching-auth";
 const SERVER_KEY = "xiangqi-teaching-server-url";
@@ -226,6 +227,7 @@ type AssignmentProblem = {
   solution: SolutionMove[];
   completed: boolean;
   attemptCount: number;
+  grade?: { score: number; stars: number; mistakes: number; hintsUsed: number; outcome: string };
 };
 type PlatformProblem = Omit<TrainingProblem, "id" | "libraryId" | "completedAttempts" | "totalElapsedMs" | "source"> & {
   id: string;
@@ -607,6 +609,7 @@ function toProblem(problem: AssignmentProblem): TrainingProblem {
     source: "teaching",
     assignmentId: problem.assignmentId,
     serverProblemId: problem.problemId,
+    assignmentGrade: problem.grade,
     accessTier: problem.accessTier ?? "public",
   };
 }
@@ -685,12 +688,12 @@ async function applyPendingAssignmentViews(auth: TeachingAuth) {
   }
 }
 
-async function markCachedAttempt(auth: TeachingAuth, attempt: PendingTeachingAttempt) {
+async function markCachedAttempt(auth: TeachingAuth, attempt: PendingTeachingAttempt, receivedGrade?: AssignmentProblem["grade"]) {
   const cacheKey = assignmentCacheKey(auth, attempt.assignmentId);
   const cache = (await storeAll<CachedAssignment>("assignmentCaches")).find((item) => item.cacheKey === cacheKey);
   if (!cache) return;
   const problems = cache.problems.map((problem) => problem.problemId === attempt.problemId
-    ? { ...problem, completed: attempt.outcome === "completed" || attempt.outcome === "revealed", attemptCount: problem.attemptCount + 1 }
+    ? { ...problem, completed: problem.completed || attempt.outcome === "completed", attemptCount: problem.attemptCount + 1, grade: receivedGrade?.score !== undefined ? receivedGrade : { score: practiceScore(attempt.outcome, attempt.mistakes), stars: practiceScore(attempt.outcome, attempt.mistakes), mistakes: attempt.mistakes, hintsUsed: attempt.hintsUsed, outcome: attempt.outcome } }
     : problem);
   await storePut("assignmentCaches", { ...cache, problems });
 }
@@ -1149,7 +1152,7 @@ export const teachingClient = {
       .find((item) => item.cacheKey === assignmentCacheKey(auth, assignmentId))
       ?.problems.map((problem, sourceIndex) => {
         const answer = answers.find((item) => item.problemId === problem.problemId);
-        return { ...toProblem(problem), sourceIndex, submissionState: answer ? answer.submissionRequested ? "queued" : "draft" : problem.attemptCount ? "submitted" : undefined } satisfies TrainingProblem;
+        return { ...toProblem(problem), sourceIndex, assignmentGrade: answer ? { score: practiceScore(answer.outcome, answer.mistakes), stars: practiceScore(answer.outcome, answer.mistakes), mistakes: answer.mistakes, hintsUsed: answer.hintsUsed, outcome: answer.outcome } : problem.grade, submissionState: answer ? answer.submissionRequested ? "queued" : "draft" : problem.attemptCount ? "submitted" : undefined } satisfies TrainingProblem;
       }) ?? [];
   },
   async submit(attempt: PendingTeachingAttempt, expectedAuth?: TeachingAuth) {
@@ -1169,9 +1172,9 @@ export const teachingClient = {
     const authContext = auth && authContexts.get(auth);
     if (!auth || !authContext || !isCurrentAuthContext(authContext)) { lastSubmitError = "请登录原教学账号后补交，答题记录已保留。"; return false; }
     try {
-      await request("/api/v1/student/attempts", { method: "POST", body: JSON.stringify(enriched) }, auth.token);
+      const grade = await request<AssignmentProblem["grade"]>("/api/v1/student/attempts", { method: "POST", body: JSON.stringify(enriched) }, auth.token);
       await storeDelete("attempts", enriched.clientAttemptId);
-      await markCachedAttempt(auth, enriched);
+      await markCachedAttempt(auth, enriched, grade);
       await storeDelete("assignmentDrafts", assignmentDraftKey(auth, enriched.assignmentId, enriched.problemId));
       await storeDelete("assignmentAnswers", assignmentDraftKey(auth, enriched.assignmentId, enriched.problemId));
       lastSubmitError = "";

@@ -6440,7 +6440,7 @@ html.phone-webview .mobile-solver-nav span { align-self:center; color:#687e70; f
 .practice-calendar-details-trigger svg { width:16px; height:16px; }
 .practice-calendar-details { width:min(620px,100%); max-height:calc(100dvh - 48px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); padding:16px; overflow:auto; overscroll-behavior:contain; border-radius:8px; background:#fbfdfb; color:#294638; }
 .practice-calendar-details > header { display:flex; align-items:center; gap:10px; padding-bottom:12px; border-bottom:1px solid #d5e3d8; }
-.practice-calendar-details > header > span { display:grid; gap:4px; }
+.practice-calendar-details .mobile-page-heading > span { display:grid; justify-items:start; gap:4px; min-width:0; flex:1; }
 .practice-calendar-details small { color:#718579; font-size:12px; }
 .practice-calendar-session-list > section { padding:14px 0; border-bottom:1px solid #d5e3d8; }
 .practice-calendar-session-list header { display:flex; align-items:center; justify-content:space-between; gap:10px; }
@@ -6448,6 +6448,14 @@ html.phone-webview .mobile-solver-nav span { align-self:center; color:#687e70; f
 .practice-calendar-session-list li { padding:6px 0; font-size:13px; overflow-wrap:anywhere; }
 .practice-calendar-session-list li strong,.practice-calendar-session-list li span { display:block; }
 .practice-calendar-session-list li span { color:#718579; font-size:12px; margin-top:4px; }
+.practice-calendar-session-list li button { width:100%; display:flex; align-items:center; justify-content:space-between; gap:8px; padding:4px 0; border:0; background:transparent; color:#294638; text-align:left; }
+.practice-calendar-session-list li button > span { min-width:0; }
+.practice-calendar-session-list li button svg { width:18px; height:18px; flex:none; color:#397b56; }
+.practice-calendar-problem { display:grid; gap:12px; padding-top:14px; }
+.practice-calendar-problem h3 { margin:0; font-size:16px; overflow-wrap:anywhere; }
+.practice-calendar-problem p { margin:0; font-size:13px; line-height:1.5; overflow-wrap:anywhere; }
+.practice-calendar-problem-board { width:min(100%,320px); justify-self:center; }
+.student-problem-list .student-assignment-grade { color:#245c3c; font-weight:700; white-space:normal; }
 .practice-history-table { width:100%; border-collapse:collapse; color:#526c5b; font-size:12px; }
 .practice-history-table th, .practice-history-table td { padding:10px 8px; border-bottom:1px solid #d5e3d8; text-align:right; }
 .practice-history-table th:first-child { text-align:left; }
@@ -6756,11 +6764,11 @@ html .mobile-practice-home .mobile-page-heading > span { display:flex; flex-dire
   .mobile-solver-page { grid-template-rows:auto auto auto auto; align-content:start; }
 }
 html.tablet-webview .mobile-solver-page { grid-template-rows:auto auto auto auto; align-content:start; }
-.practice-rules-trigger { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 6px 10px; font-size: 13px; }
+.practice-rules-trigger { display:inline-flex; align-items:center; justify-content:center; gap:7px; min-height:44px; padding:8px 14px; border:2px solid #397b56; border-radius:6px; background:#e1f0e5; color:#245c3c; font-size:14px; font-weight:800; box-shadow:0 2px 0 #bdd6c5; }
 .practice-rules-trigger svg { width: 18px; height: 18px; }
 .practice-rules-dialog { width: min(440px, calc(100vw - 24px)); max-height: calc(100dvh - 40px); overflow-y: auto; background: #fff; border-radius: 8px; padding: 16px; color: #253c33; }
 .practice-rules-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.practice-rules-dialog header button { width: 44px; height: 44px; display: grid; place-items: center; padding: 0; }
+.practice-rules-dialog header button { width:44px; height:44px; display:grid; place-items:center; padding:0; border:1px solid #bed4c6; border-radius:6px; background:#f5faf6; color:#245c3c; }
 .practice-rules-dialog table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
 .practice-rules-dialog th, .practice-rules-dialog td { padding: 10px 6px; border-bottom: 1px solid #d8e5de; text-align: left; }
 .practice-rules-dialog p { font-size: 14px; line-height: 1.6; }
