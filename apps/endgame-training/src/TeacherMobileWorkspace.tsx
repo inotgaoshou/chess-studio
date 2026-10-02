@@ -608,7 +608,7 @@ function TeacherAssignmentDetail({ assignmentId, onNavigate, renderResultBoard }
     <div className="teacher-detail-toolbar"><TeacherHeader title={assignment?.title || "作业详情"} subtitle={assignment ? `${assignment.itemCount} 题 · ${assignmentStatusLabel(assignment.status)}` : busy ? "正在读取作业与成绩" : "成绩未加载"} onBack={() => onNavigate("/teacher")}/>
       <button type="button" className="teacher-detail-refresh" disabled={busy} onClick={() => void refresh()}><RefreshCw className={busy ? "is-loading" : ""}/>{busy ? "加载中" : error ? "重试加载" : "刷新结果"}</button>
     </div>
-    {error && <section role="alert" className="teacher-result-error"><strong>暂时无法读取作业结果</strong><p>{error.includes("404") ? "结果接口暂未就绪，或这份作业已不可访问。请重试，或返回作业列表。" : error}</p>{summary && <small>以下是上次加载的结果，本次刷新未成功。</small>}</section>}
+    {error && <section role="alert" className="teacher-result-error"><strong>暂时无法加载成绩</strong><p>{error.includes("404") ? "请重试，或返回作业列表。" : error}</p>{summary && <small>当前显示上次加载的结果。</small>}</section>}
     {busy && !summary && <p role="status" className="teacher-result-loading">正在加载学生名单和成绩…</p>}
     {assignment?.status === "draft" && <><p className="teacher-mobile-draft-note">这份作业还未发布，学生端不会同步。</p><button type="button" className="teacher-mobile-publish" disabled={busy} onClick={() => void publish()}><Send/>发布作业</button></>}
     {summary && <TeacherResults revision={revision} assignmentId={assignmentId} students={results} summary={summary} renderBoard={renderResultBoard}/>}

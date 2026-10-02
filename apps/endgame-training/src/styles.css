@@ -6497,7 +6497,7 @@ html.phone-webview .mobile-solver-nav span { align-self:center; color:#687e70; f
 .teacher-detail-toolbar .teacher-mobile-header strong { overflow-wrap:anywhere; }
 .teacher-mobile-page .teacher-detail-refresh { flex-shrink:0; background:#397b56; border-color:#397b56; color:#fff; }
 .teacher-detail-refresh svg { width:17px; height:17px; flex-shrink:0; }
-.teacher-result-error { padding:14px; display:grid; gap:6px; border:1px solid #e8bbb2; border-radius:10px; background:#fff5f2; color:#9b4435; }
+.teacher-result-error { padding:10px 12px; display:grid; gap:4px; border:1px solid #e8bbb2; border-radius:8px; background:#fff5f2; color:#9b4435; }
 .teacher-result-error strong { font-size:14px; }.teacher-result-error p { margin:0; font-size:12px; line-height:1.6; }.teacher-result-error small { font-size:11px; }
 .teacher-result-loading { margin:0; padding:24px 14px; border:1px solid #d3e1d8; border-radius:10px; background:#fbfdfb; color:#657a6b; text-align:center; font-size:13px; }
 .teacher-detail-refresh .is-loading { animation:teacher-result-spin 1s linear infinite; }
