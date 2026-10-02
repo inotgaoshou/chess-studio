@@ -9,9 +9,18 @@ const time = (value?: number | null) => value == null ? "未记录" : `${Math.fl
 const date = (value?: string | null) => value ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : "未收到提交";
 const errorText = (error: unknown) => error instanceof Error ? error.message : "读取结果失败";
 const outcome = (item: TeacherProblemResult) => !item.submittedAt ? "未收到提交" : item.completed ? item.outcome === "completed" ? "已做对" : `已做对 · 最近${item.outcome === "revealed" ? "看解析" : "未做对"}` : item.outcome === "revealed" ? "已看解析" : "未做对";
+const studentFilters = { all: "接收学生", partial: "部分提交学生", submitted: "全部提交学生", solved: "全部做对学生" } as const;
+type StudentFilter = keyof typeof studentFilters;
+function matchesFilter(student: TeacherAssignmentResult, filter: StudentFilter) {
+  if (filter === "partial") return student.submittedCount != null && student.submittedCount > 0 && student.submittedCount < student.totalCount;
+  if (filter === "submitted") return student.totalCount > 0 && student.submittedCount != null && student.submittedCount >= student.totalCount;
+  if (filter === "solved") return student.totalCount > 0 && student.completedCount >= student.totalCount;
+  return true;
+}
 
 export function TeacherResults({ assignmentId, students, summary, renderBoard, revision = 0 }: { assignmentId: string; students: TeacherAssignmentResult[]; summary?: TeacherAssignmentSummary; renderBoard?: ResultBoardRenderer; revision?: number }) {
   const [studentId, setStudentId] = useState<string>();
+  const [filter, setFilter] = useState<StudentFilter>("all");
   const [problem, setProblem] = useState<TeacherProblemResult>();
   const [items, setItems] = useState<TeacherProblemResult[]>([]);
   const [cursor, setCursor] = useState<string | null>();
@@ -19,10 +28,19 @@ export function TeacherResults({ assignmentId, students, summary, renderBoard, r
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
   const root = useRef<HTMLDivElement>(null);
+  const studentList = useRef<HTMLElement>(null);
   const generation = useRef(0);
   const positions = useRef<number[]>([]);
   const loaded = useRef({ studentId: "", count: 0 });
   const student = students.find((item) => item.studentId === studentId);
+  const filteredStudents = students.filter((item) => matchesFilter(item, filter));
+  function selectFilter(next: StudentFilter) {
+    setFilter(next);
+    requestAnimationFrame(() => {
+      const page = root.current?.closest(".teacher-mobile-page");
+      if (page && studentList.current) page.scrollTo({ top: page.scrollTop + studentList.current.getBoundingClientRect().top - page.getBoundingClientRect().top - 8, behavior: "auto" });
+    });
+  }
   function enter(action: () => void) {
     const page = root.current?.closest(".teacher-mobile-page");
     positions.current.push(page?.scrollTop ?? 0);
@@ -64,16 +82,16 @@ export function TeacherResults({ assignmentId, students, summary, renderBoard, r
   return <div ref={root} className="teacher-results">
     {!student ? <>
       {summary && <section className="teacher-result-summary" aria-label="作业统计">
-        <Metric label="接收学生" value={`${summary.recipientCount} 人`}/><Metric label="部分提交" value={`${summary.partialSubmissionCount} 人`}/>
-        <Metric label="全部提交" value={`${summary.fullSubmissionCount} 人`}/><Metric label="全部做对" value={`${summary.fullySolvedCount} 人`}/>
+        <Metric label="接收学生" value={`${summary.recipientCount} 人`} selected={filter === "all"} onClick={() => selectFilter("all")}/><Metric label="部分提交" value={`${summary.partialSubmissionCount} 人`} selected={filter === "partial"} onClick={() => selectFilter("partial")}/>
+        <Metric label="全部提交" value={`${summary.fullSubmissionCount} 人`} selected={filter === "submitted"} onClick={() => selectFilter("submitted")}/><Metric label="全部做对" value={`${summary.fullySolvedCount} 人`} selected={filter === "solved"} onClick={() => selectFilter("solved")}/>
         <Metric label="题目完成率" value={`${summary.completionRate.toFixed(1)}%`}/><Metric label="已全交平均分" value={summary.averageTotalScore == null ? "暂无成绩" : `${summary.averageTotalScore.toFixed(1)} 分`}/>
       </section>}
-      <section className="teacher-mobile-section"><header><strong>学生完成情况</strong><small>{students.length} 名学生</small></header>
-        {students.map((item) => <button type="button" className="teacher-result-row" key={item.studentId} onClick={() => enter(() => setStudentId(item.studentId))}>
+      <section ref={studentList} className="teacher-mobile-section teacher-student-list" aria-label="学生名单"><header><strong aria-live="polite">{studentFilters[filter]} · {filteredStudents.length} 人</strong>{filter !== "all" && <button type="button" className="teacher-result-clear" onClick={() => selectFilter("all")}>查看全部学生</button>}</header>
+        {filteredStudents.map((item) => <button type="button" className="teacher-result-row" key={item.studentId} onClick={() => enter(() => setStudentId(item.studentId))}>
           <span><b>{item.displayName}</b><small>{item.loginName}</small><small>已提交 {recorded(item.submittedCount)}/{item.totalCount} · 已做对 {item.completedCount}/{item.totalCount}</small></span>
           <strong>{recorded(item.totalScore)}/{item.totalCount * 3} 分</strong><ChevronRight/>
         </button>)}
-        {!students.length && <p className="teacher-mobile-empty">暂无接收学生</p>}
+        {!filteredStudents.length && <p className="teacher-mobile-empty">{filter === "all" ? "暂无接收学生" : `暂无${studentFilters[filter]}`}</p>}
       </section>
     </> : problem ? <>
       <button className="teacher-results-back" type="button" onClick={back}><ChevronLeft/>返回逐题结果</button>
@@ -96,7 +114,10 @@ export function TeacherResults({ assignmentId, students, summary, renderBoard, r
   </div>;
 }
 
-function Metric({ label, value }: { label: string; value: string }) { return <div><small>{label}</small><strong>{value}</strong></div>; }
+function Metric({ label, value, selected, onClick }: { label: string; value: string; selected?: boolean; onClick?: () => void }) {
+  const content = <><small>{label}</small><strong>{value}</strong></>;
+  return onClick ? <button type="button" className="teacher-result-metric" aria-label={`${label} ${value}，查看学生名单`} aria-pressed={selected} onClick={onClick}>{content}<ChevronRight aria-hidden="true"/></button> : <div className="teacher-result-metric">{content}</div>;
+}
 
 function SubmittedReplay({ assignmentId, studentId, problem, renderBoard }: { assignmentId: string; studentId: string; problem: TeacherProblemResult; renderBoard?: ResultBoardRenderer }) {
   const [detail, setDetail] = useState<TeacherSubmittedProblem>();

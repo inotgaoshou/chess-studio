@@ -131,3 +131,19 @@ status has yet been verified.
   `1.0.3 (10017)` package passed signature and NNUE hash checks, installed in
   place on iPhone 14 at 09:37, and launched successfully at 09:37:56 on
   2026-10-02. Physical teacher/student acceptance and recording remain pending.
+
+## Teacher summary student lists — 2026-10-02
+
+- The four recipient/submission/solved counts now select the matching student
+  list and scroll it into view. Each row shows the student's display name,
+  account, submitted/solved counts and score; zero-score solved records count
+  as completed. No API or database changes are required.
+- Result UI regression passes on 360/390 px phones and 1024 px tablet:
+  duplicate-name accounts, count/list agreement, empty filters, refresh moving
+  a student out of a filter, submitted replay, and restoring filter/scroll on
+  return. Teacher workspace regression and all 32 environment/session tests
+  pass; TypeScript checking and production iOS build pass.
+- The production development-signed 1.0.3 (10018) app passed signature checking,
+  was installed over the existing iPhone 14 app and launched at 18:34:03.
+  No uninstall or data reset was performed. UI regression is browser evidence;
+  installation and launch do not substitute for physical interaction acceptance.
