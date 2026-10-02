@@ -2219,7 +2219,7 @@ export function App() {
   });
   const [mobileTab, setMobileTab] = useState<MobilePrimaryTab>(() => mobileRouteTab(mobileRouteFromPath()));
   const [teacherPath, setTeacherPath] = useState(() => window.location.pathname.startsWith("/teacher") ? window.location.pathname : "/teacher");
-  const [mobileLayout, setMobileLayout] = useState(() => window.matchMedia("(max-width: 1199px)").matches || document.documentElement.classList.contains("phone-webview"));
+  const [mobileLayout, setMobileLayout] = useState(() => window.matchMedia("(max-width: 1199px)").matches || (document.documentElement.classList.contains("phone-webview") || document.documentElement.classList.contains("tablet-webview")));
   const [resumeTeacherAfterLogin, setResumeTeacherAfterLogin] = useState(false);
   const [studentAssignmentsOpen, setStudentAssignmentsOpen] = useState(() => mobileRouteFromPath() === "assignments");
   const [practiceHome, setPracticeHome] = useState<PracticeHome>();
@@ -2436,7 +2436,7 @@ export function App() {
 
   useEffect(() => {
     const media = window.matchMedia("(max-width: 1199px)");
-    const update = () => setMobileLayout(media.matches || document.documentElement.classList.contains("phone-webview"));
+    const update = () => setMobileLayout(media.matches || (document.documentElement.classList.contains("phone-webview") || document.documentElement.classList.contains("tablet-webview")));
     update();
     media.addEventListener("change", update);
     return () => media.removeEventListener("change", update);

@@ -5363,6 +5363,7 @@ html.phone-webview .app-header .teaching-account-trigger > span {
 
 .student-assignments-workspace {
   width: min(100%, 1120px);
+  min-width: 0;
   min-height: 0;
   margin: 0 auto;
   padding: clamp(16px, 3vw, 30px);
@@ -5473,7 +5474,7 @@ html.phone-webview .app-header .teaching-account-trigger > span {
 .assignment-unread-dot { position:absolute; width:8px; height:8px; border-radius:50%; background:#d74c48; box-shadow:0 0 0 2px #fff; }
 .student-assignment-unread-dot { top:11px; left:11px; }
 .student-assignment-card.unread .student-assignment-card-title { padding-left:12px; }
-.student-assignment-detail { display: grid; gap: 14px; }
+.student-assignment-detail { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
 .student-assignment-detail > header { padding-bottom: 4px; }
 .student-assignment-detail > header > button { display: inline-flex; align-items: center; gap: 4px; padding: 5px 0; border: 0; background: transparent; color: #2f7548; font-weight: 800; }
 .student-assignment-detail > header > button svg { width: 17px; }
@@ -5785,7 +5786,8 @@ html.phone-webview .teaching-problem-heading .student-assignment-back span {
 .mobile-sync-privacy p { margin:0; color:#687d6f; font-size:11px; line-height:1.55; }
 .manual-return-button > span { display:none; }
 
-@media (max-width:1199px) {
+/* Touch tablets keep the mobile shell when landscape exceeds 1199px. */
+@media (max-width:1199px), (hover:none) and (pointer:coarse) {
   :root { --mobile-primary-nav-height:calc(58px + env(safe-area-inset-bottom, 0px)); }
 
   .app-header .workspace-switcher,
@@ -6001,6 +6003,12 @@ html.phone-webview .teaching-problem-heading .student-assignment-back span {
 
 /* Capacitor can expose a desktop-sized layout viewport while the visible
    surface is a phone. Keep the phone shell authoritative in that case. */
+html.tablet-webview .app-header > span > small,
+html.tablet-webview .app-header .workspace-switcher,
+html.tablet-webview .app-header .catalogue-toggle,
+html.tablet-webview .app-header .controls-toggle,
+html.tablet-webview .app-header .import-cbl-action,
+html.tablet-webview .app-header .teaching-account-trigger,
 html.phone-webview .app-header .workspace-switcher,
 html.phone-webview .app-header .catalogue-toggle,
 html.phone-webview .app-header .controls-toggle,
@@ -6567,7 +6575,7 @@ html.phone-webview .mobile-detail-page { bottom:0; }
   .mobile-primary-nav button span { display:none; }
   .mobile-primary-nav button { min-height:52px; }
   .mobile-home-page, .mobile-library-page, .mobile-account-page, .mobile-practice-page, .mobile-detail-page { left:72px; bottom:0; padding:24px; }
-  .student-assignments-workspace { margin-left:72px; padding:24px; padding-bottom:32px; }
+  .student-assignments-workspace { width:min(1120px,calc(100% - 72px)); margin-left:72px; padding:24px; padding-bottom:32px; }
   .student-actions-menu { right:24px; bottom:24px; left:auto; width:min(360px,calc(100vw - 120px)); }
   .student-actions-scrim { inset:var(--mobile-header-height) 0 0 72px; }
 }
@@ -6576,7 +6584,7 @@ html.tablet-webview .mobile-primary-nav { top:var(--mobile-header-height); right
 html.tablet-webview .mobile-primary-nav button span { display:none; }
 html.tablet-webview .mobile-primary-nav button { min-height:52px; }
 html.tablet-webview .mobile-home-page, html.tablet-webview .mobile-library-page, html.tablet-webview .mobile-account-page, html.tablet-webview .mobile-practice-page, html.tablet-webview .mobile-detail-page { left:72px; bottom:0; padding:24px; }
-html.tablet-webview .student-assignments-workspace { margin-left:72px; padding:24px; padding-bottom:32px; }
+html.tablet-webview .student-assignments-workspace { width:min(1120px,calc(100% - 72px)); margin-left:72px; padding:24px; padding-bottom:32px; }
 html.tablet-webview .student-actions-menu { right:24px; bottom:24px; left:auto; width:min(360px,calc(100vw - 120px)); }
 html.tablet-webview .student-actions-scrim { inset:var(--mobile-header-height) 0 0 72px; }
 
@@ -6585,7 +6593,7 @@ html.tablet-webview .student-actions-scrim { inset:var(--mobile-header-height) 0
   .mobile-primary-nav button { grid-template-columns:22px minmax(0,1fr); justify-items:start; padding:0 12px; gap:10px; }
   .mobile-primary-nav button span { display:block; }
   .mobile-home-page, .mobile-library-page, .mobile-account-page, .mobile-practice-page, .mobile-detail-page { left:184px; }
-  .student-assignments-workspace { margin-left:184px; }
+  .student-assignments-workspace { width:min(1120px,calc(100% - 184px)); margin-left:184px; }
   .student-actions-scrim { left:184px; }
 }
 
@@ -6675,7 +6683,7 @@ html.tablet-webview .mobile-solver-nav { width:min(100%,620px); justify-self:cen
   .training-app.tablet-navigation-bottom .mobile-practice-home,
   .training-app.tablet-navigation-bottom .mobile-assignment-access-page,
   .training-app.tablet-navigation-bottom .mobile-onboarding-page { bottom:var(--mobile-primary-nav-height); }
-  .training-app.tablet-navigation-bottom .student-assignments-workspace { margin-left:0; padding-bottom:calc(24px + var(--mobile-primary-nav-height)); }
+  .training-app.tablet-navigation-bottom .student-assignments-workspace { width:min(100%,1120px); margin-left:0; padding-bottom:calc(24px + var(--mobile-primary-nav-height)); }
   .training-app.tablet-navigation-bottom .student-actions-menu { right:24px; bottom:calc(24px + var(--mobile-primary-nav-height)); left:auto; width:min(360px,calc(100vw - 48px)); }
   .training-app.tablet-navigation-bottom .student-actions-scrim { inset:var(--mobile-header-height) 0 var(--mobile-primary-nav-height) 0; }
   .training-app.tablet-navigation-bottom .mobile-solver-page { bottom:0; }
@@ -6696,7 +6704,7 @@ html.phone-webview .mobile-account-page:not(.mobile-settings-page),
 html.phone-webview .mobile-practice-home,
 html.phone-webview .mobile-assignment-access-page,
 html.phone-webview .mobile-onboarding-page { bottom:var(--mobile-primary-nav-height); }
-html.phone-webview .student-assignments-workspace { margin-left:0; padding-bottom:calc(22px + var(--mobile-primary-nav-height)); }
+html.phone-webview .student-assignments-workspace { width:min(100%,1120px); margin-left:0; padding-bottom:calc(22px + var(--mobile-primary-nav-height)); }
 html.phone-webview .student-actions-scrim { inset:var(--mobile-header-height) 0 var(--mobile-primary-nav-height) 0; }
 html.phone-webview .mobile-solver-page { bottom:0; }
 
@@ -6715,7 +6723,7 @@ html.tablet-webview .training-app.tablet-navigation-bottom .mobile-account-page:
 html.tablet-webview .training-app.tablet-navigation-bottom .mobile-practice-home,
 html.tablet-webview .training-app.tablet-navigation-bottom .mobile-assignment-access-page,
 html.tablet-webview .training-app.tablet-navigation-bottom .mobile-onboarding-page { bottom:var(--mobile-primary-nav-height); }
-html.tablet-webview .training-app.tablet-navigation-bottom .student-assignments-workspace { margin-left:0; padding-bottom:calc(24px + var(--mobile-primary-nav-height)); }
+html.tablet-webview .training-app.tablet-navigation-bottom .student-assignments-workspace { width:min(100%,1120px); margin-left:0; padding-bottom:calc(24px + var(--mobile-primary-nav-height)); }
 html.tablet-webview .training-app.tablet-navigation-bottom .student-actions-menu { right:24px; bottom:calc(24px + var(--mobile-primary-nav-height)); left:auto; width:min(360px,calc(100vw - 48px)); }
 html.tablet-webview .training-app.tablet-navigation-bottom .student-actions-scrim { inset:var(--mobile-header-height) 0 var(--mobile-primary-nav-height) 0; }
 html.tablet-webview .training-app.tablet-navigation-bottom .mobile-solver-page { bottom:0; }
