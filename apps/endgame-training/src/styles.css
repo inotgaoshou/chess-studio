@@ -6077,9 +6077,10 @@ html.phone-webview .teacher-mobile-unbound-join { bottom:calc(58px + var(--phone
 .teacher-mobile-org-select { min-width:0; display:grid; grid-template-columns:auto minmax(0,1fr); align-items:center; gap:10px; color:#526c5b; font-size:12px; }
 .teacher-mobile-org-select select { min-width:0; width:100%; min-height:44px; padding:8px; border:1px solid #cfe0d3; border-radius:6px; background:#fff; color:#294638; }
 .teacher-mobile-submission { min-width:0; padding:10px; display:grid; gap:6px; background:#e7f1e8; color:#294638; overflow-wrap:anywhere; }
-.teacher-mobile-header:has([aria-label="返回首页"]) { grid-template-columns:54px minmax(0,1fr); }
-.teacher-mobile-header .teacher-mobile-icon-button[aria-label="返回首页"] { width:54px; height:48px; align-content:center; gap:2px; }
-.teacher-mobile-header .teacher-mobile-icon-button > span { font-size:10px; white-space:nowrap; }
+.teacher-mobile-header:has([aria-label="返回首页"]) { grid-template-columns:auto minmax(0,1fr); }
+.teacher-mobile-header .teacher-mobile-icon-button[aria-label="返回首页"] { width:auto; height:44px; min-height:44px; padding:0 9px; display:inline-flex; align-items:center; justify-content:center; gap:4px; border-radius:8px; }
+.teacher-mobile-header .teacher-mobile-icon-button > span { font-size:12px; font-weight:700; line-height:1; white-space:nowrap; }
+.teacher-mobile-header .teacher-mobile-icon-button > svg { width:18px; height:18px; flex-shrink:0; }
 .teacher-mobile-page .teacher-mobile-batch-number { display:grid !important; grid-template-columns:auto minmax(0,1fr) auto; }
 .teacher-mobile-page .teacher-mobile-batch-number input { width:100%; min-width:0; min-height:44px; }
 .teacher-mobile-page .teacher-mobile-organization > div { flex-shrink:0; }

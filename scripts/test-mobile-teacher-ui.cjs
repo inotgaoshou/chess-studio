@@ -88,6 +88,13 @@ async function reviewAndPublish(page) {
       }));
       assert.equal(layout.clipped, 0, 'teacher sections must not clip content at ' + viewport.width);
       assert.equal(layout.overflow, false, 'teacher page must not scroll horizontally');
+      const homeBack = page.getByRole('button', { name: '返回首页', exact: true });
+      const backLayout = await homeBack.evaluate(button => {
+        const icon = button.querySelector('svg').getBoundingClientRect();
+        const text = button.querySelector('span').getBoundingClientRect();
+        return { height: button.getBoundingClientRect().height, aligned: Math.abs(icon.y + icon.height / 2 - text.y - text.height / 2) < 2, clipped: button.scrollWidth > button.clientWidth + 1 };
+      });
+      assert.ok(backLayout.height >= 44 && backLayout.height <= 48 && backLayout.aligned && !backLayout.clipped, 'home back button must align icon and text at ' + viewport.width);
       await page.getByLabel('当前机构', { exact: true }).selectOption('yusheng');
       await page.getByText('yusheng作业0', { exact: true }).waitFor();
       assert.equal(await page.getByText('dongpu作业0', { exact: true }).count(), 0, 'organization switch must refresh assignments');
