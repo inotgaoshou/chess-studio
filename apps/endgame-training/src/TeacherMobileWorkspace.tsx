@@ -1,9 +1,11 @@
 import { BookOpen, ChevronLeft, ChevronRight, ClipboardList, FileArchive, GraduationCap, Home, LogIn, Plus, RefreshCw, Search, Send, Trash2, UserRound, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { TeacherResults, type ResultBoardRenderer } from "./TeacherResults";
 import {
   teachingClient,
   type TeacherAssignmentResult,
+  type TeacherAssignmentSummary,
   type TeacherClassDto,
   type TeacherClassMember,
   type TeacherFolder,
@@ -184,8 +186,9 @@ async function buildBatchPlans(selection: AssignmentSelection, libraries: Teache
   return { plans, groups: groupCounts, count: emitted.size };
 }
 
-export function TeacherMobileWorkspace({ auth, path, onNavigate, onLogout, onExit, onRelogin, onAuthChange }: {
+export function TeacherMobileWorkspace({ auth, path, onNavigate, onLogout, onExit, onRelogin, onAuthChange, renderResultBoard }: {
   auth: TeachingAuth; path: string; onNavigate(path: string): void; onLogout(): void; onExit(): void; onRelogin(): void; onAuthChange(auth: TeachingAuth): void;
+  renderResultBoard?: ResultBoardRenderer;
 }) {
   const kind = routeKind(path);
   if (!auth.user.orgId && !auth.user.isPlatformAdmin) return <TeacherJoinOrganization auth={auth} onLogout={onLogout} onExit={onExit} onRelogin={onRelogin} onApproved={async () => { const next = await teachingClient.refreshSession(); if (!next) throw new Error("登录会话已失效，请重新登录。"); onAuthChange(next); onNavigate("/teacher"); }}/>;
@@ -194,7 +197,7 @@ export function TeacherMobileWorkspace({ auth, path, onNavigate, onLogout, onExi
   if (kind === "classes") return <TeacherMobileShell active="classes" onNavigate={onNavigate}><TeacherClasses key={scopeKey} onNavigate={onNavigate}/></TeacherMobileShell>;
   if (kind === "class") return <TeacherMobileShell active="classes" onNavigate={onNavigate}><TeacherClassDetail key={`${scopeKey}:${path}`} classId={routeId(path, "/teacher/classes/")} onNavigate={onNavigate}/></TeacherMobileShell>;
   if (kind === "new") return <TeacherAssignmentWizard key={auth.user.id} auth={auth} onNavigate={onNavigate} onAuthChange={onAuthChange}/>;
-  if (kind === "assignment") return <TeacherMobileShell active="assignments" onNavigate={onNavigate}><TeacherAssignmentDetail key={`${scopeKey}:${path}`} assignmentId={routeId(path, "/teacher/assignments/")} onNavigate={onNavigate}/></TeacherMobileShell>;
+  if (kind === "assignment") return <TeacherMobileShell active="assignments" onNavigate={onNavigate}><TeacherAssignmentDetail key={`${scopeKey}:${path}`} assignmentId={routeId(path, "/teacher/assignments/")} onNavigate={onNavigate} renderResultBoard={renderResultBoard}/></TeacherMobileShell>;
   return <TeacherMobileShell active="home" onNavigate={onNavigate}><TeacherHome key={scopeKey} auth={auth} onNavigate={onNavigate} onAuthChange={onAuthChange} onExit={onExit}/></TeacherMobileShell>;
 }
 
@@ -583,10 +586,31 @@ function TeacherAssignmentWizard({ auth, onNavigate, onAuthChange }: { auth: Tea
   </main>;
 }
 
-function TeacherAssignmentDetail({ assignmentId, onNavigate }: { assignmentId: string; onNavigate(path: string): void }) {
+function TeacherAssignmentDetail({ assignmentId, onNavigate, renderResultBoard }: { assignmentId: string; onNavigate(path: string): void; renderResultBoard?: ResultBoardRenderer }) {
   const [assignment, setAssignment] = useState<TeachingAssignment>(); const [results, setResults] = useState<TeacherAssignmentResult[]>([]); const [error, setError] = useState(""); const [busy, setBusy] = useState(true);
-  const refresh = async () => { setBusy(true); try { const [items, nextResults] = await Promise.all([teachingClient.teacherAssignments(), teachingClient.teacherAssignmentResults(assignmentId)]); setAssignment(items.find((item) => item.id === assignmentId)); setResults(nextResults); setError(""); } catch (reason) { setError(messageOf(reason)); } finally { setBusy(false); } };
-  useEffect(() => { void refresh(); }, [assignmentId]);
+  const [summary, setSummary] = useState<TeacherAssignmentSummary>();
+  const [revision, setRevision] = useState(0);
+  const generation = useRef(0);
+  const refresh = async () => {
+    const request = ++generation.current; setBusy(true); setError("");
+    try {
+      const [items, nextResults, nextSummary] = await Promise.all([teachingClient.teacherAssignments(), teachingClient.teacherAssignmentResults(assignmentId), teachingClient.teacherAssignmentSummary(assignmentId)]);
+      if (request !== generation.current) return;
+      const nextAssignment = items.find((item) => item.id === assignmentId);
+      if (!nextAssignment) throw new Error("这份作业已移除，或不属于当前机构，请返回作业列表。");
+      setAssignment(nextAssignment); setResults(nextResults); setSummary(nextSummary); setRevision((value) => value + 1);
+    } catch (reason) { if (request === generation.current) setError(messageOf(reason)); }
+    finally { if (request === generation.current) setBusy(false); }
+  };
+  useEffect(() => { setAssignment(undefined); setResults([]); setSummary(undefined); void refresh(); return () => { ++generation.current; }; }, [assignmentId]);
   const publish = async () => { if (!assignment || !window.confirm(`发布“${assignment.title}”并固定当前学生名单？`)) return; try { await teachingClient.publishTeacherAssignment(assignment.id); await refresh(); } catch (reason) { const text = messageOf(reason); if (text.includes("发现重复题目") && window.confirm(`${text}\n\n仍要继续发布吗？`)) { try { await teachingClient.publishTeacherAssignment(assignment.id, true); await refresh(); } catch (retry) { setError(messageOf(retry)); } } else setError(text); } };
-  return <main className="teacher-mobile-page"><TeacherHeader title={assignment?.title || "作业详情"} subtitle={assignment ? `${assignment.itemCount} 题 · 作业状态：${assignmentStatusLabel(assignment.status)}` : "正在加载"} onBack={() => onNavigate("/teacher")}/>{error && <p className="teacher-mobile-error">{error}</p>}{assignment?.status === "draft" && <p className="teacher-mobile-draft-note">这份作业还未发布，学生端不会同步；发布后才会统计学生完成情况。</p>}{assignment?.status === "draft" && <button type="button" className="teacher-mobile-publish" onClick={() => void publish()}><Send/>发布作业</button>}<section className="teacher-mobile-section"><header><div><strong>学生完成情况</strong><small>{busy ? "正在加载" : `${results.length} 名学生`}</small></div><button type="button" aria-label="刷新" onClick={() => void refresh()}><RefreshCw/></button></header>{results.map((item) => <div className="teacher-mobile-status-row" key={item.studentId}><StudentIdentity displayName={item.displayName} loginName={item.loginName}/><strong>{studentProgressLabel(item.completedCount, item.totalCount)} · {item.completedCount}/{item.totalCount}</strong></div>)}{!busy && !results.length && <p className="teacher-mobile-empty">发布后将在这里显示接收学生和完成进度。</p>}</section></main>;
+  return <main className="teacher-mobile-page teacher-assignment-detail" aria-busy={busy}>
+    <div className="teacher-detail-toolbar"><TeacherHeader title={assignment?.title || "作业详情"} subtitle={assignment ? `${assignment.itemCount} 题 · ${assignmentStatusLabel(assignment.status)}` : busy ? "正在读取作业与成绩" : "成绩未加载"} onBack={() => onNavigate("/teacher")}/>
+      <button type="button" className="teacher-detail-refresh" disabled={busy} onClick={() => void refresh()}><RefreshCw className={busy ? "is-loading" : ""}/>{busy ? "加载中" : error ? "重试加载" : "刷新结果"}</button>
+    </div>
+    {error && <section role="alert" className="teacher-result-error"><strong>暂时无法读取作业结果</strong><p>{error.includes("404") ? "结果接口暂未就绪，或这份作业已不可访问。请重试，或返回作业列表。" : error}</p>{summary && <small>以下是上次加载的结果，本次刷新未成功。</small>}</section>}
+    {busy && !summary && <p role="status" className="teacher-result-loading">正在加载学生名单和成绩…</p>}
+    {assignment?.status === "draft" && <><p className="teacher-mobile-draft-note">这份作业还未发布，学生端不会同步。</p><button type="button" className="teacher-mobile-publish" disabled={busy} onClick={() => void publish()}><Send/>发布作业</button></>}
+    {summary && <TeacherResults revision={revision} assignmentId={assignmentId} students={results} summary={summary} renderBoard={renderResultBoard}/>}
+  </main>;
 }

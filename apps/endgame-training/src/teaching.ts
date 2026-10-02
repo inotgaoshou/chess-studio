@@ -324,7 +324,22 @@ export type TeacherProblemPage = { items: TeacherProblem[]; nextCursor?: string 
 export type TeacherAssignmentResult = {
   studentId: string; loginName: string; displayName: string; totalCount: number;
   completedCount: number; completedAt?: string | null;
+  submittedCount?: number; totalScore?: number; firstTryCorrectCount?: number;
+  totalElapsedMs?: number; lastSubmittedAt?: string | null;
 };
+export type TeacherAssignmentSummary = {
+  recipientCount: number; partialSubmissionCount: number; fullSubmissionCount: number;
+  fullySolvedCount: number; completedProblemCount: number; assignedProblemCount: number;
+  completionRate: number; averageTotalScore?: number | null;
+};
+export type TeacherProblemResult = {
+  problemId: string; title: string; order: number; completed: boolean;
+  outcome?: string | null; score?: number | null; stars?: number | null;
+  mistakes?: number | null; hintsUsed?: number | null; elapsedMs?: number | null;
+  firstTryCorrect: boolean; submittedAt?: string | null;
+};
+export type TeacherSubmittedProblem = { title: string; startingFen: string; moves?: string[] | null };
+export type AccountDeletionStatus = { requestId: string; status: "pending" | "cancelled"; requestedAt: string; expectedBy: string };
 export type PendingTeachingAttempt = {
   clientAttemptId: string;
   assignmentId: string;
@@ -1307,6 +1322,14 @@ export const teachingClient = {
   async teacherAssignments(context?: TeachingAuth) {
     return teacherRequest<TeachingAssignment[]>("/api/v1/admin/assignments", {}, context);
   },
+  async accountDeletionStatus() {
+    const auth = this.auth(); if (!auth) throw new Error("请先登录");
+    return request<AccountDeletionStatus | null>("/api/v1/auth/account-deletion", {}, auth.token);
+  },
+  async requestAccountDeletion(currentPassword: string, cancel = false) {
+    const auth = this.auth(); if (!auth) throw new Error("请先登录");
+    return request<AccountDeletionStatus>("/api/v1/auth/account-deletion", { method: "POST", body: JSON.stringify({ currentPassword, cancel }) }, auth.token);
+  },
   async createTeacherAdminAssignment(body: Record<string, unknown>, context?: TeachingAuth) {
     return teacherRequest<TeachingAssignment>("/api/v1/admin/assignments", { method: "POST", body: JSON.stringify(body) }, context);
   },
@@ -1314,8 +1337,18 @@ export const teachingClient = {
     return teacherRequest<TeachingAssignment>(`/api/v1/admin/assignments/${encodeURIComponent(id)}/publish${allowDuplicate ? "?allowDuplicate=true" : ""}`, { method: "POST" }, context);
   },
   async teacherAssignmentResults(id: string) {
-    const auth = requireTeacherAuth();
-    return request<TeacherAssignmentResult[]>(`/api/v1/admin/assignments/${encodeURIComponent(id)}/results`, {}, auth.token);
+    return teacherRequest<TeacherAssignmentResult[]>(`/api/v1/admin/assignments/${encodeURIComponent(id)}/results`, {});
+  },
+  async teacherAssignmentSummary(id: string) {
+    return teacherRequest<TeacherAssignmentSummary>(`/api/v1/admin/assignments/${encodeURIComponent(id)}/results/summary`, {});
+  },
+  async teacherStudentResults(id: string, studentId: string, cursor?: string) {
+    const params = new URLSearchParams({ limit: "50" });
+    if (cursor) params.set("cursor", cursor);
+    return teacherRequest<Page<TeacherProblemResult>>(`/api/v1/admin/assignments/${encodeURIComponent(id)}/students/${encodeURIComponent(studentId)}/results?${params}`, {});
+  },
+  async teacherSubmittedProblem(id: string, studentId: string, problemId: string) {
+    return teacherRequest<TeacherSubmittedProblem>(`/api/v1/admin/assignments/${encodeURIComponent(id)}/students/${encodeURIComponent(studentId)}/problems/${encodeURIComponent(problemId)}`, {});
   },
 };
 
