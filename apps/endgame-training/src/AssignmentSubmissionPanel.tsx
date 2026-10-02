@@ -24,7 +24,7 @@ export function AssignmentSubmissionPanel({ assignmentId, auth, problems, onSubm
     const version = ++generation.current;
     setLoading(true);
     try {
-      const next = await teachingClient.assignmentAnswers(assignmentId);
+      const next = (await teachingClient.assignmentAnswers(assignmentId)).sort((a, b) => problems.findIndex((problem) => problem.serverProblemId === a.problemId) - problems.findIndex((problem) => problem.serverProblemId === b.problemId));
       if (version !== generation.current) return;
       setAnswers(next);
       const lines = await Promise.all(next.map(async (answer) => {

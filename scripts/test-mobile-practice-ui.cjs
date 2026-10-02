@@ -239,6 +239,7 @@ const topic = { id: 'topic', name: '长标题练习专题与专项训练', descr
       await page.getByRole('button', { name: '提示 1/3', exact: true }).click();
       await page.getByRole('button', { name: '提示 2/3', exact: true }).click();
       await page.getByText(/这一步：车九进一/).waitFor();
+      assert.doesNotMatch(await page.locator('.mobile-solver-note').textContent(), /[a-i][0-9]\s*→\s*[a-i][0-9]/);
       assert.equal(await page.locator('.mobile-solver-board .analysis-arrow-layer').count() > 0, true);
       await solve();
       assert.equal(attempts.at(-1).hintsUsed, 3); assert.equal(attempts.at(-1).outcome, 'completed');
@@ -248,6 +249,11 @@ const topic = { id: 'topic', name: '长标题练习专题与专项训练', descr
       assert.equal(attempts.at(-1).outcome, 'completed', 'restart must keep the solver mode and submit the new attempt');
       for (const wrongCount of [0, 1, 2, 3, 4]) {
         await searchAgain();
+        const rulesTrigger = page.locator('.mobile-solver-heading .practice-rules-trigger');
+        assert.equal(await rulesTrigger.count(), 1);
+        assert.equal(await page.locator('.mobile-solver-playfield .practice-rules-trigger').count(), 0);
+        assert.equal(await rulesTrigger.evaluate((node) => node.getBoundingClientRect().height <= 32), true);
+        if (wrongCount === 0) await page.screenshot({ path: `/tmp/qixi-solver-header-${viewport.width}.png` });
         await page.getByRole('button', { name: '做题规则', exact: true }).click();
         const rules = page.getByRole('dialog', { name: '做题规则' });
         await rules.waitFor();
@@ -387,6 +393,20 @@ const topic = { id: 'topic', name: '长标题练习专题与专项训练', descr
       await page.getByRole('button', { name: '恢复默认', exact: true }).click();
       await page.getByRole('button', { name: '返回我的', exact: true }).click();
       await page.getByRole('navigation', { name: '主导航' }).waitFor();
+      if (viewport.width === 390) {
+        await page.locator('.mobile-account-tool-grid').getByRole('button', { name: /我的棋谱/ }).click();
+        const tools = page.getByRole('region', { name: '录谱常用工具' });
+        await tools.waitFor();
+        for (const safeBottom of [0, 34]) {
+          await page.evaluate((safe) => document.documentElement.style.setProperty('--phone-safe-bottom', `${safe}px`), safeBottom);
+          const bounds = await tools.boundingBox();
+          assert(bounds.y + bounds.height <= viewport.height - Math.max(12, safeBottom) - 19, 'manual toolbar clears the bottom safe area');
+          const board = await page.locator('.manual-play-board-area .board-shell').boundingBox();
+          assert(board.y + board.height <= bounds.y, 'manual board must not overlap the raised toolbar');
+        }
+        await page.screenshot({ path: '/tmp/qixi-manual-toolbar-390.png' });
+        await page.getByRole('button', { name: '返回我的', exact: true }).click();
+      }
       assert.deepEqual(errors, []);
       console.log(`${viewport.width}: daily start/retry, library back/classification, settings skins/persistence, mastered review, favorites, search and offline resubmission passed`);
       await page.close();
@@ -472,7 +492,12 @@ const topic = { id: 'topic', name: '长标题练习专题与专项训练', descr
       await page.waitForTimeout(200);
       assert.equal(submitted.length, 0, 'completion and reconnect must not submit unreviewed homework');
       await page.getByRole('button', { name: '返回作业', exact: true }).click();
+      const assignmentCard = page.getByRole('button', { name: /草稿恢复作业/ });
+      await page.waitForFunction(() => document.querySelector('.student-assignment-card-stats b')?.textContent === '1/1');
+      assert.match(await assignmentCard.textContent(), /已完成 · 100% · 1 题待提交/);
       await page.getByRole('button', { name: /草稿恢复作业/ }).click();
+      await page.getByText('1/1 题已完成', { exact: true }).waitFor();
+      assert.match(await page.locator('.student-problem-list').textContent(), /已完成 · 待提交/);
       await page.getByRole('button', { name: '检查并提交', exact: true }).click();
       const review = page.getByRole('dialog', { name: '检查作业' });
       await review.waitFor();

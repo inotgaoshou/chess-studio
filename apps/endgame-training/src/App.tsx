@@ -1717,12 +1717,11 @@ function MobilePracticeSolverPanel({ problem, session, item, navigator, pieces, 
     else onPrevious();
   };
   return <main className="mobile-solver-page">
-    <header className="mobile-solver-heading"><button type="button" className="mobile-back-button" aria-label={backLabel} title={backLabel} onClick={onBack}><ChevronLeft/></button><span><small>{isWrongReview ? "练习 / 错题 / 重练" : session ? session.mode === "learning" ? "练习 / 专项 / 学习" : "练习 / 专项 / 做题" : problem.source === "teaching" ? "作业 / 详情 / 做题" : "题库 / 做题"}</small><strong>{problem.title}</strong></span><em>{item?.problem.sideToMove === "black" ? "黑方走" : "红方走"}</em></header>
+    <header className="mobile-solver-heading"><button type="button" className="mobile-back-button" aria-label={backLabel} title={backLabel} onClick={onBack}><ChevronLeft/></button><span><small>{isWrongReview ? "练习 / 错题 / 重练" : session ? session.mode === "learning" ? "练习 / 专项 / 学习" : "练习 / 专项 / 做题" : problem.source === "teaching" ? "作业 / 详情 / 做题" : "题库 / 做题"}</small><strong>{problem.title}</strong></span><div className="mobile-solver-heading-actions"><PracticeRulesButton/><em>{item?.problem.sideToMove === "black" ? "黑方走" : "红方走"}</em></div></header>
     <section className="mobile-solver-workspace">
       <div className="mobile-solver-playfield">
         <section className="mobile-solver-board"><Board key={`mobile-${problem.id}`} pieces={pieces} selected={selected} legalTargets={legalTargets} lastMove={lastMove} hintMove={hints >= 2 && !ended && !wrongMove ? hintMove : undefined} analysisMoves={hints >= 3 && !ended && !wrongMove && hintMove ? [hintMove] : []} activeAnalysis={0} flipped={false} feedback={feedback} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={riverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={supportsCustomRiverText} onSquare={onSquare} onMove={onMove}/></section>
         <section className="mobile-solver-meta"><span><Clock3/>本题用时 <b>{elapsed}</b></span><span>{isWrongReview ? `上次错误 ${item?.problem ? "需重新掌握" : ""}` : `进度 ${index >= 0 ? index + 1 : 1}/${total}`}</span></section>
-        <PracticeRulesButton/>
         {isWrongReview && <p className="mobile-solver-warning">错题重练：完成且零错误、零提示才标为已掌握；看解析或放弃会保持待复习。</p>}
         {ended ? <section className="mobile-solver-result"><strong>{resultOutcome === "abandoned" ? "本题未完成" : revealed ? "已查看解析" : mistakes ? `第 ${mistakes + 1} 次尝试完成` : hints ? "提示后完成" : "本次已完成"}</strong><p className="practice-score" aria-label="本题评分">{score} 分 · {score} 星</p><p>{revealed || mistakes || hints || resultOutcome !== "completed" ? "不计入首次正确率，可继续巩固。" : "首次正确以提交后的记录为准。"}</p><p>{problem.source === "teaching" ? "结果保存在本机，请返回作业检查并手动提交。" : "练习结果已保存到学习档案。"}</p><div><button type="button" onClick={onRestart}><RotateCcw/>再试一次</button><button type="button" className="primary" onClick={() => canNext ? selectOffset(1) : onNext()}>{canNext ? "下一题" : "查看结果"}<ChevronRight/></button></div></section> : <section className="mobile-solver-actions">{wrongMove ? <button type="button" className="primary" onClick={onRetryWrongMove}><RotateCcw/>退回重试 · 已错 {mistakes} 次</button> : <button type="button" className="primary" onClick={onHint}><Lightbulb/>提示 {hints}/3</button>}<div><button type="button" onClick={onRestart}><RotateCcw/>重来</button><button type="button" onClick={onReveal}><ListRestart/>查看解析</button></div></section>}
         {revealed && <section className="mobile-solver-answer"><header><strong>题解</strong><small>{answerStep}/{answer.length} 手</small></header>{problem.note && <p>{problem.note}</p>}<ol>{answer.map((move, index) => <li key={index} aria-current={answerStep === index + 1 ? "step" : undefined}><button type="button" onClick={() => onPreviewStep(index + 1)}>{index + 1}. {move}</button></li>)}</ol><div><button type="button" disabled={answerStep <= 0} aria-label="题解上一步" title="题解上一步" onClick={() => onPreviewStep(answerStep - 1)}><ChevronLeft/></button><button type="button" disabled={!answer.length} aria-label={demoPlaying ? "暂停预演" : "播放题解"} title={demoPlaying ? "暂停预演" : "播放题解"} onClick={onTogglePreview}>{demoPlaying ? <Pause/> : <Play/>}</button><button type="button" disabled={answerStep >= answer.length} aria-label="题解下一步" title="题解下一步" onClick={() => onPreviewStep(answerStep + 1)}><ChevronRight/></button><button type="button" aria-label="题解回到起点" title="题解回到起点" onClick={() => onPreviewStep(0)}><RotateCcw/></button></div></section>}
@@ -2022,6 +2021,13 @@ function StudentAssignmentsPanel({ auth, syncing, lastSyncAt, message, onSync, o
   const completionRate = (library: TrainingLibrary) => library.problemCount ? Math.round(completedCount(library) / library.problemCount * 100) : 0;
   const closeActions = () => setActionsOpen(false);
   const detailCompleted = problems.filter((item) => item.assignmentGrade?.outcome === "completed" || item.completedAttempts > 0).length;
+  const problemStatus = (item: TrainingProblem) => {
+    const completed = item.assignmentGrade?.outcome === "completed" || item.completedAttempts > 0;
+    if (item.submissionState === "draft") return completed ? "已完成 · 待提交" : "未完成 · 待提交";
+    if (item.submissionState === "queued") return completed ? "已完成 · 待补交" : "未完成 · 待补交";
+    if (item.submissionState === "submitted") return completed ? "已完成 · 已提交" : "未完成 · 已提交";
+    return completed ? "已完成" : "待完成";
+  };
 
   return <section className="student-assignments-workspace" aria-label="我的作业">
     <header className="student-assignments-header">
@@ -2036,7 +2042,7 @@ function StudentAssignmentsPanel({ auth, syncing, lastSyncAt, message, onSync, o
     {selectedLibrary ? <div className="student-assignment-detail">
       <header><button type="button" onClick={() => { setSelectedLibrary(undefined); setProblems([]); }}><ChevronLeft/>返回我的作业</button><div className="student-assignment-detail-title"><strong title={selectedLibrary.title}>{selectedLibrary.title}</strong><small>{detailCompleted}/{selectedLibrary.problemCount} 题已完成</small></div></header>
       {selectedLibrary.assignmentId && !busy && <AssignmentSubmissionPanel assignmentId={selectedLibrary.assignmentId} auth={auth} problems={problems} onSubmitted={() => { void refresh(); void teachingClient.problems(selectedLibrary.assignmentId!).then(setProblems); }} onReviewProblem={(item) => { pendingAssignmentSequence = problems; pendingAssignmentIndex = problems.findIndex((problem) => problem.id === item.id); onOpenProblem(item, problems, pendingAssignmentIndex); }}/>}
-      {error && <p className="student-assignments-error">{error}</p>}{busy ? <p className="student-assignments-loading">正在读取题目…</p> : problems.length ? <div className="student-problem-list">{problems.map((item, index) => <button type="button" key={item.id} aria-label={`第 ${index + 1} 题：${item.title}，${item.submissionState === "draft" ? "待提交" : item.submissionState === "queued" ? "待补交" : item.completedAttempts ? "已完成" : "待完成"}`} onClick={() => { pendingAssignmentSequence = problems; pendingAssignmentIndex = index; onOpenProblem(item, problems, index); }}><b>{index + 1}</b><span><strong>{item.title}</strong><small>第 {index + 1} 题 · {item.submissionState === "draft" ? "待提交" : item.submissionState === "queued" ? "待补交" : item.submissionState === "submitted" ? "已提交" : "待完成"}</small>{item.assignmentGrade && <small className="student-assignment-grade">{item.assignmentGrade.score} 分 · {item.assignmentGrade.stars} 星 · 错 {item.assignmentGrade.mistakes} 次 · 提示 {item.assignmentGrade.hintsUsed} 次</small>}</span><ChevronRight/></button>)}</div> : <div className="student-assignments-empty"><strong>这个作业暂时没有题目</strong><span>请联系老师检查作业内容。</span></div>}
+      {error && <p className="student-assignments-error">{error}</p>}{busy ? <p className="student-assignments-loading">正在读取题目…</p> : problems.length ? <div className="student-problem-list">{problems.map((item, index) => <button type="button" key={item.id} aria-label={`第 ${index + 1} 题：${item.title}，${problemStatus(item)}`} onClick={() => { pendingAssignmentSequence = problems; pendingAssignmentIndex = index; onOpenProblem(item, problems, index); }}><b>{index + 1}</b><span><strong>{item.title}</strong><small>第 {index + 1} 题 · {problemStatus(item)}</small>{item.assignmentGrade && <small className="student-assignment-grade">{item.assignmentGrade.score} 分 · {item.assignmentGrade.stars} 星 · 错 {item.assignmentGrade.mistakes} 次 · 提示 {item.assignmentGrade.hintsUsed} 次</small>}</span><ChevronRight/></button>)}</div> : <div className="student-assignments-empty"><strong>这个作业暂时没有题目</strong><span>请联系老师检查作业内容。</span></div>}
     </div> : <div className="student-assignment-list">{error && <p className="student-assignments-error">{error}</p>}{libraries.length ? libraries.map((item) => <button type="button" className={`student-assignment-card ${item.isUnread ? "unread" : ""}`} key={item.id} onClick={() => void openAssignment(item)}>{item.isUnread && <i className="student-assignment-unread-dot" aria-hidden="true"/>}<span className="student-assignment-card-title"><strong>{item.title}</strong><small>{item.dueAt ? `截止 ${new Date(item.dueAt).toLocaleDateString("zh-CN")}` : "无截止日期"}</small></span><span className="student-assignment-card-stats"><b>{completedCount(item)}/{item.problemCount}</b><small>已完成 · {completionRate(item)}%{item.pendingSubmissionCount ? ` · ${item.pendingSubmissionCount} 题待提交` : ""}</small></span><ChevronRight/></button>) : <div className="student-assignments-empty"><BookOpen/><strong>暂无老师布置的作业</strong><span>作业发布后会自动同步到这里。</span></div>}</div>}
   </section>;
 }
@@ -2093,7 +2099,7 @@ function TeachingAccountDialog({ auth, syncing, lastSyncAt, message, onClose, on
   onSync(): void;
   onMessage(message: string): void;
 }) {
-  const [account, setAccount] = useState("");
+  const [account, setAccount] = useState(() => teachingClient.lastLoginAccount());
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [environment, setEnvironment] = useState(teachingClient.environment());
@@ -2105,6 +2111,7 @@ function TeachingAccountDialog({ auth, syncing, lastSyncAt, message, onClose, on
     try {
       await teachingClient.setEnvironment(next);
       setEnvironment(teachingClient.environment());
+      setAccount(teachingClient.lastLoginAccount());
     } catch (error) { setError(error instanceof Error ? error.message : String(error)); }
     finally { setBusy(false); }
   }
@@ -3438,9 +3445,9 @@ export function App() {
     const next = Math.min(3, hints + 1) as 1 | 2 | 3;
     setHints(next);
     const lead = line[0]?.iccs;
-    const notation = lead ? (await chineseLine(problem.startingFen, [...moves, lead])).at(-1) ?? lead : undefined;
+    const notation = lead ? (await chineseLine(problem.startingFen, [...moves, lead])).at(-1) : undefined;
     const logicHint = trainingLogicHint(problem, next, notation);
-    if (next === 3 && lead) setNotice(`这一步：${notation}（${lead.slice(0, 2)} → ${lead.slice(2)}）。${logicHint ?? "棋盘箭头已标出起点与目标位置。"}`);
+    if (next === 3 && lead) setNotice(`${notation && !/^[a-i][0-9][a-i][0-9]$/.test(notation) ? `这一步：${notation}。` : ""}${logicHint ?? "棋盘箭头已标出起点与目标位置。"}`);
     else if (logicHint) setNotice(logicHint);
     else if (next === 1) setNotice(problem.note || "先寻找将军、吃子和强制着。");
     else if (!lead) setNotice("题解已完成。");

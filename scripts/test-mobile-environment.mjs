@@ -271,7 +271,45 @@ test("an old authenticated request cannot refresh or retry as another account", 
 });
 
 const assignmentAttempt = { clientAttemptId: "attempt-1", assignmentId: "assignment", problemId: "problem", moves: ["a0a1"], elapsedMs: 1000, hintsUsed: 0, mistakes: 0, outcome: "completed", completedAt: "2026-10-01T00:00:00Z" };
+
+test("logout remembers only the successful login account independently for each environment", async () => {
+  const student = { ...auth, user: { id: "student", loginName: "review.student", role: "student" } };
+  const h = harness({ fetchImpl: () => response(student) });
+  assert.equal(h.client.lastLoginAccount(), "");
+  await h.client.login("student-id", "secret-password");
+  await h.client.logout();
+  assert.equal(h.client.lastLoginAccount(), "review.student");
+  assert.equal([...h.values.values()].some((value) => value.includes("secret-password")), false);
+  const restarted = harness({ entries: [...h.values] });
+  assert.equal(restarted.client.lastLoginAccount(), "review.student");
+  await restarted.client.setEnvironment("production");
+  assert.equal(restarted.client.lastLoginAccount(), "");
+  await restarted.client.setEnvironment("test");
+  assert.equal(restarted.client.lastLoginAccount(), "review.student");
+});
 const practiceAttempt = { clientAttemptId: "practice-1", itemId: "item", moves: ["a0a1"], elapsedMs: 1000, hintsUsed: 0, mistakes: 0, outcome: "completed" };
+
+test("homework completion includes local solved answers regardless of mistakes or hints", async () => {
+  const student = { ...auth, user: { id: "student", orgId: "org", role: "student" } };
+  const h = harness({ fetchImpl: () => response(student) });
+  await h.client.login("student", "password");
+  h.stores.assignmentCaches.set("cache", {
+    cacheKey: "cache", ownerId: "student", orgId: "org", serverUrl: TEST_URL,
+    assignment: { id: "assignment", title: "三题作业" }, cachedAt: "2026-10-02T00:00:00Z",
+    problems: ["problem", "problem-2", "problem-3"].map((problemId) => ({ assignmentId: "assignment", problemId, completed: false })),
+  });
+  for (const [index, problemId] of ["problem", "problem-2", "problem-3"].entries()) {
+    await h.client.saveAssignmentAnswer({ ...assignmentAttempt, clientAttemptId: `answer-${index}`, problemId, mistakes: index * 2, hintsUsed: index });
+  }
+  const [library] = await h.client.cachedLibraries();
+  assert.equal(library.completedCount, 3);
+  assert.equal(library.pendingSubmissionCount, 3);
+  assert.equal(h.calls.filter(([url]) => url.endsWith("/attempts")).length, 0);
+  await h.client.saveAssignmentAnswer({ ...assignmentAttempt, clientAttemptId: "revealed", problemId: "problem-3", outcome: "revealed" });
+  assert.equal((await h.client.cachedLibraries())[0].completedCount, 2, "viewing an answer is not a solved question");
+  h.stores.assignmentCaches.get("cache").problems[0].completed = true;
+  assert.equal((await h.client.cachedLibraries())[0].completedCount, 2, "local and server completion must not double-count the same question");
+});
 
 test("completed homework remains local until reviewed IDs are explicitly submitted", async () => {
   const student = { ...auth, user: { id: "student", orgId: "org", role: "student" } };

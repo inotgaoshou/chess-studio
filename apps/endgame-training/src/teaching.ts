@@ -6,6 +6,12 @@ import { practiceScore } from "./practiceScoring";
 const AUTH_KEY = "xiangqi-teaching-auth";
 const SERVER_KEY = "xiangqi-teaching-server-url";
 const SESSION_SERVER_KEY = "xiangqi-teaching-session-server";
+const LAST_LOGIN_ACCOUNT_PREFIX = "xiangqi-teaching-last-login-account";
+
+function rememberLoginAccount(account: string, targetServer: string) {
+  try { localStorage.setItem(`${LAST_LOGIN_ACCOUNT_PREFIX}:${targetServer}`, account.trim()); }
+  catch { /* Account autofill is optional when storage is unavailable. */ }
+}
 const DB_NAME = "xiangqi-teaching-cache";
 const DB_VERSION = 6;
 const SYNC_META_PREFIX = "xiangqi-teaching-sync";
@@ -577,14 +583,15 @@ async function deleteAssignmentCaches(predicate: (item: CachedAssignment) => boo
   db.close();
 }
 
-function toLibrary(cache: CachedAssignment): TrainingLibrary {
+function toLibrary(cache: CachedAssignment, answers: AssignmentAnswer[]): TrainingLibrary {
+  const localCompleted = new Set(answers.filter((answer) => answer.outcome === "completed").map((answer) => answer.problemId));
   return {
     id: `teaching:${cache.assignment.id}`,
     title: cache.assignment.title,
     fingerprint: cache.assignment.id,
     parserVersion: 0,
     problemCount: cache.problems.length,
-    completedCount: cache.problems.filter((problem) => problem.completed).length,
+    completedCount: cache.problems.filter((problem) => problem.completed || localCompleted.has(problem.problemId)).length,
     importedAt: cache.cachedAt,
     accessTier: cache.problems.some((problem) => problem.accessTier === "vip") ? "vip" : "public",
     source: "teaching",
@@ -733,6 +740,10 @@ export const teachingClient = {
     selectEnvironment(environment);
   },
   lastSubmitError() { return lastSubmitError; },
+  lastLoginAccount() {
+    try { return localStorage.getItem(`${LAST_LOGIN_ACCOUNT_PREFIX}:${serverUrl()}`) ?? ""; }
+    catch { return ""; }
+  },
   async login(account: string, password: string) {
     const epoch = sessionEpoch;
     const targetServer = serverUrl();
@@ -750,6 +761,7 @@ export const teachingClient = {
     if (epoch !== sessionEpoch || targetServer !== serverUrl()) throw new Error("连接环境已变化，请重新登录。");
     await persistAuth(auth, epoch, targetServer);
     if (epoch !== sessionEpoch || targetServer !== serverUrl()) throw new Error("连接环境已变化，请重新登录。");
+    rememberLoginAccount(auth.user.loginName || account, targetServer);
     return auth;
   },
   async switchOrganization(orgId: string) {
@@ -820,6 +832,7 @@ export const teachingClient = {
   },
   async logout() {
     const auth = activeAuth;
+    if (auth?.user.loginName) rememberLoginAccount(auth.user.loginName, authContexts.get(auth)?.serverUrl ?? serverUrl());
     const pendingLogout = auth ? request("/api/v1/auth/logout", { method: "POST", body: "{}" }, auth.token, false).catch(() => undefined) : undefined;
     await clearLocalSession();
     await pendingLogout;
@@ -1140,7 +1153,10 @@ export const teachingClient = {
     const answers = await this.assignmentAnswers();
     return (await storeAll<CachedAssignment>("assignmentCaches"))
       .filter((cache) => cache.ownerId === context.ownerId && cache.orgId === context.orgId && cache.serverUrl === context.serverUrl)
-      .map((cache) => ({ ...toLibrary(cache), pendingSubmissionCount: answers.filter((answer) => answer.assignmentId === cache.assignment.id).length }))
+      .map((cache) => {
+        const assignmentAnswers = answers.filter((answer) => answer.assignmentId === cache.assignment.id && cache.problems.some((problem) => problem.problemId === answer.problemId));
+        return { ...toLibrary(cache, assignmentAnswers), pendingSubmissionCount: assignmentAnswers.length };
+      })
       .sort((a, b) => b.importedAt.localeCompare(a.importedAt));
   },
   async problems(assignmentId: string) {

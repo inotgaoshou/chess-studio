@@ -4886,7 +4886,7 @@ html.phone-webview .manual-stage {
 }
 html.phone-webview .manual-workspace.study-workspace {
   grid-template-rows:minmax(0,1fr) !important;
-  padding:var(--phone-safe-top) 0 calc(4px + var(--phone-safe-bottom));
+  padding:var(--phone-safe-top) 0 calc(20px + max(12px, var(--phone-safe-bottom)));
   background:#eef5ed;
 }
 html.phone-webview .manual-stage.manual-analysis-expanded {
@@ -6354,6 +6354,7 @@ html.phone-webview .mobile-solver-page { position:fixed; z-index:40; top:var(--m
 .mobile-solver-heading strong { overflow:hidden; color:#294638; font-size:15px; text-overflow:ellipsis; white-space:nowrap; }
 .mobile-solver-heading em { padding:5px 7px; border-radius:6px; background:#fee8e3; color:#b04f43; font-size:11px; font-style:normal; font-weight:800; white-space:nowrap; }
 .mobile-solver-heading .mobile-back-button { width:44px; min-width:44px; height:44px; padding:0; }
+.mobile-solver-heading-actions { display:flex; align-items:center; gap:6px; }
 .mobile-solver-heading,
 html.phone-webview .mobile-solver-board,
 .mobile-solver-meta,
@@ -6766,6 +6767,8 @@ html .mobile-practice-home .mobile-page-heading > span { display:flex; flex-dire
 html.tablet-webview .mobile-solver-page { grid-template-rows:auto auto auto auto; align-content:start; }
 .practice-rules-trigger { display:inline-flex; align-items:center; justify-content:center; gap:7px; min-height:44px; padding:8px 14px; border:2px solid #397b56; border-radius:6px; background:#e1f0e5; color:#245c3c; font-size:14px; font-weight:800; box-shadow:0 2px 0 #bdd6c5; }
 .practice-rules-trigger svg { width: 18px; height: 18px; }
+.mobile-solver-heading-actions .practice-rules-trigger { height:30px; min-height:30px; padding:0 7px; gap:4px; border-width:1px; font-size:11px; white-space:nowrap; box-shadow:none; }
+.mobile-solver-heading-actions .practice-rules-trigger svg { width:14px; height:14px; }
 .practice-rules-dialog { width: min(440px, calc(100vw - 24px)); max-height: calc(100dvh - 40px); overflow-y: auto; background: #fff; border-radius: 8px; padding: 16px; color: #253c33; }
 .practice-rules-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .practice-rules-dialog header button { width:44px; height:44px; display:grid; place-items:center; padding:0; border:1px solid #bed4c6; border-radius:6px; background:#f5faf6; color:#245c3c; }

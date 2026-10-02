@@ -23,7 +23,7 @@ submitting them as a different student.
 
 ## Checks
 
-- `node --test scripts/test-mobile-environment.mjs scripts/test-mobile-practice-history.mjs`: 26 passed.
+- `node --test scripts/test-mobile-environment.mjs scripts/test-mobile-practice-history.mjs`: 35 passed.
 - `TEACHER_URL=http://127.0.0.1:1441 node scripts/test-mobile-teacher-ui.cjs`: passed responsive layout, batch publishing, search, retries and institution changes.
 - `PRACTICE_URL=http://127.0.0.1:1441 node scripts/test-mobile-practice-ui.cjs`: passed phone/tablet navigation, practice, favorites, search, draft restoration and reconnect on the board.
 - Production-environment mobile web/WASM build and iOS development signed build: passed. Build is `1.0.3 (10017)`, not the final review build.
@@ -67,7 +67,7 @@ status has yet been verified.
 ## Calendar, Filters And Solver Controls
 
 - Test and production are both running backend release
-  `20261001T160028Z-c7636d9502fb`. Candidate/favorite SQL decoding, JSON snapshots,
+  `20261002T011921Z-6293c4775ab3`. Candidate/favorite SQL decoding, JSON snapshots,
   history aggregation and dashboard progress decoding are fixed in that release.
 - `verify-mobile-practice-filters.mjs` compared 20 live selections per
   environment against database progress and metadata. Counts 5/10/20, previously
@@ -95,3 +95,28 @@ status has yet been verified.
 - Rebuilt production `1.0.3 (10017)` passed codesign and embedded NNUE hash
   checks, was installed over the existing connected iPhone app, and launched.
   Final review recording, annotated release tag and ASC submission remain pending.
+
+## Latest Manual Submission And History Checks
+
+- Both environments passed `scripts/verify-mobile-grading.mjs` using isolated
+  temporary students: 0–4 errors, hint correctness exclusion, retry penalties,
+  idempotency, VIP, default hidden import, admin policy permissions, no implicit
+  favorites, 90-day history inclusion and 30-day exclusion, submitted homework
+  grades, and the `(student_id,started_at)` history index. Production backup:
+  `/home/deploy/.local/state/qixi/backups/production/chess-20261002T013426Z`.
+- Homework completion counts include locally solved unsubmitted answers,
+  regardless of mistakes, hints or zero stars. Server/local records are counted
+  once per question. Completion/reconnect does not submit unconfirmed answers.
+  Checking and explicit confirmation are required; only confirmed offline
+  submissions retry automatically. Question rows and the review modal use the
+  same completion state, and pending answers follow assignment question order.
+- Phone/tablet regression passed manual submission, score display and draft
+  restoration. The compact 30px rules control is in the solver header; coordinate
+  notation is hidden from hints. Manual toolbar geometry was checked with 0px
+  and 34px bottom safe areas, without board overlap.
+- Calendar defaults to seven days, with 30/90-day ranges, per-day sessions and
+  read-only question boards. Viewing history creates no attempts. The index
+  improves bounded queries; no large-scale load test or archival redesign was
+  performed.
+- Logout remembers only the successful account name, scoped to API environment;
+  password fields remain empty. Unit regression covers logout and restart.
