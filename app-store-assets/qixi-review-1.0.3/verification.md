@@ -147,3 +147,18 @@ status has yet been verified.
   was installed over the existing iPhone 14 app and launched at 18:34:03.
   No uninstall or data reset was performed. UI regression is browser evidence;
   installation and launch do not substitute for physical interaction acceptance.
+
+## Explicit student identity — 2026-10-02
+
+- Student rows and grade details explicitly label student name and login
+  account. Whitespace-only, missing or null names show 姓名未填写. Existing
+  teacher-entered names and server interfaces remain the source of truth.
+- Existing phone/tablet result regression passes, including same-name students
+  with different accounts, blank-name fallback and returning to the filtered
+  list. The official production review assignment's actual server data was
+  checked in browser UI at 390 and 1024 px: 审核学生 / review.student.103,
+  detail entry and return all pass. This is browser validation with production
+  data, not a recording of physical phone interaction.
+- Production signed build and signature verification pass. The iPhone 14 app
+  was overwritten with 1.0.3 (10018), preserving data, and launched successfully
+  at 18:46:13. No server deployment was needed for the presentation change.

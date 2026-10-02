@@ -5,6 +5,7 @@ import { boardAt, chineseLine } from "./wasm";
 
 export type ResultBoardRenderer = (fen: string, label: string) => ReactNode;
 const recorded = (value?: number | null) => value == null ? "未记录" : String(value);
+const studentName = (value?: string | null) => value?.trim() || "姓名未填写";
 const time = (value?: number | null) => value == null ? "未记录" : `${Math.floor(value / 60000)}分${Math.round(value % 60000 / 1000)}秒`;
 const date = (value?: string | null) => value ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : "未收到提交";
 const errorText = (error: unknown) => error instanceof Error ? error.message : "读取结果失败";
@@ -88,7 +89,7 @@ export function TeacherResults({ assignmentId, students, summary, renderBoard, r
       </section>}
       <section ref={studentList} className="teacher-mobile-section teacher-student-list" aria-label="学生名单"><header><strong aria-live="polite">{studentFilters[filter]} · {filteredStudents.length} 人</strong>{filter !== "all" && <button type="button" className="teacher-result-clear" onClick={() => selectFilter("all")}>查看全部学生</button>}</header>
         {filteredStudents.map((item) => <button type="button" className="teacher-result-row" key={item.studentId} onClick={() => enter(() => setStudentId(item.studentId))}>
-          <span><b>{item.displayName}</b><small>{item.loginName}</small><small>已提交 {recorded(item.submittedCount)}/{item.totalCount} · 已做对 {item.completedCount}/{item.totalCount}</small></span>
+          <span><b>学生姓名：{studentName(item.displayName)}</b><small>登录账号：{item.loginName}</small><small>已提交 {recorded(item.submittedCount)}/{item.totalCount} · 已做对 {item.completedCount}/{item.totalCount}</small></span>
           <strong>{recorded(item.totalScore)}/{item.totalCount * 3} 分</strong><ChevronRight/>
         </button>)}
         {!filteredStudents.length && <p className="teacher-mobile-empty">{filter === "all" ? "暂无接收学生" : `暂无${studentFilters[filter]}`}</p>}
@@ -98,7 +99,7 @@ export function TeacherResults({ assignmentId, students, summary, renderBoard, r
       {busy ? <p role="status">正在刷新逐题结果…</p> : error ? <p role="alert">{error}<button type="button" onClick={() => setRetry((value) => value + 1)}>重试</button></p> : <SubmittedReplay key={`${studentId}:${problem.problemId}:${revision}`} assignmentId={assignmentId} studentId={student.studentId} problem={items.find((item) => item.problemId === problem.problemId) ?? problem} renderBoard={renderBoard}/>}
     </> : <>
       <button className="teacher-results-back" type="button" onClick={back}><ChevronLeft/>返回学生列表</button>
-      <h3>{student.displayName} · 作业结果</h3>
+      <header className="teacher-student-identity" aria-label="学生身份"><h3>学生姓名：{studentName(student.displayName)}</h3><p>登录账号：{student.loginName}</p></header>
       <section className="teacher-result-summary" aria-label="学生成绩">
         <Metric label="已提交" value={`${recorded(student.submittedCount)}/${student.totalCount}`}/><Metric label="已做对" value={`${student.completedCount}/${student.totalCount}`}/>
         <Metric label="总分" value={`${recorded(student.totalScore)}/${student.totalCount * 3}`}/><Metric label="首次正确率" value={student.firstTryCorrectCount == null ? "未记录" : `${(student.totalCount ? student.firstTryCorrectCount / student.totalCount * 100 : 0).toFixed(1)}%`}/>

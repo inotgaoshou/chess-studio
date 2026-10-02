@@ -6480,6 +6480,8 @@ html.phone-webview .mobile-solver-nav span { align-self:center; color:#687e70; f
 .account-deletion-panel p { font-size:12px; line-height:1.6; margin:0; }
 .account-deletion-panel form { display:grid; gap:9px; }.account-deletion-panel form > div { display:flex; justify-content:flex-end; gap:8px; }
 .teacher-results h3 { font-size:16px; margin:0; overflow-wrap:anywhere; }
+.teacher-student-identity { display:grid; gap:5px; }
+.teacher-results .teacher-student-identity > p { margin:0; padding:0; border:0; background:transparent; color:#657a6b; font-size:12px; overflow-wrap:anywhere; }
 .teacher-result-summary { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; padding-block:6px; border-block:1px solid #d3e1d8; }
 .teacher-result-summary > .teacher-result-metric { padding:9px 10px; display:grid; align-content:start; gap:4px; min-width:0; }
 .teacher-mobile-page .teacher-result-summary > button { min-height:68px; grid-template-columns:minmax(0,1fr) 18px; align-content:center; border:1px solid #d3e1d8; border-radius:7px; background:#fbfdfb; text-align:left; cursor:pointer; }

@@ -56,6 +56,9 @@ const fen = '4k4/9/9/9/9/9/9/9/4R4/4K4 w - - 0 1';
       await page.getByText('部分提交学生 · 1 人', { exact: true }).waitFor();
       await page.getByRole('button', { name: /审核学生.*review.student/ }).click();
       await page.getByLabel('学生成绩').waitFor();
+      const identity = page.getByLabel('学生身份', { exact: true });
+      await identity.getByText('学生姓名：审核学生', { exact: true }).waitFor();
+      await identity.getByText('登录账号：review.student', { exact: true }).waitFor();
       await page.getByText('33.3%', { exact: true }).waitFor();
       await page.getByText('0 分 · 0 星', { exact: true }).waitFor();
       assert.equal(await page.locator('.teacher-mobile-page').evaluate(node => node.scrollWidth > node.clientWidth + 1), false);
@@ -90,7 +93,7 @@ const fen = '4k4/9/9/9/9/9/9/9/4R4/4K4 w - - 0 1';
       const page = await browser.newPage({ viewport });
       let refreshed = false;
       const rows = [
-        { studentId: 'unsubmitted', displayName: '尚未提交学生', loginName: 'student.waiting', submittedCount: 0, completedCount: 0, totalScore: 0 },
+        { studentId: 'unsubmitted', displayName: '   ', loginName: 'student.waiting', submittedCount: 0, completedCount: 0, totalScore: 0 },
         { studentId: 'partial', displayName: '同名学生', loginName: 'student.partial', submittedCount: 1, completedCount: 1, totalScore: 3 },
         { studentId: 'full', displayName: '同名学生', loginName: 'student.full', submittedCount: 3, completedCount: 2, totalScore: 4 },
         ...Array.from({ length: 20 }, (_, index) => ({ studentId: `solved-${index}`, displayName: `零分完成学生${index + 1}`, loginName: `student.solved.${index + 1}`, submittedCount: 3, completedCount: 3, totalScore: 0 })),
@@ -112,21 +115,33 @@ const fen = '4k4/9/9/9/9/9/9/9/4R4/4K4 w - - 0 1';
       const list = page.getByLabel('学生名单', { exact: true });
       await page.getByText('接收学生 · 23 人', { exact: true }).waitFor();
       assert.equal(await list.locator('.teacher-result-row').count(), 23);
-      assert.equal(await list.getByText('同名学生', { exact: true }).count(), 2);
-      await list.getByText('student.partial', { exact: true }).waitFor(); await list.getByText('student.full', { exact: true }).waitFor();
+      assert.equal(await list.getByText('学生姓名：同名学生', { exact: true }).count(), 2);
+      await list.getByText('登录账号：student.partial', { exact: true }).waitFor(); await list.getByText('登录账号：student.full', { exact: true }).waitFor();
+      await page.getByRole('button', { name: /姓名未填写.*student.waiting/ }).click();
+      await page.getByLabel('学生身份').getByText('学生姓名：姓名未填写', { exact: true }).waitFor();
+      await page.getByLabel('学生身份').getByText('登录账号：student.waiting', { exact: true }).waitFor();
+      await page.getByRole('button', { name: '返回学生列表', exact: true }).click();
       await page.getByRole('button', { name: '部分提交 1 人，查看学生名单', exact: true }).click();
       await page.getByText('部分提交学生 · 1 人', { exact: true }).waitFor();
       assert.equal(await list.locator('.teacher-result-row').count(), 1);
-      await list.getByText('student.partial', { exact: true }).waitFor();
+      await list.getByText('登录账号：student.partial', { exact: true }).waitFor();
+      await page.getByRole('button', { name: /同名学生.*student.partial/ }).click();
+      await page.getByLabel('学生身份').getByText('学生姓名：同名学生', { exact: true }).waitFor();
+      await page.getByLabel('学生身份').getByText('登录账号：student.partial', { exact: true }).waitFor();
+      await page.getByRole('button', { name: '返回学生列表', exact: true }).click();
       await page.getByRole('button', { name: '全部提交 21 人，查看学生名单', exact: true }).click();
       await page.getByText('全部提交学生 · 21 人', { exact: true }).waitFor();
       assert.equal(await list.locator('.teacher-result-row').count(), 21);
-      assert.equal(await list.getByText('student.partial', { exact: true }).count(), 0);
+      assert.equal(await list.getByText('登录账号：student.partial', { exact: true }).count(), 0);
+      await page.getByRole('button', { name: /同名学生.*student.full/ }).click();
+      await page.getByLabel('学生身份').getByText('学生姓名：同名学生', { exact: true }).waitFor();
+      await page.getByLabel('学生身份').getByText('登录账号：student.full', { exact: true }).waitFor();
+      await page.getByRole('button', { name: '返回学生列表', exact: true }).click();
       await page.getByRole('button', { name: '全部做对 20 人，查看学生名单', exact: true }).click();
       await page.getByText('全部做对学生 · 20 人', { exact: true }).waitFor();
       assert.equal(await list.locator('.teacher-result-row').count(), 20);
-      assert.equal(await list.getByText('student.full', { exact: true }).count(), 0);
-      await list.getByText('student.solved.20', { exact: true }).scrollIntoViewIfNeeded();
+      assert.equal(await list.getByText('登录账号：student.full', { exact: true }).count(), 0);
+      await list.getByText('登录账号：student.solved.20', { exact: true }).scrollIntoViewIfNeeded();
       const position = await page.locator('.teacher-mobile-page').evaluate(node => node.scrollTop);
       assert.ok(position > 0);
       await page.getByRole('button', { name: /零分完成学生20.*student.solved.20/ }).click();
