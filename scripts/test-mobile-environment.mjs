@@ -11,15 +11,26 @@ const TEST_URL = "https://api-test.qixiapp.cn";
 const LIVE_URL = "https://api.qixiapp.cn";
 const auth = { token: "access", refreshToken: "refresh", expiresAt: "2099-01-01", user: { id: "u1", role: "user" } };
 
+test("practice scoring separates completion, stars and first-try correctness", () => {
+  const { practiceScore, firstTryCorrect } = harness().load("practiceScoring");
+  for (const [mistakes, expected] of [[0, 3], [1, 2], [2, 1], [3, 0], [4, 0]]) {
+    assert.equal(practiceScore("completed", mistakes), expected);
+    assert.equal(firstTryCorrect("completed", mistakes, 0), mistakes === 0);
+  }
+  assert.equal(firstTryCorrect("completed", 0, 1), false);
+  assert.equal(practiceScore("revealed", 0), 0);
+  assert.equal(practiceScore("abandoned", 0), 0);
+});
+
 function harness({ packageEnv = "test", native = true, dev = false, configured = "", entries = [], stored, fetchImpl, queued = {} } = {}) {
   const values = new Map(entries);
   const calls = [];
   let session = stored;
-  const stores = Object.fromEntries(["assignments", "assignmentCaches", "attempts", "practiceAttempts", "assignmentViews", "assignmentDrafts"].map((name) => [name, new Map((queued[name] || []).map((item) => [item.clientAttemptId || item.cacheKey, structuredClone(item)]))]));
+  const stores = Object.fromEntries(["assignments", "assignmentCaches", "attempts", "practiceAttempts", "assignmentViews", "assignmentDrafts", "assignmentAnswers"].map((name) => [name, new Map((queued[name] || []).map((item) => [name === "assignmentAnswers" ? item.cacheKey : item.clientAttemptId || item.cacheKey, structuredClone(item)]))]));
   const indexedDB = { open() {
     const opening = { result: { objectStoreNames: { contains: () => true }, close() {}, transaction(name) {
       const transaction = { objectStore: () => ({
-        put(value) { stores[name].set(value.clientAttemptId || value.cacheKey, structuredClone(value)); queueMicrotask(() => transaction.oncomplete?.()); },
+        put(value) { stores[name].set(name === "assignmentAnswers" ? value.cacheKey : value.clientAttemptId || value.cacheKey, structuredClone(value)); queueMicrotask(() => transaction.oncomplete?.()); },
         delete(key) { stores[name].delete(key); queueMicrotask(() => transaction.oncomplete?.()); },
         getAll() { const request = { result: [...stores[name].values()].map((value) => structuredClone(value)) }; queueMicrotask(() => request.onsuccess?.()); return request; },
       }) };
@@ -261,6 +272,94 @@ test("an old authenticated request cannot refresh or retry as another account", 
 const assignmentAttempt = { clientAttemptId: "attempt-1", assignmentId: "assignment", problemId: "problem", moves: ["a0a1"], elapsedMs: 1000, hintsUsed: 0, mistakes: 0, outcome: "completed", completedAt: "2026-10-01T00:00:00Z" };
 const practiceAttempt = { clientAttemptId: "practice-1", itemId: "item", moves: ["a0a1"], elapsedMs: 1000, hintsUsed: 0, mistakes: 0, outcome: "completed" };
 
+test("completed homework remains local until reviewed IDs are explicitly submitted", async () => {
+  const student = { ...auth, user: { id: "student", orgId: "org", role: "student" } };
+  const h = harness({ fetchImpl: (url) => response(url.endsWith("/auth/login") ? student : {}) });
+  await h.client.login("student", "password");
+  await h.client.saveAssignmentAnswer(assignmentAttempt);
+  await h.client.flushPending();
+  assert.equal(h.calls.filter(([url]) => url.endsWith("/attempts")).length, 0);
+  assert.equal(h.stores.assignmentAnswers.size, 1);
+  const answers = await h.client.assignmentAnswers("assignment");
+  assert.equal(answers[0].submissionRequested, false);
+  assert.equal(answers[0].ownerId, "student");
+  await assert.rejects(h.client.submitAssignmentAnswers("assignment", ["stale-review"]), /已变化/);
+  assert.equal(h.calls.filter(([url]) => url.endsWith("/attempts")).length, 0);
+  const result = await h.client.submitAssignmentAnswers("assignment", [assignmentAttempt.clientAttemptId]);
+  assert.equal(result.submitted, 1); assert.equal(result.pending, 0);
+  assert.equal(h.stores.assignmentAnswers.size, 0);
+  assert.equal(h.calls.filter(([url]) => url.endsWith("/attempts")).length, 1);
+});
+
+test("manual submission and reconnect share one in-flight homework request", async () => {
+  const student = { ...auth, user: { id: "student", orgId: "org", role: "student" } };
+  let release;
+  let started;
+  const sent = new Promise((resolve) => { started = resolve; });
+  const h = harness({ fetchImpl: (url) => {
+    if (url.endsWith("/auth/login")) return response(student);
+    if (url.endsWith("/attempts")) { started(); return new Promise((resolve) => { release = () => resolve(response({})); }); }
+    return response({});
+  } });
+  await h.client.login("student", "password");
+  await h.client.saveAssignmentAnswer(assignmentAttempt);
+  const manual = h.client.submitAssignmentAnswers("assignment", [assignmentAttempt.clientAttemptId]);
+  await sent;
+  const reconnect = h.client.flushPending();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(h.calls.filter(([url]) => url.endsWith("/attempts")).length, 1);
+  release();
+  await Promise.all([manual, reconnect]);
+  assert.equal(h.stores.attempts.size, 0);
+  assert.equal(h.stores.assignmentAnswers.size, 0);
+});
+
+test("confirmed offline homework retries the same ID while unconfirmed answers remain private", async () => {
+  const student = { ...auth, user: { id: "student", orgId: "org", role: "student" } };
+  let offline = true;
+  const sent = [];
+  const h = harness({ fetchImpl: (url, options) => {
+    if (url.endsWith("/auth/login")) return response(student);
+    if (url.endsWith("/attempts")) { sent.push(JSON.parse(options.body).clientAttemptId); if (offline) throw new Error("offline"); }
+    return response({});
+  } });
+  await h.client.login("student", "password");
+  await h.client.saveAssignmentAnswer(assignmentAttempt);
+  await h.client.saveAssignmentAnswer({ ...assignmentAttempt, clientAttemptId: "private-answer", problemId: "other-problem" });
+  const result = await h.client.submitAssignmentAnswers("assignment", [assignmentAttempt.clientAttemptId]);
+  assert.equal(result.pending, 1);
+  await assert.rejects(h.client.clearAssignmentAnswer("assignment", "problem"), /已确认提交/);
+  offline = false;
+  await h.client.flushPending();
+  assert.deepEqual(sent, ["attempt-1", "attempt-1"]);
+  assert.equal(h.stores.assignmentAnswers.size, 1);
+  assert.equal((await h.client.assignmentAnswers("assignment"))[0].clientAttemptId, "private-answer");
+});
+
+test("unreviewed legacy automatic queues do not submit during refresh", async () => {
+  const student = { ...auth, user: { id: "student", orgId: "org", role: "student" } };
+  const legacy = { ...assignmentAttempt, ownerId: "student", orgId: "org", serverUrl: TEST_URL };
+  const h = harness({ queued: { attempts: [legacy] }, fetchImpl: () => response(student) });
+  await h.client.login("student", "password");
+  await h.client.flushPending();
+  assert.equal(h.calls.filter(([url]) => url.endsWith("/attempts")).length, 0);
+  assert.equal((await h.client.assignmentAnswers("assignment"))[0].clientAttemptId, "attempt-1");
+});
+
+test("local homework answers survive account changes without becoming another student's answers", async () => {
+  const student = { ...auth, user: { id: "student", orgId: "org", role: "student" } };
+  const other = { ...student, token: "other-token", user: { ...student.user, id: "other" } };
+  const h = harness({ fetchImpl: (url, options) => response(url.endsWith("/auth/login") && JSON.parse(options.body).account === "other" ? other : student) });
+  const original = await h.client.login("student", "password");
+  await h.client.logout(); await h.client.login("other", "password");
+  await h.client.saveAssignmentAnswer(assignmentAttempt, original);
+  assert.equal((await h.client.assignmentAnswers("assignment")).length, 0);
+  await assert.rejects(h.client.submitAssignmentAnswers("assignment", ["attempt-1"]), /已变化/);
+  await h.client.flushPending();
+  assert.equal(h.calls.filter(([url]) => url.endsWith("/attempts")).length, 0);
+  assert.equal([...h.stores.assignmentAnswers.values()][0].ownerId, "student");
+});
+
 for (const practice of [false, true]) {
   const storeName = practice ? "practiceAttempts" : "attempts";
   const attempt = practice ? practiceAttempt : assignmentAttempt;
@@ -320,7 +419,7 @@ test("pending submission stops after an account change without retrying a stale 
   const ready = new Promise((resolve) => { started = resolve; });
   const student = { ...auth, user: { id: "student", orgId: "org", role: "student" } };
   const other = { ...auth, token: "other-access", user: { id: "other", orgId: "org", role: "student" } };
-  const ownership = { ownerId: "student", orgId: "org", serverUrl: TEST_URL };
+  const ownership = { ownerId: "student", orgId: "org", serverUrl: TEST_URL, submissionRequested: true };
   const h = harness({ queued: { attempts: [{ ...assignmentAttempt, ...ownership }, { ...assignmentAttempt, ...ownership, clientAttemptId: "attempt-2" }], practiceAttempts: [{ ...practiceAttempt, sessionId: "session", ...ownership }] }, fetchImpl: (url, options) => {
     if (url.endsWith("/auth/login")) return response(JSON.parse(options.body).account === "other" ? other : student);
     if (url.endsWith("/attempts")) { started(); return new Promise((resolve) => { finish = resolve; }); }

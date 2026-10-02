@@ -13,7 +13,7 @@ const topic = { id: 'topic', name: '长标题练习专题与专项训练', descr
       const errors = [];
       page.on('pageerror', (error) => errors.push(error.message));
       let dashboardFail = true, listFail = true, sessionFail = true, attemptFail = false, dailyEnabled = false, dailyFail = true, topicFail = true;
-      let favorites = [problems[0]], created, payloads = [], attempts = [];
+      let favorites = [problems[0]], created, payloads = [], attempts = [], favoriteWrites = [];
       let dashboardRequests = 0, assignmentRequests = 0, refreshRequests = 0, unclassified = false;
       const today = new Date();
       const localDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(today);
@@ -38,13 +38,17 @@ const topic = { id: 'topic', name: '长标题练习专题与专项训练', descr
         } else if (path.endsWith('/daily/daily/session')) {
           if (dailyFail) { dailyFail = false; status = 503; body = { error: '日练暂时不可用，请重试' }; }
           else body = created = { id: 'daily-session', sourceKind: 'daily', mode: 'solver', status: 'active', startedAt: new Date().toISOString(), updatedAt: new Date().toISOString(), items: [{ id: 'daily-item', ordinal: 0, status: 'pending', problem: problems[0] }] };
-        } else if (path.endsWith('/student/platform-libraries')) body = [{ id: 'lib', title: '返回验收题库', publishedCount: 25, createdAt: new Date().toISOString(), folderPath: 'S杀法/返回验收' }];
+        } else if (path.endsWith('/student/platform-libraries')) body = [
+          { id: 'lib', title: '返回验收题库', publishedCount: 25, practicedCount: 1, completedCount: 1, createdAt: new Date().toISOString(), folderPath: 'S杀法/返回验收' },
+          { id: 'done-lib', title: '已完成测试题库', publishedCount: 1, practicedCount: 1, completedCount: 1, createdAt: new Date().toISOString(), folderPath: 'S杀法/返回验收' },
+          { id: 'new-lib', title: '未开始测试题库', publishedCount: 2, practicedCount: 0, completedCount: 0, createdAt: new Date().toISOString(), folderPath: 'S杀法/返回验收' },
+        ];
         else if (path.endsWith('/platform-libraries/lib/problems')) body = { items: problems.map((problem) => ({ ...problem, difficulty: unclassified ? null : problem.difficulty, category: '象棋杀法练习4000题 周晓朴 等编著 2013年8月第1版' })) };
         else if (path.endsWith('/practice/mistakes')) {
           if (listFail) { listFail = false; status = 503; body = { error: '错题网络失败' }; }
           else body = new URL(req.url()).searchParams.get('state') === 'mastered' ? problems.map((problem) => ({ problem, reviewState: 'mastered', errorAttempts: 2, totalAttempts: 3, lastHintsUsed: 0 })) : [];
         } else if (path.endsWith('/practice/favorites')) body = favorites.map((problem) => ({ problem, reviewState: 'pending', errorAttempts: 1 }));
-        else if (path.endsWith('/favorite')) { favorites = req.method() === 'DELETE' ? [] : [problems[0]]; body = {}; }
+        else if (path.endsWith('/favorite')) { favoriteWrites.push(req.method()); favorites = req.method() === 'DELETE' ? [] : [problems.find((problem) => problem.id === path.split('/').at(-2))]; body = {}; }
         else if (path.endsWith('/practice/search')) body = { items: [problems[0]] };
         else if (path.endsWith('/practice/sessions') && req.method() === 'POST') {
           const payload = req.postDataJSON(); payloads.push(payload);
@@ -126,6 +130,11 @@ const topic = { id: 'topic', name: '长标题练习专题与专项训练', descr
       await page.getByRole('button', { name: /长标题专项练习题目0/ }).click();
       await page.locator('.mobile-solver-page').waitFor();
       assert.equal(payloads.at(-1).count, 1); assert.deepEqual(payloads.at(-1).problemIds, ['p0']);
+      const favorite = page.getByRole('button', { name: '收藏题目', exact: true });
+      await favorite.waitFor();
+      assert.equal(await favorite.getAttribute('aria-pressed'), 'false');
+      assert.equal(await favorite.locator('svg').getAttribute('fill'), 'none');
+      const favoriteWritesBeforeSolve = favoriteWrites.length;
       await page.screenshot({ path: `/tmp/practice-solver-${viewport.width}.png` });
       const aligned = await page.locator('.mobile-solver-actions button, .mobile-solver-note button, .mobile-solver-nav button').evaluateAll((buttons) => buttons.map((button) => {
         const icon = button.querySelector('svg');
@@ -169,6 +178,16 @@ const topic = { id: 'topic', name: '长标题练习专题与专项训练', descr
         await page.locator('.mobile-solver-page').waitFor();
       };
       await solve();
+      assert.equal(favoriteWrites.length, favoriteWritesBeforeSolve, 'solving must not create a favorite');
+      await favorite.click();
+      const cancelFavorite = page.getByRole('button', { name: '取消收藏', exact: true });
+      await cancelFavorite.waitFor();
+      assert.equal(await cancelFavorite.getAttribute('aria-pressed'), 'true');
+      assert.equal(await cancelFavorite.locator('svg').getAttribute('fill'), 'currentColor');
+      assert.equal(favoriteWrites.at(-1), 'POST');
+      await cancelFavorite.click();
+      await favorite.waitFor();
+      assert.equal(favoriteWrites.at(-1), 'DELETE');
       await page.getByRole('button', { name: '查看结果', exact: true }).click();
       await page.getByText('已完成', { exact: true }).waitFor();
       assert.equal(await page.getByText('已掌握本次题目', { exact: true }).count(), 0);
@@ -176,12 +195,45 @@ const topic = { id: 'topic', name: '长标题练习专题与专项训练', descr
       await searchAgain();
       await page.getByRole('button', { name: '提示 0/3', exact: true }).click();
       await page.getByRole('button', { name: '提示 1/3', exact: true }).waitFor();
+      await page.getByRole('button', { name: '提示 1/3', exact: true }).click();
+      await page.getByRole('button', { name: '提示 2/3', exact: true }).click();
+      await page.getByText(/这一步：车九进一/).waitFor();
+      assert.equal(await page.locator('.mobile-solver-board .analysis-arrow-layer').count() > 0, true);
       await solve();
-      assert.equal(attempts.at(-1).hintsUsed, 1); assert.equal(attempts.at(-1).outcome, 'completed');
+      assert.equal(attempts.at(-1).hintsUsed, 3); assert.equal(attempts.at(-1).outcome, 'completed');
       await page.getByRole('button', { name: '再试一次', exact: true }).click();
       await solve();
-      assert.equal(attempts.at(-1).hintsUsed, 0);
+      assert.equal(attempts.at(-1).hintsUsed, 3, 'restarting must retain hints and cannot restore first-try correctness');
       assert.equal(attempts.at(-1).outcome, 'completed', 'restart must keep the solver mode and submit the new attempt');
+      for (const wrongCount of [0, 1, 2, 3, 4]) {
+        await searchAgain();
+        await page.getByRole('button', { name: '做题规则', exact: true }).click();
+        const rules = page.getByRole('dialog', { name: '做题规则' });
+        await rules.waitFor();
+        assert.match(await rules.textContent(), /第 4 次及以后/);
+        assert.equal(await rules.evaluate((node) => node.scrollWidth > node.clientWidth), false);
+        await page.screenshot({ path: `/tmp/qixi-practice-rules-${viewport.width}.png` });
+        await rules.getByRole('button', { name: '关闭做题规则', exact: true }).click();
+        for (let index = 0; index < wrongCount; index++) {
+          await page.locator('.mobile-solver-board .board-square[aria-label^="a0 红"]').click();
+          await page.locator('.mobile-solver-board .board-square[aria-label="a2"]').click();
+          await page.getByText(/这步不对，请再试试/).waitFor();
+          assert.equal(await page.locator('.mobile-solver-board .board-square[aria-label^="a2 红"] img').count(), 1, 'a legal wrong move must land on the board');
+          assert.equal(created.items[0].status, 'pending');
+          await page.getByRole('button', { name: /退回重试/ }).click();
+          await page.locator('.mobile-solver-board .board-square[aria-label^="a0 红"] img').waitFor();
+        }
+        if (wrongCount) {
+          await page.getByRole('button', { name: '重来', exact: true }).click();
+          await page.getByText('已回到起点，本题的错误、提示和用时继续保留。', { exact: true }).waitFor();
+        }
+        await solve();
+        assert.equal(attempts.at(-1).mistakes, wrongCount);
+        const score = Math.max(0, 3 - wrongCount);
+        assert.equal((await page.getByLabel('本题评分', { exact: true }).textContent()).trim(), `${score} 分 · ${score} 星`);
+        if (wrongCount) assert.match(await page.locator('.mobile-solver-result').textContent(), new RegExp(`第 ${wrongCount + 1} 次尝试完成`));
+        await page.screenshot({ path: `/tmp/qixi-practice-stars-${viewport.width}-${wrongCount}.png` });
+      }
       await searchAgain();
       attemptFail = true;
       await page.getByRole('button', { name: '查看解析', exact: true }).click();
@@ -251,9 +303,19 @@ const topic = { id: 'topic', name: '长标题练习专题与专项训练', descr
       await page.locator('.mobile-solver-page').waitFor();
       await page.getByRole('button', { name: '返回练习', exact: true }).click();
       await page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: '题库', exact: true }).click();
+      const filters = page.getByRole('tablist', { name: '题库完成状态筛选' });
+      const platformSection = page.locator('.mobile-library-section').filter({ has: page.getByText('平台训练题库', { exact: true }) });
+      await filters.getByRole('tab', { name: '练习中', exact: true }).click();
+      assert.equal(await platformSection.locator('.mobile-library-list > button').count(), 1);
+      assert.match(await platformSection.textContent(), /返回验收题库/);
+      await filters.getByRole('tab', { name: '已完成', exact: true }).click();
+      assert.equal(await platformSection.locator('.mobile-library-list > button').count(), 1);
+      assert.match(await platformSection.textContent(), /已完成测试题库/);
+      await filters.getByRole('tab', { name: '全部', exact: true }).click();
+      assert.equal(await platformSection.locator('.mobile-library-list > button').count(), 3);
       const categoryToggle = page.getByRole('button', { name: '全部分类', exact: true });
       await categoryToggle.click();
-      await page.getByRole('tab', { name: 'S 杀法 25', exact: true }).click();
+      await page.getByRole('tab', { name: 'S 杀法 28', exact: true }).click();
       await page.getByRole('button', { name: '收起分类', exact: true }).click();
       await page.screenshot({ path: `/tmp/practice-library-${viewport.width}.png` });
       await page.getByRole('button', { name: /返回验收题库/ }).click();
@@ -352,7 +414,6 @@ const topic = { id: 'topic', name: '长标题练习专题与专项训练', descr
         await page.getByRole('button', { name: /第 1 题：多步分支草稿/ }).click();
         await page.getByText(terminal || savedMoves.length === 3 ? '已恢复完成的题解。' : '已恢复上次进度，可继续完成题解。', { exact: true }).waitFor();
       };
-      const completionResponse = page.waitForResponse((response) => response.url().endsWith('/attempts')).catch((error) => error);
       await openQuestion();
       assert.match(await page.locator('.mobile-solver-meta b').textContent(), /^00:1[2-9]$/);
       if (!terminal && savedMoves.length < 3) {
@@ -366,7 +427,19 @@ const topic = { id: 'topic', name: '长标题练习专题与专项训练', descr
         await page.locator('.mobile-solver-board .board-square[aria-label="a1"]').click();
       }
       await page.locator('.mobile-solver-result').waitFor();
-      assert(!(await completionResponse instanceof Error), 'recovered completion must reach the server');
+      await page.evaluate(() => window.dispatchEvent(new Event('online')));
+      await page.waitForTimeout(200);
+      assert.equal(submitted.length, 0, 'completion and reconnect must not submit unreviewed homework');
+      await page.getByRole('button', { name: '返回作业', exact: true }).click();
+      await page.getByRole('button', { name: /草稿恢复作业/ }).click();
+      await page.getByRole('button', { name: '检查并提交', exact: true }).click();
+      const review = page.getByRole('dialog', { name: '检查作业' });
+      await review.waitFor();
+      assert.match(await review.textContent(), /提示 1 次 · 错误 2 次/);
+      await page.screenshot({ path: '/tmp/qixi-manual-submit-review.png' });
+      const completionResponse = page.waitForResponse((response) => response.url().endsWith('/attempts'));
+      await review.getByRole('button', { name: '确认提交（1 题）', exact: true }).click();
+      await completionResponse;
       assert.equal(submitted.length, 1, 'a completed recovered path submits exactly one attempt');
       assert.deepEqual(submitted[0].moves, terminal ? ['e7e8'] : ['a0a2', 'a9a8', 'a2a1']);
       assert.equal(submitted[0].hintsUsed, 1);
@@ -375,6 +448,36 @@ const topic = { id: 'topic', name: '长标题练习专题与专项训练', descr
       assert.equal(submitted[0].outcome, 'completed');
       assert.deepEqual(errors, []);
       console.log(`${savedMoves.length} saved half-moves: branch, board, last move, timer, delayed reply and completed-path submission passed`);
+      await page.close();
+    }
+    for (const enabled of [false, true]) {
+      const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+      await page.addInitScript(() => {
+        localStorage.setItem('xiangqi-training-mobile-onboarding-v1', 'done');
+        localStorage.setItem('xiangqi-teaching-session-server', 'https://api-test.qixiapp.cn');
+      });
+      await page.route('https://api*.qixiapp.cn/**', async (route) => {
+        const path = new URL(route.request().url()).pathname;
+        let body = [];
+        if (path.endsWith('/auth/refresh')) body = { token: 'policy-token', expiresAt: '2099-01-01T00:00:00Z', user: { id: 'student-policy', orgId: 'org', role: 'student', loginName: 'policy', displayName: '学生' } };
+        else if (path.endsWith('/practice/dashboard')) body = { studentLocalImportEnabled: enabled, pendingAssignmentCount: 0, wrongCount: 0, favoriteCount: 0, topics: [], studyTopics: [], history: [] };
+        else if (path.endsWith('/student/assignments')) body = { items: [] };
+        await route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
+      });
+      await page.goto(`${url}/library`);
+      await page.getByRole('navigation', { name: '主导航' }).waitFor();
+      await page.waitForTimeout(300);
+      assert.equal(await page.getByRole('button', { name: '导入 CBL 题库', exact: true }).count() > 0, enabled);
+      assert.equal(await page.getByText('我的本地题库', { exact: true }).count() > 0, enabled);
+      await page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: '我的', exact: true }).click();
+      assert.equal(await page.getByRole('button', { name: /导入题库/ }).count() > 0, enabled);
+      if (enabled) {
+        await page.getByRole('button', { name: /导入题库/ }).click();
+        await page.getByRole('button', { name: '选择 CBL 文件', exact: true }).waitFor();
+        assert.equal(await page.getByText('设为 VIP 题库', { exact: true }).count(), 0);
+      }
+      await page.screenshot({ path: `/tmp/qixi-student-import-${enabled}.png` });
+      console.log(`student local import ${enabled}: library/account visibility and VIP controls passed`);
       await page.close();
     }
     for (const role of [null, 'user']) {

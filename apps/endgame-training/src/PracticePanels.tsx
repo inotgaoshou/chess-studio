@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronLeft, CircleCheckBig, LogIn, RefreshCw } from "lucide-react";
+import { ChevronLeft, LogIn, RefreshCw, Star } from "lucide-react";
 import { teachingClient, type PracticeReviewProblem } from "./teaching";
 
 export function PracticeAccessPanel({ signedIn, onLogin }: { signedIn: boolean; onLogin(): void }) {
@@ -62,7 +62,7 @@ export function PracticeFavoriteButton({ problemId, onSaved }: { problemId: stri
   const lock = useRef(false);
   const [retry, setRetry] = useState(0);
   useEffect(() => {
-    let active = true; setLoading(true); setError("");
+    let active = true; setLoading(true); setError(""); setFavorite(false);
     void teachingClient.practiceFavorites().then((items) => { if (active) setFavorite(items.some((item) => item.problem.id === problemId)); }).catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : "读取收藏失败"); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [problemId, retry]);
@@ -74,5 +74,5 @@ export function PracticeFavoriteButton({ problemId, onSaved }: { problemId: stri
     catch (reason) { setError(reason instanceof Error ? reason.message : "保存收藏失败"); }
     finally { lock.current = false; setLoading(false); }
   }
-  return <span className="practice-favorite"><button type="button" disabled={loading} aria-pressed={favorite} onClick={() => void toggle()}><CircleCheckBig/>{loading ? "处理中…" : error ? "重试收藏" : favorite ? "取消收藏" : "收藏题目"}</button>{error && <small role="alert">{error}</small>}</span>;
+  return <span className="practice-favorite"><button type="button" disabled={loading} aria-pressed={favorite} title={favorite ? "取消服务器收藏" : "收藏到服务器"} onClick={() => void toggle()}><Star fill={favorite ? "currentColor" : "none"}/>{loading ? "读取收藏…" : error ? "重试收藏" : favorite ? "取消收藏" : "收藏题目"}</button>{error && <small role="alert">{error}</small>}</span>;
 }

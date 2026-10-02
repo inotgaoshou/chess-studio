@@ -48,6 +48,7 @@ export type CblManualLibrary = {
 };
 
 export type TrainingLibrary = {
+  practicedCount?: number;
   id: string;
   title: string;
   fingerprint: string;
@@ -60,6 +61,7 @@ export type TrainingLibrary = {
   assignmentId?: string;
   dueAt?: string | null;
   isUnread?: boolean;
+  pendingSubmissionCount?: number;
   folderPath?: string;
 };
 
@@ -72,6 +74,7 @@ export type TrainingProblem = CblProblem & {
   assignmentId?: string;
   serverProblemId?: string;
   difficulty?: number | null;
+  submissionState?: "draft" | "queued" | "submitted";
   accessTier?: "public" | "vip" | "vip_or_assignment";
 };
 

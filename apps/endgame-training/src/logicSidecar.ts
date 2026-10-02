@@ -100,5 +100,5 @@ export function trainingLogicMiss(problem: TrainingProblem, iccs: string, legal:
   if (direct) return direct;
   if (logic?.failureReason) return `这步合法，但暂不符合题解主线：${logic.failureReason}`;
   if (logic?.goal) return `这步合法，但没有完成本题目标：${logic.goal}`;
-  return "这步不在题解分支中，局面没有改变，可以继续尝试。";
+  return "这步不在已收录的题解分支中，请退回后再试。";
 }

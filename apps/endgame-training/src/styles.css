@@ -6705,9 +6705,40 @@ html.tablet-webview { --mobile-header-height:calc(var(--tablet-header-content-he
 .mobile-solver-answer > div { display:flex; justify-content:center; gap:8px; }
 .mobile-solver-answer > div button { width:44px; height:44px; padding:0; border:1px solid #c9dccd; border-radius:6px; background:#fbfdfb; color:#397b56; display:grid; place-items:center; }
 .mobile-solver-answer > div svg { width:18px; height:18px; }
+.assignment-submission { padding:12px 0; border-block:1px solid #d5e3d8; display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; }
+.assignment-submission > div:first-child { display:grid; gap:4px; }
+.assignment-submission strong { color:#294638; font-size:14px; }
+.assignment-submission small, .assignment-submission p { margin:0; color:#667a6d; font-size:12px; line-height:1.5; }
+.assignment-submission > p { flex-basis:100%; }
+.assignment-submission button { min-height:40px; padding:8px 12px; border:1px solid #bdd4c4; border-radius:6px; background:#fbfdfb; color:#397b56; display:flex; align-items:center; justify-content:center; gap:6px; font-size:12px; }
+.assignment-submission button svg { width:18px; height:18px; flex:0 0 18px; }
+.assignment-submission button:disabled { opacity:.5; }
+.assignment-review-backdrop { position:fixed; z-index:150; inset:0; padding:calc(16px + env(safe-area-inset-top,0px)) 14px calc(16px + env(safe-area-inset-bottom,0px)); background:#122c2280; display:grid; place-items:center; }
+.assignment-review-dialog { width:min(560px,100%); max-height:100%; min-height:0; padding:16px; border-radius:8px; background:#fbfdfb; display:flex; flex-direction:column; gap:14px; }
+.assignment-review-dialog > header { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.assignment-review-dialog > header > span { display:grid; gap:4px; min-width:0; }
+.assignment-review-dialog > header > button { width:40px; height:40px; padding:0; flex:0 0 40px; }
+.assignment-review-answers { min-height:0; overflow:auto; overscroll-behavior:contain; display:grid; gap:10px; }
+.assignment-review-answers article { padding:10px 0; border-bottom:1px solid #d5e3d8; display:grid; gap:6px; }
+.assignment-review-answers article > header { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:5px; }
+.assignment-review-answers article > header span { color:#8b6b27; font-size:11px; }
+.assignment-review-moves { overflow-wrap:anywhere; }
+.assignment-review-answers article button { justify-self:start; }
+.assignment-review-warning { padding:8px; border-radius:5px; background:#fff8e8; color:#8b6b27 !important; }
+.assignment-review-dialog footer { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; }
+.assignment-review-dialog footer .primary { border-color:#397b56; background:#397b56; color:#fff; }
 html .mobile-practice-home .mobile-page-heading { min-height:40px; }
 html .mobile-practice-home .mobile-page-heading > span { display:flex; flex-direction:row; align-items:center; gap:7px; }
 @media (min-width:600px) {
   .mobile-solver-page { grid-template-rows:auto auto auto auto; align-content:start; }
 }
 html.tablet-webview .mobile-solver-page { grid-template-rows:auto auto auto auto; align-content:start; }
+.practice-rules-trigger { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 6px 10px; font-size: 13px; }
+.practice-rules-trigger svg { width: 18px; height: 18px; }
+.practice-rules-dialog { width: min(440px, calc(100vw - 24px)); max-height: calc(100dvh - 40px); overflow-y: auto; background: #fff; border-radius: 8px; padding: 16px; color: #253c33; }
+.practice-rules-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.practice-rules-dialog header button { width: 44px; height: 44px; display: grid; place-items: center; padding: 0; }
+.practice-rules-dialog table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
+.practice-rules-dialog th, .practice-rules-dialog td { padding: 10px 6px; border-bottom: 1px solid #d8e5de; text-align: left; }
+.practice-rules-dialog p { font-size: 14px; line-height: 1.6; }
+.practice-score { font-weight: 700; color: #8b620f; }

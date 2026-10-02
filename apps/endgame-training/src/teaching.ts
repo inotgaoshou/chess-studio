@@ -6,7 +6,7 @@ const AUTH_KEY = "xiangqi-teaching-auth";
 const SERVER_KEY = "xiangqi-teaching-server-url";
 const SESSION_SERVER_KEY = "xiangqi-teaching-session-server";
 const DB_NAME = "xiangqi-teaching-cache";
-const DB_VERSION = 5;
+const DB_VERSION = 6;
 const SYNC_META_PREFIX = "xiangqi-teaching-sync";
 const JOIN_STATUS_PREFIX = "xiangqi-organization-join-status";
 const VIP_ACCESS_MESSAGE = "作业权益已过期或未开通，请联系老师或管理员续期。";
@@ -14,6 +14,8 @@ let lastSubmitError = "";
 let activeAuth: TeachingAuth | undefined;
 let refreshInFlight: Promise<TeachingAuth | undefined> | undefined;
 let sessionEpoch = 0;
+const assignmentSubmissionLocks = new Set<string>();
+const assignmentAttemptRequests = new Map<string, Promise<boolean>>();
 type AuthContext = { ownerId: string; orgId: string; serverUrl: string; epoch: number };
 const authContexts = new WeakMap<TeachingAuth, AuthContext>();
 const tokenContexts = new Map<string, AuthContext>();
@@ -76,7 +78,8 @@ export type PracticeProblem = {
   solution: SolutionMove[];
   active: boolean;
 };
-export type PracticeSessionItem = { id: string; ordinal: number; status: "pending" | "completed" | "revealed" | "abandoned"; problem: PracticeProblem; draft?: { moves?: string[]; hints?: number; mistakes?: number; elapsedMs?: number } };
+export type PracticeGrade = { score: number; stars: number; attemptNumber: number; firstTryCorrect: boolean; mistakes: number; hintsUsed: number };
+export type PracticeSessionItem = { id: string; ordinal: number; status: "pending" | "completed" | "revealed" | "abandoned"; problem: PracticeProblem; grade?: PracticeGrade; draft?: { moves?: string[]; hints?: number; mistakes?: number; elapsedMs?: number } };
 export type PracticeSession = {
   id: string;
   sourceKind: string;
@@ -118,6 +121,7 @@ export type PracticeSearchQuery = {
   limit?: number;
 };
 export type PracticeHome = {
+  studentLocalImportEnabled?: boolean;
   resumeSession?: PracticeSession | null;
   pendingAssignmentCount: number;
   wrongCount: number;
@@ -181,6 +185,8 @@ export type TeachingAssignment = {
   isUnread?: boolean;
 };
 export type PlatformProblemLibrary = {
+  practicedCount?: number;
+  completedCount?: number;
   id: string;
   title: string;
   publishedCount: number;
@@ -324,7 +330,9 @@ export type PendingTeachingAttempt = {
   ownerId?: string;
   orgId?: string;
   serverUrl?: string;
+  submissionRequested?: boolean;
 };
+export type AssignmentAnswer = PendingTeachingAttempt & { cacheKey: string };
 export type AssignmentDraft = {
   assignmentId: string;
   problemId: string;
@@ -487,6 +495,7 @@ function openDb(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains("practiceAttempts")) db.createObjectStore("practiceAttempts", { keyPath: "clientAttemptId" });
       if (!db.objectStoreNames.contains("assignmentViews")) db.createObjectStore("assignmentViews", { keyPath: "cacheKey" });
       if (!db.objectStoreNames.contains("assignmentDrafts")) db.createObjectStore("assignmentDrafts", { keyPath: "cacheKey" });
+      if (!db.objectStoreNames.contains("assignmentAnswers")) db.createObjectStore("assignmentAnswers", { keyPath: "cacheKey" });
     };
     opening.onsuccess = () => resolve(opening.result);
     opening.onerror = () => reject(opening.error);
@@ -845,7 +854,8 @@ export const teachingClient = {
       fingerprint: library.id,
       parserVersion: 0,
       problemCount: library.publishedCount,
-      completedCount: 0,
+      completedCount: library.completedCount ?? 0,
+      practicedCount: library.practicedCount ?? 0,
       importedAt: library.createdAt,
       source: "platform",
       accessTier: "public",
@@ -977,7 +987,7 @@ export const teachingClient = {
     const auth = this.auth();
     if (!auth) return 0;
     return (await storeAll<PendingTeachingAttempt>("attempts"))
-      .filter((attempt) => sameAttemptContext(attempt, auth)).length;
+      .filter((attempt) => sameAttemptContext(attempt, auth) && attempt.submissionRequested === true).length;
   },
   async unreadAssignmentCount() {
     const auth = this.auth();
@@ -1021,6 +1031,59 @@ export const teachingClient = {
     const auth = this.auth();
     if (!auth) return;
     await storeDelete("assignmentDrafts", assignmentDraftKey(auth, assignmentId, problemId));
+  },
+  async assignmentAnswers(assignmentId?: string): Promise<AssignmentAnswer[]> {
+    const auth = this.auth();
+    if (!auth || auth.user.role !== "student") return [];
+    const current = (await storeAll<AssignmentAnswer>("assignmentAnswers")).filter((answer) => sameAttemptContext(answer, auth) && (!assignmentId || answer.assignmentId === assignmentId));
+    // Previously queued automatic submissions now require the student's review.
+    const legacy = (await storeAll<PendingTeachingAttempt>("attempts")).filter((answer) => sameAttemptContext(answer, auth) && (!assignmentId || answer.assignmentId === assignmentId));
+    const latest = new Map<string, AssignmentAnswer>();
+    for (const answer of [...legacy, ...current].sort((a, b) => a.completedAt.localeCompare(b.completedAt))) {
+      const key = assignmentDraftKey(auth, answer.assignmentId, answer.problemId);
+      latest.set(key, { ...answer, cacheKey: key });
+    }
+    return [...latest.values()];
+  },
+  async saveAssignmentAnswer(attempt: PendingTeachingAttempt, expectedAuth?: TeachingAuth) {
+    const auth = expectedAuth ?? this.auth();
+    if (!auth || auth.user.role !== "student") throw new Error("请登录学生账号后保存作业");
+    const key = assignmentDraftKey(auth, attempt.assignmentId, attempt.problemId);
+    if (assignmentSubmissionLocks.has(assignmentCacheKey(auth, attempt.assignmentId))) throw new Error("作业正在提交，暂时不能修改");
+    const existing = (await storeAll<AssignmentAnswer>("assignmentAnswers")).find((answer) => answer.cacheKey === key);
+    if (existing?.submissionRequested) throw new Error("本题已确认提交，等待提交完成后再修改");
+    await storePut("assignmentAnswers", { ...attempt, ...contextOf(auth), cacheKey: key, submissionRequested: false } satisfies AssignmentAnswer);
+  },
+  async clearAssignmentAnswer(assignmentId: string, problemId: string) {
+    const auth = this.auth();
+    if (!auth) return;
+    const answer = (await this.assignmentAnswers(assignmentId)).find((item) => item.problemId === problemId);
+    if (assignmentSubmissionLocks.has(assignmentCacheKey(auth, assignmentId))) throw new Error("作业正在提交，暂时不能修改");
+    if (answer?.submissionRequested) throw new Error("本题已确认提交，等待提交完成后再修改");
+    await storeDelete("assignmentAnswers", assignmentDraftKey(auth, assignmentId, problemId));
+    const legacy = (await storeAll<PendingTeachingAttempt>("attempts")).filter((item) => sameAttemptContext(item, auth) && item.assignmentId === assignmentId && item.problemId === problemId);
+    await Promise.all(legacy.map((item) => storeDelete("attempts", item.clientAttemptId)));
+    await this.clearAssignmentDraft(assignmentId, problemId);
+  },
+  async submitAssignmentAnswers(assignmentId: string, reviewedAttemptIds: string[]) {
+    const auth = this.auth();
+    const authContext = auth && authContexts.get(auth);
+    if (!auth || !authContext || !isCurrentAuthContext(authContext)) throw new Error("请重新登录后提交作业");
+    const key = assignmentCacheKey(auth, assignmentId);
+    if (assignmentSubmissionLocks.has(key)) throw new Error("作业正在提交，请稍候");
+    assignmentSubmissionLocks.add(key);
+    try {
+      const answers = await this.assignmentAnswers(assignmentId);
+      const selected = answers.filter((answer) => reviewedAttemptIds.includes(answer.clientAttemptId));
+      if (!selected.length || selected.length !== reviewedAttemptIds.length) throw new Error("答题记录已变化，请重新检查后提交");
+      let submitted = 0;
+      for (const answer of selected) {
+        if (!isCurrentAuthContext(authContext)) throw new Error("账号或机构已变化，请重新检查作业");
+        await storePut("assignmentAnswers", { ...answer, submissionRequested: true });
+        if (await this.submit(answer, auth)) submitted++;
+      }
+      return { submitted, pending: selected.length - submitted };
+    } finally { assignmentSubmissionLocks.delete(key); }
   },
   async syncPersonalManuals(games: LocalManualGame[], folders: LocalManualFolder[], analyses: LocalManualAnalysisSummary[]) {
     const auth = this.auth();
@@ -1071,31 +1134,46 @@ export const teachingClient = {
     const auth = this.auth();
     if (!auth) return [];
     const context = contextOf(auth);
+    const answers = await this.assignmentAnswers();
     return (await storeAll<CachedAssignment>("assignmentCaches"))
       .filter((cache) => cache.ownerId === context.ownerId && cache.orgId === context.orgId && cache.serverUrl === context.serverUrl)
-      .map(toLibrary)
+      .map((cache) => ({ ...toLibrary(cache), pendingSubmissionCount: answers.filter((answer) => answer.assignmentId === cache.assignment.id).length }))
       .sort((a, b) => b.importedAt.localeCompare(a.importedAt));
   },
   async problems(assignmentId: string) {
     const auth = this.auth();
     if (!auth) return [];
     const caches = await storeAll<CachedAssignment>("assignmentCaches");
+    const answers = await this.assignmentAnswers(assignmentId);
     return caches
       .find((item) => item.cacheKey === assignmentCacheKey(auth, assignmentId))
-      ?.problems.map((problem, sourceIndex) => ({ ...toProblem(problem), sourceIndex })) ?? [];
+      ?.problems.map((problem, sourceIndex) => {
+        const answer = answers.find((item) => item.problemId === problem.problemId);
+        return { ...toProblem(problem), sourceIndex, submissionState: answer ? answer.submissionRequested ? "queued" : "draft" : problem.attemptCount ? "submitted" : undefined } satisfies TrainingProblem;
+      }) ?? [];
   },
   async submit(attempt: PendingTeachingAttempt, expectedAuth?: TeachingAuth) {
     const auth = expectedAuth ?? this.auth();
-    const enriched = auth ? { ...attempt, ...contextOf(auth) } : { ...attempt };
+    const key = `${auth ? assignmentCacheKey(auth, attempt.assignmentId) : serverUrl()}:${attempt.clientAttemptId}`;
+    const existing = assignmentAttemptRequests.get(key);
+    if (existing) return existing;
+    const pending = this.sendAssignmentAttempt(attempt, auth);
+    assignmentAttemptRequests.set(key, pending);
+    try { return await pending; }
+    finally { assignmentAttemptRequests.delete(key); }
+  },
+  async sendAssignmentAttempt(attempt: PendingTeachingAttempt, auth?: TeachingAuth) {
+    const enriched = auth ? { ...attempt, ...contextOf(auth), submissionRequested: true } : { ...attempt, submissionRequested: true };
     lastSubmitError = "";
     await storePut("attempts", enriched);
     const authContext = auth && authContexts.get(auth);
     if (!auth || !authContext || !isCurrentAuthContext(authContext)) { lastSubmitError = "请登录原教学账号后补交，答题记录已保留。"; return false; }
-    await markCachedAttempt(auth, enriched).catch(() => undefined);
-    await storeDelete("assignmentDrafts", assignmentDraftKey(auth, enriched.assignmentId, enriched.problemId)).catch(() => undefined);
     try {
       await request("/api/v1/student/attempts", { method: "POST", body: JSON.stringify(enriched) }, auth.token);
       await storeDelete("attempts", enriched.clientAttemptId);
+      await markCachedAttempt(auth, enriched);
+      await storeDelete("assignmentDrafts", assignmentDraftKey(auth, enriched.assignmentId, enriched.problemId));
+      await storeDelete("assignmentAnswers", assignmentDraftKey(auth, enriched.assignmentId, enriched.problemId));
       lastSubmitError = "";
       return true;
     } catch (error) {
@@ -1120,13 +1198,8 @@ export const teachingClient = {
     }
     for (const attempt of await storeAll<PendingTeachingAttempt>("attempts")) {
       if (!isCurrentAuthContext(authContext)) return;
-      if (!sameAttemptContext(attempt, auth)) continue;
-      try {
-        await request("/api/v1/student/attempts", { method: "POST", body: JSON.stringify(attempt) }, auth.token);
-        await storeDelete("attempts", attempt.clientAttemptId);
-      } catch {
-        break;
-      }
+      if (!sameAttemptContext(attempt, auth) || attempt.submissionRequested !== true) continue;
+      if (!await this.submit(attempt, auth)) break;
     }
     for (const attempt of await storeAll<PendingPracticeAttempt>("practiceAttempts")) {
       if (!isCurrentAuthContext(authContext)) return;
