@@ -1367,6 +1367,8 @@ function MobileLibraryPanel({ libraries, gameLibraries, signedIn, canImportLocal
   const [categoriesExpanded, setCategoriesExpanded] = useState(false);
   const localLibraries = libraries.filter((item) => !item.source || item.source === "local");
   const platformLibraries = libraries.filter((item) => item.source === "platform");
+  const hasPracticeLibraries = localLibraries.length > 0 || platformLibraries.length > 0;
+  const hasBrowsableContent = hasPracticeLibraries || gameLibraries.length > 0;
   const teacherLibraryCount = libraries.filter((item) => item.source === "teaching").length;
   const matchesProgress = (item: TrainingLibrary) => filter === "all" || (filter === "progress"
     ? (item.practicedCount ?? item.completedCount) > 0 && item.completedCount < item.problemCount
@@ -1399,8 +1401,8 @@ function MobileLibraryPanel({ libraries, gameLibraries, signedIn, canImportLocal
 
   return <main className="mobile-library-page">
     <header className="mobile-page-heading"><span><BookOpen/><strong>题库</strong></span>{canImportLocal && <button type="button" className="mobile-heading-icon" title="导入 CBL 题库" aria-label="导入 CBL 题库" onClick={onImport}><FileUp/></button>}</header>
-    <label className="mobile-library-search"><Search/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索平台或本地题库" aria-label="搜索题库" autoComplete="off"/>{query && <button type="button" aria-label="清除搜索" onClick={() => setQuery("")}><X/></button>}</label>
-    <div className="mobile-library-filters" role="tablist" aria-label="题库完成状态筛选"><button type="button" role="tab" className={filter === "all" ? "active" : ""} aria-selected={filter === "all"} onClick={() => setFilter("all")}>全部</button><button type="button" role="tab" className={filter === "progress" ? "active" : ""} aria-selected={filter === "progress"} onClick={() => setFilter("progress")}>练习中</button><button type="button" role="tab" className={filter === "completed" ? "active" : ""} aria-selected={filter === "completed"} onClick={() => setFilter("completed")}>已完成</button></div>
+    {hasBrowsableContent && <label className="mobile-library-search"><Search/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索平台或本地题库" aria-label="搜索题库" autoComplete="off"/>{query && <button type="button" aria-label="清除搜索" onClick={() => setQuery("")}><X/></button>}</label>}
+    {hasPracticeLibraries && <div className="mobile-library-filters" role="tablist" aria-label="题库完成状态筛选"><button type="button" role="tab" className={filter === "all" ? "active" : ""} aria-selected={filter === "all"} onClick={() => setFilter("all")}>全部</button><button type="button" role="tab" className={filter === "progress" ? "active" : ""} aria-selected={filter === "progress"} onClick={() => setFilter("progress")}>练习中</button><button type="button" role="tab" className={filter === "completed" ? "active" : ""} aria-selected={filter === "completed"} onClick={() => setFilter("completed")}>已完成</button></div>}
     {signedIn ? <section className="mobile-library-overview platform"><span><Database/></span><div><strong>{platformLibraries.length || gameLibraries.length ? `${platformLibraries.length} 本平台训练题库 · ${gameLibraries.length} 本棋谱学习` : "平台内容待发布"}</strong><small>{platformLibraries.length || gameLibraries.length ? "按专题选择题目练习；完整棋谱仅供阅读、复盘与拆棋。" : "原始 CBL 导入后需经后台审核并发布，才会按账号权益显示在这里。"}</small></div></section> : <section className="mobile-library-overview"><span><UserRound/></span><div><strong>登录后读取平台内容</strong><small>平台训练题与完整棋谱按账号权限加载；本地题库始终可用。</small></div></section>}
     {platformLibraries.length > 0 && <section className="mobile-library-section"><header><strong>平台训练题库</strong><button type="button" className="mobile-section-link" aria-expanded={categoriesExpanded} onClick={() => setCategoriesExpanded((expanded) => !expanded)}><span>{categoriesExpanded ? "收起分类" : "全部分类"}</span><ChevronDown className={categoriesExpanded ? "expanded" : ""}/></button></header><div className="mobile-category-strip" role="tablist" aria-label="平台题库分类"><button type="button" role="tab" aria-selected={category === "all"} className={category === "all" ? "active" : ""} onClick={() => setCategory("all")}>全部</button>{(categoriesExpanded ? Object.keys(LIBRARY_CATEGORY_NAMES) : FEATURED_LIBRARY_CATEGORIES).map((code) => <button type="button" role="tab" aria-selected={category === code} key={code} className={category === code ? "active" : ""} onClick={() => setCategory(category === code ? "all" : code)}>{code} {LIBRARY_CATEGORY_NAMES[code]}{categoryCounts.has(code) ? ` ${categoryCounts.get(code)}` : ""}</button>)}</div><div className="mobile-library-list">{visiblePlatformLibraries.map((item) => renderLibraryCard(item, "platform"))}{!visiblePlatformLibraries.length && <div className="mobile-library-empty"><Search/><strong>当前分类暂无可用题库</strong><small>内容发布后会按账号权益自动出现在这里。</small></div>}</div></section>}
     {gameLibraries.length > 0 && <section className="mobile-library-section"><header><strong>平台棋谱学习</strong><small>{gameLibraries.length} 本</small></header><div className="mobile-library-list">{gameLibraries.filter((item) => item.title.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())).map((item) => <button type="button" key={item.id} onClick={() => onOpenGameLibrary(item)}><span className="mobile-library-cover game"><FilePenLine/></span><span><b>{item.title}</b><small>{item.folderPath ? `${item.folderPath} · ` : ""}{item.gameCount} 局 · 阅读、复盘与拆棋</small></span><ChevronRight/></button>)}</div></section>}
@@ -2220,7 +2222,11 @@ export function App() {
   const [resumeTeacherAfterLogin, setResumeTeacherAfterLogin] = useState(false);
   const [studentAssignmentsOpen, setStudentAssignmentsOpen] = useState(() => mobileRouteFromPath() === "assignments");
   const [practiceHome, setPracticeHome] = useState<PracticeHome>();
-  const canImportLocal = !mobileLayout || teachingAuth?.user.role !== "student" || practiceHome?.studentLocalImportEnabled === true;
+  const canImportLocal = !mobileLayout || Boolean(teachingAuth && (
+    ["coach", "admin"].includes(teachingAuth.user.role)
+    || teachingAuth.user.role === "student" && practiceHome?.studentLocalImportEnabled === true
+  ));
+  const importDeniedReason = !teachingAuth ? "请先登录后导入题库" : teachingAuth.user.role === "student" ? "当前机构未开放学生本地导入" : "个人账号未开放本地导入";
   const [practiceTopicId, setPracticeTopicId] = useState<string | undefined>(() => window.location.pathname.match(/^\/practice\/topics\/([^/]+)/)?.[1]);
   useEffect(() => {
     const openTopic = (event: Event) => {
@@ -2383,6 +2389,7 @@ export function App() {
   const [boardFlipped, setBoardFlipped] = useState(() => localStorage.getItem("xiangqi-training-board-flipped") === "true");
   const [studyEvaluationVisible, setStudyEvaluationVisible] = useState(() => localStorage.getItem("xiangqi-training-study-evaluation") === "true");
   const [importPanelOpen, setImportPanelOpen] = useState(false);
+  useEffect(() => { if (!canImportLocal) setImportPanelOpen(false); }, [canImportLocal]);
   const [showAbout, setShowAbout] = useState(false);
   const [boardSkin, setBoardSkin] = useState(() => readSkinPreference(BOARD_SKIN_KEY));
   const [pieceSkin, setPieceSkin] = useState(() => readSkinPreference(PIECE_SKIN_KEY));
@@ -2924,7 +2931,7 @@ export function App() {
   useEffect(() => () => { analysisGeneration.current += 1; void cancelPikafishSearch(); }, []);
 
   async function importBytes(bytes: Uint8Array, logicJson?: string, accessTier: "public" | "vip" = "public") {
-    if (!canImportLocal) throw new Error("当前机构未开放学生本地导入");
+    if (!canImportLocal) throw new Error(importDeniedReason);
     if (teachingAuth?.user.role === "student") accessTier = "public";
     if (bytes.byteLength > CBL_IMPORT_MAX_BYTES) throw new Error("文件超过 50MB，请拆分或改用更小题库。");
     setNotice("正在解析 CBL…");
@@ -2994,7 +3001,7 @@ export function App() {
     setNotice(results.join("；"));
   }
   async function importCblUrl(value: string) {
-    if (!canImportLocal) throw new Error("当前机构未开放学生本地导入");
+    if (!canImportLocal) throw new Error(importDeniedReason);
     let url: URL;
     try {
       url = new URL(value);
@@ -4967,7 +4974,11 @@ export function App() {
   }
 
   function openImportPanel() {
-    if (!canImportLocal) return;
+    if (!canImportLocal) {
+      setNotice(importDeniedReason);
+      if (!teachingAuth) { setTeachingMessage(importDeniedReason); setTeachingAccountOpen(true); }
+      return;
+    }
     if (teachingAuth?.user.role === "student") setImportAccessTier("public");
     setImportPanelOpen(true);
     setStudyMenuOpen(false);

@@ -120,6 +120,13 @@ status has yet been verified.
   performed.
 - Logout remembers only the successful account name, scoped to API environment;
   password fields remain empty. Unit regression covers logout and restart.
+- `node scripts/test-mobile-import-policy.cjs` covers guest, personal, teacher,
+  admin and both student policy states across library/account/study menus.
+  Guests and personal accounts cannot import on mobile; teachers/admins and
+  enabled students can. Permission loss closes an open panel. Logout preserves
+  existing local libraries and questions. Desktop guest import remains available.
+  Empty libraries hide search/progress filters, and unauthorized accounts see no
+  import empty state. Existing local content retains search and progress filters.
 - Client fix commit `43a2fcad` is pushed. The production development-signed
   `1.0.3 (10017)` package passed signature and NNUE hash checks, installed in
   place on iPhone 14 at 09:37, and launched successfully at 09:37:56 on
