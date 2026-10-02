@@ -120,3 +120,7 @@ status has yet been verified.
   performed.
 - Logout remembers only the successful account name, scoped to API environment;
   password fields remain empty. Unit regression covers logout and restart.
+- Client fix commit `43a2fcad` is pushed. The production development-signed
+  `1.0.3 (10017)` package passed signature and NNUE hash checks, installed in
+  place on iPhone 14 at 09:37, and launched successfully at 09:37:56 on
+  2026-10-02. Physical teacher/student acceptance and recording remain pending.
