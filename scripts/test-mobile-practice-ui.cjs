@@ -3,7 +3,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/Users/chenyubin/
 const url = process.env.PRACTICE_URL || 'http://127.0.0.1:1440';
 const fen = 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1';
 const problems = Array.from({ length: 25 }, (_, i) => ({ id: `p${i}`, libraryId: 'lib', title: `长标题专项练习题目${i}及关键杀法判断`, sourceIndex: i, category: i < 22 ? '杀法' : '残局', difficulty: i % 3 + 1, startingFen: fen, sideToMove: 'red', solutionLength: 1, solution: [{ iccs: 'a0a1', comment: '', children: [] }], note: '', active: true }));
-const topic = { id: 'topic', name: '长标题练习专题与专项训练', description: '杀法练习', contentKind: 'problem', itemCount: 25, sources: [{ libraryId: 'lib' }] };
+const topic = { id: 'topic', name: '长标题练习专题与专项训练', description: '杀法练习', contentKind: 'problem', coverFen: fen, itemCount: 25, sources: [{ libraryId: 'lib' }] };
 
 (async () => {
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
@@ -15,6 +15,7 @@ const topic = { id: 'topic', name: '长标题练习专题与专项训练', descr
       let dashboardFail = true, listFail = true, sessionFail = true, attemptFail = false, dailyEnabled = false, dailyFail = true, topicFail = true;
       let favorites = [problems[0]], created, payloads = [], attempts = [], favoriteWrites = [];
       let dashboardRequests = 0, assignmentRequests = 0, refreshRequests = 0, unclassified = false;
+      const historyRequests = [];
       const today = new Date();
       const localDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(today);
       const history = [{ localDate, completedCount: 3, correctCount: 2, sessionId: 'h1' }, { localDate, completedCount: 4, correctCount: 3, sessionId: 'h2' }];
@@ -35,6 +36,10 @@ const topic = { id: 'topic', name: '长标题练习专题与专项训练', descr
           dashboardRequests++;
           if (dashboardFail) { dashboardFail = false; status = 503; body = { error: '练习网络失败' }; }
           else body = { pendingAssignmentCount: 0, wrongCount: 0, favoriteCount: favorites.length, topics: [topic], studyTopics: [], history, ...(dailyEnabled ? { dailyPlan: { id: 'daily', topic, itemCount: 1, mode: 'solver' } } : {}) };
+        } else if (path.endsWith('/practice/history')) {
+          historyRequests.push(Number(new URL(req.url()).searchParams.get('days'))); body = history;
+        } else if (/practice\/sessions\/h[12]$/.test(path)) {
+          body = { id: path.split('/').at(-1), mode: 'solver', status: 'completed', items: [{ id: 'history-item', status: 'completed', problem: problems[0], grade: { score: 2, stars: 2, mistakes: 1, hintsUsed: 0, firstTryCorrect: false, attemptNumber: 2 } }] };
         } else if (path.endsWith('/daily/daily/session')) {
           if (dailyFail) { dailyFail = false; status = 503; body = { error: '日练暂时不可用，请重试' }; }
           else body = created = { id: 'daily-session', sourceKind: 'daily', mode: 'solver', status: 'active', startedAt: new Date().toISOString(), updatedAt: new Date().toISOString(), items: [{ id: 'daily-item', ordinal: 0, status: 'pending', problem: problems[0] }] };
@@ -80,12 +85,40 @@ const topic = { id: 'topic', name: '长标题练习专题与专项训练', descr
       await page.locator('.practice-calendar-week > button').first().click();
       assert.match(await page.locator('.practice-calendar-summary').textContent(), /完成 0 题 · 正确 0 题/);
       await page.locator('.practice-calendar-week > button').last().click();
+      await page.getByRole('button', { name: '查看详情', exact: true }).click();
+      await page.getByRole('dialog', { name: '学习记录详情' }).getByText('练习 2', { exact: true }).waitFor();
+      assert.match(await page.getByRole('dialog', { name: '学习记录详情' }).textContent(), /2 分 \/ 2 星 · 错 1 次 · 提示 0 次/);
+      await page.getByRole('button', { name: '返回学习日历', exact: true }).click();
+      assert.match(await page.locator('.practice-calendar-summary').textContent(), /完成 7 题 · 正确 5 题/);
+      for (const [label, count] of [['近 1 个月', 30], ['近 3 个月', 90]]) {
+        await page.getByRole('button', { name: label, exact: true }).click();
+        await page.locator('.practice-calendar-month-grid').waitFor();
+        assert.equal(historyRequests.at(-1), count);
+        await page.getByRole('button', { name: '上个月学习记录', exact: true }).click();
+        assert(await page.locator('.practice-calendar-week > button').count() > 0);
+        await page.screenshot({ path: `/tmp/qixi-calendar-${count}-${viewport.width}.png` });
+      }
+      await page.getByRole('button', { name: '近 7 天', exact: true }).click();
       const cardBounds = await page.locator('.mobile-practice-grid > button').evaluateAll((cards) => cards.map((card) => {
         const text = card.querySelector('span').getBoundingClientRect(), arrow = card.lastElementChild.getBoundingClientRect(), box = card.getBoundingClientRect();
         return { valid: arrow.x >= text.right && arrow.right <= box.right && text.right <= box.right };
       }));
       assert(cardBounds.every((card) => card.valid), 'arrows must remain right of text');
       await page.screenshot({ path: `/tmp/practice-home-${viewport.width}.png` });
+      assert.equal(await page.locator('.mobile-practice-note').count(), 0, 'student practice page hides local CBL explanatory copy');
+      await page.getByRole('button', { name: '首页', exact: true }).click();
+      const cover = page.locator('.mobile-home-recommendations .fen-mini-board').first();
+      await cover.waitFor();
+      await page.waitForFunction(() => Array.from(document.querySelectorAll('.mobile-home-recommendations .fen-mini-board img')).every((img) => img.complete && img.naturalWidth > 0));
+      assert.equal(await cover.locator('img').count(), 32, 'topic cover renders real FEN pieces');
+      const piecesFit = await cover.evaluate((board) => {
+        const box = board.getBoundingClientRect();
+        return Array.from(board.querySelectorAll('img')).every((img) => { const piece = img.getBoundingClientRect(); return piece.left >= box.left && piece.right <= box.right && piece.top >= box.top && piece.bottom <= box.bottom; });
+      });
+      assert(piecesFit, 'cover pieces stay within the full board');
+      await cover.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: `/tmp/qixi-home-covers-${viewport.width}.png` });
+      await page.getByRole('button', { name: '练习', exact: true }).click();
       await page.getByRole('button', { name: /长标题练习专题与专项训练/ }).click();
       await page.getByText('专题服务暂时不可用', { exact: true }).waitFor();
       await page.getByRole('button', { name: '重试', exact: true }).click();

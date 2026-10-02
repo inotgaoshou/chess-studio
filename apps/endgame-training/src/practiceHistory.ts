@@ -13,10 +13,10 @@ export function practiceHistoryByDay(history: PracticeHistory[]): PracticeDay[] 
   return [...days.values()].sort((a, b) => b.localDate.localeCompare(a.localDate));
 }
 
-export function recentPracticeDays(history: PracticeHistory[], now = new Date()): PracticeDay[] {
+export function recentPracticeDays(history: PracticeHistory[], now = new Date(), count = 7): PracticeDay[] {
   const counts = new Map(practiceHistoryByDay(history).map((day) => [day.localDate, day]));
-  return Array.from({ length: 7 }, (_, index) => {
-    const date = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate() - 6 + index));
+  return Array.from({ length: count }, (_, index) => {
+    const date = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate() - count + 1 + index));
     const localDate = date.toISOString().slice(0, 10);
     return counts.get(localDate) ?? { localDate, completedCount: 0, correctCount: 0 };
   });

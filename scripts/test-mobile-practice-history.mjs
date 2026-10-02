@@ -36,3 +36,13 @@ test("seven calendar dates cross month and year boundaries and fill empty dates"
   assert.equal(days[6].completedCount, 0);
   assert.equal(days[6].correctCount, 0);
 });
+
+test("month and quarter calendars include the entire requested range", () => {
+  for (const count of [30, 90]) {
+    const days = plain(exports.recentPracticeDays([], new Date(2026, 0, 2, 12), count));
+    assert.equal(days.length, count);
+    assert.equal(days.at(-1).localDate, "2026-01-02");
+    assert.equal(new Set(days.map((day) => day.localDate)).size, count);
+    assert.ok(days.every((day) => day.completedCount === 0));
+  }
+});

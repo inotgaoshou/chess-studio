@@ -941,7 +941,7 @@ export const teachingClient = {
   async practiceHistory(days = 7) {
     const auth = this.auth();
     if (!auth || auth.user.role !== "student") return [];
-    return request<PracticeHistory[]>(`/api/v1/student/practice/history?days=${Math.max(1, Math.min(days, 30))}`, {}, auth.token);
+    return request<PracticeHistory[]>(`/api/v1/student/practice/history?days=${Math.max(1, Math.min(days, 90))}`, {}, auth.token);
   },
   async submitPracticeAttempt(sessionId: string, attempt: PracticeAttempt, expectedAuth?: TeachingAuth) {
     const auth = expectedAuth ?? this.auth();

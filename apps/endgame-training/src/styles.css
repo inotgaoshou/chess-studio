@@ -6426,6 +6426,28 @@ html.phone-webview .mobile-solver-nav span { align-self:center; color:#687e70; f
 .practice-calendar-summary { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:6px; color:#667a6d; font-size:11px; }
 .practice-calendar-summary strong { color:#294638; font-size:12px; }
 .practice-calendar-summary b { color:#397b56; }
+.practice-calendar-range { width:100%; }
+.practice-calendar-month { display:flex; align-items:center; justify-content:space-between; gap:8px; color:#294638; font-size:13px; }
+.practice-calendar-month button { width:36px; height:36px; padding:0; border:1px solid #c7dccc; border-radius:6px; background:#fbfdfb; color:#397b56; display:grid; place-items:center; }
+.practice-calendar-month button svg { width:18px; height:18px; }
+.practice-calendar-month button:disabled { opacity:.35; cursor:default; }
+.practice-calendar-weekday { text-align:center; padding:4px 0; color:#718579; }
+.practice-calendar-month-grid button { min-height:64px; gap:3px; }
+.practice-calendar-state { margin:0; min-height:76px; display:flex; align-items:center; justify-content:center; flex-wrap:wrap; gap:8px; color:#667a6d; font-size:12px; }
+.practice-calendar-state button { display:inline-flex; align-items:center; gap:5px; min-height:36px; border:1px solid #c7dccc; border-radius:6px; background:#fbfdfb; color:#397b56; }
+.practice-calendar-state svg { width:16px; height:16px; }
+.practice-calendar-details-trigger { display:inline-flex; align-items:center; gap:4px; padding:0; border:0; background:transparent; color:#397b56; min-height:36px; font-size:12px; }
+.practice-calendar-details-trigger svg { width:16px; height:16px; }
+.practice-calendar-details { width:min(620px,100%); max-height:calc(100dvh - 48px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); padding:16px; overflow:auto; overscroll-behavior:contain; border-radius:8px; background:#fbfdfb; color:#294638; }
+.practice-calendar-details > header { display:flex; align-items:center; gap:10px; padding-bottom:12px; border-bottom:1px solid #d5e3d8; }
+.practice-calendar-details > header > span { display:grid; gap:4px; }
+.practice-calendar-details small { color:#718579; font-size:12px; }
+.practice-calendar-session-list > section { padding:14px 0; border-bottom:1px solid #d5e3d8; }
+.practice-calendar-session-list header { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.practice-calendar-session-list ol { margin:12px 0 0; padding-left:22px; }
+.practice-calendar-session-list li { padding:6px 0; font-size:13px; overflow-wrap:anywhere; }
+.practice-calendar-session-list li strong,.practice-calendar-session-list li span { display:block; }
+.practice-calendar-session-list li span { color:#718579; font-size:12px; margin-top:4px; }
 .practice-history-table { width:100%; border-collapse:collapse; color:#526c5b; font-size:12px; }
 .practice-history-table th, .practice-history-table td { padding:10px 8px; border-bottom:1px solid #d5e3d8; text-align:right; }
 .practice-history-table th:first-child { text-align:left; }
@@ -6439,7 +6461,8 @@ html.phone-webview .mobile-solver-nav span { align-self:center; color:#687e70; f
 .mobile-home-goal > div:nth-child(2) { min-width:0; display:grid; gap:3px; }.mobile-home-goal > div:nth-child(2) small,.mobile-home-goal p { color:#708474; font-size:10px; }.mobile-home-goal strong { overflow:hidden; color:#294638; font-size:14px; text-overflow:ellipsis; white-space:nowrap; }.mobile-home-goal p { margin:0; line-height:1.35; }
 .mobile-home-goal > span { display:grid; gap:2px; text-align:center; }.mobile-home-goal > span b { color:#8b6b27; font-size:17px; }.mobile-home-goal > span small { color:#7b836f; font-size:10px; }
 .mobile-home-recommendations > div { display:grid; gap:7px; }.mobile-home-recommendations button { min-height:72px; padding:8px; border:1px solid #d5e3d8; border-radius:8px; background:#fbfdfb; color:#294638; display:grid; grid-template-columns:54px minmax(0,1fr) 18px; align-items:center; gap:9px; text-align:left; }.mobile-home-recommendations button > span { min-width:0; display:grid; gap:3px; }.mobile-home-recommendations b,.mobile-home-recommendations small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }.mobile-home-recommendations b { font-size:13px; }.mobile-home-recommendations small { color:#718579; font-size:10px; }
-.fen-mini-board { aspect-ratio:9 / 10; overflow:hidden; border:1px solid #b8904b; border-radius:4px; background:#e8cd91; display:grid; grid-template-columns:repeat(9,1fr); grid-template-rows:repeat(10,1fr); box-shadow:inset 0 0 0 1px #fff4cc; }.fen-mini-board span { min-width:0; min-height:0; border-right:1px solid #af8b4c90; border-bottom:1px solid #af8b4c90; color:#202d25; display:grid; place-items:center; font-family:STKaiti,"Kaiti SC",serif; font-size:clamp(7px,2.4vw,13px); font-weight:800; }.fen-mini-board span.red { color:#b0483c; }
+.fen-mini-board { position:relative; width:100%; aspect-ratio:1120 / 1240; overflow:hidden; border:1px solid #bca77a; border-radius:4px; background-color:#f4e4bd; background-size:100% 100%; background-repeat:no-repeat; }
+.fen-mini-board img { position:absolute; width:11%; height:auto; transform:translate(-50%,-50%); pointer-events:none; }
 .mobile-heading-actions { display:flex; gap:6px; }.mobile-detail-page { position:fixed; z-index:45; top:var(--mobile-header-height); right:0; bottom:0; left:0; padding:16px 16px calc(82px + var(--phone-safe-bottom)); background:#edf4ec; display:grid; align-content:start; gap:13px; overflow:auto; overscroll-behavior:contain; -webkit-overflow-scrolling:touch; }.mobile-detail-page .mobile-page-heading { justify-content:flex-start; }.mobile-detail-page .mobile-page-heading > span { display:grid; gap:2px; }.mobile-detail-page .mobile-page-heading small { color:#718579; font-size:11px; }
 .mobile-detail-state { margin:0; padding:16px; border-radius:8px; background:#fbfdfb; color:#667a6d; text-align:center; font-size:12px; }.mobile-detail-state.error { border:1px solid #e5b8b0; background:#fff5f2; color:#a44b42; }
 .mobile-topic-hero { padding:12px; border:1px solid #bfd7c3; border-radius:8px; background:linear-gradient(135deg,#fbfdf9,#eaf3e9); display:grid; grid-template-columns:92px minmax(0,1fr); gap:12px; }.mobile-topic-hero > div { min-width:0; display:grid; align-content:center; gap:4px; }.mobile-topic-hero small { color:#8a6c2a; font-size:10px; }.mobile-topic-hero strong { overflow:hidden; color:#294638; font-size:17px; text-overflow:ellipsis; white-space:nowrap; }.mobile-topic-hero p { margin:0; color:#62766a; font-size:11px; line-height:1.45; }.mobile-topic-hero div > span { color:#397b56; font-size:11px; font-weight:800; }

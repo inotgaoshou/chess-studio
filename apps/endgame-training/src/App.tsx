@@ -1245,8 +1245,8 @@ function MobileHomePanel({ auth, home, libraries, gameLibraries, unreadAssignmen
       </div>
     </section>
     <section className="mobile-home-section mobile-home-progress">
-      <header><strong>学习日历</strong><small>近 7 天</small></header>
-      <PracticeCalendar history={home?.history ?? []}/>
+      <header><strong>学习日历</strong></header>
+      <PracticeCalendar key={`${auth?.user.id}:${auth?.user.orgId}`} history={home?.history ?? []} remote={auth?.user.role === "student"}/>
     </section>
     {!isOperator && home?.topics.length ? <section className="mobile-home-section mobile-home-recommendations"><header><strong>推荐专题</strong><small>已按权益筛选</small></header><div>{home.topics.slice(0, 3).map((topic) => <button type="button" key={topic.id} onClick={onPractice}><FenMiniBoard fen={topic.coverFen} label={`${topic.name}专题封面`} /><span><b>{topic.name}</b><small>{topic.itemCount} 题 · {topic.description || "专项训练"}</small></span><ChevronRight/></button>)}</div></section> : null}
     {!isOperator && home?.lockedTopics?.length ? <section className="mobile-home-section mobile-vip-locked-section"><header><strong>VIP 专题</strong><small>开通后可练习</small></header><div>{home.lockedTopics.slice(0, 3).map((topic) => <button type="button" key={topic.id} className="mobile-vip-locked-card" onClick={onLogin}><LockKeyhole/><span><b>{topic.name}</b><small>{topic.itemCount} {topic.contentKind === "game" ? "局棋谱" : "题"} · VIP 专属</small></span><ChevronRight/></button>)}</div></section> : null}
@@ -1256,8 +1256,6 @@ function MobileHomePanel({ auth, home, libraries, gameLibraries, unreadAssignmen
 function accessTierLabel(accessTier?: TrainingLibrary["accessTier"]) {
   return accessTier === "vip" ? "VIP" : accessTier === "vip_or_assignment" ? "VIP或作业" : "";
 }
-
-const FEN_PIECE_LABEL: Record<string, string> = { r: "車", n: "馬", b: "象", a: "士", k: "將", c: "炮", p: "卒", R: "俥", N: "傌", B: "相", A: "仕", K: "帥", C: "炮", P: "兵" };
 
 function FenMiniBoard({ fen, label }: { fen?: string | null; label: string }) {
   const rows = (fen?.split(" ")[0] ?? "").split("/");
@@ -1269,10 +1267,14 @@ function FenMiniBoard({ fen, label }: { fen?: string | null; label: string }) {
     }
     return cells.slice(0, 9);
   }) : [];
-  return <div className="fen-mini-board" aria-label={label} role="img">
-    {Array.from({ length: 90 }, (_, index) => {
-      const piece = squares[index];
-      return <span className={piece ? (piece === piece.toUpperCase() ? "red" : "black") : ""} key={index}>{piece ? FEN_PIECE_LABEL[piece] ?? "" : ""}</span>;
+  const skin = "qingxin-zhuyun";
+  const geometry = boardGeometryForSkin(skin);
+  return <div className="fen-mini-board" aria-label={label} role="img" style={{ backgroundImage: `url("/skins/${skin}/board.png")` }}>
+    {squares.map((piece, index) => {
+      if (!piece || !/[rnbakcp]/i.test(piece)) return null;
+      const point = boardPoint({ row: Math.floor(index / 9), col: index % 9 }, geometry);
+      const color = piece === piece.toUpperCase() ? "r" : "b";
+      return <img key={index} src={`/skins/${skin}/${color}${piece.toLowerCase()}.png`} alt="" draggable={false} style={{ left: `${point.x / BOARD_ART_WIDTH * 100}%`, top: `${point.y / BOARD_ART_HEIGHT * 100}%` }}/>;
     })}
   </div>;
 }
@@ -1601,8 +1603,8 @@ function MobilePracticePanel({ auth, loading, error, busy, message, onLogin, onR
       <button type="button" disabled={!home?.studyTopics.length} onClick={onBrowseLibrary}><BookOpen/><span><b>棋谱学习</b><small>{home?.studyTopics.length ? `${home.studyTopics.length} 个学习专题` : "暂无已发布完整棋谱"}</small></span><ChevronRight/></button>
       <button type="button" onClick={onStudy}><FilePenLine/><span><b>自由拆棋</b><small>从局面进入自由对弈</small></span><ChevronRight/></button>
     </div></section>
-    {student && <section className="mobile-practice-section"><header><strong>练习日历</strong><small>近 7 天</small></header><PracticeCalendar history={home?.history ?? []}/></section>}
-    <p className="mobile-practice-note">平台题库的练习进度会跨设备同步；本地 CBL 不上传，进度仅保存在当前设备。</p>
+    {student && <section className="mobile-practice-section"><header><strong>练习日历</strong></header><PracticeCalendar key={`${auth?.user.id}:${auth?.user.orgId}`} history={home?.history ?? []} remote/></section>}
+    {!student && <p className="mobile-practice-note">平台题库的练习进度会跨设备同步；本地 CBL 不上传，进度仅保存在当前设备。</p>}
   </main>;
 }
 
