@@ -71,6 +71,7 @@ export type TrainingProblem = CblProblem & {
   source?: "local" | "teaching" | "platform";
   assignmentId?: string;
   serverProblemId?: string;
+  difficulty?: number | null;
   accessTier?: "public" | "vip" | "vip_or_assignment";
 };
 

@@ -1,5 +1,6 @@
 import { MobilePracticeReviewPanel, PracticeAccessPanel, PracticeStatus, PracticeFavoriteButton } from "./PracticePanels";
 import { ManualMoveSuggestion } from "./ManualMoveSuggestion";
+import { PracticeCalendar, PracticeHistoryList } from "./PracticeCalendar";
 import { ManualShareDialog } from "./ManualShareDialog";
 import { ManualSaveDialog, isImeEnter, type ManualSaveValues } from "./ManualSaveDialog";
 import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, CircleCheckBig, CircleHelp, ClipboardCopy, ClipboardList, Clock3, CloudUpload, Cpu, Database, Ellipsis, Eye, EyeOff, FilePenLine, FileUp, FlipVertical2, Folder, GraduationCap, Home, Lightbulb, Link, ListRestart, LockKeyhole, LogIn, Minus, Palette, Pause, Pencil, Play, Plus, RefreshCw, RotateCcw, Search, Settings2, Square as StopIcon, Trash2, Undo2, UserRound, X } from "lucide-react";
@@ -1241,8 +1242,8 @@ function MobileHomePanel({ auth, home, libraries, gameLibraries, unreadAssignmen
       </div>
     </section>
     <section className="mobile-home-section mobile-home-progress">
-      <header><strong>学习概览</strong><small>{home?.history?.length ? "近 7 天" : "开始练习后显示"}</small></header>
-      <div>{home?.history?.length ? home.history.slice(0, 7).map((item) => <span key={item.localDate}><b>{item.completedCount}</b><small>{relativePracticeDate(item.localDate)}</small></span>) : <p>完成平台练习后，会在这里显示近 7 天的练习记录和建议。</p>}</div>
+      <header><strong>学习日历</strong><small>近 7 天</small></header>
+      <PracticeCalendar history={home?.history ?? []}/>
     </section>
     {!isOperator && home?.topics.length ? <section className="mobile-home-section mobile-home-recommendations"><header><strong>推荐专题</strong><small>已按权益筛选</small></header><div>{home.topics.slice(0, 3).map((topic) => <button type="button" key={topic.id} onClick={onPractice}><FenMiniBoard fen={topic.coverFen} label={`${topic.name}专题封面`} /><span><b>{topic.name}</b><small>{topic.itemCount} 题 · {topic.description || "专项训练"}</small></span><ChevronRight/></button>)}</div></section> : null}
     {!isOperator && home?.lockedTopics?.length ? <section className="mobile-home-section mobile-vip-locked-section"><header><strong>VIP 专题</strong><small>开通后可练习</small></header><div>{home.lockedTopics.slice(0, 3).map((topic) => <button type="button" key={topic.id} className="mobile-vip-locked-card" onClick={onLogin}><LockKeyhole/><span><b>{topic.name}</b><small>{topic.itemCount} {topic.contentKind === "game" ? "局棋谱" : "题"} · VIP 专属</small></span><ChevronRight/></button>)}</div></section> : null}
@@ -1288,14 +1289,14 @@ function MobileTopicDetailPanel({ topicId, busy, message, onBack, onStart, onOpe
   const topic = detail?.topic;
   return <main className="mobile-detail-page mobile-topic-detail-page">
     <header className="mobile-page-heading"><button type="button" className="mobile-back-button" aria-label="返回练习" onClick={onBack}><ChevronLeft/></button><span><strong>{topic?.name ?? "专题详情"}</strong><small>{topic?.contentKind === "game" ? "棋谱学习" : "专项练习"}</small></span></header>
-    {message && <p role="alert" className="practice-status">{message}</p>}
+    <PracticeStatus error={message} onRetry={() => { if (detail?.topic) onStart(detail.topic); }}/>
     {loading ? <p className="mobile-detail-state">正在读取专题内容…</p> : error ? <PracticeStatus error={error} onRetry={() => setRetry((value) => value + 1)}/> : topic ? <>
       <section className="mobile-topic-hero">
         <FenMiniBoard fen={topic.coverFen ?? detail?.chapters[0]?.coverFen} label={`${topic.name}封面局面`} />
         <div><small>{topic.contentKind === "game" ? "棋谱专题" : "题目专题"}</small><strong>{topic.name}</strong><p>{topic.description || (topic.contentKind === "game" ? "按章节阅读、复盘和拆棋。" : "按自己的节奏完成训练，进度会同步。")}</p><span>{topic.itemCount} {topic.contentKind === "game" ? "局" : "题"}</span></div>
       </section>
       {topic.contentKind === "problem" && <button type="button" className="mobile-detail-primary" disabled={busy} onClick={() => onStart(topic)}><Play/>{busy ? "正在创建练习…" : "开始训练"}<small>默认 10 题</small></button>}
-      <section className="mobile-detail-section"><header><strong>学习章节</strong><small>{detail?.chapters.length ?? 0} 个来源</small></header><div className="mobile-chapter-list">{detail?.chapters.map((chapter) => <button type="button" key={chapter.libraryId} onClick={() => onOpenLibrary(chapter.libraryId, topic.contentKind)}><FenMiniBoard fen={chapter.coverFen} label={`${chapter.title}局面`} /><span><b>{chapter.title}</b><small>{chapter.category ? `${chapter.category} · ` : ""}{chapter.completedCount}/{chapter.itemCount} {topic.contentKind === "game" ? "局" : "题"} 已学习</small></span><ChevronRight/></button>)}</div></section>
+      <section className="mobile-detail-section"><header><strong>学习章节</strong><small>{detail?.chapters.length ?? 0} 个来源</small></header><div className="mobile-chapter-list">{detail?.chapters.map((chapter) => <button type="button" key={`${chapter.libraryId}:${chapter.category ?? ""}`} onClick={() => onOpenLibrary(chapter.libraryId, topic.contentKind)}><FenMiniBoard fen={chapter.coverFen} label={`${chapter.title}局面`} /><span><b>{chapter.title}</b><small>{chapter.completedCount}/{chapter.itemCount} {topic.contentKind === "game" ? "局" : "题"} 已学习</small></span><ChevronRight/></button>)}</div></section>
     </> : null}
   </main>;
 }
@@ -1326,7 +1327,7 @@ function MobileLearningAssetsPanel({ home, onBack, onMistakes, onFavorites }: { 
     <header className="mobile-page-heading"><button type="button" className="mobile-back-button" aria-label="返回练习" onClick={onBack}><ChevronLeft/></button><span><strong>学习资产</strong><small>收藏、错题与练习历史</small></span></header>
     <section className="mobile-assets-summary"><span><b>{home?.favoriteCount ?? 0}</b><small>收藏题目</small></span><span><b>{home?.wrongCount ?? 0}</b><small>待复习错题</small></span><span><b>{home?.summary?.streakDays ?? 0}</b><small>连续练习</small></span></section>
     <div className="mobile-home-actions"><button type="button" onClick={onFavorites}><CircleCheckBig/><span><b>收藏题目</b><small>进入后可选择题目进行批量练习</small></span><ChevronRight/></button><button type="button" onClick={onMistakes}><RotateCcw/><span><b>错题本</b><small>根据错误次数和掌握状态复习</small></span><ChevronRight/></button></div>
-    <section className="mobile-detail-section"><header><strong>练习历史</strong><small>最近 7 天</small></header><div className="mobile-history-list">{home?.history.length ? home.history.map((item) => <span key={item.sessionId}><b>{relativePracticeDate(`${item.localDate}T12:00:00Z`)}</b><small>完成 {item.completedCount} 题 · 正确 {item.correctCount} 题</small></span>) : <p>完成平台练习后，历史记录会显示在这里。</p>}</div></section>
+    <section className="mobile-detail-section"><header><strong>练习历史</strong><small>最近 7 天</small></header><PracticeHistoryList history={home?.history ?? []}/></section>
   </main>;
 }
 
@@ -1341,7 +1342,7 @@ function MobileOnboardingPanel({ onLogin, onLocal }: { onLogin(): void; onLocal(
 const FEATURED_LIBRARY_CATEGORIES = ["A", "B", "C", "E", "N", "S"] as const;
 const LIBRARY_CATEGORY_NAMES: Record<string, string> = { A: "开局", B: "中局", C: "残局", D: "排局", E: "对局", F: "全局", G: "让子", H: "弃子", I: "绝杀", J: "飞刀", K: "陷阱", L: "巧妙", M: "书籍", N: "古谱", O: "布局", P: "棋书", S: "杀法" };
 function libraryCategoryCode(folderPath?: string) {
-  const match = folderPath?.match(/(?:^|\/)([A-S])(?:[\s、._-]|$)/i);
+  const match = folderPath?.match(/(?:^|\/)([A-S])(?:[\s、._-]|[\u4e00-\u9fff]|$)/i);
   return match?.[1]?.toUpperCase();
 }
 
@@ -1356,7 +1357,8 @@ function MobileLibraryPanel({ libraries, gameLibraries, signedIn, onOpenLibrary,
 }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<"all" | "progress" | "completed">("all");
-  const [category, setCategory] = useState<string>("featured");
+  const [category, setCategory] = useState<string>("all");
+  const [categoriesExpanded, setCategoriesExpanded] = useState(false);
   const localLibraries = libraries.filter((item) => !item.source || item.source === "local");
   const platformLibraries = libraries.filter((item) => item.source === "platform");
   const teacherLibraryCount = libraries.filter((item) => item.source === "teaching").length;
@@ -1368,7 +1370,7 @@ function MobileLibraryPanel({ libraries, gameLibraries, signedIn, onOpenLibrary,
   const totalProblems = localLibraries.reduce((total, item) => total + item.problemCount, 0);
   const visiblePlatformLibraries = platformLibraries.filter((item) => {
     const code = libraryCategoryCode(item.folderPath);
-    const matchesCategory = category === "all" || (category === "featured" ? FEATURED_LIBRARY_CATEGORIES.includes(code as typeof FEATURED_LIBRARY_CATEGORIES[number]) : code === category);
+    const matchesCategory = category === "all" || code === category;
     return matchesCategory && item.title.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
   });
   const categoryCounts = new Map<string, number>();
@@ -1390,7 +1392,7 @@ function MobileLibraryPanel({ libraries, gameLibraries, signedIn, onOpenLibrary,
     <header className="mobile-page-heading"><span><BookOpen/><strong>题库</strong></span><button type="button" className="mobile-heading-icon" title="导入 CBL 题库" aria-label="导入 CBL 题库" onClick={onImport}><FileUp/></button></header>
     <label className="mobile-library-search"><Search/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索平台或本地题库" aria-label="搜索题库" autoComplete="off"/>{query && <button type="button" aria-label="清除搜索" onClick={() => setQuery("")}><X/></button>}</label>
     {signedIn ? <section className="mobile-library-overview platform"><span><Database/></span><div><strong>{platformLibraries.length || gameLibraries.length ? `${platformLibraries.length} 本平台训练题库 · ${gameLibraries.length} 本棋谱学习` : "平台内容待发布"}</strong><small>{platformLibraries.length || gameLibraries.length ? "按专题选择题目练习；完整棋谱仅供阅读、复盘与拆棋。" : "原始 CBL 导入后需经后台审核并发布，才会按账号权益显示在这里。"}</small></div></section> : <section className="mobile-library-overview"><span><UserRound/></span><div><strong>登录后读取平台内容</strong><small>平台训练题与完整棋谱按账号权限加载；本地题库始终可用。</small></div></section>}
-    {platformLibraries.length > 0 && <section className="mobile-library-section"><header><strong>平台训练题库</strong><button type="button" className="mobile-section-link" onClick={() => setCategory(category === "all" ? "featured" : "all")}>{category === "all" ? "收起分类" : "查看全部 17 类"}</button></header><div className="mobile-category-strip" role="tablist" aria-label="平台题库分类">{(category === "all" ? Object.keys(LIBRARY_CATEGORY_NAMES) : FEATURED_LIBRARY_CATEGORIES).map((code) => <button type="button" key={code} className={category === code ? "active" : ""} onClick={() => setCategory(category === code ? (category === "all" ? "all" : "featured") : code)}>{code} {LIBRARY_CATEGORY_NAMES[code]}{categoryCounts.has(code) ? ` ${categoryCounts.get(code)}` : ""}</button>)}</div><div className="mobile-library-list">{visiblePlatformLibraries.map((item) => renderLibraryCard(item, "platform"))}{!visiblePlatformLibraries.length && <div className="mobile-library-empty"><Search/><strong>当前分类暂无可用题库</strong><small>内容发布后会按账号权益自动出现在这里。</small></div>}</div></section>}
+    {platformLibraries.length > 0 && <section className="mobile-library-section"><header><strong>平台训练题库</strong><button type="button" className="mobile-section-link" aria-expanded={categoriesExpanded} onClick={() => setCategoriesExpanded((expanded) => !expanded)}><span>{categoriesExpanded ? "收起分类" : "全部分类"}</span><ChevronDown className={categoriesExpanded ? "expanded" : ""}/></button></header><div className="mobile-category-strip" role="tablist" aria-label="平台题库分类"><button type="button" role="tab" aria-selected={category === "all"} className={category === "all" ? "active" : ""} onClick={() => setCategory("all")}>全部</button>{(categoriesExpanded ? Object.keys(LIBRARY_CATEGORY_NAMES) : FEATURED_LIBRARY_CATEGORIES).map((code) => <button type="button" role="tab" aria-selected={category === code} key={code} className={category === code ? "active" : ""} onClick={() => setCategory(category === code ? "all" : code)}>{code} {LIBRARY_CATEGORY_NAMES[code]}{categoryCounts.has(code) ? ` ${categoryCounts.get(code)}` : ""}</button>)}</div><div className="mobile-library-list">{visiblePlatformLibraries.map((item) => renderLibraryCard(item, "platform"))}{!visiblePlatformLibraries.length && <div className="mobile-library-empty"><Search/><strong>当前分类暂无可用题库</strong><small>内容发布后会按账号权益自动出现在这里。</small></div>}</div></section>}
     {gameLibraries.length > 0 && <section className="mobile-library-section"><header><strong>平台棋谱学习</strong><small>{gameLibraries.length} 本</small></header><div className="mobile-library-list">{gameLibraries.filter((item) => item.title.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())).map((item) => <button type="button" key={item.id} onClick={() => onOpenGameLibrary(item)}><span className="mobile-library-cover game"><FilePenLine/></span><span><b>{item.title}</b><small>{item.folderPath ? `${item.folderPath} · ` : ""}{item.gameCount} 局 · 阅读、复盘与拆棋</small></span><ChevronRight/></button>)}</div></section>}
     <div className="mobile-library-filters" role="tablist" aria-label="题库筛选"><button type="button" className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>全部</button><button type="button" className={filter === "progress" ? "active" : ""} onClick={() => setFilter("progress")}>练习中</button><button type="button" className={filter === "completed" ? "active" : ""} onClick={() => setFilter("completed")}>已完成</button></div>
     <section className="mobile-library-section"><header><strong>我的本地题库</strong><small>{visibleLibraries.length} 本</small></header>{visibleLibraries.length ? <div className="mobile-library-list">{visibleLibraries.map((item) => renderLibraryCard(item, "local"))}</div> : <div className="mobile-library-empty"><Folder/><strong>{query ? "没有匹配的本地题库" : "还没有本地题库"}</strong><small>{query ? "换个关键词试试。" : totalProblems ? "继续从本地题库练习。" : "导入 CBL 后，带题解的局面可进入本地练习。"}</small>{!query && <button type="button" onClick={onImport}>导入 CBL 题库</button>}</div>}</section>
@@ -1414,9 +1416,11 @@ function MobileGameBrowsePanel({ library, games, onBack, onOpenGame }: {
   </main>;
 }
 
-function MobileLibraryBrowsePanel({ library, problems, onBack, onOpenProblem }: {
+function MobileLibraryBrowsePanel({ library, problems, message, busy, onBack, onOpenProblem }: {
   library?: TrainingLibrary;
   problems: TrainingProblem[];
+  message: string;
+  busy: boolean;
   onBack(): void;
   onOpenProblem(problem: TrainingProblem): void;
 }) {
@@ -1429,6 +1433,8 @@ function MobileLibraryBrowsePanel({ library, problems, onBack, onOpenProblem }: 
 
   return <main className="mobile-library-page mobile-library-browse-page">
     <header className="mobile-page-heading"><button type="button" className="mobile-back-button" aria-label="返回题库" onClick={onBack}><ChevronLeft/></button><span><strong>{library?.title ?? "题库内容"}</strong><small>{completed}/{problems.length} 题已完成</small></span></header>
+    {message && <p className="mobile-detail-state error" role="alert">{message}</p>}
+    {busy && <p className="mobile-detail-state" role="status">正在创建练习…</p>}
     <label className="mobile-library-search"><Search/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索题名或分类" aria-label="搜索题名或分类" autoComplete="off"/>{query && <button type="button" aria-label="清除搜索" onClick={() => setQuery("")}><X/></button>}</label>
     <div className="mobile-library-filters compact" role="tablist" aria-label="练习状态筛选"><button type="button" className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>全部</button><button type="button" className={filter === "unpracticed" ? "active" : ""} onClick={() => setFilter("unpracticed")}>未练</button><button type="button" className={filter === "completed" ? "active" : ""} onClick={() => setFilter("completed")}>已练</button></div>
     {categories.length > 1 && <div className="mobile-category-strip">{categories.map((item) => <button type="button" key={item} className={category === item ? "active" : ""} onClick={() => setCategory(item)}>{item}</button>)}</div>}
@@ -1587,7 +1593,7 @@ function MobilePracticePanel({ auth, loading, error, busy, message, onLogin, onR
       <button type="button" disabled={!home?.studyTopics.length} onClick={onBrowseLibrary}><BookOpen/><span><b>棋谱学习</b><small>{home?.studyTopics.length ? `${home.studyTopics.length} 个学习专题` : "暂无已发布完整棋谱"}</small></span><ChevronRight/></button>
       <button type="button" onClick={onStudy}><FilePenLine/><span><b>自由拆棋</b><small>从局面进入自由对弈</small></span><ChevronRight/></button>
     </div></section>
-    {home?.history.length ? <section className="mobile-practice-section"><header><strong>近 7 天练习</strong><small>真实练习记录</small></header><div className="mobile-practice-history">{home.history.slice(0, 7).map((item) => <span key={item.sessionId}><b>{relativePracticeDate(`${item.localDate}T12:00:00Z`)}</b><small>{item.completedCount} 题 · 正确 {item.correctCount}</small></span>)}</div></section> : null}
+    {student && <section className="mobile-practice-section"><header><strong>练习日历</strong><small>近 7 天</small></header><PracticeCalendar history={home?.history ?? []}/></section>}
     <p className="mobile-practice-note">平台题库的练习进度会跨设备同步；本地 CBL 不上传，进度仅保存在当前设备。</p>
   </main>;
 }
@@ -1596,21 +1602,35 @@ function MobilePracticeSetupPanel({ topics, busy, message, onBack, onStart }: { 
   const [topicId, setTopicId] = useState(topics[0]?.id ?? "");
   const topic = topics.find((item) => item.id === topicId) ?? topics[0];
   const [categories, setCategories] = useState<string[]>([]);
+  const [availableDifficulties, setAvailableDifficulties] = useState<number[]>([]);
+  const [metadataState, setMetadataState] = useState<"loading" | "ready" | "failed">("loading");
   const [category, setCategory] = useState("全部");
   const [scope, setScope] = useState<"all" | "unpracticed" | "mistakes">("all");
   const [difficulty, setDifficulty] = useState<number | undefined>();
   const [count, setCount] = useState<5 | 10 | 20>(10);
   const [mode, setMode] = useState<"solver" | "learning">("solver");
-  useEffect(() => { let active = true; setCategory("全部"); setCategories([]); void Promise.all((topic?.sources ?? []).map((source) => teachingClient.platformLibraryProblems(source.libraryId))).then((groups) => { if (active) setCategories([...new Set(groups.flat().map((item) => item.category).filter(Boolean))]); }).catch(() => { if (active) setCategories([]); }); return () => { active = false; }; }, [topicId]);
+  const startPractice = () => { if (topic && !busy) onStart({ topicId: topic.id, libraryIds: topic.sources.map((source) => source.libraryId), category: category === "全部" ? undefined : category, scope, difficulty, count, mode }); };
+  useEffect(() => {
+    let active = true;
+    setCategory("全部"); setCategories([]); setDifficulty(undefined); setAvailableDifficulties([]); setMetadataState("loading");
+    void Promise.all((topic?.sources ?? []).map((source) => teachingClient.platformLibraryProblems(source.libraryId))).then((groups) => {
+      if (!active) return;
+      const problems = groups.flat();
+      setCategories([...new Set(problems.map((item) => item.category).filter(Boolean))]);
+      setAvailableDifficulties([...new Set(problems.flatMap((item) => item.difficulty == null ? [] : [item.difficulty]))]);
+      setMetadataState("ready");
+    }).catch(() => { if (active) { setCategories([]); setMetadataState("failed"); } });
+    return () => { active = false; };
+  }, [topic?.id]);
   return <main className="mobile-practice-page mobile-practice-setup-page">
     <header className="mobile-page-heading"><button type="button" className="mobile-back-button" aria-label="返回练习" onClick={onBack}><ChevronLeft/></button><span><strong>专项练习设置</strong><small>选择题目来源与练习方式</small></span></header>
     <section className="mobile-setup-group"><strong>练习专题</strong><small>仅后台已发布且有验证题解的内容可进入训练</small><div className="mobile-choice-cards">{topics.map((item) => <button type="button" key={item.id} className={topicId === item.id ? "active" : ""} onClick={() => setTopicId(item.id)}><BookOpen/><span><b>{item.name}</b><small>{item.itemCount} 题 · {item.description || "专项练习"}</small></span>{topicId === item.id && <CircleCheckBig/>}</button>)}</div></section>
-    <section className="mobile-setup-group"><strong>题目范围</strong><div className="mobile-segmented">{([ ["all", "全部"], ["unpracticed", "未练过"], ["mistakes", "错题"] ] as const).map(([value, label]) => <button type="button" key={value} className={scope === value ? "active" : ""} onClick={() => setScope(value)}>{label}</button>)}</div>{categories.length ? <div className="mobile-category-strip">{["全部", ...categories].map((value) => <button type="button" key={value} className={category === value ? "active" : ""} onClick={() => setCategory(value)}>{value}</button>)}</div> : null}</section>
+    <section className="mobile-setup-group"><strong>题目范围</strong><div className="mobile-segmented">{([ ["all", "全部"], ["unpracticed", "未练过"], ["mistakes", "错题"] ] as const).map(([value, label]) => <button type="button" key={value} className={scope === value ? "active" : ""} onClick={() => setScope(value)}>{label}</button>)}</div>{categories.length ? <label className="mobile-setup-category"><span>分类</span><select aria-label="题目分类" value={category} onChange={(event) => setCategory(event.target.value)}>{["全部", ...categories].map((value) => <option key={value} value={value}>{value}</option>)}</select></label> : null}</section>
     <section className="mobile-setup-group"><strong>练习数量</strong><div className="mobile-segmented">{([5, 10, 20] as const).map((value) => <button type="button" key={value} className={count === value ? "active" : ""} onClick={() => setCount(value)}>{value} 题</button>)}</div></section>
-    <section className="mobile-setup-group"><strong>筛选难度</strong><div className="mobile-segmented">{[[undefined, "全部"], [1, "初级"], [2, "中级"], [3, "高级"]].map(([value, label]) => <button type="button" key={String(value)} className={difficulty === value ? "active" : ""} onClick={() => setDifficulty(value as number | undefined)}>{label}</button>)}</div></section>
+    <section className="mobile-setup-group"><strong>筛选难度</strong><div className="mobile-segmented" role="radiogroup" aria-label="筛选难度">{([[undefined, "全部"], [1, "初级"], [2, "中级"], [3, "高级"]] as const).map(([value, label]) => <button type="button" role="radio" aria-checked={difficulty === value} key={String(value)} disabled={value !== undefined && !availableDifficulties.includes(value)} className={difficulty === value ? "active" : ""} onClick={() => setDifficulty(value)}>{label}</button>)}</div>{metadataState !== "ready" ? <small>{metadataState === "loading" ? "正在读取题目难度…" : "题目难度暂时无法读取"}</small> : !availableDifficulties.length && <small>当前专题尚未标注难度</small>}</section>
     <section className="mobile-setup-group"><strong>练习模式</strong><div className="mobile-choice-cards two"><button type="button" className={mode === "solver" ? "active" : ""} onClick={() => setMode("solver")}><Pencil/><span><b>做题训练</b><small>独立思考，完成后评分</small></span>{mode === "solver" && <CircleCheckBig/>}</button><button type="button" className={mode === "learning" ? "active" : ""} onClick={() => setMode("learning")}><BookOpen/><span><b>学习模式</b><small>边看解析，边学习思路</small></span>{mode === "learning" && <CircleCheckBig/>}</button></div></section>
-    <button type="button" className="mobile-practice-start" disabled={!topic || busy} onClick={() => onStart({ topicId: topic?.id, libraryIds: topic?.sources.map((source) => source.libraryId) ?? [], category: category === "全部" ? undefined : category, scope, difficulty, count, mode })}>{busy ? "正在创建练习…" : `开始练习（${count} 题）`}</button>
-    {message && <p role="alert" className="practice-status">{message}</p>}
+    <PracticeStatus error={message} onRetry={startPractice}/>
+    <button type="button" className="mobile-practice-start" disabled={!topic || busy} onClick={startPractice}>{busy ? "正在创建练习…" : `开始练习（${count} 题）`}</button>
   </main>;
 }
 
@@ -1629,7 +1649,7 @@ function ProblemNavigator({ navigator, open, onClose }: { navigator: ProblemNavi
   </>;
 }
 
-function MobilePracticeSolverPanel({ problem, session, item, navigator, pieces, selected, legalTargets, lastMove, hints, mistakes, elapsed, ended, revealed, notice, boardSkin, pieceSkin, riverText, riverTextColor, riverTextSize, supportsCustomRiverText, feedback, onSquare, onMove, onBack, onHint, onRestart, onReveal, onNext, onPrevious, onFinish, onFavorite, favoriteEnabled }: {
+function MobilePracticeSolverPanel({ problem, session, item, navigator, pieces, selected, legalTargets, lastMove, hints, mistakes, elapsed, ended, revealed, notice, boardSkin, pieceSkin, riverText, riverTextColor, riverTextSize, supportsCustomRiverText, feedback, onSquare, onMove, onBack, onHint, onRestart, onReveal, onNext, onPrevious, onFinish, onFavorite, favoriteEnabled, backLabel, answer, answerStep, demoPlaying, onPreviewStep, onTogglePreview }: {
   problem: TrainingProblem;
   session?: PracticeSession;
   item?: PracticeSessionItem;
@@ -1662,6 +1682,12 @@ function MobilePracticeSolverPanel({ problem, session, item, navigator, pieces, 
   onFinish(): void;
   onFavorite(): void;
   favoriteEnabled: boolean;
+  backLabel: string;
+  answer: string[];
+  answerStep: number;
+  demoPlaying: boolean;
+  onPreviewStep(step: number): void;
+  onTogglePreview(): void;
 }) {
   const [navigatorOpen, setNavigatorOpen] = useState(false);
   const index = navigator?.index ?? (session && item ? session.items.findIndex((candidate) => candidate.id === item.id) : -1);
@@ -1676,13 +1702,14 @@ function MobilePracticeSolverPanel({ problem, session, item, navigator, pieces, 
     else onPrevious();
   };
   return <main className="mobile-solver-page">
-    <header className="mobile-solver-heading"><button type="button" className="mobile-back-button" aria-label="返回练习" onClick={onBack}><ChevronLeft/><span>返回练习</span></button><span><small>{isWrongReview ? "练习 / 错题 / 重练" : session ? "练习 / 专项 / 做题" : problem.source === "teaching" ? "作业 / 详情 / 做题" : "题库 / 做题"}</small><strong>{problem.title}</strong></span><em>{item?.problem.sideToMove === "black" ? "黑方走" : "红方走"}</em></header>
+    <header className="mobile-solver-heading"><button type="button" className="mobile-back-button" aria-label={backLabel} title={backLabel} onClick={onBack}><ChevronLeft/></button><span><small>{isWrongReview ? "练习 / 错题 / 重练" : session ? session.mode === "learning" ? "练习 / 专项 / 学习" : "练习 / 专项 / 做题" : problem.source === "teaching" ? "作业 / 详情 / 做题" : "题库 / 做题"}</small><strong>{problem.title}</strong></span><em>{item?.problem.sideToMove === "black" ? "黑方走" : "红方走"}</em></header>
     <section className="mobile-solver-workspace">
       <div className="mobile-solver-playfield">
         <section className="mobile-solver-board"><Board key={`mobile-${problem.id}`} pieces={pieces} selected={selected} legalTargets={legalTargets} lastMove={lastMove} hintMove={hints >= 2 ? problem.solution[0]?.iccs : undefined} analysisMoves={[]} activeAnalysis={0} flipped={false} feedback={feedback} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={riverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={supportsCustomRiverText} onSquare={onSquare} onMove={onMove}/></section>
         <section className="mobile-solver-meta"><span><Clock3/>本题用时 <b>{elapsed}</b></span><span>{isWrongReview ? `上次错误 ${item?.problem ? "需重新掌握" : ""}` : `进度 ${index >= 0 ? index + 1 : 1}/${total}`}</span></section>
         {isWrongReview && <p className="mobile-solver-warning">错题重练：完成且零错误、零提示才标为已掌握；看解析或放弃会保持待复习。</p>}
         {ended ? <section className="mobile-solver-result"><strong>{revealed ? "已查看解析" : mistakes || hints ? "本题已完成，可继续巩固" : "解答正确"}</strong><p>{revealed ? "可重来后再次独立完成。" : "练习结果已保存到学习档案。"}</p><div><button type="button" onClick={onRestart}><RotateCcw/>再试一次</button><button type="button" className="primary" onClick={() => canNext ? selectOffset(1) : onNext()}>{canNext ? "下一题" : "查看结果"}<ChevronRight/></button></div></section> : <section className="mobile-solver-actions"><button type="button" className="primary" onClick={onHint}><Lightbulb/>提示 {hints}/3</button><div><button type="button" onClick={onRestart}><RotateCcw/>重来</button><button type="button" onClick={onReveal}><ListRestart/>查看解析</button></div></section>}
+        {revealed && <section className="mobile-solver-answer"><header><strong>题解</strong><small>{answerStep}/{answer.length} 手</small></header>{problem.note && <p>{problem.note}</p>}<ol>{answer.map((move, index) => <li key={index} aria-current={answerStep === index + 1 ? "step" : undefined}><button type="button" onClick={() => onPreviewStep(index + 1)}>{index + 1}. {move}</button></li>)}</ol><div><button type="button" disabled={answerStep <= 0} aria-label="题解上一步" title="题解上一步" onClick={() => onPreviewStep(answerStep - 1)}><ChevronLeft/></button><button type="button" disabled={!answer.length} aria-label={demoPlaying ? "暂停预演" : "播放题解"} title={demoPlaying ? "暂停预演" : "播放题解"} onClick={onTogglePreview}>{demoPlaying ? <Pause/> : <Play/>}</button><button type="button" disabled={answerStep >= answer.length} aria-label="题解下一步" title="题解下一步" onClick={() => onPreviewStep(answerStep + 1)}><ChevronRight/></button><button type="button" aria-label="题解回到起点" title="题解回到起点" onClick={() => onPreviewStep(0)}><RotateCcw/></button></div></section>}
         <section className="mobile-solver-note"><p>{notice}</p>{favoriteEnabled && problem.serverProblemId && <PracticeFavoriteButton key={problem.serverProblemId} problemId={problem.serverProblemId} onSaved={onFavorite}/>}</section>
       </div>
       {navigator && (
@@ -1694,23 +1721,41 @@ function MobilePracticeSolverPanel({ problem, session, item, navigator, pieces, 
   </main>;
 }
 
-function MobilePracticeResultPanel({ session, message, onBack, onRetryMistakes, onRestart }: {
+function MobilePracticeResultPanel({ session, message, onBack, onRetryMistakes, onRestart, backLabel = "返回练习" }: {
   session?: PracticeSession;
   message?: string;
   onBack(): void;
   onRetryMistakes(): void;
   onRestart(): void;
+  backLabel?: string;
 }) {
   const items = session?.items ?? [];
   const solved = items.filter((item) => item.status === "completed").length;
   const revealed = items.filter((item) => item.status === "revealed").length;
   const unfinished = items.filter((item) => item.status === "pending" || item.status === "abandoned").length;
   return <main className="mobile-practice-page mobile-practice-result-page">
-    <header className="mobile-page-heading"><button type="button" className="mobile-back-button" aria-label="返回练习" onClick={onBack}><ChevronLeft/></button><span><strong>本次练习结果</strong><small>{session ? relativePracticeDate(session.updatedAt) : "练习已保存"}</small></span></header>
+    <header className="mobile-page-heading"><button type="button" className="mobile-back-button" aria-label={backLabel} title={backLabel} onClick={onBack}><ChevronLeft/></button><span><strong>本次练习结果</strong><small>{session ? relativePracticeDate(session.updatedAt) : "练习已保存"}</small></span></header>
     <section className="mobile-practice-result-summary"><span><CircleCheckBig/></span><strong>{solved === items.length && items.length ? "全部完成，做得不错" : "练习记录已保存"}</strong><p>平台题库进度会同步到当前账号，其他设备登录后也可以继续查看。</p><div><span><b>{items.length}</b><small>题目</small></span><span><b>{solved}</b><small>已完成</small></span><span><b>{revealed}</b><small>查看解析</small></span></div></section>
     {unfinished > 0 || revealed > 0 ? <section className="mobile-practice-result-tip"><RotateCcw/><span><strong>建议再练一遍</strong><small>{unfinished ? `${unfinished} 题未完成` : "看过解析的题目不会计为独立掌握"}，可在错题复习中继续巩固。</small></span></section> : <section className="mobile-practice-result-tip success"><Lightbulb/><span><strong>查看掌握状态</strong><small>完成且零错误、零提示才标为已掌握，状态以平台记录为准。</small></span></section>}
     {message ? <p className="mobile-practice-result-message">{message}</p> : null}
     <section className="mobile-practice-result-actions"><button type="button" onClick={onRetryMistakes}><RotateCcw/>错题复习</button><button type="button" className="primary" onClick={onRestart}><Play/>再练一组</button></section>
+  </main>;
+}
+
+function MobileSingleProblemResultPanel({ problem, elapsed, hints, mistakes, revealed, message, onBack }: {
+  problem: TrainingProblem;
+  elapsed: string;
+  hints: number;
+  mistakes: number;
+  revealed: boolean;
+  message: string;
+  onBack(): void;
+}) {
+  const backLabel = problem.source === "teaching" ? "返回作业" : "返回题库";
+  return <main className="mobile-practice-page mobile-practice-result-page mobile-single-result-page">
+    <header className="mobile-page-heading"><button type="button" className="mobile-back-button" aria-label={backLabel} title={backLabel} onClick={onBack}><ChevronLeft/></button><span><strong>本题练习结果</strong></span></header>
+    <section className="mobile-practice-result-summary"><span><CircleCheckBig/></span><strong>{problem.title}</strong><p>{revealed ? "已查看解析" : "本题练习已结束"}</p><div><span><b>{elapsed}</b><small>用时</small></span><span><b>{hints}</b><small>提示</small></span><span><b>{mistakes}</b><small>错误</small></span></div><p>{problem.source === "teaching" ? message : "练习记录保存在当前设备"}</p></section>
+    <button type="button" className="mobile-detail-primary" onClick={onBack}><ChevronLeft/>{backLabel}</button>
   </main>;
 }
 
@@ -2163,6 +2208,8 @@ export function App() {
     return () => window.removeEventListener("xiangqi-open-practice-topic", openTopic);
   }, []);
   const [practiceSession, setPracticeSession] = useState<PracticeSession>();
+  const [practiceReturnRoute, setPracticeReturnRoute] = useState<"practice" | "library-browse">("practice");
+  const [singleProblemResultOpen, setSingleProblemResultOpen] = useState(false);
   const [practiceItemId, setPracticeItemId] = useState<string>();
   const [practiceMessage, setPracticeMessage] = useState("");
   const [practiceHomeLoading, setPracticeHomeLoading] = useState(false);
@@ -2178,6 +2225,7 @@ export function App() {
   const [expanded, setExpanded] = useState<string>();
   const [problems, setProblems] = useState<TrainingProblem[]>([]);
   const [problem, setProblem] = useState<TrainingProblem>();
+  useEffect(() => setSingleProblemResultOpen(false), [problem?.id, teachingAuth?.user.id]);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("全部");
   const [mode, setMode] = useState<Mode>("cloud");
@@ -2480,12 +2528,28 @@ export function App() {
     return () => { active = false; };
   }, []);
   useEffect(() => {
+    let active = true;
+    let refreshing = false;
     const refreshSession = () => {
-      if (document.visibilityState === "visible") void teachingClient.refreshSession().then((auth) => { if (auth) applyTeachingAuth(auth, true); });
+      const previous = teachingClient.auth();
+      if (document.visibilityState !== "visible" || !previous || refreshing) return;
+      refreshing = true;
+      void teachingClient.refreshSession().then((auth) => {
+        if (!active || !auth || auth !== teachingClient.auth()) return;
+        if (previous.user.id !== auth.user.id || previous.user.orgId !== auth.user.orgId || previous.user.role !== auth.user.role) {
+          applyTeachingAuth(auth, true);
+          return;
+        }
+        setTeachingAuth(auth);
+        if (previous.user.vipActive !== auth.user.vipActive) {
+          void refresh(auth);
+          void refreshPracticeHome();
+        }
+      }).finally(() => { refreshing = false; });
     };
     document.addEventListener("visibilitychange", refreshSession);
-    return () => document.removeEventListener("visibilitychange", refreshSession);
-  }, [teachingAuth?.user.id]);
+    return () => { active = false; document.removeEventListener("visibilitychange", refreshSession); };
+  }, [teachingAuth?.user.id, teachingAuth?.user.orgId, teachingAuth?.user.role]);
   async function resetAnalysis(workspace: MobileWorkspaceMode = workspaceMode, clear = true) {
     analysisGeneration.current += 1;
     setAnalysisPending(false);
@@ -2559,6 +2623,8 @@ export function App() {
       await teachingClient.saveAssignmentDraft({ assignmentId: problem.assignmentId, problemId: problem.serverProblemId, moves: [...moves], hints, mistakes, elapsedMs: Math.max(0, Math.round(elapsed)) });
     }
     setStudentAssignmentsOpen(false);
+    setPracticeSession(undefined);
+    setMobileRoute("assignments");
     setMobileTab("assignments");
     window.history.pushState({ mobileRoute: "assignments" }, "", `/assignments/problems/${encodeURIComponent(next.id)}`);
     setAssignmentSequence(sequence);
@@ -3284,7 +3350,16 @@ export function App() {
     setDemoPlaying((value) => !value);
   }
   async function reveal() { if (!problem || ended) return; const revealSession = session.current; const activeProblem = problem; const notation = await chineseLine(activeProblem.startingFen, mainline(activeProblem.solution)); if (revealSession !== session.current) return; await finish("revealed", elapsed, revealSession); if (revealSession !== session.current) return; const initialBoard = await boardAt(activeProblem.startingFen, []); if (revealSession !== session.current) return; setAnswer(notation); setRevealed(true); setPieces(initialBoard.pieces); setMoves([]); setLastMove(undefined); setAnswerStep(0); setDemoPlaying(false); setNotice("答案已显示，可预演。"); }
-  async function restart() { if (!problem) return; const restartSession = session.current; const activeProblem = problem; if (!ended && (attemptStarted || mistakes || hints)) await finish("abandoned", elapsed, restartSession); if (restartSession !== session.current) return; await selectProblem(activeProblem); }
+  async function restart() {
+    if (!problem) return;
+    const restartSession = session.current;
+    const activeProblem = problem;
+    const restartMode = mode;
+    if (!ended && (attemptStarted || mistakes || hints)) await finish("abandoned", elapsed, restartSession);
+    if (restartSession !== session.current) return;
+    await selectProblem(activeProblem);
+    setMode(restartMode);
+  }
   function pause() { if (ended) return; if (startedAt) { setElapsedSaved(elapsed); setStartedAt(undefined); setNotice("已暂停，暂停时间不会计入用时。"); } else if (elapsedSaved) { setStartedAt(Date.now()); setNotice("继续作答。"); } }
   async function confirmDelete() { const target = deleteTarget; if (!target) return; setDeleteTarget(undefined); if (target.id.startsWith("teaching:") || target.id.startsWith("platform:")) { setNotice(target.id.startsWith("platform:") ? "平台题库由平台维护，学生端不能删除。" : "线上作业由老师管理，学生端不能删除。"); return; } if (target.type === "library") { await trainingStore.deleteLibrary(target.id); const next = await availableLibraries(); setLibraries(next); if (next[0]) await selectLibrary(next[0]); else { session.current += 1; await resetAnalysis(); setLibrary(undefined); setProblems([]); setProblem(undefined); } } else { await trainingStore.hideProblem(target.id); if (library) await selectLibrary(library); } }
   const giveHint = async () => {
@@ -4973,7 +5048,8 @@ export function App() {
   // a stale session is being refreshed or the login screen is opening.
   const unboundTeacherJoin = mobileRoute === "teacher" && teacherPath === "/teacher/join-organization";
   const mobileSecondaryRoute = ["library-browse", "game-browse", "practice-setup", "practice-session", "practice-mistakes", "practice-favorites", "practice-result", "practice-topic", "practice-search", "practice-assets", "tool-setup", "tool-sync", "tool-settings"].includes(mobileRoute);
-  const mobilePrimaryVisible = !studyMode && !manualMode && !problem && !importPanelOpen && !teachingAccountOpen && !mobileSecondaryRoute && (mobileRoute !== "teacher" || unboundTeacherJoin);
+  const mobileSolverVisible = Boolean(problem && (practiceSession ? mobileRoute === "practice-session" : problem.source === "teaching" ? mobileRoute === "assignments" && !studentAssignmentsOpen : mobileRoute === "practice"));
+  const mobilePrimaryVisible = !studyMode && !manualMode && !mobileSolverVisible && !importPanelOpen && !teachingAccountOpen && !mobileSecondaryRoute && (mobileRoute !== "teacher" || unboundTeacherJoin);
 
   function updateMobileHistory(route: MobileRoute, replace = false) {
     const nextPath = mobileRoutePath(route);
@@ -5039,13 +5115,14 @@ export function App() {
     void refreshPracticeHome();
   }
 
-  async function createPracticeSession(payload: Parameters<typeof teachingClient.createPracticeSession>[0], dailyId?: string) {
+  async function createPracticeSession(payload: Parameters<typeof teachingClient.createPracticeSession>[0], dailyId?: string, returnRoute: "practice" | "library-browse" = "practice") {
     if (practiceCreationLock.current || teachingAuth?.user.role !== "student") return;
     practiceCreationLock.current = true; setPracticeCreating(true); setPracticeMessage("");
     const generation = practiceAuthGeneration.current;
     try {
       const next = dailyId ? await teachingClient.startDailyPractice(dailyId) : await teachingClient.createPracticeSession(payload);
       if (generation !== practiceAuthGeneration.current) return;
+      setPracticeReturnRoute(returnRoute);
       await openPracticeSession(next);
       void refreshPracticeHome();
     } catch (error) { if (generation === practiceAuthGeneration.current) setPracticeMessage(error instanceof Error ? error.message : "无法创建练习"); }
@@ -5057,8 +5134,47 @@ export function App() {
     setProblem(undefined);
     setPieces([]);
     setSelected(undefined);
-    navigateMobileRoute("practice", true);
+    navigateMobileRoute(practiceReturnRoute, true);
     void refreshPracticeHome();
+  }
+
+  function nextSolverProblem() {
+    if (!practiceSession || !activePracticeItem) {
+      setSingleProblemResultOpen(true);
+      return;
+    }
+    const index = practiceSession.items.findIndex((item) => item.id === activePracticeItem.id);
+    const next = practiceSession.items[index + 1];
+    if (next) void selectPracticeSessionItem(next);
+    else openPracticeResult();
+  }
+
+  function closeSingleProblemResult() {
+    setSingleProblemResultOpen(false);
+    if (problem?.source === "teaching") returnToStudentAssignments();
+    else leaveLibraryProblem();
+  }
+
+  async function openLibraryPractice(next: TrainingProblem) {
+    setSingleProblemResultOpen(false);
+    if (next.source === "platform" && next.serverProblemId) {
+      await createPracticeSession({ sourceKind: "random", scope: "all", problemIds: [next.serverProblemId], count: 1, mode: "solver" }, undefined, "library-browse");
+      return;
+    }
+    setPracticeSession(undefined);
+    await selectProblem(next);
+    setMode("solver");
+    navigateMobileRoute("practice");
+  }
+
+  function leaveLibraryProblem() {
+    session.current += 1;
+    setProblem(undefined);
+    setPieces([]);
+    setSelected(undefined);
+    setStartedAt(undefined);
+    setDemoPlaying(false);
+    navigateMobileRoute("library-browse", true);
   }
 
   async function selectPracticeSessionItem(item: PracticeSessionItem) {
@@ -5097,6 +5213,7 @@ export function App() {
     if (studyMode) await closeStudyMode();
     if (manualMode) await closeManualMode();
     if (route === "home" || route === "library") {
+      if (route === "library") void refresh();
       setStudentAssignmentsOpen(false);
       setCatalogueOpen(false);
       setControlsOpen(false);
@@ -5269,7 +5386,8 @@ export function App() {
     {mobileLayout && mobileRoute === "practice-topic" && teachingAuth?.user.role === "student" && !studyMode && !manualMode && <MobileTopicDetailPanel busy={practiceCreating} message={practiceMessage} topicId={practiceTopicId ?? window.location.pathname.match(/^\/practice\/topics\/([^/]+)/)?.[1]} onBack={() => navigateMobileRoute("practice")} onStart={(topic) => void createPracticeSession({ sourceKind: "topic", topicId: topic.id, scope: "all", libraryIds: topic.sources.map((source) => source.libraryId), category: topic.sources[0]?.category ?? undefined, count: 10, mode: "solver" })} onOpenLibrary={(libraryId, kind) => { const source = kind === "problem" ? libraries.find((item) => item.source === "platform" && item.fingerprint === libraryId) : undefined; if (source) void selectLibrary(source).then(() => navigateMobileRoute("library-browse")); else { const gameLibrary = platformGameLibraries.find((item) => item.id === libraryId); if (gameLibrary) void selectPlatformGameLibrary(gameLibrary).then(() => navigateMobileRoute("game-browse")); else navigateMobileRoute("library"); } }} />}
     {mobileLayout && mobileRoute === "practice-search" && teachingAuth?.user.role === "student" && !studyMode && !manualMode && <MobilePracticeSearchPanel message={practiceMessage} busy={practiceCreating} onBack={() => navigateMobileRoute("practice")} onOpenProblem={(next) => { if (next.serverProblemId) void createPracticeSession({ sourceKind: "random", scope: "all", problemIds: [next.serverProblemId], count: 1 }); }} />}
     {mobileLayout && mobileRoute === "practice-assets" && teachingAuth?.user.role === "student" && !studyMode && !manualMode && <MobileLearningAssetsPanel home={practiceHome} onBack={() => navigateMobileRoute("practice")} onMistakes={() => navigateMobileRoute("practice-mistakes")} onFavorites={() => navigateMobileRoute("practice-favorites")} />}
-    {mobileLayout && ["practice-setup", "practice-mistakes", "practice-favorites", "practice-topic", "practice-search", "practice-assets", "practice-session", "practice-result"].includes(mobileRoute) && teachingAuth?.user.role !== "student" ? <main className="mobile-practice-page"><PracticeAccessPanel signedIn={Boolean(teachingAuth)} onLogin={() => { if (teachingAuth) { teachingClient.logout(); setTeachingAuth(undefined); } setTeachingAccountOpen(true); }}/></main> : mobileLayout && mobileRoute === "teacher" && teachingAuth && ["coach", "admin"].includes(teachingAuth.user.role) ? <TeacherMobileWorkspace auth={teachingAuth} path={teacherPath} onNavigate={navigateTeacher} onAuthChange={(auth) => applyTeachingAuth(auth, true)} onExit={() => navigateMobileRoute("home", true)} onRelogin={() => { teachingClient.logout(); setTeachingAuth(undefined); setResumeTeacherAfterLogin(true); navigateMobileRoute("account", true); setTeachingAccountOpen(true); }} onLogout={() => { teachingClient.logout(); setTeachingAuth(undefined); navigateMobileRoute("home", true); }}/> : mobileLayout && mobileRoute === "practice-setup" ? <MobilePracticeSetupPanel busy={practiceCreating} message={practiceMessage} topics={practiceHome?.topics ?? []} onBack={() => navigateMobileRoute("practice")} onStart={(payload) => void createPracticeSession({ sourceKind: "topic", topicId: payload.topicId, scope: payload.scope, mode: payload.mode, libraryIds: payload.libraryIds, category: payload.category, difficulty: payload.difficulty, count: payload.count })}/> : mobileLayout && mobileRoute === "practice-mistakes" ? <MobilePracticeReviewPanel busy={practiceCreating} message={practiceMessage} kind="mistakes" onBack={() => navigateMobileRoute("practice")} onStart={(problemIds, state) => void createPracticeSession({ sourceKind: "mistakes", scope: state === "mastered" ? "all" : "mistakes", problemIds, count: problemIds.length })}/> : mobileLayout && mobileRoute === "practice-favorites" ? <MobilePracticeReviewPanel busy={practiceCreating} message={practiceMessage} kind="favorites" onBack={() => navigateMobileRoute("practice")} onStart={(problemIds) => void createPracticeSession({ sourceKind: "favorites", scope: "favorites", problemIds, count: problemIds.length })}/> : mobileLayout && mobileRoute === "practice-result" ? <MobilePracticeResultPanel session={practiceSession} message={practiceMessage} onBack={() => navigateMobileRoute("practice", true)} onRetryMistakes={() => navigateMobileRoute("practice-mistakes")} onRestart={() => navigateMobileRoute("practice-setup")} /> : mobileLayout && problem && !studyMode && !manualMode ? <MobilePracticeSolverPanel problem={problem} session={practiceSession} item={activePracticeItem} navigator={activeSolverNavigator} pieces={pieces} selected={selected} legalTargets={legalTargets} lastMove={lastMove} hints={hints} mistakes={mistakes} elapsed={fmt(elapsed)} ended={ended} revealed={revealed} notice={practiceSession ? practiceMessage || notice : notice} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} feedback={moveFeedback} onSquare={(square) => void move(square)} onMove={(from, to) => void moveFromTo(from, to)} onBack={() => practiceSession ? leavePracticeSession() : problem.source === "teaching" ? returnToStudentAssignments() : navigateMobileRoute("library-browse", true)} onHint={() => void giveHint()} onRestart={() => void restart()} onReveal={() => void reveal()} onPrevious={() => { if (!practiceSession || !activePracticeItem) return; const index = practiceSession.items.findIndex((item) => item.id === activePracticeItem.id); const previous = practiceSession.items[index - 1]; if (previous) void selectPracticeSessionItem(previous); }} onNext={() => { if (!practiceSession || !activePracticeItem) { navigateMobileRoute("practice", true); return; } const index = practiceSession.items.findIndex((item) => item.id === activePracticeItem.id); const next = practiceSession.items[index + 1]; if (next) void selectPracticeSessionItem(next); else openPracticeResult(); }} onFinish={() => void finish("abandoned")} favoriteEnabled={teachingAuth?.user.role === "student"} onFavorite={() => void refreshPracticeHome()}/> : mobileLayout && mobileRoute === "home" && !studyMode && !manualMode ? <MobileHomePanel auth={teachingAuth} home={practiceHome} libraries={libraries} gameLibraries={platformGameLibraries} unreadAssignments={unreadAssignmentCount} onPractice={() => navigateMobileRoute("practice")} onLibrary={() => navigateMobileRoute("library")} onAssignments={() => openMobileTab("assignments")} onSetup={() => navigateMobileRoute("tool-setup")} onTeacher={() => { if (teachingAuth) navigateTeacher(teachingAuth.user.orgId ? "/teacher" : "/teacher/join-organization"); }} onLogin={() => setTeachingAccountOpen(true)}/> : mobileLayout && mobileRoute === "library" && !studyMode && !manualMode ? <MobileLibraryPanel libraries={libraries} gameLibraries={platformGameLibraries} signedIn={Boolean(teachingAuth)} onOpenLibrary={(next) => { void selectLibrary(next).then(() => navigateMobileRoute("library-browse")); }} onOpenGameLibrary={(next) => { void selectPlatformGameLibrary(next).then(() => navigateMobileRoute("game-browse")); }} onImport={openImportPanel} onOpenAssignments={() => openMobileTab("assignments")}/> : mobileLayout && mobileRoute === "library-browse" && !studyMode && !manualMode ? <MobileLibraryBrowsePanel library={library} problems={problems} onBack={() => navigateMobileRoute("library")} onOpenProblem={(next) => { void selectProblem(next).then(() => navigateMobileRoute("practice")); }}/> : mobileLayout && mobileRoute === "game-browse" && !studyMode && !manualMode ? <MobileGameBrowsePanel library={platformGameLibrary} games={platformGames} onBack={() => navigateMobileRoute("library")} onOpenGame={(next) => void openPlatformGame(next)}/> : mobileLayout && mobileTab === "account" && !studyMode && !manualMode ? <MobileAccountPanel auth={teachingAuth} syncing={manualCloudSyncing} onLogin={() => setTeachingAccountOpen(true)} onTeaching={() => { if (!teachingAuth) setTeachingAccountOpen(true); else navigateTeacher(teachingAuth.user.orgId ? "/teacher" : "/teacher/join-organization"); }} onManual={() => navigateMobileRoute("tool-manual")} onStudy={() => navigateMobileRoute("tool-study")} onSetup={() => navigateMobileRoute("tool-setup")} onImport={openImportPanel} onSync={() => void syncPersonalManualLibrary()} onSettings={() => navigateMobileRoute("tool-settings")} onAbout={() => setShowAbout(true)}/> : mobileLayout && mobileTab === "practice" && !studyMode && !manualMode ? <MobilePracticePanel auth={teachingAuth} loading={practiceHomeLoading} error={practiceHomeError} busy={practiceCreating} message={practiceMessage} onRetry={() => void refreshPracticeHome()} onLogin={() => { if (teachingAuth) { teachingClient.logout(); setTeachingAuth(undefined); } setTeachingAccountOpen(true); }} onSearch={() => navigateMobileRoute("practice-search")} onAssets={() => navigateMobileRoute("practice-assets")} libraries={libraries} home={practiceHome} onBrowseLibrary={() => { const first = platformGameLibraries[0]; if (first) void selectPlatformGameLibrary(first).then(() => navigateMobileRoute("game-browse")); else navigateMobileRoute("library"); }} onImport={openImportPanel} onStudy={() => navigateMobileRoute("tool-study")} onOpenAssignments={() => openMobileTab("assignments")} onSetup={() => navigateMobileRoute("practice-setup")} onMistakes={() => navigateMobileRoute("practice-mistakes")} onFavorites={() => navigateMobileRoute("practice-favorites")} onResume={() => { if (practiceHome?.resumeSession) void openPracticeSession(practiceHome.resumeSession); }} onRandom={() => { const ids = practiceHome?.topics.flatMap((topic) => topic.sources.map((source) => source.libraryId)) ?? []; void createPracticeSession({ sourceKind: "random", scope: "random", libraryIds: ids, count: 10, mode: "solver" }); }} onDaily={() => { if (practiceHome?.dailyPlan) void createPracticeSession({}, practiceHome.dailyPlan.id); }} onTopic={(topic) => { setPracticeTopicId(topic.id); navigateMobileRoute("practice-topic"); }}/> : mobileLayout && mobileTab === "assignments" && !studentAssignmentsOpen && !studyMode && !manualMode ? <MobileAssignmentsAccessPanel auth={teachingAuth} onLogin={() => setTeachingAccountOpen(true)} onSwitchAccount={() => { teachingClient.logout(); setTeachingAuth(undefined); setUnreadAssignmentCount(0); setStudentAssignmentsOpen(false); setTeachingAccountOpen(true); }} onTeacher={() => { if (teachingAuth) navigateTeacher(teachingAuth.user.orgId ? "/teacher" : "/teacher/join-organization"); }} onOpenStudent={() => setStudentAssignmentsOpen(true)} onBrowseLibrary={() => navigateMobileRoute("library")}/> : mobileLayout && studentAssignmentsOpen && !studyMode && !manualMode && teachingAuth?.user.role === "student" ? <StudentAssignmentsPanel auth={teachingAuth} syncing={teachingSyncing} lastSyncAt={teachingLastSyncAt} message={teachingMessage} onSync={() => void syncTeachingAssignments()} onOpenAccount={() => setTeachingAccountOpen(true)} onOpenPractice={openStudentPractice} onOpenProblem={(next) => void openStudentProblem(next)} onUnreadChange={setUnreadAssignmentCount} /> : <div className="training-layout">
+    {mobileLayout && singleProblemResultOpen && problem && <MobileSingleProblemResultPanel problem={problem} elapsed={fmt(elapsed)} hints={hints} mistakes={mistakes} revealed={revealed} message={teachingMessage} onBack={closeSingleProblemResult}/>}
+    {mobileLayout && ["tool-settings", "tool-sync", "onboarding", "practice-topic", "practice-search", "practice-assets"].includes(mobileRoute) && !studyMode && !manualMode && (["tool-settings", "tool-sync", "onboarding"].includes(mobileRoute) || teachingAuth?.user.role === "student") ? null : mobileLayout && ["practice-setup", "practice-mistakes", "practice-favorites", "practice-topic", "practice-search", "practice-assets", "practice-session", "practice-result"].includes(mobileRoute) && teachingAuth?.user.role !== "student" ? <main className="mobile-practice-page"><PracticeAccessPanel signedIn={Boolean(teachingAuth)} onLogin={() => { if (teachingAuth) { teachingClient.logout(); setTeachingAuth(undefined); } setTeachingAccountOpen(true); }}/></main> : mobileLayout && mobileRoute === "teacher" && teachingAuth && ["coach", "admin"].includes(teachingAuth.user.role) ? <TeacherMobileWorkspace auth={teachingAuth} path={teacherPath} onNavigate={navigateTeacher} onAuthChange={(auth) => applyTeachingAuth(auth, true)} onExit={() => navigateMobileRoute("home", true)} onRelogin={() => { teachingClient.logout(); setTeachingAuth(undefined); setResumeTeacherAfterLogin(true); navigateMobileRoute("account", true); setTeachingAccountOpen(true); }} onLogout={() => { teachingClient.logout(); setTeachingAuth(undefined); navigateMobileRoute("home", true); }}/> : mobileLayout && mobileRoute === "practice-setup" ? <MobilePracticeSetupPanel busy={practiceCreating} message={practiceMessage} topics={practiceHome?.topics ?? []} onBack={() => navigateMobileRoute("practice")} onStart={(payload) => void createPracticeSession({ sourceKind: "topic", topicId: payload.topicId, scope: payload.scope, mode: payload.mode, libraryIds: payload.libraryIds, category: payload.category, difficulty: payload.difficulty, count: payload.count })}/> : mobileLayout && mobileRoute === "practice-mistakes" ? <MobilePracticeReviewPanel busy={practiceCreating} message={practiceMessage} kind="mistakes" onBack={() => navigateMobileRoute("practice")} onStart={(problemIds, state) => void createPracticeSession({ sourceKind: "mistakes", scope: state === "mastered" ? "all" : "mistakes", problemIds, count: problemIds.length })}/> : mobileLayout && mobileRoute === "practice-favorites" ? <MobilePracticeReviewPanel busy={practiceCreating} message={practiceMessage} kind="favorites" onBack={() => navigateMobileRoute("practice")} onStart={(problemIds) => void createPracticeSession({ sourceKind: "favorites", scope: "favorites", problemIds, count: problemIds.length })}/> : mobileLayout && mobileRoute === "practice-result" ? <MobilePracticeResultPanel session={practiceSession} message={practiceMessage} backLabel={practiceReturnRoute === "library-browse" ? "返回题库" : "返回练习"} onBack={leavePracticeSession} onRetryMistakes={() => navigateMobileRoute("practice-mistakes")} onRestart={() => navigateMobileRoute("practice-setup")} /> : mobileLayout && mobileSolverVisible && problem && !studyMode && !manualMode ? <MobilePracticeSolverPanel backLabel={practiceSession ? practiceReturnRoute === "library-browse" ? "返回题库" : "返回练习" : problem.source === "teaching" ? "返回作业" : "返回题库"} answer={answer} answerStep={answerStep} demoPlaying={demoPlaying} onPreviewStep={(step) => { setDemoPlaying(false); void previewAnswerStep(step); }} onTogglePreview={toggleAnswerPreview} problem={problem} session={practiceSession} item={activePracticeItem} navigator={activeSolverNavigator} pieces={pieces} selected={selected} legalTargets={legalTargets} lastMove={lastMove} hints={hints} mistakes={mistakes} elapsed={fmt(elapsed)} ended={ended} revealed={revealed} notice={practiceSession ? practiceMessage || notice : notice} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} feedback={moveFeedback} onSquare={(square) => void move(square)} onMove={(from, to) => void moveFromTo(from, to)} onBack={() => practiceSession ? leavePracticeSession() : problem.source === "teaching" ? returnToStudentAssignments() : leaveLibraryProblem()} onHint={() => void giveHint()} onRestart={() => void restart()} onReveal={() => void reveal()} onPrevious={() => { if (!practiceSession || !activePracticeItem) return; const index = practiceSession.items.findIndex((item) => item.id === activePracticeItem.id); const previous = practiceSession.items[index - 1]; if (previous) void selectPracticeSessionItem(previous); }} onNext={nextSolverProblem} onFinish={() => void finish("abandoned")} favoriteEnabled={teachingAuth?.user.role === "student"} onFavorite={() => void refreshPracticeHome()}/> : mobileLayout && mobileRoute === "home" && !studyMode && !manualMode ? <MobileHomePanel auth={teachingAuth} home={practiceHome} libraries={libraries} gameLibraries={platformGameLibraries} unreadAssignments={unreadAssignmentCount} onPractice={() => navigateMobileRoute("practice")} onLibrary={() => navigateMobileRoute("library")} onAssignments={() => openMobileTab("assignments")} onSetup={() => navigateMobileRoute("tool-setup")} onTeacher={() => { if (teachingAuth) navigateTeacher(teachingAuth.user.orgId ? "/teacher" : "/teacher/join-organization"); }} onLogin={() => setTeachingAccountOpen(true)}/> : mobileLayout && mobileRoute === "library" && !studyMode && !manualMode ? <MobileLibraryPanel libraries={libraries} gameLibraries={platformGameLibraries} signedIn={Boolean(teachingAuth)} onOpenLibrary={(next) => { void selectLibrary(next).then(() => navigateMobileRoute("library-browse")); }} onOpenGameLibrary={(next) => { void selectPlatformGameLibrary(next).then(() => navigateMobileRoute("game-browse")); }} onImport={openImportPanel} onOpenAssignments={() => openMobileTab("assignments")}/> : mobileLayout && mobileRoute === "library-browse" && !studyMode && !manualMode ? <MobileLibraryBrowsePanel message={practiceMessage} busy={practiceCreating} library={library} problems={problems} onBack={() => navigateMobileRoute("library")} onOpenProblem={(next) => void openLibraryPractice(next)}/> : mobileLayout && mobileRoute === "game-browse" && !studyMode && !manualMode ? <MobileGameBrowsePanel library={platformGameLibrary} games={platformGames} onBack={() => navigateMobileRoute("library")} onOpenGame={(next) => void openPlatformGame(next)}/> : mobileLayout && mobileTab === "account" && !studyMode && !manualMode ? <MobileAccountPanel auth={teachingAuth} syncing={manualCloudSyncing} onLogin={() => setTeachingAccountOpen(true)} onTeaching={() => { if (!teachingAuth) setTeachingAccountOpen(true); else navigateTeacher(teachingAuth.user.orgId ? "/teacher" : "/teacher/join-organization"); }} onManual={() => navigateMobileRoute("tool-manual")} onStudy={() => navigateMobileRoute("tool-study")} onSetup={() => navigateMobileRoute("tool-setup")} onImport={openImportPanel} onSync={() => void syncPersonalManualLibrary()} onSettings={() => navigateMobileRoute("tool-settings")} onAbout={() => setShowAbout(true)}/> : mobileLayout && mobileTab === "practice" && !studyMode && !manualMode ? <MobilePracticePanel auth={teachingAuth} loading={practiceHomeLoading} error={practiceHomeError} busy={practiceCreating} message={practiceMessage} onRetry={() => void refreshPracticeHome()} onLogin={() => { if (teachingAuth) { teachingClient.logout(); setTeachingAuth(undefined); } setTeachingAccountOpen(true); }} onSearch={() => navigateMobileRoute("practice-search")} onAssets={() => navigateMobileRoute("practice-assets")} libraries={libraries} home={practiceHome} onBrowseLibrary={() => { const first = platformGameLibraries[0]; if (first) void selectPlatformGameLibrary(first).then(() => navigateMobileRoute("game-browse")); else navigateMobileRoute("library"); }} onImport={openImportPanel} onStudy={() => navigateMobileRoute("tool-study")} onOpenAssignments={() => openMobileTab("assignments")} onSetup={() => navigateMobileRoute("practice-setup")} onMistakes={() => navigateMobileRoute("practice-mistakes")} onFavorites={() => navigateMobileRoute("practice-favorites")} onResume={() => { if (practiceHome?.resumeSession) void openPracticeSession(practiceHome.resumeSession); }} onRandom={() => { const ids = practiceHome?.topics.flatMap((topic) => topic.sources.map((source) => source.libraryId)) ?? []; void createPracticeSession({ sourceKind: "random", scope: "random", libraryIds: ids, count: 10, mode: "solver" }); }} onDaily={() => { if (practiceHome?.dailyPlan) void createPracticeSession({}, practiceHome.dailyPlan.id); }} onTopic={(topic) => { setPracticeTopicId(topic.id); navigateMobileRoute("practice-topic"); }}/> : mobileLayout && mobileTab === "assignments" && !studentAssignmentsOpen && !studyMode && !manualMode ? <MobileAssignmentsAccessPanel auth={teachingAuth} onLogin={() => setTeachingAccountOpen(true)} onSwitchAccount={() => { teachingClient.logout(); setTeachingAuth(undefined); setUnreadAssignmentCount(0); setStudentAssignmentsOpen(false); setTeachingAccountOpen(true); }} onTeacher={() => { if (teachingAuth) navigateTeacher(teachingAuth.user.orgId ? "/teacher" : "/teacher/join-organization"); }} onOpenStudent={() => setStudentAssignmentsOpen(true)} onBrowseLibrary={() => navigateMobileRoute("library")}/> : mobileLayout && studentAssignmentsOpen && !studyMode && !manualMode && teachingAuth?.user.role === "student" ? <StudentAssignmentsPanel auth={teachingAuth} syncing={teachingSyncing} lastSyncAt={teachingLastSyncAt} message={teachingMessage} onSync={() => void syncTeachingAssignments()} onOpenAccount={() => setTeachingAccountOpen(true)} onOpenPractice={openStudentPractice} onOpenProblem={(next) => void openStudentProblem(next)} onUnreadChange={setUnreadAssignmentCount} /> : <div className="training-layout">
     <aside className={`catalogue ${catalogueOpen ? "drawer-open" : ""}`}><header className="catalogue-heading"><span><strong>题库目录</strong><small>{libraries.length} 本题库</small></span>{library && (library.source === "local" || !library.source) && <button className="catalogue-delete" title="删除当前题库" onClick={() => setDeleteTarget({ type: "library", id: library.id, title: library.title })}><Trash2/></button>}</header><div className="library-list">{libraries.map((item) => <section key={item.id}><button className={`library-row ${expanded === item.id ? "expanded" : ""}`} onClick={() => expanded === item.id ? setExpanded(undefined) : void selectLibrary(item)}><BookOpen/><span><b>{item.title}</b><small>{item.completedCount}/{item.problemCount} 已完成{accessTierLabel(item.accessTier) ? ` · ${accessTierLabel(item.accessTier)}` : ""}</small></span>{expanded === item.id ? <ChevronDown/> : <ChevronRight/>}</button>{expanded === item.id && <div className="problem-area"><div className="filters"><div className="problem-search"><Search/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索残局题名或分类" aria-label="搜索残局题名或分类" autoComplete="off"/>{query && <button type="button" aria-label="清除搜索" title="清除搜索" onClick={() => setQuery("")}><X/></button>}</div><select value={category} onChange={(event) => setCategory(event.target.value)} aria-label="按残局分类筛选">{categories.map((value) => <option key={value}>{value}</option>)}</select></div>{visible.length ? visible.map((item) => <button key={item.id} className={`problem-row ${problem?.id === item.id ? "active" : ""}`} onClick={() => { navigateMobileRoute("practice"); void selectProblem(item); }}><b>{item.sourceIndex + 1}</b><span>{item.title}<small>{item.category} · {item.completedAttempts ? `累计 ${fmt(item.totalElapsedMs)}` : "未练"}{accessTierLabel(item.accessTier) ? ` · ${accessTierLabel(item.accessTier)}` : ""}</small></span></button>) : <p className="problem-empty">没有找到匹配的残局</p>}</div>}</section>)}</div></aside>
     <main className="training-stage">{problem ? <><header className={`problem-heading ${problem.source === "teaching" && teachingAuth?.user.role === "student" ? "teaching-problem-heading" : ""}`}><span className="problem-heading-side problem-heading-left">{problem.source === "teaching" && teachingAuth?.user.role === "student" && <button type="button" className="student-assignment-back" aria-label="返回我的作业" title="返回我的作业" onClick={returnToStudentAssignments}><ChevronLeft/><span>作业</span></button>}</span><span className="problem-heading-title"><small>第 {problem.sourceIndex + 1}/{problems.length} 题</small><strong>{problem.title}</strong></span><span className="problem-heading-side problem-heading-right">{(!problem.source || problem.source === "local") && <button className="problem-delete-button" title="移除当前残局" onClick={() => setDeleteTarget({ type: "problem", id: problem.id, title: problem.title })}><Trash2/></button>}</span></header><Board key="training" pieces={pieces} selected={selected} legalTargets={legalTargets} lastMove={lastMove} hintMove={hints >= 2 ? line[0]?.iccs : undefined} analysisMoves={analysisArrowsVisible ? trainingAnalysisLines.map((item) => item.pv[0]) : []} activeAnalysis={trainingActiveAnalysis} flipped={boardFlipped} feedback={moveFeedback} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={(square) => void move(square)} onMove={(from, to) => void moveFromTo(from, to)}/><p className="board-tip">{mode === "cloud" ? "云库优先应手；未收录时由本地 Pikafish 接手。" : mode === "ai" ? "本地 Pikafish 离线应手，不访问云库。" : problem.source === "teaching" ? "线上作业：按题解完成，完成后自动提交；离线时会暂存并在联网后补交。" : "选棋子或拖动棋子到目标点。错误走法不会改变局面。"}</p></> : <div className="empty"><BookOpen/><strong>选择题库内容</strong><span>登录后可练习平台题库，或导入本地 CBL。</span></div>}</main>
     <aside className={`controls ${controlsOpen ? "drawer-open" : ""} ${revealed ? "answer-revealed" : ""}`}>{problem ? <><section className="clock"><Clock3/><small>本题用时</small><strong>{fmt(elapsed)}</strong><span>累计用时 {fmt(problem.totalElapsedMs)}</span><button onClick={() => { setShowHistory((value) => !value); void trainingStore.attempts(problem.id).then(setAttempts); }}>记录</button></section><section className="modes">{(["cloud", ...(LOCAL_PIKAFISH_AVAILABLE ? ["ai" as const] : []), "solver", "replay", "free"] as Mode[]).map((value) => <label key={value}><input type="radio" checked={mode === value} disabled={attemptStarted || ended} onChange={() => changeMode(value)}/>{modeLabel[value]}{value === "cloud" && (LOCAL_PIKAFISH_AVAILABLE ? "（云库优先）" : "（云库应手）")}{value === "ai" && "（纯离线）"}{value === "replay" && "（按题解）"}</label>)}</section>{LOCAL_PIKAFISH_AVAILABLE && <AnalysisPanel lines={trainingAnalysisLines} pending={analysisPending && !studyMode} activeIndex={trainingActiveAnalysis} disabled={autoReplyPending || revealed || ended} enabled={true} multiPv={analysisMultiPv} moveTimeSec={analysisMoveTimeSec} scoreSide={sideToMove(problem.startingFen, moves)} arrowsVisible={analysisArrowsVisible} onToggle={() => void (analysisPending ? stopAnalysis() : startAnalysis())} onToggleArrows={toggleAnalysisArrows} onSelect={setTrainingActiveAnalysis} onMultiPvChange={(value) => void changeAnalysisMultiPv(value)} onMoveTimeChange={(value) => void changeAnalysisMoveTimeSec(value)}/>}<section className={`actions ${revealed ? "revealed-actions" : ""}`}>{revealed ? <><button className="primary" onClick={toggleAnswerPreview}>{demoPlaying ? <Pause/> : <Play/>}{demoPlaying ? "暂停预演" : answerStep >= answer.length ? "重播答案" : "答案预演"}</button><button onClick={() => void restart()}><RotateCcw/>重来</button></> : <><button className="primary" disabled={ended} onClick={() => void giveHint()}><Lightbulb/>提示 {hints}/3</button><button disabled={ended || (!startedAt && !elapsedSaved)} onClick={pause}>{startedAt ? <Pause/> : <Play/>}{startedAt ? "暂停" : "继续"}</button><button onClick={() => void restart()}><RotateCcw/>重来</button>{mode === "free" || mode === "cloud" || mode === "ai" ? <button disabled={ended} onClick={() => void finish("free_finished")}>{mode === "free" ? "结束实战" : "结束对练"}</button> : <button disabled={ended} onClick={() => void reveal()}><ListRestart/>看答案</button>}</>}</section><section className={`notice ${revealed ? "answer-notice" : ""}`}><b>错误 {mistakes} 次{revealed ? " · 答案已显示，可预演" : ""}</b>{!revealed && <p>{renderNote(notice)}</p>}</section>{showHistory ? <section className="history"><b>答题记录</b>{attempts.length ? attempts.slice(0, 30).map((item) => <p key={item.id}><strong>{item.outcome === "completed" ? "解出" : item.outcome === "revealed" ? "看答案" : item.outcome === "free_finished" ? "实战结束" : "已放弃"}</strong><span>{modeLabel[item.mode]} · {fmt(item.elapsedMs)} · 错 {item.mistakes} · 提示 {item.hintsUsed}</span></p>) : <p>还没有答题记录</p>}</section> : revealed && <section className="answer"><header><b>答案预演</b><small>{answerStep}/{answer.length} 手</small></header><footer className="answer-preview-controls"><button disabled={answerStep <= 0} onClick={() => { setDemoPlaying(false); void previewAnswerStep(answerStep - 1); }}><ChevronLeft/>上一步</button><button disabled={answerStep >= answer.length} onClick={() => { setDemoPlaying(false); void previewAnswerStep(answerStep + 1); }}><ChevronRight/>下一步</button><button disabled={!answer.length} onClick={toggleAnswerPreview}>{demoPlaying ? <Pause/> : <Play/>}{demoPlaying ? "暂停" : answerStep >= answer.length ? "重播" : "继续"}</button><button onClick={() => { setDemoPlaying(false); void previewAnswerStep(0); }}><RotateCcw/>从头</button></footer><div className="answer-move-list">{Array.from({ length: Math.ceil(answer.length / 2) }, (_, index) => <p key={index} className={answerStep > index * 2 ? "active" : ""}><b>第 {index + 1} 回合</b><span>红方 {answer[index * 2]}{answer[index * 2 + 1] ? ` · 黑方 ${answer[index * 2 + 1]}` : ""}</span></p>)}</div></section>}<footer className="navigate"><button disabled={currentIndex <= 0} onClick={() => void selectProblem(visible[currentIndex - 1])}><ChevronLeft/></button><button disabled={currentIndex >= visible.length - 1} onClick={() => void selectProblem(visible[currentIndex + 1])}><ChevronRight/></button></footer></> : <p>从目录选择题目。</p>}</aside>

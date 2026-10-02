@@ -891,7 +891,8 @@ export const teachingClient = {
   async practiceTopic(topicId: string) {
     const auth = this.auth();
     if (!auth || auth.user.role !== "student") throw new Error("请先登录学生账号");
-    return request<PracticeTopicDetail>(`/api/v1/student/practice/topics/${encodeURIComponent(topicId)}`, {}, auth.token);
+    const { chapters, ...topic } = await request<PracticeTopic & { chapters: PracticeTopicChapter[] }>(`/api/v1/student/practice/topics/${encodeURIComponent(topicId)}`, {}, auth.token);
+    return { topic, chapters } satisfies PracticeTopicDetail;
   },
   async practiceSearch(query: PracticeSearchQuery = {}) {
     const auth = this.auth();
