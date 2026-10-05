@@ -8,6 +8,8 @@ use axum::{
 pub(crate) enum ApiError {
     #[error("unauthorized")]
     Unauthorized,
+    #[error("forbidden")]
+    Forbidden,
     #[error("invalid request: {0}")]
     Invalid(String),
     #[error("conflict: {0}")]
@@ -41,6 +43,7 @@ impl IntoResponse for ApiError {
         }
         let status = match &self {
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
+            Self::Forbidden => StatusCode::FORBIDDEN,
             Self::Invalid(_) => StatusCode::BAD_REQUEST,
             Self::Conflict(_) => StatusCode::CONFLICT,
             Self::NotFound => StatusCode::NOT_FOUND,

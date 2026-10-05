@@ -24,6 +24,7 @@ import {
   FolderPlus,
   GitBranch,
   GitFork,
+  GraduationCap,
   GripVertical,
   Link,
   LayoutGrid,
@@ -72,6 +73,7 @@ import { WorkspaceTabs, type WorkspacePanel } from "./WorkspaceTabs";
 import { WorkspaceModeSwitch, type WorkspaceMode } from "./WorkspaceModeSwitch";
 import { CompactEngineAnalysisList, CompactReferencePanels, type CompactBookRow, type CompactEngineAnalysisRow, type CompactEvaluationRow } from "./CompactWorkspace";
 import { CoachProfileView } from "./CoachProfileView";
+import { TeachingCenter } from "./TeachingCenter";
 import { SkinShopDialog } from "./SkinShopDialog";
 import { CANDIDATE_PREVIEW_HALF_MOVES, DEFAULT_CANDIDATE_LINE_MOVES, DEFAULT_ENGINE_CANDIDATES, MIN_CANDIDATE_LINE_MOVES, MIN_ENGINE_CANDIDATES, halfMovesToRoundText } from "./candidatePreview";
 import { AutosaveOperationQueue, autosaveLabel, type AutosaveState } from "./autosave";
@@ -762,7 +764,7 @@ const defaultDesktopPreferences: DesktopPreferencesDto = {
   moveSoundVolume: 70,
   gameMirrorEnabled: true,
   gameMirrorRoot: "",
-  serverUrl: "http://127.0.0.1:8080",
+  serverUrl: import.meta.env.DEV ? "http://127.0.0.1:8080" : "https://api.qixiapp.cn",
 };
 const defaultSyncAccount: SyncAccountDto = {
   serverUrl: defaultDesktopPreferences.serverUrl,
@@ -1473,7 +1475,7 @@ export default function App() {
   const [ttxqDiagnostics, setTtxqDiagnostics] = useState<TtxqDiagnosticSample[]>([]);
   const [ttxqImportFolder, setTtxqImportFolder] = useState(TTXQ_BACKUP_FOLDER);
   const [comment, setComment] = useState("");
-  const [serverUrl, setServerUrl] = useState("http://127.0.0.1:8080");
+  const [serverUrl, setServerUrl] = useState(defaultDesktopPreferences.serverUrl);
   const [token, setToken] = useState("");
   const [guestToken, setGuestToken] = useState("");
   const [guestTokenExpiresAt, setGuestTokenExpiresAt] = useState("");
@@ -1551,6 +1553,7 @@ export default function App() {
   const [theoryLibraryBusy, setTheoryLibraryBusy] = useState(false);
   const [theoryLibraryError, setTheoryLibraryError] = useState<string>();
   const [desktopDialog, setDesktopDialog] = useState<DesktopDialog>(null);
+  const [teachingCenterOpen, setTeachingCenterOpen] = useState(false);
   const [userManualOpen, setUserManualOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [appInfo, setAppInfo] = useState<AppInfoDto>();
@@ -7809,6 +7812,7 @@ export default function App() {
           </section>
         )}
         {engineDivergenceDialog()}
+        {chessPlatform.kind === "desktop" && <TeachingCenter open={teachingCenterOpen} onClose={() => setTeachingCenterOpen(false)} />}
         {chessPlatform.kind === "desktop" && <DesktopDialogs
           dialog={desktopDialog}
           preferences={desktopPreferences}
@@ -8019,6 +8023,7 @@ export default function App() {
         </button>
       </nav>
 
+      {chessPlatform.kind === "desktop" && <TeachingCenter open={teachingCenterOpen} onClose={() => setTeachingCenterOpen(false)} />}
       {chessPlatform.kind === "desktop" && <DesktopDialogs
         dialog={desktopDialog}
         preferences={desktopPreferences}
@@ -8255,6 +8260,7 @@ export default function App() {
             </div>
             {syncAccount.status !== "unbound" && <button className="danger" disabled={syncBusy} onClick={() => setDesktopDialog("unbind")}>解除绑定并切换账号</button>}
           </section>}
+          {chessPlatform.kind === "desktop" && <section className="sync-box teaching-sync-summary"><div className="sync-title"><GraduationCap size={14}/><strong>教学中心</strong><span className="sync-status">独立账号</span></div><small>学生查看和完成作业；老师查看负责班级与作业统计。不会改变个人同步账号。</small><button onClick={() => setTeachingCenterOpen(true)}>打开教学中心</button></section>}
         </aside>
 
         <section className={`board-section ${mobilePanel === "board" ? "mobile-visible" : ""}`}>

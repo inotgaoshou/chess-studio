@@ -68,4 +68,25 @@ describe("ReviewGameLibrary", () => {
     expect(onChanged).toHaveBeenCalledOnce();
     expect(await screen.findByText("已创建目录：天天象棋/我的棋谱")).toBeTruthy();
   });
+
+  it("shows a friendly message instead of raw unauthorized errors", async () => {
+    const user = userEvent.setup();
+    const target = platformMock as Record<string, ReturnType<typeof vi.fn> | string>;
+    target.createLibraryFolder = vi.fn(async () => { throw new Error("unauthorized"); });
+
+    render(<ReviewGameLibrary
+      games={games}
+      folders={folders}
+      onOpen={vi.fn()}
+      onChanged={vi.fn()}
+      onClose={vi.fn()}
+    />);
+
+    await user.click(screen.getByRole("button", { name: "新建子目录" }));
+    await user.type(screen.getByLabelText("目录名"), "我的棋谱");
+    await user.click(screen.getByRole("button", { name: "创建" }));
+
+    expect((await screen.findByRole("alert")).textContent).toContain("登录状态已过期或当前账号没有权限");
+    expect(screen.queryByText("创建目录失败：unauthorized")).toBeNull();
+  });
 });

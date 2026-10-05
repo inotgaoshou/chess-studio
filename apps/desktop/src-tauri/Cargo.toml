@@ -24,7 +24,7 @@ image = { version = "0.25", default-features = false, features = ["gif", "png"] 
 imageproc = { version = "0.25", default-features = false }
 ndarray = "0.17"
 ort = "2.0.0-rc.13"
-reqwest = { version = "0.13", features = ["json"] }
+reqwest = { version = "0.13", features = ["json", "multipart"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
 printpdf = { version = "0.8.2", default-features = false }
 serde.workspace = true

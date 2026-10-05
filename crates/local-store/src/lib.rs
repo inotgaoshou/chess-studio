@@ -367,6 +367,18 @@ pub struct LocalStore {
     connection: Connection,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TeachingOutboxEntry {
+    pub client_attempt_id: String,
+    pub owner_id: String,
+    pub server_url: String,
+    pub payload_json: String,
+    pub created_at: String,
+    pub retry_count: u32,
+    pub last_error: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AnalysisSummary {
     pub score_cp: Option<i32>,
@@ -819,6 +831,100 @@ pub struct ImportedTheoryCard {
 }
 
 impl LocalStore {
+    pub fn put_teaching_cache(
+        &mut self,
+        cache_key: &str,
+        owner_id: &str,
+        kind: &str,
+        payload_json: &str,
+    ) -> Result<(), StoreError> {
+        serde_json::from_str::<serde_json::Value>(payload_json)?;
+        self.connection.execute(
+            "INSERT INTO teaching_cache (cache_key,owner_id,kind,payload_json,updated_at)
+             VALUES (?1,?2,?3,?4,?5)
+             ON CONFLICT(cache_key) DO UPDATE SET owner_id=excluded.owner_id,
+               kind=excluded.kind,payload_json=excluded.payload_json,updated_at=excluded.updated_at",
+            params![cache_key, owner_id, kind, payload_json, chrono::Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    pub fn teaching_cache(&self, cache_key: &str) -> Result<Option<String>, StoreError> {
+        self.connection
+            .query_row(
+                "SELECT payload_json FROM teaching_cache WHERE cache_key=?1",
+                [cache_key],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(StoreError::from)
+    }
+
+    pub fn enqueue_teaching_attempt(
+        &mut self,
+        client_attempt_id: &str,
+        owner_id: &str,
+        server_url: &str,
+        payload_json: &str,
+    ) -> Result<(), StoreError> {
+        serde_json::from_str::<serde_json::Value>(payload_json)?;
+        self.connection.execute(
+            "INSERT INTO teaching_attempt_outbox
+               (client_attempt_id,owner_id,server_url,payload_json,created_at,retry_count,last_error)
+             VALUES (?1,?2,?3,?4,?5,0,NULL)
+             ON CONFLICT(client_attempt_id) DO UPDATE SET payload_json=excluded.payload_json",
+            params![client_attempt_id, owner_id, server_url, payload_json, chrono::Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    pub fn pending_teaching_attempts(
+        &self,
+        owner_id: &str,
+        server_url: &str,
+    ) -> Result<Vec<TeachingOutboxEntry>, StoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT client_attempt_id,owner_id,server_url,payload_json,created_at,retry_count,last_error
+             FROM teaching_attempt_outbox WHERE owner_id=?1 AND server_url=?2
+             ORDER BY created_at,client_attempt_id",
+        )?;
+        statement
+            .query_map(params![owner_id, server_url], |row| {
+                Ok(TeachingOutboxEntry {
+                    client_attempt_id: row.get(0)?,
+                    owner_id: row.get(1)?,
+                    server_url: row.get(2)?,
+                    payload_json: row.get(3)?,
+                    created_at: row.get(4)?,
+                    retry_count: row.get(5)?,
+                    last_error: row.get(6)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(StoreError::from)
+    }
+
+    pub fn mark_teaching_attempt_failed(
+        &mut self,
+        client_attempt_id: &str,
+        error: &str,
+    ) -> Result<(), StoreError> {
+        self.connection.execute(
+            "UPDATE teaching_attempt_outbox SET retry_count=retry_count+1,last_error=?1
+             WHERE client_attempt_id=?2",
+            params![error, client_attempt_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn remove_teaching_attempt(&mut self, client_attempt_id: &str) -> Result<(), StoreError> {
+        self.connection.execute(
+            "DELETE FROM teaching_attempt_outbox WHERE client_attempt_id=?1",
+            [client_attempt_id],
+        )?;
+        Ok(())
+    }
+
     pub fn flyknife_plans(&self) -> Result<Vec<FlyknifePlan>, StoreError> {
         let mut statement = self.connection.prepare(
             "SELECT id, title, side, starting_fen, template_id, template_name, lure_move, knife_move, mainline_json, best_defense_json, score_cp, mate, baseline_score_cp, swing_cp, verification, verification_depth, risk, source_game_id, source_node_id, note, annotations_json, created_at FROM flyknife_plans ORDER BY created_at DESC",
@@ -4177,7 +4283,19 @@ impl LocalStore {
                outcome TEXT NOT NULL, created_at TEXT NOT NULL,
                FOREIGN KEY(problem_id) REFERENCES endgame_problems(id) ON DELETE CASCADE
              );
-             CREATE INDEX IF NOT EXISTS idx_endgame_attempts_problem ON endgame_attempts(problem_id, created_at DESC);",
+             CREATE INDEX IF NOT EXISTS idx_endgame_attempts_problem ON endgame_attempts(problem_id, created_at DESC);
+             CREATE TABLE IF NOT EXISTS teaching_cache (
+               cache_key TEXT PRIMARY KEY, owner_id TEXT NOT NULL, kind TEXT NOT NULL,
+               payload_json TEXT NOT NULL, updated_at TEXT NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS idx_teaching_cache_owner ON teaching_cache(owner_id,kind,updated_at DESC);
+             CREATE TABLE IF NOT EXISTS teaching_attempt_outbox (
+               client_attempt_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, server_url TEXT NOT NULL,
+               payload_json TEXT NOT NULL, created_at TEXT NOT NULL,
+               retry_count INTEGER NOT NULL DEFAULT 0, last_error TEXT
+             );
+             CREATE INDEX IF NOT EXISTS idx_teaching_outbox_owner
+               ON teaching_attempt_outbox(owner_id,server_url,created_at);",
         )?;
         ensure_column(
             &connection,
@@ -7387,5 +7505,57 @@ mod tests {
         assert_eq!(status.state, "failed");
         assert_eq!(status.error.as_deref(), Some("目录不可写"));
         assert_eq!(store.game_mirror_statuses().unwrap(), vec![status]);
+    }
+
+    #[test]
+    fn teaching_cache_and_outbox_are_isolated_and_idempotent() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        store
+            .put_teaching_cache(
+                "assignments:user-1",
+                "user-1",
+                "assignments",
+                "[{\"id\":\"a1\"}]",
+            )
+            .unwrap();
+        assert_eq!(
+            store
+                .teaching_cache("assignments:user-1")
+                .unwrap()
+                .as_deref(),
+            Some("[{\"id\":\"a1\"}]")
+        );
+
+        let payload = "{\"clientAttemptId\":\"attempt-1\",\"outcome\":\"completed\"}";
+        store
+            .enqueue_teaching_attempt("attempt-1", "user-1", "https://teaching.example", payload)
+            .unwrap();
+        store
+            .enqueue_teaching_attempt("attempt-1", "user-1", "https://teaching.example", payload)
+            .unwrap();
+        let pending = store
+            .pending_teaching_attempts("user-1", "https://teaching.example")
+            .unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].client_attempt_id, "attempt-1");
+        assert!(store.pending_operations(10).unwrap().is_empty());
+
+        store
+            .mark_teaching_attempt_failed("attempt-1", "offline")
+            .unwrap();
+        assert_eq!(
+            store
+                .pending_teaching_attempts("user-1", "https://teaching.example")
+                .unwrap()[0]
+                .retry_count,
+            1
+        );
+        store.remove_teaching_attempt("attempt-1").unwrap();
+        assert!(
+            store
+                .pending_teaching_attempts("user-1", "https://teaching.example")
+                .unwrap()
+                .is_empty()
+        );
     }
 }

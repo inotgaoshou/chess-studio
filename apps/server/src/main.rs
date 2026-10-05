@@ -12,12 +12,14 @@ mod analysis_jobs;
 mod auth;
 mod error;
 mod master_library;
+mod personal_manual_sync;
 mod reference_library;
 mod reference_migration;
 mod router;
 mod state;
 mod subscription;
 mod sync;
+mod teaching;
 
 use crate::analysis_jobs::AnalysisJobStore;
 use crate::master_library::backfill_master_opening_tags;
@@ -61,6 +63,8 @@ async fn main() -> anyhow::Result<()> {
         .execute(&pool)
         .await?;
     reference_migration::migrate_reference_library(&pool).await?;
+    teaching::migrate_teaching_schema(&pool).await?;
+    personal_manual_sync::migrate(&pool).await?;
     backfill_master_opening_tags(&pool).await?;
     let app = router(
         AppState {
@@ -145,21 +149,24 @@ mod tests {
     fn weak_credentials_are_rejected() {
         assert!(
             validate_credentials(&Credentials {
-                email: "invalid".into(),
+                email: Some("invalid".into()),
+                account: None,
                 password: "short".into()
             })
             .is_err()
         );
         assert!(
             validate_credentials(&Credentials {
-                email: "user@example.com".into(),
+                email: Some("user@example.com".into()),
+                account: None,
                 password: "1234567".into(),
             })
             .is_err()
         );
         assert!(
             validate_credentials(&Credentials {
-                email: "user@example.com".into(),
+                email: Some("user@example.com".into()),
+                account: None,
                 password: "12345678".into(),
             })
             .is_ok()
@@ -288,6 +295,16 @@ mod tests {
             "/api/v1/auth/register",
             "/api/v1/auth/login",
             "/api/v1/auth/guest",
+            "/api/v1/admin/organizations",
+            "/api/v1/admin/organization-join-requests",
+            "/api/v1/admin/organization-join-requests/{request_id}/review",
+            "/api/v1/student/assignments",
+            "/api/v1/student/assignments/{assignment_id}/problems",
+            "/api/v1/student/attempts",
+            "/api/v1/teacher/students",
+            "/api/v1/teacher/assignments",
+            "/api/v1/teacher/assignments/{assignment_id}/results",
+            "/api/v1/teacher/assignments/{assignment_id}/close",
             "/api/v1/sync/push",
             "/api/v1/sync/pull",
             "/api/v1/subscription",
@@ -355,6 +372,30 @@ mod tests {
             assert!(
                 schema.contains(foreign_key),
                 "missing foreign key {foreign_key}"
+            );
+        }
+    }
+
+    #[test]
+    fn teaching_schema_and_migration_are_created_on_startup() {
+        let source = include_str!("teaching.rs");
+        let main = include_str!("main.rs");
+        assert!(main.contains("migrate_teaching_schema"));
+        for table in [
+            "teaching_assignments",
+            "teaching_assignment_problems",
+            "teaching_assignment_targets",
+            "teaching_attempts",
+        ] {
+            assert!(
+                source.contains(&format!("CREATE TABLE IF NOT EXISTS {table}")),
+                "missing teaching table {table}"
+            );
+        }
+        for column in ["login_name", "display_name", "role"] {
+            assert!(
+                source.contains(&format!("\"{column}\"")),
+                "missing users teaching column {column}"
             );
         }
     }

@@ -34,7 +34,7 @@ type StudyBranch = StudyManualBranch;
 type ManualBranch = StudyManualBranch;
 type BoardGeometry = { columns: readonly number[]; rows: readonly number[] };
 type BoardDragState = { from: Square; piece: BoardPiece; x: number; y: number; target?: Square };
-type BoardDragCandidate = { pointerId: number; from: Square; piece: BoardPiece; startX: number; startY: number; active: boolean };
+type BoardPointerGesture = { pointerId: number; from: Square; piece?: BoardPiece; startX: number; startY: number; moved: boolean; captureTarget: HTMLButtonElement };
 type PendingAutoReply = {
   problemId: string;
   activeMode: "cloud" | "ai";
@@ -843,16 +843,38 @@ function BoardCoordinateLayer({ flipped = false, geometry }: { flipped?: boolean
 
 export function Board({ pieces, selected, legalTargets = [], lastMove, hintMove, analysisMoves = [], activeAnalysis = 0, flipped = false, feedback, setupMode = false, showSideCoordinates = false, boardSkin, pieceSkin, riverText, riverTextColor, riverTextSize, supportsCustomRiverText, onSquare, onMove }: { pieces: BoardPiece[]; selected?: Square; legalTargets?: Square[]; lastMove?: string; hintMove?: string; analysisMoves?: string[]; activeAnalysis?: number; flipped?: boolean; feedback?: TrainingFeedbackKind; setupMode?: boolean; showSideCoordinates?: boolean; boardSkin: string; pieceSkin: string; riverText: string; riverTextColor: string; riverTextSize: number; supportsCustomRiverText: boolean; onSquare(square: Square): void; onMove?(from: Square, to: Square): void }) {
   const boardRef = useRef<HTMLDivElement | null>(null);
-  const dragCandidate = useRef<BoardDragCandidate | undefined>(undefined);
-  const suppressNextClick = useRef(false);
+  const pointerGesture = useRef<BoardPointerGesture | undefined>(undefined);
+  const handledPointerClick = useRef(false);
   const [dragging, setDragging] = useState<BoardDragState>();
   const putDownClick = useRef<{ square: Square; at: number } | undefined>(undefined);
+  const releasePointer = (gesture: BoardPointerGesture) => {
+    if (gesture.captureTarget.hasPointerCapture?.(gesture.pointerId)) {
+      gesture.captureTarget.releasePointerCapture(gesture.pointerId);
+    }
+  };
+  const cancelPointer = () => {
+    const gesture = pointerGesture.current;
+    pointerGesture.current = undefined;
+    handledPointerClick.current = true;
+    setDragging(undefined);
+    if (gesture) releasePointer(gesture);
+  };
   useEffect(() => {
     putDownClick.current = undefined;
-    dragCandidate.current = undefined;
-    suppressNextClick.current = false;
-    setDragging(undefined);
+    if (pointerGesture.current) cancelPointer();
+    // Keep the completed gesture's click guard through a move/position refresh.
   }, [pieces, flipped, setupMode]);
+  const activateSquare = (square: Square, at: number, detail = 0) => {
+    const previous = putDownClick.current;
+    // Touch browsers may report detail=1 for both taps, so also use elapsed time.
+    if (previous && sameSquare(previous.square, square)
+      && (detail >= 2 || at - previous.at < 350)) {
+      putDownClick.current = undefined;
+      return;
+    }
+    putDownClick.current = sameSquare(selected, square) ? { square, at } : undefined;
+    onSquare(square);
+  };
   const hint = hintMove ? iccsSquares(hintMove).from : undefined;
   const last = lastMove ? iccsSquares(lastMove) : undefined;
   const normalizedBoardSkin = normalizeSkinId(boardSkin);
@@ -875,59 +897,58 @@ export function Board({ pieces, selected, legalTargets = [], lastMove, hintMove,
       y: Math.max(0, Math.min(100, (clientY - rect.top) / rect.height * 100)),
     };
   };
-  const finishDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const candidate = dragCandidate.current;
-    if (!candidate || candidate.pointerId !== event.pointerId) return;
-    dragCandidate.current = undefined;
-    if (!candidate.active) {
-      setDragging(undefined);
+  const finishPointer = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const gesture = pointerGesture.current;
+    if (!gesture || gesture.pointerId !== event.pointerId) return;
+    pointerGesture.current = undefined;
+    handledPointerClick.current = true;
+    event.preventDefault();
+    setDragging(undefined);
+    releasePointer(gesture);
+    const moved = gesture.moved || Math.hypot(event.clientX - gesture.startX, event.clientY - gesture.startY) >= 7;
+    if (!moved) {
+      activateSquare(gesture.from, event.timeStamp);
       return;
     }
-    event.preventDefault();
-    suppressNextClick.current = true;
-    const target = squareFromPoint(event.clientX, event.clientY) ?? candidate.from;
-    setDragging(undefined);
-    if (sameSquare(candidate.from, target)) onSquare(candidate.from);
-    else if (onMove) onMove(candidate.from, target);
+    if (setupMode || !gesture.piece) return;
+    const target = squareFromPoint(event.clientX, event.clientY) ?? gesture.from;
+    if (sameSquare(gesture.from, target)) activateSquare(gesture.from, event.timeStamp);
+    else if (onMove) onMove(gesture.from, target);
     else onSquare(target);
   };
-  return <div className="board-shell"><div ref={boardRef} className={`xiangqi-board ${setupMode ? "setup-board" : ""} ${feedback ? `move-feedback ${feedback}` : ""} ${dragging ? "dragging-piece" : ""}`} style={boardStyle} aria-label="残局棋盘" onPointerMove={(event) => {
-    if (setupMode) return;
-    const candidate = dragCandidate.current;
-    if (!candidate || candidate.pointerId !== event.pointerId) return;
-    const distance = Math.hypot(event.clientX - candidate.startX, event.clientY - candidate.startY);
-    if (!candidate.active && distance < 7) return;
-    candidate.active = true;
+  return <div className="board-shell"><div ref={boardRef} className={`xiangqi-board ${setupMode ? "setup-board" : ""} ${feedback ? `move-feedback ${feedback}` : ""} ${dragging ? "dragging-piece" : ""}`} style={boardStyle} aria-label="残局棋盘" onPointerDownCapture={(event) => {
+    if (event.isPrimary === false || (pointerGesture.current && pointerGesture.current.pointerId !== event.pointerId)) cancelPointer();
+  }} onPointerMove={(event) => {
+    const gesture = pointerGesture.current;
+    if (!gesture || gesture.pointerId !== event.pointerId) return;
+    const distance = Math.hypot(event.clientX - gesture.startX, event.clientY - gesture.startY);
+    if (!gesture.moved && distance < 7) return;
+    gesture.moved = true;
     putDownClick.current = undefined;
     event.preventDefault();
+    if (setupMode || !gesture.piece) return;
     const point = dragPoint(event.clientX, event.clientY);
-    setDragging({ from: candidate.from, piece: candidate.piece, ...point, target: squareFromPoint(event.clientX, event.clientY) });
-  }} onPointerUp={setupMode ? undefined : finishDrag} onPointerCancel={() => { dragCandidate.current = undefined; setDragging(undefined); }}>
+    setDragging({ from: gesture.from, piece: gesture.piece, ...point, target: squareFromPoint(event.clientX, event.clientY) });
+  }} onPointerUp={finishPointer} onPointerCancel={(event) => {
+    if (pointerGesture.current?.pointerId === event.pointerId) cancelPointer();
+  }} onLostPointerCapture={(event) => {
+    if (pointerGesture.current?.pointerId === event.pointerId) cancelPointer();
+  }}>
     {riverText && supportsCustomRiverText && <span className="river-custom-label" style={{ "--river-text-color": riverTextColor, "--river-text-size": `${riverTextSize}px` } as CSSProperties}>{riverText}</span>}
     {showSideCoordinates && <BoardCoordinateLayer flipped={flipped} geometry={geometry}/>}
     {analysisMoves.length > 0 && <AnalysisArrowLayer moves={analysisMoves} activeIndex={activeAnalysis} flipped={flipped} geometry={geometry}/>}
     <LegalTargetLayer targets={legalTargets} flipped={flipped} geometry={geometry}/>
     <BoardMarkerLayer selected={selected} lastMove={last} flipped={flipped} geometry={geometry}/>
     {ALL_SQUARES.map((square, index) => { const piece = pieces.find((item) => item.row === square.row && item.col === square.col); const isSelected = sameSquare(selected, square); const isLegalTarget = legalTargets.some((target) => sameSquare(target, square)); const isDraggingOrigin = sameSquare(dragging?.from, square); const isDragTarget = sameSquare(dragging?.target, square); const isLastFrom = last?.from.row === square.row && last.from.col === square.col; const isLastTo = last?.to.row === square.row && last.to.col === square.col; const highlighted = hint?.row === square.row && hint.col === square.col; const position = boardPointStyle(square, geometry, flipped); return <button key={index} style={position} className={`board-square ${isSelected ? "selected" : ""} ${isLegalTarget ? "legal-target" : ""} ${isDraggingOrigin ? "drag-origin" : ""} ${isDragTarget ? "drag-target" : ""} ${isLastFrom ? "last-from" : ""} ${isLastTo ? "last-to" : ""} ${highlighted ? "hint" : ""}`} onPointerDown={(event) => {
-      suppressNextClick.current = false;
-      if (setupMode) return;
-      if (!piece || event.button !== 0) return;
-      dragCandidate.current = { pointerId: event.pointerId, from: square, piece, startX: event.clientX, startY: event.clientY, active: false };
+      if (event.isPrimary === false || event.button !== 0) return;
+      handledPointerClick.current = false;
+      pointerGesture.current = { pointerId: event.pointerId, from: square, piece, startX: event.clientX, startY: event.clientY, moved: false, captureTarget: event.currentTarget };
       event.currentTarget.setPointerCapture?.(event.pointerId);
     }} onClick={(event) => {
-      if (suppressNextClick.current) {
-        suppressNextClick.current = false;
-        return;
-      }
-      const previous = putDownClick.current;
-      // Touch browsers may report detail=1 for both taps, so also use elapsed time.
-      if (previous && sameSquare(previous.square, square)
-        && (event.detail >= 2 || event.timeStamp - previous.at < 350)) {
-        putDownClick.current = undefined;
-        return;
-      }
-      putDownClick.current = isSelected ? { square, at: event.timeStamp } : undefined;
-      onSquare(square);
+      // Keyboard/AT clicks have no pointer type, even when the browser uses PointerEvent.
+      const pointerType = (event.nativeEvent as PointerEvent).pointerType;
+      if ((event.detail > 0 || pointerType) && handledPointerClick.current) return;
+      activateSquare(square, event.timeStamp, event.detail);
     }} aria-pressed={Boolean(piece && isSelected)} aria-label={`${squareName(square)}${piece ? ` ${piece.color === "red" ? "红" : "黑"}${piece.label}` : ""}`}>{piece && <><span className="piece-ground-shadow" aria-hidden="true"/><span className="piece-lift"><img className="piece" src={trainingPieceAsset(piece, pieceSkin)} alt={piece.label} draggable={false}/></span></>}</button>; })}
     {dragging && <img className="piece board-drag-ghost" style={{ "--drag-x": `${dragging.x}%`, "--drag-y": `${dragging.y}%` } as CSSProperties} src={trainingPieceAsset(dragging.piece, pieceSkin)} alt="" aria-hidden="true" draggable={false}/>}
     {feedback === "capture" && <span className="capture-feedback"><span>吃</span></span>}

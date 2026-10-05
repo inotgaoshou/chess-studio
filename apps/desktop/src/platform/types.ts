@@ -526,6 +526,40 @@ export type SyncAccountDto = {
   status: "unbound" | "signedOut" | "signedIn" | "expired";
   lastSyncResult?: string;
 };
+export type TeachingAccountDto = {
+  serverUrl: string;
+  status: "signedOut" | "signedIn";
+  userId?: string;
+  loginName?: string;
+  displayName?: string;
+  role?: "admin" | "coach" | "student";
+  expiresAt?: string;
+};
+export type TeachingAssignmentDto = {
+  id: string;
+  title: string;
+  status: "draft" | "published" | "closed";
+  dueAt?: string;
+  itemCount: number;
+  targetCount: number;
+  completedCount: number;
+  createdAt: string;
+};
+export type TeachingProblemDto = {
+  assignmentId: string;
+  problemId: string;
+  title: string;
+  category: string;
+  startingFen: string;
+  note: string;
+  solution: TeachingSolutionMove[];
+  completed: boolean;
+  attemptCount: number;
+};
+export type TeachingSolutionMove = { iccs: string; comment: string; children: TeachingSolutionMove[] };
+export type TeachingLibraryDto = { id: string; assetId: string; title: string; reviewStatus: "draft" | "pending_review" | "published" | "rejected" | "archived"; publishedCount: number; folderPath: string; originalFilename: string };
+export type TeachingAssignmentResultDto = { studentId: string; loginName: string; displayName: string; totalCount: number; completedCount: number; completedAt?: string; sources: Array<{ sourceType: "class" | "student"; sourceId: string }> };
+export type TeachingAssetDto = { id: string; originalFilename: string; reviewStatus: string; parseStatus: string; parseMessage?: string };
 export type MasterPlayerDto = {
   id: string;
   name: string;

@@ -28,8 +28,11 @@ install -d -m 0700 \
   /etc/nginx/certs/api-test.qixiapp.cn
 install -m 0750 "$root/scripts/issue-qixi-certificates.sh" /usr/local/sbin/issue-qixi-certificates
 install -m 0750 "$root/scripts/renew-qixi-certificates.sh" /usr/local/sbin/renew-qixi-certificates
+install -m 0750 "$root/scripts/check-qixi-certificate-expiry.sh" /usr/local/sbin/check-qixi-certificate-expiry
 install -m 0644 "$root/deploy/systemd/qixi-acme-renew.service" /etc/systemd/system/qixi-acme-renew.service
 install -m 0644 "$root/deploy/systemd/qixi-acme-renew.timer" /etc/systemd/system/qixi-acme-renew.timer
+install -m 0644 "$root/deploy/systemd/qixi-certificate-expiry.service" /etc/systemd/system/qixi-certificate-expiry.service
+install -m 0644 "$root/deploy/systemd/qixi-certificate-expiry.timer" /etc/systemd/system/qixi-certificate-expiry.timer
 
 # DNS validation does not require the new vhost to be active. Cert install
 # reloads the existing valid Nginx configuration after each issuance.
@@ -45,4 +48,6 @@ nginx -t
 systemctl reload nginx
 systemctl daemon-reload
 systemctl enable --now qixi-acme-renew.timer
+systemctl enable --now qixi-certificate-expiry.timer
+systemctl start qixi-certificate-expiry.service
 echo "Installed Qixi HTTPS gateway and daily certificate renewal."

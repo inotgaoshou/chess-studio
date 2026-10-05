@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 pub const TOKEN_KEY: &str = "sync-jwt";
+pub const TEACHING_TOKEN_KEY: &str = "teaching-jwt";
 const SERVICE_NAME: &str = "cn.yhdm.xiangqi-assistant";
 
 pub trait CredentialStore: Send + Sync {

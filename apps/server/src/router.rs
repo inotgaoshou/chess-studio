@@ -11,11 +11,12 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 use crate::analysis::analyze;
 use crate::analysis_jobs::{cancel_analysis_job, create_analysis_job, get_analysis_job};
-use crate::auth::{guest_auth, login, register};
+use crate::auth::{guest_auth, login, register, switch_organization};
 use crate::master_library::{
     find_related_master_games, list_master_player_games, list_master_players, master_game_detail,
     master_library_stats, master_opening_profile,
 };
+use crate::personal_manual_sync::{status as personal_manual_sync_status, sync as sync_personal_manuals};
 use crate::reference_library::{
     confirm_reference_batch, create_reference_source, list_openings, list_reference_fingerprints,
     list_reference_games, offline_package_manifest, opening_detail, publish_reference_chunk,
@@ -24,6 +25,14 @@ use crate::reference_library::{
 use crate::state::AppState;
 use crate::subscription::{redeem_code, subscription};
 use crate::sync::{pull, push};
+use crate::teaching::{
+    admin_assignment_results, admin_list_teacher_assignments, close_teacher_assignment,
+    create_admin_teacher_assignment, create_organization_join_request, create_teacher_assignment,
+    list_organization_join_requests, list_organizations, list_student_assignment_problems,
+    list_student_assignments, list_teacher_assignments, list_teacher_classes,
+    list_teacher_students, publish_teacher_assignment, review_organization_join_request,
+    submit_student_attempt, teacher_assignment_results,
+};
 
 pub(crate) const REFERENCE_PUBLISH_BODY_LIMIT: usize = 16 * 1024 * 1024;
 
@@ -36,9 +45,63 @@ pub(crate) fn router(state: AppState, cors: CorsLayer) -> Router {
         .route("/health", get(|| async { Json(Health { status: "ok" }) }))
         .route("/api/v1/auth/register", post(register))
         .route("/api/v1/auth/login", post(login))
+        .route(
+            "/api/v1/auth/switch-organization",
+            post(switch_organization),
+        )
         .route("/api/v1/auth/guest", post(guest_auth))
+        .route("/api/v1/admin/organizations", get(list_organizations))
+        .route(
+            "/api/v1/admin/organization-join-requests",
+            get(list_organization_join_requests).post(create_organization_join_request),
+        )
+        .route(
+            "/api/v1/admin/organization-join-requests/{request_id}/review",
+            post(review_organization_join_request),
+        )
+        .route("/api/v1/student/assignments", get(list_student_assignments))
+        .route(
+            "/api/v1/student/assignments/{assignment_id}/problems",
+            get(list_student_assignment_problems),
+        )
+        .route("/api/v1/student/attempts", post(submit_student_attempt))
+        .route("/api/v1/teacher/students", get(list_teacher_students))
+        .route(
+            "/api/v1/admin/assignments",
+            get(admin_list_teacher_assignments).post(create_admin_teacher_assignment),
+        )
+        .route(
+            "/api/v1/admin/assignments/{assignment_id}/results",
+            get(admin_assignment_results),
+        )
+        .route(
+            "/api/v1/admin/assignments/{assignment_id}/publish",
+            post(publish_teacher_assignment),
+        )
+        .route(
+            "/api/v1/admin/assignments/{assignment_id}/close",
+            post(close_teacher_assignment),
+        )
+        .route("/api/v1/teacher/classes", get(list_teacher_classes))
+        .route(
+            "/api/v1/teacher/assignments",
+            get(list_teacher_assignments).post(create_teacher_assignment),
+        )
+        .route(
+            "/api/v1/teacher/assignments/{assignment_id}/results",
+            get(teacher_assignment_results),
+        )
+        .route(
+            "/api/v1/teacher/assignments/{assignment_id}/close",
+            post(close_teacher_assignment),
+        )
         .route("/api/v1/sync/push", post(push))
         .route("/api/v1/sync/pull", get(pull))
+        .route(
+            "/api/v1/personal-manual-sync",
+            post(sync_personal_manuals).layer(DefaultBodyLimit::max(4 * 1024 * 1024)),
+        )
+        .route("/api/v1/personal-manual-sync/status", get(personal_manual_sync_status))
         .route("/api/v1/subscription", get(subscription))
         .route("/api/v1/subscription/redeem", post(redeem_code))
         .route("/api/v1/analysis", post(analyze))

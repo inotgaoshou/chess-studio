@@ -7,7 +7,7 @@ case "$warn_days" in
 esac
 
 cert_root="/etc/nginx/certs"
-hosts=(qixiapp.cn admin.qixiapp.cn api.qixiapp.cn api-test.qixiapp.cn)
+hosts=(qixiapp.cn admin.qixiapp.cn admin-test.qixiapp.cn api.qixiapp.cn api-test.qixiapp.cn)
 threshold_seconds=$((warn_days * 86400))
 expired_or_near=false
 

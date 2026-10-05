@@ -14,8 +14,11 @@ COPYFILE_DISABLE=1 tar -C "$root" -czf "$archive" \
   deploy/nginx/qixi-ip-redirect.conf \
   deploy/systemd/qixi-acme-renew.service \
   deploy/systemd/qixi-acme-renew.timer \
+  deploy/systemd/qixi-certificate-expiry.service \
+  deploy/systemd/qixi-certificate-expiry.timer \
   scripts/issue-qixi-certificates.sh \
   scripts/renew-qixi-certificates.sh \
+  scripts/check-qixi-certificate-expiry.sh \
   scripts/install-qixi-gateway.sh
 
 scp -q "$archive" "$server:/tmp/qixi-gateway.tar.gz"

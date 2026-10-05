@@ -580,7 +580,22 @@ pub(crate) fn bundled_pikafish_path(app: &tauri::AppHandle) -> Option<PathBuf> {
             candidates.extend(pikafish_candidates(&parent.join("../Resources")));
         }
     }
-    candidates.into_iter().find(|candidate| candidate.is_file())
+    candidates
+        .into_iter()
+        .find(|candidate| candidate.is_file())
+        .or_else(development_pikafish_path)
+}
+
+#[cfg(debug_assertions)]
+pub(crate) fn development_pikafish_path() -> Option<PathBuf> {
+    pikafish_candidates(Path::new(env!("CARGO_MANIFEST_DIR")))
+        .into_iter()
+        .find(|candidate| candidate.is_file())
+}
+
+#[cfg(not(debug_assertions))]
+fn development_pikafish_path() -> Option<PathBuf> {
+    None
 }
 
 pub(crate) fn pikafish_candidates(base: &Path) -> Vec<PathBuf> {

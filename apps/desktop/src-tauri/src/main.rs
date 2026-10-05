@@ -9,6 +9,7 @@ mod eleeye_opening_book;
 mod endgame_service;
 mod engine_service;
 mod gif_export;
+mod guided_learning;
 mod link_service;
 mod link_vision;
 mod manual_pdf;
@@ -19,10 +20,10 @@ mod pfbook_opening_book;
 mod reference_service;
 mod report_service;
 mod sync_service;
+mod teaching_service;
 mod training_service;
 mod ttxq_decoder;
 mod ttxq_sync;
-mod guided_learning;
 mod window_service;
 #[cfg(target_os = "windows")]
 mod windows_link;
@@ -45,6 +46,11 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use chrono::{DateTime, Utc};
 use credential_store::TOKEN_KEY;
 use engine_protocol::{EngineEvent, EngineSession, Protocol, SearchLimit};
+use guided_learning::{
+    DailyTrainingPlanDto, GuidedAnalysisResultDto, GuidedEngineLine, OpeningRepertoireDto,
+    OpeningSample, WeeklyLearningReportDto, classify_submission, daily_plan,
+    infer_opening_repertoire, weekly_report,
+};
 use link_core::{
     BoardOrientation, CapturePolicy, CaptureSource, LinkMode, LinkSessionState, RecognitionMode,
     ReconcileDecision, StabilityGate,
@@ -72,11 +78,6 @@ use tauri::{Emitter, Manager, State};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::time::timeout;
-use guided_learning::{
-    DailyTrainingPlanDto, GuidedAnalysisResultDto, GuidedEngineLine, OpeningRepertoireDto,
-    OpeningSample, WeeklyLearningReportDto, classify_submission, daily_plan,
-    infer_opening_repertoire, weekly_report,
-};
 use uuid::Uuid;
 use xiangqi_core::{
     Board, Color, DomesticRuleState, GameStatus, Move, PieceKind, RuleMode, RuleVerdict,
@@ -303,7 +304,20 @@ fn main() {
             sync_service::login_sync_account,
             sync_service::logout_sync_account,
             sync_service::unbind_sync_account,
-            sync_service::sync_now
+            sync_service::sync_now,
+            teaching_service::get_teaching_account,
+            teaching_service::login_teaching_account,
+            teaching_service::logout_teaching_account,
+            teaching_service::list_teaching_assignments,
+            teaching_service::list_teaching_classes,
+            teaching_service::list_teaching_problem_libraries,
+            teaching_service::create_teaching_assignment,
+            teaching_service::get_teaching_assignment_results,
+            teaching_service::upload_teaching_cbl,
+            teaching_service::submit_teaching_asset_review,
+            teaching_service::list_teaching_assignment_problems,
+            teaching_service::submit_teaching_attempt,
+            teaching_service::flush_teaching_attempts
         ])
         .build(tauri::generate_context!())
         .expect("failed to build Xiangqi Studio")

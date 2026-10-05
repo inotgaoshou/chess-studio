@@ -25,6 +25,13 @@ function folderDisplayPath(path: string) {
   return path;
 }
 
+function friendlyLibraryError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/unauthorized|401/i.test(message)) return "登录状态已过期或当前账号没有权限，请重新登录后再试。";
+  if (/forbidden|403/i.test(message)) return "当前账号没有执行此操作的权限。";
+  return message;
+}
+
 function folderAncestors(path: string) {
   const segments = path.split("/").filter(Boolean);
   return segments.slice(0, -1).map((_, index) => segments.slice(0, index + 1).join("/"));
@@ -303,7 +310,7 @@ export function ReviewGameLibrary({ games, folders, onOpen, onShare, onDelete, o
       setActionError(undefined);
       setActionSuccess(`已创建目录：${folderDisplayPath(path)}`);
     } catch (error) {
-      setActionError(`创建目录失败：${error instanceof Error ? error.message : String(error)}`);
+      setActionError(`创建目录失败：${friendlyLibraryError(error)}`);
     } finally {
       setCreatingFolder(false);
     }
@@ -375,7 +382,7 @@ export function ReviewGameLibrary({ games, folders, onOpen, onShare, onDelete, o
       setFolderManage(null);
       setActionError(undefined);
     } catch (error) {
-      setActionError(`目录操作失败：${error instanceof Error ? error.message : String(error)}`);
+      setActionError(`目录操作失败：${friendlyLibraryError(error)}`);
     } finally {
       setCreatingFolder(false);
     }

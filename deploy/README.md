@@ -1,4 +1,25 @@
-# 腾讯云线上部署
+# 旧版部署说明
+
+This document describes the older standalone `xiangqi-server` deployment and
+must not be used for the live Qixi administration platform. The live platform
+uses the complete `xiangqi-admin-server` release pipeline in
+`/Users/chenyubin/Documents/xiangqi-admin-private`, with immutable releases at
+`/opt/qixi-admin-api/releases` on the CVM. Its authoritative operations guide
+is `docs/qixi-release-runbook.md` in that repository.
+
+The supported public endpoints are:
+
+| Host | Role |
+| --- | --- |
+| `admin.qixiapp.cn` | production operations UI |
+| `api.qixiapp.cn` | production application API |
+| `admin-test.qixiapp.cn` | test operations UI |
+| `api-test.qixiapp.cn` | test application API |
+
+The rest of this file is retained only as historical reference. Do not run its
+service, database, or Nginx installation commands against the current CVM.
+
+# 腾讯云线上部署（历史说明）
 
 此目录部署 `xiangqi-server`，不使用 Docker。它不会替换现有的
 `xiangqi-admin.service` 或其 IP 访问方式。

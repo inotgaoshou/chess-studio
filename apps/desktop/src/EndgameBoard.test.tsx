@@ -1,9 +1,11 @@
 /// <reference path="../../endgame-training/src/build-meta.d.ts" />
+/// <reference path="../../endgame-training/src/vite-env.d.ts" />
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.hoisted(() => {
+  vi.stubGlobal("__APP_ENV__", "test");
   vi.stubGlobal("__APP_VERSION__", "test");
   vi.stubGlobal("__APP_BUILD_TIME__", "2026-09-21T00:00:00Z");
 });
@@ -15,11 +17,198 @@ const pieces: BoardPiece[] = [
   { row: 9, col: 1, color: "red", kind: "horse", label: "马" },
 ];
 const defaults = { pieces, boardSkin: "default", pieceSkin: "default", riverText: "", riverTextColor: "#000", riverTextSize: 20, supportsCustomRiverText: false };
-function InteractiveBoard({ setupMode = false }: { setupMode?: boolean }) {
+function InteractiveBoard({ setupMode = false, analysisMoves = [] }: { setupMode?: boolean; analysisMoves?: string[] }) {
   const [selected, setSelected] = useState<{ row: number; col: number }>();
-  return <Board {...defaults} setupMode={setupMode} selected={selected} onSquare={(square) => setSelected((old) => old?.row === square.row && old.col === square.col ? undefined : square)}/>;
+  return <Board {...defaults} setupMode={setupMode} analysisMoves={analysisMoves} selected={selected} onSquare={(square) => setSelected((old) => old?.row === square.row && old.col === square.col ? undefined : square)}/>;
 }
 afterEach(cleanup);
+
+function pointer(element: Element, type: string, options: PointerEventInit & { at?: number } = {}) {
+  const event = new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: 83, clientY: 1136, ...options });
+  Object.defineProperties(event, {
+    pointerId: { value: options.pointerId ?? 1 },
+    pointerType: { value: options.pointerType ?? "touch" },
+    isPrimary: { value: options.isPrimary ?? true },
+    ...(options.at === undefined ? {} : { timeStamp: { value: options.at } }),
+  });
+  fireEvent(element, event);
+}
+
+function tap(element: Element, options: PointerEventInit & { at?: number } = {}, click = false) {
+  pointer(element, "pointerdown", options);
+  pointer(element, "pointerup", options);
+  if (click) fireEvent.click(element, { detail: 1 });
+}
+
+function boardGeometry(container: HTMLElement) {
+  const board = container.querySelector<HTMLElement>(".xiangqi-board")!;
+  vi.spyOn(board, "getBoundingClientRect").mockReturnValue({ x: 0, y: 0, left: 0, top: 0, right: 1120, bottom: 1240, width: 1120, height: 1240, toJSON: () => ({}) });
+  return (square: HTMLElement) => ({
+    clientX: parseFloat(square.style.getPropertyValue("--piece-left")) * 1120 / 100,
+    clientY: parseFloat(square.style.getPropertyValue("--piece-top")) * 1240 / 100,
+  });
+}
+
+describe("endgame board pointer gestures", () => {
+  it.each([false, true])("selects on the first touch release, including small finger jitter (setup=%s)", (setupMode) => {
+    const { getByRole } = render(<InteractiveBoard setupMode={setupMode}/>);
+    const rook = getByRole("button", { name: "a0 红车" });
+    pointer(rook, "pointerdown");
+    pointer(rook, "pointermove", { clientX: 86 });
+    pointer(rook, "pointerup", { clientX: 86 });
+    expect(rook.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("handles a touch and all its compatibility clicks only once", () => {
+    const onSquare = vi.fn();
+    const { getByRole } = render(<Board {...defaults} onSquare={onSquare}/>);
+    const rook = getByRole("button", { name: "a0 红车" });
+    tap(rook, {}, true);
+    fireEvent.click(rook, { detail: 2 });
+    expect(onSquare).toHaveBeenCalledExactlyOnceWith({ row: 9, col: 0 });
+  });
+
+  it("deduplicates a pointer click with detail=0 while allowing keyboard activation", () => {
+    const onSquare = vi.fn();
+    const { getByRole } = render(<Board {...defaults} onSquare={onSquare}/>);
+    const rook = getByRole("button", { name: "a0 红车" });
+    tap(rook);
+    pointer(rook, "click", { detail: 0 });
+    expect(onSquare).toHaveBeenCalledTimes(1);
+    fireEvent.click(rook, { detail: 0 });
+    expect(onSquare).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps 30 independent taps responsive with and without compatibility clicks", () => {
+    const { getByRole } = render(<InteractiveBoard/>);
+    const rook = getByRole("button", { name: "a0 红车" });
+    const horse = getByRole("button", { name: "b0 红马" });
+    for (let index = 0; index < 30; index += 1) {
+      const chosen = index % 2 ? horse : rook;
+      const other = index % 2 ? rook : horse;
+      tap(chosen, { pointerId: index + 1 }, index % 3 === 0);
+      expect(chosen.getAttribute("aria-pressed")).toBe("true");
+      expect(other.getAttribute("aria-pressed")).toBe("false");
+    }
+  });
+
+  it("puts a selected piece down and allows picking it up again after the double-tap window", () => {
+    const { getByRole } = render(<InteractiveBoard/>);
+    const rook = getByRole("button", { name: "a0 红车" });
+    tap(rook, { at: 100 }, true);
+    tap(rook, { at: 200 }, true);
+    expect(rook.getAttribute("aria-pressed")).toBe("false");
+    tap(rook, { at: 600 }, true);
+    expect(rook.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it.each([false, true])("forwards empty and enemy tap destinations once (flipped=%s)", (flipped) => {
+    const onSquare = vi.fn();
+    const enemy: BoardPiece = { row: 8, col: 0, color: "black", kind: "pawn", label: "卒" };
+    const { getByRole } = render(<Board {...defaults} pieces={[...pieces, enemy]} selected={pieces[0]} flipped={flipped} onSquare={onSquare}/>);
+    tap(getByRole("button", { name: "a1 黑卒" }), {}, true);
+    expect(onSquare).toHaveBeenLastCalledWith({ row: 8, col: 0 });
+    tap(getByRole("button", { name: "a2" }), {}, true);
+    expect(onSquare).toHaveBeenLastCalledWith({ row: 7, col: 0 });
+    expect(onSquare).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([false, true])("drags to a destination once without also tapping the source (flipped=%s)", (flipped) => {
+    const onSquare = vi.fn();
+    const onMove = vi.fn();
+    const { container, getByRole } = render(<Board {...defaults} flipped={flipped} onSquare={onSquare} onMove={onMove}/>);
+    const point = boardGeometry(container);
+    const rook = getByRole("button", { name: "a0 红车" });
+    const destination = getByRole("button", { name: "a1" });
+    pointer(rook, "pointerdown", point(rook));
+    pointer(rook, "pointermove", point(destination));
+    pointer(rook, "pointerup", point(destination));
+    fireEvent.click(rook, { detail: 1 });
+    expect(onMove).toHaveBeenCalledExactlyOnceWith({ row: 9, col: 0 }, { row: 8, col: 0 });
+    expect(onSquare).not.toHaveBeenCalled();
+    expect(container.querySelector(".board-drag-ghost")).toBeNull();
+  });
+
+  it.each(["pointercancel", "lostpointercapture"])("cancels a drag on %s and accepts the next tap", (cancelEvent) => {
+    const onSquare = vi.fn();
+    const onMove = vi.fn();
+    const { container, getByRole } = render(<Board {...defaults} onSquare={onSquare} onMove={onMove}/>);
+    const point = boardGeometry(container);
+    const rook = getByRole("button", { name: "a0 红车" });
+    pointer(rook, "pointerdown", point(rook));
+    pointer(rook, "pointermove", point(getByRole("button", { name: "a1" })));
+    pointer(rook, cancelEvent);
+    pointer(rook, "pointerup");
+    fireEvent.click(rook, { detail: 1 });
+    expect(onMove).not.toHaveBeenCalled();
+    expect(onSquare).not.toHaveBeenCalled();
+    expect(container.querySelector(".board-drag-ghost")).toBeNull();
+    tap(rook, { pointerId: 2 });
+    expect(onSquare).toHaveBeenCalledExactlyOnceWith({ row: 9, col: 0 });
+  });
+
+  it("cancels the primary gesture when a second finger touches the board", () => {
+    const onSquare = vi.fn();
+    const onMove = vi.fn();
+    const { getByRole } = render(<Board {...defaults} onSquare={onSquare} onMove={onMove}/>);
+    const rook = getByRole("button", { name: "a0 红车" });
+    const horse = getByRole("button", { name: "b0 红马" });
+    pointer(rook, "pointerdown");
+    pointer(horse, "pointerdown", { pointerId: 2, isPrimary: false });
+    pointer(rook, "pointerup");
+    pointer(horse, "pointerup", { pointerId: 2, isPrimary: false });
+    fireEvent.click(rook, { detail: 1 });
+    fireEvent.click(horse, { detail: 1 });
+    expect(onSquare).not.toHaveBeenCalled();
+    expect(onMove).not.toHaveBeenCalled();
+    tap(rook, { pointerId: 3 });
+    expect(onSquare).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not lose a tap when analysis arrows refresh between press and release", () => {
+    const { getByRole, rerender } = render(<InteractiveBoard/>);
+    const rook = getByRole("button", { name: "a0 红车" });
+    pointer(rook, "pointerdown");
+    rerender(<InteractiveBoard analysisMoves={["a0a1", "b0c2"]}/>);
+    pointer(rook, "pointerup");
+    expect(rook.getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(rook, { detail: 1 });
+    expect(rook.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("does not replay a tap after a position update before its compatibility click", () => {
+    const onSquare = vi.fn();
+    const { getByRole, rerender } = render(<Board {...defaults} onSquare={onSquare}/>);
+    const rook = getByRole("button", { name: "a0 红车" });
+    tap(rook);
+    rerender(<Board {...defaults} pieces={[...pieces]} onSquare={onSquare}/>);
+    fireEvent.click(rook, { detail: 1 });
+    expect(onSquare).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancels a press when the board position changes before release", () => {
+    const onSquare = vi.fn();
+    const { getByRole, rerender } = render(<Board {...defaults} onSquare={onSquare}/>);
+    const rook = getByRole("button", { name: "a0 红车" });
+    pointer(rook, "pointerdown");
+    rerender(<Board {...defaults} pieces={[...pieces]} onSquare={onSquare}/>);
+    pointer(rook, "pointerup");
+    fireEvent.click(rook, { detail: 1 });
+    expect(onSquare).not.toHaveBeenCalled();
+    tap(rook, { pointerId: 2 });
+    expect(onSquare).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps mouse taps and keyboard activation working after a touch", () => {
+    const onSquare = vi.fn();
+    const { getByRole } = render(<Board {...defaults} onSquare={onSquare}/>);
+    const rook = getByRole("button", { name: "a0 红车" });
+    tap(rook, {}, true);
+    fireEvent.click(rook, { detail: 0 });
+    tap(rook, { pointerType: "mouse" }, true);
+    expect(onSquare).toHaveBeenCalledTimes(3);
+  });
+});
 
 describe("endgame shared board selection", () => {
   it.each([false, true])("lifts only one piece and switches selection (setup=%s)", (setupMode) => {

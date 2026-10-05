@@ -1,11 +1,11 @@
 mod manual_export;
-use manual_format::{import_cbl_game_library, import_cbl_library, ManualDocument};
+use manual_format::{ManualDocument, import_cbl_game_library, import_cbl_library};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use wasm_bindgen::prelude::*;
 use xiangqi_core::{
-    Board, Color, DomesticRuleState, GameStatus, Move, PieceKind, RuleMode, RuleVerdict, Square,
-    STARTING_FEN,
+    Board, Color, DomesticRuleState, GameStatus, Move, PieceKind, RuleMode, RuleVerdict,
+    STARTING_FEN, Square,
 };
 use xiangqi_manual::{ManualTree, MoveNode};
 
@@ -184,7 +184,11 @@ pub fn parse_cbl_library(bytes: &[u8]) -> Result<String, JsValue> {
 pub fn parse_cbl_game_library(bytes: &[u8]) -> Result<String, JsValue> {
     let mut games = Vec::new();
     let summary = import_cbl_game_library(bytes, |game| {
-        games.push(cbl_manual_game(game.source_index, game.record_hash, &game.document)?);
+        games.push(cbl_manual_game(
+            game.source_index,
+            game.record_hash,
+            &game.document,
+        )?);
         Ok(())
     })
     .map_err(js_error)?;
@@ -206,8 +210,15 @@ fn cbl_manual_game(
     let mut comments = std::collections::BTreeMap::new();
     let mut parent = document.tree.root_id();
     loop {
-        let children = document.tree.branches(parent).map_err(|error| error.to_string())?;
-        let Some(next) = children.iter().find(|node| node.is_mainline).or(children.first()) else {
+        let children = document
+            .tree
+            .branches(parent)
+            .map_err(|error| error.to_string())?;
+        let Some(next) = children
+            .iter()
+            .find(|node| node.is_mainline)
+            .or(children.first())
+        else {
             break;
         };
         moves.push(next.mv.to_iccs());
@@ -809,10 +820,12 @@ mod tests {
         let state: serde_json::Value = serde_json::from_str(&game.state_json().unwrap()).unwrap();
         assert_eq!(state["ruleMode"], "asianAxf");
         assert_eq!(state["ruleStatus"], "进行中");
-        assert!(state["ruleReason"]
-            .as_str()
-            .unwrap()
-            .contains("亚洲象棋规则"));
+        assert!(
+            state["ruleReason"]
+                .as_str()
+                .unwrap()
+                .contains("亚洲象棋规则")
+        );
     }
 
     #[test]

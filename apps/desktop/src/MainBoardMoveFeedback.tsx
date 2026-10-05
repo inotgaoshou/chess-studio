@@ -1,4 +1,4 @@
-import { useEffect, type CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import type { BoardState, MoveItem, Piece } from "./platform";
 import { mainBoardIntersectionStyle } from "./boardGeometry";
 import { DEFAULT_MOVE_FEEDBACK_PACK } from "./MoveFeedbackPack";
@@ -52,6 +52,28 @@ type Props = {
   onComplete(id: string): void;
 };
 
+function FeedbackPiece({ className, piece, src, style }: { className: string; piece: Piece; src: string; style: CSSProperties }) {
+  const [assetFailed, setAssetFailed] = useState(false);
+  useEffect(() => setAssetFailed(false), [src]);
+
+  if (assetFailed) {
+    return <span
+      className={`${className} feedback-piece-fallback piece-${piece.color}`}
+      style={style}
+      aria-hidden="true"
+    ><span>{piece.label || "?"}</span></span>;
+  }
+
+  return <img
+    className={className}
+    src={src}
+    style={style}
+    alt=""
+    aria-hidden="true"
+    onError={() => setAssetFailed(true)}
+  />;
+}
+
 export function MainBoardMoveFeedback({ feedback, reversed, boardSkin, pieceAsset, onComplete }: Props) {
   useEffect(() => {
     if (!feedback) return;
@@ -65,15 +87,15 @@ export function MainBoardMoveFeedback({ feedback, reversed, boardSkin, pieceAsse
   const to = mainBoardIntersectionStyle(feedback.move.to, reversed, boardSkin);
   const king = feedback.checkedKing ? mainBoardIntersectionStyle(feedback.checkedKing, reversed, boardSkin) : undefined;
   return <>
-    {feedback.captured && <img
+    {feedback.captured && <FeedbackPiece
       className="main-board-feedback-piece capture"
+      piece={feedback.captured}
       src={pieceAsset(feedback.captured)}
       style={{ "--feedback-left": to.left, "--feedback-top": to.top } as CSSProperties}
-      alt=""
-      aria-hidden="true"
     />}
-    <img
+    <FeedbackPiece
       className="main-board-feedback-piece moving"
+      piece={feedback.mover}
       src={pieceAsset(feedback.mover)}
       style={{
         "--feedback-from-left": from.left,
@@ -81,8 +103,6 @@ export function MainBoardMoveFeedback({ feedback, reversed, boardSkin, pieceAsse
         "--feedback-to-left": to.left,
         "--feedback-to-top": to.top,
       } as CSSProperties}
-      alt=""
-      aria-hidden="true"
     />
     {feedback.kind === "capture" && <span
       className="main-board-capture-feedback"

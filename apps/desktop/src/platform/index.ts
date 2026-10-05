@@ -9,6 +9,62 @@ import { BUILTIN_ENGINE_PATH, FALLBACK_BUILTIN_OPENING_BOOK_MANIFEST } from "./t
 import type { AnalysisLine, AnalysisOptions, AppInfoDto, BoardState, BookImportDraft, BookTopicDetail, BuiltinOpeningBookManifestDto, CaptureSource, CblGameLibraryImportResultDto, ChessPlatform, CloudAnalysisPreferences, CloudAuthDto, CloudBookCandidate, CloudGuestAuthDto, DesktopPreferencesDto, EndgameAttemptDto, EndgameBatchImportResultDto, EndgameFolderDto, EndgameFreePracticeMoveDto, EndgameImportResultDto, EndgameLibraryDto, EndgameMoveFeedbackDto, EndgameProblemDto, EndgameRefreshResultDto, EngineArenaOptionsDto, EngineArenaResultDto, EngineMoveResult, EnginePlayOptions, EngineProbeDto, EngineProfileDto, EngineRuntimeEvent, ExportFormat, FlyknifeCandidate, FlyknifePlan, FlyknifeTemplate, FlyknifeTopic, GameMetadata, GameMirrorStatus, GameReportDatasetDto, GameReportOptionsDto, GameReportPresentationDto, GameReportProgressDto, GameSummary, GenerateFlyknifeRequest, LibraryFolder, LibraryMoveResult, LinkAutoSide, LinkObservation, LinkSessionStatus, LinkTargetWindow, MasterGameDetailDto, MasterLibraryStatsDto, MasterGameSummaryDto, MasterLibraryFilters, MasterOpeningProfileDto, MasterPlayerDto, MasterStyleHintDto, MasterStyleImportResultDto, MasterStyleProfileDto, OpeningCatalogBuildResultDto, OpeningCategoryDto, OpeningMatchDto, PositionExplorerRequest, PositionMoveStatDto, PreviewLineStep, ReferenceGameDocumentDto, ReferenceGameFilters, ReferenceGameSummaryDto, ReferenceImportBatchDto, ReferenceOfflinePackageManifestDto, ReferenceOfflinePackageResultDto, ReferencePublishResultDto, ReferenceReviewIssueDto, ReferenceSourceDto, RelatedMasterGame, ReplayExportScope, ScreenshotMoveResolution, StartLinkSessionRequest, StudySessionDto, SubscriptionDto, SyncAccountDto, SyncResult, TheoryCardDto, TheoryCardFeedbackDto, TheoryLibraryDto, TrainingGenerationResultDto, TrainingSummaryDto, TrainingTaskDto, TtxqDiagnosticSample, TtxqGamePreview, TtxqSyncProgress } from "./types";
 import type { ChineseLineParseResult, DailyTrainingPlan, GuidedAnalysisStart, GuidedAnalysisSubmission, GuidedAnalysisSubmissionResult, GuidedEngineLine, LearningProfile, OpeningRepertoire, WeeklyLearningReport } from "./types";
 import type { ReferenceOpeningFilters } from "./types";
+import type { TeachingAccountDto, TeachingAssetDto, TeachingAssignmentDto, TeachingAssignmentResultDto, TeachingLibraryDto, TeachingProblemDto } from "./types";
+export type { TeachingAccountDto, TeachingAssetDto, TeachingAssignmentDto, TeachingAssignmentResultDto, TeachingLibraryDto, TeachingProblemDto } from "./types";
+
+export function getTeachingAccount(serverUrl: string) {
+  return invoke<TeachingAccountDto>("get_teaching_account", { serverUrl });
+}
+
+export function loginTeachingAccount(serverUrl: string, account: string, password: string) {
+  return invoke<TeachingAccountDto>("login_teaching_account", { serverUrl, account, password });
+}
+
+export function logoutTeachingAccount(serverUrl: string) {
+  return invoke<TeachingAccountDto>("logout_teaching_account", { serverUrl });
+}
+
+export function listTeachingAssignments(serverUrl: string) {
+  return invoke<TeachingAssignmentDto[]>("list_teaching_assignments", { serverUrl });
+}
+
+export function listTeachingClasses(serverUrl: string) {
+  return invoke<Array<{ id: string; name: string; studentCount: number; coachCount: number }>>("list_teaching_classes", { serverUrl });
+}
+
+export function listTeachingProblemLibraries(serverUrl: string) {
+  return invoke<TeachingLibraryDto[]>("list_teaching_problem_libraries", { serverUrl });
+}
+
+export function createTeachingAssignment(serverUrl: string, request: Record<string, unknown>) {
+  return invoke<TeachingAssignmentDto>("create_teaching_assignment", { serverUrl, request });
+}
+
+export function getTeachingAssignmentResults(serverUrl: string, assignmentId: string) {
+  return invoke<TeachingAssignmentResultDto[]>("get_teaching_assignment_results", { serverUrl, assignmentId });
+}
+
+export async function uploadTeachingCbl(serverUrl: string) {
+  const filePath = await open({ multiple: false, filters: [{ name: "CBL 棋谱库", extensions: ["cbl", "CBL"] }] });
+  if (!filePath || Array.isArray(filePath)) return undefined;
+  return invoke<TeachingAssetDto>("upload_teaching_cbl", { serverUrl, filePath });
+}
+
+export function submitTeachingAssetReview(serverUrl: string, assetId: string) {
+  return invoke<TeachingAssetDto>("submit_teaching_asset_review", { serverUrl, assetId });
+}
+
+export function listTeachingAssignmentProblems(serverUrl: string, assignmentId: string) {
+  return invoke<TeachingProblemDto[]>("list_teaching_assignment_problems", { serverUrl, assignmentId });
+}
+
+export function submitTeachingAttempt(serverUrl: string, attempt: Record<string, unknown>) {
+  return invoke<{ queued?: boolean; clientAttemptId?: string }>("submit_teaching_attempt", { serverUrl, attempt });
+}
+
+export function flushTeachingAttempts(serverUrl: string) {
+  return invoke<{ submitted: number; remaining: number }>("flush_teaching_attempts", { serverUrl });
+}
 
 type WebGameInstance = {
   stateJson(): string;
@@ -56,7 +112,7 @@ const webManualMimeType = "application/vnd.xiangqi-assistant+json";
 const webStartingFen = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1";
 const webCloudBookUrl = "https://www.chessdb.cn/chessdb.php";
 const configuredWebServerUrl = import.meta.env.VITE_XIANGQI_SERVER_URL?.trim();
-const defaultWebServerUrl = configuredWebServerUrl || (isMobileBuild ? "https://api.xiangqi.studio" : "http://127.0.0.1:8080");
+const defaultWebServerUrl = configuredWebServerUrl || (import.meta.env.DEV ? "http://127.0.0.1:8080" : "https://api.qixiapp.cn");
 const webAccountTokenSessionKey = "xiangqi.cloud.accountToken";
 const webGuestTokenSessionKey = "xiangqi.cloud.guestToken";
 
