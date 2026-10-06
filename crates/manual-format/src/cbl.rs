@@ -16,7 +16,8 @@ const STANDARD_STARTING_BOARD: &str = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P
 // Version 6 adds record-level routing in the teaching platform. Reparse jobs use
 // this value to distinguish content created before the new classification rules.
 // Version 7 locates records independently of the library's index allocation.
-pub const CBL_PARSER_VERSION: u32 = 7;
+// Version 8: training projections require strict validated solutions, including on reparse.
+pub const CBL_PARSER_VERSION: u32 = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
