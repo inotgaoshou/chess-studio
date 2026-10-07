@@ -48,6 +48,7 @@ export type CblManualLibrary = {
 };
 
 export type TrainingLibrary = {
+  mateCollection?: { assetId: string; title: string; group: string; moveCounts?: Record<string, number> };
   practicedCount?: number;
   id: string;
   title: string;
@@ -66,6 +67,7 @@ export type TrainingLibrary = {
 };
 
 export type TrainingProblem = CblProblem & {
+  targetMateMoves?: number;
   id: string;
   libraryId: string;
   completedAttempts: number;

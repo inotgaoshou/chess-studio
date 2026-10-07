@@ -71,6 +71,7 @@ export type TeachingUser = {
 
 export type TeachingAuth = { token: string; expiresAt: string; user: TeachingUser; refreshToken?: string };
 export type PracticeProblem = {
+  targetMateMoves?: number;
   id: string;
   libraryId: string;
   sourceIndex: number;
@@ -191,6 +192,8 @@ export type TeachingAssignment = {
   createdAt: string;
   isUnread?: boolean;
 };
+type MateCollection = { id: string; title: string; counts: { published: number }; batchLibraryIds: string[]; groups: { key: string; label: string; counts: { published: number }; completedCount?: number; practicedCount?: number; moveCounts?: Record<string, number> }[] };
+export type MateMoveResult = { outcome: "correct" | "completed" | "wrong" | "pending_review"; message: string; path: string[]; autoMoves: string[]; completed: boolean };
 export type PlatformProblemLibrary = {
   practicedCount?: number;
   completedCount?: number;
@@ -223,6 +226,8 @@ export type PlatformGame = {
 };
 
 type AssignmentProblem = {
+  sourceIndex?: number;
+  targetMateMoves?: number;
   assignmentId: string;
   problemId: string;
   title: string;
@@ -620,7 +625,8 @@ function toProblem(problem: AssignmentProblem): TrainingProblem {
   return {
     id: `teaching:${problem.assignmentId}:${problem.problemId}`,
     libraryId: `teaching:${problem.assignmentId}`,
-    sourceIndex: 0,
+    sourceIndex: problem.sourceIndex ?? 0,
+    targetMateMoves: problem.targetMateMoves,
     title: problem.title,
     category: problem.category,
     startingFen: problem.startingFen,
@@ -878,8 +884,17 @@ export const teachingClient = {
   async platformLibraries() {
     const auth = this.auth();
     if (!auth || auth.user.role !== "student") return [];
-    const libraries = await request<PlatformProblemLibrary[]>("/api/v1/student/platform-libraries", {}, auth.token);
-    return libraries.map((library): TrainingLibrary => ({
+    const [libraries, collections] = await Promise.all([
+      request<PlatformProblemLibrary[]>("/api/v1/student/platform-libraries", {}, auth.token),
+      request<MateCollection[]>("/api/v1/student/mate-collections", {}, auth.token),
+    ]);
+    const batches = new Set(collections.flatMap(c => c.batchLibraryIds));
+    const mates: TrainingLibrary[] = collections.flatMap(c => c.groups.filter(g => g.counts.published > 0).map(g => ({
+      id: `platform:mate:${c.id}:${g.key}`, title: g.label, fingerprint: `mate:${c.id}:${g.key}`, parserVersion: 0,
+      problemCount: g.counts.published, completedCount: g.completedCount ?? 0, practicedCount: g.practicedCount ?? 0, importedAt: "", source: "platform", accessTier: "public",
+      folderPath: `S杀法/比赛杀法/${c.title}`, mateCollection: { assetId: c.id, title: c.title, group: g.key, moveCounts: g.moveCounts },
+    })));
+    return [...mates, ...libraries.filter(l => !batches.has(l.id)).map((library): TrainingLibrary => ({
       id: `platform:${library.id}`,
       title: library.title,
       fingerprint: library.id,
@@ -891,22 +906,36 @@ export const teachingClient = {
       source: "platform",
       accessTier: "public",
       folderPath: library.folderPath,
-    }));
+    }))];
   },
   async platformLibraryProblems(libraryId: string) {
     const auth = this.auth();
     if (!auth || auth.user.role !== "student") return [];
-    const items = await requestPages<PlatformProblem>(`/api/v1/student/platform-libraries/${encodeURIComponent(libraryId)}/problems`, auth.token);
+    let items: PlatformProblem[];
+    if (libraryId.startsWith("mate:")) {
+      const [, asset, group, exact] = libraryId.split(":");
+      items = []; let page = 1;
+      do { const params = new URLSearchParams({ group, page: String(page), pageSize: "100" }); if (exact) params.set("mateMoves", exact);
+        const result = await request<{ items: PlatformProblem[]; totalPages: number }>(`/api/v1/student/mate-collections/${encodeURIComponent(asset)}/records?${params}`, {}, auth.token);
+        items.push(...result.items); if (page >= result.totalPages) break; page++;
+      } while (true);
+    } else items = await requestPages<PlatformProblem>(`/api/v1/student/platform-libraries/${encodeURIComponent(libraryId)}/problems`, auth.token);
     return items.map((problem): TrainingProblem => ({
       ...problem,
       id: `platform:${problem.id}`,
-      libraryId: `platform:${problem.libraryId}`,
+      libraryId: `platform:${libraryId}`,
       completedAttempts: 0,
       totalElapsedMs: 0,
       source: "platform",
       serverProblemId: problem.id,
       accessTier: problem.accessTier ?? "public",
     }));
+  },
+  async verifyMateMove(problem: TrainingProblem, path: string[], candidate: string, sessionId?: string) {
+    const auth = this.auth(); if (!auth || !problem.serverProblemId) throw new Error("请登录后验证其他解法");
+    return request<MateMoveResult>(`/api/v1/student/problems/${encodeURIComponent(problem.serverProblemId)}/mate-move`, {
+      method: "POST", body: JSON.stringify({ path, candidate, assignmentId: problem.assignmentId, sessionId }),
+    }, auth.token);
   },
   async platformGameLibraries() {
     const auth = this.auth();
@@ -1183,7 +1212,7 @@ export const teachingClient = {
       .find((item) => item.cacheKey === assignmentCacheKey(auth, assignmentId))
       ?.problems.map((problem, sourceIndex) => {
         const answer = answers.find((item) => item.problemId === problem.problemId);
-        return { ...toProblem(problem), sourceIndex, assignmentGrade: answer ? { score: practiceScore(answer.outcome, answer.mistakes), stars: practiceScore(answer.outcome, answer.mistakes), mistakes: answer.mistakes, hintsUsed: answer.hintsUsed, outcome: answer.outcome } : problem.grade, submissionState: answer ? answer.submissionRequested ? "queued" : "draft" : problem.attemptCount ? "submitted" : undefined } satisfies TrainingProblem;
+        return { ...toProblem(problem), sourceIndex: problem.sourceIndex ?? sourceIndex, assignmentGrade: answer ? { score: practiceScore(answer.outcome, answer.mistakes), stars: practiceScore(answer.outcome, answer.mistakes), mistakes: answer.mistakes, hintsUsed: answer.hintsUsed, outcome: answer.outcome } : problem.grade, submissionState: answer ? answer.submissionRequested ? "queued" : "draft" : problem.attemptCount ? "submitted" : undefined } satisfies TrainingProblem;
       }) ?? [];
   },
   async submit(attempt: PendingTeachingAttempt, expectedAuth?: TeachingAuth) {
