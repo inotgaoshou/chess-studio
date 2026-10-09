@@ -211,16 +211,20 @@ export function TeacherAssignmentPractice({ assignmentId, total: initialTotal, i
     {historical && <section aria-label="历史回放"><h3>{historical.attempt.studentName} · {historical.attempt.title} · 第 {historical.step} 手</h3>{renderBoard(historical.board,undefined,historical.attempt.moves[historical.step-1],undefined,()=>{},()=>{})}<div className="teacher-trial-actions"><button type="button" disabled={!historical.step} onClick={() => void replayHistory(historical.attempt,historical.step-1)}>历史上一步</button><button type="button" disabled={historical.step>=historical.attempt.moves.length} onClick={() => void replayHistory(historical.attempt,historical.step+1)}>历史下一步</button><button type="button" onClick={() => { ++request.current; setHistorical(undefined); }}>关闭历史回放</button></div></section>}
     </div>
     {total === 0 && <p>本次作业当前没有可试做题目，可从已撤回题目重发。</p>}
-    {busy && <p role="status">正在准备题目…</p>}
-    {error && <p role="alert">{error}<button type="button" disabled={busy} onClick={() => awaitingReply ? void retryReply() : void open(failedOrder)}>{awaitingReply ? "重试应招" : "重试"}</button></p>}
-    {position && <><h3>{position.problem.title}</h3>{renderBoard(position.board, selected, position.progress.moves.at(-1), position.progress.hint ? line?.[0]?.iccs : undefined, square, (from, to) => void play(from, to))}
-      {trialOutcome(position.board) && <p className="teacher-trial-outcome" role="status">{trialOutcome(position.board)}</p>}
-      {!trialOutcome(position.board) && position.board.status === "将军" && <p className="teacher-trial-check" role="status">将军 · {position.board.fen.split(/\s+/)[1] === "b" ? "黑方" : "红方"}正在被将军</p>}
+    {busy && !position && <p role="status">正在准备题目…</p>}
+    {!position && error && <p role="alert">{error}<button type="button" disabled={busy} onClick={() => void open(failedOrder)}>重试</button></p>}
+    {position && <><h3 className="teacher-trial-title" title={position.problem.title}>{position.problem.title}</h3>{renderBoard(position.board, selected, position.progress.moves.at(-1), position.progress.hint ? line?.[0]?.iccs : undefined, square, (from, to) => void play(from, to))}
+      <div className="teacher-trial-status">
+        {error ? <p role="alert">{error}<button type="button" disabled={busy} onClick={() => awaitingReply ? void retryReply() : void open(failedOrder)}>{awaitingReply ? "重试应招" : "重试"}</button></p>
+        : <p role="status" className={trialOutcome(position.board) ? "teacher-trial-outcome" : position.board.status === "将军" ? "teacher-trial-check" : undefined}>
+          {trialOutcome(position.board) ?? `${position.board.status === "将军" ? `将军 · ${position.board.fen.split(/\s+/)[1] === "b" ? "黑方" : "红方"}正在被将军。` : ""}${busy && !awaitingReply ? "正在准备局面…" : notice}`}
+        </p>}
+      </div>
       <div className="teacher-trial-actions"><button type="button" disabled={busy || !position.progress.moves.length} onClick={() => void changeMoves(position.progress.moves.slice(0, position.progress.revealed || position.progress.moves.length % 2 === 1 ? -1 : -2), position.progress.revealed)}><ChevronLeft/>上一步</button>
       {position.progress.revealed ? <button type="button" disabled={busy || !line?.length} onClick={() => void changeMoves([...position.progress.moves, line![0].iccs], true)}>下一步<ChevronRight/></button> : <button type="button" disabled={busy || awaitingReply || Boolean(trialOutcome(position.board))} onClick={() => void hint()}><Lightbulb/>提示</button>}
       <button type="button" disabled={busy} onClick={() => void changeMoves([], true)}>看答案</button><button type="button" disabled={busy} onClick={() => void changeMoves([])}><RotateCcw/>重新试做</button></div>
       <button type="button" disabled={busy} onClick={() => setEditing(position.problem)}>修改／替换／撤回本题</button>
-      <p role="status">{notice}</p>{position.problem.note && <p className="teacher-trial-note">{position.problem.note}</p>}
+      {position.problem.note && <p className="teacher-trial-note">{position.problem.note}</p>}
       {awaitingReply && !busy && !error && <button type="button" onClick={() => void retryReply()}>继续 AI 应招</button>}
     </>}
     <small>{items.length}/{total} 题已读取 · 本机试做进度独立保存</small>

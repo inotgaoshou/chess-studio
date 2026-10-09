@@ -45,7 +45,7 @@ function harness({ packageEnv = "test", native = true, dev = false, configured =
     removeItem: (key) => values.delete(key),
   };
   const context = vm.createContext({
-    localStorage, indexedDB, Headers, __APP_ENV__: packageEnv,
+    localStorage, indexedDB, Headers, AbortController, setTimeout: (fn, ms) => setTimeout(fn, Math.min(ms, 30)), clearTimeout, __APP_ENV__: packageEnv,
     runtimeEnv: { DEV: dev, VITE_TEACHING_API_BASE: configured },
     fetch: async (...args) => {
       calls.push(args);
@@ -79,6 +79,25 @@ function harness({ packageEnv = "test", native = true, dev = false, configured =
     },
   });
   return { environment, client: teachingClient, calls, values, stores, session: () => session, load };
+}
+
+for (const stage of ["connection", "body"]) {
+  test(`login leaves the busy state when the ${stage} stalls and can retry`, async () => {
+    let stalled = true;
+    const h = harness({ fetchImpl: () => stalled
+      ? stage === "connection" ? new Promise(() => {}) : { ok: true, json: () => new Promise(() => {}) }
+      : { ok: true, json: async () => structuredClone(auth) } });
+    const result = await Promise.race([
+      h.client.login("user", "password").then(() => "unexpected success", error => error.message),
+      new Promise(resolve => setTimeout(() => resolve("still logging in"), 150)),
+    ]);
+    assert.match(result, /连接超时/);
+    assert.equal(h.client.auth(), undefined);
+    assert.equal(h.session(), undefined);
+    stalled = false;
+    await h.client.login("user", "password");
+    assert.equal(h.client.auth().user.id, "u1");
+  });
 }
 
 test("test package defaults to test, persists a switch, and can switch back", async () => {

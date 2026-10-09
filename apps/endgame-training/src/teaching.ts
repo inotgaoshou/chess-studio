@@ -429,6 +429,34 @@ function userFacingError(error?: string, status?: number) {
 
 function appId() { return isNativeSessionStore() ? "student-mobile" : "student-web"; }
 
+// Cover both connecting and reading the body; either can stall on mobile networks.
+async function fetchJson(url: string, init: RequestInit): Promise<{ response: Response; body: unknown }> {
+  const controller = new AbortController();
+  const abort = () => controller.abort(init.signal?.reason);
+  if (init.signal?.aborted) abort();
+  else init.signal?.addEventListener("abort", abort, { once: true });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error("连接超时，请检查网络后重试。输入内容已保留。"));
+      controller.abort();
+    }, 20_000);
+  });
+  try {
+    return await Promise.race([
+      (async () => {
+        const response = await fetch(url, { ...init, signal: controller.signal });
+        const body: unknown = await response.json().catch(() => ({}));
+        return { response, body };
+      })(),
+      timeout,
+    ]);
+  } finally {
+    clearTimeout(timer);
+    init.signal?.removeEventListener("abort", abort);
+  }
+}
+
 async function persistAuth(auth: TeachingAuth, epoch = sessionEpoch, targetServer = serverUrl()) {
   if (isNativeSessionStore()) {
     const stored = await secureSession.load();
@@ -460,8 +488,7 @@ async function refreshAuth(): Promise<TeachingAuth | undefined> {
     const headers = new Headers({ "content-type": "application/json", "x-xiangqi-app-id": appId() });
     headers.set("x-xiangqi-device-id", stored?.deviceId ?? secureSession.deviceId());
     headers.set("x-xiangqi-device-name", isNativeSessionStore() ? "Qixi Mobile" : "Qixi Web");
-    const response = await fetch(`${targetServer}/api/v1/auth/refresh`, { method: "POST", headers, credentials: "include", body: JSON.stringify({ refreshToken }) });
-    const body = await response.json().catch(() => ({}));
+    const { response, body } = await fetchJson(`${targetServer}/api/v1/auth/refresh`, { method: "POST", headers, credentials: "include", body: JSON.stringify({ refreshToken }) });
     if (!response.ok || epoch !== sessionEpoch || targetServer !== serverUrl()) return undefined;
     const auth = body as TeachingAuth;
     if (!auth.token || !auth.user) return undefined;
@@ -483,8 +510,7 @@ async function request<T>(path: string, init: RequestInit = {}, token?: string, 
   const authContext = accessToken ? tokenContexts.get(accessToken) : undefined;
   if (accessToken && (!authContext || !isCurrentAuthContext(authContext))) throw new Error("登录账号或机构已变化，请重新操作。");
   if (accessToken) headers.set("authorization", `Bearer ${accessToken}`);
-  const response = await fetch(`${targetServer}${path}`, { ...init, headers, credentials: "include" });
-  const body = await response.json().catch(() => ({}));
+  const { response, body } = await fetchJson(`${targetServer}${path}`, { ...init, headers, credentials: "include" });
   if (authContext && !isCurrentAuthContext(authContext)) throw new Error("登录账号或机构已变化，请重新操作。");
   if (!response.ok) {
     if (response.status === 401 && retry && path !== "/api/v1/auth/refresh" && accessToken) {

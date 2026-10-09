@@ -7063,6 +7063,11 @@ html.touch-webview .study-sidebar .analysis-candidates {
 .teacher-assignment-practice > h3 { margin:2px 0; font-size:16px; line-height:1.4; }
 .teacher-assignment-practice > p { margin:2px 0; font-size:13px; line-height:1.5; }
 .teacher-assignment-practice .teacher-trial-actions { gap:6px; }
+.teacher-assignment-practice > .teacher-trial-title { height:2.8em; overflow:auto; overflow-wrap:anywhere; }
+.teacher-trial-status { height:72px; overflow:auto; overscroll-behavior:contain; font-size:13px; line-height:1.5; }
+.teacher-trial-status p { margin:0; overflow-wrap:anywhere; }
+.teacher-trial-status [role="alert"] { color:#b91c1c; }
+html .teacher-assignment-detail:has(.teacher-assignment-content[hidden]) { overflow-anchor:none; scrollbar-gutter:stable; }
 .teacher-trial-management { display:grid; gap:6px; padding:8px; border:1px solid #c9ddce; border-radius:8px; }
 .teacher-trial-management[hidden] { display:none; }
 .teacher-trial-outcome { padding:8px 10px; border:1px solid #8cbd98; border-radius:7px; background:#e2f0e5; color:#24613a; font-weight:700; }

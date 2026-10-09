@@ -16,6 +16,30 @@ async function verifyBoardAppearance(board) {
   assert.equal(squareAppearance.padding, '0px', 'form button padding must not shrink pieces');
   assert(squareAppearance.pieceRatio >= 0.8, 'pieces must fill their board hit targets');
 }
+async function startBoardStability(page) {
+  await page.evaluate(() => {
+    window.boardFrames = [];
+    window.recordBoardFrames = true;
+    function record() {
+      const board = document.querySelector('.teacher-assignment-practice .teacher-trial-board');
+      if (board) {
+        const { x, y, width, height } = board.getBoundingClientRect();
+        window.boardFrames.push({ x, y, width, height });
+      }
+      if (window.recordBoardFrames) requestAnimationFrame(record);
+    }
+    record();
+  });
+}
+async function verifyBoardStability(page) {
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve)))));
+  const frames = await page.evaluate(() => { window.recordBoardFrames = false; return window.boardFrames; });
+  assert(frames.length > 2, 'sample the board throughout the opponent reply');
+  for (const dimension of ['x', 'y', 'width', 'height']) {
+    const values = frames.map(frame => frame[dimension]);
+    assert(Math.max(...values) - Math.min(...values) <= 1, `board ${dimension} must remain stable throughout moves/status/replies: ${Math.min(...values)} to ${Math.max(...values)}`);
+  }
+}
 (async () => {
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
@@ -33,6 +57,7 @@ async function verifyBoardAppearance(board) {
       });
       await page.route('https://www.chessdb.cn/**', async route => {
         cloudRequests++;
+        await new Promise(r => setTimeout(r, 160));
         if(cloudFailure) { await route.abort(); return; }
         const move=new URL(route.request().url()).searchParams.get('board').split(/\s+/)[1]==='b'?'h9g7':'h0g2';
         await route.fulfill({contentType:'text/plain',body:`move:${move},score:20,winrate:52`});
@@ -74,8 +99,10 @@ async function verifyBoardAppearance(board) {
       await page.evaluate(()=>window.retainedTrialBoard=document.querySelector('.teacher-trial-board .xiangqi-board'));
       const before=await board.locator('.piece').count();
       await board.locator('.board-square').nth(7 * 9 + 7).click();
+      await startBoardStability(page);
       await board.locator('.board-square').nth(7 * 9 + 4).click();
       await page.getByText(replyNotice).waitFor();
+      await verifyBoardStability(page);
       assert(await page.evaluate(()=>Object.keys(localStorage).some(k=>k.startsWith('qixi-teacher-trial-v1:')&&JSON.parse(localStorage[k]||'null')?.moves?.join(',')==='h2e2,h9g7')));
       await page.getByRole('button',{name:'重新试做',exact:true}).click();
       // A legal move outside the saved answer still receives an opponent response.
@@ -86,8 +113,9 @@ async function verifyBoardAppearance(board) {
       assert(await page.evaluate(()=>Object.keys(localStorage).some(k=>k.startsWith('qixi-teacher-trial-v1:')&&JSON.parse(localStorage[k]||'null')?.moves?.length===0)));
       cloudFailure=true;
       if(nativeMode) await page.evaluate(()=>window.engineUnavailable=true);
-      await board.locator('.board-square').nth(7*9+7).click();await board.locator('.board-square').nth(7*9+5).click();
+      await board.locator('.board-square').nth(7*9+7).click();await startBoardStability(page);await board.locator('.board-square').nth(7*9+5).click();
       await page.getByRole('button',{name:'重试应招',exact:true}).waitFor();
+      await verifyBoardStability(page);
       assert(await page.evaluate(()=>Object.keys(localStorage).some(k=>k.startsWith('qixi-teacher-trial-v1:')&&JSON.parse(localStorage[k]||'null')?.moves?.join(',')==='h2f2')));
       cloudFailure=false;if(nativeMode)await page.evaluate(()=>window.engineUnavailable=false);
       await page.getByRole('button',{name:'重试应招',exact:true}).click();await page.getByText(replyNotice).waitFor();
@@ -105,8 +133,9 @@ async function verifyBoardAppearance(board) {
       assert(await page.evaluate(()=>Object.keys(localStorage).some(k=>k.endsWith(':p48')&&JSON.parse(localStorage[k]||'null')?.moves?.join(',')==='h9g7,h0g2')),'black-start teacher receives a red reply');
       await page.getByRole('button',{name:'试做第 50 题',exact:true}).click();await page.getByRole('heading',{name:'试做题50',exact:true}).waitFor();
       const beforeMate=cloudRequests;
-      await board.locator('.board-square').nth(2*9+4).click();await board.locator('.board-square').nth(1*9+4).click();
+      await board.locator('.board-square').nth(2*9+4).click();await startBoardStability(page);await board.locator('.board-square').nth(1*9+4).click();
       await page.locator('.teacher-trial-outcome').filter({hasText:'绝杀（将死） · 红方获胜'}).waitFor();assert.equal(cloudRequests,beforeMate,'no opponent search after checkmate');
+      await verifyBoardStability(page);
       await page.getByRole('button',{name:'上一步',exact:true}).click();assert.equal(await page.locator('.teacher-trial-outcome').count(),0,'rewinding clears terminal result');
       await page.getByRole('button',{name:'试做第 51 题',exact:true}).click();await page.getByRole('heading',{name:'试做题51',exact:true}).waitFor();
       await board.locator('.board-square').nth(2*9+5).click();await board.locator('.board-square').nth(1*9+5).click();
