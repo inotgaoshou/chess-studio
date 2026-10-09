@@ -4,6 +4,18 @@ const base = process.env.TEACHER_URL || 'http://127.0.0.1:1441';
 const nativeMode = process.env.TRIAL_NATIVE === '1';
 const replyNotice = nativeMode ? /AI（Pikafish）应招：/ : /云库应招：/;
 const fen = 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1';
+async function verifyBoardAppearance(board) {
+  const squareAppearance = await board.locator('.board-square').first().evaluate(square => {
+    const style = getComputedStyle(square);
+    const image = square.querySelector('.piece');
+    return { background: style.backgroundColor, border: style.borderTopWidth, padding: style.paddingTop,
+      pieceRatio: image.getBoundingClientRect().width / square.getBoundingClientRect().width };
+  });
+  assert.equal(squareAppearance.background, 'rgba(0, 0, 0, 0)', 'board intersections must remain transparent, not white form buttons');
+  assert.equal(squareAppearance.border, '0px', 'form button borders must not cover board lines');
+  assert.equal(squareAppearance.padding, '0px', 'form button padding must not shrink pieces');
+  assert(squareAppearance.pieceRatio >= 0.8, 'pieces must fill their board hit targets');
+}
 (async () => {
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
@@ -56,6 +68,8 @@ const fen = 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0
       assert(boardTop-pageTop<200,'compact header gives the board priority');
       const board=page.locator('.teacher-trial-board');
       await board.locator('.piece').first().waitFor();
+      await verifyBoardAppearance(board);
+      await board.screenshot({path:`tmp/teacher-board-fixed-${viewport.width}.png`});
       // Use board square hit targets; teacher trial is legal free play and auto-answers matching defenses.
       await page.evaluate(()=>window.retainedTrialBoard=document.querySelector('.teacher-trial-board .xiangqi-board'));
       const before=await board.locator('.piece').count();
@@ -104,6 +118,7 @@ const fen = 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0
       await page.getByRole('button',{name:'刷新题目',exact:true}).click();await page.getByRole('alert').waitFor();
       await page.getByRole('button',{name:'重试',exact:true}).click();await page.getByRole('heading',{name:'试做题53',exact:true}).waitFor();
       await page.getByRole('button',{name:'修改／替换／撤回本题',exact:true}).click();
+      await verifyBoardAppearance(page.locator('.teacher-trial-board'));
       await page.getByLabel('题目名称',{exact:true}).fill('教师修订题名');await page.getByLabel('题目说明',{exact:true}).fill('长说明\n保留换行和草稿');
       await page.getByRole('button',{name:'返回试做（保留草稿）',exact:true}).click();
       await page.getByRole('button',{name:'修改／替换／撤回本题',exact:true}).click();assert.equal(await page.getByLabel('题目名称',{exact:true}).inputValue(),'教师修订题名');
