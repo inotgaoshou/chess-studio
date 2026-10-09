@@ -1,6 +1,7 @@
 import { BookOpen, ChevronLeft, ChevronRight, ClipboardList, FileArchive, GraduationCap, Home, LogIn, Plus, RefreshCw, Search, Send, Trash2, UserRound, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { TeacherAssignmentPractice, type TeacherPracticeBoardRenderer } from "./TeacherAssignmentPractice";
 import { TeacherResults, type ResultBoardRenderer } from "./TeacherResults";
 import {
   teachingClient,
@@ -186,9 +187,9 @@ async function buildBatchPlans(selection: AssignmentSelection, libraries: Teache
   return { plans, groups: groupCounts, count: emitted.size };
 }
 
-export function TeacherMobileWorkspace({ auth, path, onNavigate, onLogout, onExit, onRelogin, onAuthChange, renderResultBoard }: {
+export function TeacherMobileWorkspace({ auth, path, onNavigate, onLogout, onExit, onRelogin, onAuthChange, renderResultBoard, renderPracticeBoard }: {
   auth: TeachingAuth; path: string; onNavigate(path: string): void; onLogout(): void; onExit(): void; onRelogin(): void; onAuthChange(auth: TeachingAuth): void;
-  renderResultBoard?: ResultBoardRenderer;
+  renderResultBoard?: ResultBoardRenderer; renderPracticeBoard?: TeacherPracticeBoardRenderer;
 }) {
   const kind = routeKind(path);
   if (!auth.user.orgId && !auth.user.isPlatformAdmin) return <TeacherJoinOrganization auth={auth} onLogout={onLogout} onExit={onExit} onRelogin={onRelogin} onApproved={async () => { const next = await teachingClient.refreshSession(); if (!next) throw new Error("登录会话已失效，请重新登录。"); onAuthChange(next); onNavigate("/teacher"); }}/>;
@@ -197,7 +198,7 @@ export function TeacherMobileWorkspace({ auth, path, onNavigate, onLogout, onExi
   if (kind === "classes") return <TeacherMobileShell active="classes" onNavigate={onNavigate}><TeacherClasses key={scopeKey} onNavigate={onNavigate}/></TeacherMobileShell>;
   if (kind === "class") return <TeacherMobileShell active="classes" onNavigate={onNavigate}><TeacherClassDetail key={`${scopeKey}:${path}`} classId={routeId(path, "/teacher/classes/")} onNavigate={onNavigate}/></TeacherMobileShell>;
   if (kind === "new") return <TeacherAssignmentWizard key={auth.user.id} auth={auth} onNavigate={onNavigate} onAuthChange={onAuthChange}/>;
-  if (kind === "assignment") return <TeacherMobileShell active="assignments" onNavigate={onNavigate}><TeacherAssignmentDetail key={`${scopeKey}:${path}`} assignmentId={routeId(path, "/teacher/assignments/")} onNavigate={onNavigate} renderResultBoard={renderResultBoard}/></TeacherMobileShell>;
+  if (kind === "assignment") return <TeacherMobileShell active="assignments" onNavigate={onNavigate}><TeacherAssignmentDetail key={`${scopeKey}:${path}`} assignmentId={routeId(path, "/teacher/assignments/")} onNavigate={onNavigate} auth={auth} renderPracticeBoard={renderPracticeBoard} renderResultBoard={renderResultBoard}/></TeacherMobileShell>;
   return <TeacherMobileShell active="home" onNavigate={onNavigate}><TeacherHome key={scopeKey} auth={auth} onNavigate={onNavigate} onAuthChange={onAuthChange} onExit={onExit}/></TeacherMobileShell>;
 }
 
@@ -504,78 +505,80 @@ function TeacherAssignmentWizard({ auth, onNavigate, onAuthChange }: { auth: Tea
   const validBatch = draft.batchMode === "none" || Number.isInteger(batchValue) && batchValue >= 1 && batchValue <= 10000;
   const estimatedBatches = draft.batchMode === "none" ? selectedCount ? 1 : 0 : validBatch ? selectedGroups.reduce((sum, item) => sum + (draft.batchMode === "count" ? Math.min(item.count, draft.batchCount) : Math.ceil(item.count / draft.batchSize)), 0) : 0;
   return <main className="teacher-mobile-page teacher-mobile-wizard">
-    <TeacherHeader title="布置作业" subtitle={`第 ${step}/4 步 · ${auth.user.orgName || "未选择机构"}`} onBack={leave}/>
-    <TeacherOrganizationSelect auth={auth} disabled={locked} onChange={(id) => void changeOrganization(id)}/>
-    {loading && <p className="teacher-mobile-progress" role="status">正在加载当前机构</p>}
-    {error && <p className="teacher-mobile-error" role="alert">{error}</p>}
-    {loadFailed && <button type="button" onClick={() => setReload((value) => value + 1)}>重试加载机构</button>}
-    {progress && <p className="teacher-mobile-progress" role="status">{progress}</p>}
-    {submissionProgress && <section className="teacher-mobile-submission" aria-live="polite">
-      <strong>已完成 {submissionProgress.completed}/{submissionProgress.total} 批</strong>
-      <small>已创建 {submissionProgress.ids.length} 份作业，编号：{submissionProgress.ids.join("、") || "无"}</small>
-      {submissionProgress.uncertain && <small>创建结果未确认，请返回工作台核实。</small>}
-    </section>}
-    <fieldset className="teacher-mobile-wizard-fields" disabled={locked}>
-      <nav className="teacher-mobile-stepper" aria-label="作业步骤">
-        {["机构", "题目", "学生", "发布"].map((label, index) => <button type="button" key={label} className={step === index + 1 ? "active" : step > index + 1 ? "complete" : ""} disabled={index + 1 > step} onClick={() => setStep(index + 1)}><b>{index + 1}</b><span>{label}</span></button>)}
-      </nav>
-      {step === 1 && <section className="teacher-mobile-step">
-        <h2>确认布置机构</h2>
-        <div className="teacher-mobile-scope"><GraduationCap/><span><b>{auth.user.orgName || "尚未绑定机构"}</b><small>仅限本人负责的班级及学生</small></span></div>
+    <div className="teacher-mobile-wizard-body">
+      <TeacherHeader title="布置作业" subtitle={`第 ${step}/4 步 · ${auth.user.orgName || "未选择机构"}`} onBack={leave}/>
+      <TeacherOrganizationSelect auth={auth} disabled={locked} onChange={(id) => void changeOrganization(id)}/>
+      {loading && <p className="teacher-mobile-progress" role="status">正在加载当前机构</p>}
+      {error && <p className="teacher-mobile-error" role="alert">{error}</p>}
+      {loadFailed && <button type="button" onClick={() => setReload((value) => value + 1)}>重试加载机构</button>}
+      {progress && <p className="teacher-mobile-progress" role="status">{progress}</p>}
+      {submissionProgress && <section className="teacher-mobile-submission" aria-live="polite">
+        <strong>已完成 {submissionProgress.completed}/{submissionProgress.total} 批</strong>
+        <small>已创建 {submissionProgress.ids.length} 份作业，编号：{submissionProgress.ids.join("、") || "无"}</small>
+        {submissionProgress.uncertain && <small>创建结果未确认，请返回工作台核实。</small>}
       </section>}
-      {step === 2 && <section className="teacher-mobile-step">
-        <h2>选择作业题目</h2>
-        <label><span>作业标题</span><input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="例如：中局杀法训练"/></label>
-        <label><span>作业说明（可选）</span><textarea value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })}/></label>
-        <label><span>目录</span><select value={folderId} onChange={(event) => setFolderId(event.target.value)}><option value="">全部目录</option>{folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.path || folder.name}</option>)}</select></label>
-        <div className="teacher-mobile-library-picker">{visibleLibraries.map((library) => <button type="button" key={library.id} className={activeLibraryId === library.id ? "active" : ""} onClick={() => { setActiveLibraryId(library.id); setQuery(""); }}><BookOpen/><span><b>{library.title}</b><small>{library.publishedCount} 题 · {librarySourceLabel(library, auth.user.orgId)}{library.accessTier === "vip" ? " · VIP" : ""}</small></span>{selection.libraryIds.includes(library.id) && <i>整库</i>}</button>)}</div>
-        {mergedDuplicateCount > 0 && <p className="teacher-mobile-merge-note">已合并 {mergedDuplicateCount} 个公共库重复项。</p>}
-        {activeLibraryId && <>
-          <label className="teacher-mobile-search"><Search/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索当前题库" aria-label="搜索当前题库"/></label>
-          {problemsLoading && <p role="status">正在加载题目</p>}
-          {problemError && <p className="teacher-mobile-error" role="alert">{problemError}</p>}
-          <button type="button" className="teacher-mobile-select-all" disabled={problemsLoading || Boolean(problemError)} onClick={() => void selectSearch()}>{query ? `选择当前搜索结果（${problemCount} 题）` : selection.libraryIds.includes(activeLibraryId) ? "取消整库选择" : "选择整个题库"}</button>
-          <div className="teacher-mobile-problem-picker">{problems.map((problem) => <label key={problem.id}><input type="checkbox" disabled={selection.libraryIds.includes(problem.libraryId) || selection.filters.some((filter) => filter.libraryId === problem.libraryId)} checked={selection.problems.some((item) => item.id === problem.id)} onChange={() => toggleProblem(problem)}/><span><b>第 {problem.sourceIndex + 1} 题 · {problem.title}</b><small>{problem.category || "未分类"}{problem.accessTier === "vip" ? " · VIP" : ""}</small></span></label>)}</div>
-        </>}
-        <div className="teacher-mobile-batch">
-          <b>分批布置</b>
-          <div>
-            <label><input type="radio" name="batchMode" checked={draft.batchMode === "none"} onChange={() => setDraft({ ...draft, batchMode: "none" })}/>不分批</label>
-            {[50, 100].map((size) => <label key={size}><input type="radio" name="batchMode" checked={draft.batchMode === "preset" && draft.batchSize === size} onChange={() => setDraft({ ...draft, batchMode: "preset", batchSize: size })}/>每{size}题</label>)}
-            <label><input type="radio" name="batchMode" checked={draft.batchMode === "size"} onChange={() => setDraft({ ...draft, batchMode: "size", batchSize: 20 })}/>自定义题数</label>
-            <label><input type="radio" name="batchMode" checked={draft.batchMode === "count"} onChange={() => setDraft({ ...draft, batchMode: "count" })}/>按批次数</label>
+      <fieldset className="teacher-mobile-wizard-fields" disabled={locked}>
+        <nav className="teacher-mobile-stepper" aria-label="作业步骤">
+          {["机构", "题目", "学生", "发布"].map((label, index) => <button type="button" key={label} className={step === index + 1 ? "active" : step > index + 1 ? "complete" : ""} disabled={index + 1 > step} onClick={() => setStep(index + 1)}><b>{index + 1}</b><span>{label}</span></button>)}
+        </nav>
+        {step === 1 && <section className="teacher-mobile-step">
+          <h2>确认布置机构</h2>
+          <div className="teacher-mobile-scope"><GraduationCap/><span><b>{auth.user.orgName || "尚未绑定机构"}</b><small>仅限本人负责的班级及学生</small></span></div>
+        </section>}
+        {step === 2 && <section className="teacher-mobile-step">
+          <h2>选择作业题目</h2>
+          <label><span>作业标题</span><input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="例如：中局杀法训练"/></label>
+          <label><span>作业说明（可选）</span><textarea value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })}/></label>
+          <label><span>目录</span><select value={folderId} onChange={(event) => setFolderId(event.target.value)}><option value="">全部目录</option>{folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.path || folder.name}</option>)}</select></label>
+          <div className="teacher-mobile-library-picker">{visibleLibraries.map((library) => <button type="button" key={library.id} className={activeLibraryId === library.id ? "active" : ""} onClick={() => { setActiveLibraryId(library.id); setQuery(""); }}><BookOpen/><span><b>{library.title}</b><small>{library.publishedCount} 题 · {librarySourceLabel(library, auth.user.orgId)}{library.accessTier === "vip" ? " · VIP" : ""}</small></span>{selection.libraryIds.includes(library.id) && <i>整库</i>}</button>)}</div>
+          {mergedDuplicateCount > 0 && <p className="teacher-mobile-merge-note">已合并 {mergedDuplicateCount} 个公共库重复项。</p>}
+          {activeLibraryId && <>
+            <label className="teacher-mobile-search"><Search/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索当前题库" aria-label="搜索当前题库"/></label>
+            {problemsLoading && <p role="status">正在加载题目</p>}
+            {problemError && <p className="teacher-mobile-error" role="alert">{problemError}</p>}
+            <button type="button" className="teacher-mobile-select-all" disabled={problemsLoading || Boolean(problemError)} onClick={() => void selectSearch()}>{query ? `选择当前搜索结果（${problemCount} 题）` : selection.libraryIds.includes(activeLibraryId) ? "取消整库选择" : "选择整个题库"}</button>
+            <div className="teacher-mobile-problem-picker">{problems.map((problem) => <label key={problem.id}><input type="checkbox" disabled={selection.libraryIds.includes(problem.libraryId) || selection.filters.some((filter) => filter.libraryId === problem.libraryId)} checked={selection.problems.some((item) => item.id === problem.id)} onChange={() => toggleProblem(problem)}/><span><b>第 {problem.sourceIndex + 1} 题 · {problem.title}</b><small>{problem.category || "未分类"}{problem.accessTier === "vip" ? " · VIP" : ""}</small></span></label>)}</div>
+          </>}
+          <div className="teacher-mobile-batch">
+            <b>分批布置</b>
+            <div>
+              <label><input type="radio" name="batchMode" checked={draft.batchMode === "none"} onChange={() => setDraft({ ...draft, batchMode: "none" })}/>不分批</label>
+              {[50, 100].map((size) => <label key={size}><input type="radio" name="batchMode" checked={draft.batchMode === "preset" && draft.batchSize === size} onChange={() => setDraft({ ...draft, batchMode: "preset", batchSize: size })}/>每{size}题</label>)}
+              <label><input type="radio" name="batchMode" checked={draft.batchMode === "size"} onChange={() => setDraft({ ...draft, batchMode: "size", batchSize: 20 })}/>自定义题数</label>
+              <label><input type="radio" name="batchMode" checked={draft.batchMode === "count"} onChange={() => setDraft({ ...draft, batchMode: "count" })}/>按批次数</label>
+            </div>
+            {draft.batchMode === "size" && <label className="teacher-mobile-batch-number"><span>每批题数</span><input aria-label="每批题数" type="number" inputMode="numeric" min="1" max="10000" step="1" value={draft.batchSize || ""} onChange={(event) => setDraft({ ...draft, batchSize: Number(event.target.value) })}/><span>题</span></label>}
+            {draft.batchMode === "count" && <label className="teacher-mobile-batch-number"><span>每组批次数</span><input aria-label="批次数" type="number" inputMode="numeric" min="1" max="10000" step="1" value={draft.batchCount || ""} onChange={(event) => setDraft({ ...draft, batchCount: Number(event.target.value) })}/><span>批</span></label>}
+            {!validBatch ? <small className="teacher-mobile-error">请输入 1–10000 的整数</small> : <small>{draft.batchMode === "none" ? "合并去重，生成一份作业" : `按题库独立分批，预计最多生成 ${estimatedBatches} 份作业`}</small>}
+            {selectedGroups.map((item, index) => <small key={index}>{item.label}：{item.count} 题</small>)}
           </div>
-          {draft.batchMode === "size" && <label className="teacher-mobile-batch-number"><span>每批题数</span><input aria-label="每批题数" type="number" inputMode="numeric" min="1" max="10000" step="1" value={draft.batchSize || ""} onChange={(event) => setDraft({ ...draft, batchSize: Number(event.target.value) })}/><span>题</span></label>}
-          {draft.batchMode === "count" && <label className="teacher-mobile-batch-number"><span>每组批次数</span><input aria-label="批次数" type="number" inputMode="numeric" min="1" max="10000" step="1" value={draft.batchCount || ""} onChange={(event) => setDraft({ ...draft, batchCount: Number(event.target.value) })}/><span>批</span></label>}
-          {!validBatch ? <small className="teacher-mobile-error">请输入 1–10000 的整数</small> : <small>{draft.batchMode === "none" ? "合并去重，生成一份作业" : `按题库独立分批，预计最多生成 ${estimatedBatches} 份作业`}</small>}
-          {selectedGroups.map((item, index) => <small key={index}>{item.label}：{item.count} 题</small>)}
-        </div>
-        <p className="teacher-mobile-selection-summary">已选择 {selectedCount} 题</p>
-      </section>}
-      {step === 3 && <section className="teacher-mobile-step">
-        <h2>选择班级和学生</h2>
-        <div className="teacher-mobile-choice-list"><b>班级（可多选）</b>{classes.map((item) => <label key={item.id}><input type="checkbox" checked={draft.classIds.includes(item.id)} onChange={(event) => setDraft({ ...draft, classIds: event.target.checked ? [...draft.classIds, item.id] : draft.classIds.filter((id) => id !== item.id) })}/><span>{item.name}<small>{item.studentCount} 名学生</small></span></label>)}{!classes.length && <p className="teacher-mobile-empty">当前机构没有由你负责的班级</p>}</div>
-        <div className="teacher-mobile-choice-list"><b>个别学生（可选）</b>{students.map((item) => <label key={item.id}><input type="checkbox" checked={draft.studentIds.includes(item.id)} onChange={(event) => setDraft({ ...draft, studentIds: event.target.checked ? [...draft.studentIds, item.id] : draft.studentIds.filter((id) => id !== item.id) })}/><span>{item.displayName}<small>{item.loginName}</small></span></label>)}</div>
-        <p className="teacher-mobile-selection-summary">已选择 {draft.classIds.length} 个班级、{draft.studentIds.length} 名学生</p>
-      </section>}
-      {step === 4 && <section className="teacher-mobile-step">
-        <h2>发布设置</h2>
-        <label><span>截止时间</span><input type="datetime-local" value={draft.dueAt} onChange={(event) => setDraft({ ...draft, dueAt: event.target.value })}/></label>
-        <div className="teacher-mobile-number-grid">
-          <label><span>限时（分钟）</span><input type="number" min="0" value={draft.timeLimitMinutes} onChange={(event) => setDraft({ ...draft, timeLimitMinutes: event.target.value })}/></label>
-          <label><span>尝试次数（0 不限）</span><input type="number" min="0" value={draft.maxAttempts} onChange={(event) => setDraft({ ...draft, maxAttempts: event.target.value })}/></label>
-        </div>
-        <label className="teacher-mobile-toggle"><input type="checkbox" checked={draft.allowAnswer} onChange={(event) => setDraft({ ...draft, allowAnswer: event.target.checked })}/>允许查看答案</label>
-        <label className="teacher-mobile-toggle"><input type="checkbox" checked={draft.randomizeItems} onChange={(event) => setDraft({ ...draft, randomizeItems: event.target.checked })}/>随机题目顺序</label>
-        <div className="teacher-mobile-preview">
-          <b>{draft.title || "未填写标题"}</b>
-          <strong>所属机构：{auth.user.orgName}</strong>
-          <small>{prepared?.count ?? selectedCount} 题 · {draft.classIds.length} 个班级 · {draft.studentIds.length} 名学生</small>
-          <small>核对后生成 {prepared?.plans.length ?? 0} 份作业</small>
-          {prepared?.groups.map((item, index) => <small key={index}>{item.label}：{item.count} 题{draft.batchMode !== "none" && ` · ${item.batches} 批`}</small>)}
-        </div>
-      </section>}
-    </fieldset>
+          <p className="teacher-mobile-selection-summary">已选择 {selectedCount} 题</p>
+        </section>}
+        {step === 3 && <section className="teacher-mobile-step">
+          <h2>选择班级和学生</h2>
+          <div className="teacher-mobile-choice-list"><b>班级（可多选）</b>{classes.map((item) => <label key={item.id}><input type="checkbox" checked={draft.classIds.includes(item.id)} onChange={(event) => setDraft({ ...draft, classIds: event.target.checked ? [...draft.classIds, item.id] : draft.classIds.filter((id) => id !== item.id) })}/><span>{item.name}<small>{item.studentCount} 名学生</small></span></label>)}{!classes.length && <p className="teacher-mobile-empty">当前机构没有由你负责的班级</p>}</div>
+          <div className="teacher-mobile-choice-list"><b>个别学生（可选）</b>{students.map((item) => <label key={item.id}><input type="checkbox" checked={draft.studentIds.includes(item.id)} onChange={(event) => setDraft({ ...draft, studentIds: event.target.checked ? [...draft.studentIds, item.id] : draft.studentIds.filter((id) => id !== item.id) })}/><span>{item.displayName}<small>{item.loginName}</small></span></label>)}</div>
+          <p className="teacher-mobile-selection-summary">已选择 {draft.classIds.length} 个班级、{draft.studentIds.length} 名学生</p>
+        </section>}
+        {step === 4 && <section className="teacher-mobile-step">
+          <h2>发布设置</h2>
+          <label><span>截止时间</span><input type="datetime-local" value={draft.dueAt} onChange={(event) => setDraft({ ...draft, dueAt: event.target.value })}/></label>
+          <div className="teacher-mobile-number-grid">
+            <label><span>限时（分钟）</span><input type="number" min="0" value={draft.timeLimitMinutes} onChange={(event) => setDraft({ ...draft, timeLimitMinutes: event.target.value })}/></label>
+            <label><span>尝试次数（0 不限）</span><input type="number" min="0" value={draft.maxAttempts} onChange={(event) => setDraft({ ...draft, maxAttempts: event.target.value })}/></label>
+          </div>
+          <label className="teacher-mobile-toggle"><input type="checkbox" checked={draft.allowAnswer} onChange={(event) => setDraft({ ...draft, allowAnswer: event.target.checked })}/>允许查看答案</label>
+          <label className="teacher-mobile-toggle"><input type="checkbox" checked={draft.randomizeItems} onChange={(event) => setDraft({ ...draft, randomizeItems: event.target.checked })}/>随机题目顺序</label>
+          <div className="teacher-mobile-preview">
+            <b>{draft.title || "未填写标题"}</b>
+            <strong>所属机构：{auth.user.orgName}</strong>
+            <small>{prepared?.count ?? selectedCount} 题 · {draft.classIds.length} 个班级 · {draft.studentIds.length} 名学生</small>
+            <small>核对后生成 {prepared?.plans.length ?? 0} 份作业</small>
+            {prepared?.groups.map((item, index) => <small key={index}>{item.label}：{item.count} 题{draft.batchMode !== "none" && ` · ${item.batches} 批`}</small>)}
+          </div>
+        </section>}
+      </fieldset>
+    </div>
     <footer className="teacher-mobile-wizard-footer">
       {step > 1 ? <button type="button" disabled={locked} onClick={() => setStep(step - 1)}>上一步</button> : <span/>}
       {step < 4 ? <button type="button" className="primary" disabled={locked || (step === 2 && !validBatch)} onClick={() => void next()}>下一步<ChevronRight/></button> : <div>
@@ -586,10 +589,21 @@ function TeacherAssignmentWizard({ auth, onNavigate, onAuthChange }: { auth: Tea
   </main>;
 }
 
-function TeacherAssignmentDetail({ assignmentId, onNavigate, renderResultBoard }: { assignmentId: string; onNavigate(path: string): void; renderResultBoard?: ResultBoardRenderer }) {
+function TeacherAssignmentDetail({ assignmentId, onNavigate, renderResultBoard, renderPracticeBoard, auth }: { assignmentId: string; auth: TeachingAuth; onNavigate(path: string): void; renderResultBoard?: ResultBoardRenderer; renderPracticeBoard?: TeacherPracticeBoardRenderer }) {
   const [assignment, setAssignment] = useState<TeachingAssignment>(); const [results, setResults] = useState<TeacherAssignmentResult[]>([]); const [error, setError] = useState(""); const [busy, setBusy] = useState(true);
   const [summary, setSummary] = useState<TeacherAssignmentSummary>();
   const [revision, setRevision] = useState(0);
+  const [practice, setPractice] = useState(false);
+  const [practiceOrder, setPracticeOrder] = useState<number>();
+  const trialReturnScroll = useRef(0);
+  const pageRef = useRef<HTMLElement | null>(null);
+  function startPractice(order?: number) {
+    trialReturnScroll.current = pageRef.current?.scrollTop ?? 0; setPracticeOrder(order); setPractice(true);
+    requestAnimationFrame(() => pageRef.current?.scrollTo(0,0));
+  }
+  function closePractice() {
+    setPractice(false); void refresh(); requestAnimationFrame(() => pageRef.current?.scrollTo(0,trialReturnScroll.current));
+  }
   const generation = useRef(0);
   const refresh = async () => {
     const request = ++generation.current; setBusy(true); setError("");
@@ -604,13 +618,17 @@ function TeacherAssignmentDetail({ assignmentId, onNavigate, renderResultBoard }
   };
   useEffect(() => { setAssignment(undefined); setResults([]); setSummary(undefined); void refresh(); return () => { ++generation.current; }; }, [assignmentId]);
   const publish = async () => { if (!assignment || !window.confirm(`发布“${assignment.title}”并固定当前学生名单？`)) return; try { await teachingClient.publishTeacherAssignment(assignment.id); await refresh(); } catch (reason) { const text = messageOf(reason); if (text.includes("发现重复题目") && window.confirm(`${text}\n\n仍要继续发布吗？`)) { try { await teachingClient.publishTeacherAssignment(assignment.id, true); await refresh(); } catch (retry) { setError(messageOf(retry)); } } else setError(text); } };
-  return <main className="teacher-mobile-page teacher-assignment-detail" aria-busy={busy}>
+  return <main ref={pageRef} className="teacher-mobile-page teacher-assignment-detail" aria-busy={busy}>
+    {practice && assignment && renderPracticeBoard && <TeacherAssignmentPractice assignmentId={assignmentId} total={assignment.itemCount} initialOrder={practiceOrder} auth={auth} renderBoard={renderPracticeBoard} onBack={closePractice}/>}
+    <div className="teacher-assignment-content" hidden={practice}>
     <div className="teacher-detail-toolbar"><TeacherHeader title={assignment?.title || "作业详情"} subtitle={assignment ? `${assignment.itemCount} 题 · ${assignmentStatusLabel(assignment.status)}` : busy ? "正在读取作业与成绩" : "成绩未加载"} onBack={() => onNavigate("/teacher")}/>
       <button type="button" className="teacher-detail-refresh" disabled={busy} onClick={() => void refresh()}><RefreshCw className={busy ? "is-loading" : ""}/>{busy ? "加载中" : error ? "重试加载" : "刷新结果"}</button>
     </div>
     {error && <section role="alert" className="teacher-result-error"><strong>暂时无法加载成绩</strong><p>{error.includes("404") ? "请重试，或返回作业列表。" : error}</p>{summary && <small>当前显示上次加载的结果。</small>}</section>}
     {busy && !summary && <p role="status" className="teacher-result-loading">正在加载学生名单和成绩…</p>}
     {assignment?.status === "draft" && <><p className="teacher-mobile-draft-note">这份作业还未发布，学生端不会同步。</p><button type="button" className="teacher-mobile-publish" disabled={busy} onClick={() => void publish()}><Send/>发布作业</button></>}
-    {summary && <TeacherResults revision={revision} assignmentId={assignmentId} students={results} summary={summary} renderBoard={renderResultBoard}/>}
+    {assignment && renderPracticeBoard && <button type="button" className="teacher-mobile-publish" disabled={busy} onClick={() => startPractice()}>教师试做／检查与修改题目</button>}
+    {summary && <TeacherResults revision={revision} assignmentId={assignmentId} students={results} summary={summary} renderBoard={renderResultBoard} onPractice={renderPracticeBoard ? startPractice : undefined}/>}
+    </div>
   </main>;
 }

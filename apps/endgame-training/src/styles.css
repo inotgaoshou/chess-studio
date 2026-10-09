@@ -2152,7 +2152,7 @@ html.touch-webview .study-move-cell {
 html.phone-webview {
   --phone-safe-top: env(safe-area-inset-top, 0px);
   --phone-safe-bottom: env(safe-area-inset-bottom, 0px);
-  --phone-header-content-height: 44px;
+  --phone-header-content-height: 48px;
   --mobile-header-content-height: var(--phone-header-content-height);
   --mobile-header-height: calc(var(--phone-header-content-height) + var(--phone-safe-top));
   --phone-training-controls-height: min(31dvh, 260px);
@@ -2854,12 +2854,12 @@ html.tablet-webview .study-sidebar {
     grid-column:1;
   }
 
-  html.tablet-webview .analysis-panel,
-  html.tablet-webview .actions,
-  html.tablet-webview .notice,
-  html.tablet-webview .answer,
-  html.tablet-webview .history,
-  html.tablet-webview .navigate {
+  html.tablet-webview .controls > .analysis-panel,
+  html.tablet-webview .controls > .actions,
+  html.tablet-webview .controls > .notice,
+  html.tablet-webview .controls > .answer,
+  html.tablet-webview .controls > .history,
+  html.tablet-webview .controls > .navigate {
     grid-column:2;
   }
 
@@ -6835,3 +6835,230 @@ html.tablet-webview .mobile-solver-page { grid-template-rows:auto auto auto auto
 .practice-rules-dialog th, .practice-rules-dialog td { padding: 10px 6px; border-bottom: 1px solid #d8e5de; text-align: left; }
 .practice-rules-dialog p { font-size: 14px; line-height: 1.6; }
 .practice-score { font-weight: 700; color: #8b620f; }
+
+/* Native system insets are fitted by Capacitor; CSS safe areas cover browser/iOS. */
+button, a, input, select, textarea { touch-action:manipulation; }
+.app-header button.about-trigger,
+html.phone-webview .app-header button.about-trigger {
+  width:44px;
+  min-width:44px;
+  height:44px;
+  min-height:44px;
+  flex:0 0 44px;
+}
+.about-backdrop { z-index:1200; min-height:0; }
+.about-backdrop > .about-dialog {
+  width:min(720px,100%);
+  min-height:0;
+  max-height:100%;
+  overflow-y:auto;
+  touch-action:pan-y;
+}
+.about-dialog .orientation-picker button,
+.about-dialog footer button { min-height:44px; }
+.about-dialog .orientation-picker:disabled { opacity:.65; }
+.about-dialog .orientation-error { color:#a12828; }
+.about-dialog > footer {
+  position:sticky;
+  bottom:-14px;
+  padding:8px 0;
+  background:#fff;
+  z-index:1;
+}
+
+/* Fixed children now use the visible keyboard viewport as their containing
+   block, including iOS's pan offset. Normal board layout is unaffected. */
+html.keyboard-open #root {
+  position:fixed;
+  top:var(--input-viewport-top,0px);
+  left:0;
+  width:100%;
+  height:var(--input-viewport-height,100dvh);
+  min-height:0;
+  transform:translateZ(0);
+  overflow:hidden;
+}
+html.keyboard-open .training-app { height:100%; min-height:0; }
+html.keyboard-open .teacher-mobile-page,
+html.keyboard-open .teacher-mobile-shell > .teacher-mobile-page {
+  top:var(--mobile-header-height,64px);
+  bottom:0;
+  height:auto;
+  padding-bottom:20px;
+}
+html.keyboard-open .mobile-primary-nav,
+html.keyboard-open .teacher-mobile-bottom-nav { display:none !important; }
+/* Every input page fills the same visible area, including tablet bottom-nav
+   layouts and pages whose normal height was computed from 100dvh. */
+html.keyboard-open .training-app :is(.mobile-library-page,.mobile-account-page,.mobile-practice-page,.mobile-detail-page,.teacher-mobile-page) {
+  top:var(--mobile-header-height,64px);
+  bottom:0 !important;
+  height:calc(100% - var(--mobile-header-height,64px)) !important;
+  min-height:0;
+  padding-bottom:20px !important;
+  overflow-y:auto;
+  scroll-padding-block:12px;
+}
+/* Reserve the footer's actual row height instead of painting it over the
+   scrolling form. The same DOM becomes one scroll area while typing. */
+html .training-app .teacher-mobile-page.teacher-mobile-wizard {
+  display:grid;
+  grid-template-rows:minmax(0,1fr) auto;
+  align-content:stretch;
+  gap:0;
+  padding:0;
+  overflow:hidden;
+}
+.teacher-mobile-wizard-body {
+  min-width:0;
+  min-height:0;
+  display:grid;
+  align-content:start;
+  gap:12px;
+  padding:14px;
+  overflow-y:auto;
+  overscroll-behavior:contain;
+  -webkit-overflow-scrolling:touch;
+  scroll-padding-block:12px;
+}
+.teacher-mobile-page .teacher-mobile-wizard-footer {
+  position:static;
+  margin:0;
+  padding:10px 14px calc(10px + var(--phone-safe-bottom,env(safe-area-inset-bottom,0px)));
+}
+html.keyboard-open .training-app .teacher-mobile-page.teacher-mobile-wizard {
+  display:block;
+  padding:0 !important;
+  overflow-y:auto;
+}
+html.keyboard-open .teacher-mobile-wizard-body { overflow:visible; }
+html.keyboard-open .teacher-mobile-page .teacher-mobile-wizard-footer {
+  position:static;
+  margin:0;
+  padding-bottom:10px;
+}
+html.keyboard-open .teacher-mobile-shell { display:contents; }
+html.keyboard-open .training-app .teacher-mobile-page {
+  position:fixed;
+  right:0;
+  left:0;
+}
+html.touch-webview input:where(:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=color]):not([type=hidden]):not([type=file]):not([type=button]):not([type=submit])),
+html.touch-webview textarea,
+html.touch-webview select { font-size:16px !important; }
+html.keyboard-open textarea {
+  min-height:64px;
+  max-height:max(64px,calc(var(--input-viewport-height,100dvh) - 180px));
+  overflow-y:auto;
+}
+html.keyboard-open .about-dialog,
+html.keyboard-open .confirm-backdrop section,
+html.keyboard-open .teaching-account-dialog,
+html.keyboard-open section[role=dialog],
+html.keyboard-open .manual-panel-sheet {
+  max-height:calc(var(--input-viewport-height,100dvh) - 24px);
+  overflow-y:auto;
+}
+html.keyboard-open :is(.manual-save-dialog,.manual-share-dialog) {
+  min-height:0;
+  max-height:calc(var(--input-viewport-height,100dvh) - 24px);
+  overflow:hidden;
+  gap:0;
+}
+html.keyboard-open :is(.manual-save-body,.manual-share-body) {
+  flex:1 1 auto;
+  min-height:0;
+  scroll-padding-block:12px;
+}
+html.keyboard-open .manual-save-dialog > :is(header,footer) { padding-block:8px; }
+html.keyboard-open .manual-save-body { padding-block:10px; }
+html.keyboard-open .manual-panel-sheet { bottom:0; }
+/* Some landscape IMEs leave less than 200px. Give that area to the form;
+   dialogs scroll as a whole when a separate footer would leave no input row. */
+html.keyboard-short .training-app { --mobile-header-height:0px; }
+html.keyboard-short .app-header { display:none; }
+html.keyboard-short textarea { min-height:32px; max-height:64px; }
+html.keyboard-short :is(.manual-save-dialog,.manual-share-dialog) {
+  display:block;
+  overflow-y:auto;
+}
+html.keyboard-short :is(.manual-save-body,.manual-share-body) { overflow:visible; }
+html.keyboard-short .manual-save-dialog > footer { position:static; }
+
+/* Both phone and tablet engine docks reserve a scrollable row for scores. */
+html.touch-webview .study-sidebar > .analysis-panel {
+  grid-column:1;
+  grid-row:3;
+  min-height:0;
+  height:100%;
+  display:grid;
+  grid-template-rows:auto auto auto minmax(0,1fr);
+  align-content:start;
+  overflow:hidden;
+}
+html.touch-webview .study-sidebar .analysis-candidates {
+  min-height:0;
+  height:100%;
+  max-height:none;
+  overflow-y:auto;
+  overscroll-behavior:contain;
+}
+
+.teacher-problem-navigation { position:sticky; top:0; z-index:3; padding:10px; border:1px solid #c9ddce; border-radius:8px; background:#f8fcf8; display:grid; gap:8px; }
+.teacher-problem-navigation > header { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.teacher-problem-navigation strong { font-size:13px; color:#294638; }
+.teacher-problem-navigation header > div { display:flex; gap:6px; }
+.teacher-problem-navigation header > div { flex-wrap:wrap; justify-content:flex-end; }
+.teacher-problem-navigation header button { min-height:40px; padding:0 8px; border:1px solid #b8d2c1; border-radius:6px; background:#fff; color:#397b56; display:inline-flex; align-items:center; justify-content:center; gap:4px; font-size:12px; font-weight:700; }
+.teacher-problem-navigation header svg { width:16px; height:16px; }
+.teacher-problem-number-grid { max-height:132px; overflow-y:auto; overscroll-behavior:contain; display:grid; grid-template-columns:repeat(auto-fill,minmax(40px,1fr)); gap:6px; }
+.teacher-problem-number-grid[hidden] { display:none; }
+.teacher-problem-switch-status { min-height:18px; margin:0; color:#657a6b; font-size:12px; }
+.teacher-problem-number-grid button { min-width:40px; min-height:40px; padding:0; border:1px solid #d0dfd4; border-radius:6px; background:#fff; color:#526c5b; font-size:13px; font-weight:800; }
+.teacher-problem-number-grid button.completed { background:#e4f3e7; border-color:#9bc8a5; color:#2e7449; }
+.teacher-problem-number-grid button.submitted { background:#fff5df; border-color:#ddc38d; color:#946d26; }
+.teacher-problem-number-grid button.active { background:#397b56; border-color:#397b56; color:#fff; box-shadow:inset 0 0 0 2px #f2d778; }
+
+.teacher-assignment-practice, .teacher-problem-editor { display: grid; gap: 12px; min-width: 0; padding-bottom: 16px; }
+.teacher-assignment-practice > header, .teacher-problem-editor > header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; justify-content: space-between; }
+.teacher-trial-board { width: min(100%, 520px); margin-inline: auto; }
+.teacher-trial-actions, .teacher-edit-palette { display: flex; flex-wrap: wrap; gap: 8px; }
+.teacher-trial-note { white-space: pre-wrap; overflow-wrap: anywhere; }
+.teacher-problem-editor label { display: grid; gap: 6px; min-width: 0; }
+.teacher-problem-editor input, .teacher-problem-editor textarea, .teacher-problem-editor select { min-width: 0; max-width: 100%; font-size: 16px; }
+.teacher-problem-editor textarea { width: 100%; min-height: 96px; resize: vertical; }
+.teacher-problem-editor fieldset { min-width: 0; display: grid; gap: 10px; padding: 12px; border: 1px solid #d7dde5; border-radius: 12px; }
+.teacher-problem-editor .teacher-answer-json { min-height: 220px; font-family: monospace; }
+.teacher-edit-palette [aria-pressed="true"] { background: #dbeafe; border-color: #2563eb; }
+.teacher-replacement-list { max-height: 260px; overflow: auto; padding: 8px; }
+.teacher-replacement-list label { display: flex; align-items: center; padding-block: 8px; }
+.teacher-problem-editor details { padding: 10px; border: 1px solid #d7dde5; border-radius: 10px; }
+.teacher-problem-editor details[open] > :not(summary) { margin-top: 10px; }
+.teacher-problem-editor [role="alert"] { color: #b91c1c; overflow-wrap: anywhere; }
+.teacher-assignment-content { display: grid; gap: 14px; }
+.teacher-assignment-content[hidden] { display: none; }
+.teacher-trial-entry { width: 100%; color: #fff; background: #287451; border-color: #287451; min-height: 44px; margin-bottom: 8px; }
+.teacher-assignment-practice { gap:6px; align-content:start; }
+.teacher-assignment-practice > header { flex-wrap:nowrap; gap:6px; }
+.teacher-assignment-practice > header strong { font-size:13px; }
+.teacher-assignment-practice button, .teacher-problem-editor button {
+  appearance:none; min-height:40px; padding:6px 10px; border:1px solid #b8d2c1;
+  border-radius:7px; background:#fbfdfb; color:#2e6b48; display:inline-flex;
+  align-items:center; justify-content:center; gap:4px; font-size:13px; line-height:1.3;
+}
+.teacher-assignment-practice button svg, .teacher-problem-editor button svg { width:17px; height:17px; flex-shrink:0; }
+.teacher-assignment-practice .teacher-problem-navigation { padding:6px 8px; gap:6px; position:static; }
+.teacher-assignment-practice > h3 { margin:2px 0; font-size:16px; line-height:1.4; }
+.teacher-assignment-practice > p { margin:2px 0; font-size:13px; line-height:1.5; }
+.teacher-assignment-practice .teacher-trial-actions { gap:6px; }
+.teacher-trial-management { display:grid; gap:6px; padding:8px; border:1px solid #c9ddce; border-radius:8px; }
+.teacher-trial-management[hidden] { display:none; }
+.teacher-trial-outcome { padding:8px 10px; border:1px solid #8cbd98; border-radius:7px; background:#e2f0e5; color:#24613a; font-weight:700; }
+.teacher-trial-check { color:#a4412b; font-weight:700; }
+html .teacher-mobile-shell:has(.teacher-assignment-content[hidden]) .teacher-mobile-bottom-nav { display:none; }
+html .teacher-mobile-shell:has(.teacher-assignment-content[hidden]) { grid-template-rows:minmax(0,1fr); }
+html .teacher-assignment-detail:has(.teacher-assignment-content[hidden]) { padding:8px 10px max(10px,env(safe-area-inset-bottom)); }
+html.phone-webview:not(.keyboard-open) .teacher-mobile-shell:has(.teacher-assignment-content[hidden]) > .teacher-mobile-page { height:calc(var(--app-viewport-height,100dvh) - var(--mobile-header-height)); }
+@media (max-width:700px) {
+  html:not(.phone-webview):not(.keyboard-open) .teacher-mobile-shell:has(.teacher-assignment-content[hidden]) > .teacher-mobile-page { bottom:0; }
+}

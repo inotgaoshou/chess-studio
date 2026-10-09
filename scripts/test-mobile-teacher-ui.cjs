@@ -103,7 +103,7 @@ async function reviewAndPublish(page) {
       await page.getByText('白老师', { exact: true }).waitFor();
       if (process.env.TEACHER_SCREENSHOTS) await page.screenshot({ path: process.env.TEACHER_SCREENSHOTS + '/teacher-' + viewport.width + '.png' });
       await openWizard(page);
-      await page.locator('.teacher-mobile-page').evaluate(node => { node.scrollTop = node.scrollHeight; });
+      await page.locator('.teacher-mobile-wizard-body').evaluate(node => { node.scrollTop = node.scrollHeight; });
       const footer = await page.locator('.teacher-mobile-wizard-footer').boundingBox();
       assert(footer.y >= 0 && footer.y + footer.height <= viewport.height + 1, 'wizard footer must be reachable at ' + viewport.width);
       assert.equal(await page.locator('.teacher-mobile-page').evaluate(node => node.scrollWidth > node.clientWidth + 2), false);
@@ -112,6 +112,8 @@ async function reviewAndPublish(page) {
         await page.setViewportSize({ width: 390, height: 460 });
         await page.waitForFunction(() => Number.parseFloat(document.documentElement.style.getPropertyValue('--app-viewport-height')) <= 460);
         await page.getByRole('textbox', { name: '作业标题', exact: true }).fill('键盘验收');
+        await page.waitForFunction(() => document.documentElement.classList.contains('keyboard-open'));
+        await page.waitForTimeout(180);
         await page.locator('.teacher-mobile-page').evaluate(node => { node.scrollTop = node.scrollHeight; });
         const keyboardFooter = await page.locator('.teacher-mobile-wizard-footer').boundingBox();
         assert(keyboardFooter.y + keyboardFooter.height <= 461, 'wizard must adapt to reduced keyboard viewport');

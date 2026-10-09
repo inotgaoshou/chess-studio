@@ -381,7 +381,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 10019;
+				CURRENT_PROJECT_VERSION = 10020;
 				DEVELOPMENT_TEAM = US68YTUSG4;
 				INFOPLIST_FILE = App/Info.plist;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
@@ -393,7 +393,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.3;
+				MARKETING_VERSION = 1.0.4;
 				OTHER_SWIFT_FLAGS = "$(inherited) \"-D\" \"COCOAPODS\" \"-DDEBUG\"";
 				OTHER_CPLUSPLUSFLAGS = "$(inherited) -DIS_64BIT -DUSE_NEON=8 -DARCH=armv8";
 				OTHER_LDFLAGS = "$(inherited) -lpikafish -lc++";
@@ -413,7 +413,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 10019;
+				CURRENT_PROJECT_VERSION = 10020;
 				DEVELOPMENT_TEAM = US68YTUSG4;
 				INFOPLIST_FILE = App/Info.plist;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
@@ -425,7 +425,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.3;
+				MARKETING_VERSION = 1.0.4;
 				OTHER_CPLUSPLUSFLAGS = "$(inherited) -DIS_64BIT -DUSE_NEON=8 -DARCH=armv8";
 				OTHER_LDFLAGS = "$(inherited) -lpikafish -lc++";
 				PIKAFISH_IOS_ROOT = "$(SRCROOT)/../../../../../pikafish-ios";

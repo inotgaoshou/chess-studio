@@ -1,7 +1,7 @@
 {
   "name": "xiangqi-endgame-training",
   "private": true,
-  "version": "1.0.3",
+  "version": "1.0.4",
   "type": "module",
   "scripts": {
     "wasm:build": "wasm-pack build ../../crates/web-core --target web --out-dir ../../apps/endgame-training/public/wasm --out-name xiangqi_web_core",
@@ -20,6 +20,7 @@
     "@capacitor/cli": "^7.6.8",
     "@capacitor/core": "^7.6.8",
     "@capacitor/ios": "^7.6.8",
+    "@capacitor/keyboard": "^7.0.6",
     "lucide-react": "^0.468.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"

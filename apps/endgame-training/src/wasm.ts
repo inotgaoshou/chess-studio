@@ -74,7 +74,7 @@ export async function queryCloudBook(fen: string): Promise<CloudBookMove[]> {
       const endpoint = new URL("https://www.chessdb.cn/chessdb.php");
       endpoint.searchParams.set("action", "queryall");
       endpoint.searchParams.set("board", fen);
-      const response = await fetch(endpoint, { headers: { accept: "text/plain" } });
+      const response = await fetch(endpoint, { headers: { accept: "text/plain" }, signal: AbortSignal.timeout(10000) });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       payload = await response.text();
     }

@@ -12,6 +12,14 @@ expected_pikafish_tag="${PIKAFISH_TAG:-Pikafish-2026-09-06}"
 expected_pikafish_source_revision="4c17cee11f888ae1d48a9494f2e2239f019f0a1f"
 expected_pikafish_nnue_sha256="7d13d73569a9b571ba0eb20cf1596247bc2a42738967e61afef6482b231e900e"
 export VITE_APP_ENV="${VITE_APP_ENV:-production}"
+derived_data="$app_dir/build/DerivedData-$VITE_APP_ENV-device"
+build_bytes_before="$(du -sk "$app_dir/build" 2>/dev/null | awk '{print $1}' || true)"
+report_build_growth() {
+  local after
+  after="$(du -sk "$app_dir/build" 2>/dev/null | awk '{print $1}' || true)"
+  echo "Project iOS build storage (KiB): ${build_bytes_before:-0} -> ${after:-0}"
+}
+trap report_build_growth EXIT
 case "$VITE_APP_ENV" in
   test|production) ;;
   *) echo "VITE_APP_ENV must be test or production" >&2; exit 2 ;;
@@ -113,9 +121,11 @@ archive_app() {
     -project "$project" \
     -scheme "$scheme" \
     -configuration Release \
+    -derivedDataPath "$derived_data" \
     -destination 'generic/platform=iOS' \
     -allowProvisioningUpdates \
     -archivePath "$archive_path" \
+    "PIKAFISH_IOS_ROOT=$pikafish_ios_root" \
     archive
 }
 
@@ -126,7 +136,7 @@ export_ipa() {
   local temp_dir export_options export_dir ipa_source ipa_name
 
   temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/xiangqi-endgame-ipa.XXXXXX")"
-  trap "$(printf 'rm -rf -- %q' "$temp_dir")" EXIT
+  trap "$(printf 'rm -rf -- %q' "$temp_dir"); report_build_growth" EXIT
   export_options="$temp_dir/ExportOptions.plist"
   export_dir="$temp_dir/export"
 
@@ -168,10 +178,10 @@ case "$action" in
     open "$project"
     ;;
   check)
-    xcodebuild -project "$project" -scheme App -configuration Debug -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build
+    xcodebuild -project "$project" -scheme App -configuration Debug -derivedDataPath "$derived_data" -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO "PIKAFISH_IOS_ROOT=$pikafish_ios_root" build
     ;;
   signed-build)
-    xcodebuild -project "$project" -scheme "$scheme" -configuration Debug -destination 'generic/platform=iOS' -allowProvisioningUpdates build
+    xcodebuild -project "$project" -scheme "$scheme" -configuration Debug -derivedDataPath "$derived_data" -destination 'generic/platform=iOS' -allowProvisioningUpdates "PIKAFISH_IOS_ROOT=$pikafish_ios_root" build
     ;;
   archive)
     archive_app "${IOS_ARCHIVE_PATH:-$app_dir/build/App.xcarchive}"

@@ -53,6 +53,26 @@ pnpm --dir apps/endgame-training android:apk
 
 产物为 `android/app/build/outputs/apk/release/app-release.apk`，同时保留带版本号的副本。在平板或手机上可通过 Android Studio、`adb install -r` 或文件管理器安装。
 
+Android 构建默认版本为 `1.0.4 / 10020`，前端显示版本取自本项目 `package.json`。本版启用 Capacitor 的 Android 15 系统区域自动避让，修复设置入口连续点击和方向偏好保存。锁横屏允许左右横屏，自动模式跟随系统旋转设置。
+
+设置触摸回归：启动本项目 Vite 后运行 `node scripts/test-mobile-settings-ui.cjs`（从仓库根目录运行，默认端口 1440，可用 `SETTINGS_URL` 指定地址）。模拟器验收使用 `scripts/test-mobile-settings-android.py --adb <adb路径> --serial emulator-5554 --output <结果目录> --cycles 20`；该脚本会调整模拟器的系统旋转及导航设置，只接受模拟器序列号。
+
+输入布局由 `inputViewport.ts` 统一监听 Capacitor Keyboard 和浏览器可见视口。iPhone 恢复系统键盘辅助栏的“完成”入口，结束输入不提交表单，多行说明仍可回车换行。作业正文独立滚动，底部操作区占用自己的布局行；键盘打开时隐藏底部导航、正文与作业操作条进入同一个滚动区域，不重新创建输入框。不足 200px 的可见区域暂时隐藏应用顶栏，保存弹窗改为整体滚动，避免正文被操作区压到无法输入。触摸设备文字输入字号至少 16px。键盘收起后恢复正常布局，不清空表单。
+
+教师逐题回放保留当前棋盘，下一题的数据、着法和皮肤图片准备好后一起切换，失败保留原题并可重试。题号默认收起，本设备的展开选择保存在 `xiangqi-teacher-problem-navigation-expanded-v1`，不覆盖已有底部／侧边导航偏好。
+
+输入及切题回归从仓库根目录运行：
+
+```bash
+node scripts/test-mobile-input-analysis.cjs
+node scripts/test-mobile-input-occlusion.cjs
+node scripts/test-mobile-teacher-switching.cjs
+node scripts/test-mobile-teacher-navigation.cjs
+node scripts/test-mobile-teacher-results.cjs
+```
+
+输入脚本默认访问 1440 端口，教师脚本默认访问 1441 端口及测试环境；先启动对应 Vite 服务。输入遮挡检查覆盖文字区域的命中检测、移动端横竖屏和原生事件模拟，但不能代替 Android 原生软键盘及 iPhone 中文九宫格、英文、数字键盘真机验收。
+
 ## iPhone / iPad
 
 iOS 工程位于 `ios/App/App.xcodeproj`，采用 Swift Package Manager，不依赖 Android SQLite 插件或 CocoaPods。`TrainingStorePlugin.swift` 用 iOS 系统 `SQLite3`，并保持与 Android 相同的 `TrainingStore` 接口。

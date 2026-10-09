@@ -344,6 +344,8 @@ export type TeacherProblemResult = {
   firstTryCorrect: boolean; submittedAt?: string | null;
 };
 export type TeacherSubmittedProblem = { title: string; startingFen: string; moves?: string[] | null };
+export type TeacherPracticeProblem = { slotId: string; originalProblemId: string; withdrawn: boolean; problemId: string; order: number; title: string; startingFen: string; note: string; solution: SolutionMove[] };
+export type TeacherHistoricalAttempt = { id: string; problemId: string; title: string; startingFen: string; moves: string[]; studentName: string; outcome: string; submittedAt: string };
 export type AccountDeletionStatus = { requestId: string; status: "pending" | "cancelled"; requestedAt: string; expectedBy: string };
 export type PendingTeachingAttempt = {
   clientAttemptId: string;
@@ -1350,6 +1352,18 @@ export const teachingClient = {
   },
   async teacherAssignments(context?: TeachingAuth) {
     return teacherRequest<TeachingAssignment[]>("/api/v1/admin/assignments", {}, context);
+  },
+  async teacherPracticeProblems(id: string, cursor?: string, context?: TeachingAuth, withdrawn = false) {
+    const params = new URLSearchParams({ limit: "50", withdrawn: String(withdrawn) });
+    if (cursor) params.set("cursor", cursor);
+    return teacherRequest<Page<TeacherPracticeProblem>>(`/api/v1/admin/assignments/${encodeURIComponent(id)}/problems?${params}`, {}, context);
+  },
+  async teacherProblemHistory(id: string, cursor: string | undefined, context: TeachingAuth) {
+    const params = new URLSearchParams({ limit: "50" }); if (cursor) params.set("cursor",cursor);
+    return teacherRequest<Page<TeacherHistoricalAttempt>>(`/api/v1/admin/assignments/${encodeURIComponent(id)}/problem-history?${params}`, {}, context);
+  },
+  async changeTeacherProblem(id: string, problem: TeacherPracticeProblem, change: Record<string, unknown>, context: TeachingAuth) {
+    return teacherRequest<{ problemId: string; withdrawn?: boolean; reported?: boolean }>(`/api/v1/admin/assignments/${encodeURIComponent(id)}/problem-slots/${encodeURIComponent(problem.slotId)}`, { method: "POST", body: JSON.stringify({ ...change, expectedProblemId: problem.problemId }) }, context);
   },
   async accountDeletionStatus() {
     const auth = this.auth(); if (!auth) throw new Error("请先登录");
