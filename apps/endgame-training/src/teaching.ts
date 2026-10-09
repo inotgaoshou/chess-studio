@@ -1,3 +1,4 @@
+import type { CatalogProblem, TeachingCatalogNode, TrainingGoal } from "./TeachingCatalog";
 import type { LocalManualAnalysisSummary, LocalManualFolder, LocalManualGame, SolutionMove, TrainingLibrary, TrainingProblem } from "./types";
 import { isNativeSessionStore, secureSession } from "./secureSession";
 import { environmentServerUrl, packageEnvironment, selectEnvironment, selectedEnvironment, type AppEnvironment } from "./appEnvironment";
@@ -71,6 +72,7 @@ export type TeachingUser = {
 
 export type TeachingAuth = { token: string; expiresAt: string; user: TeachingUser; refreshToken?: string };
 export type PracticeProblem = {
+  trainingGoal?: TrainingGoal | null;
   targetMateMoves?: number;
   id: string;
   libraryId: string;
@@ -226,6 +228,7 @@ export type PlatformGame = {
 };
 
 type AssignmentProblem = {
+  trainingGoal?: TrainingGoal | null;
   sourceIndex?: number;
   targetMateMoves?: number;
   assignmentId: string;
@@ -321,6 +324,7 @@ export type TeacherProblemLibrary = {
   mergedSourceLabel?: string; mergedDuplicateCount?: number;
 };
 export type TeacherProblem = {
+  trainingGoal?: TrainingGoal | null; contentFingerprint?: string; teachingChapter?: string;
   id: string; libraryId: string; sourceIndex: number; title: string; category: string;
   accessTier: "public" | "vip"; startingFen: string; sideToMove: string;
   solutionLength: number; reviewStatus: string; validationStatus: string;
@@ -626,6 +630,7 @@ function toProblem(problem: AssignmentProblem): TrainingProblem {
     id: `teaching:${problem.assignmentId}:${problem.problemId}`,
     libraryId: `teaching:${problem.assignmentId}`,
     sourceIndex: problem.sourceIndex ?? 0,
+    trainingGoal: problem.trainingGoal,
     targetMateMoves: problem.targetMateMoves,
     title: problem.title,
     category: problem.category,
@@ -1334,6 +1339,20 @@ export const teachingClient = {
   async createTeacherClassStudent(classId: string, body: { displayName: string; loginName?: string; password: string }) {
     const auth = requireTeacherAuth();
     return request<TeacherClassMember>(`/api/v1/admin/classes/${encodeURIComponent(classId)}/students/create`, { method: "POST", body: JSON.stringify(body) }, auth.token);
+  },
+  async teachingCatalog(teacher = false, context?: TeachingAuth) {
+    const path = teacher ? "/api/v1/admin/teaching-catalog" : "/api/v1/student/teaching-catalog";
+    if (teacher) return teacherRequest<TeachingCatalogNode[]>(path, {}, context);
+    const auth = this.auth(); if (!auth) throw new Error("请先登录学生账号");
+    return request<TeachingCatalogNode[]>(path, {}, auth.token);
+  },
+  async catalogProblems(id: string, query: { q?: string; goal?: string; difficulty?: number; cursor?: string; limit?: number } = {}, teacher = false, context?: TeachingAuth) {
+    const params = new URLSearchParams({ limit: String(query.limit ?? 50) });
+    for (const [key, value] of Object.entries(query)) if (value !== undefined && value !== "") params.set(key, String(value));
+    const path = `/api/v1/${teacher ? "admin" : "student"}/teaching-catalog/${encodeURIComponent(id)}/problems?${params}`;
+    if (teacher) return teacherRequest<{ items: CatalogProblem[]; nextCursor?: string | null }>(path, {}, context);
+    const auth = this.auth(); if (!auth) throw new Error("请先登录学生账号");
+    return request<{ items: CatalogProblem[]; nextCursor?: string | null }>(path, {}, auth.token);
   },
   async teacherFolderTree(context?: TeachingAuth) {
     return teacherRequest<TeacherFolder[]>("/api/v1/admin/content/folder-tree?scope=teaching", {}, context);

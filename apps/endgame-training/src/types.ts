@@ -1,6 +1,7 @@
 export type SolutionMove = { iccs: string; comment: string; children: SolutionMove[] };
 
 export type CblProblem = {
+  trainingGoal?: import("./TeachingCatalog").TrainingGoal | null;
   sourceIndex: number;
   title: string;
   category: string;
