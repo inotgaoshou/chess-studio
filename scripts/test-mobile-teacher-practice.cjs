@@ -78,7 +78,7 @@ async function verifyBoardStability(page) {
           if(fail){fail=false;await route.fulfill({status:500,contentType:'application/json',body:'{"error":"题目读取暂时失败"}'});return;}
           const offset=Number(url.searchParams.get('cursor')||0);
           const fixtures={48:fen.replace(' w ',' b '),49:'4k4/3R1R3/4R4/9/9/9/9/9/9/4K4 w - - 0 1',50:'4k4/3R5/5R3/9/9/9/9/9/9/3K5 w - - 0 1'};
-          body={items:url.searchParams.get('withdrawn')==='true'?[]:Array.from({length:Math.min(50,total-offset)},(_,i)=>({problemId:'p'+(offset+i),slotId:'p'+(offset+i),originalProblemId:'p'+(offset+i),order:offset+i,title:'试做题'+(offset+i+1),startingFen:fixtures[offset+i]||fen,note:'用于核实题目',solution:[{iccs:'h2e2',comment:'平炮',children:[{iccs:'h9g7',comment:'上马',children:[]}]}],withdrawn:false})),nextCursor:offset+50<total?String(offset+50):null};
+          body={items:url.searchParams.get('withdrawn')==='true'?[]:Array.from({length:Math.min(50,total-offset)},(_,i)=>({problemId:'p'+(offset+i),slotId:'p'+(offset+i),originalProblemId:'p'+(offset+i),order:offset+i,title:'试做题'+(offset+i+1),startingFen:fixtures[offset+i]||fen,note:'用于核实题目',solution:[{iccs:'h2e2',comment:'平炮',children:[{iccs:'h9g7',comment:'上马',children:[]}]},{iccs:'h2g2',comment:'另一平炮变招',children:[{iccs:'h9g7',comment:'应招上马',children:[]}]}],withdrawn:false})),nextCursor:offset+50<total?String(offset+50):null};
         } else if(path.includes('/problem-slots/')) {body={problemId:'revised'};if(req.postDataJSON().action==='withdraw')total--;}
         await route.fulfill({contentType:'application/json',body:JSON.stringify(body)});
       });
@@ -119,6 +119,19 @@ async function verifyBoardStability(page) {
       assert(await page.evaluate(()=>Object.keys(localStorage).some(k=>k.startsWith('qixi-teacher-trial-v1:')&&JSON.parse(localStorage[k]||'null')?.moves?.join(',')==='h2f2')));
       cloudFailure=false;if(nativeMode)await page.evaluate(()=>window.engineUnavailable=false);
       await page.getByRole('button',{name:'重试应招',exact:true}).click();await page.getByText(replyNotice).waitFor();
+      // Viewing and jumping through the saved answer must not erase actual trial moves.
+      const practiceBeforeAnswer = await page.evaluate(()=>localStorage[Object.keys(localStorage).find(k=>k.endsWith(':p0'))]);
+      await page.getByRole('button',{name:'看答案',exact:true}).click();
+      const answerPanel = page.getByRole('region',{name:'保存题解'});
+      await answerPanel.getByText('平炮',{exact:true}).waitFor();
+      assert.equal(await answerPanel.locator('.teacher-trial-answer-row').count(),2);
+      await answerPanel.getByLabel('第 1 手变招',{exact:true}).selectOption('h2g2');
+      await answerPanel.getByText('另一平炮变招',{exact:true}).waitFor();
+      assert.equal(await answerPanel.locator('[aria-current=step]').count(),1);
+      await answerPanel.locator('.teacher-trial-answer-row button').nth(1).click();
+      assert.equal(await page.evaluate(()=>localStorage[Object.keys(localStorage).find(k=>k.endsWith(':p0'))]),practiceBeforeAnswer);
+      await page.getByRole('button',{name:'继续试做',exact:true}).click();
+      assert.equal(await page.evaluate(()=>localStorage[Object.keys(localStorage).find(k=>k.endsWith(':p0'))]),practiceBeforeAnswer);
       await page.getByRole('button',{name:'重新试做',exact:true}).click();
       // Controls also exercise WASM and draft persistence without sending any student submissions.
       await page.getByRole('button',{name:'提示',exact:true}).click();await page.getByText(/题解提示：/).waitFor();
@@ -126,7 +139,7 @@ async function verifyBoardStability(page) {
       await page.getByRole('button',{name:'上一步',exact:true}).waitFor();
       assert.equal(await board.locator('.piece').count(),before);
       assert.equal(posts.filter(r=>r.path.includes('/student/')).length,0);
-      assert(await page.evaluate(()=>Object.keys(localStorage).some(k=>k.startsWith('qixi-teacher-trial-v1:')&&JSON.parse(localStorage[k]||'null')?.moves?.includes('h2e2'))));
+      assert(await page.evaluate(()=>Object.keys(localStorage).some(k=>k.endsWith(':p0')&&JSON.parse(localStorage[k]||'null')?.moves?.length===0)),'answer replay remains separate from persisted trial progress');
       await page.getByRole('button',{name:'展开题号',exact:true}).click();
       await page.getByRole('button',{name:'试做第 49 题',exact:true}).click();await page.getByRole('heading',{name:'试做题49',exact:true}).waitFor();
       await board.locator('.board-square').nth(0*9+7).click();await board.locator('.board-square').nth(2*9+6).click();await page.getByText(replyNotice).waitFor();

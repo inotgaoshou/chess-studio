@@ -7067,6 +7067,13 @@ html.touch-webview .study-sidebar .analysis-candidates {
 .teacher-trial-status { height:72px; overflow:auto; overscroll-behavior:contain; font-size:13px; line-height:1.5; }
 .teacher-trial-status p { margin:0; overflow-wrap:anywhere; }
 .teacher-trial-status [role="alert"] { color:#b91c1c; }
+.teacher-trial-answer { min-width:0; padding:8px; display:grid; gap:6px; border:1px solid #c9ddce; border-radius:8px; background:#f8fcf8; }
+.teacher-trial-answer > header { display:flex; align-items:center; justify-content:space-between; gap:6px; }
+.teacher-trial-answer-list { max-height:220px; overflow:auto; overscroll-behavior:contain; }
+.teacher-trial-answer-row { display:flex; flex-wrap:wrap; align-items:center; gap:6px; padding:4px 0; border-bottom:1px solid #dce8df; }
+.teacher-trial-answer-row button[aria-current="step"] { background:#dceee1; border-color:#397b56; }
+.teacher-trial-answer-row select { min-width:0; max-width:100%; min-height:40px; font-size:16px; }
+.teacher-trial-answer-row p { flex-basis:100%; margin:0; font-size:13px; overflow-wrap:anywhere; white-space:pre-wrap; }
 html .teacher-assignment-detail:has(.teacher-assignment-content[hidden]) { overflow-anchor:none; scrollbar-gutter:stable; }
 .teacher-trial-management { display:grid; gap:6px; padding:8px; border:1px solid #c9ddce; border-radius:8px; }
 .teacher-trial-management[hidden] { display:none; }

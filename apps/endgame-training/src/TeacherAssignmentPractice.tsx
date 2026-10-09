@@ -4,6 +4,7 @@ import { teachingClient, type TeachingAuth, type TeacherPracticeProblem, type Te
 import { boardAt, cancelPikafishSearch, chineseLine } from "./wasm";
 import { teacherTrialReply, trialOutcome } from "./teacherTrial";
 import { TeacherProblemEditor } from "./TeacherProblemEditor";
+import { TeacherTrialAnswer } from "./TeacherTrialAnswer";
 import type { BoardState, SolutionMove } from "./types";
 
 type Square = { row: number; col: number };
@@ -42,6 +43,7 @@ export function TeacherAssignmentPractice({ assignmentId, total: initialTotal, i
   const request = useRef(0);
   const grid = useRef<HTMLElement | null>(null);
   const lock = useRef(false);
+  const trialBeforeAnswer = useRef<Progress | undefined>(undefined);
   const prefix = `qixi-teacher-trial-v1:${teachingClient.serverUrl()}:${auth.user.id}:${auth.user.orgId}:${assignmentId}`;
   const progressKey = (problem: TeacherPracticeProblem) => `${prefix}:${problem.problemId}`;
   function persist(next: Position) {
@@ -73,6 +75,7 @@ export function TeacherAssignmentPractice({ assignmentId, total: initialTotal, i
       try { board = await boardAt(problem.startingFen, progress.moves); }
       catch { progress = initial; board = await boardAt(problem.startingFen, []); }
       if (request.current !== version) return;
+      trialBeforeAnswer.current = undefined;
       const next = { problem, board, progress }; setPosition(next); setSelected(undefined); setNotice("教师试做：进度仅保存在本机，无需提交。"); persist(next);
     } catch (reason) { if (request.current === version) setError(reason instanceof Error ? reason.message : "题目读取失败"); }
     finally { if (request.current === version) { lock.current = false; setBusy(false); } }
@@ -135,15 +138,15 @@ export function TeacherAssignmentPractice({ assignmentId, total: initialTotal, i
     if (own) setSelected(current => current?.row === square.row && current.col === square.col ? undefined : square);
     else if (selected) void play(selected, square);
   }
-  async function changeMoves(moves: string[], revealed = false) {
+  async function changeMoves(moves: string[], revealed = false, hint = false) {
     if (!position || lock.current) return;
     lock.current = true; setBusy(true); setError("");
     const version = ++request.current;
     try {
       const board = await boardAt(position.problem.startingFen, moves);
       if (request.current !== version) return;
-      const next = { ...position, board, progress: { ...position.progress, moves, hint: false, revealed } };
-      setPosition(next); setSelected(undefined); persist(next); setNotice(revealed ? "答案核对：使用上一步／下一步查看保存的题解。" : "教师试做：进度仅保存在本机，无需提交。");
+      const next = { ...position, board, progress: { ...position.progress, moves, hint, revealed } };
+      setPosition(next); setSelected(undefined); if (!revealed) persist(next); setNotice(revealed ? "答案核对：点击中文走法或上一步／下一步查看题解。" : "教师试做：进度仅保存在本机，无需提交。");
     } catch (reason) { if (request.current === version) setError(reason instanceof Error ? reason.message : "局面读取失败"); }
     finally { if (request.current === version) { lock.current = false; setBusy(false); } }
   }
@@ -222,7 +225,11 @@ export function TeacherAssignmentPractice({ assignmentId, total: initialTotal, i
       </div>
       <div className="teacher-trial-actions"><button type="button" disabled={busy || !position.progress.moves.length} onClick={() => void changeMoves(position.progress.moves.slice(0, position.progress.revealed || position.progress.moves.length % 2 === 1 ? -1 : -2), position.progress.revealed)}><ChevronLeft/>上一步</button>
       {position.progress.revealed ? <button type="button" disabled={busy || !line?.length} onClick={() => void changeMoves([...position.progress.moves, line![0].iccs], true)}>下一步<ChevronRight/></button> : <button type="button" disabled={busy || awaitingReply || Boolean(trialOutcome(position.board))} onClick={() => void hint()}><Lightbulb/>提示</button>}
-      <button type="button" disabled={busy} onClick={() => void changeMoves([], true)}>看答案</button><button type="button" disabled={busy} onClick={() => void changeMoves([])}><RotateCcw/>重新试做</button></div>
+      <button type="button" disabled={busy} onClick={() => {
+        if (position.progress.revealed) void changeMoves(trialBeforeAnswer.current?.moves ?? [], false, trialBeforeAnswer.current?.hint ?? false);
+        else { trialBeforeAnswer.current = position.progress; void changeMoves([], true); }
+      }}>{position.progress.revealed ? "继续试做" : "看答案"}</button><button type="button" disabled={busy} onClick={() => void changeMoves([])}><RotateCcw/>重新试做</button></div>
+      {position.progress.revealed && <TeacherTrialAnswer fen={position.problem.startingFen} solution={position.problem.solution} moves={position.progress.moves} busy={busy} onJump={moves => void changeMoves(moves, true)}/>}
       <button type="button" disabled={busy} onClick={() => setEditing(position.problem)}>修改／替换／撤回本题</button>
       {position.problem.note && <p className="teacher-trial-note">{position.problem.note}</p>}
       {awaitingReply && !busy && !error && <button type="button" onClick={() => void retryReply()}>继续 AI 应招</button>}
