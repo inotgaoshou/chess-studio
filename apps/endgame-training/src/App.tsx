@@ -4,6 +4,7 @@ import { ManualMoveSuggestion } from "./ManualMoveSuggestion";
 import { PracticeCalendar, PracticeHistoryList } from "./PracticeCalendar";
 import { AccountDeletionPanel } from "./AccountDeletionPanel";
 import { AssignmentSubmissionPanel } from "./AssignmentSubmissionPanel";
+import { StudentAssignmentNumbers } from "./StudentAssignmentNumbers";
 import { PracticeRulesButton } from "./PracticeRulesButton";
 import { practiceScore } from "./practiceScoring";
 import { ManualShareDialog } from "./ManualShareDialog";
@@ -2061,6 +2062,13 @@ function StudentAssignmentsPanel({ auth, syncing, lastSyncAt, message, onSync, o
     if (item.submissionState === "submitted") return completed ? "已完成 · 已提交" : "未完成 · 已提交";
     return completed ? "已完成" : "待完成";
   };
+  function openProblem(index: number) {
+    const item = problems[index];
+    if (!item) return;
+    pendingAssignmentSequence = problems;
+    pendingAssignmentIndex = index;
+    onOpenProblem(item, problems, index);
+  }
 
   return <section className="student-assignments-workspace" aria-label="我的作业">
     <header className="student-assignments-header">
@@ -2074,8 +2082,9 @@ function StudentAssignmentsPanel({ auth, syncing, lastSyncAt, message, onSync, o
     {!auth.user.vipActive && <p className="student-assignments-access-note">{auth.user.vipEnabled ? "作业权益已过期，请联系老师或管理员续期。公开作业仍可正常完成。" : "未开通作业权益时，公开作业可正常完成；飞刀、陷阱等 VIP 作业需要有效权益。"}</p>}
     {selectedLibrary ? <div className="student-assignment-detail">
       <header><button type="button" onClick={() => { setSelectedLibrary(undefined); setProblems([]); }}><ChevronLeft/>返回我的作业</button><div className="student-assignment-detail-title"><strong title={selectedLibrary.title}>{selectedLibrary.title}</strong><small>{detailCompleted}/{selectedLibrary.problemCount} 题已完成</small></div></header>
-      {selectedLibrary.assignmentId && !busy && <AssignmentSubmissionPanel assignmentId={selectedLibrary.assignmentId} auth={auth} problems={problems} onSubmitted={() => { void refresh(); void teachingClient.problems(selectedLibrary.assignmentId!).then(setProblems); }} onReviewProblem={(item) => { pendingAssignmentSequence = problems; pendingAssignmentIndex = problems.findIndex((problem) => problem.id === item.id); onOpenProblem(item, problems, pendingAssignmentIndex); }}/>}
-      {error && <p className="student-assignments-error">{error}</p>}{busy ? <p className="student-assignments-loading">正在读取题目…</p> : problems.length ? <div className="student-problem-list">{problems.map((item, index) => <button type="button" key={item.id} aria-label={`第 ${index + 1} 题：${item.title}，${problemStatus(item)}`} onClick={() => { pendingAssignmentSequence = problems; pendingAssignmentIndex = index; onOpenProblem(item, problems, index); }}><b>{index + 1}</b><span><strong>{item.title}</strong><small>第 {index + 1} 题 · {problemStatus(item)}</small>{item.assignmentGrade && <small className="student-assignment-grade">{item.assignmentGrade.score} 分 · {item.assignmentGrade.stars} 星 · 错 {item.assignmentGrade.mistakes} 次 · 提示 {item.assignmentGrade.hintsUsed} 次</small>}</span><ChevronRight/></button>)}</div> : <div className="student-assignments-empty"><strong>这个作业暂时没有题目</strong><span>请联系老师检查作业内容。</span></div>}
+      {selectedLibrary.assignmentId && !busy && <AssignmentSubmissionPanel assignmentId={selectedLibrary.assignmentId} auth={auth} problems={problems} onSubmitted={() => { void refresh(); void teachingClient.problems(selectedLibrary.assignmentId!).then(setProblems); }} onReviewProblem={(item) => openProblem(problems.findIndex((problem) => problem.id === item.id))}/>}
+      {!busy && problems.length > 0 && <StudentAssignmentNumbers problems={problems} statusLabel={problemStatus} onSelect={openProblem}/>}
+      {error && <p className="student-assignments-error">{error}</p>}{busy ? <p className="student-assignments-loading">正在读取题目…</p> : problems.length ? <div className="student-problem-list">{problems.map((item, index) => <button type="button" key={item.id} aria-label={`第 ${index + 1} 题：${item.title}，${problemStatus(item)}`} onClick={() => openProblem(index)}><b>{index + 1}</b><span><strong>{item.title}</strong><small>第 {index + 1} 题 · {problemStatus(item)}</small>{item.assignmentGrade && <small className="student-assignment-grade">{item.assignmentGrade.score} 分 · {item.assignmentGrade.stars} 星 · 错 {item.assignmentGrade.mistakes} 次 · 提示 {item.assignmentGrade.hintsUsed} 次</small>}</span><ChevronRight/></button>)}</div> : <div className="student-assignments-empty"><strong>这个作业暂时没有题目</strong><span>请联系老师检查作业内容。</span></div>}
     </div> : <div className="student-assignment-list">{error && <p className="student-assignments-error">{error}</p>}{libraries.length ? libraries.map((item) => <button type="button" className={`student-assignment-card ${item.isUnread ? "unread" : ""}`} key={item.id} onClick={() => void openAssignment(item)}>{item.isUnread && <i className="student-assignment-unread-dot" aria-hidden="true"/>}<span className="student-assignment-card-title"><strong>{item.title}</strong><small>{item.dueAt ? `截止 ${new Date(item.dueAt).toLocaleDateString("zh-CN")}` : "无截止日期"}</small></span><span className="student-assignment-card-stats"><b>{completedCount(item)}/{item.problemCount}</b><small>已完成 · {completionRate(item)}%{item.pendingSubmissionCount ? ` · ${item.pendingSubmissionCount} 题待提交` : ""}</small></span><ChevronRight/></button>) : <div className="student-assignments-empty"><BookOpen/><strong>暂无老师布置的作业</strong><span>作业发布后会自动同步到这里。</span></div>}</div>}
   </section>;
 }
