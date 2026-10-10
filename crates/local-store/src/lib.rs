@@ -76,6 +76,32 @@ pub struct ExternalGameImport {
     pub imported_at: String,
 }
 
+/// A provider-owned read-only snapshot waiting to be published to the user's
+/// cloud mirror. This queue is deliberately separate from the editable game
+/// operation outbox so provider snapshots can never create local tombstones.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderMirrorQueueItem {
+    pub provider: String,
+    pub external_id: String,
+    pub game_id: Uuid,
+    pub payload_hash: String,
+    pub snapshot_json: String,
+    pub state: String,
+    pub uploaded_at: Option<String>,
+    pub retry_count: u32,
+    pub last_error: Option<String>,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderMirrorQueueCounts {
+    pub pending: u32,
+    pub uploaded: u32,
+    pub rejected: u32,
+}
+
 /// A bounded, device-local capture of an unsupported external move encoding.
 /// These rows are intentionally not represented as operations and never sync.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2600,6 +2626,178 @@ impl LocalStore {
         Ok(())
     }
 
+    pub fn enqueue_provider_mirror(
+        &mut self,
+        provider: &str,
+        external_id: &str,
+        game_id: Uuid,
+        payload_hash: &str,
+        snapshot_json: &str,
+        updated_at: &str,
+    ) -> Result<(), StoreError> {
+        self.connection.execute(
+            "INSERT INTO provider_mirror_queue
+             (provider, external_id, game_id, payload_hash, snapshot_json, state,
+              uploaded_at, retry_count, last_error, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'pending', NULL, 0, NULL, ?6)
+             ON CONFLICT(provider, external_id) DO UPDATE SET
+               game_id=excluded.game_id,
+               snapshot_json=excluded.snapshot_json,
+               updated_at=excluded.updated_at,
+               state=CASE
+                 WHEN provider_mirror_queue.payload_hash <> excluded.payload_hash THEN 'pending'
+                 ELSE provider_mirror_queue.state
+               END,
+               uploaded_at=CASE
+                 WHEN provider_mirror_queue.payload_hash <> excluded.payload_hash THEN NULL
+                 ELSE provider_mirror_queue.uploaded_at
+               END,
+               retry_count=CASE
+                 WHEN provider_mirror_queue.payload_hash <> excluded.payload_hash THEN 0
+                 ELSE provider_mirror_queue.retry_count
+               END,
+               last_error=CASE
+                 WHEN provider_mirror_queue.payload_hash <> excluded.payload_hash THEN NULL
+                 ELSE provider_mirror_queue.last_error
+               END,
+               payload_hash=excluded.payload_hash",
+            params![
+                provider,
+                external_id,
+                game_id.to_string(),
+                payload_hash,
+                snapshot_json,
+                updated_at
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn pending_provider_mirrors(
+        &self,
+        provider: &str,
+        limit: usize,
+    ) -> Result<Vec<ProviderMirrorQueueItem>, StoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT provider, external_id, game_id, payload_hash, snapshot_json, state,
+                    uploaded_at, retry_count, last_error, updated_at
+             FROM provider_mirror_queue
+             WHERE provider=?1 AND state IN ('pending', 'failed')
+             ORDER BY updated_at, external_id
+             LIMIT ?2",
+        )?;
+        let rows = statement.query_map(params![provider, limit.min(500) as i64], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, Option<String>>(6)?,
+                row.get::<_, u32>(7)?,
+                row.get::<_, Option<String>>(8)?,
+                row.get::<_, String>(9)?,
+            ))
+        })?;
+        let mut items = Vec::new();
+        for row in rows {
+            let (
+                provider,
+                external_id,
+                game_id,
+                payload_hash,
+                snapshot_json,
+                state,
+                uploaded_at,
+                retry_count,
+                last_error,
+                updated_at,
+            ) = row?;
+            items.push(ProviderMirrorQueueItem {
+                provider,
+                external_id,
+                game_id: Uuid::parse_str(&game_id).map_err(json_error)?,
+                payload_hash,
+                snapshot_json,
+                state,
+                uploaded_at,
+                retry_count,
+                last_error,
+                updated_at,
+            });
+        }
+        Ok(items)
+    }
+
+    pub fn mark_provider_mirror_uploaded(
+        &mut self,
+        provider: &str,
+        external_id: &str,
+        payload_hash: &str,
+        uploaded_at: &str,
+    ) -> Result<bool, StoreError> {
+        Ok(self.connection.execute(
+            "UPDATE provider_mirror_queue
+             SET state='uploaded', uploaded_at=?4, last_error=NULL
+             WHERE provider=?1 AND external_id=?2 AND payload_hash=?3",
+            params![provider, external_id, payload_hash, uploaded_at],
+        )? > 0)
+    }
+
+    pub fn mark_provider_mirror_failed(
+        &mut self,
+        provider: &str,
+        external_id: &str,
+        payload_hash: &str,
+        error: &str,
+    ) -> Result<bool, StoreError> {
+        Ok(self.connection.execute(
+            "UPDATE provider_mirror_queue
+             SET state='failed', retry_count=retry_count + 1, last_error=?4
+             WHERE provider=?1 AND external_id=?2 AND payload_hash=?3",
+            params![provider, external_id, payload_hash, error],
+        )? > 0)
+    }
+
+    pub fn mark_provider_mirror_rejected(
+        &mut self,
+        provider: &str,
+        external_id: &str,
+        payload_hash: &str,
+        error: &str,
+    ) -> Result<bool, StoreError> {
+        Ok(self.connection.execute(
+            "UPDATE provider_mirror_queue
+             SET state='rejected', retry_count=retry_count + 1, last_error=?4
+             WHERE provider=?1 AND external_id=?2 AND payload_hash=?3",
+            params![provider, external_id, payload_hash, error],
+        )? > 0)
+    }
+
+    pub fn provider_mirror_queue_counts(
+        &self,
+        provider: &str,
+    ) -> Result<ProviderMirrorQueueCounts, StoreError> {
+        self.connection
+            .query_row(
+                "SELECT
+                   COALESCE(SUM(CASE WHEN state IN ('pending', 'failed') THEN 1 ELSE 0 END), 0),
+                   COALESCE(SUM(CASE WHEN state = 'uploaded' THEN 1 ELSE 0 END), 0),
+                   COALESCE(SUM(CASE WHEN state = 'rejected' THEN 1 ELSE 0 END), 0)
+                 FROM provider_mirror_queue WHERE provider=?1",
+                [provider],
+                |row| {
+                    Ok(ProviderMirrorQueueCounts {
+                        pending: row.get(0)?,
+                        uploaded: row.get(1)?,
+                        rejected: row.get(2)?,
+                    })
+                },
+            )
+            .map_err(StoreError::from)
+    }
+
     pub fn record_ttxq_diagnostic_sample(
         &mut self,
         qipu_id: &str,
@@ -4038,6 +4236,17 @@ impl LocalStore {
                PRIMARY KEY(provider, external_id),
                FOREIGN KEY(game_id) REFERENCES games(id)
              );
+             CREATE TABLE IF NOT EXISTS provider_mirror_queue (
+               provider TEXT NOT NULL, external_id TEXT NOT NULL, game_id TEXT NOT NULL,
+               payload_hash TEXT NOT NULL, snapshot_json TEXT NOT NULL,
+               state TEXT NOT NULL DEFAULT 'pending', uploaded_at TEXT,
+               retry_count INTEGER NOT NULL DEFAULT 0, last_error TEXT,
+               updated_at TEXT NOT NULL,
+               PRIMARY KEY(provider, external_id),
+               FOREIGN KEY(game_id) REFERENCES games(id) ON DELETE CASCADE
+             );
+             CREATE INDEX IF NOT EXISTS idx_provider_mirror_queue_state
+               ON provider_mirror_queue(provider, state, updated_at);
              CREATE TABLE IF NOT EXISTS ttxq_diagnostic_samples (
                id INTEGER PRIMARY KEY AUTOINCREMENT,
                qipu_id TEXT NOT NULL,
@@ -7557,5 +7766,149 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn provider_mirror_queue_is_hash_idempotent_and_retryable() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let game_id = Uuid::new_v4();
+        let create = operation(game_id);
+        store
+            .save_game_with_operation(game_id, "云镜像队列", "fen", Uuid::new_v4(), &create)
+            .unwrap();
+        store
+            .enqueue_provider_mirror(
+                "ttxq",
+                "778899",
+                game_id,
+                "sha256:first",
+                r#"{"id":"ttxq:778899","readOnly":true}"#,
+                "2026-10-10T10:00:00Z",
+            )
+            .unwrap();
+        assert_eq!(
+            store.provider_mirror_queue_counts("ttxq").unwrap().pending,
+            1
+        );
+
+        assert!(
+            store
+                .mark_provider_mirror_failed("ttxq", "778899", "sha256:first", "offline")
+                .unwrap()
+        );
+        let failed = store.pending_provider_mirrors("ttxq", 50).unwrap();
+        assert_eq!(failed[0].retry_count, 1);
+        assert_eq!(failed[0].last_error.as_deref(), Some("offline"));
+
+        assert!(
+            store
+                .mark_provider_mirror_uploaded(
+                    "ttxq",
+                    "778899",
+                    "sha256:first",
+                    "2026-10-10T10:01:00Z",
+                )
+                .unwrap()
+        );
+        assert!(
+            store
+                .pending_provider_mirrors("ttxq", 50)
+                .unwrap()
+                .is_empty()
+        );
+
+        // An identical snapshot remains uploaded, while a new payload hash is
+        // a new revision and returns to the pending queue.
+        store
+            .enqueue_provider_mirror(
+                "ttxq",
+                "778899",
+                game_id,
+                "sha256:first",
+                r#"{"id":"ttxq:778899","readOnly":true}"#,
+                "2026-10-10T10:02:00Z",
+            )
+            .unwrap();
+        assert!(
+            store
+                .pending_provider_mirrors("ttxq", 50)
+                .unwrap()
+                .is_empty()
+        );
+        store
+            .enqueue_provider_mirror(
+                "ttxq",
+                "778899",
+                game_id,
+                "sha256:second",
+                r#"{"id":"ttxq:778899","readOnly":true,"title":"修订"}"#,
+                "2026-10-10T10:03:00Z",
+            )
+            .unwrap();
+        let pending = store.pending_provider_mirrors("ttxq", 50).unwrap();
+        assert_eq!(pending[0].payload_hash, "sha256:second");
+        assert_eq!(pending[0].retry_count, 0);
+        assert!(
+            !store
+                .mark_provider_mirror_uploaded(
+                    "ttxq",
+                    "778899",
+                    "sha256:first",
+                    "2026-10-10T10:04:00Z",
+                )
+                .unwrap()
+        );
+        assert_eq!(
+            store.provider_mirror_queue_counts("ttxq").unwrap().pending,
+            1
+        );
+    }
+
+    #[test]
+    fn rejected_provider_mirror_does_not_block_later_pending_records() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        for (external_id, hash) in [("bad", "sha256:bad"), ("good", "sha256:good")] {
+            let game_id = Uuid::new_v4();
+            store
+                .save_game_with_operation(
+                    game_id,
+                    external_id,
+                    "fen",
+                    Uuid::new_v4(),
+                    &operation(game_id),
+                )
+                .unwrap();
+            store
+                .enqueue_provider_mirror(
+                    "ttxq",
+                    external_id,
+                    game_id,
+                    hash,
+                    &format!(r#"{{"id":"ttxq:{external_id}","readOnly":true}}"#),
+                    if external_id == "bad" {
+                        "2026-10-10T10:00:00Z"
+                    } else {
+                        "2026-10-10T10:01:00Z"
+                    },
+                )
+                .unwrap();
+        }
+
+        assert!(
+            store
+                .mark_provider_mirror_rejected("ttxq", "bad", "sha256:bad", "snapshot too large",)
+                .unwrap()
+        );
+        let pending = store.pending_provider_mirrors("ttxq", 50).unwrap();
+        assert_eq!(
+            pending
+                .iter()
+                .map(|item| item.external_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["good"]
+        );
+        let counts = store.provider_mirror_queue_counts("ttxq").unwrap();
+        assert_eq!(counts.pending, 1);
+        assert_eq!(counts.rejected, 1);
     }
 }

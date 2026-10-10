@@ -1,5 +1,6 @@
 use super::*;
 use std::collections::{HashMap, HashSet};
+use std::sync::OnceLock;
 
 #[path = "ttxq_annotations.rs"]
 mod ttxq_annotations;
@@ -28,7 +29,13 @@ pub(crate) fn collect_ttxq_h5_history(
     app: tauri::AppHandle,
     state: State<'_, DesktopState>,
 ) -> Result<(), String> {
-    collect_ttxq_h5_history_impl(app, state)
+    let result = collect_ttxq_h5_history_impl(app, state.clone());
+    if result.is_err() {
+        if let Ok(mut sync) = state.ttxq_sync.lock() {
+            sync.import_after_read = false;
+        }
+    }
+    result
 }
 
 const TTXQ_WINDOW_LABEL: &str = "ttxq-sync";
@@ -37,6 +44,7 @@ const MAX_GAMES: usize = 20_000;
 const MAX_SCAN_NODES: usize = 20_000;
 const MAX_MOVES_PER_GAME: usize = 1_000;
 const MAX_PAYLOAD_BYTES: usize = 8 * 1024 * 1024;
+const PROVIDER_IMPORT_MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 const TTXQ_BACKUP_FOLDER: &str = "天天象棋备份";
 const TTXQ_ORDERED_SOURCE_PREFIX: &str = "ttxq-order:";
 const BRIDGE_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -45,6 +53,8 @@ const TTXQ_ANNOTATION_BEGIN: &str = "【天天象棋注解】";
 const TTXQ_ANNOTATION_END: &str = "【天天象棋注解结束】";
 const TTXQ_ANNOTATION_ITEM_BEGIN: &str = "【天天象棋注解条目】";
 const TTXQ_ANNOTATION_ITEM_END: &str = "【天天象棋注解条目结束】";
+
+static TTXQ_MIRROR_PUBLISH_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 
 fn default_true() -> bool {
     true
@@ -250,6 +260,12 @@ pub(crate) struct TtxqBridgePayloadDto {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TtxqSyncProgressDto {
     pub state: String,
+    pub auto_sync_enabled: bool,
+    pub phase: String,
+    pub last_detected_at: Option<String>,
+    pub last_imported_at: Option<String>,
+    pub cloud_pending: usize,
+    pub cloud_uploaded: usize,
     pub bridge_version: u32,
     pub source_list: String,
     pub discovered_count: usize,
@@ -263,8 +279,11 @@ pub(crate) struct TtxqSyncProgressDto {
     pub loaded: usize,
     pub completed: usize,
     pub imported: usize,
+    pub updated: usize,
     pub skipped: usize,
     pub failed: usize,
+    pub cloud_failed: usize,
+    pub cloud_rejected: usize,
     pub message: String,
 }
 
@@ -298,6 +317,12 @@ impl Default for TtxqSyncProgressDto {
     fn default() -> Self {
         Self {
             state: "disconnected".into(),
+            auto_sync_enabled: false,
+            phase: "监听当前列表".into(),
+            last_detected_at: None,
+            last_imported_at: None,
+            cloud_pending: 0,
+            cloud_uploaded: 0,
             bridge_version: BRIDGE_VERSION,
             source_list: String::new(),
             discovered_count: 0,
@@ -311,14 +336,16 @@ impl Default for TtxqSyncProgressDto {
             loaded: 0,
             completed: 0,
             imported: 0,
+            updated: 0,
             skipped: 0,
             failed: 0,
+            cloud_failed: 0,
+            cloud_rejected: 0,
             message: "未连接天天象棋".into(),
         }
     }
 }
 
-#[derive(Default)]
 pub(crate) struct TtxqSyncState {
     pub(crate) progress: TtxqSyncProgressDto,
     payload: Option<TtxqBridgePayloadDto>,
@@ -326,6 +353,38 @@ pub(crate) struct TtxqSyncState {
     next_attempt: u64,
     bridge_acknowledged: bool,
     progress_revision: u64,
+    auto_target_folder: String,
+    visible_signature: Option<String>,
+    processed_signature: Option<String>,
+    signature_generation: u64,
+    import_after_read: bool,
+}
+
+impl Default for TtxqSyncState {
+    fn default() -> Self {
+        Self {
+            progress: TtxqSyncProgressDto::default(),
+            payload: None,
+            active_attempt: 0,
+            next_attempt: 0,
+            bridge_acknowledged: false,
+            progress_revision: 0,
+            auto_target_folder: TTXQ_BACKUP_FOLDER.into(),
+            visible_signature: None,
+            processed_signature: None,
+            signature_generation: 0,
+            import_after_read: false,
+        }
+    }
+}
+
+fn preserve_session_progress(previous: &TtxqSyncProgressDto, next: &mut TtxqSyncProgressDto) {
+    next.auto_sync_enabled = previous.auto_sync_enabled;
+    next.last_detected_at = previous.last_detected_at.clone();
+    next.last_imported_at = previous.last_imported_at.clone();
+    next.cloud_pending = previous.cloud_pending;
+    next.cloud_uploaded = previous.cloud_uploaded;
+    next.cloud_rejected = previous.cloud_rejected;
 }
 
 fn advance_progress_revision(sync: &mut TtxqSyncState) {
@@ -336,12 +395,15 @@ fn begin_read_attempt(sync: &mut TtxqSyncState) -> u64 {
     sync.next_attempt = sync.next_attempt.wrapping_add(1).max(1);
     sync.active_attempt = sync.next_attempt;
     sync.bridge_acknowledged = false;
-    sync.progress = TtxqSyncProgressDto {
+    let mut progress = TtxqSyncProgressDto {
         state: "reading".into(),
+        phase: "读取棋谱".into(),
         read_phase: "discovering".into(),
         message: "正在连接天天象棋网页桥接；请保持授权窗口打开".into(),
         ..TtxqSyncProgressDto::default()
     };
+    preserve_session_progress(&sync.progress, &mut progress);
+    sync.progress = progress;
     sync.payload = None;
     advance_progress_revision(sync);
     sync.active_attempt
@@ -362,8 +424,9 @@ fn set_read_error(sync: &mut TtxqSyncState, attempt_id: u64, message: &str) -> b
     let read_total = sync.progress.read_total;
     let read_completed = sync.progress.read_completed;
     let read_failed = sync.progress.read_failed;
-    sync.progress = TtxqSyncProgressDto {
+    let mut progress = TtxqSyncProgressDto {
         state: "error".into(),
+        phase: "监听当前列表".into(),
         read_total,
         read_completed,
         read_failed,
@@ -373,7 +436,30 @@ fn set_read_error(sync: &mut TtxqSyncState, attempt_id: u64, message: &str) -> b
         ),
         ..TtxqSyncProgressDto::default()
     };
+    preserve_session_progress(&sync.progress, &mut progress);
+    sync.progress = progress;
+    sync.import_after_read = false;
     true
+}
+
+fn register_visible_signature(
+    sync: &mut TtxqSyncState,
+    signature: &str,
+    detected_at: &str,
+) -> Option<u64> {
+    if !sync.progress.auto_sync_enabled
+        || signature.trim().is_empty()
+        || sync.visible_signature.as_deref() == Some(signature)
+        || sync.processed_signature.as_deref() == Some(signature)
+    {
+        return None;
+    }
+    sync.visible_signature = Some(signature.to_owned());
+    sync.signature_generation = sync.signature_generation.wrapping_add(1).max(1);
+    sync.progress.last_detected_at = Some(detected_at.to_owned());
+    sync.progress.phase = "检测到变化".into();
+    sync.progress.message = "检测到当前列表变化，等待 2 秒稳定后自动读取".into();
+    Some(sync.signature_generation)
 }
 
 fn fail_unacknowledged_bridge(sync: &mut TtxqSyncState, attempt_id: u64, host: &str) -> bool {
@@ -1083,6 +1169,256 @@ pub(crate) fn preview_ttxq_history(
     Ok(payload.games.iter().map(ttxq_game_preview).collect())
 }
 
+fn visible_list_monitor_script() -> &'static str {
+    r#"(() => {
+      const marker = Symbol.for('cn.xiangqi.studio.ttxq.visibleListMonitor');
+      if (window[marker]) return;
+      window[marker] = true;
+      const invoke = () => window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke;
+      const visible = (element) => {
+        try {
+          const style = window.getComputedStyle(element);
+          const rect = element.getBoundingClientRect();
+          return style.display !== 'none' && style.visibility !== 'hidden'
+            && style.opacity !== '0' && (rect.width > 0 || rect.height > 0);
+        } catch (_) { return false; }
+      };
+      const selectedHint = () => {
+        const values = [];
+        try {
+          for (const element of Array.from(document.querySelectorAll('[aria-selected="true"],.active,.selected,[class*="current"]')).slice(0, 80)) {
+            if (!visible(element)) continue;
+            const text = String(element.textContent || '').trim();
+            if (text && text.length <= 32) values.push(text);
+          }
+        } catch (_) {}
+        return values.join(' ');
+      };
+      const qipuId = (value) => {
+        if (!value || typeof value !== 'object') return '';
+        const raw = value.qipuId ?? value.qipuID ?? value.iQipuId ?? value.iQipuID
+          ?? value.lQipuId ?? value.lQiPuID ?? value.qipu_id;
+        const id = raw == null ? '' : String(raw).trim();
+        return /^[1-9]\d{4,}$/.test(id) ? id : '';
+      };
+      const idsIn = (root) => {
+        const ids = new Set();
+        const stack = [{ value: root, depth: 0 }];
+        const seen = new WeakSet();
+        let visited = 0;
+        while (stack.length && visited < 5000) {
+          const { value, depth } = stack.pop();
+          if (!value || typeof value !== 'object' || seen.has(value)) continue;
+          seen.add(value); visited += 1;
+          const id = qipuId(value); if (id) ids.add(id);
+          if (depth >= 12) continue;
+          let keys = [];
+          try { keys = Object.keys(value).slice(0, 80); } catch (_) { continue; }
+          for (const key of keys) {
+            if (/^(?:parent|_parent|stage|_stage|root|_root|owner|_owner|target|event|events|listeners?|children|_children)$/.test(key)) continue;
+            try {
+              const child = value[key];
+              if (child && typeof child === 'object'
+                && (Array.isArray(child) || qipuId(child) || /(?:qipu|list|items?|records?|data|collect|favor|create|manual|wall)/i.test(key))) {
+                stack.push({ value: child, depth: depth + 1 });
+              }
+            } catch (_) {}
+          }
+        }
+        return [...ids].sort();
+      };
+      const snapshot = () => {
+        const emptyText = [];
+        try {
+          for (const element of Array.from(document.querySelectorAll('*')).slice(0, 1000)) {
+            if (!visible(element)) continue;
+            const text = String(element.textContent || '').replace(/\s+/g, '');
+            if (text && text.length <= 100 && /(?:暂无数据|暂无棋谱|暂无收藏|请稍后轻触重试|请稍后重试|加载失败)/.test(text)) emptyText.push(text);
+          }
+        } catch (_) {}
+        if (emptyText.length) return { status: 'empty', sourceList: '', signature: '', visibleCount: 0 };
+        let model = null;
+        try { model = window.fdk && window.fdk.getModel && window.fdk.getModel('QipuModel'); } catch (_) {}
+        if (!model) return { status: 'loading', sourceList: '', signature: '', visibleCount: 0 };
+        const hint = selectedHint();
+        const kind = /(?:收藏|collect|favou?rite)/i.test(hint) ? 'favorite'
+          : /(?:创建|记谱|create|manual|record)/i.test(hint) ? 'created'
+          : /(?:最近|recent|history)/i.test(hint) ? 'recent' : '';
+        const label = kind === 'favorite' ? '我的收藏' : kind === 'created' ? '我的记谱' : kind === 'recent' ? '最近对局' : '当前棋谱列表';
+        const names = kind === 'favorite'
+          ? ['_qipuCollectDataList', '_qipuFavoriteDataList', '_qipuWallDataList', '_qipuWallPreViewData']
+          : kind === 'created'
+          ? ['_qipuCreateDataList', '_qipuSelfRecordDataList', '_qipuManualDataList', '_qipuRecordDataList', '_qipuWallDataList', '_qipuWallPreViewData']
+          : kind === 'recent'
+          ? ['_qipuRecentView', '_qipuDataList', '_qipuListData']
+          : ['_qipuRecentView', '_qipuCollectDataList', '_qipuCreateDataList', '_qipuSelfRecordDataList', '_qipuManualDataList', '_qipuWallDataList'];
+        const roots = [];
+        for (const name of names) {
+          try {
+            const root = model[name];
+            if (root && typeof root === 'object' && !roots.includes(root)) roots.push(root);
+          } catch (_) {}
+        }
+        const populated = roots.map(root => ({ root, ids: idsIn(root) })).filter(item => item.ids.length);
+        if (!populated.length) return { status: 'loading', sourceList: label, signature: '', visibleCount: 0 };
+        if (!kind && populated.length !== 1) return { status: 'ambiguous', sourceList: label, signature: '', visibleCount: 0 };
+        const ids = populated[0].ids;
+        return { status: 'ready', sourceList: label, signature: `${label}|${ids.join(',')}`, visibleCount: ids.length };
+      };
+      const report = async () => {
+        const call = invoke(); if (typeof call !== 'function') return;
+        const value = snapshot();
+        try { await call('report_ttxq_visible_list_signature', value); } catch (_) {}
+      };
+      window.setInterval(report, 1000);
+      window.setTimeout(report, 1200);
+    })();"#
+}
+
+#[tauri::command]
+pub(crate) fn set_ttxq_auto_sync(
+    enabled: bool,
+    target_folder: Option<String>,
+    state: State<'_, DesktopState>,
+) -> Result<TtxqSyncProgressDto, String> {
+    let target_folder = normalize_ttxq_target_folder(target_folder)?;
+    let counts = state
+        .model
+        .lock()
+        .map_err(|_| "本地棋谱库不可用".to_owned())?
+        .store
+        .provider_mirror_queue_counts("ttxq")
+        .map_err(|error| error.to_string())?;
+    let mut sync = state
+        .ttxq_sync
+        .lock()
+        .map_err(|_| "天天象棋同步状态不可用".to_owned())?;
+    sync.auto_target_folder = target_folder;
+    sync.visible_signature = None;
+    sync.processed_signature = None;
+    sync.signature_generation = sync.signature_generation.wrapping_add(1);
+    sync.progress.auto_sync_enabled = enabled;
+    sync.progress.cloud_pending = counts.pending as usize;
+    sync.progress.cloud_uploaded = counts.uploaded as usize;
+    sync.progress.phase = "监听当前列表".into();
+    sync.progress.message = if enabled {
+        "自动同步已开启，只监听授权窗口当前可见列表".into()
+    } else {
+        "自动同步已关闭，可继续手动读取当前列表".into()
+    };
+    Ok(sync.progress.clone())
+}
+
+#[tauri::command]
+pub(crate) fn sync_ttxq_current_list_now(
+    target_folder: Option<String>,
+    app: tauri::AppHandle,
+    state: State<'_, DesktopState>,
+) -> Result<(), String> {
+    let target_folder = normalize_ttxq_target_folder(target_folder)?;
+    {
+        let mut sync = state
+            .ttxq_sync
+            .lock()
+            .map_err(|_| "天天象棋同步状态不可用".to_owned())?;
+        sync.auto_target_folder = target_folder;
+        sync.import_after_read = true;
+    }
+    collect_ttxq_h5_history_impl(app, state)
+}
+
+#[tauri::command]
+pub(crate) fn report_ttxq_visible_list_signature(
+    signature: String,
+    source_list: String,
+    visible_count: usize,
+    status: String,
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<(), String> {
+    if window.label() != TTXQ_WINDOW_LABEL {
+        return Err("天天象棋桥接只能由授权窗口调用".into());
+    }
+    if signature.len() > 64 * 1024
+        || source_list.len() > 64
+        || visible_count > MAX_GAMES
+        || !matches!(status.as_str(), "ready" | "empty" | "loading" | "ambiguous")
+    {
+        return Err("天天象棋可见列表签名无效".into());
+    }
+    if status == "ready" {
+        if visible_count == 0 || signature.trim().is_empty() {
+            return Err("天天象棋可见列表签名无效".into());
+        }
+        let Some((_, ids)) = signature.split_once('|') else {
+            return Err("天天象棋可见列表签名无效".into());
+        };
+        if ids.split(',').filter(|id| !id.is_empty()).count() != visible_count
+            || ids
+                .split(',')
+                .filter(|id| !id.is_empty())
+                .any(|id| !id.bytes().all(|byte| byte.is_ascii_digit()))
+        {
+            return Err("天天象棋可见列表签名无效".into());
+        }
+    }
+    let generation = {
+        let mut sync = state
+            .ttxq_sync
+            .lock()
+            .map_err(|_| "天天象棋同步状态不可用".to_owned())?;
+        if !sync.progress.auto_sync_enabled {
+            return Ok(());
+        }
+        sync.progress.source_list = source_list.chars().take(24).collect();
+        if status != "ready" {
+            sync.visible_signature = None;
+            sync.progress.phase = "监听当前列表".into();
+            sync.progress.message = match status.as_str() {
+                "empty" => "当前可见列表为空或加载失败，自动同步已暂停".into(),
+                "ambiguous" => "无法唯一确定当前列表，请只打开一个棋谱列表".into(),
+                _ => "正在等待当前棋谱列表加载".into(),
+            };
+            return Ok(());
+        }
+        register_visible_signature(&mut sync, &signature, &Utc::now().to_rfc3339())
+    };
+    let Some(generation) = generation else {
+        return Ok(());
+    };
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        loop {
+            let ready = {
+                let state = app.state::<DesktopState>();
+                let Ok(mut sync) = state.ttxq_sync.lock() else {
+                    return;
+                };
+                if !sync.progress.auto_sync_enabled
+                    || sync.signature_generation != generation
+                    || sync.visible_signature.as_deref() != Some(signature.as_str())
+                {
+                    return;
+                }
+                if matches!(sync.progress.state.as_str(), "reading" | "importing") {
+                    false
+                } else {
+                    sync.processed_signature = Some(signature.clone());
+                    true
+                }
+            };
+            if ready {
+                let state = app.state::<DesktopState>();
+                let _ = collect_ttxq_h5_history_impl(app.clone(), state);
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    });
+    Ok(())
+}
+
 #[tauri::command]
 pub(crate) fn start_ttxq_authorization(
     app: tauri::AppHandle,
@@ -1092,7 +1428,7 @@ pub(crate) fn start_ttxq_authorization(
         window.show().map_err(|error| error.to_string())?;
         window.set_focus().map_err(|error| error.to_string())?;
     } else {
-        tauri::WebviewWindowBuilder::new(
+        let window = tauri::WebviewWindowBuilder::new(
             &app,
             TTXQ_WINDOW_LABEL,
             tauri::WebviewUrl::External(
@@ -1104,6 +1440,7 @@ pub(crate) fn start_ttxq_authorization(
         .title("Xiangqi Studio · 天天象棋授权")
         .inner_size(980.0, 760.0)
         .min_inner_size(720.0, 560.0)
+        .initialization_script(visible_list_monitor_script())
         .on_navigation(|url| {
             url.scheme() == "https"
                 && url.host_str().is_some_and(|host| {
@@ -1115,6 +1452,15 @@ pub(crate) fn start_ttxq_authorization(
         })
         .build()
         .map_err(|error| error.to_string())?;
+        let close_app = app.clone();
+        window.on_window_event(move |event| {
+            if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+                let state = close_app.state::<DesktopState>();
+                if let Ok(mut sync) = state.ttxq_sync.lock() {
+                    *sync = TtxqSyncState::default();
+                }
+            }
+        });
     }
     let mut sync = state
         .ttxq_sync
@@ -1122,9 +1468,11 @@ pub(crate) fn start_ttxq_authorization(
         .map_err(|_| "天天象棋同步状态不可用".to_owned())?;
     sync.progress = TtxqSyncProgressDto {
         state: "authorizing".into(),
+        phase: "监听当前列表".into(),
         message: "请在独立窗口内自行登录，并进入最近对局后滚动加载历史棋谱".into(),
         ..TtxqSyncProgressDto::default()
     };
+    sync.import_after_read = false;
     Ok(())
 }
 
@@ -1132,6 +1480,7 @@ pub(crate) fn start_ttxq_authorization(
 pub(crate) fn submit_ttxq_bridge_payload(
     mut payload: TtxqBridgePayloadDto,
     attempt_id: u64,
+    app: tauri::AppHandle,
     window: tauri::WebviewWindow,
     state: State<'_, DesktopState>,
 ) -> Result<TtxqSyncProgressDto, String> {
@@ -1281,8 +1630,9 @@ pub(crate) fn submit_ttxq_bridge_payload(
     let source_list = sync.progress.source_list.clone();
     let discovered_count = sync.progress.discovered_count.max(read_total);
     let ignored_stale_count = sync.progress.ignored_stale_count;
-    sync.progress = TtxqSyncProgressDto {
+    let mut progress = TtxqSyncProgressDto {
         state: "ready".into(),
+        phase: "读取棋谱".into(),
         bridge_version,
         source_list,
         discovered_count,
@@ -1303,8 +1653,24 @@ pub(crate) fn submit_ttxq_bridge_payload(
         },
         ..TtxqSyncProgressDto::default()
     };
+    preserve_session_progress(&sync.progress, &mut progress);
+    sync.progress = progress;
     sync.payload = Some(payload);
-    Ok(sync.progress.clone())
+    let auto_sync = sync.progress.auto_sync_enabled;
+    let import_after_read = sync.import_after_read;
+    sync.import_after_read = false;
+    let target_folder = sync.auto_target_folder.clone();
+    let ready = sync.progress.clone();
+    drop(sync);
+    if !auto_sync && !import_after_read {
+        return Ok(ready);
+    }
+    let imported = import_ttxq_history_impl(Some(target_folder), &state)?;
+    tauri::async_runtime::spawn(async move {
+        let state = app.state::<DesktopState>();
+        let _ = publish_pending_ttxq_mirrors_impl(&state).await;
+    });
+    Ok(imported)
 }
 
 #[tauri::command]
@@ -1397,8 +1763,9 @@ pub(crate) fn report_ttxq_read_progress(
         .collect::<String>();
     let discovered_count = discovered_count.unwrap_or(total.max(sync.progress.discovered_count));
     let ignored_stale_count = ignored_stale_count.unwrap_or(sync.progress.ignored_stale_count);
-    sync.progress = TtxqSyncProgressDto {
+    let mut progress = TtxqSyncProgressDto {
         state: "reading".into(),
+        phase: "读取棋谱".into(),
         bridge_version,
         source_list,
         discovered_count,
@@ -1424,6 +1791,8 @@ pub(crate) fn report_ttxq_read_progress(
         },
         ..TtxqSyncProgressDto::default()
     };
+    preserve_session_progress(&sync.progress, &mut progress);
+    sync.progress = progress;
     advance_progress_revision(&mut sync);
     Ok(())
 }
@@ -1714,10 +2083,207 @@ fn deduplicate_ttxq_batch<'a>(games: &'a [TtxqGameRecordDto]) -> Vec<&'a TtxqGam
         .collect()
 }
 
+fn collect_provider_paths(
+    parent_id: Uuid,
+    children: &HashMap<Uuid, Vec<xiangqi_manual::MoveNode>>,
+    path: &mut Vec<xiangqi_manual::MoveNode>,
+    leaves: &mut Vec<Vec<xiangqi_manual::MoveNode>>,
+    comments: &mut serde_json::Map<String, serde_json::Value>,
+) {
+    let Some(next) = children.get(&parent_id) else {
+        if !path.is_empty() {
+            leaves.push(path.clone());
+        }
+        return;
+    };
+    if next.is_empty() {
+        if !path.is_empty() {
+            leaves.push(path.clone());
+        }
+        return;
+    }
+    for node in next {
+        path.push(node.clone());
+        if !node.comment.trim().is_empty() {
+            comments.insert(
+                path.iter()
+                    .map(|item| item.mv.to_iccs())
+                    .collect::<Vec<_>>()
+                    .join(","),
+                serde_json::Value::String(node.comment.clone()),
+            );
+        }
+        collect_provider_paths(node.id, children, path, leaves, comments);
+        path.pop();
+    }
+}
+
+fn ttxq_provider_mirror_snapshot(
+    model: &AppModel,
+    game_id: Uuid,
+    qipu_id: &str,
+    hash: &str,
+) -> Result<serde_json::Value, String> {
+    let game = model
+        .store
+        .load_game(game_id)
+        .map_err(|error| error.to_string())?
+        .ok_or("天天象棋本地棋谱不存在")?;
+    let nodes = model
+        .store
+        .load_move_nodes(game_id)
+        .map_err(|error| error.to_string())?;
+    let mut children = HashMap::<Uuid, Vec<xiangqi_manual::MoveNode>>::new();
+    for node in nodes.into_iter().filter(|node| !node.deleted) {
+        children.entry(node.parent_id).or_default().push(node);
+    }
+    for siblings in children.values_mut() {
+        siblings.sort_by_key(|node| node.order_key);
+    }
+    let mut mainline = Vec::<xiangqi_manual::MoveNode>::new();
+    let mut parent = game.root_id;
+    while let Some(next) = children.get(&parent).and_then(|siblings| {
+        siblings
+            .iter()
+            .find(|node| node.is_mainline)
+            .or_else(|| siblings.first())
+    }) {
+        mainline.push(next.clone());
+        parent = next.id;
+        if mainline.len() > MAX_MOVES_PER_GAME {
+            return Err("天天象棋云镜像主线过长".into());
+        }
+    }
+    let mainline_moves = mainline
+        .iter()
+        .map(|node| node.mv.to_iccs())
+        .collect::<Vec<_>>();
+    let mut comments = serde_json::Map::new();
+    let mut leaves = Vec::new();
+    collect_provider_paths(
+        game.root_id,
+        &children,
+        &mut Vec::new(),
+        &mut leaves,
+        &mut comments,
+    );
+    let branches = leaves
+        .into_iter()
+        .filter_map(|path| {
+            let path_moves = path
+                .iter()
+                .map(|node| node.mv.to_iccs())
+                .collect::<Vec<_>>();
+            let common = path_moves
+                .iter()
+                .zip(&mainline_moves)
+                .take_while(|(left, right)| left == right)
+                .count();
+            if common == path_moves.len() && common == mainline_moves.len() {
+                return None;
+            }
+            let moves = path_moves[common..].to_vec();
+            if moves.is_empty() {
+                return None;
+            }
+            Some(serde_json::json!({
+                "id": path[common].id.to_string(),
+                "parentCursor": common,
+                "parentPath": path_moves[..common].to_vec(),
+                "moves": moves,
+                "notation": path_moves[common..].to_vec(),
+                "createdAt": Utc::now().timestamp_millis(),
+                "branchOrder": path[common].order_key,
+            }))
+        })
+        .collect::<Vec<_>>();
+    let mut board = Board::from_fen(&game.starting_fen).map_err(|error| error.to_string())?;
+    for raw_move in &mainline_moves {
+        board = board
+            .apply_move(Move::from_iccs(raw_move).map_err(|error| error.to_string())?)
+            .map_err(|error| error.to_string())?;
+    }
+    let metadata = serde_json::from_str::<ManualMetadata>(&game.metadata_json).unwrap_or_default();
+    let result = match metadata.result.as_str() {
+        "1-0" => "first-win",
+        "0-1" => "first-loss",
+        "1/2-1/2" => "draw",
+        _ => "unknown",
+    };
+    Ok(serde_json::json!({
+        "id": format!("ttxq:{qipu_id}"),
+        "title": game.title,
+        "note": game.note,
+        "folderPath": "天天象棋云镜像",
+        "startingFen": game.starting_fen,
+        "currentNodeId": mainline.last().map(|node| node.id).unwrap_or(game.root_id).to_string(),
+        "currentFen": board.to_fen(),
+        "moves": mainline_moves,
+        "cursor": mainline.len(),
+        "branches": branches,
+        "comments": comments,
+        "metadata": {
+            "event": metadata.event,
+            "redPlayer": metadata.red,
+            "blackPlayer": metadata.black,
+            "playedAt": metadata.date,
+            "gameType": if game.starting_fen == STARTING_FEN { "full" } else { "middle" },
+            "result": result,
+        },
+        "createdAt": game.updated_at,
+        "updatedAt": game.updated_at,
+        "origin": {
+            "kind": "providerMirror",
+            "provider": "ttxq",
+            "externalId": qipu_id,
+            "payloadHash": hash,
+        },
+        "readOnly": true,
+    }))
+}
+
+fn enqueue_ttxq_provider_mirror(
+    model: &mut AppModel,
+    qipu_id: &str,
+    game_id: Uuid,
+) -> Result<(), String> {
+    let import = model
+        .store
+        .external_game_import("ttxq", qipu_id)
+        .map_err(|error| error.to_string())?
+        .ok_or("天天象棋导入映射不存在")?;
+    let snapshot = ttxq_provider_mirror_snapshot(model, game_id, qipu_id, &import.payload_hash)?;
+    let snapshot_json = serde_json::to_string(&snapshot).map_err(|error| error.to_string())?;
+    model
+        .store
+        .enqueue_provider_mirror(
+            "ttxq",
+            qipu_id,
+            game_id,
+            &import.payload_hash,
+            &snapshot_json,
+            &Utc::now().to_rfc3339(),
+        )
+        .map_err(|error| error.to_string())
+}
+
 #[tauri::command]
-pub(crate) fn import_ttxq_history(
+pub(crate) async fn import_ttxq_history(
     target_folder: Option<String>,
     state: State<'_, DesktopState>,
+) -> Result<TtxqSyncProgressDto, String> {
+    import_ttxq_history_impl(target_folder, &state)?;
+    let _ = publish_pending_ttxq_mirrors_impl(&state).await;
+    state
+        .ttxq_sync
+        .lock()
+        .map_err(|_| "天天象棋同步状态不可用".to_owned())
+        .map(|sync| sync.progress.clone())
+}
+
+fn import_ttxq_history_impl(
+    target_folder: Option<String>,
+    state: &DesktopState,
 ) -> Result<TtxqSyncProgressDto, String> {
     let payload = state
         .ttxq_sync
@@ -1756,17 +2322,30 @@ pub(crate) fn import_ttxq_history(
         message: "正在导入天天象棋棋谱".into(),
         ..TtxqSyncProgressDto::default()
     };
+    let mut first_queue_error = None;
     let import_result = (|| -> Result<(), String> {
         for (source_order, game) in unique_games.iter().enumerate() {
             progress.completed += 1;
             let imported_at = Utc::now().to_rfc3339();
-            match import_ttxq_record(&mut model, game, source_order, &target_folder, &imported_at)?
-            {
-                TtxqImportOutcome::Imported(_) | TtxqImportOutcome::Updated(_) => {
-                    progress.imported += 1;
-                }
+            let outcome =
+                import_ttxq_record(&mut model, game, source_order, &target_folder, &imported_at)?;
+            match outcome {
+                TtxqImportOutcome::Imported(_) => progress.imported += 1,
+                TtxqImportOutcome::Updated(_) => progress.updated += 1,
                 TtxqImportOutcome::Skipped(_) => progress.skipped += 1,
                 TtxqImportOutcome::Failed => progress.failed += 1,
+            }
+            if let TtxqImportOutcome::Imported(game_id)
+            | TtxqImportOutcome::Updated(game_id)
+            | TtxqImportOutcome::Skipped(game_id) = outcome
+            {
+                // Cloud publication is best-effort and must never roll back a
+                // valid local import, but a queue failure must remain visible.
+                if let Err(error) = enqueue_ttxq_provider_mirror(&mut model, &game.qipu_id, game_id)
+                {
+                    progress.cloud_failed += 1;
+                    first_queue_error.get_or_insert(error);
+                }
             }
         }
         Ok(())
@@ -1779,21 +2358,422 @@ pub(crate) fn import_ttxq_history(
         active_qipu_id.as_deref(),
         import_result,
     )?;
-    progress.state = if progress.failed == 0 {
-        "complete".into()
-    } else {
-        "partial".into()
-    };
+    let counts = model
+        .store
+        .provider_mirror_queue_counts("ttxq")
+        .map_err(|error| error.to_string())?;
+    progress.cloud_rejected = counts.rejected as usize;
+    progress.state =
+        if progress.failed == 0 && progress.cloud_failed == 0 && progress.cloud_rejected == 0 {
+            "complete".into()
+        } else {
+            "partial".into()
+        };
     progress.message = format!(
-        "导入 {} 盘，跳过 {} 盘，失败 {} 盘",
-        progress.imported, progress.skipped, progress.failed
+        "新增 {} 盘，更新 {} 盘，跳过 {} 盘，失败 {} 盘",
+        progress.imported, progress.updated, progress.skipped, progress.failed
     );
+    if progress.cloud_failed > 0 {
+        progress.message.push_str(&format!(
+            "；{} 盘未加入云端队列，请重新同步当前列表{}",
+            progress.cloud_failed,
+            first_queue_error
+                .as_deref()
+                .map(|error| format!("（{}）", error.chars().take(80).collect::<String>()))
+                .unwrap_or_default()
+        ));
+    }
+    if progress.cloud_rejected > 0 {
+        progress.message.push_str(&format!(
+            "；{} 盘数据无效或过大，无法上传云镜像",
+            progress.cloud_rejected
+        ));
+    }
+    drop(model);
     let mut sync = state
         .ttxq_sync
         .lock()
         .map_err(|_| "天天象棋同步状态不可用".to_owned())?;
+    progress.phase = if progress.cloud_failed > 0 {
+        "等待重试".into()
+    } else if progress.cloud_rejected > 0 {
+        "上传云端".into()
+    } else {
+        "导入本地".into()
+    };
+    progress.last_imported_at = Some(Utc::now().to_rfc3339());
+    progress.cloud_pending = counts.pending as usize;
+    progress.cloud_uploaded = counts.uploaded as usize;
+    preserve_session_progress(&sync.progress, &mut progress);
+    progress.last_imported_at = Some(Utc::now().to_rfc3339());
+    progress.cloud_pending = counts.pending as usize;
+    progress.cloud_uploaded = counts.uploaded as usize;
+    progress.cloud_rejected = counts.rejected as usize;
     sync.progress = progress.clone();
     Ok(progress)
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProviderImportUploadRequest {
+    provider: &'static str,
+    records: Vec<ProviderImportUploadRecord>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProviderImportUploadRecord {
+    external_id: String,
+    payload_hash: String,
+    snapshot: serde_json::Value,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProviderImportUploadResponse {
+    records: Vec<ProviderImportUploadAck>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProviderImportUploadAck {
+    external_id: String,
+    payload_hash: String,
+}
+
+fn encode_provider_upload_batch(
+    pending: &[local_store::ProviderMirrorQueueItem],
+    max_body_bytes: usize,
+) -> Result<(Vec<local_store::ProviderMirrorQueueItem>, Vec<u8>), String> {
+    let mut selected = Vec::new();
+    let mut records = Vec::new();
+    let mut body = Vec::new();
+    for item in pending.iter().take(50) {
+        let snapshot = match serde_json::from_str(&item.snapshot_json) {
+            Ok(snapshot) => snapshot,
+            Err(error) if selected.is_empty() => {
+                return Err(format!("云镜像数据无效：{error}"));
+            }
+            Err(_) => break,
+        };
+        let record = ProviderImportUploadRecord {
+            external_id: item.external_id.clone(),
+            payload_hash: item.payload_hash.clone(),
+            snapshot,
+        };
+        records.push(record);
+        let candidate = serde_json::to_vec(&ProviderImportUploadRequest {
+            provider: "ttxq",
+            records: records.clone(),
+        })
+        .map_err(|error| error.to_string())?;
+        if candidate.len() > max_body_bytes {
+            records.pop();
+            if selected.is_empty() {
+                return Err(format!(
+                    "单盘云镜像超过 {} MB 上传限制",
+                    max_body_bytes / 1024 / 1024
+                ));
+            }
+            break;
+        }
+        selected.push(item.clone());
+        body = candidate;
+    }
+    if selected.is_empty() {
+        return Err("没有可上传的天天象棋云镜像".into());
+    }
+    Ok((selected, body))
+}
+
+fn mark_provider_batch_failed(
+    model: &mut AppModel,
+    pending: &[local_store::ProviderMirrorQueueItem],
+    message: &str,
+) -> Option<String> {
+    pending.iter().find_map(|item| {
+        model
+            .store
+            .mark_provider_mirror_failed("ttxq", &item.external_id, &item.payload_hash, message)
+            .err()
+            .map(|error| error.to_string())
+    })
+}
+
+pub(crate) async fn publish_pending_ttxq_mirrors_impl(
+    state: &DesktopState,
+) -> Result<TtxqSyncProgressDto, String> {
+    let publish_lock = TTXQ_MIRROR_PUBLISH_LOCK.get_or_init(|| tokio::sync::Mutex::new(()));
+    let _publish_guard = publish_lock.lock().await;
+    let (server_url, token) = {
+        let model = state
+            .model
+            .lock()
+            .map_err(|_| "本地棋谱库不可用".to_owned())?;
+        let preferences = model
+            .store
+            .desktop_preferences()
+            .map_err(|error| error.to_string())?;
+        (
+            preferences.server_url,
+            crate::sync_service::active_sync_token(state)?,
+        )
+    };
+    let Some(token) = token else {
+        let counts = state
+            .model
+            .lock()
+            .map_err(|_| "本地棋谱库不可用".to_owned())?
+            .store
+            .provider_mirror_queue_counts("ttxq")
+            .map_err(|error| error.to_string())?;
+        let mut sync = state
+            .ttxq_sync
+            .lock()
+            .map_err(|_| "天天象棋同步状态不可用".to_owned())?;
+        sync.progress.phase = if counts.pending > 0 {
+            "等待重试".into()
+        } else {
+            "上传云端".into()
+        };
+        sync.progress.cloud_pending = counts.pending as usize;
+        sync.progress.cloud_uploaded = counts.uploaded as usize;
+        sync.progress.cloud_rejected = counts.rejected as usize;
+        if sync.progress.cloud_failed == 0 && sync.progress.cloud_rejected == 0 {
+            sync.progress.message = "本地导入已完成；登录 Xiangqi Studio 后将上传云镜像".into();
+        } else if sync.progress.cloud_failed == 0 {
+            sync.progress.message = format!(
+                "本地导入已完成；{} 盘数据无效或过大，无法上传云镜像",
+                sync.progress.cloud_rejected
+            );
+        }
+        return Ok(sync.progress.clone());
+    };
+    crate::engine_service::validate_server_url(&server_url)?;
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|error| format!("无法创建云镜像上传连接：{error}"))?;
+    loop {
+        let pending_candidates = state
+            .model
+            .lock()
+            .map_err(|_| "本地棋谱库不可用".to_owned())?
+            .store
+            .pending_provider_mirrors("ttxq", 50)
+            .map_err(|error| error.to_string())?;
+        if pending_candidates.is_empty() {
+            break;
+        }
+        let (pending, body) =
+            match encode_provider_upload_batch(&pending_candidates, PROVIDER_IMPORT_MAX_BODY_BYTES)
+            {
+                Ok(batch) => batch,
+                Err(message) => {
+                    let item = &pending_candidates[0];
+                    state
+                        .model
+                        .lock()
+                        .map_err(|_| "本地棋谱库不可用".to_owned())?
+                        .store
+                        .mark_provider_mirror_rejected(
+                            "ttxq",
+                            &item.external_id,
+                            &item.payload_hash,
+                            &message,
+                        )
+                        .map_err(|error| error.to_string())?;
+                    update_cloud_retry_progress(state, &message)?;
+                    continue;
+                }
+            };
+        {
+            let mut sync = state
+                .ttxq_sync
+                .lock()
+                .map_err(|_| "天天象棋同步状态不可用".to_owned())?;
+            sync.progress.phase = "上传云端".into();
+            sync.progress.message = format!("正在上传 {} 盘天天象棋云镜像", pending.len());
+        }
+        let response = client
+            .post(format!(
+                "{}/api/v1/personal-manual-sync/provider-imports",
+                server_url.trim_end_matches('/')
+            ))
+            .bearer_auth(&token)
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(body)
+            .send()
+            .await;
+        let response = match response {
+            Ok(response) => response,
+            Err(error) => {
+                let mut message = format!("云镜像上传失败：{error}");
+                let mut model = state
+                    .model
+                    .lock()
+                    .map_err(|_| "本地棋谱库不可用".to_owned())?;
+                if let Some(queue_error) =
+                    mark_provider_batch_failed(&mut model, &pending, &message)
+                {
+                    message.push_str(&format!("；更新重试状态失败：{queue_error}"));
+                }
+                drop(model);
+                update_cloud_retry_progress(state, &message)?;
+                return Err(message);
+            }
+        };
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            crate::sync_service::clear_sync_token(state)?;
+            state
+                .model
+                .lock()
+                .map_err(|_| "本地棋谱库不可用".to_owned())?
+                .store
+                .set_sync_token_expired(true)
+                .map_err(|error| error.to_string())?;
+            update_cloud_retry_progress(state, "登录已过期；本地棋谱已保留，重新登录后重试")?;
+            return Err("登录已过期，请重新登录".into());
+        }
+        let status = response.status();
+        if !status.is_success() {
+            let mut message = format!("云镜像服务返回错误 {status}");
+            let mut model = state
+                .model
+                .lock()
+                .map_err(|_| "本地棋谱库不可用".to_owned())?;
+            if let Some(queue_error) = mark_provider_batch_failed(&mut model, &pending, &message) {
+                message.push_str(&format!("；更新重试状态失败：{queue_error}"));
+            }
+            drop(model);
+            update_cloud_retry_progress(state, &message)?;
+            return Err(message);
+        }
+        let body: ProviderImportUploadResponse = match response.json().await {
+            Ok(body) => body,
+            Err(error) => {
+                let mut message = format!("云镜像服务返回了无效数据：{error}");
+                let mut model = state
+                    .model
+                    .lock()
+                    .map_err(|_| "本地棋谱库不可用".to_owned())?;
+                if let Some(queue_error) =
+                    mark_provider_batch_failed(&mut model, &pending, &message)
+                {
+                    message.push_str(&format!("；更新重试状态失败：{queue_error}"));
+                }
+                drop(model);
+                update_cloud_retry_progress(state, &message)?;
+                return Err(message);
+            }
+        };
+        let acknowledged = body
+            .records
+            .into_iter()
+            .map(|record| (record.external_id, record.payload_hash))
+            .collect::<HashSet<_>>();
+        let acknowledged_count = acknowledged.len();
+        let uploaded_at = Utc::now().to_rfc3339();
+        let mut model = state
+            .model
+            .lock()
+            .map_err(|_| "本地棋谱库不可用".to_owned())?;
+        for item in &pending {
+            if acknowledged.contains(&(item.external_id.clone(), item.payload_hash.clone())) {
+                model
+                    .store
+                    .mark_provider_mirror_uploaded(
+                        "ttxq",
+                        &item.external_id,
+                        &item.payload_hash,
+                        &uploaded_at,
+                    )
+                    .map_err(|error| error.to_string())?;
+            } else {
+                model
+                    .store
+                    .mark_provider_mirror_failed(
+                        "ttxq",
+                        &item.external_id,
+                        &item.payload_hash,
+                        "服务端未确认该镜像",
+                    )
+                    .map_err(|error| error.to_string())?;
+            }
+        }
+        if acknowledged_count < pending.len() {
+            drop(model);
+            update_cloud_retry_progress(state, "部分云镜像未被服务端确认，已保留并等待重试")?;
+            break;
+        }
+    }
+    let counts = state
+        .model
+        .lock()
+        .map_err(|_| "本地棋谱库不可用".to_owned())?
+        .store
+        .provider_mirror_queue_counts("ttxq")
+        .map_err(|error| error.to_string())?;
+    let mut sync = state
+        .ttxq_sync
+        .lock()
+        .map_err(|_| "天天象棋同步状态不可用".to_owned())?;
+    sync.progress.cloud_pending = counts.pending as usize;
+    sync.progress.cloud_uploaded = counts.uploaded as usize;
+    sync.progress.cloud_rejected = counts.rejected as usize;
+    if sync.progress.cloud_failed > 0 {
+        sync.progress.state = "partial".into();
+        sync.progress.phase = "等待重试".into();
+        if !sync.progress.message.contains("未加入云端队列") {
+            sync.progress.message = format!(
+                "云镜像已上传 {} 盘；{} 盘未加入云端队列，请重新同步当前列表",
+                counts.uploaded, sync.progress.cloud_failed
+            );
+        }
+    } else if sync.progress.cloud_rejected > 0 {
+        sync.progress.state = "partial".into();
+        sync.progress.phase = "上传云端".into();
+        sync.progress.message = format!(
+            "云镜像已上传 {} 盘；{} 盘数据无效或过大，需修复数据后重新导入",
+            counts.uploaded, sync.progress.cloud_rejected
+        );
+    } else {
+        sync.progress.phase = if sync.progress.auto_sync_enabled {
+            "监听当前列表".into()
+        } else {
+            "上传云端".into()
+        };
+        sync.progress.message = format!("云镜像已上传 {} 盘", counts.uploaded);
+    }
+    Ok(sync.progress.clone())
+}
+
+fn update_cloud_retry_progress(state: &DesktopState, message: &str) -> Result<(), String> {
+    let counts = state
+        .model
+        .lock()
+        .map_err(|_| "本地棋谱库不可用".to_owned())?
+        .store
+        .provider_mirror_queue_counts("ttxq")
+        .map_err(|error| error.to_string())?;
+    let mut sync = state
+        .ttxq_sync
+        .lock()
+        .map_err(|_| "天天象棋同步状态不可用".to_owned())?;
+    sync.progress.phase = "等待重试".into();
+    sync.progress.cloud_pending = counts.pending as usize;
+    sync.progress.cloud_uploaded = counts.uploaded as usize;
+    sync.progress.cloud_rejected = counts.rejected as usize;
+    sync.progress.message = message.into();
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) async fn publish_pending_ttxq_mirrors(
+    state: State<'_, DesktopState>,
+) -> Result<TtxqSyncProgressDto, String> {
+    publish_pending_ttxq_mirrors_impl(&state).await
 }
 
 fn insert_ttxq_variation(
@@ -8115,7 +9095,7 @@ if (raw.path !== 'bridge-snapshot') throw new Error('unchanged previous-game mov
     }
 
     #[test]
-    fn remote_bridge_capability_is_limited_to_ttxq_and_three_commands() {
+    fn remote_bridge_capability_is_limited_to_ttxq_and_four_commands() {
         let capability: serde_json::Value =
             serde_json::from_str(include_str!("../capabilities/ttxq-bridge.json")).unwrap();
         assert_eq!(capability["local"], false);
@@ -8139,8 +9119,71 @@ if (raw.path !== 'bridge-snapshot') throw new Error('unchanged previous-game mov
             "submit_ttxq_bridge_payload",
             "report_ttxq_read_progress",
             "report_ttxq_bridge_error",
+            "report_ttxq_visible_list_signature",
         ] {
             assert!(permissions.contains(&format!("\"{command}\"")));
         }
+    }
+
+    #[test]
+    fn visible_signature_is_deduplicated_and_newer_changes_replace_pending_work() {
+        let mut sync = TtxqSyncState::default();
+        sync.progress.auto_sync_enabled = true;
+
+        let first = register_visible_signature(&mut sync, "最近棋谱|1,2", "2026-10-10T10:00:00Z")
+            .expect("first signature should schedule work");
+        assert_eq!(sync.progress.phase, "检测到变化");
+        assert!(
+            register_visible_signature(&mut sync, "最近棋谱|1,2", "2026-10-10T10:00:01Z").is_none()
+        );
+
+        let second =
+            register_visible_signature(&mut sync, "最近棋谱|1,2,3", "2026-10-10T10:00:02Z")
+                .expect("changed signature should replace pending work");
+        assert!(second > first);
+        assert_eq!(sync.visible_signature.as_deref(), Some("最近棋谱|1,2,3"));
+
+        sync.processed_signature = sync.visible_signature.clone();
+        assert!(
+            register_visible_signature(&mut sync, "最近棋谱|1,2,3", "2026-10-10T10:00:03Z")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn visible_signature_is_ignored_while_auto_sync_is_disabled() {
+        let mut sync = TtxqSyncState::default();
+        assert!(
+            register_visible_signature(&mut sync, "最近棋谱|1", "2026-10-10T10:00:00Z").is_none()
+        );
+        assert!(sync.visible_signature.is_none());
+    }
+
+    #[test]
+    fn provider_upload_batch_respects_the_serialized_body_limit() {
+        let item = |external_id: &str| local_store::ProviderMirrorQueueItem {
+            provider: "ttxq".into(),
+            external_id: external_id.into(),
+            game_id: Uuid::new_v4(),
+            payload_hash: format!("sha256:{external_id}"),
+            snapshot_json: serde_json::json!({
+                "id": format!("ttxq:{external_id}"),
+                "readOnly": true,
+                "note": "x".repeat(180),
+            })
+            .to_string(),
+            state: "pending".into(),
+            uploaded_at: None,
+            retry_count: 0,
+            last_error: None,
+            updated_at: "2026-10-10T10:00:00Z".into(),
+        };
+        let pending = vec![item("1"), item("2"), item("3")];
+        let (selected, body) = encode_provider_upload_batch(&pending, 520).unwrap();
+
+        assert_eq!(selected.len(), 1);
+        assert!(body.len() <= 520);
+        let request: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(request["records"].as_array().unwrap().len(), 1);
     }
 }

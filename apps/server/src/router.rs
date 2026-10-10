@@ -16,7 +16,10 @@ use crate::master_library::{
     find_related_master_games, list_master_player_games, list_master_players, master_game_detail,
     master_library_stats, master_opening_profile,
 };
-use crate::personal_manual_sync::{status as personal_manual_sync_status, sync as sync_personal_manuals};
+use crate::personal_manual_sync::{
+    list_provider_imports, publish_provider_imports, status as personal_manual_sync_status,
+    sync as sync_personal_manuals,
+};
 use crate::reference_library::{
     confirm_reference_batch, create_reference_source, list_openings, list_reference_fingerprints,
     list_reference_games, offline_package_manifest, opening_detail, publish_reference_chunk,
@@ -101,7 +104,16 @@ pub(crate) fn router(state: AppState, cors: CorsLayer) -> Router {
             "/api/v1/personal-manual-sync",
             post(sync_personal_manuals).layer(DefaultBodyLimit::max(4 * 1024 * 1024)),
         )
-        .route("/api/v1/personal-manual-sync/status", get(personal_manual_sync_status))
+        .route(
+            "/api/v1/personal-manual-sync/status",
+            get(personal_manual_sync_status),
+        )
+        .route(
+            "/api/v1/personal-manual-sync/provider-imports",
+            get(list_provider_imports)
+                .post(publish_provider_imports)
+                .layer(DefaultBodyLimit::max(4 * 1024 * 1024)),
+        )
         .route("/api/v1/subscription", get(subscription))
         .route("/api/v1/subscription/redeem", post(redeem_code))
         .route("/api/v1/analysis", post(analyze))

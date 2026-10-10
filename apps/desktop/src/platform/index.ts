@@ -466,6 +466,9 @@ class DesktopPlatform implements ChessPlatform {
   listTtxqDiagnosticSamples() { return invoke<TtxqDiagnosticSample[]>("list_ttxq_diagnostic_samples"); }
   clearTtxqDiagnosticSamples() { return invoke<void>("clear_ttxq_diagnostic_samples"); }
   startTtxqAuthorization() { return invoke<void>("start_ttxq_authorization"); }
+  setTtxqAutoSync(enabled: boolean, targetFolder?: string) { return invoke<TtxqSyncProgress>("set_ttxq_auto_sync", { enabled, targetFolder: targetFolder ?? null }); }
+  syncTtxqCurrentListNow(targetFolder?: string) { return invoke<void>("sync_ttxq_current_list_now", { targetFolder: targetFolder ?? null }); }
+  publishPendingTtxqMirrors() { return invoke<TtxqSyncProgress>("publish_pending_ttxq_mirrors"); }
   collectTtxqHistory() { return invoke<void>("collect_ttxq_h5_history"); }
   importTtxqHistory(targetFolder?: string) { return invoke<TtxqSyncProgress>("import_ttxq_history", { targetFolder: targetFolder ?? null }); }
   disconnectTtxq() { return invoke<void>("disconnect_ttxq"); }
@@ -1257,6 +1260,9 @@ class WebPlatform implements ChessPlatform {
   async listTtxqDiagnosticSamples(): Promise<TtxqDiagnosticSample[]> { throw new Error("Web 端暂不支持天天象棋账号同步"); }
   async clearTtxqDiagnosticSamples(): Promise<void> { throw new Error("Web 端暂不支持天天象棋账号同步"); }
   async startTtxqAuthorization(): Promise<void> { throw new Error("Web 端暂不支持天天象棋账号同步"); }
+  async setTtxqAutoSync(): Promise<TtxqSyncProgress> { throw new Error("Web 端暂不支持天天象棋账号同步"); }
+  async syncTtxqCurrentListNow(_targetFolder?: string): Promise<void> { throw new Error("Web 端暂不支持天天象棋账号同步"); }
+  async publishPendingTtxqMirrors(): Promise<TtxqSyncProgress> { throw new Error("Web 端暂不支持天天象棋账号同步"); }
   async collectTtxqHistory(): Promise<void> { throw new Error("Web 端暂不支持天天象棋账号同步"); }
   async importTtxqHistory(): Promise<TtxqSyncProgress> { throw new Error("Web 端暂不支持天天象棋账号同步"); }
   async disconnectTtxq(): Promise<void> { throw new Error("Web 端暂不支持天天象棋账号同步"); }

@@ -13,7 +13,7 @@ import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, Chevron
 import { type CSSProperties, type PointerEvent as ReactPointerEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import { trainingStore } from "./store";
 import type { Attempt, BoardPiece, BoardState, LocalManualAnalysisSummary, LocalManualFolder, LocalManualGame, MobileWorkspaceMode, RuleMode, SolutionMove, TrainingLibrary, TrainingProblem } from "./types";
-import { acceptsMove, boardAt, cancelPikafishSearch, chineseLine, hasLocalPikafish, parseCbl, parseCblGames, queryCloudBook, queryPikafishAnalysis, queryPikafishReply, type CloudBookMove, type PikafishAnalysisLine } from "./wasm";
+import { acceptsMove, boardAt, cancelPikafishSearch, chineseLine, hasLocalPikafish, parseCbl, parseCblGames, queryCloudBook, queryPikafishAnalysis, queryPikafishReply, type CloudBookMove, type PikafishAnalysis, type PikafishAnalysisLine } from "./wasm";
 import { deriveTrainingFeedback, playTrainingFeedback, TRAINING_FEEDBACK_PACK, type TrainingFeedbackKind } from "./moveFeedback";
 import { setPreferredOrientation, type PreferredOrientation } from "./orientation";
 import { DEFAULT_SKIN_ID, LEGACY_DEFAULT_SKIN_ID, SKIN_CATALOG, normalizeSkinId, skinById, type SkinCatalogItem } from "./skinCatalog";
@@ -22,6 +22,7 @@ import { applyTrainingLogicSidecar, trainingLogicHint, trainingLogicMiss } from 
 import { allowTeacherNavigation, OrganizationSearchSelect, TeacherMobileWorkspace } from "./TeacherMobileWorkspace";
 import { teachingClient, type PersonalManualSyncStatus as RemoteManualSyncStatus, type PlatformGame, type PlatformGameLibrary, type PracticeHome, type PracticeSession, type PracticeSessionItem, type PracticeTopic, type PracticeTopicDetail, type PracticeSearchResult, type TeachingAssignment, type TeachingAssignmentResults, type TeachingAuth, type TeachingClass, type TeachingOrganization, type TeachingOrganizationJoinRequest, type TeachingStudent } from "./teaching";
 import { packageEnvironment, packageEnvironmentLabel, type AppEnvironment } from "./appEnvironment";
+import { assertManualGameEditable, copyProviderMirrorToEditable, TTXQ_MIRROR_FOLDER } from "./providerMirrors";
 
 type Mode = "cloud" | "ai" | "solver" | "replay" | "free";
 type StudyPanelTab = "engine" | "cloud" | "manual";
@@ -30,6 +31,7 @@ type TabletNavigationPosition = "sidebar" | "bottom";
 type MobileRoute = MobilePrimaryTab | "library-browse" | "game-browse" | "practice-setup" | "practice-session" | "practice-mistakes" | "practice-favorites" | "practice-result" | "practice-topic" | "practice-search" | "practice-assets" | "onboarding" | "tool-manual" | "tool-study" | "tool-setup" | "tool-sync" | "tool-settings" | "teacher";
 type ManualPanelTab = "moves" | "analysis" | "library";
 type ManualAnalysisView = "trend" | "report" | "issues";
+const TTXQ_MIRROR_OWNER_KEY = "xiangqi-ttxq-mirror-owner";
 type Square = { row: number; col: number };
 type AnalysisLine = PikafishAnalysisLine & { notation: string[] };
 type StudyBranch = StudyManualBranch;
@@ -1557,7 +1559,7 @@ function MobileSettingsPanel({ boardSkin, pieceSkin, boardSkinInfo, riverText, r
 function MobileManualSyncPanel({ auth, syncing, stats, status, remoteStatus, onBack, onLogin, onSync }: {
   auth?: TeachingAuth;
   syncing: boolean;
-  stats: { games: number; folders: number; analyses: number };
+  stats: { games: number; folders: number; analyses: number; mirrors: number };
   status?: ManualCloudSyncStatus;
   remoteStatus?: RemoteManualSyncStatus;
   onBack(): void;
@@ -1573,11 +1575,11 @@ function MobileManualSyncPanel({ auth, syncing, stats, status, remoteStatus, onB
     </section> : <>
       <section className="mobile-sync-summary">
         <header><span className="mobile-account-avatar"><CloudUpload/></span><div><strong>{auth.user.displayName}</strong><small>个人棋谱仅归当前账号私有保存</small></div></header>
-        <div className="mobile-sync-stats"><span><b>{stats.games}</b><small>本地棋谱</small></span><span><b>{stats.folders}</b><small>目录</small></span><span><b>{stats.analyses}</b><small>分析摘要</small></span></div>
+        <div className="mobile-sync-stats"><span><b>{stats.games}</b><small>个人棋谱</small></span><span><b>{stats.mirrors}</b><small>只读镜像</small></span><span><b>{stats.folders}</b><small>目录</small></span><span><b>{stats.analyses}</b><small>分析摘要</small></span></div>
       </section>
       <section className={`mobile-sync-status ${status?.outcome === "error" ? "error" : ""}`} aria-live="polite"><header><span><RefreshCw/><strong>{syncing ? "正在同步" : "上次同步"}</strong></span><small>{syncing ? "请勿关闭应用" : lastSynced}</small></header><p>{syncing ? "正在同步个人录谱、目录、注释与分析摘要。" : status?.message ?? (remoteStatus?.lastSyncedAt ? `云端已保存 ${remoteStatus.gameCount} 份棋谱、${remoteStatus.folderCount} 个目录。` : "尚未同步到云端。")}</p></section>
       <button type="button" className="mobile-sync-submit" disabled={syncing} onClick={onSync}><CloudUpload/>{syncing ? "正在同步..." : "立即同步"}</button>
-      <section className="mobile-sync-privacy"><Eye/><div><strong>同步范围</strong><p>仅同步个人录谱、目录、注释和分析摘要。不上传 CBL 题库、练习记录或老师作业。</p></div></section>
+      <section className="mobile-sync-privacy"><Eye/><div><strong>同步范围</strong><p>个人录谱、目录、注释和分析摘要支持双向同步；天天象棋云镜像只读下载，编辑前需复制到我的棋谱。</p></div></section>
     </>}
   </main>;
 }
@@ -2360,6 +2362,7 @@ export function App() {
   const [studyMoveTextOpen, setStudyMoveTextOpen] = useState(initialStudyState.showMoveText === true);
   const [manualFolders, setManualFolders] = useState<LocalManualFolder[]>([]);
   const manualLibraryRequest = useRef(0);
+  const manualMirrorRequest = useRef(0);
   const [manualGames, setManualGames] = useState<LocalManualGame[]>([]);
   const [manualQuery, setManualQuery] = useState("");
   const [manualFolder, setManualFolder] = useState("");
@@ -2410,7 +2413,7 @@ export function App() {
   const [manualCloudSyncing, setManualCloudSyncing] = useState(false);
   const [manualCloudSyncMessage, setManualCloudSyncMessage] = useState("仅同步个人录谱、目录和本地分析，不上传 CBL 题库。");
   const [manualCloudSyncStatus, setManualCloudSyncStatus] = useState<ManualCloudSyncStatus | undefined>(() => readManualCloudSyncStatus(teachingClient.auth()));
-  const [manualCloudSyncStats, setManualCloudSyncStats] = useState({ games: 0, folders: 0, analyses: 0 });
+  const [manualCloudSyncStats, setManualCloudSyncStats] = useState({ games: 0, folders: 0, analyses: 0, mirrors: 0 });
   const [manualCloudRemoteStatus, setManualCloudRemoteStatus] = useState<RemoteManualSyncStatus>();
   const [manualIssueSide, setManualIssueSide] = useState<"red" | "black">("red");
   const [boardFlipped, setBoardFlipped] = useState(() => localStorage.getItem("xiangqi-training-board-flipped") === "true");
@@ -2448,7 +2451,9 @@ export function App() {
   const expected = useMemo(() => line.map((item) => item.iccs), [line]);
   const currentStudyMoves = useMemo(() => studyMoves.slice(0, Math.min(studyCursor, studyMoves.length)), [studyCursor, studyMoves]);
   const currentManualMoves = useMemo(() => manualMoves.slice(0, Math.min(manualCursor, manualMoves.length)), [manualCursor, manualMoves]);
+  const manualReadOnly = manualGame?.readOnly === true || manualGame?.origin?.kind === "providerMirror";
   const manualFolderPath = cleanManualFolderPath(manualFolder);
+  const manualMirrorFolderSelected = manualFolderPath === TTXQ_MIRROR_FOLDER || manualFolderPath.startsWith(`${TTXQ_MIRROR_FOLDER}/`);
   const manualBreadcrumbs = useMemo(() => manualFolderBreadcrumbs(manualFolderPath), [manualFolderPath]);
   const studyNoticePersistent = persistentStudyNotice(studyNotice);
   const boardSkinInfo = skinById(boardSkin);
@@ -2516,7 +2521,7 @@ export function App() {
 
   useEffect(() => {
     let cancelled = false;
-    if (!manualSelected || manualTerminal) {
+    if (!manualSelected || manualTerminal || manualReadOnly) {
       setManualLegalTargets([]);
       return () => { cancelled = true; };
     }
@@ -2535,7 +2540,7 @@ export function App() {
       if (!cancelled) setManualLegalTargets(targets.filter((target): target is Square => Boolean(target)));
     });
     return () => { cancelled = true; };
-  }, [currentManualMoves, manualPieces, manualSelected, manualStartingFen, manualTerminal, studyRuleMode]);
+  }, [currentManualMoves, manualPieces, manualReadOnly, manualSelected, manualStartingFen, manualTerminal, studyRuleMode]);
 
   async function availableLibraries(authOverride = teachingAuth) {
     const [local, teaching, platform] = await Promise.all([
@@ -2575,6 +2580,7 @@ export function App() {
   function applyTeachingAuth(auth: TeachingAuth, switched = false) {
     setTeachingAuth(auth);
     setTeachingLastSyncAt(teachingClient.lastSyncAt());
+    void syncProviderManualMirrors(true);
     if (auth.user.role === "student") {
       setStudentAssignmentsOpen(true);
       setTeachingMessage(switched ? `已切换到${auth.user.orgName ?? "新机构"}，正在同步作业` : "");
@@ -2604,6 +2610,7 @@ export function App() {
           return;
         }
         setTeachingAuth(auth);
+        void syncProviderManualMirrors(true);
         if (previous.user.vipActive !== auth.user.vipActive) {
           void refresh(auth);
           void refreshPracticeHome();
@@ -2630,6 +2637,20 @@ export function App() {
       return;
     }
     await resetAnalysis("training");
+  }
+  async function queryAvailableAnalysis(fen: string, moveTimeMs: number, multiPv: number): Promise<PikafishAnalysis> {
+    if (LOCAL_PIKAFISH_AVAILABLE) return queryPikafishAnalysis(fen, moveTimeMs, multiPv);
+    const result = await teachingClient.analyzePosition(fen, moveTimeMs, multiPv);
+    const lines: PikafishAnalysisLine[] = result.lines.map((line) => ({
+      multipv: line.multipv,
+      depth: line.depth ?? 0,
+      scoreCp: line.scoreCp,
+      mate: line.mate,
+      nodes: 0,
+      nps: line.nps ?? 0,
+      pv: line.pv,
+    }));
+    return { bestMove: lines[0]?.pv[0] ?? "", lines };
   }
   async function selectLibrary(next: TrainingLibrary) {
     session.current += 1;
@@ -3065,7 +3086,7 @@ export function App() {
     const target = workspaceMode;
     const standalone = target === "study" || target === "manual";
     const terminal = target === "manual" ? manualTerminal : studyTerminal;
-    if (!LOCAL_PIKAFISH_AVAILABLE || (standalone && terminal) || (!standalone && (!problem || autoReplyPending || revealed))) return;
+    if ((!LOCAL_PIKAFISH_AVAILABLE && !teachingClient.auth()) || (standalone && terminal) || (!standalone && (!problem || autoReplyPending || revealed))) return;
     const startingFen = target === "manual" ? manualStartingFen : standalone ? studyStartingFen : problem!.startingFen;
     const currentMoves = target === "manual" ? currentManualMoves : standalone ? currentStudyMoves : moves;
     const request = ++analysisGeneration.current;
@@ -3079,21 +3100,21 @@ export function App() {
     if (target === "study") {
       setStudyAnalysisLines([]);
       setStudyActiveAnalysis(0);
-      setStudyNotice("Pikafish 正在分析当前局面…");
+      setStudyNotice(`${LOCAL_PIKAFISH_AVAILABLE ? "本地" : "服务端"} Pikafish 正在分析当前局面…`);
     } else if (target === "manual") {
       setManualAnalysisLines([]);
       setManualActiveAnalysis(0);
-      setManualNotice("Pikafish 正在分析当前录谱局面…");
+      setManualNotice(`${LOCAL_PIKAFISH_AVAILABLE ? "本地" : "服务端"} Pikafish 正在分析当前录谱局面…`);
     } else {
       setTrainingAnalysisLines([]);
       setTrainingActiveAnalysis(0);
-      setNotice("Pikafish 正在分析当前局面…");
+      setNotice(`${LOCAL_PIKAFISH_AVAILABLE ? "本地" : "服务端"} Pikafish 正在分析当前局面…`);
     }
     try {
       await waitForNextPaint();
       if (request !== analysisGeneration.current) return;
       const position = await boardAt(startingFen, currentMoves, standalone ? studyRuleMode : "domestic2020");
-      const result = await queryPikafishAnalysis(position.fen, analysisMoveTimeSec * 1000, requestedMultiPv);
+      const result = await queryAvailableAnalysis(position.fen, analysisMoveTimeSec * 1000, requestedMultiPv);
       const translated = await Promise.all(result.lines.filter((item) => item.pv.length > 0).map(async (item) => ({ ...item, notation: await chineseLine(position.fen, item.pv).catch(() => item.pv) })));
       if (request !== analysisGeneration.current) return;
       const sorted = translated.sort((left, right) => left.multipv - right.multipv);
@@ -3117,7 +3138,7 @@ export function App() {
   }
   async function stopAnalysis() { await resetAnalysis(); if (studyMode) setStudyNotice("已停止 AI 拆棋。"); else if (manualMode) setManualNotice("已停止 AI 分析。"); else setNotice("已停止 AI 拆棋。"); }
   async function enableStudyEngine() {
-    if (!LOCAL_PIKAFISH_AVAILABLE || studyTerminal) return;
+    if ((!LOCAL_PIKAFISH_AVAILABLE && !teachingClient.auth()) || studyTerminal) return;
     localStorage.setItem(STUDY_ENGINE_ENABLED_KEY, "true");
     setStudyEngineEnabled(true);
     setAnalysisArrowsVisible(true);
@@ -3774,8 +3795,10 @@ export function App() {
       trainingStore.manualGames(folder || undefined, queryText || undefined),
     ]);
     if (request !== manualLibraryRequest.current) return;
+    const mirrorOwner = teachingClient.providerManualMirrorOwnerKey();
+    const cachedMirrorOwner = localStorage.getItem(TTXQ_MIRROR_OWNER_KEY) ?? undefined;
     setManualFolders(folders);
-    setManualGames(games);
+    setManualGames(games.filter((game) => !game.readOnly || (mirrorOwner && mirrorOwner === cachedMirrorOwner)));
   }
 
   async function refreshManualCloudSyncStats() {
@@ -3784,7 +3807,8 @@ export function App() {
       trainingStore.manualFolders(),
       trainingStore.manualAnalyses(),
     ]);
-    setManualCloudSyncStats({ games: games.length, folders: folders.length, analyses: analyses.length });
+    const mirrors = games.filter((game) => game.readOnly && game.origin?.kind === "providerMirror").length;
+    setManualCloudSyncStats({ games: games.length - mirrors, folders: folders.length, analyses: analyses.length, mirrors });
     const auth = teachingClient.auth();
     if (!auth) {
       setManualCloudRemoteStatus(undefined);
@@ -3802,6 +3826,49 @@ export function App() {
     const next: Record<string, LocalManualAnalysisSummary> = {};
     for (const summary of summaries) if (summary.gameId === gameId) next[summary.nodeId] = summary;
     setManualAnalysisSummaries(next);
+  }
+
+  async function syncProviderManualMirrors(silent = false) {
+    const ownerKey = teachingClient.providerManualMirrorOwnerKey();
+    if (!ownerKey) return 0;
+    const request = ++manualMirrorRequest.current;
+    try {
+      const response = await teachingClient.providerManualMirrors();
+      if (request !== manualMirrorRequest.current || teachingClient.providerManualMirrorOwnerKey() !== ownerKey) return 0;
+      const previousOwner = localStorage.getItem(TTXQ_MIRROR_OWNER_KEY);
+      if (previousOwner !== ownerKey) {
+        const existing = await trainingStore.manualGames();
+        for (const game of existing) {
+          if (request !== manualMirrorRequest.current || teachingClient.providerManualMirrorOwnerKey() !== ownerKey) return 0;
+          if (game.readOnly && game.origin?.kind === "providerMirror") await trainingStore.deleteManualGame(game.id);
+        }
+      }
+      await trainingStore.createManualFolder(TTXQ_MIRROR_FOLDER).catch(() => undefined);
+      let imported = 0;
+      for (const record of response.records) {
+        if (request !== manualMirrorRequest.current || teachingClient.providerManualMirrorOwnerKey() !== ownerKey) return imported;
+        const snapshot = record.snapshot;
+        const valid = record.provider === "ttxq"
+          && snapshot.id === `ttxq:${record.externalId}`
+          && snapshot.readOnly === true
+          && snapshot.origin?.kind === "providerMirror"
+          && snapshot.origin.provider === "ttxq"
+          && snapshot.origin.externalId === record.externalId
+          && snapshot.origin.payloadHash === record.payloadHash
+          && Array.isArray(snapshot.moves)
+          && typeof snapshot.startingFen === "string";
+        if (!valid) continue;
+        await trainingStore.saveManualGame({ ...snapshot, folderPath: TTXQ_MIRROR_FOLDER, readOnly: true });
+        imported += 1;
+      }
+      localStorage.setItem(TTXQ_MIRROR_OWNER_KEY, ownerKey);
+      await refreshManualLibrary();
+      await refreshManualCloudSyncStats();
+      return imported;
+    } catch (error) {
+      if (!silent) throw error;
+      return 0;
+    }
   }
 
   async function syncPersonalManualLibrary() {
@@ -3828,27 +3895,32 @@ export function App() {
       const result = await teachingClient.syncPersonalManuals(games, folders, analyses);
       const active = result.records.filter((record) => !record.deleted);
       for (const record of active.filter((record) => record.kind === "folder")) {
+        if (record.id === TTXQ_MIRROR_FOLDER || record.id.startsWith(`${TTXQ_MIRROR_FOLDER}/`)) continue;
         await trainingStore.createManualFolder((record.payload as LocalManualFolder).path);
       }
       for (const record of active.filter((record) => record.kind === "game")) {
+        if (record.id.startsWith("ttxq:")) continue;
         await trainingStore.saveManualGame(record.payload as LocalManualGame);
       }
       for (const record of result.records.filter((record) => record.deleted && record.kind === "game" && localGameIds.has(record.id))) {
         await trainingStore.deleteManualGame(record.id);
       }
       for (const record of active.filter((record) => record.kind === "analysis")) {
+        if (record.id.startsWith("ttxq:")) continue;
         await trainingStore.saveManualAnalysis(record.payload as LocalManualAnalysisSummary);
       }
       for (const record of result.records.filter((record) => record.deleted && record.kind === "folder" && localFolderPaths.has(record.id))) {
+        if (record.id === TTXQ_MIRROR_FOLDER || record.id.startsWith(`${TTXQ_MIRROR_FOLDER}/`)) continue;
         await trainingStore.deleteManualFolder(record.id);
       }
       teachingClient.completePersonalManualSync(result);
+      const mirrorCount = await syncProviderManualMirrors(true);
       await refreshManualLibrary();
       if (manualGame) await loadManualAnalyses(manualGame.id);
-      const cloudGames = active.filter((record) => record.kind === "game").length;
-      const cloudFolders = active.filter((record) => record.kind === "folder").length;
+      const cloudGames = active.filter((record) => record.kind === "game" && !record.id.startsWith("ttxq:")).length;
+      const cloudFolders = active.filter((record) => record.kind === "folder" && record.id !== TTXQ_MIRROR_FOLDER && !record.id.startsWith(`${TTXQ_MIRROR_FOLDER}/`)).length;
       const conflicts = result.conflictCount ? `，保留 ${result.conflictCount} 份冲突副本` : "";
-      const message = `同步完成：云端 ${cloudGames} 份棋谱、${cloudFolders} 个目录${conflicts}。`;
+      const message = `同步完成：云端 ${cloudGames} 份个人棋谱、${cloudFolders} 个目录，下载 ${mirrorCount} 份天天象棋只读镜像${conflicts}。`;
       const status = { at: new Date().toISOString(), outcome: "success" as const, message };
       writeManualCloudSyncStatus(auth, status);
       setManualCloudSyncStatus(status);
@@ -3886,12 +3958,15 @@ export function App() {
       cursor,
       branches: overrides.branches ?? manualBranches,
       comments: overrides.comments ?? manualComments,
+      origin: overrides.origin ?? manualGame?.origin,
+      readOnly: overrides.readOnly ?? manualGame?.readOnly,
       createdAt: overrides.createdAt ?? manualGame?.createdAt ?? now,
       updatedAt: overrides.updatedAt ?? now,
     };
   }
 
   async function saveManualGame(overrides: Partial<LocalManualGame> = {}) {
+    assertManualGameEditable(manualGame);
     setManualSaveStatus("保存中");
     try {
       const saved = await trainingStore.saveManualGame(manualPayload(overrides));
@@ -3906,6 +3981,7 @@ export function App() {
   }
 
   async function saveManualGameAndShowLibrary() {
+    if (manualReadOnly) { setManualNotice("天天象棋云镜像为只读棋谱，请先复制到我的棋谱。"); return; }
     setManualSaveDraft(manualPayload());
   }
 
@@ -4031,7 +4107,7 @@ export function App() {
     setManualSelected(undefined);
     setManualLastMove(activeMoves.at(-1));
     setManualTerminal(terminalResult(state.ruleStatus ?? state.status));
-    setManualNotice(`已打开：${loaded.title}`);
+    setManualNotice(loaded.readOnly ? `已打开只读云镜像：${loaded.title}。如需编辑，请先复制到我的棋谱。` : `已打开：${loaded.title}`);
     setManualSaveStatus("已保存");
     setManualPanelTab("moves");
     setManualPanelOpen(false);
@@ -4040,28 +4116,45 @@ export function App() {
     await loadManualAnalyses(loaded.id);
   }
 
+  async function copyManualMirrorToMyLibrary(game = manualGame) {
+    if (!game?.readOnly && game?.origin?.kind !== "providerMirror") return;
+    const now = new Date().toISOString();
+    const copy = copyProviderMirrorToEditable(game, crypto.randomUUID(), now);
+    const saved = await trainingStore.saveManualGame(copy);
+    setManualFolder("");
+    setManualQuery("");
+    await openManualGame(saved);
+    await refreshManualLibrary("", "");
+    setManualNotice(`已复制到我的棋谱：${saved.title}`);
+  }
+
   async function createManualFolder() {
+    if (manualMirrorFolderSelected) { setManualNotice("天天象棋云镜像目录为只读，不能新建子目录。"); return; }
     setManualSheetError("");
     setManualSheet({ type: "folderCreate", parent: manualFolderPath, name: "" });
   }
 
   async function deleteManualFolder(path: string) {
+    if (path === TTXQ_MIRROR_FOLDER || path.startsWith(`${TTXQ_MIRROR_FOLDER}/`)) { setManualNotice("天天象棋云镜像目录不可删除。"); return; }
     setManualSheetError("");
     setManualSheet({ type: "folderDelete", target: path });
   }
 
   async function renameManualGame() {
+    if (manualReadOnly) { setManualNotice("天天象棋云镜像不可改名，请先复制到我的棋谱。"); return; }
     setManualSaveDraft(manualPayload());
   }
 
   async function moveManualGameToFolder(game = manualGame) {
     if (!game) return;
+    if (game.readOnly || game.origin?.kind === "providerMirror") { setManualNotice("天天象棋云镜像不可移动，请先复制到我的棋谱。"); return; }
     setManualSheetError("");
     setManualSheet({ type: "gameMove", game, folder: cleanManualFolderPath(game.folderPath ?? manualFolderPath) });
   }
 
   async function deleteManualGame(game = manualGame) {
     if (!game) return;
+    if (game.readOnly || game.origin?.kind === "providerMirror") { setManualNotice("天天象棋云镜像不可删除。"); return; }
     setManualSheetError("");
     setManualSheet({ type: "gameDelete", game });
   }
@@ -4096,6 +4189,7 @@ export function App() {
       return;
     }
     if (manualSheet.type === "gameInfo") {
+      if (manualReadOnly) { setManualSheetError("天天象棋云镜像为只读棋谱，请先复制到我的棋谱。"); return; }
       const title = manualSheet.title.trim();
       if (!title) { setManualSheetError("棋谱标题不能为空。"); setManualNotice("棋谱标题不能为空。"); return; }
       await saveManualGame({ title, note: manualSheet.note.trim() });
@@ -4124,6 +4218,7 @@ export function App() {
       return;
     }
     if (manualSheet.type === "folderRename") {
+      if (manualSheet.target === TTXQ_MIRROR_FOLDER || manualSheet.target.startsWith(`${TTXQ_MIRROR_FOLDER}/`)) { setManualSheetError("天天象棋云镜像目录不可重命名。"); return; }
       const next = cleanManualFolderPath(manualSheet.path);
       if (!next) { setManualSheetError("目录路径不能为空。"); setManualNotice("目录路径不能为空。"); return; }
       await trainingStore.renameManualFolder(manualSheet.target, next);
@@ -4135,6 +4230,7 @@ export function App() {
       return;
     }
     if (manualSheet.type === "folderDelete") {
+      if (manualSheet.target === TTXQ_MIRROR_FOLDER || manualSheet.target.startsWith(`${TTXQ_MIRROR_FOLDER}/`)) { setManualSheetError("天天象棋云镜像目录不可删除。"); return; }
       const parent = manualParentFolder(manualSheet.target);
       await trainingStore.deleteManualFolder(manualSheet.target);
       setManualFolder(parent);
@@ -4145,6 +4241,7 @@ export function App() {
       return;
     }
     if (manualSheet.type === "gameMove") {
+      if (manualSheet.game.readOnly || manualSheet.game.origin?.kind === "providerMirror") { setManualSheetError("天天象棋云镜像不可移动。"); return; }
       const folder = cleanManualFolderPath(manualSheet.folder);
       await trainingStore.moveManualGame(manualSheet.game.id, folder);
       if (manualSheet.game.id === manualGame?.id) setManualGame({ ...manualSheet.game, folderPath: folder || undefined });
@@ -4156,6 +4253,7 @@ export function App() {
     }
     if (manualSheet.type === "gameDelete") {
       const game = manualSheet.game;
+      if (game.readOnly || game.origin?.kind === "providerMirror") { setManualSheetError("天天象棋云镜像不可删除。"); return; }
       await trainingStore.deleteManualGame(game.id);
       if (manualGame?.id === game.id) {
         setManualGame(undefined);
@@ -4174,11 +4272,13 @@ export function App() {
   }
 
   async function renameManualFolder(path: string) {
+    if (path === TTXQ_MIRROR_FOLDER || path.startsWith(`${TTXQ_MIRROR_FOLDER}/`)) { setManualNotice("天天象棋云镜像目录不可重命名。"); return; }
     setManualSheetError("");
     setManualSheet({ type: "folderRename", target: path, path });
   }
 
   async function deleteManualGameConfirmed(game: LocalManualGame) {
+    if (game.readOnly || game.origin?.kind === "providerMirror") { setManualNotice("天天象棋云镜像不可删除。"); return; }
     await trainingStore.deleteManualGame(game.id);
     if (manualGame?.id === game.id) {
       setManualGame(undefined);
@@ -4194,6 +4294,7 @@ export function App() {
   }
 
   function rememberManualBranch(parentCursor: number, branchMoves: string[], branchNotation: string[], parentPath = manualMoves.slice(0, parentCursor)) {
+    if (manualReadOnly) return;
     if (!branchMoves.length) return;
     setManualBranches((items) => {
       const parentKey = parentPath.join(",");
@@ -4203,6 +4304,7 @@ export function App() {
   }
 
   async function playManualMove(iccs: string) {
+    if (manualReadOnly) { setManualNotice("天天象棋云镜像为只读棋谱，请先复制到我的棋谱再走棋。"); return; }
     if (manualTerminal) return;
     setManualAutoPlaying(false);
     if (manualCursor < manualMoves.length && manualMoves[manualCursor] === iccs) {
@@ -4249,7 +4351,7 @@ export function App() {
     setManualCurrentFen(state.fen);
     setManualTerminal(terminalResult(state.ruleStatus ?? state.status));
     setManualNotice(nextCursor ? `已定位到第 ${nextCursor} 手。` : "已回到起始局面。");
-    void saveManualGame({ cursor: nextCursor, currentFen: state.fen, currentNodeId: manualNodeId(nextCursor) });
+    if (!manualReadOnly) void saveManualGame({ cursor: nextCursor, currentFen: state.fen, currentNodeId: manualNodeId(nextCursor) });
   }
 
   function manualText() {
@@ -4326,12 +4428,13 @@ export function App() {
     setManualNotice("正在预览录谱主线。");
   }
 
-  async function runManualMenuAction(action: "training" | "rename" | "save" | "share" | "library" | "comment" | "setup" | "analysis" | "new" | "flip" | "start" | "play" | "end" | "exit") {
+  async function runManualMenuAction(action: "training" | "rename" | "save" | "share" | "copy" | "library" | "comment" | "setup" | "analysis" | "new" | "flip" | "start" | "play" | "end" | "exit") {
     setManualMenuOpen(false);
     if (action === "training" || action === "exit") await closeManualMode();
     else if (action === "rename") await renameManualGame();
     else if (action === "save") await saveManualGameAndShowLibrary();
     else if (action === "share") await shareManualText();
+    else if (action === "copy") await copyManualMirrorToMyLibrary();
     else if (action === "library") openManualPanel("library");
     else if (action === "comment") { openManualPanel("moves"); setManualNotice("正在查看当前棋谱与分支。"); }
     else if (action === "setup") await openManualSetup();
@@ -4357,7 +4460,7 @@ export function App() {
       boardAt(manualStartingFen, focusedMoves, studyRuleMode),
       chineseLine(manualStartingFen, fullMoves).catch(() => fullMoves),
     ]);
-    if (previousContinuation.length && previousContinuation.join(",") !== branch.moves.join(",")) rememberManualBranch(branch.parentCursor, previousContinuation, previousNotation, manualMoves.slice(0, branch.parentCursor));
+    if (!manualReadOnly && previousContinuation.length && previousContinuation.join(",") !== branch.moves.join(",")) rememberManualBranch(branch.parentCursor, previousContinuation, previousNotation, manualMoves.slice(0, branch.parentCursor));
     setManualMoves(fullMoves);
     setManualCursor(nextCursor);
     setManualNotation(notation);
@@ -4365,16 +4468,18 @@ export function App() {
     setManualLastMove(focusedMoves.at(-1));
     setManualCurrentFen(state.fen);
     setManualTerminal(terminalResult(state.ruleStatus ?? state.status));
-    setManualNotice("已切换录谱分支。");
-    void saveManualGame({ moves: fullMoves, cursor: nextCursor, currentFen: state.fen, currentNodeId: manualNodeId(nextCursor), branches: manualBranches });
+    setManualNotice(manualReadOnly ? "正在查看天天象棋云镜像分支，原棋谱未改变。" : "已切换录谱分支。");
+    if (!manualReadOnly) void saveManualGame({ moves: fullMoves, cursor: nextCursor, currentFen: state.fen, currentNodeId: manualNodeId(nextCursor), branches: manualBranches });
   }
 
   function deleteManualBranch(id: string) {
+    if (manualReadOnly) { setManualNotice("天天象棋云镜像为只读棋谱，请先复制后调整分支。"); return; }
     setManualBranches((items) => items.filter((item) => item.id !== id));
     setManualNotice("已删除录谱分支。");
   }
 
   function moveManualBranch(id: string, direction: -1 | 1) {
+    if (manualReadOnly) { setManualNotice("天天象棋云镜像为只读棋谱，请先复制后调整分支。"); return; }
     setManualBranches((items) => {
       const next = [...items];
       const index = next.findIndex((item) => item.id === id);
@@ -4386,6 +4491,7 @@ export function App() {
   }
 
   async function moveManual(square: Square) {
+    if (manualReadOnly) { setManualSelected(undefined); setManualNotice("天天象棋云镜像为只读棋谱，请先复制到我的棋谱再走棋。"); return; }
     const pieceAtTarget = manualPieces.find((piece) => piece.row === square.row && piece.col === square.col);
     const movingSide = sideToMove(manualStartingFen, currentManualMoves);
     if (!manualSelected) {
@@ -4399,6 +4505,7 @@ export function App() {
   }
 
   async function moveManualFromTo(from: Square, to: Square) {
+    if (manualReadOnly) { setManualSelected(undefined); setManualNotice("天天象棋云镜像为只读棋谱，请先复制到我的棋谱再走棋。"); return; }
     const movingSide = sideToMove(manualStartingFen, currentManualMoves);
     const source = manualPieces.find((piece) => piece.row === from.row && piece.col === from.col);
     const target = manualPieces.find((piece) => piece.row === to.row && piece.col === to.col);
@@ -4424,6 +4531,7 @@ export function App() {
   }
 
   function openManualSetup(restoreDraft = false) {
+    if (manualReadOnly) { setManualNotice("天天象棋云镜像不能设置局面，请先复制到我的棋谱。"); return; }
     const restore = restoreDraft && manualSetupDraftActive && manualSetupPieces.length;
     if (!restore) {
       setManualSetupPieces(defaultManualSetupPieces());
@@ -4614,8 +4722,8 @@ export function App() {
   }
 
   async function analyzeManualMainline() {
-    if (!manualGame || !LOCAL_PIKAFISH_AVAILABLE) {
-      setManualNotice("整局本地分析仅在 iOS/Android 真机可用，请先保存棋谱。");
+    if (!manualGame || (!LOCAL_PIKAFISH_AVAILABLE && !teachingClient.auth())) {
+      setManualNotice("请先保存棋谱；Web 端需登录后使用服务端 AI 分析。");
       return;
     }
     const request = ++analysisGeneration.current;
@@ -4625,20 +4733,26 @@ export function App() {
     setManualAnalysisView("trend");
     setManualFullAnalysisProgress({ done: 0, total, running: true });
     const summaries: Record<string, LocalManualAnalysisSummary> = {};
-    for (let index = 0; index < total; index += 1) {
-      if (request !== analysisGeneration.current) break;
-      const position = await boardAt(manualStartingFen, manualMoves.slice(0, index), studyRuleMode);
-      const result = await queryPikafishAnalysis(position.fen, analysisMoveTimeSec * 1000, 1);
-      const first = result.lines[0];
-      if (first) {
-        const summary: LocalManualAnalysisSummary = { gameId: manualGame.id, nodeId: manualNodeId(index), fen: position.fen, scoreCp: first.scoreCp, mate: first.mate, depth: first.depth, bestMove: result.bestMove || first.pv[0] || "", pv: first.pv, updatedAt: new Date().toISOString() };
-        summaries[summary.nodeId] = summary;
-        await trainingStore.saveManualAnalysis(summary);
+    try {
+      for (let index = 0; index < total; index += 1) {
+        if (request !== analysisGeneration.current) break;
+        const position = await boardAt(manualStartingFen, manualMoves.slice(0, index), studyRuleMode);
+        const result = await queryAvailableAnalysis(position.fen, analysisMoveTimeSec * 1000, 1);
+        const first = result.lines[0];
+        if (first) {
+          const summary: LocalManualAnalysisSummary = { gameId: manualGame.id, nodeId: manualNodeId(index), fen: position.fen, scoreCp: first.scoreCp, mate: first.mate, depth: first.depth, bestMove: result.bestMove || first.pv[0] || "", pv: first.pv, updatedAt: new Date().toISOString() };
+          summaries[summary.nodeId] = summary;
+          await trainingStore.saveManualAnalysis(summary);
+        }
+        setManualFullAnalysisProgress({ done: index + 1, total, running: index + 1 < total });
       }
-      setManualFullAnalysisProgress({ done: index + 1, total, running: index + 1 < total });
+      setManualAnalysisSummaries((current) => ({ ...current, ...summaries }));
+      setManualNotice(request === analysisGeneration.current ? "整局主线分析完成。" : "整局分析已停止。");
+    } catch (error) {
+      if (request === analysisGeneration.current) setManualNotice(error instanceof Error ? error.message : "整局 AI 分析失败，请稍后重试。");
+    } finally {
+      if (request === analysisGeneration.current) setManualFullAnalysisProgress((progress) => progress ? { ...progress, running: false } : progress);
     }
-    setManualAnalysisSummaries((current) => ({ ...current, ...summaries }));
-    setManualNotice(request === analysisGeneration.current ? "整局主线分析完成。" : "整局分析已停止。");
   }
 
   async function loadCurrentProblemIntoStudy() {
@@ -5581,7 +5695,7 @@ export function App() {
     <aside className="study-sidebar">
       <nav className="study-move-nav" aria-label="拆棋着法导航"><button disabled={!studyCursor} aria-label="回到开始" title="回到开始" onClick={() => void navigateStudyMove(0)}><ChevronsLeft/></button><button disabled={!studyCursor} aria-label="上一步" title="上一步" onClick={() => void navigateStudyMove(studyCursor - 1)}><ChevronLeft/></button><button className={studyAutoPlaying ? "active" : ""} disabled={!studyMoves.length} aria-label={studyAutoPlaying ? "暂停播放棋谱" : "自动播放棋谱"} title={studyAutoPlaying ? "暂停播放棋谱" : "自动播放棋谱"} onClick={() => void toggleStudyAutoPlay()}>{studyAutoPlaying ? <Pause/> : <Play/>}</button><button disabled={studyCursor >= studyMoves.length} aria-label="下一步" title="下一步" onClick={() => void navigateStudyMove(studyCursor + 1)}><ChevronRight/></button><button disabled={studyCursor >= studyMoves.length} aria-label="最后一步" title="最后一步" onClick={() => void navigateStudyMove(studyMoves.length)}><ChevronsRight/></button></nav>
       <nav className="study-panel-tabs" role="tablist" aria-label="拆棋研究面板">{studyPanelItems.map(([value, label, Icon]) => <button key={value} role="tab" aria-selected={studyPanelTab === value} className={studyPanelTab === value ? "active" : ""} onClick={() => setStudyPanelTab(value)}><Icon/><span>{label}</span></button>)}</nav>
-      {studyPanelTab === "engine" && (LOCAL_PIKAFISH_AVAILABLE ? <AnalysisPanel lines={studyAnalysisLines} pending={analysisPending && studyMode} activeIndex={studyActiveAnalysis} disabled={Boolean(studyTerminal)} enabled={studyEngineEnabled} multiPv={analysisMultiPv} moveTimeSec={analysisMoveTimeSec} scoreSide={studyScoreSide} arrowsVisible={analysisArrowsVisible} onToggle={() => void (analysisPending ? stopAnalysis() : studyEngineEnabled ? startAnalysis() : enableStudyEngine())} onToggleArrows={toggleAnalysisArrows} onSelect={setStudyActiveAnalysis} onMultiPvChange={(value) => void changeAnalysisMultiPv(value)} onMoveTimeChange={(value) => void changeAnalysisMoveTimeSec(value)}/> : <section className="study-unavailable">本地 Pikafish 仅在 Android 或 iOS 版可用。</section>)}
+      {studyPanelTab === "engine" && (LOCAL_PIKAFISH_AVAILABLE || teachingAuth ? <AnalysisPanel lines={studyAnalysisLines} pending={analysisPending && studyMode} activeIndex={studyActiveAnalysis} disabled={Boolean(studyTerminal)} enabled={studyEngineEnabled} multiPv={analysisMultiPv} moveTimeSec={analysisMoveTimeSec} scoreSide={studyScoreSide} arrowsVisible={analysisArrowsVisible} onToggle={() => void (analysisPending ? stopAnalysis() : studyEngineEnabled ? startAnalysis() : enableStudyEngine())} onToggleArrows={toggleAnalysisArrows} onSelect={setStudyActiveAnalysis} onMultiPvChange={(value) => void changeAnalysisMultiPv(value)} onMoveTimeChange={(value) => void changeAnalysisMoveTimeSec(value)}/> : <section className="study-unavailable">Web 端登录后可使用服务端 Pikafish 分析。</section>)}
       {studyPanelTab === "cloud" && <section className="study-cloud-panel">{studyCloudPending ? <p className="study-cloud-empty">正在查询当前局面…</p> : studyCloudMoves.length ? <div className="study-cloud-list">{studyCloudMoves.map((item, index) => { const evaluation = cloudEvaluation(item, studyScoreSide); return <button key={item.iccs} onClick={() => void playStudyMove(item.iccs)}><b>{index + 1}</b><strong>{item.notation}</strong><em>红分 {evaluation.redScore > 0 ? "+" : ""}{evaluation.redScore}</em><small>红 {evaluation.redRate.toFixed(1)}% · 黑 {evaluation.blackRate.toFixed(1)}%</small></button>; })}</div> : <p className="study-cloud-empty">{studyCloudError ?? "当前局面暂无云库着法。"}</p>}</section>}
       {studyPanelTab === "manual" && <StudyManualTree moves={studyMoves} notation={studyNotation} cursor={studyCursor} branches={studyBranches} comments={studyComments} onCommentChange={(key, comment) => setStudyComments((current) => ({ ...current, [key]: comment }))} onNavigate={(cursor) => void navigateStudyMove(cursor)} onAdopt={(branch, focusCursor) => void adoptStudyBranch(branch, focusCursor)} onDelete={(id) => void deleteStudyBranch(id)} onDiscardCurrent={(parentCursor, replacement) => void discardStudyCurrentLine(parentCursor, replacement)} onMove={moveStudyBranch}/>}
       <section className={`study-notice ${studyNoticeVisible ? "" : "hidden"} ${studyNoticePersistent ? "important" : ""}`} aria-live={studyNoticePersistent ? "assertive" : "polite"}><b>{studyRuleLabel(studyRuleMode)}</b><p>{studyNotice}</p></section>
@@ -5590,7 +5704,7 @@ export function App() {
   </div>}{manualMode && <div className="manual-workspace study-workspace">
     <main className={`study-stage manual-stage evaluation-hidden ${manualSetupOpen ? "manual-setup-active" : ""} ${manualAnalysisExpanded ? "manual-analysis-expanded" : ""}`}><header className="study-toolbar manual-statusbar" aria-label="录谱状态">
       <button type="button" className="manual-return-button" aria-label={manualSetupOpen ? "取消摆棋" : "返回我的"} title={manualSetupOpen ? "取消摆棋" : "返回我的"} onClick={() => manualSetupOpen ? cancelManualSetup() : void closeManualMode("account")}><ChevronLeft/><span>{manualSetupOpen ? "取消" : "返回我的"}</span></button>
-      <div><b>{manualSetupOpen ? `创建局面 · ${manualSetupSide === "red" ? "红先" : "黑先"}` : manualAnalysisExpanded ? "录谱分析" : `录谱 ${manualCursor}/${manualMoves.length}`}</b><small>{manualSetupOpen ? manualNotice : `${manualGame?.title ?? "标准开局"} · ${manualSaveStatus}${manualTerminal ? ` · ${manualTerminal}` : ""}`}</small></div>
+      <div><b>{manualSetupOpen ? `创建局面 · ${manualSetupSide === "red" ? "红先" : "黑先"}` : manualAnalysisExpanded ? "录谱分析" : manualReadOnly ? `云镜像 · 只读 ${manualCursor}/${manualMoves.length}` : `录谱 ${manualCursor}/${manualMoves.length}`}</b><small>{manualSetupOpen ? manualNotice : `${manualGame?.title ?? "标准开局"} · ${manualReadOnly ? "只读" : manualSaveStatus}${manualTerminal ? ` · ${manualTerminal}` : ""}`}</small></div>
       <nav className="manual-mode-switch" aria-label="快捷切换模式"><button type="button" onClick={() => void switchFromManualMode("training")}><BookOpen/><span>残棋</span></button><button type="button" onClick={() => void switchFromManualMode("study")}><Cpu/><span>拆棋</span></button><button type="button" className="active" aria-current="page"><FilePenLine/><span>录谱</span></button></nav>
       {manualSetupOpen ? <button type="button" aria-label="复制当前 FEN" title="复制当前 FEN" onClick={() => void copyManualSetupFen()}><ClipboardCopy/></button> : <button type="button" aria-label="打开棋库" onClick={() => openManualPanel("library")}><Database/></button>}
     </header>{manualSetupOpen ? <section className="manual-setup-board-area">{renderManualSetupTray("black")}{manualSetupError && <p className="manual-setup-toast" role="alert" aria-live="assertive">{manualSetupError}</p>}<div className="manual-setup-board-slot"><Board pieces={manualSetupPieces} selected={manualSetupSelected} legalTargets={[]} lastMove={undefined} analysisMoves={[]} activeAnalysis={manualArrowActiveIndex} flipped={boardFlipped} feedback={undefined} setupMode={true} showSideCoordinates={true} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={editManualSetupSquare}/></div>{renderManualSetupTray("red")}</section> : <div className="manual-play-board-area"><Board key="manual" pieces={manualPieces} selected={manualSelected} legalTargets={manualLegalTargets} lastMove={manualLastMove} analysisMoves={manualArrowMoves} activeAnalysis={manualArrowActiveIndex} flipped={boardFlipped} feedback={moveFeedback} setupMode={false} showSideCoordinates={true} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={(square) => void moveManual(square)} onMove={(from, to) => void moveManualFromTo(from, to)}/></div>}
@@ -5604,20 +5718,20 @@ export function App() {
         </> : <>
         <div className="manual-tool-row compact-actions">
           <button type="button" className={manualMenuOpen ? "active" : ""} onClick={() => setManualMenuOpen((open) => !open)}><Ellipsis/><span>菜单</span></button>
-          {manualAnalysisExpanded ? <button type="button" className="active" onClick={() => void (analysisPending ? stopAnalysis() : startAnalysis())}><Cpu/><span>自我分析</span></button> : <button type="button" onClick={() => void openManualSetup()}><Pencil/><span>设置局面</span></button>}
+          {manualAnalysisExpanded ? <button type="button" className="active" onClick={() => void (analysisPending ? stopAnalysis() : startAnalysis())}><Cpu/><span>自我分析</span></button> : manualReadOnly ? <button type="button" className="mirror-copy-button" onClick={() => void copyManualMirrorToMyLibrary()}><ClipboardCopy/><span>复制到我的棋谱</span></button> : <button type="button" onClick={() => void openManualSetup()}><Pencil/><span>设置局面</span></button>}
           <button type="button" className={boardFlipped ? "active" : ""} onClick={toggleBoardFlipped}><FlipVertical2/><span>翻转</span></button>
           <button type="button" disabled={!manualCursor} onClick={() => { setManualAutoPlaying(false); void navigateManualMove(manualCursor - 1); }}><ChevronLeft/><span>上一步</span></button>
           <button type="button" disabled={manualCursor >= manualMoves.length} onClick={() => { setManualAutoPlaying(false); void navigateManualMove(manualCursor + 1); }}><ChevronRight/><span>下一步</span></button>
         </div>
         {manualMenuOpen && <section className="manual-popover-menu" aria-label="录谱菜单">
-          <button type="button" onClick={() => void runManualMenuAction("save")}><CircleCheckBig/><span>保存棋谱</span></button>
+          {manualReadOnly ? <button type="button" onClick={() => void runManualMenuAction("copy")}><ClipboardCopy/><span>复制到我的棋谱</span></button> : <button type="button" onClick={() => void runManualMenuAction("save")}><CircleCheckBig/><span>保存棋谱</span></button>}
           <button type="button" onClick={() => void runManualMenuAction("new")}><Plus/><span>新谱</span></button>
           <button type="button" onClick={() => void runManualMenuAction("library")}><Database/><span>棋库</span></button>
           <button type="button" onClick={() => void runManualMenuAction("comment")}><ClipboardList/><span>查看棋谱</span></button>
           <button type="button" onClick={() => void runManualMenuAction("analysis")}><Cpu/><span>分析</span></button>
           <button type="button" onClick={() => void runManualMenuAction("flip")}><FlipVertical2/><span>翻转</span></button>
-          <button type="button" onClick={() => void runManualMenuAction("setup")}><Pencil/><span>设置局面</span></button>
-          <button type="button" onClick={() => void runManualMenuAction("rename")}><FilePenLine/><span>标题备注</span></button>
+          {!manualReadOnly && <button type="button" onClick={() => void runManualMenuAction("setup")}><Pencil/><span>设置局面</span></button>}
+          {!manualReadOnly && <button type="button" onClick={() => void runManualMenuAction("rename")}><FilePenLine/><span>标题备注</span></button>}
           <button type="button" onClick={() => void runManualMenuAction("share")}><ClipboardCopy/><span>分享棋谱</span></button>
           <button type="button" onClick={() => void runManualMenuAction("start")}><ChevronsLeft/><span>回到开局</span></button>
           <button type="button" onClick={() => void runManualMenuAction("play")}><Play/><span>{manualAutoPlaying ? "暂停播放" : "播放棋谱"}</span></button>
@@ -5633,16 +5747,16 @@ export function App() {
       <header><strong>{manualPanelTab === "moves" ? "棋谱与注释" : manualPanelTab === "analysis" ? "本地分析" : "本地棋库"}</strong><button type="button" aria-label="关闭录谱面板" onClick={() => setManualPanelOpen(false)}><X/></button></header>
       <nav className="study-panel-tabs" role="tablist" aria-label="录谱面板">{([["moves", "棋谱", ClipboardList], ["analysis", "分析", Cpu], ["library", "棋库", Database]] as const).map(([value, label, Icon]) => <button key={value} role="tab" aria-selected={manualPanelTab === value} className={manualPanelTab === value ? "active" : ""} onClick={() => openManualPanel(value)}><Icon/><span>{label}</span></button>)}</nav>
       <div className="manual-panel-content">
-        {manualPanelTab === "moves" && <StudyManualTree moves={manualMoves} notation={manualNotation} cursor={manualCursor} branches={manualBranches} comments={manualComments} onCommentChange={(key, comment) => { const comments = { ...manualComments, [key]: comment }; setManualComments(comments); void saveManualGame({ comments }); }} onNavigate={(cursor) => void navigateManualMove(cursor)} onAdopt={(branch, focusCursor) => void adoptManualBranch(branch, focusCursor)} onDelete={deleteManualBranch} onDiscardCurrent={() => setManualNotice("主线删除后续首版暂不开放，请使用分支切换。")} onMove={moveManualBranch}/>}
+        {manualPanelTab === "moves" && <StudyManualTree moves={manualMoves} notation={manualNotation} cursor={manualCursor} branches={manualBranches} comments={manualComments} readOnly={manualReadOnly} onCommentChange={(key, comment) => { if (manualReadOnly) return; const comments = { ...manualComments, [key]: comment }; setManualComments(comments); void saveManualGame({ comments }); }} onNavigate={(cursor) => void navigateManualMove(cursor)} onAdopt={(branch, focusCursor) => void adoptManualBranch(branch, focusCursor)} onDelete={deleteManualBranch} onDiscardCurrent={() => setManualNotice("主线删除后续首版暂不开放，请使用分支切换。")} onMove={moveManualBranch}/>}
         {manualPanelTab === "analysis" && renderManualAnalysisBody()}
         {manualPanelTab === "library" && <section className="manual-library-panel">
-          <header><button onClick={() => void createManualFolder()}><Folder/>{manualFolderPath ? "新子目录" : "新目录"}</button><button onClick={() => void createManualFromFen(STANDARD_STARTING_FEN, "标准开局")}><Plus/>新谱</button><button disabled={manualCloudSyncing} onClick={() => void syncPersonalManualLibrary()}><CloudUpload/>{manualCloudSyncing ? "同步中" : "同步"}</button><button disabled={!manualGame} onClick={() => void renameManualGame()}><Pencil/>棋谱信息</button></header>
+          <header><button disabled={manualMirrorFolderSelected} onClick={() => void createManualFolder()}><Folder/>{manualFolderPath ? "新子目录" : "新目录"}</button><button onClick={() => void createManualFromFen(STANDARD_STARTING_FEN, "标准开局")}><Plus/>新谱</button><button disabled={manualCloudSyncing} onClick={() => void syncPersonalManualLibrary()}><CloudUpload/>{manualCloudSyncing ? "同步中" : "同步"}</button>{manualReadOnly ? <button onClick={() => void copyManualMirrorToMyLibrary()}><ClipboardCopy/>复制到我的棋谱</button> : <button disabled={!manualGame} onClick={() => void renameManualGame()}><Pencil/>棋谱信息</button>}</header>
           <p className="manual-cloud-sync-status" aria-live="polite">{manualCloudSyncMessage}</p>
           <div className="problem-search"><Search/><input value={manualQuery} placeholder="搜索本地棋谱" onChange={(event) => setManualQuery(event.target.value)}/>{manualQuery && <button type="button" onClick={() => setManualQuery("")}><X/></button>}</div>
           <nav className="manual-folder-breadcrumbs" aria-label="本地棋谱目录路径">{manualBreadcrumbs.map((item) => <button key={item.path || "root"} className={manualFolderPath === item.path ? "active" : ""} onClick={() => setManualFolder(item.path)}>{item.label}</button>)}</nav>
-          {manualFolderPath && <div className="manual-folder-actions"><button onClick={() => void renameManualFolder(manualFolderPath)}><Pencil/>重命名当前目录</button><button className="danger" onClick={() => void deleteManualFolder(manualFolderPath)}><Trash2/>删除目录</button></div>}
+          {manualFolderPath && !manualMirrorFolderSelected && <div className="manual-folder-actions"><button onClick={() => void renameManualFolder(manualFolderPath)}><Pencil/>重命名当前目录</button><button className="danger" onClick={() => void deleteManualFolder(manualFolderPath)}><Trash2/>删除目录</button></div>}
           <ManualFolderTree folders={manualFolders} currentPath={manualFolderPath} onSelect={setManualFolder}/>
-          <div className="manual-game-list">{manualGames.length ? manualGames.map((game) => <button key={game.id} className={manualGame?.id === game.id ? "active" : ""} onClick={() => void openManualGame(game)}><b>{game.title}</b><small>{game.folderPath || "未分类"} · {game.moves.length} 手 · {new Date(game.updatedAt).toLocaleDateString("zh-CN")}</small><span><i onClick={(event) => { event.stopPropagation(); void moveManualGameToFolder(game); }}>移动</i><i onClick={(event) => { event.stopPropagation(); void deleteManualGame(game); }}>删除</i></span></button>) : <p>暂无本地棋谱。</p>}</div>
+          <div className="manual-game-list">{manualGames.length ? manualGames.map((game) => { const mirror = game.readOnly || game.origin?.kind === "providerMirror"; return <button key={game.id} className={`${manualGame?.id === game.id ? "active" : ""} ${mirror ? "provider-mirror" : ""}`} onClick={() => void openManualGame(game)}><b>{game.title}{mirror && <em>只读</em>}</b><small>{game.folderPath || "未分类"} · {game.moves.length} 手 · {new Date(game.updatedAt).toLocaleDateString("zh-CN")}</small><span>{mirror ? <i onClick={(event) => { event.stopPropagation(); void copyManualMirrorToMyLibrary(game); }}>复制</i> : <><i onClick={(event) => { event.stopPropagation(); void moveManualGameToFolder(game); }}>移动</i><i onClick={(event) => { event.stopPropagation(); void deleteManualGame(game); }}>删除</i></>}</span></button>; }) : <p>暂无本地棋谱。</p>}</div>
         </section>}
       </div>
       <section className="manual-panel-notice" aria-live="polite"><b>{manualGame?.title ?? "本地录谱"}</b><p>{manualNotice}</p></section>

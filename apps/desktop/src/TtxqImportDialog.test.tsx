@@ -14,7 +14,7 @@ const disconnected: TtxqSyncProgress = { state: "disconnected", readTotal: 0, re
 
 function renderDialog(progress: TtxqSyncProgress = disconnected, busy = false, preview: TtxqGamePreview[] = [], diagnostics: TtxqDiagnosticSample[] = []) {
   const folders: LibraryFolder[] = [{ name: "天天象棋备份", system: false, gameCount: 16 }, { name: "天天象棋备份/备战世青赛", system: false, gameCount: 3 }];
-  const actions = { onClose: vi.fn(), onTargetFolderChange: vi.fn(), onCreateFolder: vi.fn(), onAuthorize: vi.fn(), onCollect: vi.fn(), onImport: vi.fn(), onDisconnect: vi.fn(), onShowDiagnostics: vi.fn(), onClearDiagnostics: vi.fn() };
+  const actions = { onClose: vi.fn(), onTargetFolderChange: vi.fn(), onCreateFolder: vi.fn(), onAuthorize: vi.fn(), onCollect: vi.fn(), onImport: vi.fn(), onAutoSyncChange: vi.fn(), onPublishPending: vi.fn(), onDisconnect: vi.fn(), onShowDiagnostics: vi.fn(), onClearDiagnostics: vi.fn() };
   function Harness() {
     const [targetFolder, setTargetFolder] = useState("天天象棋备份");
     return <TtxqImportDialog
@@ -40,15 +40,30 @@ describe("TtxqImportDialog", () => {
     renderDialog();
     expect(screen.getByRole("dialog", { name: "天天象棋棋谱导入" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "登录天天象棋" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "读取已加载棋谱" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "立即同步当前列表" }).hasAttribute("disabled")).toBe(true);
     expect(screen.getByRole("button", { name: "导入全部" }).hasAttribute("disabled")).toBe(true);
   });
 
   it("shows loaded totals but keeps import disabled until a valid preview exists", () => {
-    renderDialog({ state: "ready", readTotal: 12, readCompleted: 12, readFailed: 0, loaded: 12, completed: 5, imported: 3, skipped: 1, failed: 1, message: "已读取已加载的历史棋谱，可开始导入" });
+    renderDialog({ state: "ready", readTotal: 12, readCompleted: 12, readFailed: 0, loaded: 12, completed: 5, imported: 2, updated: 1, skipped: 1, failed: 1, message: "已读取已加载的历史棋谱，可开始导入" });
     expect(document.querySelector(".ttxq-import-count")?.textContent).toContain("已加载 12 盘");
+    expect(document.querySelector(".ttxq-import-count")?.textContent).toContain("新增 2 · 更新 1");
     expect(screen.getByRole("button", { name: "导入全部" }).hasAttribute("disabled")).toBe(true);
     expect(screen.getByRole("button", { name: "断开天天象棋" })).toBeTruthy();
+  });
+
+  it("shows session auto-sync phase and routes cloud retry actions", async () => {
+    const user = userEvent.setup();
+    const actions = renderDialog({ ...disconnected, state: "authorizing", autoSyncEnabled: true, phase: "等待重试", cloudPending: 2, cloudUploaded: 5, cloudRejected: 1, message: "网络不可用，等待重试" });
+    const toggle = screen.getByRole("checkbox", { name: "自动同步当前可见列表" });
+    expect((toggle as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByText("等待重试")).toBeTruthy();
+    expect(screen.getByText(/云端已同步 5 · 待同步 2/)).toBeTruthy();
+    expect(screen.getByText(/无法上传 1/)).toBeTruthy();
+    await user.click(toggle);
+    await user.click(screen.getByRole("button", { name: "重试云端上传" }));
+    expect(actions.onAutoSyncChange).toHaveBeenCalledWith(false);
+    expect(actions.onPublishPending).toHaveBeenCalledOnce();
   });
 
   it("lets the user choose or create a nested import folder", async () => {
@@ -66,7 +81,7 @@ describe("TtxqImportDialog", () => {
     renderDialog({ state: "reading", readPhase: "reading", readTotal: 20, readCompleted: 7, readFailed: 1, loaded: 0, completed: 0, imported: 0, skipped: 0, failed: 0, message: "正在读取已加载的历史棋谱（7/20）" });
     expect(document.querySelector(".ttxq-import-reading-progress")?.textContent).toContain("发现 20 盘 · 已读取 7 / 20 · 失败 1");
     expect(screen.getByRole("progressbar", { name: "读取进度" }).getAttribute("value")).toBe("7");
-    expect(screen.getByRole("button", { name: "读取中…" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "同步中…" }).hasAttribute("disabled")).toBe(true);
   });
 
   it("shows discovery status before the H5 page reports a total", () => {
@@ -148,7 +163,7 @@ describe("TtxqImportDialog", () => {
   it("shows a bridge timeout and allows the user to retry", () => {
     renderDialog({ ...disconnected, state: "error", message: "读取失败：远程 IPC 未启动或页面已导航（h5login.qqchess.qq.com）" });
     expect(screen.getByText(/远程 IPC 未启动/)).toBeTruthy();
-    expect(screen.getByRole("button", { name: "读取已加载棋谱" }).hasAttribute("disabled")).toBe(false);
+    expect(screen.getByRole("button", { name: "立即同步当前列表" }).hasAttribute("disabled")).toBe(false);
   });
 
   it("previews valid games and explains incompatible move formats", () => {
@@ -205,7 +220,7 @@ describe("TtxqImportDialog", () => {
     const user = userEvent.setup();
     const actions = renderDialog({ ...disconnected, state: "authorizing", message: "请在独立窗口内自行登录" });
     await user.click(screen.getByRole("button", { name: "打开授权窗口" }));
-    await user.click(screen.getByRole("button", { name: "读取已加载棋谱" }));
+    await user.click(screen.getByRole("button", { name: "立即同步当前列表" }));
     await user.keyboard("{Escape}");
     expect(actions.onAuthorize).toHaveBeenCalledOnce();
     expect(actions.onCollect).toHaveBeenCalledOnce();

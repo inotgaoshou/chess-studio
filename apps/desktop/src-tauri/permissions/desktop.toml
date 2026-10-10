@@ -14,8 +14,8 @@ commands.allow = [
   "start_link_session", "stop_link_session", "get_link_session_status", "pause_link_session",
   "recalibrate_link_session", "get_link_capture_preview", "recognize_link_image_file",
   "submit_link_position", "set_link_side_to_move", "confirm_link_engine_move", "import_recognized_position",
-  "get_ttxq_sync_progress", "preview_ttxq_history", "list_ttxq_diagnostic_samples", "clear_ttxq_diagnostic_samples", "start_ttxq_authorization", "collect_ttxq_h5_history",
-  "submit_ttxq_bridge_payload", "report_ttxq_read_progress", "report_ttxq_bridge_error",
+  "get_ttxq_sync_progress", "preview_ttxq_history", "list_ttxq_diagnostic_samples", "clear_ttxq_diagnostic_samples", "start_ttxq_authorization", "set_ttxq_auto_sync", "sync_ttxq_current_list_now", "publish_pending_ttxq_mirrors", "collect_ttxq_h5_history",
+  "submit_ttxq_bridge_payload", "report_ttxq_read_progress", "report_ttxq_bridge_error", "report_ttxq_visible_list_signature",
   "import_ttxq_history", "disconnect_ttxq", "list_games", "get_game_metadata", "update_game_metadata_for_game", "delete_games", "get_game_mirror_status",
   "update_game_mirror", "rebuild_game_mirrors", "reveal_game_mirror", "list_library_folders",
   "create_library_folder", "rename_library_folder", "delete_library_folder", "move_games_to_folder", "reorder_library_game", "update_game_library",
@@ -60,5 +60,6 @@ description = "Allows a Tencent chess page to report validated TianTian XiangQi 
 commands.allow = [
   "submit_ttxq_bridge_payload",
   "report_ttxq_read_progress",
-  "report_ttxq_bridge_error"
+  "report_ttxq_bridge_error",
+  "report_ttxq_visible_list_signature"
 ]

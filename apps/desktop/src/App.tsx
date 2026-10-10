@@ -1474,6 +1474,7 @@ export default function App() {
   const [ttxqPreview, setTtxqPreview] = useState<TtxqGamePreview[]>([]);
   const [ttxqDiagnostics, setTtxqDiagnostics] = useState<TtxqDiagnosticSample[]>([]);
   const [ttxqImportFolder, setTtxqImportFolder] = useState(TTXQ_BACKUP_FOLDER);
+  const ttxqLastImportedRef = useRef<string | undefined>(undefined);
   const [comment, setComment] = useState("");
   const [serverUrl, setServerUrl] = useState(defaultDesktopPreferences.serverUrl);
   const [token, setToken] = useState("");
@@ -5920,12 +5921,19 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (chessPlatform.kind !== "desktop" || ttxqSync.state !== "reading") return;
+    if (chessPlatform.kind !== "desktop" || !ttxqImportOpen || (ttxqSync.state !== "reading" && !ttxqSync.autoSyncEnabled)) return;
     const timer = window.setInterval(() => {
       void refreshTtxqSync().catch(() => undefined);
     }, 500);
     return () => window.clearInterval(timer);
-  }, [ttxqSync.state]);
+  }, [ttxqImportOpen, ttxqSync.state, ttxqSync.autoSyncEnabled]);
+
+  useEffect(() => {
+    if (!ttxqSync.lastImportedAt || ttxqLastImportedRef.current === ttxqSync.lastImportedAt) return;
+    ttxqLastImportedRef.current = ttxqSync.lastImportedAt;
+    void chessPlatform.previewTtxqHistory().then(setTtxqPreview).catch(() => setTtxqPreview([]));
+    void refreshGames();
+  }, [ttxqSync.lastImportedAt]);
 
   async function startTtxqAuthorization() {
     try {
@@ -5940,13 +5948,36 @@ export default function App() {
     setTtxqPreview([]);
     setTtxqDiagnostics([]);
     try {
-      await chessPlatform.collectTtxqHistory();
+      await chessPlatform.syncTtxqCurrentListNow(ttxqImportFolder);
       await refreshTtxqSync();
+      setNotice("正在读取当前可见列表；完成后会自动导入并同步云镜像。");
     } catch (error) {
       setNotice(friendlyError(error));
       await refreshTtxqSync().catch(() => undefined);
     }
     finally { setSyncBusy(false); }
+  }
+
+  async function setTtxqAutoSync(enabled: boolean) {
+    try {
+      setTtxqSync(await chessPlatform.setTtxqAutoSync(enabled, ttxqImportFolder));
+    } catch (error) {
+      setNotice(friendlyError(error));
+    }
+  }
+
+  async function publishPendingTtxqMirrors() {
+    setSyncBusy(true);
+    try {
+      const progress = await chessPlatform.publishPendingTtxqMirrors();
+      setTtxqSync(progress);
+      setNotice(progress.message);
+    } catch (error) {
+      setNotice(friendlyError(error));
+      await refreshTtxqSync().catch(() => undefined);
+    } finally {
+      setSyncBusy(false);
+    }
   }
 
   async function importTtxqHistory() {
@@ -9249,6 +9280,8 @@ export default function App() {
         onAuthorize={() => void startTtxqAuthorization()}
         onCollect={() => void collectTtxqHistory()}
         onImport={() => void importTtxqHistory()}
+        onAutoSyncChange={(enabled) => void setTtxqAutoSync(enabled)}
+        onPublishPending={() => void publishPendingTtxqMirrors()}
         onDisconnect={() => void disconnectTtxq()}
         onShowDiagnostics={() => void refreshTtxqDiagnostics()}
         onClearDiagnostics={() => void clearTtxqDiagnostics()}

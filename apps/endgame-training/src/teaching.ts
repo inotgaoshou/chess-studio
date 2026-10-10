@@ -3,6 +3,7 @@ import type { LocalManualAnalysisSummary, LocalManualFolder, LocalManualGame, So
 import { isNativeSessionStore, secureSession } from "./secureSession";
 import { environmentServerUrl, packageEnvironment, selectEnvironment, selectedEnvironment, type AppEnvironment } from "./appEnvironment";
 import { practiceScore } from "./practiceScoring";
+import { buildPersonalManualSyncRecords, type PersonalManualSyncKind } from "./providerMirrors";
 
 const AUTH_KEY = "xiangqi-teaching-auth";
 const SERVER_KEY = "xiangqi-teaching-server-url";
@@ -387,7 +388,7 @@ type PendingAssignmentView = {
   orgId: string;
   serverUrl: string;
 };
-export type PersonalManualSyncKind = "game" | "folder" | "analysis";
+export type { PersonalManualSyncKind } from "./providerMirrors";
 export type PersonalManualSyncRecord = {
   kind: PersonalManualSyncKind;
   id: string;
@@ -395,13 +396,6 @@ export type PersonalManualSyncRecord = {
   deleted: boolean;
   payload: LocalManualGame | LocalManualFolder | LocalManualAnalysisSummary;
   updatedAt: string;
-};
-type PersonalManualSyncRequestRecord = {
-  kind: PersonalManualSyncKind;
-  id: string;
-  baseRevision: number;
-  deleted: boolean;
-  payload: LocalManualGame | LocalManualFolder | LocalManualAnalysisSummary | Record<string, never>;
 };
 type PersonalManualSyncState = { revisions: Record<string, number> };
 export type PersonalManualSyncStatus = {
@@ -412,6 +406,26 @@ export type PersonalManualSyncStatus = {
   conflictCount: number;
 };
 type PersonalManualSyncResponse = { records: PersonalManualSyncRecord[]; conflictCount: number; status: PersonalManualSyncStatus };
+export type ProviderManualMirrorRecord = {
+  provider: "ttxq";
+  externalId: string;
+  payloadHash: string;
+  revision: number;
+  snapshot: LocalManualGame;
+  updatedAt: string;
+};
+type ProviderManualMirrorsResponse = { records: ProviderManualMirrorRecord[] };
+export type ServerAnalysisLine = {
+  depth?: number;
+  scoreCp?: number;
+  mate?: number;
+  nps?: number;
+  timeMs?: number;
+  multipv: number;
+  notation: string[];
+  pv: string[];
+};
+export type ServerAnalysisResponse = { engine: string; elapsedMs: number; lines: ServerAnalysisLine[] };
 
 function serverUrl() {
   localStorage.removeItem(SERVER_KEY);
@@ -683,14 +697,6 @@ function personalManualSyncState(auth: TeachingAuth): PersonalManualSyncState {
 }
 
 function personalManualRecordKey(kind: PersonalManualSyncKind, id: string) { return `${kind}:${id}`; }
-
-function parsePersonalManualRecordKey(key: string): { kind: PersonalManualSyncKind; id: string } | undefined {
-  const separator = key.indexOf(":");
-  if (separator < 1) return undefined;
-  const kind = key.slice(0, separator);
-  const id = key.slice(separator + 1);
-  return id && (kind === "game" || kind === "folder" || kind === "analysis") ? { kind, id } : undefined;
-}
 
 function sameAttemptContext(attempt: PendingTeachingAttempt, auth: TeachingAuth) {
   const context = contextOf(auth);
@@ -1154,22 +1160,28 @@ export const teachingClient = {
     const auth = this.auth();
     if (!auth) throw new Error("请先登录后再同步个人棋谱");
     const state = personalManualSyncState(auth);
-    const local = new Map<string, Pick<PersonalManualSyncRequestRecord, "kind" | "id" | "payload">>();
-    for (const game of games) local.set(personalManualRecordKey("game", game.id), { kind: "game", id: game.id, payload: game });
-    for (const folder of folders) local.set(personalManualRecordKey("folder", folder.path), { kind: "folder", id: folder.path, payload: folder });
-    for (const analysis of analyses) {
-      const id = `${analysis.gameId}:${analysis.nodeId}`;
-      local.set(personalManualRecordKey("analysis", id), { kind: "analysis", id, payload: analysis });
-    }
-    const records: PersonalManualSyncRequestRecord[] = [...local.values()].map((record) => ({ ...record, baseRevision: state.revisions[personalManualRecordKey(record.kind, record.id)] || 0, deleted: false }));
-    for (const [key, revision] of Object.entries(state.revisions)) {
-      if (!local.has(key)) {
-        const record = parsePersonalManualRecordKey(key);
-        if (record) records.push({ ...record, baseRevision: revision, deleted: true, payload: {} });
-      }
-    }
+    const records = buildPersonalManualSyncRecords(games, folders, analyses, state.revisions);
     const response = await request<PersonalManualSyncResponse>("/api/v1/personal-manual-sync", { method: "POST", body: JSON.stringify({ records }) }, auth.token);
     return response;
+  },
+  async providerManualMirrors() {
+    const auth = this.auth();
+    if (!auth) throw new Error("请先登录后同步天天象棋云镜像");
+    return request<ProviderManualMirrorsResponse>("/api/v1/personal-manual-sync/provider-imports", {}, auth.token);
+  },
+  providerManualMirrorOwnerKey() {
+    const auth = this.auth();
+    if (!auth) return undefined;
+    const context = authContexts.get(auth);
+    return `${context?.serverUrl ?? serverUrl()}::${auth.user.id}`;
+  },
+  async analyzePosition(fen: string, moveTimeMs: number, multiPv: number) {
+    const auth = this.auth();
+    if (!auth) throw new Error("Web 端请先登录账号后使用服务端 AI 分析");
+    return request<ServerAnalysisResponse>("/api/v1/analysis", {
+      method: "POST",
+      body: JSON.stringify({ fen, mode: "time", value: Math.max(100, Math.min(5_000, moveTimeMs)), multiPv: Math.max(1, Math.min(5, multiPv)) }),
+    }, auth.token);
   },
   async personalManualSyncStatus() {
     const auth = this.auth();

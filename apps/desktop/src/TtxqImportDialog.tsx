@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, Database, Download, ExternalLink, FileWarning, FolderPlus, LogOut, RefreshCw, Trash2, X } from "lucide-react";
+import { CheckCircle2, CloudUpload, Database, Download, ExternalLink, FileWarning, FolderPlus, LogOut, RefreshCw, Trash2, X } from "lucide-react";
 import type { LibraryFolder, TtxqDiagnosticSample, TtxqGamePreview, TtxqSyncProgress } from "./platform";
 
 type Props = {
@@ -15,6 +15,8 @@ type Props = {
   onAuthorize(): void;
   onCollect(): void;
   onImport(): void;
+  onAutoSyncChange?(enabled: boolean): void;
+  onPublishPending?(): void;
   onDisconnect(): void;
   onShowDiagnostics(): void;
   onClearDiagnostics(): void;
@@ -67,7 +69,7 @@ function roundLabel(round: string) {
   return value;
 }
 
-export function TtxqImportDialog({ progress, preview, diagnostics, folders, targetFolder, busy, onClose, onTargetFolderChange, onCreateFolder, onAuthorize, onCollect, onImport, onDisconnect, onShowDiagnostics, onClearDiagnostics }: Props) {
+export function TtxqImportDialog({ progress, preview, diagnostics, folders, targetFolder, busy, onClose, onTargetFolderChange, onCreateFolder, onAuthorize, onCollect, onImport, onAutoSyncChange, onPublishPending, onDisconnect, onShowDiagnostics, onClearDiagnostics }: Props) {
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !busy) onClose();
@@ -124,8 +126,13 @@ export function TtxqImportDialog({ progress, preview, diagnostics, folders, targ
       <div className="ttxq-import-content">
         <section className="ttxq-import-status" aria-live="polite">
           <div><span>同步状态</span><strong className={progress.state}>{stateLabel(progress.state)}</strong></div>
+          <div className="ttxq-auto-sync-row">
+            <label><input type="checkbox" checked={Boolean(progress.autoSyncEnabled)} disabled={!connected || busy} onChange={(event) => onAutoSyncChange?.(event.target.checked)}/><span>自动同步当前可见列表</span></label>
+            <strong>{progress.phase || "监听当前列表"}</strong>
+          </div>
           <p>{progress.message}</p>
           {(progress.bridgeVersion || progress.sourceList) && <p className="ttxq-import-source">桥接 v{progress.bridgeVersion ?? "-"}{progress.sourceList ? ` · 当前列表：${progress.sourceList}` : ""}{progress.ignoredStaleCount ? ` · 已忽略旧缓存 ${progress.ignoredStaleCount} 项` : ""}</p>}
+          {(progress.lastDetectedAt || progress.lastImportedAt || progress.cloudPending || progress.cloudUploaded || progress.cloudFailed || progress.cloudRejected) && <p className="ttxq-import-source">{progress.lastDetectedAt ? `最后检测：${new Date(progress.lastDetectedAt).toLocaleTimeString("zh-CN")}` : "尚未检测变化"}{progress.lastImportedAt ? ` · 最后导入：${new Date(progress.lastImportedAt).toLocaleTimeString("zh-CN")}` : ""} · 云端已同步 {progress.cloudUploaded ?? 0} · 待同步 {progress.cloudPending ?? 0}{progress.cloudFailed ? ` · 入队失败 ${progress.cloudFailed}` : ""}{progress.cloudRejected ? ` · 无法上传 ${progress.cloudRejected}` : ""}</p>}
           {isReading && <section className="ttxq-import-reading-progress" aria-label="读取进度">
             <header><strong>{isDiscovering ? "扫描已加载列表" : isLoadingGame ? "等待棋谱加载" : isMetadata ? "解析棋谱信息" : isBranches ? "读取分支变化" : "读取棋谱走法"}</strong><span>{isDiscovering ? `已发现 ${progress.readTotal} 盘` : isLoadingGame || isMetadata || isBranches ? `第 ${progress.readCurrent ?? 0} / ${progress.readTotal} 盘` : `${readPercent}%`}</span></header>
             {isDiscovering
@@ -146,8 +153,8 @@ export function TtxqImportDialog({ progress, preview, diagnostics, folders, targ
               : "正在检查天天象棋网页中已加载的最近对局…"}</p>
           </section>}
           {progress.state === "error" && readElapsedSeconds > 0 && <p className="ttxq-import-read-duration">本次读取用时 {readElapsedSeconds} 秒</p>}
-          {progress.loaded > 0 && <p className="ttxq-import-count">已加载 <b>{progress.loaded}</b> 盘{hasResult && <> · 导入 <b>{progress.imported}</b> · 跳过 <b>{progress.skipped}</b> · 失败 <b>{progress.failed}</b></>}</p>}
-          {importSucceeded && <p className="ttxq-import-success" role="status"><CheckCircle2 size={16}/>已成功导入 {progress.imported} 盘棋谱，已保存到本地棋谱库。</p>}
+          {progress.loaded > 0 && <p className="ttxq-import-count">已加载 <b>{progress.loaded}</b> 盘{hasResult && <> · 新增 <b>{progress.imported}</b> · 更新 <b>{progress.updated ?? 0}</b> · 跳过 <b>{progress.skipped}</b> · 失败 <b>{progress.failed}</b></>}</p>}
+          {importSucceeded && <p className="ttxq-import-success" role="status"><CheckCircle2 size={16}/>已成功导入 {progress.imported + (progress.updated ?? 0)} 盘棋谱（新增 {progress.imported} 盘、更新 {progress.updated ?? 0} 盘），已保存到本地棋谱库。</p>}
         </section>
 
         <section className="ttxq-import-folder" aria-label="导入目标目录">
@@ -200,8 +207,9 @@ export function TtxqImportDialog({ progress, preview, diagnostics, folders, targ
 
         <div className="ttxq-import-actions">
           <button type="button" className="primary" disabled={busy} onClick={onAuthorize}><ExternalLink size={15}/>{connected ? "打开授权窗口" : "登录天天象棋"}</button>
-          <button type="button" aria-label={progress.state === "reading" ? "读取中…" : "读取已加载棋谱"} title="重新读取已加载棋谱" disabled={busy || !connected || progress.state === "reading"} onClick={onCollect}><RefreshCw className={progress.state === "reading" ? "spin" : undefined} size={15}/>{progress.state === "reading" ? "读取中…" : "重新读取已加载棋谱"}</button>
+          <button type="button" aria-label={progress.state === "reading" ? "同步中…" : "立即同步当前列表"} title="读取、导入并上传当前可见列表" disabled={busy || !connected || progress.state === "reading"} onClick={onCollect}><RefreshCw className={progress.state === "reading" ? "spin" : undefined} size={15}/>{progress.state === "reading" ? "同步中…" : "立即同步当前列表"}</button>
           <button type="button" className="primary" disabled={!canImport} onClick={onImport}><Download size={15}/>{busy ? "导入中…" : "导入全部"}</button>
+          {(progress.cloudPending ?? 0) > 0 && <button type="button" disabled={busy} onClick={() => onPublishPending?.()}><CloudUpload size={15}/>重试云端上传</button>}
         </div>
       </div>
 

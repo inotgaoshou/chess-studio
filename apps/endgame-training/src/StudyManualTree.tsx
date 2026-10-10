@@ -23,6 +23,7 @@ type Props = {
   onDelete(id: string): void;
   onDiscardCurrent(parentCursor: number, replacement?: StudyManualBranch): void;
   onMove(id: string, direction: -1 | 1): void;
+  readOnly?: boolean;
 };
 
 const MAINLINE_ID = "__mainline__";
@@ -42,7 +43,7 @@ type BranchChoice = {
 
 type BranchChoiceWithLetter = BranchChoice & { letter: string };
 
-export function StudyManualTree({ moves, notation, cursor, branches, comments, onCommentChange, onNavigate, onAdopt, onDelete, onDiscardCurrent, onMove }: Props) {
+export function StudyManualTree({ moves, notation, cursor, branches, comments, onCommentChange, onNavigate, onAdopt, onDelete, onDiscardCurrent, onMove, readOnly = false }: Props) {
   const branchesAt = useMemo(() => {
     const result = new Map<number, StudyManualBranch[]>();
     for (const branch of branches) {
@@ -213,9 +214,9 @@ export function StudyManualTree({ moves, notation, cursor, branches, comments, o
         {activeBranches.length ? <>
           <header>
             <div><span>变着：</span><nav aria-label="变招操作">
-              <button type="button" className="danger" disabled={!selectedBranch && !canDiscardSelectedMainline} aria-label="删除变招" onClick={deleteSelectedBranch}><Trash2/></button>
-              <button type="button" disabled={!selectedBranch || selectedBranchIndex <= 0} aria-label="上移变招" onClick={() => selectedBranch && onMove(selectedBranch.id, -1)}><ArrowUp/></button>
-              <button type="button" disabled={!selectedBranch || selectedBranchIndex < 0 || selectedBranchIndex >= orderedBranchChoices.length - 1} aria-label="下移变招" onClick={() => selectedBranch && onMove(selectedBranch.id, 1)}><ArrowDown/></button>
+              <button type="button" className="danger" disabled={readOnly || (!selectedBranch && !canDiscardSelectedMainline)} aria-label="删除变招" onClick={deleteSelectedBranch}><Trash2/></button>
+              <button type="button" disabled={readOnly || !selectedBranch || selectedBranchIndex <= 0} aria-label="上移变招" onClick={() => selectedBranch && onMove(selectedBranch.id, -1)}><ArrowUp/></button>
+              <button type="button" disabled={readOnly || !selectedBranch || selectedBranchIndex < 0 || selectedBranchIndex >= orderedBranchChoices.length - 1} aria-label="下移变招" onClick={() => selectedBranch && onMove(selectedBranch.id, 1)}><ArrowDown/></button>
             </nav></div>
             <div className="study-branch-picker" onBlur={(event) => {
               if (!event.currentTarget.contains(event.relatedTarget)) setBranchPickerOpen(false);
@@ -233,7 +234,7 @@ export function StudyManualTree({ moves, notation, cursor, branches, comments, o
             </div>
           </header>
         </> : <p className="study-variation-empty">当前线路没有变招。</p>}
-        <textarea value={comments[currentPathKey] ?? ""} onChange={(event) => onCommentChange(currentPathKey, event.target.value)} placeholder="此处编辑注释..." aria-label="当前棋谱节点注释"/>
+        <textarea value={comments[currentPathKey] ?? ""} disabled={readOnly} onChange={(event) => onCommentChange(currentPathKey, event.target.value)} placeholder={readOnly ? "云镜像注释只读" : "此处编辑注释..."} aria-label="当前棋谱节点注释"/>
       </aside>
     </div>
   </section>;

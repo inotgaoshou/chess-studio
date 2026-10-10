@@ -138,6 +138,13 @@ export type LocalManualGame = {
   comments: Record<string, string>;
   createdAt: string;
   updatedAt: string;
+  origin?: {
+    kind: "providerMirror";
+    provider: "ttxq";
+    externalId: string;
+    payloadHash: string;
+  };
+  readOnly?: boolean;
 };
 
 export type LocalManualAnalysisSummary = {

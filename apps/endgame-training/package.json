@@ -8,6 +8,7 @@
     "skins:prepare": "node ../../scripts/prepare-endgame-training-skins.mjs",
     "dev": "vite --host 0.0.0.0 --port 1422",
     "build": "tsc && vite build",
+    "test:provider-mirrors": "node --experimental-strip-types --test tests/providerMirrors.test.ts",
     "mobile:build": "pnpm wasm:build && pnpm build",
     "android:sync": "pnpm mobile:build && cap sync android",
     "android:apk": "bash ../../scripts/build-endgame-training-apk.sh",

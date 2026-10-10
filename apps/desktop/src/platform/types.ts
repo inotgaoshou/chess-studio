@@ -1073,7 +1073,7 @@ export type LinkObservation = { state: LinkSessionState; accepted: boolean; move
 export type BoardOrientation = "redAtBottom" | "blackAtBottom";
 export type LinkMoveDetail = { iccs: string; notation: string; movedBy: Side; from: MoveSquare; to: MoveSquare };
 export type LinkSessionStatus = { source: CaptureSource; mode: LinkMode; state: LinkSessionState; reason?: string; phase?: string; lastError?: string; startedAt?: string; lastHeartbeatAt?: string; recognitionAttempts?: number; lastDetectionSummary?: string; turnIndicator?: string; manualTurnOverride?: LinkAutoSide; pendingExternalMove?: string; capturePreviewKind?: string; frameRate: number; confidence?: number; confidenceThreshold?: number; stableFrames: number; requiredStableFrames: number; latestFen?: string; lastMove?: string; lastMoveDetail?: LinkMoveDetail; initialPositionSeen?: boolean; autoSide?: LinkAutoSide; boardOrientation?: BoardOrientation; captureRunning: boolean; targetWindow?: LinkTargetWindow; captureBackend?: string; captureDpi?: number; clickAvailable?: boolean };
-export type TtxqSyncProgress = { state: "disconnected" | "authorizing" | "reading" | "ready" | "importing" | "complete" | "partial" | "error" | string; bridgeVersion?: number; sourceList?: string; discoveredCount?: number; ignoredStaleCount?: number; readPhase?: "discovering" | "loading" | "metadata" | "branches" | "reading" | string; readScanned?: number; readCurrent?: number; readTotal: number; readCompleted: number; readFailed: number; loaded: number; completed: number; imported: number; skipped: number; failed: number; message: string };
+export type TtxqSyncProgress = { state: "disconnected" | "authorizing" | "reading" | "ready" | "importing" | "complete" | "partial" | "error" | string; autoSyncEnabled?: boolean; phase?: "监听当前列表" | "检测到变化" | "读取棋谱" | "导入本地" | "上传云端" | "等待重试" | string; lastDetectedAt?: string; lastImportedAt?: string; cloudPending?: number; cloudUploaded?: number; cloudFailed?: number; cloudRejected?: number; bridgeVersion?: number; sourceList?: string; discoveredCount?: number; ignoredStaleCount?: number; readPhase?: "discovering" | "loading" | "metadata" | "branches" | "reading" | string; readScanned?: number; readCurrent?: number; readTotal: number; readCompleted: number; readFailed: number; loaded: number; completed: number; imported: number; updated?: number; skipped: number; failed: number; message: string };
 export type TtxqGamePreview = { qipuId: string; title: string; red: string; black: string; event: string; date: string; result: string; round: string; playedAt: string; duration: string; moveCount: number; variationCount: number; routeCount: number; decodedRouteCount: number; variationNodeCount: number; branchComplete: boolean; annotationCount?: number; annotationsComplete?: boolean; valid: boolean; error?: string; diagnostic?: string };
 export type TtxqDiagnosticSample = { id: number; qipuId: string; fieldPath: string; valueType: string; valueLength: number; rawSample: string; error: string; capturedAt: string };
 export type LibraryMoveResult = { folderCount: number; gameCount: number };
@@ -1221,6 +1221,9 @@ export interface ChessPlatform {
   listTtxqDiagnosticSamples(): Promise<TtxqDiagnosticSample[]>;
   clearTtxqDiagnosticSamples(): Promise<void>;
   startTtxqAuthorization(): Promise<void>;
+  setTtxqAutoSync(enabled: boolean, targetFolder?: string): Promise<TtxqSyncProgress>;
+  syncTtxqCurrentListNow(targetFolder?: string): Promise<void>;
+  publishPendingTtxqMirrors(): Promise<TtxqSyncProgress>;
   collectTtxqHistory(): Promise<void>;
   importTtxqHistory(targetFolder?: string): Promise<TtxqSyncProgress>;
   disconnectTtxq(): Promise<void>;

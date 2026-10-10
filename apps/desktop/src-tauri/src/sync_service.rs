@@ -529,7 +529,9 @@ pub(crate) async fn register_sync_account(
     password: String,
     state: State<'_, DesktopState>,
 ) -> Result<SyncAccountDto, String> {
-    authenticate_sync_account("register", email, password, true, &state).await
+    let account = authenticate_sync_account("register", email, password, true, &state).await?;
+    let _ = crate::ttxq_sync::publish_pending_ttxq_mirrors_impl(&state).await;
+    Ok(account)
 }
 
 #[tauri::command]
@@ -538,7 +540,9 @@ pub(crate) async fn login_sync_account(
     password: String,
     state: State<'_, DesktopState>,
 ) -> Result<SyncAccountDto, String> {
-    authenticate_sync_account("login", email, password, false, &state).await
+    let account = authenticate_sync_account("login", email, password, false, &state).await?;
+    let _ = crate::ttxq_sync::publish_pending_ttxq_mirrors_impl(&state).await;
+    Ok(account)
 }
 
 #[tauri::command]
@@ -708,5 +712,6 @@ pub(crate) async fn sync_now(state: State<'_, DesktopState>) -> Result<SyncResul
             result.uploaded, result.downloaded
         ))
         .map_err(|error| error.to_string())?;
+    let _ = crate::ttxq_sync::publish_pending_ttxq_mirrors_impl(&state).await;
     Ok(result)
 }
