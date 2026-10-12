@@ -1358,12 +1358,20 @@ export const teachingClient = {
     const auth = this.auth(); if (!auth) throw new Error("请先登录学生账号");
     return request<TeachingCatalogNode[]>(path, {}, auth.token);
   },
-  async catalogProblems(id: string, query: { q?: string; goal?: string; difficulty?: number; mateGroup?: string; mateMoves?: number; cursor?: string; limit?: number } = {}, teacher = false, context?: TeachingAuth) {
+  async catalogBrowse(query:{nodeId?:string;cursor?:string;q?:string;materialCursor?:string;limit?:number}={},teacher=false,context?:TeachingAuth) {
+    const params=new URLSearchParams({limit:String(query.limit??50)});
+    for(const [key,value] of Object.entries(query))if(value!==undefined&&value!=="")params.set(key,String(value));
+    const path=`/api/v1/${teacher?"admin":"student"}/teaching-catalog/browse?${params}`;
+    if(teacher)return teacherRequest<import("./TeachingCatalog").CatalogBrowsePage>(path,{},context);
+    const auth=context??this.auth();if(!auth)throw new Error("请先登录学生账号");
+    return request<import("./TeachingCatalog").CatalogBrowsePage>(path,{},auth.token);
+  },
+  async catalogProblems(id: string, query: { q?: string; goal?: string; material?:string; motif?:string; difficulty?: number; mateGroup?: string; mateMoves?: number; cursor?: string; limit?: number } = {}, teacher = false, context?: TeachingAuth) {
     const params = new URLSearchParams({ limit: String(query.limit ?? 50) });
     for (const [key, value] of Object.entries(query)) if (value !== undefined && value !== "") params.set(key, String(value));
     const path = `/api/v1/${teacher ? "admin" : "student"}/teaching-catalog/${encodeURIComponent(id)}/problems?${params}`;
     if (teacher) return teacherRequest<{ items: CatalogProblem[]; nextCursor?: string | null }>(path, {}, context);
-    const auth = this.auth(); if (!auth) throw new Error("请先登录学生账号");
+    const auth = context ?? this.auth(); if (!auth) throw new Error("请先登录学生账号");
     return request<{ items: CatalogProblem[]; nextCursor?: string | null }>(path, {}, auth.token);
   },
   async teacherFolderTree(context?: TeachingAuth) {
