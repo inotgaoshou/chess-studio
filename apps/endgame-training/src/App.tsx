@@ -15,13 +15,15 @@ import { trainingStore } from "./store";
 import type { Attempt, BoardPiece, BoardState, LocalManualAnalysisSummary, LocalManualFolder, LocalManualGame, MobileWorkspaceMode, RuleMode, SolutionMove, TrainingLibrary, TrainingProblem } from "./types";
 import { acceptsMove, boardAt, cancelPikafishSearch, chineseLine, hasLocalPikafish, parseCbl, parseCblGames, queryCloudBook, queryPikafishAnalysis, queryPikafishReply, type CloudBookMove, type PikafishAnalysis, type PikafishAnalysisLine } from "./wasm";
 import { deriveTrainingFeedback, playTrainingFeedback, TRAINING_FEEDBACK_PACK, type TrainingFeedbackKind } from "./moveFeedback";
-import { setPreferredOrientation, type PreferredOrientation } from "./orientation";
+import { type PreferredOrientation } from "./orientation";
+import { useScreenOrientation } from "./useScreenOrientation";
 import { DEFAULT_SKIN_ID, LEGACY_DEFAULT_SKIN_ID, SKIN_CATALOG, normalizeSkinId, skinById, type SkinCatalogItem } from "./skinCatalog";
 import { StudyManualTree, type StudyManualBranch } from "./StudyManualTree";
 import { applyTrainingLogicSidecar, trainingLogicHint, trainingLogicMiss } from "./logicSidecar";
 import { allowTeacherNavigation, OrganizationSearchSelect, TeacherMobileWorkspace } from "./TeacherMobileWorkspace";
 import { teachingClient, type PersonalManualSyncStatus as RemoteManualSyncStatus, type PlatformGame, type PlatformGameLibrary, type PracticeHome, type PracticeSession, type PracticeSessionItem, type PracticeTopic, type PracticeTopicDetail, type PracticeSearchResult, type TeachingAssignment, type TeachingAssignmentResults, type TeachingAuth, type TeachingClass, type TeachingOrganization, type TeachingOrganizationJoinRequest, type TeachingStudent } from "./teaching";
 import { packageEnvironment, packageEnvironmentLabel, type AppEnvironment } from "./appEnvironment";
+import { RESULT_BOARD_SKIN } from "./resultBoardAssets";
 import { assertManualGameEditable, copyProviderMirrorToEditable, TTXQ_MIRROR_FOLDER } from "./providerMirrors";
 
 type Mode = "cloud" | "ai" | "solver" | "replay" | "free";
@@ -1071,7 +1073,7 @@ function readSkinPreference(key: string) {
 }
 
 function readTabletNavigationPosition(): TabletNavigationPosition {
-  return localStorage.getItem(TABLET_NAVIGATION_POSITION_KEY) === "bottom" ? "bottom" : "sidebar";
+  return localStorage.getItem(TABLET_NAVIGATION_POSITION_KEY) === "sidebar" ? "sidebar" : "bottom";
 }
 
 function skinCardName(skin: SkinCatalogItem, index?: number) {
@@ -1132,8 +1134,11 @@ function StudySkinSettings({ boardSkin, pieceSkin, boardSkinInfo, riverText, riv
   </section>;
 }
 
-function AboutDialog({ preferredOrientation, studyRuleMode, skinDevCommandOpen, skinDevCommand, skinDevUnlocked, skinDevNotice, onClose, onOrientationChange, onStudyRuleModeChange, onSkinDevTap, onSkinDevCommandChange, onRunSkinDevCommand, onExportAiSkinPackage }: {
+function AboutDialog({ preferredOrientation, orientationPending, orientationMessage, orientationError, studyRuleMode, skinDevCommandOpen, skinDevCommand, skinDevUnlocked, skinDevNotice, onClose, onOrientationChange, onStudyRuleModeChange, onSkinDevTap, onSkinDevCommandChange, onRunSkinDevCommand, onExportAiSkinPackage }: {
   preferredOrientation: PreferredOrientation;
+  orientationPending: boolean;
+  orientationMessage: string;
+  orientationError: string;
   studyRuleMode: RuleMode;
   skinDevCommandOpen: boolean;
   skinDevCommand: string;
@@ -1147,9 +1152,12 @@ function AboutDialog({ preferredOrientation, studyRuleMode, skinDevCommandOpen, 
   onRunSkinDevCommand(): void;
   onExportAiSkinPackage(): void;
 }) {
-  return <div className="confirm-backdrop" role="dialog" aria-modal="true" aria-labelledby="about-title" onMouseDown={onClose}>
+  return <div className="confirm-backdrop about-backdrop" role="dialog" aria-modal="true" aria-labelledby="about-title" onMouseDown={onClose}>
     <section className="about-dialog" tabIndex={-1} onMouseDown={(event) => event.stopPropagation()}>
       <BookOpen/><b id="about-title">棋析</b><p>本地 CBL 残局训练</p>
+      <fieldset className="orientation-picker" disabled={orientationPending}><legend>屏幕方向{orientationPending ? " · 切换中…" : ""}</legend>{(["auto", "landscape", "portrait"] as PreferredOrientation[]).map((value) => <button key={value} aria-pressed={preferredOrientation === value} className={preferredOrientation === value ? "active" : ""} onClick={() => onOrientationChange(value)}>{value === "auto" ? "自动" : value === "landscape" ? "锁横屏" : "锁竖屏"}</button>)}</fieldset>
+      <p>自动：跟随系统旋转设置。</p>
+      {orientationError ? <p className="orientation-error" role="alert">{orientationError}</p> : <p role="status">{orientationMessage}</p>}
       <dl>
         <div><dt>版本</dt><dd>{SKIN_DEV_TOOLS_ENABLED ? <button type="button" className="skin-dev-tap" onClick={onSkinDevTap}>{APP_VERSION}</button> : APP_VERSION}</dd></div>
         <div><dt>构建时间</dt><dd>{APP_BUILD_TIME}</dd></div>
@@ -1157,7 +1165,6 @@ function AboutDialog({ preferredOrientation, studyRuleMode, skinDevCommandOpen, 
         <div><dt>当前棋规</dt><dd>{studyRuleLabel(studyRuleMode)}</dd></div>
         <div><dt>联系方式</dt><dd>xiangqistudio@outlook.com</dd></div>
       </dl>
-      <fieldset className="orientation-picker"><legend>屏幕方向</legend>{(["auto", "landscape", "portrait"] as PreferredOrientation[]).map((value) => <button key={value} className={preferredOrientation === value ? "active" : ""} onClick={() => onOrientationChange(value)}>{value === "auto" ? "自动" : value === "landscape" ? "锁横屏" : "锁竖屏"}</button>)}</fieldset>
       <fieldset className="orientation-picker rule-mode-about"><legend>棋规模式</legend>{(["domestic2020", "asianAxf"] as RuleMode[]).map((value) => <button key={value} className={studyRuleMode === value ? "active" : ""} onClick={() => onStudyRuleModeChange(value)}>{studyRuleLabel(value)}</button>)}</fieldset>
       {SKIN_DEV_TOOLS_ENABLED && skinDevCommandOpen && <section className="skin-dev-panel"><strong>开发者命令</strong><div><input value={skinDevCommand} type="text" autoComplete="off" placeholder="舒服skin" onChange={(event) => onSkinDevCommandChange(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") onRunSkinDevCommand(); }}/><button onClick={onRunSkinDevCommand}>执行</button></div>{skinDevNotice && <small>{skinDevNotice}</small>}{skinDevUnlocked && <button className="skin-export-button" onClick={onExportAiSkinPackage}>导出 AI 皮肤素材包</button>}</section>}
       <p className="about-rule-note">棋规用于本地局面与重复棋例提示；Pikafish 引擎搜索不切换规则。</p>
@@ -1295,7 +1302,7 @@ function FenMiniBoard({ fen, label }: { fen?: string | null; label: string }) {
     }
     return cells.slice(0, 9);
   }) : [];
-  const skin = "qingxin-zhuyun";
+  const skin = RESULT_BOARD_SKIN;
   const geometry = boardGeometryForSkin(skin);
   return <div className="fen-mini-board" aria-label={label} role="img" style={{ backgroundImage: `url("/skins/${skin}/board.png")` }}>
     {squares.map((piece, index) => {
@@ -2432,10 +2439,7 @@ export function App() {
   const [skinDevCommand, setSkinDevCommand] = useState("");
   const [skinDevUnlocked, setSkinDevUnlocked] = useState(false);
   const [skinDevNotice, setSkinDevNotice] = useState("");
-  const [preferredOrientation, setPreferredOrientationState] = useState<PreferredOrientation>(() => {
-    const saved = localStorage.getItem("xiangqi-training-orientation");
-    return saved === "landscape" || saved === "portrait" ? saved : "auto";
-  });
+  const { preferredOrientation, orientationPending, orientationMessage, orientationError, changeOrientation } = useScreenOrientation();
   const session = useRef(0);
   const analysisGeneration = useRef(0);
   const studyGeneration = useRef(0);
@@ -2903,11 +2907,6 @@ export function App() {
     }));
   }, [manualSetupDraftActive, manualSetupHistory, manualSetupPieces, manualSetupSide]);
   useEffect(() => {
-    void setPreferredOrientation(preferredOrientation).catch(() => {
-      setNotice("无法恢复屏幕方向设置，已使用系统自动旋转。");
-    });
-  }, []);
-  useEffect(() => {
     setStudyNoticeVisible(true);
     if (persistentStudyNotice(studyNotice)) return;
     const timer = window.setTimeout(() => setStudyNoticeVisible(false), 2200);
@@ -2938,7 +2937,7 @@ export function App() {
       }
       if (event.key !== "Tab") return;
       const dialog = document.querySelector<HTMLElement>(selector);
-      const focusable = [...(dialog?.querySelectorAll<HTMLElement>("textarea, input, select, button, [tabindex]:not([tabindex='-1'])") ?? [])].filter((item) => !item.hasAttribute("disabled"));
+      const focusable = [...(dialog?.querySelectorAll<HTMLElement>("textarea, input, select, button, [tabindex]:not([tabindex='-1'])") ?? [])].filter((item) => !item.matches(":disabled"));
       if (!focusable.length) return;
       const first = focusable[0];
       const last = focusable.at(-1)!;
@@ -3536,20 +3535,6 @@ export function App() {
     else if (next === 2) setNotice("提示：棋盘上已标出当前应走棋子。");
     else setNotice(`这一步：${notation}`);
   };
-  async function changeOrientation(next: PreferredOrientation) {
-    try {
-      const result = await setPreferredOrientation(next);
-      localStorage.setItem("xiangqi-training-orientation", next);
-      setPreferredOrientationState(next);
-      if (result.requiresPhysicalRotation) {
-        setNotice(`已限制为${next === "landscape" ? "横屏" : "竖屏"}。请关闭系统方向锁定，再将设备实际转为${next === "landscape" ? "横向" : "竖向"}一次。`);
-      } else {
-        setNotice(next === "auto" ? "已恢复自动旋转。" : `已锁定${next === "landscape" ? "横屏" : "竖屏"}。`);
-      }
-    } catch {
-      setNotice("屏幕方向切换失败，请确认系统方向锁定已关闭。");
-    }
-  }
   function changeRiverText(next: string) { const value = next.slice(0, 16); localStorage.setItem("xiangqi-training-river-text", value); setRiverText(value); }
   function changeRiverTextColor(next: string) { localStorage.setItem("xiangqi-training-river-text-color", next); setRiverTextColor(next); }
   function changeRiverTextSize(next: number) { const value = Math.max(16, Math.min(42, next)); localStorage.setItem("xiangqi-training-river-text-size", String(value)); setRiverTextSize(value); }
@@ -5806,6 +5791,9 @@ export function App() {
   {deleteTarget && <div className="confirm-backdrop" onMouseDown={() => setDeleteTarget(undefined)}><section onMouseDown={(event) => event.stopPropagation()}><strong>确认删除</strong><p>{deleteTarget.type === "library" ? `删除题库《${deleteTarget.title}》及该应用内的答题记录？` : `从训练目录移除《${deleteTarget.title}》？答题记录会保留。`}</p><footer><button onClick={() => setDeleteTarget(undefined)}>取消</button><button className="danger" onClick={() => void confirmDelete()}>删除</button></footer></section></div>}
   {showAbout && <AboutDialog
     preferredOrientation={preferredOrientation}
+    orientationPending={orientationPending}
+    orientationMessage={orientationMessage}
+    orientationError={orientationError}
     studyRuleMode={studyRuleMode}
     skinDevCommandOpen={skinDevCommandOpen}
     skinDevCommand={skinDevCommand}

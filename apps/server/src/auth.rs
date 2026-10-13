@@ -378,8 +378,17 @@ pub(crate) async fn switch_organization(
     .bind(user_id.to_string())
     .fetch_optional(&state.pool)
     .await?;
-    let Some((role, auth_version, is_platform_admin, login_name, email, display_name, org_name, vip_enabled, vip_expires_at)) =
-        row
+    let Some((
+        role,
+        auth_version,
+        is_platform_admin,
+        login_name,
+        email,
+        display_name,
+        org_name,
+        vip_enabled,
+        vip_expires_at,
+    )) = row
     else {
         return Err(ApiError::Forbidden);
     };

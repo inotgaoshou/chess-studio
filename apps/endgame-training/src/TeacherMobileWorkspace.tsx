@@ -505,25 +505,26 @@ function TeacherAssignmentWizard({ auth, onNavigate, onAuthChange }: { auth: Tea
   const validBatch = draft.batchMode === "none" || Number.isInteger(batchValue) && batchValue >= 1 && batchValue <= 10000;
   const estimatedBatches = draft.batchMode === "none" ? selectedCount ? 1 : 0 : validBatch ? draft.batchMode === "count" ? Math.min(selectedCount,draft.batchCount) : Math.ceil(selectedCount/draft.batchSize) : 0;
   return <main className="teacher-mobile-page teacher-mobile-wizard">
-    <TeacherHeader title="布置作业" subtitle={`第 ${step}/4 步 · ${auth.user.orgName || "未选择机构"}`} onBack={leave}/>
-    <TeacherOrganizationSelect auth={auth} disabled={locked} onChange={(id) => void changeOrganization(id)}/>
-    {loading && <p className="teacher-mobile-progress" role="status">正在加载当前机构</p>}
-    {error && <p className="teacher-mobile-error" role="alert">{error}</p>}
-    {loadFailed && <button type="button" onClick={() => setReload((value) => value + 1)}>重试加载机构</button>}
-    {progress && <p className="teacher-mobile-progress" role="status">{progress}</p>}
-    {submissionProgress && <section className="teacher-mobile-submission" aria-live="polite">
-      <strong>已完成 {submissionProgress.completed}/{submissionProgress.total} 批</strong>
-      <small>已创建 {submissionProgress.ids.length} 份作业，编号：{submissionProgress.ids.join("、") || "无"}</small>
-      {submissionProgress.uncertain && <small>创建结果未确认，请返回工作台核实。</small>}
-    </section>}
-    <fieldset className="teacher-mobile-wizard-fields" disabled={locked}>
-      <nav className="teacher-mobile-stepper" aria-label="作业步骤">
-        {["机构", "题目", "学生", "发布"].map((label, index) => <button type="button" key={label} className={step === index + 1 ? "active" : step > index + 1 ? "complete" : ""} disabled={index + 1 > step} onClick={() => setStep(index + 1)}><b>{index + 1}</b><span>{label}</span></button>)}
-      </nav>
-      {step === 1 && <section className="teacher-mobile-step">
-        <h2>确认布置机构</h2>
-        <div className="teacher-mobile-scope"><GraduationCap/><span><b>{auth.user.orgName || "尚未绑定机构"}</b><small>仅限本人负责的班级及学生</small></span></div>
+    <div className="teacher-mobile-wizard-body">
+      <TeacherHeader title="布置作业" subtitle={`第 ${step}/4 步 · ${auth.user.orgName || "未选择机构"}`} onBack={leave}/>
+      <TeacherOrganizationSelect auth={auth} disabled={locked} onChange={(id) => void changeOrganization(id)}/>
+      {loading && <p className="teacher-mobile-progress" role="status">正在加载当前机构</p>}
+      {error && <p className="teacher-mobile-error" role="alert">{error}</p>}
+      {loadFailed && <button type="button" onClick={() => setReload((value) => value + 1)}>重试加载机构</button>}
+      {progress && <p className="teacher-mobile-progress" role="status">{progress}</p>}
+      {submissionProgress && <section className="teacher-mobile-submission" aria-live="polite">
+        <strong>已完成 {submissionProgress.completed}/{submissionProgress.total} 批</strong>
+        <small>已创建 {submissionProgress.ids.length} 份作业，编号：{submissionProgress.ids.join("、") || "无"}</small>
+        {submissionProgress.uncertain && <small>创建结果未确认，请返回工作台核实。</small>}
       </section>}
+      <fieldset className="teacher-mobile-wizard-fields" disabled={locked}>
+        <nav className="teacher-mobile-stepper" aria-label="作业步骤">
+          {["机构", "题目", "学生", "发布"].map((label, index) => <button type="button" key={label} className={step === index + 1 ? "active" : step > index + 1 ? "complete" : ""} disabled={index + 1 > step} onClick={() => setStep(index + 1)}><b>{index + 1}</b><span>{label}</span></button>)}
+        </nav>
+        {step === 1 && <section className="teacher-mobile-step">
+          <h2>确认布置机构</h2>
+          <div className="teacher-mobile-scope"><GraduationCap/><span><b>{auth.user.orgName || "尚未绑定机构"}</b><small>仅限本人负责的班级及学生</small></span></div>
+        </section>}
         {step === 2 && <section className="teacher-mobile-step">
           <h2>选择作业题目</h2>
           <label><span>作业标题</span><input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="例如：中局杀法训练"/></label>
@@ -584,6 +585,7 @@ function TeacherAssignmentWizard({ auth, onNavigate, onAuthChange }: { auth: Tea
           </div>
         </section>}
       </fieldset>
+    </div>
     <footer className="teacher-mobile-wizard-footer">
       {step > 1 ? <button type="button" disabled={locked} onClick={() => setStep(step - 1)}>上一步</button> : <span/>}
       {step < 4 ? <button type="button" className="primary" disabled={locked || (step === 2 && !validBatch)} onClick={() => void next()}>下一步<ChevronRight/></button> : <div>

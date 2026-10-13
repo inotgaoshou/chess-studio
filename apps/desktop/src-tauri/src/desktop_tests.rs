@@ -1693,12 +1693,10 @@ mod tests {
             Some(expected_nnue.as_path())
         );
 
-        let session = engine_protocol::EngineSession::launch(
-            &pikafish,
-            std::time::Duration::from_secs(3),
-        )
-        .await
-        .expect("prepared Pikafish should complete its engine handshake");
+        let session =
+            engine_protocol::EngineSession::launch(&pikafish, std::time::Duration::from_secs(3))
+                .await
+                .expect("prepared Pikafish should complete its engine handshake");
         session.close().await.unwrap();
     }
 

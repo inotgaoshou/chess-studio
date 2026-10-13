@@ -14,14 +14,18 @@ public class ScreenOrientationPlugin extends Plugin {
         String orientation = call.getString("orientation", "auto");
         final int requestedOrientation;
         switch (orientation) {
-            case "landscape": requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE; break;
-            case "portrait": requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT; break;
+            case "landscape": requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE; break;
+            case "portrait": requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT; break;
             case "auto": requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED; break;
             default: call.reject("不支持的屏幕方向"); return;
         }
         getActivity().runOnUiThread(() -> {
-            getActivity().setRequestedOrientation(requestedOrientation);
-            call.resolve();
+            try {
+                getActivity().setRequestedOrientation(requestedOrientation);
+                call.resolve();
+            } catch (RuntimeException error) {
+                call.reject("系统未允许切换屏幕方向", error);
+            }
         });
     }
 }

@@ -27,16 +27,6 @@ export function ManualSaveDialog({ game, folders, onSave, onCreateFolder, onClos
   const [draft, setDraft] = useState(() => ({ title: game.title, note: game.note,
     folderPath: game.folderPath ?? "", metadata: manualMetadata(game) }));
   const initial = useRef(JSON.stringify(draft));
-  const [viewport, setViewport] = useState(() => ({ height: window.visualViewport?.height ?? window.innerHeight, top: window.visualViewport?.offsetTop ?? 0 }));
-  useEffect(() => {
-    const update = () => setViewport({ height: window.visualViewport?.height ?? window.innerHeight, top: window.visualViewport?.offsetTop ?? 0 });
-    window.visualViewport?.addEventListener("resize", update);
-    window.visualViewport?.addEventListener("scroll", update);
-    return () => {
-      window.visualViewport?.removeEventListener("resize", update);
-      window.visualViewport?.removeEventListener("scroll", update);
-    };
-  }, []);
   const [discard, setDiscard] = useState(false);
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
@@ -88,8 +78,8 @@ export function ManualSaveDialog({ game, folders, onSave, onCreateFolder, onClos
       setNewFolder(undefined);
     });
   };
-  return <div className="confirm-backdrop manual-save-backdrop" style={{ height: viewport.height, top: viewport.top, bottom: "auto" }} onClick={close}>
-    <section className="manual-save-dialog" style={{ maxHeight: Math.max(160, viewport.height - 36) }} role="dialog" aria-modal="true" aria-label="保存棋谱"
+  return <div className="confirm-backdrop manual-save-backdrop" onClick={close}>
+    <section className="manual-save-dialog" role="dialog" aria-modal="true" aria-label="保存棋谱"
       onClick={(event) => event.stopPropagation()}
       onCompositionStart={() => { composing.current = true; }}
       onCompositionEnd={() => { composing.current = false; }}

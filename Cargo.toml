@@ -29,3 +29,12 @@ serde_json = "1.0"
 thiserror = "2.0"
 tokio = { version = "1.48", features = ["full"] }
 uuid = { version = "1.18", features = ["v4", "serde"] }
+
+# Keep local verification caches bounded; release optimization is unchanged.
+[profile.dev]
+debug = 1
+incremental = false
+
+[profile.test]
+debug = 1
+incremental = false
