@@ -857,6 +857,41 @@ pub struct ImportedTheoryCard {
 }
 
 impl LocalStore {
+    /// Invalidates only this server/account's teaching cache and submission queue.
+    /// Personal manuals, drafts and analysis are stored separately and remain intact.
+    pub fn observe_teaching_epoch(
+        &mut self,
+        owner_id: &str,
+        server_url: &str,
+        epoch: &str,
+    ) -> Result<bool, StoreError> {
+        let key = format!("teaching-epoch:{server_url}:{owner_id}");
+        let payload = serde_json::to_string(epoch)?;
+        let tx = self.connection.transaction()?;
+        let previous: Option<String> = tx
+            .query_row(
+                "SELECT payload_json FROM teaching_cache WHERE cache_key=?1",
+                [&key],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if previous.as_deref() == Some(payload.as_str()) {
+            return Ok(false);
+        }
+        let prefix = format!("teaching-data:{server_url}:{owner_id}:");
+        tx.execute(
+            "DELETE FROM teaching_cache WHERE owner_id=?1 AND substr(cache_key,1,length(?2))=?2",
+            params![owner_id, prefix],
+        )?;
+        tx.execute(
+            "DELETE FROM teaching_attempt_outbox WHERE owner_id=?1 AND server_url=?2",
+            params![owner_id, server_url],
+        )?;
+        tx.execute("INSERT INTO teaching_cache(cache_key,owner_id,kind,payload_json,updated_at) VALUES(?1,?2,'epoch',?3,?4) ON CONFLICT(cache_key) DO UPDATE SET payload_json=excluded.payload_json,updated_at=excluded.updated_at", params![key,owner_id,payload,chrono::Utc::now().to_rfc3339()])?;
+        tx.commit()?;
+        Ok(true)
+    }
+
     pub fn put_teaching_cache(
         &mut self,
         cache_key: &str,
@@ -7714,6 +7749,108 @@ mod tests {
         assert_eq!(status.state, "failed");
         assert_eq!(status.error.as_deref(), Some("目录不可写"));
         assert_eq!(store.game_mirror_statuses().unwrap(), vec![status]);
+    }
+
+    #[test]
+    fn teaching_epoch_reset_preserves_other_accounts_servers_and_personal_data() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        for (key, owner) in [
+            ("teaching-data:https://test:u:assignments:all", "u"),
+            ("teaching-data:https://test:other:assignments:all", "other"),
+            ("teaching-data:https://production:u:assignments:all", "u"),
+            ("teaching-profile:https://test", "u"),
+        ] {
+            store
+                .put_teaching_cache(key, owner, "assignments", "[]")
+                .unwrap();
+        }
+        store
+            .enqueue_teaching_attempt("old", "u", "https://test", "{}")
+            .unwrap();
+        store
+            .enqueue_teaching_attempt("other", "u", "https://production", "{}")
+            .unwrap();
+        let personal_id = Uuid::new_v4();
+        store
+            .save_game_with_operation(
+                personal_id,
+                "我的棋谱",
+                "fen",
+                Uuid::new_v4(),
+                &operation(personal_id),
+            )
+            .unwrap();
+        let tables_before: i64 = store
+            .connection
+            .query_row("SELECT count(*) FROM games", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(tables_before, 1);
+        assert!(
+            store
+                .observe_teaching_epoch("u", "https://test", "new")
+                .unwrap()
+        );
+        assert!(
+            store
+                .teaching_cache("teaching-data:https://test:u:assignments:all")
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            store
+                .teaching_cache("teaching-profile:https://test")
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            store
+                .teaching_cache("teaching-data:https://test:other:assignments:all")
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            store
+                .teaching_cache("teaching-data:https://production:u:assignments:all")
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            store
+                .pending_teaching_attempts("u", "https://test")
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            store
+                .pending_teaching_attempts("u", "https://production")
+                .unwrap()
+                .len(),
+            1
+        );
+        store
+            .put_teaching_cache(
+                "teaching-data:https://test:u:assignments:all:new",
+                "u",
+                "assignments",
+                "[]",
+            )
+            .unwrap();
+        assert!(
+            !store
+                .observe_teaching_epoch("u", "https://test", "new")
+                .unwrap()
+        );
+        assert!(
+            store
+                .teaching_cache("teaching-data:https://test:u:assignments:all:new")
+                .unwrap()
+                .is_some()
+        );
+        let tables_after: i64 = store
+            .connection
+            .query_row("SELECT count(*) FROM games", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(tables_before, tables_after);
     }
 
     #[test]

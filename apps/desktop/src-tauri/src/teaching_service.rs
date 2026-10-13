@@ -68,6 +68,26 @@ fn data_cache_key(server_url: &str, owner_id: &str, kind: &str, id: Option<&str>
     )
 }
 
+fn scoped_data_cache_key(
+    state: &DesktopState,
+    server_url: &str,
+    owner_id: &str,
+    kind: &str,
+    id: Option<&str>,
+) -> Result<String, String> {
+    let epoch_key = format!(
+        "teaching-epoch:{}:{owner_id}",
+        normalized_server_url(server_url)
+    );
+    let epoch = read_cache(state, &epoch_key)?
+        .and_then(|v| v.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "legacy".into());
+    Ok(format!(
+        "{}:{epoch}",
+        data_cache_key(server_url, owner_id, kind, id)
+    ))
+}
+
 fn read_cache(state: &DesktopState, key: &str) -> Result<Option<serde_json::Value>, String> {
     let model = state.model.lock().map_err(|_| "本地教学缓存锁已损坏")?;
     model
@@ -246,6 +266,19 @@ pub(crate) async fn get_teaching_account(
     let cached = cached_account(&state, &server_url)?;
     match authenticated_get::<TeachingUser>(&state, &server_url, "/api/v1/auth/me").await {
         Ok(user) => {
+            let capability: serde_json::Value =
+                authenticated_get(&state, &server_url, "/api/v1/capabilities").await?;
+            if let Some(epoch) = capability
+                .get("contentEpoch")
+                .and_then(serde_json::Value::as_str)
+            {
+                uuid::Uuid::parse_str(epoch).map_err(|_| "教学服务返回了无效版本")?;
+                let mut model = state.model.lock().map_err(|_| "本地教学缓存锁已损坏")?;
+                model
+                    .store
+                    .observe_teaching_epoch(&user.id, &normalized_server_url(&server_url), epoch)
+                    .map_err(|e| e.to_string())?;
+            }
             let account = TeachingAccountDto {
                 server_url: normalized_server_url(&server_url),
                 status: "signedIn".into(),
@@ -344,7 +377,7 @@ pub(crate) async fn list_teaching_assignments(
     } else {
         "/api/v1/admin/assignments"
     };
-    let key = data_cache_key(&server_url, owner_id, "assignments", None);
+    let key = scoped_data_cache_key(&state, &server_url, owner_id, "assignments", None)?;
     let remote = if account.role.as_deref() == Some("student") {
         authenticated_get_pages(&state, &server_url, path).await
     } else {
@@ -367,7 +400,7 @@ pub(crate) async fn list_teaching_classes(
 ) -> Result<serde_json::Value, String> {
     let account = get_teaching_account(server_url.clone(), state.clone()).await?;
     let owner_id = account.user_id.as_deref().ok_or("教学账号无效")?;
-    let key = data_cache_key(&server_url, owner_id, "classes", None);
+    let key = scoped_data_cache_key(&state, &server_url, owner_id, "classes", None)?;
     match authenticated_get::<serde_json::Value>(&state, &server_url, "/api/v1/admin/classes").await
     {
         Ok(value) => {
@@ -481,7 +514,13 @@ pub(crate) async fn list_teaching_assignment_problems(
 ) -> Result<serde_json::Value, String> {
     let account = get_teaching_account(server_url.clone(), state.clone()).await?;
     let owner_id = account.user_id.as_deref().ok_or("教学账号无效")?;
-    let key = data_cache_key(&server_url, owner_id, "problems", Some(&assignment_id));
+    let key = scoped_data_cache_key(
+        &state,
+        &server_url,
+        owner_id,
+        "problems",
+        Some(&assignment_id),
+    )?;
     match authenticated_get_pages(
         &state,
         &server_url,

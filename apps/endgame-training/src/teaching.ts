@@ -1,3 +1,4 @@
+import { ContentEpochTracker, belongsToContentScope } from "./contentEpoch";
 import type { CatalogProblem, TeachingCatalogNode, TrainingGoal } from "./TeachingCatalog";
 import type { LocalManualAnalysisSummary, LocalManualFolder, LocalManualGame, SolutionMove, TrainingLibrary, TrainingProblem } from "./types";
 import { isNativeSessionStore, secureSession } from "./secureSession";
@@ -20,6 +21,42 @@ const SYNC_META_PREFIX = "xiangqi-teaching-sync";
 const JOIN_STATUS_PREFIX = "xiangqi-organization-join-status";
 const VIP_ACCESS_MESSAGE = "作业权益已过期或未开通，请联系老师或管理员续期。";
 let lastSubmitError = "";
+const contentEpochs = new ContentEpochTracker({ getItem: key => localStorage.getItem(key), setItem: (key, value) => localStorage.setItem(key, value) });
+const epochProbes = new Map<string, Promise<boolean>>();
+async function ensureContentEpoch(context: AuthContext): Promise<boolean> {
+  const key = `${context.serverUrl}:${context.ownerId}:${context.epoch}`;
+  const existing = epochProbes.get(key);
+  if (existing) return existing;
+  const pending = (async () => {
+    const response = await fetch(`${context.serverUrl}/api/v1/capabilities`, { headers: { "x-xiangqi-app-id": appId() }, credentials: "include" });
+    if (response.status === 404) return false; // Older servers have no reset marker.
+    if (!response.ok) throw new Error(userFacingError(undefined, response.status));
+    const body = await response.json() as { contentEpoch?: string };
+    const epoch = typeof body.contentEpoch === "string" && /^[0-9a-f-]{36}$/i.test(body.contentEpoch) ? body.contentEpoch : undefined;
+    return contentEpochs.observe(context, epoch, () => purgeTeachingContent(context), () => isCurrentAuthContext(context));
+  })();
+  epochProbes.set(key, pending);
+  try { return await pending; }
+  finally { if (epochProbes.get(key) === pending) epochProbes.delete(key); }
+}
+async function purgeTeachingContent(context: AuthContext) {
+  const db = await openDb();
+  const names = ["assignments", "assignmentCaches", "attempts", "practiceAttempts", "assignmentViews", "assignmentDrafts", "assignmentAnswers"];
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction(names, "readwrite");
+      for (const name of names) {
+        const cursor = transaction.objectStore(name).openCursor();
+        cursor.onsuccess = () => { const item = cursor.result; if (!item) return; if (belongsToContentScope(item.value, context)) item.delete(); item.continue(); };
+      }
+      transaction.oncomplete = () => resolve();
+      transaction.onabort = () => reject(transaction.error ?? new Error("题库缓存清理失败"));
+      transaction.onerror = () => reject(transaction.error);
+    });
+    const prefix = `${SYNC_META_PREFIX}:${encodeURIComponent(context.serverUrl)}:${context.ownerId}:`;
+    for (const key of Object.keys(localStorage)) if (key.startsWith(prefix)) localStorage.removeItem(key);
+  } finally { db.close(); }
+}
 let activeAuth: TeachingAuth | undefined;
 let refreshInFlight: Promise<TeachingAuth | undefined> | undefined;
 let sessionEpoch = 0;
@@ -160,6 +197,7 @@ export type PracticeAttempt = { itemId: string; elapsedMs: number; hintsUsed: nu
 type PendingPracticeAttempt = PracticeAttempt & {
   sessionId: string;
   ownerId?: string;
+  contentEpoch?: string;
   orgId?: string;
   serverUrl?: string;
 };
@@ -261,6 +299,7 @@ type CachedAssignment = {
   problems: AssignmentProblem[];
   cachedAt: string;
   ownerId: string;
+  contentEpoch?: string;
   orgId: string;
   serverUrl: string;
 };
@@ -361,6 +400,7 @@ export type PendingTeachingAttempt = {
   outcome: "completed" | "revealed" | "abandoned";
   completedAt: string;
   ownerId?: string;
+  contentEpoch?: string;
   orgId?: string;
   serverUrl?: string;
   submissionRequested?: boolean;
@@ -377,6 +417,7 @@ export type AssignmentDraft = {
 type CachedAssignmentDraft = AssignmentDraft & {
   cacheKey: string;
   ownerId: string;
+  contentEpoch?: string;
   orgId: string;
   serverUrl: string;
   updatedAt: string;
@@ -385,6 +426,7 @@ type PendingAssignmentView = {
   cacheKey: string;
   assignmentId: string;
   ownerId: string;
+  contentEpoch?: string;
   orgId: string;
   serverUrl: string;
 };
@@ -498,10 +540,18 @@ async function request<T>(path: string, init: RequestInit = {}, token?: string, 
   const targetServer = serverUrl();
   const authContext = accessToken ? tokenContexts.get(accessToken) : undefined;
   if (accessToken && (!authContext || !isCurrentAuthContext(authContext))) throw new Error("登录账号或机构已变化，请重新操作。");
+  const teachingContentRequest = /^\/api\/v1\/(student|teacher)\//.test(path);
+  if (authContext && teachingContentRequest) {
+    const changed = await ensureContentEpoch(authContext);
+    if (!isCurrentAuthContext(authContext)) throw new Error("登录账号或环境已变化，请重新操作。");
+    if (changed && init.method && !["GET", "HEAD"].includes(init.method.toUpperCase())) throw new Error("题库已重建，旧练习缓存已清理，请刷新后重新操作。");
+  }
+  const contentEpoch = authContext ? contentEpochs.current(authContext) : undefined;
   if (accessToken) headers.set("authorization", `Bearer ${accessToken}`);
   const response = await fetch(`${targetServer}${path}`, { ...init, headers, credentials: "include" });
   const body = await response.json().catch(() => ({}));
   if (authContext && !isCurrentAuthContext(authContext)) throw new Error("登录账号或机构已变化，请重新操作。");
+  if (authContext && teachingContentRequest && contentEpoch !== contentEpochs.current(authContext)) throw new Error("题库已重建，请刷新后重新操作。");
   if (!response.ok) {
     if (response.status === 401 && retry && path !== "/api/v1/auth/refresh" && accessToken) {
       const refreshed = await refreshAuth();
@@ -590,7 +640,7 @@ async function replaceAssignmentCaches(context: ReturnType<typeof contextOf>, ne
     existingRequest.onsuccess = () => {
       const keep = new Set(next.map((item) => item.cacheKey));
       for (const item of existingRequest.result as CachedAssignment[]) {
-        if (item.ownerId === context.ownerId && item.orgId === context.orgId && item.serverUrl === context.serverUrl && !keep.has(item.cacheKey)) {
+        if (item.ownerId === context.ownerId && item.orgId === context.orgId && item.serverUrl === context.serverUrl && item.contentEpoch === context.contentEpoch && !keep.has(item.cacheKey)) {
           store.delete(item.cacheKey);
         }
       }
@@ -662,7 +712,9 @@ function toProblem(problem: AssignmentProblem): TrainingProblem {
 }
 
 function contextOf(auth: TeachingAuth) {
+  const scope = { ownerId: auth.user.id, serverUrl: authContexts.get(auth)?.serverUrl ?? serverUrl() };
   return {
+    contentEpoch: contentEpochs.current(scope),
     ownerId: auth.user.id,
     orgId: auth.user.orgId || "default",
     serverUrl: authContexts.get(auth)?.serverUrl ?? serverUrl(),
@@ -671,7 +723,7 @@ function contextOf(auth: TeachingAuth) {
 
 function assignmentCacheKey(auth: TeachingAuth, assignmentId: string) {
   const context = contextOf(auth);
-  return `${context.serverUrl}::${context.ownerId}::${context.orgId}::${assignmentId}`;
+  return `${context.serverUrl}::${context.ownerId}::${context.orgId}::${context.contentEpoch ?? "legacy"}::${assignmentId}`;
 }
 
 function assignmentDraftKey(auth: TeachingAuth, assignmentId: string, problemId: string) {
@@ -700,17 +752,17 @@ function personalManualRecordKey(kind: PersonalManualSyncKind, id: string) { ret
 
 function sameAttemptContext(attempt: PendingTeachingAttempt, auth: TeachingAuth) {
   const context = contextOf(auth);
-  return attempt.ownerId === context.ownerId && attempt.orgId === context.orgId && attempt.serverUrl === context.serverUrl;
+  return attempt.ownerId === context.ownerId && attempt.orgId === context.orgId && attempt.serverUrl === context.serverUrl && attempt.contentEpoch === context.contentEpoch;
 }
 
 function samePracticeAttemptContext(attempt: PendingPracticeAttempt, auth: TeachingAuth) {
   const context = contextOf(auth);
-  return attempt.ownerId === context.ownerId && attempt.orgId === context.orgId && attempt.serverUrl === context.serverUrl;
+  return attempt.ownerId === context.ownerId && attempt.orgId === context.orgId && attempt.serverUrl === context.serverUrl && attempt.contentEpoch === context.contentEpoch;
 }
 
 function sameAssignmentViewContext(view: PendingAssignmentView, auth: TeachingAuth) {
   const context = contextOf(auth);
-  return view.ownerId === context.ownerId && view.orgId === context.orgId && view.serverUrl === context.serverUrl;
+  return view.ownerId === context.ownerId && view.orgId === context.orgId && view.serverUrl === context.serverUrl && view.contentEpoch === context.contentEpoch;
 }
 
 async function markCachedAssignmentViewed(auth: TeachingAuth, assignmentId: string) {
@@ -1065,7 +1117,7 @@ export const teachingClient = {
     if (!auth || auth.user.role !== "student") return 0;
     const context = contextOf(auth);
     return (await storeAll<CachedAssignment>("assignmentCaches"))
-      .filter((cache) => cache.ownerId === context.ownerId && cache.orgId === context.orgId && cache.serverUrl === context.serverUrl && cache.assignment.isUnread)
+      .filter((cache) => cache.ownerId === context.ownerId && cache.orgId === context.orgId && cache.serverUrl === context.serverUrl && cache.contentEpoch === context.contentEpoch && cache.assignment.isUnread)
       .length;
   },
   async markAssignmentViewed(assignmentId: string) {
@@ -1210,10 +1262,12 @@ export const teachingClient = {
   async cachedLibraries() {
     const auth = this.auth();
     if (!auth) return [];
+    const current = authContexts.get(auth);
+    if (current) { try { await ensureContentEpoch(current); } catch (error) { if (!(error instanceof TypeError)) throw error; } }
     const context = contextOf(auth);
     const answers = await this.assignmentAnswers();
     return (await storeAll<CachedAssignment>("assignmentCaches"))
-      .filter((cache) => cache.ownerId === context.ownerId && cache.orgId === context.orgId && cache.serverUrl === context.serverUrl)
+      .filter((cache) => cache.ownerId === context.ownerId && cache.orgId === context.orgId && cache.serverUrl === context.serverUrl && cache.contentEpoch === context.contentEpoch)
       .map((cache) => {
         const assignmentAnswers = answers.filter((answer) => answer.assignmentId === cache.assignment.id && cache.problems.some((problem) => problem.problemId === answer.problemId));
         return { ...toLibrary(cache, assignmentAnswers), pendingSubmissionCount: assignmentAnswers.length };
@@ -1266,6 +1320,7 @@ export const teachingClient = {
     if (!auth || auth.user.role !== "student") return;
     const authContext = authContexts.get(auth);
     if (!authContext || !isCurrentAuthContext(authContext)) return;
+    try { await ensureContentEpoch(authContext); } catch (error) { if (error instanceof TypeError) return; throw error; }
     for (const view of await storeAll<PendingAssignmentView>("assignmentViews")) {
       if (!isCurrentAuthContext(authContext)) return;
       if (!sameAssignmentViewContext(view, auth)) continue;
