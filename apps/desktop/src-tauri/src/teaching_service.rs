@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tauri::State;
 
 use crate::{
@@ -43,7 +44,16 @@ pub(crate) struct TeachingAccountDto {
 }
 
 fn normalized_server_url(server_url: &str) -> String {
-    server_url.trim_end_matches('/').to_owned()
+    server_url.trim().trim_end_matches('/').to_owned()
+}
+
+fn token_key(server_url: &str) -> String {
+    let digest = Sha256::digest(normalized_server_url(server_url).as_bytes());
+    format!("{TEACHING_TOKEN_KEY}:{digest:x}")
+}
+
+fn offline_error(error: &str) -> bool {
+    error.starts_with("教学服务不可用：")
 }
 
 fn profile_cache_key(server_url: &str) -> String {
@@ -107,7 +117,18 @@ fn cache_account(state: &DesktopState, account: &TeachingAccountDto) -> Result<(
 
 fn endpoint(server_url: &str, path: &str) -> Result<String, String> {
     validate_server_url(server_url)?;
-    Ok(format!("{}{}", server_url.trim_end_matches('/'), path))
+    Ok(format!("{}{}", normalized_server_url(server_url), path))
+}
+
+async fn authenticated_error(
+    state: &DesktopState,
+    server_url: &str,
+    response: reqwest::Response,
+) -> Result<String, String> {
+    if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+        state.credentials.delete(&token_key(server_url))?;
+    }
+    Ok(error_message(response).await)
 }
 
 async fn error_message(response: reqwest::Response) -> String {
@@ -139,7 +160,7 @@ async fn authenticated_get<T: serde::de::DeserializeOwned>(
 ) -> Result<T, String> {
     let token = state
         .credentials
-        .get(TEACHING_TOKEN_KEY)?
+        .get(&token_key(server_url))?
         .ok_or_else(|| "请先登录教学账号".to_owned())?;
     let response = reqwest::Client::new()
         .get(endpoint(server_url, path)?)
@@ -149,7 +170,7 @@ async fn authenticated_get<T: serde::de::DeserializeOwned>(
         .await
         .map_err(|error| format!("教学服务不可用：{error}"))?;
     if !response.status().is_success() {
-        return Err(error_message(response).await);
+        return Err(authenticated_error(state, server_url, response).await?);
     }
     response
         .json()
@@ -186,7 +207,7 @@ async fn authenticated_post(
 ) -> Result<serde_json::Value, String> {
     let token = state
         .credentials
-        .get(TEACHING_TOKEN_KEY)?
+        .get(&token_key(server_url))?
         .ok_or("请先登录教学账号")?;
     let response = reqwest::Client::new()
         .post(endpoint(server_url, path)?)
@@ -197,7 +218,7 @@ async fn authenticated_post(
         .await
         .map_err(|error| format!("教学服务不可用：{error}"))?;
     if !response.status().is_success() {
-        return Err(error_message(response).await);
+        return Err(authenticated_error(state, server_url, response).await?);
     }
     response
         .json()
@@ -210,7 +231,8 @@ pub(crate) async fn get_teaching_account(
     server_url: String,
     state: State<'_, DesktopState>,
 ) -> Result<TeachingAccountDto, String> {
-    if state.credentials.get(TEACHING_TOKEN_KEY)?.is_none() {
+    validate_server_url(&server_url)?;
+    if state.credentials.get(&token_key(&server_url))?.is_none() {
         return Ok(TeachingAccountDto {
             server_url,
             status: "signedOut".into(),
@@ -237,11 +259,16 @@ pub(crate) async fn get_teaching_account(
             Ok(account)
         }
         Err(error) => {
-            if error.contains("unauthorized") || error.contains("401") {
-                state.credentials.delete(TEACHING_TOKEN_KEY)?;
-                return Err(error);
+            if offline_error(&error)
+                && cached.as_ref().is_some_and(|item| {
+                    item.expires_at
+                        .is_some_and(|expiry| expiry > chrono::Utc::now())
+                })
+            {
+                cached.ok_or(error)
+            } else {
+                Err(error)
             }
-            cached.ok_or(error)
         }
     }
 }
@@ -270,7 +297,11 @@ pub(crate) async fn login_teaching_account(
     if !matches!(auth.user.role.as_str(), "student" | "coach" | "admin") {
         return Err("教学账号角色无效".into());
     }
-    state.credentials.set(TEACHING_TOKEN_KEY, &auth.token)?;
+    state
+        .credentials
+        .set(&token_key(&server_url), &auth.token)?;
+    // An old unbound token cannot safely be attributed to this server.
+    state.credentials.delete(TEACHING_TOKEN_KEY)?;
     let account = TeachingAccountDto {
         server_url: normalized_server_url(&server_url),
         status: "signedIn".into(),
@@ -289,7 +320,7 @@ pub(crate) fn logout_teaching_account(
     server_url: String,
     state: State<'_, DesktopState>,
 ) -> Result<TeachingAccountDto, String> {
-    state.credentials.delete(TEACHING_TOKEN_KEY)?;
+    state.credentials.delete(&token_key(&server_url))?;
     Ok(TeachingAccountDto {
         server_url,
         status: "signedOut".into(),
@@ -324,7 +355,8 @@ pub(crate) async fn list_teaching_assignments(
             write_cache(&state, &key, owner_id, "assignments", &value)?;
             Ok(value)
         }
-        Err(error) => read_cache(&state, &key)?.ok_or(error),
+        Err(error) if offline_error(&error) => read_cache(&state, &key)?.ok_or(error),
+        Err(error) => Err(error),
     }
 }
 
@@ -342,7 +374,8 @@ pub(crate) async fn list_teaching_classes(
             write_cache(&state, &key, owner_id, "classes", &value)?;
             Ok(value)
         }
-        Err(error) => read_cache(&state, &key)?.ok_or(error),
+        Err(error) if offline_error(&error) => read_cache(&state, &key)?.ok_or(error),
+        Err(error) => Err(error),
     }
 }
 
@@ -390,7 +423,7 @@ pub(crate) async fn upload_teaching_cbl(
 ) -> Result<serde_json::Value, String> {
     let token = state
         .credentials
-        .get(TEACHING_TOKEN_KEY)?
+        .get(&token_key(&server_url))?
         .ok_or("请先登录教学账号")?;
     let path = std::path::Path::new(&file_path);
     let file_name = path
@@ -417,7 +450,7 @@ pub(crate) async fn upload_teaching_cbl(
         .await
         .map_err(|error| format!("教学服务不可用：{error}"))?;
     if !response.status().is_success() {
-        return Err(error_message(response).await);
+        return Err(authenticated_error(&state, &server_url, response).await?);
     }
     response
         .json()
@@ -460,7 +493,8 @@ pub(crate) async fn list_teaching_assignment_problems(
             write_cache(&state, &key, owner_id, "problems", &value)?;
             Ok(value)
         }
-        Err(error) => read_cache(&state, &key)?.ok_or(error),
+        Err(error) if offline_error(&error) => read_cache(&state, &key)?.ok_or(error),
+        Err(error) => Err(error),
     }
 }
 
@@ -491,7 +525,7 @@ pub(crate) async fn submit_teaching_attempt(
     }
     let token = state
         .credentials
-        .get(TEACHING_TOKEN_KEY)?
+        .get(&token_key(&server_url))?
         .ok_or("请先登录教学账号")?;
     let response = reqwest::Client::new()
         .post(endpoint(&server_url, "/api/v1/student/attempts")?)
@@ -512,7 +546,7 @@ pub(crate) async fn submit_teaching_attempt(
         let retryable = response.status().is_server_error()
             || response.status().as_u16() == 408
             || response.status().as_u16() == 429;
-        let message = error_message(response).await;
+        let message = authenticated_error(&state, &server_url, response).await?;
         if retryable {
             mark_attempt_failed(&state, client_attempt_id, &message)?;
             return Ok(serde_json::json!({ "queued": true, "clientAttemptId": client_attempt_id }));
@@ -582,4 +616,45 @@ pub(crate) async fn flush_teaching_attempts(
             .len()
     };
     Ok(serde_json::json!({ "submitted": submitted, "remaining": remaining }))
+}
+
+#[cfg(test)]
+mod credential_tests {
+    use super::*;
+    use crate::credential_store::{CredentialStore, MemoryCredentialStore};
+
+    #[test]
+    fn credentials_are_bound_to_the_logged_in_server() {
+        let store = MemoryCredentialStore::new();
+        let production = token_key("https://api.qixiapp.cn");
+        store.set(&production, "test-token").unwrap();
+        store
+            .set(TEACHING_TOKEN_KEY, "legacy-unbound-token")
+            .unwrap();
+        assert_eq!(
+            store
+                .get(&token_key("https://api-test.qixiapp.cn"))
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            store.get(&token_key("https://other.example")).unwrap(),
+            None
+        );
+        assert_eq!(token_key(" https://api.qixiapp.cn/ "), production);
+        store
+            .delete(&token_key("https://api-test.qixiapp.cn"))
+            .unwrap();
+        assert!(store.get(&production).unwrap().is_some());
+    }
+
+    #[test]
+    fn permission_errors_never_allow_an_offline_cache_fallback() {
+        assert!(offline_error("教学服务不可用：connection refused"));
+        assert!(!offline_error(
+            "登录状态已过期或当前账号没有权限，请重新登录后再试。"
+        ));
+        assert!(!offline_error("当前账号没有执行此操作的权限。"));
+        assert!(!offline_error("教学服务返回了无效数据"));
+    }
 }

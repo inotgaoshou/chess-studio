@@ -352,9 +352,6 @@ CREATE TABLE IF NOT EXISTS class_coaches (
 
 INSERT IGNORE INTO organizations (id, name)
 VALUES (UUID(), '象棋工作室');
-UPDATE users
-SET org_id=(SELECT id FROM organizations ORDER BY created_at LIMIT 1)
-WHERE org_id IS NULL AND (role IN ('student','coach','admin') OR is_platform_admin=1);
 INSERT IGNORE INTO user_organization_memberships (user_id, org_id, role, is_default)
 SELECT id, org_id, CASE WHEN is_platform_admin=1 THEN 'admin' ELSE role END, 1
 FROM users
@@ -884,15 +881,16 @@ pub(crate) async fn submit_student_attempt(
     if assignment_status.as_deref() != Some("published") {
         return Err(ApiError::Invalid("assignment is closed".into()));
     }
-    let belongs: u64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM teaching_assignment_problems WHERE id=? AND assignment_id=?",
+    let snapshot: Option<(String, serde_json::Value)> = sqlx::query_as(
+        "SELECT starting_fen, solution_json FROM teaching_assignment_problems WHERE id=? AND assignment_id=?",
     )
     .bind(request.problem_id.to_string())
     .bind(request.assignment_id.to_string())
-    .fetch_one(&state.pool)
+    .fetch_optional(&state.pool)
     .await?;
-    if belongs == 0 {
-        return Err(ApiError::NotFound);
+    let (starting_fen, solution) = snapshot.ok_or(ApiError::NotFound)?;
+    if request.outcome == "completed" {
+        verify_completed_attempt(&starting_fen, &solution, &request.moves)?;
     }
     sqlx::query(
         "INSERT IGNORE INTO teaching_attempts
@@ -1718,6 +1716,55 @@ fn validate_attempt(request: &SubmitAttemptRequest) -> Result<(), ApiError> {
         return Err(ApiError::Invalid("too many moves in attempt".into()));
     }
     Ok(())
+}
+
+fn verify_completed_attempt(
+    starting_fen: &str,
+    solution: &serde_json::Value,
+    moves: &[String],
+) -> Result<(), ApiError> {
+    let invalid = || ApiError::Invalid("提交着法未完成作业快照的合法题解分支".into());
+    if moves.is_empty() {
+        return Err(invalid());
+    }
+    let mut board = xiangqi_core::Board::from_fen(starting_fen).map_err(|_| invalid())?;
+    let mut alternatives = solution.as_array().ok_or_else(invalid)?;
+    for (index, iccs) in moves.iter().enumerate() {
+        let node = alternatives.iter()
+            .find(|node| node.get("iccs").and_then(serde_json::Value::as_str) == Some(iccs))
+            .ok_or_else(invalid)?;
+        board = board.apply_iccs(iccs).map_err(|_| invalid())?;
+        alternatives = node.get("children").and_then(serde_json::Value::as_array)
+            .ok_or_else(invalid)?;
+        if index + 1 == moves.len() && !alternatives.is_empty() {
+            return Err(invalid());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod attempt_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn completion_requires_an_entire_legal_snapshot_branch() {
+        let solution = json!([{ "iccs": "a3a4", "children": [
+            { "iccs": "a6a5", "children": [] },
+            { "iccs": "c6c5", "children": [] }
+        ] }]);
+        let line = |values: &[&str]| values.iter().map(|value| value.to_string()).collect::<Vec<_>>();
+        for values in [&["a3a4", "a6a5"][..], &["a3a4", "c6c5"][..]] {
+            assert!(verify_completed_attempt(xiangqi_core::STARTING_FEN, &solution, &line(values)).is_ok());
+        }
+        for values in [&[][..], &["a3a4"][..], &["c3c4", "a6a5"][..], &["a3a4", "a6a5", "c3c4"][..]] {
+            assert!(verify_completed_attempt(xiangqi_core::STARTING_FEN, &solution, &line(values)).is_err());
+        }
+        let illegal = json!([{ "iccs": "a3a9", "children": [] }]);
+        assert!(verify_completed_attempt(xiangqi_core::STARTING_FEN, &illegal, &line(&["a3a9"])).is_err());
+        assert!(verify_completed_attempt("invalid", &solution, &line(&["a3a4", "a6a5"])).is_err());
+    }
 }
 
 fn parse_uuid(value: &str) -> Uuid {
