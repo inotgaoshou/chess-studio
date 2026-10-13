@@ -13,6 +13,10 @@ apps/desktop/dist/
 apps/desktop/src-tauri/gen/
 apps/endgame-training/build/
 apps/endgame-training/dist/
+apps/endgame-training/ios/build/
+/artifacts/
+/output/
+/tmp/
 mobile-package-size-report.*
 apps/desktop/mobile-package-size-report.*
 
