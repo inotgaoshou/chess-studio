@@ -1,7 +1,7 @@
 import {useEffect,useRef,useState} from "react";
 
 export type BrowseNode = {id:string;parentId?:string|null;name:string;kind?:string;itemCount?:number|null;completedCount?:number|null};
-export type BrowsePage<N extends BrowseNode> = {currentNode?:N|null;breadcrumbs:N[];children:N[];nextCursor?:string|null;learningMaterials:{id:string;title:string;reviewStatus:string}[];materialNextCursor?:string|null};
+export type BrowsePage<N extends BrowseNode> = {statisticsReady?:boolean;statisticsRevision?:string;currentNode?:N|null;breadcrumbs:N[];children:N[];nextCursor?:string|null;learningMaterials:{id:string;title:string;reviewStatus:string}[];materialNextCursor?:string|null};
 export function useDebounced<T>(value:T,delay=300) {
  const [settled,setSettled]=useState(value);
  useEffect(()=>{const timer=setTimeout(()=>setSettled(value),delay);return()=>clearTimeout(timer);},[value,delay]);
@@ -24,17 +24,43 @@ export function useCatalogBrowse<N extends BrowseNode>(request:(params:Record<st
  const materialController=useRef<AbortController|null>(null);
  const publish=(page:BrowsePage<N>)=>{pageRef.current=page;cache.current.set(key,page);setState({key,page});};
  const countPending=useRef(0);
+ const countRevision=useRef<string|undefined>(undefined);
+ useEffect(()=>{countRevision.current=undefined;},[request]);
+ const countRequests=useRef(new Map<string,AbortSignal>());
  async function counts(query:Record<string,string>,signal:AbortSignal) {
+  const requestKey=JSON.stringify(query);
+  if(countRequests.current.get(requestKey)===signal)return;
+  countRequests.current.set(requestKey,signal);
   countPending.current++;setCountBusy(true);
   try {
-   const result=await request({...query,view:"counts"},signal);
-   if(signal.aborted)return;
-   const all=new Map([...result.children,...(result.currentNode?[result.currentNode]:[])].map(n=>[n.id,n]));
-   const update=(n:N)=>all.has(n.id)?{...n,itemCount:all.get(n.id)!.itemCount,completedCount:all.get(n.id)!.completedCount}:n;
-   publish({...pageRef.current,children:pageRef.current.children.map(update),currentNode:pageRef.current.currentNode?update(pageRef.current.currentNode):null});
+   let delay=1000;
+   while(!signal.aborted) {
+    const result=await request({...query,view:"counts"},signal);
+    if(signal.aborted)return;
+    const revision=result.statisticsRevision;
+    if(revision&&countRevision.current&&BigInt(revision)<BigInt(countRevision.current))continue;
+    const changed=revision!==undefined&&countRevision.current!==undefined&&revision!==countRevision.current;
+    if(revision)countRevision.current=revision;
+    if(changed||result.statisticsReady===false) {
+     cache.current.clear();
+     const clear=(n:N)=>({...n,itemCount:null,completedCount:null});
+     pageRef.current={...pageRef.current,children:pageRef.current.children.map(clear),currentNode:pageRef.current.currentNode?clear(pageRef.current.currentNode):null};
+     for(const page of loadedPages.current)if(JSON.stringify(page)!==requestKey)void counts(page,signal);
+    }
+    const all=new Map([...result.children,...(result.currentNode?[result.currentNode]:[])].map(n=>[n.id,n]));
+    const update=(n:N)=>all.has(n.id)?{...n,itemCount:all.get(n.id)!.itemCount,completedCount:all.get(n.id)!.completedCount}:n;
+    publish({...pageRef.current,statisticsReady:result.statisticsReady,statisticsRevision:revision,children:pageRef.current.children.map(update),currentNode:pageRef.current.currentNode?update(pageRef.current.currentNode):null});
+    if(result.statisticsReady!==false)break;
+    await new Promise<void>(resolve=>{const finish=()=>{clearTimeout(timer);signal.removeEventListener("abort",finish);resolve();};const timer=setTimeout(finish,delay);signal.addEventListener("abort",finish,{once:true});if(signal.aborted)finish();});
+    delay=Math.min(delay*2,10000);
+   }
   } catch(e){if(!signal.aborted)setCountError(message(e));}
-  finally {if(!signal.aborted){countPending.current--;setCountBusy(countPending.current>0);}}
+  finally {
+   if(countRequests.current.get(requestKey)===signal)countRequests.current.delete(requestKey);
+   if(!signal.aborted){countPending.current--;setCountBusy(countPending.current>0);}
+  }
  }
+
  useEffect(()=>{
   const abort=new AbortController();controller.current=abort;countPending.current=0;
   const saved=cache.current.get(key);pageRef.current=saved??empty<N>();setState({key,page:pageRef.current});
