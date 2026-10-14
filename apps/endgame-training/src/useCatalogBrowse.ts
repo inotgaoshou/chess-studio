@@ -85,7 +85,9 @@ export function useCatalogBrowse<N extends BrowseNode>(request:(params:Record<st
  async function more() {
   const cursor=pageRef.current.nextCursor,signal=controller.current?.signal;if(!cursor||!signal||loading)return;
   setLoading(true);setError("");const query={...params,cursor,view:"structure"};
-  try{const part=await request(query,signal);if(signal.aborted)return;loadedPages.current.push(query);publish({...part,availabilityRevision:part.statisticsRevision,learningMaterials:pageRef.current.learningMaterials,materialNextCursor:pageRef.current.materialNextCursor,children:[...new Map([...pageRef.current.children,...part.children].map(n=>[n.id,n])).values()]});void counts(query,signal);}
+  try{const part=await request(query,signal);if(signal.aborted)return;
+   if(params.availability==='available'&&part.statisticsRevision!==pageRef.current.availabilityRevision){setRetry(n=>n+1);return;}
+   loadedPages.current.push(query);publish({...part,availabilityRevision:part.statisticsRevision,learningMaterials:pageRef.current.learningMaterials,materialNextCursor:pageRef.current.materialNextCursor,children:[...new Map([...pageRef.current.children,...part.children].map(n=>[n.id,n])).values()]});void counts(query,signal);}
   catch(e){if(!signal.aborted)setError(message(e));}finally{if(!signal.aborted)setLoading(false);}
  }
  useEffect(()=>{
