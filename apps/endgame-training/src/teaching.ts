@@ -40,6 +40,7 @@ async function ensureContentEpoch(context: AuthContext): Promise<boolean> {
   finally { if (epochProbes.get(key) === pending) epochProbes.delete(key); }
 }
 async function purgeTeachingContent(context: AuthContext) {
+  window.dispatchEvent(new Event("teaching-content-reset"));
   const db = await openDb();
   const names = ["assignments", "assignmentCaches", "attempts", "practiceAttempts", "assignmentViews", "assignmentDrafts", "assignmentAnswers"];
   try {
@@ -60,6 +61,14 @@ async function purgeTeachingContent(context: AuthContext) {
 let activeAuth: TeachingAuth | undefined;
 let refreshInFlight: Promise<TeachingAuth | undefined> | undefined;
 let sessionEpoch = 0;
+// Only concurrent reads are shared; results are never cached as eligibility evidence.
+const platformReads = new Map<string, Promise<unknown>>();
+function sharePlatformRead<T>(name:string,auth:TeachingAuth,load:()=>Promise<T>):Promise<T> {
+  const key=JSON.stringify([serverUrl(),sessionEpoch,auth.user.id,auth.user.orgId,name]);
+  const current=platformReads.get(key);if(current)return current as Promise<T>;
+  const pending=load().finally(()=>{if(platformReads.get(key)===pending)platformReads.delete(key);});
+  platformReads.set(key,pending);return pending;
+}
 const assignmentSubmissionLocks = new Set<string>();
 const assignmentAttemptRequests = new Map<string, Promise<boolean>>();
 type AuthContext = { ownerId: string; orgId: string; serverUrl: string; epoch: number };
@@ -79,6 +88,8 @@ function isCurrentAuthContext(context: AuthContext) {
 
 async function clearLocalSession() {
   sessionEpoch += 1;
+  platformReads.clear();
+  window.dispatchEvent(new Event("teaching-content-reset"));
   activeAuth = undefined;
   refreshInFlight = undefined;
   tokenContexts.clear();
@@ -915,6 +926,7 @@ export const teachingClient = {
     );
   },
   async logout() {
+    window.dispatchEvent(new Event("teaching-content-reset"));
     const auth = activeAuth;
     if (auth?.user.loginName) rememberLoginAccount(auth.user.loginName, authContexts.get(auth)?.serverUrl ?? serverUrl());
     const pendingLogout = auth ? request("/api/v1/auth/logout", { method: "POST", body: "{}" }, auth.token, false).catch(() => undefined) : undefined;
@@ -947,6 +959,7 @@ export const teachingClient = {
   async platformLibraries() {
     const auth = this.auth();
     if (!auth || auth.user.role !== "student") return [];
+    return sharePlatformRead("libraries",auth,async()=>{
     const [libraries, collections] = await Promise.all([
       request<PlatformProblemLibrary[]>("/api/v1/student/platform-libraries", {}, auth.token),
       request<MateCollection[]>("/api/v1/student/mate-collections", {}, auth.token),
@@ -970,6 +983,7 @@ export const teachingClient = {
       accessTier: "public",
       folderPath: library.folderPath,
     }))];
+    });
   },
   async platformLibraryProblems(libraryId: string) {
     const auth = this.auth();
@@ -1003,7 +1017,7 @@ export const teachingClient = {
   async platformGameLibraries() {
     const auth = this.auth();
     if (!auth || auth.user.role !== "student") return [];
-    return request<PlatformGameLibrary[]>("/api/v1/student/platform-game-libraries", {}, auth.token);
+    return sharePlatformRead("games",auth,()=>request<PlatformGameLibrary[]>("/api/v1/student/platform-game-libraries", {}, auth.token));
   },
   async platformGameLibraryGames(libraryId: string) {
     const auth = this.auth();
@@ -1413,21 +1427,21 @@ export const teachingClient = {
     const auth = this.auth(); if (!auth) throw new Error("请先登录学生账号");
     return request<TeachingCatalogNode[]>(path, {}, auth.token);
   },
-  async catalogBrowse(query:{nodeId?:string;cursor?:string;q?:string;materialCursor?:string;limit?:number}={},teacher=false,context?:TeachingAuth) {
+  async catalogBrowse(query:{nodeId?:string;cursor?:string;q?:string;materialCursor?:string;limit?:number|string;view?:string}={},teacher=false,context?:TeachingAuth,signal?:AbortSignal) {
     const params=new URLSearchParams({limit:String(query.limit??50)});
     for(const [key,value] of Object.entries(query))if(value!==undefined&&value!=="")params.set(key,String(value));
     const path=`/api/v1/${teacher?"admin":"student"}/teaching-catalog/browse?${params}`;
-    if(teacher)return teacherRequest<import("./TeachingCatalog").CatalogBrowsePage>(path,{},context);
+    if(teacher)return teacherRequest<import("./TeachingCatalog").CatalogBrowsePage>(path,{signal},context);
     const auth=context??this.auth();if(!auth)throw new Error("请先登录学生账号");
-    return request<import("./TeachingCatalog").CatalogBrowsePage>(path,{},auth.token);
+    return request<import("./TeachingCatalog").CatalogBrowsePage>(path,{signal},auth.token);
   },
-  async catalogProblems(id: string, query: { q?: string; goal?: string; material?:string; motif?:string; difficulty?: number; mateGroup?: string; mateMoves?: number; cursor?: string; limit?: number } = {}, teacher = false, context?: TeachingAuth) {
+  async catalogProblems(id: string, query: { q?: string; goal?: string; material?:string; motif?:string; difficulty?: number; mateGroup?: string; mateMoves?: number; cursor?: string; limit?: number } = {}, teacher = false, context?: TeachingAuth, signal?:AbortSignal) {
     const params = new URLSearchParams({ limit: String(query.limit ?? 50) });
     for (const [key, value] of Object.entries(query)) if (value !== undefined && value !== "") params.set(key, String(value));
     const path = `/api/v1/${teacher ? "admin" : "student"}/teaching-catalog/${encodeURIComponent(id)}/problems?${params}`;
-    if (teacher) return teacherRequest<{ items: CatalogProblem[]; nextCursor?: string | null }>(path, {}, context);
+    if (teacher) return teacherRequest<{ items: CatalogProblem[]; nextCursor?: string | null }>(path, {signal}, context);
     const auth = context ?? this.auth(); if (!auth) throw new Error("请先登录学生账号");
-    return request<{ items: CatalogProblem[]; nextCursor?: string | null }>(path, {}, auth.token);
+    return request<{ items: CatalogProblem[]; nextCursor?: string | null }>(path, {signal}, auth.token);
   },
   async teacherFolderTree(context?: TeachingAuth) {
     return teacherRequest<TeacherFolder[]>("/api/v1/admin/content/folder-tree?scope=teaching", {}, context);

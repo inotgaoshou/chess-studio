@@ -141,3 +141,11 @@
 .training-goal-details summary { min-height: 44px; display: list-item; align-content: center; cursor: pointer; }
 .training-goal-details summary:focus-visible { outline: 2px solid #356b50; outline-offset: 2px; }
 .training-goal-details p { margin: 0 0 12px; line-height: 1.6; overflow-wrap: anywhere; white-space: pre-wrap; }
+.teaching-catalog .catalog-problems { display:grid; grid-template-columns:1fr; gap:12px; }
+.teaching-catalog .catalog-problems>button { align-items:flex-start; gap:14px; padding:14px; }
+.teaching-catalog .catalog-problems .catalog-board { width:144px; height:auto; flex:0 0 144px; }
+.teaching-catalog .catalog-extra-filters { grid-column:1/-1; }
+.teaching-catalog .catalog-extra-filters summary { cursor:pointer; min-height:44px; align-content:center; }
+.teaching-catalog .catalog-extra-filters label { display:inline-flex; flex-direction:column; gap:6px; margin:8px 12px 8px 0; }
+@media(max-width:390px) { .teaching-catalog .catalog-problems .catalog-board { width:112px; flex-basis:112px; } }
+@media(min-width:760px) { .teaching-catalog .catalog-problems { grid-template-columns:repeat(2,minmax(0,1fr)); } }

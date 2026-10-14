@@ -2839,7 +2839,7 @@ export function App() {
     };
   }, [teachingAuth?.user.id, teachingAuth?.user.orgId, teachingAuth?.user.role]);
   useEffect(() => {
-    void availableLibraries().then(async (next) => { setLibraries(next); if (next[0]) await selectLibrary(next[0]); });
+    void availableLibraries().then(async (next) => { setLibraries(next); if (!mobileLayout && next[0]) await selectLibrary(next[0]); });
     void refreshPlatformGames();
     void teachingClient.flushPending();
     if (teachingAuth?.user.role === "student") void syncTeachingAssignments();
@@ -3521,7 +3521,7 @@ export function App() {
     setNotice(`已退回，请继续尝试。已错 ${mistakes} 次，不计入首次正确率。`);
   }
   function pause() { if (ended) return; if (startedAt) { setElapsedSaved(elapsed); setStartedAt(undefined); setNotice("已暂停，暂停时间不会计入用时。"); } else if (elapsedSaved) { setStartedAt(Date.now()); setNotice("继续作答。"); } }
-  async function confirmDelete() { const target = deleteTarget; if (!target) return; setDeleteTarget(undefined); if (target.id.startsWith("teaching:") || target.id.startsWith("platform:")) { setNotice(target.id.startsWith("platform:") ? "平台题库由平台维护，学生端不能删除。" : "线上作业由老师管理，学生端不能删除。"); return; } if (target.type === "library") { await trainingStore.deleteLibrary(target.id); const next = await availableLibraries(); setLibraries(next); if (next[0]) await selectLibrary(next[0]); else { session.current += 1; await resetAnalysis(); setLibrary(undefined); setProblems([]); setProblem(undefined); } } else { await trainingStore.hideProblem(target.id); if (library) await selectLibrary(library); } }
+  async function confirmDelete() { const target = deleteTarget; if (!target) return; setDeleteTarget(undefined); if (target.id.startsWith("teaching:") || target.id.startsWith("platform:")) { setNotice(target.id.startsWith("platform:") ? "平台题库由平台维护，学生端不能删除。" : "线上作业由老师管理，学生端不能删除。"); return; } if (target.type === "library") { await trainingStore.deleteLibrary(target.id); const next = await availableLibraries(); setLibraries(next); if (!mobileLayout && next[0]) await selectLibrary(next[0]); else { session.current += 1; await resetAnalysis(); setLibrary(undefined); setProblems([]); setProblem(undefined); } } else { await trainingStore.hideProblem(target.id); if (library) await selectLibrary(library); } }
   const giveHint = async () => {
     if (!problem || ended) return;
     const next = Math.min(3, hints + 1) as 1 | 2 | 3;
