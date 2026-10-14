@@ -136,3 +136,8 @@
 .catalog-selected button:focus-visible { outline: 2px solid #356b50; outline-offset: 2px; }
 .catalog-selected button:disabled { opacity: .45; }
 @media(max-width:599px) { .catalog-selected article { flex-wrap: wrap; justify-content: flex-end; } .catalog-selected article > span { flex-basis: 100%; } }
+
+.training-goal-details { min-width: 0; max-width: 100%; font-size: 13px; text-align: left; }
+.training-goal-details summary { min-height: 44px; display: list-item; align-content: center; cursor: pointer; }
+.training-goal-details summary:focus-visible { outline: 2px solid #356b50; outline-offset: 2px; }
+.training-goal-details p { margin: 0 0 12px; line-height: 1.6; overflow-wrap: anywhere; white-space: pre-wrap; }
