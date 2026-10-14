@@ -71,6 +71,7 @@ export function useCatalogBrowse<N extends BrowseNode>(request:(params:Record<st
    do {
     const query={...JSON.parse(key),view:"structure",...(cursor?{cursor}:{})};
     const part=await request(query,abort.signal);if(abort.signal.aborted)return;
+    if(cursor&&query.availability==='available'&&part.statisticsRevision!==combined.availabilityRevision){setRetry(n=>n+1);return;}
     loadedPages.current.push(query);
     const prior=new Map(pageRef.current.children.map(n=>[n.id,n]));
     combined={...part,availabilityRevision:part.statisticsRevision,learningMaterials:pageRef.current.learningMaterials,materialNextCursor:pageRef.current.materialNextCursor,children:[...combined.children.map(n=>prior.get(n.id)??n),...part.children.map(n=>({...n,itemCount:prior.get(n.id)?.itemCount??n.itemCount,completedCount:prior.get(n.id)?.completedCount??n.completedCount,materialCount:prior.get(n.id)?.materialCount??n.materialCount}))]};
