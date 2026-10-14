@@ -1,3 +1,4 @@
+import { makeCheckinApi } from "./checkinApi";
 import { ContentEpochTracker, belongsToContentScope } from "./contentEpoch";
 import type { CatalogProblem, TeachingCatalogNode, TrainingGoal } from "./TeachingCatalog";
 import type { LocalManualAnalysisSummary, LocalManualFolder, LocalManualGame, SolutionMove, TrainingLibrary, TrainingProblem } from "./types";
@@ -545,7 +546,7 @@ async function refreshAuth(): Promise<TeachingAuth | undefined> {
 async function request<T>(path: string, init: RequestInit = {}, token?: string, retry = true, context?: TeachingAuth): Promise<T> {
   if (context) requireTeacherAuth(context);
   const headers = new Headers(init.headers);
-  headers.set("content-type", "application/json");
+  if (!(init.body instanceof FormData)) headers.set("content-type", "application/json");
   headers.set("x-xiangqi-app-id", appId());
   const accessToken = token ?? activeAuth?.token;
   const targetServer = serverUrl();
@@ -573,7 +574,7 @@ async function request<T>(path: string, init: RequestInit = {}, token?: string, 
       }
     }
     const error = (body as { error?: string }).error;
-    throw new Error(userFacingError(error, response.status));
+    throw Object.assign(new Error(userFacingError(error, response.status)), { status: response.status });
   }
   return body as T;
 }
@@ -1501,4 +1502,25 @@ function requireTeacherAuth(context?: TeachingAuth) {
   if (!auth || !["coach", "admin"].includes(auth.user.role)) throw new Error("请先登录老师账号");
   if (context && (auth.user.id !== context.user.id || auth.user.orgId !== context.user.orgId)) throw new Error("工作机构或账号已改变，请重新确认作业范围。");
   return auth;
+}
+
+// Captures the account/environment at creation, so in-flight check-ins cannot
+// cross an account or institution switch. No credentials enter IndexedDB.
+export function checkinSession(auth: TeachingAuth) {
+  const captured = authContexts.get(auth);
+  if (!captured || !isCurrentAuthContext(captured)) throw new Error("登录会话已变化，请重新打开打卡");
+  const isCurrent = () => isCurrentAuthContext(captured);
+  const check = () => { if (!isCurrent()) throw Object.assign(new Error("账号或机构已切换"), { status: 409 }); };
+  const send = async <T>(path: string, init: RequestInit = {}): Promise<T> => {
+    check(); const value = await request<T>(path, init, activeAuth?.token); check(); return value;
+  };
+  const readPhoto = async (path: string, retry = true): Promise<Blob> => {
+    check(); const headers = new Headers({ "x-xiangqi-app-id": appId(), authorization: `Bearer ${activeAuth?.token}` });
+    const response = await fetch(`${captured.serverUrl}${path}`, { headers, credentials: "include" }); check();
+    if (response.status === 401 && retry && await refreshAuth()) { check(); return readPhoto(path, false); }
+    if (!response.ok) throw Object.assign(new Error(userFacingError(undefined, response.status)), { status: response.status });
+    const blob = await response.blob(); check(); return blob;
+  };
+  return { api: makeCheckinApi(send, readPhoto, () => teachingClient.teacherClasses(auth), id => teachingClient.teacherClassStudents(id)),
+    scope: JSON.stringify([captured.serverUrl, auth.user.id, auth.user.orgId]), isCurrent };
 }
