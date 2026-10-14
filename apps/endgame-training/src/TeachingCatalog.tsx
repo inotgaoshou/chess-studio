@@ -30,13 +30,14 @@ function CatalogView({ auth, teacher = false, selectedIds = [], onAdd, onRemove,
   const [directoryQuery,setDirectoryQuery]=useState(navigation.get(scope)?.directoryQuery||""),[mode,setMode]=useState(navigation.get(scope)?.mode||"training");
   const directorySearch=useDebounced(directoryQuery),problemSearch=useDebounced(query),motifSearch=useDebounced(motif);
   const request=useCallback((params:Record<string,string>,signal:AbortSignal)=>teachingClient.catalogBrowse(params,teacher,auth,signal),[teacher,auth]);
-  const browse=useCatalogBrowse<TeachingCatalogNode>(request,{limit:"50",...(nodeId?{nodeId}:{}),...(directorySearch?{q:directorySearch}:{})},mode==="reading",navigation.get(scope)?.nodeCount||0);
+  const browse=useCatalogBrowse<TeachingCatalogNode>(request,{limit:"50",...(nodeId?{nodeId}:{}),...(directorySearch?{q:directorySearch}:{})},mode==="reading",navigation.get(scope)?.nodeCount||0,navigation.get(scope)?.id===nodeId?navigation.get(scope)?.materialCount||0:0);
   const nodes=browse.page.children,path=browse.page.breadcrumbs,materials=browse.page.learningMaterials,nodeCursor=browse.page.nextCursor,materialCursor=browse.page.materialNextCursor;
   const loading=problemLoading||browse.loading;
 
   const locations=useRef(new Map<string,{directoryQuery:string;query:string;goal:string;difficulty:string;mateGroup:string;mateMoves:string;material:string;motif:string;mode:string;nodeCount:number;itemCount:number;materialCount:number;scroll:number}>());
   function saveNavigation(){navigation.set(scope,{id:nodeId,directoryQuery,query,goal,difficulty,mateGroup,mateMoves,material,motif,mode,nodeCount:nodes.length,itemCount:items.length,materialCount:materials.length,scroll:readScroll()});}
-  function navigate(id:string|null){locations.current.set(nodeId||"root",{directoryQuery,query,goal,difficulty,mateGroup,mateMoves,material,motif,mode,nodeCount:nodes.length,itemCount:items.length,materialCount:materials.length,scroll:readScroll()});const old=locations.current.get(id||"root");setDirectoryQuery(old?.directoryQuery||"");setQuery(old?.query||"");setGoal(old?.goal||"");setDifficulty(old?.difficulty||"");setMateGroup(old?.mateGroup||"");setMateMoves(old?.mateMoves||"");setMaterial(old?.material||"");setMotif(old?.motif||"");setMode(old?.mode||"training");setNodeId(id);}
+  const pendingScroll=useRef(true);
+  function navigate(id:string|null){pendingScroll.current=true;locations.current.set(nodeId||"root",{directoryQuery,query,goal,difficulty,mateGroup,mateMoves,material,motif,mode,nodeCount:nodes.length,itemCount:items.length,materialCount:materials.length,scroll:readScroll()});const old=locations.current.get(id||"root");setDirectoryQuery(old?.directoryQuery||"");setQuery(old?.query||"");setGoal(old?.goal||"");setDifficulty(old?.difficulty||"");setMateGroup(old?.mateGroup||"");setMateMoves(old?.mateMoves||"");setMaterial(old?.material||"");setMotif(old?.motif||"");setMode(old?.mode||"training");setNodeId(id);}
   useEffect(()=>{const old=navigation.get(scope);const same=old?.id===nodeId&&old.directoryQuery===directoryQuery&&old.query===query&&old.goal===goal&&old.difficulty===difficulty&&old.mateGroup===mateGroup&&old.mateMoves===mateMoves&&old.material===material&&old.motif===motif;navigation.set(scope,{id:nodeId,directoryQuery,query,goal,difficulty,mateGroup,mateMoves,material,motif,mode,nodeCount:same?old.nodeCount:0,itemCount:same?old.itemCount:0,materialCount:same?old.materialCount:0,scroll:old?.id===nodeId?old.scroll:0});},[scope,nodeId,directoryQuery,query,goal,difficulty,mateGroup,mateMoves,material,motif,mode]);
 
   const itemKey=JSON.stringify([nodeId,mode,problemSearch,goal,difficulty,mateGroup,mateMoves,material,motifSearch]);
@@ -53,13 +54,12 @@ function CatalogView({ auth, teacher = false, selectedIds = [], onAdd, onRemove,
       const same=saved?.query===query&&saved.goal===goal&&saved.material===material&&saved.motif===motif&&saved.difficulty===difficulty&&saved.mateMoves===mateMoves&&saved.mateGroup===mateGroup;
       const wanted=Math.max(cached?.items.length??0,same?saved.itemCount:0);
       do {const page=await teachingClient.catalogProblems(nodeId,{...filter,cursor:after},teacher,auth,abort.signal);if(abort.signal.aborted)return;all=[...new Map([...all,...page.items].map(p=>[p.id,p])).values()];setItems(all);setCursor(page.nextCursor);itemCache.current.set(itemKey,{items:all,cursor:page.nextCursor});after=page.nextCursor??undefined;if(after&&seen.has(after))throw new Error("题目分页异常");if(after)seen.add(after);}while(after&&all.length<wanted);
-      requestAnimationFrame(restoreScroll);
     })().catch(e=>{if(!abort.signal.aborted)setError(e instanceof Error?e.message:String(e));}).finally(()=>{if(version===generation.current)setLoading(false);});
     return()=>{abort.abort();generation.current++;};
   },[scope,itemKey,browse.page.currentNode?.kind,retry]);
 
   const current=browse.page.currentNode;const children=nodes;
-  useEffect(()=>{if(!browse.loading)requestAnimationFrame(restoreScroll);},[nodeId,browse.loading]);
+  useEffect(()=>{if(!pendingScroll.current||loading||(mode==="reading"&&browse.materialBusy)||(current?.id??null)!==nodeId||((current?.kind==="chapter"||mode==="reading")&&itemOwner!==itemKey))return;const frame=requestAnimationFrame(()=>{pendingScroll.current=false;restoreScroll();});return()=>cancelAnimationFrame(frame);},[nodeId,loading,browse.materialBusy,mode,itemOwner,itemKey,current?.id]);
   const moreDirectories=()=>browse.more();
   const moreMaterials=()=>browse.moreMaterials();
   async function more() { if (busy || !cursor || !nodeId) return; const version = generation.current; setBusy(true); try { const page = await teachingClient.catalogProblems(nodeId, { ...(mode === "reading" ? {} : { q: query, goal, mateGroup, material, motif, mateMoves: mateMoves ? Number(mateMoves) : undefined, difficulty: difficulty ? Number(difficulty) : undefined }), cursor }, teacher, auth); if (version === generation.current) { setItems(old => {const items=[...new Map([...old, ...page.items].map(p => [p.id, p])).values()];itemCache.current.set(itemKey,{items,cursor:page.nextCursor});return items;}); setCursor(page.nextCursor); } } catch (reason) { if(version===generation.current)setError(String(reason)); } finally { setBusy(false); } }

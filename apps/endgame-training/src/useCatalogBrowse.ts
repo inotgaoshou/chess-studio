@@ -11,7 +11,7 @@ const message=(e:unknown)=>e instanceof Error?e.message:String(e);
 const empty=<N extends BrowseNode>():BrowsePage<N>=>({breadcrumbs:[],children:[],learningMaterials:[]});
 
 /** Per-mounted-account navigation cache; counts never authorize content access. */
-export function useCatalogBrowse<N extends BrowseNode>(request:(params:Record<string,string>,signal:AbortSignal)=>Promise<BrowsePage<N>>,params:Record<string,string>,reading:boolean,restoreCount=0) {
+export function useCatalogBrowse<N extends BrowseNode>(request:(params:Record<string,string>,signal:AbortSignal)=>Promise<BrowsePage<N>>,params:Record<string,string>,reading:boolean,restoreCount=0,restoreMaterials=0) {
  const key=JSON.stringify(params);
  const cache=useRef(new Map<string,BrowsePage<N>>());
  useEffect(()=>()=>cache.current.clear(),[request]);
@@ -47,7 +47,7 @@ export function useCatalogBrowse<N extends BrowseNode>(request:(params:Record<st
     loadedPages.current.push(query);
     const prior=new Map(pageRef.current.children.map(n=>[n.id,n]));
     combined={...part,learningMaterials:pageRef.current.learningMaterials,materialNextCursor:pageRef.current.materialNextCursor,children:[...combined.children.map(n=>prior.get(n.id)??n),...part.children.map(n=>({...n,itemCount:prior.get(n.id)?.itemCount??n.itemCount,completedCount:prior.get(n.id)?.completedCount??n.completedCount}))]};
-    publish(combined);setLoading(false);void counts(query,abort.signal);
+    publish(combined);void counts(query,abort.signal);
     cursor=part.nextCursor??undefined;
     if(cursor&&seen.has(cursor))throw new Error("目录分页异常");if(cursor)seen.add(cursor);
    }while(cursor&&combined.children.length<Math.max(restoreCount,saved?.children.length??0));
@@ -65,7 +65,8 @@ export function useCatalogBrowse<N extends BrowseNode>(request:(params:Record<st
   const abort=new AbortController();materialController.current=abort;setMaterialError("");setMaterialBusy(false);
   if(!reading||!params.nodeId)return()=>abort.abort();
   setMaterialBusy(true);
-  void request({...JSON.parse(key),view:"materials"},abort.signal).then(part=>{if(!abort.signal.aborted)publish({...pageRef.current,learningMaterials:part.learningMaterials,materialNextCursor:part.materialNextCursor});}).catch(e=>{if(!abort.signal.aborted)setMaterialError(message(e));}).finally(()=>{if(!abort.signal.aborted)setMaterialBusy(false);});
+  const wanted=Math.max(restoreMaterials,pageRef.current.learningMaterials.length);
+  void (async()=>{let after:string|undefined;let materials:BrowsePage<N>["learningMaterials"]=[];const seen=new Set<string>();do{const part=await request({...JSON.parse(key),view:"materials",...(after?{materialCursor:after}:{})},abort.signal);if(abort.signal.aborted)return;materials=[...new Map([...materials,...part.learningMaterials].map(g=>[g.id,g])).values()];after=part.materialNextCursor??undefined;if(after&&seen.has(after))throw new Error("教材分页异常");if(after)seen.add(after);if(!after||materials.length>=wanted)publish({...pageRef.current,learningMaterials:materials,materialNextCursor:part.materialNextCursor});}while(after&&materials.length<wanted);})().catch(e=>{if(!abort.signal.aborted)setMaterialError(message(e));}).finally(()=>{if(!abort.signal.aborted)setMaterialBusy(false);});
   return()=>abort.abort();
  },[request,key,reading,materialRetry]);
  async function moreMaterials(){const cursor=pageRef.current.materialNextCursor,signal=materialController.current?.signal;if(!cursor||!signal||materialBusy)return;setMaterialBusy(true);setMaterialError("");try{const part=await request({...params,view:"materials",materialCursor:cursor},signal);if(!signal.aborted)publish({...pageRef.current,learningMaterials:[...pageRef.current.learningMaterials,...part.learningMaterials],materialNextCursor:part.materialNextCursor});}catch(e){if(!signal.aborted)setMaterialError(message(e));}finally{if(!signal.aborted)setMaterialBusy(false);}}
