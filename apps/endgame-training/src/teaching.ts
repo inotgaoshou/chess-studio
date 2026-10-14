@@ -1428,7 +1428,7 @@ export const teachingClient = {
     const auth = this.auth(); if (!auth) throw new Error("请先登录学生账号");
     return request<TeachingCatalogNode[]>(path, {}, auth.token);
   },
-  async catalogBrowse(query:{nodeId?:string;cursor?:string;q?:string;materialCursor?:string;limit?:number|string;view?:string}={},teacher=false,context?:TeachingAuth,signal?:AbortSignal) {
+  async catalogBrowse(query:{nodeId?:string;cursor?:string;q?:string;materialCursor?:string;limit?:number|string;view?:string;availability?:string}={},teacher=false,context?:TeachingAuth,signal?:AbortSignal) {
     const params=new URLSearchParams({limit:String(query.limit??50)});
     for(const [key,value] of Object.entries(query))if(value!==undefined&&value!=="")params.set(key,String(value));
     const path=`/api/v1/${teacher?"admin":"student"}/teaching-catalog/browse?${params}`;

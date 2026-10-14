@@ -1,7 +1,7 @@
 import {useEffect,useRef,useState} from "react";
 
-export type BrowseNode = {id:string;parentId?:string|null;name:string;kind?:string;itemCount?:number|null;completedCount?:number|null};
-export type BrowsePage<N extends BrowseNode> = {statisticsReady?:boolean;statisticsRevision?:string;currentNode?:N|null;breadcrumbs:N[];children:N[];nextCursor?:string|null;learningMaterials:{id:string;title:string;reviewStatus:string}[];materialNextCursor?:string|null};
+export type BrowseNode = {id:string;parentId?:string|null;name:string;kind?:string;itemCount?:number|null;completedCount?:number|null;materialCount?:number|null};
+export type BrowsePage<N extends BrowseNode> = {availabilityReady?:boolean;availabilityRevision?:string;statisticsReady?:boolean;statisticsRevision?:string;currentNode?:N|null;breadcrumbs:N[];children:N[];nextCursor?:string|null;learningMaterials:{id:string;title:string;reviewStatus:string}[];materialNextCursor?:string|null};
 export function useDebounced<T>(value:T,delay=300) {
  const [settled,setSettled]=useState(value);
  useEffect(()=>{const timer=setTimeout(()=>setSettled(value),delay);return()=>clearTimeout(timer);},[value,delay]);
@@ -39,16 +39,17 @@ export function useCatalogBrowse<N extends BrowseNode>(request:(params:Record<st
     if(signal.aborted)return;
     const revision=result.statisticsRevision;
     if(revision&&countRevision.current&&BigInt(revision)<BigInt(countRevision.current))continue;
+    if(query.availability==='available'&&result.statisticsReady!==false&&(pageRef.current.availabilityReady===false||(pageRef.current.availabilityRevision!==undefined&&pageRef.current.availabilityRevision!==revision))) { setRetry(n=>n+1);return; }
     const changed=revision!==undefined&&countRevision.current!==undefined&&revision!==countRevision.current;
     if(revision)countRevision.current=revision;
     if(changed||result.statisticsReady===false) {
      cache.current.clear();
-     const clear=(n:N)=>({...n,itemCount:null,completedCount:null});
+     const clear=(n:N)=>({...n,itemCount:null,completedCount:null,materialCount:null});
      pageRef.current={...pageRef.current,children:pageRef.current.children.map(clear),currentNode:pageRef.current.currentNode?clear(pageRef.current.currentNode):null};
      for(const page of loadedPages.current)if(JSON.stringify(page)!==requestKey)void counts(page,signal);
     }
     const all=new Map([...result.children,...(result.currentNode?[result.currentNode]:[])].map(n=>[n.id,n]));
-    const update=(n:N)=>all.has(n.id)?{...n,itemCount:all.get(n.id)!.itemCount,completedCount:all.get(n.id)!.completedCount}:n;
+    const update=(n:N)=>all.has(n.id)?{...n,itemCount:all.get(n.id)!.itemCount,completedCount:all.get(n.id)!.completedCount,materialCount:all.get(n.id)!.materialCount}:n;
     publish({...pageRef.current,statisticsReady:result.statisticsReady,statisticsRevision:revision,children:pageRef.current.children.map(update),currentNode:pageRef.current.currentNode?update(pageRef.current.currentNode):null});
     if(result.statisticsReady!==false)break;
     await new Promise<void>(resolve=>{const finish=()=>{clearTimeout(timer);signal.removeEventListener("abort",finish);resolve();};const timer=setTimeout(finish,delay);signal.addEventListener("abort",finish,{once:true});if(signal.aborted)finish();});
@@ -72,7 +73,7 @@ export function useCatalogBrowse<N extends BrowseNode>(request:(params:Record<st
     const part=await request(query,abort.signal);if(abort.signal.aborted)return;
     loadedPages.current.push(query);
     const prior=new Map(pageRef.current.children.map(n=>[n.id,n]));
-    combined={...part,learningMaterials:pageRef.current.learningMaterials,materialNextCursor:pageRef.current.materialNextCursor,children:[...combined.children.map(n=>prior.get(n.id)??n),...part.children.map(n=>({...n,itemCount:prior.get(n.id)?.itemCount??n.itemCount,completedCount:prior.get(n.id)?.completedCount??n.completedCount}))]};
+    combined={...part,availabilityRevision:part.statisticsRevision,learningMaterials:pageRef.current.learningMaterials,materialNextCursor:pageRef.current.materialNextCursor,children:[...combined.children.map(n=>prior.get(n.id)??n),...part.children.map(n=>({...n,itemCount:prior.get(n.id)?.itemCount??n.itemCount,completedCount:prior.get(n.id)?.completedCount??n.completedCount,materialCount:prior.get(n.id)?.materialCount??n.materialCount}))]};
     publish(combined);void counts(query,abort.signal);
     cursor=part.nextCursor??undefined;
     if(cursor&&seen.has(cursor))throw new Error("目录分页异常");if(cursor)seen.add(cursor);
@@ -84,7 +85,7 @@ export function useCatalogBrowse<N extends BrowseNode>(request:(params:Record<st
  async function more() {
   const cursor=pageRef.current.nextCursor,signal=controller.current?.signal;if(!cursor||!signal||loading)return;
   setLoading(true);setError("");const query={...params,cursor,view:"structure"};
-  try{const part=await request(query,signal);if(signal.aborted)return;loadedPages.current.push(query);publish({...part,learningMaterials:pageRef.current.learningMaterials,materialNextCursor:pageRef.current.materialNextCursor,children:[...new Map([...pageRef.current.children,...part.children].map(n=>[n.id,n])).values()]});void counts(query,signal);}
+  try{const part=await request(query,signal);if(signal.aborted)return;loadedPages.current.push(query);publish({...part,availabilityRevision:part.statisticsRevision,learningMaterials:pageRef.current.learningMaterials,materialNextCursor:pageRef.current.materialNextCursor,children:[...new Map([...pageRef.current.children,...part.children].map(n=>[n.id,n])).values()]});void counts(query,signal);}
   catch(e){if(!signal.aborted)setError(message(e));}finally{if(!signal.aborted)setLoading(false);}
  }
  useEffect(()=>{
