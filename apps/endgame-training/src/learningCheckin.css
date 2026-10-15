@@ -89,3 +89,12 @@
 .checkin-no-motion *, .checkin-no-motion *::before, .checkin-no-motion *::after { animation: none !important; transition: none !important; }
 @media (prefers-reduced-motion: reduce) { .checkin-workspace *, .checkin-workspace *::before, .checkin-workspace *::after { animation: none !important; transition: none !important; } }
 @media (max-width: 600px) { .checkin-workspace { padding: 14px 12px 100px; } .checkin-heading > button { padding: 8px; font-size: 13px; } .checkin-form-grid { grid-template-columns: 1fr; gap: 0; } .checkin-stage, .checkin-route, .checkin-task-editor, .checkin-plan-editor, .checkin-results { padding: 12px; } .checkin-route-track { margin-left: 10px; margin-right: 12px; } .checkin-heading h1 { font-size: 20px; } .checkin-task { padding: 12px; } }
+
+.checkin-workspace [hidden] { display: none !important; }
+.checkin-workspace [tabindex="-1"] { scroll-margin-top: calc(var(--checkin-sticky-top, 0px) + 12px); }
+.checkin-workspace .checkin-sticky-actions { position: sticky; top: var(--checkin-sticky-top, 0px); z-index: 8; background: var(--checkin-paper); padding: 10px 0; border-bottom: 1px solid var(--checkin-line); }
+.checkin-sticky-actions h2 { margin-bottom: 0; }
+.checkin-sticky-actions > div:last-child, .checkin-bottom-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.checkin-sticky-actions > div:first-child { min-width: 0; }
+.checkin-bottom-actions { padding-top: 12px; border-top: 1px solid var(--checkin-line); }
+@media (max-width: 600px) { .checkin-workspace .checkin-sticky-actions { flex-wrap: wrap; gap: 6px; } .checkin-sticky-actions button { min-height: 40px; padding: 6px 10px; } }
