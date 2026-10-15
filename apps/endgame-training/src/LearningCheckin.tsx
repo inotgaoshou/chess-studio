@@ -185,7 +185,7 @@ function CheckinPlanEditor({ draft, classes, students, onChange, busy, preview, 
   </fieldset></section>;
 }
 export function CheckinPlanResults({ api, detail, onClose, studentId, week }: { api: CheckinApi; detail: CheckinDetail; onClose(): void; studentId?: string; week?: string }) {
-  return <TeacherPlanDetail key={`${detail.plan.id}:${studentId}:${week}`} api={api} detail={detail} onChange={() => {}} onClose={onClose} initialStudent={studentId} initialWeek={week} readOnly />;
+  return <div className="checkin-workspace"><TeacherPlanDetail key={`${detail.plan.id}:${studentId}:${week}`} api={api} detail={detail} onChange={() => {}} onClose={onClose} initialStudent={studentId} initialWeek={week} readOnly /></div>;
 }
 function TeacherPlanDetail({ api, detail, onChange, onClose, initialStudent, initialWeek, readOnly = false }: { api: CheckinApi; detail: CheckinDetail; onChange(detail: CheckinDetail): void; onClose(): void; initialStudent?: string; initialWeek?: string; readOnly?: boolean }) {
   const weeks = [...new Set(detail.tasks.map(t => weekStart(t.localDate)))].sort();
