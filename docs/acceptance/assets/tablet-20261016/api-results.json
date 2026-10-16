@@ -1,0 +1,132 @@
+[
+  {
+    "case": "final-production-vip",
+    "vipActive": true,
+    "requests": [
+      {
+        "path": "/api/v1/auth/login",
+        "status": 200,
+        "seconds": 0.915
+      },
+      {
+        "path": "/api/v1/student/teaching-catalog/browse?limit=50&availability=available&view=structure",
+        "status": 200,
+        "seconds": 0.419
+      },
+      {
+        "path": "/api/v1/student/teaching-catalog/browse?limit=50&availability=available&view=counts",
+        "status": 200,
+        "seconds": 0.431
+      },
+      {
+        "path": "/api/v1/student/teaching-catalog/browse?limit=50&availability=available&view=structure&nodeId=e0c0221d-1b02-5f2c-9122-a7b0821f2603",
+        "status": 200,
+        "seconds": 0.971
+      },
+      {
+        "path": "/api/v1/student/teaching-catalog/browse?limit=50&availability=available&view=structure&nodeId=950e87e8-cb2b-4444-8952-071c266a3f23",
+        "status": 200,
+        "seconds": 0.978
+      },
+      {
+        "path": "/api/v1/student/teaching-catalog/browse?limit=50&availability=available&view=structure&nodeId=9d085a8a-1134-4820-a00c-6b1d223d9931",
+        "status": 200,
+        "seconds": 0.969
+      },
+      {
+        "path": "/api/v1/student/teaching-catalog/9d085a8a-1134-4820-a00c-6b1d223d9931/problems?limit=20",
+        "status": 200,
+        "seconds": 7.134
+      },
+      {
+        "path": "/api/v1/auth/logout",
+        "status": 200,
+        "seconds": 0.785
+      }
+    ],
+    "navigation": [
+      {
+        "name": "基础杀法",
+        "kind": "category",
+        "children": 3
+      },
+      {
+        "name": "1～4步杀专项",
+        "kind": "series",
+        "children": 4
+      },
+      {
+        "name": "一步杀",
+        "kind": "chapter",
+        "children": 0
+      }
+    ],
+    "problemCount": 20,
+    "failure": null
+  },
+  {
+    "case": "final-test-nonvip",
+    "vipActive": false,
+    "requests": [
+      {
+        "path": "/api/v1/auth/login",
+        "status": 200,
+        "seconds": 0.129
+      },
+      {
+        "path": "/api/v1/student/teaching-catalog/browse?limit=50&availability=available&view=structure",
+        "status": 200,
+        "seconds": 0.999
+      },
+      {
+        "path": "/api/v1/student/teaching-catalog/browse?limit=50&availability=available&view=counts",
+        "status": 200,
+        "seconds": 0.733
+      },
+      {
+        "path": "/api/v1/student/teaching-catalog/browse?limit=50&availability=available&view=structure&nodeId=e0c0221d-1b02-5f2c-9122-a7b0821f2603",
+        "status": 200,
+        "seconds": 0.337
+      },
+      {
+        "path": "/api/v1/student/teaching-catalog/browse?limit=50&availability=available&view=structure&nodeId=950e87e8-cb2b-4444-8952-071c266a3f23",
+        "status": 200,
+        "seconds": 0.353
+      },
+      {
+        "path": "/api/v1/student/teaching-catalog/browse?limit=50&availability=available&view=structure&nodeId=9d085a8a-1134-4820-a00c-6b1d223d9931",
+        "status": 200,
+        "seconds": 0.551
+      },
+      {
+        "path": "/api/v1/student/teaching-catalog/9d085a8a-1134-4820-a00c-6b1d223d9931/problems?limit=20",
+        "status": 200,
+        "seconds": 3.551
+      },
+      {
+        "path": "/api/v1/auth/logout",
+        "status": 200,
+        "seconds": 0.25
+      }
+    ],
+    "navigation": [
+      {
+        "name": "基础杀法",
+        "kind": "category",
+        "children": 3
+      },
+      {
+        "name": "1～4步杀专项",
+        "kind": "series",
+        "children": 4
+      },
+      {
+        "name": "一步杀",
+        "kind": "chapter",
+        "children": 0
+      }
+    ],
+    "problemCount": 20,
+    "failure": null
+  }
+]
