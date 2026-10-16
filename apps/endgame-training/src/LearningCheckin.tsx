@@ -56,6 +56,7 @@ export function CheckinStudentWorkspace({ client, studentId, onBack }: { client:
   const [celebrating, setCelebrating] = useState<CheckinBadge>(); const [horseMoved, setHorseMoved] = useState(false); const [stamped, setStamped] = useState("");
   const [motion, setMotion] = useState(() => { try { return localStorage.getItem("qixi-checkin-motion") !== "off"; } catch { return true; } });
   const [tick, setTick] = useState(0); const [clockOffset, setClockOffset] = useState(0); const [, setClockTick] = useState(0);
+  const submissionsInFlight = useRef(new Set<string>());
   const taskSection = useRef<HTMLElement>(null);
   const taskSource = useRef<HTMLElement | null>(null);
   const taskPosition = useRef<CheckinPosition | undefined>(undefined);
@@ -83,7 +84,9 @@ export function CheckinStudentWorkspace({ client, studentId, onBack }: { client:
   const now = new Date(Date.now() + clockOffset).toISOString();
   async function refresh() { setError(""); setLoading(true); try { await client.flush(); setTick(v => v + 1); } catch (error) { setError(message(error)); } finally { setLoading(false); } }
   async function submitted(task: CheckinTask, draft: CheckinLocalDraft) {
-    if (!detail) return;
+    if (!detail || submissionsInFlight.current.has(task.id)) return;
+    submissionsInFlight.current.add(task.id);
+    try {
     const before = weekProgress(detail, studentId, weekStart(task.localDate));
     const revision = detail.submissions.find(s => s.taskId === task.id && s.studentId === studentId)?.revision ?? 0;
     await client.queue(detail.plan.id, task.id, revision, draft); closeTask(); setNotice("本机已记录，待同步");
@@ -97,6 +100,7 @@ export function CheckinStudentWorkspace({ client, studentId, onBack }: { client:
       const oldBadge = detail.badges.find(b => b.studentId === studentId && b.weekStart === badge?.weekStart);
       if (badge && (!oldBadge || oldBadge.needsSupplement)) setCelebrating(badge);
     } else { const item = queued.find(q => q.taskId === task.id); setNotice(item?.error ?? "本机已记录，待同步"); }
+    } finally { submissionsInFlight.current.delete(task.id); }
   }
   return <main className={`checkin-workspace ${motion ? "" : "checkin-no-motion"}`}>
     <header className="checkin-heading"><button type="button" onClick={onBack}>‹ 返回</button><div><h1>我的学习打卡</h1><p>一项一枚印章，一天一步成长</p></div><button type="button" disabled={loading} onClick={() => void refresh()}>刷新与同步</button></header>
