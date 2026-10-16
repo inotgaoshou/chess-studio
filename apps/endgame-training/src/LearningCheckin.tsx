@@ -130,7 +130,8 @@ function StudentTaskEditor({ sectionRef, task, detail, studentId, client, pendin
   const writable = canSubmitTask(detail, task, now) && sub?.status !== "submitted" && (!pending || pending.blocked);
   async function update(value: CheckinLocalDraft) { setDraft(value); try { await client.saveDraft(task.id, value); } catch (error) { setError(`草稿保存失败：${message(error)}`); } }
   async function addPhoto(file?: File) { if (!file) return; setBusy(true); setError(""); try { const blob = await compressCheckinPhoto(file); await update({ ...draft, photos: [...draft.photos, { id: crypto.randomUUID(), blob }] }); } catch (error) { setError(message(error)); } finally { setBusy(false); } }
-  async function submit() { setBusy(true); setError(""); try { await onSubmit(draft); } catch (error) { setError(message(error)); } finally { setBusy(false); } }
+  const submitting = useRef(false);
+  async function submit() { if (submitting.current) return; submitting.current = true; setBusy(true); setError(""); try { await onSubmit(draft); } catch (error) { setError(message(error)); } finally { submitting.current = false; setBusy(false); } }
   return <section ref={sectionRef} tabIndex={-1} id="checkin-student-task-detail" className="checkin-task-editor" aria-label="任务详情"><header><h2>{task.subject} · {task.localDate}</h2><button type="button" onClick={onClose}>收起</button></header><p>{task.instruction}</p><TaskRecord detail={detail} task={task} studentId={studentId} api={client.api} />
     {!writable && !pending && sub?.status !== "submitted" && <p>任务尚未开放或补交期已经结束。</p>}
     {(writable || pending) && <><label className="checkin-field">一句心得（选填）<textarea disabled={!writable || busy || !ready} value={draft.note} maxLength={1000} onChange={e => void update({ ...draft, note: e.target.value })} placeholder="今天我完成了什么？" /></label>
