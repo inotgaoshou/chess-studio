@@ -7,7 +7,7 @@ function useClient(auth: TeachingAuth) {
 }
 export function MobileStudentCheckin({ auth, onBack }: { auth: TeachingAuth; onBack(): void }) {
   const client = useClient(auth);
-  return <CheckinStudentWorkspace key={client.scope} client={client} studentId={auth.user.id} onBack={onBack} />;
+  return <div className="mobile-checkin-page"><CheckinStudentWorkspace key={client.scope} client={client} studentId={auth.user.id} onBack={onBack} /></div>;
 }
 export function MobileTeacherCheckin({ auth, onBack }: { auth: TeachingAuth; onBack(): void }) {
   const api = useMemo(() => checkinSession(auth).api, [auth.user.id, auth.user.orgId, auth.expiresAt]);

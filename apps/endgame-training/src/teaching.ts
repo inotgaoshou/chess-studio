@@ -24,18 +24,32 @@ const VIP_ACCESS_MESSAGE = "作业权益已过期或未开通，请联系老师�
 let lastSubmitError = "";
 const contentEpochs = new ContentEpochTracker({ getItem: key => localStorage.getItem(key), setItem: (key, value) => localStorage.setItem(key, value) });
 const epochProbes = new Map<string, Promise<boolean>>();
+// Bound reads including capability checks: a hung mobile connection must expose retry.
+async function teachingRead<T>(read: (signal: AbortSignal) => Promise<T>, source?: AbortSignal): Promise<T> {
+  const abort = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let rejectAbort: (reason: unknown) => void = () => {};
+  const cancelled = new Promise<never>((_, reject) => { rejectAbort = reject; });
+  const cancel = () => { abort.abort(); rejectAbort(new DOMException("读取已取消", "AbortError")); };
+  source?.addEventListener("abort", cancel, { once: true });
+  if (source?.aborted) { source.removeEventListener("abort", cancel); throw new DOMException("读取已取消", "AbortError"); }
+  timer = setTimeout(() => { abort.abort(); rejectAbort(new Error("读取超时，请检查网络后重试")); }, 15_000);
+  try { return await Promise.race([cancelled, read(abort.signal)]); }
+  finally { clearTimeout(timer); source?.removeEventListener("abort", cancel); }
+}
 async function ensureContentEpoch(context: AuthContext): Promise<boolean> {
   const key = `${context.serverUrl}:${context.ownerId}:${context.epoch}`;
   const existing = epochProbes.get(key);
   if (existing) return existing;
-  const pending = (async () => {
-    const response = await fetch(`${context.serverUrl}/api/v1/capabilities`, { headers: { "x-xiangqi-app-id": appId() }, credentials: "include" });
+  const pending = teachingRead(async signal => {
+    const response = await fetch(`${context.serverUrl}/api/v1/capabilities`, { signal, headers: { "x-xiangqi-app-id": appId() }, credentials: "include" });
     if (response.status === 404) return false; // Older servers have no reset marker.
     if (!response.ok) throw new Error(userFacingError(undefined, response.status));
     const body = await response.json() as { contentEpoch?: string };
+    if (signal.aborted) throw new DOMException("读取已取消", "AbortError");
     const epoch = typeof body.contentEpoch === "string" && /^[0-9a-f-]{36}$/i.test(body.contentEpoch) ? body.contentEpoch : undefined;
     return contentEpochs.observe(context, epoch, () => purgeTeachingContent(context), () => isCurrentAuthContext(context));
-  })();
+  });
   epochProbes.set(key, pending);
   try { return await pending; }
   finally { if (epochProbes.get(key) === pending) epochProbes.delete(key); }
@@ -558,6 +572,7 @@ async function request<T>(path: string, init: RequestInit = {}, token?: string, 
     if (!isCurrentAuthContext(authContext)) throw new Error("登录账号或环境已变化，请重新操作。");
     if (changed && init.method && !["GET", "HEAD"].includes(init.method.toUpperCase())) throw new Error("题库已重建，旧练习缓存已清理，请刷新后重新操作。");
   }
+  if (init.signal?.aborted) throw new DOMException("读取已取消", "AbortError");
   const contentEpoch = authContext ? contentEpochs.current(authContext) : undefined;
   if (accessToken) headers.set("authorization", `Bearer ${accessToken}`);
   const response = await fetch(`${targetServer}${path}`, { ...init, headers, credentials: "include" });
@@ -1432,17 +1447,17 @@ export const teachingClient = {
     const params=new URLSearchParams({limit:String(query.limit??50)});
     for(const [key,value] of Object.entries(query))if(value!==undefined&&value!=="")params.set(key,String(value));
     const path=`/api/v1/${teacher?"admin":"student"}/teaching-catalog/browse?${params}`;
-    if(teacher)return teacherRequest<import("./TeachingCatalog").CatalogBrowsePage>(path,{signal},context);
+    if(teacher)return teachingRead(signal => teacherRequest<import("./TeachingCatalog").CatalogBrowsePage>(path,{signal},context), signal);
     const auth=context??this.auth();if(!auth)throw new Error("请先登录学生账号");
-    return request<import("./TeachingCatalog").CatalogBrowsePage>(path,{signal},auth.token);
+    return teachingRead(signal => request<import("./TeachingCatalog").CatalogBrowsePage>(path,{signal},auth.token), signal);
   },
   async catalogProblems(id: string, query: { q?: string; goal?: string; material?:string; motif?:string; difficulty?: number; mateGroup?: string; mateMoves?: number; cursor?: string; limit?: number } = {}, teacher = false, context?: TeachingAuth, signal?:AbortSignal) {
     const params = new URLSearchParams({ limit: String(query.limit ?? 50) });
     for (const [key, value] of Object.entries(query)) if (value !== undefined && value !== "") params.set(key, String(value));
     const path = `/api/v1/${teacher ? "admin" : "student"}/teaching-catalog/${encodeURIComponent(id)}/problems?${params}`;
-    if (teacher) return teacherRequest<{ items: CatalogProblem[]; nextCursor?: string | null }>(path, {signal}, context);
+    if (teacher) return teachingRead(signal => teacherRequest<{ items: CatalogProblem[]; nextCursor?: string | null }>(path, {signal}, context), signal);
     const auth = context ?? this.auth(); if (!auth) throw new Error("请先登录学生账号");
-    return request<{ items: CatalogProblem[]; nextCursor?: string | null }>(path, {signal}, auth.token);
+    return teachingRead(signal => request<{ items: CatalogProblem[]; nextCursor?: string | null }>(path, {signal}, auth.token), signal);
   },
   async teacherFolderTree(context?: TeachingAuth) {
     return teacherRequest<TeacherFolder[]>("/api/v1/admin/content/folder-tree?scope=teaching", {}, context);

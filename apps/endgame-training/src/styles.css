@@ -6840,6 +6840,19 @@ html.tablet-webview .mobile-solver-page { grid-template-rows:auto auto auto auto
 .practice-score { font-weight: 700; color: #8b620f; }
 
 /* Native system insets are fitted by Capacitor; CSS safe areas cover browser/iOS. */
+.mobile-checkin-page {
+  position:fixed;
+  z-index:30;
+  top:var(--mobile-header-height,64px);
+  right:0;
+  bottom:0;
+  left:0;
+  overflow:auto;
+  overscroll-behavior:contain;
+  -webkit-overflow-scrolling:touch;
+  padding-bottom:env(safe-area-inset-bottom,0px);
+  background:#f4f7f0;
+}
 button, a, input, select, textarea { touch-action:manipulation; }
 .app-header button.about-trigger,
 html.phone-webview .app-header button.about-trigger {

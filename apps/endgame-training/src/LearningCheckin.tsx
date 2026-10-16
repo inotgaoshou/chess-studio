@@ -56,6 +56,16 @@ export function CheckinStudentWorkspace({ client, studentId, onBack }: { client:
   const [celebrating, setCelebrating] = useState<CheckinBadge>(); const [horseMoved, setHorseMoved] = useState(false); const [stamped, setStamped] = useState("");
   const [motion, setMotion] = useState(() => { try { return localStorage.getItem("qixi-checkin-motion") !== "off"; } catch { return true; } });
   const [tick, setTick] = useState(0); const [clockOffset, setClockOffset] = useState(0); const [, setClockTick] = useState(0);
+  const taskSection = useRef<HTMLElement>(null);
+  const taskSource = useRef<HTMLElement | null>(null);
+  const taskPosition = useRef<CheckinPosition | undefined>(undefined);
+  const [taskReveal, setTaskReveal] = useState(0);
+  useEffect(() => { if (task) focusCheckin(taskSection.current); }, [task?.id, taskReveal]);
+  function openTask(value: CheckinTask, source: HTMLButtonElement) {
+    if (task?.id !== value.id) { taskSource.current = source; taskPosition.current = captureCheckinPosition(source); }
+    setTask(value); setTaskReveal(v => v + 1);
+  }
+  function closeTask() { setTask(undefined); focusCheckin(taskSource.current, taskPosition.current); }
   const api = client.api;
   useEffect(() => { let active = true; setLoading(true); void client.plans().then(value => { if (active) { setPlans(value); setPlanId(current => value.some(p => p.id === current) ? current : (value.find(p => checkinPhase(p) === "active" || checkinPhase(p) === "supplement") ?? value[0])?.id ?? ""); } }).catch(error => { if (active) setError(message(error)); }).finally(() => { if (active) setLoading(false); }); return () => { active = false; }; }, [client, tick]);
   useEffect(() => { if (!planId) return; let active = true; setError(""); setLoading(true);
@@ -76,7 +86,7 @@ export function CheckinStudentWorkspace({ client, studentId, onBack }: { client:
     if (!detail) return;
     const before = weekProgress(detail, studentId, weekStart(task.localDate));
     const revision = detail.submissions.find(s => s.taskId === task.id && s.studentId === studentId)?.revision ?? 0;
-    await client.queue(detail.plan.id, task.id, revision, draft); setTask(undefined); setNotice("本机已记录，待同步");
+    await client.queue(detail.plan.id, task.id, revision, draft); closeTask(); setNotice("本机已记录，待同步");
     await client.flush(); const queued = await client.pending(); setPending(queued);
     const updated = await client.detail(detail.plan.id); setDetail(updated);
     if (!queued.some(q => q.taskId === task.id)) {
@@ -103,17 +113,17 @@ export function CheckinStudentWorkspace({ client, studentId, onBack }: { client:
       <section className="checkin-tasks"><h2>{selectedDate === beijingDate() ? "今日任务" : `${selectedDate}任务`}</h2>{todayTasks.map(t => {
         const sub = detail.submissions.find(s => s.taskId === t.id && s.studentId === studentId); const local = pending.find(p => p.taskId === t.id);
         return <article key={t.id} className="checkin-task"><div><span className="checkin-subject">{t.subject}</span><strong>{t.instruction}</strong><small>{t.required ? "必做" : "选做"}{t.photoRequired ? " · 需照片" : ""}</small>{local && <p className={local.blocked ? "checkin-error" : ""}>{local.blocked ? "未提交成功，本机记录保留" : "本机已记录，待同步"}{local.error ? `：${local.error}` : ""}</p>}</div>
-          <button type="button" onClick={() => setTask(t)}>{sub?.status === "submitted" ? <span className={`checkin-stamp ${stamped === t.id ? "stamping" : ""}`}>成</span> : sub?.status === "returned" ? "需补充" : local ? "查看本机记录" : canSubmitTask(detail, t, now) ? "去打卡" : "查看任务"}</button>
+          <button type="button" aria-expanded={task?.id === t.id} aria-controls={task?.id === t.id ? "checkin-student-task-detail" : undefined} onClick={event => openTask(t, event.currentTarget)}>{sub?.status === "submitted" ? <span className={`checkin-stamp ${stamped === t.id ? "stamping" : ""}`}>成</span> : sub?.status === "returned" ? "需补充" : local ? "查看本机记录" : canSubmitTask(detail, t, now) ? "去打卡" : "查看任务"}</button>
         </article>;
       })}</section>
-      {task && <StudentTaskEditor key={task.id} task={task} detail={detail} studentId={studentId} client={client} pending={pending.find(p => p.taskId === task.id)} now={now} onSubmit={draft => submitted(task, draft)} onClose={() => setTask(undefined)} />}
-      <WeekTable detail={detail} studentId={studentId} week={week} onTask={t => { setDate(t.localDate); setTask(t); }} />
+      {task && <StudentTaskEditor key={task.id} sectionRef={taskSection} task={task} detail={detail} studentId={studentId} client={client} pending={pending.find(p => p.taskId === task.id)} now={now} onSubmit={draft => submitted(task, draft)} onClose={closeTask} />}
+      <WeekTable detail={detail} studentId={studentId} week={week} onTask={(t, source) => { setDate(t.localDate); openTask(t, source); }} />
       <section className="checkin-badges"><h2>我的徽章</h2>{detail.badges.filter(b => b.studentId === studentId).map(b => <Badge key={b.weekStart} badge={b} />)}{!detail.badges.length && <p>完成本周安排的学习日，就能获得周徽章。</p>}</section>
     </>}
     {celebrating && <section className="checkin-celebration" role="status"><div className="checkin-confetti" aria-hidden="true">✦ · ✧ · ✦</div><h2>小马到达本周终点啦！</h2><Badge badge={celebrating} /><p>这一周的努力，都留下了印记。</p><button type="button" onClick={() => setCelebrating(undefined)}>收好徽章</button></section>}
   </main>;
 }
-function StudentTaskEditor({ task, detail, studentId, client, pending, now, onSubmit, onClose }: { now: string; task: CheckinTask; detail: CheckinDetail; studentId: string; client: CheckinStudentClient; pending?: PendingCheckin; onSubmit(draft: CheckinLocalDraft): Promise<void>; onClose(): void }) {
+function StudentTaskEditor({ sectionRef, task, detail, studentId, client, pending, now, onSubmit, onClose }: { sectionRef: React.RefObject<HTMLElement | null>; now: string; task: CheckinTask; detail: CheckinDetail; studentId: string; client: CheckinStudentClient; pending?: PendingCheckin; onSubmit(draft: CheckinLocalDraft): Promise<void>; onClose(): void }) {
   const [draft, setDraft] = useState<CheckinLocalDraft>(EMPTY_PHOTOS); const [ready, setReady] = useState(false); const [busy, setBusy] = useState(false); const [error, setError] = useState("");
   useEffect(() => { let active = true; void client.draft(task.id).then(saved => { if (active) { setDraft(saved ?? pending ?? EMPTY_PHOTOS); setReady(true); } }).catch(error => { if (active) setError(message(error)); }); return () => { active = false; }; }, [client, task.id]);
   const sub = detail.submissions.find(s => s.taskId === task.id && s.studentId === studentId);
@@ -121,7 +131,7 @@ function StudentTaskEditor({ task, detail, studentId, client, pending, now, onSu
   async function update(value: CheckinLocalDraft) { setDraft(value); try { await client.saveDraft(task.id, value); } catch (error) { setError(`草稿保存失败：${message(error)}`); } }
   async function addPhoto(file?: File) { if (!file) return; setBusy(true); setError(""); try { const blob = await compressCheckinPhoto(file); await update({ ...draft, photos: [...draft.photos, { id: crypto.randomUUID(), blob }] }); } catch (error) { setError(message(error)); } finally { setBusy(false); } }
   async function submit() { setBusy(true); setError(""); try { await onSubmit(draft); } catch (error) { setError(message(error)); } finally { setBusy(false); } }
-  return <section className="checkin-task-editor" aria-label="任务详情"><header><h2>{task.subject} · {task.localDate}</h2><button type="button" onClick={onClose}>收起</button></header><p>{task.instruction}</p><TaskRecord detail={detail} task={task} studentId={studentId} api={client.api} />
+  return <section ref={sectionRef} tabIndex={-1} id="checkin-student-task-detail" className="checkin-task-editor" aria-label="任务详情"><header><h2>{task.subject} · {task.localDate}</h2><button type="button" onClick={onClose}>收起</button></header><p>{task.instruction}</p><TaskRecord detail={detail} task={task} studentId={studentId} api={client.api} />
     {!writable && !pending && sub?.status !== "submitted" && <p>任务尚未开放或补交期已经结束。</p>}
     {(writable || pending) && <><label className="checkin-field">一句心得（选填）<textarea disabled={!writable || busy || !ready} value={draft.note} maxLength={1000} onChange={e => void update({ ...draft, note: e.target.value })} placeholder="今天我完成了什么？" /></label>
       <div className="checkin-photos">{draft.photos.map(photo => <div key={photo.id}><Photo api={client.api} id={photo.id} blob={photo.blob} />{writable && <button type="button" disabled={busy} onClick={() => void update({ ...draft, photos: draft.photos.filter(p => p.id !== photo.id) })}>移除</button>}</div>)}</div>

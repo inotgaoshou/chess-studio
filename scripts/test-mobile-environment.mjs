@@ -22,7 +22,7 @@ test("practice scoring separates completion, stars and first-try correctness", (
   assert.equal(practiceScore("abandoned", 0), 0);
 });
 
-function harness({ packageEnv = "test", native = true, dev = false, configured = "", entries = [], stored, fetchImpl, queued = {} } = {}) {
+function harness({ packageEnv = "test", native = true, dev = false, configured = "", entries = [], stored, fetchImpl, timers, queued = {} } = {}) {
   const values = new Map(entries);
   const calls = [];
   let session = stored;
@@ -45,7 +45,7 @@ function harness({ packageEnv = "test", native = true, dev = false, configured =
     removeItem: (key) => values.delete(key),
   };
   const context = vm.createContext({
-    localStorage, indexedDB, Headers, __APP_ENV__: packageEnv,
+    localStorage, indexedDB, Headers, FormData, Event, AbortController, DOMException, URLSearchParams, setTimeout: timers?.setTimeout ?? setTimeout, clearTimeout: timers?.clearTimeout ?? clearTimeout, window: new EventTarget(), __APP_ENV__: packageEnv,
     runtimeEnv: { DEV: dev, VITE_TEACHING_API_BASE: configured },
     fetch: async (...args) => {
       calls.push(args);
@@ -66,6 +66,9 @@ function harness({ packageEnv = "test", native = true, dev = false, configured =
   }
   const environment = load("appEnvironment");
   const { teachingClient } = load("teaching", {
+    "./checkinApi": load("checkinApi"),
+    "./contentEpoch": load("contentEpoch"),
+    "./providerMirrors": load("providerMirrors"),
     "./appEnvironment": environment,
     "./practiceScoring": load("practiceScoring"),
     "./secureSession": {
@@ -485,4 +488,22 @@ test("pending counts and submission exclude another organization of the same acc
   await h.client.flushPending();
   assert.equal(h.calls.filter(([url]) => url.endsWith("/attempts")).length, 0);
   assert.equal(h.stores.attempts.size, 1);
+});
+
+test("catalog timeout includes a stalled capabilities probe and retries without changing account", async () => {
+  let timeout,stalled=true;
+  const student={...auth,user:{id:'vip-student',role:'student',vipActive:true}};
+  const h=harness({stored:{...student,auth:student,serverUrl:TEST_URL},timers:{setTimeout(fn){timeout=fn;return 1;},clearTimeout(){}},fetchImpl:async url=>{
+    if(url.endsWith('/capabilities')&&stalled)return new Promise(()=>{});
+    if(url.endsWith('/capabilities'))return {ok:true,status:200,json:async()=>({})};
+    if(url.includes('/teaching-catalog/'))return {ok:true,status:200,json:async()=>({children:[{id:'public',name:'公开内容'}],breadcrumbs:[],learningMaterials:[]})};
+    return {ok:true,status:200,json:async()=>student};
+  }});
+  await h.client.restore();
+  const first=h.client.catalogBrowse({view:'structure'});await new Promise(r=>setImmediate(r));
+  assert.equal(typeof timeout,'function','catalog reads must have a deadline even before fetch starts');timeout();
+  await assert.rejects(first,/超时/);
+  assert.equal(h.client.auth().user.id,'vip-student');
+  stalled=false;await new Promise(r=>setImmediate(r));
+  assert.equal((await h.client.catalogBrowse({view:'structure'})).children[0].id,'public');
 });
