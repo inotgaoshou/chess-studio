@@ -1,3 +1,4 @@
+import type { VerificationRequest } from "../../../packages/training-verification/types";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EndgameTrainingDialog } from "./EndgameTrainingDialog";
@@ -48,6 +49,9 @@ const platform = vi.hoisted(() => ({
   reorderEndgameLibrary: vi.fn(),
   saveEndgameAttempt: vi.fn(),
   endgameChineseMainline: vi.fn(),
+  endgameVerifyMove: vi.fn(),
+  setEndgameGoal: vi.fn(),
+  endgameProgress: vi.fn(),
   deleteEndgameLibrary: vi.fn(),
   deleteEndgameProblem: vi.fn(),
   listEndgameAttempts: vi.fn(),
@@ -79,6 +83,14 @@ beforeEach(() => {
   platform.reorderEndgameLibrary.mockResolvedValue(true);
   platform.saveEndgameAttempt.mockResolvedValue(undefined);
   platform.endgameChineseMainline.mockResolvedValue(["马六进四"]);
+  platform.setEndgameGoal.mockResolvedValue(undefined);
+  platform.endgameProgress.mockResolvedValue(null);
+  platform.endgameVerifyMove.mockImplementation(async (request: VerificationRequest) => {
+    const node = request.solution.find(node => node.iccs === request.candidate);
+    const reply = node?.children[0];
+    const completed = !!node && (!reply || !reply.children.length);
+    return {outcome:node ? completed ? "completed" : "correct" : "pending_review",message:node ? "皮卡鱼复核通过" : "待复核：证据不足",path:node ? [...request.path,request.candidate,...(reply ? [reply.iccs] : [])] : request.path,autoMoves:reply ? [reply.iccs] : [],completed,verifierVersion:"training-multisolution-v1"};
+  });
   platform.deleteEndgameLibrary.mockResolvedValue(undefined);
   platform.deleteEndgameProblem.mockResolvedValue(undefined);
   platform.listEndgameAttempts.mockResolvedValue([]);
@@ -88,7 +100,8 @@ beforeEach(() => {
 });
 
 async function chooseSolverMode() {
-  fireEvent.click(await screen.findByLabelText("只走解题方"));
+  await waitFor(() => expect((screen.getByLabelText("只走解题方") as HTMLInputElement).disabled).toBe(false));
+  fireEvent.click(screen.getByLabelText("只走解题方"));
 }
 
 describe("EndgameTrainingDialog", () => {
@@ -163,6 +176,7 @@ describe("EndgameTrainingDialog", () => {
 
     await screen.findByRole("button", { name: /中国象棋实用残局增订本-陈松顺/ });
     fireEvent.click(screen.getByRole("button", { name: /马取单士--着法1/ }));
+    await waitFor(() => expect((screen.getByLabelText("云库对练") as HTMLInputElement).disabled).toBe(false));
     fireEvent.click(screen.getByLabelText("f8"));
     fireEvent.click(screen.getByLabelText("e6"));
 
@@ -181,8 +195,47 @@ describe("EndgameTrainingDialog", () => {
     fireEvent.click(await screen.findByLabelText("f8"));
     fireEvent.click(screen.getByLabelText("d7"));
 
-    expect(screen.getByText("正确，继续完成题解。")).toBeTruthy();
+    expect(await screen.findByText("皮卡鱼复核通过")).toBeTruthy();
     expect([...view.container.querySelectorAll('[data-square="2-3"]')].some((piece) => piece.getAttribute("alt") === "马")).toBe(true);
+  });
+
+  it("accepts an unlisted move without completing at the annotated leaf", async () => {
+    platform.endgameVerifyMove.mockResolvedValue({outcome:"correct",message:"皮卡鱼确认另一种正确解法，请继续",path:["f8h7","d8d7"],autoMoves:[],completed:false,hintMove:"h7f6",verifierVersion:"training-multisolution-v1"});
+    render(<EndgameTrainingDialog onClose={vi.fn()}/>);
+    await screen.findByRole("button", { name: /马取单士--着法1/ });
+    fireEvent.click(screen.getByRole("button", { name: /马取单士--着法1/ }));
+    await chooseSolverMode();
+    fireEvent.click(screen.getByLabelText("f8")); fireEvent.click(screen.getByLabelText("h7"));
+    await screen.findByText("皮卡鱼确认另一种正确解法，请继续");
+    expect(platform.endgameVerifyMove).toHaveBeenCalledWith(expect.objectContaining({candidate:"f8h7"}));
+    expect(platform.saveEndgameAttempt).not.toHaveBeenCalled();
+    expect(screen.getByText("错误 0 次")).toBeTruthy();
+  });
+
+  it("keeps uncertainty out of mistakes and ignores the response after closing", async () => {
+    let resolve!: (value: unknown) => void;
+    platform.endgameVerifyMove.mockImplementation(() => new Promise(done => { resolve = done; }));
+    const onClose = vi.fn(); render(<EndgameTrainingDialog onClose={onClose}/>);
+    await screen.findByRole("button", { name: /马取单士--着法1/ });
+    fireEvent.click(screen.getByRole("button", { name: /马取单士--着法1/ }));
+    await chooseSolverMode();
+    fireEvent.click(screen.getByLabelText("f8")); fireEvent.click(screen.getByLabelText("e6"));
+    await screen.findByText("皮卡鱼复核中…");
+    expect((screen.getByLabelText("双方复现（按题解）") as HTMLInputElement).disabled).toBe(true);
+    fireEvent.click(screen.getByTitle("关闭"));
+    await act(async () => { resolve({outcome:"completed",path:["f8e6"],autoMoves:[],completed:true,message:"过期结果"}); });
+    expect(onClose).toHaveBeenCalled(); expect(platform.saveEndgameAttempt).not.toHaveBeenCalled();
+    expect(screen.queryByText("过期结果")).toBeNull();
+  });
+
+  it("does not count engine timeout as an incorrect answer", async () => {
+    platform.endgameVerifyMove.mockResolvedValue({outcome:"pending_review",message:"待复核：搜索超时",path:[],autoMoves:[],completed:false});
+    render(<EndgameTrainingDialog onClose={vi.fn()}/>);
+    await screen.findByRole("button", { name: /马取单士--着法1/ });
+    fireEvent.click(screen.getByRole("button", { name: /马取单士--着法1/ })); await chooseSolverMode();
+    fireEvent.click(screen.getByLabelText("f8"));fireEvent.click(screen.getByLabelText("e6"));
+    await screen.findByText("待复核：搜索超时");
+    expect(screen.getByText("错误 0 次")).toBeTruthy(); expect(platform.saveEndgameAttempt).not.toHaveBeenCalled();
   });
 
   it("uses an expandable book parent before showing its problems", async () => {
@@ -493,9 +546,10 @@ describe("EndgameTrainingDialog", () => {
     vi.useFakeTimers();
     fireEvent.click(screen.getByLabelText("f8"));
     fireEvent.click(screen.getByLabelText("e6"));
-    expect(screen.getByText("正确，正在显示对方应手…")).toBeTruthy();
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(screen.getByText("正确，等待皮卡鱼应手…")).toBeTruthy();
     await act(async () => { await vi.advanceTimersByTimeAsync(650); });
-    expect(screen.getByText("正确，对方应手已自动走出：将5进1。")).toBeTruthy();
+    expect(screen.getByText("皮卡鱼应手：将5进1。皮卡鱼复核通过")).toBeTruthy();
     expect(platform.saveEndgameAttempt).toHaveBeenCalledWith(expect.objectContaining({ outcome: "completed" }));
   });
 
@@ -506,6 +560,7 @@ describe("EndgameTrainingDialog", () => {
 
     await screen.findByRole("button", { name: /终局题/ });
     fireEvent.click(screen.getByRole("button", { name: /将死应立即结束/ }));
+    await waitFor(() => expect((screen.getByLabelText("双方复现（按题解）") as HTMLInputElement).disabled).toBe(false));
     fireEvent.click(screen.getByLabelText("双方复现（按题解）"));
     fireEvent.click(screen.getByLabelText("f8"));
     fireEvent.click(screen.getByLabelText("e6"));

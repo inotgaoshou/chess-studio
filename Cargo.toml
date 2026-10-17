@@ -6,6 +6,7 @@ members = [
   "crates/manual-format",
   "crates/web-core",
   "crates/engine-protocol",
+  "crates/training-verifier",
   "crates/link-core",
   "crates/sync-protocol",
   "crates/local-store",

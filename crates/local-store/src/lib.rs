@@ -668,6 +668,8 @@ pub struct EndgameProblem {
     pub starting_fen: String,
     pub note: String,
     pub solution_json: String,
+    pub training_goal_json: Option<String>,
+    pub target_mate_moves: Option<u32>,
     pub attempt_count: u32,
     pub completed_attempts: u32,
     pub total_elapsed_ms: u64,
@@ -693,6 +695,8 @@ pub struct EndgameProblemImport {
     pub starting_fen: String,
     pub note: String,
     pub solution_json: String,
+    pub training_goal_json: Option<String>,
+    pub target_mate_moves: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1077,13 +1081,13 @@ impl LocalStore {
             )?;
             for problem in problems {
                 let updated = transaction.execute(
-                    "UPDATE endgame_problems SET title=?1, category=?2, starting_fen=?3, note=?4, solution_json=?5, active=1 WHERE library_id=?6 AND source_index=?7",
-                    params![problem.title, problem.category, problem.starting_fen, problem.note, problem.solution_json, existing, problem.source_index],
+                    "UPDATE endgame_problems SET title=?1, category=?2, starting_fen=?3, note=?4, solution_json=?5, training_goal_json=CASE WHEN starting_fen=?3 AND solution_json=?5 THEN COALESCE(?8,training_goal_json) ELSE ?8 END, target_mate_moves=CASE WHEN starting_fen=?3 AND solution_json=?5 THEN COALESCE(?9,target_mate_moves) ELSE ?9 END, active=1 WHERE library_id=?6 AND source_index=?7",
+                    params![problem.title, problem.category, problem.starting_fen, problem.note, problem.solution_json, existing, problem.source_index, problem.training_goal_json, problem.target_mate_moves],
                 )?;
                 if updated == 0 {
                     transaction.execute(
-                        "INSERT INTO endgame_problems (id, library_id, source_index, title, category, starting_fen, note, solution_json, active) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1)",
-                        params![Uuid::new_v4().to_string(), existing, problem.source_index, problem.title, problem.category, problem.starting_fen, problem.note, problem.solution_json],
+                        "INSERT INTO endgame_problems (id, library_id, source_index, title, category, starting_fen, note, solution_json, training_goal_json, target_mate_moves, active) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1)",
+                        params![Uuid::new_v4().to_string(), existing, problem.source_index, problem.title, problem.category, problem.starting_fen, problem.note, problem.solution_json, problem.training_goal_json, problem.target_mate_moves],
                     )?;
                 }
             }
@@ -1098,7 +1102,7 @@ impl LocalStore {
         let transaction = self.connection.transaction()?;
         transaction.execute("INSERT INTO endgame_libraries (id, folder_id, title, source_path, fingerprint, parser_version, sort_order, imported_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)", params![id.to_string(), folder_id.map(|id| id.to_string()), title, source_path, fingerprint, parser_version, sort_order, imported_at])?;
         for problem in problems {
-            transaction.execute("INSERT INTO endgame_problems (id, library_id, source_index, title, category, starting_fen, note, solution_json, active) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1)", params![Uuid::new_v4().to_string(), id.to_string(), problem.source_index, problem.title, problem.category, problem.starting_fen, problem.note, problem.solution_json])?;
+            transaction.execute("INSERT INTO endgame_problems (id, library_id, source_index, title, category, starting_fen, note, solution_json, training_goal_json, target_mate_moves, active) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1)", params![Uuid::new_v4().to_string(), id.to_string(), problem.source_index, problem.title, problem.category, problem.starting_fen, problem.note, problem.solution_json, problem.training_goal_json, problem.target_mate_moves])?;
         }
         transaction.commit()?;
         self.endgame_library(id)?
@@ -1606,7 +1610,7 @@ impl LocalStore {
                 },
             )
             .collect::<std::collections::HashMap<_, _>>();
-        let mut statement = self.connection.prepare("SELECT id, library_id, source_index, title, category, starting_fen, note, solution_json FROM endgame_problems WHERE library_id=?1 AND active=1 ORDER BY source_index")?;
+        let mut statement = self.connection.prepare("SELECT id, library_id, source_index, title, category, starting_fen, note, solution_json, training_goal_json, target_mate_moves FROM endgame_problems WHERE library_id=?1 AND active=1 ORDER BY source_index")?;
         statement
             .query_map([library_id.to_string()], |row| {
                 Ok((
@@ -1618,6 +1622,8 @@ impl LocalStore {
                     row.get::<_, String>(5)?,
                     row.get::<_, String>(6)?,
                     row.get::<_, String>(7)?,
+                    row.get::<_, Option<String>>(8)?,
+                    row.get::<_, Option<u32>>(9)?,
                 ))
             })?
             .map(|row| {
@@ -1630,6 +1636,8 @@ impl LocalStore {
                     starting_fen,
                     note,
                     solution_json,
+                    training_goal_json,
+                    target_mate_moves,
                 ) = row?;
                 let (attempt_count, completed_attempts, total_elapsed_ms) =
                     stats.get(&id).copied().unwrap_or((0, 0, 0));
@@ -1642,12 +1650,19 @@ impl LocalStore {
                     starting_fen,
                     note,
                     solution_json,
+                    training_goal_json,
+                    target_mate_moves,
                     attempt_count,
                     completed_attempts,
                     total_elapsed_ms,
                 })
             })
             .collect()
+    }
+
+    pub fn set_endgame_goal(&mut self, problem: Uuid, goal_json: Option<&str>, target: Option<u32>) -> Result<(), StoreError> {
+        self.connection.execute("UPDATE endgame_problems SET training_goal_json=?1,target_mate_moves=?2 WHERE id=?3", params![goal_json,target,problem.to_string()])?;
+        Ok(())
     }
 
     pub fn save_endgame_attempt(
@@ -4566,6 +4581,8 @@ impl LocalStore {
             "active",
             "INTEGER NOT NULL DEFAULT 1",
         )?;
+        ensure_column(&connection, "endgame_problems", "training_goal_json", "TEXT")?;
+        ensure_column(&connection, "endgame_problems", "target_mate_moves", "INTEGER")?;
         Ok(Self { connection })
     }
 }
@@ -6990,6 +7007,22 @@ mod tests {
     }
 
     #[test]
+    fn endgame_reimport_preserves_reviewed_goal_only_for_unchanged_content() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        let mut problems = vec![EndgameProblemImport { source_index: 0, title: "test".into(), category: "test".into(), starting_fen: "4k4/9/9/9/9/9/9/9/9/4K4 w - - 0 1".into(), note: String::new(), solution_json: "[]".into(), training_goal_json: None, target_mate_moves: None }];
+        let library = store.import_endgame_library("/tmp/goals.cbl", "goal-hash", "goals", 1, &problems, None).unwrap();
+        let id = store.endgame_problems(library.id).unwrap()[0].id;
+        store.set_endgame_goal(id, Some("{\"kind\":\"win\"}"), Some(3)).unwrap();
+        store.import_endgame_library("/tmp/goals.cbl", "goal-hash", "goals", 2, &problems, None).unwrap();
+        let retained = store.endgame_problems(library.id).unwrap().pop().unwrap();
+        assert!(retained.training_goal_json.is_some()); assert_eq!(retained.target_mate_moves, Some(3));
+        problems[0].solution_json = "[{\"iccs\":\"a0a1\",\"children\":[]}]".into();
+        store.import_endgame_library("/tmp/goals.cbl", "goal-hash", "goals", 2, &problems, None).unwrap();
+        let changed = store.endgame_problems(library.id).unwrap().pop().unwrap();
+        assert_eq!(changed.training_goal_json, None); assert_eq!(changed.target_mate_moves, None);
+    }
+
+    #[test]
     fn endgame_library_reuses_an_identical_import_and_accumulates_completed_time() {
         let mut store = LocalStore::open_in_memory().unwrap();
         let problems = vec![EndgameProblemImport {
@@ -6999,6 +7032,8 @@ mod tests {
             starting_fen: "4k4/9/9/9/9/9/9/9/9/4K4 w - - 0 1".into(),
             note: String::new(),
             solution_json: "[]".into(),
+            training_goal_json: None,
+            target_mate_moves: None,
         }];
         let first = store
             .import_endgame_library("/tmp/book.cbl", "sha256:one", "残局", 1, &problems, None)
@@ -7034,6 +7069,8 @@ mod tests {
                 starting_fen: "4k4/9/9/9/9/9/9/9/9/4K4 w - - 0 1".into(),
                 note: String::new(),
                 solution_json: "[]".into(),
+                training_goal_json: None,
+                target_mate_moves: None,
             },
             EndgameProblemImport {
                 source_index: 9,
@@ -7042,6 +7079,8 @@ mod tests {
                 starting_fen: "4k4/9/9/9/9/9/9/9/9/4K4 w - - 0 1".into(),
                 note: String::new(),
                 solution_json: "[]".into(),
+                training_goal_json: None,
+                target_mate_moves: None,
             },
         ];
         let library = store
@@ -7058,6 +7097,8 @@ mod tests {
             starting_fen: "9/3kaN3/9/9/9/9/9/9/9/4K4 w - - 0 1".into(),
             note: "单马必胜单士".into(),
             solution_json: "[\"f8e6\"]".into(),
+            training_goal_json: None,
+            target_mate_moves: None,
         }];
         let refreshed = store
             .import_endgame_library("/tmp/book.cbl", "sha256:one", "残局", 2, &corrected, None)
@@ -7092,6 +7133,8 @@ mod tests {
             starting_fen: "9/3kan3/9/9/9/9/9/9/9/4K4 w - - 0 1".into(),
             note: String::new(),
             solution_json: "[\"f8e6\"]".into(),
+            training_goal_json: None,
+            target_mate_moves: None,
         }];
         let library = store
             .import_endgame_library(
@@ -7191,6 +7234,8 @@ mod tests {
             starting_fen: "9/3kan3/9/9/9/9/9/9/9/4K4 w - - 0 1".into(),
             note: String::new(),
             solution_json: "[\"f8e6\"]".into(),
+            training_goal_json: None,
+            target_mate_moves: None,
         }];
         let library = store
             .import_endgame_library(

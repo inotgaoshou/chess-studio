@@ -6470,6 +6470,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "training-verifier"
+version = "1.0.2"
+dependencies = [
+ "engine-protocol",
+ "js-sys",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "xiangqi-core",
+]
+
+[[package]]
 name = "tray-icon"
 version = "0.24.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7899,6 +7912,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tempfile",
  "tokio",
+ "training-verifier",
  "url",
  "uuid",
  "windows-sys 0.59.0",
@@ -7951,6 +7965,7 @@ dependencies = [
  "manual-format",
  "serde",
  "serde_json",
+ "training-verifier",
  "uuid",
  "wasm-bindgen",
  "wasm-bindgen-test",

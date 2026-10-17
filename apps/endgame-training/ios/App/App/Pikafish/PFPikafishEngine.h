@@ -10,6 +10,7 @@ typedef NS_ENUM(NSInteger, PFScoreKind) {
 @interface PFAnalysisLine : NSObject
 @property(nonatomic, readonly) NSInteger multipv;
 @property(nonatomic, readonly) NSInteger depth;
+@property(nonatomic, copy, readonly) NSString *bound;
 @property(nonatomic, readonly) PFScoreKind scoreKind;
 @property(nonatomic, readonly) NSInteger scoreValue;
 @property(nonatomic, readonly) uint64_t nodes;
@@ -33,6 +34,8 @@ typedef void (^PFAnalysisCompletionHandler)(PFAnalysisResult * _Nullable result,
            threads:(NSInteger)threads
             hashMB:(NSInteger)hashMB
            multiPV:(NSInteger)multiPV
+             depth:(NSInteger)depth
+       searchMoves:(NSArray<NSString *> *)searchMoves
             update:(PFAnalysisUpdateHandler)update
         completion:(PFAnalysisCompletionHandler)completion;
 - (void)cancel;

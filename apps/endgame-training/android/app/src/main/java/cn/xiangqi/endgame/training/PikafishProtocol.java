@@ -57,6 +57,10 @@ final class PikafishProtocol {
                         if ("mate".equals(kind)) result.mate = value;
                     }
                     break;
+                case "lowerbound":
+                case "upperbound":
+                    result.bound = parts[index];
+                    break;
                 case "pv":
                     List<String> pv = new ArrayList<>();
                     while (++index < parts.length) {
@@ -93,6 +97,7 @@ final class PikafishProtocol {
         int multiPv = 1;
         Integer scoreCp;
         Integer mate;
+        String bound;
         long nodes;
         long nps;
         List<String> pv = Collections.emptyList();

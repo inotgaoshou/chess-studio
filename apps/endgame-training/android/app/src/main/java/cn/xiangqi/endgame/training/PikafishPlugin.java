@@ -52,13 +52,37 @@ public class PikafishPlugin extends Plugin {
         submitAnalysis(call, false);
     }
 
+    @PluginMethod
+    public void identity(PluginCall call) {
+        final long generation = requestGeneration.get();
+        executor.execute(() -> {
+            try {
+                prepareResources(generation);
+                JSObject result = new JSObject(); result.put("fingerprint", ENGINE_SHA256 + ":" + NNUE_SHA256); call.resolve(result);
+            } catch (Exception error) { call.reject("本地验证资源不可用",error); }
+        });
+    }
+
     private void submitAnalysis(PluginCall call, boolean bestMoveOnly) {
         String fen = call.getString("fen");
         if (fen == null || fen.trim().isEmpty()) {
             call.reject("缺少当前局面");
             return;
         }
-        int moveTimeMs = PikafishProtocol.clampMoveTimeMs(call.getInt("moveTimeMs"));
+        boolean verification = Boolean.TRUE.equals(call.getBoolean("verification"));
+        int depth = verification ? 26 : 0;
+        int moveTimeMs = verification ? Math.max(100, Math.min(6000, call.getInt("moveTimeMs", 6000))) : PikafishProtocol.clampMoveTimeMs(call.getInt("moveTimeMs"));
+        String searchMoves = "";
+        if (verification && call.getArray("searchMoves") != null) {
+            java.util.List<String> requested = new java.util.ArrayList<>();
+            for (int i = 0; i < call.getArray("searchMoves").length(); i++) {
+                String move = call.getArray("searchMoves").optString(i);
+                if (!move.matches("[a-i][0-9][a-i][0-9]")) { call.reject("无效的指定着法"); return; }
+                requested.add(move);
+            }
+            searchMoves = String.join(" ", requested);
+        }
+        final String restrictedMoves = searchMoves;
         int multiPv = bestMoveOnly ? 1 : PikafishProtocol.clampMultiPv(call.getInt("multiPv"));
         long request = requestGeneration.incrementAndGet();
         stopActiveProcess();
@@ -68,7 +92,7 @@ public class PikafishPlugin extends Plugin {
                 return;
             }
             try {
-                AnalysisResult analysis = runAnalysis(fen.trim(), moveTimeMs, multiPv, request);
+                AnalysisResult analysis = runAnalysis(fen.trim(), moveTimeMs, multiPv, request, depth, restrictedMoves);
                 if (request != requestGeneration.get()) {
                     call.reject("本地引擎请求已取消");
                     return;
@@ -95,7 +119,7 @@ public class PikafishPlugin extends Plugin {
         call.resolve();
     }
 
-    private AnalysisResult runAnalysis(String fen, int moveTimeMs, int multiPv, long request) throws Exception {
+    private AnalysisResult runAnalysis(String fen, int moveTimeMs, int multiPv, long request, int depth, String searchMoves) throws Exception {
         EngineResources resources = prepareResources(request);
         ensureRequestActive(request);
         Process process = new ProcessBuilder(resources.engine.getAbsolutePath())
@@ -116,7 +140,7 @@ public class PikafishPlugin extends Plugin {
                 send(writer, "isready");
                 waitFor(reader, process, request, 90_000, line -> "readyok".equals(line.trim()), "NNUE 加载超时");
                 send(writer, "position fen " + fen);
-                send(writer, "go movetime " + moveTimeMs);
+                send(writer, "go " + (depth > 0 ? "depth " + depth + " " : "") + "movetime " + moveTimeMs + (searchMoves.isEmpty() ? "" : " searchmoves " + searchMoves));
                 AnalysisResult analysis = waitForAnalysis(reader, process, request, moveTimeMs + 60_000L);
                 send(writer, "quit");
                 return analysis;
@@ -241,6 +265,7 @@ public class PikafishPlugin extends Plugin {
             row.put("multipv", line.multiPv);
             row.put("depth", line.depth);
             if (line.scoreCp != null) row.put("scoreCp", line.scoreCp);
+            if (line.bound != null) row.put("bound", line.bound);
             if (line.mate != null) row.put("mate", line.mate);
             row.put("nodes", line.nodes);
             row.put("nps", line.nps);

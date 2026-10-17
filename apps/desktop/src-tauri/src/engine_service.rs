@@ -639,19 +639,24 @@ pub(crate) async fn configure_engine_nnue(
     session: &mut EngineSession,
     engine_path: &Path,
 ) -> Result<Option<PathBuf>, String> {
-    let Some(nnue_path) = preferred_nnue_path(engine_path) else {
+    let Some(nnue_path) = validated_nnue_path(engine_path)? else {
         return Ok(None);
     };
+    session
+        .configure("EvalFile", &nnue_path.to_string_lossy())
+        .await
+        .map_err(|_| "Pikafish 未能加载 NNUE".to_owned())?;
+    Ok(Some(nnue_path))
+}
+
+pub(crate) fn validated_nnue_path(engine_path: &Path) -> Result<Option<PathBuf>, String> {
+    let Some(nnue_path) = preferred_nnue_path(engine_path) else { return Ok(None); };
     let nnue_sha256 = file_sha256(&nnue_path)?;
     if nnue_sha256 != PIKAFISH_20260906_NNUE_SHA256 {
         return Err(format!(
             "Pikafish NNUE 哈希不匹配：期望 {PIKAFISH_20260906_NNUE_SHA256}，实际 {nnue_sha256}"
         ));
     }
-    session
-        .configure("EvalFile", &nnue_path.to_string_lossy())
-        .await
-        .map_err(|error| format!("Pikafish 未能加载 NNUE {}：{error}", nnue_path.display()))?;
     Ok(Some(nnue_path))
 }
 

@@ -36,6 +36,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .iter()
         .map(|problem| {
             Ok(EndgameProblemImport {
+                training_goal_json: None,
+                target_mate_moves: None,
                 source_index: problem.source_index,
                 title: problem.title.clone(),
                 category: problem.category.clone(),

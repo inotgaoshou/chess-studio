@@ -12,6 +12,7 @@ final class TrainingStorePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "replaceLibrary", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "libraries", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "problems", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setProblemVerification", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "attempts", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "saveAttempt", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "deleteLibrary", returnType: CAPPluginReturnPromise),
@@ -48,6 +49,13 @@ final class TrainingStorePlugin: CAPPlugin, CAPBridgedPlugin {
     @objc func problems(_ call: CAPPluginCall) {
         respond(call, failure: "无法读取残局题目") {
             ["items": try self.store.problems(libraryId: try Self.requiredString(call, key: "libraryId"))]
+        }
+    }
+
+    @objc func setProblemVerification(_ call: CAPPluginCall) {
+        respond(call, failure: "验证目标保存失败") {
+            try self.store.setProblemVerification(id: Self.requiredString(call,key:"problemId"), verification: Self.requiredString(call,key:"verification"))
+            return [:]
         }
     }
 
@@ -230,14 +238,22 @@ private final class TrainingDatabase {
 
     func problems(libraryId: String) throws -> String {
         try queue.sync {
-            let rows = try query("SELECT p.id,p.library_id,p.source_index,p.title,p.category,p.starting_fen,p.note,p.solution_json,p.logic_json,COUNT(a.id),COALESCE(SUM(a.elapsed_ms),0) FROM problems p LEFT JOIN attempts a ON a.problem_id=p.id WHERE p.library_id=? AND p.active=1 GROUP BY p.id ORDER BY p.source_index", [libraryId]) { statement in
+            let rows = try query("SELECT p.id,p.library_id,p.source_index,p.title,p.category,p.starting_fen,p.note,p.solution_json,p.logic_json,COUNT(a.id),COALESCE(SUM(a.elapsed_ms),0),p.verification_json FROM problems p LEFT JOIN attempts a ON a.problem_id=p.id WHERE p.library_id=? AND p.active=1 GROUP BY p.id ORDER BY p.source_index", [libraryId]) { statement in
                 var row: [String: Any] = ["id": text(statement, 0), "libraryId": text(statement, 1), "sourceIndex": integer(statement, 2), "title": text(statement, 3), "category": text(statement, 4), "startingFen": text(statement, 5), "note": text(statement, 6), "solution": try jsonValue(text(statement, 7)), "completedAttempts": integer(statement, 9), "totalElapsedMs": integer(statement, 10)]
+                if let verification = try jsonValue(text(statement,11)) as? [String:Any] {
+                    row["trainingGoal"] = verification["trainingGoal"]
+                    row["targetMateMoves"] = verification["targetMateMoves"]
+                }
                 let logic = text(statement, 8)
                 if !logic.isEmpty { row["logic"] = try jsonValue(logic) }
                 return row
             }
             return try json(rows)
         }
+    }
+
+    func setProblemVerification(id: String, verification: String) throws {
+        try queue.sync { try execute("UPDATE problems SET verification_json=? WHERE id=?",[verification,id]) }
     }
 
     func attempts(problemId: String) throws -> String {
@@ -413,6 +429,7 @@ private final class TrainingDatabase {
         try execute("CREATE TABLE IF NOT EXISTS libraries (id TEXT PRIMARY KEY, title TEXT NOT NULL, fingerprint TEXT NOT NULL, parser_version INTEGER NOT NULL, imported_at TEXT NOT NULL)")
         try execute("CREATE TABLE IF NOT EXISTS problems (id TEXT PRIMARY KEY, library_id TEXT NOT NULL, source_index INTEGER NOT NULL, title TEXT NOT NULL, category TEXT NOT NULL, starting_fen TEXT NOT NULL, note TEXT NOT NULL, solution_json TEXT NOT NULL, logic_json TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1)")
         do { try execute("ALTER TABLE problems ADD COLUMN logic_json TEXT NOT NULL DEFAULT ''") } catch { }
+        do { try execute("ALTER TABLE problems ADD COLUMN verification_json TEXT NOT NULL DEFAULT '{}'") } catch { }
         try execute("CREATE TABLE IF NOT EXISTS attempts (id TEXT PRIMARY KEY, problem_id TEXT NOT NULL, mode TEXT NOT NULL, elapsed_ms INTEGER NOT NULL, hints_used INTEGER NOT NULL, mistakes INTEGER NOT NULL, outcome TEXT NOT NULL, created_at TEXT NOT NULL)")
         try execute("CREATE INDEX IF NOT EXISTS attempts_problem_idx ON attempts(problem_id, created_at DESC)")
         try execute("CREATE TABLE IF NOT EXISTS manual_folders (path TEXT PRIMARY KEY, created_at TEXT NOT NULL)")
@@ -433,6 +450,7 @@ private final class TrainingDatabase {
     }
 
     private func saveProblem(_ problem: [String: Any]) throws {
+
         guard let solution = problem["solution"] else { throw TrainingStoreError.invalidInput("solution") }
         let solutionData = try JSONSerialization.data(withJSONObject: solution)
         let solutionJson = String(decoding: solutionData, as: UTF8.self)
@@ -443,7 +461,13 @@ private final class TrainingDatabase {
         } else {
             logicJson = ""
         }
+        let prior = try query("SELECT verification_json FROM problems WHERE id=? AND starting_fen=? AND solution_json=?",[try value(problem,"id"),try value(problem,"startingFen"),solutionJson]) { statement in ["value": text(statement,0)] }.first?["value"] as? String
         try execute("INSERT INTO problems (id,library_id,source_index,title,category,starting_fen,note,solution_json,logic_json,active) VALUES (?,?,?,?,?,?,?,?,?,1) ON CONFLICT(id) DO UPDATE SET library_id=excluded.library_id,source_index=excluded.source_index,title=excluded.title,category=excluded.category,starting_fen=excluded.starting_fen,note=excluded.note,solution_json=excluded.solution_json,logic_json=excluded.logic_json,active=1", [try value(problem, "id"), try value(problem, "libraryId"), try number(problem, "sourceIndex"), try value(problem, "title"), try value(problem, "category"), try value(problem, "startingFen"), (problem["note"] as? String) ?? "", solutionJson, logicJson])
+        var verification: [String:Any] = [:]
+        verification["trainingGoal"] = problem["trainingGoal"]
+        verification["targetMateMoves"] = problem["targetMateMoves"]
+        try execute("UPDATE problems SET verification_json=? WHERE id=?",[verification.isEmpty ? (prior ?? "{}") : try json(verification),try value(problem,"id")])
+
     }
 
     private func transaction(_ operation: () throws -> Void) throws {

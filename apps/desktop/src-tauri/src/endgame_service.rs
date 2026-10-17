@@ -4,6 +4,72 @@ use local_store::{
 };
 use manual_format::CBL_PARSER_VERSION;
 
+#[tauri::command]
+pub(crate) fn endgame_progress(problem_id: String, progress: Option<String>, state: State<'_, DesktopState>) -> Result<Option<String>, String> {
+    let id = Uuid::parse_str(&problem_id).map_err(|_| "题目无效")?;
+    let key = format!("local-answer-progress:{id}");
+    let mut model = state.model.lock().map_err(|_| "状态暂时不可用")?;
+    if let Some(progress) = progress {
+        if progress.len() > 2_000_000 { return Err("进度超过保存容量".into()); }
+        model.store.put_teaching_cache(&key,"local","answer-progress",&progress).map_err(|_| "进度保存失败")?;
+    }
+    model.store.teaching_cache(&key).map_err(|_| "进度读取失败".into())
+}
+
+#[tauri::command]
+pub(crate) async fn endgame_verify_move(
+    request: training_verifier::Request,
+    app: tauri::AppHandle,
+    state: State<'_, DesktopState>,
+) -> Result<training_verifier::ResultDto, String> {
+    use sha2::{Digest, Sha256};
+    let timeout_request = request.clone();
+    let work = async {
+    let plans = match training_verifier::searches(&request) {
+        Ok(plans) => plans,
+        Err(_) => return Ok(training_verifier::verify(&request,&Default::default())),
+    };
+    let engine = crate::engine_service::resolve_engine_path(&app, BUILTIN_ENGINE_PATH);
+    let (path, nnue, fingerprint) = match engine {
+        Ok(path) if !plans.is_empty() => {
+            let resource_path = path.clone();
+            let nnue = tokio::task::spawn_blocking(move || crate::engine_service::validated_nnue_path(&resource_path)).await.map_err(|_| "引擎资源校验失败")??;
+            let fingerprint = training_verifier::engine::fingerprint(&path, nnue.as_deref()).await?;
+            (path,nnue,fingerprint)
+        }
+        _ if plans.is_empty() => (PathBuf::new(),None,String::new()),
+        _ => return Ok(training_verifier::pending(&request,"待复核：本地皮卡鱼暂时不可用，错误次数未增加")),
+    };
+    let request_json = serde_json::to_string(&request).map_err(|_| "验证请求无效")?;
+    let key = format!("answer-verification:{:x}",Sha256::digest(format!("{}\n{}\n{}\n{}",training_verifier::VERSION,training_verifier::SEARCH_CONFIG,fingerprint,request_json)));
+    let cached = { state.model.lock().map_err(|_| "state lock poisoned")?.store.teaching_cache(&key).map_err(|_| "验证缓存读取失败")? };
+    if let Some(text) = cached {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
+            if let Ok(result) = serde_json::from_value(value["result"].clone()) { return Ok(result); }
+        }
+    }
+    let (mut result,evidence) = training_verifier::engine::run(&request,path,nnue,fingerprint).await;
+    result.local_only = true; result.evidence_id=Some(key.clone());
+    if result.outcome!="pending_review" || result.review_kind.is_some() {
+        let payload=serde_json::json!({"request":request,"evidence":evidence,"result":result});
+        state.model.lock().map_err(|_| "state lock poisoned")?.store.put_teaching_cache(&key,"local","answer-verification",&payload.to_string()).map_err(|_| "验证证据保存失败")?;
+    }
+    Ok(result)
+    };
+    match tokio::time::timeout(Duration::from_secs(15),work).await {
+        Ok(result) => result,
+        Err(_) => Ok(training_verifier::pending(&timeout_request,"待复核：皮卡鱼验证超时，错误次数未增加")),
+    }
+}
+
+#[tauri::command]
+pub(crate) fn endgame_set_goal(problem_id: String, goal: Option<training_verifier::Goal>, target_mate_moves: Option<u32>, state: State<'_, DesktopState>) -> Result<(), String> {
+    if let Some(goal) = &goal { goal.validate()?; }
+    if target_mate_moves.is_some_and(|target| target == 0 || target > 255) { return Err("杀棋步数必须在 1–255 之间".into()); }
+    let goal = goal.map(|g| serde_json::to_string(&g)).transpose().map_err(|_| "目标无效")?;
+    state.model.lock().map_err(|_| "状态暂时不可用")?.store.set_endgame_goal(Uuid::parse_str(&problem_id).map_err(|_| "题目无效")?, goal.as_deref(), target_mate_moves).map_err(|_| "目标保存失败".into())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct EndgameImportResult {
@@ -179,6 +245,8 @@ fn import_endgame_cbl_path(
         .iter()
         .map(|problem| {
             Ok(EndgameProblemImport {
+                training_goal_json: None,
+                target_mate_moves: None,
                 source_index: problem.source_index,
                 title: problem.title.clone(),
                 category: problem.category.clone(),

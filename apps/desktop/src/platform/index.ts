@@ -426,6 +426,9 @@ class DesktopPlatform implements ChessPlatform {
   saveEndgameAttempt(request: { problemId: string; mode: "cloud" | "solver" | "replay" | "free"; elapsedMs: number; hintsUsed: number; mistakes: number; outcome: "completed" | "revealed" | "abandoned" | "free_finished" }) { return invoke<void>("save_endgame_attempt", request); }
   deleteEndgameLibrary(libraryId: string) { return invoke<void>("delete_endgame_library", { libraryId }); }
   deleteEndgameProblem(problemId: string) { return invoke<void>("delete_endgame_problem", { problemId }); }
+  endgameProgress(problemId: string, progress?: string) { return invoke<string | null>("endgame_progress", {problemId,progress}); }
+  setEndgameGoal(problemId: string, goal?: import("../../../../packages/training-verification/types").VerificationGoal, targetMateMoves?: number) { return invoke<void>("endgame_set_goal", {problemId, goal, targetMateMoves}); }
+  endgameVerifyMove(request: import("../../../../packages/training-verification/types").VerificationRequest) { return invoke<import("../../../../packages/training-verification/types").VerificationResult>("endgame_verify_move", { request }); }
   endgameChineseMainline(startingFen: string, moves: string[]) { return invoke<string[]>("endgame_chinese_mainline", { startingFen, moves }); }
   endgameFreePracticeMove(startingFen: string, previousMoves: string[], iccs: string) { return invoke<EndgameFreePracticeMoveDto>("endgame_free_practice_move", { startingFen, previousMoves, iccs }); }
   endgameMoveFeedback(startingFen: string, previousMoves: string[], iccs: string) { return invoke<EndgameMoveFeedbackDto>("endgame_move_feedback", { startingFen, previousMoves, iccs }); }
@@ -1205,6 +1208,9 @@ class WebPlatform implements ChessPlatform {
   async deleteEndgameLibrary(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
   async deleteEndgameProblem(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
   async endgameChineseMainline(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
+  async endgameProgress(): Promise<never> { throw new Error("Web 端不支持桌面残局进度"); }
+  async setEndgameGoal(): Promise<never> { throw new Error("Web 端不支持桌面残局目标编辑"); }
+  async endgameVerifyMove(): Promise<never> { throw new Error("Web 端不支持本地皮卡鱼答案复核"); }
   async endgameFreePracticeMove(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
   async endgameMoveFeedback(): Promise<never> { throw new Error("Web 端不支持本地 CBL 残局题库"); }
   async listStudySessions(): Promise<StudySessionDto[]> { throw new Error("Web 端暂不支持训练总结"); }

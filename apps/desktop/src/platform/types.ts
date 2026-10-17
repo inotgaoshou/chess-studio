@@ -674,7 +674,7 @@ export type TrainingGenerationResultDto = {
 };
 export type EndgameFolderDto = { id: string; parentId?: string | null; name: string; createdAt: string };
 export type EndgameLibraryDto = { id: string; folderId?: string | null; title: string; sourcePath: string; fingerprint: string; parserVersion: number; problemCount: number; attemptedCount: number; completedCount: number; importedAt: string };
-export type EndgameProblemDto = { id: string; libraryId: string; sourceIndex: number; title: string; category: string; startingFen: string; note: string; solutionJson: string; attemptCount: number; completedAttempts: number; totalElapsedMs: number };
+export type EndgameProblemDto = { id: string; libraryId: string; sourceIndex: number; title: string; category: string; startingFen: string; note: string; solutionJson: string; trainingGoalJson?: string | null; targetMateMoves?: number | null; attemptCount: number; completedAttempts: number; totalElapsedMs: number };
 export type EndgameImportResultDto = { library: EndgameLibraryDto; warnings: string[] };
 export type EndgameBatchImportItemDto = { path: string; library?: EndgameLibraryDto; warnings: string[]; error?: string };
 export type EndgameBatchImportResultDto = { items: EndgameBatchImportItemDto[] };
@@ -1190,6 +1190,9 @@ export interface ChessPlatform {
   saveEndgameAttempt(request: { problemId: string; mode: "cloud" | "solver" | "replay" | "free"; elapsedMs: number; hintsUsed: number; mistakes: number; outcome: "completed" | "revealed" | "abandoned" | "free_finished" }): Promise<void>;
   deleteEndgameLibrary(libraryId: string): Promise<void>;
   deleteEndgameProblem(problemId: string): Promise<void>;
+  endgameProgress(problemId: string, progress?: string): Promise<string | null>;
+  setEndgameGoal(problemId: string, goal?: import("../../../../packages/training-verification/types").VerificationGoal, targetMateMoves?: number): Promise<void>;
+  endgameVerifyMove(request: import("../../../../packages/training-verification/types").VerificationRequest): Promise<import("../../../../packages/training-verification/types").VerificationResult>;
   endgameChineseMainline(startingFen: string, moves: string[]): Promise<string[]>;
   endgameFreePracticeMove(startingFen: string, previousMoves: string[], iccs: string): Promise<EndgameFreePracticeMoveDto>;
   endgameMoveFeedback(startingFen: string, previousMoves: string[], iccs: string): Promise<EndgameMoveFeedbackDto>;

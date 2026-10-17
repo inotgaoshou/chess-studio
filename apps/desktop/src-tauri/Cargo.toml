@@ -9,6 +9,7 @@ default-run = "xiangqi-desktop"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+training-verifier = { path = "../../../crates/training-verifier", features = ["engine"] }
 ab_glyph = "0.2"
 base64 = "0.22"
 chrono.workspace = true

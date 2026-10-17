@@ -8,6 +8,7 @@ license.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+training-verifier = { path = "../training-verifier" }
 serde.workspace = true
 serde_json.workspace = true
 uuid = { version = "1.18", features = ["v4", "serde", "js"] }
