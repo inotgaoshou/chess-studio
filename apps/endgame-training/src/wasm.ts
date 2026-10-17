@@ -7,17 +7,20 @@ type NativeCloudBook = {
 const nativeCloudBook = registerPlugin<NativeCloudBook>("CloudBook");
 type NativePikafish = {
   bestMove(options: { fen: string; moveTimeMs: number }): Promise<{ iccs: string }>;
-  analyze(options: { fen: string; moveTimeMs: number; multiPv: number }): Promise<PikafishAnalysis>;
+  identity(): Promise<{ fingerprint: string }>;
+  analyze(options: { fen: string; moveTimeMs: number; multiPv: number; depth?: number; searchMoves?: string[]; verification?: boolean }): Promise<PikafishAnalysis>;
   cancel(): Promise<void>;
 };
 const nativePikafish = registerPlugin<NativePikafish>("Pikafish");
 export type CloudBookMove = { iccs: string; notation: string; score: number; winRate: number };
 export type EngineReply = { iccs: string; notation: string };
-export type PikafishAnalysisLine = { multipv: number; depth: number; scoreCp?: number; mate?: number; nodes: number; nps: number; pv: string[] };
+export type PikafishAnalysisLine = { multipv: number; depth: number; scoreCp?: number; mate?: number; bound?: string; nodes: number; nps: number; pv: string[] };
 export type PikafishAnalysis = { bestMove: string; lines: PikafishAnalysisLine[] };
 
 type Core = {
   default(): Promise<void>;
+  trainingVerificationSearches(request: string): string;
+  verifyTrainingMove(request: string, evidence: string): string;
   exportLocalManual(json: string, format: string): string;
   parseCblLibrary(bytes: Uint8Array): string;
   parseCblGameLibrary(bytes: Uint8Array): string;
@@ -124,4 +127,9 @@ export async function queryPikafishAnalysis(fen: string, moveTimeMs = 2000, mult
 
 export async function cancelPikafishSearch() {
   if (hasLocalPikafish()) await nativePikafish.cancel();
+}
+
+export async function localVerificationIdentity() { return (await nativePikafish.identity()).fingerprint; }
+export async function queryVerificationSearch(spec: import("../../../packages/training-verification/types").VerificationSearch) {
+  return nativePikafish.analyze({ ...spec, multiPv: 1, verification: true });
 }

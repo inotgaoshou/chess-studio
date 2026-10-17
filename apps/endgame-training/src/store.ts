@@ -5,6 +5,7 @@ type NativeStore = {
   replaceLibrary(options: { library: string; problems: string }): Promise<void>;
   libraries(): Promise<{ items: string }>;
   problems(options: { libraryId: string }): Promise<{ items: string }>;
+  setProblemVerification(options: {problemId:string; verification:string}): Promise<void>;
   attempts(options: { problemId: string }): Promise<{ items: string }>;
   saveAttempt(options: { attempt: string }): Promise<void>;
   deleteLibrary(options: { libraryId: string }): Promise<void>;
@@ -88,6 +89,11 @@ export const trainingStore = {
   async problems(libraryId: string): Promise<TrainingProblem[]> {
     if (isNative()) return JSON.parse((await nativeStore.problems({ libraryId })).items) as TrainingProblem[];
     return memory.problems.filter((item) => item.libraryId === libraryId).map((problem) => ({ ...problem, completedAttempts: memory.attempts.filter((item) => item.problemId === problem.id && item.outcome === "completed").length, totalElapsedMs: memory.attempts.filter((item) => item.problemId === problem.id).reduce((total, item) => total + item.elapsedMs, 0) }));
+  },
+  async setProblemVerification(problem: TrainingProblem, goal?: TrainingProblem["trainingGoal"], targetMateMoves?: number) {
+    if (problem.source && problem.source !== "local") throw new Error("平台与作业目标须由内容审核确认");
+    if (isNative()) await nativeStore.setProblemVerification({problemId:problem.id,verification:JSON.stringify({trainingGoal:goal,targetMateMoves})});
+    else memory.problems = memory.problems.map(item => item.id === problem.id ? {...item,trainingGoal:goal,targetMateMoves} : item);
   },
   async attempts(problemId: string): Promise<Attempt[]> {
     if (isNative()) return JSON.parse((await nativeStore.attempts({ problemId })).items) as Attempt[];

@@ -44,6 +44,13 @@ public class PikafishProtocolTest {
     }
 
     @Test
+    public void preservesBoundsForVerification() {
+        assertEquals("lowerbound", PikafishProtocol.parseInfo("info depth 26 score cp 42 lowerbound pv a0a1").bound);
+        assertEquals("upperbound", PikafishProtocol.parseInfo("info depth 26 score cp 42 upperbound pv a0a1").bound);
+        assertNull(PikafishProtocol.parseInfo("info depth 26 score cp 42 pv a0a1").bound);
+    }
+
+    @Test
     public void parsesMateScoresAndRejectsNonAnalysisLines() {
         PikafishProtocol.AnalysisLine line = PikafishProtocol.parseInfo(
             "info depth 22 multipv 1 score mate 3 nodes 9 nps 20 pv a0a1"

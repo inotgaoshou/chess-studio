@@ -34,6 +34,8 @@ pub struct EngineInfo {
     pub depth: Option<u32>,
     pub score_cp: Option<i32>,
     pub mate: Option<i32>,
+    #[serde(default)]
+    pub score_bound: Option<String>,
     pub nps: Option<u64>,
     pub time_ms: Option<u64>,
     pub hashfull: Option<u32>,
@@ -98,6 +100,7 @@ impl Default for EngineInfo {
             depth: None,
             score_cp: None,
             mate: None,
+            score_bound: None,
             nps: None,
             time_ms: None,
             hashfull: None,
@@ -240,6 +243,7 @@ pub fn parse_engine_line(line: &str) -> EngineEvent {
                     }
                 }
             }
+            "lowerbound" | "upperbound" => info.score_bound = Some(tokens[index].to_owned()),
             "pv" => {
                 info.pv = tokens[index + 1..]
                     .iter()
@@ -385,6 +389,17 @@ impl EngineSession {
 
     pub async fn ponder_hit(&mut self) -> Result<(), EngineError> {
         self.send("ponderhit").await
+    }
+
+    /// Reach the requested depth, bounded by a wall-clock search allowance.
+    pub async fn search_bounded(&mut self, fen: &str, depth: u32, move_time_ms: u64, search_moves: &[String]) -> Result<(), EngineError> {
+        self.send(&position_command(fen, &[])).await?;
+        let mut command = format!("go depth {depth} movetime {move_time_ms}");
+        if !search_moves.is_empty() {
+            command.push_str(" searchmoves ");
+            command.push_str(&search_moves.join(" "));
+        }
+        self.send(&command).await
     }
 
     pub async fn stop(&mut self) -> Result<(), EngineError> {
@@ -645,6 +660,7 @@ done
                 depth: Some(16),
                 score_cp: Some(38),
                 mate: None,
+                score_bound: None,
                 nps: Some(120000),
                 time_ms: Some(530),
                 hashfull: Some(210),
@@ -652,6 +668,14 @@ done
                 pv: vec!["h2e2".into(), "h9g7".into()]
             })
         );
+    }
+
+    #[test]
+    fn preserves_score_bounds() {
+        for bound in ["upperbound", "lowerbound"] {
+            let EngineEvent::Info(info) = parse_engine_line(&format!("info depth 26 multipv 1 score cp 123 {bound} pv a3a4")) else { panic!("info"); };
+            assert_eq!(info.score_bound.as_deref(), Some(bound));
+        }
     }
 
     #[test]

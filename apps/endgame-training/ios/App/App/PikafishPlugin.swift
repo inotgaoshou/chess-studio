@@ -1,5 +1,6 @@
 import Capacitor
 import Foundation
+import CryptoKit
 
 @objc(PikafishPlugin)
 final class PikafishPlugin: CAPPlugin, CAPBridgedPlugin {
@@ -8,6 +9,7 @@ final class PikafishPlugin: CAPPlugin, CAPBridgedPlugin {
     let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "bestMove", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "analyze", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "identity", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "cancel", returnType: CAPPluginReturnPromise)
     ]
 
@@ -15,6 +17,19 @@ final class PikafishPlugin: CAPPlugin, CAPBridgedPlugin {
     private var engine: PFPikafishEngine?
     private var activeCall: CAPPluginCall?
     private var requestGeneration: UInt64 = 0
+
+    private var resourceIdentity: String?
+    @objc func identity(_ call: CAPPluginCall) {
+        if let resourceIdentity { call.resolve(["fingerprint": resourceIdentity]); return }
+        guard let executable = Bundle.main.executableURL, let network = Bundle.main.url(forResource: "pikafish", withExtension: "nnue") else { call.reject("引擎资源不存在"); return }
+        do {
+            var hash = SHA256()
+            for url in [executable, network] { hash.update(data: try Data(contentsOf: url, options: .mappedIfSafe)) }
+            let identity = hash.finalize().map { String(format: "%02x", $0) }.joined()
+            resourceIdentity = identity
+            call.resolve(["fingerprint": identity])
+        } catch { call.reject("无法校验引擎资源") }
+    }
 
     @objc func bestMove(_ call: CAPPluginCall) {
         submit(call, bestMoveOnly: true)
@@ -52,7 +67,10 @@ final class PikafishPlugin: CAPPlugin, CAPBridgedPlugin {
         }
 
         guard let engine = loadEngine(for: call) else { return }
-        let moveTimeMs = max(100, min(5_000, call.getInt("moveTimeMs") ?? 800))
+        let verification = call.getBool("verification") ?? false
+        let moveTimeMs = max(100, min(verification ? 6_000 : 5_000, call.getInt("moveTimeMs") ?? 800))
+        let searchMoves = verification ? call.getArray("searchMoves", String.self) ?? [] : []
+        guard searchMoves.allSatisfy({ $0.range(of: "^[a-i][0-9][a-i][0-9]$", options: .regularExpression) != nil }) else { call.reject("无效的指定着法"); return }
         let multiPv = bestMoveOnly ? 1 : max(1, min(4, call.getInt("multiPv") ?? 4))
         let (request, previous) = stateQueue.sync { () -> (UInt64, CAPPluginCall?) in
             requestGeneration &+= 1
@@ -69,6 +87,8 @@ final class PikafishPlugin: CAPPlugin, CAPBridgedPlugin {
             threads: 2,
             hashMB: 128,
             multiPV: multiPv,
+            depth: verification ? 26 : 0,
+            searchMoves: searchMoves,
             update: { _ in },
             completion: { [weak self, weak call] result, error in
                 guard let self, let call, self.finish(request: request, call: call) else { return }
@@ -117,6 +137,7 @@ final class PikafishPlugin: CAPPlugin, CAPBridgedPlugin {
             var payload: [String: Any] = [
                 "multipv": line.multipv,
                 "depth": line.depth,
+                "bound": line.bound,
                 "nodes": line.nodes,
                 "nps": line.nps,
                 "pv": line.pv

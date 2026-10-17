@@ -1,3 +1,5 @@
+import { mergePracticeAttempts, mergePracticeDrafts, type PracticeDraft } from "./practiceProgress";
+import type { VerificationResult } from "../../../packages/training-verification/types";
 import { makeCheckinApi } from "./checkinApi";
 import { ContentEpochTracker, belongsToContentScope } from "./contentEpoch";
 import type { CatalogProblem, TeachingCatalogNode, TrainingGoal } from "./TeachingCatalog";
@@ -17,7 +19,7 @@ function rememberLoginAccount(account: string, targetServer: string) {
   catch { /* Account autofill is optional when storage is unavailable. */ }
 }
 const DB_NAME = "xiangqi-teaching-cache";
-const DB_VERSION = 6;
+const DB_VERSION = 7;
 const SYNC_META_PREFIX = "xiangqi-teaching-sync";
 const JOIN_STATUS_PREFIX = "xiangqi-organization-join-status";
 const VIP_ACCESS_MESSAGE = "作业权益已过期或未开通，请联系老师或管理员续期。";
@@ -57,7 +59,7 @@ async function ensureContentEpoch(context: AuthContext): Promise<boolean> {
 async function purgeTeachingContent(context: AuthContext) {
   window.dispatchEvent(new Event("teaching-content-reset"));
   const db = await openDb();
-  const names = ["assignments", "assignmentCaches", "attempts", "practiceAttempts", "assignmentViews", "assignmentDrafts", "assignmentAnswers"];
+  const names = ["assignments", "assignmentCaches", "attempts", "practiceAttempts", "assignmentViews", "assignmentDrafts", "assignmentAnswers", "practiceSessions", "practiceDrafts"];
   try {
     await new Promise<void>((resolve, reject) => {
       const transaction = db.transaction(names, "readwrite");
@@ -153,7 +155,9 @@ export type PracticeProblem = {
   active: boolean;
 };
 export type PracticeGrade = { score: number; stars: number; attemptNumber: number; firstTryCorrect: boolean; mistakes: number; hintsUsed: number };
-export type PracticeSessionItem = { id: string; ordinal: number; status: "pending" | "completed" | "revealed" | "abandoned"; problem: PracticeProblem; grade?: PracticeGrade; draft?: { moves?: string[]; hints?: number; mistakes?: number; elapsedMs?: number } };
+export type PracticeSessionItem = {
+  localDraftRevision?: string;
+  verificationState?: "pending_server"; id: string; ordinal: number; status: "pending" | "completed" | "revealed" | "abandoned"; problem: PracticeProblem; grade?: PracticeGrade; draft?: { verification?: VerificationResult; verificationContent?: string; moves?: string[]; hints?: number; mistakes?: number; elapsedMs?: number } };
 export type PracticeSession = {
   id: string;
   sourceKind: string;
@@ -221,6 +225,7 @@ export type CreatePracticeSession = {
 };
 export type PracticeAttempt = { itemId: string; elapsedMs: number; hintsUsed: number; mistakes: number; outcome: "completed" | "revealed" | "abandoned"; clientAttemptId: string; moves: string[] };
 type PendingPracticeAttempt = PracticeAttempt & {
+  queuedRevision?: string;
   sessionId: string;
   ownerId?: string;
   contentEpoch?: string;
@@ -260,7 +265,7 @@ export type TeachingAssignment = {
   isUnread?: boolean;
 };
 type MateCollection = { id: string; title: string; counts: { published: number }; batchLibraryIds: string[]; groups: { key: string; label: string; counts: { published: number }; completedCount?: number; practicedCount?: number; moveCounts?: Record<string, number> }[] };
-export type MateMoveResult = { outcome: "correct" | "completed" | "wrong" | "pending_review"; message: string; path: string[]; autoMoves: string[]; completed: boolean };
+export type LegacyMateMoveResult = { outcome: "correct" | "completed" | "wrong" | "pending_review"; message: string; path: string[]; autoMoves: string[]; completed: boolean };
 export type PlatformProblemLibrary = {
   practicedCount?: number;
   completedCount?: number;
@@ -433,6 +438,8 @@ export type PendingTeachingAttempt = {
 };
 export type AssignmentAnswer = PendingTeachingAttempt & { cacheKey: string };
 export type AssignmentDraft = {
+  verification?: VerificationResult;
+  verificationContent?: string;
   assignmentId: string;
   problemId: string;
   moves: string[];
@@ -612,6 +619,7 @@ function openDb(): Promise<IDBDatabase> {
     const opening = indexedDB.open(DB_NAME, DB_VERSION);
     opening.onupgradeneeded = () => {
       const db = opening.result;
+      for (const name of ["practiceSessions", "practiceDrafts"]) if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, { keyPath: "cacheKey" });
       if (!db.objectStoreNames.contains("assignments")) db.createObjectStore("assignments", { keyPath: "assignment.id" });
       if (!db.objectStoreNames.contains("assignmentCaches")) db.createObjectStore("assignmentCaches", { keyPath: "cacheKey" });
       if (!db.objectStoreNames.contains("attempts")) db.createObjectStore("attempts", { keyPath: "clientAttemptId" });
@@ -751,6 +759,76 @@ function contextOf(auth: TeachingAuth) {
 function assignmentCacheKey(auth: TeachingAuth, assignmentId: string) {
   const context = contextOf(auth);
   return `${context.serverUrl}::${context.ownerId}::${context.orgId}::${context.contentEpoch ?? "legacy"}::${assignmentId}`;
+}
+
+type CachedPracticeSession = ReturnType<typeof contextOf> & { cacheKey: string; session: PracticeSession; navigationRevision?: string };
+const practiceWrites = new Map<string, Promise<unknown>>();
+let draftSequence = 0;
+function nextPracticeRevision() { return `${String(Date.now()).padStart(16,"0")}:${String(++draftSequence).padStart(8,"0")}`; }
+async function practiceDrafts(auth: TeachingAuth, sessionId: string) {
+  const key = assignmentCacheKey(auth, sessionId);
+  return (await storeAll<PracticeDraft>("practiceDrafts")).filter(d => d.sessionKey === key);
+}
+async function cachePracticeSession(auth: TeachingAuth, session: PracticeSession, acknowledgedRevision = "") {
+  const prior = (await storeAll<CachedPracticeSession>("practiceSessions")).find(s => s.cacheKey === assignmentCacheKey(auth, session.id));
+  const navigationRevision = [prior?.navigationRevision ?? "", acknowledgedRevision].sort().at(-1)!;
+  const merged = mergePracticeAttempts(mergePracticeDrafts(session, await practiceDrafts(auth, session.id), navigationRevision), (await storeAll<PendingPracticeAttempt>("practiceAttempts")).filter(a => a.sessionId === session.id && samePracticeAttemptContext(a, auth)));
+  await storePut("practiceSessions", { ...contextOf(auth), cacheKey: assignmentCacheKey(auth, session.id), session: merged, navigationRevision } satisfies CachedPracticeSession);
+  return merged;
+}
+async function sendPracticeDraft(auth: TeachingAuth, saved: PracticeDraft) {
+  const previous = practiceWrites.get(saved.sessionKey) ?? Promise.resolve();
+  const pending = previous.catch(() => undefined).then(async () => {
+    const context = authContexts.get(auth);
+    if (!context || !isCurrentAuthContext(context)) throw new Error("登录账号或机构已变化");
+    const latest = (await practiceDrafts(auth, saved.sessionId)).find(d => d.cacheKey === saved.cacheKey);
+    if (latest?.revision !== saved.revision) return;
+    const result = await teachingRead(signal => request<PracticeSession>(`/api/v1/student/practice/sessions/${encodeURIComponent(saved.sessionId)}`, { method: "PATCH", signal, body: JSON.stringify({ currentItemId: saved.currentItemId, draft: saved.draft }) }, auth.token));
+    // Compare and delete in one transaction: a slower reply cannot erase a newer draft.
+    const db = await openDb();
+    try { await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction("practiceDrafts", "readwrite"), store = tx.objectStore("practiceDrafts");
+      const get = store.get(saved.cacheKey);
+      get.onsuccess = () => { if (get.result?.revision === saved.revision) store.delete(saved.cacheKey); };
+      tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error);
+    }); } finally { db.close(); }
+    return cachePracticeSession(auth, result, saved.revision);
+  });
+  practiceWrites.set(saved.sessionKey, pending);
+  try { return await pending; }
+  finally { if (practiceWrites.get(saved.sessionKey) === pending) practiceWrites.delete(saved.sessionKey); }
+}
+
+const practiceSubmissions = new Map<string, Promise<PracticeSession | undefined>>();
+async function syncPracticeAttempts(auth: TeachingAuth, sessionId: string): Promise<PracticeSession | undefined> {
+  const key = assignmentCacheKey(auth, sessionId);
+  const previous = practiceSubmissions.get(key) ?? Promise.resolve(undefined);
+  const pending = previous.catch(() => undefined).then(async () => {
+    let updated: PracticeSession | undefined;
+    const context = authContexts.get(auth);
+    for (const attempt of (await storeAll<PendingPracticeAttempt>("practiceAttempts")).filter(a => a.sessionId === sessionId && samePracticeAttemptContext(a, auth)).sort((a,b) => (a.queuedRevision ?? "").localeCompare(b.queuedRevision ?? ""))) {
+      if (!context || !isCurrentAuthContext(context)) throw new Error("登录账号或机构已变化");
+      const { sessionId: _sessionId, ownerId: _ownerId, orgId: _orgId, serverUrl: _serverUrl, queuedRevision: _revision, contentEpoch: _epoch, ...payload } = attempt;
+      const result = await teachingRead(signal => request<PracticeSession>(`/api/v1/student/practice/sessions/${encodeURIComponent(sessionId)}/attempts`, { method: "POST", signal, body: JSON.stringify(payload) }, auth.token));
+      // Remove only progress covered by this attempt; retain a newer retry.
+      const db = await openDb();
+      try { await new Promise<void>((resolve,reject) => {
+        const tx = db.transaction(["practiceDrafts","practiceAttempts"],"readwrite"), store = tx.objectStore("practiceDrafts");
+        tx.objectStore("practiceAttempts").delete(attempt.clientAttemptId);
+        const cursor = store.openCursor();
+        cursor.onsuccess = () => { const row = cursor.result; if (!row) return; const draft = row.value as PracticeDraft;
+          if (draft.sessionKey === key && draft.currentItemId === attempt.itemId && draft.draft && draft.revision <= (attempt.queuedRevision ?? "")) row.delete();
+          row.continue(); };
+        tx.oncomplete=()=>resolve(); tx.onerror=()=>reject(tx.error);
+      }); } finally { db.close(); }
+      updated = await cachePracticeSession(auth, result);
+      if (isCurrentAuthContext(context)) window.dispatchEvent(new CustomEvent("qixi-practice-session-confirmed", { detail: { session: updated, context: key } }));
+    }
+    return updated;
+  });
+  practiceSubmissions.set(key, pending);
+  try { return await pending; }
+  finally { if (practiceSubmissions.get(key) === pending) practiceSubmissions.delete(key); }
 }
 
 function assignmentDraftKey(auth: TeachingAuth, assignmentId: string, problemId: string) {
@@ -1024,9 +1102,9 @@ export const teachingClient = {
       accessTier: problem.accessTier ?? "public",
     }));
   },
-  async verifyMateMove(problem: TrainingProblem, path: string[], candidate: string, sessionId?: string) {
+  async verifyTrainingMove(problem: TrainingProblem, path: string[], candidate: string, sessionId?: string) {
     const auth = this.auth(); if (!auth || !problem.serverProblemId) throw new Error("请登录后验证其他解法");
-    return request<MateMoveResult>(`/api/v1/student/problems/${encodeURIComponent(problem.serverProblemId)}/mate-move`, {
+    return request<VerificationResult>(`/api/v1/student/problems/${encodeURIComponent(problem.serverProblemId)}/verify-move`, {
       method: "POST", body: JSON.stringify({ path, candidate, assignmentId: problem.assignmentId, sessionId }),
     }, auth.token);
   },
@@ -1084,22 +1162,37 @@ export const teachingClient = {
   async createPracticeSession(payload: CreatePracticeSession) {
     const auth = this.auth();
     if (!auth || auth.user.role !== "student") throw new Error("请先登录学生账号");
-    return request<PracticeSession>("/api/v1/student/practice/sessions", { method: "POST", body: JSON.stringify(payload) }, auth.token);
+    return cachePracticeSession(auth, await request<PracticeSession>("/api/v1/student/practice/sessions", { method: "POST", body: JSON.stringify(payload) }, auth.token));
   },
+  async localPracticeSession(session: PracticeSession) {
+    const auth = this.auth(); if (!auth) return session;
+    const cached = (await storeAll<CachedPracticeSession>("practiceSessions")).find(s => s.cacheKey === assignmentCacheKey(auth, session.id));
+    return cachePracticeSession(auth, cached?.session ?? session);
+  },
+  practiceSessionContext(sessionId: string) { const auth = this.auth(); return auth ? assignmentCacheKey(auth, sessionId) : ""; },
   async practiceSession(sessionId: string) {
     const auth = this.auth();
     if (!auth || auth.user.role !== "student") throw new Error("请先登录学生账号");
-    return request<PracticeSession>(`/api/v1/student/practice/sessions/${encodeURIComponent(sessionId)}`, {}, auth.token);
+    try { return await cachePracticeSession(auth, await request<PracticeSession>(`/api/v1/student/practice/sessions/${encodeURIComponent(sessionId)}`, {}, auth.token)); }
+    catch (error) {
+      if (!(error instanceof TypeError) && navigator.onLine !== false) throw error;
+      const cached = (await storeAll<CachedPracticeSession>("practiceSessions")).find(s => s.cacheKey === assignmentCacheKey(auth, sessionId));
+      if (!cached) throw error;
+      return cachePracticeSession(auth, cached.session);
+    }
   },
   async updatePracticeSession(sessionId: string, currentItemId: string, draft?: PracticeSessionItem["draft"]) {
     const auth = this.auth();
     if (!auth || auth.user.role !== "student") throw new Error("请先登录学生账号");
-    return request<PracticeSession>(`/api/v1/student/practice/sessions/${encodeURIComponent(sessionId)}`, { method: "PATCH", body: JSON.stringify({ currentItemId, draft }) }, auth.token);
+    const sessionKey = assignmentCacheKey(auth, sessionId);
+    const saved: PracticeDraft & ReturnType<typeof contextOf> = { ...contextOf(auth), cacheKey: `${sessionKey}::${currentItemId}${draft ? "" : "::navigation"}`, sessionKey, sessionId, currentItemId, draft, revision: nextPracticeRevision() };
+    await storePut("practiceDrafts", saved);
+    return sendPracticeDraft(auth, saved);
   },
   async startDailyPractice(planId: string) {
     const auth = this.auth();
     if (!auth || auth.user.role !== "student") throw new Error("请先登录学生账号");
-    return request<PracticeSession>(`/api/v1/student/practice/daily/${encodeURIComponent(planId)}/session`, { method: "POST", body: "{}" }, auth.token);
+    return cachePracticeSession(auth, await request<PracticeSession>(`/api/v1/student/practice/daily/${encodeURIComponent(planId)}/session`, { method: "POST", body: "{}" }, auth.token));
   },
   async practiceHistory(days = 7) {
     const auth = this.auth();
@@ -1109,13 +1202,14 @@ export const teachingClient = {
   async submitPracticeAttempt(sessionId: string, attempt: PracticeAttempt, expectedAuth?: TeachingAuth) {
     const auth = expectedAuth ?? this.auth();
     if (!auth || auth.user.role !== "student") throw new Error("请先登录学生账号");
-    const queued: PendingPracticeAttempt = { ...attempt, sessionId, ...contextOf(auth) };
+    const queued: PendingPracticeAttempt = { ...attempt, sessionId, ...contextOf(auth), queuedRevision: nextPracticeRevision() };
     await storePut("practiceAttempts", queued);
+    const cached = (await storeAll<CachedPracticeSession>("practiceSessions")).find(s => s.cacheKey === assignmentCacheKey(auth, sessionId));
+    if (cached) await cachePracticeSession(auth, cached.session);
     const authContext = authContexts.get(auth);
     if (!authContext || !isCurrentAuthContext(authContext)) throw new Error("登录账号或机构已变化，答题记录已保留，请登录原账号后补交。");
-    const result = await request<PracticeSession>(`/api/v1/student/practice/sessions/${encodeURIComponent(sessionId)}/attempts`, { method: "POST", body: JSON.stringify(attempt) }, auth.token);
-    await storeDelete("practiceAttempts", attempt.clientAttemptId);
-    return result;
+    const result = await syncPracticeAttempts(auth, sessionId);
+    return result ?? this.practiceSession(sessionId);
   },
   async practiceMistakes(state: "pending" | "mastered" = "pending") {
     const auth = this.auth();
@@ -1376,16 +1470,15 @@ export const teachingClient = {
       if (!sameAttemptContext(attempt, auth) || attempt.submissionRequested !== true) continue;
       if (!await this.submit(attempt, auth)) break;
     }
-    for (const attempt of await storeAll<PendingPracticeAttempt>("practiceAttempts")) {
+    for (const draft of (await storeAll<PracticeDraft>("practiceDrafts")).sort((a,b) => a.revision.localeCompare(b.revision))) {
       if (!isCurrentAuthContext(authContext)) return;
-      if (!samePracticeAttemptContext(attempt, auth)) continue;
-      try {
-        const { sessionId, ownerId: _ownerId, orgId: _orgId, serverUrl: _serverUrl, ...payload } = attempt;
-        await request(`/api/v1/student/practice/sessions/${encodeURIComponent(sessionId)}/attempts`, { method: "POST", body: JSON.stringify(payload) }, auth.token);
-        await storeDelete("practiceAttempts", attempt.clientAttemptId);
-      } catch {
-        break;
-      }
+      if (draft.sessionKey !== assignmentCacheKey(auth, draft.sessionId)) continue;
+      try { await sendPracticeDraft(auth, draft); } catch { break; }
+    }
+    const sessionIds = new Set((await storeAll<PendingPracticeAttempt>("practiceAttempts")).filter(a => samePracticeAttemptContext(a, auth)).map(a => a.sessionId));
+    for (const sessionId of sessionIds) {
+      if (!isCurrentAuthContext(authContext)) return;
+      try { await syncPracticeAttempts(auth, sessionId); } catch { break; }
     }
   },
   async students() {

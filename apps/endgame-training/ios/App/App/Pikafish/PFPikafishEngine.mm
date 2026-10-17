@@ -21,6 +21,7 @@ static NSString *const PFPikafishErrorDomain = @"PFPikafishErrorDomain";
 @interface PFAnalysisLine ()
 - (instancetype)initWithMultiPV:(NSInteger)multipv
                           depth:(NSInteger)depth
+                          bound:(NSString *)bound
                       scoreKind:(PFScoreKind)scoreKind
                      scoreValue:(NSInteger)scoreValue
                           nodes:(uint64_t)nodes
@@ -31,6 +32,7 @@ static NSString *const PFPikafishErrorDomain = @"PFPikafishErrorDomain";
 @implementation PFAnalysisLine
 - (instancetype)initWithMultiPV:(NSInteger)multipv
                           depth:(NSInteger)depth
+                          bound:(NSString *)bound
                       scoreKind:(PFScoreKind)scoreKind
                      scoreValue:(NSInteger)scoreValue
                           nodes:(uint64_t)nodes
@@ -40,6 +42,7 @@ static NSString *const PFPikafishErrorDomain = @"PFPikafishErrorDomain";
     if (self) {
         _multipv = multipv;
         _depth = depth;
+        _bound = [bound copy];
         _scoreKind = scoreKind;
         _scoreValue = scoreValue;
         _nodes = nodes;
@@ -136,6 +139,8 @@ static NSError *PFError(NSInteger code, NSString *message) {
            threads:(NSInteger)threads
             hashMB:(NSInteger)hashMB
         multiPV:(NSInteger)multiPV
+             depth:(NSInteger)depth
+       searchMoves:(NSArray<NSString *> *)searchMoves
             update:(PFAnalysisUpdateHandler)update
         completion:(PFAnalysisCompletionHandler)completion {
     auto generation = _generation;
@@ -143,6 +148,7 @@ static NSError *PFError(NSInteger code, NSString *message) {
     [self stopActiveEngine];
 
     NSString *fenCopy = [fen copy];
+    NSArray<NSString *> *restrictedMoves = [searchMoves copy];
     NSString *networkPath = [_networkPath copy];
     PFAnalysisUpdateHandler updateCopy = [update copy];
     PFAnalysisCompletionHandler completionCopy = [completion copy];
@@ -193,6 +199,7 @@ static NSError *PFError(NSInteger code, NSString *message) {
             PFAnalysisLine *line = [[PFAnalysisLine alloc]
                 initWithMultiPV:static_cast<NSInteger>(info.multiPV)
                 depth:info.depth
+                bound:PFString(info.bound)
                 scoreKind:score.first
                 scoreValue:score.second
                 nodes:static_cast<uint64_t>(info.nodes)
@@ -211,6 +218,8 @@ static NSError *PFError(NSInteger code, NSString *message) {
         Search::LimitsType limits;
         limits.startTime = now();
         limits.movetime = MAX(100, MIN(10'000, moveTimeMs));
+        if (depth > 0) limits.depth = depth;
+        for (NSString *move in restrictedMoves) limits.searchmoves.emplace_back(move.UTF8String);
         {
             std::lock_guard<std::mutex> lock(self->_activeMutex);
             if (generation->load() != request) {

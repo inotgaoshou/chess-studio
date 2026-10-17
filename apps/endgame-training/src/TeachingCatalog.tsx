@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { CatalogChevron, CatalogIcon, CatalogSearch, CatalogState } from "./CatalogPresentation";
 import { teachingClient, type TeachingAuth, type TeacherProblem } from "./teaching";
 import "./teachingCatalog.css";
-export type TrainingGoal = { kind: "mate" | "gain_material" | "draw" | "endgame_win"; description: string; solverSide: "w" | "b"; reviewMethod: "forced_mate" | "reviewed_solution" };
+export type TrainingGoal = import("../../../packages/training-verification/types").VerificationGoal;
 export type TeachingCatalogNode = { id: string; parentId?: string | null; name: string; kind: string; displayOrder: number; active: boolean; confirmed: boolean; itemCount?: number|null; completedCount?: number|null; materialCount?:number|null; rehearsalCount?:number|null; rehearsalCompletedCount?:number|null; description?:string; icon?:string; teachingEntry?:string };
 export type CatalogProblem = TeacherProblem & { contentFingerprint?: string; verifiedMateMoves?: number | null; trainingGoal?: TrainingGoal | null; difficulty?: number | null; teachingChapter?: string };
 export function goalLabel(goal?: TrainingGoal | null) { return goal ? ({ mate: "杀棋", gain_material: "得子", draw: "求和", endgame_win: "残局胜法" }[goal.kind] || "题目目标") : "原题解"; }
