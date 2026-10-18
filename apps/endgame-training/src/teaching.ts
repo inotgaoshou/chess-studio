@@ -1040,6 +1040,16 @@ export const teachingClient = {
     if (!auth || auth.user.role !== "student") return [];
     return requestPages<PlatformGame>(`/api/v1/student/platform-game-libraries/${encodeURIComponent(libraryId)}/games`, auth.token);
   },
+  async rehearsalRequest<T>(path: string, init?: RequestInit): Promise<T> {
+    const auth=this.auth();if(!auth)throw new Error("请先登录");
+    return request<T>(path,init??{},auth.token);
+  },
+  async catalogRehearsals(id:string,cursor?:string,teacher=false,context?:TeachingAuth,signal?:AbortSignal){
+    const path=`/api/v1/${teacher?"admin":"student"}/teaching-catalog/${encodeURIComponent(id)}/rehearsals${cursor?`?cursor=${encodeURIComponent(cursor)}`:""}`;
+    if(teacher)return teacherRequest<{items:{id:string;title:string;completed:boolean}[];nextCursor?:string|null}>(path,{signal},context);
+    const auth=context??this.auth();if(!auth)throw new Error("请先登录");
+    return request<{items:{id:string;title:string;completed:boolean}[];nextCursor?:string|null}>(path,{signal},auth.token);
+  },
   async platformGameDetail(gameId: string) {
     const auth = this.auth();
     if (!auth || auth.user.role !== "student") throw new Error("请先登录学生账号");

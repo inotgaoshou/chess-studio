@@ -149,3 +149,6 @@
 .teaching-catalog .catalog-extra-filters label { display:inline-flex; flex-direction:column; gap:6px; margin:8px 12px 8px 0; }
 @media(max-width:390px) { .teaching-catalog .catalog-problems .catalog-board { width:112px; flex-basis:112px; } }
 @media(min-width:760px) { .teaching-catalog .catalog-problems { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+
+.line-rehearsal{max-width:580px;margin:auto;padding:14px;color:var(--text-color,#292d2a);background:var(--panel-bg,#fff)}
+.line-rehearsal header,.rehearsal-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.line-rehearsal h3{margin:6px 0}.line-rehearsal p{line-height:1.6;white-space:pre-wrap}.line-rehearsal .preview-board{width:min(100%,380px);margin:12px auto}.line-rehearsal .board-wrap{max-width:440px;margin:auto}.rehearsal-overlay{position:fixed;inset:0;z-index:1200;overflow:auto;background:#0007;padding:24px}.rehearsal-overlay>.line-rehearsal{border-radius:12px;box-shadow:0 10px 35px #0003}.rehearsal-page{overflow:auto;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}

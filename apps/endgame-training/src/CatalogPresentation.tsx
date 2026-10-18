@@ -4,12 +4,12 @@ import { type ReactNode } from "react";
 const entryIcons = {
   basic_mates: Target, mate_series: Layers, checking_mates: Zap,
   quiet_mates: Route, practical_mates: Swords, middlegame: Crosshair,
-  endgame_mates: Flag, practical_endgames: BookOpen,
+  endgame_mates: Flag, practical_endgames: BookOpen, flying_knives: Swords,
 };
 const entriesByName: Record<string, keyof typeof entryIcons> = {
   "基础杀法": "basic_mates", "杀法练习系列": "mate_series", "连将杀": "checking_mates",
   "非连将杀": "quiet_mates", "实战杀法": "practical_mates", "中局战术": "middlegame",
-  "残局杀法": "endgame_mates", "实用残局": "practical_endgames",
+  "飞刀与陷阱": "flying_knives", "残局杀法": "endgame_mates", "实用残局": "practical_endgames",
 };
 export function CatalogIcon({ entry, name, chapter = false }: { entry?: string; name: string; chapter?: boolean }) {
   const key = entry && entry in entryIcons ? entry as keyof typeof entryIcons : entriesByName[name];
