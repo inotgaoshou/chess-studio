@@ -1,3 +1,4 @@
+import { teachingRead } from "./teachingDeadline";
 import { mergePracticeAttempts, mergePracticeDrafts, type PracticeDraft } from "./practiceProgress";
 import type { VerificationResult } from "../../../packages/training-verification/types";
 import { makeCheckinApi } from "./checkinApi";
@@ -26,19 +27,6 @@ const VIP_ACCESS_MESSAGE = "作业权益已过期或未开通，请联系老师�
 let lastSubmitError = "";
 const contentEpochs = new ContentEpochTracker({ getItem: key => localStorage.getItem(key), setItem: (key, value) => localStorage.setItem(key, value) });
 const epochProbes = new Map<string, Promise<boolean>>();
-// Bound reads including capability checks: a hung mobile connection must expose retry.
-async function teachingRead<T>(read: (signal: AbortSignal) => Promise<T>, source?: AbortSignal): Promise<T> {
-  const abort = new AbortController();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let rejectAbort: (reason: unknown) => void = () => {};
-  const cancelled = new Promise<never>((_, reject) => { rejectAbort = reject; });
-  const cancel = () => { abort.abort(); rejectAbort(new DOMException("读取已取消", "AbortError")); };
-  source?.addEventListener("abort", cancel, { once: true });
-  if (source?.aborted) { source.removeEventListener("abort", cancel); throw new DOMException("读取已取消", "AbortError"); }
-  timer = setTimeout(() => { abort.abort(); rejectAbort(new Error("读取超时，请检查网络后重试")); }, 15_000);
-  try { return await Promise.race([cancelled, read(abort.signal)]); }
-  finally { clearTimeout(timer); source?.removeEventListener("abort", cancel); }
-}
 async function ensureContentEpoch(context: AuthContext): Promise<boolean> {
   const key = `${context.serverUrl}:${context.ownerId}:${context.epoch}`;
   const existing = epochProbes.get(key);
@@ -1102,11 +1090,13 @@ export const teachingClient = {
       accessTier: problem.accessTier ?? "public",
     }));
   },
-  async verifyTrainingMove(problem: TrainingProblem, path: string[], candidate: string, sessionId?: string) {
+  async verifyTrainingMove(problem: TrainingProblem, path: string[], candidate: string, sessionId?: string, isCurrent?: () => boolean) {
     const auth = this.auth(); if (!auth || !problem.serverProblemId) throw new Error("请登录后验证其他解法");
-    return request<VerificationResult>(`/api/v1/student/problems/${encodeURIComponent(problem.serverProblemId)}/verify-move`, {
-      method: "POST", body: JSON.stringify({ path, candidate, assignmentId: problem.assignmentId, sessionId }),
-    }, auth.token);
+    const authContext = authContexts.get(auth);
+    const problemId = problem.serverProblemId;
+    return teachingRead(signal => request<VerificationResult>(`/api/v1/student/problems/${encodeURIComponent(problemId)}/verify-move`, {
+      method: "POST", body: JSON.stringify({ path, candidate, assignmentId: problem.assignmentId, sessionId }), signal,
+    }, auth.token), undefined, () => Boolean(authContext && isCurrentAuthContext(authContext)) && (!isCurrent || isCurrent()));
   },
   async platformGameLibraries() {
     const auth = this.auth();

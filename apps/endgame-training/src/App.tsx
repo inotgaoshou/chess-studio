@@ -2736,7 +2736,7 @@ export function App() {
     let result: VerificationResult;
     try {
       if (active.serverProblemId && navigator.onLine !== false) {
-        try { result = await teachingClient.verifyTrainingMove(active, prior, candidate, sessionId); }
+        try { result = await teachingClient.verifyTrainingMove(active, prior, candidate, sessionId, current); }
         catch { result = await verifyLocally(active, prior, candidate, context, current); }
       } else result = await verifyLocally(active, prior, candidate, context, current);
       if (current() && JSON.stringify(result.path) === JSON.stringify(path) && ["correct", "completed"].includes(result.outcome)) return result;
@@ -3476,7 +3476,7 @@ export function App() {
       try {
         let result: VerificationResult;
         if (problem.serverProblemId && navigator.onLine !== false) {
-          try { result = await teachingClient.verifyTrainingMove(problem, moves, iccs, practiceSession?.id); }
+          try { result = await teachingClient.verifyTrainingMove(problem, moves, iccs, practiceSession?.id, stillActive); }
           catch { if (!stillActive()) return; result = await verifyLocally(problem, moves, iccs, context, stillActive); }
         } else result = await verifyLocally(problem, moves, iccs, context, stillActive);
         if (!stillActive()) return;
