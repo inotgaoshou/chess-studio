@@ -125,6 +125,8 @@ archive_app() {
     -destination 'generic/platform=iOS' \
     -allowProvisioningUpdates \
     -archivePath "$archive_path" \
+    PIKAFISH_IOS_ROOT="$pikafish_ios_root" \
+    PIKAFISH_TAG="$expected_pikafish_tag" \
     archive
 }
 

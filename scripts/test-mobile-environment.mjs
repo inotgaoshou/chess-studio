@@ -26,13 +26,25 @@ function harness({ packageEnv = "test", native = true, dev = false, configured =
   const values = new Map(entries);
   const calls = [];
   let session = stored;
-  const stores = Object.fromEntries(["assignments", "assignmentCaches", "attempts", "practiceAttempts", "assignmentViews", "assignmentDrafts", "assignmentAnswers"].map((name) => [name, new Map((queued[name] || []).map((item) => [name === "assignmentAnswers" ? item.cacheKey : item.clientAttemptId || item.cacheKey, structuredClone(item)]))]));
+  const stores = Object.fromEntries(["assignments", "assignmentCaches", "attempts", "practiceAttempts", "assignmentViews", "assignmentDrafts", "assignmentAnswers", "practiceSessions", "practiceDrafts"].map((name) => [name, new Map((queued[name] || []).map((item) => [name === "assignmentAnswers" ? item.cacheKey : item.clientAttemptId || item.cacheKey, structuredClone(item)]))]));
   const indexedDB = { open() {
     const opening = { result: { objectStoreNames: { contains: () => true }, close() {}, transaction(name) {
-      const transaction = { objectStore: () => ({
-        put(value) { stores[name].set(name === "assignmentAnswers" ? value.cacheKey : value.clientAttemptId || value.cacheKey, structuredClone(value)); queueMicrotask(() => transaction.oncomplete?.()); },
-        delete(key) { stores[name].delete(key); queueMicrotask(() => transaction.oncomplete?.()); },
-        getAll() { const request = { result: [...stores[name].values()].map((value) => structuredClone(value)) }; queueMicrotask(() => request.onsuccess?.()); return request; },
+      const transaction = { objectStore: (storeName = name) => ({
+        put(value) { stores[storeName].set(storeName === "assignmentAnswers" ? value.cacheKey : value.clientAttemptId || value.cacheKey, structuredClone(value)); queueMicrotask(() => transaction.oncomplete?.()); },
+        delete(key) { stores[storeName].delete(key); queueMicrotask(() => transaction.oncomplete?.()); },
+        openCursor() {
+          const entries = [...stores[storeName].entries()];
+          const request = {};
+          let index = 0;
+          const deliver = () => {
+            const entry = entries[index++];
+            request.result = entry ? { value: entry[1], delete: () => stores[storeName].delete(entry[0]), continue: () => queueMicrotask(deliver) } : null;
+            request.onsuccess?.();
+          };
+          queueMicrotask(deliver);
+          return request;
+        },
+        getAll() { const request = { result: [...stores[storeName].values()].map((value) => structuredClone(value)) }; queueMicrotask(() => request.onsuccess?.()); return request; },
       }) };
       return transaction;
     } } };
@@ -45,7 +57,7 @@ function harness({ packageEnv = "test", native = true, dev = false, configured =
     removeItem: (key) => values.delete(key),
   };
   const context = vm.createContext({
-    localStorage, indexedDB, Headers, FormData, Event, AbortController, DOMException, URLSearchParams, setTimeout: timers?.setTimeout ?? setTimeout, clearTimeout: timers?.clearTimeout ?? clearTimeout, window: new EventTarget(), __APP_ENV__: packageEnv,
+    localStorage, indexedDB, navigator: { onLine: true }, Headers, FormData, Event, CustomEvent, AbortController, DOMException, URLSearchParams, setTimeout: timers?.setTimeout ?? setTimeout, clearTimeout: timers?.clearTimeout ?? clearTimeout, setInterval, clearInterval, window: new EventTarget(), __APP_ENV__: packageEnv,
     runtimeEnv: { DEV: dev, VITE_TEACHING_API_BASE: configured },
     fetch: async (...args) => {
       calls.push(args);
@@ -66,6 +78,9 @@ function harness({ packageEnv = "test", native = true, dev = false, configured =
   }
   const environment = load("appEnvironment");
   const { teachingClient } = load("teaching", {
+    "./catalogAccess": load("catalogAccess"),
+    "./teachingDeadline": load("teachingDeadline"),
+    "./practiceProgress": load("practiceProgress"),
     "./checkinApi": load("checkinApi"),
     "./contentEpoch": load("contentEpoch"),
     "./providerMirrors": load("providerMirrors"),
@@ -412,7 +427,7 @@ for (const practice of [false, true]) {
       if (url.endsWith("/attempts")) {
         assert.equal(h.stores[storeName].get(attempt.clientAttemptId).ownerId, "student");
         if (offline) throw new Error("offline");
-        return response({ id: "accepted" });
+        return response(practice ? { id: "session", items: [], currentItemId: "" } : { id: "accepted" });
       }
       return response(student);
     } });
@@ -506,4 +521,57 @@ test("catalog timeout includes a stalled capabilities probe and retries without 
   assert.equal(h.client.auth().user.id,'vip-student');
   stalled=false;await new Promise(r=>setImmediate(r));
   assert.equal((await h.client.catalogBrowse({view:'structure'})).children[0].id,'public');
+});
+
+test("practice dashboard is readable while an unrelated offline submission is stalled", async () => {
+  const student = { ...auth, user: { id: "student", orgId: "org", role: "student" } };
+  const home = { topics: [], studyTopics: [], history: [] };
+  const h = harness({ fetchImpl: url => response(url.endsWith('/practice/dashboard') ? home : student) });
+  await h.client.login('student', 'password');
+  let finish;
+  h.client.flushPending = () => new Promise(resolve => { finish = resolve; });
+  const pending = h.client.practiceHome();
+  try {
+    const result = await Promise.race([pending, new Promise((_, reject) => setTimeout(() => reject(new Error('dashboard is blocked by background submission')), 100))]);
+    assert.deepEqual(JSON.parse(JSON.stringify(result)), home);
+  } finally { finish?.(); await pending; }
+});
+
+test("stalled practice dashboard has a deadline and can retry", async () => {
+  const deadlines = new Map(); let nextDeadline = 0, stalled = true;
+  const student = { ...auth, user: { id: 'student', orgId: 'org', role: 'student' } };
+  const h = harness({ timers: { setTimeout(fn) { const id = ++nextDeadline; deadlines.set(id, fn); return id; }, clearTimeout(id) { deadlines.delete(id); } }, fetchImpl: url => {
+    if (url.endsWith('/practice/dashboard')) return stalled ? new Promise(() => {}) : response({topics:[],studyTopics:[],history:[]});
+    return response(student);
+  } });
+  await h.client.login('student', 'password');
+  h.client.flushPending = async () => {};
+  const pending = h.client.practiceHome();
+  await new Promise(resolve => setImmediate(resolve));
+  assert(deadlines.size > 0, 'dashboard must be bounded even if the network never answers');
+  for (const expire of [...deadlines.values()]) expire();
+  await assert.rejects(pending, /超时/);
+  stalled = false;
+  assert.equal((await h.client.practiceHome()).topics.length, 0);
+});
+
+for (const [name, start] of [
+  ['daily creation', client => client.startDailyPractice('daily')],
+  ['topic creation', client => client.createPracticeSession({topicId:'topic', itemCount:1, mode:'solver'})],
+  ['session resume', client => client.practiceSession('session')],
+]) test(`stalled practice ${name} times out without automatic retry`, async () => {
+  const deadlines = new Map(); let nextDeadline = 0, requests = 0;
+  const student = { ...auth, user: { id: 'student', orgId: 'org', role: 'student' } };
+  const h = harness({ timers: { setTimeout(fn) { const id = ++nextDeadline; deadlines.set(id, fn); return id; }, clearTimeout(id) { deadlines.delete(id); } }, fetchImpl: url => {
+    if (url.includes('/practice/')) { requests++; return new Promise(() => {}); }
+    return response(student);
+  } });
+  await h.client.login('student', 'password');
+  const pending = start(h.client);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(requests, 1);
+  assert.equal(deadlines.size, 1);
+  for (const expire of [...deadlines.values()]) expire();
+  await assert.rejects(pending, /超时/);
+  assert.equal(requests, 1, 'a timed out session request must not replay a creation');
 });

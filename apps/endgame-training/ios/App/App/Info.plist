@@ -22,6 +22,10 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>NSCameraUsageDescription</key>
+	<string>用于拍摄学习打卡的作业照片，仅在你主动拍照时使用相机。</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>用于选择学习打卡的作业照片，照片仅在你确认提交后上传。</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>ITSAppUsesNonExemptEncryption</key>

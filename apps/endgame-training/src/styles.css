@@ -7034,3 +7034,6 @@ html.touch-webview .study-sidebar .analysis-candidates {
 .teacher-problem-number-grid button.completed { background:#e4f3e7; border-color:#9bc8a5; color:#2e7449; }
 .teacher-problem-number-grid button.submitted { background:#fff5df; border-color:#ddc38d; color:#946d26; }
 .teacher-problem-number-grid button.active { background:#397b56; border-color:#397b56; color:#fff; box-shadow:inset 0 0 0 2px #f2d778; }
+
+.mobile-topic-load-status { min-height: 24px; color: #6b7972; font-size: 12px; line-height: 24px; }
+.mobile-topic-detail-page .mobile-chapter-list { min-height: 100px; }

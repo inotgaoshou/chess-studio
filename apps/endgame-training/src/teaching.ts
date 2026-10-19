@@ -1,3 +1,4 @@
+import { canBrowsePlatformSources, hasActiveCatalogVip } from "./catalogAccess";
 import { teachingRead } from "./teachingDeadline";
 import { mergePracticeAttempts, mergePracticeDrafts, type PracticeDraft } from "./practiceProgress";
 import type { VerificationResult } from "../../../packages/training-verification/types";
@@ -69,11 +70,12 @@ let sessionEpoch = 0;
 // Only concurrent reads are shared; results are never cached as eligibility evidence.
 const platformReads = new Map<string, Promise<unknown>>();
 function sharePlatformRead<T>(name:string,auth:TeachingAuth,load:()=>Promise<T>):Promise<T> {
-  const key=JSON.stringify([serverUrl(),sessionEpoch,auth.user.id,auth.user.orgId,name]);
+  const key=JSON.stringify([serverUrl(),sessionEpoch,auth.user.id,auth.user.orgId,hasActiveCatalogVip(auth),name]);
   const current=platformReads.get(key);if(current)return current as Promise<T>;
   const pending=load().finally(()=>{if(platformReads.get(key)===pending)platformReads.delete(key);});
   platformReads.set(key,pending);return pending;
 }
+const topicDisplays = new Map<string, {at:number; detail:PracticeTopicDetail}>();
 const assignmentSubmissionLocks = new Set<string>();
 const assignmentAttemptRequests = new Map<string, Promise<boolean>>();
 type AuthContext = { ownerId: string; orgId: string; serverUrl: string; epoch: number };
@@ -570,8 +572,10 @@ async function request<T>(path: string, init: RequestInit = {}, token?: string, 
   if (init.signal?.aborted) throw new DOMException("读取已取消", "AbortError");
   const contentEpoch = authContext ? contentEpochs.current(authContext) : undefined;
   if (accessToken) headers.set("authorization", `Bearer ${accessToken}`);
+  const accessScope=activeAuth?JSON.stringify([activeAuth.user.role,hasActiveCatalogVip(activeAuth)]):"";
   const response = await fetch(`${targetServer}${path}`, { ...init, headers, credentials: "include" });
   const body = await response.json().catch(() => ({}));
+  if(authContext&&/^\/api\/v1\/(student|admin)\//.test(path)&&accessScope!==(activeAuth?JSON.stringify([activeAuth.user.role,hasActiveCatalogVip(activeAuth)]):""))throw new Error("账号权益已变化，请重新打开内容。");
   if (authContext && !isCurrentAuthContext(authContext)) throw new Error("登录账号或机构已变化，请重新操作。");
   if (authContext && teachingContentRequest && contentEpoch !== contentEpochs.current(authContext)) throw new Error("题库已重建，请刷新后重新操作。");
   if (!response.ok) {
@@ -907,6 +911,11 @@ export const teachingClient = {
   },
   async refreshSession() { return refreshAuth(); },
   serverUrl,
+  presentationScope(auth = activeAuth) { return JSON.stringify([serverUrl(),sessionEpoch,auth?.user.id,auth?.user.orgId,auth?.user.role,hasActiveCatalogVip(auth)]); },
+  cachedPracticeTopic(topicId?: string) {
+    const saved = topicDisplays.get(`${this.presentationScope()}:${topicId}`);
+    return saved && Date.now() - saved.at < 60_000 ? saved.detail : undefined;
+  },
   environment: selectedEnvironment,
   async setEnvironment(environment: AppEnvironment) {
     if (packageEnvironment !== "test") throw new Error("正式版不支持切换环境。");
@@ -1041,6 +1050,7 @@ export const teachingClient = {
   async platformLibraries() {
     const auth = this.auth();
     if (!auth || auth.user.role !== "student") return [];
+    if(!canBrowsePlatformSources(auth))return [];
     return sharePlatformRead("libraries",auth,async()=>{
     const [libraries, collections] = await Promise.all([
       request<PlatformProblemLibrary[]>("/api/v1/student/platform-libraries", {}, auth.token),
@@ -1101,6 +1111,7 @@ export const teachingClient = {
   async platformGameLibraries() {
     const auth = this.auth();
     if (!auth || auth.user.role !== "student") return [];
+    if(!canBrowsePlatformSources(auth))return [];
     return sharePlatformRead("games",auth,()=>request<PlatformGameLibrary[]>("/api/v1/student/platform-game-libraries", {}, auth.token));
   },
   async platformGameLibraryGames(libraryId: string) {
@@ -1120,20 +1131,31 @@ export const teachingClient = {
   },
   async platformGameDetail(gameId: string) {
     const auth = this.auth();
-    if (!auth || auth.user.role !== "student") throw new Error("请先登录学生账号");
+    if (!auth) throw new Error("请先登录");
+    if (["coach", "admin"].includes(auth.user.role)) return teacherRequest<unknown>(`/api/v1/admin/games/${encodeURIComponent(gameId)}`, {}, auth);
+    if (auth.user.role !== "student") throw new Error("当前账号没有读取权限");
     return request<unknown>(`/api/v1/student/platform-games/${encodeURIComponent(gameId)}`, {}, auth.token);
   },
   async practiceHome() {
     const auth = this.auth();
     if (!auth || auth.user.role !== "student") return undefined;
-    await this.flushPending();
-    return request<PracticeHome>("/api/v1/student/practice/dashboard", {}, auth.token);
+    // Submission retries run independently in the online/visibility lifecycle.
+    // A pending offline write must never block opening the practice homepage.
+    const scope = this.presentationScope();
+    return teachingRead(signal => request<PracticeHome>("/api/v1/student/practice/dashboard", { signal }, auth.token), undefined, () => scope === this.presentationScope());
   },
   async practiceTopic(topicId: string) {
     const auth = this.auth();
     if (!auth || auth.user.role !== "student") throw new Error("请先登录学生账号");
-    const { chapters, ...topic } = await request<PracticeTopic & { chapters: PracticeTopicChapter[] }>(`/api/v1/student/practice/topics/${encodeURIComponent(topicId)}`, {}, auth.token);
-    return { topic, chapters } satisfies PracticeTopicDetail;
+    const context = `${this.presentationScope()}:${topicId}`;
+    const result = await teachingRead(signal => request<PracticeTopic & { chapters: PracticeTopicChapter[] }>(`/api/v1/student/practice/topics/${encodeURIComponent(topicId)}`, {signal}, auth.token));
+    const {chapters, ...topic} = result;
+    const detail = {topic, chapters} satisfies PracticeTopicDetail;
+    if (context === `${this.presentationScope()}:${topicId}`) {
+      topicDisplays.set(context, {at:Date.now(),detail});
+      if (topicDisplays.size > 24) topicDisplays.delete(topicDisplays.keys().next().value!);
+    }
+    return detail;
   },
   async practiceSearch(query: PracticeSearchQuery = {}) {
     const auth = this.auth();
@@ -1152,7 +1174,7 @@ export const teachingClient = {
   async createPracticeSession(payload: CreatePracticeSession) {
     const auth = this.auth();
     if (!auth || auth.user.role !== "student") throw new Error("请先登录学生账号");
-    return cachePracticeSession(auth, await request<PracticeSession>("/api/v1/student/practice/sessions", { method: "POST", body: JSON.stringify(payload) }, auth.token));
+    return cachePracticeSession(auth, await teachingRead(signal => request<PracticeSession>("/api/v1/student/practice/sessions", { method: "POST", signal, body: JSON.stringify(payload) }, auth.token)));
   },
   async localPracticeSession(session: PracticeSession) {
     const auth = this.auth(); if (!auth) return session;
@@ -1163,7 +1185,7 @@ export const teachingClient = {
   async practiceSession(sessionId: string) {
     const auth = this.auth();
     if (!auth || auth.user.role !== "student") throw new Error("请先登录学生账号");
-    try { return await cachePracticeSession(auth, await request<PracticeSession>(`/api/v1/student/practice/sessions/${encodeURIComponent(sessionId)}`, {}, auth.token)); }
+    try { return await cachePracticeSession(auth, await teachingRead(signal => request<PracticeSession>(`/api/v1/student/practice/sessions/${encodeURIComponent(sessionId)}`, { signal }, auth.token))); }
     catch (error) {
       if (!(error instanceof TypeError) && navigator.onLine !== false) throw error;
       const cached = (await storeAll<CachedPracticeSession>("practiceSessions")).find(s => s.cacheKey === assignmentCacheKey(auth, sessionId));
@@ -1182,7 +1204,7 @@ export const teachingClient = {
   async startDailyPractice(planId: string) {
     const auth = this.auth();
     if (!auth || auth.user.role !== "student") throw new Error("请先登录学生账号");
-    return cachePracticeSession(auth, await request<PracticeSession>(`/api/v1/student/practice/daily/${encodeURIComponent(planId)}/session`, { method: "POST", body: "{}" }, auth.token));
+    return cachePracticeSession(auth, await teachingRead(signal => request<PracticeSession>(`/api/v1/student/practice/daily/${encodeURIComponent(planId)}/session`, { method: "POST", signal, body: "{}" }, auth.token)));
   },
   async practiceHistory(days = 7) {
     const auth = this.auth();
@@ -1544,7 +1566,7 @@ export const teachingClient = {
     const auth=context??this.auth();if(!auth)throw new Error("请先登录学生账号");
     return teachingRead(signal => request<import("./TeachingCatalog").CatalogBrowsePage>(path,{signal},auth.token), signal);
   },
-  async catalogProblems(id: string, query: { q?: string; goal?: string; material?:string; motif?:string; difficulty?: number; mateGroup?: string; mateMoves?: number; cursor?: string; limit?: number } = {}, teacher = false, context?: TeachingAuth, signal?:AbortSignal) {
+  async catalogProblems(id: string, query: { libraryId?: string; q?: string; goal?: string; material?:string; motif?:string; difficulty?: number; mateGroup?: string; mateMoves?: number; cursor?: string; limit?: number } = {}, teacher = false, context?: TeachingAuth, signal?:AbortSignal) {
     const params = new URLSearchParams({ limit: String(query.limit ?? 50) });
     for (const [key, value] of Object.entries(query)) if (value !== undefined && value !== "") params.set(key, String(value));
     const path = `/api/v1/${teacher ? "admin" : "student"}/teaching-catalog/${encodeURIComponent(id)}/problems?${params}`;
@@ -1558,6 +1580,9 @@ export const teachingClient = {
   async teacherProblemLibraries(query = "", context?: TeachingAuth) {
     const suffix = query.trim() ? `?scope=teaching&q=${encodeURIComponent(query.trim())}` : "?scope=teaching";
     return teacherRequest<TeacherProblemLibrary[]>(`/api/v1/admin/problem-libraries${suffix}`, {}, context);
+  },
+  async teacherProblemDetail(id: string) {
+    return teacherRequest<{startingFen: string; title: string; note?: string; solution: SolutionMove[]}>(`/api/v1/admin/problems/${encodeURIComponent(id)}`, {});
   },
   async teacherProblems(libraryId: string, query: { q?: string; cursor?: string; limit?: number } = {}, context?: TeachingAuth) {
     const params = new URLSearchParams({ limit: String(query.limit ?? 50), reviewStatus: "published", sort: "source_asc", assignmentEligible: "true", includeTotal: "true" });

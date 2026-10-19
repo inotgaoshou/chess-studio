@@ -10,7 +10,7 @@ android {
         applicationId "cn.xiangqi.endgame.training"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode Integer.parseInt(System.getenv("ANDROID_VERSION_CODE") ?: "10032")
+        versionCode Integer.parseInt(System.getenv("ANDROID_VERSION_CODE") ?: "10036")
         versionName System.getenv("ANDROID_VERSION_NAME") ?: "1.0.6"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {

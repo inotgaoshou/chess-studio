@@ -102,27 +102,30 @@ export function CheckinStudentWorkspace({ client, studentId, onBack }: { client:
     } else { const item = queued.find(q => q.taskId === task.id); setNotice(item?.error ?? "本机已记录，待同步"); }
     } finally { submissionsInFlight.current.delete(task.id); }
   }
-  return <main className={`checkin-workspace ${motion ? "" : "checkin-no-motion"}`}>
-    <header className="checkin-heading"><button type="button" onClick={onBack}>‹ 返回</button><div><h1>我的学习打卡</h1><p>一项一枚印章，一天一步成长</p></div><button type="button" disabled={loading} onClick={() => void refresh()}>刷新与同步</button></header>
-    <label className="checkin-motion"><input type="checkbox" checked={motion} onChange={e => { setMotion(e.target.checked); try { localStorage.setItem("qixi-checkin-motion", e.target.checked ? "on" : "off"); } catch { /* Session preference remains usable. */ } }} />完成动效</label>
+  return <main className={`checkin-workspace checkin-student-workspace ${motion ? "" : "checkin-no-motion"}`}>
+    <header className="checkin-heading"><button type="button" onClick={onBack}>‹ 返回</button><div><h1>我的学习打卡</h1></div><button type="button" disabled={loading} onClick={() => void refresh()}>刷新与同步</button></header>
     {error && <p role="alert" className="checkin-error">{error}</p>}{notice && <p role="status" className="checkin-notice">{notice}</p>}
     {loading && <p role="status">正在读取打卡计划…</p>}
     {!loading && !plans.length && !error && <p>老师还没有发布打卡计划。发布后，你的每日任务会显示在这里。</p>}
-    {plans.length > 0 && <label className="checkin-field">阶段计划<select value={planId} onChange={e => { setPlanId(e.target.value); setDetail(undefined); setTask(undefined); setWeek(""); setNotice(""); }}>{plans.map(p => <option key={p.id} value={p.id}>{p.title} · {phaseLabels[checkinPhase(p)]}</option>)}</select></label>}
+    <div className="checkin-student-filters">{plans.length > 0 && <label className="checkin-field">阶段计划<select value={planId} onChange={e => { setPlanId(e.target.value); setDetail(undefined); setTask(undefined); setWeek(""); setNotice(""); }}>{plans.map(p => <option key={p.id} value={p.id}>{p.title} · {phaseLabels[checkinPhase(p)]}</option>)}</select></label>}
+    {detail && <label className="checkin-field">查看周次<select value={week} onChange={e => { setWeek(e.target.value); setTask(undefined); }}>{weeks.map((w, i) => <option key={w} value={w}>第{i + 1}周 · {w} 至 {addDays(w, 6)}</option>)}</select></label>}</div>
     {detail && <>
-      <section className="checkin-stage"><strong>{detail.plan.title}</strong><span>{phaseLabels[checkinPhase(detail.plan, now)]}</span><p>{checkinTime(detail.plan.startsAt)} — {checkinTime(detail.plan.endsAt)}</p><small>补交截止 {checkinTime(detail.plan.supplementUntil)} · 打卡表示已提交，不代表作业全部正确</small></section>
-      <label className="checkin-field">查看周次<select value={week} onChange={e => { setWeek(e.target.value); setTask(undefined); }}>{weeks.map((w, i) => <option key={w} value={w}>第{i + 1}周 · {w} 至 {addDays(w, 6)}</option>)}</select></label>
-      <HorseRoute detail={detail} studentId={studentId} week={week} animate={horseMoved} />
+      <details className="checkin-plan-info"><summary>计划时间与说明 · {phaseLabels[checkinPhase(detail.plan, now)]}</summary><p>{checkinTime(detail.plan.startsAt)} — {checkinTime(detail.plan.endsAt)}</p><small>补交截止 {checkinTime(detail.plan.supplementUntil)} · 打卡表示已提交，不代表作业全部正确</small></details>
       <div className="checkin-date-tabs" role="group" aria-label="查看每天任务">{progress?.dates.map(d => <button type="button" key={d} aria-pressed={selectedDate === d} onClick={() => { setDate(d); setTask(undefined); }}>{d === beijingDate() ? "今天" : d.slice(5)}{progress.completedDates.includes(d) ? " ✓" : ""}</button>)}</div>
-      <section className="checkin-tasks"><h2>{selectedDate === beijingDate() ? "今日任务" : `${selectedDate}任务`}</h2>{todayTasks.map(t => {
+      <section className="checkin-tasks"><header className="checkin-tasks-heading"><h2>{selectedDate === beijingDate() ? "今日任务" : `${selectedDate}任务`}</h2><small>共{todayTasks.length}项 · 已完成{todayTasks.filter(t => detail.submissions.some(s => s.taskId === t.id && s.studentId === studentId && s.status === "submitted")).length}项</small></header>{todayTasks.map(t => {
         const sub = detail.submissions.find(s => s.taskId === t.id && s.studentId === studentId); const local = pending.find(p => p.taskId === t.id);
-        return <article key={t.id} className="checkin-task"><div><span className="checkin-subject">{t.subject}</span><strong>{t.instruction}</strong><small>{t.required ? "必做" : "选做"}{t.photoRequired ? " · 需照片" : ""}</small>{local && <p className={local.blocked ? "checkin-error" : ""}>{local.blocked ? "未提交成功，本机记录保留" : "本机已记录，待同步"}{local.error ? `：${local.error}` : ""}</p>}</div>
+        return <div key={t.id} className="checkin-task-item"><article className="checkin-task"><div><div className="checkin-task-meta"><span className="checkin-subject">{t.subject}</span><small>{t.required ? "必做" : "选做"}{t.photoRequired ? " · 需照片" : ""}</small></div><strong>{t.instruction}</strong>{local && <p className={local.blocked ? "checkin-error" : ""}>{local.blocked ? "未提交成功，本机记录保留" : "本机已记录，待同步"}{local.error ? `：${local.error}` : ""}</p>}</div>
           <button type="button" aria-expanded={task?.id === t.id} aria-controls={task?.id === t.id ? "checkin-student-task-detail" : undefined} onClick={event => openTask(t, event.currentTarget)}>{sub?.status === "submitted" ? <span className={`checkin-stamp ${stamped === t.id ? "stamping" : ""}`}>成</span> : sub?.status === "returned" ? "需补充" : local ? "查看本机记录" : canSubmitTask(detail, t, now) ? "去打卡" : "查看任务"}</button>
-        </article>;
-      })}</section>
-      {task && <StudentTaskEditor key={task.id} sectionRef={taskSection} task={task} detail={detail} studentId={studentId} client={client} pending={pending.find(p => p.taskId === task.id)} now={now} onSubmit={draft => submitted(task, draft)} onClose={closeTask} />}
+        </article>
+          {task?.id === t.id && <StudentTaskEditor key={task.id} sectionRef={taskSection} task={task} detail={detail} studentId={studentId} client={client} pending={local} now={now} onSubmit={draft => submitted(task, draft)} onClose={closeTask} />}
+        </div>;
+      })}{!todayTasks.length && <p>当天没有安排任务，可切换日期查看。</p>}</section>
+      <details className="checkin-progress-details"><summary>本周进度与徽章 · {progress?.completed ?? 0}/{progress?.planned ?? 0}天达标</summary>
+      <HorseRoute detail={detail} studentId={studentId} week={week} animate={horseMoved} />
       <WeekTable detail={detail} studentId={studentId} week={week} onTask={(t, source) => { setDate(t.localDate); openTask(t, source); }} />
       <section className="checkin-badges"><h2>我的徽章</h2>{detail.badges.filter(b => b.studentId === studentId).map(b => <Badge key={b.weekStart} badge={b} />)}{!detail.badges.length && <p>完成本周安排的学习日，就能获得周徽章。</p>}</section>
+    <label className="checkin-motion"><input type="checkbox" checked={motion} onChange={e => { setMotion(e.target.checked); try { localStorage.setItem("qixi-checkin-motion", e.target.checked ? "on" : "off"); } catch { /* Session preference remains usable. */ } }} />完成动效</label>
+      </details>
     </>}
     {celebrating && <section className="checkin-celebration" role="status"><div className="checkin-confetti" aria-hidden="true">✦ · ✧ · ✦</div><h2>小马到达本周终点啦！</h2><Badge badge={celebrating} /><p>这一周的努力，都留下了印记。</p><button type="button" onClick={() => setCelebrating(undefined)}>收好徽章</button></section>}
   </main>;
