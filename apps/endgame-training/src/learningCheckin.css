@@ -82,7 +82,9 @@
 .checkin-preview li { margin-bottom: 8px; overflow-wrap: anywhere; }
 .checkin-home-entry { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px; margin: 12px 0; background: #edf4e9; border-radius: 14px; color: #24352e; }
 .checkin-home-entry strong, .checkin-home-entry small { display: block; }
-.checkin-home-entry button { min-height: 44px; color: white; background: #29764d; border: 0; border-radius: 10px; padding: 8px 14px; }
+.checkin-home-entry > div { flex: 1; min-width: 0; }
+.checkin-home-entry small { font-size: 12px; line-height: 1.5; margin-top: 4px; }
+.checkin-home-entry button { flex: 0 0 auto; min-width: 84px; white-space: nowrap; min-height: 44px; color: white; background: #29764d; border: 0; border-radius: 10px; padding: 8px 14px; }
 @keyframes checkin-stamp { 0% { transform: scale(1.6) rotate(-18deg); opacity: .2; } 65% { transform: scale(.9) rotate(-9deg); opacity: 1; } 100% { transform: scale(1) rotate(-9deg); } }
 @keyframes checkin-hop { 40% { transform: translate(-50%,-14px) rotate(-8deg); } 100% { transform: translate(-50%,0); } }
 @keyframes checkin-confetti { from { transform: translateY(-14px) scale(.7); opacity: .1; } to { transform: translateY(0) scale(1); opacity: 1; } }

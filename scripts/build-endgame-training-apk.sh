@@ -132,7 +132,7 @@ reject_forbidden_resource "$(find "$resource_dir" -maxdepth 1 -type f \( -iname 
 reject_forbidden_resource "$(find "$app_dir/android/app/src/main/jniLibs" -type f \( -iname '*fairy*' -o -iname '*stockfish*' \) -print -quit 2>/dev/null || true)" "jniLibs"
 
 export ANDROID_VERSION_NAME="${ANDROID_VERSION_NAME:-1.0.6}"
-export ANDROID_VERSION_CODE="${ANDROID_VERSION_CODE:-10032}"
+export ANDROID_VERSION_CODE="${ANDROID_VERSION_CODE:-10035}"
 
 "$pnpm_bin" --dir "$app_dir" mobile:build
 "$pnpm_bin" --dir "$app_dir" exec cap sync android

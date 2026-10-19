@@ -2,10 +2,10 @@ import {useEffect,useRef,useState} from "react";
 
 export type BrowseNode = {id:string;parentId?:string|null;name:string;kind?:string;itemCount?:number|null;completedCount?:number|null;materialCount?:number|null;rehearsalCount?:number|null;rehearsalCompletedCount?:number|null};
 export type BrowsePage<N extends BrowseNode> = {availabilityReady?:boolean;availabilityRevision?:string;availabilitySnapshotRevision?:string|null;statisticsReady?:boolean;statisticsRevision?:string;statisticsSnapshotRevision?:string|null;statisticsUpdatedAt?:string|null;currentNode?:N|null;breadcrumbs:N[];children:N[];nextCursor?:string|null;learningMaterials:{id:string;title:string;reviewStatus:string}[];materialNextCursor?:string|null};
-export function useDebounced<T>(value:T,delay=300) {
- const [settled,setSettled]=useState(value);
- useEffect(()=>{const timer=setTimeout(()=>setSettled(value),delay);return()=>clearTimeout(timer);},[value,delay]);
- return settled;
+export function useDebounced<T>(value:T,delay=300,scope?:string|null) {
+ const [settled,setSettled]=useState({value,scope});
+ useEffect(()=>{const timer=setTimeout(()=>setSettled({value,scope}),delay);return()=>clearTimeout(timer);},[value,delay,scope]);
+ return settled.scope===scope?settled.value:value;
 }
 const message=(e:unknown)=>e instanceof Error?e.message:String(e);
 // Older servers expose only the current revision; new servers identify the
@@ -15,19 +15,28 @@ const canReuseCounts=(part:BrowsePage<BrowseNode>,prior:BrowsePage<BrowseNode>)=
 const responseVersion=(page:BrowsePage<BrowseNode>)=>page.availabilitySnapshotRevision!==undefined?page.availabilitySnapshotRevision:page.statisticsRevision;
 const empty=<N extends BrowseNode>():BrowsePage<N>=>({breadcrumbs:[],children:[],learningMaterials:[]});
 
-/** Per-mounted-account navigation cache; counts never authorize content access. */
-export function useCatalogBrowse<N extends BrowseNode>(request:(params:Record<string,string>,signal:AbortSignal)=>Promise<BrowsePage<N>>,params:Record<string,string>,reading:boolean,restoreCount=0,restoreMaterials=0) {
+const navigationCaches = new Map<string, Map<string, BrowsePage<BrowseNode>>>();
+export function clearCatalogBrowseCache() { navigationCaches.clear(); }
+function accountCache<N extends BrowseNode>(scope?: string): Map<string, BrowsePage<N>> {
+ if (!scope) return new Map();
+ let cache = navigationCaches.get(scope);
+ if (!cache) { cache = new Map(); navigationCaches.set(scope, cache); }
+ if (navigationCaches.size > 8) navigationCaches.delete(navigationCaches.keys().next().value!);
+ return cache as Map<string, BrowsePage<N>>;
+}
+/** Display-only cache, scoped by session/account/role/entitlement; every read revalidates. */
+export function useCatalogBrowse<N extends BrowseNode>(request:(params:Record<string,string>,signal:AbortSignal)=>Promise<BrowsePage<N>>,params:Record<string,string>,reading:boolean,restoreCount=0,restoreMaterials=0,scope?:string) {
  const key=JSON.stringify(params);
- const cache=useRef(new Map<string,BrowsePage<N>>());
- useEffect(()=>()=>cache.current.clear(),[request]);
- const [state,setState]=useState({key,request,page:empty<N>()});
+ const cache=useRef(accountCache<N>(scope));
+ useEffect(()=>()=>{if(!scope)cache.current.clear();},[request,scope]);
+ const [state,setState]=useState({key,request,page:cache.current.get(key)??empty<N>()});
  const [loading,setLoading]=useState(true),[countBusy,setCountBusy]=useState(false),[materialBusy,setMaterialBusy]=useState(false);
  const [error,setError]=useState(""),[countError,setCountError]=useState(""),[materialError,setMaterialError]=useState("");
  const [retry,setRetry]=useState(0),[countRetry,setCountRetry]=useState(0),[materialRetry,setMaterialRetry]=useState(0);
  const controller=useRef<AbortController|null>(null),pageRef=useRef(empty<N>());
  const loadedPages=useRef<Record<string,string>[]>([]);
  const materialController=useRef<AbortController|null>(null);
- const publish=(page:BrowsePage<N>)=>{pageRef.current=page;cache.current.set(key,page);setState({key,request,page});};
+ const publish=(page:BrowsePage<N>)=>{pageRef.current=page;cache.current.set(key,page);if(cache.current.size>80)cache.current.delete(cache.current.keys().next().value!);setState({key,request,page});};
  const countPending=useRef(0);
  const countRevision=useRef<string|undefined>(undefined);
  const requestedReload=useRef<string|undefined>(undefined);
@@ -121,5 +130,6 @@ export function useCatalogBrowse<N extends BrowseNode>(request:(params:Record<st
   return()=>abort.abort();
  },[request,key,reading,materialRetry]);
  async function moreMaterials(){const cursor=pageRef.current.materialNextCursor,signal=materialController.current?.signal;if(!cursor||!signal||materialBusy)return;setMaterialBusy(true);setMaterialError("");try{const part=await request({...params,view:"materials",materialCursor:cursor},signal);if(!signal.aborted)publish({...pageRef.current,learningMaterials:[...pageRef.current.learningMaterials,...part.learningMaterials],materialNextCursor:part.materialNextCursor});}catch(e){if(!signal.aborted)setMaterialError(message(e));}finally{if(!signal.aborted)setMaterialBusy(false);}}
- return {page:state.request!==request?empty<N>():state.key===key?state.page:cache.current.get(key)??empty<N>(),loading,countBusy,materialBusy,error,countError,materialError,more,moreMaterials,retry:()=>setRetry(n=>n+1),retryCounts:()=>setCountRetry(n=>n+1),retryMaterials:()=>setMaterialRetry(n=>n+1)};
+ const seed=(query:Record<string,string>,page:BrowsePage<N>)=>{const nextKey=JSON.stringify(query);if(!cache.current.has(nextKey))cache.current.set(nextKey,page);};
+ return {seed,page:state.key===key&&state.request===request?state.page:cache.current.get(key)??empty<N>(),loading,countBusy,materialBusy,error,countError,materialError,more,moreMaterials,retry:()=>setRetry(n=>n+1),retryCounts:()=>setCountRetry(n=>n+1),retryMaterials:()=>setMaterialRetry(n=>n+1)};
 }
