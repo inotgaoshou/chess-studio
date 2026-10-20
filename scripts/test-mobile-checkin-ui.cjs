@@ -12,7 +12,7 @@ const url = process.env.MOBILE_URL || 'http://127.0.0.1:1440';
       page.on('pageerror', error => errors.push(error.message));
       await page.addInitScript(() => {
         localStorage.setItem('xiangqi-training-mobile-onboarding-v1', 'done');
-        localStorage.setItem('xiangqi-teaching-session-server', 'http://127.0.0.1:8090');
+        localStorage.setItem('xiangqi-teaching-session-server', 'https://api-test.qixiapp.cn');
       });
       const now = new Date();
       const date = new Date(now.getTime() + 8 * 3600_000).toISOString().slice(0, 10);
@@ -41,11 +41,12 @@ const url = process.env.MOBILE_URL || 'http://127.0.0.1:1440';
       await page.getByRole('heading', { name: '今日任务', exact: true }).waitFor();
       const scrollable = await page.locator('.checkin-tasks').evaluate(node => {
         for (let parent = node.parentElement; parent; parent = parent.parentElement) {
-          if (/(auto|scroll)/.test(getComputedStyle(parent).overflowY)) return true;
+          if (/(auto|scroll)/.test(getComputedStyle(parent).overflowY) && parent.scrollHeight > parent.clientHeight) return true;
         }
         return false;
       });
-      assert(scrollable, 'touch users must be able to scroll to tasks below the viewport at ' + viewport.width);
+      const tasksFit = await page.locator('.checkin-tasks').evaluate(node => node.getBoundingClientRect().bottom <= innerHeight);
+      assert(tasksFit || scrollable, 'tasks must fit or have a scrollable container at ' + viewport.width);
       for (let i = 0; i < tasks.length; i++) {
         await page.locator('.checkin-task').nth(i).getByRole('button', { name: '去打卡', exact: true }).click();
         const submit = page.getByRole('button', { name: '我完成了，盖个章', exact: true });

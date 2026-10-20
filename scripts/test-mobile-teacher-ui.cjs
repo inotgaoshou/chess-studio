@@ -19,8 +19,8 @@ async function fixture(browser, viewport, options = {}) {
   await page.route('**/api/v1/**', async route => {
     const request = route.request(), parsed = new URL(request.url()), path = parsed.pathname;
     const requestOrg = request.headers().authorization?.replace('Bearer ', '') || org;
-    requests.push({ path, org: requestOrg, method: request.method() });
-    let body = [], status = 200;
+    requests.push({ path, search: parsed.search, org: requestOrg, method: request.method() });
+    let body = [], status = 200, libraryNext = null;
     if (path.endsWith('/auth/refresh')) {
       if (expired && options.refreshChangesOrg) org = 'yusheng';
       body = { token: org, expiresAt: '2099-01-01T00:00:00Z', user: user() };
@@ -34,7 +34,7 @@ async function fixture(browser, viewport, options = {}) {
     } else if (path.endsWith('/admin/classes')) body = [{ id: requestOrg + '-class', name: requestOrg + '班级', studentCount: 1, coachCount: 1 }];
     else if (path.endsWith('/students')) body = [{ id: requestOrg + '-student', displayName: requestOrg + '学生', loginName: requestOrg + '.student' }];
     else if (path.endsWith('/folder-tree')) body = [{ id: 'folder', name: '公共目录', path: '公共目录' }];
-    else if (path.endsWith('/problem-libraries')) body = [{ id: 'library', title: '七百题库', publishedCount: options.problemSize ?? 700, reviewStatus: 'published', folderId: 'folder' }, ...(options.multiLibrary ? [{ id: 'library2', title: '第二题库', publishedCount: 9, reviewStatus: 'published' }] : [])];
+    else if (path.endsWith('/problem-libraries') || path.endsWith('/problem-libraries/page')) body = [{ id: 'library', title: '七百题库', publishedCount: options.problemSize ?? 700, reviewStatus: 'published', folderId: 'folder' }, ...(options.multiLibrary ? [{ id: 'library2', title: '第二题库', publishedCount: 9, reviewStatus: 'published' }] : [])];
     else if (path.endsWith('/problems')) {
       const library = path.split('/').at(-2), total = library === 'library2' ? 9 : parsed.searchParams.get('q') ? 120 : (options.problemSize ?? 700);
       const offset = Number(parsed.searchParams.get('cursor') || 0), limit = Number(parsed.searchParams.get('limit') || 50);
@@ -56,6 +56,17 @@ async function fixture(browser, viewport, options = {}) {
       body = Array.from({ length: 16 }, (_, i) => ({ id: requestOrg + i, title: requestOrg + '作业' + i, status: 'published', targetCount: 1, completedCount: 0 }));
       if (options.slowAssignments && requestOrg === 'dongpu') await new Promise(resolve => setTimeout(resolve, 400));
     }
+    if (path.endsWith('/problem-libraries/page')) {
+      if(options.paged) {
+        const first={id:'library',title:'七百题库',publishedCount:700,reviewStatus:'published',folderId:'folder',contentHash:'same-source',parserVersion:1,sourceScope:'platform'};
+        const second={id:'library2',title:'第二题库',publishedCount:9,reviewStatus:'published',folderId:'folder',contentHash:'other-source',parserVersion:1};
+        if(parsed.searchParams.get('q')==='仅副本') body=[{...first,id:'duplicate',title:'机构重复副本',sourceScope:'organization'}];
+        else if(parsed.searchParams.has('folderId')) body=[second];
+        else if(parsed.searchParams.has('cursor')) body=[{...first,id:'duplicate',title:'机构重复副本',sourceScope:'organization'},second];
+        else {body=[first];libraryNext='page-two';}
+      }
+      body={items:body,nextCursor:libraryNext};
+    }
     await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   });
   await page.goto(url + '/teacher');
@@ -67,6 +78,7 @@ async function openWizard(page) {
   await page.getByRole('button', { name: /^布置作业/ }).click();
   await page.getByRole('button', { name: '下一步' }).click();
   await page.getByRole('textbox', { name: '作业标题', exact: true }).fill('移动端验收');
+  await page.getByRole('button', {name:'原资料库',exact:true}).click();
   await page.getByRole('button', { name: '选择整个题库', exact: true }).click();
 }
 
@@ -124,6 +136,30 @@ async function reviewAndPublish(page) {
     console.log('PASS teacher layout and authenticated home navigation');
     if (process.env.TEACHER_LAYOUT_ONLY) return;
     {
+      const {page,requests}=await fixture(browser,{width:390,height:844},{paged:true});
+      await openWizard(page);
+      await page.getByRole('button',{name:'加载更多题库',exact:true}).click();
+      await page.getByRole('button',{name:/^第二题库/}).waitFor();
+      assert.equal(await page.getByRole('button',{name:/^机构重复副本/}).count(),0,'selected canonical source survives later duplicate');
+      await page.getByText('已选择 700 题',{exact:true}).waitFor();
+      await page.getByRole('button',{name:/^第二题库/}).click();
+      await page.getByRole('button',{name:'选择整个题库',exact:true}).click();
+      await page.getByText('已选择 709 题',{exact:true}).waitFor();
+      await page.getByLabel('搜索题库',{exact:true}).fill('仅副本');
+      await page.getByRole('button',{name:/^七百题库/}).waitFor();
+      await page.getByRole('button',{name:/^七百题库/}).click();
+      await page.getByLabel('搜索当前题库').fill('canonical-check');
+      await page.waitForFunction(()=>document.querySelector('.teacher-mobile-problem-picker')?.textContent.includes('canonical-check'));
+      assert(!requests.some(item=>item.path.includes('/problem-libraries/duplicate/problems')),'filtered duplicate must query canonical source IDs');
+      await page.getByLabel('搜索题库',{exact:true}).fill('');
+      await page.getByText('目录',{exact:true}).locator('..').locator('select').selectOption('folder');
+      await page.waitForFunction(()=>document.querySelector('.teacher-mobile-library-picker')?.textContent.includes('第二题库')&&!document.querySelector('.teacher-mobile-library-picker')?.textContent.includes('七百题库'));
+      assert(requests.some(item=>item.search.includes('folderId=folder')),'folder filtering reaches the server');
+      await page.getByText('已选择 709 题',{exact:true}).waitFor();
+      await page.close();
+      console.log('PASS library pagination keeps selection and canonical identity; folder filter uses server');
+    }
+    {
       const { page } = await fixture(browser, { width: 390, height: 844 }, { slowSearch: true });
       await openWizard(page);
       await page.getByLabel('搜索当前题库').fill('慢');
@@ -143,15 +179,14 @@ async function reviewAndPublish(page) {
       await page.getByRole('radio', { name: '按批次数', exact: true }).check();
       await reviewAndPublish(page);
       await page.getByText('教师工作台', { exact: true }).waitFor();
-      assert.equal(created.length, 13);
+      assert.equal(created.length, 7);
       const ids = created.flatMap(item => item.problemIds);
       assert.equal(ids.length, 706);
       assert.equal(new Set(ids).size, 706);
-      assert.equal(created.filter(item => item.title.includes('七百题库')).length, 7);
-      assert.equal(created.filter(item => item.title.includes('第二题库')).length, 6);
-      assert(created.every(item => item.problemIds.every(id => id.startsWith(item.title.includes('第二题库') ? 'library2-' : 'library-'))));
+      assert.deepEqual(ids, [...Array.from({length:700}, (_,i) => 'library-' + i), ...Array.from({length:6}, (_,i) => 'library2-' + (i+3))]);
+      assert.deepEqual(created.map(item => item.problemIds.length), [100,101,101,101,101,101,101]);
       await page.close();
-      console.log('PASS independent multi-library batches and global deduplication');
+      console.log('PASS combined ordered multi-library batches and global deduplication');
     }
     {
       const { page, created } = await fixture(browser, { width: 390, height: 844 }, { problemSize: 0 });
@@ -230,6 +265,8 @@ async function reviewAndPublish(page) {
         await page.getByRole('radio', { name: '自定义题数', exact: true }).check();
         assert.equal(await page.getByRole('spinbutton', { name: '每批题数', exact: true }).inputValue(), '20');
       } else if (mode === 'search') {
+        await page.getByRole('button', {name:'选择整个题库',exact:true}).click();
+        await page.getByText('已选择 0 题',{exact:true}).waitFor();
         await page.getByLabel('搜索当前题库').fill('命中');
         await page.getByRole('button', { name: /选择当前搜索结果/ }).click();
         await page.getByText('已选择 120 题', { exact: true }).waitFor();
@@ -238,6 +275,11 @@ async function reviewAndPublish(page) {
         if (mode === 'remainder') await page.getByLabel('批次数', { exact: true }).fill('3');
       }
       await reviewAndPublish(page);
+      if (mode === 'expired') {
+        await page.getByRole('alert').filter({hasText:'登录已续期'}).waitFor();
+        assert.equal(created.length, 0, '401 must not replay a write');
+        await page.getByRole('button', {name:'继续发布',exact:true}).click();
+      }
       if (mode === 'retry') {
         await page.getByRole('alert').filter({ hasText: '发布临时失败' }).waitFor();
         assert.equal(created.length, 2);

@@ -83,7 +83,7 @@ function StudentIdentity({ displayName, loginName }: { displayName: string; logi
 }
 
 function libraryContentKey(library: TeacherProblemLibrary) {
-  const fingerprint = [library.fingerprint, library.contentFingerprint, library.content_fingerprint, library.fileSha256, library.file_sha256, library.hash]
+  const fingerprint = [library.contentHash, library.fingerprint, library.contentFingerprint, library.content_fingerprint, library.fileSha256, library.file_sha256, library.hash]
     .map((value) => value?.trim())
     .find(Boolean);
   const parserVersion = library.parserVersion ?? library.parser_version ?? "";
@@ -110,7 +110,7 @@ function librarySourceLabel(library: TeacherProblemLibrary, currentOrgId?: strin
   return kind === "platform" ? "平台公共" : kind === "organization" ? "机构题库" : "题库";
 }
 
-function dedupeTeacherLibraries(libraries: TeacherProblemLibrary[], currentOrgId?: string | null) {
+function dedupeTeacherLibraries(libraries: TeacherProblemLibrary[], currentOrgId?: string | null, preferredIds = new Set<string>()) {
   const byKey = new Map<string, { library: TeacherProblemLibrary; sources: Set<string>; count: number }>();
   const sourceScore = (library: TeacherProblemLibrary) => librarySourceKind(library, currentOrgId) === "organization" ? 2 : librarySourceKind(library, currentOrgId) === "platform" ? 0 : 1;
   for (const library of libraries) {
@@ -123,7 +123,7 @@ function dedupeTeacherLibraries(libraries: TeacherProblemLibrary[], currentOrgId
     }
     current.sources.add(source);
     current.count += 1;
-    if (sourceScore(library) > sourceScore(current.library)) current.library = library;
+    if (!preferredIds.has(current.library.id) && (preferredIds.has(library.id) || sourceScore(library) > sourceScore(current.library))) current.library = library;
   }
   let mergedDuplicateCount = 0;
   const items = [...byKey.values()].map(({ library, sources, count }) => {
@@ -338,8 +338,15 @@ function TeacherClassDetail({ classId, onNavigate }: { classId: string; onNaviga
 function TeacherAssignmentWizard({ auth, onNavigate, onAuthChange, onRehearse, initialProblems, onReadGame, onReadSolution }: { initialProblems?: CatalogProblem[]; onReadGame?(id:string):void; onReadSolution?(ids:string[]):void; onRehearse?(id:string):void; auth: TeachingAuth; onNavigate(path: string): void; onAuthChange(auth: TeachingAuth): void }) {
   const [catalogMode, setCatalogMode] = useState(true);
   const [step, setStep] = useState(1); const [folders, setFolders] = useState<TeacherFolder[]>([]); const [libraries, setLibraries] = useState<TeacherProblemLibrary[]>([]); const [classes, setClasses] = useState<TeacherClassDto[]>([]); const [students, setStudents] = useState<TeacherClassMember[]>([]);
-  const [draft, setDraft] = useState<AssignmentDraft>(EMPTY_DRAFT); const [selection, setSelection] = useState<AssignmentSelection>(() => initialProblems?.length ? { ...EMPTY_SELECTION, ordered: true, problems: initialProblems } : EMPTY_SELECTION); const [activeLibraryId, setActiveLibraryId] = useState(""); const [folderId, setFolderId] = useState(""); const [query, setQuery] = useState(""); const [problems, setProblems] = useState<TeacherProblem[]>([]);
+  const [draft, setDraft] = useState<AssignmentDraft>(EMPTY_DRAFT); const [selection, setSelection] = useState<AssignmentSelection>(() => initialProblems?.length ? { ...EMPTY_SELECTION, ordered: true, problems: initialProblems } : EMPTY_SELECTION); const [requestedLibraryId, setActiveLibraryId] = useState(""); const [folderId, setFolderId] = useState(""); const [query, setQuery] = useState(""); const [problems, setProblems] = useState<TeacherProblem[]>([]);
   const [busy, setBusy] = useState(false); const [progress, setProgress] = useState(""); const [error, setError] = useState(""); const [mergedDuplicateCount, setMergedDuplicateCount] = useState(0);
+  const [libraryQuery, setLibraryQuery] = useState("");
+  const [libraryCursor, setLibraryCursor] = useState<string | null>(null);
+  const [visibleLibraryIds, setVisibleLibraryIds] = useState<string[]>([]);
+  const [librariesLoading, setLibrariesLoading] = useState(false);
+  const [libraryError, setLibraryError] = useState("");
+  const libraryGeneration = useRef(0);
+  const libraryAbort = useRef<AbortController | undefined>(undefined);
   const [loading, setLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
   const [reload, setReload] = useState(0);
@@ -356,6 +363,9 @@ function TeacherAssignmentWizard({ auth, onNavigate, onAuthChange, onRehearse, i
   type Submission = { context: TeachingAuth; publishNow: boolean; uncertain: boolean; jobs: Array<{ body: Record<string, unknown>; id?: string; done: boolean }> };
   const submission = useRef<Submission | undefined>(undefined);
   const [submissionProgress, setSubmissionProgress] = useState<{ completed: number; total: number; ids: string[]; uncertain: boolean; publishNow: boolean }>();
+  const canonicalLibraries = dedupeTeacherLibraries(libraries, auth.user.orgId, new Set([...selection.libraryIds, ...selection.filters.map(item=>item.libraryId), ...selection.problems.map(item=>item.libraryId), requestedLibraryId]));
+  const requestedLibrary = libraries.find(item => item.id === requestedLibraryId);
+  const activeLibraryId = canonicalLibraries.items.find(item => requestedLibrary && libraryContentKey(item) === libraryContentKey(requestedLibrary))?.id ?? requestedLibraryId;
   const selectedCount = selectionCount(selection, libraries); const hasTargets = draft.classIds.length > 0 || draft.studentIds.length > 0;
   useEffect(() => {
     let cancelled = false;
@@ -371,20 +381,42 @@ function TeacherAssignmentWizard({ auth, onNavigate, onAuthChange, onRehearse, i
     setLoading(true); setLoadFailed(false); setError("");
     void (async () => {
       try {
-        const [nextFolders, nextLibraries, nextClasses] = await Promise.all([
-          teachingClient.teacherFolderTree(auth), teachingClient.teacherProblemLibraries("", auth), teachingClient.teacherClasses(auth),
+        const [nextFolders, nextClasses] = await Promise.all([
+          teachingClient.teacherFolderTree(auth), teachingClient.teacherClasses(auth),
         ]);
         const memberLists = await Promise.all(nextClasses.map((item) => teachingClient.teacherClassStudents(item.id, auth)));
         if (cancelled) return;
-        const deduped = dedupeTeacherLibraries(nextLibraries.filter((item) => item.reviewStatus === "published"), auth.user.orgId);
-        setFolders(nextFolders); setLibraries(deduped.items); setMergedDuplicateCount(deduped.mergedDuplicateCount);
+        setFolders(nextFolders);
         setClasses(nextClasses); setStudents([...new Map(memberLists.flat().map((item) => [item.id, item])).values()]);
-        setActiveLibraryId(deduped.items[0]?.id || "");
+
       } catch (reason) { if (!cancelled) { setError(messageOf(reason)); setLoadFailed(true); } }
       finally { if (!cancelled) setLoading(false); }
     })();
     return () => { cancelled = true; selectionGeneration.current++; };
   }, [scope, reload]);
+  async function loadLibraries(after?: string) {
+    if (after && librariesLoading) return;
+    libraryAbort.current?.abort();
+    const abort = new AbortController(); libraryAbort.current = abort;
+    const generation = ++libraryGeneration.current;
+    setLibrariesLoading(true); setLibraryError("");
+    try {
+      const page = await teachingClient.teacherProblemLibrariesPage({q:libraryQuery.trim(),folderId:folderId || undefined,cursor:after},auth,abort.signal);
+      if (abort.signal.aborted || generation !== libraryGeneration.current) return;
+      const rows = page.items.filter(item => item.reviewStatus === "published");
+      setLibraryCursor(page.nextCursor ?? null);
+      // Keep metadata for previously selected sources while browsing other pages/filters.
+      setLibraries(old => [...new Map([...old,...rows].map(item => [item.id,item])).values()]);
+      setVisibleLibraryIds(old => after ? [...new Set([...old,...rows.map(item => item.id)])] : rows.map(item => item.id));
+      if (!after) setActiveLibraryId(rows[0]?.id || "");
+    } catch(reason) { if (!abort.signal.aborted && generation === libraryGeneration.current) setLibraryError(messageOf(reason)); }
+    finally { if (generation === libraryGeneration.current) setLibrariesLoading(false); }
+  }
+  useEffect(() => {
+    libraryGeneration.current++; libraryAbort.current?.abort(); setLibraryCursor(null); setVisibleLibraryIds([]);
+    const timer = window.setTimeout(() => void loadLibraries(), 250);
+    return () => { window.clearTimeout(timer); libraryGeneration.current++; libraryAbort.current?.abort(); };
+  }, [scope, reload, folderId, libraryQuery]);
   useEffect(() => {
     let cancelled = false;
     setProblems([]); setProblemCount(0); setProblemError("");
@@ -478,7 +510,12 @@ function TeacherAssignmentWizard({ auth, onNavigate, onAuthChange, onRehearse, i
             const created = await teachingClient.createTeacherAdminAssignment(job.body, run.context);
             job.id = created.id;
             if (!job.id) throw new Error("服务器未返回作业编号");
-          } catch (reason) { run.uncertain = true; throw reason; }
+          } catch (reason) {
+            // A definitive authentication rejection did not create a draft.
+            // Transport failures remain uncertain and must never recreate it.
+            run.uncertain = !(reason && typeof reason === "object" && "status" in reason && reason.status === 401);
+            throw reason;
+          }
           updateSubmission();
         }
         if (run.publishNow) {
@@ -502,7 +539,9 @@ function TeacherAssignmentWizard({ auth, onNavigate, onAuthChange, onRehearse, i
       operationLock.current = false; setBusy(false); setProgress("");
     }
   };
-  const visibleLibraries = libraries.filter((item) => !folderId || item.folderId === folderId);
+  const libraryPage = canonicalLibraries;
+  const visibleKeys = new Set(libraries.filter(item => visibleLibraryIds.includes(item.id)).map(libraryContentKey));
+  const visibleLibraries = libraryPage.items.filter(item => visibleKeys.has(libraryContentKey(item)));
   const locked = busy || switching || loading || loadFailed || Boolean(submissionProgress);
   const selectedGroups = [...selection.libraryIds.map((id) => ({ label: libraries.find((item) => item.id === id)?.title || "题库", count: libraries.find((item) => item.id === id)?.publishedCount || 0 })), ...selection.filters.map((item) => ({ label: item.label, count: item.count })), ...[...new Set(selection.problems.map((item) => item.libraryId))].map((id) => ({ label: `${libraries.find((item) => item.id === id)?.title || "题库"} 自选题`, count: selection.problems.filter((item) => item.libraryId === id).length }))];
   const batchValue = draft.batchMode === "count" ? draft.batchCount : draft.batchSize;
@@ -536,7 +575,10 @@ function TeacherAssignmentWizard({ auth, onNavigate, onAuthChange, onRehearse, i
           <div className="mobile-segmented"><button type="button" className={catalogMode ? "active" : ""} onClick={() => setCatalogMode(true)}>教学目录</button><button type="button" className={!catalogMode ? "active" : ""} onClick={() => setCatalogMode(false)}>原资料库</button></div>
           {catalogMode ? <TeachingCatalog teacher auth={auth} onReadGame={onReadGame} onReadSolution={onReadSolution} onRehearse={onRehearse} selectedIds={selection.problems.map(p => p.id)} onRemove={id => setSelection(old => ({ ...old, problems: old.problems.filter(p => p.id !== id) }))} onAdd={(items: CatalogProblem[]) => setSelection(old => ({ ...old, ordered: true, problems: [...new Map([...old.problems, ...items].map(p => [p.id,p])).values()] }))}/> : <>
           <label><span>目录</span><select value={folderId} onChange={(event) => setFolderId(event.target.value)}><option value="">全部目录</option>{folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.path || folder.name}</option>)}</select></label>
-          <div className="teacher-mobile-library-picker">{visibleLibraries.map((library) => <button type="button" key={library.id} className={activeLibraryId === library.id ? "active" : ""} onClick={() => { setActiveLibraryId(library.id); setQuery(""); }}><BookOpen/><span><b>{library.title}</b><small>{library.publishedCount} 题 · {librarySourceLabel(library, auth.user.orgId)}{library.accessTier === "vip" ? " · VIP" : ""}</small></span>{selection.libraryIds.includes(library.id) && <i>整库</i>}</button>)}</div>
+          <label><span>搜索题库</span><input value={libraryQuery} onChange={event => setLibraryQuery(event.target.value)} placeholder="搜索题库、文件名、目录"/></label>
+          {librariesLoading && <p role="status">正在加载题库…</p>}
+          {libraryError && <p role="alert">{libraryError}<button type="button" onClick={() => void loadLibraries(libraryCursor || undefined)}>重试加载</button></p>}
+          <div className="teacher-mobile-library-picker">{visibleLibraries.map((library) => <button type="button" key={library.id} className={activeLibraryId === library.id ? "active" : ""} onClick={() => { setActiveLibraryId(library.id); setQuery(""); }}><BookOpen/><span><b>{library.title}</b><small>{library.publishedCount} 题 · {librarySourceLabel(library, auth.user.orgId)}{library.accessTier === "vip" ? " · VIP" : ""}</small></span>{selection.libraryIds.includes(library.id) && <i>整库</i>}</button>)}</div>{libraryCursor && <button type="button" disabled={librariesLoading} onClick={() => void loadLibraries(libraryCursor)}>加载更多题库</button>}
           {mergedDuplicateCount > 0 && <p className="teacher-mobile-merge-note">已合并 {mergedDuplicateCount} 个公共库重复项。</p>}
           {activeLibraryId && <>
             <label className="teacher-mobile-search"><Search/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索当前题库" aria-label="搜索当前题库"/></label>
