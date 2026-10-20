@@ -1,3 +1,4 @@
+import { withRequestDeadline } from "./requestDeadline";
 import { Capacitor, registerPlugin } from "@capacitor/core";
 import type { BoardState, CblLibrary, CblManualLibrary, RuleMode } from "./types";
 
@@ -70,35 +71,37 @@ export async function acceptsMove(fen: string, moves: string[], move: string, ru
 }
 
 export async function queryCloudBook(fen: string): Promise<CloudBookMove[]> {
-  let payload: string;
-  try {
-    if (Capacitor.isNativePlatform()) payload = (await nativeCloudBook.query({ fen })).payload;
-    else {
-      const endpoint = new URL("https://www.chessdb.cn/chessdb.php");
-      endpoint.searchParams.set("action", "queryall");
-      endpoint.searchParams.set("board", fen);
-      const response = await fetch(endpoint, { headers: { accept: "text/plain" } });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      payload = await response.text();
-    }
-  } catch (error) { throw new Error(`云库请求失败：${error instanceof Error ? error.message : "网络不可用"}`); }
-  const rows = payload.trim().split("|").map((row) => Object.fromEntries(row.split(",").flatMap((part) => {
-    const index = part.indexOf(":");
-    return index < 0 ? [] : [[part.slice(0, index), part.slice(index + 1)]];
-  })));
-  const unique = new Map<string, CloudBookMove>();
-  for (const row of rows) {
-    const iccs = row.move;
-    if (!iccs || unique.has(iccs)) continue;
+  return withRequestDeadline(async signal => {
+    let payload: string;
     try {
-      await boardAt(fen, [iccs]);
-      const score = Number(row.score) || 0;
-      const parsedWinRate = Number(row.winrate);
-      const winRate = Number.isFinite(parsedWinRate) ? parsedWinRate : 100 / (1 + Math.exp(-score / 330));
-      unique.set(iccs, { iccs, notation: (await chineseLine(fen, [iccs])).at(-1) ?? iccs, score, winRate: Math.max(0, Math.min(100, winRate)) });
-    } catch { /* Ignore invalid candidates returned by the public cloud book. */ }
-  }
-  return [...unique.values()].sort((left, right) => right.score - left.score || left.iccs.localeCompare(right.iccs));
+      if (Capacitor.isNativePlatform()) payload = (await nativeCloudBook.query({ fen })).payload;
+      else {
+        const endpoint = new URL("https://www.chessdb.cn/chessdb.php");
+        endpoint.searchParams.set("action", "queryall");
+        endpoint.searchParams.set("board", fen);
+        const response = await fetch(endpoint, { signal, headers: { accept: "text/plain" } });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        payload = await response.text();
+      }
+    } catch (error) { throw new Error(`云库请求失败：${error instanceof Error ? error.message : "网络不可用"}`); }
+    const rows = payload.trim().split("|").map((row) => Object.fromEntries(row.split(",").flatMap((part) => {
+      const index = part.indexOf(":");
+      return index < 0 ? [] : [[part.slice(0, index), part.slice(index + 1)]];
+    })));
+    const unique = new Map<string, CloudBookMove>();
+    for (const row of rows) {
+      const iccs = row.move;
+      if (!iccs || unique.has(iccs)) continue;
+      try {
+        await boardAt(fen, [iccs]);
+        const score = Number(row.score) || 0;
+        const parsedWinRate = Number(row.winrate);
+        const winRate = Number.isFinite(parsedWinRate) ? parsedWinRate : 100 / (1 + Math.exp(-score / 330));
+        unique.set(iccs, { iccs, notation: (await chineseLine(fen, [iccs])).at(-1) ?? iccs, score, winRate: Math.max(0, Math.min(100, winRate)) });
+      } catch { /* Ignore invalid candidates returned by the public cloud book. */ }
+    }
+    return [...unique.values()].sort((left, right) => right.score - left.score || left.iccs.localeCompare(right.iccs));
+  }, undefined, "云库请求超时，请重试");
 }
 
 export function hasLocalPikafish() {

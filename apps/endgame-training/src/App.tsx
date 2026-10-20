@@ -1,3 +1,5 @@
+import { TeacherSourceLibraries } from "./TeacherSourceLibraries";
+import { FEATURED_LIBRARY_CATEGORIES, LIBRARY_CATEGORY_NAMES, libraryCategoryCode } from "./libraryCategories";
 import { canBrowsePlatformSources } from "./catalogAccess";
 import {LineRehearsal,type RehearsalRequest} from "./LineRehearsal";
 import { localTrainingProgress, saveLocalTrainingProgress } from "./localTrainingProgress";
@@ -1026,27 +1028,31 @@ function ManualTrendChart({ samples, progress, onAnalyze }: { samples: ManualTre
   </section>;
 }
 
-function ImportCblPanel({ accessTier, canSetAccessTier, onAccessTierChange, onBack, onPick, onImportUrl }: { canSetAccessTier: boolean; accessTier: "public" | "vip"; onAccessTierChange(value: "public" | "vip"): void; onBack(): void; onPick(): void; onImportUrl(url: string): Promise<void> }) {
+function ImportCblPanel({ accessTier, canSetAccessTier, onAccessTierChange, onBack, onPick, onImportUrl }: { canSetAccessTier: boolean; accessTier: "public" | "vip"; onAccessTierChange(value: "public" | "vip"): void; onBack(): void; onPick(): void; onImportUrl(url: string, signal?: AbortSignal): Promise<void> }) {
   const [url, setUrl] = useState("");
   const [status, setStatus] = useState("");
   const [pending, setPending] = useState(false);
+  const download = useRef<AbortController | undefined>(undefined);
+  useEffect(() => () => download.current?.abort(), []);
   async function submitUrl() {
+    if (download.current) return;
     const value = url.trim();
     if (!value) { setStatus("请先粘贴 CBL 下载地址。"); return; }
+    const abort = new AbortController(); download.current = abort;
     setPending(true);
     setStatus("正在下载并解析 CBL…");
     try {
-      await onImportUrl(value);
+      await onImportUrl(value, abort.signal);
       setStatus("导入完成。");
     } catch (error) {
-      setStatus(`URL 导入失败：${error instanceof Error ? error.message : String(error)}`);
+      if (!abort.signal.aborted) setStatus(`URL 导入失败：${error instanceof Error ? error.message : String(error)}`);
     } finally {
-      setPending(false);
+      download.current = undefined; setPending(false);
     }
   }
   return <section className="import-cbl-panel" role="dialog" aria-modal="true" aria-labelledby="import-cbl-title">
     <header><button type="button" aria-label="返回棋析" onClick={onBack}><ChevronLeft/><span>返回</span></button><div><b id="import-cbl-title">导入 CBL</b><small>选择本机、网盘或 URL 中的 .CBL 棋库</small></div></header>
-    <main><FileUp/><strong>导入 CBL 棋库</strong><p>电脑本地文件请先通过 AirDrop、iCloud Drive、微信/QQ 文件或系统“文件 App”保存到手机，再点“选择 CBL 文件”。可多选题库；标准开局棋谱会自动进入录谱库。同名 .logic.json 可附加残局提示。</p>{canSetAccessTier && <label className="import-access-toggle"><input type="checkbox" checked={accessTier === "vip"} onChange={(event) => onAccessTierChange(event.target.checked ? "vip" : "public")}/><span><b>设为 VIP 题库</b><small>勾选后，本次导入的残局题发布到作业时会要求学生有有效 VIP/作业权益。</small></span></label>}<button type="button" className="primary" onClick={onPick}><FileUp/>选择 CBL 文件</button><div className="import-url-box"><label><span>URL 导入</span><input value={url} inputMode="url" autoCapitalize="none" autoCorrect="off" placeholder="https://example.com/library.cbl" disabled={pending} onChange={(event) => { setUrl(event.target.value); setStatus(""); }}/></label><button type="button" disabled={pending} onClick={() => void submitUrl()}><Link/>{pending ? "导入中" : "下载导入"}</button>{status && <small>{status}</small>}</div><p className="import-cbl-hint">URL 服务器若限制跨域、防盗链或下载权限，请先下载到本机后使用文件导入。单个文件最大 50MB；URL 导入不附加 sidecar。</p></main>
+    <main><FileUp/><strong>导入 CBL 棋库</strong><p>电脑本地文件请先通过 AirDrop、iCloud Drive、微信/QQ 文件或系统“文件 App”保存到手机，再点“选择 CBL 文件”。可多选题库；标准开局棋谱会自动进入录谱库。同名 .logic.json 可附加残局提示。</p>{canSetAccessTier && <label className="import-access-toggle"><input type="checkbox" checked={accessTier === "vip"} onChange={(event) => onAccessTierChange(event.target.checked ? "vip" : "public")}/><span><b>设为 VIP 题库</b><small>勾选后，本次导入的残局题发布到作业时会要求学生有有效 VIP/作业权益。</small></span></label>}<button type="button" className="primary" disabled={pending} onClick={onPick}><FileUp/>选择 CBL 文件</button><div className="import-url-box"><label><span>URL 导入</span><input value={url} inputMode="url" autoCapitalize="none" autoCorrect="off" placeholder="https://example.com/library.cbl" disabled={pending} onChange={(event) => { setUrl(event.target.value); setStatus(""); }}/></label><button type="button" disabled={pending} onClick={() => void submitUrl()}><Link/>{pending ? "导入中" : "下载导入"}</button>{status && <small>{status}</small>}</div><p className="import-cbl-hint">URL 服务器若限制跨域、防盗链或下载权限，请先下载到本机后使用文件导入。单个文件最大 50MB；URL 导入不附加 sidecar。</p></main>
   </section>;
 }
 
@@ -1394,13 +1400,6 @@ function MobileOnboardingPanel({ onLogin, onLocal }: { onLogin(): void; onLocal(
   </main>;
 }
 
-const FEATURED_LIBRARY_CATEGORIES = ["A", "B", "C", "E", "N", "S"] as const;
-const LIBRARY_CATEGORY_NAMES: Record<string, string> = { A: "开局", B: "中局", C: "残局", D: "排局", E: "对局", F: "全局", G: "让子", H: "弃子", I: "绝杀", J: "飞刀", K: "陷阱", L: "巧妙", M: "书籍", N: "古谱", O: "布局", P: "棋书", S: "杀法", other: "其他" };
-function libraryCategoryCode(folderPath?: string) {
-  const match = folderPath?.match(/(?:^|\/)([A-S])(?:[\s、._-]|[\u4e00-\u9fff]|$)/i);
-  const code=match?.[1]?.toUpperCase();
-  return code&&LIBRARY_CATEGORY_NAMES[code]?code:"other";
-}
 
 function MobileLibraryPanel({ onCatalogAssign, teachingAuth, onCatalogPractice, onCatalogRead, onCatalogGame, onCatalogRehearse, libraries, gameLibraries, signedIn, canImportLocal, onOpenLibrary, onOpenGameLibrary, onImport, onOpenAssignments }: {
   onCatalogAssign?(items: CatalogProblem[]): void;
@@ -1417,19 +1416,18 @@ function MobileLibraryPanel({ onCatalogAssign, teachingAuth, onCatalogPractice, 
   const teacher = Boolean(teachingAuth && ["coach", "admin"].includes(teachingAuth.user.role));
   const catalogVisible = teachingAuth?.user.role === "student" || teacher;
   const sourcesVisible=canBrowsePlatformSources(teachingAuth);
-  const [teacherSources,setTeacherSources]=useState<TrainingLibrary[]>([]);
   const [sourceLibraryId,setSourceLibraryId]=useState<string>();
-  useEffect(()=>{setTeacherSources([]);setSourceLibraryId(undefined);if(!teacher||!teachingAuth)return;let active=true;void teachingClient.teacherProblemLibraries("",teachingAuth).then(items=>{if(active)setTeacherSources(items.filter(l=>l.reviewStatus==="published"&&l.publishedCount>0).map(l=>({id:`platform:${l.id}`,fingerprint:l.id,title:l.title,problemCount:l.publishedCount,completedCount:0,parserVersion:0,importedAt:"",source:"platform",folderPath:l.folderPath})));}).catch(()=>undefined);return()=>{active=false;};},[teachingAuth,teacher]);
+  useEffect(() => setSourceLibraryId(undefined), [teachingAuth?.user.id, teachingAuth?.user.orgId]);
   const [selectedProblems, setSelectedProblems] = useState<CatalogProblem[]>([]);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<"all" | "progress" | "completed">("all");
   const [category, setCategory] = useState<string>("");
   const [categoriesExpanded, setCategoriesExpanded] = useState(false);
   const localLibraries = libraries.filter((item) => !item.source || item.source === "local");
-  const platformLibraries = sourcesVisible?(teacher?teacherSources:libraries.filter((item) => item.source === "platform")):[];
+  const platformLibraries = sourcesVisible?(teacher?[]:libraries.filter((item) => item.source === "platform")):[];
   const visibleGameLibraries=sourcesVisible?gameLibraries:[];
   const hasPracticeLibraries = localLibraries.length > 0 || platformLibraries.length > 0;
-  const hasBrowsableContent = hasPracticeLibraries || visibleGameLibraries.length > 0;
+  const hasBrowsableContent = teacher || hasPracticeLibraries || visibleGameLibraries.length > 0;
   const teacherLibraryCount = libraries.filter((item) => item.source === "teaching").length;
   const matchesProgress = (item: TrainingLibrary) => filter === "all" || (filter === "progress"
     ? (item.practicedCount ?? item.completedCount) > 0 && item.completedCount < item.problemCount
@@ -1468,6 +1466,7 @@ function MobileLibraryPanel({ onCatalogAssign, teachingAuth, onCatalogPractice, 
     {hasBrowsableContent && <label className="mobile-library-search"><Search/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={sourcesVisible?"搜索平台或本地题库":"搜索本地题库"} aria-label="搜索题库" autoComplete="off"/>{query && <button type="button" aria-label="清除搜索" onClick={() => setQuery("")}><X/></button>}</label>}
     {hasPracticeLibraries && <div className="mobile-library-filters" role="tablist" aria-label="题库完成状态筛选"><button type="button" role="tab" className={filter === "all" ? "active" : ""} aria-selected={filter === "all"} onClick={() => setFilter("all")}>全部</button><button type="button" role="tab" className={filter === "progress" ? "active" : ""} aria-selected={filter === "progress"} onClick={() => setFilter("progress")}>练习中</button><button type="button" role="tab" className={filter === "completed" ? "active" : ""} aria-selected={filter === "completed"} onClick={() => setFilter("completed")}>已完成</button></div>}
     {catalogVisible ? null : signedIn ? <section className="mobile-library-overview platform"><span><Database/></span><div><strong>{platformLibraries.length || gameLibraries.length ? `${platformLibraries.length} 本平台训练题库 · ${gameLibraries.length} 本棋谱学习` : "平台内容待发布"}</strong><small>{platformLibraries.length || gameLibraries.length ? "按专题选择题目练习；完整棋谱仅供阅读、复盘与拆棋。" : "原始 CBL 导入后需经后台审核并发布，才会按账号权益显示在这里。"}</small></div></section> : <section className="mobile-library-overview"><span><UserRound/></span><div><strong>登录后读取平台内容</strong><small>平台训练题与完整棋谱按账号权限加载；本地题库始终可用。</small></div></section>}
+    {teacher && teachingAuth && <TeacherSourceLibraries key={`${teachingAuth.user.id}:${teachingAuth.user.orgId}`} auth={teachingAuth} query={query} onOpen={setSourceLibraryId}/>}
     {platformLibraries.length > 0 && <section className="mobile-library-section"><header><strong>平台训练题库</strong><button type="button" className="mobile-section-link" aria-expanded={categoriesExpanded} onClick={() => setCategoriesExpanded((expanded) => !expanded)}><span>{categoriesExpanded ? "收起分类" : "更多分类"}</span><ChevronDown className={categoriesExpanded ? "expanded" : ""}/></button></header><div className="mobile-category-strip" role="tablist" aria-label="平台题库分类">{shownCategories.map((code) => <button type="button" role="tab" aria-selected={selectedCategory === code} key={code} className={selectedCategory === code ? "active" : ""} onClick={() => setCategory(code)}>{code} {LIBRARY_CATEGORY_NAMES[code]}{categoryCounts.has(code) ? ` ${categoryCounts.get(code)}` : ""}</button>)}</div><div className="mobile-library-list"><MateLibraryGroups libraries={visiblePlatformLibraries} onOpen={onOpenLibrary}/>{visiblePlatformLibraries.filter(item => !item.mateCollection).map((item) => renderLibraryCard(item, "platform"))}{!visiblePlatformLibraries.length && <div className="mobile-library-empty"><Search/><strong>当前分类暂无可用题库</strong><small>内容发布后会按账号权益自动出现在这里。</small></div>}</div></section>}
     {visibleGameLibraries.length > 0 && <section className="mobile-library-section"><header><strong>平台棋谱学习</strong><small>{visibleGameLibraries.length} 本</small></header><div className="mobile-library-list">{visibleGameLibraries.filter((item) => item.title.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())).map((item) => <button type="button" key={item.id} onClick={() => onOpenGameLibrary(item)}><span className="mobile-library-cover game"><FilePenLine/></span><span><b>{item.title}</b><small>{item.folderPath ? `${item.folderPath} · ` : ""}{item.gameCount} 局 · 阅读、复盘与拆棋</small></span><ChevronRight/></button>)}</div></section>}
     {(canImportLocal || localLibraries.length > 0) && <section className="mobile-library-section"><header><strong>我的本地题库</strong><small>{visibleLibraries.length} 本</small></header>{visibleLibraries.length ? <div className="mobile-library-list">{visibleLibraries.map((item) => renderLibraryCard(item, "local"))}</div> : <div className="mobile-library-empty"><Folder/><strong>{query || filter !== "all" ? "当前筛选没有本地题库" : "还没有本地题库"}</strong><small>{query ? "换个关键词试试。" : totalProblems ? "继续从本地题库练习。" : "导入 CBL 后，带题解的局面可进入本地练习。"}</small>{canImportLocal && !query && <button type="button" onClick={onImport}>导入 CBL 题库</button>}</div>}</section>}
@@ -3184,7 +3183,7 @@ export function App() {
     setImportPanelOpen(false);
     setNotice(results.join("；"));
   }
-  async function importCblUrl(value: string) {
+  async function importCblUrl(value: string, source?: AbortSignal) {
     if (!canImportLocal) throw new Error(importDeniedReason);
     let url: URL;
     try {
@@ -3193,12 +3192,16 @@ export function App() {
       throw new Error("URL 格式不正确。");
     }
     if (!["http:", "https:"].includes(url.protocol)) throw new Error("仅支持 http 或 https 下载地址。");
-    const response = await fetch(url, { headers: { accept: "application/octet-stream,*/*" } });
-    if (!response.ok) throw new Error(`下载失败：HTTP ${response.status}`);
-    const declaredSize = Number(response.headers.get("content-length"));
-    if (Number.isFinite(declaredSize) && declaredSize > CBL_IMPORT_MAX_BYTES) throw new Error("远程文件超过 50MB。");
-    const buffer = await response.arrayBuffer();
-    if (buffer.byteLength > CBL_IMPORT_MAX_BYTES) throw new Error("远程文件超过 50MB。");
+    const buffer = await withRequestDeadline(async signal => {
+      const response = await fetch(url, { signal, headers: { accept: "application/octet-stream,*/*" } });
+      if (!response.ok) throw new Error(`下载失败：HTTP ${response.status}`);
+      const declaredSize = Number(response.headers.get("content-length"));
+      if (Number.isFinite(declaredSize) && declaredSize > CBL_IMPORT_MAX_BYTES) throw new Error("远程文件超过 50MB。");
+      const buffer = await response.arrayBuffer();
+      if (buffer.byteLength > CBL_IMPORT_MAX_BYTES) throw new Error("远程文件超过 50MB。");
+      return buffer;
+    }, source, "CBL 下载超时，请重试");
+    source?.throwIfAborted();
     const result = await importBytes(new Uint8Array(buffer), undefined, importAccessTier);
     setImportPanelOpen(false);
     setNotice(result);

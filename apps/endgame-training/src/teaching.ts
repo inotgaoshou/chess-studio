@@ -1631,9 +1631,12 @@ export const teachingClient = {
   async teacherFolderTree(context?: TeachingAuth) {
     return teacherRequest<TeacherFolder[]>("/api/v1/admin/content/folder-tree?scope=teaching", {}, context);
   },
-  async teacherProblemLibrariesPage(query: { q?: string; folderId?: string; cursor?: string } = {}, context?: TeachingAuth, signal?: AbortSignal) {
+  async teacherLibraryCategories(context?: TeachingAuth, signal?: AbortSignal) {
+    return teacherRequest<{code:string;libraryCount:number}[]>("/api/v1/admin/problem-library-categories?scope=teaching", {signal}, context);
+  },
+  async teacherProblemLibrariesPage(query: { q?: string; folderId?: string; cursor?: string; category?: string; publishedOnly?: boolean } = {}, context?: TeachingAuth, signal?: AbortSignal) {
     const params = new URLSearchParams({scope:"teaching",limit:"50"});
-    for (const [key,value] of Object.entries(query)) if(value) params.set(key,value);
+    for (const [key,value] of Object.entries(query)) if(value) params.set(key,String(value));
     return teacherRequest<{items:TeacherProblemLibrary[];nextCursor?:string|null}>(`/api/v1/admin/problem-libraries/page?${params}`, {signal}, context);
   },
   async teacherProblemLibraries(query = "", context?: TeachingAuth) {
