@@ -1,6 +1,6 @@
 import { PracticeOpeningStatus, measureOpening, setActiveOpening } from "./PracticeOpeningStatus";
 import { TeacherSourceLibraries } from "./TeacherSourceLibraries";
-import { FEATURED_LIBRARY_CATEGORIES, LIBRARY_CATEGORY_NAMES, libraryCategoryCode } from "./libraryCategories";
+import { FEATURED_LIBRARY_CATEGORIES, LIBRARY_CATEGORY_NAMES, libraryCategoryCode, legacyTrainingSourceVisible, legacyTrainingSourceTitle } from "./libraryCategories";
 import { canBrowsePlatformSources } from "./catalogAccess";
 import {LineRehearsal,type RehearsalRequest} from "./LineRehearsal";
 import { localTrainingProgress, saveLocalTrainingProgress } from "./localTrainingProgress";
@@ -1448,7 +1448,7 @@ function MobileLibraryPanel({ onCatalogNavigate, onCatalogAssign, teachingAuth, 
   const [category, setCategory] = useState<string>("");
   const [categoriesExpanded, setCategoriesExpanded] = useState(false);
   const localLibraries = libraries.filter((item) => !item.source || item.source === "local");
-  const platformLibraries = sourcesVisible?(teacher?[]:libraries.filter((item) => item.source === "platform")):[];
+  const platformLibraries = sourcesVisible?(teacher?[]:libraries.filter((item) => item.source === "platform" && legacyTrainingSourceVisible(item.folderPath, item.problemCount))):[];
   const visibleGameLibraries=sourcesVisible?gameLibraries:[];
   const hasPracticeLibraries = localLibraries.length > 0 || platformLibraries.length > 0;
   const hasBrowsableContent = teacher || hasPracticeLibraries || visibleGameLibraries.length > 0;
@@ -1478,9 +1478,10 @@ function MobileLibraryPanel({ onCatalogNavigate, onCatalogAssign, teachingAuth, 
   const renderLibraryCard = (item: TrainingLibrary, kind: "platform" | "local") => {
     const progress = item.problemCount ? Math.min(100, Math.round(item.completedCount / item.problemCount * 100)) : 0;
     const access = accessTierLabel(item.accessTier);
+    const curated = kind === "platform" && libraryCategoryCode(item.folderPath) === "B";
     return <button type="button" key={item.id} onClick={() => teacher&&kind==="platform"?setSourceLibraryId(item.fingerprint):onOpenLibrary(item)}>
       <span className={`mobile-library-cover ${kind === "platform" ? "platform" : ""}`}><BookOpen/></span>
-      <span><b>{item.title}</b><small>{item.folderPath && kind === "platform" ? `${item.folderPath} · ` : ""}{item.problemCount} 题{` · 已完成 ${item.completedCount} 题`}{access ? ` · ${access}` : ""}</small><i><em style={{ width: `${progress}%` }}/></i></span>
+      <span><b>{kind === "platform" ? legacyTrainingSourceTitle(item.title, item.folderPath, item.problemCount) : item.title}</b><small>{curated ? "" : `${item.folderPath && kind === "platform" ? `${item.folderPath} · ` : ""}${item.problemCount} 题 · `}已完成 {item.completedCount} 题{access ? ` · ${access}` : ""}</small><i><em style={{ width: `${progress}%` }}/></i></span>
       {access && <em className="mobile-access-badge">{access}</em>}<ChevronRight/>
     </button>;
   };

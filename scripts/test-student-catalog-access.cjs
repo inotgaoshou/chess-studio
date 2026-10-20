@@ -2,8 +2,10 @@ const assert=require('node:assert/strict');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'/Users/chenyubin/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
 const url=process.env.LIBRARY_URL||'http://127.0.0.1:1446';
 const entries=[['basic_mates','基础杀法'],['mate_series','杀法练习系列'],['checking_mates','连将杀'],['quiet_mates','非连将杀'],['practical_mates','实战杀法'],['middlegame','中局战术']];
-const nodes=entries.map(([teachingEntry,name],i)=>({id:teachingEntry,teachingEntry,name,kind:'category',active:true,confirmed:true,displayOrder:i,itemCount:100+i,completedCount:7,rehearsalCount:30,rehearsalCompletedCount:2,materialCount:12}));
-const books=[['c','C 残局'],['b','B 中局'],['unknown','无分类']].map(([id,folderPath])=>({id,assetId:id,title:'来源'+id,folderPath,publishedCount:1,reviewStatus:'published',problemCount:1,parserVersion:1,createdAt:''}));
+const nodes=entries.map(([teachingEntry,name],i)=>({id:teachingEntry,teachingEntry,name,kind:'category',active:true,confirmed:true,displayOrder:i,itemCount:teachingEntry==='middlegame'?4:100+i,completedCount:7,rehearsalCount:30,rehearsalCompletedCount:2,materialCount:12}));
+const source=(id,title,folderPath,publishedCount,problemCount=publishedCount)=>({id,assetId:id,title,folderPath,publishedCount,reviewStatus:'published',problemCount,parserVersion:1,createdAt:''});
+const smallBooks=[source('b4','零散111（训练题）','B 中局',4,111),source('b2','零散193（训练题）','B 中局',2,193),source('b9','零散318（训练题）','B 中局',9,318)];
+const books=[source('c','来源c','C 残局',1),source('b','中局妙手193（训练题）','B 中局',10,193),source('unknown','来源unknown','无分类',1),...smallBooks];
 (async()=>{const browser=await chromium.launch({channel:'chrome',headless:true});try{
  for(const mode of ['student','vip','expired','coach','admin']){
   const page=await browser.newPage({viewport:{width:320,height:740}}),requests=[],errors=[];
@@ -15,7 +17,7 @@ const books=[['c','C 残局'],['b','B 中局'],['unknown','无分类']].map(([id
    if(path.endsWith('/auth/refresh'))body={token:mode,expiresAt:'2099-01-01T00:00:00Z',user:{id:mode,orgId:'school',orgName:'验收学校',role,displayName:'验收',vipActive:activeVip,vipExpiresAt:mode==='expired'?'2000-01-01T00:00:00Z':null,organizations:[]}};
    else if(path.endsWith('/teaching-catalog/browse')){await new Promise(r=>setTimeout(r,100));const current=nodes.find(n=>n.id===u.searchParams.get('nodeId'));body={statisticsReady:true,statisticsRevision:'1',availabilitySnapshotRevision:'1',statisticsSnapshotRevision:'1',currentNode:current||null,breadcrumbs:current?[current]:[],children:current?[]:[...nodes].reverse(),learningMaterials:[]};}
    else if(path.endsWith('/admin/problem-library-categories'))body=[{code:'B',libraryCount:1},{code:'C',libraryCount:1},{code:'other',libraryCount:1}];
-   else if(path.endsWith('/admin/problem-libraries/page'))body={items:books,nextCursor:null};
+   else if(path.endsWith('/admin/problem-libraries/page')){const category=u.searchParams.get('category');body=category==='B'&&!u.searchParams.get('cursor')?{items:smallBooks,nextCursor:'after-small'}:{items:books.filter(b=>category==='B'?b.folderPath==='B 中局':category==='C'?b.folderPath==='C 残局':b.folderPath==='无分类'),nextCursor:null};}
    else if(path.endsWith('/platform-libraries')||path.endsWith('/admin/problem-libraries'))body=books;
    else if(path.endsWith('/student/assignments'))body={items:[],nextCursor:null};
    else if(path.endsWith('/practice/dashboard'))body={topics:[],studyTopics:[],history:[]};
@@ -25,7 +27,11 @@ const books=[['c','C 残局'],['b','B 中局'],['unknown','无分类']].map(([id
   const names=await catalog.locator('.catalog-node-copy strong').allTextContents();assert.deepEqual(names,entries.slice(0,full?6:4).map(e=>e[1]),mode+' visible root order');
   assert(!/复现线路|已完成|篇教材/.test(await catalog.innerText()),'root cards must be compact');
   if(role==='student'){assert.equal(await catalog.getByRole('heading',{name:'教学题库',exact:true}).count(),0);assert.equal(await catalog.getByRole('textbox',{name:'搜索教学目录'}).count(),0);}
-  if(full){const tabs=page.getByRole('tablist',{name:'平台题库分类'});await tabs.waitFor({timeout:5000}).catch(async e=>{console.error(mode,await page.locator("body").innerText(),requests);throw e;});assert.equal(await tabs.getByRole('tab',{name:'全部',exact:true}).count(),0);assert.equal(await tabs.getByRole('tab',{name:/B 中局/}).getAttribute('aria-selected'),'true');await tabs.getByRole('tab',{name:/C 残局/}).click();await tabs.getByRole('tab',{name:/C 残局/}).click();assert.equal(await tabs.getByRole('tab',{name:/C 残局/}).getAttribute('aria-selected'),'true');await page.getByRole('button',{name:'更多分类',exact:true}).click();await tabs.getByRole('tab',{name:/其他/}).click();assert.equal(await tabs.getByRole('tab',{name:/其他/}).getAttribute('aria-selected'),'true');}
+  if(full){const tabs=page.getByRole('tablist',{name:'平台题库分类'});await tabs.waitFor({timeout:5000}).catch(async e=>{console.error(mode,await page.locator("body").innerText(),requests);throw e;});assert.equal(await tabs.getByRole('tab',{name:'全部',exact:true}).count(),0);assert.equal(await tabs.getByRole('tab',{name:/B 中局/}).getAttribute('aria-selected'),'true');
+   if(role!=='student'){await page.getByText('本页暂无匹配题库，可继续加载',{exact:true}).waitFor();await page.getByRole('button',{name:'加载更多题库',exact:true}).click();}
+   const legacy=page.locator('.mobile-library-list');await legacy.getByText('中局妙手 · 精选练习 · 实际10题',{exact:true}).waitFor();assert.equal(await legacy.getByText(/零散|111|193|318|训练题/).count(),0,'legacy counts and small sources hidden');assert.equal(await legacy.locator('button').count(),1,'10 question boundary retained');
+   if(role==='student')assert.match(await tabs.getByRole('tab',{name:/B 中局/}).innerText(),/中局\s*10$/,'category sum uses visible playable count');
+   await tabs.getByRole('tab',{name:/C 残局/}).click();await tabs.getByRole('tab',{name:/C 残局/}).click();assert.equal(await tabs.getByRole('tab',{name:/C 残局/}).getAttribute('aria-selected'),'true');await page.getByRole('button',{name:'更多分类',exact:true}).click();await tabs.getByRole('tab',{name:/其他/}).click();assert.equal(await tabs.getByRole('tab',{name:/其他/}).getAttribute('aria-selected'),'true');}
   else {assert.equal(await page.getByText('平台训练题库',{exact:true}).count(),0);assert(!requests.some(p=>/\/(platform-libraries|platform-game-libraries|mate-collections)/.test(p)),'ordinary students must not prefetch source libraries');}
   if(process.env.SCREENSHOT_DIR)await page.screenshot({path:process.env.SCREENSHOT_DIR+'/'+mode+'-library-10035.png',fullPage:true});
   await catalog.getByRole('button',{name:/基础杀法/}).click();await catalog.getByRole('button',{name:'返回上级目录',exact:true}).waitFor();assert.equal(await catalog.getByRole('textbox',{name:'搜索教学目录'}).count(),0);

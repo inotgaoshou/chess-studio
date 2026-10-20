@@ -6,3 +6,19 @@ export function libraryCategoryCode(folderPath?: string) {
   return code&&LIBRARY_CATEGORY_NAMES[code]?code:"other";
 }
 
+/** Presentation only for the legacy source browser, never textbook chapters or assignment selection. */
+export function legacyTrainingSourceVisible(folderPath: string | undefined, playableCount: number) {
+  return libraryCategoryCode(folderPath) !== "B" || (Number.isInteger(playableCount) && playableCount >= 10);
+}
+
+export function legacyTrainingSourceTitle(title: string, folderPath: string | undefined, playableCount: number) {
+  if (libraryCategoryCode(folderPath) !== "B") return title;
+  const name = title
+    .replace(/[（(]\s*训练题\s*[)）]/g, "")
+    .replace(/[（(]\s*\d+\s*(?:题|局|份|条)?\s*[)）]\s*$/u, "")
+    .replace(/\s*[-—·_：:]?\s*\d+\s*(?:题|局|份|条)?\s*$/u, "")
+    .replace(/\s*[-—·_：:]\s*$/u, "")
+    .trim();
+  return `${name || "中局"} · 精选练习 · 实际${playableCount}题`;
+}
+

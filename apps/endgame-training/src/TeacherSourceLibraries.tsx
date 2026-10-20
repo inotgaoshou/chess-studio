@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { BookOpen, ChevronDown, ChevronRight } from "lucide-react";
 import { teachingClient, type TeachingAuth, type TeacherProblemLibrary } from "./teaching";
-import { FEATURED_LIBRARY_CATEGORIES, LIBRARY_CATEGORY_NAMES } from "./libraryCategories";
+import { FEATURED_LIBRARY_CATEGORIES, LIBRARY_CATEGORY_NAMES, libraryCategoryCode, legacyTrainingSourceVisible, legacyTrainingSourceTitle } from "./libraryCategories";
 
 export function TeacherSourceLibraries({ auth, query, onOpen }: {
   auth: TeachingAuth; query: string; onOpen(id: string): void;
@@ -61,13 +61,14 @@ export function TeacherSourceLibraries({ auth, query, onOpen }: {
     return () => { request.current?.abort(); ++epoch.current; busy.current = false; };
   }, [scope, selected, search, reload]);
   const shown = expanded ? categories : categories.filter(code => (FEATURED_LIBRARY_CATEGORIES as readonly string[]).includes(code) || code === selected);
+  const visibleItems = items.filter(item => legacyTrainingSourceVisible(item.folderPath, item.publishedCount));
   return <section className="mobile-library-section teacher-source-libraries">
     <header><strong>平台训练题库</strong><button type="button" className="mobile-section-link" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}><span>{expanded ? "收起分类" : "更多分类"}</span><ChevronDown className={expanded ? "expanded" : ""}/></button></header>
     <div className="mobile-category-strip" role="tablist" aria-label="平台题库分类">{shown.map(code => <button type="button" role="tab" key={code} aria-selected={code === selected} className={code === selected ? "active" : ""} onClick={() => setCategory(code)}>{code} {LIBRARY_CATEGORY_NAMES[code]}</button>)}</div>
-    <div className="mobile-library-list">{items.map(item => <button type="button" key={item.id} onClick={() => onOpen(item.id)}><span className="mobile-library-cover platform"><BookOpen/></span><span><b>{item.title}</b><small>{item.folderPath ? `${item.folderPath} · ` : ""}{item.publishedCount} 题</small></span><ChevronRight/></button>)}</div>
+    <div className="mobile-library-list">{visibleItems.map(item => <button type="button" key={item.id} onClick={() => onOpen(item.id)}><span className="mobile-library-cover platform"><BookOpen/></span><span><b>{legacyTrainingSourceTitle(item.title, item.folderPath, item.publishedCount)}</b>{libraryCategoryCode(item.folderPath) !== "B" && <small>{item.folderPath ? `${item.folderPath} · ` : ""}{item.publishedCount} 题</small>}</span><ChevronRight/></button>)}</div>
     {(loading || categoriesLoading) && <p role="status">正在加载题库…</p>}
     {(categoryError || error) && <div role="alert"><p>{categoryError || error}</p><button type="button" disabled={loading} onClick={() => categoryError ? setReload(value => value + 1) : void load(cursor)}>重试题库加载</button></div>}
-    {!loading && !categoriesLoading && !categoryError && !error && !items.length && <p>当前分类暂无匹配题库</p>}
+    {!loading && !categoriesLoading && !categoryError && !error && !visibleItems.length && <p>{cursor ? "本页暂无匹配题库，可继续加载" : "当前分类暂无匹配题库"}</p>}
     {cursor && !error && <button type="button" className="catalog-action" disabled={loading} onClick={() => void load(cursor)}>{loading ? "正在加载…" : "加载更多题库"}</button>}
   </section>;
 }
