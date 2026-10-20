@@ -199,3 +199,33 @@
 .solution-read-board { max-width:480px; margin:auto; pointer-events:none; }
 .solution-read-panel .xiangqi-board { width:100%; }
 .solution-read-panel ol { display:flex; flex-wrap:wrap; gap:8px 24px; }
+
+/* Compact app browsing only; assignment selection and desktop catalogs keep their controls. */
+.teaching-catalog.catalog-phone-browse { padding: 10px; margin: 0; border-radius: 10px; }
+.catalog-phone-browse .catalog-back-heading { display: flex; align-items: center; gap: 8px; min-height: 44px; margin-bottom: 8px; }
+.catalog-phone-browse .catalog-back-heading > button { display: inline-flex; align-items: center; gap: 4px; flex: none; padding: 0 8px; min-height: 44px; border: 0; background: transparent; color: var(--catalog-green); }
+.catalog-phone-browse .catalog-back-heading svg { width: 18px; height: 18px; }
+.catalog-phone-browse .catalog-back-heading h3 { min-width: 0; margin: 0; font-size: 16px; line-height: 1.4; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.teaching-catalog.catalog-phone-browse .catalog-nodes { gap: 8px; margin: 8px 0; }
+.teaching-catalog.catalog-phone-browse .catalog-nodes > button { min-height: 104px; padding: 10px; gap: 6px; }
+.teaching-catalog.catalog-phone-browse .catalog-node-copy { gap: 3px; }
+.teaching-catalog.catalog-phone-browse .catalog-node-copy strong { font-size: 14px; line-height: 1.4; }
+.teaching-catalog.catalog-phone-browse .catalog-entry-symbol { width: 32px; height: 32px; border-radius: 8px; }
+.teaching-catalog.catalog-phone-browse .catalog-entry-symbol svg { width: 20px; height: 20px; }
+.teaching-catalog.catalog-phone-browse .catalog-chapter-rows > button { min-height: 60px; padding: 8px 10px; grid-template-columns: 32px minmax(0,1fr) 16px; }
+.teaching-catalog.catalog-phone-browse .catalog-tabs { width: 100%; min-height: 44px; padding: 0; margin: 8px 0; gap: 2px; border-radius: 8px; }
+.teaching-catalog.catalog-phone-browse .catalog-tabs > button { min-width: 0; min-height: 44px; padding: 6px 8px; border-radius: 8px; }
+.catalog-phone-browse .catalog-search-tools { justify-content: flex-end; margin: 0 0 4px; }
+.catalog-phone-browse .catalog-search-tools > button { padding: 6px 10px; }
+.teaching-catalog.catalog-phone-browse .catalog-problems { gap: 8px; margin: 8px 0; }
+.teaching-catalog.catalog-phone-browse .catalog-problem-card > button:first-child { padding: 10px; gap: 10px; }
+.teaching-catalog.catalog-phone-browse .catalog-problems .catalog-board { width: 96px; flex-basis: 96px; }
+.teaching-catalog.catalog-phone-browse .catalog-problem-copy { gap: 4px; }
+.catalog-phone-browse .catalog-problem-copy small:empty { display: none; }
+.teaching-catalog.catalog-phone-browse .catalog-state { padding: 12px; margin: 8px 0; }
+.teaching-catalog.catalog-phone-browse .catalog-load-status { margin-top: 4px; }
+
+.catalog-phone-browse .catalog-content-toolbar { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+.teaching-catalog.catalog-phone-browse .catalog-content-toolbar .catalog-tabs { flex: 1; min-width: 0; margin: 0; }
+.catalog-phone-browse .catalog-filter-toggle { display: inline-flex; flex: none; align-items: center; justify-content: center; gap: 4px; min-height: 44px; padding: 6px 8px; font-size: 13px; }
+.catalog-phone-browse .catalog-filter-toggle svg { width: 16px; height: 16px; }

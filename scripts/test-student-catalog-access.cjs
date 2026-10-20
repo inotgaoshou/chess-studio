@@ -10,10 +10,12 @@ const books=[['c','C 残局'],['b','B 中局'],['unknown','无分类']].map(([id
   let activeVip=['vip','expired'].includes(mode);
   const role=['coach','admin'].includes(mode)?mode:'student';const full=['vip','coach','admin'].includes(mode);
   page.on('pageerror',e=>errors.push(e.message));
-  await page.addInitScript(()=>{localStorage.setItem('xiangqi-training-mobile-onboarding-v1','done');localStorage.setItem('xiangqi-teaching-session-server','https://api.qixiapp.cn');});
+  await page.addInitScript(()=>{localStorage.setItem('xiangqi-training-mobile-onboarding-v1','done');localStorage.setItem('xiangqi-teaching-session-server','http://127.0.0.1:8090');});
   await page.route('**/api/v1/**',async route=>{const req=route.request(),u=new URL(req.url()),path=u.pathname;requests.push(path+u.search);let body=[];
    if(path.endsWith('/auth/refresh'))body={token:mode,expiresAt:'2099-01-01T00:00:00Z',user:{id:mode,orgId:'school',orgName:'验收学校',role,displayName:'验收',vipActive:activeVip,vipExpiresAt:mode==='expired'?'2000-01-01T00:00:00Z':null,organizations:[]}};
    else if(path.endsWith('/teaching-catalog/browse')){await new Promise(r=>setTimeout(r,100));const current=nodes.find(n=>n.id===u.searchParams.get('nodeId'));body={statisticsReady:true,statisticsRevision:'1',availabilitySnapshotRevision:'1',statisticsSnapshotRevision:'1',currentNode:current||null,breadcrumbs:current?[current]:[],children:current?[]:[...nodes].reverse(),learningMaterials:[]};}
+   else if(path.endsWith('/admin/problem-library-categories'))body=[{code:'B',libraryCount:1},{code:'C',libraryCount:1},{code:'other',libraryCount:1}];
+   else if(path.endsWith('/admin/problem-libraries/page'))body={items:books,nextCursor:null};
    else if(path.endsWith('/platform-libraries')||path.endsWith('/admin/problem-libraries'))body=books;
    else if(path.endsWith('/student/assignments'))body={items:[],nextCursor:null};
    else if(path.endsWith('/practice/dashboard'))body={topics:[],studyTopics:[],history:[]};
@@ -26,8 +28,8 @@ const books=[['c','C 残局'],['b','B 中局'],['unknown','无分类']].map(([id
   if(full){const tabs=page.getByRole('tablist',{name:'平台题库分类'});await tabs.waitFor({timeout:5000}).catch(async e=>{console.error(mode,await page.locator("body").innerText(),requests);throw e;});assert.equal(await tabs.getByRole('tab',{name:'全部',exact:true}).count(),0);assert.equal(await tabs.getByRole('tab',{name:/B 中局/}).getAttribute('aria-selected'),'true');await tabs.getByRole('tab',{name:/C 残局/}).click();await tabs.getByRole('tab',{name:/C 残局/}).click();assert.equal(await tabs.getByRole('tab',{name:/C 残局/}).getAttribute('aria-selected'),'true');await page.getByRole('button',{name:'更多分类',exact:true}).click();await tabs.getByRole('tab',{name:/其他/}).click();assert.equal(await tabs.getByRole('tab',{name:/其他/}).getAttribute('aria-selected'),'true');}
   else {assert.equal(await page.getByText('平台训练题库',{exact:true}).count(),0);assert(!requests.some(p=>/\/(platform-libraries|platform-game-libraries|mate-collections)/.test(p)),'ordinary students must not prefetch source libraries');}
   if(process.env.SCREENSHOT_DIR)await page.screenshot({path:process.env.SCREENSHOT_DIR+'/'+mode+'-library-10035.png',fullPage:true});
-  await catalog.getByRole('button',{name:/基础杀法/}).click();await catalog.getByRole('textbox',{name:'搜索教学目录'}).waitFor();
-  if(role==='student'){await page.getByRole('button',{name:'首页',exact:true}).click();const button=page.getByRole('button',{name:'去打卡',exact:true});await button.waitFor();const size=await button.evaluate(e=>({width:e.getBoundingClientRect().width,height:e.getBoundingClientRect().height,whiteSpace:getComputedStyle(e).whiteSpace,shrink:getComputedStyle(e).flexShrink}));assert(size.width>=84&&size.height>=44&&size.whiteSpace==='nowrap'&&size.shrink==='0');}
+  await catalog.getByRole('button',{name:/基础杀法/}).click();await catalog.getByRole('button',{name:'返回上级目录',exact:true}).waitFor();assert.equal(await catalog.getByRole('textbox',{name:'搜索教学目录'}).count(),0);
+  if(role==='student'){await page.getByRole('button',{name:'首页',exact:true}).click();const button=page.getByRole('button',{name:/今日打卡.*去打卡/});await button.waitFor();const size=await button.boundingBox();assert(size.height>=44);assert.equal(await button.locator('.checkin-home-cta').evaluate(e=>getComputedStyle(e).whiteSpace),'nowrap');}
   if(mode==='vip'){activeVip=false;await page.evaluate(()=>document.dispatchEvent(new Event('visibilitychange')));await page.getByRole('button',{name:'题库',exact:true}).click();await page.waitForFunction(()=>document.querySelectorAll('.catalog-nodes > button').length===4);assert.equal(await page.getByText('平台训练题库',{exact:true}).count(),0,'VIP revocation must discard source UI');}
   assert.deepEqual(errors,[]);console.log('PASS catalog audience '+mode);await page.close();
  }

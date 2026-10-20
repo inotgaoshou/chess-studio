@@ -33,19 +33,19 @@ async function fixture(browser,role,width=390,vip=false,leaf=false){
  return {page,state,errors,session,card,async close(){assert.deepEqual(errors,[]);await page.close();}};
 }
 (async()=>{const browser=await chromium.launch({channel:'chrome',headless:true});try{
- {const f=await fixture(browser,'student',390,false,true);assert.equal(await f.card.count(),1);assert.equal(await f.page.getByRole('textbox',{name:'搜索题名',exact:true}).count(),1);await f.close();console.log('PASS leaf category displays direct questions');}
+ {const f=await fixture(browser,'student',390,false,true);assert.equal(await f.card.count(),1);assert.equal(await f.page.getByRole('textbox',{name:'搜索题名',exact:true}).count(),0);await f.close();console.log('PASS leaf category displays direct questions');}
  for(const width of [390,800,1280])for(const [role,vip] of [['student',false],['student',true],['coach',false]]){
   const f=await fixture(browser,role,width,vip),{page,state,card}=f;
   assert.equal(await page.locator('.catalog-filters:visible').count(),0);
-  assert.equal(await page.locator('.teaching-catalog input:visible').count(),1);
+  assert.equal(await page.locator('.teaching-catalog input:visible').count(),0);
   await page.getByRole('button',{name:'筛选',exact:true}).click();await page.getByRole('combobox',{name:'题目目标'}).selectOption('gain_material');
   await page.getByRole('button',{name:/筛选.*1/}).click();
-  await page.getByRole('textbox',{name:'搜索题名',exact:true}).fill('内线');
   await card.getByRole('button',{name:'看题解',exact:true}).click();
   const viewer=page.getByRole('dialog',{name:'只读题解'});await viewer.waitFor();assert.equal(state.creates,0);assert.equal(state.grades,0);
   await viewer.getByRole('button',{name:'下一步',exact:true}).click();await viewer.getByText('先运车',{exact:true}).waitFor();
   await viewer.getByRole('button',{name:'关闭题解'}).click();
-  assert.equal(await page.getByRole('textbox',{name:'搜索题名',exact:true}).inputValue(),'内线');
+  assert.equal(await page.getByRole('textbox',{name:'搜索题名',exact:true}).count(),0);
+  assert.equal(await page.getByRole('button',{name:/线路复现/}).count(),0);
   const touch=await card.getByRole('button',{name:'看题解',exact:true}).boundingBox();assert(touch.height>=44);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
   await page.screenshot({path:`/tmp/catalog-opening-${role}-${vip}-${width}.png`});
