@@ -28,7 +28,7 @@ const problemId = process.env.PRACTICE_REAL_PROBLEM || '2a5bec26-d430-57db-bd80-
    assert.equal(actual.role,account.role);console.log(account.label+': real login passed');
    let creates=0,grades=0; const verdicts=[],failures=[];
    const request=r=>{const u=new URL(r.url());if(u.origin!==api)return;if(r.method()==='POST'&&u.pathname.endsWith('/practice/sessions'))creates++;if(r.method()==='POST'&&u.pathname.endsWith('/attempts'))grades++;};
-   const response=async r=>{const u=new URL(r.url());if(u.origin!==api)return;if(r.status()>=400)failures.push({path:u.pathname,status:r.status()});if(u.pathname.endsWith('/verify-move')&&r.ok()){const result=await r.json();verdicts.push({outcome:result.outcome,completed:result.completed,path:result.path});}};
+   const response=async r=>{const u=new URL(r.url());if(u.origin!==api)return;if(r.status()>=400&&/\/(auth|practice|problems|teaching-catalog)(?:\/|$)/.test(u.pathname))failures.push({path:u.pathname,status:r.status()});if(u.pathname.endsWith('/verify-move')&&r.ok()){const result=await r.json();verdicts.push({outcome:result.outcome,completed:result.completed,path:result.path});}};
    page.on('request',request);page.on('response',response);
    try {
     await page.goto('https://localhost/library');

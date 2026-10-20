@@ -28,7 +28,7 @@ async function fixture(browser,role,width=390,vip=false,leaf=false){
   else if(path.endsWith('/platform-libraries/lib/problems'))body={items:[problem]};
   await route.fulfill({contentType:'application/json',body:JSON.stringify(body)});
  });
- await page.goto(url+'/library');await page.getByRole('button',{name:/基础杀法.*可练题/}).click().catch(async e=>{console.log('FIXTURE',errors,(await page.locator('body').innerText()).slice(0,2500),state.requests);throw e;});
+ await page.goto(url+'/library');await page.getByRole('button',{name:/基础杀法.*可练题/}).waitFor();await page.evaluate(()=>window.dispatchEvent(new Event('teaching-content-reset')));await page.getByRole('button',{name:/基础杀法.*可练题/}).click().catch(async e=>{console.log('FIXTURE',errors,(await page.locator('body').innerText()).slice(0,2500),state.requests);throw e;});
  const card=page.locator('.catalog-problem-card').first();await card.waitFor();
  return {page,state,errors,session,card,async close(){assert.deepEqual(errors,[]);await page.close();}};
 }
