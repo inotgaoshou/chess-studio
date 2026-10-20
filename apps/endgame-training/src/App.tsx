@@ -2857,7 +2857,7 @@ export function App() {
       // Validate the entire saved path before attempting answer restoration; never discard the saved record.
       const restored = saved?.moves ?? [];
       const state = await measureOpening(openingOperation.current, "board", () => boardAt(next.startingFen, restored));
-      const verified = restored.length ? await restoreAnswerVerification(next, restored) : undefined;
+      const verified = restored.length ? await restoreAnswerVerification(next, restored, undefined, signal) : undefined;
       signal.throwIfAborted(); if (entry !== session.current) return;
       commitProblemStart(next, state, []);
       setPracticeSession(undefined); setPracticeReturnRoute("library");
@@ -2903,11 +2903,13 @@ export function App() {
     const auth = teachingClient.auth();
     return `${teachingClient.serverUrl()}:${auth?.user.id ?? "local"}:${auth?.user.orgId ?? ""}:${active.assignmentId ?? sessionId ?? active.id}`;
   }
-  async function restoreAnswerVerification(active: TrainingProblem, path: string[], sessionId?: string) {
+  async function restoreAnswerVerification(active: TrainingProblem, path: string[], sessionId?: string, source?: AbortSignal) {
     if (!path.length) return undefined;
+    // Restoring a verdict is optional; a legal saved board must remain usable while review is unavailable.
+    return withRequestDeadline(async signal => {
     const restoreSession = session.current;
     const context = verificationContext(active, sessionId);
-    const current = () => restoreSession === session.current && context === verificationContext(active, sessionId);
+    const current = () => !signal.aborted && restoreSession === session.current && context === verificationContext(active, sessionId);
     const index = path.length % 2 ? path.length - 1 : path.length - 2;
     const prior = path.slice(0, index), candidate = path[index];
     let result: VerificationResult;
@@ -2919,6 +2921,7 @@ export function App() {
       if (current() && JSON.stringify(result.path) === JSON.stringify(path) && ["correct", "completed"].includes(result.outcome)) return result;
     } catch { /* Keep the legal saved path, with completion awaiting verification. */ }
     return undefined;
+    }, source, "恢复判题暂不可用", 5000).catch(() => undefined);
   }
   function commitProblemStart(next: TrainingProblem, initial: BoardState, history: Attempt[], restoring = false) {
     finishing.current = false; latestTrainingMoves.current = [];
@@ -5729,7 +5732,7 @@ export function App() {
         const [state, history, verification] = await Promise.all([
           measureOpening(openingOperation.current, "board", () => boardAt(item.problem.startingFen, restoredMoves)),
           measureOpening(openingOperation.current, "local-store", () => trainingStore.attempts(nextProblem.id), signal),
-          item.draft && cached.mode !== "learning" ? restoreAnswerVerification(nextProblem, restoredMoves, cached.id) : undefined,
+          item.draft && cached.mode !== "learning" ? restoreAnswerVerification(nextProblem, restoredMoves, cached.id, signal) : undefined,
         ]);
         signal.throwIfAborted();
         return { cached, item, nextProblem, restoredMoves, state, history, verification };
@@ -5756,7 +5759,7 @@ export function App() {
         setEnded(true); setResultOutcome(item.status === "completed" ? "completed" : item.status === "revealed" ? "revealed" : "abandoned");
       }
       setMode(cached.mode === "learning" ? "replay" : "solver");
-      setNotice(cached.mode === "learning" ? "学习模式：可查看题解并了解关键思路。" : "可尝试其他解法，皮卡鱼复核后判题；提示和错误会记录到练习档案。");
+      setNotice(cached.mode === "learning" ? "学习模式：可查看题解并了解关键思路。" : restoredMoves.length && !verification ? "已恢复本机进度，待复核，尚未确认完成。" : "可尝试其他解法，皮卡鱼复核后判题；提示和错误会记录到练习档案。");
       navigatePracticeSession(cached.id, replace);
       void teachingClient.updatePracticeSession(cached.id, item.id).catch(() => undefined);
       return true;

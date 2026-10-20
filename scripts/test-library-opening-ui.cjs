@@ -48,7 +48,7 @@ async function fixture(browser, width = 800) {
       if (state.mode === 'refresh-hang') { status = 401; body = { error: 'expired' }; }
       else if (state.mode === 'create-fail') { status = 503; body = { error: '创建失败，请重试' }; }
       else body = state.session;
-    } else if (path.includes('/practice/sessions/')) body = state.session;
+    } else if(path.endsWith('/verify-move')&&state.mode==='review-hang'){state.held.push(route);return;} else if (path.includes('/practice/sessions/')) body = state.session;
     await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   });
   await page.goto(`${url}/practice`);
@@ -80,5 +80,16 @@ async function fixture(browser, width = 800) {
     assert.equal(f.state.writes,1);
     await f.finish();
     console.log('one overall deadline covers creation and local initialization');
+    const draft = await fixture(browser);
+    draft.state.mode='review-hang';
+    draft.state.session.items[0].draft={moves:['a0a1','a9a8'],hints:2,mistakes:1,elapsedMs:12345};
+    const verifying=draft.page.waitForRequest(r=>r.url().endsWith('/verify-move'));
+    await draft.start();await verifying;await draft.page.clock.runFor(5100);
+    await draft.page.locator('.mobile-solver-page').waitFor();
+    await draft.page.getByText('已恢复本机进度，待复核，尚未确认完成。',{exact:true}).waitFor();
+    await draft.page.getByRole('button',{name:'a1 红车',exact:true}).waitFor();
+    await draft.page.getByRole('button',{name:'a8 黑车',exact:true}).waitFor();
+    assert.equal(draft.state.writes,1);assert.equal(await draft.page.locator('.mobile-solver-result').count(),0);
+    await draft.finish();console.log('legal saved board opens pending review when verdict restoration hangs');
   } finally {await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});
