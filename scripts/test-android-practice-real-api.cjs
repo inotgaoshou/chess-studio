@@ -32,6 +32,8 @@ const problemId = process.env.PRACTICE_REAL_PROBLEM || '2a5bec26-d430-57db-bd80-
    page.on('request',request);page.on('response',response);
    try {
     await page.goto('https://localhost/library');
+    await page.getByRole('button',{name:/基础杀法.*可练题/}).waitFor();
+    await page.evaluate(()=>window.dispatchEvent(new Event('teaching-content-reset')));
     await page.getByRole('button',{name:/基础杀法.*可练题/}).click();
     const card=page.locator('.catalog-problem-card').filter({hasText:process.env.PRACTICE_REAL_TITLE || 'TEST_ONLY 炮目录验收一步杀'}).first();await card.waitFor();
     const detailResponse=page.waitForResponse(r=>r.url()===`${api}/api/v1/${actual.role==='student'?'student':'admin'}/problems/${problemId}`);
