@@ -1,5 +1,7 @@
 // Browser fault/ordering tests; real MySQL and native-device gates run separately.
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const cblFixture=process.env.CBL_TEST_FIXTURE || require('node:path').join(__dirname,'../app-store-assets/qixi-review-1.0.0-10010/qixi-review-sample.cbl');
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/Users/chenyubin/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
 const base = process.env.PRACTICE_URL || 'http://127.0.0.1:1448';
 (async () => {
@@ -37,7 +39,7 @@ const base = process.env.PRACTICE_URL || 'http://127.0.0.1:1448';
   });
   await page.route('https://downloads.test/**',async route=>{
    if(downloadMode==='hang'){held.push(route);return;}
-   await route.fulfill({contentType:'application/octet-stream',body:Buffer.from([0,1,2,3])});
+   await route.fulfill({contentType:'application/octet-stream',body:downloadMode==='valid'?fs.readFileSync(cblFixture):Buffer.from([0,1,2,3])});
   });
   await page.route('https://www.chessdb.cn/**',route=>route.fulfill({contentType:'text/plain',body:'unknown'}));
   await page.goto(base+'/library');const source=page.locator('.teacher-source-libraries');
@@ -66,6 +68,23 @@ const base = process.env.PRACTICE_URL || 'http://127.0.0.1:1448';
   const retry=page.waitForResponse('https://downloads.test/book.cbl');await panel.getByRole('button',{name:'下载导入',exact:true}).click();await retry;await page.waitForTimeout(50);
   await page.clock.runFor(15100);await panel.getByText(/CBL 下载超时/).waitFor();
   await panel.getByRole('button',{name:'返回棋析',exact:true}).click();
+  downloadMode='valid';await page.evaluate(async()=>{
+   window.hangDownloadBody=false;
+   const {trainingStore}=await import('/src/store.ts');const original=trainingStore.importLibrary;
+   trainingStore.importLibrary=(...args)=>new Promise(resolve=>window.releaseImport=async()=>resolve(await original(...args)));
+  });
+  await page.locator('.mobile-heading-icon[aria-label="导入 CBL 题库"]').click();
+  await panel.locator('input[inputmode=url]').fill('https://downloads.test/book.cbl');await panel.getByRole('button',{name:'下载导入',exact:true}).click();
+  await page.waitForFunction(()=>typeof window.releaseImport==='function');
+  await page.clock.runFor(15100);await panel.getByText(/CBL 导入超时/).waitFor();
+  assert(await panel.getByRole('button',{name:'下载导入',exact:true}).isEnabled(),'stalled native save also releases the import button');
+  await panel.getByRole('button',{name:'返回棋析',exact:true}).click();
+  await page.locator('.mobile-heading-icon[aria-label="导入 CBL 题库"]').click();
+  await page.evaluate(()=>window.releaseImport());await page.waitForTimeout(100);
+  assert.equal(await panel.count(),1,'cancelled local save cannot close a newer import panel');
+  assert.equal(await panel.getByText('导入完成。',{exact:true}).count(),0,'cancelled operation cannot announce success in the new panel');
+  await panel.getByRole('button',{name:'返回棋析',exact:true}).click();
+  console.log('CBL successful download followed by stalled save: cancellation isolates the next panel');
   const cloudResponse=page.waitForResponse(r=>r.url().includes('chessdb.cn'));
   await page.evaluate(async()=>{
    window.hangCloudBody=true;window.cloudResult='pending';

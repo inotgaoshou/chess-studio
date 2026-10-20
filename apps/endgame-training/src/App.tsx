@@ -2596,14 +2596,16 @@ export function App() {
     ]);
     return [...teaching, ...platform, ...local];
   }
-  async function refreshPlatformGames(authOverride = teachingClient.auth()) {
+  async function refreshPlatformGames(authOverride = teachingClient.auth(), source?: AbortSignal) {
     const scope=teachingClient.presentationScope(authOverride);
     const items=authOverride?.user.role === "student" && canBrowsePlatformSources(authOverride) ? await teachingClient.platformGameLibraries().catch(() => []) : [];
+    source?.throwIfAborted();
     if(scope===teachingClient.presentationScope())setPlatformGameLibraries(items);
   }
-  async function refresh(authOverride = teachingClient.auth()) {
+  async function refresh(authOverride = teachingClient.auth(), source?: AbortSignal) {
     const scope=teachingClient.presentationScope(authOverride);
-    const [next] = await Promise.all([availableLibraries(authOverride), refreshPlatformGames(authOverride)]);
+    const [next] = await Promise.all([availableLibraries(authOverride), refreshPlatformGames(authOverride, source)]);
+    source?.throwIfAborted();
     if(scope===teachingClient.presentationScope())setLibraries(next);
   }
   async function syncTeachingAssignments() {
@@ -2709,10 +2711,12 @@ export function App() {
     }));
     return { bestMove: lines[0]?.pv[0] ?? "", lines };
   }
-  async function selectLibrary(next: TrainingLibrary) {
+  async function selectLibrary(next: TrainingLibrary, source?: AbortSignal) {
+    source?.throwIfAborted();
     session.current += 1;
     pendingAutoReply.current = undefined;
     await resetTrainingAnalysis();
+    source?.throwIfAborted();
     setLibrary(next);
     setExpanded(next.id);
     const nextProblems = next.source === "teaching" && next.assignmentId
@@ -2720,6 +2724,7 @@ export function App() {
       : next.source === "platform"
         ? await teachingClient.platformLibraryProblems(next.fingerprint)
         : await trainingStore.problems(next.id);
+    source?.throwIfAborted();
     setProblems(nextProblems);
     setProblem(undefined);
     setQuery("");
@@ -3113,24 +3118,29 @@ export function App() {
   }, [manualAutoPlaying, manualCursor, manualMoves.length]);
   useEffect(() => () => { analysisGeneration.current += 1; void cancelPikafishSearch(); }, []);
 
-  async function importBytes(bytes: Uint8Array, logicJson?: string, accessTier: "public" | "vip" = "public") {
+  async function importBytes(bytes: Uint8Array, logicJson?: string, accessTier: "public" | "vip" = "public", source?: AbortSignal) {
+    source?.throwIfAborted();
     if (!canImportLocal) throw new Error(importDeniedReason);
     if (teachingAuth?.user.role === "student") accessTier = "public";
     if (bytes.byteLength > CBL_IMPORT_MAX_BYTES) throw new Error("文件超过 50MB，请拆分或改用更小题库。");
     setNotice("正在解析 CBL…");
     const parsed = logicJson ? applyTrainingLogicSidecar(await parseCbl(bytes), logicJson) : await parseCbl(bytes);
+    source?.throwIfAborted();
     const results: string[] = [];
     const containsStandardGames = parsed.warnings.some((warning) => warning.includes("标准开局记录不是残局题目"));
     if (!parsed.problems.length || containsStandardGames) {
       setNotice(parsed.problems.length ? "发现标准开局记录，正在解析完整棋谱…" : "未发现残局题目，正在按完整棋谱解析…");
       const manuals = await parseCblGames(bytes);
+      source?.throwIfAborted();
       const standardGames = manuals.games.filter((game) => game.startingFen.split(" ")[0] === STANDARD_STARTING_FEN.split(" ")[0]);
       if (standardGames.length) {
         const folder = manuals.title.trim() || "导入棋谱";
         await trainingStore.createManualFolder(folder);
+        source?.throwIfAborted();
         const now = new Date().toISOString();
         for (const game of standardGames) {
           const ending = await boardAt(game.startingFen, game.moves);
+          source?.throwIfAborted();
           await trainingStore.saveManualGame({
             id: `cbl-game:${game.recordHash}`,
             title: game.title || `棋谱 ${game.sourceIndex + 1}`,
@@ -3147,16 +3157,19 @@ export function App() {
             createdAt: now,
             updatedAt: now,
           });
+          source?.throwIfAborted();
         }
-        await refreshManualLibrary(folder, "");
+        await refreshManualLibrary(folder, "", source);
         results.push(`“${folder}”已导入录谱库，共 ${standardGames.length} 盘${manuals.warnings.length ? `；${manuals.warnings.length} 条尾部异常已保留有效着法` : ""}`);
       }
     }
     if (parsed.problems.length) {
       setNotice(`正在保存 ${parsed.problems.length} 道题…`);
       const imported = await trainingStore.importLibrary(bytes, parsed, { accessTier });
-      await refresh();
-      await selectLibrary(imported);
+      source?.throwIfAborted();
+      await refresh(undefined, source);
+      await selectLibrary(imported, source);
+      source?.throwIfAborted();
       const logicCount = parsed.problems.filter((item) => item.logic).length;
       const suffix = logicCount ? `，已附加 ${logicCount} 条逻辑标注` : "";
       const damaged = parsed.warnings.filter((warning) => !warning.includes("标准开局记录不是残局题目")).length;
@@ -3202,7 +3215,8 @@ export function App() {
       return buffer;
     }, source, "CBL 下载超时，请重试");
     source?.throwIfAborted();
-    const result = await importBytes(new Uint8Array(buffer), undefined, importAccessTier);
+    const result = await withRequestDeadline(signal => importBytes(new Uint8Array(buffer), undefined, importAccessTier, signal), source, "CBL 导入超时，请检查本地题库后重试");
+    source?.throwIfAborted();
     setImportPanelOpen(false);
     setNotice(result);
   }
@@ -3904,12 +3918,13 @@ export function App() {
     if (!manualPieces.length) await createManualFromFen(STANDARD_STARTING_FEN, "标准开局");
   }
 
-  async function refreshManualLibrary(folder = manualFolder, queryText = manualQuery) {
+  async function refreshManualLibrary(folder = manualFolder, queryText = manualQuery, source?: AbortSignal) {
     const request = ++manualLibraryRequest.current;
     const [folders, games] = await Promise.all([
       trainingStore.manualFolders(),
       trainingStore.manualGames(folder || undefined, queryText || undefined),
     ]);
+    source?.throwIfAborted();
     if (request !== manualLibraryRequest.current) return;
     const mirrorOwner = teachingClient.providerManualMirrorOwnerKey();
     const cachedMirrorOwner = localStorage.getItem(TTXQ_MIRROR_OWNER_KEY) ?? undefined;
