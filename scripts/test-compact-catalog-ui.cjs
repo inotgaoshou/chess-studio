@@ -80,7 +80,7 @@ async function flow(page,role,vip,label,native=false){
  await catalog(page).getByRole('button',{name:/筛选.*1/}).click();
  await catalog(page).getByRole('button',{name:'加载更多题目',exact:true}).click();
  await page.waitForFunction(()=>document.querySelectorAll('.catalog-problem-card').length===3);
- await catalog(page).getByRole('button',{name:'教材讲解',exact:true}).click();
+ await catalog(page).getByRole('button',{name:'棋谱学习',exact:true}).click();
  await catalog(page).getByRole('button',{name:'原谱讲解',exact:true}).waitFor();
  await catalog(page).getByRole('button',{name:'做题训练',exact:true}).click();
  await catalog(page).locator('.catalog-problem-card').first().getByRole('button',{name:'看题解',exact:true}).click();
@@ -164,8 +164,8 @@ async function legacy(page){
   try{let view;for(let attempt=0;attempt<20&&!view;attempt++){await new Promise(r=>setTimeout(r,200));view=(await device.webViews()).find(v=>v.pkg()===(process.env.PRACTICE_ANDROID_PACKAGE||'cn.xiangqi.endgame.training.practiceentry'));}assert(view,'Emulator WebView did not initialize');const page=await view.page();await flow(page,'student',false,'android',true);await page.unrouteAll({behavior:'ignoreErrors'});}finally{await device.close();}
  }else{
   const browser=await chromium.launch({channel:'chrome',headless:true});try{
-   for(const width of process.env.CATALOG_LEGACY_ONLY?[]:[375,390,430,800])for(const [role,vip]of[['student',false],['student',true],['coach',false]]){
-    const page=await browser.newPage({viewport:{width,height:width===800?1100:844},hasTouch:true,isMobile:true});try{await flow(page,role,vip,`${width}-${role}-${vip}`);}finally{await page.close();}
+   for(const width of process.env.CATALOG_LEGACY_ONLY?[]:[375,390,430,800,1280])for(const [role,vip]of[['student',false],['student',true],['coach',false]]){
+    const page=await browser.newPage({viewport:{width,height:width===800?1100:width===1280?800:844},hasTouch:true,isMobile:true});try{await flow(page,role,vip,`${width}-${role}-${vip}`);}finally{await page.close();}
    }
    let page=await browser.newPage({viewport:{width:390,height:844}});try{if(!process.env.CATALOG_LEGACY_ONLY)await failures(page);}finally{await page.close();}
    page=await browser.newPage({viewport:{width:390,height:844}});try{await legacy(page);}finally{await page.close();}
