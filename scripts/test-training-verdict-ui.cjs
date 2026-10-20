@@ -1,4 +1,4 @@
-// Synthetic verification responses + real browser/WASM: rejected moves never advance training.
+// Synthetic verification/AI responses + real browser/WASM: trials never advance accepted progress.
 const assert = require('node:assert/strict');
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/Users/chenyubin/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
 const url = process.env.PRACTICE_URL || 'http://127.0.0.1:1443';
@@ -29,7 +29,7 @@ async function fixture(browser, outcome = 'wrong', width = 390) {
       body = { outcome: state.outcome, message: state.outcome === 'wrong' ? '这步未达到题目目标，请再试试。' : state.outcome === 'correct' ? '正确，继续完成题目。' : '待复核：题目缺少可计算的目标条件，错误次数未增加', path: state.outcome === 'correct' ? ['g8f6', 'e8f6'] : [], autoMoves: state.outcome === 'correct' ? ['e8f6'] : [], completed: false, reviewKind: state.outcome === 'pending_review' ? 'missing_conditions' : undefined, verifierVersion: 'training-multisolution-v1' };
     } else if (path.endsWith('/analysis')) {
       state.analyses++;
-      body = { engine: 'fixture', elapsedMs: 1, lines: [{ multipv: 1, pv: ['e8f6'] }] };
+      body = { engine: 'fixture', elapsedMs: 1, lines: [{ multipv: 1, pv: [request.postDataJSON().fen.startsWith('2Pa5') ? 'f6d5' : 'e8f6'] }] };
     } else if (path.includes('/practice/sessions/')) {
       if (request.method() !== 'GET') state.writes.push(request.postDataJSON());
       body = session;
@@ -55,31 +55,36 @@ async function fixture(browser, outcome = 'wrong', width = 390) {
         const f = await fixture(browser, outcome, width);
         await f.move();
         const verdict = f.page.locator('.training-move-verdict');
-        await verdict.waitFor();
-        assert.equal(await verdict.getAttribute('role'), outcome === 'wrong' ? 'alert' : 'status');
-        assert((await verdict.innerText()).includes(outcome === 'wrong' ? '已错 1 次' : '暂不计分'));
-        assert.equal(await f.square('g8 红马').count(), 1); assert.equal(await f.square('e8 黑马').count(), 1);
-        assert.equal(await f.board.locator('.selected, .legal-target, .last-to').count(), 0);
-        assert.equal(f.state.analyses, 0, 'rejected candidate never triggers AI retaliation');
+        await f.square('f6 黑马').waitFor();
+        await f.page.getByText('试走中，未计为答对；可继续走棋或退回重试。', { exact: true }).waitFor();
+        if (outcome === 'wrong') {
+          await verdict.waitFor();
+          assert.equal(await verdict.getAttribute('role'), 'alert');
+          assert((await verdict.innerText()).includes('已错 1 次'));
+        } else assert.equal(await verdict.count(), 0, 'pending has no blocking banner');
+        assert.equal(f.state.analyses, 1);
         assert(f.state.writes.every(body => !body.draft?.moves?.length && body.outcome !== 'completed'));
         assert.equal(await f.page.locator('.mobile-solver-result').count(), 0);
-        const box = await verdict.boundingBox(); assert(box.width > 200 && box.x >= 0 && box.x + box.width <= width);
-        await f.move(); await verdict.waitFor();
-        if (outcome === 'wrong') await verdict.getByText(/已错 2 次/).waitFor();
-        else assert(!(await verdict.innerText()).includes('已错'));
-        assert.equal(f.state.verifications, 2, 'retry is unlocked after rejection');
+        await f.square('c8 红兵').click(); await f.square('c9').click();
+        await f.square('d5 黑马').waitFor();
+        assert.equal(f.state.verifications, 1, 'continued trial is not sent as an accepted answer');
+        assert.equal(f.state.analyses, 2);
+        assert(f.state.writes.every(body => !body.draft?.moves?.length && body.outcome !== 'completed'));
+        await f.page.getByRole('button', { name: /^退回重试/ }).click();
+        await f.square('g8 红马').waitFor();
+        assert.equal(await verdict.count(), 0);
         // A later accepted move must clear stale warnings and preserve ordinary AI reply/progress behavior.
         const saved = f.page.waitForRequest(request => request.method() === 'PATCH' && request.postDataJSON()?.draft?.moves?.join(',') === 'g8f6,e8f6');
         f.state.outcome = 'correct'; await f.move(); await f.square('f6 黑马').waitFor(); await saved;
         assert.equal(await verdict.count(), 0);
         assert(f.state.writes.some(body => body.draft?.moves?.join(',') === 'g8f6,e8f6'));
         assert(f.state.writes.every(body => body.outcome !== 'completed'));
-        await f.finish(); console.log(`PASS ${width}px ${outcome}: no move/AI/progress, clear selection, retry, accepted continuation`);
+        await f.finish(); console.log(`PASS ${width}px ${outcome}: legal trial/AI, no accepted progress, rollback, accepted continuation`);
       }
     }
     {
       const f = await fixture(browser); await f.square('g8 红马').click(); await f.square('f7 黑士').click();
-      await f.page.getByRole('alert').getByText(/这步不合法/).waitFor();
+      await f.page.getByRole('alert').getByText(/这步不符合棋规/).waitFor();
       assert.equal(f.state.verifications, 0); assert.equal(f.state.analyses, 0);
       assert.equal(await f.square('g8 红马').count(), 1); await f.finish();
       console.log('PASS illegal horse move is rejected before verification or AI');

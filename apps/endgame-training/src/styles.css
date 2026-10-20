@@ -6386,12 +6386,7 @@ html.phone-webview .mobile-solver-board > .board-shell { width:min(100%, 390px, 
 .mobile-solver-meta svg { width:16px; color:#397b56; }
 .mobile-solver-meta b { color:#2e6546; font-size:13px; }
 .mobile-solver-warning { margin:0; padding:8px; border-radius:6px; background:#fff1ec; color:#a65045; font-size:11px; text-align:center; }
-.training-move-verdict { display:flex; flex:0 0 auto; align-items:flex-start; gap:8px; padding:10px 12px; border:1px solid #e3aba3; border-radius:8px; background:#fff1ec; color:#933a31; overflow-wrap:anywhere; }
-.training-move-verdict.pending { border-color:#dfc48c; background:#fff8e8; color:#78531c; }
-.training-move-verdict > svg { flex:0 0 22px; width:22px; height:22px; }
-.training-move-verdict > div { min-width:0; }
-.training-move-verdict strong { font-size:14px; line-height:1.5; }
-.training-move-verdict p { margin:3px 0 0; font-size:12px; line-height:1.5; }
+.training-move-verdict { flex:0 0 auto; margin:4px 0; padding:4px 8px; border-radius:5px; background:#fff1ec; color:#933a31; font-size:12px; line-height:1.5; overflow-wrap:anywhere; }
 @media (max-width:599px) { .mobile-solver-playfield > .training-move-verdict { margin-block:8px; } }
 .mobile-solver-actions { display:grid; gap:8px; }
 .mobile-solver-actions > .primary { min-height:44px; border:1px solid #397b56; border-radius:7px; background:#397b56; color:#fff; font-weight:800; }
