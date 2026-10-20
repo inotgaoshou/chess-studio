@@ -7,6 +7,12 @@ pnpm_bin="${PNPM_BIN:-pnpm}"
 action="${1:-open}"
 project="$app_dir/ios/App/App.xcodeproj"
 scheme="App"
+ios_marketing_version="${IOS_MARKETING_VERSION:-1.0.6}"
+ios_build_number="${IOS_BUILD_NUMBER:-10037}"
+if [[ ! "$ios_marketing_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ || ! "$ios_build_number" =~ ^[1-9][0-9]*$ ]]; then
+  echo "IOS_MARKETING_VERSION must be x.y.z and IOS_BUILD_NUMBER a positive integer." >&2
+  exit 64
+fi
 pikafish_ios_root="${PIKAFISH_IOS_ROOT:-$root_dir/../pikafish-ios}"
 expected_pikafish_tag="${PIKAFISH_TAG:-Pikafish-2026-09-06}"
 expected_pikafish_source_revision="4c17cee11f888ae1d48a9494f2e2239f019f0a1f"
@@ -26,9 +32,9 @@ case "$VITE_APP_ENV" in
 esac
 
 case "$action" in
-  open|check|signed-build|archive|ipa) ;;
+  open|check|signed-build|archive|ipa|export-ipa) ;;
   *)
-    echo "Usage: $0 [open|check|signed-build|archive|ipa]" >&2
+    echo "Usage: $0 [open|check|signed-build|archive|ipa|export-ipa]" >&2
     exit 2
     ;;
 esac
@@ -127,7 +133,17 @@ archive_app() {
     -archivePath "$archive_path" \
     PIKAFISH_IOS_ROOT="$pikafish_ios_root" \
     PIKAFISH_TAG="$expected_pikafish_tag" \
+    MARKETING_VERSION="$ios_marketing_version" \
+    CURRENT_PROJECT_VERSION="$ios_build_number" \
     archive
+  # A version can exist in both environments. Exporting the same Archive must
+  # not silently turn a test build into a production distribution artifact.
+  python3 - "$archive_path/QixiRelease.json" "$VITE_APP_ENV" "$ios_marketing_version" "$ios_build_number" "$(git -C "$root_dir" rev-parse HEAD)" <<'PY'
+import json,sys
+from pathlib import Path
+path,environment,version,build,commit=sys.argv[1:]
+Path(path).write_text(json.dumps({'environment':environment,'version':version,'build':build,'commit':commit,'bundleId':'cn.xiangqi.endgame.training'},indent=2)+'\n')
+PY
 }
 
 export_ipa() {
@@ -135,6 +151,19 @@ export_ipa() {
   local export_method="$2"
   local output_dir="${IOS_IPA_OUTPUT_DIR:-$root_dir/artifacts/endgame-training-ios}"
   local temp_dir export_options export_dir ipa_source ipa_name
+
+  require_file "$archive_path/QixiRelease.json" "Archive release manifest"
+  python3 - "$archive_path/QixiRelease.json" "$VITE_APP_ENV" "$ios_marketing_version" "$ios_build_number" <<'PY'
+import json,sys
+path,environment,version,build=sys.argv[1:]
+manifest=json.load(open(path))
+if any(manifest.get(key)!=value for key,value in [('environment',environment),('version',version),('build',build),('bundleId','cn.xiangqi.endgame.training')]):
+    raise SystemExit('Archive environment/version/bundle identity does not match this export request.')
+PY
+  if [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$archive_path/Products/Applications/App.app/Info.plist")" != "cn.xiangqi.endgame.training" ]]; then
+    echo "Archive application bundle identity does not match this export request." >&2
+    exit 1
+  fi
 
   temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/xiangqi-endgame-ipa.XXXXXX")"
   trap "$(printf 'rm -rf -- %q' "$temp_dir"); report_build_growth" EXIT
@@ -172,22 +201,22 @@ case "$action" in
     require_pikafish_ios_distribution_materials
     ;;
 esac
-sync_web_assets
+if [[ "$action" != "export-ipa" ]]; then sync_web_assets; fi
 
 case "$action" in
   open)
     open "$project"
     ;;
   check)
-    xcodebuild -project "$project" -scheme App -configuration Debug -derivedDataPath "$derived_data" -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build
+    xcodebuild -project "$project" -scheme App -configuration Debug -derivedDataPath "$derived_data" -destination 'generic/platform=iOS' PIKAFISH_IOS_ROOT="$pikafish_ios_root" PIKAFISH_TAG="$expected_pikafish_tag" MARKETING_VERSION="$ios_marketing_version" CURRENT_PROJECT_VERSION="$ios_build_number" CODE_SIGNING_ALLOWED=NO build
     ;;
   signed-build)
-    xcodebuild -project "$project" -scheme "$scheme" -configuration Debug -derivedDataPath "$derived_data" -destination 'generic/platform=iOS' -allowProvisioningUpdates build
+    xcodebuild -project "$project" -scheme "$scheme" -configuration Debug -derivedDataPath "$derived_data" -destination 'generic/platform=iOS' PIKAFISH_IOS_ROOT="$pikafish_ios_root" PIKAFISH_TAG="$expected_pikafish_tag" MARKETING_VERSION="$ios_marketing_version" CURRENT_PROJECT_VERSION="$ios_build_number" -allowProvisioningUpdates build
     ;;
   archive)
-    archive_app "${IOS_ARCHIVE_PATH:-$app_dir/build/App.xcarchive}"
+    archive_app "${IOS_ARCHIVE_PATH:-$app_dir/build/App-$VITE_APP_ENV.xcarchive}"
     ;;
-  ipa)
+  ipa|export-ipa)
     export_method="${IOS_EXPORT_METHOD:-ad-hoc}"
     case "$export_method" in
       ad-hoc|app-store|development|enterprise) ;;
@@ -196,8 +225,14 @@ case "$action" in
         exit 2
         ;;
     esac
-    archive_path="${IOS_ARCHIVE_PATH:-$app_dir/build/App.xcarchive}"
-    archive_app "$archive_path"
+    archive_path="${IOS_ARCHIVE_PATH:-$app_dir/build/App-$VITE_APP_ENV.xcarchive}"
+    if [[ "$action" == "ipa" ]]; then archive_app "$archive_path"; fi
+    archive_info="$archive_path/Products/Applications/App.app/Info.plist"
+    require_file "$archive_info" "archived application Info.plist"
+    if [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$archive_info")" != "$ios_marketing_version" || "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$archive_info")" != "$ios_build_number" ]]; then
+      echo "Archive version does not match requested IOS_MARKETING_VERSION / IOS_BUILD_NUMBER." >&2
+      exit 1
+    fi
     export_ipa "$archive_path" "$export_method"
     ;;
 esac
