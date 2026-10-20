@@ -1481,7 +1481,7 @@ function MobileLibraryPanel({ onCatalogNavigate, onCatalogAssign, teachingAuth, 
     const curated = kind === "platform" && libraryCategoryCode(item.folderPath) === "B";
     return <button type="button" key={item.id} onClick={() => teacher&&kind==="platform"?setSourceLibraryId(item.fingerprint):onOpenLibrary(item)}>
       <span className={`mobile-library-cover ${kind === "platform" ? "platform" : ""}`}><BookOpen/></span>
-      <span><b>{kind === "platform" ? legacyTrainingSourceTitle(item.title, item.folderPath, item.problemCount) : item.title}</b><small>{curated ? "" : `${item.folderPath && kind === "platform" ? `${item.folderPath} · ` : ""}${item.problemCount} 题 · `}已完成 {item.completedCount} 题{access ? ` · ${access}` : ""}</small><i><em style={{ width: `${progress}%` }}/></i></span>
+      <span><b>{kind === "platform" ? legacyTrainingSourceTitle(item.title, item.folderPath) : item.title}</b><small>{curated ? `精选练习 · 实际${item.problemCount}题 · ` : `${item.folderPath && kind === "platform" ? `${item.folderPath} · ` : ""}${item.problemCount} 题 · `}已完成 {item.completedCount} 题{access ? ` · ${access}` : ""}</small><i><em style={{ width: `${progress}%` }}/></i></span>
       {access && <em className="mobile-access-badge">{access}</em>}<ChevronRight/>
     </button>;
   };
