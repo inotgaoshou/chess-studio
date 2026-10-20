@@ -24,7 +24,7 @@ async function fixture(browser,role,width=390,vip=false,leaf=false){
   else if(path.endsWith('/attempts')){state.grades++;body={...session,status:'completed',items:[{...session.items[0],status:'completed'}]};}
   else if(path.includes('/practice/sessions/'))body=session;
   else if(path.endsWith('/practice/dashboard'))body={topics:[],studyTopics:[],history:[]};
-  else if(path.endsWith('/student/platform-libraries'))body=vip?[{id:'lib',title:'中局弃子 20（训练题）',folderPath:'B中局',publishedCount:1,problemCount:1,practicedCount:0,completedCount:0}]:[];
+  else if(path.endsWith('/student/platform-libraries'))body=vip?[{id:'lib',title:'中局弃子 20（训练题）',folderPath:'B中局',publishedCount:10,problemCount:10,practicedCount:0,completedCount:0}]:[];
   else if(path.endsWith('/platform-libraries/lib/problems'))body={items:[problem]};
   await route.fulfill({contentType:'application/json',body:JSON.stringify(body)});
  });
@@ -62,7 +62,7 @@ async function fixture(browser,role,width=390,vip=false,leaf=false){
  }
  {
   const f=await fixture(browser,'student',390,true),{page,state}=f;
-  await page.getByRole('button',{name:/中局弃子 20/}).click();
+  await page.getByRole('button',{name:/中局弃子/}).click();
   const row=page.locator('.source-problem-card').first();await row.waitFor();
   await row.getByRole('button',{name:'看题解',exact:true}).click();await page.getByRole('dialog',{name:'只读题解'}).waitFor();
   assert.equal(state.creates,0);await page.getByRole('button',{name:'关闭题解'}).click();

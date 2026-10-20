@@ -38,6 +38,9 @@ function scopedLocations(scope:string) {
 export function TeachingCatalog(props:Props) { const [epoch,setEpoch]=useState(0);useEffect(()=>{const reset=()=>{navigation.clear();locationCaches.clear();itemDisplays.clear();clearCatalogBrowseCache();setEpoch(v=>v+1);};window.addEventListener("teaching-content-reset",reset);return()=>window.removeEventListener("teaching-content-reset",reset);},[]);const scope=`${teachingClient.presentationScope(props.auth)}:${Boolean(props.teacher)}:${props.scene ?? "select"}:${props.sourceLibraryId??""}`;return <CatalogView key={`${scope}:${epoch}`} {...props} scope={scope}/>; }
 function scrollContainer(element:HTMLElement|null):HTMLElement|undefined { for(let parent=element?.parentElement;parent;parent=parent.parentElement){if(/auto|scroll/.test(getComputedStyle(parent).overflowY))return parent;} }
 const browseParams=(id:string|null,q:string):Record<string,string>=>({availability:"available",allowStaleCounts:"true",limit:"50",...(id?{nodeId:id}:{}),...(q?{q}:{})});
+// Production placements verified 2026-10-20. Other editions/placements remain available.
+const BASIC_TOPIC_ID = "e0c0221d-1b02-5f2c-9122-a7b0821f2603";
+const HIDDEN_BASIC_BOOKS = new Set(["90134f10-dc44-4b4e-b203-992af2d4c73c", "38f0967a-3b69-4fa5-9834-534959af52ed"]);
 function CatalogView({ auth, teacher = false, scene = "select", compact = false, onNavigate, sourceLibraryId, selectedIds = [], onAdd, onRemove, onPractice, onRehearse, onReadGame, onReadSolution, scope }: Props & {scope:string}) {
   const selection = teacher && scene === "select";
   const mobileBrowse = compact && scene === "browse";
@@ -45,7 +48,8 @@ function CatalogView({ auth, teacher = false, scene = "select", compact = false,
   const restoreLocation = <T extends CatalogLocation>(saved:T|undefined):T|undefined => saved && mobileBrowse
     ? {...saved,directoryQuery:"",query:"",mode:saved.mode==="reading"?"reading":"training",...(saved.directoryQuery||saved.query?{nodeCount:0,itemCount:0,materialCount:0,scroll:0}:{})}
     : saved;
-  const restored=restoreLocation(navigation.get(scope));
+  const previous=restoreLocation(navigation.get(scope));
+  const restored=mobileBrowse && previous && HIDDEN_BASIC_BOOKS.has(previous.id ?? "") ? {...previous,id:BASIC_TOPIC_ID,nodeCount:0,itemCount:0,scroll:0} : previous;
   const [filtersOpen, setFiltersOpen] = useState(false);
   const viewRef=useRef<HTMLElement>(null);
   const readScroll=()=>scrollContainer(viewRef.current)?.scrollTop??window.scrollY;
@@ -63,7 +67,9 @@ function CatalogView({ auth, teacher = false, scene = "select", compact = false,
   const request=useCallback((params:Record<string,string>,signal:AbortSignal)=>teachingClient.catalogBrowse(params,teacher,auth,signal),[teacher,auth]);
   const browse=useCatalogBrowse<TeachingCatalogNode>(request,params(nodeId,directorySearch),mode==="reading",navigation.get(scope)?.nodeCount||0,navigation.get(scope)?.id===nodeId?navigation.get(scope)?.materialCount||0:0,scope);
   useEffect(()=>{const refresh=()=>browse.retry();window.addEventListener("teaching-rehearsal-updated",refresh);return()=>window.removeEventListener("teaching-rehearsal-updated",refresh);},[browse.retry]);
-  const allowedNodes=restricted&&!nodeId?browse.page.children.filter(n=>basicEntryOrder(n.teachingEntry)>=0):browse.page.children;
+  const basicBrowse = mobileBrowse && browse.page.breadcrumbs.some(n=>n.id===BASIC_TOPIC_ID && n.teachingEntry==="basic_mates");
+  const allowedNodes=(restricted&&!nodeId?browse.page.children.filter(n=>basicEntryOrder(n.teachingEntry)>=0):browse.page.children)
+    .filter(n=>!basicBrowse || !HIDDEN_BASIC_BOOKS.has(n.id));
   const nodes=!nodeId?[...allowedNodes].sort((a,b)=>(basicEntryOrder(a.teachingEntry)<0?4:basicEntryOrder(a.teachingEntry))-(basicEntryOrder(b.teachingEntry)<0?4:basicEntryOrder(b.teachingEntry))||a.displayOrder-b.displayOrder):allowedNodes,path=browse.page.breadcrumbs,materials=browse.page.learningMaterials,nodeCursor=browse.page.nextCursor,materialCursor=browse.page.materialNextCursor;
   const loading=problemLoading||browse.loading;
   // Some published leaf categories contain questions directly, without chapter children.
@@ -78,6 +84,7 @@ function CatalogView({ auth, teacher = false, scene = "select", compact = false,
   function navigate(id:string|null){onNavigate?.();pendingScroll.current=true;saveNavigation();const old=restoreLocation(locations.current.get(id||"root"));autoReading.current=!mobileBrowse&&!old;setDirectoryQuery(old?.directoryQuery||"");setQuery(old?.query||"");setGoal(old?.goal||"");setDifficulty(old?.difficulty||"");setMateGroup(old?.mateGroup||"");setMateMoves(old?.mateMoves||"");setMaterial(old?.material||"");setMotif(old?.motif||"");const target=nodes.find(n=>n.id===id)??path.find(n=>n.id===id);
     if(target){const ancestor=path.findIndex(n=>n.id===id);browse.seed(params(id,old?.directoryQuery||""),{...browse.page,currentNode:target,breadcrumbs:ancestor>=0?path.slice(0,ancestor+1):[...path,target],children:[],nextCursor:null,learningMaterials:[],materialNextCursor:null});}
     setMode(old?.mode||(!mobileBrowse&&target?.itemCount===0&&(target.materialCount??0)>0?"reading":"training"));setNodeId(id);}
+  useEffect(()=>{if(basicBrowse && path.some(n=>HIDDEN_BASIC_BOOKS.has(n.id))) navigate(BASIC_TOPIC_ID);},[basicBrowse,nodeId,path]);
   useEffect(()=>{const old=navigation.get(scope);const same=old?.id===nodeId&&old.directoryQuery===directoryQuery&&old.query===query&&old.goal===goal&&old.difficulty===difficulty&&old.mateGroup===mateGroup&&old.mateMoves===mateMoves&&old.material===material&&old.motif===motif;navigation.set(scope,{id:nodeId,directoryQuery,query,goal,difficulty,mateGroup,mateMoves,material,motif,mode,nodeCount:same?old.nodeCount:0,itemCount:same?old.itemCount:0,materialCount:same?old.materialCount:0,scroll:old?.id===nodeId?old.scroll:0});},[scope,nodeId,directoryQuery,query,goal,difficulty,mateGroup,mateMoves,material,motif,mode]);
 
   const itemKey=JSON.stringify([nodeId,mode,problemSearch,goal,difficulty,mateGroup,mateMoves,material,motifSearch]);

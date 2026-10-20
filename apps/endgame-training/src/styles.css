@@ -7065,3 +7065,29 @@ html.touch-webview .study-sidebar .analysis-candidates {
 .checkin-home-cta > svg { width:18px; height:18px; }
 .mobile-home-page > .checkin-home-entry:active { background:#e5f0e4; }
 .checkin-home-entry:focus-visible, .checkin-student-workspace .checkin-heading-action:focus-visible { outline:2px solid #29764d; outline-offset:2px; }
+
+/* Mobile source browsing: independent exercise/solution controls share one card. */
+.mobile-problem-list { gap:8px; }
+.mobile-problem-list .source-problem-card { min-width:0; min-height:60px; display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:stretch; border:1px solid #d7e3d9; border-radius:8px; overflow:hidden; background:#fff; }
+.mobile-problem-list .source-problem-card > button { min-width:0; min-height:60px; margin:0; padding:9px 10px; border:0; border-radius:0; background:#fff; color:#294638; font:inherit; box-shadow:none; -webkit-appearance:none; appearance:none; }
+.mobile-problem-list .source-problem-card > button:first-child { display:grid; grid-template-columns:28px minmax(0,1fr) 18px; gap:8px; align-items:center; text-align:left; }
+.mobile-problem-list .source-problem-card > button:first-child > b { width:28px; height:28px; border-radius:50%; display:grid; place-items:center; background:#e7f1e8; color:#397b56; font-size:12px; }
+.mobile-problem-list .source-problem-card > button:first-child > span { min-width:0; display:grid; gap:4px; }
+.mobile-problem-list .source-problem-card strong { white-space:normal; overflow-wrap:anywhere; line-height:1.45; }
+.mobile-problem-list .source-problem-card > .catalog-read-solution { min-width:66px; min-height:44px; padding:8px; border-left:1px solid #e3ebe5; display:flex; flex-direction:column; justify-content:center; align-items:center; gap:4px; color:#397b56; font-size:11px; }
+.mobile-problem-list .source-problem-card > .catalog-read-solution svg { width:17px; height:17px; }
+.mobile-problem-list .source-problem-card > button:active, .mobile-game-list > button:active { background:#eaf3ec; }
+.mobile-library-browse-page .mobile-page-heading { min-width:0; gap:8px; }
+.mobile-library-browse-page .mobile-page-heading > span { flex:1; min-width:0; }
+.mobile-library-browse-page .mobile-page-heading strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.mobile-library-browse-page .mobile-back-button, .mobile-library-browse-page .browse-search-toggle { width:44px; height:44px; min-width:44px; flex:0 0 44px; }
+.mobile-library-browse-page .browse-search { min-height:44px; height:44px; }
+.mobile-library-browse-page .browse-search > button { width:44px; height:44px; flex:0 0 44px; }
+.mobile-library-browse-page .mobile-library-filters button, .mobile-library-browse-page .mobile-category-strip button { min-height:44px; }
+.mobile-library-browse-page .mobile-game-list strong { white-space:normal; overflow-wrap:anywhere; line-height:1.45; }
+.mobile-library-section .mobile-books-more { min-height:44px; width:100%; border:1px solid #d4e1d6; border-radius:7px; background:#fff; color:#397b56; display:flex; align-items:center; justify-content:center; gap:6px; font:inherit; font-size:13px; }
+.mobile-library-section .mobile-books-more svg { width:16px; height:16px; }
+.mobile-library-section .mobile-books-more[aria-expanded="true"] svg { transform:rotate(180deg); }
+.mobile-study-pieces { --lift-piece-size:94.6%; }
+.mobile-study-pieces .board-square .piece-lift { width:94.6%; height:94.6%; }
+.mobile-study-pieces .board-drag-ghost { width:10.12%; }

@@ -635,13 +635,13 @@ async function requestOnce<T>(path: string, init: RequestInit = {}, token?: stri
   return body as T;
 }
 
-async function requestPages<T>(path: string, token: string): Promise<T[]> {
+async function requestPages<T>(path: string, token: string, signal?: AbortSignal): Promise<T[]> {
   const items: T[] = [];
   let cursor: string | undefined;
   do {
     const query = new URLSearchParams({ limit: "100" });
     if (cursor) query.set("cursor", cursor);
-    const page = await request<Page<T>>(`${path}?${query}`, {}, token);
+    const page = await request<Page<T>>(`${path}?${query}`, {signal}, token);
     items.push(...page.items);
     cursor = page.nextCursor || undefined;
   } while (cursor);
@@ -1167,10 +1167,10 @@ export const teachingClient = {
     if(!canBrowsePlatformSources(auth))return [];
     return sharePlatformRead("games",auth,()=>request<PlatformGameLibrary[]>("/api/v1/student/platform-game-libraries", {}, auth.token));
   },
-  async platformGameLibraryGames(libraryId: string) {
+  async platformGameLibraryGames(libraryId: string, signal?: AbortSignal) {
     const auth = this.auth();
     if (!auth || auth.user.role !== "student") return [];
-    return requestPages<PlatformGame>(`/api/v1/student/platform-game-libraries/${encodeURIComponent(libraryId)}/games`, auth.token);
+    return requestPages<PlatformGame>(`/api/v1/student/platform-game-libraries/${encodeURIComponent(libraryId)}/games`, auth.token, signal);
   },
   async rehearsalRequest<T>(path: string, init?: RequestInit): Promise<T> {
     const auth=this.auth();if(!auth)throw new Error("请先登录");
@@ -1182,12 +1182,12 @@ export const teachingClient = {
     const auth=context??this.auth();if(!auth)throw new Error("请先登录");
     return request<{items:{id:string;title:string;completed:boolean}[];nextCursor?:string|null}>(path,{signal},auth.token);
   },
-  async platformGameDetail(gameId: string) {
+  async platformGameDetail(gameId: string, signal?: AbortSignal) {
     const auth = this.auth();
     if (!auth) throw new Error("请先登录");
-    if (["coach", "admin"].includes(auth.user.role)) return teacherRequest<unknown>(`/api/v1/admin/games/${encodeURIComponent(gameId)}`, {}, auth);
+    if (["coach", "admin"].includes(auth.user.role)) return teacherRequest<unknown>(`/api/v1/admin/games/${encodeURIComponent(gameId)}`, {signal}, auth);
     if (auth.user.role !== "student") throw new Error("当前账号没有读取权限");
-    return request<unknown>(`/api/v1/student/platform-games/${encodeURIComponent(gameId)}`, {}, auth.token);
+    return request<unknown>(`/api/v1/student/platform-games/${encodeURIComponent(gameId)}`, {signal}, auth.token);
   },
   async practiceHome() {
     const auth = this.auth();
