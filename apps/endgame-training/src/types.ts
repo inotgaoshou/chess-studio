@@ -68,6 +68,8 @@ export type TrainingLibrary = {
 };
 
 export type TrainingProblem = CblProblem & {
+  /** Account-scoped local teacher trial; never a student assignment or practice session. */
+  trialOwner?: string;
   targetMateMoves?: number;
   id: string;
   libraryId: string;

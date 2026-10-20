@@ -1,3 +1,4 @@
+import { measureActiveOpening } from "./PracticeOpeningStatus";
 import { canBrowsePlatformSources, hasActiveCatalogVip } from "./catalogAccess";
 import { teachingRead } from "./teachingDeadline";
 import { mergePracticeAttempts, mergePracticeDrafts, type PracticeDraft } from "./practiceProgress";
@@ -601,7 +602,7 @@ async function requestOnce<T>(path: string, init: RequestInit = {}, token?: stri
   if (accessToken && (!authContext || !isCurrentAuthContext(authContext))) throw new Error("登录账号或机构已变化，请重新操作。");
   const teachingContentRequest = /^\/api\/v1\/(student|teacher)\//.test(path);
   if (authContext && teachingContentRequest) {
-    const changed = await ensureContentEpoch(authContext);
+    const changed = await measureActiveOpening("capabilities", () => ensureContentEpoch(authContext), init.signal);
     if (!isCurrentAuthContext(authContext)) throw new Error("登录账号或环境已变化，请重新操作。");
     if (changed && init.method && !["GET", "HEAD"].includes(init.method.toUpperCase())) throw new Error("题库已重建，旧练习缓存已清理，请刷新后重新操作。");
   }
@@ -609,15 +610,15 @@ async function requestOnce<T>(path: string, init: RequestInit = {}, token?: stri
   const contentEpoch = authContext ? contentEpochs.current(authContext) : undefined;
   if (accessToken) headers.set("authorization", `Bearer ${accessToken}`);
   const accessScope=activeAuth?JSON.stringify([activeAuth.user.role,hasActiveCatalogVip(activeAuth)]):"";
-  const response = await fetch(`${targetServer}${path}`, { ...init, headers, credentials: "include" });
-  const body = await response.json().catch(() => ({}));
+  const response = await measureActiveOpening("transport", () => fetch(`${targetServer}${path}`, { ...init, headers, credentials: "include" }), init.signal);
+  const body = await measureActiveOpening("response-body", () => response.json().catch(() => ({})), init.signal);
   if(authContext&&/^\/api\/v1\/(student|admin)\//.test(path)&&accessScope!==(activeAuth?JSON.stringify([activeAuth.user.role,hasActiveCatalogVip(activeAuth)]):""))throw new Error("账号权益已变化，请重新打开内容。");
   init.signal?.throwIfAborted();
   if (authContext && !isCurrentAuthContext(authContext)) throw new Error("登录账号或机构已变化，请重新操作。");
   if (authContext && teachingContentRequest && contentEpoch !== contentEpochs.current(authContext)) throw new Error("题库已重建，请刷新后重新操作。");
   if (!response.ok) {
     if (response.status === 401 && retry && path !== "/api/v1/auth/refresh" && accessToken) {
-      const refreshed = await refreshAuth(init.signal ?? undefined);
+      const refreshed = await measureActiveOpening("auth-refresh", () => refreshAuth(init.signal ?? undefined), init.signal);
       init.signal?.throwIfAborted();
       if (refreshed) {
         if (authContext && !isCurrentAuthContext(authContext)) throw new Error("登录账号或机构已变化，请重新操作。");
@@ -1156,7 +1157,7 @@ export const teachingClient = {
     const auth = this.auth(); if (!auth || !problem.serverProblemId) throw new Error("请登录后验证其他解法");
     const authContext = authContexts.get(auth);
     const problemId = problem.serverProblemId;
-    return teachingRead(signal => request<VerificationResult>(`/api/v1/student/problems/${encodeURIComponent(problemId)}/verify-move`, {
+    return teachingRead(signal => request<VerificationResult>(`/api/v1/${auth.user.role === "student" ? "student" : "admin"}/problems/${encodeURIComponent(problemId)}/verify-move`, {
       method: "POST", body: JSON.stringify({ path, candidate, assignmentId: problem.assignmentId, sessionId }), signal,
     }, auth.token), undefined, () => Boolean(authContext && isCurrentAuthContext(authContext)) && (!isCurrent || isCurrent()), 25_000);
   },
@@ -1621,7 +1622,7 @@ export const teachingClient = {
     return teachingRead(signal => request<import("./TeachingCatalog").CatalogBrowsePage>(path,{signal},auth.token), signal);
   },
   async catalogProblems(id: string, query: { libraryId?: string; q?: string; goal?: string; material?:string; motif?:string; difficulty?: number; mateGroup?: string; mateMoves?: number; cursor?: string; limit?: number } = {}, teacher = false, context?: TeachingAuth, signal?:AbortSignal) {
-    const params = new URLSearchParams({ limit: String(query.limit ?? 50) });
+    const params = new URLSearchParams({ limit: String(query.limit ?? 50), pageOnly: "true" });
     for (const [key, value] of Object.entries(query)) if (value !== undefined && value !== "") params.set(key, String(value));
     const path = `/api/v1/${teacher ? "admin" : "student"}/teaching-catalog/${encodeURIComponent(id)}/problems?${params}`;
     if (teacher) return teachingRead(signal => teacherRequest<{ items: CatalogProblem[]; nextCursor?: string | null }>(path, {signal}, context), signal);
@@ -1643,8 +1644,14 @@ export const teachingClient = {
     const suffix = query.trim() ? `?scope=teaching&q=${encodeURIComponent(query.trim())}` : "?scope=teaching";
     return teacherRequest<TeacherProblemLibrary[]>(`/api/v1/admin/problem-libraries${suffix}`, {}, context);
   },
-  async teacherProblemDetail(id: string) {
-    return teacherRequest<{startingFen: string; title: string; note?: string; solution: SolutionMove[]}>(`/api/v1/admin/problems/${encodeURIComponent(id)}`, {});
+  async teacherProblemDetail(id: string, signal?: AbortSignal) {
+    return teacherRequest<PracticeProblem>(`/api/v1/admin/problems/${encodeURIComponent(id)}`, { signal });
+  },
+  async readableProblem(id: string, signal?: AbortSignal): Promise<PracticeProblem> {
+    const auth = this.auth(); if (!auth) throw new Error("请先登录");
+    return auth.user.role === "student"
+      ? request<PracticeProblem>(`/api/v1/student/problems/${encodeURIComponent(id)}`, { signal }, auth.token)
+      : this.teacherProblemDetail(id, signal);
   },
   async teacherProblems(libraryId: string, query: { q?: string; cursor?: string; limit?: number } = {}, context?: TeachingAuth) {
     const params = new URLSearchParams({ limit: String(query.limit ?? 50), reviewStatus: "published", sort: "source_asc", assignmentEligible: "true", includeTotal: "true" });

@@ -13,7 +13,7 @@ const session = { id: 'native-session', sourceKind: 'daily', mode: 'solver', sta
   const device = (await _android.devices()).find(candidate => candidate.serial() === serial);
   assert(device, `Emulator ${serial} is not connected`);
   try {
-    const view = (await device.webViews()).find(candidate => candidate.pkg() === 'cn.xiangqi.endgame.training');
+    const view = (await device.webViews()).find(candidate => candidate.pkg() === (process.env.PRACTICE_ANDROID_PACKAGE || 'cn.xiangqi.endgame.training'));
     assert(view, 'Open the installed debug APK first');
     const page = await view.page(); page.setDefaultTimeout(15000);
     const errors = []; page.on('pageerror', error => errors.push(error.message));
@@ -23,6 +23,7 @@ const session = { id: 'native-session', sourceKind: 'daily', mode: 'solver', sta
       const path = new URL(route.request().url()).pathname;
       let body = [];
       if (path.endsWith('/auth/refresh')) body = auth;
+      else if (path.endsWith('/auth/me')) body = auth.user;
       else if (path.endsWith('/capabilities')) body = {};
       else if (path.endsWith('/practice/dashboard')) body = { topics: [topic], studyTopics: [], history: [], dailyPlan: { id: 'native-daily', topic, itemCount: 10, mode: 'solver' } };
       else if (path.endsWith('/student/assignments')) body = { items: [] };
@@ -77,7 +78,7 @@ const session = { id: 'native-session', sourceKind: 'daily', mode: 'solver', sta
     const previousWrites = writes;
     await daily().click(); await page.waitForFunction(() => window.nativeCancelHeld);
     await page.clock.runFor(15_100);
-    await page.getByRole('alert').filter({ hasText: /打开题目失败.*超时/ }).waitFor();
+    await page.getByRole('alert').filter({ hasText: /超时/ }).waitFor();
     assert.equal(writes, previousWrites + 1);
     await page.evaluate(() => { window.hangNativeCancel = false; });
     await page.getByRole('button', { name: '重试', exact: true }).click(); await solver().waitFor();

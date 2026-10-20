@@ -163,3 +163,36 @@
 .teaching-catalog .catalog-load-status { min-height: 24px; margin-top: 12px; color: var(--catalog-muted); font-size: 12px; line-height: 24px; }
 .teaching-catalog .catalog-section-heading > .catalog-count { flex: 0 0 112px; min-height: 32px; text-align: center; font-variant-numeric: tabular-nums; }
 .teaching-catalog .catalog-node-meta { min-height: 18px; }
+/* App browse controls and independent solution action; assignment selection keeps full filters. */
+.catalog-search-tools { display:flex; align-items:center; gap:8px; }
+.catalog-search-tools .catalog-search { flex:1; min-width:0; }
+.catalog-search-tools > button { display:flex; align-items:center; justify-content:center; gap:6px; white-space:nowrap; min-height:44px; }
+.catalog-search-tools svg,.catalog-read-solution svg { width:18px; height:18px; }
+.catalog-compact .catalog-extra-filters { display:contents; }
+.catalog-compact .catalog-extra-filters > summary { display:none; }
+.catalog-compact .catalog-description summary { min-height:44px; display:flex; align-items:center; color:var(--catalog-muted); cursor:pointer; }
+.catalog-problem-card { min-width:0; border:1px solid var(--catalog-line); border-radius:8px; background:#fff; overflow:hidden; display:flex; flex-direction:column; }
+.teaching-catalog .catalog-problem-card > button:first-child { flex:1; width:100%; border:0; display:flex; align-items:flex-start; gap:12px; padding:12px; text-align:left; }
+.catalog-problem-card .catalog-read-solution { border:0; border-top:1px solid var(--catalog-line); border-radius:0; background:#f0f7f0; color:var(--catalog-green); }
+.catalog-read-solution { min-height:44px; display:flex; align-items:center; justify-content:center; gap:6px; }
+.source-problem-card { display:flex; border:1px solid #dce5dc; border-radius:8px; background:#fff; overflow:hidden; }
+.mobile-problem-list .source-problem-card > button:first-child { flex:1; min-width:0; display:flex; align-items:center; gap:10px; text-align:left; padding:12px; border:0; }
+.source-problem-card > button:first-child > span { flex:1; min-width:0; display:grid; gap:5px; }
+.source-problem-card strong { overflow-wrap:anywhere; }
+.source-problem-card .catalog-read-solution { flex:none; padding:8px; border:0; border-left:1px solid #dce5dc; color:#356b50; }
+.practice-opening-status { position:fixed; z-index:180; top:calc(env(safe-area-inset-top,0px) + 58px); left:50%; transform:translateX(-50%); width:min(620px,calc(100% - 24px)); padding:12px 14px; background:#f0f7f0; border:1px solid #bdd4c0; border-radius:8px; box-shadow:0 4px 16px #243d3020; color:#294c37; }
+.practice-opening-status p { margin:0 0 8px; line-height:1.5; overflow-wrap:anywhere; }
+.practice-opening-status p > svg { width:18px; height:18px; vertical-align:middle; margin-right:6px; }
+.practice-opening-status small { display:block; color:#65766a; }
+.practice-opening-status > div { display:flex; gap:8px; }
+.practice-opening-status button { display:flex; align-items:center; justify-content:center; gap:6px; min-height:44px; padding:8px 16px; }
+.practice-opening-status button svg { width:18px; height:18px; }
+.solution-read-overlay { position:fixed; inset:0; z-index:200; background:#24352e88; display:flex; justify-content:center; overflow:auto; padding:env(safe-area-inset-top,12px) 12px env(safe-area-inset-bottom,12px); }
+.solution-read-panel { width:min(700px,100%); margin:auto; max-height:100%; overflow:auto; background:#fff; border-radius:8px; padding:16px; color:#273c32; }
+.solution-read-panel header { display:flex; align-items:center; gap:12px; }
+.solution-read-panel h2 { flex:1; min-width:0; font-size:18px; }
+.solution-read-panel button { min-height:44px; min-width:44px; }
+.solution-read-panel nav,.solution-branches { display:flex; gap:8px; flex-wrap:wrap; }
+.solution-read-board { max-width:480px; margin:auto; pointer-events:none; }
+.solution-read-panel .xiangqi-board { width:100%; }
+.solution-read-panel ol { display:flex; flex-wrap:wrap; gap:8px 24px; }

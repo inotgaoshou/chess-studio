@@ -13,8 +13,9 @@ async function fixture(browser, width = 800) {
   page.on('pageerror', error => errors.push(error.message));
   const state = { mode: 'ok', ownerId: 'student', writes: 0, topicReads: 0, refreshes: 0, capabilities: 0, held: [], session: makeSession() };
   await page.addInitScript(() => {
+    new MutationObserver((_, observer) => { if (document.documentElement) { document.documentElement.classList.add('tablet-webview'); observer.disconnect(); } }).observe(document, {childList:true});
     localStorage.setItem('xiangqi-training-mobile-onboarding-v1', 'done');
-    localStorage.setItem('xiangqi-teaching-session-server', 'https://api-test.qixiapp.cn');
+    localStorage.setItem('xiangqi-teaching-session-server', 'http://127.0.0.1:8090');
     const originalFetch = window.fetch;
     window.fetch = async (...args) => {
       const response = await originalFetch(...args);
@@ -25,14 +26,14 @@ async function fixture(browser, width = 800) {
       return response;
     };
   });
-  await page.route('https://api*.qixiapp.cn/**', async route => {
+  await page.route('**/api/v1/**', async route => {
     const path = new URL(route.request().url()).pathname;
     let body = [], status = 200;
     if (path.endsWith('/auth/refresh')) {
       state.refreshes++;
       if (state.mode === 'refresh-hang') { state.held.push(route); return; }
       body = { token: `mock-${state.refreshes}`, expiresAt: '2099-01-01T00:00:00Z', user: { id: state.ownerId, orgId: 'org', role: 'student', displayName: '回归学生' } };
-    } else if (path.endsWith('/capabilities')) {
+    } else if (path.endsWith('/auth/me')) { body = { id: state.ownerId, orgId: 'org', role: 'student', displayName: '回归学生' }; } else if (path.endsWith('/capabilities')) {
       state.capabilities++;
       if (state.mode === 'capabilities-hang') { state.held.push(route); return; }
       body = {};
@@ -141,7 +142,7 @@ async function fixture(browser, width = 800) {
       await f.start();
       await f.page.waitForFunction(() => typeof window.releaseAttempts === 'function');
       await f.page.clock.runFor(15_100);
-      await f.page.getByRole('alert').filter({ hasText: /打开题目失败.*超时/ }).waitFor();
+      await f.page.getByRole('alert').filter({ hasText: /超时/ }).waitFor();
       await f.page.evaluate(async () => {
         const { trainingStore } = await import('/src/store.ts'); trainingStore.attempts = window.savedAttempts;
         window.releaseAttempts([]);
@@ -161,7 +162,7 @@ async function fixture(browser, width = 800) {
       await f.start();
       await f.page.waitForFunction(()=>window.cacheHeld);
       await f.page.clock.runFor(15100);
-      await f.page.getByRole('alert').filter({hasText:/打开题目失败.*超时/}).waitFor();
+      await f.page.getByRole('alert').filter({hasText:/超时/}).waitFor();
       await f.page.evaluate(async () => {const {teachingClient}=await import(window.teachingModuleUrl);teachingClient.localPracticeSession=window.savedLocalSession;});
       await f.page.getByRole('button',{name:'重试',exact:true}).click();
       await f.page.locator('.mobile-solver-page').waitFor();
