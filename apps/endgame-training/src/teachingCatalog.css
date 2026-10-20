@@ -51,6 +51,12 @@
 :is(.teaching-display, .teaching-catalog, .curriculum-picker) .catalog-search input::placeholder { color: #849187; }
 :is(.teaching-display, .teaching-catalog, .curriculum-picker) .catalog-search button { flex: none; width: 44px; padding: 8px; margin-right: -10px; border: 0; background: transparent; display: grid; place-items: center; }
 .catalog-search button svg { width: 18px; height: 18px; }
+.teaching-catalog .catalog-breadcrumb { margin-bottom: 4px; }
+.teaching-catalog .catalog-search { height: 44px; min-height: 44px; gap: 6px; padding: 0 10px; border-radius: 8px; }
+.teaching-catalog .catalog-search > svg { width: 16px; height: 16px; }
+.teaching-catalog .catalog-search input { min-height: 0; height: 42px; padding: 4px 0; }
+.teaching-catalog .catalog-search button { height: 44px; margin-right: -10px; }
+.teaching-catalog .catalog-search + .catalog-section-heading { margin-top: 10px; }
 :is(.teaching-display, .teaching-catalog, .curriculum-picker) .catalog-section-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin: 18px 0 12px; }
 :is(.teaching-display, .teaching-catalog, .curriculum-picker) :is(h2,h3) { margin: 0; font-size: 19px; line-height: 1.5; overflow-wrap: anywhere; }
 :is(.teaching-display, .teaching-catalog, .curriculum-picker) .catalog-section-heading > div { flex: 1; min-width: 140px; }
