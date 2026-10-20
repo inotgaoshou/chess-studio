@@ -6,7 +6,7 @@ export function PracticeOpeningStatus({ busy, message, title, phase, onRetry, on
   if (!busy && !message) return null;
   return <section className="practice-opening-status" aria-label="打开题目">
     {busy ? <p role="status"><LoaderCircle className="spinning"/>正在打开{title ? `《${title}》` : "练习"}…<small>{phase}</small></p> : <p role="alert">{message}</p>}
-    <div>{!busy && <button type="button" onClick={onRetry}><RotateCcw/>重试</button>}<button type="button" onClick={onCancel}><X/>取消</button></div>
+    <div>{!busy && <button type="button" className="practice-opening-retry" onClick={onRetry}><RotateCcw/>重试</button>}<button type="button" onClick={onCancel}><X/>取消</button></div>
   </section>;
 }
 
