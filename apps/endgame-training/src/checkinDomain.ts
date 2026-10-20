@@ -2,7 +2,7 @@
 export type CheckinTemplate = { id: string; subject: string; instruction: string; weekdays: number[]; required: boolean; photoRequired: boolean };
 export type CheckinDraft = { clientId: string; title: string; startsAt: string; endsAt: string; classIds: string[]; studentIds: string[]; templates: CheckinTemplate[] };
 export type CheckinPhase = "draft" | "upcoming" | "active" | "supplement" | "archived";
-export type CheckinPlan = { id: string; title: string; status: "draft" | "published"; phase: CheckinPhase; startsAt: string; endsAt: string; supplementUntil: string; draft?: CheckinDraft };
+export type CheckinPlan = { id: string; title: string; status: "draft" | "published"; revision?: number; phase: CheckinPhase; startsAt: string; endsAt: string; supplementUntil: string; draft?: CheckinDraft };
 export type CheckinTask = { id: string; templateId: string; localDate: string; subject: string; instruction: string; required: boolean; photoRequired: boolean };
 export type CheckinSubmission = { taskId: string; studentId: string; status: "pending" | "submitted" | "returned"; revision: number; note: string; photoIds: string[]; submittedAt?: string; isLate: boolean };
 export type CheckinBadge = { studentId: string; weekStart: string; plannedDays: number; earnedAt: string; needsSupplement: boolean };
@@ -16,6 +16,8 @@ export interface CheckinApi {
   create(draft: CheckinDraft): Promise<CheckinPlan>;
   save(id: string, draft: CheckinDraft): Promise<CheckinPlan>;
   publish(id: string): Promise<CheckinPlan>;
+  edit(id: string, draft: CheckinDraft, expectedRevision: number): Promise<CheckinPlan>;
+  remove(id: string, expectedRevision: number): Promise<{ deleted: boolean }>;
   submit(taskId: string, body: CheckinSubmit): Promise<{ duplicate: boolean }>;
   review(taskId: string, studentId: string, body: { action: "comment" | "return"; note: string; expectedRevision: number }): Promise<unknown>;
   upload(taskId: string, id: string, blob: Blob): Promise<{ id: string }>;

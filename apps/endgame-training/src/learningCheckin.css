@@ -76,7 +76,7 @@
 .checkin-filters > label { min-width: 180px; flex: 1; display: grid; gap: 6px; }
 .checkin-plan { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; padding: 16px 0; border-bottom: 1px solid var(--checkin-line); }
 .checkin-plan > div:first-child { flex: 1; min-width: 200px; }
-.checkin-plan > div:last-child { display: flex; gap: 8px; }
+.checkin-plan > div:last-child { display: flex; flex-wrap: wrap; gap: 8px; }
 .checkin-plan strong, .checkin-plan span { display: block; }
 .checkin-preview { background: #edf4e9; padding: 15px; border-radius: 10px; margin: 16px 0; }
 .checkin-preview li { margin-bottom: 8px; overflow-wrap: anywhere; }
@@ -93,9 +93,17 @@
 @media (max-width: 600px) { .checkin-workspace { padding: 14px 12px 100px; } .checkin-heading > button { padding: 8px; font-size: 13px; } .checkin-form-grid { grid-template-columns: 1fr; gap: 0; } .checkin-stage, .checkin-route, .checkin-task-editor, .checkin-plan-editor, .checkin-results { padding: 12px; } .checkin-route-track { margin-left: 10px; margin-right: 12px; } .checkin-heading h1 { font-size: 20px; } .checkin-task { padding: 12px; } }
 
 .checkin-workspace [hidden] { display: none !important; }
-.checkin-student-workspace .checkin-heading { flex-wrap: nowrap; gap: 8px; margin-bottom: 10px; }
+.checkin-student-workspace .checkin-heading { display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; gap: 8px; margin-bottom: 10px; padding-bottom: 4px; border-bottom: 1px solid var(--checkin-line); }
 .checkin-student-workspace .checkin-heading > div { min-width: 0; }
-.checkin-student-workspace .checkin-heading h1 { font-size: clamp(17px, 3vw, 23px); }
+.checkin-student-workspace .checkin-heading h1 { font-size: clamp(18px, 3vw, 22px); line-height: 1.4; text-align: center; }
+.checkin-student-workspace .checkin-heading-action { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 8px; background: #e8f0e6; color: var(--checkin-green); }
+.checkin-heading-action > svg { width: 22px; height: 22px; }
+.checkin-workspace .checkin-visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+.checkin-workspace .checkin-empty-state { display: grid; justify-items: center; gap: 12px; padding: 32px 20px; margin-top: 20px; border: 1px solid var(--checkin-line); border-radius: 8px; background: var(--checkin-paper); text-align: center; }
+.checkin-empty-icon { display: grid; place-items: center; width: 64px; height: 64px; border-radius: 18px; background: #e8f0e6; color: var(--checkin-green); }
+.checkin-empty-icon > svg { width: 34px; height: 34px; }
+.checkin-student-workspace .checkin-empty-state h2 { margin: 0; font-size: 18px; }
+.checkin-empty-state p { margin: 0; color: var(--checkin-muted); font-size: 14px; line-height: 1.8; }
 .checkin-student-filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .checkin-student-filters .checkin-field { margin: 4px 0; gap: 3px; font-size: 12px; }
 .checkin-student-workspace details > summary { cursor: pointer; min-height: 44px; padding: 10px 2px; font-weight: 600; }
@@ -112,11 +120,11 @@
 .checkin-student-workspace .checkin-task-item > .checkin-task-editor { margin: 0; border-radius: 0 0 12px 12px; border-color: var(--checkin-green); padding: 12px; }
 .checkin-progress-details { margin-top: 12px; border-top: 1px solid var(--checkin-line); }
 .checkin-progress-details > summary { color: var(--checkin-green); }
-@media (max-width: 480px) { .checkin-student-filters { grid-template-columns: 1fr; gap: 4px; } .checkin-student-filters .checkin-field { grid-template-columns: 60px minmax(0, 1fr); align-items: center; } .checkin-student-workspace .checkin-heading > button { padding: 6px 8px; font-size: 12px; } }
+@media (max-width: 480px) { .checkin-student-filters { grid-template-columns: 1fr; gap: 4px; } .checkin-student-filters .checkin-field { grid-template-columns: 60px minmax(0, 1fr); align-items: center; } }
 .checkin-workspace [tabindex="-1"] { scroll-margin-top: calc(var(--checkin-sticky-top, 0px) + 12px); }
 .checkin-workspace .checkin-sticky-actions { position: sticky; top: var(--checkin-sticky-top, 0px); z-index: 8; background: var(--checkin-paper); padding: 10px 0; border-bottom: 1px solid var(--checkin-line); }
 .checkin-sticky-actions h2 { margin-bottom: 0; }
 .checkin-sticky-actions > div:last-child, .checkin-bottom-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .checkin-sticky-actions > div:first-child { min-width: 0; }
 .checkin-bottom-actions { padding-top: 12px; border-top: 1px solid var(--checkin-line); }
-@media (max-width: 600px) { .checkin-workspace .checkin-sticky-actions { flex-wrap: wrap; gap: 6px; } .checkin-sticky-actions button { min-height: 40px; padding: 6px 10px; } }
+@media (max-width: 600px) { .checkin-workspace .checkin-sticky-actions { flex-wrap: wrap; gap: 6px; } .checkin-sticky-actions button { min-height: 44px; padding: 6px 10px; } }

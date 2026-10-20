@@ -7051,3 +7051,15 @@ html.touch-webview .study-sidebar .analysis-candidates {
 
 .mobile-topic-load-status { min-height: 24px; color: #6b7972; font-size: 12px; line-height: 24px; }
 .mobile-topic-detail-page .mobile-chapter-list { min-height: 100px; }
+
+/* Student check-in entry and navigation icons. */
+.mobile-home-page > .checkin-home-entry { grid-column:1 / -1; margin:0; display:grid; grid-template-columns:48px minmax(0,1fr) auto; align-items:center; gap:12px; width:100%; min-width:0; min-height:88px; box-sizing:border-box; padding:14px; border:1px solid #b5d2bb; border-radius:8px; background:#f8fdf9; color:#294638; font:inherit; text-align:left; cursor:pointer; }
+.checkin-home-icon { display:grid; place-items:center; width:48px; height:48px; border-radius:12px; background:#397b56; color:#fff; }
+.checkin-home-icon > svg { width:30px; height:30px; }
+.checkin-home-copy { display:grid; gap:4px; min-width:0; }
+.checkin-home-copy strong { font-size:17px; line-height:1.4; }
+.checkin-home-copy small { color:#667a6d; font-size:12px; line-height:1.5; }
+.checkin-home-cta { display:flex; align-items:center; gap:3px; color:#29764d; font-size:13px; font-weight:700; white-space:nowrap; }
+.checkin-home-cta > svg { width:18px; height:18px; }
+.mobile-home-page > .checkin-home-entry:active { background:#e5f0e4; }
+.checkin-home-entry:focus-visible, .checkin-student-workspace .checkin-heading-action:focus-visible { outline:2px solid #29764d; outline-offset:2px; }

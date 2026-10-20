@@ -7,6 +7,8 @@ export function makeCheckinApi(request: <T>(path: string, init?: RequestInit) =>
     create: (draft: CheckinDraft) => request<CheckinPlan>("/api/v1/admin/checkin/plans", json(draft)),
     save: (id, draft) => request<CheckinPlan>(`/api/v1/admin/checkin/plans/${id}`, json(draft, "PUT")),
     publish: id => request<CheckinPlan>(`/api/v1/admin/checkin/plans/${id}/publish`, { method: "POST" }),
+    edit: (id, draft, expectedRevision) => request<CheckinPlan>(`/api/v1/admin/checkin/plans/${id}/edit`, json({ draft, expectedRevision })),
+    remove: (id, expectedRevision) => request(`/api/v1/admin/checkin/plans/${id}`, json({ expectedRevision }, "DELETE")),
     submit: (id, body) => request(`/api/v1/student/checkin/tasks/${id}/submit`, json(body)),
     review: (id, student, body) => request(`/api/v1/admin/checkin/tasks/${id}/students/${student}/review`, json(body)),
     upload: (task, id, blob) => { const form = new FormData(); form.append("id", id); form.append("file", blob, "homework.jpg"); return request(`/api/v1/student/checkin/tasks/${task}/photos`, { method: "POST", body: form }); },

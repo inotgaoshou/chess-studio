@@ -5,7 +5,7 @@ export type TrainingFeedbackKind = "move" | "capture" | "check" | "checkmate" | 
 export const TRAINING_FEEDBACK_PACK = {
   id: "ink-strike",
   labels: { check: "将", checkmate: "绝杀", stalemate: "困毙" },
-  voice: { move: "/audio/move-crisp.wav", capture: "/audio/capture.wav", check: "/audio/check.wav", checkmate: "/audio/checkmate.wav" },
+  voice: { move: "/audio/move-crisp.wav", capture: "/audio/capture.wav", check: "/audio/check.wav", checkmate: "/audio/checkmate-crisp.wav" },
 } as const;
 
 const voices = new Map<"capture" | "check" | "checkmate", HTMLAudioElement>();
@@ -35,7 +35,7 @@ function playVoice(kind: "capture" | "check" | "checkmate") {
   }
   voice.pause();
   voice.currentTime = 0;
-  voice.volume = .85;
+  voice.volume = kind === "checkmate" ? 1 : .85;
   void voice.play().catch(() => undefined);
 }
 
@@ -138,11 +138,10 @@ function playMetalAccent(context: AudioContext, now: number, level: number) {
   playTone(context, now + .025, 2010, 1960, .15, .026 * level, "sine");
 }
 
-function playGong(context: AudioContext, now: number, level: number) {
-  playTone(context, now, 196, 184, 1.05, .13 * level, "sine");
-  playTone(context, now + .012, 287, 271, .86, .09 * level, "sine");
-  playTone(context, now + .018, 421, 397, .68, .055 * level, "triangle");
-  playNoiseSweep(context, now, .09, 850, 380, .04 * level);
+function playVictoryChime(context: AudioContext, now: number, level: number) {
+  playTone(context, now, 1046.5, 1046.5, .22, .095 * level, "triangle");
+  playTone(context, now + .025, 1568, 1568, .18, .05 * level, "sine");
+  playTone(context, now + .05, 2093, 2093, .14, .03 * level, "sine");
 }
 
 export function playTrainingFeedback(kind: TrainingFeedbackKind) {
@@ -173,8 +172,8 @@ export function playTrainingFeedback(kind: TrainingFeedbackKind) {
       playMetalAccent(context, now, level);
     }
     if (kind === "checkmate" || kind === "stalemate") {
-      playWhoosh(context, now, level, 1.05);
-      playGong(context, now + .035, level);
+      playWhoosh(context, now, level, .45);
+      playVictoryChime(context, now + .035, level);
     }
     void context.resume().catch(() => undefined);
   } catch {

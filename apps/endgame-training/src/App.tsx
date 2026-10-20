@@ -20,7 +20,7 @@ import { PracticeRulesButton } from "./PracticeRulesButton";
 import { practiceScore } from "./practiceScoring";
 import { ManualShareDialog } from "./ManualShareDialog";
 import { ManualSaveDialog, isImeEnter, type ManualSaveValues } from "./ManualSaveDialog";
-import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, CircleCheckBig, CircleHelp, ClipboardCopy, ClipboardList, Clock3, CloudUpload, Cpu, Database, Ellipsis, Eye, EyeOff, FilePenLine, FileUp, FlipVertical2, Folder, GraduationCap, Home, Lightbulb, Link, ListRestart, LockKeyhole, LogIn, Minus, Palette, Pause, Pencil, Play, Plus, RefreshCw, RotateCcw, Search, Settings2, Square as StopIcon, Trash2, Undo2, UserRound, X } from "lucide-react";
+import { BookOpen, CalendarCheck2, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, CircleCheckBig, CircleHelp, ClipboardCopy, ClipboardList, Clock3, CloudUpload, Cpu, Database, Ellipsis, Eye, EyeOff, FilePenLine, FileUp, FlipVertical2, Folder, GraduationCap, Home, Lightbulb, Link, ListRestart, LockKeyhole, LogIn, Minus, Palette, Pause, Pencil, Play, Plus, RefreshCw, RotateCcw, Search, Settings2, Square as StopIcon, Trash2, Undo2, UserRound, X } from "lucide-react";
 import { type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
 import { trainingStore } from "./store";
 import type { Attempt, BoardPiece, BoardState, LocalManualAnalysisSummary, LocalManualFolder, LocalManualGame, MobileWorkspaceMode, RuleMode, SolutionMove, TrainingLibrary, TrainingProblem } from "./types";
@@ -1280,7 +1280,11 @@ function MobileHomePanel({ auth, home, libraries, gameLibraries, unreadAssignmen
     {isOperator && <section className="mobile-home-operator">
       <GraduationCap/><div><strong>{role === "admin" ? "机构运营待办" : "教学工作台"}</strong><small>{role === "admin" ? "管理机构内容、练习计划与作业运营。" : "管理本人班级、草稿作业和学生完成情况。"}</small></div><button type="button" onClick={onTeacher}>进入</button>
     </section>}
-    {auth?.user.role === "student" && <section className="checkin-home-entry"><div><strong>今日打卡</strong><small>语数英与象棋，每日积累</small></div><button type="button" onClick={onCheckin}>去打卡</button></section>}
+    {auth?.user.role === "student" && <button type="button" className="checkin-home-entry" onClick={onCheckin}>
+      <span className="checkin-home-icon" aria-hidden="true"><CalendarCheck2 /></span>
+      <span className="checkin-home-copy"><strong>今日打卡</strong><small>每天完成任务，盖个成长章</small></span>
+      <span className="checkin-home-cta">去打卡<ChevronRight aria-hidden="true" /></span>
+    </button>}
     {!isOperator && <section className="mobile-home-primary">
       <span><Lightbulb/></span><div><strong>{resume ? "继续上次练习" : daily ? "今日练习" : "开始专项练习"}</strong><small>{resume ? `${resume.items.filter((item) => item.status !== "pending").length}/${resume.items.length} 题已完成` : daily ? `${daily.topic.name} · ${daily.itemCount} 题` : "选择专题、难度和题量，生成固定练习会话。"}</small></div><button type="button" onClick={onPractice}>{resume ? "继续" : "开始"}</button>
     </section>}
