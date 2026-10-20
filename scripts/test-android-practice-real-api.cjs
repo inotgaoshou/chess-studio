@@ -28,7 +28,7 @@ const problemId = process.env.PRACTICE_REAL_PROBLEM || '2a5bec26-d430-57db-bd80-
    assert.equal(actual.role,account.role);console.log(account.label+': real login passed');
    let creates=0,grades=0; const verdicts=[],failures=[];
    const request=r=>{const u=new URL(r.url());if(u.origin!==api)return;if(r.method()==='POST'&&u.pathname.endsWith('/practice/sessions'))creates++;if(r.method()==='POST'&&u.pathname.endsWith('/attempts'))grades++;};
-   const response=async r=>{const u=new URL(r.url());if(u.origin!==api)return;if(r.status()>=400&&/\/(auth|practice|problems|teaching-catalog)(?:\/|$)/.test(u.pathname))failures.push({path:u.pathname,status:r.status()});if(u.pathname.endsWith('/verify-move')&&r.ok()){const result=await r.json();verdicts.push({outcome:result.outcome,completed:result.completed,path:result.path});}};
+   const response=async r=>{const u=new URL(r.url());if(u.origin!==api)return;if(r.status()>=400&&/\/(auth|practice|problems|teaching-catalog)(?:\/|$)/.test(u.pathname))failures.push({path:u.pathname,status:r.status()});if(u.pathname.endsWith('/verify-move')&&r.ok()){const result=await r.json();verdicts.push({candidate:r.request().postDataJSON().candidate,outcome:result.outcome,completed:result.completed,path:result.path});}};
    page.on('request',request);page.on('response',response);
    try {
     await page.goto('https://localhost/library');
@@ -49,6 +49,23 @@ const problemId = process.env.PRACTICE_REAL_PROBLEM || '2a5bec26-d430-57db-bd80-
     if(await page.getByRole('button',{name:'再试一次',exact:true}).count())await page.getByRole('button',{name:'再试一次',exact:true}).click();
     const board=page.locator('.mobile-solver-page .xiangqi-board');
     const candidate=detail.solution[0].iccs;
+    if(process.env.PRACTICE_REAL_TRIAL==='1'&&account.label==='ordinary') {
+     assert.equal(detail.startingFen,'4k4/3R5/R3P4/9/9/9/9/9/9/4K4 w - - 0 1','Use the reviewed test-only trial fixture');
+     await board.getByRole('button',{name:'e0 红帅',exact:true}).click();
+     await board.getByRole('button',{name:'d0',exact:true}).click();
+     for(let n=0;n<300&&!verdicts.some(v=>v.candidate==='e0d0');n++)await page.waitForTimeout(100);
+     assert.equal(verdicts.find(v=>v.candidate==='e0d0')?.outcome,'wrong','Real server must reject the missed mate');
+     await page.getByText('试走中，未计为答对；可继续走棋或退回重试。',{exact:true}).waitFor({timeout:16000});
+     await board.getByRole('button',{name:'d0 红帅',exact:true}).waitFor();
+     await board.getByRole('button',{name:'f9 黑将',exact:true}).waitFor();
+     assert.equal(await page.locator('.mobile-solver-result').count(),0);assert.equal(grades,0);
+     await page.screenshot({path:'/tmp/practice-real-wrong-ai.png'});
+     await page.getByRole('button',{name:/^退回重试/}).click();
+     await board.getByRole('button',{name:'e0 红帅',exact:true}).waitFor();
+     console.log(JSON.stringify({realWrong:true,aiReply:true,noGrade:true,trialBoard:true,returnToAccepted:true}));
+     verdicts.length=0;
+    }
+
     await board.getByRole('button',{name:new RegExp('^'+candidate.slice(0,2)+'(?: |$)')}).click();
     await board.getByRole('button',{name:new RegExp('^'+candidate.slice(2)+'(?: |$)')}).click();
     for(let n=0;n<250&&!verdicts.length;n++)await page.waitForTimeout(100);
