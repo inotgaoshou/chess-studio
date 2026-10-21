@@ -229,3 +229,8 @@
 .teaching-catalog.catalog-phone-browse .catalog-content-toolbar .catalog-tabs { flex: 1; min-width: 0; margin: 0; }
 .catalog-phone-browse .catalog-filter-toggle { display: inline-flex; flex: none; align-items: center; justify-content: center; gap: 4px; min-height: 44px; padding: 6px 8px; font-size: 13px; }
 .catalog-phone-browse .catalog-filter-toggle svg { width: 16px; height: 16px; }
+
+/* Keep same-titled reading positions distinguishable in a compact row. */
+.teaching-catalog .catalog-reading .catalog-reading-solution { padding: 8px 12px; min-height: 60px; }
+.teaching-catalog .catalog-reading .catalog-reading-solution .catalog-board { width: 48px; height: auto; flex: 0 0 48px; }
+.teaching-catalog .catalog-reading .catalog-reading-solution > span { flex: 1; overflow-wrap: anywhere; }

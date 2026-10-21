@@ -16,3 +16,20 @@ export function catalogVisibleChildren<T extends ContentNode>(nodes: T[], mode: 
   // stays available to management and assignment selection.
   return mode === "training" && entry === "practical_mates" && nodes.some(n => n.kind === "chapter") ? nodes.filter(n => n.kind === "chapter" && (n.itemCount == null || n.itemCount > 0)) : nodes;
 }
+
+/** Reading entries may include identical imports under different source IDs.
+ * Use the server's complete content/version fingerprint, never a title or FEN:
+ * those can be shared by different problems, solutions or annotated editions.
+ * Keep raw pages/IDs for pagination, training, selection and existing records.
+ */
+export function catalogReadingItems<T extends { id: string; contentFingerprint?: string | null }>(items: T[]): T[] {
+  const seen = new Set<string>();
+  return items.filter(item => {
+    const fingerprint = item.contentFingerprint;
+    const key = fingerprint && /^[a-f0-9]{64}$/i.test(fingerprint)
+      ? `content:${fingerprint.toLowerCase()}` : `id:${item.id}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
