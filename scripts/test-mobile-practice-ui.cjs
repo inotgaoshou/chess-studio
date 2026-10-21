@@ -63,6 +63,10 @@ const topic = { id: 'topic', name: '长标题练习专题与专项训练', descr
             created = { id: `s${payloads.length}`, sourceKind: payload.sourceKind, mode: payload.mode || 'solver', status: 'active', startedAt: new Date().toISOString(), updatedAt: new Date().toISOString(), items: (payload.problemIds || ['p0']).map((id, ordinal) => ({ id: `i${ordinal}`, ordinal, status: 'pending', problem: problems.find((p) => p.id === id) })) };
             body = created;
           }
+        } else if (path.endsWith('/verify-move')) {
+          const { path: prior, candidate } = req.postDataJSON();
+          const correct = candidate === 'a0a1';
+          body = { outcome: correct ? 'completed' : 'wrong', message: correct ? '已完成' : '这步不对，请再试试', path: correct ? [...prior, candidate] : prior, autoMoves: [], completed: correct, verifierVersion: 'fixture', evidenceId: 'fixture-evidence' };
         } else if (path.endsWith('/attempts')) {
           const attempt = req.postDataJSON(); attempts.push(attempt);
           if (attemptFail) { attemptFail = false; status = 503; body = { error: '提交离线' }; }
@@ -99,7 +103,9 @@ const topic = { id: 'topic', name: '长标题练习专题与专项训练', descr
       await page.getByRole('button', { name: '返回学习日历', exact: true }).click();
       assert.match(await page.locator('.practice-calendar-summary').textContent(), /完成 7 题 · 正确 5 题/);
       for (const [label, count] of [['近 1 个月', 30], ['近 3 个月', 90]]) {
+        const historyLoaded = page.waitForResponse(response => response.url().includes(`/practice/history?days=${count}`));
         await page.getByRole('button', { name: label, exact: true }).click();
+        await historyLoaded;
         await page.locator('.practice-calendar-month-grid').waitFor();
         assert.equal(historyRequests.at(-1), count);
         await page.getByRole('button', { name: '上个月学习记录', exact: true }).click();
@@ -262,13 +268,12 @@ const topic = { id: 'topic', name: '长标题练习专题与专项训练', descr
         await page.screenshot({ path: `/tmp/qixi-practice-rules-${viewport.width}.png` });
         await rules.getByRole('button', { name: '关闭做题规则', exact: true }).click();
         for (let index = 0; index < wrongCount; index++) {
-          await page.locator('.mobile-solver-board .board-square[aria-label^="a0 红"]').click();
-          await page.locator('.mobile-solver-board .board-square[aria-label="a2"]').click();
+          const verified = page.waitForResponse(response => response.url().endsWith('/verify-move'));
+          await page.locator('.mobile-solver-board .board-square[aria-label^="a0 红"]').dragTo(page.locator('.mobile-solver-board .board-square[aria-label="a2"]'));
+          await verified;
           await page.getByText(/这步不对，请再试试/).waitFor();
-          assert.equal(await page.locator('.mobile-solver-board .board-square[aria-label^="a2 红"] img').count(), 1, 'a legal wrong move must land on the board');
+          assert.equal(await page.locator('.mobile-solver-board .board-square[aria-label^="a0 红"] img').count(), 1, 'a rejected move preserves the verified board position');
           assert.equal(created.items[0].status, 'pending');
-          await page.getByRole('button', { name: /退回重试/ }).click();
-          await page.locator('.mobile-solver-board .board-square[aria-label^="a0 红"] img').waitFor();
         }
         if (wrongCount) {
           await page.getByRole('button', { name: '重来', exact: true }).click();
@@ -437,6 +442,16 @@ const topic = { id: 'topic', name: '长标题练习专题与专项训练', descr
         else if (path.endsWith('/student/assignments')) body = { items: [assignment] };
         else if (path.endsWith('/problems')) body = { items: [assignmentProblem] };
         else if (path.endsWith('/view')) body = {};
+        else if (path.endsWith('/verify-move')) {
+          const { path: prior, candidate } = req.postDataJSON();
+          let next = solution;
+          for (const move of prior) next = next.find(node => node.iccs === move)?.children || [];
+          next = next.find(node => node.iccs === candidate)?.children || [];
+          const moves = [...prior, candidate], autoMoves = [];
+          if (!terminal && moves.length % 2 && next.length) { autoMoves.push(next[0].iccs); moves.push(next[0].iccs); next = next[0].children; }
+          const completed = terminal || !next.length;
+          body = { outcome: completed ? 'completed' : 'correct', message: completed ? '已完成' : '请继续', path: moves, autoMoves, completed, verifierVersion: 'fixture', evidenceId: 'draft-fixture-evidence' };
+        }
         else if (path.endsWith('/attempts')) {
           submitted.push(req.postDataJSON());
           assignmentProblem.completed = true;

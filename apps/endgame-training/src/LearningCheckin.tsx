@@ -1,7 +1,8 @@
 // Canonical shared interface; see tools/sync-checkin-ui.mjs.
 import { useEffect, useMemo, useRef, useState } from "react";
+import { CalendarCheck2, ChevronLeft, RefreshCw } from "lucide-react";
 import type { CheckinApi, CheckinBadge, CheckinClass, CheckinDetail, CheckinDraft, CheckinPlan, CheckinStudent, CheckinTask, CheckinTemplate } from "./checkinDomain";
-import { addDays, beijingDate, beijingInput, beijingInstant, canSubmitTask, checkinPhase, checkinTime, newCheckinDraft, phaseLabels, stagePreview, weekdayLabels, weekProgress, weekStart } from "./checkinDomain";
+import { addDays, beijingDate, beijingInput, beijingInstant, canSubmitTask, checkinPhase, checkinTime, copyCheckinDraft, newCheckinDraft, phaseLabels, stagePreview, weekdayLabels, weekProgress, weekStart } from "./checkinDomain";
 import { CheckinStudentClient, compressCheckinPhoto, type CheckinLocalDraft, type PendingCheckin } from "./checkinOffline";
 import "./learningCheckin.css";
 import { canLeaveCheckin, captureCheckinPosition, focusCheckin, useCheckinLeaveGuard, type CheckinPosition } from "./checkinNavigation";
@@ -69,7 +70,7 @@ export function CheckinStudentWorkspace({ client, studentId, onBack }: { client:
   function closeTask() { setTask(undefined); focusCheckin(taskSource.current, taskPosition.current); }
   const api = client.api;
   useEffect(() => { let active = true; setLoading(true); void client.plans().then(value => { if (active) { setPlans(value); setPlanId(current => value.some(p => p.id === current) ? current : (value.find(p => checkinPhase(p) === "active" || checkinPhase(p) === "supplement") ?? value[0])?.id ?? ""); } }).catch(error => { if (active) setError(message(error)); }).finally(() => { if (active) setLoading(false); }); return () => { active = false; }; }, [client, tick]);
-  useEffect(() => { if (!planId) return; let active = true; setError(""); setLoading(true);
+  useEffect(() => { setDetail(undefined); setTask(undefined); if (!planId) return; let active = true; setError(""); setLoading(true);
     void Promise.all([client.detail(planId), client.pending()]).then(([value, queued]) => { if (active) {
       setDetail(value); setClockOffset(Date.parse(value.serverNow) - Date.parse(value.cachedAt ?? new Date().toISOString())); setPending(queued); const weeks = [...new Set(value.tasks.map(t => weekStart(t.localDate)))].sort();
       setWeek(current => weeks.includes(current) ? current : weeks.includes(weekStart(beijingDate())) ? weekStart(beijingDate()) : weeks[0] ?? "");
@@ -102,27 +103,38 @@ export function CheckinStudentWorkspace({ client, studentId, onBack }: { client:
     } else { const item = queued.find(q => q.taskId === task.id); setNotice(item?.error ?? "本机已记录，待同步"); }
     } finally { submissionsInFlight.current.delete(task.id); }
   }
-  return <main className={`checkin-workspace ${motion ? "" : "checkin-no-motion"}`}>
-    <header className="checkin-heading"><button type="button" onClick={onBack}>‹ 返回</button><div><h1>我的学习打卡</h1><p>一项一枚印章，一天一步成长</p></div><button type="button" disabled={loading} onClick={() => void refresh()}>刷新与同步</button></header>
-    <label className="checkin-motion"><input type="checkbox" checked={motion} onChange={e => { setMotion(e.target.checked); try { localStorage.setItem("qixi-checkin-motion", e.target.checked ? "on" : "off"); } catch { /* Session preference remains usable. */ } }} />完成动效</label>
+  return <main className={`checkin-workspace checkin-student-workspace ${motion ? "" : "checkin-no-motion"}`}>
+    <header className="checkin-heading">
+      <button className="checkin-heading-action" type="button" onClick={onBack} title="返回"><ChevronLeft aria-hidden="true" /><span className="checkin-visually-hidden">返回</span></button>
+      <div><h1>我的学习打卡</h1></div>
+      <button className="checkin-heading-action" type="button" disabled={loading} onClick={() => void refresh()} title="刷新与同步"><RefreshCw aria-hidden="true" /><span className="checkin-visually-hidden">刷新与同步</span></button>
+    </header>
     {error && <p role="alert" className="checkin-error">{error}</p>}{notice && <p role="status" className="checkin-notice">{notice}</p>}
     {loading && <p role="status">正在读取打卡计划…</p>}
-    {!loading && !plans.length && !error && <p>老师还没有发布打卡计划。发布后，你的每日任务会显示在这里。</p>}
-    {plans.length > 0 && <label className="checkin-field">阶段计划<select value={planId} onChange={e => { setPlanId(e.target.value); setDetail(undefined); setTask(undefined); setWeek(""); setNotice(""); }}>{plans.map(p => <option key={p.id} value={p.id}>{p.title} · {phaseLabels[checkinPhase(p)]}</option>)}</select></label>}
+    {!loading && !plans.length && !detail && !error && <section className="checkin-empty-state">
+      <span className="checkin-empty-icon" aria-hidden="true"><CalendarCheck2 /></span>
+      <h2>等老师布置任务</h2>
+      <p>老师还没有发布打卡计划。<br />发布后，每日任务就会显示在这里。</p>
+    </section>}
+    <div className="checkin-student-filters">{plans.length > 0 && <label className="checkin-field">阶段计划<select value={planId} onChange={e => { setPlanId(e.target.value); setDetail(undefined); setTask(undefined); setWeek(""); setNotice(""); }}>{plans.map(p => <option key={p.id} value={p.id}>{p.title} · {phaseLabels[checkinPhase(p)]}</option>)}</select></label>}
+    {detail && <label className="checkin-field">查看周次<select value={week} onChange={e => { setWeek(e.target.value); setTask(undefined); }}>{weeks.map((w, i) => <option key={w} value={w}>第{i + 1}周 · {w} 至 {addDays(w, 6)}</option>)}</select></label>}</div>
     {detail && <>
-      <section className="checkin-stage"><strong>{detail.plan.title}</strong><span>{phaseLabels[checkinPhase(detail.plan, now)]}</span><p>{checkinTime(detail.plan.startsAt)} — {checkinTime(detail.plan.endsAt)}</p><small>补交截止 {checkinTime(detail.plan.supplementUntil)} · 打卡表示已提交，不代表作业全部正确</small></section>
-      <label className="checkin-field">查看周次<select value={week} onChange={e => { setWeek(e.target.value); setTask(undefined); }}>{weeks.map((w, i) => <option key={w} value={w}>第{i + 1}周 · {w} 至 {addDays(w, 6)}</option>)}</select></label>
-      <HorseRoute detail={detail} studentId={studentId} week={week} animate={horseMoved} />
+      <details className="checkin-plan-info"><summary>计划时间与说明 · {phaseLabels[checkinPhase(detail.plan, now)]}</summary><p>{checkinTime(detail.plan.startsAt)} — {checkinTime(detail.plan.endsAt)}</p><small>补交截止 {checkinTime(detail.plan.supplementUntil)} · 打卡表示已提交，不代表作业全部正确</small></details>
       <div className="checkin-date-tabs" role="group" aria-label="查看每天任务">{progress?.dates.map(d => <button type="button" key={d} aria-pressed={selectedDate === d} onClick={() => { setDate(d); setTask(undefined); }}>{d === beijingDate() ? "今天" : d.slice(5)}{progress.completedDates.includes(d) ? " ✓" : ""}</button>)}</div>
-      <section className="checkin-tasks"><h2>{selectedDate === beijingDate() ? "今日任务" : `${selectedDate}任务`}</h2>{todayTasks.map(t => {
+      <section className="checkin-tasks"><header className="checkin-tasks-heading"><h2>{selectedDate === beijingDate() ? "今日任务" : `${selectedDate}任务`}</h2><small>共{todayTasks.length}项 · 已完成{todayTasks.filter(t => detail.submissions.some(s => s.taskId === t.id && s.studentId === studentId && s.status === "submitted")).length}项</small></header>{todayTasks.map(t => {
         const sub = detail.submissions.find(s => s.taskId === t.id && s.studentId === studentId); const local = pending.find(p => p.taskId === t.id);
-        return <article key={t.id} className="checkin-task"><div><span className="checkin-subject">{t.subject}</span><strong>{t.instruction}</strong><small>{t.required ? "必做" : "选做"}{t.photoRequired ? " · 需照片" : ""}</small>{local && <p className={local.blocked ? "checkin-error" : ""}>{local.blocked ? "未提交成功，本机记录保留" : "本机已记录，待同步"}{local.error ? `：${local.error}` : ""}</p>}</div>
+        return <div key={t.id} className="checkin-task-item"><article className="checkin-task"><div><div className="checkin-task-meta"><span className="checkin-subject">{t.subject}</span><small>{t.required ? "必做" : "选做"}{t.photoRequired ? " · 需照片" : ""}</small></div><strong>{t.instruction}</strong>{local && <p className={local.blocked ? "checkin-error" : ""}>{local.blocked ? "未提交成功，本机记录保留" : "本机已记录，待同步"}{local.error ? `：${local.error}` : ""}</p>}</div>
           <button type="button" aria-expanded={task?.id === t.id} aria-controls={task?.id === t.id ? "checkin-student-task-detail" : undefined} onClick={event => openTask(t, event.currentTarget)}>{sub?.status === "submitted" ? <span className={`checkin-stamp ${stamped === t.id ? "stamping" : ""}`}>成</span> : sub?.status === "returned" ? "需补充" : local ? "查看本机记录" : canSubmitTask(detail, t, now) ? "去打卡" : "查看任务"}</button>
-        </article>;
-      })}</section>
-      {task && <StudentTaskEditor key={task.id} sectionRef={taskSection} task={task} detail={detail} studentId={studentId} client={client} pending={pending.find(p => p.taskId === task.id)} now={now} onSubmit={draft => submitted(task, draft)} onClose={closeTask} />}
+        </article>
+          {task?.id === t.id && <StudentTaskEditor key={task.id} sectionRef={taskSection} task={task} detail={detail} studentId={studentId} client={client} pending={local} now={now} onSubmit={draft => submitted(task, draft)} onClose={closeTask} />}
+        </div>;
+      })}{!todayTasks.length && <p>当天没有安排任务，可切换日期查看。</p>}</section>
+      <details className="checkin-progress-details"><summary>本周进度与徽章 · {progress?.completed ?? 0}/{progress?.planned ?? 0}天达标</summary>
+      <HorseRoute detail={detail} studentId={studentId} week={week} animate={horseMoved} />
       <WeekTable detail={detail} studentId={studentId} week={week} onTask={(t, source) => { setDate(t.localDate); openTask(t, source); }} />
       <section className="checkin-badges"><h2>我的徽章</h2>{detail.badges.filter(b => b.studentId === studentId).map(b => <Badge key={b.weekStart} badge={b} />)}{!detail.badges.length && <p>完成本周安排的学习日，就能获得周徽章。</p>}</section>
+    <label className="checkin-motion"><input type="checkbox" checked={motion} onChange={e => { setMotion(e.target.checked); try { localStorage.setItem("qixi-checkin-motion", e.target.checked ? "on" : "off"); } catch { /* Session preference remains usable. */ } }} />完成动效</label>
+      </details>
     </>}
     {celebrating && <section className="checkin-celebration" role="status"><div className="checkin-confetti" aria-hidden="true">✦ · ✧ · ✦</div><h2>小马到达本周终点啦！</h2><Badge badge={celebrating} /><p>这一周的努力，都留下了印记。</p><button type="button" onClick={() => setCelebrating(undefined)}>收好徽章</button></section>}
   </main>;
@@ -153,66 +165,103 @@ export function CheckinTeacherWorkspace({ api, onBack }: { api: CheckinApi; onBa
   const [preview, setPreview] = useState(false); const [retry, setRetry] = useState(0); const [ready, setReady] = useState(false);
   const [editorCollapsed, setEditorCollapsed] = useState(false); const [detailShown, setDetailShown] = useState(true); const [reveal, setReveal] = useState(0);
   const [savedDraft, setSavedDraft] = useState("");
+  const [classMembers, setClassMembers] = useState<Record<string, string[]>>({});
+  const [editingPlan, setEditingPlan] = useState<CheckinPlan>();
+  const [effectiveDate, setEffectiveDate] = useState(beijingDate()); const [reason, setReason] = useState("");
+  const mutationInFlight = useRef(false);
+  const published = editingPlan?.status === "published";
   const sourcePosition = useRef<CheckinPosition | undefined>(undefined); const editorPosition = useRef<CheckinPosition | undefined>(undefined);
   const workspace = useRef<HTMLElement>(null); const sourceButton = useRef<HTMLElement | null>(null);
-  useCheckinLeaveGuard(Boolean(draft && JSON.stringify(draft) !== savedDraft), busy);
+  useCheckinLeaveGuard(Boolean(draft && (JSON.stringify(draft) !== savedDraft || (published && (reason.trim() || effectiveDate !== [beijingDate(), beijingDate(draft.startsAt)].sort().at(-1))))), busy);
   useEffect(() => { if (draft && !editorCollapsed) focusCheckin(workspace.current?.querySelector<HTMLElement>(".checkin-plan-editor"), editorPosition.current); }, [draft?.clientId, editorCollapsed]);
   useEffect(() => { if (detail && detailShown) focusCheckin(workspace.current?.querySelector<HTMLElement>(".checkin-results")); }, [detail?.plan.id, detailShown, reveal]);
   function returnToPlans() { setDetailShown(false); focusCheckin(sourceButton.current ?? workspace.current?.querySelector<HTMLElement>(".checkin-plan-list"), sourcePosition.current); }
-  function showEditor(value: CheckinDraft, id?: string) { editorPosition.current = undefined; setDraft(value); setSavedDraft(id ? JSON.stringify(value) : ""); setEditing(id); setEditorCollapsed(false); setDetailShown(false); setPreview(false); focusCheckin(workspace.current?.querySelector<HTMLElement>(".checkin-plan-editor")); }
+  function showEditor(value: CheckinDraft, id?: string, plan?: CheckinPlan) { setEditingPlan(plan); setReason(""); setEffectiveDate([beijingDate(), beijingDate(value.startsAt)].sort().at(-1)!); editorPosition.current = undefined; setDraft(value); setSavedDraft(id ? JSON.stringify(value) : ""); setEditing(id); setEditorCollapsed(false); setDetailShown(false); setPreview(false); focusCheckin(workspace.current?.querySelector<HTMLElement>(".checkin-plan-editor")); }
 
   async function reload() {
     const [p, c] = await Promise.all([api.list(), api.classes()]);
     const members = await Promise.all(c.map(c => api.students(c.id)));
+    setClassMembers(Object.fromEntries(c.map((group, i) => [group.id, members[i].map(s => s.id)])));
     setPlans(p); setClasses(c); setStudents([...new Map(members.flat().map(s => [s.id, s])).values()]); setReady(true);
   }
-  useEffect(() => { let active = true; setReady(false); setError(""); void Promise.all([api.list(), api.classes()]).then(async ([p,c]) => { const members = await Promise.all(c.map(c => api.students(c.id))); if (active) { setPlans(p); setClasses(c); setStudents([...new Map(members.flat().map(s => [s.id,s])).values()]); setReady(true); } }).catch(error => { if (active) setError(message(error)); }); return () => { active = false; }; }, [api, retry]);
+  useEffect(() => { let active = true; setReady(false); setError(""); void Promise.all([api.list(), api.classes()]).then(async ([p,c]) => { const members = await Promise.all(c.map(c => api.students(c.id))); if (active) { setClassMembers(Object.fromEntries(c.map((group, i) => [group.id, members[i].map(s => s.id)]))); setPlans(p); setClasses(c); setStudents([...new Map(members.flat().map(s => [s.id,s])).values()]); setReady(true); } }).catch(error => { if (active) setError(message(error)); }); return () => { active = false; }; }, [api, retry]);
   async function save(publish: boolean) {
-    if (!draft) return; setBusy(true); setError("");
-    try { const plan = editing ? await api.save(editing, draft) : await api.create(draft); setEditing(plan.id); setSavedDraft(JSON.stringify(draft));
-      if (publish) { await api.publish(plan.id); setDraft(undefined); setEditing(undefined); setNotice("阶段计划已发布，每周任务将自动重复"); } else { setNotice("草稿已保存"); }
+    if (!draft || mutationInFlight.current) return;
+    mutationInFlight.current = true; setBusy(true); setError("");
+    try {
+      const plan = editing ? await api.save(editing, draft, { expectedRevision: editingPlan?.revision,
+        ...(published ? { effectiveDate, reason } : {}) }) : await api.create(draft);
+      setEditing(plan.id); setEditingPlan(plan); setSavedDraft(JSON.stringify(draft));
+      if (published) {
+        setDraft(undefined); setEditing(undefined); setDetail(undefined); setReason("");
+        setNotice("原计划已更新，历史任务、已有打卡和照片保留");
+      } else if (publish) {
+        await api.publish(plan.id); setDraft(undefined); setEditing(undefined);
+        setNotice("阶段计划已发布，每周任务将自动重复");
+      } else { setNotice("草稿已保存"); }
       await reload(); setPreview(false);
-    } catch (error) { setError(message(error)); } finally { setBusy(false); }
+    } catch (error) { setError(message(error)); } finally { mutationInFlight.current = false; setBusy(false); }
   }
   function copy(plan: CheckinPlan) {
     if (!plan.draft || !canLeaveCheckin()) return;
-    const fresh = newCheckinDraft();
-    showEditor({ ...plan.draft, clientId: fresh.clientId, startsAt: fresh.startsAt, endsAt: fresh.endsAt, title: `${plan.title}（新阶段）`.slice(0,120), templates: plan.draft.templates.map(t => ({ ...t, id: crypto.randomUUID(), weekdays: [...t.weekdays] })) });
-    setDetail(undefined);
+    showEditor(copyCheckinDraft(plan, plans, beijingDate(), classMembers)); setDetail(undefined); setNotice("已复制为草稿，默认接在原计划之后；修改原要求请使用“编辑计划”");
+  }
+  async function editPlan(plan: CheckinPlan, source: HTMLElement) {
+    if (!canLeaveCheckin()) return;
+    sourceButton.current = source; sourcePosition.current = captureCheckinPosition(source);
+    setBusy(true); setError(""); setNotice("");
+    try {
+      const latest = (await api.detail(plan.id)).plan;
+      if (!latest.draft) throw new Error("计划模板不可用，请刷新后重试");
+      showEditor(latest.draft, latest.id, latest); setDetail(undefined);
+    } catch (error) { setError(message(error)); } finally { setBusy(false); }
+  }
+  async function removePlan(plan: CheckinPlan) {
+    if (mutationInFlight.current || !canLeaveCheckin()) return;
+    if (!window.confirm(`删除“${plan.title}”？学生将不再看到此计划，已有打卡和照片保留在后台。`)) return;
+    mutationInFlight.current = true; setBusy(true); setError("");
+    try {
+      if (plan.revision == null) throw new Error("请刷新页面后再删除计划");
+      await api.remove(plan.id, plan.revision, "删除误建或不再使用的计划");
+      if (editing === plan.id) { setDraft(undefined); setEditing(undefined); setReason(""); }
+      if (detail?.plan.id === plan.id) setDetail(undefined);
+      setNotice("计划已删除，已有记录保留在后台"); await reload();
+    } catch (error) { setError(message(error)); } finally { mutationInFlight.current = false; setBusy(false); }
   }
   async function open(plan: CheckinPlan, source: HTMLElement) {
     sourceButton.current = source; sourcePosition.current = captureCheckinPosition(source);
     if (detail?.plan.id === plan.id && plan.status !== "draft") { setDetailShown(true); setReveal(v => v + 1); focusCheckin(workspace.current?.querySelector<HTMLElement>(".checkin-results")); return; }
-    if (editing === plan.id && draft) { setEditorCollapsed(false); focusCheckin(workspace.current?.querySelector<HTMLElement>(".checkin-plan-editor")); return; }
+    if (plan.status === "draft" && editing === plan.id && draft) { setEditorCollapsed(false); focusCheckin(workspace.current?.querySelector<HTMLElement>(".checkin-plan-editor")); return; }
     if (!canLeaveCheckin()) return;
     setError(""); setBusy(true);
     try {
-      if (plan.status === "draft" && plan.draft) { showEditor(plan.draft, plan.id); setDetail(undefined); }
+      if (plan.status === "draft" && plan.draft) { showEditor(plan.draft, plan.id, plan); setDetail(undefined); }
       else { setDetail(await api.detail(plan.id)); setDetailShown(true); setDraft(undefined); setReveal(v => v + 1); focusCheckin(workspace.current?.querySelector<HTMLElement>(".checkin-results")); }
     } catch (error) { setError(message(error)); } finally { setBusy(false); }
   }
   const visible = plans.filter(p => (!filter || checkinPhase(p) === filter) && (!classFilter || p.draft?.classIds.includes(classFilter)));
   return <main ref={workspace} className="checkin-workspace checkin-teacher"><header className="checkin-heading">{onBack && <button type="button" onClick={() => { if (canLeaveCheckin()) onBack(); }}>‹ 返回</button>}<div><h1>学习打卡</h1><p>一次布置，在阶段内每周循环；可以为两个孩子分别制定计划。</p></div><button type="button" disabled={busy || !ready} className="checkin-primary" onClick={() => { if (!canLeaveCheckin()) return; showEditor(newCheckinDraft()); setDetail(undefined); setNotice(""); }}>新建阶段计划</button></header>
     {error && <p className="checkin-error" role="alert">{error}<button type="button" onClick={() => setRetry(v => v + 1)}>重试读取</button></p>}{notice && <p role="status" className="checkin-notice">{notice}</p>}{!ready && !error && <p role="status">正在读取班级与打卡计划…</p>}
-    {draft && <CheckinPlanEditor key={draft.clientId} draft={draft} classes={classes} students={students} onChange={value => { setDraft(value); setPreview(false); }} busy={busy} collapsed={editorCollapsed} onToggle={() => { if (!editorCollapsed) editorPosition.current = captureCheckinPosition(workspace.current); setEditorCollapsed(v => !v); if (!editorCollapsed) focusCheckin(workspace.current?.querySelector<HTMLElement>(".checkin-plan-editor")); }} onDiscard={() => { if (canLeaveCheckin()) { setDraft(undefined); setEditing(undefined); } }} preview={preview} onPreview={() => setPreview(true)} onSave={() => void save(false)} onPublish={() => void save(true)} onClose={() => { if (!editorCollapsed) editorPosition.current = captureCheckinPosition(workspace.current); setEditorCollapsed(true); focusCheckin(sourceButton.current ?? workspace.current?.querySelector<HTMLElement>(".checkin-plan-list"), sourcePosition.current); }} />}
+    {draft && <CheckinPlanEditor key={draft.clientId} published={published} effectiveDate={effectiveDate} reason={reason} onEffectiveDate={setEffectiveDate} onReason={setReason} draft={draft} classes={classes} students={students} onChange={value => { setDraft(value); setPreview(false); }} busy={busy} collapsed={editorCollapsed} onToggle={() => { if (!editorCollapsed) editorPosition.current = captureCheckinPosition(workspace.current); setEditorCollapsed(v => !v); if (!editorCollapsed) focusCheckin(workspace.current?.querySelector<HTMLElement>(".checkin-plan-editor")); }} onDiscard={() => { if (canLeaveCheckin()) { setDraft(undefined); setEditing(undefined); } }} preview={preview} onPreview={() => setPreview(true)} onSave={() => void save(false)} onPublish={() => void save(true)} onClose={() => { if (!editorCollapsed) editorPosition.current = captureCheckinPosition(workspace.current); setEditorCollapsed(true); focusCheckin(sourceButton.current ?? workspace.current?.querySelector<HTMLElement>(".checkin-plan-list"), sourcePosition.current); }} />}
     {detail && <div hidden={!detailShown}><TeacherPlanDetail key={detail.plan.id} api={api} detail={detail} onChange={setDetail} onClose={returnToPlans} reveal={reveal} /></div>}
     <section className="checkin-plan-list" tabIndex={-1}><h2>阶段计划</h2><div className="checkin-filters"><label>状态<select value={filter} onChange={e => setFilter(e.target.value)}><option value="">全部状态</option>{Object.entries(phaseLabels).map(([v,label]) => <option key={v} value={v}>{label}</option>)}</select></label><label>班级<select value={classFilter} onChange={e => setClassFilter(e.target.value)}><option value="">全部班级／指定学生</option>{classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label></div>
-    {visible.map(p => <article className="checkin-plan" key={p.id}><div><strong>{p.title}</strong><span>{phaseLabels[checkinPhase(p)]} · 每周重复</span><small>{checkinTime(p.startsAt)} — {checkinTime(p.endsAt)}</small><small>{p.draft?.classIds.length ? p.draft.classIds.map(id => classes.find(c => c.id === id)?.name ?? "原班级").join("、") : p.draft?.studentIds.map(id => students.find(s => s.id === id)?.displayName ?? "指定学生").join("、")}</small></div><div><button disabled={busy} type="button" onClick={event => void open(p, event.currentTarget)}>{p.status === "draft" ? "编辑草稿" : "完成情况"}</button><button disabled={busy} type="button" onClick={() => copy(p)}>复制新阶段</button></div></article>)}
+    {visible.map(p => <article className="checkin-plan" key={p.id}><div><strong>{p.title}</strong><span>{phaseLabels[checkinPhase(p)]} · 每周重复</span><small>{checkinTime(p.startsAt)} — {checkinTime(p.endsAt)}</small><small>{p.draft?.classIds.length ? p.draft.classIds.map(id => classes.find(c => c.id === id)?.name ?? "原班级").join("、") : p.draft?.studentIds.map(id => students.find(s => s.id === id)?.displayName ?? "指定学生").join("、")}</small></div><div><button disabled={busy} type="button" onClick={event => void open(p, event.currentTarget)}>{p.status === "draft" ? "编辑草稿" : "完成情况"}</button>{p.status === "published" && p.draft && checkinPhase(p) !== "archived" && <button disabled={busy} type="button" onClick={event => void editPlan(p, event.currentTarget)}>编辑计划</button>}<button disabled={busy} type="button" onClick={() => copy(p)}>复制新阶段</button><button disabled={busy} type="button" onClick={() => void removePlan(p)}>删除</button></div></article>)}
     {ready && !visible.length && <p>暂无计划。新建后可为整班或某个孩子安排七天任务。</p>}</section>
   </main>;
 }
-function CheckinPlanEditor({ draft, classes, students, onChange, busy, preview, onPreview, onSave, onPublish, onClose, collapsed, onToggle, onDiscard }: { collapsed: boolean; onToggle(): void; onDiscard(): void; draft: CheckinDraft; classes: CheckinClass[]; students: CheckinStudent[]; onChange(draft: CheckinDraft): void; busy: boolean; preview: boolean; onPreview(): void; onSave(): void; onPublish(): void; onClose(): void }) {
+function CheckinPlanEditor({ published, effectiveDate, reason, onEffectiveDate, onReason, draft, classes, students, onChange, busy, preview, onPreview, onSave, onPublish, onClose, collapsed, onToggle, onDiscard }: { published: boolean; effectiveDate: string; reason: string; onEffectiveDate(value: string): void; onReason(value: string): void; collapsed: boolean; onToggle(): void; onDiscard(): void; draft: CheckinDraft; classes: CheckinClass[]; students: CheckinStudent[]; onChange(draft: CheckinDraft): void; busy: boolean; preview: boolean; onPreview(): void; onSave(): void; onPublish(): void; onClose(): void }) {
   const [target, setTarget] = useState<"class" | "student">(draft.classIds.length ? "class" : "student");
   const info = useMemo(() => stagePreview(draft), [draft]);
   const valid = draft.title.trim() && info.dates.length && !info.missing.length && (draft.classIds.length || draft.studentIds.length) && draft.templates.every(t => t.subject.trim() && t.instruction.trim() && t.weekdays.length);
   function toggle(key: "classIds" | "studentIds", id: string) { onChange({ ...draft, [key]: draft[key].includes(id) ? draft[key].filter(v => v !== id) : [...draft[key], id] }); }
   function taskChange(id: string, value: Partial<CheckinTemplate>) { onChange({ ...draft, templates: draft.templates.map(t => t.id === id ? { ...t, ...value } : t) }); }
-  return <section className="checkin-plan-editor" tabIndex={-1}><header className="checkin-sticky-actions"><h2>{collapsed ? draft.title || "未命名计划" : "布置阶段计划"}</h2><div><button type="button" disabled={busy} onClick={onClose}>返回计划列表</button><button type="button" disabled={busy} aria-expanded={!collapsed} onClick={onToggle}>{collapsed ? "展开编辑" : "收起"}</button><button type="button" disabled={busy} onClick={onDiscard}>放弃编辑</button></div></header><fieldset disabled={busy} hidden={collapsed}>
+  return <section className="checkin-plan-editor" tabIndex={-1}><header className="checkin-sticky-actions"><h2>{collapsed ? draft.title || "未命名计划" : published ? "编辑原计划" : "布置阶段计划"}</h2><div><button type="button" disabled={busy} onClick={onClose}>返回计划列表</button><button type="button" disabled={busy} aria-expanded={!collapsed} onClick={onToggle}>{collapsed ? "展开编辑" : "收起"}</button><button type="button" disabled={busy} onClick={onDiscard}>放弃编辑</button></div></header><fieldset disabled={busy} hidden={collapsed}>
     <label className="checkin-field">计划名称<input value={draft.title} maxLength={120} onChange={e => onChange({ ...draft, title: e.target.value })} placeholder="例如：哥哥的期中学习计划" /></label>
-    <div className="checkin-form-grid"><label className="checkin-field">开始时间（北京时间）<input type="datetime-local" value={beijingInput(draft.startsAt)} onChange={e => { if (e.target.value) onChange({ ...draft, startsAt: beijingInstant(e.target.value) }); }} /></label><label className="checkin-field">结束时间（北京时间）<input type="datetime-local" value={beijingInput(draft.endsAt)} onChange={e => { if (e.target.value) onChange({ ...draft, endsAt: beijingInstant(e.target.value) }); }} /></label></div>
+    <div className="checkin-form-grid"><label className="checkin-field">开始时间（北京时间）<input type="datetime-local" disabled={published} value={beijingInput(draft.startsAt)} onChange={e => { if (e.target.value) onChange({ ...draft, startsAt: beijingInstant(e.target.value) }); }} /></label><label className="checkin-field">结束时间（北京时间）<input type="datetime-local" value={beijingInput(draft.endsAt)} onChange={e => { if (e.target.value) onChange({ ...draft, endsAt: beijingInstant(e.target.value) }); }} /></label></div>
     <p>重复方式：每周重复 · 结束后仍可补交七天 · 最长366天</p>
-    <label className="checkin-field">布置范围<select value={target} onChange={e => { const mode = e.target.value as "class" | "student"; setTarget(mode); onChange({ ...draft, classIds: [], studentIds: [] }); }}><option value="student">指定学生（两个孩子可分别布置）</option><option value="class">整班布置</option></select></label>
-    <div className="checkin-targets">{target === "class" ? classes.map(c => <label key={c.id}><input type="checkbox" checked={draft.classIds.includes(c.id)} onChange={() => toggle("classIds",c.id)} />{c.name}</label>) : students.map(s => <label key={s.id}><input type="checkbox" checked={draft.studentIds.includes(s.id)} onChange={() => toggle("studentIds",s.id)} />{s.displayName}</label>)}{!classes.length && <p>请先在班级管理中创建班级，并添加两个孩子或学生。</p>}</div>
+    {published && <><p>直接更新这份计划，不会新建阶段。生效日期之前的任务、已有打卡或照片的任务保留原要求；开始时间和接收名单保持不变。</p><label className="checkin-field">修改生效日期（北京时间）<input type="date" min={[beijingDate(), beijingDate(draft.startsAt)].sort().at(-1)} max={beijingDate(draft.endsAt)} value={effectiveDate} onChange={e => onEffectiveDate(e.target.value)} /></label><label className="checkin-field">修改原因<textarea maxLength={500} value={reason} onChange={e => onReason(e.target.value)} placeholder="例如：从明天起调整阅读要求" /></label></>}
+    <label className="checkin-field">布置范围<select disabled={published} value={target} onChange={e => { const mode = e.target.value as "class" | "student"; setTarget(mode); onChange({ ...draft, classIds: [], studentIds: [] }); }}><option value="student">指定学生（两个孩子可分别布置）</option><option value="class">整班布置</option></select></label>
+    <div className="checkin-targets">{target === "class" ? classes.map(c => <label key={c.id}><input type="checkbox" disabled={published} checked={draft.classIds.includes(c.id)} onChange={() => toggle("classIds",c.id)} />{c.name}</label>) : students.map(s => <label key={s.id}><input type="checkbox" disabled={published} checked={draft.studentIds.includes(s.id)} onChange={() => toggle("studentIds",s.id)} />{s.displayName}</label>)}{!classes.length && <p>请先在班级管理中创建班级，并添加两个孩子或学生。</p>}</div>
     <h3>一周任务模板</h3>{draft.templates.map((t, i) => <section className="checkin-template" key={t.id}><header><strong>任务{i + 1}</strong><button type="button" disabled={draft.templates.length <= 1} onClick={() => onChange({ ...draft, templates: draft.templates.filter(v => v.id !== t.id) })}>移除</button></header>
       <label className="checkin-field">科目<input list="checkin-subjects" value={t.subject} maxLength={40} onChange={e => taskChange(t.id,{subject:e.target.value})} /></label>
       <label className="checkin-field">具体要求<textarea value={t.instruction} maxLength={1000} placeholder="例如：完成数学练习册第35页" onChange={e => taskChange(t.id,{instruction:e.target.value})} /></label>
@@ -221,8 +270,8 @@ function CheckinPlanEditor({ draft, classes, students, onChange, busy, preview, 
     </section>)}<datalist id="checkin-subjects">{["语文","数学","英语","象棋","阅读","运动"].map(s => <option key={s} value={s} />)}</datalist>
     <button type="button" disabled={draft.templates.length >= 30} onClick={() => onChange({ ...draft, templates: [...draft.templates,{id:crypto.randomUUID(),subject:"数学",instruction:"",weekdays:[1,2,3,4,5,6,7],required:true,photoRequired:false}] })}>＋ 添加任务</button>
     {!info.dates.length && <p className="checkin-error">请设置有效起止时间，最多366天。</p>}{info.missing.length > 0 && <p className="checkin-error">以下日期缺少必做任务：{info.missing.slice(0,7).join("、")}{info.missing.length > 7 ? "…" : ""}</p>}
-    <footer><button type="button" disabled={!valid} onClick={onSave}>保存草稿</button><button type="button" disabled={!valid} onClick={onPreview}>预览发布</button></footer>
-    {preview && <section className="checkin-preview"><h3>发布预览</h3><p>{info.dates[0]} — {info.dates.at(-1)} · 共{info.dates.length}天、{info.taskCount}项任务／学生</p><p>补交截止 {checkinTime(new Date(Date.parse(draft.endsAt) + 7*86_400_000).toISOString())}</p><p>{info.weeks.map((w,i) => `第${i + 1}周${w.days}天${w.days < 7 ? "（阶段短周）" : ""}`).join(" · ")}</p><strong>学生页面中的一周任务</strong><ul>{draft.templates.map(t => <li key={t.id}>{t.subject} · {t.instruction} · {t.weekdays.map(d => weekdayLabels[d - 1]).join("、")} · {t.required ? "必做" : "选做"}{t.photoRequired ? " · 需照片" : ""}</li>)}</ul><p>发布后任务及接收名单锁定；本阶段内每周自动重复。</p><button className="checkin-primary" type="button" disabled={!valid} onClick={onPublish}>确认发布阶段计划</button></section>}
+    <footer>{published ? <button className="checkin-primary" type="button" disabled={!valid || !reason.trim() || !effectiveDate || effectiveDate < [beijingDate(), beijingDate(draft.startsAt)].sort().at(-1)! || effectiveDate > beijingDate(draft.endsAt)} onClick={onSave}>保存修改</button> : <><button type="button" disabled={!valid} onClick={onSave}>保存草稿</button><button type="button" disabled={!valid} onClick={onPreview}>预览发布</button></>}</footer>
+    {preview && <section className="checkin-preview"><h3>发布预览</h3><p>{info.dates[0]} — {info.dates.at(-1)} · 共{info.dates.length}天、{info.taskCount}项任务／学生</p><p>补交截止 {checkinTime(new Date(Date.parse(draft.endsAt) + 7*86_400_000).toISOString())}</p><p>{info.weeks.map((w,i) => `第${i + 1}周${w.days}天${w.days < 7 ? "（阶段短周）" : ""}`).join(" · ")}</p><strong>学生页面中的一周任务</strong><ul>{draft.templates.map(t => <li key={t.id}>{t.subject} · {t.instruction} · {t.weekdays.map(d => weekdayLabels[d - 1]).join("、")} · {t.required ? "必做" : "选做"}{t.photoRequired ? " · 需照片" : ""}</li>)}</ul><p>发布后可通过“编辑计划”调整后续任务；已有打卡及接收名单保留。同一学生的计划日期不可重叠。</p><button className="checkin-primary" type="button" disabled={!valid} onClick={onPublish}>确认发布阶段计划</button></section>}
     <footer><button type="button" disabled={busy} onClick={onClose}>返回计划列表</button><button type="button" disabled={busy} onClick={onToggle}>收起</button></footer>
   </fieldset></section>;
 }

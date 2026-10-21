@@ -2,7 +2,8 @@
 export type CheckinTemplate = { id: string; subject: string; instruction: string; weekdays: number[]; required: boolean; photoRequired: boolean };
 export type CheckinDraft = { clientId: string; title: string; startsAt: string; endsAt: string; classIds: string[]; studentIds: string[]; templates: CheckinTemplate[] };
 export type CheckinPhase = "draft" | "upcoming" | "active" | "supplement" | "archived";
-export type CheckinPlan = { id: string; title: string; status: "draft" | "published"; phase: CheckinPhase; startsAt: string; endsAt: string; supplementUntil: string; draft?: CheckinDraft };
+export type CheckinPlan = { id: string; title: string; status: "draft" | "published"; revision?: number; phase: CheckinPhase; startsAt: string; endsAt: string; supplementUntil: string; draft?: CheckinDraft };
+export type CheckinEdit = { expectedRevision?: number; effectiveDate?: string; reason?: string };
 export type CheckinTask = { id: string; templateId: string; localDate: string; subject: string; instruction: string; required: boolean; photoRequired: boolean };
 export type CheckinSubmission = { taskId: string; studentId: string; status: "pending" | "submitted" | "returned"; revision: number; note: string; photoIds: string[]; submittedAt?: string; isLate: boolean };
 export type CheckinBadge = { studentId: string; weekStart: string; plannedDays: number; earnedAt: string; needsSupplement: boolean };
@@ -14,7 +15,8 @@ export interface CheckinApi {
   list(): Promise<CheckinPlan[]>;
   detail(id: string): Promise<CheckinDetail>;
   create(draft: CheckinDraft): Promise<CheckinPlan>;
-  save(id: string, draft: CheckinDraft): Promise<CheckinPlan>;
+  save(id: string, draft: CheckinDraft, edit?: CheckinEdit): Promise<CheckinPlan>;
+  remove(id: string, expectedRevision: number, reason: string): Promise<unknown>;
   publish(id: string): Promise<CheckinPlan>;
   submit(taskId: string, body: CheckinSubmit): Promise<{ duplicate: boolean }>;
   review(taskId: string, studentId: string, body: { action: "comment" | "return"; note: string; expectedRevision: number }): Promise<unknown>;
@@ -67,6 +69,25 @@ export function canSubmitTask(detail: CheckinDetail, task: CheckinTask, now: str
 export function newCheckinDraft(): CheckinDraft {
   const today = beijingDate();
   return { clientId: crypto.randomUUID(), title: "", startsAt: `${today}T00:00:00+08:00`, endsAt: `${addDays(today, 27)}T23:59:00+08:00`, classIds: [], studentIds: [], templates: [{ id: crypto.randomUUID(), subject: "语文", instruction: "", weekdays: [1,2,3,4,5,6,7], required: true, photoRequired: false }] };
+}
+
+export function copyCheckinDraft(plan: CheckinPlan, plans: CheckinPlan[], today = beijingDate(), classMembers: Record<string, string[]> = {}): CheckinDraft {
+  if (!plan.draft) throw new Error("计划模板不可用，请刷新后重试");
+  const source = plan.draft;
+  const recipients = (draft: CheckinDraft) => new Set([...draft.studentIds, ...draft.classIds.flatMap(id => classMembers[id] ?? [])]);
+  const selected = recipients(source);
+  const sharesTarget = (other: CheckinPlan) => other.id === plan.id || !!other.draft && (
+    [...recipients(other.draft)].some(id => selected.has(id))
+    || other.draft.classIds.some(id => source.classIds.includes(id))
+  );
+  const last = plans.filter(p => p.status === "published" && sharesTarget(p))
+    .map(p => beijingDate(p.endsAt)).concat(beijingDate(plan.endsAt)).sort().at(-1)!;
+  const first = [today, addDays(last, 1)].sort().at(-1)!;
+  const days = datesInStage(plan.startsAt, plan.endsAt).length || 28;
+  return { ...source, clientId: crypto.randomUUID(), title: `${plan.title}（新阶段）`.slice(0, 120),
+    startsAt: `${first}T00:00:00+08:00`, endsAt: `${addDays(first, days - 1)}T23:59:00+08:00`,
+    classIds: [...source.classIds], studentIds: [...source.studentIds],
+    templates: source.templates.map(t => ({ ...t, id: crypto.randomUUID(), weekdays: [...t.weekdays] })) };
 }
 
 export function checkinPhase(plan: CheckinPlan, now: string = new Date().toISOString()): CheckinPhase {

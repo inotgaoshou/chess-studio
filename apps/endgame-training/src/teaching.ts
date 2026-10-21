@@ -1,4 +1,5 @@
 import { mergePracticeAttempts, mergePracticeDrafts, type PracticeDraft } from "./practiceProgress";
+import { withRequestDeadline } from "./requestDeadline";
 import type { VerificationResult } from "../../../packages/training-verification/types";
 import { makeCheckinApi } from "./checkinApi";
 import { ContentEpochTracker, belongsToContentScope } from "./contentEpoch";
@@ -28,16 +29,7 @@ const contentEpochs = new ContentEpochTracker({ getItem: key => localStorage.get
 const epochProbes = new Map<string, Promise<boolean>>();
 // Bound reads including capability checks: a hung mobile connection must expose retry.
 async function teachingRead<T>(read: (signal: AbortSignal) => Promise<T>, source?: AbortSignal): Promise<T> {
-  const abort = new AbortController();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let rejectAbort: (reason: unknown) => void = () => {};
-  const cancelled = new Promise<never>((_, reject) => { rejectAbort = reject; });
-  const cancel = () => { abort.abort(); rejectAbort(new DOMException("读取已取消", "AbortError")); };
-  source?.addEventListener("abort", cancel, { once: true });
-  if (source?.aborted) { source.removeEventListener("abort", cancel); throw new DOMException("读取已取消", "AbortError"); }
-  timer = setTimeout(() => { abort.abort(); rejectAbort(new Error("读取超时，请检查网络后重试")); }, 15_000);
-  try { return await Promise.race([cancelled, read(abort.signal)]); }
-  finally { clearTimeout(timer); source?.removeEventListener("abort", cancel); }
+  return withRequestDeadline(read, source, "读取超时，请检查网络后重试");
 }
 async function ensureContentEpoch(context: AuthContext): Promise<boolean> {
   const key = `${context.serverUrl}:${context.ownerId}:${context.epoch}`;
@@ -539,8 +531,9 @@ async function refreshAuth(): Promise<TeachingAuth | undefined> {
   if (refreshInFlight) return refreshInFlight;
   const epoch = sessionEpoch;
   const targetServer = serverUrl();
-  const refresh = (async () => {
+  const refresh = withRequestDeadline(async signal => {
     const stored = isNativeSessionStore() ? await secureSession.load() : undefined;
+    signal.throwIfAborted();
     if (epoch !== sessionEpoch) return undefined;
     if ((isNativeSessionStore() ? stored?.serverUrl : localStorage.getItem(SESSION_SERVER_KEY)) !== targetServer) {
       await clearLocalSession();
@@ -551,20 +544,30 @@ async function refreshAuth(): Promise<TeachingAuth | undefined> {
     const headers = new Headers({ "content-type": "application/json", "x-xiangqi-app-id": appId() });
     headers.set("x-xiangqi-device-id", stored?.deviceId ?? secureSession.deviceId());
     headers.set("x-xiangqi-device-name", isNativeSessionStore() ? "Qixi Mobile" : "Qixi Web");
-    const response = await fetch(`${targetServer}/api/v1/auth/refresh`, { method: "POST", headers, credentials: "include", body: JSON.stringify({ refreshToken }) });
+    const response = await fetch(`${targetServer}/api/v1/auth/refresh`, { method: "POST", signal, headers, credentials: "include", body: JSON.stringify({ refreshToken }) });
     const body = await response.json().catch(() => ({}));
+    signal.throwIfAborted();
     if (!response.ok || epoch !== sessionEpoch || targetServer !== serverUrl()) return undefined;
     const auth = body as TeachingAuth;
     if (!auth.token || !auth.user) return undefined;
     auth.refreshToken = auth.refreshToken ?? refreshToken;
     await persistAuth(auth, epoch, targetServer);
     return epoch === sessionEpoch ? auth : undefined;
-  })().catch(() => undefined).finally(() => { if (refreshInFlight === refresh) refreshInFlight = undefined; });
+  }).catch(() => undefined).finally(() => { if (refreshInFlight === refresh) refreshInFlight = undefined; });
   refreshInFlight = refresh;
   return refresh;
 }
 
 async function request<T>(path: string, init: RequestInit = {}, token?: string, retry = true, context?: TeachingAuth): Promise<T> {
+  if (/^\/api\/v1\/student\/practice\//.test(path)) {
+    // One deadline includes capabilities, auth refresh, retry after 401, and JSON reading.
+    return withRequestDeadline(signal => requestOnce<T>(path, { ...init, signal }, token, retry, context), init.signal);
+  }
+  return requestOnce<T>(path, init, token, retry, context);
+}
+
+async function requestOnce<T>(path: string, init: RequestInit = {}, token?: string, retry = true, context?: TeachingAuth): Promise<T> {
+  init.signal?.throwIfAborted();
   if (context) requireTeacherAuth(context);
   const headers = new Headers(init.headers);
   if (!(init.body instanceof FormData)) headers.set("content-type", "application/json");
@@ -584,15 +587,17 @@ async function request<T>(path: string, init: RequestInit = {}, token?: string, 
   if (accessToken) headers.set("authorization", `Bearer ${accessToken}`);
   const response = await fetch(`${targetServer}${path}`, { ...init, headers, credentials: "include" });
   const body = await response.json().catch(() => ({}));
+  init.signal?.throwIfAborted();
   if (authContext && !isCurrentAuthContext(authContext)) throw new Error("登录账号或机构已变化，请重新操作。");
   if (authContext && teachingContentRequest && contentEpoch !== contentEpochs.current(authContext)) throw new Error("题库已重建，请刷新后重新操作。");
   if (!response.ok) {
     if (response.status === 401 && retry && path !== "/api/v1/auth/refresh" && accessToken) {
       const refreshed = await refreshAuth();
+      init.signal?.throwIfAborted();
       if (refreshed) {
         if (authContext && !isCurrentAuthContext(authContext)) throw new Error("登录账号或机构已变化，请重新操作。");
         if (context) requireTeacherAuth(context);
-        return request<T>(path, init, refreshed.token, false, context);
+        return requestOnce<T>(path, init, refreshed.token, false, context);
       }
     }
     const error = (body as { error?: string }).error;
@@ -769,10 +774,11 @@ async function practiceDrafts(auth: TeachingAuth, sessionId: string) {
   const key = assignmentCacheKey(auth, sessionId);
   return (await storeAll<PracticeDraft>("practiceDrafts")).filter(d => d.sessionKey === key);
 }
-async function cachePracticeSession(auth: TeachingAuth, session: PracticeSession, acknowledgedRevision = "") {
+async function cachePracticeSession(auth: TeachingAuth, session: PracticeSession, acknowledgedRevision = "", signal?: AbortSignal) {
   const prior = (await storeAll<CachedPracticeSession>("practiceSessions")).find(s => s.cacheKey === assignmentCacheKey(auth, session.id));
   const navigationRevision = [prior?.navigationRevision ?? "", acknowledgedRevision].sort().at(-1)!;
   const merged = mergePracticeAttempts(mergePracticeDrafts(session, await practiceDrafts(auth, session.id), navigationRevision), (await storeAll<PendingPracticeAttempt>("practiceAttempts")).filter(a => a.sessionId === session.id && samePracticeAttemptContext(a, auth)));
+  signal?.throwIfAborted();
   await storePut("practiceSessions", { ...contextOf(auth), cacheKey: assignmentCacheKey(auth, session.id), session: merged, navigationRevision } satisfies CachedPracticeSession);
   return merged;
 }
@@ -1129,10 +1135,10 @@ export const teachingClient = {
     await this.flushPending();
     return request<PracticeHome>("/api/v1/student/practice/dashboard", {}, auth.token);
   },
-  async practiceTopic(topicId: string) {
+  async practiceTopic(topicId: string, signal?: AbortSignal) {
     const auth = this.auth();
     if (!auth || auth.user.role !== "student") throw new Error("请先登录学生账号");
-    const { chapters, ...topic } = await request<PracticeTopic & { chapters: PracticeTopicChapter[] }>(`/api/v1/student/practice/topics/${encodeURIComponent(topicId)}`, {}, auth.token);
+    const { chapters, ...topic } = await request<PracticeTopic & { chapters: PracticeTopicChapter[] }>(`/api/v1/student/practice/topics/${encodeURIComponent(topicId)}`, { signal }, auth.token);
     return { topic, chapters } satisfies PracticeTopicDetail;
   },
   async practiceSearch(query: PracticeSearchQuery = {}) {
@@ -1149,26 +1155,27 @@ export const teachingClient = {
     const suffix = params.size ? `?${params.toString()}` : "";
     return request<PracticeSearchResult>(`/api/v1/student/practice/search${suffix}`, {}, auth.token);
   },
-  async createPracticeSession(payload: CreatePracticeSession) {
+  async createPracticeSession(payload: CreatePracticeSession, signal?: AbortSignal) {
     const auth = this.auth();
     if (!auth || auth.user.role !== "student") throw new Error("请先登录学生账号");
-    return cachePracticeSession(auth, await request<PracticeSession>("/api/v1/student/practice/sessions", { method: "POST", body: JSON.stringify(payload) }, auth.token));
+    return cachePracticeSession(auth, await request<PracticeSession>("/api/v1/student/practice/sessions", { method: "POST", signal, body: JSON.stringify(payload) }, auth.token), "", signal);
   },
-  async localPracticeSession(session: PracticeSession) {
+  async localPracticeSession(session: PracticeSession, signal?: AbortSignal) {
     const auth = this.auth(); if (!auth) return session;
     const cached = (await storeAll<CachedPracticeSession>("practiceSessions")).find(s => s.cacheKey === assignmentCacheKey(auth, session.id));
-    return cachePracticeSession(auth, cached?.session ?? session);
+    return cachePracticeSession(auth, cached?.session ?? session, "", signal);
   },
   practiceSessionContext(sessionId: string) { const auth = this.auth(); return auth ? assignmentCacheKey(auth, sessionId) : ""; },
-  async practiceSession(sessionId: string) {
+  async practiceSession(sessionId: string, signal?: AbortSignal) {
     const auth = this.auth();
     if (!auth || auth.user.role !== "student") throw new Error("请先登录学生账号");
-    try { return await cachePracticeSession(auth, await request<PracticeSession>(`/api/v1/student/practice/sessions/${encodeURIComponent(sessionId)}`, {}, auth.token)); }
+    try { return await cachePracticeSession(auth, await request<PracticeSession>(`/api/v1/student/practice/sessions/${encodeURIComponent(sessionId)}`, { signal }, auth.token), "", signal); }
     catch (error) {
+      signal?.throwIfAborted();
       if (!(error instanceof TypeError) && navigator.onLine !== false) throw error;
       const cached = (await storeAll<CachedPracticeSession>("practiceSessions")).find(s => s.cacheKey === assignmentCacheKey(auth, sessionId));
       if (!cached) throw error;
-      return cachePracticeSession(auth, cached.session);
+      return cachePracticeSession(auth, cached.session, "", signal);
     }
   },
   async updatePracticeSession(sessionId: string, currentItemId: string, draft?: PracticeSessionItem["draft"]) {
@@ -1179,10 +1186,10 @@ export const teachingClient = {
     await storePut("practiceDrafts", saved);
     return sendPracticeDraft(auth, saved);
   },
-  async startDailyPractice(planId: string) {
+  async startDailyPractice(planId: string, signal?: AbortSignal) {
     const auth = this.auth();
     if (!auth || auth.user.role !== "student") throw new Error("请先登录学生账号");
-    return cachePracticeSession(auth, await request<PracticeSession>(`/api/v1/student/practice/daily/${encodeURIComponent(planId)}/session`, { method: "POST", body: "{}" }, auth.token));
+    return cachePracticeSession(auth, await request<PracticeSession>(`/api/v1/student/practice/daily/${encodeURIComponent(planId)}/session`, { method: "POST", signal, body: "{}" }, auth.token), "", signal);
   },
   async practiceHistory(days = 7) {
     const auth = this.auth();
