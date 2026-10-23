@@ -1,0 +1,86 @@
+   Compiling xiangqi-core v1.0.2 (<chess-workspace>/.local/v105-reverify-20261016/chess/chess-studio/crates/xiangqi-core)
+   Compiling engine-protocol v1.0.2 (<chess-workspace>/.local/v105-reverify-20261016/chess/chess-studio/crates/engine-protocol)
+   Compiling admin-core v0.1.0 (<chess-workspace>/.local/v105-reverify-20261016/xiangqi-admin-private/crates/admin-core)
+   Compiling xiangqi-manual v1.0.2 (<chess-workspace>/.local/v105-reverify-20261016/chess/chess-studio/crates/manual)
+   Compiling manual-format v1.0.2 (<chess-workspace>/.local/v105-reverify-20261016/chess/chess-studio/crates/manual-format)
+   Compiling xiangqi-admin-server v0.1.0 (<chess-workspace>/.local/v105-reverify-20261016/xiangqi-admin-private/apps/admin-server)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 32.42s
+     Running unittests src/main.rs (<admin-workspace>/target/debug/deps/xiangqi_admin_server-73dbe9355410a5fd)
+
+running 74 tests
+test assignment_problems::integration_tests::teacher_assignment_revisions_preserve_history_and_isolate_permissions ... ignored, requires disposable local QIXI_ROLLBACK_TEST_DATABASE_URL
+test assignment_problems::tests::edit_rejects_illegal_answers_and_keeps_branch_validation ... ok
+test assignments::query_tests::assignment_scope_accepts_real_browser_query_strings ... ok
+test auth::browser_tests::browser_accounts_mysql_lifecycle ... ignored, requires local QIXI_CHECKIN_TEST_DATABASE_URL; disposable schema
+test auth::browser_tests::browser_cookie_selection_is_scoped_and_deduplicated ... ok
+test auth::content_permission_tests::content_reading_allows_bound_teachers_without_granting_review_or_delete ... ok
+test catalog::tests::correct_move_applies_first_opponent_reply ... ok
+test catalog::tests::illegal_move_is_rejected_without_changing_position ... ok
+test catalog::tests::library_publication_checks_versions_scope_and_content_atomically ... ignored, requires QIXI_ROLLBACK_TEST_DATABASE_URL; synthetic rows are rolled back
+test catalog::tests::library_publication_requires_the_actual_review_role ... ok
+test catalog::tests::replay_path_can_stop_on_any_solution_node ... ok
+test catalog::tests::wrong_legal_move_does_not_change_position ... ok
+test cbl_inventory::tests::manifest_paths_cannot_escape_or_alias ... ok
+test checkin_statistics::tests::range_uses_beijing_week_and_rejects_bad_pagination ... ok
+test checkins::integration_tests::checkin_mysql_lifecycle_and_two_children ... ignored, requires local QIXI_CHECKIN_TEST_DATABASE_URL; disposable schema
+test checkins::tests::boundaries_use_beijing_and_seven_day_grace ... ok
+test checkins::tests::future_dates_and_returns_do_not_count ... ok
+test checkins::tests::recurring_dates_and_partial_weeks ... ok
+test checkins::tests::required_tasks_every_scheduled_day ... ok
+test checkins::tests::stage_and_phase_boundaries ... ok
+test classes::user_classes_tests::user_class_edits_are_atomic_and_scoped ... ignored, requires local QIXI_ROLLBACK_TEST_DATABASE_URL; disposable schema
+test content::classification_tests::automated_reparse_checks_the_locked_source_and_failed_draft_state ... ok
+test content::classification_tests::legacy_reparse_accepts_an_empty_body_or_empty_json ... ok
+test content::classification_tests::missing_solution_is_held_for_review ... ok
+test content::classification_tests::real_kill_books_preserve_invalid_prefix_and_isolate_missing_answers ... ignored, requires QIXI_CBL_SOURCE_ROOT with the original books
+test content::classification_tests::records_rejected_by_both_parsers_remain_pending ... ok
+test content::classification_tests::source_directory_policies_cover_nested_import_paths ... ok
+test content::classification_tests::standard_starting_game_is_never_routed_to_the_problem_pool ... ok
+test content::classification_tests::training_metadata_cannot_override_strict_solution_validation ... ok
+test content::classification_tests::verified_solution_becomes_a_restricted_training_problem ... ok
+test content::import_classification::database_tests::import_category_preserves_reviews_and_rejects_stale_versions ... ignored, requires disposable loopback MySQL; creates and drops its own schema
+test content::import_classification::tests::category_requires_an_explicit_bounded_name ... ok
+test content_machine_checks::tests::bad_positions_missing_moves_and_truncation_are_blocked ... ok
+test content_machine_checks::tests::legal_unfinished_games_pass_and_all_branches_are_checked ... ok
+test content_machine_checks::tests::placeholder_check_versions_only_learning_reviews ... ok
+test content_machine_checks::tests::unlabelled_winning_lines_must_cover_all_defences_without_claiming_distance ... ok
+test content_ops::tests::folder_depth_limit_matches_contract ... ok
+test content_ops::tests::folder_name_rejects_path_separators ... ok
+test content_ops::tests::purge_removes_classification_and_catalog_metadata_before_versions ... ignored, requires QIXI_TEST_DATABASE_URL; inserts synthetic rows and rolls back
+test content_preview::tests::replay_preserves_branches_comments_and_original_tree ... ok
+test content_review::tests::approvals_are_bound_to_the_file_version ... ok
+test content_review::tests::evidence_requires_exact_nonempty_unique_samples ... ok
+test learning_content::tests::empty_chapter_opening_requires_review_but_annotated_lessons_remain_valid ... ok
+test learning_content::tests::short_endgames_and_identified_games_are_not_chapter_placeholders ... ok
+test mate_certificate::tests::real_short_strategies_replay_and_missing_defence_is_rejected ... ok
+test mate_certificate::tests::rejects_illegal_incomplete_overlong_and_corrupt_roots ... ok
+test mate_collections::export_platform_cbl_review_sql ... ok
+test mate_solver::real_titles::real_2018_category_counts ... ignored, requires QIXI_2018_CBL sample
+test mate_solver::tests::certificates_cover_every_defence_and_end_in_wins ... ok
+test mate_solver::tests::hints_never_prune_defences_and_cancellation_stops_proof ... ok
+test mate_solver::tests::labels_and_all_direct_mates_are_accepted ... ok
+test mate_solver::tests::timeout_is_unknown_and_cooperative_lines_do_not_prove_mate ... ok
+test migrations::tests::administrator_migration_and_snapshot_recovery ... ignored, requires disposable local MySQL with binary logging and untrusted creators
+test migrations::tests::migration_versions_are_unique_and_ordered ... ok
+test migrations::tests::pending_foreign_keys_match_parent_collations ... ok
+test pending_engine::tests::complete_mate_and_branch_validation ... ok
+test pending_engine::tests::completed_candidates_survive_a_later_line_timeout ... ok
+test pending_engine::tests::engine_failure_timeout_and_dropped_search_stop_process ... ok
+test pending_engine::tests::loops_and_terminal_continuations_are_rejected ... ok
+test pending_engine::tests::mock_engine_requires_positive_mate_and_legal_terminal_pv ... ok
+test pending_engine::tests::real_pikafish_solves_a_short_mate ... ignored, requires QIXI_PENDING_TEST_ENGINE and QIXI_PENDING_TEST_NNUE
+test pending_solutions::tests::mate_collections_preserve_ids_and_publish_categories_independently ... ignored, requires local QIXI_ROLLBACK_TEST_DATABASE_URL; creates and drops an isolated schema
+test pending_solutions::tests::pending_solution_handlers_preserve_sources_and_gate_publication ... ignored, requires local QIXI_ROLLBACK_TEST_DATABASE_URL; isolated disposable schema
+test personal_manual_sync::tests::validates_identity_fields_for_each_record_type ... ok
+test solution_json::tests::reads_complete_strategy_capacity_and_keeps_candidate_bound ... ok
+test solution_json::tests::supports_120_plies_but_rejects_unbounded_input ... ok
+test student::grading_tests::stars_depend_on_mistakes_and_require_completion ... ok
+test teacher_results::tests::no_submissions_have_no_average ... ok
+test teacher_results::tests::separates_submission_completion_and_zero_score ... ok
+test teaching_catalog::integration_tests::query_empty_filters_are_unset_and_invalid_values_still_fail ... ok
+test teaching_catalog::integration_tests::teaching_catalog_cbl_acceptance ... ignored, requires disposable local MySQL; optionally real CBL manifest
+test teaching_catalog::tests::classification_is_conservative ... ok
+test teaching_catalog::tests::hidden_ancestor_and_cycle_are_not_visible ... ok
+test training_goals::tests::non_mate_requires_explicit_side_and_legal_tree ... ok
+
+test result: ok. 60 passed; 0 failed; 14 ignored; 0 measured; 0 filtered out; finished in 9.92s

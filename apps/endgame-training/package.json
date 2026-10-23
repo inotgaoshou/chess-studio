@@ -15,7 +15,8 @@
     "android:debug": "pnpm android:sync && cd android && ./gradlew :app:assembleDebug",
     "ios:sync": "pnpm mobile:build && cap sync ios",
     "ios:open": "pnpm ios:sync && cap open ios",
-    "test": "node --experimental-strip-types --test tests/*.test.ts"
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "test:ui": "node ../desktop/node_modules/vitest/vitest.mjs run --config ui-tests/vitest.config.ts"
   },
   "dependencies": {
     "@capacitor/android": "^7.6.8",

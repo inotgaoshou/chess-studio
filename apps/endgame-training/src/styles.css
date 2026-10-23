@@ -6645,7 +6645,7 @@ html.tablet-webview .mobile-assignment-access-page .mobile-assignment-hero { min
   .mobile-problem-navigator > header { display:flex; align-items:center; justify-content:space-between; gap:10px; }.mobile-problem-navigator > header span { display:grid; gap:2px; }.mobile-problem-navigator > header strong { color:#294638; font-size:15px; }.mobile-problem-navigator > header small { color:#718579; font-size:11px; }.mobile-problem-navigator > header button { display:none; }
   .mobile-problem-navigator-legend { display:flex; flex-wrap:wrap; gap:7px; color:#718579; font-size:10px; }.mobile-problem-navigator-legend span { display:inline-flex; align-items:center; gap:4px; }.mobile-problem-navigator-legend span::before { width:8px; height:8px; border-radius:50%; background:#edf1ee; content:""; }.mobile-problem-navigator-legend .current::before { background:#397b56; }.mobile-problem-navigator-legend .completed::before { background:#69a878; }.mobile-problem-navigator-legend .revealed::before { background:#c99a42; }
   .mobile-problem-navigator-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(40px,1fr)); gap:8px; }.mobile-problem-navigator-grid button { aspect-ratio:1; min-width:40px; min-height:40px; padding:0; border:1px solid #d7e3d9; border-radius:6px; background:#f7faf7; color:#587066; font-size:12px; font-weight:800; }.mobile-problem-navigator-grid button.completed { border-color:#9bc8a5; background:#e8f4e9; color:#2e7449; }.mobile-problem-navigator-grid button.revealed { border-color:#e1c58c; background:#fff8e8; color:#956b24; }.mobile-problem-navigator-grid button.active { border-color:#27784d; background:#27784d; color:#fff; box-shadow:0 0 0 2px #cfe4d4; }
-  .mobile-solver-nav { width:min(100%,620px); justify-self:center; min-height:46px; display:grid; grid-template-columns:1fr auto 1fr; gap:10px; }.mobile-solver-nav button { min-height:46px; border:1px solid #bfd5c4; border-radius:7px; background:#fbfdfb; color:#397b56; font-weight:800; }.mobile-problem-navigator-trigger { display:none; }
+  .mobile-solver-nav { width:min(100%,620px); justify-self:center; min-height:46px; display:grid; grid-template-columns:1fr auto 1fr; gap:10px; }.mobile-solver-nav button { min-height:46px; border:1px solid #bfd5c4; border-radius:7px; background:#fbfdfb; color:#397b56; font-weight:800; }.mobile-problem-navigator-trigger { display:inline-flex; }
 }
 
 @media (min-width:840px) and (max-width:1199px) { .mobile-solver-page { left:184px; } }
@@ -6657,12 +6657,26 @@ html.tablet-webview .mobile-problem-navigator { min-width:0; max-height:calc(100
 html.tablet-webview .mobile-problem-navigator > header { display:flex; align-items:center; justify-content:space-between; gap:10px; } html.tablet-webview .mobile-problem-navigator > header span { display:grid; gap:2px; } html.tablet-webview .mobile-problem-navigator > header strong { color:#294638; font-size:15px; } html.tablet-webview .mobile-problem-navigator > header small { color:#718579; font-size:11px; } html.tablet-webview .mobile-problem-navigator > header button { display:none; }
 html.tablet-webview .mobile-problem-navigator-legend { display:flex; flex-wrap:wrap; gap:7px; color:#718579; font-size:10px; } html.tablet-webview .mobile-problem-navigator-legend span { display:inline-flex; align-items:center; gap:4px; } html.tablet-webview .mobile-problem-navigator-legend span::before { width:8px; height:8px; border-radius:50%; background:#edf1ee; content:""; } html.tablet-webview .mobile-problem-navigator-legend .current::before { background:#397b56; } html.tablet-webview .mobile-problem-navigator-legend .completed::before { background:#69a878; } html.tablet-webview .mobile-problem-navigator-legend .revealed::before { background:#c99a42; }
 html.tablet-webview .mobile-problem-navigator-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(40px,1fr)); gap:8px; } html.tablet-webview .mobile-problem-navigator-grid button { aspect-ratio:1; min-width:40px; min-height:40px; padding:0; border:1px solid #d7e3d9; border-radius:6px; background:#f7faf7; color:#587066; font-size:12px; font-weight:800; } html.tablet-webview .mobile-problem-navigator-grid button.completed { border-color:#9bc8a5; background:#e8f4e9; color:#2e7449; } html.tablet-webview .mobile-problem-navigator-grid button.revealed { border-color:#e1c58c; background:#fff8e8; color:#956b24; } html.tablet-webview .mobile-problem-navigator-grid button.active { border-color:#27784d; background:#27784d; color:#fff; box-shadow:0 0 0 2px #cfe4d4; }
-html.tablet-webview .mobile-solver-nav { width:min(100%,620px); justify-self:center; min-height:46px; display:grid; grid-template-columns:1fr auto 1fr; gap:10px; } html.tablet-webview .mobile-solver-nav button { min-height:46px; border:1px solid #bfd5c4; border-radius:7px; background:#fbfdfb; color:#397b56; font-weight:800; } html.tablet-webview .mobile-problem-navigator-trigger { display:none; }
+html.tablet-webview .mobile-solver-nav { width:min(100%,620px); justify-self:center; min-height:46px; display:grid; grid-template-columns:1fr auto 1fr; gap:10px; } html.tablet-webview .mobile-solver-nav button { min-height:46px; border:1px solid #bfd5c4; border-radius:7px; background:#fbfdfb; color:#397b56; font-weight:800; } html.tablet-webview .mobile-problem-navigator-trigger { display:inline-flex; }
 
 @media (max-width:599px) {
   .mobile-assignment-access-page { padding:22px 18px; }.mobile-assignment-access-workspace { display:grid; gap:14px; }.mobile-assignment-access-page .mobile-assignment-hero { min-height:0; padding:18px; }.mobile-assignment-access-page .mobile-assignment-hero strong { font-size:21px; }.mobile-assignment-access-page .mobile-assignment-hero p { font-size:13px; }
   .mobile-solver-workspace { display:contents; }.mobile-problem-navigator { position:fixed; z-index:91; right:12px; bottom:calc(12px + var(--phone-safe-bottom)); left:12px; max-height:min(68dvh,560px); padding:14px; border:1px solid #c9ddce; border-radius:10px; background:#fbfdfb; box-shadow:0 18px 40px rgba(26,48,35,.22); display:none; overflow:auto; }.mobile-problem-navigator.open { display:grid; align-content:start; gap:12px; }.mobile-problem-navigator > header { display:flex; align-items:center; justify-content:space-between; }.mobile-problem-navigator > header span { display:grid; gap:2px; }.mobile-problem-navigator > header strong { color:#294638; font-size:16px; }.mobile-problem-navigator > header small { color:#718579; font-size:11px; }.mobile-problem-navigator > header button { width:36px; height:36px; border:0; border-radius:6px; background:#edf4ec; color:#397b56; display:grid; place-items:center; }.mobile-problem-navigator-legend { display:flex; flex-wrap:wrap; gap:7px; color:#718579; font-size:10px; }.mobile-problem-navigator-legend span { display:inline-flex; align-items:center; gap:4px; }.mobile-problem-navigator-legend span::before { width:8px; height:8px; border-radius:50%; background:#edf1ee; content:""; }.mobile-problem-navigator-legend .current::before { background:#397b56; }.mobile-problem-navigator-legend .completed::before { background:#69a878; }.mobile-problem-navigator-legend .revealed::before { background:#c99a42; }.mobile-problem-navigator-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(42px,1fr)); gap:8px; }.mobile-problem-navigator-grid button { aspect-ratio:1; min-width:42px; min-height:42px; padding:0; border:1px solid #d7e3d9; border-radius:6px; background:#f7faf7; color:#587066; font-size:12px; font-weight:800; }.mobile-problem-navigator-grid button.completed { border-color:#9bc8a5; background:#e8f4e9; color:#2e7449; }.mobile-problem-navigator-grid button.revealed { border-color:#e1c58c; background:#fff8e8; color:#956b24; }.mobile-problem-navigator-grid button.active { border-color:#27784d; background:#27784d; color:#fff; }.mobile-problem-navigator-scrim { position:fixed; z-index:90; inset:var(--mobile-header-height) 0 0; border:0; background:rgba(26,48,35,.24); display:block; }
 }
+
+/* The question picker stays collapsed on phones and tablets until requested. */
+html .mobile-solver-workspace, html.tablet-webview .mobile-solver-workspace { grid-template-columns:minmax(0,1fr); }
+html .mobile-solver-nav .mobile-solver-previous { grid-column:1; grid-row:1; }
+html .mobile-solver-nav .mobile-problem-navigator-trigger { grid-column:2; grid-row:1; }
+html .mobile-solver-nav .mobile-solver-next { grid-column:3; grid-row:1; }
+html .mobile-solver-workspace > .mobile-problem-navigator.open {
+  position:fixed; z-index:91; right:auto; bottom:calc(12px + var(--phone-safe-bottom, 0px)); left:50%; transform:translateX(-50%);
+  box-sizing:border-box; width:calc(100% - 24px); max-width:520px; max-height:min(68dvh,560px); padding:14px;
+  border:1px solid #c9ddce; border-radius:10px; background:#fbfdfb; box-shadow:0 18px 40px rgba(26,48,35,.22);
+  display:grid; align-content:start; gap:12px; overflow:auto;
+}
+html .mobile-problem-navigator-scrim { position:fixed; z-index:90; inset:var(--mobile-header-height) 0 0; border:0; background:rgba(26,48,35,.24); display:block; }
+html .mobile-problem-navigator > header > button, html.tablet-webview .mobile-problem-navigator > header > button { display:grid; place-items:center; width:44px; height:44px; padding:8px; border:0; border-radius:6px; background:#edf4ec; color:#397b56; }
 
 .mobile-navigation-settings { padding:13px; border:1px solid #cfe0d3; border-radius:8px; background:#f7fbf8; display:grid; gap:10px; }
 .mobile-navigation-settings > header span { display:grid; gap:3px; }
@@ -7091,3 +7105,78 @@ html.touch-webview .study-sidebar .analysis-candidates {
 .mobile-study-pieces { --lift-piece-size:94.6%; }
 .mobile-study-pieces .board-square .piece-lift { width:94.6%; height:94.6%; }
 .mobile-study-pieces .board-drag-ghost { width:10.12%; }
+
+/* Shared phone browse/practice typography and controls. Board pieces retain their skins. */
+html.phone-webview :is(.catalog-phone-browse, .mobile-solver-page, .mobile-library-browse-page, .mobile-search-page) {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: #294638;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-text-size-adjust: 100%;
+}
+html.phone-webview :is(.catalog-phone-browse, .mobile-solver-page, .mobile-library-browse-page, .mobile-search-page) :is(button, input, select) {
+  font-family: inherit;
+  -webkit-tap-highlight-color: transparent;
+}
+html.phone-webview :is(.catalog-phone-browse, .mobile-solver-page, .mobile-library-browse-page, .mobile-search-page) button:focus-visible {
+  outline: 2px solid #356b50;
+  outline-offset: 2px;
+}
+html.phone-webview .mobile-solver-heading { min-height: 52px; gap: 8px; }
+html.phone-webview .mobile-solver-heading strong { font-size: 16px; font-weight: 600; line-height: 1.45; }
+html.phone-webview .mobile-solver-heading small { font-size: 12px; line-height: 1.4; color: #687d70; }
+html.phone-webview .mobile-solver-heading em { padding: 5px 8px; border-radius: 8px; font-size: 12px; font-weight: 600; }
+html.phone-webview .mobile-solver-meta { min-height: 40px; border-radius: 10px; font-size: 12px; font-variant-numeric: tabular-nums; }
+html.phone-webview .mobile-solver-meta b { font-size: 14px; font-weight: 600; }
+.mobile-solver-clock-status { color: #687d70; font-size: 11px; font-weight: 400; }
+html.phone-webview :is(.mobile-solver-actions, .mobile-solver-result, .mobile-solver-nav) button {
+  appearance: none;
+  min-height: 44px;
+  border: 1px solid #c3d8c9;
+  border-radius: 10px;
+  background: #fff;
+  color: #356b50;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+  transition: background-color .12s, border-color .12s;
+}
+html.phone-webview .mobile-solver-actions > div { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
+html.phone-webview :is(.mobile-solver-actions, .mobile-solver-result) button.primary { background: #356b50; border-color: #356b50; color: #fff; }
+html.phone-webview :is(.mobile-solver-actions, .mobile-solver-result, .mobile-solver-nav) button:active:not(:disabled) { background: #edf5ef; border-color: #87ae95; }
+html.phone-webview :is(.mobile-solver-actions, .mobile-solver-result) button.primary:active:not(:disabled) { background: #29583f; }
+html.phone-webview :is(.mobile-solver-actions, .mobile-solver-result, .mobile-solver-nav) button:disabled { opacity: .5; }
+html.phone-webview .mobile-solver-result { border-radius: 12px; padding: 12px; gap: 8px; }
+html.phone-webview .mobile-solver-result strong { font-size: 16px; font-weight: 600; }
+html.phone-webview .mobile-solver-result p { font-size: 12px; line-height: 1.6; }
+html.phone-webview .mobile-solver-note { border-radius: 10px; padding: 8px 10px; }
+html.phone-webview .mobile-solver-note p { font-size: 12px; line-height: 1.5; white-space: normal; }
+html.phone-webview .mobile-solver-note button { min-height: 44px; font-size: 13px; font-weight: 600; }
+html.phone-webview .mobile-solver-finish { min-height: 44px; font-size: 14px; font-weight: 500; border-radius: 10px; }
+html.phone-webview .mobile-solver-heading :is(.mobile-back-button, .practice-rules-trigger) { min-height: 44px; border-radius: 10px; font-size: 13px; font-weight: 500; }
+html.phone-webview .catalog-phone-browse :is(.catalog-problem-copy strong, .catalog-back-heading h3) { font-weight: 600; }
+html.phone-webview .catalog-phone-browse .catalog-problem-copy strong { font-size: 15px; line-height: 1.5; }
+html.phone-webview .catalog-phone-browse button { appearance: none; font-size: 14px; }
+html.phone-webview .catalog-phone-browse .catalog-problem-card { border-radius: 12px; }
+html.phone-webview .catalog-phone-browse .catalog-problem-card > button:first-child:active { background: #edf5ef; }
+
+/* Keep question navigation above a board fitted to the remaining viewport. */
+html .mobile-solver-page, html.phone-webview .mobile-solver-page, html.tablet-webview .mobile-solver-page {
+  display:flex; flex-direction:column; align-items:stretch; gap:6px; padding:8px 12px calc(8px + var(--phone-safe-bottom, 0px));
+}
+html .mobile-solver-page > * { flex:0 0 auto; }
+html .mobile-solver-page .mobile-solver-playfield { display:grid; align-content:start; gap:6px; }
+html .mobile-solver-page .mobile-solver-board { display:grid; place-items:center; }
+html .mobile-solver-page .mobile-solver-board > .board-shell {
+  width:var(--solver-board-fit-width, min(100%, 390px)); min-width:0; max-width:100%; height:auto;
+}
+html .mobile-solver-page .mobile-solver-nav {
+  position:sticky; top:0; z-index:3; width:min(100%,620px); align-self:center; min-height:44px; background:#edf4ec;
+}
+html .mobile-solver-page .mobile-solver-nav button { min-height:44px; }
+html .mobile-solver-page .mobile-solver-actions { grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; }
+html .mobile-solver-page .mobile-solver-actions > div { display:contents; }
+html .mobile-solver-page .mobile-solver-actions button { min-height:44px; }
+html .mobile-solver-page .mobile-solver-meta { min-height:36px; }
+html .mobile-solver-page .mobile-solver-note { padding:4px 8px; }
+html .mobile-solver-workspace > .mobile-problem-navigator.open { top:var(--solver-picker-top, calc(var(--mobile-header-height) + 120px)); bottom:auto; }

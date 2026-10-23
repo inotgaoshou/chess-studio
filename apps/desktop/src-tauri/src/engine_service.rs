@@ -650,7 +650,9 @@ pub(crate) async fn configure_engine_nnue(
 }
 
 pub(crate) fn validated_nnue_path(engine_path: &Path) -> Result<Option<PathBuf>, String> {
-    let Some(nnue_path) = preferred_nnue_path(engine_path) else { return Ok(None); };
+    let Some(nnue_path) = preferred_nnue_path(engine_path) else {
+        return Ok(None);
+    };
     let nnue_sha256 = file_sha256(&nnue_path)?;
     if nnue_sha256 != PIKAFISH_20260906_NNUE_SHA256 {
         return Err(format!(

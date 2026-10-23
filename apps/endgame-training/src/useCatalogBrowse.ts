@@ -5,6 +5,9 @@ export type MateStepCount = {mateMoves:number;itemCount:number};
 export type BrowsePage<N extends BrowseNode> = {mateStepCounts?:MateStepCount[]|null;availabilityReady?:boolean;availabilityRevision?:string;availabilitySnapshotRevision?:string|null;statisticsReady?:boolean;statisticsRevision?:string;statisticsSnapshotRevision?:string|null;statisticsUpdatedAt?:string|null;currentNode?:N|null;breadcrumbs:N[];children:N[];nextCursor?:string|null;learningMaterials:{id:string;title:string;reviewStatus:string}[];materialNextCursor?:string|null};
 export function useDebounced<T>(value:T,delay=300,scope?:string|null) {
  const [settled,setSettled]=useState({value,scope});
+ // Start a new scope immediately, then debounce its subsequent edits. Waiting
+ // for the timer to adopt the scope lets every early keystroke bypass the delay.
+ if(settled.scope!==scope)setSettled({value,scope});
  useEffect(()=>{const timer=setTimeout(()=>setSettled({value,scope}),delay);return()=>clearTimeout(timer);},[value,delay,scope]);
  return settled.scope===scope?settled.value:value;
 }

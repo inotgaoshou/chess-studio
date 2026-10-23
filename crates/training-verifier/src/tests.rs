@@ -295,9 +295,10 @@ async fn real_pikafish_regression() {
     );
     assert!(e.lines.contains_key("candidate"));
     if out.outcome != "pending_review" {
-        assert!(e
-            .lines
-            .values()
-            .all(|line| line.depth >= 26 && line.bound.as_ref().is_none_or(|b| b.is_empty())));
+        assert!(
+            e.lines
+                .values()
+                .all(|line| line.depth >= 26 && line.bound.as_ref().is_none_or(|b| b.is_empty()))
+        );
     }
 }

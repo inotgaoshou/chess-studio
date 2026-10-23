@@ -945,13 +945,17 @@ mod tests {
 /// Structured engine results only; UCI stays behind native process boundaries.
 #[wasm_bindgen(js_name = trainingVerificationSearches)]
 pub fn training_verification_searches(request: &str) -> Result<String, JsValue> {
-    let r: training_verifier::Request = serde_json::from_str(request).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let r: training_verifier::Request =
+        serde_json::from_str(request).map_err(|e| JsValue::from_str(&e.to_string()))?;
     let searches = training_verifier::searches(&r).map_err(|e| JsValue::from_str(&e))?;
     serde_json::to_string(&searches).map_err(|e| JsValue::from_str(&e.to_string()))
 }
 #[wasm_bindgen(js_name = verifyTrainingMove)]
 pub fn verify_training_move(request: &str, evidence: &str) -> Result<String, JsValue> {
-    let r: training_verifier::Request = serde_json::from_str(request).map_err(|e| JsValue::from_str(&e.to_string()))?;
-    let evidence: training_verifier::Evidence = serde_json::from_str(evidence).map_err(|e| JsValue::from_str(&e.to_string()))?;
-    serde_json::to_string(&training_verifier::verify(&r, &evidence)).map_err(|e| JsValue::from_str(&e.to_string()))
+    let r: training_verifier::Request =
+        serde_json::from_str(request).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let evidence: training_verifier::Evidence =
+        serde_json::from_str(evidence).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    serde_json::to_string(&training_verifier::verify(&r, &evidence))
+        .map_err(|e| JsValue::from_str(&e.to_string()))
 }

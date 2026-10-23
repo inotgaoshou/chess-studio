@@ -207,9 +207,12 @@
 .catalog-phone-browse .catalog-back-heading svg { width: 18px; height: 18px; }
 .catalog-phone-browse .catalog-back-heading h3 { min-width: 0; margin: 0; font-size: 16px; line-height: 1.4; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .teaching-catalog.catalog-phone-browse .catalog-nodes { gap: 8px; margin: 8px 0; }
-.teaching-catalog.catalog-phone-browse .catalog-nodes > button { min-height: 104px; padding: 10px; gap: 6px; }
+.teaching-catalog.catalog-phone-browse .catalog-nodes > button { min-height: 100px; padding: 12px; gap: 8px; border-radius: 12px; align-content: center; }
+.teaching-catalog.catalog-phone-browse .catalog-nodes > button:only-child { grid-column: 1 / -1; min-height: 76px; grid-template-columns: 36px minmax(0,1fr) 16px; }
+.teaching-catalog.catalog-phone-browse .catalog-nodes > button:only-child .catalog-node-copy { grid-column: 2; grid-row: 1; }
+.teaching-catalog.catalog-phone-browse .catalog-nodes > button:active { background: #edf5ef; border-color: #94b7a0; }
 .teaching-catalog.catalog-phone-browse .catalog-node-copy { gap: 3px; }
-.teaching-catalog.catalog-phone-browse .catalog-node-copy strong { font-size: 14px; line-height: 1.4; }
+.teaching-catalog.catalog-phone-browse .catalog-node-copy strong { font-size: 15px; font-weight: 600; line-height: 1.45; }
 .teaching-catalog.catalog-phone-browse .catalog-entry-symbol { width: 32px; height: 32px; border-radius: 8px; }
 .teaching-catalog.catalog-phone-browse .catalog-entry-symbol svg { width: 20px; height: 20px; }
 .teaching-catalog.catalog-phone-browse .catalog-chapter-rows > button { min-height: 60px; padding: 8px 10px; grid-template-columns: 32px minmax(0,1fr) 16px; }
@@ -229,6 +232,16 @@
 .teaching-catalog.catalog-phone-browse .catalog-content-toolbar .catalog-tabs { flex: 1; min-width: 0; margin: 0; }
 .catalog-phone-browse .catalog-filter-toggle { display: inline-flex; flex: none; align-items: center; justify-content: center; gap: 4px; min-height: 44px; padding: 6px 8px; font-size: 13px; }
 .catalog-phone-browse .catalog-filter-toggle svg { width: 16px; height: 16px; }
+
+.teaching-catalog.catalog-phone-browse .catalog-mobile-filters { margin: 8px 0; padding: 10px; border: 1px solid var(--catalog-line); border-radius: 10px; background: #f7f9f6; }
+.catalog-phone-browse .catalog-mobile-filters > header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.catalog-phone-browse .catalog-mobile-filters > header strong { flex: 1; min-width: 0; font-size: 14px; color: var(--catalog-ink); }
+.teaching-catalog.catalog-phone-browse .catalog-mobile-filters > header button { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-width: 44px; min-height: 44px; padding: 6px 8px; font-size: 13px; background: transparent; border: 0; color: var(--catalog-green); }
+.catalog-phone-browse .catalog-mobile-filters > header svg { width: 16px; height: 16px; }
+.catalog-phone-browse .catalog-mobile-filter-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.catalog-phone-browse .catalog-mobile-filter-grid label { display: grid; gap: 4px; min-width: 0; margin: 0; color: var(--catalog-muted); font-size: 12px; }
+.teaching-catalog.catalog-phone-browse .catalog-mobile-filter-grid :is(input, select) { box-sizing: border-box; width: 100%; min-width: 0; height: 44px; min-height: 44px; padding: 8px; border: 1px solid #cedace; border-radius: 8px; background: #fff; color: var(--catalog-ink); font: inherit; font-size: 16px; }
+.teaching-catalog.catalog-phone-browse .catalog-mobile-filter-grid select { appearance: none; padding-right: 26px; background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='m2 4 4 4 4-4' fill='none' stroke='%2365756c' stroke-width='1.4'/%3E%3C/svg%3E") no-repeat right 8px center; }
 
 /* Keep same-titled reading positions distinguishable in a compact row. */
 .teaching-catalog .catalog-reading .catalog-reading-solution { padding: 8px 12px; min-height: 60px; }

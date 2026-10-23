@@ -392,7 +392,13 @@ impl EngineSession {
     }
 
     /// Reach the requested depth, bounded by a wall-clock search allowance.
-    pub async fn search_bounded(&mut self, fen: &str, depth: u32, move_time_ms: u64, search_moves: &[String]) -> Result<(), EngineError> {
+    pub async fn search_bounded(
+        &mut self,
+        fen: &str,
+        depth: u32,
+        move_time_ms: u64,
+        search_moves: &[String],
+    ) -> Result<(), EngineError> {
         self.send(&position_command(fen, &[])).await?;
         let mut command = format!("go depth {depth} movetime {move_time_ms}");
         if !search_moves.is_empty() {
@@ -673,7 +679,11 @@ done
     #[test]
     fn preserves_score_bounds() {
         for bound in ["upperbound", "lowerbound"] {
-            let EngineEvent::Info(info) = parse_engine_line(&format!("info depth 26 multipv 1 score cp 123 {bound} pv a3a4")) else { panic!("info"); };
+            let EngineEvent::Info(info) = parse_engine_line(&format!(
+                "info depth 26 multipv 1 score cp 123 {bound} pv a3a4"
+            )) else {
+                panic!("info");
+            };
             assert_eq!(info.score_bound.as_deref(), Some(bound));
         }
     }

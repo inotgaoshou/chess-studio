@@ -25,6 +25,7 @@ test("practice scoring separates completion, stars and first-try correctness", (
 function harness({ packageEnv = "test", native = true, dev = false, configured = "", entries = [], stored, fetchImpl, timers, queued = {} } = {}) {
   const values = new Map(entries);
   const calls = [];
+  const storageReads = [];
   let session = stored;
   const stores = Object.fromEntries(["assignments", "assignmentCaches", "attempts", "practiceAttempts", "assignmentViews", "assignmentDrafts", "assignmentAnswers", "practiceSessions", "practiceDrafts"].map((name) => [name, new Map((queued[name] || []).map((item) => [name === "assignmentAnswers" ? item.cacheKey : item.clientAttemptId || item.cacheKey, structuredClone(item)]))]));
   const indexedDB = { open() {
@@ -44,7 +45,8 @@ function harness({ packageEnv = "test", native = true, dev = false, configured =
           queueMicrotask(deliver);
           return request;
         },
-        getAll() { const request = { result: [...stores[storeName].values()].map((value) => structuredClone(value)) }; queueMicrotask(() => request.onsuccess?.()); return request; },
+        get(key) { storageReads.push({store:storeName,method:"get",key}); const request = { result: structuredClone(stores[storeName].get(key)) }; queueMicrotask(() => request.onsuccess?.()); return request; },
+        getAll() { storageReads.push({store:storeName,method:"getAll"}); const request = { result: [...stores[storeName].values()].map((value) => structuredClone(value)) }; queueMicrotask(() => request.onsuccess?.()); return request; },
       }) };
       return transaction;
     } } };
@@ -78,8 +80,10 @@ function harness({ packageEnv = "test", native = true, dev = false, configured =
   }
   const environment = load("appEnvironment");
   const { teachingClient } = load("teaching", {
+    "./PracticeOpeningStatus": { measureActiveOpening: (_phase, work) => work() },
     "./catalogAccess": load("catalogAccess"),
     "./teachingDeadline": load("teachingDeadline"),
+    "./requestDeadline": load("requestDeadline"),
     "./practiceProgress": load("practiceProgress"),
     "./checkinApi": load("checkinApi"),
     "./contentEpoch": load("contentEpoch"),
@@ -96,7 +100,7 @@ function harness({ packageEnv = "test", native = true, dev = false, configured =
       },
     },
   });
-  return { environment, client: teachingClient, calls, values, stores, session: () => session, load };
+  return { environment, client: teachingClient, calls, values, stores, storageReads, session: () => session, load };
 }
 
 test("test package defaults to test, persists a switch, and can switch back", async () => {
@@ -221,7 +225,7 @@ test("native clear waits for a pending save so old credentials cannot reappear",
 const response = (body, status = 200) => ({ ok: status >= 200 && status < 300, status, json: async () => structuredClone(body) });
 for (const method of ["switchOrganization", "leaveOrganization"]) {
   const endpoint = method === "switchOrganization" ? "switch-organization" : "leave-organization";
-  test(`${method} keeps the rotated refresh token after a 401 retry`, async () => {
+  test(`${method} keeps the rotated refresh token without automatically replaying an organization write`, async () => {
     let changes = 0;
     const rotated = { ...auth, token: "rotated-access", refreshToken: "rotated-refresh" };
     const h = harness({ fetchImpl: (url, options) => {
@@ -234,6 +238,8 @@ for (const method of ["switchOrganization", "leaveOrganization"]) {
       return response(auth);
     } });
     await h.client.login("user", "password");
+    await assert.rejects(h.client[method]("org-next"), /登录已续期/);
+    assert.equal(changes, 1);
     const changed = await h.client[method]("org-next");
     assert.equal(changed.refreshToken, "rotated-refresh");
     assert.equal(h.session().refreshToken, "rotated-refresh");
@@ -574,4 +580,20 @@ for (const [name, start] of [
   for (const expire of [...deadlines.values()]) expire();
   await assert.rejects(pending, /超时/);
   assert.equal(requests, 1, 'a timed out session request must not replay a creation');
+});
+
+
+test("opening restores the selected session by key without copying unrelated historical snapshots", async () => {
+  const student = { ...auth, user: { id: "student", orgId: "org", role: "student" } };
+  const h = harness({fetchImpl: async () => response(student)});
+  await h.client.login("student", "password");
+  const next = {id:"selected-session",currentItemId:"i2",items:[{id:"i1",status:"pending",problem:{id:"p1",startingFen:"fen",solution:[]}},{id:"i2",status:"pending",problem:{id:"p2",startingFen:"fen2",solution:[]}}]};
+  await h.client.localPracticeSession(next);
+  h.stores.practiceSessions.set("unrelated", { get snapshot() { throw new Error("full history was cloned"); } });
+  h.storageReads.length = 0;
+  const restored = await h.client.localPracticeSession(next);
+  assert.equal(restored.currentItemId, "i2");
+  assert.equal(restored.items.length, 2);
+  assert.equal(h.storageReads.filter(r => r.store === "practiceSessions" && r.method === "getAll").length, 0);
+  assert(h.storageReads.some(r => r.store === "practiceSessions" && r.method === "get"));
 });

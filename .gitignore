@@ -27,3 +27,6 @@ apps/desktop/mobile-package-size-report.*
 # Local planning artifacts; product documentation remains versioned normally.
 /docs/FEATURE_MAP.zh-CN.md
 /docs/FEATURE_DEVELOPMENT_LOG.zh-CN.md
+
+# Ignore dependency directories even when local worktrees use symlinks.
+node_modules

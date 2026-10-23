@@ -1,0 +1,337 @@
+[
+  {
+    "viewport": {
+      "width": 320,
+      "height": 740
+    },
+    "heading": {
+      "box": {
+        "x": 12,
+        "y": 62,
+        "width": 296,
+        "height": 49,
+        "top": 62,
+        "right": 308,
+        "bottom": 111,
+        "left": 12
+      },
+      "title": {
+        "x": 64,
+        "y": 71.40625,
+        "width": 192,
+        "height": 25.1875,
+        "top": 71.40625,
+        "right": 256,
+        "bottom": 96.59375,
+        "left": 64
+      },
+      "buttons": [
+        {
+          "x": 12,
+          "y": 62,
+          "width": 44,
+          "height": 44,
+          "top": 62,
+          "right": 56,
+          "bottom": 106,
+          "left": 12
+        },
+        {
+          "x": 264,
+          "y": 62,
+          "width": 44,
+          "height": 44,
+          "top": 62,
+          "right": 308,
+          "bottom": 106,
+          "left": 264
+        }
+      ]
+    },
+    "firstTaskTop": 369,
+    "taskListHeight": 808,
+    "rowHeights": [
+      63,
+      63,
+      63,
+      63,
+      63,
+      63,
+      81,
+      63,
+      63,
+      63,
+      63,
+      63
+    ],
+    "horizontalOverflow": false
+  },
+  {
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "heading": {
+      "box": {
+        "x": 12,
+        "y": 62,
+        "width": 366,
+        "height": 49,
+        "top": 62,
+        "right": 378,
+        "bottom": 111,
+        "left": 12
+      },
+      "title": {
+        "x": 64,
+        "y": 71.40625,
+        "width": 262,
+        "height": 25.1875,
+        "top": 71.40625,
+        "right": 326,
+        "bottom": 96.59375,
+        "left": 64
+      },
+      "buttons": [
+        {
+          "x": 12,
+          "y": 62,
+          "width": 44,
+          "height": 44,
+          "top": 62,
+          "right": 56,
+          "bottom": 106,
+          "left": 12
+        },
+        {
+          "x": 334,
+          "y": 62,
+          "width": 44,
+          "height": 44,
+          "top": 62,
+          "right": 378,
+          "bottom": 106,
+          "left": 334
+        }
+      ]
+    },
+    "firstTaskTop": 369,
+    "taskListHeight": 808,
+    "rowHeights": [
+      63,
+      63,
+      63,
+      63,
+      63,
+      63,
+      81,
+      63,
+      63,
+      63,
+      63,
+      63
+    ],
+    "horizontalOverflow": false
+  },
+  {
+    "viewport": {
+      "width": 800,
+      "height": 1280
+    },
+    "heading": {
+      "box": {
+        "x": 20,
+        "y": 76,
+        "width": 760,
+        "height": 49,
+        "top": 76,
+        "right": 780,
+        "bottom": 125,
+        "left": 20
+      },
+      "title": {
+        "x": 72,
+        "y": 82.59375,
+        "width": 656,
+        "height": 30.796875,
+        "top": 82.59375,
+        "right": 728,
+        "bottom": 113.390625,
+        "left": 72
+      },
+      "buttons": [
+        {
+          "x": 20,
+          "y": 76,
+          "width": 44,
+          "height": 44,
+          "top": 76,
+          "right": 64,
+          "bottom": 120,
+          "left": 20
+        },
+        {
+          "x": 736,
+          "y": 76,
+          "width": 44,
+          "height": 44,
+          "top": 76,
+          "right": 780,
+          "bottom": 120,
+          "left": 736
+        }
+      ]
+    },
+    "firstTaskTop": 348,
+    "taskListHeight": 808,
+    "rowHeights": [
+      63,
+      63,
+      63,
+      63,
+      63,
+      63,
+      81,
+      63,
+      63,
+      63,
+      63,
+      63
+    ],
+    "horizontalOverflow": false
+  },
+  {
+    "viewport": {
+      "width": 1280,
+      "height": 800
+    },
+    "heading": {
+      "box": {
+        "x": 110,
+        "y": 76,
+        "width": 1060,
+        "height": 49,
+        "top": 76,
+        "right": 1170,
+        "bottom": 125,
+        "left": 110
+      },
+      "title": {
+        "x": 162,
+        "y": 82.59375,
+        "width": 956,
+        "height": 30.796875,
+        "top": 82.59375,
+        "right": 1118,
+        "bottom": 113.390625,
+        "left": 162
+      },
+      "buttons": [
+        {
+          "x": 110,
+          "y": 76,
+          "width": 44,
+          "height": 44,
+          "top": 76,
+          "right": 154,
+          "bottom": 120,
+          "left": 110
+        },
+        {
+          "x": 1126,
+          "y": 76,
+          "width": 44,
+          "height": 44,
+          "top": 76,
+          "right": 1170,
+          "bottom": 120,
+          "left": 1126
+        }
+      ]
+    },
+    "firstTaskTop": 348,
+    "taskListHeight": 808,
+    "rowHeights": [
+      63,
+      63,
+      63,
+      63,
+      63,
+      63,
+      81,
+      63,
+      63,
+      63,
+      63,
+      63
+    ],
+    "horizontalOverflow": false
+  },
+  {
+    "viewport": {
+      "width": 844,
+      "height": 390
+    },
+    "heading": {
+      "box": {
+        "x": 20,
+        "y": 68,
+        "width": 804,
+        "height": 49,
+        "top": 68,
+        "right": 824,
+        "bottom": 117,
+        "left": 20
+      },
+      "title": {
+        "x": 72,
+        "y": 74.59375,
+        "width": 700,
+        "height": 30.796875,
+        "top": 74.59375,
+        "right": 772,
+        "bottom": 105.390625,
+        "left": 72
+      },
+      "buttons": [
+        {
+          "x": 20,
+          "y": 68,
+          "width": 44,
+          "height": 44,
+          "top": 68,
+          "right": 64,
+          "bottom": 112,
+          "left": 20
+        },
+        {
+          "x": 780,
+          "y": 68,
+          "width": 44,
+          "height": 44,
+          "top": 68,
+          "right": 824,
+          "bottom": 112,
+          "left": 780
+        }
+      ]
+    },
+    "firstTaskTop": 340,
+    "taskListHeight": 808,
+    "rowHeights": [
+      63,
+      63,
+      63,
+      63,
+      63,
+      63,
+      81,
+      63,
+      63,
+      63,
+      63,
+      63
+    ],
+    "horizontalOverflow": false
+  }
+]

@@ -31,7 +31,7 @@ export function TeacherSourceLibraries({ auth, query, onOpen }: {
     setCategoriesLoading(true); setCategories([]); setCategory(""); setCategoryError("");
     void teachingClient.teacherLibraryCategories(context.current, abort.signal).then(rows => {
       if (abort.signal.aborted) return;
-      const codes = rows.filter(row => row.libraryCount > 0 && LIBRARY_CATEGORY_NAMES[row.code]).map(row => row.code);
+      const codes = rows.filter(row => row.libraryCount > 0 && row.code !== "other" && LIBRARY_CATEGORY_NAMES[row.code]).map(row => row.code);
       setCategories(Object.keys(LIBRARY_CATEGORY_NAMES).filter(code => codes.includes(code)));
     }).catch(reason => { if (!abort.signal.aborted) setCategoryError(String(reason instanceof Error ? reason.message : reason)); }).finally(() => { if (!abort.signal.aborted) setCategoriesLoading(false); });
     return () => abort.abort();

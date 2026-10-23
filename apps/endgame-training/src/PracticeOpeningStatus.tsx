@@ -1,9 +1,19 @@
 import { withRequestDeadline } from "./requestDeadline";
+import { useEffect, useState } from "react";
 import { LoaderCircle, RotateCcw, X } from "lucide-react";
 export function PracticeOpeningStatus({ busy, message, title, phase, onRetry, onCancel }: {
   busy: boolean; message: string; title: string; phase: string; onRetry(): void; onCancel(): void;
 }) {
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    if (!busy) { setVisible(false); return; }
+    // Keep the current board in place during fast local question switches.
+    // Slow operations still expose cancellation; errors never wait for this timer.
+    const timer = window.setTimeout(() => setVisible(true), 300);
+    return () => window.clearTimeout(timer);
+  }, [busy]);
   if (!busy && !message) return null;
+  if (busy && !visible) return null;
   return <section className="practice-opening-status" aria-label="打开题目">
     {busy ? <p role="status"><LoaderCircle className="spinning"/>正在打开{title ? `《${title}》` : "练习"}…<small>{phase}</small></p> : <p role="alert">{message}</p>}
     <div>{!busy && <button type="button" className="practice-opening-retry" onClick={onRetry}><RotateCcw/>重试</button>}<button type="button" onClick={onCancel}><X/>取消</button></div>

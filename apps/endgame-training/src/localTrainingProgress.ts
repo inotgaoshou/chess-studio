@@ -12,7 +12,7 @@ export function saveLocalTrainingProgress(problem: TrainingProblem, progress?: O
   if (problem.source === "platform" || problem.source === "teaching") return;
   try {
     const records = read(); delete records[problem.id];
-    if (progress && (problem.trialOwner || progress.moves.length)) records[problem.id] = { ...progress, content: JSON.stringify(verificationRequest(problem, [], "")) };
+    if (progress && (problem.trialOwner || progress.moves.length || progress.elapsedMs > 0 || progress.hints || progress.mistakes)) records[problem.id] = { ...progress, content: JSON.stringify(verificationRequest(problem, [], "")) };
     localStorage.setItem(KEY, JSON.stringify(Object.fromEntries(Object.entries(records).slice(-100))));
   } catch { /* Private progress remains optional if local storage is full. */ }
 }

@@ -1660,8 +1660,16 @@ impl LocalStore {
             .collect()
     }
 
-    pub fn set_endgame_goal(&mut self, problem: Uuid, goal_json: Option<&str>, target: Option<u32>) -> Result<(), StoreError> {
-        self.connection.execute("UPDATE endgame_problems SET training_goal_json=?1,target_mate_moves=?2 WHERE id=?3", params![goal_json,target,problem.to_string()])?;
+    pub fn set_endgame_goal(
+        &mut self,
+        problem: Uuid,
+        goal_json: Option<&str>,
+        target: Option<u32>,
+    ) -> Result<(), StoreError> {
+        self.connection.execute(
+            "UPDATE endgame_problems SET training_goal_json=?1,target_mate_moves=?2 WHERE id=?3",
+            params![goal_json, target, problem.to_string()],
+        )?;
         Ok(())
     }
 
@@ -4581,8 +4589,18 @@ impl LocalStore {
             "active",
             "INTEGER NOT NULL DEFAULT 1",
         )?;
-        ensure_column(&connection, "endgame_problems", "training_goal_json", "TEXT")?;
-        ensure_column(&connection, "endgame_problems", "target_mate_moves", "INTEGER")?;
+        ensure_column(
+            &connection,
+            "endgame_problems",
+            "training_goal_json",
+            "TEXT",
+        )?;
+        ensure_column(
+            &connection,
+            "endgame_problems",
+            "target_mate_moves",
+            "INTEGER",
+        )?;
         Ok(Self { connection })
     }
 }
@@ -7009,17 +7027,36 @@ mod tests {
     #[test]
     fn endgame_reimport_preserves_reviewed_goal_only_for_unchanged_content() {
         let mut store = LocalStore::open_in_memory().unwrap();
-        let mut problems = vec![EndgameProblemImport { source_index: 0, title: "test".into(), category: "test".into(), starting_fen: "4k4/9/9/9/9/9/9/9/9/4K4 w - - 0 1".into(), note: String::new(), solution_json: "[]".into(), training_goal_json: None, target_mate_moves: None }];
-        let library = store.import_endgame_library("/tmp/goals.cbl", "goal-hash", "goals", 1, &problems, None).unwrap();
+        let mut problems = vec![EndgameProblemImport {
+            source_index: 0,
+            title: "test".into(),
+            category: "test".into(),
+            starting_fen: "4k4/9/9/9/9/9/9/9/9/4K4 w - - 0 1".into(),
+            note: String::new(),
+            solution_json: "[]".into(),
+            training_goal_json: None,
+            target_mate_moves: None,
+        }];
+        let library = store
+            .import_endgame_library("/tmp/goals.cbl", "goal-hash", "goals", 1, &problems, None)
+            .unwrap();
         let id = store.endgame_problems(library.id).unwrap()[0].id;
-        store.set_endgame_goal(id, Some("{\"kind\":\"win\"}"), Some(3)).unwrap();
-        store.import_endgame_library("/tmp/goals.cbl", "goal-hash", "goals", 2, &problems, None).unwrap();
+        store
+            .set_endgame_goal(id, Some("{\"kind\":\"win\"}"), Some(3))
+            .unwrap();
+        store
+            .import_endgame_library("/tmp/goals.cbl", "goal-hash", "goals", 2, &problems, None)
+            .unwrap();
         let retained = store.endgame_problems(library.id).unwrap().pop().unwrap();
-        assert!(retained.training_goal_json.is_some()); assert_eq!(retained.target_mate_moves, Some(3));
+        assert!(retained.training_goal_json.is_some());
+        assert_eq!(retained.target_mate_moves, Some(3));
         problems[0].solution_json = "[{\"iccs\":\"a0a1\",\"children\":[]}]".into();
-        store.import_endgame_library("/tmp/goals.cbl", "goal-hash", "goals", 2, &problems, None).unwrap();
+        store
+            .import_endgame_library("/tmp/goals.cbl", "goal-hash", "goals", 2, &problems, None)
+            .unwrap();
         let changed = store.endgame_problems(library.id).unwrap().pop().unwrap();
-        assert_eq!(changed.training_goal_json, None); assert_eq!(changed.target_mate_moves, None);
+        assert_eq!(changed.training_goal_json, None);
+        assert_eq!(changed.target_mate_moves, None);
     }
 
     #[test]

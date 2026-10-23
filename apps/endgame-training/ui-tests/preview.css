@@ -1,0 +1,30 @@
+/* Simulator controls are separate from the shipped application. */
+.presentation-preview {
+  --mobile-header-height: calc(max(env(safe-area-inset-top), 8px) + 82px);
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.preview-toolbar {
+  position: relative;
+  z-index: 50;
+  flex: none;
+  padding: max(env(safe-area-inset-top), 8px) 12px 10px;
+  background: #f8fbf9;
+  border-bottom: 1px solid #d9e5dd;
+  color: #294638;
+}
+.preview-toolbar-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 20px; margin-bottom: 8px; }
+.preview-toolbar-title strong { font-size: 13px; font-weight: 600; }
+.preview-toolbar-title small { color: #6b7e72; font-size: 11px; }
+.preview-toolbar-controls { display: flex; gap: 8px; height: 44px; }
+.preview-toolbar-controls :is(button, select) { appearance: none; min-width: 0; min-height: 44px; padding: 8px 12px; border: 1px solid #cbded0; border-radius: 10px; background: #fff; color: #356b50; font: inherit; font-size: 14px; font-weight: 600; line-height: 1.3; }
+.preview-toolbar-controls select { width: 112px; padding-right: 24px; background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='m2 4 4 4 4-4' fill='none' stroke='%23356b50' stroke-width='1.4'/%3E%3C/svg%3E") no-repeat right 8px center; }
+.preview-toolbar-controls nav { flex: 1; display: flex; padding: 3px; border-radius: 10px; background: #eaf1ec; }
+.preview-toolbar-controls nav button { flex: 1; min-height: 38px; border: 0; border-radius: 8px; background: transparent; }
+.preview-toolbar-controls nav button[aria-pressed=true] { background: #fff; box-shadow: 0 1px 4px #243d3014; }
+.preview-toolbar-controls .preview-count-toggle { padding-inline: 8px; font-size: 12px; }
+.preview-toolbar-controls :is(button, select):focus-visible { outline: 2px solid #356b50; outline-offset: 2px; }
+.preview-toolbar-controls button:active { background-color: #dcebe1; }
+.preview-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }

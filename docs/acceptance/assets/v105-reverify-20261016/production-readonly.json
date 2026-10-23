@@ -1,0 +1,93 @@
+{
+  "productionRelease": "20261016-tablet-430b84e",
+  "route": "HTTPS via local SSH forwarding; hostname and certificate validation retained",
+  "assets": [
+    {
+      "path": "/skins/qingxin-zhuyun/board.png",
+      "validPng": true,
+      "bytes": 1534023
+    },
+    {
+      "path": "/skins/qingxin-zhuyun/rk.png",
+      "validPng": true,
+      "bytes": 23437
+    },
+    {
+      "path": "/skins/qingxin-zhuyun/ra.png",
+      "validPng": true,
+      "bytes": 22789
+    },
+    {
+      "path": "/skins/qingxin-zhuyun/rb.png",
+      "validPng": true,
+      "bytes": 23361
+    },
+    {
+      "path": "/skins/qingxin-zhuyun/rn.png",
+      "validPng": true,
+      "bytes": 23784
+    },
+    {
+      "path": "/skins/qingxin-zhuyun/rr.png",
+      "validPng": true,
+      "bytes": 23572
+    },
+    {
+      "path": "/skins/qingxin-zhuyun/rc.png",
+      "validPng": true,
+      "bytes": 24372
+    },
+    {
+      "path": "/skins/qingxin-zhuyun/rp.png",
+      "validPng": true,
+      "bytes": 23427
+    },
+    {
+      "path": "/skins/qingxin-zhuyun/bk.png",
+      "validPng": true,
+      "bytes": 24246
+    },
+    {
+      "path": "/skins/qingxin-zhuyun/ba.png",
+      "validPng": true,
+      "bytes": 21906
+    },
+    {
+      "path": "/skins/qingxin-zhuyun/bb.png",
+      "validPng": true,
+      "bytes": 25085
+    },
+    {
+      "path": "/skins/qingxin-zhuyun/bn.png",
+      "validPng": true,
+      "bytes": 24051
+    },
+    {
+      "path": "/skins/qingxin-zhuyun/br.png",
+      "validPng": true,
+      "bytes": 23562
+    },
+    {
+      "path": "/skins/qingxin-zhuyun/bc.png",
+      "validPng": true,
+      "bytes": 24544
+    },
+    {
+      "path": "/skins/qingxin-zhuyun/bp.png",
+      "validPng": true,
+      "bytes": 23455
+    }
+  ],
+  "health": [
+    {
+      "host": "api.qixiapp.cn",
+      "passed": true,
+      "response": "{\"status\":\"ready\"}"
+    },
+    {
+      "host": "api-test.qixiapp.cn",
+      "passed": true,
+      "response": "{\"status\":\"ready\"}"
+    }
+  ]
+}

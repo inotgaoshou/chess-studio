@@ -1,5 +1,5 @@
 //! Bounded native search adapter. Dropping the future kills its UCI child.
-use crate::{pending, searches, verify, Evidence, Line, Request, ResultDto, Search};
+use crate::{Evidence, Line, Request, ResultDto, Search, pending, searches, verify};
 use engine_protocol::{EngineEvent, EngineSession};
 use sha2::{Digest, Sha256};
 use std::{
@@ -59,7 +59,7 @@ pub async fn search(session: &mut EngineSession, spec: &Search) -> Result<Line, 
                 });
             }
             EngineEvent::BestMove { .. } => {
-                return latest.ok_or_else(|| "验证引擎未返回评估证据".into())
+                return latest.ok_or_else(|| "验证引擎未返回评估证据".into());
             }
             _ => {}
         }

@@ -8,7 +8,8 @@ export function libraryCategoryCode(folderPath?: string) {
 
 /** Presentation only for the legacy source browser, never textbook chapters or assignment selection. */
 export function legacyTrainingSourceVisible(folderPath: string | undefined, playableCount: number) {
-  return libraryCategoryCode(folderPath) !== "B" || (Number.isInteger(playableCount) && playableCount >= 10);
+  const code = libraryCategoryCode(folderPath);
+  return code !== "other" && (code !== "B" || (Number.isInteger(playableCount) && playableCount >= 10));
 }
 
 export function legacyTrainingSourceTitle(title: string, folderPath: string | undefined) {

@@ -451,11 +451,7 @@ fn material(b: &Board, solver: Color) -> i32 {
                 PieceKind::Advisor | PieceKind::Elephant => 200,
                 PieceKind::Pawn => 100,
             };
-            if p.color == solver {
-                value
-            } else {
-                -value
-            }
+            if p.color == solver { value } else { -value }
         })
         .sum()
 }

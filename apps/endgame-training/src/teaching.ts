@@ -689,6 +689,19 @@ async function storeDelete(storeName: string, key: IDBValidKey) {
   db.close();
 }
 
+// Practice sessions contain complete problem snapshots. Read the requested key
+// instead of cloning every historical session whenever a question is opened.
+async function storeGet<T>(storeName: string, key: IDBValidKey): Promise<T | undefined> {
+  const db = await openDb();
+  try {
+    return await new Promise<T | undefined>((resolve, reject) => {
+      const request = db.transaction(storeName).objectStore(storeName).get(key);
+      request.onsuccess = () => resolve(request.result as T | undefined);
+      request.onerror = () => reject(request.error);
+    });
+  } finally { db.close(); }
+}
+
 async function storeAll<T>(storeName: string): Promise<T[]> {
   const db = await openDb();
   const values = await new Promise<T[]>((resolve, reject) => {
@@ -804,9 +817,13 @@ async function practiceDrafts(auth: TeachingAuth, sessionId: string) {
   return (await storeAll<PracticeDraft>("practiceDrafts")).filter(d => d.sessionKey === key);
 }
 async function cachePracticeSession(auth: TeachingAuth, session: PracticeSession, acknowledgedRevision = "", signal?: AbortSignal) {
-  const prior = (await storeAll<CachedPracticeSession>("practiceSessions")).find(s => s.cacheKey === assignmentCacheKey(auth, session.id));
+  const [prior, drafts, attempts] = await Promise.all([
+    storeGet<CachedPracticeSession>("practiceSessions", assignmentCacheKey(auth, session.id)),
+    practiceDrafts(auth, session.id),
+    storeAll<PendingPracticeAttempt>("practiceAttempts"),
+  ]);
   const navigationRevision = [prior?.navigationRevision ?? "", acknowledgedRevision].sort().at(-1)!;
-  const merged = mergePracticeAttempts(mergePracticeDrafts(session, await practiceDrafts(auth, session.id), navigationRevision), (await storeAll<PendingPracticeAttempt>("practiceAttempts")).filter(a => a.sessionId === session.id && samePracticeAttemptContext(a, auth)));
+  const merged = mergePracticeAttempts(mergePracticeDrafts(session, drafts, navigationRevision), attempts.filter(a => a.sessionId === session.id && samePracticeAttemptContext(a, auth)));
   signal?.throwIfAborted();
   await storePut("practiceSessions", { ...contextOf(auth), cacheKey: assignmentCacheKey(auth, session.id), session: merged, navigationRevision } satisfies CachedPracticeSession);
   return merged;
@@ -1232,7 +1249,7 @@ export const teachingClient = {
   },
   async localPracticeSession(session: PracticeSession, signal?: AbortSignal) {
     const auth = this.auth(); if (!auth) return session;
-    const cached = (await storeAll<CachedPracticeSession>("practiceSessions")).find(s => s.cacheKey === assignmentCacheKey(auth, session.id));
+    const cached = await storeGet<CachedPracticeSession>("practiceSessions", assignmentCacheKey(auth, session.id));
     return cachePracticeSession(auth, cached?.session ?? session, "", signal);
   },
   practiceSessionContext(sessionId: string) { const auth = this.auth(); return auth ? assignmentCacheKey(auth, sessionId) : ""; },
@@ -1243,7 +1260,7 @@ export const teachingClient = {
     catch (error) {
       signal?.throwIfAborted();
       if (!(error instanceof TypeError) && navigator.onLine !== false) throw error;
-      const cached = (await storeAll<CachedPracticeSession>("practiceSessions")).find(s => s.cacheKey === assignmentCacheKey(auth, sessionId));
+      const cached = await storeGet<CachedPracticeSession>("practiceSessions", assignmentCacheKey(auth, sessionId));
       if (!cached) throw error;
       return cachePracticeSession(auth, cached.session, "", signal);
     }
@@ -1271,7 +1288,7 @@ export const teachingClient = {
     if (!auth || auth.user.role !== "student") throw new Error("请先登录学生账号");
     const queued: PendingPracticeAttempt = { ...attempt, sessionId, ...contextOf(auth), queuedRevision: nextPracticeRevision() };
     await storePut("practiceAttempts", queued);
-    const cached = (await storeAll<CachedPracticeSession>("practiceSessions")).find(s => s.cacheKey === assignmentCacheKey(auth, sessionId));
+    const cached = await storeGet<CachedPracticeSession>("practiceSessions", assignmentCacheKey(auth, sessionId));
     if (cached) await cachePracticeSession(auth, cached.session);
     const authContext = authContexts.get(auth);
     if (!authContext || !isCurrentAuthContext(authContext)) throw new Error("登录账号或机构已变化，答题记录已保留，请登录原账号后补交。");

@@ -1730,11 +1730,14 @@ fn verify_completed_attempt(
     let mut board = xiangqi_core::Board::from_fen(starting_fen).map_err(|_| invalid())?;
     let mut alternatives = solution.as_array().ok_or_else(invalid)?;
     for (index, iccs) in moves.iter().enumerate() {
-        let node = alternatives.iter()
+        let node = alternatives
+            .iter()
             .find(|node| node.get("iccs").and_then(serde_json::Value::as_str) == Some(iccs))
             .ok_or_else(invalid)?;
         board = board.apply_iccs(iccs).map_err(|_| invalid())?;
-        alternatives = node.get("children").and_then(serde_json::Value::as_array)
+        alternatives = node
+            .get("children")
+            .and_then(serde_json::Value::as_array)
             .ok_or_else(invalid)?;
         if index + 1 == moves.len() && !alternatives.is_empty() {
             return Err(invalid());
@@ -1754,15 +1757,34 @@ mod attempt_tests {
             { "iccs": "a6a5", "children": [] },
             { "iccs": "c6c5", "children": [] }
         ] }]);
-        let line = |values: &[&str]| values.iter().map(|value| value.to_string()).collect::<Vec<_>>();
+        let line = |values: &[&str]| {
+            values
+                .iter()
+                .map(|value| value.to_string())
+                .collect::<Vec<_>>()
+        };
         for values in [&["a3a4", "a6a5"][..], &["a3a4", "c6c5"][..]] {
-            assert!(verify_completed_attempt(xiangqi_core::STARTING_FEN, &solution, &line(values)).is_ok());
+            assert!(
+                verify_completed_attempt(xiangqi_core::STARTING_FEN, &solution, &line(values))
+                    .is_ok()
+            );
         }
-        for values in [&[][..], &["a3a4"][..], &["c3c4", "a6a5"][..], &["a3a4", "a6a5", "c3c4"][..]] {
-            assert!(verify_completed_attempt(xiangqi_core::STARTING_FEN, &solution, &line(values)).is_err());
+        for values in [
+            &[][..],
+            &["a3a4"][..],
+            &["c3c4", "a6a5"][..],
+            &["a3a4", "a6a5", "c3c4"][..],
+        ] {
+            assert!(
+                verify_completed_attempt(xiangqi_core::STARTING_FEN, &solution, &line(values))
+                    .is_err()
+            );
         }
         let illegal = json!([{ "iccs": "a3a9", "children": [] }]);
-        assert!(verify_completed_attempt(xiangqi_core::STARTING_FEN, &illegal, &line(&["a3a9"])).is_err());
+        assert!(
+            verify_completed_attempt(xiangqi_core::STARTING_FEN, &illegal, &line(&["a3a9"]))
+                .is_err()
+        );
         assert!(verify_completed_attempt("invalid", &solution, &line(&["a3a4", "a6a5"])).is_err());
     }
 }
