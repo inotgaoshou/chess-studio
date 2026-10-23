@@ -1,0 +1,31 @@
+{
+  "environment": "test",
+  "submissionCount": 4,
+  "badgeCount": 1,
+  "submissions": [
+    {
+      "task": "平板验收06",
+      "revision": 1,
+      "status": "submitted",
+      "note": "reverify-draft-06"
+    },
+    {
+      "task": "平板验收12",
+      "revision": 1,
+      "status": "submitted",
+      "note": ""
+    },
+    {
+      "task": "平板验收01",
+      "revision": 1,
+      "status": "submitted",
+      "note": "tablet-draft-01"
+    },
+    {
+      "task": "平板验收07",
+      "revision": 1,
+      "status": "submitted",
+      "note": "offline-restart-07"
+    }
+  ]
+}

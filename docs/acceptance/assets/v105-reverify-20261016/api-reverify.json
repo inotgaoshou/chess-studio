@@ -1,0 +1,305 @@
+{
+  "checks": [
+    {
+      "name": "production permanent VIP catalog read only",
+      "status": "pass"
+    },
+    {
+      "name": "test review VIP catalog read only",
+      "status": "pass"
+    },
+    {
+      "name": "test browser cookies and account/logout isolation",
+      "status": "pass"
+    },
+    {
+      "name": "test ordinary non-VIP catalog read only",
+      "status": "pass"
+    }
+  ],
+  "catalog": [
+    {
+      "label": "production-vip",
+      "environment": "https://admin.qixiapp.cn",
+      "identity": {
+        "role": "student",
+        "vipActive": true
+      },
+      "categories": 8,
+      "statisticsReady": false,
+      "navigation": [
+        {
+          "name": "基础杀法",
+          "kind": "category"
+        },
+        {
+          "name": "1～4步杀专项",
+          "kind": "series"
+        },
+        {
+          "name": "一步杀",
+          "kind": "chapter"
+        }
+      ],
+      "pageCount": 20,
+      "requests": [
+        {
+          "path": "/api/v1/auth/login",
+          "status": 200,
+          "seconds": 0.109
+        },
+        {
+          "path": "/api/v1/student/teaching-catalog/browse?limit=50&availability=available&view=structure",
+          "status": 200,
+          "seconds": 0.088
+        },
+        {
+          "path": "/api/v1/student/teaching-catalog/browse?limit=50&availability=available&view=counts",
+          "status": 200,
+          "seconds": 0.059
+        },
+        {
+          "path": "/api/v1/student/teaching-catalog/browse?limit=50&availability=available&view=structure&nodeId=e0c0221d-1b02-5f2c-9122-a7b0821f2603",
+          "status": 200,
+          "seconds": 0.067
+        },
+        {
+          "path": "/api/v1/student/teaching-catalog/browse?limit=50&availability=available&view=structure&nodeId=950e87e8-cb2b-4444-8952-071c266a3f23",
+          "status": 200,
+          "seconds": 0.059
+        },
+        {
+          "path": "/api/v1/student/teaching-catalog/browse?limit=50&availability=available&view=structure&nodeId=9d085a8a-1134-4820-a00c-6b1d223d9931",
+          "status": 200,
+          "seconds": 0.058
+        },
+        {
+          "path": "/api/v1/student/teaching-catalog/9d085a8a-1134-4820-a00c-6b1d223d9931/problems?limit=20",
+          "status": 200,
+          "seconds": 3.125
+        },
+        {
+          "path": "/api/v1/auth/logout",
+          "status": 200,
+          "seconds": 0.068
+        }
+      ]
+    },
+    {
+      "label": "test-review-vip",
+      "environment": "https://admin-test.qixiapp.cn",
+      "identity": {
+        "role": "student",
+        "vipActive": true
+      },
+      "categories": 8,
+      "statisticsReady": true,
+      "navigation": [
+        {
+          "name": "基础杀法",
+          "kind": "category"
+        },
+        {
+          "name": "1～4步杀专项",
+          "kind": "series"
+        },
+        {
+          "name": "一步杀",
+          "kind": "chapter"
+        }
+      ],
+      "pageCount": 20,
+      "requests": [
+        {
+          "path": "/api/v1/auth/login",
+          "status": 200,
+          "seconds": 0.105
+        },
+        {
+          "path": "/api/v1/student/teaching-catalog/browse?limit=50&availability=available&view=structure",
+          "status": 200,
+          "seconds": 0.089
+        },
+        {
+          "path": "/api/v1/student/teaching-catalog/browse?limit=50&availability=available&view=counts",
+          "status": 200,
+          "seconds": 0.508
+        },
+        {
+          "path": "/api/v1/student/teaching-catalog/browse?limit=50&availability=available&view=structure&nodeId=e0c0221d-1b02-5f2c-9122-a7b0821f2603",
+          "status": 200,
+          "seconds": 0.101
+        },
+        {
+          "path": "/api/v1/student/teaching-catalog/browse?limit=50&availability=available&view=structure&nodeId=950e87e8-cb2b-4444-8952-071c266a3f23",
+          "status": 200,
+          "seconds": 0.07
+        },
+        {
+          "path": "/api/v1/student/teaching-catalog/browse?limit=50&availability=available&view=structure&nodeId=9d085a8a-1134-4820-a00c-6b1d223d9931",
+          "status": 200,
+          "seconds": 0.058
+        },
+        {
+          "path": "/api/v1/student/teaching-catalog/9d085a8a-1134-4820-a00c-6b1d223d9931/problems?limit=20",
+          "status": 200,
+          "seconds": 1.846
+        },
+        {
+          "path": "/api/v1/auth/logout",
+          "status": 200,
+          "seconds": 0.065
+        }
+      ]
+    },
+    {
+      "label": "test-non-vip",
+      "environment": "https://api-test.qixiapp.cn",
+      "identity": {
+        "role": "student",
+        "vipActive": false
+      },
+      "categories": 8,
+      "statisticsReady": true,
+      "navigation": [
+        {
+          "name": "基础杀法",
+          "kind": "category"
+        },
+        {
+          "name": "1～4步杀专项",
+          "kind": "series"
+        },
+        {
+          "name": "一步杀",
+          "kind": "chapter"
+        }
+      ],
+      "pageCount": 20,
+      "requests": [
+        {
+          "path": "/api/v1/auth/login",
+          "status": 200,
+          "seconds": 0.213
+        },
+        {
+          "path": "/api/v1/student/teaching-catalog/browse?limit=50&availability=available&view=structure",
+          "status": 200,
+          "seconds": 0.146
+        },
+        {
+          "path": "/api/v1/student/teaching-catalog/browse?limit=50&availability=available&view=counts",
+          "status": 200,
+          "seconds": 0.627
+        },
+        {
+          "path": "/api/v1/student/teaching-catalog/browse?limit=50&availability=available&view=structure&nodeId=e0c0221d-1b02-5f2c-9122-a7b0821f2603",
+          "status": 200,
+          "seconds": 0.088
+        },
+        {
+          "path": "/api/v1/student/teaching-catalog/browse?limit=50&availability=available&view=structure&nodeId=950e87e8-cb2b-4444-8952-071c266a3f23",
+          "status": 200,
+          "seconds": 0.058
+        },
+        {
+          "path": "/api/v1/student/teaching-catalog/browse?limit=50&availability=available&view=structure&nodeId=9d085a8a-1134-4820-a00c-6b1d223d9931",
+          "status": 200,
+          "seconds": 0.072
+        },
+        {
+          "path": "/api/v1/student/teaching-catalog/9d085a8a-1134-4820-a00c-6b1d223d9931/problems?limit=20",
+          "status": 200,
+          "seconds": 1.595
+        },
+        {
+          "path": "/api/v1/auth/logout",
+          "status": 200,
+          "seconds": 0.067
+        }
+      ]
+    }
+  ],
+  "browserRequests": [
+    {
+      "path": "/api/v1/auth/login",
+      "status": 200,
+      "seconds": 0.098
+    },
+    {
+      "path": "/api/v1/auth/login",
+      "status": 200,
+      "seconds": 0.096
+    },
+    {
+      "path": "/api/v1/auth/browser-accounts",
+      "status": 200,
+      "seconds": 0.055
+    },
+    {
+      "path": "/api/v1/auth/login",
+      "status": 401,
+      "seconds": 0.086
+    },
+    {
+      "path": "/api/v1/auth/browser-accounts",
+      "status": 200,
+      "seconds": 0.063
+    },
+    {
+      "path": "/api/v1/auth/browser-accounts/select",
+      "status": 200,
+      "seconds": 0.074
+    },
+    {
+      "path": "/api/v1/admin/checkin/statistics",
+      "status": 200,
+      "seconds": 0.092
+    },
+    {
+      "path": "/api/v1/checkin/plans",
+      "status": 200,
+      "seconds": 0.068
+    },
+    {
+      "path": "/api/v1/checkin/plans/4a632fa5-f74f-4324-a572-703bdc9ceaed",
+      "status": 200,
+      "seconds": 0.07
+    },
+    {
+      "path": "/api/v1/admin/checkin/statistics",
+      "status": 403,
+      "seconds": 0.068
+    },
+    {
+      "path": "/api/v1/auth/browser-accounts/remove",
+      "status": 200,
+      "seconds": 0.086
+    },
+    {
+      "path": "/api/v1/auth/browser-accounts",
+      "status": 200,
+      "seconds": 0.128
+    },
+    {
+      "path": "/api/v1/auth/browser-accounts/select",
+      "status": 401,
+      "seconds": 0.057
+    },
+    {
+      "path": "/api/v1/auth/browser-accounts/logout",
+      "status": 200,
+      "seconds": 0.075
+    },
+    {
+      "path": "/api/v1/auth/browser-accounts",
+      "status": 200,
+      "seconds": 0.062
+    },
+    {
+      "path": "/api/v1/auth/browser-accounts/logout",
+      "status": 200,
+      "seconds": 0.065
+    }
+  ]
+}

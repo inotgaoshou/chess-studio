@@ -1,0 +1,41 @@
+✔ practice scoring separates completion, stars and first-try correctness (442.103208ms)
+✔ test package defaults to test, persists a switch, and can switch back (224.405541ms)
+✔ production ignores saved environments, custom URLs, and build URL overrides (89.220375ms)
+✔ local development keeps its gateway configuration (799.839833ms)
+✔ native restore rejects legacy credentials before any request (419.62175ms)
+✔ native restore rejects another server's credentials before any request (406.571083ms)
+✔ login saves server ownership; switching requires logout and preserves unrelated data (180.727875ms)
+✔ matching native session can refresh (47.640708ms)
+✔ refresh arriving after an environment switch cannot restore old authentication (432.825209ms)
+✔ browser restore requires matching server ownership even with cookies (143.002917ms)
+✔ native clear waits for a pending save so old credentials cannot reappear (40.903292ms)
+✔ switchOrganization keeps the rotated refresh token after a 401 retry (107.495792ms)
+✔ switchOrganization ignores a late result after logout (191.197334ms)
+✔ switchOrganization ignores a late result after account replacement (124.88625ms)
+✔ leaveOrganization keeps the rotated refresh token after a 401 retry (77.371ms)
+✔ leaveOrganization ignores a late result after logout (63.468917ms)
+✔ leaveOrganization ignores a late result after account replacement (46.917291ms)
+✔ an old authenticated request cannot refresh or retry as another account (72.301875ms)
+✔ logout remembers only the successful login account independently for each environment (73.789958ms)
+✔ homework completion includes local solved answers regardless of mistakes or hints (58.872125ms)
+✔ completed homework remains local until reviewed IDs are explicitly submitted (62.36175ms)
+✔ manual submission and reconnect share one in-flight homework request (50.081625ms)
+✔ confirmed offline homework retries the same ID while unconfirmed answers remain private (38.591ms)
+✔ unreviewed legacy automatic queues do not submit during refresh (55.673375ms)
+✔ local homework answers survive account changes without becoming another student's answers (31.747209ms)
+✔ attempts is persisted before sending and survives an offline failure (90.130166ms)
+✔ attempts keeps original account/environment ownership after logout and environment change (41.829875ms)
+✔ practiceAttempts is persisted before sending and survives an offline failure (35.153209ms)
+✔ practiceAttempts keeps original account/environment ownership after logout and environment change (34.986625ms)
+✔ unowned legacy attempts are retained without being submitted by another account (35.550625ms)
+✔ pending submission stops after an account change without retrying a stale 401 (27.683041ms)
+✔ pending counts and submission exclude another organization of the same account (31.202667ms)
+✔ catalog timeout includes a stalled capabilities probe and retries without changing account (40.369792ms)
+ℹ tests 33
+ℹ suites 0
+ℹ pass 33
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 5043.414917

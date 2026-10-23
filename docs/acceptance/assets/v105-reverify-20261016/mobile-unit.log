@@ -1,0 +1,26 @@
+✔ Beijing calendar is independent of device timezone and spans years (5.938583ms)
+✔ weekly templates expand into separate dates and split partial weeks (0.994833ms)
+✔ a stage day must have a required task, optional tasks do not fill the gap (0.127167ms)
+✔ two children and required/optional submissions have independent day counts (0.296333ms)
+✔ future dates are locked, grace boundary inclusive and archive rejects (0.144916ms)
+✔ offline drafts/photos and queued submissions survive a new client (18.299958ms)
+✔ retry uploads once, preserves idempotency id and removes queue after confirmation (1.379041ms)
+✔ expired/review-conflicted submissions are retained and do not endlessly retry (0.220208ms)
+✔ two child accounts never see each other's cached plans/drafts/queue (0.167334ms)
+✔ account switch during upload stops submission and preserves old-account queue (0.430916ms)
+✔ cached fallback is allowed only for transient failures, not revoked access (0.173ms)
+✔ concurrent flush calls share one request (0.333667ms)
+✔ legacy caches are purged once; same epoch and absent legacy server field preserve new caches (1.260833ms)
+✔ concurrent identical probes do not clear fresh downloads twice (3.355917ms)
+✔ changed account or server never purges another account, personal storage is outside this scope (0.130417ms)
+✔ copying a cloud mirror creates an independent editable game (1.288958ms)
+✔ cloud mirrors are rejected by the shared editing guard (0.336042ms)
+✔ personal sync excludes mirrors and never creates mirror tombstones (1.094833ms)
+ℹ tests 18
+ℹ suites 0
+ℹ pass 18
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 375.348542

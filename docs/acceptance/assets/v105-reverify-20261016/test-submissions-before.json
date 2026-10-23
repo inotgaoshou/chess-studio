@@ -1,0 +1,17 @@
+{
+  "environment": "test",
+  "submissionCount": 2,
+  "badgeCount": 1,
+  "submissions": [
+    {
+      "task": "平板验收12",
+      "revision": 1,
+      "status": "submitted"
+    },
+    {
+      "task": "平板验收01",
+      "revision": 1,
+      "status": "submitted"
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+
+> xiangqi-admin-private@0.1.0 check:web
+> npm run check --workspace apps/admin-web
+
+
+> xiangqi-admin-web@0.1.0 check
+> tsc --noEmit
