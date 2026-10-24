@@ -26,6 +26,8 @@ type Core = {
   parseCblLibrary(bytes: Uint8Array): string;
   parseCblGameLibrary(bytes: Uint8Array): string;
   chineseLine(fen: string, moves: string[]): string;
+  boardStateAfter(fen: string, moves: string[], ruleMode: RuleMode): string;
+  legalTargetsAfter(fen: string, moves: string[], row: number, col: number): string;
   WebGame: { new(fen?: string, ruleMode?: RuleMode): { playMove(iccs: string): string; stateJson(): string } };
 };
 
@@ -55,10 +57,12 @@ export async function chineseLine(fen: string, moves: string[]) {
 
 export async function boardAt(fen: string, moves: string[], ruleMode: RuleMode = "domestic2020"): Promise<BoardState> {
   const core = await trainingCore();
-  const game = new core.WebGame(fen, ruleMode);
-  for (const move of moves) game.playMove(move);
-  const state = JSON.parse(game.stateJson()) as { fen: string; pieces: BoardState["pieces"]; sideToMove?: string; side_to_move?: string; status: string; ruleMode?: RuleMode; ruleStatus?: string; ruleReason?: string };
+  const state = JSON.parse(core.boardStateAfter(fen, moves, ruleMode)) as { fen: string; pieces: BoardState["pieces"]; sideToMove?: string; side_to_move?: string; status: string; ruleMode?: RuleMode; ruleStatus?: string; ruleReason?: string };
   return { fen: state.fen, pieces: state.pieces, sideToMove: state.sideToMove ?? state.side_to_move ?? "", status: state.status, ruleMode: state.ruleMode, ruleStatus: state.ruleStatus, ruleReason: state.ruleReason };
+}
+
+export async function legalTargetsAfter(fen: string, moves: string[], from: { row: number; col: number }) {
+  return JSON.parse((await trainingCore()).legalTargetsAfter(fen, moves, from.row, from.col)) as { row: number; col: number }[];
 }
 
 export async function acceptsMove(fen: string, moves: string[], move: string, ruleMode: RuleMode = "domestic2020") {

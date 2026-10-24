@@ -309,6 +309,38 @@ pub fn chinese_line(starting_fen: &str, moves: Vec<String>) -> Result<String, Js
     serde_json::to_string(&board.chinese_pv_notation(&moves).map_err(js_error)?).map_err(js_error)
 }
 
+/// Replay once and serialize only the final state. Returning stateJson after
+/// every historical move repeatedly rebuilds status, notation and rule history.
+#[wasm_bindgen(js_name = boardStateAfter)]
+pub fn board_state_after(fen: String, moves: Vec<String>, rule_mode: Option<String>) -> Result<String, JsValue> {
+    let mut game = WebGame::new(Some(fen), rule_mode)?;
+    for mv in moves { game.apply_move_only(&mv)?; }
+    game.state_json()
+}
+
+fn legal_targets_after(fen: &str, moves: &[String], from: Square) -> Result<Vec<SquareDto>, String> {
+    let mut board = Board::from_fen(fen).map_err(|error| error.to_string())?;
+    for mv in moves {
+        board = board.apply_move(Move::from_iccs(mv).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
+    }
+    let mut targets = Vec::new();
+    for row in 0..10 {
+        for col in 0..9 {
+            if board.apply_move(Move { from, to: Square { row, col } }).is_ok() {
+                targets.push(SquareDto { row, col });
+            }
+        }
+    }
+    Ok(targets)
+}
+
+/// Highlight candidates share one reconstructed position; actual moves still
+/// use boardStateAfter and its complete rule history before being committed.
+#[wasm_bindgen(js_name = legalTargetsAfter)]
+pub fn legal_targets_after_json(fen: &str, moves: Vec<String>, row: u8, col: u8) -> Result<String, JsValue> {
+    serde_json::to_string(&legal_targets_after(fen, &moves, Square { row, col }).map_err(js_error)?).map_err(js_error)
+}
+
 #[wasm_bindgen]
 impl WebGame {
     #[wasm_bindgen(constructor)]
@@ -376,13 +408,18 @@ impl WebGame {
 
     #[wasm_bindgen(js_name = playMove)]
     pub fn play_move(&mut self, iccs: &str) -> Result<String, JsValue> {
+        self.apply_move_only(iccs)?;
+        self.state_json()
+    }
+
+    fn apply_move_only(&mut self, iccs: &str) -> Result<(), JsValue> {
         let mv = Move::from_iccs(iccs).map_err(js_error)?;
         let next = self.board.apply_move(mv).map_err(js_error)?;
         let parent = self.current_node.unwrap_or_else(|| self.tree.root_id());
         let node_id = self.tree.add_move(parent, mv, "").map_err(js_error)?;
         self.board = next;
         self.current_node = Some(node_id);
-        self.state_json()
+        Ok(())
     }
 
     #[wasm_bindgen(js_name = navigateTo)]
@@ -939,6 +976,37 @@ mod tests {
         let before = game.state_json().unwrap();
         assert!(game.play_move("b0d1").is_err());
         assert_eq!(game.state_json().unwrap(), before);
+    }
+
+    #[test]
+    fn batched_replay_preserves_final_position_and_rule_history() {
+        let moves: Vec<String> = ["b0c2", "b9c7", "h0g2", "h9g7", "c2b0", "c7b9", "g2h0", "g7h9"].map(String::from).to_vec();
+        for mode in ["domestic2020", "free"] {
+            let mut incremental = WebGame::new(None, Some(mode.into())).unwrap();
+            for mv in &moves { incremental.play_move(mv).unwrap(); }
+            let old: serde_json::Value = serde_json::from_str(&incremental.state_json().unwrap()).unwrap();
+            let new: serde_json::Value = serde_json::from_str(&board_state_after(STARTING_FEN.into(), moves.clone(), Some(mode.into())).unwrap()).unwrap();
+            for key in ["fen", "sideToMove", "status", "pieces", "ruleMode", "ruleStatus", "ruleReason"] {
+                assert_eq!(old[key], new[key], "{mode}: {key}");
+            }
+            let notation = |value: &serde_json::Value| value["history"].as_array().unwrap().iter().map(|mv|mv["notation"].clone()).collect::<Vec<_>>();
+            assert_eq!(notation(&old), notation(&new));
+        }
+    }
+
+    #[test]
+    fn batched_targets_match_legal_moves_and_keep_history_unchanged() {
+        for (fen, moves, from) in [
+            (STARTING_FEN, vec!["b0c2".to_owned()], Square { row: 0, col: 1 }),
+            ("4k4/9/9/9/9/9/9/4r4/9/4K4 w - - 0 1", vec![], Square { row: 9, col: 4 }),
+        ] {
+            let mut board = Board::from_fen(fen).unwrap();
+            for mv in &moves { board = board.apply_move(Move::from_iccs(mv).unwrap()).unwrap(); }
+            let expected: Vec<_> = board.legal_moves().into_iter().filter(|mv|mv.from == from).map(|mv|(mv.to.row,mv.to.col)).collect();
+            let actual: Vec<_> = legal_targets_after(fen,&moves,from).unwrap().into_iter().map(|sq|(sq.row,sq.col)).collect();
+            assert_eq!(actual,expected);
+        }
+        assert!(legal_targets_after(STARTING_FEN,&["b0d1".into()],Square{row:9,col:1}).is_err());
     }
 }
 

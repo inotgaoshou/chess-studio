@@ -3826,6 +3826,9 @@ html.phone-webview .controls.answer-revealed .navigate {
 }
 
 .manual-workspace {
+  height:var(--app-viewport-height,100vh);
+  min-height:0;
+  max-height:var(--app-viewport-height,100vh);
   z-index:58;
   grid-template-columns:minmax(0,1fr);
   grid-template-rows:minmax(0,1fr) !important;
@@ -4646,6 +4649,13 @@ html.phone-webview .controls.answer-revealed .navigate {
 .manual-game-list small { color:#6d8276; font-size:9px; }
 .manual-game-list span { grid-row:1 / span 2; grid-column:2; display:flex; gap:5px; }
 .manual-game-list i { padding:3px 5px; border-radius:4px; background:#edf6ef; color:#397951; font-style:normal; font-size:10px; }
+.manual-game-card { display:flex; flex-wrap:wrap; gap:4px; padding:6px; border:1px solid #c5d9ca; border-radius:7px; background:#fff; }
+.manual-game-card.active { border-color:#397951; background:#eaf5ed; }
+.manual-game-card.provider-mirror { border-color:#d8c28d; background:#fffcf3; }
+.manual-game-card > .manual-game-open { flex:1 1 180px; min-width:0; min-height:44px; display:grid; align-content:center; justify-items:start; gap:4px; padding:4px 6px; border:0; background:transparent; text-align:left; }
+.manual-game-actions { display:flex; gap:4px; margin-left:auto; align-items:center; }
+.manual-game-actions button { min-width:44px; min-height:44px; padding:4px 6px; border:1px solid #c5d9ca; border-radius:6px; background:#f5faf6; color:#316b46; font-size:12px; }
+.manual-game-actions button:active,.manual-game-open:active { background:#dbeee0; }
 .manual-analysis-progress { padding:6px 8px; border:1px solid #c8ded0; border-radius:6px; background:#fff; color:#315d45; display:flex; justify-content:space-between; gap:8px; font-size:11px; }
 .manual-analysis-list { min-height:0; display:grid; gap:4px; overflow:auto; }
 .manual-analysis-list p { margin:0; min-height:30px; padding:4px 6px; border:1px solid #d6e4d9; border-radius:5px; background:#fff; display:grid; grid-template-columns:24px minmax(0,1fr) auto; align-items:center; gap:5px; font-size:10px; }
@@ -4809,7 +4819,7 @@ html.tablet-webview .manual-setup-board-slot {
 }
 html.tablet-webview .manual-play-board-area > .board-shell,
 html.tablet-webview .manual-setup-board-slot > .board-shell {
-  width:min(100cqw, calc(100cqh * 1120 / 1240), 760px);
+  width:var(--fitted-board-width, min(100%, 760px));
   height:auto;
   max-width:100%;
   max-height:100%;
@@ -4973,7 +4983,7 @@ html.phone-webview .manual-stage > .manual-play-board-area {
   place-items:center;
 }
 html.phone-webview .manual-stage .manual-play-board-area > .board-shell {
-  width:min(100cqw, calc(100cqh * 1120 / 1240), 650px);
+  width:min(var(--fitted-board-width, 100%), 650px);
   height:auto;
 }
 html.phone-webview .manual-bottom-tools {
