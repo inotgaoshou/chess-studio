@@ -68,6 +68,8 @@ export type TrainingLibrary = {
 };
 
 export type TrainingProblem = CblProblem & {
+  /** Presentation only: ordinal within the current deduplicated browse list. */
+  displayNumber?: number;
   /** Account-scoped local teacher trial; never a student assignment or practice session. */
   trialOwner?: string;
   targetMateMoves?: number;

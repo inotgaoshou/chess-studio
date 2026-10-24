@@ -24,7 +24,7 @@ async function bestMove(fen){
   }});child.stdin.write('uci\n');
  });
 }
-const wasmStub=`let core;export async function trainingCore(){if(!core){core=await import('/wasm/xiangqi_web_core.js');await core.default();}return new Proxy(core,{get:(target,key)=>key==='verifyTrainingMove'&&window.fixtureVerdict?()=>JSON.stringify({outcome:window.fixtureVerdict,message:'fixture verdict',path:[],autoMoves:[],completed:false,verifierVersion:'fixture'}):target[key]});}
+const wasmStub=`let core;export async function trainingCore(){if(!core){core=await import('/wasm/xiangqi_web_core.js');await core.default();}return new Proxy(core,{get:(target,key)=>key==='verifyTrainingMove'&&window.fixtureVerdict?()=>JSON.stringify({outcome:window.fixtureVerdict,message:'fixture verdict',path:[],autoMoves:[],completed:false,verifierVersion:'training-multisolution-v2'}):target[key]});}
 export async function boardAt(fen,moves=[],rule='domestic2020'){const c=await trainingCore(),g=new c.WebGame(fen,rule);for(const m of moves)g.playMove(m);const s=JSON.parse(g.stateJson());return {...s,sideToMove:s.sideToMove??s.side_to_move};}
 export async function acceptsMove(fen,moves,m){try{await boardAt(fen,[...moves,m]);return true;}catch{return false;}}
 export async function chineseLine(fen,moves){return JSON.parse((await trainingCore()).chineseLine(fen,moves));}
@@ -72,12 +72,12 @@ try{for(const width of [390,800,1280]){
  assert.equal(await page.evaluate(()=>attemptWrites.length),0);
  await page.screenshot({path:out+'/trial-'+width+'.png',fullPage:true});
  // A definite wrong verdict uses simulated structured verification; replies still use real Pikafish.
- await returned.click();await page.evaluate(()=>{localStorage.removeItem('qixi-answer-verification-v1');window.fixtureVerdict='wrong';});
+ await returned.click();await page.evaluate(()=>{localStorage.removeItem('qixi-answer-verification-v2');window.fixtureVerdict='wrong';});
  await play('g8','f6');await page.getByText('这步不理想 · 已错 2 次，可继续试走。',{exact:true}).waitFor();
  assert.equal(await page.evaluate(()=>attemptWrites.length),0);
  await play('c8','c9');await page.getByText('试走中，未计为答对；可继续走棋或退回重试。',{exact:true}).waitFor();
  assert.equal(await page.evaluate(()=>attemptWrites.length),0);
- await returned.click();await page.evaluate(()=>{localStorage.removeItem('qixi-answer-verification-v1');window.fixtureVerdict=undefined;});
+ await returned.click();await page.evaluate(()=>{localStorage.removeItem('qixi-answer-verification-v2');window.fixtureVerdict=undefined;});
  // The real WASM verifier still accepts the original reviewed answer after leaving a trial.
  await play('g8','e9');await page.waitForFunction(()=>window.attemptWrites.length===1);
  assert.equal(await page.evaluate(()=>attemptWrites[0][0].outcome),'completed');

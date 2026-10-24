@@ -311,7 +311,7 @@
   font: 900 clamp(30px, 6vw, 70px)/.92 STKaiti, KaiTi, serif;
   letter-spacing: 0;
   text-shadow: 0 2px 0 #2e140bf2, 0 0 2px #fffff0f0, 0 0 8px #ffefbe70;
-  animation-duration: 2.8s;
+  animation-duration: .8s;
 }
 .ink-feedback > span {
   display: block;
@@ -387,10 +387,10 @@
   content: none;
 }
 .ink-feedback.checkmate {
-  animation-duration: 3.4s;
+  animation-duration: 1.2s;
   text-shadow: 0 2px 0 #46120cf2, 0 0 2px #fffadc, 0 0 18px #d93c2ab8;
 }
-.ink-feedback.stalemate { animation-duration: 3.4s; }
+.ink-feedback.stalemate { animation-duration: 1.2s; }
 .capture-feedback {
   position: absolute;
   z-index: 6;
@@ -405,7 +405,7 @@
   text-shadow: 0 2px 0 #7d3008d1, 0 0 4px #fff6aefa, 0 0 8px #e16416bd;
   pointer-events: none;
   transform: translate(-50%, -50%);
-  animation: capture-title .52s cubic-bezier(.15, .78, .2, 1) both;
+  animation: capture-title .25s cubic-bezier(.15, .78, .2, 1) both;
 }
 .capture-feedback > span {
   display: block;
@@ -458,7 +458,7 @@
 @media (prefers-reduced-motion: reduce) {
   .xiangqi-board.move-feedback.capture .last-to .piece { animation: none; }
   .capture-feedback,
-  .ink-feedback { display: none; }
+  .ink-feedback { animation: none; filter:none; }
 }
 
 .river-custom-label {
@@ -7180,3 +7180,14 @@ html .mobile-solver-page .mobile-solver-actions button { min-height:44px; }
 html .mobile-solver-page .mobile-solver-meta { min-height:36px; }
 html .mobile-solver-page .mobile-solver-note { padding:4px 8px; }
 html .mobile-solver-workspace > .mobile-problem-navigator.open { top:var(--solver-picker-top, calc(var(--mobile-header-height) + 120px)); bottom:auto; }
+
+/* Movement is an independent board overlay: it never affects layout or hit targets. */
+.board-moving-piece { position:absolute; z-index:8; width:9.2%; height:auto; pointer-events:none; transform:translate(-50%,-50%); animation:board-piece-slide 180ms ease-out both; }
+.board-square.animating-destination .piece-lift,.board-square.animating-destination .piece-ground-shadow { visibility:hidden; }
+@keyframes board-piece-slide { from {left:var(--move-from-x);top:var(--move-from-y);} to {left:var(--move-to-x);top:var(--move-to-y);} }
+.mobile-study-pieces .board-moving-piece { width:10.12%; }
+@media (prefers-reduced-motion:reduce) {
+  .board-moving-piece { display:none; }
+  .board-square.animating-destination .piece-lift,.board-square.animating-destination .piece-ground-shadow { visibility:visible; }
+  .ink-feedback,.capture-feedback { animation:none; filter:none; }
+}

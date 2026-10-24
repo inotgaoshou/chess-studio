@@ -1,6 +1,14 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { initialPracticeItem, practiceGroupIds } from "../src/practiceNavigation.ts";
+import { currentListNumbers, initialPracticeItem, practiceGroupIds } from "../src/practiceNavigation.ts";
+
+test("display ordinals span deduplicated pages and restart for a different filter", () => {
+  const first = Array.from({length: 50}, (_, i) => ({id: `p${i}`}));
+  const next = [...first, first[49], {id: "p50"}];
+  assert.equal(currentListNumbers(next).p50, 51);
+  assert.equal(currentListNumbers([next[50], next[51]]).p50, 2);
+  assert.equal(currentListNumbers([{id: "p50"}]).p50, 1);
+});
 
 test("catalog groups retain list order, remove duplicates, and include the clicked problem", () => {
   const items = Array.from({ length: 50 }, (_, i) => ({ id: `p${i}` }));

@@ -44,7 +44,7 @@ describe("role-aware exercise UI",()=>{
     const props={scope:"test-local",library:undefined,problems:[problem],message:"",busy:false,onBack:vi.fn(),onOpenProblem,onReadSolution};
     const ui=render(<MobileLibraryBrowsePanel {...props} answersAllowed={false}/>);
     expect(screen.queryByRole("button",{name:/看题解/})).toBeNull();
-    fireEvent.click(screen.getByRole("button",{name:/一题测试/}));expect(onOpenProblem).toHaveBeenCalledWith(problem);
+    fireEvent.click(screen.getByRole("button",{name:/一题测试/}));expect(onOpenProblem).toHaveBeenCalledWith({...problem,displayNumber:1},{[problem.serverProblemId??problem.id]:1});
     ui.rerender(<MobileLibraryBrowsePanel {...props} answersAllowed/>);
     fireEvent.click(screen.getByRole("button",{name:/看题解/}));expect(onReadSolution).toHaveBeenCalledWith(problem);
   });
@@ -137,7 +137,7 @@ describe("catalog role, reading and filter integration",()=>{
     const question=await screen.findByRole("button",{name:/第 1 题 · 一题测试/});
     expect(Boolean(screen.queryByText("原题解"))).toBe(role!=="student");
     expect(Boolean(screen.queryByRole("button",{name:/看题解/}))).toBe(role!=="student");
-    fireEvent.click(question);expect(onPractice).toHaveBeenCalledWith(["p1"],"一题测试");
+    fireEvent.click(question);expect(onPractice).toHaveBeenCalledWith(["p1"],"一题测试","p1",{p1:1});
     fireEvent.click(screen.getByText("按教材查看"));
     if(role==="student"){
       expect(screen.queryByRole("button",{name:"教材学习"})).toBeNull();
@@ -161,7 +161,7 @@ describe("catalog role, reading and filter integration",()=>{
     const onPractice=vi.fn();render(<TeachingCatalog auth={studentAuth} scene="browse" compact onPractice={onPractice}/>);
     fireEvent.click(await screen.findByRole("button",{name:/基础杀法/}));await screen.findByText("第 1 题 · 一题测试");
     fireEvent.click(screen.getByText("按教材查看"));fireEvent.click(screen.getByRole("button",{name:"原书章节"}));
-    fireEvent.click(await screen.findByRole("button",{name:/第 1 题 · 一题测试/}));expect(onPractice).toHaveBeenCalledWith(["p1"],"一题测试");
+    fireEvent.click(await screen.findByRole("button",{name:/第 1 题 · 一题测试/}));expect(onPractice).toHaveBeenCalledWith(["p1"],"一题测试","p1",{p1:1});
     expect(screen.queryByRole("button",{name:"教材学习"})).toBeNull();
     expect(vi.mocked(teachingClient.catalogBrowse).mock.calls.some(([params])=>params.view==="materials")).toBe(false);
   });
@@ -232,7 +232,7 @@ describe("catalog role, reading and filter integration",()=>{
     fireEvent.click(await screen.findByRole("button",{name:/基础杀法/}));await screen.findByText("第 1 题 · 一题测试");
     fireEvent.click(screen.getByRole("button",{name:"加载更多题目"}));
     fireEvent.click(await screen.findByRole("button",{name:/第 2 题 · 第二页题目/}));
-    expect(onPractice).toHaveBeenCalledWith(["p1","p2"],"第二页题目","p2");
+    expect(onPractice).toHaveBeenCalledWith(["p1","p2"],"第二页题目","p2",{p1:1,p2:2});
   });
   it("teacher assignment selection keeps its original filters and selection action",async()=>{
     window.dispatchEvent(new Event("teaching-content-reset"));catalogFixture();const onAdd=vi.fn();

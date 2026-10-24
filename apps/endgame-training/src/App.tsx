@@ -6,11 +6,13 @@ import { TeacherSourceLibraries } from "./TeacherSourceLibraries";
 import { FEATURED_LIBRARY_CATEGORIES, LIBRARY_CATEGORY_NAMES, libraryCategoryCode, legacyTrainingSourceVisible, legacyTrainingSourceTitle } from "./libraryCategories";
 import { canBrowsePlatformSources } from "./catalogAccess";
 import {LineRehearsal,type RehearsalRequest} from "./LineRehearsal";
+import { loadTrialDraft, saveTrialDraft } from "./trialProgress";
 import { localTrainingProgress, saveLocalTrainingProgress } from "./localTrainingProgress";
 import { withRequestDeadline } from "./requestDeadline";
-import { initialPracticeItem, practiceGroupIds } from "./practiceNavigation";
+import { currentListNumbers, loadListNumbers, saveListNumbers, initialPracticeItem, practiceGroupIds } from "./practiceNavigation";
 import { practiceContent } from "./practiceProgress";
 import { LocalGoalEditor } from "./LocalGoalEditor";
+import { needsTerminalWin, terminalWin } from "./verificationPolicy";
 import { verifyLocally, verificationRequest } from "./answerVerification";
 import { advanceTrainingTrial, type TrainingTrialPosition } from "./trainingTrial";
 import type { VerificationResult } from "../../../packages/training-verification/types";
@@ -31,7 +33,7 @@ import { type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactN
 import { trainingStore } from "./store";
 import type { Attempt, BoardPiece, BoardState, LocalManualAnalysisSummary, LocalManualFolder, LocalManualGame, MobileWorkspaceMode, RuleMode, SolutionMove, TrainingLibrary, TrainingProblem } from "./types";
 import { acceptsMove, boardAt, cancelPikafishSearch, chineseLine, hasLocalPikafish, parseCbl, parseCblGames, queryCloudBook, queryPikafishAnalysis, queryPikafishReply, type CloudBookMove, type PikafishAnalysis, type PikafishAnalysisLine } from "./wasm";
-import { deriveTrainingFeedback, playTrainingFeedback, TRAINING_FEEDBACK_PACK, type TrainingFeedbackKind } from "./moveFeedback";
+import { cancelTrainingFeedback, trainingFeedbackEvent, FEEDBACK_DURATION, playTrainingFeedback, TRAINING_FEEDBACK_PACK, type TrainingFeedbackEvent, type TrainingFeedbackKind } from "./moveFeedback";
 import { type PreferredOrientation } from "./orientation";
 import { useScreenOrientation } from "./useScreenOrientation";
 import { DEFAULT_SKIN_ID, LEGACY_DEFAULT_SKIN_ID, SKIN_CATALOG, normalizeSkinId, skinById, type SkinCatalogItem } from "./skinCatalog";
@@ -874,8 +876,18 @@ function BoardCoordinateLayer({ flipped = false, geometry }: { flipped?: boolean
   </div>;
 }
 
-export function Board({ pieces, selected, legalTargets = [], lastMove, hintMove, analysisMoves = [], activeAnalysis = 0, flipped = false, feedback, setupMode = false, showSideCoordinates = false, boardSkin, pieceSkin, riverText, riverTextColor, riverTextSize, supportsCustomRiverText, onSquare, onMove }: { pieces: BoardPiece[]; selected?: Square; legalTargets?: Square[]; lastMove?: string; hintMove?: string; analysisMoves?: string[]; activeAnalysis?: number; flipped?: boolean; feedback?: TrainingFeedbackKind; setupMode?: boolean; showSideCoordinates?: boolean; boardSkin: string; pieceSkin: string; riverText: string; riverTextColor: string; riverTextSize: number; supportsCustomRiverText: boolean; onSquare(square: Square): void; onMove?(from: Square, to: Square): void }) {
+export function Board({ pieces, selected, legalTargets = [], lastMove, hintMove, analysisMoves = [], activeAnalysis = 0, flipped = false, feedback, feedbackEvent, setupMode = false, showSideCoordinates = false, boardSkin, pieceSkin, riverText, riverTextColor, riverTextSize, supportsCustomRiverText, onSquare, onMove }: { pieces: BoardPiece[]; selected?: Square; legalTargets?: Square[]; lastMove?: string; hintMove?: string; analysisMoves?: string[]; activeAnalysis?: number; flipped?: boolean; feedback?: TrainingFeedbackKind; feedbackEvent?: TrainingFeedbackEvent; setupMode?: boolean; showSideCoordinates?: boolean; boardSkin: string; pieceSkin: string; riverText: string; riverTextColor: string; riverTextSize: number; supportsCustomRiverText: boolean; onSquare(square: Square): void; onMove?(from: Square, to: Square): void }) {
   const boardRef = useRef<HTMLDivElement | null>(null);
+  const [movingEvent,setMovingEvent] = useState<TrainingFeedbackEvent>();
+  const lastFeedbackId=useRef<number | undefined>(undefined);
+  useEffect(()=>{
+    if(!feedbackEvent?.piece || feedbackEvent.iccs!==lastMove){setMovingEvent(undefined);return;}
+    if(lastFeedbackId.current===feedbackEvent.id)return;
+    lastFeedbackId.current=feedbackEvent.id;
+    setMovingEvent(feedbackEvent);
+    const timer=setTimeout(()=>setMovingEvent(undefined),180);
+    return()=>{clearTimeout(timer);setMovingEvent(undefined);};
+  },[feedbackEvent?.id,lastMove]);
   const pointerGesture = useRef<BoardPointerGesture | undefined>(undefined);
   const handledPointerClick = useRef(false);
   const [dragging, setDragging] = useState<BoardDragState>();
@@ -912,6 +924,11 @@ export function Board({ pieces, selected, legalTargets = [], lastMove, hintMove,
   const last = lastMove ? iccsSquares(lastMove) : undefined;
   const normalizedBoardSkin = normalizeSkinId(boardSkin);
   const geometry = boardGeometryForSkin(normalizedBoardSkin);
+  const movingSquares=movingEvent?iccsSquares(movingEvent.iccs):undefined;
+  const movementStyle = movingSquares ? (()=>{
+    const from=boardPointStyle(movingSquares.from,geometry,flipped),to=boardPointStyle(movingSquares.to,geometry,flipped);
+    return {"--move-from-x":from.left,"--move-from-y":from.top,"--move-to-x":to.left,"--move-to-y":to.top} as CSSProperties;
+  })():undefined;
   const boardImage = riverText && supportsCustomRiverText ? "board-river-blank.png" : "board.png";
   const boardStyle = { backgroundImage: `url("/skins/${normalizedBoardSkin}/${boardImage}")` } as CSSProperties;
   const squareFromPoint = (clientX: number, clientY: number): Square | undefined => {
@@ -972,7 +989,7 @@ export function Board({ pieces, selected, legalTargets = [], lastMove, hintMove,
     {analysisMoves.length > 0 && <AnalysisArrowLayer moves={analysisMoves} activeIndex={activeAnalysis} flipped={flipped} geometry={geometry}/>}
     <LegalTargetLayer targets={legalTargets} flipped={flipped} geometry={geometry}/>
     <BoardMarkerLayer selected={selected} lastMove={last} flipped={flipped} geometry={geometry}/>
-    {ALL_SQUARES.map((square, index) => { const piece = pieces.find((item) => item.row === square.row && item.col === square.col); const isSelected = sameSquare(selected, square); const isLegalTarget = legalTargets.some((target) => sameSquare(target, square)); const isDraggingOrigin = sameSquare(dragging?.from, square); const isDragTarget = sameSquare(dragging?.target, square); const isLastFrom = last?.from.row === square.row && last.from.col === square.col; const isLastTo = last?.to.row === square.row && last.to.col === square.col; const highlighted = hint?.row === square.row && hint.col === square.col; const position = boardPointStyle(square, geometry, flipped); return <button key={index} style={position} className={`board-square ${isSelected ? "selected" : ""} ${isLegalTarget ? "legal-target" : ""} ${isDraggingOrigin ? "drag-origin" : ""} ${isDragTarget ? "drag-target" : ""} ${isLastFrom ? "last-from" : ""} ${isLastTo ? "last-to" : ""} ${highlighted ? "hint" : ""}`} onPointerDown={(event) => {
+    {ALL_SQUARES.map((square, index) => { const piece = pieces.find((item) => item.row === square.row && item.col === square.col); const isSelected = sameSquare(selected, square); const isLegalTarget = legalTargets.some((target) => sameSquare(target, square)); const isDraggingOrigin = sameSquare(dragging?.from, square); const isDragTarget = sameSquare(dragging?.target, square); const isLastFrom = last?.from.row === square.row && last.from.col === square.col; const isLastTo = last?.to.row === square.row && last.to.col === square.col; const highlighted = hint?.row === square.row && hint.col === square.col; const position = boardPointStyle(square, geometry, flipped); return <button key={index} style={position} className={`board-square ${isSelected ? "selected" : ""} ${isLegalTarget ? "legal-target" : ""} ${isDraggingOrigin ? "drag-origin" : ""} ${isDragTarget ? "drag-target" : ""} ${isLastFrom ? "last-from" : ""} ${isLastTo ? "last-to" : ""} ${sameSquare(movingSquares?.to,square)?"animating-destination":""} ${highlighted ? "hint" : ""}`} onPointerDown={(event) => {
       if (event.isPrimary === false || event.button !== 0) return;
       handledPointerClick.current = false;
       pointerGesture.current = { pointerId: event.pointerId, from: square, piece, startX: event.clientX, startY: event.clientY, moved: false, captureTarget: event.currentTarget };
@@ -983,9 +1000,10 @@ export function Board({ pieces, selected, legalTargets = [], lastMove, hintMove,
       if ((event.detail > 0 || pointerType) && handledPointerClick.current) return;
       activateSquare(square, event.timeStamp, event.detail);
     }} aria-pressed={Boolean(piece && isSelected)} aria-label={`${squareName(square)}${piece ? ` ${piece.color === "red" ? "红" : "黑"}${piece.label}` : ""}`}>{piece && <><span className="piece-ground-shadow" aria-hidden="true"/><span className="piece-lift"><img className="piece" src={trainingPieceAsset(piece, pieceSkin)} alt={piece.label} draggable={false}/></span></>}</button>; })}
+    {movingEvent?.piece && <img key={`move-${movingEvent.id}`} className="piece board-moving-piece" style={movementStyle} src={trainingPieceAsset(movingEvent.piece,pieceSkin)} alt="" aria-hidden="true" draggable={false}/>}
     {dragging && <img className="piece board-drag-ghost" style={{ "--drag-x": `${dragging.x}%`, "--drag-y": `${dragging.y}%` } as CSSProperties} src={trainingPieceAsset(dragging.piece, pieceSkin)} alt="" aria-hidden="true" draggable={false}/>}
-    {feedback === "capture" && <span className="capture-feedback"><span>吃</span></span>}
-    {(feedback === "check" || feedback === "checkmate" || feedback === "stalemate") && <span className={`ink-feedback ${feedback}`}><span>{TRAINING_FEEDBACK_PACK.labels[feedback]}</span></span>}
+    {feedback === "capture" && <span key={`capture-${feedbackEvent?.id}`} className="capture-feedback"><span>吃</span></span>}
+    {(feedback === "check" || feedback === "checkmate" || feedback === "stalemate") && <span key={`seal-${feedbackEvent?.id}`} className={`ink-feedback ${feedback}`}><span>{TRAINING_FEEDBACK_PACK.labels[feedback]}</span></span>}
   </div></div>;
 }
 
@@ -1406,7 +1424,7 @@ export function MobilePracticeSearchPanel({ answersAllowed, scope, message, busy
     <header className="mobile-page-heading"><button type="button" className="mobile-back-button" aria-label="返回练习" onClick={onBack}><ChevronLeft/></button><span><strong>智能搜索</strong><small>仅展示当前账号可练习内容</small></span></header>
     <label className="mobile-library-search"><Search/><input autoFocus value={q} onChange={(event) => setQ(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") runSearch(); }} placeholder="题名、分类或关键词" aria-label="搜索练习题"/><button type="button" onClick={runSearch} aria-label="开始搜索"><ChevronRight/></button></label>
     <div className="mobile-search-filter"><select value={category} onChange={(event) => setCategory(event.target.value)}><option value="">全部分类</option><option value="杀法">杀法</option><option value="残局">残局</option><option value="开局">开局</option></select><select value={side} onChange={(event) => setSide(event.target.value as "" | "red" | "black")}><option value="">不限先手</option><option value="red">红方先</option><option value="black">黑方先</option></select></div>
-    {message && <p role="alert" className="practice-status">{message}</p>}<PracticeStatus error={error} onRetry={runSearch}/><section className="mobile-problem-list mobile-search-results">{loading ? <p>正在检索…</p> : error ? null : result.items.length ? result.items.map((item) => <article className="source-problem-card" key={item.id}><button type="button" disabled={busy} onClick={() => onOpenProblem(practiceProblemToTrainingProblem(item))}><b>{item.sourceIndex + 1}</b><span><strong>{item.title}</strong><small>{item.category || "未分类"} · {item.sideToMove === "black" ? "黑方走" : "红方走"}{answersAllowed&&` · ${item.solutionLength} 步题解`}</small></span><ChevronRight/></button>{answersAllowed&&<button type="button" className="catalog-read-solution" onClick={() => {if(answersAllowed)onReadSolution(item.id,item.title);}}><BookOpen/>看题解</button>}</article>) : <div className="mobile-library-empty"><Search/><strong>{q || category || side ? "没有符合条件的题目" : "输入关键词开始搜索"}</strong><small>搜索会自动按你的权益过滤专题和题目。</small></div>}</section>
+    {message && <p role="alert" className="practice-status">{message}</p>}<PracticeStatus error={error} onRetry={runSearch}/><section className="mobile-problem-list mobile-search-results">{loading ? <p>正在检索…</p> : error ? null : result.items.length ? result.items.map((item, displayIndex) => <article className="source-problem-card" key={item.id}><button type="button" disabled={busy} onClick={() => onOpenProblem({...practiceProblemToTrainingProblem(item),displayNumber:displayIndex+1})}><b>{displayIndex + 1}</b><span><strong>{item.title}</strong><small>{item.category || "未分类"} · {item.sideToMove === "black" ? "黑方走" : "红方走"}{answersAllowed&&` · ${item.solutionLength} 步题解`}</small></span><ChevronRight/></button>{answersAllowed&&<button type="button" className="catalog-read-solution" onClick={() => {if(answersAllowed)onReadSolution(item.id,item.title);}}><BookOpen/>看题解</button>}</article>) : <div className="mobile-library-empty"><Search/><strong>{q || category || side ? "没有符合条件的题目" : "输入关键词开始搜索"}</strong><small>搜索会自动按你的权益过滤专题和题目。</small></div>}</section>
   </main>;
 }
 
@@ -1431,7 +1449,7 @@ function MobileOnboardingPanel({ onLogin, onLocal }: { onLogin(): void; onLocal(
 function MobileLibraryPanel({ onCatalogNavigate, onCatalogAssign, teachingAuth, onCatalogPractice, onCatalogRead, onCatalogGame, onCatalogRehearse, libraries, gameLibraries, signedIn, canImportLocal, onOpenLibrary, onOpenGameLibrary, onImport, onOpenAssignments }: {
   onCatalogNavigate?():void;
   onCatalogAssign?(items: CatalogProblem[]): void;
-  teachingAuth?: TeachingAuth; onCatalogPractice?(ids: string[], title?: string, preferredProblemId?: string): void; onCatalogRead?(ids:string[]):void; onCatalogGame?(id:string):void; onCatalogRehearse?(id:string):void;
+  teachingAuth?: TeachingAuth; onCatalogPractice?(ids: string[], title?: string, preferredProblemId?: string, numbers?: Record<string,number>): void; onCatalogRead?(ids:string[]):void; onCatalogGame?(id:string):void; onCatalogRehearse?(id:string):void;
   libraries: TrainingLibrary[];
   gameLibraries: PlatformGameLibrary[];
   signedIn: boolean;
@@ -1572,7 +1590,7 @@ export function MobileLibraryBrowsePanel({ answersAllowed, library, problems, on
   message: string;
   busy: boolean;
   onBack(): void;
-  onOpenProblem(problem: TrainingProblem): void;
+  onOpenProblem(problem: TrainingProblem,numbers?:Record<string,number>): void;
   onReadSolution?(problem: TrainingProblem): void;
   scope: string;
 }) {
@@ -1591,7 +1609,7 @@ export function MobileLibraryBrowsePanel({ answersAllowed, library, problems, on
     {searchOpen && <BrowseSearch query={query} label="搜索题名或分类" onChange={setQuery}/>}
     <div className="mobile-library-filters compact" role="tablist" aria-label="练习状态筛选"><button type="button" className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>全部</button><button type="button" className={filter === "unpracticed" ? "active" : ""} onClick={() => setFilter("unpracticed")}>未练</button><button type="button" className={filter === "completed" ? "active" : ""} onClick={() => setFilter("completed")}>已练</button></div>
     {categories.length > 1 && <div className="mobile-category-strip">{categories.map((item) => <button type="button" key={item} className={category === item ? "active" : ""} onClick={() => setCategory(item)}>{item}</button>)}</div>}
-    <section className="mobile-problem-list">{visibleProblems.length ? visibleProblems.map((item) => <article className="source-problem-card" key={item.id}><button type="button" onClick={() => onOpenProblem(item)}><b>{item.sourceIndex + 1}</b><span><strong>{item.title}</strong><small>{item.category && item.category !== library?.title ? `${item.category} · ` : ""}{item.completedAttempts ? `已练 ${item.completedAttempts} 次` : "未练习"}{accessTierLabel(item.accessTier) ? ` · ${accessTierLabel(item.accessTier)}` : ""}</small></span><i className={item.completedAttempts ? "done" : ""}>{item.completedAttempts ? <CircleCheckBig/> : <ChevronRight/>}</i></button>{answersAllowed && item.serverProblemId && <button type="button" className="catalog-read-solution" onClick={() => {if(answersAllowed)onReadSolution?.(item);}}><BookOpen/>看题解</button>}</article>) : <div className="mobile-library-empty"><Search/><strong>没有符合条件的题目</strong><small>调整分类或练习状态后再试。</small></div>}</section>
+    <section className="mobile-problem-list">{visibleProblems.length ? visibleProblems.map((item, displayIndex) => <article className="source-problem-card" key={item.id}><button type="button" onClick={() => onOpenProblem({...item,displayNumber:displayIndex+1},currentListNumbers(visibleProblems.map(p=>({id:p.serverProblemId??p.id}))))}><b>{displayIndex + 1}</b><span><strong>{item.title}</strong><small>{item.category && item.category !== library?.title ? `${item.category} · ` : ""}{item.completedAttempts ? `已练 ${item.completedAttempts} 次` : "未练习"}{accessTierLabel(item.accessTier) ? ` · ${accessTierLabel(item.accessTier)}` : ""}</small></span><i className={item.completedAttempts ? "done" : ""}>{item.completedAttempts ? <CircleCheckBig/> : <ChevronRight/>}</i></button>{answersAllowed && item.serverProblemId && <button type="button" className="catalog-read-solution" onClick={() => {if(answersAllowed)onReadSolution?.(item);}}><BookOpen/>看题解</button>}</article>) : <div className="mobile-library-empty"><Search/><strong>没有符合条件的题目</strong><small>调整分类或练习状态后再试。</small></div>}</section>
   </main>;
 }
 
@@ -1808,7 +1826,7 @@ function ProblemNavigator({ navigator, open, onClose }: { navigator: ProblemNavi
   </>;
 }
 
-export function MobilePracticeSolverPanel({ answersAllowed, problem, session, item, navigator, pieces, selected, legalTargets, lastMove, hints, mistakes, resultOutcome, wrongMove, moveRejection, onRetryWrongMove, trialAwaitingReply, trialBusy, onRetryTrialReply, hintMove, elapsed, timerPaused = false, ended, revealed, notice, boardSkin, pieceSkin, riverText, riverTextColor, riverTextSize, supportsCustomRiverText, feedback, onSquare, onMove, onBack, onHint, onRestart, onReveal, onNext, onPrevious, onFinish, onFavorite, favoriteEnabled, backLabel, answer, answerStep, demoPlaying, onPreviewStep, onTogglePreview, goalEditor }: {
+export function MobilePracticeSolverPanel({ answersAllowed, problem, session, item, navigator, pieces, selected, legalTargets, lastMove, hints, mistakes, resultOutcome, wrongMove, moveRejection, onRetryWrongMove, trialAwaitingReply, trialBusy, onRetryTrialReply, hintMove, elapsed, timerPaused = false, ended, revealed, notice, boardSkin, pieceSkin, riverText, riverTextColor, riverTextSize, supportsCustomRiverText, feedback, feedbackEvent, onSquare, onMove, onBack, onHint, onRestart, onReveal, onNext, onPrevious, onFinish, onFavorite, favoriteEnabled, backLabel, answer, answerStep, demoPlaying, onPreviewStep, onTogglePreview, goalEditor }: {
   answersAllowed: boolean;
   goalEditor?: ReactNode;
   problem: TrainingProblem;
@@ -1840,7 +1858,7 @@ export function MobilePracticeSolverPanel({ answersAllowed, problem, session, it
   riverTextColor: string;
   riverTextSize: number;
   supportsCustomRiverText: boolean;
-  feedback?: TrainingFeedbackKind;
+  feedback?: TrainingFeedbackKind; feedbackEvent?: TrainingFeedbackEvent;
   onSquare(square: Square): void;
   onMove(from: Square, to: Square): void;
   onBack(): void;
@@ -1910,11 +1928,11 @@ export function MobilePracticeSolverPanel({ answersAllowed, problem, session, it
     else onPrevious();
   };
   return <main ref={solverPage} className="mobile-solver-page">
-    <header className="mobile-solver-heading"><button type="button" className="mobile-back-button" aria-label={backLabel} title={backLabel} onClick={onBack}><ChevronLeft/></button><span><small>{isWrongReview ? "练习 / 错题 / 重练" : session ? answersAllowed && session.mode === "learning" ? "练习 / 专项 / 学习" : "练习 / 专项 / 做题" : problem.source === "teaching" ? "作业 / 详情 / 做题" : "题库 / 做题"}</small><strong>{problem.title}</strong>{problem.trainingGoal && <small>{goalLabel(problem.trainingGoal)} · {problem.trainingGoal.reviewMethod === "reviewed_solution" ? "按审核题解" : "强制杀验证"}</small>}</span><div className="mobile-solver-heading-actions"><PracticeRulesButton/><em>{item?.problem.sideToMove === "black" ? "黑方走" : "红方走"}</em></div></header>
+    <header className="mobile-solver-heading"><button type="button" className="mobile-back-button" aria-label={backLabel} title={backLabel} onClick={onBack}><ChevronLeft/></button><span><small>{isWrongReview ? "练习 / 错题 / 重练" : session ? answersAllowed && session.mode === "learning" ? "练习 / 专项 / 学习" : "练习 / 专项 / 做题" : problem.source === "teaching" ? "作业 / 详情 / 做题" : "题库 / 做题"}</small><strong>{problem.displayNumber!=null?`第 ${problem.displayNumber} 题 · `:""}{problem.title}</strong>{problem.trainingGoal && <small>{goalLabel(problem.trainingGoal)} · {problem.trainingGoal.reviewMethod === "reviewed_solution" ? "按审核题解" : "强制杀验证"}</small>}</span><div className="mobile-solver-heading-actions"><PracticeRulesButton/><em>{item?.problem.sideToMove === "black" ? "黑方走" : "红方走"}</em></div></header>
     {showNavigation && navigator ? <nav className="mobile-solver-nav" aria-label="题目导航">{canPrevious && <button type="button" className="mobile-solver-previous" onClick={() => selectOffset(-1)}><ChevronLeft/>上一题</button>}<button type="button" className="mobile-problem-navigator-trigger" aria-expanded={navigatorOpen} onClick={() => setNavigatorOpen((open) => !open)}>{index >= 0 ? index + 1 : 1}/{total}<ChevronDown/></button>{canNext && <button type="button" className="mobile-solver-next" onClick={() => selectOffset(1)}>下一题<ChevronRight/></button>}</nav> : null}
     <section className="mobile-solver-workspace">
       <div className="mobile-solver-playfield">
-        <section className="mobile-solver-board"><Board key={`mobile-${problem.id}`} pieces={pieces} selected={selected} legalTargets={legalTargets} lastMove={lastMove} hintMove={hints >= 2 && !ended && !wrongMove ? hintMove : undefined} analysisMoves={hints >= 3 && !ended && !wrongMove && hintMove ? [hintMove] : []} activeAnalysis={0} flipped={false} feedback={feedback} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={riverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={supportsCustomRiverText} onSquare={onSquare} onMove={onMove}/></section>
+        <section className="mobile-solver-board"><Board key={`mobile-${problem.id}`} pieces={pieces} selected={selected} legalTargets={legalTargets} lastMove={lastMove} hintMove={hints >= 2 && !ended && !wrongMove ? hintMove : undefined} analysisMoves={hints >= 3 && !ended && !wrongMove && hintMove ? [hintMove] : []} activeAnalysis={0} flipped={false} feedback={feedback} feedbackEvent={feedbackEvent} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={riverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={supportsCustomRiverText} onSquare={onSquare} onMove={onMove}/></section>
         {problem.trainingGoal?.description && <details key={problem.id} className="training-goal-details"><summary>目标说明</summary><p>{problem.trainingGoal.description}</p></details>}
         {goalEditor}
         <section className="mobile-solver-meta"><span><Clock3/>本题用时 <b>{elapsed}</b><small className="mobile-solver-clock-status" aria-label="本题计时状态">{ended ? "已结束" : timerPaused ? "已暂停" : "计时中"}</small></span><span>{isWrongReview ? `上次错误 ${item?.problem ? "需重新掌握" : ""}` : total>1?`本组进度 ${index >= 0 ? index + 1 : 1}/${total}`:"单题练习"}</span></section>
@@ -1966,7 +1984,7 @@ function MobileSingleProblemResultPanel({ problem, elapsed, hints, mistakes, rev
   const backLabel = problem.source === "teaching" ? "返回作业" : "返回题库";
   return <main className="mobile-practice-page mobile-practice-result-page mobile-single-result-page">
     <header className="mobile-page-heading"><button type="button" className="mobile-back-button" aria-label={backLabel} title={backLabel} onClick={onBack}><ChevronLeft/></button><span><strong>本题练习结果</strong></span></header>
-    <section className="mobile-practice-result-summary"><span><CircleCheckBig/></span><strong>{problem.title}</strong>{problem.trainingGoal && <small>{goalLabel(problem.trainingGoal)} · {problem.trainingGoal.reviewMethod === "reviewed_solution" ? "按审核题解" : "强制杀验证"}</small>}{problem.trainingGoal?.description && <details className="training-goal-details"><summary>目标说明</summary><p>{problem.trainingGoal.description}</p></details>}<p>{revealed ? "已查看解析" : "本题练习已结束"}</p><div><span><b>{elapsed}</b><small>用时</small></span><span><b>{hints}</b><small>提示</small></span><span><b>{mistakes}</b><small>错误</small></span></div><p>{problem.source === "teaching" ? message : "练习记录保存在当前设备"}</p></section>
+    <section className="mobile-practice-result-summary"><span><CircleCheckBig/></span><strong>{problem.displayNumber!=null?`第 ${problem.displayNumber} 题 · `:""}{problem.title}</strong>{problem.trainingGoal && <small>{goalLabel(problem.trainingGoal)} · {problem.trainingGoal.reviewMethod === "reviewed_solution" ? "按审核题解" : "强制杀验证"}</small>}{problem.trainingGoal?.description && <details className="training-goal-details"><summary>目标说明</summary><p>{problem.trainingGoal.description}</p></details>}<p>{revealed ? "已查看解析" : "本题练习已结束"}</p><div><span><b>{elapsed}</b><small>用时</small></span><span><b>{hints}</b><small>提示</small></span><span><b>{mistakes}</b><small>错误</small></span></div><p>{problem.source === "teaching" ? message : "练习记录保存在当前设备"}</p></section>
     <button type="button" className="mobile-detail-primary" onClick={onBack}><ChevronLeft/>{backLabel}</button>
   </main>;
 }
@@ -2140,7 +2158,7 @@ function TeacherAssignmentPanel({ onMessage }: { onMessage(message: string): voi
       <label><span>作业标题</span><input value={title} placeholder={selectedLibrary ? `${selectedLibrary.title} 作业` : "作业标题"} onChange={(event) => setTitle(event.target.value)} /></label>
       <label><span>截止日期</span><input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} /></label>
       <label><span>本地题库</span><select value={libraryId} onChange={(event) => setLibraryId(event.target.value)}>{localLibraries.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label>
-      <div className="teacher-picker-list">{libraryProblems.length ? libraryProblems.slice(0, 120).map((problem) => <label key={problem.id}><input type="checkbox" checked={selectedProblemIds.includes(problem.id)} onChange={() => toggleProblem(problem.id)} /><span>{problem.title}<small>{problem.category || "未分类"} · 第 {problem.sourceIndex + 1} 题</small></span></label>) : <p>先导入 CBL 题库，再从这里选择题目。</p>}</div>
+      <div className="teacher-picker-list">{libraryProblems.length ? libraryProblems.slice(0, 120).map((problem) => <label key={problem.id}><input type="checkbox" checked={selectedProblemIds.includes(problem.id)} onChange={() => toggleProblem(problem.id)} /><span>{problem.title}<small>{problem.category || "未分类"} · 第 {problem.displayNumber ?? problem.sourceIndex + 1} 题</small></span></label>) : <p>先导入 CBL 题库，再从这里选择题目。</p>}</div>
       <div className="teacher-picker-list compact">{classes.length ? classes.map((item) => <div className="teacher-class-group" key={item.id}><button type="button" className="teacher-class-toggle" onClick={() => toggleClass(item)}><strong>{item.name}</strong><small>{item.studentCount} 人 · {item.students.filter((student) => selectedStudentIds.includes(student.id)).length} 人已选</small></button>{item.students.map((student) => <label key={student.id}><input type="checkbox" checked={selectedStudentIds.includes(student.id)} onChange={() => toggleStudent(student.id)} /><span>{student.displayName}<small>{student.loginName}</small></span></label>)}</div>) : students.length ? students.map((student) => <label key={student.id}><input type="checkbox" checked={selectedStudentIds.includes(student.id)} onChange={() => toggleStudent(student.id)} /><span>{student.displayName}<small>{student.loginName}</small></span></label>) : <p>当前机构没有可管理的学生。</p>}</div>
       <footer><button type="button" disabled={busy || !libraryProblems.length || !students.length} className="primary" onClick={() => void publishAssignment()}>{busy ? "处理中…" : "发布作业"}</button></footer>
     </section>
@@ -2409,6 +2427,9 @@ export function App() {
   const [teachingAuth, setTeachingAuth] = useState<TeachingAuth | undefined>();
   const [catalogAssignment, setCatalogAssignment] = useState<{ scope: string; problems: CatalogProblem[] }>();
   const catalogAccountScope = teachingClient.presentationScope(teachingAuth);
+  const problemOwner=useRef({scope:catalogAccountScope,id:""});
+  const browseNumbers = useRef<{scope:string;numbers:Record<string,number>}>({scope:catalogAccountScope,numbers:{}});
+  if(browseNumbers.current.scope!==catalogAccountScope)browseNumbers.current={scope:catalogAccountScope,numbers:{}};
   const gameBrowseOwner = useRef(catalogAccountScope);
   const answersAllowed = canViewExerciseSolutions(teachingAuth);
   const answerAccess = useRef<AnswerAccess>({scope:catalogAccountScope,allowed:answersAllowed,generation:0});
@@ -2512,6 +2533,7 @@ export function App() {
   const [controlsOpen, setControlsOpen] = useState(false);
   const [autoReplyPending, setAutoReplyPending] = useState(false);
   const [moveFeedback, setMoveFeedback] = useState<TrainingFeedbackKind>();
+  const [feedbackEvent,setFeedbackEvent]=useState<TrainingFeedbackEvent>();
   const [trainingAnalysisLines, setTrainingAnalysisLines] = useState<AnalysisLine[]>([]);
   const [studyAnalysisLines, setStudyAnalysisLines] = useState<AnalysisLine[]>([]);
   const [manualAnalysisLines, setManualAnalysisLines] = useState<AnalysisLine[]>([]);
@@ -2940,6 +2962,8 @@ export function App() {
       for (const played of restored) continuation = continuation.find(n => n.iccs === played)?.children ?? [];
       setLine(continuation);
       setNotice(restored.length && !verified ? "已恢复本机进度，待复核，尚未确认完成。" : "个人试做：进度仅保存在本机，不计入学生成绩。");
+      if(!verified?.completed)await restoreTrialPosition(next,restored,entry);
+      signal.throwIfAborted();if(entry!==session.current)return;
       // Do not call the general navigation helper, which would cancel this opening operation.
       window.history.pushState({ mobileRoute: "practice" }, "", "/practice");
       setMobileRoute("practice"); setMobileTab("practice");
@@ -2978,6 +3002,20 @@ export function App() {
     const auth = teachingClient.auth();
     return `${teachingClient.serverUrl()}:${auth?.user.id ?? "local"}:${auth?.user.orgId ?? ""}:${active.assignmentId ?? sessionId ?? active.id}`;
   }
+  async function restoreTrialPosition(active:TrainingProblem,accepted:string[],expectedSession:number,sessionId?:string) {
+    const context=verificationContext(active,sessionId),saved=loadTrialDraft(context,active,accepted);
+    if(!saved)return;
+    try {
+      const board=await boardAt(active.startingFen,saved.path);
+      if(expectedSession!==session.current||context!==verificationContext(active,sessionId))return;
+      const terminal=!!terminalResult(board.status);
+      setTrialPosition({path:saved.path,board,awaitingReply:!terminal&&saved.path.length%2===1,terminal});
+      setPieces(board.pieces);setLastMove(saved.path.at(-1));setWrongMove(saved.path[accepted.length]);
+      setHints(saved.hints);setMistakes(saved.mistakes);resetClock(saved.elapsedMs);
+      setEnded(false);setResultOutcome(undefined);setAnswerVerification(undefined);
+      setNotice("已恢复试走局面，尚未计为答对；可继续或退回重试。");
+    }catch{/* Keep the accepted route usable if a saved trial no longer replays. */}
+  }
   async function restoreAnswerVerification(active: TrainingProblem, path: string[], sessionId?: string, source?: AbortSignal) {
     if (!path.length) return undefined;
     // Restoring a verdict is optional; a legal saved board must remain usable while review is unavailable.
@@ -2993,12 +3031,15 @@ export function App() {
         try { result = await teachingClient.verifyTrainingMove(active, prior, candidate, sessionId, current); }
         catch { result = await verifyLocally(active, prior, candidate, context, current); }
       } else result = await verifyLocally(active, prior, candidate, context, current);
+      if (result.completed && needsTerminalWin(active) && !terminalWin(active, await boardAt(active.startingFen,result.path))) return undefined;
       if (current() && JSON.stringify(result.path) === JSON.stringify(path) && ["correct", "completed"].includes(result.outcome)) return result;
     } catch { /* Keep the legal saved path, with completion awaiting verification. */ }
     return undefined;
     }, source, "恢复判题暂不可用", 5000).catch(() => undefined);
   }
   function commitProblemStart(next: TrainingProblem, initial: BoardState, history: Attempt[], restoring = false) {
+    problemOwner.current={scope:catalogAccountScope,id:next.id};
+    next = {...next, displayNumber: next.displayNumber ?? (next.source!=="teaching" ? browseNumbers.current.numbers[next.serverProblemId??next.id] : undefined)};
     finishing.current = false; latestTrainingMoves.current = [];
     setAnswerVerification(undefined); setMoveRejection(undefined); setTrialPosition(undefined); setProblem(next); setLine(next.solution); setMoves([]); setPieces(initial.pieces);
     setSelected(undefined); setLastMove(undefined); resetClock(); setAttemptStarted(false);
@@ -3018,7 +3059,7 @@ export function App() {
 
     if (opening !== session.current || !restoreLocal) return;
     const saved = localTrainingProgress(next);
-    if (!saved) { setAutoReplyPending(false); return; }
+    if (!saved) { await restoreTrialPosition(next,[],opening);setAutoReplyPending(false); return; }
     setAutoReplyPending(true); setNotice("正在复核保存的路线…");
     try {
       const verified = saved.moves.length ? await restoreAnswerVerification(next, saved.moves) : undefined;
@@ -3031,6 +3072,7 @@ export function App() {
       for (const played of saved.moves) continuation = continuation.find(n => n.iccs === played)?.children ?? [];
       setLine(continuation.length ? continuation : verified?.hintMove ? [{ iccs: verified.hintMove, comment: "皮卡鱼建议", children: [] }] : []);
       setNotice(verified ? "已恢复验证路线，可继续完成。" : "已恢复保存的局面；待复核，尚未确认完成。");
+      if(!verified?.completed)await restoreTrialPosition(next,saved.moves,opening);
     } catch { if (opening === session.current) setNotice("保存的局面暂时无法恢复，请重试。"); }
     finally { if (opening === session.current) setAutoReplyPending(false); }
   }
@@ -3069,9 +3111,10 @@ export function App() {
         latestTrainingMoves.current = [...savedAnswer.moves]; setMoves(savedAnswer.moves);
         setPieces(state.pieces); setLastMove(savedAnswer.moves.at(-1));
         setHints(savedAnswer.hintsUsed); setMistakes(savedAnswer.mistakes); resetClock(savedAnswer.elapsedMs);
-        setResultOutcome(savedAnswer.outcome);
-        setEnded(true); stopClock(); finishing.current = true;
-        setNotice(savedAnswer.submissionRequested ? "本题已确认提交，待联网补交。" : "本题结果已保存，尚未提交给老师。");
+        const validCompleted=savedAnswer.outcome!=="completed"||!needsTerminalWin(next)||terminalWin(next,state);
+        setResultOutcome(validCompleted?savedAnswer.outcome:undefined);
+        setEnded(validCompleted);stopClock();finishing.current=validCompleted;
+        setNotice(!validCompleted?"已恢复保存路线，尚未绝杀或困毙，完成状态待重新复核。":savedAnswer.submissionRequested ? "本题已确认提交，待联网补交。" : "本题结果已保存，尚未提交给老师。");
         if (savedAnswer.outcome === "revealed" && answerOwnerIsCurrent(answerAccess.current)) {
           const owner=answerAccess.current;
           const notation=await chineseLine(next.startingFen, mainline(next.solution)).catch(() => mainline(next.solution));
@@ -3106,7 +3149,7 @@ export function App() {
           if (!stillRestoring()) return;
         }
         const completed = restoredMoves.length > 0 && (restoredVerification?.completed === true
-          || (!next.targetMateMoves && !next.trainingGoal?.verification && !restoredVerification && followsSavedLine && !restoredLine.length));
+          || (!needsTerminalWin(next) && !next.trainingGoal?.verification && !restoredVerification && followsSavedLine && !restoredLine.length));
         if (!followsSavedLine && restoredVerification?.hintMove) restoredLine = [{iccs:restoredVerification.hintMove,comment:"皮卡鱼建议",children:[]}];
         const duration = Math.max(0, Math.round(draft.elapsedMs));
         const attempted = restoredMoves.length > 0 || duration > 0 || draft.hints > 0 || draft.mistakes > 0;
@@ -3123,6 +3166,7 @@ export function App() {
         setEnded(completed);
         setNotice(completed ? "已恢复完成的题解。" : "已恢复上次进度，可继续完成题解。");
         if (completed) setResultOutcome("completed");
+        else await restoreTrialPosition(next,restoredMoves,restoreSession);
         if (completed && !savedAnswer && restoreAuth) {
           finishing.current = true;
           await trainingStore.saveAttempt({ problemId: next.id, mode: "solver", elapsedMs: duration, hintsUsed: draft.hints, mistakes: draft.mistakes, outcome: "completed" });
@@ -3213,6 +3257,10 @@ export function App() {
     setPlatformGameLibrary(undefined); setPlatformGames([]);
     if (mobileRoute === "game-browse") navigateMobileRoute("library", true);
   }, [catalogAccountScope]);
+  useEffect(()=>{
+    if(!problem||!trialPosition||ended||problemOwner.current.scope!==catalogAccountScope||problemOwner.current.id!==problem.id)return;
+    saveTrialDraft(verificationContext(problem,practiceSession?.id),problem,{accepted:moves,path:trialPosition.path,hints,mistakes,elapsedMs:readElapsed()});
+  },[problem,trialPosition,moves,hints,mistakes,elapsed,autoReplyPending,ended,catalogAccountScope,practiceSession?.id,readElapsed]);
   useEffect(() => {
     if (!problem?.trialOwner || autoReplyPending || ended) return;
     saveLocalTrainingProgress(problem, { moves, hints, mistakes, elapsedMs: readElapsed() });
@@ -3294,7 +3342,8 @@ export function App() {
     const timer = window.setTimeout(() => setStudyNoticeVisible(false), 2200);
     return () => window.clearTimeout(timer);
   }, [studyNotice]);
-  useEffect(() => { if (!moveFeedback) return; const duration = moveFeedback === "checkmate" || moveFeedback === "stalemate" ? 3400 : moveFeedback === "check" ? 2800 : moveFeedback === "capture" ? 520 : 320; const timer = window.setTimeout(() => setMoveFeedback(undefined), duration); return () => clearTimeout(timer); }, [moveFeedback]);
+  useEffect(() => { if (!feedbackEvent) return; const timer = window.setTimeout(() => {setMoveFeedback(undefined);setFeedbackEvent(undefined);}, FEEDBACK_DURATION[feedbackEvent.kind]); return () => clearTimeout(timer); }, [feedbackEvent]);
+  useEffect(()=>{setMoveFeedback(undefined);setFeedbackEvent(undefined);cancelTrainingFeedback();},[problem?.id,workspaceMode,catalogAccountScope]);
   useEffect(() => { if (!answersAllowed || !demoPlaying || !problem || answerStep >= answer.length) return; const timer = window.setTimeout(() => { void previewAnswerStep(answerStep + 1); }, 750); return () => clearTimeout(timer); }, [answersAllowed, answer.length, answerStep, demoPlaying, problem]);
   useEffect(() => {
     if (!studyMode || studyCloudFen === studyCurrentFen) return;
@@ -3460,18 +3509,18 @@ export function App() {
     setImportPanelOpen(false);
     setNotice(result);
   }
-  async function renderBoard(nextMoves: string[], move?: string, expectedSession = session.current) {
+  async function renderBoard(nextMoves: string[], move?: string, expectedSession = session.current, emitFeedback = true) {
     if (!problem || expectedSession !== session.current) return;
-    const before = pieces;
+    const before = move ? (await boardAt(problem.startingFen,nextMoves.slice(0,-1))).pieces : pieces;
     const state = await boardAt(problem.startingFen, nextMoves);
     if (expectedSession !== session.current) return;
     setSelected(undefined);
     latestTrainingMoves.current = nextMoves;
     setTrialPosition(undefined); setWrongMove(undefined); setPieces(state.pieces); setMoves(nextMoves); setLastMove(move);
-    if (move) {
-      const feedback = deriveTrainingFeedback(before, state, move);
-      setMoveFeedback(feedback);
-      playTrainingFeedback(feedback);
+    if (move && emitFeedback) {
+      const feedback = trainingFeedbackEvent(before, state, move);
+      setMoveFeedback(feedback.kind); setFeedbackEvent(feedback);
+      playTrainingFeedback(feedback.kind);
     }
     return state;
   }
@@ -3581,6 +3630,11 @@ export function App() {
   async function finish(outcome: Attempt["outcome"], duration = readElapsed(), expectedSession = session.current) {
     if (!problem || ended || finishing.current || expectedSession !== session.current) return;
     if (trialPosition && outcome === "completed") return;
+    if(outcome==="completed" && needsTerminalWin(problem)) {
+      const actual=await boardAt(problem.startingFen,latestTrainingMoves.current);
+      if(expectedSession!==session.current||finishing.current||ended)return;
+      if(!terminalWin(problem,actual)){setNotice("尚未绝杀或困毙，请继续走棋；未计为完成。");return;}
+    }
     duration = Math.max(0, Math.round(duration));
     const completedProblem = problem;
     const completedMode = mode;
@@ -3735,6 +3789,8 @@ export function App() {
     const current = () => expectedSession === session.current && view === trainingView.current
       && context === verificationContext(problem, practiceSession?.id);
     let previousPieces = pieces;
+    // With no candidate, this path has already been displayed (or restored).
+    let previousPath = candidate ? (trialPosition?.path ?? moves) : path;
     setAutoReplyPending(true); setSelected(undefined); setLegalTargets([]);
     setNotice("试走中，皮卡鱼正在应手…");
     const result = await advanceTrainingTrial(problem.startingFen, path, candidate, {
@@ -3750,11 +3806,11 @@ export function App() {
       setPieces(position.board.pieces); setLastMove(position.path.at(-1));
       setSelected(undefined); setLegalTargets([]);
       const last = position.path.at(-1);
-      if (last) {
-        const feedback = deriveTrainingFeedback(previousPieces, position.board, last);
-        setMoveFeedback(feedback); playTrainingFeedback(feedback);
+      if (last && position.path.length===previousPath.length+1) {
+        const feedback = trainingFeedbackEvent(previousPieces, position.board, last);
+        setMoveFeedback(feedback.kind); setFeedbackEvent(feedback); playTrainingFeedback(feedback.kind);
       }
-      previousPieces = position.board.pieces;
+      previousPieces = position.board.pieces; previousPath=position.path;
     });
     if (!current()) { if (expectedSession === session.current) setAutoReplyPending(false); return; }
     setAutoReplyPending(false);
@@ -3847,6 +3903,9 @@ export function App() {
         setTrialPosition({ path: candidatePath, board: candidateBoard, awaitingReply: true, terminal: !!terminalResult(candidateBoard.status) });
         setWrongMove(iccs);
         setPieces(candidateBoard.pieces); setLastMove(iccs); setSelected(undefined); setLegalTargets([]);
+        const feedback=trainingFeedbackEvent(pieces,candidateBoard,iccs);
+        setMoveFeedback(feedback.kind);setFeedbackEvent(feedback);playTrainingFeedback(feedback.kind);
+        const movedAt=performance.now();
         await resetAnalysis();
         if (!stillActive()) return;
         let result: VerificationResult;
@@ -3854,6 +3913,10 @@ export function App() {
           try { result = await teachingClient.verifyTrainingMove(problem, moves, iccs, practiceSession?.id, stillActive); }
           catch { if (!stillActive()) return; result = await verifyLocally(problem, moves, iccs, context, stillActive); }
         } else result = await verifyLocally(problem, moves, iccs, context, stillActive);
+        if (!stillActive()) return;
+        if (result.completed && needsTerminalWin(problem) && !terminalWin(problem, await boardAt(problem.startingFen,result.path))) {
+          result = {...result,outcome:"pending_review",completed:false,message:"尚未绝杀或困毙，继续试走，完成状态待复核"};
+        }
         if (!stillActive()) return;
         if (result.outcome === "pending_review") {
           setMoveRejection({ kind: "pending_review", message: result.message });
@@ -3865,13 +3928,17 @@ export function App() {
           setMoveRejection({ kind: result.outcome, message: result.message }); setSelected(undefined); setLegalTargets([]);
 
           if (result.outcome === "wrong") await continueTrainingTrial(candidatePath, undefined, moveSession);
-          else await renderBoard(moves, moves.at(-1), moveSession);
+          else await renderBoard(moves, undefined, moveSession);
           return;
         }
         setAttemptStarted(true);
-        await renderBoard(result.path, result.path.at(-1), moveSession);
+        // Let the player's 180ms slide finish even for a cached verdict.
+        if(performance.now()-movedAt<180)await new Promise(resolve=>setTimeout(resolve,180-(performance.now()-movedAt)));
+        if(!stillActive())return;
+        await renderBoard(result.path, result.path.at(-1), moveSession, result.autoMoves.length > 0);
         if (!stillActive()) return;
         setAnswerVerification(result);
+        saveTrialDraft(context,problem);
         saveLocalTrainingProgress(problem, result.completed ? undefined : { moves: result.path, hints, mistakes, elapsedMs: readElapsed() });
         if (practiceSession && activePracticeItem) void teachingClient.updatePracticeSession(practiceSession.id, activePracticeItem.id, { moves: result.path, verification: result, verificationContent: practiceContent(activePracticeItem.problem), hints, mistakes, elapsedMs: readElapsed() }).catch(() => undefined);
         let continuation = problem.solution;
@@ -3921,7 +3988,10 @@ export function App() {
     }
     setLine(nextLine);
     setNotice("正确，继续完成题解。");
-    if (!nextLine.length) await finish("completed", durationAfterMove, moveSession);
+    if (!nextLine.length) {
+      if (needsTerminalWin(problem) && !terminalWin(problem,state)) await continueTrainingTrial(nextMoves,undefined,moveSession);
+      else await finish("completed", durationAfterMove, moveSession);
+    }
   }
 
   async function previewAnswerStep(nextStep: number) {
@@ -3952,6 +4022,7 @@ export function App() {
   async function restart() {
     if (!problem) return;
     const wasRunning = clockRunning;
+    setMoveFeedback(undefined);setFeedbackEvent(undefined);cancelTrainingFeedback();
     stopClock();
     if (problem.source === "teaching" && problem.assignmentId && problem.serverProblemId) {
       try { await teachingClient.clearAssignmentAnswer(problem.assignmentId, problem.serverProblemId); }
@@ -3965,6 +4036,7 @@ export function App() {
     const retainedElapsed = readElapsed();
     if (!ended && (attemptStarted || mistakes || hints) && mode !== "solver" && mode !== "replay") await finish("abandoned", readElapsed(), restartSession);
     if (restartSession !== session.current) return;
+    saveTrialDraft(verificationContext(activeProblem,practiceSession?.id),activeProblem);
     saveLocalTrainingProgress(activeProblem);
     await selectProblem(activeProblem, false);
     if (session.current !== restartSession + 1) return;
@@ -3982,7 +4054,7 @@ export function App() {
     const currentSession = ++session.current;
     const state = await boardAt(problem.startingFen, moves);
     if (currentSession !== session.current) return;
-    setPieces(state.pieces); setLastMove(moves.at(-1)); setTrialPosition(undefined); setWrongMove(undefined); setSelected(undefined); setMoveRejection(undefined); setAutoReplyPending(false);
+    setPieces(state.pieces); setLastMove(moves.at(-1)); saveTrialDraft(verificationContext(problem,practiceSession?.id),problem);setTrialPosition(undefined); setWrongMove(undefined); setSelected(undefined); setMoveRejection(undefined); setAutoReplyPending(false);
     await resetTrainingAnalysis();
     if (currentSession !== session.current) return;
     setNotice(mistakes ? `已退回，请继续尝试。已错 ${mistakes} 次，不计入首次正确率。` : "已退回，可重新尝试。待复核的走法未计为错误。");
@@ -4779,15 +4851,15 @@ export function App() {
       boardAt(manualStartingFen, nextMoves, studyRuleMode),
       chineseLine(manualStartingFen, nextMoves).catch(() => nextMoves),
     ]);
-    const feedback = deriveTrainingFeedback(manualPieces, state, iccs);
+    const feedback = trainingFeedbackEvent(manualPieces, state, iccs);
     setManualMoves(nextMoves);
     setManualCursor(nextMoves.length);
     setManualNotation(notation);
     setManualPieces(state.pieces);
     setManualLastMove(iccs);
     setManualCurrentFen(state.fen);
-    setMoveFeedback(feedback);
-    playTrainingFeedback(feedback);
+    setMoveFeedback(feedback.kind); setFeedbackEvent(feedback);
+    playTrainingFeedback(feedback.kind);
     const terminal = terminalResult(state.ruleStatus ?? state.status);
     setManualTerminal(terminal);
     setManualNotice(terminal ? `当前局面：${terminal}。` : `已记录：${notation.at(-1) ?? iccs}`);
@@ -5438,14 +5510,14 @@ export function App() {
       chineseLine(studyStartingFen, nextMoves).catch(() => nextMoves),
     ]);
     if (generation !== studyGeneration.current) return;
-    const feedback = deriveTrainingFeedback(studyPieces, state, iccs);
+    const feedback = trainingFeedbackEvent(studyPieces, state, iccs);
     setStudyMoves(nextMoves);
     setStudyCursor(nextMoves.length);
     setStudyNotation(notation);
     setStudyPieces(state.pieces);
     setStudyLastMove(iccs);
-    setMoveFeedback(feedback);
-    playTrainingFeedback(feedback);
+    setMoveFeedback(feedback.kind); setFeedbackEvent(feedback);
+    playTrainingFeedback(feedback.kind);
     const terminal = terminalResult(state.ruleStatus ?? state.status);
     setStudyTerminal(terminal);
     setStudyNotice(terminal ? `当前局面：${terminal}。` : `${movingSide === "red" ? "红" : "黑"}方已走 ${notation.at(-1) ?? iccs}。`);
@@ -5781,10 +5853,12 @@ export function App() {
       };
     }
     if (problem && !problem.trialOwner && (!problem.source || problem.source === "local") && problem.libraryId === library?.id && problems.length > 1) {
+      const numbers=browseNumbers.current.scope===catalogAccountScope?browseNumbers.current.numbers:{};
+      const list=numbers[problem.id]?problems.filter(p=>numbers[p.id]!=null):problems;
       return {
-        index: Math.max(0,problems.findIndex(p=>p.id===problem.id)),
-        items: problems.map(p=>({id:p.id,title:p.title,status:(p.id===problem.id&&ended&&resultOutcome==="completed")||p.completedAttempts?"completed":"pending"})),
-        onSelect: (nextIndex:number) => { const target=problems[nextIndex];if(target)void openLibraryPractice(target); },
+        index: Math.max(0,list.findIndex(p=>p.id===problem.id)),
+        items: list.map(p=>({id:p.id,title:p.title,status:(p.id===problem.id&&ended&&resultOutcome==="completed")||p.completedAttempts?"completed":"pending"})),
+        onSelect: (nextIndex:number) => { const target=list[nextIndex];if(target)void openLibraryPractice(target,numbers); },
       };
     }
     if (problem?.source === "teaching" && assignmentSequence.length) {
@@ -5841,6 +5915,7 @@ export function App() {
   }
 
   async function openPracticeSession(next: PracticeSession, preferredItemId?: string, replace = false, source?: AbortSignal, preferredProblemId?: string) {
+    browseNumbers.current={scope:catalogAccountScope,numbers:loadListNumbers(catalogAccountScope,next.id)};
     const entry = ++session.current;
     const authGeneration = practiceAuthGeneration.current;
     setAutoReplyPending(true);
@@ -5884,11 +5959,13 @@ export function App() {
       setHints(Math.max(item.draft?.hints ?? 0, item.grade?.hintsUsed ?? 0));
       setMistakes(Math.max(item.draft?.mistakes ?? 0, item.grade?.mistakes ?? 0));
       resetClock(item.draft?.elapsedMs ?? 0);
-      if (item.status !== "pending") {
+      if (item.status !== "pending" && (item.verificationState!=="pending_server" || verification?.completed || item.status!=="completed")) {
         setEnded(true); setResultOutcome(item.status === "completed" ? "completed" : item.status === "revealed" ? "revealed" : "abandoned");
       }
       setMode(exerciseMode(cached.mode,answersAllowed) === "learning" ? "replay" : "solver");
       setNotice(answersAllowed && cached.mode === "learning" ? "学习模式：可查看题解并了解关键思路。" : restoredMoves.length && !verification ? "已恢复本机进度，待复核，尚未确认完成。" : "可尝试其他解法，皮卡鱼复核后判题；提示和错误会记录到练习档案。");
+      if(item.status==="pending"||item.verificationState==="pending_server")await restoreTrialPosition(nextProblem,restoredMoves,entry,cached.id);
+      if(source?.aborted||entry!==session.current||authGeneration!==practiceAuthGeneration.current)return false;
       navigatePracticeSession(cached.id, replace);
       void teachingClient.updatePracticeSession(cached.id, item.id).catch(() => undefined);
       return true;
@@ -5965,10 +6042,15 @@ export function App() {
     }, () => void runPracticeOpening(key, load, returnRoute, replace, preferredItemId, title, preferredProblemId));
   }
 
-  async function createPracticeSession(payload: Parameters<typeof teachingClient.createPracticeSession>[0], dailyId?: string, returnRoute: "practice" | "library-browse" | "library" | "practice-search" = "practice", title = "", preferredProblemId?: string) {
+  async function createPracticeSession(payload: Parameters<typeof teachingClient.createPracticeSession>[0], dailyId?: string, returnRoute: "practice" | "library-browse" | "library" | "practice-search" = "practice", title = "", preferredProblemId?: string, numbers:Record<string,number> = {}) {
+    browseNumbers.current={scope:catalogAccountScope,numbers};
     payload={...payload,...(payload.mode?{mode:exerciseMode(payload.mode,answersAllowed)}:{})};
     const key = JSON.stringify([dailyId, payload, returnRoute]);
-    await runPracticeOpening(key, signal => dailyId ? teachingClient.startDailyPractice(dailyId, signal) : teachingClient.createPracticeSession(payload, signal), returnRoute, false, undefined, title, preferredProblemId);
+    await runPracticeOpening(key, async signal => {
+      const next=await (dailyId ? teachingClient.startDailyPractice(dailyId,signal):teachingClient.createPracticeSession(payload,signal));
+      saveListNumbers(catalogAccountScope,next.id,Object.fromEntries(next.items.map(item=>[item.problem.id,numbers[item.problem.id]]).filter(([,n])=>Number.isInteger(n))));
+      return next;
+    }, returnRoute, false, undefined, title, preferredProblemId);
   }
 
   function resumePracticeSession(sessionId: string, replace = false) {
@@ -6008,21 +6090,23 @@ export function App() {
     else leaveLibraryProblem();
   }
 
-  async function openCatalogPractice(ids:string[], title?:string, preferredProblemId?:string) {
+  async function openCatalogPractice(ids:string[], title?:string, preferredProblemId?:string, numbers:Record<string,number> = {}) {
+    browseNumbers.current={scope:catalogAccountScope,numbers};
     if(teachingAuth?.user.role!=="student") {
       setCatalogTrialGroup({scope:catalogAccountScope,ids});
       await openTeacherTrial(preferredProblemId??ids[0],title);
     } else {
-      await createPracticeSession({problemIds:ids,sourceKind:"random",mode:"solver",count:Math.min(20,ids.length)},undefined,"library",title,preferredProblemId);
+      await createPracticeSession({problemIds:ids,sourceKind:"random",mode:"solver",count:Math.min(20,ids.length)},undefined,"library",title,preferredProblemId,numbers);
     }
   }
 
-  async function openLibraryPractice(next: TrainingProblem) {
+  async function openLibraryPractice(next: TrainingProblem, numbers:Record<string,number> = currentListNumbers(problems.map(p=>({id:p.serverProblemId??p.id})))) {
+    browseNumbers.current={scope:catalogAccountScope,numbers};
     if(problem&&!ended)saveLocalTrainingProgress(problem,{moves,hints,mistakes,elapsedMs:readElapsed()});
     setSingleProblemResultOpen(false);
     if (next.source === "platform" && next.serverProblemId) {
       const ids = practiceGroupIds(problems.filter(p=>p.serverProblemId).map(p=>({id:p.serverProblemId!})), next.serverProblemId);
-      await createPracticeSession({ sourceKind: "random", scope: "all", problemIds: ids.length?ids:[next.serverProblemId], count: ids.length||1, mode: "solver" }, undefined, "library-browse", next.title, next.serverProblemId);
+      await createPracticeSession({ sourceKind: "random", scope: "all", problemIds: ids.length?ids:[next.serverProblemId], count: ids.length||1, mode: "solver" }, undefined, "library-browse", next.title, next.serverProblemId, numbers);
       return;
     }
     setPracticeSession(undefined);
@@ -6263,12 +6347,12 @@ export function App() {
     {answersAllowed && solutionView && ownsAnswerAccess(solutionView.owner,answerAccess.current) && <SolutionReadPanel problem={solutionView.problem} initial={solutionView.state} onClose={() => setSolutionView(undefined)}/>}
     {mobileLayout && <PracticeOpeningStatus busy={practiceCreating} message={practiceMessage} title={openingTitle} phase={openingPhase} onRetry={() => practiceRetry.current?.()} onCancel={cancelPracticeOpening}/>}
     {mobileLayout && mobileRoute === "practice-topic" && teachingAuth?.user.role === "student" && !studyMode && !manualMode && <MobileTopicDetailPanel key={`${teachingClient.presentationScope()}:${practiceTopicId ?? window.location.pathname}`} initialTopic={practiceHome?.topics.find(t => t.id === practiceTopicId)} busy={practiceCreating} message={""} topicId={practiceTopicId ?? window.location.pathname.match(/^\/practice\/topics\/([^/]+)/)?.[1]} onBack={() => navigateMobileRoute("practice")} onStart={(topic) => void createPracticeSession({ sourceKind: "topic", topicId: topic.id, scope: "all", libraryIds: topic.sources.map((source) => source.libraryId), category: topic.sources[0]?.category ?? undefined, count: 10, mode: "solver" })} onOpenLibrary={(libraryId, kind) => { const source = kind === "problem" ? libraries.find((item) => item.source === "platform" && item.fingerprint === libraryId) : undefined; if (source) void selectLibrary(source).then(() => navigateMobileRoute("library-browse")); else { const gameLibrary = platformGameLibraries.find((item) => item.id === libraryId); if (gameLibrary) void selectPlatformGameLibrary(gameLibrary); else navigateMobileRoute("library"); } }} />}
-    {mobileLayout && mobileRoute === "practice-search" && teachingAuth?.user.role === "student" && !studyMode && !manualMode && <MobilePracticeSearchPanel answersAllowed={answersAllowed} key={catalogAccountScope} scope={catalogAccountScope} onReadSolution={(id,title)=>void openTeacherSolution(id,title)} message={""} busy={practiceCreating} onBack={() => navigateMobileRoute("practice")} onOpenProblem={(next) => { if (next.serverProblemId) void createPracticeSession({ sourceKind: "random", scope: "all", problemIds: [next.serverProblemId], count: 1 },undefined,"practice-search",next.title); }} />}
+    {mobileLayout && mobileRoute === "practice-search" && teachingAuth?.user.role === "student" && !studyMode && !manualMode && <MobilePracticeSearchPanel answersAllowed={answersAllowed} key={catalogAccountScope} scope={catalogAccountScope} onReadSolution={(id,title)=>void openTeacherSolution(id,title)} message={""} busy={practiceCreating} onBack={() => navigateMobileRoute("practice")} onOpenProblem={(next) => { if (next.serverProblemId) void createPracticeSession({ sourceKind: "random", scope: "all", problemIds: [next.serverProblemId], count: 1 },undefined,"practice-search",next.title,undefined,{[next.serverProblemId]:next.displayNumber??1}); }} />}
     {mobileLayout && mobileRoute === "practice-assets" && teachingAuth?.user.role === "student" && !studyMode && !manualMode && <MobileLearningAssetsPanel home={practiceHome} onBack={() => navigateMobileRoute("practice")} onMistakes={() => navigateMobileRoute("practice-mistakes")} onFavorites={() => navigateMobileRoute("practice-favorites")} />}
     {mobileLayout && singleProblemResultOpen && problem && <MobileSingleProblemResultPanel problem={problem} elapsed={fmt(elapsed)} hints={hints} mistakes={mistakes} revealed={resultOutcome==="revealed" || revealed} message={teachingMessage} onBack={closeSingleProblemResult}/>}
-    {mobileLayout && mobileRoute === "checkin" ? null : mobileLayout && ["tool-settings", "tool-sync", "onboarding", "practice-topic", "practice-search", "practice-assets"].includes(mobileRoute) && !studyMode && !manualMode && (["tool-settings", "tool-sync", "onboarding"].includes(mobileRoute) || teachingAuth?.user.role === "student") ? null : mobileLayout && ["practice-setup", "practice-mistakes", "practice-favorites", "practice-topic", "practice-search", "practice-assets", "practice-session", "practice-result"].includes(mobileRoute) && teachingAuth?.user.role !== "student" ? <main className="mobile-practice-page"><PracticeAccessPanel signedIn={Boolean(teachingAuth)} onLogin={() => { if (teachingAuth) { teachingClient.logout(); setTeachingAuth(undefined); } setTeachingAccountOpen(true); }}/></main> : mobileLayout && mobileRoute === "teacher" && teachingAuth && ["coach", "admin"].includes(teachingAuth.user.role) ? <TeacherMobileWorkspace initialProblems={catalogAssignment?.scope === catalogAccountScope ? catalogAssignment.problems : undefined} onReadGame={id => void openPlatformGame({id}, "library").catch(reason => setTeachingMessage(String(reason)))} onReadSolution={ids => void openTeacherSolution(ids[0])} onRehearse={setRehearsalGame} renderResultBoard={(fen, label) => <FenMiniBoard fen={fen} label={label}/>} auth={teachingAuth} path={teacherPath} onNavigate={navigateTeacher} onAuthChange={(auth) => applyTeachingAuth(auth, true)} onExit={() => navigateMobileRoute("home", true)} onRelogin={() => { teachingClient.logout(); setTeachingAuth(undefined); setResumeTeacherAfterLogin(true); navigateMobileRoute("account", true); setTeachingAccountOpen(true); }} onLogout={() => { teachingClient.logout(); setTeachingAuth(undefined); navigateMobileRoute("home", true); }}/> : mobileLayout && mobileRoute === "practice-setup" ? <MobilePracticeSetupPanel answersAllowed={answersAllowed} busy={practiceCreating} message={""} topics={practiceHome?.topics ?? []} onBack={() => navigateMobileRoute("practice")} onStart={(payload) => void createPracticeSession({ sourceKind: "topic", topicId: payload.topicId, scope: payload.scope, mode: payload.mode, libraryIds: payload.libraryIds, category: payload.category, difficulty: payload.difficulty, count: payload.count })}/> : mobileLayout && mobileRoute === "practice-mistakes" ? <MobilePracticeReviewPanel busy={practiceCreating} message={""} kind="mistakes" onBack={() => navigateMobileRoute("practice")} onStart={(problemIds, state) => void createPracticeSession({ sourceKind: "mistakes", scope: state === "mastered" ? "all" : "mistakes", problemIds, count: problemIds.length })}/> : mobileLayout && mobileRoute === "practice-favorites" ? <MobilePracticeReviewPanel busy={practiceCreating} message={""} kind="favorites" onBack={() => navigateMobileRoute("practice")} onStart={(problemIds) => void createPracticeSession({ sourceKind: "favorites", scope: "favorites", problemIds, count: problemIds.length })}/> : mobileLayout && mobileRoute === "practice-result" ? <MobilePracticeResultPanel session={practiceSession} message={""} backLabel={practiceReturnRoute.startsWith("library") ? "返回题库" : practiceReturnRoute === "practice-search" ? "返回搜索" : "返回练习"} onBack={leavePracticeSession} onRetryMistakes={() => navigateMobileRoute("practice-mistakes")} onRestart={() => navigateMobileRoute("practice-setup")} /> : mobileLayout && mobileSolverVisible && problem && !studyMode && !manualMode ? <MobilePracticeSolverPanel answersAllowed={answersAllowed} goalEditor={localGoalEditor} backLabel={practiceSession ? practiceReturnRoute.startsWith("library") ? "返回题库" : practiceReturnRoute === "practice-search" ? "返回搜索" : "返回练习" : problem.source === "teaching" ? "返回作业" : "返回题库"} answer={answer} answerStep={answerStep} demoPlaying={demoPlaying} onPreviewStep={(step) => { setDemoPlaying(false); void previewAnswerStep(step); }} onTogglePreview={toggleAnswerPreview} problem={problem} session={practiceSession} item={activePracticeItem} navigator={activeSolverNavigator} pieces={pieces} selected={selected} legalTargets={legalTargets} lastMove={lastMove} hints={hints} mistakes={mistakes} resultOutcome={resultOutcome} hintMove={line[0]?.iccs} wrongMove={wrongMove} moveRejection={moveRejection} trialAwaitingReply={trialPosition?.awaitingReply} trialBusy={autoReplyPending} onRetryTrialReply={() => void retryTrialReply()} onRetryWrongMove={() => void retryWrongMove()} elapsed={fmt(elapsed)} timerPaused={!clockRunning} ended={ended} revealed={revealed} notice={practiceSession ? practiceMessage || notice : notice} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} feedback={moveFeedback} onSquare={(square) => void move(square)} onMove={(from, to) => void moveFromTo(from, to)} onBack={() => practiceSession ? leavePracticeSession() : problem.source === "teaching" ? returnToStudentAssignments() : leaveLibraryProblem()} onHint={() => void giveHint()} onRestart={() => void restart()} onReveal={() => void reveal()} onPrevious={() => { if (!practiceSession || !activePracticeItem) return; const index = practiceSession.items.findIndex((item) => item.id === activePracticeItem.id); const previous = practiceSession.items[index - 1]; if (previous) void selectPracticeSessionItem(previous); }} onNext={nextSolverProblem} onFinish={() => void finish("abandoned")} favoriteEnabled={teachingAuth?.user.role === "student"} onFavorite={() => void refreshPracticeHome()}/> : mobileLayout && mobileRoute === "home" && !studyMode && !manualMode ? <MobileHomePanel onCheckin={() => navigateMobileRoute("checkin")} auth={teachingAuth} home={practiceHome} libraries={libraries} gameLibraries={platformGameLibraries} unreadAssignments={unreadAssignmentCount} onPractice={() => navigateMobileRoute("practice")} onLibrary={() => navigateMobileRoute("library")} onAssignments={() => openMobileTab("assignments")} onSetup={() => navigateMobileRoute("tool-setup")} onTeacher={() => { if (teachingAuth) navigateTeacher(teachingAuth.user.orgId ? "/teacher" : "/teacher/join-organization"); }} onLogin={() => setTeachingAccountOpen(true)}/> : mobileLayout && mobileRoute === "library" && !studyMode && !manualMode ? <MobileLibraryPanel onCatalogNavigate={cancelPracticeOpening} key={catalogAccountScope} onCatalogAssign={items => { setCatalogAssignment({scope: catalogAccountScope, problems: items}); navigateTeacher("/teacher/assignments/new"); }} teachingAuth={teachingAuth} onCatalogPractice={(ids,title,preferredProblemId)=>void openCatalogPractice(ids,title,preferredProblemId)} onCatalogRead={ids=>void openTeacherSolution(ids[0])} onCatalogGame={id=>void openPlatformGame({id},"library").catch(reason => setTeachingMessage(String(reason)))} onCatalogRehearse={id=>setRehearsalGame(id)} canImportLocal={canImportLocal} libraries={libraries} gameLibraries={platformGameLibraries} signedIn={Boolean(teachingAuth)} onOpenLibrary={(next) => { void selectLibrary(next).then(() => navigateMobileRoute("library-browse")); }} onOpenGameLibrary={(next) => { void selectPlatformGameLibrary(next); }} onImport={openImportPanel} onOpenAssignments={() => openMobileTab("assignments")}/> : mobileLayout && mobileRoute === "library-browse" && !studyMode && !manualMode ? <MobileLibraryBrowsePanel answersAllowed={answersAllowed} key={`problems:${catalogAccountScope}:${library?.id}`} scope={`${catalogAccountScope}:${library?.id}`} message={""} busy={practiceCreating} library={library} problems={problems} onReadSolution={next => next.serverProblemId && void openTeacherSolution(next.serverProblemId, next.title)} onBack={() => navigateMobileRoute("library")} onOpenProblem={(next) => void openLibraryPractice(next)}/> : mobileLayout && mobileRoute === "game-browse" && !studyMode && !manualMode ? <MobileGameBrowsePanel key={`games:${catalogAccountScope}:${platformGameLibrary?.id}`} scope={`games:${catalogAccountScope}:${platformGameLibrary?.id}`} library={platformGameLibrary} games={platformGames} onBack={() => navigateMobileRoute("library")} onOpenGame={(next) => void openPlatformGame(next)}/> : mobileLayout && mobileTab === "account" && !studyMode && !manualMode ? <MobileAccountPanel canImportLocal={canImportLocal} auth={teachingAuth} syncing={manualCloudSyncing} onLogin={() => setTeachingAccountOpen(true)} onTeaching={() => { if (!teachingAuth) setTeachingAccountOpen(true); else navigateTeacher(teachingAuth.user.orgId ? "/teacher" : "/teacher/join-organization"); }} onManual={() => navigateMobileRoute("tool-manual")} onStudy={() => navigateMobileRoute("tool-study")} onSetup={() => navigateMobileRoute("tool-setup")} onImport={openImportPanel} onSync={() => void syncPersonalManualLibrary()} onSettings={() => navigateMobileRoute("tool-settings")} onAbout={() => setShowAbout(true)}/> : mobileLayout && mobileTab === "practice" && !studyMode && !manualMode ? <MobilePracticePanel auth={teachingAuth} loading={practiceHomeLoading} error={practiceHomeError} busy={practiceCreating} message={""} onRetry={() => void refreshPracticeHome()} onRetryPractice={() => practiceRetry.current?.()} onLogin={() => { if (teachingAuth) { teachingClient.logout(); setTeachingAuth(undefined); } setTeachingAccountOpen(true); }} onSearch={() => navigateMobileRoute("practice-search")} onAssets={() => navigateMobileRoute("practice-assets")} libraries={libraries} home={practiceHome} onBrowseLibrary={() => { const first = platformGameLibraries[0]; if (first) void selectPlatformGameLibrary(first); else navigateMobileRoute("library"); }} onImport={openImportPanel} onStudy={() => navigateMobileRoute("tool-study")} onOpenAssignments={() => openMobileTab("assignments")} onSetup={() => navigateMobileRoute("practice-setup")} onMistakes={() => navigateMobileRoute("practice-mistakes")} onFavorites={() => navigateMobileRoute("practice-favorites")} onResume={() => { if (practiceHome?.resumeSession) void resumePracticeSession(practiceHome.resumeSession.id); }} onRandom={() => { const ids = practiceHome?.topics.flatMap((topic) => topic.sources.map((source) => source.libraryId)) ?? []; void createPracticeSession({ sourceKind: "random", scope: "random", libraryIds: ids, count: 10, mode: "solver" }); }} onDaily={() => { if (practiceHome?.dailyPlan) void createPracticeSession({}, practiceHome.dailyPlan.id); }} onTopic={(topic) => navigatePracticeTopic(topic.id)}/> : mobileLayout && mobileTab === "assignments" && !studentAssignmentsOpen && !studyMode && !manualMode ? <MobileAssignmentsAccessPanel onCheckin={() => navigateMobileRoute("checkin")} auth={teachingAuth} onLogin={() => setTeachingAccountOpen(true)} onSwitchAccount={() => { teachingClient.logout(); setTeachingAuth(undefined); setUnreadAssignmentCount(0); setStudentAssignmentsOpen(false); setTeachingAccountOpen(true); }} onTeacher={() => { if (teachingAuth) navigateTeacher(teachingAuth.user.orgId ? "/teacher" : "/teacher/join-organization"); }} onOpenStudent={() => setStudentAssignmentsOpen(true)} onBrowseLibrary={() => navigateMobileRoute("library")}/> : mobileLayout && studentAssignmentsOpen && !studyMode && !manualMode && teachingAuth?.user.role === "student" ? <StudentAssignmentsPanel onCheckin={() => navigateMobileRoute("checkin")} auth={teachingAuth} syncing={teachingSyncing} lastSyncAt={teachingLastSyncAt} message={teachingMessage} onSync={() => void syncTeachingAssignments()} onOpenAccount={() => setTeachingAccountOpen(true)} onOpenPractice={openStudentPractice} onOpenProblem={(next) => void openStudentProblem(next)} onUnreadChange={setUnreadAssignmentCount} /> : <div className="training-layout">
+    {mobileLayout && mobileRoute === "checkin" ? null : mobileLayout && ["tool-settings", "tool-sync", "onboarding", "practice-topic", "practice-search", "practice-assets"].includes(mobileRoute) && !studyMode && !manualMode && (["tool-settings", "tool-sync", "onboarding"].includes(mobileRoute) || teachingAuth?.user.role === "student") ? null : mobileLayout && ["practice-setup", "practice-mistakes", "practice-favorites", "practice-topic", "practice-search", "practice-assets", "practice-session", "practice-result"].includes(mobileRoute) && teachingAuth?.user.role !== "student" ? <main className="mobile-practice-page"><PracticeAccessPanel signedIn={Boolean(teachingAuth)} onLogin={() => { if (teachingAuth) { teachingClient.logout(); setTeachingAuth(undefined); } setTeachingAccountOpen(true); }}/></main> : mobileLayout && mobileRoute === "teacher" && teachingAuth && ["coach", "admin"].includes(teachingAuth.user.role) ? <TeacherMobileWorkspace initialProblems={catalogAssignment?.scope === catalogAccountScope ? catalogAssignment.problems : undefined} onReadGame={id => void openPlatformGame({id}, "library").catch(reason => setTeachingMessage(String(reason)))} onReadSolution={ids => void openTeacherSolution(ids[0])} onRehearse={setRehearsalGame} renderResultBoard={(fen, label) => <FenMiniBoard fen={fen} label={label}/>} auth={teachingAuth} path={teacherPath} onNavigate={navigateTeacher} onAuthChange={(auth) => applyTeachingAuth(auth, true)} onExit={() => navigateMobileRoute("home", true)} onRelogin={() => { teachingClient.logout(); setTeachingAuth(undefined); setResumeTeacherAfterLogin(true); navigateMobileRoute("account", true); setTeachingAccountOpen(true); }} onLogout={() => { teachingClient.logout(); setTeachingAuth(undefined); navigateMobileRoute("home", true); }}/> : mobileLayout && mobileRoute === "practice-setup" ? <MobilePracticeSetupPanel answersAllowed={answersAllowed} busy={practiceCreating} message={""} topics={practiceHome?.topics ?? []} onBack={() => navigateMobileRoute("practice")} onStart={(payload) => void createPracticeSession({ sourceKind: "topic", topicId: payload.topicId, scope: payload.scope, mode: payload.mode, libraryIds: payload.libraryIds, category: payload.category, difficulty: payload.difficulty, count: payload.count })}/> : mobileLayout && mobileRoute === "practice-mistakes" ? <MobilePracticeReviewPanel busy={practiceCreating} message={""} kind="mistakes" onBack={() => navigateMobileRoute("practice")} onStart={(problemIds, state) => void createPracticeSession({ sourceKind: "mistakes", scope: state === "mastered" ? "all" : "mistakes", problemIds, count: problemIds.length })}/> : mobileLayout && mobileRoute === "practice-favorites" ? <MobilePracticeReviewPanel busy={practiceCreating} message={""} kind="favorites" onBack={() => navigateMobileRoute("practice")} onStart={(problemIds) => void createPracticeSession({ sourceKind: "favorites", scope: "favorites", problemIds, count: problemIds.length })}/> : mobileLayout && mobileRoute === "practice-result" ? <MobilePracticeResultPanel session={practiceSession} message={""} backLabel={practiceReturnRoute.startsWith("library") ? "返回题库" : practiceReturnRoute === "practice-search" ? "返回搜索" : "返回练习"} onBack={leavePracticeSession} onRetryMistakes={() => navigateMobileRoute("practice-mistakes")} onRestart={() => navigateMobileRoute("practice-setup")} /> : mobileLayout && mobileSolverVisible && problem && !studyMode && !manualMode ? <MobilePracticeSolverPanel answersAllowed={answersAllowed} goalEditor={localGoalEditor} backLabel={practiceSession ? practiceReturnRoute.startsWith("library") ? "返回题库" : practiceReturnRoute === "practice-search" ? "返回搜索" : "返回练习" : problem.source === "teaching" ? "返回作业" : "返回题库"} answer={answer} answerStep={answerStep} demoPlaying={demoPlaying} onPreviewStep={(step) => { setDemoPlaying(false); void previewAnswerStep(step); }} onTogglePreview={toggleAnswerPreview} problem={problem} session={practiceSession} item={activePracticeItem} navigator={activeSolverNavigator} pieces={pieces} selected={selected} legalTargets={legalTargets} lastMove={lastMove} hints={hints} mistakes={mistakes} resultOutcome={resultOutcome} hintMove={line[0]?.iccs} wrongMove={wrongMove} moveRejection={moveRejection} trialAwaitingReply={trialPosition?.awaitingReply} trialBusy={autoReplyPending} onRetryTrialReply={() => void retryTrialReply()} onRetryWrongMove={() => void retryWrongMove()} elapsed={fmt(elapsed)} timerPaused={!clockRunning} ended={ended} revealed={revealed} notice={practiceSession ? practiceMessage || notice : notice} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} feedback={moveFeedback} feedbackEvent={feedbackEvent} onSquare={(square) => void move(square)} onMove={(from, to) => void moveFromTo(from, to)} onBack={() => practiceSession ? leavePracticeSession() : problem.source === "teaching" ? returnToStudentAssignments() : leaveLibraryProblem()} onHint={() => void giveHint()} onRestart={() => void restart()} onReveal={() => void reveal()} onPrevious={() => { if (!practiceSession || !activePracticeItem) return; const index = practiceSession.items.findIndex((item) => item.id === activePracticeItem.id); const previous = practiceSession.items[index - 1]; if (previous) void selectPracticeSessionItem(previous); }} onNext={nextSolverProblem} onFinish={() => void finish("abandoned")} favoriteEnabled={teachingAuth?.user.role === "student"} onFavorite={() => void refreshPracticeHome()}/> : mobileLayout && mobileRoute === "home" && !studyMode && !manualMode ? <MobileHomePanel onCheckin={() => navigateMobileRoute("checkin")} auth={teachingAuth} home={practiceHome} libraries={libraries} gameLibraries={platformGameLibraries} unreadAssignments={unreadAssignmentCount} onPractice={() => navigateMobileRoute("practice")} onLibrary={() => navigateMobileRoute("library")} onAssignments={() => openMobileTab("assignments")} onSetup={() => navigateMobileRoute("tool-setup")} onTeacher={() => { if (teachingAuth) navigateTeacher(teachingAuth.user.orgId ? "/teacher" : "/teacher/join-organization"); }} onLogin={() => setTeachingAccountOpen(true)}/> : mobileLayout && mobileRoute === "library" && !studyMode && !manualMode ? <MobileLibraryPanel onCatalogNavigate={cancelPracticeOpening} key={catalogAccountScope} onCatalogAssign={items => { setCatalogAssignment({scope: catalogAccountScope, problems: items}); navigateTeacher("/teacher/assignments/new"); }} teachingAuth={teachingAuth} onCatalogPractice={(ids,title,preferredProblemId,numbers)=>void openCatalogPractice(ids,title,preferredProblemId,numbers)} onCatalogRead={ids=>void openTeacherSolution(ids[0])} onCatalogGame={id=>void openPlatformGame({id},"library").catch(reason => setTeachingMessage(String(reason)))} onCatalogRehearse={id=>setRehearsalGame(id)} canImportLocal={canImportLocal} libraries={libraries} gameLibraries={platformGameLibraries} signedIn={Boolean(teachingAuth)} onOpenLibrary={(next) => { void selectLibrary(next).then(() => navigateMobileRoute("library-browse")); }} onOpenGameLibrary={(next) => { void selectPlatformGameLibrary(next); }} onImport={openImportPanel} onOpenAssignments={() => openMobileTab("assignments")}/> : mobileLayout && mobileRoute === "library-browse" && !studyMode && !manualMode ? <MobileLibraryBrowsePanel answersAllowed={answersAllowed} key={`problems:${catalogAccountScope}:${library?.id}`} scope={`${catalogAccountScope}:${library?.id}`} message={""} busy={practiceCreating} library={library} problems={problems} onReadSolution={next => next.serverProblemId && void openTeacherSolution(next.serverProblemId, next.title)} onBack={() => navigateMobileRoute("library")} onOpenProblem={(next,numbers) => void openLibraryPractice(next,numbers)}/> : mobileLayout && mobileRoute === "game-browse" && !studyMode && !manualMode ? <MobileGameBrowsePanel key={`games:${catalogAccountScope}:${platformGameLibrary?.id}`} scope={`games:${catalogAccountScope}:${platformGameLibrary?.id}`} library={platformGameLibrary} games={platformGames} onBack={() => navigateMobileRoute("library")} onOpenGame={(next) => void openPlatformGame(next)}/> : mobileLayout && mobileTab === "account" && !studyMode && !manualMode ? <MobileAccountPanel canImportLocal={canImportLocal} auth={teachingAuth} syncing={manualCloudSyncing} onLogin={() => setTeachingAccountOpen(true)} onTeaching={() => { if (!teachingAuth) setTeachingAccountOpen(true); else navigateTeacher(teachingAuth.user.orgId ? "/teacher" : "/teacher/join-organization"); }} onManual={() => navigateMobileRoute("tool-manual")} onStudy={() => navigateMobileRoute("tool-study")} onSetup={() => navigateMobileRoute("tool-setup")} onImport={openImportPanel} onSync={() => void syncPersonalManualLibrary()} onSettings={() => navigateMobileRoute("tool-settings")} onAbout={() => setShowAbout(true)}/> : mobileLayout && mobileTab === "practice" && !studyMode && !manualMode ? <MobilePracticePanel auth={teachingAuth} loading={practiceHomeLoading} error={practiceHomeError} busy={practiceCreating} message={""} onRetry={() => void refreshPracticeHome()} onRetryPractice={() => practiceRetry.current?.()} onLogin={() => { if (teachingAuth) { teachingClient.logout(); setTeachingAuth(undefined); } setTeachingAccountOpen(true); }} onSearch={() => navigateMobileRoute("practice-search")} onAssets={() => navigateMobileRoute("practice-assets")} libraries={libraries} home={practiceHome} onBrowseLibrary={() => { const first = platformGameLibraries[0]; if (first) void selectPlatformGameLibrary(first); else navigateMobileRoute("library"); }} onImport={openImportPanel} onStudy={() => navigateMobileRoute("tool-study")} onOpenAssignments={() => openMobileTab("assignments")} onSetup={() => navigateMobileRoute("practice-setup")} onMistakes={() => navigateMobileRoute("practice-mistakes")} onFavorites={() => navigateMobileRoute("practice-favorites")} onResume={() => { if (practiceHome?.resumeSession) void resumePracticeSession(practiceHome.resumeSession.id); }} onRandom={() => { const ids = practiceHome?.topics.flatMap((topic) => topic.sources.map((source) => source.libraryId)) ?? []; void createPracticeSession({ sourceKind: "random", scope: "random", libraryIds: ids, count: 10, mode: "solver" }); }} onDaily={() => { if (practiceHome?.dailyPlan) void createPracticeSession({}, practiceHome.dailyPlan.id); }} onTopic={(topic) => navigatePracticeTopic(topic.id)}/> : mobileLayout && mobileTab === "assignments" && !studentAssignmentsOpen && !studyMode && !manualMode ? <MobileAssignmentsAccessPanel onCheckin={() => navigateMobileRoute("checkin")} auth={teachingAuth} onLogin={() => setTeachingAccountOpen(true)} onSwitchAccount={() => { teachingClient.logout(); setTeachingAuth(undefined); setUnreadAssignmentCount(0); setStudentAssignmentsOpen(false); setTeachingAccountOpen(true); }} onTeacher={() => { if (teachingAuth) navigateTeacher(teachingAuth.user.orgId ? "/teacher" : "/teacher/join-organization"); }} onOpenStudent={() => setStudentAssignmentsOpen(true)} onBrowseLibrary={() => navigateMobileRoute("library")}/> : mobileLayout && studentAssignmentsOpen && !studyMode && !manualMode && teachingAuth?.user.role === "student" ? <StudentAssignmentsPanel onCheckin={() => navigateMobileRoute("checkin")} auth={teachingAuth} syncing={teachingSyncing} lastSyncAt={teachingLastSyncAt} message={teachingMessage} onSync={() => void syncTeachingAssignments()} onOpenAccount={() => setTeachingAccountOpen(true)} onOpenPractice={openStudentPractice} onOpenProblem={(next) => void openStudentProblem(next)} onUnreadChange={setUnreadAssignmentCount} /> : <div className="training-layout">
     <aside className={`catalogue ${catalogueOpen ? "drawer-open" : ""}`}><header className="catalogue-heading"><span><strong>题库目录</strong><small>{libraries.length} 本题库</small></span>{library && (library.source === "local" || !library.source) && <button className="catalogue-delete" title="删除当前题库" onClick={() => setDeleteTarget({ type: "library", id: library.id, title: library.title })}><Trash2/></button>}</header><div className="library-list"><MateLibraryGroups libraries={libraries} onOpen={(next) => void selectLibrary(next)}/>{[...libraries.filter(item => !item.mateCollection), ...(library?.mateCollection ? [library] : [])].map((item) => <section key={item.id}><button className={`library-row ${expanded === item.id ? "expanded" : ""}`} onClick={() => expanded === item.id ? setExpanded(undefined) : void selectLibrary(item)}><BookOpen/><span><b>{item.title}</b><small>{item.completedCount}/{item.problemCount} 已完成{accessTierLabel(item.accessTier) ? ` · ${accessTierLabel(item.accessTier)}` : ""}</small></span>{expanded === item.id ? <ChevronDown/> : <ChevronRight/>}</button>{expanded === item.id && <div className="problem-area"><div className="filters"><div className="problem-search"><Search/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索残局题名或分类" aria-label="搜索残局题名或分类" autoComplete="off"/>{query && <button type="button" aria-label="清除搜索" title="清除搜索" onClick={() => setQuery("")}><X/></button>}</div><select value={category} onChange={(event) => setCategory(event.target.value)} aria-label="按残局分类筛选">{categories.map((value) => <option key={value}>{value}</option>)}</select></div>{visible.length ? visible.map((item) => <button key={item.id} className={`problem-row ${problem?.id === item.id ? "active" : ""}`} onClick={() => { navigateMobileRoute("practice"); void selectProblem(item); }}><b>{item.sourceIndex + 1}</b><span>{item.title}<small>{item.category} · {item.completedAttempts ? `累计 ${fmt(item.totalElapsedMs)}` : "未练"}{accessTierLabel(item.accessTier) ? ` · ${accessTierLabel(item.accessTier)}` : ""}</small></span></button>) : <p className="problem-empty">没有找到匹配的残局</p>}</div>}</section>)}</div></aside>
-    <main className="training-stage">{problem ? <><header className={`problem-heading ${problem.source === "teaching" && teachingAuth?.user.role === "student" ? "teaching-problem-heading" : ""}`}><span className="problem-heading-side problem-heading-left">{problem.source === "teaching" && teachingAuth?.user.role === "student" && <button type="button" className="student-assignment-back" aria-label="返回我的作业" title="返回我的作业" onClick={returnToStudentAssignments}><ChevronLeft/><span>作业</span></button>}</span><span className="problem-heading-title"><small>第 {problem.sourceIndex + 1}/{problems.length} 题</small><strong>{problem.title}</strong>{problem.trainingGoal && <small>{goalLabel(problem.trainingGoal)} · {problem.trainingGoal.reviewMethod === "reviewed_solution" ? "按审核题解" : "强制杀验证"}</small>}</span><span className="problem-heading-side problem-heading-right">{(!problem.source || problem.source === "local") && <button className="problem-delete-button" title="移除当前残局" onClick={() => setDeleteTarget({ type: "problem", id: problem.id, title: problem.title })}><Trash2/></button>}</span></header>{problem.trainingGoal?.description && <details key={problem.id} className="training-goal-details"><summary>目标说明</summary><p>{problem.trainingGoal.description}</p></details>}<Board key="training" pieces={pieces} selected={selected} legalTargets={legalTargets} lastMove={lastMove} hintMove={hints >= 2 && !trialPosition ? line[0]?.iccs : undefined} analysisMoves={analysisArrowsVisible ? trainingAnalysisLines.map((item) => item.pv[0]) : []} activeAnalysis={trainingActiveAnalysis} flipped={boardFlipped} feedback={moveFeedback} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={(square) => void move(square)} onMove={(from, to) => void moveFromTo(from, to)}/><p className="board-tip">{mode === "cloud" ? "云库优先应手；未收录时由本地 Pikafish 接手。" : mode === "ai" ? "本地 Pikafish 离线应手，不访问云库。" : problem.source === "teaching" ? "线上作业：完成后在作业详情检查并手动提交。" : "合法走法可继续试走，皮卡鱼自动应手；退回后重新解题。"}</p></> : <div className="empty"><BookOpen/><strong>选择题库内容</strong><span>登录后可练习平台题库，或导入本地 CBL。</span></div>}</main>
+    <main className="training-stage">{problem ? <><header className={`problem-heading ${problem.source === "teaching" && teachingAuth?.user.role === "student" ? "teaching-problem-heading" : ""}`}><span className="problem-heading-side problem-heading-left">{problem.source === "teaching" && teachingAuth?.user.role === "student" && <button type="button" className="student-assignment-back" aria-label="返回我的作业" title="返回我的作业" onClick={returnToStudentAssignments}><ChevronLeft/><span>作业</span></button>}</span><span className="problem-heading-title"><small>第 {problem.sourceIndex + 1}/{problems.length} 题</small><strong>{problem.displayNumber!=null?`第 ${problem.displayNumber} 题 · `:""}{problem.title}</strong>{problem.trainingGoal && <small>{goalLabel(problem.trainingGoal)} · {problem.trainingGoal.reviewMethod === "reviewed_solution" ? "按审核题解" : "强制杀验证"}</small>}</span><span className="problem-heading-side problem-heading-right">{(!problem.source || problem.source === "local") && <button className="problem-delete-button" title="移除当前残局" onClick={() => setDeleteTarget({ type: "problem", id: problem.id, title: problem.title })}><Trash2/></button>}</span></header>{problem.trainingGoal?.description && <details key={problem.id} className="training-goal-details"><summary>目标说明</summary><p>{problem.trainingGoal.description}</p></details>}<Board key="training" pieces={pieces} selected={selected} legalTargets={legalTargets} lastMove={lastMove} hintMove={hints >= 2 && !trialPosition ? line[0]?.iccs : undefined} analysisMoves={analysisArrowsVisible ? trainingAnalysisLines.map((item) => item.pv[0]) : []} activeAnalysis={trainingActiveAnalysis} flipped={boardFlipped} feedback={moveFeedback} feedbackEvent={feedbackEvent} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={(square) => void move(square)} onMove={(from, to) => void moveFromTo(from, to)}/><p className="board-tip">{mode === "cloud" ? "云库优先应手；未收录时由本地 Pikafish 接手。" : mode === "ai" ? "本地 Pikafish 离线应手，不访问云库。" : problem.source === "teaching" ? "线上作业：完成后在作业详情检查并手动提交。" : "合法走法可继续试走，皮卡鱼自动应手；退回后重新解题。"}</p></> : <div className="empty"><BookOpen/><strong>选择题库内容</strong><span>登录后可练习平台题库，或导入本地 CBL。</span></div>}</main>
     <aside className={`controls ${controlsOpen ? "drawer-open" : ""} ${revealed ? "answer-revealed" : ""}`}>{problem ? <><section className="clock"><Clock3/><small>本题用时</small><strong>{fmt(elapsed)}</strong><span>累计用时 {fmt(problem.totalElapsedMs)}</span><button onClick={() => { setShowHistory((value) => !value); void trainingStore.attempts(problem.id).then(setAttempts); }}>记录</button></section><section className="modes">{(["cloud", ...(LOCAL_PIKAFISH_AVAILABLE ? ["ai" as const] : []), "solver", "replay", "free"] as Mode[]).filter(value=>answersAllowed||value!=="replay").map((value) => <label key={value}><input type="radio" checked={mode === value} disabled={attemptStarted || ended} onChange={() => changeMode(value)}/>{modeLabel[value]}{value === "cloud" && (LOCAL_PIKAFISH_AVAILABLE ? "（云库优先）" : "（云库应手）")}{value === "ai" && "（纯离线）"}{value === "replay" && "（按题解）"}</label>)}</section>{LOCAL_PIKAFISH_AVAILABLE && <AnalysisPanel lines={trainingAnalysisLines} pending={analysisPending && !studyMode} activeIndex={trainingActiveAnalysis} disabled={autoReplyPending || revealed || ended} enabled={true} multiPv={analysisMultiPv} moveTimeSec={analysisMoveTimeSec} scoreSide={sideToMove(problem.startingFen, displayedTrainingMoves)} arrowsVisible={analysisArrowsVisible} onToggle={() => void (analysisPending ? stopAnalysis() : startAnalysis())} onToggleArrows={toggleAnalysisArrows} onSelect={setTrainingActiveAnalysis} onMultiPvChange={(value) => void changeAnalysisMultiPv(value)} onMoveTimeChange={(value) => void changeAnalysisMoveTimeSec(value)}/>}{localGoalEditor}<section className={`actions ${revealed ? "revealed-actions" : ""}`}>{revealed ? <><button className="primary" onClick={toggleAnswerPreview}>{demoPlaying ? <Pause/> : <Play/>}{demoPlaying ? "暂停预演" : answerStep >= answer.length ? "重播答案" : "答案预演"}</button><button onClick={() => void restart()}><RotateCcw/>重来</button></> : <><button className="primary" disabled={ended} onClick={() => void giveHint()}><Lightbulb/>提示 {hints}/3</button><button disabled={ended || (!clockRunning && !elapsed)} onClick={pause}>{clockRunning ? <Pause/> : <Play/>}{clockRunning ? "暂停" : "继续"}</button><button onClick={() => void restart()}><RotateCcw/>重来</button>{mode === "free" || mode === "cloud" || mode === "ai" ? <button disabled={ended} onClick={() => void finish("free_finished")}>{mode === "free" ? "结束实战" : "结束对练"}</button> : answersAllowed && <button disabled={ended} onClick={() => void reveal()}><ListRestart/>看答案</button>}</>}</section>{wrongMove && <button type="button" onClick={() => void retryWrongMove()}><RotateCcw/>退回重试{mistakes > 0 ? ` · 已错 ${mistakes} 次` : ""}</button>}{trialPosition?.awaitingReply && !autoReplyPending && <button type="button" onClick={() => void retryTrialReply()}><RefreshCw/>重试 AI 应手</button>}{!ended && !autoReplyPending && <TrainingMoveVerdict rejection={moveRejection} mistakes={mistakes}/>}<section className={`notice ${revealed ? "answer-notice" : ""}`}><b>错误 {mistakes} 次{revealed ? " · 答案已显示，可预演" : ""}</b>{!revealed && <p>{renderNote(notice)}</p>}</section>{showHistory ? <section className="history"><b>答题记录</b>{attempts.length ? attempts.slice(0, 30).map((item) => <p key={item.id}><strong>{item.outcome === "completed" ? "解出" : item.outcome === "revealed" ? "看答案" : item.outcome === "free_finished" ? "实战结束" : "已放弃"}</strong><span>{modeLabel[item.mode]} · {fmt(item.elapsedMs)} · 错 {item.mistakes} · 提示 {item.hintsUsed}</span></p>) : <p>还没有答题记录</p>}</section> : revealed && <section className="answer"><header><b>答案预演</b><small>{answerStep}/{answer.length} 手</small></header><footer className="answer-preview-controls"><button disabled={answerStep <= 0} onClick={() => { setDemoPlaying(false); void previewAnswerStep(answerStep - 1); }}><ChevronLeft/>上一步</button><button disabled={answerStep >= answer.length} onClick={() => { setDemoPlaying(false); void previewAnswerStep(answerStep + 1); }}><ChevronRight/>下一步</button><button disabled={!answer.length} onClick={toggleAnswerPreview}>{demoPlaying ? <Pause/> : <Play/>}{demoPlaying ? "暂停" : answerStep >= answer.length ? "重播" : "继续"}</button><button onClick={() => { setDemoPlaying(false); void previewAnswerStep(0); }}><RotateCcw/>从头</button></footer><div className="answer-move-list">{Array.from({ length: Math.ceil(answer.length / 2) }, (_, index) => <p key={index} className={answerStep > index * 2 ? "active" : ""}><b>第 {index + 1} 回合</b><span>红方 {answer[index * 2]}{answer[index * 2 + 1] ? ` · 黑方 ${answer[index * 2 + 1]}` : ""}</span></p>)}</div></section>}<footer className="navigate"><button disabled={currentIndex <= 0} onClick={() => void selectProblem(visible[currentIndex - 1])}><ChevronLeft/></button><button disabled={currentIndex >= visible.length - 1} onClick={() => void selectProblem(visible[currentIndex + 1])}><ChevronRight/></button></footer></> : <p>从目录选择题目。</p>}</aside>
   </div>}{studyMode && <div className={`study-workspace${mobileLayout ? " mobile-study-pieces" : ""}`}>
     <main className={`study-stage${studyEvaluationVisible ? "" : " evaluation-hidden"}`}><header className={`study-toolbar ${studyMenuOpen ? "menu-open" : ""}`}><nav className="study-command-bar" aria-label="拆棋工具栏">
@@ -6280,7 +6364,7 @@ export function App() {
       <button className={boardFlipped ? "active" : ""} aria-label="翻转棋盘" title="翻转棋盘" onClick={() => runStudyMenuAction("flip")}><FlipVertical2/><span>翻转</span></button>
       <button className={`study-engine-toggle ${studyEngineEnabled ? "active engine-enabled" : ""}`} disabled={Boolean(studyTerminal)} aria-pressed={studyEngineEnabled} aria-label={studyEngineEnabled ? "关闭引擎分析" : "开启引擎分析"} title={studyEngineEnabled ? "关闭引擎分析" : "开启引擎分析"} onClick={() => void toggleStudyEngine()}><Search/><span>{studyEngineEnabled ? "引擎开" : "引擎关"}</span></button>
       <button className={studyPanelTab === "engine" ? "active" : ""} aria-label="打开引擎面板" title="打开引擎面板" onClick={() => setStudyPanelTab("engine")}><Cpu/><span>引擎</span></button>
-    </nav></header>{studyEvaluationVisible && <section className="study-engine-strip"><div><span>深度 {studySummaryLine?.depth ?? "--"}</span><span>节点 {studySummaryLine ? compactNumber(studySummaryLine.nodes) : "--"}</span><span>速度 {studySummaryLine ? `${compactNumber(studySummaryLine.nps)}/s` : "--"}</span></div><button className="study-evaluation-toggle" type="button" aria-label="隐藏顶部评估" onClick={toggleStudyEvaluation}>当前评估 {studyEvaluationLabel}</button></section>}<Board key="study" pieces={studyPieces} selected={studySelected} legalTargets={studyLegalTargets} lastMove={studyLastMove} analysisMoves={studyArrowMoves} activeAnalysis={studyArrowActiveIndex} flipped={boardFlipped} feedback={moveFeedback} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={(square) => void moveStudy(square)} onMove={(from, to) => void moveStudyFromTo(from, to)}/></main>
+    </nav></header>{studyEvaluationVisible && <section className="study-engine-strip"><div><span>深度 {studySummaryLine?.depth ?? "--"}</span><span>节点 {studySummaryLine ? compactNumber(studySummaryLine.nodes) : "--"}</span><span>速度 {studySummaryLine ? `${compactNumber(studySummaryLine.nps)}/s` : "--"}</span></div><button className="study-evaluation-toggle" type="button" aria-label="隐藏顶部评估" onClick={toggleStudyEvaluation}>当前评估 {studyEvaluationLabel}</button></section>}<Board key="study" pieces={studyPieces} selected={studySelected} legalTargets={studyLegalTargets} lastMove={studyLastMove} analysisMoves={studyArrowMoves} activeAnalysis={studyArrowActiveIndex} flipped={boardFlipped} feedback={moveFeedback} feedbackEvent={feedbackEvent} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={(square) => void moveStudy(square)} onMove={(from, to) => void moveStudyFromTo(from, to)}/></main>
     {studyMenuOpen && <section className="study-menu" aria-label="拆棋功能菜单">
         <header><span><strong>拆棋功能</strong><small>临时拆棋，不写题解树</small></span><button type="button" aria-label="关闭拆棋功能菜单" onClick={() => setStudyMenuOpen(false)}><X/></button></header>
         <StudySkinSettings boardSkin={boardSkin} pieceSkin={pieceSkin} boardSkinInfo={boardSkinInfo} riverText={riverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} onBoardSkinChange={changeBoardSkin} onPieceSkinChange={changePieceSkin} onUseSkinSet={useSkinSet} onRiverTextChange={changeRiverText} onRiverTextColorChange={changeRiverTextColor} onRiverTextSizeChange={changeRiverTextSize}/>
@@ -6310,7 +6394,7 @@ export function App() {
       <div><b>{manualSetupOpen ? `创建局面 · ${manualSetupSide === "red" ? "红先" : "黑先"}` : manualAnalysisExpanded ? "录谱分析" : manualReadOnly ? `云镜像 · 只读 ${manualCursor}/${manualMoves.length}` : `录谱 ${manualCursor}/${manualMoves.length}`}</b><small>{manualSetupOpen ? manualNotice : `${manualGame?.title ?? "标准开局"} · ${manualReadOnly ? "只读" : manualSaveStatus}${manualTerminal ? ` · ${manualTerminal}` : ""}`}</small></div>
       <nav className="manual-mode-switch" aria-label="快捷切换模式"><button type="button" onClick={() => void switchFromManualMode("training")}><BookOpen/><span>残棋</span></button><button type="button" onClick={() => void switchFromManualMode("study")}><Cpu/><span>拆棋</span></button><button type="button" className="active" aria-current="page"><FilePenLine/><span>录谱</span></button></nav>
       {manualSetupOpen ? <button type="button" aria-label="复制当前 FEN" title="复制当前 FEN" onClick={() => void copyManualSetupFen()}><ClipboardCopy/></button> : <button type="button" aria-label="打开棋库" onClick={() => openManualPanel("library")}><Database/></button>}
-    </header>{manualSetupOpen ? <section className="manual-setup-board-area">{renderManualSetupTray("black")}{manualSetupError && <p className="manual-setup-toast" role="alert" aria-live="assertive">{manualSetupError}</p>}<div className="manual-setup-board-slot"><Board pieces={manualSetupPieces} selected={manualSetupSelected} legalTargets={[]} lastMove={undefined} analysisMoves={[]} activeAnalysis={manualArrowActiveIndex} flipped={boardFlipped} feedback={undefined} setupMode={true} showSideCoordinates={true} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={editManualSetupSquare}/></div>{renderManualSetupTray("red")}</section> : <div className="manual-play-board-area"><Board key="manual" pieces={manualPieces} selected={manualSelected} legalTargets={manualLegalTargets} lastMove={manualLastMove} analysisMoves={manualArrowMoves} activeAnalysis={manualArrowActiveIndex} flipped={boardFlipped} feedback={moveFeedback} setupMode={false} showSideCoordinates={true} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={(square) => void moveManual(square)} onMove={(from, to) => void moveManualFromTo(from, to)}/></div>}
+    </header>{manualSetupOpen ? <section className="manual-setup-board-area">{renderManualSetupTray("black")}{manualSetupError && <p className="manual-setup-toast" role="alert" aria-live="assertive">{manualSetupError}</p>}<div className="manual-setup-board-slot"><Board pieces={manualSetupPieces} selected={manualSetupSelected} legalTargets={[]} lastMove={undefined} analysisMoves={[]} activeAnalysis={manualArrowActiveIndex} flipped={boardFlipped} feedback={undefined} setupMode={true} showSideCoordinates={true} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={editManualSetupSquare}/></div>{renderManualSetupTray("red")}</section> : <div className="manual-play-board-area"><Board key="manual" pieces={manualPieces} selected={manualSelected} legalTargets={manualLegalTargets} lastMove={manualLastMove} analysisMoves={manualArrowMoves} activeAnalysis={manualArrowActiveIndex} flipped={boardFlipped} feedback={moveFeedback} feedbackEvent={feedbackEvent} setupMode={false} showSideCoordinates={true} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={(square) => void moveManual(square)} onMove={(from, to) => void moveManualFromTo(from, to)}/></div>}
       {manualAnalysisExpanded && <section className="manual-analysis-dock" aria-label="录谱分析面板">
         <header><strong>自我分析</strong><div><button type="button" onClick={() => void analyzeManualMainline()}>整局分析</button><button type="button" onClick={() => { setManualAnalysisExpanded(false); setManualPanelTab("moves"); }}>收起</button></div></header>
         {renderManualAnalysisBody()}

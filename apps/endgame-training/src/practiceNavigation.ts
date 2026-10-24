@@ -1,5 +1,15 @@
 // The practice API accepts at most 20 questions. Keep the clicked question in its
 // original group rather than silently replacing a list with a one-question test.
+export function currentListNumbers(items: { id: string }[]): Record<string, number> {
+  return Object.fromEntries([...new Set(items.map(item => item.id))].map((id, i) => [id, i + 1]));
+}
+const NUMBER_CACHE="qixi-list-numbers-v107";
+function numberVisits():Record<string,Record<string,number>>{try{return JSON.parse(localStorage.getItem(NUMBER_CACHE)||"{}");}catch{return {};}}
+export function saveListNumbers(scope:string,sessionId:string,numbers:Record<string,number>){
+  try{const visits=numberVisits(),key=JSON.stringify([scope,sessionId]);delete visits[key];visits[key]=numbers;localStorage.setItem(NUMBER_CACHE,JSON.stringify(Object.fromEntries(Object.entries(visits).slice(-80))));}catch{/* Numbering is optional presentation context. */}
+}
+export function loadListNumbers(scope:string,sessionId:string):Record<string,number>{return numberVisits()[JSON.stringify([scope,sessionId])]??{};}
+
 export function practiceGroupIds(items: { id: string }[], selectedId: string): string[] {
   const ids = [...new Set(items.map(item => item.id))];
   const index = ids.indexOf(selectedId);

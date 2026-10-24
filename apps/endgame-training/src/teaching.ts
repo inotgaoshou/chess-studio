@@ -4,6 +4,7 @@ import { teachingRead } from "./teachingDeadline";
 import { mergePracticeAttempts, mergePracticeDrafts, type PracticeDraft } from "./practiceProgress";
 import { withRequestDeadline } from "./requestDeadline";
 import type { VerificationResult } from "../../../packages/training-verification/types";
+import { currentVerification } from "./verificationPolicy";
 import { makeCheckinApi } from "./checkinApi";
 import { ContentEpochTracker, belongsToContentScope } from "./contentEpoch";
 import type { CatalogProblem, TeachingCatalogNode, TrainingGoal } from "./TeachingCatalog";
@@ -1176,7 +1177,7 @@ export const teachingClient = {
     const problemId = problem.serverProblemId;
     return teachingRead(signal => request<VerificationResult>(`/api/v1/${auth.user.role === "student" ? "student" : "admin"}/problems/${encodeURIComponent(problemId)}/verify-move`, {
       method: "POST", body: JSON.stringify({ path, candidate, assignmentId: problem.assignmentId, sessionId }), signal,
-    }, auth.token), undefined, () => Boolean(authContext && isCurrentAuthContext(authContext)) && (!isCurrent || isCurrent()), 25_000);
+    }, auth.token), undefined, () => Boolean(authContext && isCurrentAuthContext(authContext)) && (!isCurrent || isCurrent()), 25_000).then(currentVerification);
   },
   async platformGameLibraries() {
     const auth = this.auth();

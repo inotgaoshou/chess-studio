@@ -1,4 +1,117 @@
 use super::*;
+
+fn recorded_endgame() -> Request {
+    Request {
+        starting_fen: "2N6/3k5/9/9/9/9/9/9/9/4K4 w - - 0 1".into(),
+        path: vec![],
+        candidate: "c9e8".into(),
+        solution: vec![Node {
+            iccs: "c9e8".into(),
+            ..Default::default()
+        }],
+        goal: Some(Goal {
+            kind: "endgame_win".into(),
+            description: "红先胜".into(),
+            solver_side: "w".into(),
+            review_method: "reviewed_solution".into(),
+            verification: None,
+        }),
+        target_mate_moves: None,
+    }
+}
+
+#[test]
+fn recorded_reply_that_checkmates_solver_is_suspect_not_correct() {
+    let mut r = recorded_endgame();
+    r.starting_fen = "4k4/9/9/9/9/9/9/r8/3rp4/4K4 w - - 0 1".into();
+    r.candidate = "e0f0".into();
+    r.solution = vec![Node {
+        iccs: r.candidate.clone(),
+        children: vec![Node {
+            iccs: "a2f2".into(),
+            ..Default::default()
+        }],
+        ..Default::default()
+    }];
+    let out = verify(&r, &Evidence::default());
+    assert_eq!(out.outcome, "pending_review");
+    assert_eq!(out.review_kind.as_deref(), Some("suspect_answer"));
+    assert!(!out.completed);
+}
+
+#[test]
+fn recorded_endgame_leaf_with_two_legal_defences_is_not_completion() {
+    let r = recorded_endgame();
+    let b = play(&board_at(&r).unwrap(), &r.candidate).unwrap();
+    let defences: Vec<_> = b.legal_moves().iter().map(|m| m.to_iccs()).collect();
+    assert_eq!(defences, ["d8d9", "d8d7"]);
+    assert!(!verify(&r, &Evidence::default()).completed);
+    assert!(!actual_goal_reached(&r, &[r.candidate.clone()]));
+}
+
+#[test]
+fn recorded_endgame_leaf_requests_and_uses_engine_continuation() {
+    let r = recorded_endgame();
+    let plans = searches(&r).unwrap();
+    assert_eq!(plans.len(), 1);
+    assert_eq!(plans[0].key, "reply");
+    let mut e = Evidence {
+        engine_fingerprint: "pikafish-network".into(),
+        ..Default::default()
+    };
+    e.lines.insert(
+        "reply".into(),
+        Line {
+            depth: DEPTH,
+            score_cp: Some(-500),
+            pv: vec!["d8d7".into()],
+            ..Default::default()
+        },
+    );
+    let out = verify(&r, &e);
+    assert_eq!(out.outcome, "correct");
+    assert_eq!(out.path, ["c9e8", "d8d7"]);
+    assert!(!out.completed);
+    let mut next = r.clone();
+    next.path = out.path;
+    next.candidate = "e8c7".into();
+    assert_eq!(verify(&next, &e).outcome, "pending_review");
+}
+
+#[test]
+fn endgame_horizon_and_winning_evaluation_never_count_as_actual_win() {
+    let mut r = request();
+    r.goal.as_mut().unwrap().kind = "endgame_win".into();
+    let out = verify(&r, &evidence(0));
+    assert_eq!(out.outcome, "correct");
+    assert!(!out.completed);
+    assert!(!actual_goal_reached(&r, &out.path));
+}
+
+#[test]
+fn actual_checkmate_and_stalemate_finish_endgames_but_post_terminal_moves_do_not() {
+    let mut r = recorded_endgame();
+    r.starting_fen = "4k4/3R5/R8/4P4/9/9/9/9/9/4K4 w - - 0 1".into();
+    r.candidate = "a7f7".into();
+    let after = play(&board_at(&r).unwrap(), &r.candidate).unwrap();
+    assert_eq!(after.status(), GameStatus::Stalemate);
+    let out = verify(&r, &Evidence::default());
+    assert!(out.completed);
+    assert!(actual_goal_reached(&r, &out.path));
+    assert!(!actual_goal_reached(
+        &r,
+        &[r.candidate.clone(), "e9e8".into()]
+    ));
+    let board = board_at(&r).unwrap();
+    let checkmate = board
+        .legal_moves()
+        .into_iter()
+        .find(|m| play(&board, &m.to_iccs()).unwrap().status() == GameStatus::Checkmate)
+        .unwrap();
+    r.candidate = checkmate.to_iccs();
+    assert!(verify(&r, &Evidence::default()).completed);
+    assert!(!won(&after, Color::Black));
+}
 fn request() -> Request {
     Request {
         starting_fen: xiangqi_core::STARTING_FEN.into(),
@@ -262,6 +375,17 @@ async fn real_pikafish_regression() {
     );
     let nnue = path.parent().unwrap().join("pikafish.nnue");
     let fingerprint = engine::fingerprint(&path, Some(&nnue)).await.unwrap();
+    let (continued, e) = engine::run(
+        &recorded_endgame(),
+        path.clone(),
+        Some(nnue.clone()),
+        fingerprint.clone(),
+    )
+    .await;
+    assert_eq!(continued.outcome, "correct", "{}", continued.message);
+    assert!(!continued.completed);
+    assert_eq!(continued.auto_moves.len(), 1);
+    assert!(e.lines.contains_key("reply"));
     let mut r = request();
     r.goal = None;
     r.target_mate_moves = Some(2);

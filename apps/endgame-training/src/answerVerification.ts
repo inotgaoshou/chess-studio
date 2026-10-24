@@ -1,8 +1,9 @@
 import type { VerificationRequest, VerificationEvidence, VerificationResult, VerificationSearch } from "../../../packages/training-verification/types";
 import type { TrainingProblem } from "./types";
+import { currentVerification, VERIFIER_VERSION } from "./verificationPolicy";
 import { cancelPikafishSearch, hasLocalPikafish, localVerificationIdentity, queryVerificationSearch, trainingCore } from "./wasm";
 
-const STORE = "qixi-answer-verification-v1";
+const STORE = "qixi-answer-verification-v2";
 type Saved = { key: string; request: VerificationRequest; evidence: VerificationEvidence; result: VerificationResult };
 function records(): Saved[] { try { return JSON.parse(localStorage.getItem(STORE) || "[]"); } catch { return []; } }
 export function verificationRequest(problem: TrainingProblem, path: string[], candidate: string): VerificationRequest {
@@ -11,7 +12,7 @@ export function verificationRequest(problem: TrainingProblem, path: string[], ca
     targetMateMoves: problem.targetMateMoves ?? (!problem.trainingGoal && label ? Number(label[1]) : undefined) };
 }
 function pending(path: string[], message: string): VerificationResult {
-  return { outcome: "pending_review", message, path, autoMoves: [], completed: false, verifierVersion: "training-multisolution-v1", localOnly: true };
+  return { outcome: "pending_review", message, path, autoMoves: [], completed: false, verifierVersion: VERIFIER_VERSION, localOnly: true };
 }
 export async function verifyLocally(problem: TrainingProblem, path: string[], candidate: string, context: string, isCurrent: () => boolean): Promise<VerificationResult> {
   let expired = false;
@@ -26,10 +27,10 @@ export async function verifyLocally(problem: TrainingProblem, path: string[], ca
       const specs: VerificationSearch[] = JSON.parse(core.trainingVerificationSearches(JSON.stringify(request)));
       const identity = specs.length && hasLocalPikafish() ? await localVerificationIdentity() : "";
       const evidence: VerificationEvidence = { engineFingerprint: identity, lines: {} };
-      const source = JSON.stringify({ context, request, identity, version: "training-multisolution-v1", depth: 26, threads: 2, hash: 128, specs });
+      const source = JSON.stringify({ context, request, identity, version: VERIFIER_VERSION, depth: 26, threads: 2, hash: 128, specs });
       const key = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(source)))).map(v => v.toString(16).padStart(2, "0")).join("");
       const cached = records().find(r => r.key === key);
-      if (cached) return cached.result;
+      if (cached) return currentVerification(cached.result);
       if (identity) for (const spec of specs) {
         if (!active()) return pending(path, "验证已取消");
         const result = await queryVerificationSearch(spec);
@@ -39,6 +40,7 @@ export async function verifyLocally(problem: TrainingProblem, path: string[], ca
       }
       if (Date.now() - startedAt > 13000) return pending(path, "待复核：皮卡鱼验证超时，错误次数未增加");
       const result: VerificationResult = JSON.parse(core.verifyTrainingMove(JSON.stringify(request), JSON.stringify(evidence)));
+      currentVerification(result);
       if (Date.now() - startedAt >= 15000) return pending(path, "待复核：皮卡鱼验证超时，错误次数未增加");
       result.localOnly = true; result.evidenceId = key;
       if (active() && (result.outcome !== "pending_review" || result.reviewKind)) {

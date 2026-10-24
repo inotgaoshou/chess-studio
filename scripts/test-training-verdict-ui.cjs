@@ -7,14 +7,14 @@ async function fixture(browser, outcome = 'wrong', width = 390) {
   const page = await browser.newPage({ viewport: { width, height: width === 1280 ? 800 : 1000 }, isMobile: true, hasTouch: true });
   page.setDefaultTimeout(6000);
   const errors = []; page.on('pageerror', error => errors.push(error.message));
-  const state = { outcome, verifications: 0, analyses: 0, writes: [] };
+  const state = { outcome, verifications: 0, analyses: 0, writes: [], delay: 0 };
   const user = { id: 'verdict-student', orgId: 'fixture', displayName: '判题验收', role: 'student' };
   const problem = { id: 'p1', libraryId: 'lib', title: '图2', sourceIndex: 0, category: '杀法', startingFen: fen, sideToMove: 'red', solution: [], note: '' };
   const topic = { id: 'topic', name: '基础杀法', itemCount: 1, contentKind: 'problem', sources: [{ libraryId: 'lib' }] };
   const session = { id: 's1', sourceKind: 'daily', mode: 'solver', status: 'active', items: [{ id: 'i1', ordinal: 0, status: 'pending', problem }] };
   await page.addInitScript(() => {
     localStorage.setItem('xiangqi-training-mobile-onboarding-v1', 'done');
-    localStorage.setItem('xiangqi-teaching-session-server', 'http://127.0.0.1:8090');
+    localStorage.setItem('xiangqi-teaching-session-server', 'https://api.qixiapp.cn'); window.feedbackCalls=[]; HTMLMediaElement.prototype.play=function(){window.feedbackCalls.push(this.src);return Promise.resolve();};
   });
   await page.route('**/api/v1/**', async route => {
     const request = route.request(), path = new URL(request.url()).pathname;
@@ -26,7 +26,8 @@ async function fixture(browser, outcome = 'wrong', width = 390) {
     else if (path.endsWith('/daily/daily/session')) body = session;
     else if (path.endsWith('/verify-move')) {
       state.verifications++;
-      body = { outcome: state.outcome, message: state.outcome === 'wrong' ? '这步未达到题目目标，请再试试。' : state.outcome === 'correct' ? '正确，继续完成题目。' : '待复核：题目缺少可计算的目标条件，错误次数未增加', path: state.outcome === 'correct' ? ['g8f6', 'e8f6'] : [], autoMoves: state.outcome === 'correct' ? ['e8f6'] : [], completed: false, reviewKind: state.outcome === 'pending_review' ? 'missing_conditions' : undefined, verifierVersion: 'training-multisolution-v1' };
+      if(state.delay)await new Promise(resolve=>setTimeout(resolve,state.delay));
+      body = { outcome: state.outcome, message: state.outcome === 'wrong' ? '这步未达到题目目标，请再试试。' : state.outcome === 'correct' ? '正确，继续完成题目。' : '待复核：题目缺少可计算的目标条件，错误次数未增加', path: state.outcome === 'correct' ? ['g8f6', 'e8f6'] : [], autoMoves: state.outcome === 'correct' ? ['e8f6'] : [], completed: false, reviewKind: state.outcome === 'pending_review' ? 'missing_conditions' : undefined, verifierVersion: 'training-multisolution-v2' };
     } else if (path.endsWith('/analysis')) {
       state.analyses++;
       body = { engine: 'fixture', elapsedMs: 1, lines: [{ multipv: 1, pv: [request.postDataJSON().fen.startsWith('2Pa5') ? 'f6d5' : 'e8f6'] }] };
@@ -63,6 +64,7 @@ async function fixture(browser, outcome = 'wrong', width = 390) {
           assert((await verdict.innerText()).includes('已错 1 次'));
         } else assert.equal(await verdict.count(), 0, 'pending has no blocking banner');
         assert.equal(f.state.analyses, 1);
+        assert.equal(await f.page.evaluate(()=>window.feedbackCalls.length),2,'one cue per actual player/AI move');
         assert(f.state.writes.every(body => !body.draft?.moves?.length && body.outcome !== 'completed'));
         assert.equal(await f.page.locator('.mobile-solver-result').count(), 0);
         await f.square('c8 红兵').click(); await f.square('c9').click();
@@ -81,6 +83,12 @@ async function fixture(browser, outcome = 'wrong', width = 390) {
         assert(f.state.writes.every(body => body.outcome !== 'completed'));
         await f.finish(); console.log(`PASS ${width}px ${outcome}: legal trial/AI, no accepted progress, rollback, accepted continuation`);
       }
+    }
+    {
+      const f=await fixture(browser,'pending_review');f.state.delay=2000;await f.move();
+      await f.page.waitForFunction(()=>Object.values(JSON.parse(localStorage.getItem('qixi-trial-progress-v2')||'{}')).some(d=>d.path.join(',')==='g8f6'&&d.accepted.length===0));
+      assert.equal(await f.page.locator('.mobile-solver-result').count(),0);
+      await f.finish();console.log('PASS legal pending move persists separately while AI/verification waits');
     }
     {
       const f = await fixture(browser); await f.square('g8 红马').click(); await f.square('f7 黑士').click();

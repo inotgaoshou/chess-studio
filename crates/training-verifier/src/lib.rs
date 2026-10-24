@@ -6,7 +6,7 @@ use xiangqi_core::{Board, Color, GameStatus, Move, PieceKind, Square};
 
 #[cfg(feature = "engine")]
 pub mod engine;
-pub const VERSION: &str = "training-multisolution-v1";
+pub const VERSION: &str = "training-multisolution-v2";
 pub const DEPTH: u32 = 26;
 /// Bump the policy version if these verification settings change.
 pub const SEARCH_CONFIG: &str = "depth=26;threads=2;hash=128;multipv=1;candidateMs=6000;bestMs=6000;mateMs=1500;proofMs=2000;proofNodes=100000";
@@ -193,13 +193,19 @@ fn known(r: &Request) -> Option<&Node> {
     }
     children.iter().find(|n| n.iccs == r.candidate)
 }
+pub fn requires_terminal_win(r: &Request) -> bool {
+    r.target_mate_moves.is_some()
+        || r.goal
+            .as_ref()
+            .is_some_and(|g| matches!(g.kind.as_str(), "mate" | "endgame_win"))
+}
 pub fn searches(r: &Request) -> Result<Vec<Search>, String> {
     let board = board_at(r)?;
     let initial = Board::from_fen(&r.starting_fen).map_err(|_| "初始局面无效")?;
     if terminal(&board) || board.side_to_move() != initial.side_to_move() {
         return Err("当前不能继续解题方走法".into());
     }
-    play(&board, &r.candidate)?;
+    let next = play(&board, &r.candidate)?;
     let mate = r.target_mate_moves.is_some();
     if !mate
         && r.goal
@@ -207,6 +213,21 @@ pub fn searches(r: &Request) -> Result<Vec<Search>, String> {
             .and_then(|g| g.verification.as_ref())
             .is_none()
     {
+        // A recorded answer is still usable, but its leaf is not a game result.
+        // Search only for the missing defence; absent objective conditions must
+        // not turn unlisted attacking moves into verified answers.
+        if requires_terminal_win(r)
+            && !terminal(&next)
+            && known(r).is_some_and(|n| n.children.is_empty())
+        {
+            return Ok(vec![Search {
+                key: "reply".into(),
+                fen: next.to_fen(),
+                search_moves: vec![],
+                depth: DEPTH,
+                move_time_ms: 6000,
+            }]);
+        }
         return Ok(vec![]);
     }
     let mut plans = vec![Search {
@@ -254,11 +275,14 @@ pub fn verify(r: &Request, evidence: &Evidence) -> ResultDto {
     if let Some(target) = r.target_mate_moves {
         return verify_mate(r, evidence, &board, &next, solver, target);
     }
+    if requires_terminal_win(r) && won(&next, solver) {
+        return accepted(r, &next, None, None);
+    }
     let Some(goal) = &r.goal else {
-        return legacy(r, &next);
+        return legacy(r, &next, evidence);
     };
     let Some(criteria) = &goal.verification else {
-        return legacy(r, &next);
+        return legacy(r, &next, evidence);
     };
     if evidence.engine_fingerprint.is_empty() {
         return pending(r, "待复核：皮卡鱼证据不可用");
@@ -347,6 +371,9 @@ pub fn verify(r: &Request, evidence: &Evidence) -> ResultDto {
             |b, m| play(&b, m),
         )
         .expect("checked reply");
+    if terminal(&final_board) && !won(&final_board, solver) {
+        return rejected(r, "该走法导致解题方被绝杀或困毙", known(r).is_some());
+    }
     out.completed = won(&final_board, solver)
         || match goal.kind.as_str() {
             "gain_material" => {
@@ -357,7 +384,8 @@ pub fn verify(r: &Request, evidence: &Evidence) -> ResultDto {
                     )
                     >= criteria.min_material_gain.unwrap_or(i32::MAX)
             }
-            _ => out.path.len() >= criteria.horizon_plies,
+            "draw" => !terminal(&final_board) && out.path.len() >= criteria.horizon_plies,
+            _ => false,
         };
     if out.completed {
         out.outcome = "completed".into();
@@ -380,13 +408,47 @@ fn rejected(r: &Request, message: &str, annotated: bool) -> ResultDto {
         result(r, "wrong", message)
     }
 }
-fn legacy(r: &Request, next: &Board) -> ResultDto {
+fn legacy(r: &Request, next: &Board, evidence: &Evidence) -> ResultDto {
     let Some(node) = known(r) else {
         let mut out = pending(r, "待复核：题目缺少可计算的目标条件，错误次数未增加");
         out.review_kind = Some("missing_conditions".into());
         return out;
     };
     let reply = node.children.first();
+    if requires_terminal_win(r) {
+        let engine_reply = evidence
+            .lines
+            .get("reply")
+            .filter(|line| !evidence.engine_fingerprint.is_empty() && exact(line))
+            .and_then(|line| line.pv.first())
+            .cloned();
+        let mut out = accepted(
+            r,
+            next,
+            reply.map(|n| n.iccs.clone()).or(engine_reply),
+            reply
+                .and_then(|n| n.children.first())
+                .map(|n| n.iccs.clone()),
+        );
+        if out.outcome != "pending_review" {
+            let final_board = out
+                .path
+                .iter()
+                .try_fold(
+                    Board::from_fen(&r.starting_fen).expect("validated"),
+                    |board, mv| play(&board, mv),
+                )
+                .expect("checked reply");
+            if terminal(&final_board) && !won(&final_board, next.side_to_move().opposite()) {
+                return rejected(r, "该走法导致解题方被绝杀或困毙", true);
+            }
+        }
+        if out.outcome != "pending_review" {
+            out.review_kind = Some("missing_conditions".into());
+            out.message = "沿审核题解继续；须实际绝杀或困毙才算完成，其他路线待补充目标条件".into();
+        }
+        return out;
+    }
     let mut out = if reply.is_none() && !terminal(next) {
         let mut out = result(r, "completed", "已完成审核题解");
         out.path.push(r.candidate.clone());
@@ -465,15 +527,28 @@ pub fn position_key(b: &Board) -> String {
 
 /// Completion predicate over actual played moves, independent of a cached PV.
 pub fn actual_goal_reached(r: &Request, moves: &[String]) -> bool {
+    if moves.len() > 512 || r.goal.as_ref().is_some_and(|g| g.validate().is_err()) {
+        return false;
+    }
     let Ok(initial) = Board::from_fen(&r.starting_fen) else {
         return false;
     };
     let solver = initial.side_to_move();
-    let Ok(board) = moves.iter().try_fold(initial.clone(), |b, m| play(&b, m)) else {
+    let Ok(board) = moves.iter().try_fold(initial.clone(), |b, m| {
+        if terminal(&b) {
+            return Err("终局后不能继续走棋".into());
+        }
+        play(&b, m)
+    }) else {
         return false;
     };
     if terminal(&board) {
-        return won(&board, solver);
+        return won(&board, solver)
+            && r.target_mate_moves
+                .is_none_or(|n| n > 0 && moves.len() <= n as usize * 2 - 1);
+    }
+    if requires_terminal_win(r) {
+        return false;
     }
     let Some(goal) = &r.goal else {
         return false;
@@ -484,8 +559,10 @@ pub fn actual_goal_reached(r: &Request, moves: &[String]) -> bool {
     if goal.kind == "gain_material" {
         material(&board, solver) - material(&initial, solver)
             >= c.min_material_gain.unwrap_or(i32::MAX)
-    } else {
+    } else if goal.kind == "draw" {
         moves.len() >= c.horizon_plies
+    } else {
+        false
     }
 }
 
