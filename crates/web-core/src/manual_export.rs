@@ -237,3 +237,15 @@ mod tests {
         );
     }
 }
+
+/// Use the same validated parser as desktop; return the complete UUID tree so
+/// the mobile adapter can preserve every variation and comment.
+#[wasm_bindgen(js_name = importLocalManual)]
+pub fn import_local_manual(bytes: &[u8]) -> Result<String, JsValue> {
+    if bytes.len() > 2 * 1024 * 1024 {
+        return Err(JsValue::from_str("棋谱文件不能超过 2 MB"));
+    }
+    let doc = manual_format::import_document(bytes, None)
+        .map_err(|error| JsValue::from_str(&error.to_string()))?;
+    serde_json::to_string(&doc).map_err(|error| JsValue::from_str(&error.to_string()))
+}

@@ -1,0 +1,22 @@
+{
+  "id": "xuan-paper",
+  "source": "皮肤/默认",
+  "note": "Existing user-provided artwork; visually close reference, not verified pixel-identical to screenshot. Copied unchanged.",
+  "files": {
+    "board.png": "0bf975e95bf54550ecc55fac26c34c417440112b990a791ee60e29b6c656589b",
+    "rk.png": "b5a5f9e0040060cb931010c81f8b42b2f66265a6b5551d0ca3744560395b0204",
+    "ra.png": "5652693ed1ccb7321f537d018f6ab936f62ea9c4b55c6831f8ccb6858ecd4aa8",
+    "rb.png": "3841f4adf5fbfccd8ca4302347d42ae2d4cbde9f1885332dadba96ae230b5a2b",
+    "rn.png": "f23d7ae06d0ca7052b91a53beabd92a44a9f3c7fe6c9ba430771c577bd6c1b09",
+    "rr.png": "d9e25ca3c0b7570e80bfbdf426e5bf54c83ba8fd20e980ff4b74c7c5cce26c0a",
+    "rc.png": "3f9b4ad63231f1044b79d296048e555c1afcfd872c0f3d2248b821b7d6067b7c",
+    "rp.png": "a62e4c939c61e3f5a2a4c716ea3a5b277024814aed0f2daa6f6bc74d9cf4c8e6",
+    "bk.png": "f6715dd3ecca98dc2bfc8ce1eefbc8d72a1a03069cd4fd8ae11c48195e4d7574",
+    "ba.png": "e0f1295948734dc63a363169b23bdc8649d0d8e44cb4f08df24b06fc536c6ecb",
+    "bb.png": "788dc7cccc01f818a892893f254d33c060e2677c56edd44038c2c551670138ac",
+    "bn.png": "8dbe6a9a1cb8bf70cc63688d2e950bbb3bef2dd3ae30ecd1ed269858cd9cc6a6",
+    "br.png": "3856750b8fc48a607a98408220823c8efea05c525b5de5882ed8a5e6cdb17a1b",
+    "bc.png": "e1bb884a50ebe5ab5a5e426a33e2e6d50e4c5c5a4460fd494d1de59cb7460404",
+    "bp.png": "7583c87ea03ba2fe97b35ce3a7bb51cd2d7a357c4db69f1ec36a07a344067f66"
+  }
+}

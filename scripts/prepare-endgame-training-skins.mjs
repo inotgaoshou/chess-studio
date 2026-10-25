@@ -8,6 +8,7 @@ const repoRoot = path.resolve(new URL("..", import.meta.url).pathname);
 const sourceRoot = process.argv[2] ?? "/Users/chenyubin/Documents/chess/皮肤";
 const outputRoot = path.join(repoRoot, "apps/endgame-training/public/skins");
 const catalogPath = path.join(repoRoot, "apps/endgame-training/src/skinCatalog.ts");
+const authoredSkins = JSON.parse(fs.readFileSync(path.join(repoRoot, "apps/endgame-training/src/authoredSkinCatalog.json"), "utf8"));
 const statusPath = path.join(sourceRoot, "SKIN_STATUS.md");
 
 const requiredFiles = [
@@ -152,7 +153,7 @@ function removeDirectory(target) {
 }
 
 function pruneOutputSkins(items) {
-  const activeIds = new Set([defaultSkin.id, ...items.map((item) => item.id)]);
+  const activeIds = new Set([defaultSkin.id, ...items.map((item) => item.id), ...authoredSkins.map((item) => item.id)]);
   for (const entry of fs.readdirSync(outputRoot, { withFileTypes: true })) {
     if (!entry.isDirectory() || activeIds.has(entry.name)) continue;
     removeDirectory(path.join(outputRoot, entry.name));
@@ -212,7 +213,9 @@ function collectCandidates() {
 
 function writeCatalog(items) {
   const catalogItems = [defaultSkin, ...items.filter((item) => item.id !== defaultSkin.id)];
-  const body = `export type SkinCatalogItem = {
+  const body = `import authoredSkins from "./authoredSkinCatalog.json";
+
+export type SkinCatalogItem = {
   id: string;
   name: string;
   source: "folder" | "zip";
@@ -223,7 +226,7 @@ function writeCatalog(items) {
 export const DEFAULT_SKIN_ID = ${JSON.stringify(defaultSkin.id)};
 export const LEGACY_DEFAULT_SKIN_ID = "skin-bb439484";
 
-export const SKIN_CATALOG = ${JSON.stringify(catalogItems, null, 2)} as const satisfies readonly SkinCatalogItem[];
+export const SKIN_CATALOG = [...${JSON.stringify(catalogItems, null, 2)}, ...authoredSkins.map((skin) => ({ ...skin, source: "folder" as const, group: "2d" as const }))] as const satisfies readonly SkinCatalogItem[];
 
 export function normalizeSkinId(value: string | null | undefined) {
   return SKIN_CATALOG.some((skin) => skin.id === value) ? value as string : DEFAULT_SKIN_ID;
@@ -431,8 +434,9 @@ catalog.sort((left, right) => {
   if (right.id === "default") return 1;
   return left.name.localeCompare(right.name, "zh-Hans-CN");
 });
+for (const skin of authoredSkins) validateSkin(path.join(outputRoot, skin.id));
 pruneOutputSkins(catalog);
 writeCatalog(catalog);
 writeStatus(statusRecords);
-console.log(`generated ${catalog.length} skins`);
+console.log(`generated ${catalog.length + authoredSkins.length} skins`);
 console.log(`wrote ${statusPath}`);

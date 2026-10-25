@@ -18,12 +18,13 @@ function localDateTime(value: string) {
 }
 
 export type ManualSaveValues = Pick<LocalManualGame, "title" | "note" | "folderPath" | "metadata">;
-export function ManualSaveDialog({ game, folders, onSave, onCreateFolder, onClose }: {
-  game: LocalManualGame; folders: LocalManualFolder[];
+export function ManualSaveDialog({ game, folders, mode = "save", onSave, onCreateFolder, onClose }: {
+  game: LocalManualGame; folders: LocalManualFolder[]; mode?: "save" | "edit";
   onSave(values: ManualSaveValues): Promise<void>;
   onCreateFolder(path: string): Promise<void>;
   onClose(): void;
 }) {
+  const dialogTitle = mode === "edit" ? "编辑棋谱信息" : "保存棋谱";
   const [draft, setDraft] = useState(() => ({ title: game.title, note: game.note,
     folderPath: game.folderPath ?? "", metadata: manualMetadata(game) }));
   const initial = useRef(JSON.stringify(draft));
@@ -79,7 +80,7 @@ export function ManualSaveDialog({ game, folders, onSave, onCreateFolder, onClos
     });
   };
   return <div className="confirm-backdrop manual-save-backdrop" onClick={close}>
-    <section className="manual-save-dialog" role="dialog" aria-modal="true" aria-label="保存棋谱"
+    <section className="manual-save-dialog" role="dialog" aria-modal="true" aria-label={dialogTitle}
       onClick={(event) => event.stopPropagation()}
       onCompositionStart={() => { composing.current = true; }}
       onCompositionEnd={() => { composing.current = false; }}
@@ -88,7 +89,7 @@ export function ManualSaveDialog({ game, folders, onSave, onCreateFolder, onClos
         event.preventDefault();
         if (newFolder !== undefined) createFolder(); else save();
       }}>
-      <header><strong>保存棋谱</strong><button type="button" aria-label="关闭保存棋谱" disabled={busy} onClick={close}>×</button></header>
+      <header><strong>{dialogTitle}</strong><button type="button" aria-label={`关闭${dialogTitle}`} disabled={busy} onClick={close}>×</button></header>
       <div className="manual-save-body">
         {error && <p className="manual-save-error" role="alert">{error}</p>}
         <fieldset disabled={busy || discard}>
@@ -120,7 +121,7 @@ export function ManualSaveDialog({ game, folders, onSave, onCreateFolder, onClos
           <label>备注<textarea rows={3} value={draft.note} onChange={(event) => setDraft({ ...draft, note: event.target.value })}/></label>
         </fieldset>
       </div>
-      <footer><button type="button" disabled={busy || discard} onClick={close}>取消</button><button type="button" className="primary" disabled={busy || discard} onClick={save}>{busy ? "保存中…" : "保存棋谱"}</button></footer>
+      <footer><button type="button" disabled={busy || discard} onClick={close}>取消</button><button type="button" className="primary" disabled={busy || discard} onClick={save}>{busy ? "保存中…" : mode === "edit" ? "保存修改" : "保存棋谱"}</button></footer>
       {discard && <div className="manual-save-discard" role="alertdialog" aria-label="放弃资料修改">
         <strong>是否放弃本次资料修改？</strong><p>已录入的着法、分支和注释会保留。</p>
         <div><button type="button" onClick={() => setDiscard(false)}>继续编辑</button><button type="button" onClick={onClose}>放弃修改</button></div>

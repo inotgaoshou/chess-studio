@@ -20,6 +20,12 @@ describe("actual-move feedback",()=>{
     const target=ui.container.querySelector('.board-square[aria-label="e8 红马"]') as HTMLElement;
     const position=target.style.cssText;
     expect(ui.container.querySelector(".board-moving-piece")).toBeTruthy();
+    const origin=ui.container.querySelector('.board-square[aria-label="c9"]') as HTMLElement;
+    const moving=ui.container.querySelector(".board-moving-piece") as HTMLElement;
+    expect(moving.style.getPropertyValue("--move-from-x")).toBe(origin.style.getPropertyValue("--piece-left"));
+    expect(moving.style.getPropertyValue("--move-from-y")).toBe(origin.style.getPropertyValue("--piece-top"));
+    expect(moving.style.getPropertyValue("--move-to-x")).toBe(target.style.getPropertyValue("--piece-left"));
+    expect(moving.style.getPropertyValue("--move-to-y")).toBe(target.style.getPropertyValue("--piece-top"));
     act(()=>vi.advanceTimersByTime(180));
     expect(ui.container.querySelector(".board-moving-piece")).toBeNull();
     expect(target.style.cssText).toBe(position);

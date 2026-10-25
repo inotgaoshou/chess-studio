@@ -1,3 +1,5 @@
+import authoredSkins from "./authoredSkinCatalog.json";
+
 export type SkinCatalogItem = {
   id: string;
   name: string;
@@ -85,7 +87,8 @@ export const SKIN_CATALOG = [
     "source": "zip",
     "supportsCustomRiverText": false,
     "group": "2d"
-  }
+  },
+  ...authoredSkins.map((skin) => ({ ...skin, source: "folder" as const, group: "2d" as const }))
 ] as const satisfies readonly SkinCatalogItem[];
 
 export function normalizeSkinId(value: string | null | undefined) {

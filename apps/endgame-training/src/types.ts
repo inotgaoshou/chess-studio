@@ -128,6 +128,7 @@ export type LocalManualMetadata = {
 };
 
 export type LocalManualGame = {
+  favorite?: boolean;
   metadata?: LocalManualMetadata;
   id: string;
   title: string;

@@ -23,6 +23,7 @@ type Core = {
   trainingVerificationSearches(request: string): string;
   verifyTrainingMove(request: string, evidence: string): string;
   exportLocalManual(json: string, format: string): string;
+  importLocalManual(bytes: Uint8Array): string;
   parseCblLibrary(bytes: Uint8Array): string;
   parseCblGameLibrary(bytes: Uint8Array): string;
   chineseLine(fen: string, moves: string[]): string;

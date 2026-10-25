@@ -20,7 +20,7 @@ export function FenThumbnail({ fen }: { fen: string }) {
   return <svg className="catalog-board" viewBox="0 0 168 186" role="img" aria-label="初始棋盘缩略图"><rect width="168" height="186" rx="5" fill="#f4deb3"/>{Array.from({ length: 10 }, (_, i) => <path key={`r${i}`} d={`M12 ${12 + i * 18}h144`} stroke="#a88c60" strokeWidth=".7"/>)}{Array.from({ length: 9 }, (_, i) => <path key={`c${i}`} d={i === 0 || i === 8 ? `M${12 + i * 18} 12v162` : `M${12 + i * 18} 12v72m0 18v72`} stroke="#a88c60" strokeWidth=".7"/>)}<path d="M66 12l36 36m0-36L66 48m0 90l36 36m0-36l-36 36" stroke="#a88c60" strokeWidth=".7"/>{pieces.map(({ x, y, code }, i) => <g key={i}><circle cx={x} cy={y} r="7.8" fill="#fff5df" stroke="#a98d62"/><text x={x} y={y + 3.2} textAnchor="middle" fontSize="10" fontWeight="700" fill={code === code.toUpperCase() ? "#a32c22" : "#282620"}>{labels[code]}</text></g>)}</svg>;
 }
 export type CatalogBrowsePage = { currentNode?:TeachingCatalogNode|null; breadcrumbs:TeachingCatalogNode[]; children:TeachingCatalogNode[]; nextCursor?:string|null; learningMaterials:Array<{id:string;title:string;reviewStatus:string}>; materialNextCursor?:string|null };
-type Props = { auth?: TeachingAuth; teacher?: boolean; scene?: "browse" | "select"; compact?: boolean; onNavigate?():void; onLocationChange?(inside:boolean):void; sourceLibraryId?:string; selectedIds?: string[]; onAdd?(items: CatalogProblem[]): void; onRemove?(id:string):void; onPractice?(ids:string[],title?:string,preferredProblemId?:string,numbers?:Record<string,number>):void; onRehearse?(id:string):void; onReadGame?(id:string):void; onReadSolution?(ids:string[]):void };
+type Props = { initialMateStep?: string; auth?: TeachingAuth; teacher?: boolean; scene?: "browse" | "select"; compact?: boolean; onNavigate?():void; onLocationChange?(inside:boolean):void; sourceLibraryId?:string; selectedIds?: string[]; onAdd?(items: CatalogProblem[]): void; onRemove?(id:string):void; onPractice?(ids:string[],title?:string,preferredProblemId?:string,numbers?:Record<string,number>):void; onRehearse?(id:string):void; onReadGame?(id:string):void; onReadSolution?(ids:string[]):void };
 type ItemPage = {items:CatalogProblem[];cursor?:string|null};
 const itemDisplays = new Map<string, Map<string, ItemPage>>();
 function itemDisplayCache(scope:string) {
@@ -46,7 +46,7 @@ const browseParams=(id:string|null,q:string):Record<string,string>=>({availabili
 const BASIC_TOPIC_ID = "e0c0221d-1b02-5f2c-9122-a7b0821f2603";
 const HIDDEN_BASIC_BOOKS = new Set(["90134f10-dc44-4b4e-b203-992af2d4c73c", "38f0967a-3b69-4fa5-9834-534959af52ed"]);
 const MATE_TEACHING_ENTRIES = new Set(["basic_mates", "mate_series", "checking_mates", "quiet_mates", "practical_mates", "endgame_mates"]);
-function CatalogView({ auth, teacher = false, scene = "select", compact = false, onNavigate, onLocationChange, sourceLibraryId, selectedIds = [], onAdd, onRemove, onPractice, onRehearse, onReadGame, onReadSolution, scope }: Props & {scope:string}) {
+function CatalogView({ initialMateStep, auth, teacher = false, scene = "select", compact = false, onNavigate, onLocationChange, sourceLibraryId, selectedIds = [], onAdd, onRemove, onPractice, onRehearse, onReadGame, onReadSolution, scope }: Props & {scope:string}) {
   const selection = teacher && scene === "select";
   const answersAllowed = canViewExerciseSolutions(auth);
   const mobileBrowse = compact && scene === "browse";
@@ -106,9 +106,40 @@ function CatalogView({ auth, teacher = false, scene = "select", compact = false,
   useLayoutEffect(()=>{const top=restoreLocation(locations.current.get(nodeId||"root"))?.scroll??(restored?.id===nodeId?restored.scroll:0)??0;const container=scrollContainer(viewRef.current);if(container)container.scrollTop=top;else window.scrollTo(0,top);},[nodeId,scope]);
   const autoReading=useRef(false);
   useEffect(()=>{if(autoReading.current&&browse.page.currentNode?.id===nodeId&&browse.page.currentNode.itemCount!=null){autoReading.current=false;if(browse.page.currentNode.itemCount===0&&(browse.page.currentNode.materialCount??0)>0)setMode("reading");}},[nodeId,browse.page.currentNode]);
-  function navigate(id:string|null){onNavigate?.();setMateChoice(restoreLocation(locations.current.get(id||"root"))?.mateChoice??null);pendingScroll.current=true;saveNavigation();const old=restoreLocation(locations.current.get(id||"root"));autoReading.current=!mobileBrowse&&!old;setDirectoryQuery(old?.directoryQuery||"");setQuery(old?.query||"");setGoal(old?.goal||"");setDifficulty(old?.difficulty||"");setMateGroup(old?.mateGroup||"");setMateMoves(old?.mateMoves||"");setMaterial(old?.material||"");setMotif(old?.motif||"");const target=nodes.find(n=>n.id===id)??path.find(n=>n.id===id);
-    if(target){const ancestor=path.findIndex(n=>n.id===id);browse.seed(params(id,old?.directoryQuery||""),{...browse.page,currentNode:target,breadcrumbs:ancestor>=0?path.slice(0,ancestor+1):[...path,target],children:[],nextCursor:null,learningMaterials:[],materialNextCursor:null,mateStepCounts:null});}
-    setCatalogEntry(id?(old?.teachingEntry||path.find(n=>n.teachingEntry)?.teachingEntry||target?.teachingEntry||""):"");setMode(old?.mode||(!mobileBrowse&&target?.itemCount===0&&(target.materialCount??0)>0?"reading":"training"));setNodeId(id);}
+  function navigate(id: string | null, step?: string) {
+    onNavigate?.();
+    saveNavigation();
+    // A direct step entry is a fresh exercise choice; ordinary browsing keeps
+    // the prior page's mode, filters and scroll position.
+    const old = step ? undefined : restoreLocation(locations.current.get(id || "root"));
+    setMateChoice(step ?? old?.mateChoice ?? null);
+    pendingScroll.current = true;
+    autoReading.current = !mobileBrowse && !old;
+    setDirectoryQuery(old?.directoryQuery || ""); setQuery(old?.query || "");
+    setGoal(old?.goal || ""); setDifficulty(old?.difficulty || "");
+    setMateGroup(old?.mateGroup || ""); setMateMoves(old?.mateMoves || "");
+    setMaterial(old?.material || ""); setMotif(old?.motif || "");
+    const target = nodes.find(n => n.id === id) ?? path.find(n => n.id === id);
+    if (target) {
+      const ancestor = path.findIndex(n => n.id === id);
+      browse.seed(params(id, old?.directoryQuery || ""), { ...browse.page, currentNode: target,
+        breadcrumbs: ancestor >= 0 ? path.slice(0, ancestor + 1) : [...path, target],
+        children: [], nextCursor: null, learningMaterials: [], materialNextCursor: null, mateStepCounts: null });
+    }
+    setCatalogEntry(id ? old?.teachingEntry || path.find(n => n.teachingEntry)?.teachingEntry || target?.teachingEntry || "" : "");
+    setMode(step ? "training" : old?.mode || (!mobileBrowse && target?.itemCount === 0 && (target.materialCount ?? 0) > 0 ? "reading" : "training"));
+    if (step) stepScroll.current.set(`${id}:${step}`, 0);
+    setNodeId(id);
+  }
+  const quickStepApplied = useRef(false);
+  const basicTopic = nodes.find(node => node.teachingEntry === "basic_mates");
+  useEffect(() => {
+    if (!mobileBrowse || !initialMateStep || quickStepApplied.current) return;
+    const topic = basicTopic ?? path.find(node => node.teachingEntry === "basic_mates");
+    if (!topic) { if (nodeId && !browse.loading) navigate(null); return; }
+    quickStepApplied.current = true;
+    navigate(topic.id, initialMateStep);
+  }, [mobileBrowse, initialMateStep, basicTopic?.id, nodeId, browse.loading]);
   useEffect(()=>{if(basicBrowse && path.some(n=>HIDDEN_BASIC_BOOKS.has(n.id))) navigate(BASIC_TOPIC_ID);},[basicBrowse,nodeId,path]);
   useEffect(()=>{const old=navigation.get(scope);const same=old?.id===nodeId&&old.directoryQuery===directoryQuery&&old.query===query&&old.goal===goal&&old.difficulty===difficulty&&old.mateGroup===mateGroup&&old.mateMoves===mateMoves&&old.material===material&&old.motif===motif;navigation.set(scope,{id:nodeId,teachingEntry:catalogEntry,mateChoice,directoryQuery,query,goal,difficulty,mateGroup,mateMoves,material,motif,mode,nodeCount:same?old.nodeCount:0,itemCount:same?old.itemCount:0,materialCount:same?old.materialCount:0,scroll:old?.id===nodeId?old.scroll:0});},[scope,nodeId,catalogEntry,mateChoice,directoryQuery,query,goal,difficulty,mateGroup,mateMoves,material,motif,mode]);
 
@@ -169,6 +200,7 @@ function CatalogView({ auth, teacher = false, scene = "select", compact = false,
       {selectedStep!=="all"&&<button className="catalog-original-order" type="button" onClick={()=>chooseStep("all")}>按原书题序浏览</button>}
     </div>}
     {directMate && <details key={nodeId} className="catalog-textbooks"><summary>按教材查看</summary>{!studentTrainingOnly&&<div className="catalog-tabs"><button type="button" aria-pressed={mode==="training"} onClick={()=>setMode("training")}>做题训练</button><button type="button" aria-pressed={mode==="reading"} onClick={()=>setMode("reading")}>教材学习</button></div>}{children.map(n=><button type="button" className="catalog-textbook-row" key={n.id} onClick={()=>navigate(n.id)}><span>{n.name}</span><CatalogChevron/></button>)}{nodeCursor&&<button type="button" onClick={()=>void moreDirectories()}>更多教材</button>}</details>}
+    {mobileBrowse && !nodeId && basicTopic && <section className="catalog-quick-mates" aria-label="杀法快捷练习"><header><strong>直接练杀法</strong><small>选择步数，直接看题</small></header><div>{[["1","一步杀"],["2","两步杀"],["3","三步杀"],["4","四步杀"]].map(([step,label])=><button type="button" key={step} onClick={()=>navigate(basicTopic.id,step)}>{label}<CatalogChevron/></button>)}</div></section>}
     {!directMate && children.length > 0 && <div className={`catalog-nodes ${nodeId?"catalog-chapter-rows":""}`}>{children.map(n => <button type="button" disabled={busy} key={n.id} className={n.name.includes("陈松顺")?"catalog-featured":""} onClick={() => navigate(n.id)}><CatalogIcon entry={n.teachingEntry} name={n.name} chapter={!!nodeId}/><span className="catalog-node-copy"><strong>{n.name}</strong><span className="catalog-node-meta">{catalogContentLabels(n,browse.page.statisticsReady===false?"统计更新中…":"统计中…",selection?"题可布置":"可练题",mobileBrowse).map(label=><span key={label}>{label}</span>)}{!n.confirmed&&<span className="catalog-badge catalog-badge-pending">待确认</span>}{!n.active&&<span className="catalog-badge">停用</span>}{n.name.includes("陈松顺")&&<span className="catalog-badge catalog-badge-featured">陈松顺专题</span>}</span></span><CatalogChevron/></button>)}</div>}
     {!directMate&&nodeCursor&&<button type="button" className="catalog-more" disabled={busy} onClick={()=>void moreDirectories()}>更多系列 / 章节</button>}
     {nodeId && <>{!directMate&&(!studentTrainingOnly||problemLevel)&&<div className="catalog-content-toolbar">{!studentTrainingOnly&&<div className="catalog-tabs" aria-label="目录内容"><button type="button" aria-pressed={mode==="training"} onClick={()=>{onNavigate?.();autoReading.current=false;setMode("training");}}>做题训练</button>{!mobileBrowse && <button type="button" aria-pressed={mode==="rehearsal"} onClick={()=>{onNavigate?.();autoReading.current=false;setMode("rehearsal");}}>线路复现{current?.rehearsalCount!=null?`（${current.rehearsalCount}）`:""}</button>}<button type="button" aria-pressed={mode==="reading"} onClick={()=>{onNavigate?.();autoReading.current=false;setMode("reading");}}>棋谱学习</button></div>}{mobileBrowse && problemLevel && mode==="training" && <button className="catalog-filter-toggle" type="button" aria-expanded={filtersOpen} onClick={()=>setFiltersOpen(v=>!v)}><SlidersHorizontal aria-hidden="true"/>筛选{filterCount>0 && <span>{filterCount}</span>}</button>}</div>}

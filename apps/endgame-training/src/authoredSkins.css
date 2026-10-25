@@ -1,0 +1,14 @@
+/* A shallow board shadow complements the baked thin edge without changing layout. */
+.board-shell.authored-skin {
+  border-radius: 3px;
+  box-shadow: 0 2px 3px #392a171a, 0 5px 10px #233c2f0d;
+  --lift-piece-size: 100%;
+}
+.board-shell.authored-skin .board-square .piece-lift { width: 100%; height: 100%; }
+.board-shell.authored-skin .board-moving-piece,
+.board-shell.authored-skin .board-drag-ghost { width: 10.7142857%; }
+
+/* Original grid sits nearer the edge; keep the selected top rank inside its board. */
+.board-shell.reference-wood-skin .board-square.selected .piece-lift {
+  transform: translateY(-4%) scale(1.02);
+}

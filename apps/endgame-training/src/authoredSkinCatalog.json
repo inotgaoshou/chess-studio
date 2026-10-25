@@ -1,0 +1,34 @@
+[
+  {
+    "id": "xuan-paper",
+    "name": "竹韵雅木",
+    "description": "原始木纹素材 · 竹边书法棋子",
+    "source": "folder",
+    "supportsCustomRiverText": false,
+    "group": "2d"
+  },
+  {
+    "id": "sea-salt",
+    "name": "经典竞技",
+    "description": "素面金黄棋盘 · 红黑白字棋子",
+    "source": "folder",
+    "supportsCustomRiverText": true,
+    "group": "2d"
+  },
+  {
+    "id": "chestnut",
+    "name": "原木黑白",
+    "description": "细木纹棋盘 · 黑白立体棋子",
+    "source": "folder",
+    "supportsCustomRiverText": true,
+    "group": "2d"
+  },
+  {
+    "id": "dusk-jade",
+    "name": "暮山深青",
+    "description": "深青夜色 · 低眩光",
+    "source": "folder",
+    "supportsCustomRiverText": true,
+    "group": "2d"
+  }
+]
