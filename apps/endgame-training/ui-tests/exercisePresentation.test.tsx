@@ -84,14 +84,14 @@ describe("single and multiple question navigation",()=>{
     expect(screen.queryByRole("button",{name:"上一题"})).toBeNull();
     expect(screen.queryByLabelText("题目目录")).toBeNull();
     fireEvent.click(screen.getByRole("button",{name:"下一题"}));expect(onSelect).toHaveBeenCalledWith(1);
-    fireEvent.click(screen.getByRole("button",{name:"1/3"}));expect(screen.getByLabelText("第 2 题：二题，待完成")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button",{name:"1/3"}));expect(screen.queryByLabelText("题目目录")).toBeNull();
-    fireEvent.click(screen.getByRole("button",{name:"1/3"}));
+    fireEvent.click(screen.getByRole("button",{name:/^1\s*\/\s*1–3$/}));expect(screen.getByLabelText("第 2 题：二题，待完成")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button",{name:/^1\s*\/\s*1–3$/}));expect(screen.queryByLabelText("题目目录")).toBeNull();
+    fireEvent.click(screen.getByRole("button",{name:/^1\s*\/\s*1–3$/}));
     fireEvent.click(screen.getByLabelText("第 2 题：二题，待完成"));expect(onSelect).toHaveBeenLastCalledWith(1);
     expect(screen.queryByLabelText("题目目录")).toBeNull();
     ui.rerender(<MobilePracticeSolverPanel {...ui.props} problem={{...problem,id:"p2"}} navigator={{...nav,items:[...nav.items],index:1}}/>);
     expect(screen.getByRole("button",{name:"上一题"})).toBeTruthy();expect(screen.getByRole("button",{name:"下一题"})).toBeTruthy();
-    fireEvent.click(screen.getByRole("button",{name:"2/3"}));
+    fireEvent.click(screen.getByRole("button",{name:/^2\s*\/\s*1–3$/}));
     ui.rerender(<MobilePracticeSolverPanel {...ui.props} problem={{...problem,id:"p3"}} navigator={{...nav,items:[...nav.items],index:2}}/>);
     expect(screen.queryByLabelText("题目目录")).toBeNull();
     expect(screen.queryByRole("button",{name:"下一题"})).toBeNull();

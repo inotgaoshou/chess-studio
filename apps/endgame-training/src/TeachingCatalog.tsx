@@ -3,7 +3,7 @@ import { canViewExerciseSolutions } from "./exercisePresentation";
 import { MobileCatalogFilters, activeCatalogFilterCount } from "./MobileCatalogFilters";
 import {catalogContentLabels,catalogVisibleChildren,catalogReadingItems} from "./catalogContent";
 import { ArrowLeft, BookOpen, SlidersHorizontal, X } from "lucide-react";
-import { basicEntryOrder, hasActiveCatalogVip } from "./catalogAccess";
+import { basicEntryOrder, hasActiveCatalogVip, isPublicCatalogEntry } from "./catalogAccess";
 import {clearCatalogBrowseCache,useCatalogBrowse,useDebounced} from "./useCatalogBrowse";
 import { useCallback, useMemo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { CatalogChevron, CatalogIcon, CatalogSearch, CatalogState } from "./CatalogPresentation";
@@ -12,7 +12,7 @@ import "./teachingCatalog.css";
 export type TrainingGoal = import("../../../packages/training-verification/types").VerificationGoal;
 export type TeachingCatalogNode = { id: string; parentId?: string | null; name: string; kind: string; displayOrder: number; active: boolean; confirmed: boolean; itemCount?: number|null; completedCount?: number|null; materialCount?:number|null; rehearsalCount?:number|null; rehearsalCompletedCount?:number|null; description?:string; icon?:string; teachingEntry?:string };
 export type CatalogProblem = TeacherProblem & { contentFingerprint?: string; verifiedMateMoves?: number | null; trainingGoal?: TrainingGoal | null; difficulty?: number | null; teachingChapter?: string };
-export function goalLabel(goal?: TrainingGoal | null) { return goal ? ({ mate: "杀棋", gain_material: "得子", draw: "求和", endgame_win: "残局胜法" }[goal.kind] || "题目目标") : "原题解"; }
+export function goalLabel(goal?: TrainingGoal | null) { return goal ? ({ mate: "杀棋", gain_material: "净得子", draw: "求和", endgame_win: "残局胜法" }[goal.kind] || "题目目标") : "原题解"; }
 export function FenThumbnail({ fen }: { fen: string }) {
   const labels: Record<string, string> = { k: "将", a: "士", b: "象", n: "马", r: "车", c: "炮", p: "卒", K: "帅", A: "仕", B: "相", N: "马", R: "车", C: "炮", P: "兵" };
   const pieces: Array<{ x: number; y: number; code: string }> = [];
@@ -81,7 +81,7 @@ function CatalogView({ initialMateStep, auth, teacher = false, scene = "select",
   useEffect(()=>{if(browse.page.currentNode?.id===nodeId&&resolvedEntry)setCatalogEntry(resolvedEntry);},[nodeId,browse.page.currentNode?.id,resolvedEntry]);
   useEffect(()=>{const refresh=()=>browse.retry();window.addEventListener("teaching-rehearsal-updated",refresh);return()=>window.removeEventListener("teaching-rehearsal-updated",refresh);},[browse.retry]);
   const basicBrowse = mobileBrowse && browse.page.breadcrumbs.some(n=>n.id===BASIC_TOPIC_ID && n.teachingEntry==="basic_mates");
-  const allowedNodes=(restricted&&!nodeId?browse.page.children.filter(n=>basicEntryOrder(n.teachingEntry)>=0):browse.page.children)
+  const allowedNodes=(restricted&&!nodeId?browse.page.children.filter(n=>isPublicCatalogEntry(n.teachingEntry)):browse.page.children)
     .filter(n=>!basicBrowse || !HIDDEN_BASIC_BOOKS.has(n.id));
   const nodes=!nodeId?[...allowedNodes].sort((a,b)=>(basicEntryOrder(a.teachingEntry)<0?4:basicEntryOrder(a.teachingEntry))-(basicEntryOrder(b.teachingEntry)<0?4:basicEntryOrder(b.teachingEntry))||a.displayOrder-b.displayOrder):allowedNodes,path=browse.page.breadcrumbs,materials=browse.page.learningMaterials,nodeCursor=browse.page.nextCursor,materialCursor=browse.page.materialNextCursor;
   const directMate = mobileBrowse && path.some(n=>basicEntryOrder(n.teachingEntry)>=0);

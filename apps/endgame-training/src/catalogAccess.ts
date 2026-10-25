@@ -13,3 +13,7 @@ export function canBrowsePlatformSources(auth?: Account): boolean {
 export function basicEntryOrder(entry?: string): number {
   return BASIC_TEACHING_ENTRIES.findIndex(value => value === entry);
 }
+
+export function isPublicCatalogEntry(entry?: string): boolean {
+  return basicEntryOrder(entry) >= 0 || entry === "capture";
+}
