@@ -22,6 +22,7 @@ type Core = {
   default(): Promise<void>;
   trainingVerificationSearches(request: string): string;
   verifyTrainingMove(request: string, evidence: string): string;
+  trainingActualGoalReached(request: string, moves: string): boolean;
   exportLocalManual(json: string, format: string): string;
   importLocalManual(bytes: Uint8Array): string;
   parseCblLibrary(bytes: Uint8Array): string;

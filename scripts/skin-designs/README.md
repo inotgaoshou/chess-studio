@@ -18,3 +18,10 @@ Each set contains a 1120×1240 board, blank-river variant, and fourteen transpar
 For board-only refinements, append `--boards-only` to preserve every piece PNG byte-for-byte. Procedural grain is rasterized by Chromium at generation time. The app only loads PNGs.
 
 `record-skin-previews.cjs` records the real Board component in a dedicated demonstration page, with touch input, two known legal horse moves, skin switching, flipping and landscape layout checks. Output names explicitly identify Chromium/WebKit, not native Android/iOS. It is not a replacement for native package acceptance. `SKIN_SCREENSHOT_SCALE=3 SKIN_TEST_WIDTH=390` on the layout script produces high-resolution phone stills.
+
+
+## Source artwork replacement (latest)
+
+`xuan-paper` now copies the user's existing `皮肤/默认` board and all fourteen piece PNGs unchanged. SHA-256 values and provenance are recorded in `reference-assets.json`. The generator validates these bytes and skips regenerating this set. Its calibrated grid lives in `referenceSkinGeometry.json`; the other three sets retain `authoredSkinGeometry.json`.
+
+This original bitmap board preserves its river lettering and therefore advertises `supportsCustomRiverText:false`. The previous generated blank-river image is not selected. The default skin and all saved skin IDs remain unchanged. This is a closer source-artwork version, **not a claim of pixel-identical reproduction**: the supplied screenshot has different frame proportions, background and lighting. Exact screenshot assets are still required to verify 100% equivalence.

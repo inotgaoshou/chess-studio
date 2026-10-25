@@ -7376,3 +7376,48 @@ html.phone-webview .manual-reference-layout .manual-stage.manual-analysis-expand
  html:is(.phone-webview,.tablet-webview) .manual-reference-layout .manual-stage.manual-analysis-expanded > .manual-analysis-dock { grid-column:2; grid-row:2; width:100%; min-width:0; max-width:100%; }
  html:is(.phone-webview,.tablet-webview) .manual-reference-layout .manual-stage.manual-analysis-expanded > .manual-bottom-tools { grid-column:2; grid-row:3; }
 }
+
+/* Keep save fields inside the visible viewport, including iOS 15 keyboards. */
+.manual-save-backdrop .manual-save-dialog { min-height:0; max-height:100%; gap:0; }
+.manual-save-dialog .manual-save-body { flex:1 1 auto; -webkit-overflow-scrolling:touch; touch-action:pan-y; scroll-padding-block:12px; }
+.manual-save-header-actions { display:flex; align-items:center; gap:8px; }
+.manual-save-header-actions .manual-save-hide-keyboard { display:none; font-size:12px; min-height:36px; padding:0 10px; }
+html.keyboard-open .manual-save-hide-keyboard { display:block; }
+html.keyboard-open .manual-save-backdrop .manual-save-dialog { max-height:100%; }
+.manual-save-body input,.manual-save-body select { min-height:44px; line-height:22px; }
+.manual-save-date-inputs { display:grid; grid-template-columns:minmax(0,1.3fr) minmax(0,1fr); gap:10px; }
+.manual-save-datetime { min-width:0; display:grid; gap:7px; }
+.manual-save-time-preview { display:flex; flex-wrap:wrap; align-items:baseline; justify-content:space-between; gap:5px 12px; font-size:13px; color:#315943; }
+.manual-save-time-preview output { font-size:14px; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.manual-save-date-inputs input { display:block; max-width:100%; -webkit-appearance:none; appearance:none; }
+.manual-save-date-inputs input::-webkit-date-and-time-value { text-align:left; min-height:22px; }
+.manual-save-date-inputs input::-webkit-datetime-edit { padding:0; }
+@media (orientation:landscape) and (min-width:700px) {
+ .manual-save-backdrop .manual-save-dialog { width:min(100%,760px); }
+ .manual-save-body .manual-save-fields { grid-template-columns:repeat(2,minmax(0,1fr)); align-items:start; gap:10px 16px; }
+ .manual-save-fields > .manual-save-pair { display:contents; }
+ .manual-save-fields > :is(.manual-save-datetime,.manual-save-note,small,.manual-save-destination,.manual-save-new-folder) { grid-column:1/-1; }
+}
+.manual-save-heading { display:grid; min-width:0; gap:3px; }
+.manual-save-heading small { font-size:11px; color:#6a8173; font-weight:400; }
+.manual-save-dialog > footer button { min-height:44px; font-size:14px; }
+/* Native pickers remain tappable; visible text has a stable ISO date and 24h time. */
+.manual-save-native-date { position:relative; min-width:0; min-height:44px; display:flex; align-items:center; padding:9px; border:1px solid #bdd6c5; border-radius:7px; background:white; color:#254b37; font-size:16px; line-height:24px; font-variant-numeric:tabular-nums; }
+.manual-save-native-date > input { position:absolute; inset:0; width:100%; height:100%; opacity:0; }
+.manual-save-native-date:focus-within { outline:2px solid #4c90b0; outline-offset:1px; }
+.capture-feedback,.ink-feedback { animation-duration:var(--feedback-duration,900ms); }
+.xiangqi-board.move-feedback.capture .last-to .piece { animation-duration:.5s; }
+/* Keep feedback to compositor-friendly opacity/transform on older tablets. */
+@keyframes capture-title {
+  0% { opacity:0; transform:translate(-50%,-50%) scale(.7) rotate(-8deg); }
+  20% { opacity:1; transform:translate(-50%,-50%) scale(1.04) rotate(-3deg); }
+  78% { opacity:1; transform:translate(-50%,-50%) scale(1); }
+  100% { opacity:0; transform:translate(-50%,-50%) scale(.96); }
+}
+@keyframes ink-title {
+  0% { opacity:0; transform:translate(-50%,-50%) rotate(-9deg) scale(1.16); }
+  20% { opacity:1; transform:translate(-50%,-50%) rotate(-7deg) scale(1); }
+  82% { opacity:1; transform:translate(-50%,-50%) rotate(-7deg) scale(1); }
+  100% { opacity:0; transform:translate(-50%,-50%) rotate(-7deg) scale(1.03); }
+}
+.xiangqi-board.move-feedback.capture .last-to .piece { animation:none; }

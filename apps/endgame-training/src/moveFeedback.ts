@@ -2,7 +2,7 @@ import type { BoardPiece, BoardState } from "./types";
 
 export type TrainingFeedbackKind = "move" | "capture" | "check" | "checkmate" | "stalemate";
 export type TrainingFeedbackEvent = { id: number; kind: TrainingFeedbackKind; iccs: string; piece?: BoardPiece };
-export const FEEDBACK_DURATION: Record<TrainingFeedbackKind, number> = { move:180,capture:250,check:800,checkmate:1200,stalemate:1200 };
+export const FEEDBACK_DURATION: Record<TrainingFeedbackKind, number> = { move:180,capture:900,check:1500,checkmate:1800,stalemate:1800 };
 export const TRAINING_FEEDBACK_PACK = {
   id: "crisp-board-v107",
   labels: { check: "将", checkmate: "绝杀", stalemate: "困毙" },

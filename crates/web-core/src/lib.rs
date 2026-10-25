@@ -1027,3 +1027,12 @@ pub fn verify_training_move(request: &str, evidence: &str) -> Result<String, JsV
     serde_json::to_string(&training_verifier::verify(&r, &evidence))
         .map_err(|e| JsValue::from_str(&e.to_string()))
 }
+
+#[wasm_bindgen(js_name = trainingActualGoalReached)]
+pub fn training_actual_goal_reached(request: &str, moves: &str) -> Result<bool, JsValue> {
+    let r: training_verifier::Request = serde_json::from_str(request)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let moves: Vec<String> = serde_json::from_str(moves)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    Ok(training_verifier::actual_goal_reached(&r, &moves))
+}

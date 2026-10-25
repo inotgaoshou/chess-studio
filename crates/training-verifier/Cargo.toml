@@ -7,6 +7,10 @@ license.workspace = true
 [features]
 engine = ["dep:engine-protocol", "dep:tokio", "dep:sha2"]
 
+[[example]]
+name = "audit_net_material"
+required-features = ["engine"]
+
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true

@@ -18,7 +18,7 @@ import { currentListNumbers, loadListNumbers, saveListNumbers, initialPracticeIt
 import { practiceContent } from "./practiceProgress";
 import { LocalGoalEditor } from "./LocalGoalEditor";
 import { needsTerminalWin, terminalWin } from "./verificationPolicy";
-import { verifyLocally, verificationRequest } from "./answerVerification";
+import { completionMatchesMaterialGoal, verifyLocally, verificationRequest } from "./answerVerification";
 import { advanceTrainingTrial, type TrainingTrialPosition } from "./trainingTrial";
 import type { VerificationResult } from "../../../packages/training-verification/types";
 import { MobileStudentCheckin, CheckinSyncBridge } from "./MobileCheckin";
@@ -893,6 +893,17 @@ function BoardCoordinateLayer({ flipped = false, geometry }: { flipped?: boolean
 export function Board({ pieces, selected, legalTargets = [], lastMove, hintMove, analysisMoves = [], activeAnalysis = 0, flipped = false, feedback, feedbackEvent, setupMode = false, showSideCoordinates = false, boardSkin, pieceSkin, riverText, riverTextColor, riverTextSize, supportsCustomRiverText, onSquare, onMove }: { pieces: BoardPiece[]; selected?: Square; legalTargets?: Square[]; lastMove?: string; hintMove?: string; analysisMoves?: string[]; activeAnalysis?: number; flipped?: boolean; feedback?: TrainingFeedbackKind; feedbackEvent?: TrainingFeedbackEvent; setupMode?: boolean; showSideCoordinates?: boolean; boardSkin: string; pieceSkin: string; riverText: string; riverTextColor: string; riverTextSize: number; supportsCustomRiverText: boolean; onSquare(square: Square): void; onMove?(from: Square, to: Square): void }) {
   const boardRef = useRef<HTMLDivElement | null>(null);
   const [movingEvent,setMovingEvent] = useState<TrainingFeedbackEvent>();
+  const [noticeEvent,setNoticeEvent] = useState<TrainingFeedbackEvent>();
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useLayoutEffect(() => {
+    if (!lastMove) { clearTimeout(noticeTimer.current); setNoticeEvent(undefined); return; }
+    if (!feedbackEvent || feedbackEvent.kind === "move" || feedbackEvent.iccs !== lastMove) return;
+    clearTimeout(noticeTimer.current); setNoticeEvent(feedbackEvent);
+    noticeTimer.current = setTimeout(() => setNoticeEvent(undefined), FEEDBACK_DURATION[feedbackEvent.kind]);
+  }, [feedbackEvent?.id, lastMove]);
+  useEffect(() => () => clearTimeout(noticeTimer.current), []);
+  const visibleFeedback = noticeEvent?.kind ?? feedback;
+  const visibleFeedbackId = noticeEvent?.id ?? feedbackEvent?.id;
   const lastFeedbackId=useRef<number | undefined>(undefined);
   // Hide the destination and place the moving piece before the browser paints.
   useLayoutEffect(()=>{
@@ -945,7 +956,7 @@ export function Board({ pieces, selected, legalTargets = [], lastMove, hintMove,
     return {"--move-from-x":from["--piece-left"],"--move-from-y":from["--piece-top"],"--move-to-x":to["--piece-left"],"--move-to-y":to["--piece-top"]} as CSSProperties;
   })():undefined;
   const boardImage = riverText && supportsCustomRiverText ? "board-river-blank.png" : "board.png";
-  const boardStyle = { backgroundImage: `url("/skins/${normalizedBoardSkin}/${boardImage}")` } as CSSProperties;
+  const boardStyle = { backgroundImage: `url("/skins/${normalizedBoardSkin}/${boardImage}")`, "--feedback-duration": visibleFeedback ? `${FEEDBACK_DURATION[visibleFeedback]}ms` : undefined } as CSSProperties;
   const squareFromPoint = (clientX: number, clientY: number): Square | undefined => {
     const rect = boardRef.current?.getBoundingClientRect();
     if (!rect || rect.width <= 0 || rect.height <= 0) return undefined;
@@ -1017,8 +1028,8 @@ export function Board({ pieces, selected, legalTargets = [], lastMove, hintMove,
     }} aria-pressed={Boolean(piece && isSelected)} aria-label={`${squareName(square)}${piece ? ` ${piece.color === "red" ? "红" : "黑"}${piece.label}` : ""}`}>{piece && <><span className="piece-ground-shadow" aria-hidden="true"/><span className="piece-lift"><img className="piece" src={trainingPieceAsset(piece, pieceSkin)} alt={piece.label} draggable={false}/></span></>}</button>; })}
     {movingEvent?.piece && <img key={`move-${movingEvent.id}`} className="piece board-moving-piece" style={movementStyle} src={trainingPieceAsset(movingEvent.piece,pieceSkin)} alt="" aria-hidden="true" draggable={false}/>}
     {dragging && <img className="piece board-drag-ghost" style={{ "--drag-x": `${dragging.x}%`, "--drag-y": `${dragging.y}%` } as CSSProperties} src={trainingPieceAsset(dragging.piece, pieceSkin)} alt="" aria-hidden="true" draggable={false}/>}
-    {feedback === "capture" && <span key={`capture-${feedbackEvent?.id}`} className="capture-feedback"><span>吃</span></span>}
-    {(feedback === "check" || feedback === "checkmate" || feedback === "stalemate") && <span key={`seal-${feedbackEvent?.id}`} className={`ink-feedback ${feedback}`}><span>{TRAINING_FEEDBACK_PACK.labels[feedback]}</span></span>}
+    {visibleFeedback === "capture" && <span key={`capture-${visibleFeedbackId}`} className="capture-feedback"><span>吃</span></span>}
+    {(visibleFeedback === "check" || visibleFeedback === "checkmate" || visibleFeedback === "stalemate") && <span key={`seal-${visibleFeedbackId}`} className={`ink-feedback ${visibleFeedback}`}><span>{TRAINING_FEEDBACK_PACK.labels[visibleFeedback]}</span></span>}
   </div></div>;
 }
 
@@ -2971,23 +2982,28 @@ export function App() {
       // Validate the entire saved path before attempting answer restoration; never discard the saved record.
       const restored = saved?.moves ?? [];
       const state = await measureOpening(openingOperation.current, "board", () => boardAt(next.startingFen, restored));
-      const verified = restored.length ? await restoreAnswerVerification(next, restored, undefined, signal) : undefined;
       signal.throwIfAborted(); if (entry !== session.current) return;
-      commitProblemStart(next, state, []);
+      commitProblemStart(next, state, [], restored.length > 0);
       setPracticeSession(undefined); setPracticeReturnRoute("library");
       latestTrainingMoves.current = restored; setMoves(restored); setLastMove(restored.at(-1));
       setHints(saved?.hints ?? 0); setMistakes(saved?.mistakes ?? 0); resetClock(saved?.elapsedMs ?? 0);
-      setAnswerVerification(verified); setMode("solver");
-      if (verified?.completed) { setEnded(true); setResultOutcome("completed"); }
+      setMode("solver");
       let continuation = next.solution;
       for (const played of restored) continuation = continuation.find(n => n.iccs === played)?.children ?? [];
       setLine(continuation);
-      setNotice(restored.length && !verified ? "已恢复本机进度，待复核，尚未确认完成。" : "个人试做：进度仅保存在本机，不计入学生成绩。");
-      if(!verified?.completed)await restoreTrialPosition(next,restored,entry);
+      setNotice(restored.length ? "已恢复本机局面，正在后台复核；可先查看棋盘。" : "个人试做：进度仅保存在本机，不计入学生成绩。");
+      await restoreTrialPosition(next,restored,entry);
       signal.throwIfAborted();if(entry!==session.current)return;
       // Do not call the general navigation helper, which would cancel this opening operation.
       window.history.pushState({ mobileRoute: "practice" }, "", "/practice");
       setMobileRoute("practice"); setMobileTab("practice");
+      if (restored.length) void restoreAnswerVerification(next, restored, undefined, signal).then(verified => {
+        const currentAuth = teachingClient.auth();
+        if (signal.aborted || entry !== session.current || owner !== JSON.stringify([teachingClient.serverUrl(), currentAuth?.user.id, currentAuth?.user.orgId, currentAuth?.user.role])) return;
+        setAnswerVerification(verified);
+        if (verified?.completed) { setTrialPosition(undefined); setWrongMove(undefined); setPieces(state.pieces); setEnded(true); setResultOutcome("completed"); }
+        setNotice(verified ? "已恢复验证路线，可继续完成。" : "已恢复保存的局面，尚未确认完成；继续作答时会重新复核。");
+      }).finally(() => { if (entry === session.current) setAutoReplyPending(false); });
     }, () => void openTeacherTrial(id, title));
   }
   async function openCatalogStudy(raw: unknown, returnRoute: "game-browse" | "library", signal: AbortSignal) {
@@ -3053,6 +3069,7 @@ export function App() {
         catch { result = await verifyLocally(active, prior, candidate, context, current); }
       } else result = await verifyLocally(active, prior, candidate, context, current);
       if (result.completed && needsTerminalWin(active) && !terminalWin(active, await boardAt(active.startingFen,result.path))) return undefined;
+      if (!await completionMatchesMaterialGoal(active, result)) return undefined;
       if (current() && JSON.stringify(result.path) === JSON.stringify(path) && ["correct", "completed"].includes(result.outcome)) return result;
     } catch { /* Keep the legal saved path, with completion awaiting verification. */ }
     return undefined;
@@ -3938,6 +3955,7 @@ export function App() {
         if (result.completed && needsTerminalWin(problem) && !terminalWin(problem, await boardAt(problem.startingFen,result.path))) {
           result = {...result,outcome:"pending_review",completed:false,message:"尚未绝杀或困毙，继续试走，完成状态待复核"};
         }
+        if (!await completionMatchesMaterialGoal(problem, result)) result = {...result,outcome:"pending_review",completed:false,message:"尚未达到净得子目标，需考虑对方回吃后重新复核"};
         if (!stillActive()) return;
         if (result.outcome === "pending_review") {
           setMoveRejection({ kind: "pending_review", message: result.message });
@@ -3953,7 +3971,7 @@ export function App() {
           return;
         }
         setAttemptStarted(true);
-        // Let the player's 180ms slide finish even for a cached verdict.
+        // Piece motion stays quick; the separate notice can remain after the reply.
         if(performance.now()-movedAt<180)await new Promise(resolve=>setTimeout(resolve,180-(performance.now()-movedAt)));
         if(!stillActive())return;
         await renderBoard(result.path, result.path.at(-1), moveSession, result.autoMoves.length > 0);
@@ -4565,9 +4583,10 @@ export function App() {
     const folder = saved.folderPath ?? "";
     setManualFolder(folder);
     setManualQuery("");
-    await refreshManualLibrary(folder, "");
+    setManualGames(items => [saved, ...items.filter(item => item.id !== saved.id)]);
     setManualNotice(`棋谱已保存到${folder || "未分类"}。`);
     openManualPanel("library");
+    void refreshManualLibrary(folder, "").catch(() => undefined);
   }
 
   async function openManualMode(createInitialManual = true) {
@@ -4973,8 +4992,7 @@ export function App() {
     catch { if (revision === manualSaveRevision.current) setManualNotice("该走法不合法，棋谱没有改变。"); return; }
     if (revision !== manualSaveRevision.current) return;
     setManualSelected(undefined);
-    const notation = await chineseLine(manualStartingFen, nextMoves).catch(() => nextMoves);
-    if (revision !== manualSaveRevision.current) return;
+    const notation = [...manualNotation.slice(0, manualCursor), iccs];
     const branches = manualCursor < manualMoves.length ? rememberManualBranch(manualCursor, manualMoves.slice(manualCursor), manualNotation.slice(manualCursor)) : manualBranches;
     const feedback = trainingFeedbackEvent(manualPieces, state, iccs);
     setManualMoves(nextMoves);
@@ -4987,8 +5005,14 @@ export function App() {
     playTrainingFeedback(feedback.kind);
     const terminal = terminalResult(state.ruleStatus ?? state.status);
     setManualTerminal(terminal);
-    setManualNotice(terminal ? `当前局面：${terminal}。` : `已记录：${notation.at(-1) ?? iccs}`);
+    setManualNotice(terminal ? `当前局面：${terminal}。` : "已记录这一手。");
     void saveManualGame({ moves: nextMoves, cursor: nextMoves.length, currentFen: state.fen, currentNodeId: manualNodeId(nextMoves.length), branches }).catch(() => undefined);
+    const textRevision = manualSaveRevision.current;
+    requestAnimationFrame(() => setTimeout(() => void chineseLine(manualStartingFen, nextMoves).then(text => {
+      if (textRevision !== manualSaveRevision.current) return;
+      setManualNotation(text);
+      if (!terminal) setManualNotice(`已记录：${text.at(-1) ?? iccs}`);
+    }).catch(() => undefined), 0));
     void resetAnalysis("manual", false);
   }
 
@@ -5674,8 +5698,7 @@ export function App() {
     }
     if (generation !== studyGeneration.current) return;
     setStudySelected(undefined);
-    const notation = await chineseLine(studyStartingFen, nextMoves).catch(() => nextMoves);
-    if (generation !== studyGeneration.current) return;
+    const notation = [...studyNotation.slice(0, studyCursor), iccs];
     if (studyCursor < studyMoves.length) rememberStudyBranch(studyCursor, studyMoves.slice(studyCursor), studyNotation.slice(studyCursor));
     const feedback = trainingFeedbackEvent(studyPieces, state, iccs);
     setStudyMoves(nextMoves);
@@ -5687,7 +5710,12 @@ export function App() {
     playTrainingFeedback(feedback.kind);
     const terminal = terminalResult(state.ruleStatus ?? state.status);
     setStudyTerminal(terminal);
-    setStudyNotice(terminal ? `当前局面：${terminal}。` : `${movingSide === "red" ? "红" : "黑"}方已走 ${notation.at(-1) ?? iccs}。`);
+    setStudyNotice(terminal ? `当前局面：${terminal}。` : `${movingSide === "red" ? "红" : "黑"}方已落子。`);
+    requestAnimationFrame(() => setTimeout(() => void chineseLine(studyStartingFen, nextMoves).then(text => {
+      if (generation !== studyGeneration.current) return;
+      setStudyNotation(text);
+      if (!terminal) setStudyNotice(`${movingSide === "red" ? "红" : "黑"}方已走 ${text.at(-1) ?? iccs}。`);
+    }).catch(() => undefined), 0));
     invalidateStudyCloud(state.fen);
     void resetAnalysis("study");
   }
@@ -6087,6 +6115,7 @@ export function App() {
     const authGeneration = practiceAuthGeneration.current;
     setAutoReplyPending(true);
     pendingAutoReply.current = undefined;
+    let checkingSavedRoute = false;
     try {
       const prepared = await withRequestDeadline(async signal => {
         // Cache restoration and stopping the old search are independent. Both
@@ -6100,20 +6129,19 @@ export function App() {
         if (!item) throw new Error("当前筛选没有可练习题目，请调整范围后重试");
         const nextProblem = practiceProblemToTrainingProblem(item.problem);
         const restoredMoves = item.draft?.moves ?? [];
-        const [state, history, verification] = await Promise.all([
+        const [state, history] = await Promise.all([
           measureOpening(openingOperation.current, "board", () => boardAt(item.problem.startingFen, restoredMoves)),
           measureOpening(openingOperation.current, "local-store", () => trainingStore.attempts(nextProblem.id), signal),
-          item.draft && exerciseMode(cached.mode,answersAllowed) !== "learning" ? restoreAnswerVerification(nextProblem, restoredMoves, cached.id, signal) : undefined,
         ]);
         signal.throwIfAborted();
-        return { cached, item, nextProblem, restoredMoves, state, history, verification };
+        return { cached, item, nextProblem, restoredMoves, state, history };
       }, source, "打开题目超时，请重试，练习进度已保留");
       if (source?.aborted || entry !== session.current || authGeneration !== practiceAuthGeneration.current) return false;
-      const { cached, item, nextProblem, restoredMoves, state, history, verification } = prepared;
+      const { cached, item, nextProblem, restoredMoves, state, history } = prepared;
+      checkingSavedRoute = restoredMoves.length > 0 && exerciseMode(cached.mode,answersAllowed) !== "learning";
       // Commit only after every initialization step succeeds. Failure keeps the source page intact.
-      commitProblemStart(nextProblem, state, history);
+      commitProblemStart(nextProblem, state, history, checkingSavedRoute);
       setPracticeSession(cached); setPracticeItemId(item.id); setPracticeMessage("");
-      setAnswerVerification(verification);
       let restoredLine = item.problem.solution;
       for (const move of restoredMoves) {
         const branch = restoredLine.find((candidate) => candidate.iccs === move);
@@ -6121,25 +6149,33 @@ export function App() {
         restoredLine = branch.children;
       }
       latestTrainingMoves.current = [...restoredMoves]; setMoves(restoredMoves);
-      setLine(restoredLine.length ? restoredLine : verification?.hintMove ? [{iccs:verification.hintMove,comment:"皮卡鱼建议",children:[]}] : []);
+      setLine(restoredLine);
       setLastMove(restoredMoves.at(-1));
       setHints(Math.max(item.draft?.hints ?? 0, item.grade?.hintsUsed ?? 0));
       setMistakes(Math.max(item.draft?.mistakes ?? 0, item.grade?.mistakes ?? 0));
       resetClock(item.draft?.elapsedMs ?? 0);
-      if (item.status !== "pending" && (item.verificationState!=="pending_server" || verification?.completed || item.status!=="completed")) {
+      if (item.status !== "pending" && (item.verificationState!=="pending_server" || item.status!=="completed")) {
         setEnded(true); setResultOutcome(item.status === "completed" ? "completed" : item.status === "revealed" ? "revealed" : "abandoned");
       }
       setMode(exerciseMode(cached.mode,answersAllowed) === "learning" ? "replay" : "solver");
-      setNotice(answersAllowed && cached.mode === "learning" ? "学习模式：可查看题解并了解关键思路。" : restoredMoves.length && !verification ? "已恢复本机进度，待复核，尚未确认完成。" : "可尝试其他解法，皮卡鱼复核后判题；提示和错误会记录到练习档案。");
+      setNotice(answersAllowed && cached.mode === "learning" ? "学习模式：可查看题解并了解关键思路。" : checkingSavedRoute ? "已恢复保存的局面，正在后台复核；可先查看棋盘。" : "可尝试其他解法，皮卡鱼复核后判题；提示和错误会记录到练习档案。");
       if(item.status==="pending"||item.verificationState==="pending_server")await restoreTrialPosition(nextProblem,restoredMoves,entry,cached.id);
       if(source?.aborted||entry!==session.current||authGeneration!==practiceAuthGeneration.current)return false;
       navigatePracticeSession(cached.id, replace);
       void teachingClient.updatePracticeSession(cached.id, item.id).catch(() => undefined);
+      if (checkingSavedRoute) void restoreAnswerVerification(nextProblem, restoredMoves, cached.id, source).then(verification => {
+        if (source?.aborted || entry !== session.current || authGeneration !== practiceAuthGeneration.current) return;
+        setAnswerVerification(verification);
+        setLine(restoredLine.length ? restoredLine : verification?.hintMove ? [{iccs:verification.hintMove,comment:"皮卡鱼建议",children:[]}] : []);
+        if (verification?.completed) { setTrialPosition(undefined); setWrongMove(undefined); setPieces(state.pieces); setEnded(true); setResultOutcome("completed"); }
+        setNotice(verification ? "已恢复验证路线，可继续完成。" : "已恢复保存的局面，尚未确认完成；继续作答时会重新复核。");
+      }).finally(() => { if (entry === session.current) setAutoReplyPending(false); });
       return true;
     } catch (error) {
+      checkingSavedRoute = false;
       if (!source?.aborted && entry === session.current && authGeneration === practiceAuthGeneration.current) setPracticeMessage(`打开题目失败：${error instanceof Error ? error.message : "请重试"}，练习进度已保留。`);
       return false;
-    } finally { if (entry === session.current) setAutoReplyPending(false); }
+    } finally { if (entry === session.current && !checkingSavedRoute) setAutoReplyPending(false); }
   }
   function openPracticeResult(next = practiceSession, replace = false) {
     if (!next) { navigateMobileRoute("practice", replace); return; }
@@ -6561,7 +6597,7 @@ export function App() {
       <div className="recording-title"><b>{manualSetupOpen ? `创建局面 · ${manualSetupSide === "red" ? "红先" : "黑先"}` : manualAnalysisExpanded ? "录谱分析" : manualReadOnly ? `云镜像 · 只读 ${manualCursor}/${manualMoves.length}` : `录谱 ${manualCursor}/${manualMoves.length}`}</b><small>{manualSetupOpen ? manualNotice : `${manualGame?.favorite ? "★ " : ""}${manualGame?.title ?? "标准开局"} · ${manualReadOnly ? "只读" : manualSaveStatus}${manualTerminal ? ` · ${manualTerminal}` : ""}`}</small></div>
 
       {manualSetupOpen ? <button type="button" aria-label="复制当前 FEN" title="复制当前 FEN" onClick={() => void copyManualSetupFen()}><ClipboardCopy/></button> : <button type="button" aria-label="打开棋库" onClick={() => openManualPanel("library")}><Database/></button>}
-    </header>{manualSetupOpen ? <section className="manual-setup-board-area">{renderManualSetupTray("black")}{manualSetupError && <p className="manual-setup-toast" role="alert" aria-live="assertive">{manualSetupError}</p>}<FittedBoardArea className="manual-setup-board-slot"><Board pieces={manualSetupPieces} selected={manualSetupSelected} legalTargets={[]} lastMove={undefined} analysisMoves={[]} activeAnalysis={manualArrowActiveIndex} flipped={boardFlipped} feedback={undefined} setupMode={true} showSideCoordinates={true} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={editManualSetupSquare}/></FittedBoardArea>{renderManualSetupTray("red")}</section> : <FittedBoardArea className="manual-play-board-area"><Board key="manual" pieces={manualPieces} selected={manualSelected} legalTargets={manualLegalTargets} lastMove={manualLastMove} analysisMoves={manualArrowMoves} activeAnalysis={manualArrowActiveIndex} flipped={boardFlipped} feedback={moveFeedback} feedbackEvent={feedbackEvent} setupMode={false} showSideCoordinates={true} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={(square) => void moveManual(square)} onMove={(from, to) => void moveManualFromTo(from, to)}/></FittedBoardArea>}
+    </header>{manualSetupOpen ? <section className="manual-setup-board-area">{renderManualSetupTray("black")}{manualSetupError && <p className="manual-setup-toast" role="alert" aria-live="assertive">{manualSetupError}</p>}<FittedBoardArea className="manual-setup-board-slot"><Board pieces={manualSetupPieces} selected={manualSetupSelected} legalTargets={[]} lastMove={undefined} analysisMoves={[]} activeAnalysis={manualArrowActiveIndex} flipped={boardFlipped} feedback={undefined} setupMode={true} showSideCoordinates={true} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={editManualSetupSquare}/></FittedBoardArea>{renderManualSetupTray("red")}</section> : <FittedBoardArea className="manual-play-board-area" suspended={Boolean(manualSaveDraft)}><Board key="manual" pieces={manualPieces} selected={manualSelected} legalTargets={manualLegalTargets} lastMove={manualLastMove} analysisMoves={manualArrowMoves} activeAnalysis={manualArrowActiveIndex} flipped={boardFlipped} feedback={moveFeedback} feedbackEvent={feedbackEvent} setupMode={false} showSideCoordinates={true} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={(square) => void moveManual(square)} onMove={(from, to) => void moveManualFromTo(from, to)}/></FittedBoardArea>}
       {manualAnalysisExpanded && <section className="manual-analysis-dock" aria-label="录谱分析面板">
         <header><strong>自我分析</strong><div><button type="button" onClick={() => void analyzeManualMainline()}>整局分析</button><button type="button" onClick={() => { setManualAnalysisExpanded(false); setManualPanelTab("moves"); }}>收起</button></div></header>
         {renderManualAnalysisBody()}

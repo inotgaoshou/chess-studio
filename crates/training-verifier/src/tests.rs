@@ -426,3 +426,39 @@ async fn real_pikafish_regression() {
         );
     }
 }
+
+#[test]
+fn material_goal_is_not_completed_by_a_mate_or_stalemate_without_net_gain() {
+    let mut r = request();
+    r.starting_fen = "4k4/3R5/R8/4P4/9/9/9/9/9/4K4 w - - 0 1".into();
+    r.candidate = "a7f7".into();
+    let g = r.goal.as_mut().unwrap();
+    g.kind = "gain_material".into();
+    g.verification.as_mut().unwrap().min_material_gain = Some(100);
+    let after = play(&board_at(&r).unwrap(), &r.candidate).unwrap();
+    assert!(won(&after, Color::Red));
+    assert!(!actual_goal_reached(&r, &[r.candidate.clone()]));
+    let mut e = evidence(0);
+    for key in ["candidate", "best"] {
+        let line = e.lines.get_mut(key).unwrap();
+        line.pv = vec![r.candidate.clone()];
+        line.mate = Some(1);
+    }
+    let out = verify(&r, &e);
+    assert!(!out.completed);
+    assert!(!["correct", "completed"].contains(&out.outcome.as_str()));
+}
+
+#[test]
+fn material_completion_waits_for_the_defence_and_keeps_only_the_net_profit() {
+    let mut r = request();
+    r.starting_fen = "2Pa5/3k1P3/3a5/9/9/9/9/9/3K5/9 w - - 0 1".into();
+    r.candidate = "c9d9".into();
+    let g = r.goal.as_mut().unwrap();
+    g.kind = "gain_material".into();
+    g.verification.as_mut().unwrap().min_material_gain = Some(100);
+    assert!(!actual_goal_reached(&r, &["c9d9".into()]));
+    assert!(actual_goal_reached(&r, &["c9d9".into(), "d8d9".into()]));
+    r.goal.as_mut().unwrap().verification.as_mut().unwrap().min_material_gain = Some(200);
+    assert!(!actual_goal_reached(&r, &["c9d9".into(), "d8d9".into()]));
+}

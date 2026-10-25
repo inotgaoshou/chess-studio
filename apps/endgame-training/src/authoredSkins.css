@@ -12,3 +12,8 @@
 .board-shell.reference-wood-skin .board-square.selected .piece-lift {
   transform: translateY(-4%) scale(1.02);
 }
+/* Avoid WebKit resolving the child's percentage height against an auto-height ancestor. */
+.board-shell.authored-skin > .xiangqi-board {
+  height: auto;
+  aspect-ratio: 1120 / 1240;
+}

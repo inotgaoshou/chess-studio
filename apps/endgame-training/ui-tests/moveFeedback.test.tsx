@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, render } from "@testing-library/react";
+import { act, fireEvent, render } from "@testing-library/react";
 import { Board } from "../src/App";
-import { cancelTrainingFeedback, playTrainingFeedback, trainingFeedbackEvent, TRAINING_FEEDBACK_PACK } from "../src/moveFeedback";
+import { cancelTrainingFeedback, playTrainingFeedback, trainingFeedbackEvent, TRAINING_FEEDBACK_PACK, FEEDBACK_DURATION } from "../src/moveFeedback";
 import { currentVerification, needsTerminalWin, terminalWin, VERIFIER_VERSION } from "../src/verificationPolicy";
 import type { BoardPiece, BoardState } from "../src/types";
 
@@ -35,6 +35,15 @@ describe("actual-move feedback",()=>{
     expect(ui.container.querySelector(".board-moving-piece")).toBeTruthy();
     ui.rerender(<Board {...props} feedbackEvent={undefined} lastMove={undefined}/>);
     expect(ui.container.querySelector(".board-moving-piece")).toBeNull();
+  });
+  it("keeps a capture notice visible while the next piece responds immediately",()=>{
+    vi.useFakeTimers();const onSquare=vi.fn(),capture={id:9901,kind:"capture" as const,iccs:"c9e8",piece};
+    const props={pieces:state.pieces,lastMove:"c9e8",feedback:"capture" as const,feedbackEvent:capture,boardSkin:"classic",pieceSkin:"classic",riverText:"",riverTextColor:"#000",riverTextSize:20,supportsCustomRiverText:false,onSquare};
+    const ui=render(<Board {...props}/>);const notice=ui.container.querySelector(".capture-feedback");
+    act(()=>vi.advanceTimersByTime(100));ui.rerender(<Board {...props} lastMove="e8c7" feedback="move" feedbackEvent={{...capture,id:9902,kind:"move",iccs:"e8c7"}}/>);
+    fireEvent.click(ui.container.querySelector(".board-square")!);expect(onSquare).toHaveBeenCalled();expect(ui.container.querySelector(".capture-feedback")).toBe(notice);
+    expect((ui.container.querySelector(".xiangqi-board") as HTMLElement).style.getPropertyValue("--feedback-duration")).toBe(`${FEEDBACK_DURATION.capture}ms`);
+    act(()=>vi.advanceTimersByTime(FEEDBACK_DURATION.capture-100));expect(ui.container.querySelector(".capture-feedback")).toBeNull();
   });
   it("uses distinct stalemate audio and tolerates rejected playback",async()=>{
     const instances:Array<{src:string;pause:ReturnType<typeof vi.fn>;play:ReturnType<typeof vi.fn>}> = [];

@@ -1,6 +1,26 @@
 import { Capacitor } from "@capacitor/core";
 import { Keyboard, type KeyboardInfo } from "@capacitor/keyboard";
 
+/** Keep the form in place until native keyboard animation and viewport resizing finish. */
+export async function dismissInputViewport() {
+  const root = document.documentElement;
+  const keyboardWasOpen = root.classList.contains("keyboard-open");
+  if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+  if (!keyboardWasOpen) return;
+  if (Capacitor.isNativePlatform()) await Keyboard.hide().catch(() => undefined);
+  await new Promise<void>(resolve => {
+    const started = performance.now(); let stableSince = started, prior = "";
+    const check = () => {
+      const now = performance.now();
+      const current = `${window.innerHeight}:${window.visualViewport?.height}:${window.visualViewport?.offsetTop}:${root.classList.contains("keyboard-open")}`;
+      if (current !== prior) { prior = current; stableSince = now; }
+      if ((!root.classList.contains("keyboard-open") && now - stableSince >= 120) || now - started >= 1200) resolve();
+      else requestAnimationFrame(check);
+    };
+    requestAnimationFrame(check);
+  });
+}
+
 /** One visible area for native resize, iOS viewport pan, and browser keyboards. */
 export function installInputViewport() {
   const viewport = window.visualViewport;
@@ -22,7 +42,7 @@ export function installInputViewport() {
     // Scroll the form, not the document: document scrolling makes iOS pan again.
     for (let parent = input.parentElement; parent && parent !== document.body; parent = parent.parentElement) {
       if (!/(auto|scroll)/.test(getComputedStyle(parent).overflowY)) continue;
-      const field = input.getBoundingClientRect();
+      const field = (input.closest(".manual-save-body label") ?? input).getBoundingClientRect();
       const bounds = parent.getBoundingClientRect();
       const areaTop = Math.max(bounds.top, visibleTop);
       const areaBottom = Math.min(bounds.bottom, visibleTop + visibleHeight);

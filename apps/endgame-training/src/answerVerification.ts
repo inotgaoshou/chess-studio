@@ -11,6 +11,10 @@ export function verificationRequest(problem: TrainingProblem, path: string[], ca
   return { startingFen: problem.startingFen, path, candidate, solution: problem.solution, goal: problem.trainingGoal,
     targetMateMoves: problem.targetMateMoves ?? (!problem.trainingGoal && label ? Number(label[1]) : undefined) };
 }
+export async function completionMatchesMaterialGoal(problem: TrainingProblem, result: VerificationResult): Promise<boolean> {
+  if (!result.completed || problem.trainingGoal?.kind !== "gain_material") return true;
+  return (await trainingCore()).trainingActualGoalReached(JSON.stringify(verificationRequest(problem, [], "")), JSON.stringify(result.path));
+}
 function pending(path: string[], message: string): VerificationResult {
   return { outcome: "pending_review", message, path, autoMoves: [], completed: false, verifierVersion: VERIFIER_VERSION, localOnly: true };
 }

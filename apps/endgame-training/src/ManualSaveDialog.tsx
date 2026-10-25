@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { LocalManualFolder, LocalManualGame, LocalManualMetadata } from "./types";
+import { dismissInputViewport } from "./inputViewport";
 
 export function isImeEnter(event: { key: string; nativeEvent: { isComposing?: boolean; keyCode?: number } }, composing = false) {
   return event.key === "Enter" && !composing && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229;
@@ -25,8 +26,11 @@ export function ManualSaveDialog({ game, folders, mode = "save", onSave, onCreat
   onClose(): void;
 }) {
   const dialogTitle = mode === "edit" ? "编辑棋谱信息" : "保存棋谱";
-  const [draft, setDraft] = useState(() => ({ title: game.title, note: game.note,
-    folderPath: game.folderPath ?? "", metadata: manualMetadata(game) }));
+  const [draft, setDraft] = useState(() => {
+    const metadata = manualMetadata(game), local = localDateTime(metadata.playedAt);
+    return { title: game.title, note: game.note, folderPath: game.folderPath ?? "", metadata,
+      playedDate: local.slice(0, 10), playedTime: local.slice(11, 16) };
+  });
   const initial = useRef(JSON.stringify(draft));
   const [discard, setDiscard] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -38,7 +42,7 @@ export function ManualSaveDialog({ game, folders, mode = "save", onSave, onCreat
   const close = () => {
     if (lock.current) return;
     if (dirty) setDiscard(true);
-    else onClose();
+    else dismiss();
   };
   useEffect(() => {
     const handle = (event: KeyboardEvent) => {
@@ -59,11 +63,19 @@ export function ManualSaveDialog({ game, folders, mode = "save", onSave, onCreat
     catch (reason) { setError(reason instanceof Error ? reason.message : "保存失败，请重试。"); }
     finally { lock.current = false; setBusy(false); }
   };
+  const dismiss = () => { void run(async () => { await dismissInputViewport(); onClose(); }); };
   const save = () => {
     if (composing.current) return;
     if (!draft.title.trim()) { setError("请填写棋谱名称。"); return; }
+    if (Boolean(draft.playedDate) !== Boolean(draft.playedTime)) { setError("请同时填写对局日期和时刻，或将两项都清空。"); return; }
+    const local = draft.playedDate ? `${draft.playedDate}T${draft.playedTime}` : "";
+    if (local && Number.isNaN(new Date(local).getTime())) { setError("请填写有效的对局日期和时刻。"); return; }
+    const { playedDate: _date, playedTime: _time, ...values } = draft;
+    // Preserve seconds and the original instant when the displayed time was not edited.
+    const playedAt = local === localDateTime(draft.metadata.playedAt) ? draft.metadata.playedAt : local ? new Date(local).toISOString() : "";
     void run(async () => {
-      await onSave({ ...draft, title: draft.title.trim(), note: draft.note.trim() });
+      await dismissInputViewport();
+      await onSave({ ...values, title: draft.title.trim(), note: draft.note.trim(), metadata: { ...draft.metadata, playedAt } });
       onClose();
     });
   };
@@ -89,17 +101,23 @@ export function ManualSaveDialog({ game, folders, mode = "save", onSave, onCreat
         event.preventDefault();
         if (newFolder !== undefined) createFolder(); else save();
       }}>
-      <header><strong>{dialogTitle}</strong><button type="button" aria-label={`关闭${dialogTitle}`} disabled={busy} onClick={close}>×</button></header>
+      <header><div className="manual-save-heading"><strong>{dialogTitle}</strong><small>上下滑动查看全部信息</small></div><div className="manual-save-header-actions"><button type="button" disabled={busy} className="manual-save-hide-keyboard" onClick={() => void dismissInputViewport()}>收起键盘</button><button type="button" aria-label={`关闭${dialogTitle}`} disabled={busy} onClick={close}>×</button></div></header>
       <div className="manual-save-body">
         {error && <p className="manual-save-error" role="alert">{error}</p>}
-        <fieldset disabled={busy || discard}>
-          <label>棋谱名称<input autoFocus value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })}/></label>
+        <fieldset className="manual-save-fields" disabled={busy || discard}>
+          <label>棋谱名称<input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })}/></label>
           <label>归属赛事<input value={draft.metadata.event} onChange={(event) => metadata("event", event.target.value)}/></label>
           <div className="manual-save-pair">
             <label>红方棋手<input value={draft.metadata.redPlayer} onChange={(event) => metadata("redPlayer", event.target.value)}/></label>
             <label>黑方棋手<input value={draft.metadata.blackPlayer} onChange={(event) => metadata("blackPlayer", event.target.value)}/></label>
           </div>
-          <label>对局时间<input type="datetime-local" value={localDateTime(draft.metadata.playedAt)} onChange={(event) => metadata("playedAt", event.target.value ? new Date(event.target.value).toISOString() : "")}/></label>
+          <div className="manual-save-datetime">
+            <div className="manual-save-time-preview"><strong>对局时间</strong><output>{draft.playedDate && draft.playedTime ? `${draft.playedDate} ${draft.playedTime}` : "未设置"}</output></div>
+            <div className="manual-save-date-inputs">
+              <label>对局日期<span className="manual-save-native-date"><span aria-hidden="true">{draft.playedDate || "选择日期"}</span><input aria-label="对局日期" type="date" value={draft.playedDate} onChange={event => setDraft({ ...draft, playedDate: event.target.value })}/></span></label>
+              <label>对局时刻<span className="manual-save-native-date"><span aria-hidden="true">{draft.playedTime || "选择时刻"}</span><input aria-label="对局时刻" type="time" step="60" value={draft.playedTime} onChange={event => setDraft({ ...draft, playedTime: event.target.value })}/></span></label>
+            </div>
+          </div>
           <div className="manual-save-pair">
             <label>棋谱类型<select value={draft.metadata.gameType} onChange={(event) => metadata("gameType", event.target.value as LocalManualMetadata["gameType"])}>
               <option value="full">全局</option><option value="middle">中残局</option><option value="endgame">残局</option>
@@ -118,13 +136,13 @@ export function ManualSaveDialog({ game, folders, mode = "save", onSave, onCreat
           {newFolder === undefined ? <button type="button" onClick={() => setNewFolder("")}>＋ 新建子目录</button> :
             <div className="manual-save-new-folder"><label>子目录名称<input value={newFolder} onChange={(event) => setNewFolder(event.target.value)}/></label>
               <button type="button" onClick={createFolder}>创建目录</button><button type="button" onClick={() => setNewFolder(undefined)}>取消新建</button></div>}
-          <label>备注<textarea rows={3} value={draft.note} onChange={(event) => setDraft({ ...draft, note: event.target.value })}/></label>
+          <label className="manual-save-note">备注<textarea aria-label="备注" rows={3} value={draft.note} onChange={(event) => setDraft({ ...draft, note: event.target.value })}/></label>
         </fieldset>
       </div>
       <footer><button type="button" disabled={busy || discard} onClick={close}>取消</button><button type="button" className="primary" disabled={busy || discard} onClick={save}>{busy ? "保存中…" : mode === "edit" ? "保存修改" : "保存棋谱"}</button></footer>
       {discard && <div className="manual-save-discard" role="alertdialog" aria-label="放弃资料修改">
         <strong>是否放弃本次资料修改？</strong><p>已录入的着法、分支和注释会保留。</p>
-        <div><button type="button" onClick={() => setDiscard(false)}>继续编辑</button><button type="button" onClick={onClose}>放弃修改</button></div>
+        <div><button type="button" onClick={() => setDiscard(false)}>继续编辑</button><button type="button" disabled={busy} onClick={dismiss}>放弃修改</button></div>
       </div>}
     </section>
   </div>;

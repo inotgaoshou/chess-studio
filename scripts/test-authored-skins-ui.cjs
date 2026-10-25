@@ -55,6 +55,7 @@ const out=path.resolve(__dirname,'../artifacts/skins-20261025');
    const bounds=await page.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth,board:document.querySelector('.xiangqi-board').getBoundingClientRect().toJSON()}));
    assert(bounds.scroll<=bounds.width,'Horizontal overflow');
    assert(bounds.board.width>200,'Board must remain visible');
+   assert(Math.abs(bounds.board.width/bounds.board.height-1120/1240)<.005,'Board aspect ratio must be preserved');
    // Include the complete transparent sprite, so the visible disc/shadow has more clearance.
    const insets=await page.evaluate(()=>{
     const board=document.querySelector('.xiangqi-board').getBoundingClientRect();
@@ -75,7 +76,7 @@ const out=path.resolve(__dirname,'../artifacts/skins-20261025');
    assert(liftedFits,'Selected edge piece must remain inside the board');
   }
   await page.evaluate(()=>window.renderSkin());
-  await page.screenshot({path:path.join(out,`${engine}-${width}-${d.id}${scaleTag}.png`),animations:'disabled'});
+  await page.locator('main').screenshot({path:path.join(out,`${engine}-${width}-${d.id}${scaleTag}.png`),animations:'disabled'});
   await page.evaluate(()=>window.renderSkin(false,'自在弈棋'));
   assert.match(await page.locator('.xiangqi-board').getAttribute('style'),capability?/board-river-blank/:/board\.png/);
   results.push({engine,width,skin:d.id,pieces:32,flippedTouch:'passed',overflow:'none',edgeClearance:`at least ${minInset} source px`,customRiver:capability?'passed':'original lettering preserved',selectedEdge:'passed'});

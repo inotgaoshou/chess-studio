@@ -2,9 +2,10 @@ import { useLayoutEffect, useRef, type ReactNode } from "react";
 
 // iOS 15 has no container query units. Measure the remaining grid cell instead
 // of falling back to a full-width board that extends below the toolbar.
-export function FittedBoardArea({ className, children }: { className: string; children: ReactNode }) {
+export function FittedBoardArea({ className, children, suspended = false }: { className: string; children: ReactNode; suspended?: boolean }) {
   const element = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
+    if (suspended) return;
     const node = element.current!;
     const fit = () => {
       const { width, height } = node.getBoundingClientRect();
@@ -15,6 +16,6 @@ export function FittedBoardArea({ className, children }: { className: string; ch
     observer.observe(node);
     window.addEventListener("resize", fit);
     return () => { observer.disconnect(); window.removeEventListener("resize", fit); };
-  }, []);
+  }, [suspended]);
   return <div className={className} ref={element}>{children}</div>;
 }

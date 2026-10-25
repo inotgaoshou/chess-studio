@@ -334,7 +334,12 @@ pub fn verify(r: &Request, evidence: &Evidence) -> ResultDto {
             .map(|m| m > 0)
             .unwrap_or_else(|| candidate.score_cp.is_some_and(|v| v >= min))
     };
-    let goal_ok = if won(&projected, solver) {
+    let goal_ok = if goal.kind == "gain_material" {
+        (!terminal(&projected) || won(&projected, solver))
+            && material(&projected, solver)
+                - material(&Board::from_fen(&r.starting_fen).expect("validated"), solver)
+                >= criteria.min_material_gain.unwrap_or(i32::MAX)
+    } else if won(&projected, solver) {
         true
     } else if terminal(&projected) {
         false
@@ -374,19 +379,7 @@ pub fn verify(r: &Request, evidence: &Evidence) -> ResultDto {
     if terminal(&final_board) && !won(&final_board, solver) {
         return rejected(r, "该走法导致解题方被绝杀或困毙", known(r).is_some());
     }
-    out.completed = won(&final_board, solver)
-        || match goal.kind.as_str() {
-            "gain_material" => {
-                material(&final_board, solver)
-                    - material(
-                        &Board::from_fen(&r.starting_fen).expect("validated"),
-                        solver,
-                    )
-                    >= criteria.min_material_gain.unwrap_or(i32::MAX)
-            }
-            "draw" => !terminal(&final_board) && out.path.len() >= criteria.horizon_plies,
-            _ => false,
-        };
+    out.completed = actual_goal_reached(r, &out.path);
     if out.completed {
         out.outcome = "completed".into();
         out.message = "皮卡鱼复核通过，已达到题目目标".into();
@@ -542,6 +535,13 @@ pub fn actual_goal_reached(r: &Request, moves: &[String]) -> bool {
     }) else {
         return false;
     };
+    if let Some(goal) = r.goal.as_ref().filter(|g| g.kind == "gain_material") {
+        let Some(c) = &goal.verification else { return false; };
+        return (!terminal(&board) || won(&board, solver))
+            && (moves.len() >= c.horizon_plies || won(&board, solver))
+            && material(&board, solver) - material(&initial, solver)
+                >= c.min_material_gain.unwrap_or(i32::MAX);
+    }
     if terminal(&board) {
         return won(&board, solver)
             && r.target_mate_moves
@@ -617,7 +617,11 @@ pub fn verify_defence(
     if count < c.horizon_plies && !terminal(&projected) {
         return Err("待复核：实际应手的后续推演不足".into());
     }
-    let reached = won(&projected, solver)
+    let reached = if goal.kind == "gain_material" {
+        (!terminal(&projected) || won(&projected, solver))
+            && material(&projected, solver) - material(&initial, solver)
+                >= c.min_material_gain.unwrap_or(i32::MAX)
+    } else { won(&projected, solver)
         || (!terminal(&projected)
             && match goal.kind.as_str() {
                 "gain_material" => {
@@ -630,7 +634,7 @@ pub fn verify_defence(
                     })
                 }),
                 _ => false,
-            });
+            }) };
     if reached {
         Ok(())
     } else {

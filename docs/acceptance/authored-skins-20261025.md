@@ -95,3 +95,17 @@ Checks: 6 focused tests passed; 16 Chromium layouts passed plus four phone layou
 `record-skin-previews.cjs` records four explicit browser-engine previews (Chromium/WebKit × phone/tablet). Each switches the three skins, taps red b0c2 and black b9c7, flips and resets, then checks landscape. The demonstration page is separate from the application UI, reusing the actual Board and skin CSS. An initial recording-page width constraint caused portrait cropping; corrected its grid minimum width, added explicit portrait bounds assertions, and re-recorded. These videos are not native Android/iOS simulator or physical-device acceptance.
 
 Latest artifacts: `v107-fixed-pieces-clear-boards-hd.png`, `videos/manifest.json` and four MP4 files under `artifacts/skins-20261025/`. No APK/IPA or App Store action this turn.
+
+
+## 最新：原图逐项对照与第一套原始素材替换
+
+- 对照原图、此前矢量版本、本机默认素材，生成 `artifacts/skins-20261025/reference-comparison.png`。
+- `xuan-paper` 改用用户本机 `皮肤/默认` 的原始棋盘及14张棋子PNG，文件字节不做编辑。保留此前版本于 `artifacts/skins-20261025/before-source-replacement`。
+- 原图仍存在边框比例、木纹及阴影差别，未宣称100%还原。没有截取静态棋子贴到整盘来冒充可走棋。
+- 按原图材质网格独立校准点击、翻转、动画位置；原始河界不可自定义，界面按能力隐藏对应编辑。原有其他皮肤的河界自定义保持。
+- 前端6项相关回归通过；Chromium/WebKit各16组布局通过，正式环境前端构建通过。
+- 预览录像使用真实Board组件的浏览器演示页，明确标注“非原生”；未安装、上传或提审原生APK/IPA。
+
+最新截图：`chromium-390-xuan-paper@3x.png`。四段视频已重新录制，加入宽高比校验，修正演示页WebKit拉伸；仅浏览器预览通过。生产前端包与源资源64个PNG哈希一致，其中15个为原始素材。
+
+新增棋盘宽高比断言后发现 WebKit 的百分比高度解析会拉长独立棋盘，现对新皮肤的内层棋盘使用 `height:auto` 与明确 `aspect-ratio` 修复。Chromium、WebKit 均重新通过16组，构建重跑通过。
