@@ -5,7 +5,7 @@ const fixture=require('./catalog-mate-fixtures.cjs');
 (async()=>{const browser=await(process.env.TEST_WEBKIT?webkit.launch():chromium.launch({channel:'chrome'}));try{
  const page=await browser.newPage({viewport:{width:390,height:844}});page.setDefaultTimeout(6000);let hold=false;const held=[];
  await page.route('**/api/v1/**',async route=>{const u=new URL(route.request().url());const body=fixture.responseFor(u);
- if(u.pathname.includes('/teaching-catalog/')&&u.pathname.endsWith('/problems')&&u.searchParams.get('mateMoves')==='2'){if(u.searchParams.has('cursor')){body.items=[{...body.items[0],id:'page-two',title:'第二页题'}];body.nextCursor=null;}else body.nextCursor='second';}
+ if(u.pathname.includes('/teaching-catalog/')&&u.pathname.endsWith('/problems')&&u.searchParams.get('mateMoves')==='2'){if(u.searchParams.has('cursor')){body.items=[{...body.items[0],id:'page-two',title:'第二页题'}];body.nextCursor=null;}else {body.nextCursor='second';body.items.push({...body.items[0]});}}
  if(u.pathname.includes('/teaching-catalog/')&&u.pathname.endsWith('/problems')&&hold&&u.searchParams.get('mateMoves')==='2'){held.push(()=>route.fulfill({contentType:'application/json',body:JSON.stringify(body)}).catch(()=>{}));return;}
  await route.fulfill({contentType:'application/json',body:JSON.stringify(body)});
  });

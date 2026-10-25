@@ -27,3 +27,18 @@ export function initialPracticeItem<T extends { id: string; problem: { id: strin
     ?? items.find(item => item.status === "pending")
     ?? items[0];
 }
+
+// Presentation context contains the loaded list, not just the API's 20-item session.
+export function adjacentPracticeGroup(numbers: Record<string, number>, currentId: string, direction: -1 | 1): string[] {
+  const ids = Object.entries(numbers).filter(([, n]) => Number.isInteger(n) && n > 0).sort((a,b) => a[1]-b[1]).map(([id])=>id);
+  const index = ids.indexOf(currentId);
+  if (index < 0) return [];
+  const start = (Math.floor(index / 20) + direction) * 20;
+  return start < 0 ? [] : ids.slice(start, start + 20);
+}
+
+export function numberedProblemTitle(title: string): string {
+  // Strip only a source ordinal when a separate display ordinal is shown.
+  // Mate lengths and substantive names remain untouched; stored titles do not change.
+  return title.replace(/^\s*(?:第\s*\d+\s*[题局]|[图题]\s*\d+|\d{3,}(?=[\s.、:：\-－—]))\s*[.、:：·\-－—]*\s*/, "") || title;
+}

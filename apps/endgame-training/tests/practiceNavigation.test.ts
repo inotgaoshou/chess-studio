@@ -25,3 +25,16 @@ test("selected problem opens even when the server returns a different item order
   assert.equal(initialPracticeItem([], undefined), undefined);
   assert.equal(initialPracticeItem(items, "i1", undefined, "unavailable"), undefined);
 });
+
+test("groups after 20 retain list ordinals and can reach adjacent loaded groups", async () => {
+  const { adjacentPracticeGroup, numberedProblemTitle } = await import("../src/practiceNavigation.ts");
+  const items=Array.from({length:50},(_,i)=>({id:`p${i+1}`})),numbers=currentListNumbers(items);
+  assert.equal(numbers.p21,21);assert.equal(numbers.p22,22);
+  assert.deepEqual(adjacentPracticeGroup(numbers,"p22",-1),items.slice(0,20).map(p=>p.id));
+  assert.deepEqual(adjacentPracticeGroup(numbers,"p22",1),items.slice(40).map(p=>p.id));
+  assert.deepEqual(adjacentPracticeGroup(numbers,"p1",-1),[]);
+  assert.deepEqual(adjacentPracticeGroup(numbers,"p50",1),[]);
+  assert.equal(numberedProblemTitle("第 1 题 · 两步杀"),"两步杀");
+  assert.equal(numberedProblemTitle("0002-两步杀"),"两步杀");
+  assert.equal(numberedProblemTitle("2步杀"),"2步杀");
+});
