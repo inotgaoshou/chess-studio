@@ -16,6 +16,7 @@ const game={id:'library-fixture',title:'省赛决赛',note:'原备注',folderPat
   await page.getByRole('button',{name:/我的棋谱 录谱/}).click();const library=page.getByRole('dialog',{name:'我的棋谱',exact:true});await library.waitFor();await library.getByRole('button',{name:'编辑信息：省赛决赛'}).waitFor();
   // A new document returns to its source library, rather than the account page.
   if(width<600)await library.locator('.directory-toggle').click();await library.getByRole('button',{name:'目录：比赛',exact:true}).click();
+  await library.getByLabel('包含子目录').check();
   await library.getByRole('textbox',{name:'搜索我的棋谱'}).fill('省赛');
   await page.evaluate(async()=>{const {trainingStore}=await import('/src/store.ts');const read=trainingStore.manualGames.bind(trainingStore);window.releaseNewManualRefresh=undefined;trainingStore.manualGames=async(...args)=>{if(!window.releaseNewManualRefresh)await new Promise(resolve=>window.releaseNewManualRefresh=resolve);return read(...args);};});
   await library.getByRole('button',{name:'新建棋谱',exact:true}).click();await library.waitFor({state:'hidden',timeout:2000});
@@ -25,6 +26,7 @@ const game={id:'library-fixture',title:'省赛决赛',note:'原备注',folderPat
   await page.getByRole('button',{name:'返回我的棋谱',exact:true}).click();await library.waitFor();
   assert.equal(await library.getByRole('textbox',{name:'搜索我的棋谱'}).inputValue(),'省赛');assert.match(await library.locator('.personal-library-toolbar > span').innerText(),/^比赛 ·/);
   await library.getByRole('button',{name:'清空搜索'}).click();await library.getByRole('button',{name:'返回',exact:true}).click();await library.waitFor({state:'hidden'});await page.getByRole('button',{name:/我的棋谱 录谱/}).click();await library.waitFor();
+  if(width<600)await library.locator('.directory-toggle').click();await library.getByRole('button',{name:'目录：比赛/决赛',exact:true}).click();
   await library.getByRole('button',{name:'编辑信息：省赛决赛'}).click();const edit=page.getByRole('dialog',{name:'编辑棋谱信息'});await edit.waitFor();
   const top=await edit.getByLabel('棋谱名称',{exact:true}).evaluate(el=>{const r=el.getBoundingClientRect();return document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)===el;});assert(top,'Edit input must be on top and receive taps');
   await edit.getByLabel('棋谱名称',{exact:true}).fill('决赛复盘');await edit.getByLabel('红方棋手',{exact:true}).fill('王五');await edit.getByRole('button',{name:'保存修改',exact:true}).click();await edit.waitFor({state:'hidden'});await library.getByRole('button',{name:'编辑信息：决赛复盘'}).waitFor();

@@ -9,8 +9,8 @@ export function manualResult(game: LocalManualGame) {
   const redWon = result === "first-win" ? firstRed : !firstRed;
   return redWon ? { label: "红胜", score: "1–0", tone: "red" } : { label: "黑胜", score: "0–1", tone: "black" };
 }
-export function manualInFolder(game: LocalManualGame, folder: string) {
-  return !folder || game.folderPath === folder || Boolean(game.folderPath?.startsWith(`${folder}/`));
+export function manualInFolder(game: LocalManualGame, folder: string, includeDescendants = false) {
+  return !folder || game.folderPath === folder || (includeDescendants && Boolean(game.folderPath?.startsWith(`${folder}/`)));
 }
 export function manualMatchesQuery(game: LocalManualGame, query: string) {
   const result = manualResult(game);

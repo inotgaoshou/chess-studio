@@ -19,6 +19,8 @@ export function ManualLibraryDialog({ games, folders, folder, query, selectedId,
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [page, setPage] = useState(1);
   const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const [includeDescendants, setIncludeDescendants] = useState(false);
+  const [unfiledOnly, setUnfiledOnly] = useState(false);
   const [pending, setPending] = useState<{kind: "move" | "delete"; games: LocalManualGame[]}>();
   const [destination, setDestination] = useState("");
   const [error, setError] = useState("");
@@ -33,13 +35,14 @@ export function ManualLibraryDialog({ games, folders, folder, query, selectedId,
     }
     return [...all].sort((a,b) => a.localeCompare(b,"zh-Hans-CN"));
   }, [folders,games]);
-  const visible = useMemo(() => games.filter(game => (!favoritesOnly || game.favorite) && manualInFolder(game,folder) && manualMatchesQuery(game,query)),[games,folder,query,favoritesOnly]);
+  const visible = useMemo(() => games.filter(game => (!favoritesOnly || game.favorite) && (!unfiledOnly || !game.folderPath) && manualInFolder(game,folder,includeDescendants) && manualMatchesQuery(game,query)),[games,folder,query,favoritesOnly,unfiledOnly,includeDescendants]);
   const pages = Math.max(1,Math.ceil(visible.length/30));
   const currentPage = Math.min(page,pages);
   const pageGames = visible.slice((currentPage-1)*30,currentPage*30);
   const editable = pageGames.filter(game=>!isProviderMirrorGame(game));
   const chosen = visible.filter(game=>selected.has(game.id)&&!isProviderMirrorGame(game));
-  useEffect(()=>{setPage(1);setSelected(new Set());},[folder,query,favoritesOnly]);
+  useEffect(()=>{setPage(1);setSelected(new Set());},[folder,query,favoritesOnly,unfiledOnly,includeDescendants]);
+  useEffect(()=>{if(folder)setUnfiledOnly(false);},[folder]);
   useEffect(()=>{
     const close=(event:KeyboardEvent)=>{if(event.key!=="Escape"||event.isComposing||lock.current)return;event.stopPropagation();if(pending)setPending(undefined);else onClose();};
     window.addEventListener("keydown",close);return()=>window.removeEventListener("keydown",close);
@@ -52,18 +55,20 @@ export function ManualLibraryDialog({ games, folders, folder, query, selectedId,
   }
   const request=(kind:"move"|"delete",items:LocalManualGame[])=>{setError("");setDestination(items[0]?.folderPath||"");setPending({kind,games:items});};
   const toggle=(id:string)=>setSelected(old=>{const next=new Set(old);if(next.has(id))next.delete(id);else next.add(id);return next;});
-  const chooseFolder=(path:string)=>{onFolder(path);setDirectoryOpen(false);};
+  const chooseFolder=(path:string,unfiled=false)=>{setUnfiledOnly(unfiled);onFolder(path);setDirectoryOpen(false);};
+  const folderLabel = unfiledOnly ? "未分类" : folder || "全部本地";
   return <section className="personal-manual-library" role="dialog" aria-modal="true" aria-label="我的棋谱">
     <header className="personal-library-header"><button type="button" aria-label="返回" disabled={busy} onClick={onClose}><ChevronLeft/></button><div><strong>我的棋谱</strong><small>本地棋谱库 · {games.length} 盘</small></div><button type="button" className="primary" disabled={busy} onClick={()=>void run(async()=>{setCreating(true);try{await onNew();}finally{setCreating(false);}})}><Plus/>{creating?"正在新建…":"新建棋谱"}</button></header>
     <div className="personal-library-body">
       <aside className={directoryOpen?"directories expanded":"directories"} aria-label="棋谱目录">
-        <button type="button" className="directory-toggle" aria-expanded={directoryOpen} onClick={()=>setDirectoryOpen(!directoryOpen)}><Folder/><span>{folder||"全部本地"}</span><ChevronDown/></button>
-        <nav><button type="button" className={!folder?"active":""} onClick={()=>chooseFolder("")}><Folder/><span>全部本地</span><small>{games.length}</small></button>
+        <button type="button" className="directory-toggle" aria-expanded={directoryOpen} onClick={()=>setDirectoryOpen(!directoryOpen)}><Folder/><span>{folderLabel}</span><ChevronDown/></button>
+        <nav><button type="button" className={!folder&&!unfiledOnly?"active":""} onClick={()=>chooseFolder("")}><Folder/><span>全部本地</span><small>{games.length}</small></button>
+          <button type="button" aria-label="未分类" className={unfiledOnly?"active":""} onClick={()=>chooseFolder("",true)}><Folder/><span>未分类</span><small>{games.filter(game=>!game.folderPath).length}</small></button>
           {paths.filter(path=>!path.split("/").some((_,index,parts)=>index<parts.length-1&&collapsed.has(parts.slice(0,index+1).join("/")))).map(path=>{
             const children=paths.some(item=>item.startsWith(`${path}/`));
             return <div key={path} className="personal-directory-row" style={{paddingLeft:`${(path.split("/").length-1)*12}px`}}>
               {children?<button type="button" aria-label={`${collapsed.has(path)?"展开":"折叠"}目录：${path}`} onClick={()=>setCollapsed(old=>{const next=new Set(old);if(next.has(path))next.delete(path);else next.add(path);return next;})}>{collapsed.has(path)?<ChevronRight/>:<ChevronDown/>}</button>:<span className="directory-indent"/>}
-              <button type="button" className={folder===path?"active":""} aria-label={`目录：${path}`} onClick={()=>chooseFolder(path)}><Folder/><span>{path.split("/").at(-1)}</span><small>{games.filter(game=>manualInFolder(game,path)).length}</small></button>
+              <button type="button" className={folder===path?"active":""} aria-label={`目录：${path}`} onClick={()=>chooseFolder(path)}><Folder/><span>{path.split("/").at(-1)}</span><small>{games.filter(game=>manualInFolder(game,path,includeDescendants)).length}</small></button>
             </div>;
           })}
           <button type="button" disabled={readonlyFolder(folder)||busy} onClick={onCreateFolder}><FolderPlus/>{folder?"新建子目录":"新建目录"}</button>
@@ -72,7 +77,8 @@ export function ManualLibraryDialog({ games, folders, folder, query, selectedId,
       </aside>
       <main className="personal-library-main">
         <div className="personal-library-search"><Search/><input aria-label="搜索我的棋谱" placeholder="搜索标题、棋手、赛果、回合或赛事" value={query} onChange={e=>onQuery(e.target.value)}/>{query&&<button type="button" aria-label="清空搜索" onClick={()=>onQuery("")}><X/></button>}</div>
-        <div className="personal-library-toolbar"><span>{folder||"全部本地"} · {visible.length} 盘</span><button type="button" aria-pressed={favoritesOnly} onClick={()=>setFavoritesOnly(!favoritesOnly)}>{favoritesOnly?"全部棋谱":"收藏"}</button><button type="button" disabled={busy||syncing} onClick={()=>void run(onSync)}><CloudUpload/>{syncing?"同步中":"云同步"}</button></div>
+        <div className="personal-library-toolbar"><span>{folderLabel} · {visible.length} 盘</span><button type="button" aria-pressed={favoritesOnly} onClick={()=>setFavoritesOnly(!favoritesOnly)}>{favoritesOnly?"全部棋谱":"收藏"}</button><button type="button" disabled={busy||syncing} onClick={()=>void run(onSync)}><CloudUpload/>{syncing?"同步中":"云同步"}</button></div>
+        {folder&&<label className="personal-library-descendants"><input type="checkbox" checked={includeDescendants} onChange={e=>setIncludeDescendants(e.target.checked)}/>包含子目录</label>}
         <div className="personal-library-selection"><button type="button" disabled={!editable.length||busy} onClick={()=>setSelected(old=>{const next=new Set(old),all=editable.every(g=>next.has(g.id));editable.forEach(g=>all?next.delete(g.id):next.add(g.id));return next;})}>{editable.length>0&&editable.every(g=>selected.has(g.id))?"取消全选":"全选当前"}</button><span>已选 {chosen.length} 盘</span><button type="button" disabled={!chosen.length||busy} onClick={()=>request("move",chosen)}><FolderInput/>移动</button><button type="button" className="danger" disabled={!chosen.length||busy} onClick={()=>request("delete",chosen)}><Trash2/>删除</button></div>
         {error&&!pending&&<p role="alert" className="personal-library-error">{error}</p>}
         {syncMessage&&<p className="personal-library-status" role="status">{syncMessage}</p>}
@@ -98,7 +104,7 @@ export function ManualLibraryDialog({ games, folders, folder, query, selectedId,
     {pending&&<div className="personal-library-confirm"><section role="alertdialog" aria-modal="true" aria-label={pending.kind==="move"?"移动棋谱":"删除棋谱"}><h3>{pending.kind==="move"?"移动":"删除"} {pending.games.length} 盘棋谱</h3><p>{pending.games.slice(0,3).map(game=>game.title).join("、")}{pending.games.length>3?"…":""}</p>
       {pending.kind==="move"?<label>目标目录<select value={destination} onChange={e=>setDestination(e.target.value)} disabled={busy}><option value="">未分类</option>{paths.filter(path=>!readonlyFolder(path)).map(path=><option key={path} value={path}>{path}</option>)}</select></label>:<p>删除后无法在本机恢复，请确认已保留需要的棋谱。</p>}
       {error&&<p role="alert" className="personal-library-error">{error}</p>}
-      <footer><button type="button" disabled={busy} onClick={()=>{setPending(undefined);setError("");}}>取消</button><button type="button" className={pending.kind==="delete"?"danger":"primary"} disabled={busy} onClick={()=>void run(async()=>{if(pending.kind==="move")await onMoveGames(pending.games,destination);else await onDeleteGames(pending.games);setSelected(new Set());setPending(undefined);})}>{busy?"处理中…":pending.kind==="move"?"确认移动":"确认删除"}</button></footer>
+      <footer><button type="button" disabled={busy} onClick={()=>{setPending(undefined);setError("");}}>取消</button><button type="button" className={pending.kind==="delete"?"danger":"primary"} disabled={busy} onClick={()=>void run(async()=>{if(pending.kind==="move"){await onMoveGames(pending.games,destination);setUnfiledOnly(!destination);setIncludeDescendants(false);}else await onDeleteGames(pending.games);setSelected(new Set());setPending(undefined);})}>{busy?"处理中…":pending.kind==="move"?"确认移动":"确认删除"}</button></footer>
     </section></div>}
   </section>;
 }

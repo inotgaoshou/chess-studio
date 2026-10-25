@@ -4521,7 +4521,7 @@ export function App() {
       note: overrides.note ?? manualGame?.note ?? "",
       metadata: overrides.metadata ?? manualGame?.metadata,
       favorite: overrides.favorite ?? manualGame?.favorite,
-      folderPath: (overrides.folderPath ?? manualGame?.folderPath ?? manualFolder) || undefined,
+      folderPath: (Object.prototype.hasOwnProperty.call(overrides, "folderPath") ? overrides.folderPath : manualGame ? manualGame.folderPath : manualFolder) || undefined,
       startingFen: overrides.startingFen ?? manualStartingFen,
       currentNodeId: overrides.currentNodeId ?? manualNodeId(cursor),
       currentFen: overrides.currentFen ?? manualCurrentFen,
@@ -4542,7 +4542,15 @@ export function App() {
     const revision = ++manualSaveRevision.current;
     try {
       const snapshot = manualPayload(overrides);
-      const pending = manualSaveTail.current.then(() => trainingStore.saveManualGame(snapshot));
+      const pending = manualSaveTail.current.then(async () => {
+        // Folder ownership may change while the document remains open (move,
+        // folder rename or sync). A later autosave must not restore its old path.
+        const stored = await trainingStore.openManualGame(snapshot.id);
+        assertManualGameEditable(stored);
+        const folderPath = Object.prototype.hasOwnProperty.call(overrides, "folderPath")
+          ? snapshot.folderPath : stored ? stored.folderPath : snapshot.folderPath;
+        return trainingStore.saveManualGame({ ...snapshot, folderPath, updatedAt: overrides.updatedAt ?? new Date().toISOString() });
+      });
       manualSaveTail.current = pending.then(() => undefined, () => undefined);
       const saved = await pending;
       if (revision === manualSaveRevision.current) {
@@ -4578,7 +4586,11 @@ export function App() {
     // that snapshot with its older stored version when editing its metadata.
     const latest = draft.id === manualGame?.id ? manualPayload() : stored ?? draft;
     assertManualGameEditable(latest);
-    const saved = await trainingStore.saveManualGame({ ...latest, ...values, folderPath: values.folderPath || undefined, updatedAt: new Date().toISOString() });
+    // If the folder field was untouched, preserve a concurrent move instead of
+    // writing the dialog's older directory back over it.
+    const folderPath = (values.folderPath || "") === (draft.folderPath || "") && stored
+      ? stored.folderPath : values.folderPath || undefined;
+    const saved = await trainingStore.saveManualGame({ ...latest, ...values, folderPath, updatedAt: new Date().toISOString() });
     if (saved.id === manualGame?.id) setManualGame(saved);
     const folder = saved.folderPath ?? "";
     setManualFolder(folder);
@@ -4751,21 +4763,31 @@ export function App() {
     setManualNotice(`已复制到我的棋谱：${saved.title}`);
   }
 
-  async function moveManualLibraryGames(games: LocalManualGame[], folder: string) {
+  async function moveManualLibraryGames(games: LocalManualGame[], destination: string) {
+    const folder = cleanManualFolderPath(destination);
     if (folder === TTXQ_MIRROR_FOLDER || folder.startsWith(`${TTXQ_MIRROR_FOLDER}/`)) throw new Error("不能移动到只读云镜像目录。");
-    await manualSaveTail.current;
+    ++manualLibraryRequest.current;
     let completed = 0;
-    try {
+    // Share the autosave queue so a move cannot race a pending document write.
+    const pending = manualSaveTail.current.then(async () => {
       for (const game of games) {
         const latest = await trainingStore.openManualGame(game.id);
-        if (!latest) continue;
+        if (!latest) throw new Error(`《${game.title}》已不存在，请刷新棋谱列表。`);
         assertManualGameEditable(latest);
         await trainingStore.moveManualGame(latest.id, folder);
-        setManualGame(current => current?.id === latest.id ? { ...current, folderPath: folder || undefined } : current);
+        const moved = await trainingStore.openManualGame(latest.id);
+        if (!moved || (moved.folderPath || "") !== folder) throw new Error(`《${game.title}》移动未完成，请重试。`);
+        setManualGame(current => current?.id === latest.id ? { ...current, folderPath: moved.folderPath, updatedAt: moved.updatedAt } : current);
+        setManualGames(items => items.map(item => item.id === moved.id ? moved : item));
         completed++;
       }
+    });
+    manualSaveTail.current = pending.then(() => undefined, () => undefined);
+    try {
+      await pending;
       setManualFolder(folder);
-      setManualNotice(`已移动 ${completed} 盘棋谱。`);
+      setManualQuery("");
+      setManualNotice(`已将 ${completed} 盘棋谱移动到${folder || "未分类"}。`);
     } catch (error) {
       throw new Error(`已移动 ${completed} 盘；${error instanceof Error ? error.message : "移动失败，请重试。"}`);
     } finally { await refreshManualLibrary(); }
@@ -4912,9 +4934,7 @@ export function App() {
     if (manualSheet.type === "gameMove") {
       if (manualSheet.game.readOnly || manualSheet.game.origin?.kind === "providerMirror") { setManualSheetError("天天象棋云镜像不可移动。"); return; }
       const folder = cleanManualFolderPath(manualSheet.folder);
-      await trainingStore.moveManualGame(manualSheet.game.id, folder);
-      if (manualSheet.game.id === manualGame?.id) setManualGame({ ...manualSheet.game, folderPath: folder || undefined });
-      await refreshManualLibrary(manualFolder, manualQuery);
+      await moveManualLibraryGames([manualSheet.game], folder);
       setManualNotice(folder ? `已移动到：${folder}` : "已移动到未分类。");
       setManualSheetError("");
       setManualSheet(undefined);

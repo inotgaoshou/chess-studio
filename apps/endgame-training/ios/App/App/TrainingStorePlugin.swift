@@ -331,7 +331,7 @@ private final class TrainingDatabase {
 
     func manualGames(folder: String, queryText: String) throws -> String {
         try queue.sync {
-            var sql = "SELECT game_json,folder_path FROM manual_games"
+            var sql = "SELECT game_json,folder_path,updated_at FROM manual_games"
             var clauses = [String]()
             var values: [Any] = []
             if !folder.isEmpty {
@@ -346,7 +346,7 @@ private final class TrainingDatabase {
             if !clauses.isEmpty { sql += " WHERE " + clauses.joined(separator: " AND ") }
             sql += " ORDER BY updated_at DESC"
             return try json(try query(sql, values) { statement in
-                try manualGamePayload(text(statement, 0), folder: text(statement, 1))
+                try manualGamePayload(text(statement, 0), folder: text(statement, 1), updatedAt: text(statement, 2))
             })
         }
     }
@@ -362,8 +362,8 @@ private final class TrainingDatabase {
 
     func openManualGame(_ id: String) throws -> String {
         try queue.sync {
-            try query("SELECT game_json,folder_path FROM manual_games WHERE id=? LIMIT 1", [id]) { statement in
-                ["item": try json(manualGamePayload(text(statement, 0), folder: text(statement, 1)))]
+            try query("SELECT game_json,folder_path,updated_at FROM manual_games WHERE id=? LIMIT 1", [id]) { statement in
+                ["item": try json(manualGamePayload(text(statement, 0), folder: text(statement, 1), updatedAt: text(statement, 2)))]
             }.first?["item"] as? String ?? ""
         }
     }
@@ -412,10 +412,11 @@ private final class TrainingDatabase {
         }
     }
 
-    private func manualGamePayload(_ raw: String, folder: String) throws -> [String: Any] {
+    private func manualGamePayload(_ raw: String, folder: String, updatedAt: String) throws -> [String: Any] {
         guard var payload = try jsonValue(raw) as? [String: Any] else { throw TrainingStoreError.invalidInput("game") }
         if folder.isEmpty { payload.removeValue(forKey: "folderPath") }
         else { payload["folderPath"] = folder }
+        payload["updatedAt"] = updatedAt
         return payload
     }
 

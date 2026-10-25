@@ -269,8 +269,8 @@ public class TrainingStorePlugin extends Plugin {
                 String like = "%" + queryText + "%";
                 args.add(like); args.add(like); args.add(like);
             }
-            Cursor cursor = getReadableDatabase().query("manual_games", new String[] { "game_json", "folder_path" }, where.length() > 0 ? where.toString() : null, args.toArray(new String[0]), null, null, "updated_at DESC");
-            while (cursor.moveToNext()) { try { result.put(manualGamePayload(cursor.getString(0), cursor.getString(1))); } catch (Exception ignored) {} }
+            Cursor cursor = getReadableDatabase().query("manual_games", new String[] { "game_json", "folder_path", "updated_at" }, where.length() > 0 ? where.toString() : null, args.toArray(new String[0]), null, null, "updated_at DESC");
+            while (cursor.moveToNext()) { try { result.put(manualGamePayload(cursor.getString(0), cursor.getString(1), cursor.getString(2))); } catch (Exception ignored) {} }
             cursor.close();
             return result;
         }
@@ -294,8 +294,8 @@ public class TrainingStorePlugin extends Plugin {
         }
 
         String openManualGame(String id) throws Exception {
-            try (Cursor cursor = getReadableDatabase().query("manual_games", new String[] { "game_json", "folder_path" }, "id=?", new String[] { id }, null, null, null, "1")) {
-                return cursor.moveToNext() ? manualGamePayload(cursor.getString(0), cursor.getString(1)).toString() : "";
+            try (Cursor cursor = getReadableDatabase().query("manual_games", new String[] { "game_json", "folder_path", "updated_at" }, "id=?", new String[] { id }, null, null, null, "1")) {
+                return cursor.moveToNext() ? manualGamePayload(cursor.getString(0), cursor.getString(1), cursor.getString(2)).toString() : "";
             }
         }
 
@@ -351,10 +351,11 @@ public class TrainingStorePlugin extends Plugin {
             getWritableDatabase().insertWithOnConflict("manual_analysis", null, values, SQLiteDatabase.CONFLICT_REPLACE);
         }
 
-        private JSONObject manualGamePayload(String raw, String folder) throws Exception {
+        private JSONObject manualGamePayload(String raw, String folder, String updatedAt) throws Exception {
             JSONObject payload = new JSONObject(raw);
             if (folder == null || folder.isEmpty()) payload.remove("folderPath");
             else payload.put("folderPath", folder);
+            payload.put("updatedAt", updatedAt);
             return payload;
         }
 

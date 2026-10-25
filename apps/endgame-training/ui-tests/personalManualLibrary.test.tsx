@@ -2,7 +2,7 @@ import { expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ManualLibraryDialog } from "../src/ManualLibraryDialog";
 import { ManualSaveDialog } from "../src/ManualSaveDialog";
-import { manualMatchesQuery, manualResult } from "../src/manualLibrary";
+import { manualInFolder, manualMatchesQuery, manualResult } from "../src/manualLibrary";
 import type { LocalManualGame } from "../src/types";
 const game:LocalManualGame={id:"one",title:"省赛决赛",note:"备注",folderPath:"比赛/决赛",startingFen:"9 w",currentFen:"",currentNodeId:"main:1",moves:["b0c2","b9c7"],cursor:1,branches:[],comments:{"main:1":"保留注释"},createdAt:"2026-10-20",updatedAt:"2026-10-25",metadata:{event:"秋季赛",redPlayer:"张三",blackPlayer:"李四",playedAt:"2026-10-20",gameType:"full",result:"first-win"}};
 const props=()=>({games:[game,{...game,id:"mirror",title:"云端棋谱",readOnly:true}],folders:[{path:"比赛",createdAt:""},{path:"比赛/决赛",createdAt:""}],folder:"",query:"",syncing:false,syncMessage:"",onFolder:vi.fn(),onQuery:vi.fn(),onClose:vi.fn(),onNew:vi.fn(async()=>{}),onOpen:vi.fn(async()=>{}),onEdit:vi.fn(async()=>{}),onShare:vi.fn(async()=>{}),onCopy:vi.fn(async()=>{}),onSync:vi.fn(async()=>{}),onCreateFolder:vi.fn(),onRenameFolder:vi.fn(),onDeleteFolder:vi.fn(),onMoveGames:vi.fn(async(..._args:unknown[])=>{}),onDeleteGames:vi.fn(async()=>{})});
@@ -17,6 +17,8 @@ it("searches players, results, rounds and events inside descendant folders",()=>
  expect(manualMatchesQuery(game,"李四 黑胜")).toBe(false);
  expect(manualResult({...game,startingFen:"9 b"}).label).toBe("黑胜");
  render(<ManualLibraryDialog {...props()} folder="比赛" query="张三 秋季赛"/>);
+ expect(screen.queryByRole("button",{name:"打开棋谱：省赛决赛"})).toBeNull();
+ fireEvent.click(screen.getByLabelText("包含子目录"));
  expect(screen.getByRole("button",{name:"打开棋谱：省赛决赛"})).toBeTruthy();
 });
 it("excludes readonly mirrors from batch selection and confirms before deleting",async()=>{
@@ -46,4 +48,19 @@ it("shows creation progress and prevents duplicate documents while persistence i
  const creating=screen.getByRole("button",{name:"正在新建…",exact:true});expect((creating as HTMLButtonElement).disabled).toBe(true);
  fireEvent.click(creating);expect(p.onNew).toHaveBeenCalledOnce();finish();
  await waitFor(()=>expect((screen.getByRole("button",{name:"新建棋谱",exact:true}) as HTMLButtonElement).disabled).toBe(false));
+});
+
+it("browses direct folder members unless descendants are explicitly requested",()=>{
+ expect(manualInFolder(game,"比赛")).toBe(false);
+ expect(manualInFolder(game,"比赛",true)).toBe(true);
+ expect(manualInFolder(game,"比赛/决赛")).toBe(true);
+ expect(manualInFolder({...game,folderPath:"比赛/决赛外"},"比赛/决赛",true)).toBe(false);
+ expect(manualInFolder(game,"")).toBe(true);
+});
+it("provides an unclassified view separate from all local games",()=>{
+ const p=props();render(<ManualLibraryDialog {...p} games={[game,{...game,id:"unfiled",title:"未分类棋谱",folderPath:undefined}]}/>);
+ fireEvent.click(screen.getByRole("button",{name:"未分类",exact:true}));
+ expect(p.onFolder).toHaveBeenCalledWith("");
+ expect(screen.queryByRole("button",{name:"打开棋谱：省赛决赛"})).toBeNull();
+ expect(screen.getByRole("button",{name:"打开棋谱：未分类棋谱"})).toBeTruthy();
 });
