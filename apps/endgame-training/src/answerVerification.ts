@@ -7,12 +7,17 @@ const STORE = "qixi-answer-verification-v2";
 type Saved = { key: string; request: VerificationRequest; evidence: VerificationEvidence; result: VerificationResult };
 function records(): Saved[] { try { return JSON.parse(localStorage.getItem(STORE) || "[]"); } catch { return []; } }
 export function verificationRequest(problem: TrainingProblem, path: string[], candidate: string): VerificationRequest {
+  const requireVerifiedGoal = !!problem.serverProblemId || problem.source === "platform" || problem.source === "teaching";
   const label = problem.title.match(/(\d+)步杀/);
   return { startingFen: problem.startingFen, path, candidate, solution: problem.solution, goal: problem.trainingGoal,
-    targetMateMoves: problem.targetMateMoves ?? (!problem.trainingGoal && label ? Number(label[1]) : undefined) };
+    requireVerifiedGoal,
+    targetMateMoves: problem.targetMateMoves ?? (!requireVerifiedGoal && !problem.trainingGoal && label ? Number(label[1]) : undefined) };
 }
 export async function completionMatchesMaterialGoal(problem: TrainingProblem, result: VerificationResult): Promise<boolean> {
-  if (!result.completed || problem.trainingGoal?.kind !== "gain_material") return true;
+  if (!result.completed) return true;
+  const request = verificationRequest(problem, [], "");
+  if (request.requireVerifiedGoal && !request.goal && request.targetMateMoves == null) return false;
+  if (problem.trainingGoal?.kind !== "gain_material") return true;
   return (await trainingCore()).trainingActualGoalReached(JSON.stringify(verificationRequest(problem, [], "")), JSON.stringify(result.path));
 }
 function pending(path: string[], message: string): VerificationResult {

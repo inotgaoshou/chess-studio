@@ -14,3 +14,7 @@ export function currentVerification(result: VerificationResult) {
   if (result.verifierVersion !== VERIFIER_VERSION) throw new Error("判题规则已更新，需要重新复核");
   return result;
 }
+
+export function missingPlatformGoal(problem: Pick<TrainingProblem,"source"|"serverProblemId"|"trainingGoal"|"targetMateMoves">) {
+  return (!!problem.serverProblemId || problem.source === "platform" || problem.source === "teaching") && !problem.trainingGoal && problem.targetMateMoves == null;
+}

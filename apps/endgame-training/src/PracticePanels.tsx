@@ -1,3 +1,4 @@
+import { mobileExerciseTitle, mobileExerciseGoal } from "./mobileExercisePresentation";
 import { useEffect, useRef, useState } from "react";
 import { ChevronLeft, LogIn, RefreshCw, Star } from "lucide-react";
 import { teachingClient, type PracticeReviewProblem } from "./teaching";
@@ -30,8 +31,8 @@ export function MobilePracticeReviewPanel({ kind, busy, message, onBack, onStart
     void request.then((next) => { if (active) setItems(next); }).catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : "读取失败"); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [kind, state, retry]);
-  const categories = ["全部", ...new Set(items.map((item) => item.problem.category).filter(Boolean))];
-  const visible = items.filter((item) => category === "全部" || item.problem.category === category);
+  const categories = ["全部", ...new Set(items.map((item) => mobileExerciseGoal(item.problem.trainingGoal)).filter(Boolean))];
+  const visible = items.filter((item) => category === "全部" || mobileExerciseGoal(item.problem.trainingGoal) === category);
   const ids = selected.length ? selected : visible.slice(0, 20).map((item) => item.problem.id);
   async function removeFavorite(id: string) {
     if (busy || removalLock.current.has(id)) return;
@@ -49,7 +50,7 @@ export function MobilePracticeReviewPanel({ kind, busy, message, onBack, onStart
     <div className="mobile-category-strip">{categories.map((value) => <button type="button" key={value} className={category === value ? "active" : ""} onClick={() => { setCategory(value); setSelected([]); }}>{value}</button>)}</div>
     <PracticeStatus loading={loading} error={error} onRetry={() => setRetry((value) => value + 1)}/>
     {!loading && !error && <><div className="practice-selection"><span>已选 {selected.length}/20 题</span><button type="button" disabled={!visible.length} onClick={() => setSelected(visible.slice(0, 20).map((item) => item.problem.id))}>全选{visible.length > 20 ? "前 20 题" : ""}</button><button type="button" disabled={!selected.length} onClick={() => setSelected([])}>清空</button></div>
-      <section className="mobile-review-list">{visible.length ? visible.map((item) => <label key={item.problem.id} className={`practice-review-row ${selected.includes(item.problem.id) ? "selected" : ""}`}><input type="checkbox" aria-label={`选择 ${item.problem.title}`} checked={selected.includes(item.problem.id)} disabled={!selected.includes(item.problem.id) && selected.length >= 20} onChange={() => setSelected((current) => current.includes(item.problem.id) ? current.filter((id) => id !== item.problem.id) : [...current, item.problem.id])}/><span><strong>{item.problem.title}</strong><small>{item.problem.category || "未分类"} · 未独立完成次数 {item.errorAttempts}</small></span>{kind === "favorites" && <button type="button" aria-label={`取消收藏 ${item.problem.title}`} disabled={busy || removing.includes(item.problem.id)} onClick={() => void removeFavorite(item.problem.id)}>{removing.includes(item.problem.id) ? "处理中…" : "取消收藏"}</button>}</label>) : <p className="mobile-library-empty">{category !== "全部" ? "此分类暂无题目" : kind === "favorites" ? "还没有收藏题目" : state === "mastered" ? "暂无已掌握题目" : "暂无待复习题目，可查看已掌握题目"}</p>}</section></>}
+      <section className="mobile-review-list">{visible.length ? visible.map((item) => <label key={item.problem.id} className={`practice-review-row ${selected.includes(item.problem.id) ? "selected" : ""}`}><input type="checkbox" aria-label={`选择 ${mobileExerciseTitle(item.problem)}`} checked={selected.includes(item.problem.id)} disabled={!selected.includes(item.problem.id) && selected.length >= 20} onChange={() => setSelected((current) => current.includes(item.problem.id) ? current.filter((id) => id !== item.problem.id) : [...current, item.problem.id])}/><span><strong>{mobileExerciseTitle(item.problem)}</strong><small>{mobileExerciseGoal(item.problem.trainingGoal)} · 未独立完成次数 {item.errorAttempts}</small></span>{kind === "favorites" && <button type="button" aria-label={`取消收藏 ${mobileExerciseTitle(item.problem)}`} disabled={busy || removing.includes(item.problem.id)} onClick={() => void removeFavorite(item.problem.id)}>{removing.includes(item.problem.id) ? "处理中…" : "取消收藏"}</button>}</label>) : <p className="mobile-library-empty">{category !== "全部" ? "此分类暂无题目" : kind === "favorites" ? "还没有收藏题目" : state === "mastered" ? "暂无已掌握题目" : "暂无待复习题目，可查看已掌握题目"}</p>}</section></>}
     {message && <p role="alert" className="practice-status">{message}</p>}
     <button type="button" className="mobile-practice-start" disabled={loading || !!error || !ids.length || busy} onClick={() => onStart(ids, state)}>{busy ? "正在创建练习…" : `${state === "mastered" && kind === "mistakes" ? "巩固重练" : "开始练习"}（${ids.length} 题${selected.length ? "" : " · 当前筛选前 20 题以内"}）`}</button>
   </main>;

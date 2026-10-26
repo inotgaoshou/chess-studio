@@ -16,4 +16,6 @@ it("lets a public student enter capture exercises without treating them as mate 
  expect(problems).toHaveBeenCalledWith(capture.id,expect.objectContaining({goal:"gain_material"}),false,auth,expect.anything());
  expect(screen.queryByRole("button",{name:/实战残局/})).toBeNull();
  expect(screen.queryByRole("button",{name:"两步杀",exact:true})).toBeNull();
+ expect(screen.queryByText("按教材查看")).toBeNull();
+ expect(screen.queryByRole("button",{name:/吃子教材/})).toBeNull();
 });
