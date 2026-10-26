@@ -59,6 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 candidate: node.iccs.clone(),
                 solution: problem.solution.clone(),
                 target_mate_moves: None,
+        require_verified_goal: false,
                 goal: Some(Goal {
                     kind: "gain_material".into(),
                     description: "净得子：在对方最优应手与回吃后，至少净赚一兵（100 子力分）"

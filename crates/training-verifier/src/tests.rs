@@ -17,6 +17,7 @@ fn recorded_endgame() -> Request {
             verification: None,
         }),
         target_mate_moves: None,
+        require_verified_goal: false,
     }
 }
 
@@ -131,6 +132,7 @@ fn request() -> Request {
             }),
         }),
         target_mate_moves: None,
+        require_verified_goal: false,
     }
 }
 fn evidence(score: i32) -> Evidence {
@@ -461,4 +463,20 @@ fn material_completion_waits_for_the_defence_and_keeps_only_the_net_profit() {
     assert!(actual_goal_reached(&r, &["c9d9".into(), "d8d9".into()]));
     r.goal.as_mut().unwrap().verification.as_mut().unwrap().min_material_gain = Some(200);
     assert!(!actual_goal_reached(&r, &["c9d9".into(), "d8d9".into()]));
+}
+
+#[test]
+fn public_figure13_cannot_complete_a_truncated_answer_without_goal() {
+    let r: Request=serde_json::from_value(serde_json::json!({
+        "startingFen":"2bcck3/3na4/4b4/9/9/9/3p5/4K4/4A4/5C3 w - - 0 1",
+        "path":[],"candidate":"e1f2","solution":[{"iccs":"e1f2","children":[]}],
+        "requireVerifiedGoal":true
+    })).unwrap();
+    let out=verify(&r,&Evidence::default());
+    assert_eq!(out.outcome,"pending_review");
+    assert!(!out.completed);
+    assert!(out.path.is_empty());
+    let after=play(&play(&board_at(&r).unwrap(),"e1f2").unwrap(),"e8f7").unwrap();
+    assert_eq!(after.status(),GameStatus::Checkmate);
+    assert!(!won(&after,Color::Red));
 }

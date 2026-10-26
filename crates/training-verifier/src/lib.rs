@@ -86,6 +86,9 @@ pub struct Request {
     pub solution: Vec<Node>,
     pub goal: Option<Goal>,
     pub target_mate_moves: Option<u32>,
+    /// Platform grading requires a reviewed objective; local line rehearsal stays compatible.
+    #[serde(default)]
+    pub require_verified_goal: bool,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -407,6 +410,11 @@ fn legacy(r: &Request, next: &Board, evidence: &Evidence) -> ResultDto {
         out.review_kind = Some("missing_conditions".into());
         return out;
     };
+    if r.require_verified_goal && r.goal.is_none() && r.target_mate_moves.is_none() {
+        let mut out = pending(r, "待复核：题目缺少已确认目标，未计为答对或错误");
+        out.review_kind = Some("missing_conditions".into());
+        return out;
+    }
     let reply = node.children.first();
     if requires_terminal_win(r) {
         let engine_reply = evidence
