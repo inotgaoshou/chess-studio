@@ -1,5 +1,6 @@
-import { ArrowDown, ArrowUp, ChevronDown, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronDown, Lightbulb, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { moveNotationLabel } from "./moveNotation";
 
 export type StudyManualBranch = {
   id: string;
@@ -24,10 +25,11 @@ type Props = {
   onDiscardCurrent(parentCursor: number, replacement?: StudyManualBranch): void;
   onMove(id: string, direction: -1 | 1): void;
   readOnly?: boolean;
+  onExplain?(index: number): void;
 };
 
 const MAINLINE_ID = "__mainline__";
-const moveLabel = (notation: string | undefined, iccs: string | undefined) => notation || iccs || "--";
+const moveLabel = (notation: string | undefined, iccs: string | undefined) => notation || iccs ? moveNotationLabel(notation) : "--";
 const branchLetter = (index: number) => String.fromCharCode(65 + index);
 const sameLine = (left: string[], right: string[]) => left.join(",") === right.join(",");
 const branchOrder = (branch: StudyManualBranch, fallbackIndex: number) => Number.isFinite(branch.branchOrder) ? Math.max(0, Math.floor(Number(branch.branchOrder))) : fallbackIndex + 1;
@@ -43,7 +45,7 @@ type BranchChoice = {
 
 type BranchChoiceWithLetter = BranchChoice & { letter: string };
 
-export function StudyManualTree({ moves, notation, cursor, branches, comments, onCommentChange, onNavigate, onAdopt, onDelete, onDiscardCurrent, onMove, readOnly = false }: Props) {
+export function StudyManualTree({ moves, notation, cursor, branches, comments, onCommentChange, onNavigate, onAdopt, onDelete, onDiscardCurrent, onMove, readOnly = false, onExplain }: Props) {
   const branchesAt = useMemo(() => {
     const result = new Map<number, StudyManualBranch[]>();
     for (const branch of branches) {
@@ -188,10 +190,10 @@ export function StudyManualTree({ moves, notation, cursor, branches, comments, o
     const move = moves[index];
     if (!move) return <span className="study-move-cell empty" aria-hidden="true"/>;
     const badge = branchBadge(index);
-    return <button type="button" className={`study-move-cell ${badge ? "has-branch" : ""} ${cursor === index + 1 ? "active" : ""}`} onClick={() => onNavigate(index + 1)}>
+    return <span className="study-move-with-commentary"><button type="button" className={`study-move-cell ${badge ? "has-branch" : ""} ${cursor === index + 1 ? "active" : ""}`} onClick={() => onNavigate(index + 1)}>
       <i className={side}/><span>{moveLabel(notation[index], move)}</span>
       {badge && <em>{badge}</em>}
-    </button>;
+    </button>{onExplain && <button className="commentary-entry" type="button" aria-label={`讲解这步 ${moveLabel(notation[index], move)}`} onClick={() => onExplain(index)}><Lightbulb aria-hidden="true"/>讲解</button>}</span>;
   }
 
   return <section className="study-manual-tree" aria-label="棋谱分支树">

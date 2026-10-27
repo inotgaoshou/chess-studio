@@ -5,6 +5,12 @@ import { PracticeOpeningStatus } from "../src/PracticeOpeningStatus";
 const props = { busy: true, message: "", title: "下一题", phase: "准备棋盘", onRetry: vi.fn(), onCancel: vi.fn() };
 afterEach(() => vi.useRealTimers());
 
+it("opening from a question list acknowledges the tap immediately", () => {
+  render(<PracticeOpeningStatus {...props} delayMs={0}/>);
+  expect(screen.getByRole("status")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "取消" })).toBeTruthy();
+});
+
 it("fast question switches never flash an opening overlay", () => {
   vi.useFakeTimers();
   const ui = render(<PracticeOpeningStatus {...props}/>);

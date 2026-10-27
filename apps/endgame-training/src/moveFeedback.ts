@@ -1,4 +1,5 @@
 import type { BoardPiece, BoardState } from "./types";
+import { stopCommentarySpeech } from "./commentarySpeech";
 
 export type TrainingFeedbackKind = "move" | "capture" | "check" | "checkmate" | "stalemate";
 export type TrainingFeedbackEvent = { id: number; kind: TrainingFeedbackKind; iccs: string; piece?: BoardPiece };
@@ -36,6 +37,7 @@ export function cancelTrainingFeedback() {
   }
 }
 export function playTrainingFeedback(kind:TrainingFeedbackKind) {
+  void stopCommentarySpeech();
   cancelTrainingFeedback();
   if(typeof Audio === "undefined")return;
   try {

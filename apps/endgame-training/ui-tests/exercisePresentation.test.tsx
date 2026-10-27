@@ -19,6 +19,16 @@ function solver(overrides: Partial<ComponentProps<typeof MobilePracticeSolverPan
 }
 
 describe("role-aware exercise UI",()=>{
+  it("renders the mobile commentary slot and historical explanation only with answer access",()=>{
+    const onExplainAnswer=vi.fn();
+    const ui=solver({answersAllowed:true,revealed:true,commentary:<button>解释刚才这步</button>,onExplainAnswer});
+    expect(screen.getByRole("button",{name:"解释刚才这步"})).toBeTruthy();
+    fireEvent.click(screen.getByRole("button",{name:"讲解这步"}));
+    expect(onExplainAnswer).toHaveBeenCalledWith(0);
+    ui.rerender(<MobilePracticeSolverPanel {...ui.props} answersAllowed={false}/>);
+    expect(screen.queryByRole("button",{name:"解释刚才这步"})).toBeNull();
+    expect(screen.queryByRole("button",{name:"讲解这步"})).toBeNull();
+  });
   for(const [role,vip] of [["student",false],["student",true],["coach",false],["admin",false]] as const) {
     it(`${role} VIP=${vip}: answer buttons and restored panels follow role`,()=>{
       const answersAllowed=canViewExerciseSolutions(auth(role,vip));

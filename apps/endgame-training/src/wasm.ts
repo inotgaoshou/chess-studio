@@ -1,4 +1,6 @@
 import { withRequestDeadline } from "./requestDeadline";
+import { EngineCoordinator } from "./engineCoordinator";
+import type { MoveFacts } from "../../../packages/move-commentary";
 import { Capacitor, registerPlugin } from "@capacitor/core";
 import type { BoardState, CblLibrary, CblManualLibrary, RuleMode } from "./types";
 
@@ -13,6 +15,7 @@ type NativePikafish = {
   cancel(): Promise<void>;
 };
 const nativePikafish = registerPlugin<NativePikafish>("Pikafish");
+const engineCoordinator = new EngineCoordinator(() => nativePikafish.cancel());
 export type CloudBookMove = { iccs: string; notation: string; score: number; winRate: number };
 export type EngineReply = { iccs: string; notation: string };
 export type PikafishAnalysisLine = { multipv: number; depth: number; scoreCp?: number; mate?: number; bound?: string; nodes: number; nps: number; pv: string[] };
@@ -28,6 +31,7 @@ type Core = {
   parseCblLibrary(bytes: Uint8Array): string;
   parseCblGameLibrary(bytes: Uint8Array): string;
   chineseLine(fen: string, moves: string[]): string;
+  moveLineFacts(fen: string, moves: string[]): string;
   boardStateAfter(fen: string, moves: string[], ruleMode: RuleMode): string;
   legalTargetsAfter(fen: string, moves: string[], row: number, col: number): string;
   WebGame: { new(fen?: string, ruleMode?: RuleMode): { playMove(iccs: string): string; stateJson(): string } };
@@ -55,6 +59,10 @@ export async function parseCblGames(bytes: Uint8Array): Promise<CblManualLibrary
 
 export async function chineseLine(fen: string, moves: string[]) {
   return JSON.parse((await trainingCore()).chineseLine(fen, moves)) as string[];
+}
+
+export async function moveLineFacts(fen: string, moves: string[]): Promise<MoveFacts[]> {
+  return JSON.parse((await trainingCore()).moveLineFacts(fen, moves));
 }
 
 export async function boardAt(fen: string, moves: string[], ruleMode: RuleMode = "domestic2020"): Promise<BoardState> {
@@ -117,7 +125,7 @@ export function hasLocalPikafish() {
 export async function queryPikafishReply(fen: string, moveTimeMs = 800): Promise<EngineReply> {
   try {
     if (!hasLocalPikafish()) throw new Error("本地 Pikafish 仅在 Android 或 iOS 版可用");
-    const { iccs } = await nativePikafish.bestMove({ fen, moveTimeMs });
+    const { iccs } = await engineCoordinator.run(3, () => nativePikafish.bestMove({ fen, moveTimeMs }));
     await boardAt(fen, [iccs]);
     return { iccs, notation: (await chineseLine(fen, [iccs])).at(-1) ?? iccs };
   } catch (error) {
@@ -128,17 +136,22 @@ export async function queryPikafishReply(fen: string, moveTimeMs = 800): Promise
 export async function queryPikafishAnalysis(fen: string, moveTimeMs = 2000, multiPv = 4): Promise<PikafishAnalysis> {
   try {
     if (!hasLocalPikafish()) throw new Error("本地 Pikafish 仅在 Android 或 iOS 版可用");
-    return await nativePikafish.analyze({ fen, moveTimeMs, multiPv });
+    return await engineCoordinator.run(2, () => nativePikafish.analyze({ fen, moveTimeMs, multiPv }));
   } catch (error) {
     throw new Error(`AI 拆棋失败：${error instanceof Error ? error.message : "引擎启动失败"}`);
   }
 }
 
 export async function cancelPikafishSearch() {
-  if (hasLocalPikafish()) await nativePikafish.cancel();
+  if (hasLocalPikafish()) await engineCoordinator.cancel();
+}
+
+export async function queryCommentaryAnalysis(fen: string, moveTimeMs: number, multiPv: number, signal: AbortSignal) {
+  if (!hasLocalPikafish()) return undefined;
+  return (await engineCoordinator.run(1, () => nativePikafish.analyze({ fen, moveTimeMs, multiPv }), signal)).lines[0];
 }
 
 export async function localVerificationIdentity() { return (await nativePikafish.identity()).fingerprint; }
 export async function queryVerificationSearch(spec: import("../../../packages/training-verification/types").VerificationSearch) {
-  return nativePikafish.analyze({ ...spec, multiPv: 1, verification: true });
+  return engineCoordinator.run(3, () => nativePikafish.analyze({ ...spec, multiPv: 1, verification: true }));
 }

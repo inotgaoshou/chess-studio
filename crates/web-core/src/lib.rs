@@ -309,6 +309,12 @@ pub fn chinese_line(starting_fen: &str, moves: Vec<String>) -> Result<String, Js
     serde_json::to_string(&board.chinese_pv_notation(&moves).map_err(js_error)?).map_err(js_error)
 }
 
+/// Position-local evidence only; no ManualTree, storage or engine side effects.
+#[wasm_bindgen(js_name = moveLineFacts)]
+pub fn move_line_facts(fen: &str, moves: Vec<String>) -> Result<String, JsValue> {
+    serde_json::to_string(&xiangqi_core::move_facts::line_facts(fen, &moves).map_err(js_error)?).map_err(js_error)
+}
+
 /// Replay once and serialize only the final state. Returning stateJson after
 /// every historical move repeatedly rebuilds status, notation and rule history.
 #[wasm_bindgen(js_name = boardStateAfter)]

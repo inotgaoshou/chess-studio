@@ -16,7 +16,7 @@ Android 版还提供“AI 拆棋”：对当前局面进行本地 MultiPV 分析
 
 ## 安装包环境
 
-`VITE_APP_ENV=test|production` 同时决定登录弹窗的“测试版／正式版”标识与默认服务域名。普通构建和本地发行默认 `production`，固定连接 `https://api.qixiapp.cn`，不提供环境切换；测试包默认连接 `https://api-test.qixiapp.cn`，未登录时可选择测试或线上环境，选择会保留。TestFlight 工作流的 `app_env` 默认 `test`。
+`VITE_APP_ENV=test|production` 同时决定登录弹窗的“测试版／正式版”标识与默认服务域名。普通构建和本地发行默认 `production`，固定连接 `https://api.qixiapp.cn`，不提供环境切换；测试包默认连接 `https://api-test.qixiapp.cn`，未登录时可选择测试或线上环境，选择会保留。TestFlight 工作流的 `app_env` 默认 `production`，正式构建须使用匹配的已注释移动端发布标签。
 
 连接地址不在弹窗中显示，也不能输入自定义域名。切换环境需先退出登录，切换后重新登录；本地棋谱和按服务器隔离的作业缓存保留。旧版未记录服务器归属的安全会话需重新登录。
 

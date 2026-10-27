@@ -6,11 +6,11 @@ on:
       marketing_version:
         description: "App Store marketing version"
         required: true
-        default: "1.0.3"
+        default: "1.0.7"
       build_number:
         description: "App Store Connect build number"
         required: true
-        default: "10018"
+        default: "10070"
       app_env:
         description: "Package environment (test packages can also connect to production)"
         type: choice

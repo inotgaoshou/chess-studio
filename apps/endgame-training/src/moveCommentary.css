@@ -1,0 +1,67 @@
+.move-commentary { min-width:0; width:100%; border:1px solid #b9d2c3; border-radius:12px; background:#f4faf6; color:#294c38; text-align:left; overflow:hidden; }
+.move-commentary > header { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:10px; padding:12px; background:#edf6ef; border-bottom:1px solid #d6e6db; }
+.move-commentary > header > div,.commentary-speech { display:flex; flex-wrap:wrap; align-items:center; gap:6px; }
+.move-commentary button,.move-commentary select { min-height:36px; border:1px solid #bdd4c4; border-radius:8px; background:white; color:#356345; padding:7px 10px; font-size:12px; }
+.move-commentary button,.commentary-entry { display:inline-flex; align-items:center; justify-content:center; gap:5px; cursor:pointer; font-weight:650; line-height:1.3; }
+.move-commentary button svg,.commentary-entry svg { width:16px; height:16px; flex-shrink:0; }
+.commentary-entry { min-height:36px; padding:7px 10px; border:1px solid #dfb15d; border-radius:8px; background:#fff1cd; color:#75480e; font-size:12px; white-space:nowrap; box-shadow:0 1px 2px #6d49100d; }
+.commentary-entry:hover:not(:disabled) { background:#ffe6ab; border-color:#c98c2d; }
+.commentary-entry:active:not(:disabled) { background:#ffdb8a; }
+.move-commentary button:disabled,.commentary-entry:disabled { opacity:.45; cursor:default; box-shadow:none; }
+.move-commentary button:focus-visible,.commentary-entry:focus-visible,.move-commentary select:focus-visible { outline:3px solid #d79a2e; outline-offset:2px; }
+.move-commentary .commentary-heading { flex-wrap:nowrap; gap:9px; }
+.commentary-heading-icon { display:grid; place-items:center; width:34px; height:34px; border-radius:10px; background:#ffedbd; color:#9b650f; flex-shrink:0; }
+.commentary-heading-icon svg { width:21px; height:21px; }
+.commentary-heading > span:last-child { display:grid; gap:2px; }
+.commentary-heading strong { font-size:14px; }
+.move-commentary .commentary-heading small { font-size:11px; color:#53725f; }
+.move-commentary .commentary-primary { min-height:40px; border-color:#226e48; background:#226e48; color:#fff; padding:9px 13px; font-size:13px; font-weight:750; box-shadow:0 2px 4px #174e2520; }
+.move-commentary .commentary-primary:hover:not(:disabled) { background:#175437; }
+.move-commentary .commentary-collapse { min-height:36px; background:transparent; border-color:transparent; padding:6px; font-size:11px; color:#4a6c58; }
+.move-commentary-body { padding:10px 12px 12px; font-size:13px; line-height:1.75; }
+.move-commentary-body > section { margin-top:9px; padding:9px 11px; border:1px solid #dce8df; border-radius:9px; background:#fff; }
+.move-commentary-body > section h4 { margin:0 0 4px; color:#205a39; font-size:13px; }
+.move-commentary-body > section p { margin:0; }
+.move-commentary h3,.move-commentary h4 { margin:8px 0 3px; }
+.move-commentary p { margin:3px 0 9px; }
+.move-commentary small { color:#62796a; }
+.move-commentary code { display:block; overflow-wrap:anywhere; font-size:11px; }
+.move-commentary summary { cursor:pointer; min-height:32px; padding:5px 0; }
+.move-commentary ol { padding-left:26px; }
+.move-commentary .commentary-speech { position:sticky; top:0; z-index:1; padding:8px 0; background:#f4faf6; }
+.move-commentary .commentary-speaking { background:#e1f0e6; border-color:#7daf8d; }
+.move-commentary .commentary-speech label { display:flex; align-items:center; gap:5px; }
+.analysis-candidate-commentary { display:grid; gap:4px; }
+.analysis-candidates .analysis-candidate-commentary > .commentary-entry { justify-self:end; display:inline-flex; width:auto; }
+.study-move-with-commentary { display:flex; min-width:0; align-items:stretch; }
+.study-move-with-commentary > .study-move-cell { flex:1; }
+.study-move-with-commentary > .commentary-entry { flex-shrink:0; gap:3px; padding-inline:6px; font-size:11px; border-radius:6px; }
+.study-move-with-commentary > .commentary-entry svg { width:13px; height:13px; }
+.manual-analysis-dock .move-commentary { flex-shrink:0; }
+.recording-feedback-row > .commentary-entry { min-height:44px; margin:0; }
+.commentary-spinner { animation:commentary-spin 1s linear infinite; }
+@keyframes commentary-spin { to { transform:rotate(360deg); } }
+@media (prefers-reduced-motion:reduce) { .commentary-spinner { animation:none; } }
+.commentary-research-content,.manual-commentary-content { min-width:0; min-height:0; overflow:auto; overscroll-behavior:contain; display:flex; flex-direction:column; align-items:stretch; gap:8px; }
+.commentary-research-content > .move-commentary,.manual-commentary-content > .move-commentary { flex:0 0 auto; }
+.study-sidebar .commentary-research-content > :is(.study-manual-tree,.analysis-panel,.study-cloud-panel) { flex:0 0 auto; height:auto; min-height:160px; max-height:none; }
+.study-sidebar .commentary-research-content > .analysis-panel { min-height:240px; }
+.study-sidebar .commentary-research-content .study-manual-layout { min-height:160px; height:auto; }
+.study-sidebar .commentary-research-content .study-mainline-column { min-height:140px; }
+.manual-commentary-content > .manual-analysis-workbench { flex:0 0 auto; }
+@media (pointer:coarse) { .move-commentary button,.move-commentary select,.commentary-entry { min-height:44px; } }
+@media (orientation:landscape) {
+  html.phone-webview .study-workspace:has(.commentary-research-content) { grid-template-rows:minmax(0,1fr); }
+  html.phone-webview .study-workspace:has(.commentary-research-content) > .study-stage { height:100%; grid-template-rows:28px minmax(0,1fr); align-content:stretch; }
+  html.phone-webview .study-workspace:has(.commentary-research-content) > .study-stage > .board-shell { height:100%; width:auto; max-height:100%; max-width:100%; align-self:center; }
+}
+@media (orientation:landscape) and (min-width:700px) {
+  html:is(.phone-webview,.tablet-webview) .manual-reference-layout .manual-stage.manual-analysis-expanded:not(.manual-setup-active):has(.manual-commentary-content) {
+    grid-template-columns:minmax(0,1fr) clamp(300px,40vw,440px);
+    grid-template-rows:44px minmax(170px,1fr) 100px!important;
+  }
+  html:is(.phone-webview,.tablet-webview) .manual-reference-layout .manual-stage.manual-analysis-expanded:has(.manual-commentary-content) > .manual-bottom-tools {
+    overflow:auto; justify-content:flex-start;
+  }
+  .manual-stage.manual-analysis-expanded:has(.manual-commentary-content) > .manual-bottom-tools > * { flex-shrink:0; }
+}

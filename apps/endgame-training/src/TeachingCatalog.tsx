@@ -87,7 +87,7 @@ function CatalogView({ initialMateStep, auth, teacher = false, scene = "select",
   const nodes=!nodeId?[...allowedNodes].sort((a,b)=>(basicEntryOrder(a.teachingEntry)<0?4:basicEntryOrder(a.teachingEntry))-(basicEntryOrder(b.teachingEntry)<0?4:basicEntryOrder(b.teachingEntry))||a.displayOrder-b.displayOrder):allowedNodes,path=browse.page.breadcrumbs,materials=browse.page.learningMaterials,nodeCursor=browse.page.nextCursor,materialCursor=browse.page.materialNextCursor;
   const directMate = mobileBrowse && path.some(n=>MATE_TEACHING_ENTRIES.has(n.teachingEntry??""));
   const directCapture = mobileBrowse && path.some(n=>n.teachingEntry==="capture");
-  const goal=directCapture?"gain_material":rawGoal, mateGroup=directCapture?"":rawMateGroup;
+  const goal=directCapture?"":rawGoal, mateGroup=directCapture?"":rawMateGroup;
   const stepCounts=browse.page.mateStepCounts;
   const firstStep=stepCounts?.filter(n=>n.itemCount>0).map(n=>n.mateMoves).sort((a,b)=>a-b)[0];
   const selectedStep=mateChoice??(firstStep?String(firstStep):"all");

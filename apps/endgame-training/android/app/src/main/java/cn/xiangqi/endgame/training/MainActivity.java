@@ -10,6 +10,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(ScreenOrientationPlugin.class);
         registerPlugin(CloudBookPlugin.class);
         registerPlugin(PikafishPlugin.class);
+        registerPlugin(CommentarySpeechPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

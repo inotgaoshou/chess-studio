@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+pub mod move_facts;
+
 pub const STARTING_FEN: &str =
     "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1";
 pub const DOMESTIC_RULE_NAME: &str = "国内中国象棋规则（2020版导向）";
