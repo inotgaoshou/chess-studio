@@ -49,6 +49,36 @@ export type AuthoringDirectory = {
   draftCount?: number;
   items: AuthoredQuestion[];
 };
+export type AuthoringSource = {
+  id: string;
+  title: string;
+  fen: string;
+  authored?: boolean;
+  category?: string;
+  duplicateKey?: string;
+  alreadyAdded?: boolean;
+  sourceScope?: string;
+  sourceTitle?: string;
+  sourceCount?: number;
+};
+export type AuthoringSourcePage = {
+  items: AuthoringSource[];
+  categories?: string[];
+  nextCursor?: string | null;
+  sourcePickerVersion?: number;
+};
+export function sourceIdentity(item: Pick<AuthoringSource, "id" | "authored" | "duplicateKey">): string {
+  return item.duplicateKey || `${item.authored ? "authored" : "source"}:${item.id}`;
+}
+export function mergeSources(previous: AuthoringSource[], incoming: AuthoringSource[]): AuthoringSource[] {
+  const seen = new Set(previous.map(sourceIdentity));
+  return [...previous,...incoming.filter(item => {
+    const key = sourceIdentity(item);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  })];
+}
 export type AuthoringApi = {
   scopeKey?: string;
   request<T>(path: string, init?: RequestInit): Promise<T>;

@@ -15,6 +15,10 @@ import {
   assignable,
   itemRef,
   shiftQuestions,
+  mergeSources,
+  sourceIdentity,
+  type AuthoringSource,
+  type AuthoringSourcePage,
   toIccs,
   splitAssignments,
   type AuthoringApi,
@@ -580,6 +584,8 @@ export function TeacherAuthoring({
         <SourcePicker
           api={api}
           kind={picker}
+          directoryId={dir?.id}
+          existing={dir?.items ?? []}
           onClose={() => setPicker(undefined)}
           onChoose={async (source) => {
             if (picker === "problems") {
@@ -588,6 +594,7 @@ export function TeacherAuthoring({
                 subjectId: source.id,
                 kind: source.authored ? "authored" : "source",
               } as AuthoredQuestion;
+              if (dir?.items.some(item => itemRef(item).subjectId === q.subjectId && itemRef(item).kind === q.kind)) throw new Error("这道题已添加到当前目录");
               await changeDir([...(dir?.items ?? []), q]);
               setPicker(undefined);
             } else {
@@ -629,80 +636,75 @@ function TitleSheet({title,value,busy,error,onClose,onSubmit}:{title:string;valu
   </form></div>;
 }
 
-function SourcePicker({
-  api,
-  kind,
-  onClose,
-  onChoose,
-}: {
-  api: AuthoringApi;
-  kind: "problems" | "games";
-  onClose(): void;
-  onChoose(item: { id: string; authored?: boolean }): Promise<void>;
+function SourcePicker({api,kind,directoryId,existing,onClose,onChoose}:{
+  api:AuthoringApi;
+  kind:"problems"|"games";
+  directoryId?:string;
+  existing:AuthoredQuestion[];
+  onClose():void;
+  onChoose(item:AuthoringSource):Promise<void>;
 }) {
-  const [q, setQ] = useState(""),
-    [items, setItems] = useState<
-      { id: string; title: string; fen: string; authored?: boolean }[]
-    >([]),
-    [error, setError] = useState(""),
-    [busy, setBusy] = useState(false);
-  const request = useRef(0);
+  const [q,setQ] = useState(""), [category,setCategory] = useState(""), [reload,setReload] = useState(0);
+  const [items,setItems] = useState<AuthoringSource[]>([]), [categories,setCategories] = useState<string[]>([]);
+  const [nextCursor,setNextCursor] = useState<string|null>(), [error,setError] = useState(""), [busy,setBusy] = useState(true), [choosing,setChoosing] = useState(false);
+  const request = useRef(0), selectionLock = useRef(false), paginationLock = useRef(false);
+  const list = useRef<HTMLDivElement>(null);
+  const existingIds = new Set(existing.map(item => `${itemRef(item).kind}:${itemRef(item).subjectId}`));
+  async function readPage(after?:string) {
+    const params = new URLSearchParams({kind,q:q.trim(),limit:"30"});
+    if (category) params.set("category",category);
+    if (directoryId) params.set("directoryId",directoryId);
+    if (after) params.set("cursor",after);
+    return api.request<AuthoringSourcePage>(BASE+"/sources?"+params);
+  }
   useEffect(() => {
-    const n = ++request.current;
-    const timer = setTimeout(() => {
-      setBusy(true);
-      void api
-        .request<{ items: typeof items }>(
-          BASE + `/sources?kind=${kind}&q=${encodeURIComponent(q)}`,
-        )
-        .then((v) => {
-          if (n === request.current) setItems(v.items);
-        })
-        .catch((e) => {
-          if (n === request.current) setError(message(e));
-        })
-        .finally(() => {
-          if (n === request.current) setBusy(false);
-        });
-    }, 200);
-    return () => {
-      clearTimeout(timer);
-      request.current++;
-    };
-  }, [q, kind]);
-  return (
-    <div className="authoring-overlay">
-      <section className="authoring-sheet">
-        <h3>{kind === "games" ? "选择已有棋谱" : "选择平台／机构题目"}</h3>
-        <input
-          aria-label="搜索题目或棋谱"
-          placeholder="输入名称搜索"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-        />
-        {error && <p role="alert">{error}</p>}
-        <div className="authoring-source-list">
-          {items.map((item) => (
-            <button
-              key={item.id}
-              disabled={busy}
-              onClick={() => {
-                setBusy(true);
-                void onChoose(item)
-                  .catch((e) => setError(message(e)))
-                  .finally(() => setBusy(false));
-              }}
-            >
-              <AuthoringBoard fen={item.fen} />
-              <span>{item.title}</span>
-            </button>
-          ))}
-        </div>
-        {!items.length && <p>{busy ? "正在读取…" : "没有匹配内容"}</p>}
-        <button onClick={onClose}>返回</button>
-      </section>
+    const epoch=++request.current;
+    setItems([]);setNextCursor(undefined);setError("");setBusy(true);paginationLock.current=false;
+    list.current?.scrollTo?.({top:0});
+    const timer=setTimeout(()=> {
+      void readPage().then(page=>{
+        if(epoch!==request.current)return;
+        setItems(mergeSources([],page.items));setCategories(page.categories ?? []);setNextCursor(page.nextCursor ?? null);
+      }).catch(reason=>{if(epoch===request.current)setError(message(reason));}).finally(()=>{if(epoch===request.current)setBusy(false);});
+    },200);
+    return ()=>{clearTimeout(timer);request.current++;};
+  },[q,category,kind,directoryId,api,reload]);
+  async function loadMore() {
+    if (!nextCursor || busy || choosing || paginationLock.current) return;
+    const epoch=request.current, after=nextCursor;
+    paginationLock.current=true;setBusy(true);setError("");
+    try {
+      const page=await readPage(after);
+      if(epoch!==request.current)return;
+      if(page.nextCursor===after)throw new Error("分页读取异常，请重新搜索后重试");
+      setItems(old=>mergeSources(old,page.items));setNextCursor(page.nextCursor ?? null);
+    } catch(reason) {if(epoch===request.current)setError(message(reason));}
+    finally {if(epoch===request.current){setBusy(false);paginationLock.current=false;}}
+  }
+  async function choose(item:AuthoringSource) {
+    if(selectionLock.current)return;
+    const epoch=request.current;
+    selectionLock.current=true;setChoosing(true);setError("");
+    try {await onChoose(item);}
+    catch(reason){if(epoch===request.current)setError(message(reason));}
+    finally {selectionLock.current=false;if(epoch===request.current)setChoosing(false);}
+  }
+  return <div className="authoring-overlay"><section className="authoring-sheet authoring-picker" role="dialog" aria-modal="true" aria-label={kind === "games" ? "选择已有棋谱" : "选择平台／机构题目"}>
+    <header className="authoring-picker-header"><button type="button" disabled={choosing} onClick={onClose}>‹ 返回</button><h3>{kind === "games" ? "选择已有棋谱" : "选择平台／机构题目"}</h3></header>
+    {kind === "problems" && <label className="authoring-picker-category">题型分类<select aria-label="题型分类" value={category} disabled={choosing} onChange={event=>setCategory(event.target.value)}><option value="">全部</option>{categories.map(value=><option key={value} value={value}>{value}</option>)}</select></label>}
+    <input aria-label="搜索题目或棋谱" placeholder="输入名称搜索" value={q} disabled={choosing} onChange={event=>setQ(event.target.value)}/>
+    {error && <p role="alert" className="authoring-error">{error}<button type="button" disabled={busy || choosing} onClick={()=>setReload(value=>value+1)}>重试</button></p>}
+    <div className="authoring-source-list" ref={list} aria-busy={busy || choosing}>
+      {items.map(item=>{
+        const added=kind === "problems" && (item.alreadyAdded || existingIds.has(`${item.authored ? "authored" : "source"}:${item.id}`));
+        return <button type="button" key={sourceIdentity(item)} disabled={busy || choosing || Boolean(added)} onClick={()=>void choose(item)}>
+          <AuthoringBoard fen={item.fen}/><span className="authoring-source-copy"><strong>{item.title}</strong><small>{[item.category,item.sourceScope,item.sourceTitle].filter(Boolean).join(" · ")}</small>{(item.sourceCount ?? 0)>1 && <small>已合并 {item.sourceCount} 个重复来源</small>}{added && <small>已添加</small>}</span>
+        </button>;
+      })}
+      {!items.length && <p role="status">{busy ? "正在读取…" : error ? "请修改搜索条件后重试" : "没有匹配内容"}</p>}
+      {nextCursor && <button type="button" disabled={busy || choosing} onClick={()=>void loadMore()}>{busy ? "正在读取…" : "加载更多"}</button>}
     </div>
-  );
+  </section></div>;
 }
 
 function QuestionEditor({

@@ -392,3 +392,30 @@
     grid-template-columns: minmax(320px, 600px) minmax(300px, 1fr);
   }
 }
+
+.teacher-mobile-overview > button {
+  min-width: 0;
+  min-height: 68px;
+  padding: 10px 5px;
+  border: 0;
+  border-right: 1px solid #e4ece5;
+  background: transparent;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 4px;
+  cursor: pointer;
+}
+.teacher-mobile-overview > button:last-child { border-right: 0; }
+.teacher-mobile-overview > button:focus-visible { outline: 2px solid #397b56; outline-offset: -3px; }
+
+.authoring-picker { overflow: hidden; min-height: min(600px, 86dvh); }
+.authoring-picker-header { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+.authoring-picker-header h3 { font-size: 18px; }
+.authoring-picker-header button { flex-shrink: 0; }
+.authoring-picker .authoring-picker-category { margin: 0; flex-shrink: 0; }
+.authoring-picker > input, .authoring-picker > [role="alert"] { flex-shrink: 0; }
+.authoring-picker .authoring-source-list { min-height: 0; overflow-y: auto; overscroll-behavior: contain; flex: 1; }
+.authoring-source-copy { min-width: 0; display: grid; gap: 5px; overflow-wrap: anywhere; }
+.authoring-source-copy small { color: #61776a; font-size: 12px; }
+.authoring-source-list button:disabled { opacity: .65; }

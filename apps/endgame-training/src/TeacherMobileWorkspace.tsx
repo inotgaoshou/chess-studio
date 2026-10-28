@@ -57,6 +57,7 @@ function routeKind(path: string) {
   if (path === "/teacher/join-organization") return "join" as const;
   if (path === "/teacher/classes") return "classes" as const;
   if (path.startsWith("/teacher/classes/")) return "class" as const;
+  if (["/teacher/assignments/published", "/teacher/assignments/drafts"].includes(path)) return "assignment-list" as const;
   if (path === "/teacher/assignments/new") return "new" as const;
   if (path.startsWith("/teacher/assignments/")) return "assignment" as const;
   return "home" as const;
@@ -202,6 +203,7 @@ export function TeacherMobileWorkspace({ auth, path, onNavigate, onLogout, onExi
   if (kind === "classes") return <TeacherMobileShell active="classes" onNavigate={onNavigate}><TeacherClasses key={scopeKey} onNavigate={onNavigate}/></TeacherMobileShell>;
   if (kind === "class") return <TeacherMobileShell active="classes" onNavigate={onNavigate}><TeacherClassDetail key={`${scopeKey}:${path}`} classId={routeId(path, "/teacher/classes/")} onNavigate={onNavigate}/></TeacherMobileShell>;
   if (kind === "new") return <TeacherAssignmentWizard key={auth.user.id} auth={auth} onNavigate={onNavigate} onAuthChange={onAuthChange} onRehearse={onRehearse} initialProblems={initialProblems} onReadGame={onReadGame} onReadSolution={onReadSolution}/>;
+  if (kind === "assignment-list") return <TeacherMobileShell active="assignments" onNavigate={onNavigate}><TeacherAssignmentList key={`${scopeKey}:${path}`} auth={auth} status={path.endsWith("/drafts") ? "draft" : "published"} onNavigate={onNavigate} renderResultBoard={renderResultBoard}/></TeacherMobileShell>;
   if (kind === "assignment") return <TeacherMobileShell active="assignments" onNavigate={onNavigate}><TeacherAssignmentDetail key={`${scopeKey}:${path}`} assignmentId={routeId(path, "/teacher/assignments/")} onNavigate={onNavigate} renderResultBoard={renderResultBoard}/></TeacherMobileShell>;
   return <TeacherMobileShell active="home" onNavigate={onNavigate}><TeacherHome key={scopeKey} auth={auth} onNavigate={onNavigate} onAuthChange={onAuthChange} onExit={onExit}/></TeacherMobileShell>;
 }
@@ -287,12 +289,24 @@ function TeacherHome({ auth, onNavigate, onAuthChange, onExit }: { auth: Teachin
     <TeacherHeader title="教师工作台" subtitle={auth.user.orgName || "当前机构"} onBack={onExit} backLabel="返回首页"/>
     <TeacherOrganizationSelect auth={auth} disabled={busy || Boolean(orgBusy)} onChange={(id) => void changeOrganization(id)}/>
     <section className="teacher-mobile-identity"><UserRound/><div><strong>{auth.user.displayName}</strong><small>{auth.user.loginName} · 可管理本人负责的班级</small></div></section>
-    <section className="teacher-mobile-overview"><span><b>{classes.length}</b><small>负责班级</small></span><span><b>{published}</b><small>已发布作业</small></span><span><b>{drafts}</b><small>待发布草稿</small></span></section>
+    <section className="teacher-mobile-overview" aria-label="教学统计"><button type="button" onClick={() => onNavigate("/teacher/classes")}><b>{classes.length}</b><small>负责班级</small></button><button type="button" onClick={() => onNavigate("/teacher/assignments/published")}><b>{published}</b><small>已发布作业</small></button><button type="button" onClick={() => onNavigate("/teacher/assignments/drafts")}><b>{drafts}</b><small>待发布草稿</small></button></section>
     {error && <p className="teacher-mobile-error">{error}</p>}
-    <section className="teacher-mobile-actions"><button type="button" className="primary" onClick={()=>onNavigate("/teacher/authoring")}><BookOpen/><span><b>机构题库 · 摆棋出题</b><small>目录管理 · 补答案 · 布置作业</small></span><ChevronRight/></button><button type="button" onClick={() => onNavigate("/teacher/checkin")}><ClipboardList/><span><b>学习打卡</b><small>阶段循环计划，可为不同孩子分别布置</small></span><ChevronRight/></button><button type="button" className="primary" onClick={() => onNavigate("/teacher/assignments/new")}><Send/><span><b>布置作业</b><small>按题目、班级和规则分步发布</small></span><ChevronRight/></button><button type="button" onClick={() => onNavigate("/teacher/classes")}><GraduationCap/><span><b>班级与学生</b><small>创建班级、加入或创建学生</small></span><ChevronRight/></button><button type="button" onClick={() => onNavigate("/teacher/join-organization")}><UserRound/><span><b>申请加入机构</b><small>查看已提交的机构申请</small></span><ChevronRight/></button></section>
+    <section className="teacher-mobile-actions"><button type="button" onClick={()=>onNavigate("/teacher/authoring")}><BookOpen/><span><b>机构题库 · 摆棋出题</b><small>目录管理 · 补答案 · 布置作业</small></span><ChevronRight/></button><button type="button" onClick={() => onNavigate("/teacher/assignments/new")}><Send/><span><b>布置作业</b><small>按题目、班级和规则分步发布</small></span><ChevronRight/></button><button type="button" onClick={() => onNavigate("/teacher/checkin")}><ClipboardList/><span><b>学习打卡</b><small>阶段循环计划，可为不同孩子分别布置</small></span><ChevronRight/></button><button type="button" onClick={() => onNavigate("/teacher/classes")}><GraduationCap/><span><b>班级与学生</b><small>创建班级、加入或创建学生</small></span><ChevronRight/></button><button type="button" onClick={() => onNavigate("/teacher/join-organization")}><UserRound/><span><b>申请加入机构</b><small>查看已提交的机构申请</small></span><ChevronRight/></button></section>
     {organizations.length > 0 && <section className="teacher-mobile-section teacher-mobile-organizations"><header><div><strong>我的任教机构</strong><small>{organizations.length} 个机构</small></div><button type="button" aria-label="管理任教机构" aria-expanded={manageOrganizations} onClick={() => setManageOrganizations(!manageOrganizations)}><UserRound/></button></header>{organizations.map((organization) => <div className="teacher-mobile-organization" key={organization.id}><span><b>{organization.name}</b><small>{organization.id === auth.user.orgId ? "当前工作机构" : "教师"}</small></span><div>{organization.id !== auth.user.orgId && <button type="button" disabled={busy || Boolean(orgBusy)} onClick={() => void changeOrganization(organization.id)}>{orgBusy === organization.id ? "切换中" : "切换"}</button>}{manageOrganizations && <button type="button" className="danger" disabled={busy || Boolean(orgBusy)} onClick={() => void leaveOrganization(organization.id, organization.name)}>{orgBusy === organization.id ? "处理中" : "退出"}</button>}</div></div>)}</section>}
     <section className="teacher-mobile-section"><header><div><strong>最近作业</strong><small>{busy ? "正在加载" : `${assignments.length} 份作业`}</small></div><button type="button" aria-label="刷新" onClick={() => void refresh()} disabled={busy}><RefreshCw className={busy ? "spinning" : undefined}/></button></header>{assignments.slice(0, 8).map((item) => <button type="button" className="teacher-mobile-row" key={item.id} onClick={() => onNavigate(`/teacher/assignments/${encodeURIComponent(item.id)}`)}><ClipboardList/><span><b>{item.title}</b><small>作业状态：{assignmentStatusLabel(item.status)} · {assignmentProgressLabel(item)} · {item.dueAt ? `截止 ${dateTime(item.dueAt)}` : "无截止"}</small></span><ChevronRight/></button>)}{!busy && !assignments.length && <p className="teacher-mobile-empty">还没有作业，先为班级创建第一份练习。</p>}</section>
   </main>;
+}
+
+function TeacherAssignmentList({auth,status,onNavigate,renderResultBoard}:{auth:TeachingAuth;status:"published"|"draft";onNavigate(path:string):void;renderResultBoard?:ResultBoardRenderer}) {
+  const [items,setItems] = useState<TeachingAssignment[]>([]), [busy,setBusy] = useState(true), [error,setError] = useState(""), [reload,setReload] = useState(0), [selected,setSelected] = useState<string>();
+  useEffect(() => {
+    let active = true;
+    setBusy(true);setError("");
+    void teachingClient.teacherAssignments(auth).then(value => {if(active)setItems(value.filter(item=>item.status===status));}).catch(reason=>{if(active)setError(messageOf(reason));}).finally(()=>{if(active)setBusy(false);});
+    return ()=>{active=false;};
+  }, [auth,status,reload]);
+  if (selected) return <TeacherAssignmentDetail assignmentId={selected} onNavigate={onNavigate} onBack={()=>{setSelected(undefined);setReload(value=>value+1);}} renderResultBoard={renderResultBoard}/>;
+  return <main className="teacher-mobile-page"><TeacherHeader title={status === "draft" ? "待发布草稿" : "已发布作业"} subtitle={auth.user.orgName || "当前机构"} onBack={()=>onNavigate("/teacher")}/><section className="teacher-mobile-section"><header><strong>{busy ? "正在加载…" : `共 ${items.length} 份`}</strong><button type="button" disabled={busy} aria-label="刷新作业列表" onClick={()=>setReload(value=>value+1)}><RefreshCw/></button></header>{error && <p role="alert" className="teacher-mobile-error">{error}</p>}{items.map(item=><button type="button" className="teacher-mobile-row" key={item.id} onClick={()=>setSelected(item.id)}><ClipboardList/><span><b>{item.title}</b><small>{assignmentStatusLabel(item.status)} · {item.itemCount} 题 · {assignmentProgressLabel(item)}</small></span><ChevronRight/></button>)}{!busy&&!error&&!items.length&&<p className="teacher-mobile-empty">{status === "draft" ? "还没有待发布草稿。" : "还没有已发布作业。"}</p>}</section></main>;
 }
 
 function TeacherJoinOrganization({ auth, onLogout, onExit, onRelogin, onApproved }: { auth: TeachingAuth; onLogout(): void; onExit(): void; onRelogin(): void; onApproved(): Promise<void> }) {
@@ -645,7 +659,7 @@ function TeacherAssignmentWizard({ auth, onNavigate, onAuthChange, onRehearse, i
   </main>;
 }
 
-function TeacherAssignmentDetail({ assignmentId, onNavigate, renderResultBoard }: { assignmentId: string; onNavigate(path: string): void; renderResultBoard?: ResultBoardRenderer }) {
+function TeacherAssignmentDetail({ assignmentId, onNavigate, renderResultBoard, onBack }: { assignmentId: string; onNavigate(path: string): void; onBack?(): void; renderResultBoard?: ResultBoardRenderer }) {
   const [assignment, setAssignment] = useState<TeachingAssignment>(); const [results, setResults] = useState<TeacherAssignmentResult[]>([]); const [error, setError] = useState(""); const [busy, setBusy] = useState(true);
   const [summary, setSummary] = useState<TeacherAssignmentSummary>();
   const [revision, setRevision] = useState(0);
@@ -664,7 +678,7 @@ function TeacherAssignmentDetail({ assignmentId, onNavigate, renderResultBoard }
   useEffect(() => { setAssignment(undefined); setResults([]); setSummary(undefined); void refresh(); return () => { ++generation.current; }; }, [assignmentId]);
   const publish = async () => { if (!assignment || !window.confirm(`发布“${assignment.title}”并固定当前学生名单？`)) return; try { await teachingClient.publishTeacherAssignment(assignment.id); await refresh(); } catch (reason) { const text = messageOf(reason); if (text.includes("发现重复题目") && window.confirm(`${text}\n\n仍要继续发布吗？`)) { try { await teachingClient.publishTeacherAssignment(assignment.id, true); await refresh(); } catch (retry) { setError(messageOf(retry)); } } else setError(text); } };
   return <main className="teacher-mobile-page teacher-assignment-detail" aria-busy={busy}>
-    <div className="teacher-detail-toolbar"><TeacherHeader title={assignment?.title || "作业详情"} subtitle={assignment ? `${assignment.itemCount} 题 · ${assignmentStatusLabel(assignment.status)}` : busy ? "正在读取作业与成绩" : "成绩未加载"} onBack={() => onNavigate("/teacher")}/>
+    <div className="teacher-detail-toolbar"><TeacherHeader title={assignment?.title || "作业详情"} subtitle={assignment ? `${assignment.itemCount} 题 · ${assignmentStatusLabel(assignment.status)}` : busy ? "正在读取作业与成绩" : "成绩未加载"} onBack={onBack || (() => onNavigate("/teacher"))}/>
       <button type="button" className="teacher-detail-refresh" disabled={busy} onClick={() => void refresh()}><RefreshCw className={busy ? "is-loading" : ""}/>{busy ? "加载中" : error ? "重试加载" : "刷新结果"}</button>
     </div>
     {error && <section role="alert" className="teacher-result-error"><strong>暂时无法加载成绩</strong><p>{error.includes("404") ? "请重试，或返回作业列表。" : error}</p>{summary && <small>当前显示上次加载的结果。</small>}</section>}

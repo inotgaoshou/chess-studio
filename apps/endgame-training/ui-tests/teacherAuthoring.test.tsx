@@ -1,5 +1,5 @@
 import { beforeEach, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { TeacherAuthoring } from "../src/TeacherAuthoring";
 import {
   AUTHORING_BASE as B,
@@ -348,4 +348,51 @@ it("pauses incremental answer validation and never publishes after a pause", asy
   expect(request.mock.calls.filter(([path])=>path.endsWith('/validate-next'))).toHaveLength(1);
   expect(request.mock.calls.some(([path])=>path.endsWith('/actions'))).toBe(false);
   expect((screen.getByRole("button",{name:"校验题目"}) as HTMLButtonElement).disabled).toBe(false);
+});
+
+async function openSourcePicker() {
+  await enter();
+  fireEvent.click(screen.getByRole("button",{name:"＋添加题目"}));
+  fireEvent.click(screen.getByRole("button",{name:"从平台／机构题库选题"}));
+  return screen.findByRole("dialog",{name:"选择平台／机构题目"});
+}
+it("filters paged sources, merges duplicate identities, blocks existing items, and returns without changing the directory", async () => {
+  const f=fixture([question()]), fallback=f.request.getMockImplementation()!;
+  const base={fen:START_FEN,sourceScope:"平台",sourceTitle:"测试题库"};
+  f.request.mockImplementation(async (path,init)=>{
+    if(!path.startsWith(B+"/sources?"))return fallback(path,init);
+    const params=new URL(path,"https://test.invalid").searchParams;
+    expect(params.get("directoryId")).toBe("d");
+    if(params.get("category")==="中局")return {items:[{...base,id:"different",title:"同局面不同答案",duplicateKey:"other"}],categories:["杀棋","中局","未分类"],nextCursor:null};
+    return {items:params.has("cursor") ? [{...base,id:"duplicate",title:"重复来源",duplicateKey:"same"},{...base,id:"next",title:"下一页",duplicateKey:"next"}] : [{...base,id:"source",title:"原题",duplicateKey:"same"},{...base,id:"q",title:"已在目录",authored:true,alreadyAdded:true}],categories:["杀棋","中局","未分类"],nextCursor:params.has("cursor") ? null : "page2"};
+  });
+  await openSourcePicker();
+  await screen.findByText("原题");
+  expect((screen.getByText("已在目录").closest("button") as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(screen.getByRole("button",{name:"加载更多"}));
+  await screen.findByText("下一页");
+  expect(screen.queryByText("重复来源")).toBeNull();
+  fireEvent.change(screen.getByLabelText("题型分类"),{target:{value:"中局"}});
+  await screen.findByText("同局面不同答案");
+  expect(screen.queryByText("原题")).toBeNull();
+  fireEvent.click(within(screen.getByRole("dialog",{name:"选择平台／机构题目"})).getByRole("button",{name:"‹ 返回",exact:true}));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(f.directory.items.map(q=>q.id)).toEqual(["q"]);
+  expect(f.request.mock.calls.some(([,init])=>init?.method==="PATCH")).toBe(false);
+});
+it("ignores a source result after the search changes", async () => {
+  const f=fixture(),fallback=f.request.getMockImplementation()!;
+  let resolveOld!:(value:unknown)=>void;
+  f.request.mockImplementation(async(path,init)=>{
+    if(!path.startsWith(B+"/sources?"))return fallback(path,init);
+    const q=new URL(path,"https://test.invalid").searchParams.get("q");
+    if(!q)return new Promise(resolve=>{resolveOld=resolve;});
+    return {items:[{id:"new",title:"新结果",fen:START_FEN}],categories:[]};
+  });
+  await openSourcePicker();
+  await waitFor(()=>expect(resolveOld).toBeTypeOf("function"));
+  fireEvent.change(screen.getByLabelText("搜索题目或棋谱"),{target:{value:"新"}});
+  await screen.findByText("新结果");
+  resolveOld({items:[{id:"old",title:"旧结果",fen:START_FEN}],categories:[]});
+  await waitFor(()=>expect(screen.queryByText("旧结果")).toBeNull());
 });
