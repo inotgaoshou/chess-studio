@@ -1,0 +1,36 @@
+import { afterEach, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { ProblemNumberNavigation } from "../src/ProblemNumberNavigation";
+const items = Array.from({ length: 45 }, (_, i) => ({ id: `p${i}`, number: i + 1 }));
+afterEach(() => localStorage.removeItem("qixi.problem-number-view"));
+it("keeps the active question visible, floats outside the page and restores collapsed preference", () => {
+  const select = vi.fn();
+  const view = render(<ProblemNumberNavigation items={items} activeId="p24" onSelect={select}/>);
+  expect((screen.getByRole("combobox", {name:"题号范围"}) as HTMLSelectElement).value).toBe("1");
+  fireEvent.click(screen.getByRole("button", {name:"跳到第 25 题"}));
+  expect(select).toHaveBeenCalledWith(24);
+  fireEvent.click(screen.getByRole("button", {name:"悬浮题号导航"}));
+  const nav = screen.getByRole("navigation", {name:"数字导航"});
+  expect(nav.parentElement).toBe(document.body);
+  fireEvent.keyDown(screen.getByRole("button", {name:/拖动题号导航/}), {key:"ArrowLeft"});
+  expect(nav.style.left).toBe("8px");
+  fireEvent.click(screen.getByRole("button", {name:"收起题号导航"}));
+  expect(screen.queryByRole("button", {name:"跳到第 25 题"})).toBeNull();
+  expect(screen.getByText("第 25 题")).toBeTruthy();
+  view.unmount();
+  const next=render(<ProblemNumberNavigation items={items} activeId="p24" onSelect={select}/>);
+  fireEvent.click(screen.getByRole("button", {name:"展开题号导航"}));
+  expect(screen.getByRole("button", {name:"跳到第 25 题"})).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", {name:"取消悬浮题号导航"}));
+  expect(next.container.contains(screen.getByRole("navigation", {name:"数字导航"}))).toBe(true);
+});
+it("handles invalid saved preferences and changes result sets without selecting a question", () => {
+  localStorage.setItem("qixi.problem-number-view", "null");
+  const select=vi.fn();
+  const view=render(<ProblemNumberNavigation items={items} onSelect={select}/>);
+  fireEvent.click(screen.getByRole("button", {name:"下一组"}));
+  expect(screen.getByRole("button", {name:"跳到第 21 题"})).toBeTruthy();
+  view.rerender(<ProblemNumberNavigation items={[{id:"filtered",number:1}]} onSelect={select}/>);
+  expect(screen.getByRole("button", {name:"跳到第 1 题"})).toBeTruthy();
+  expect(select).not.toHaveBeenCalled();
+});

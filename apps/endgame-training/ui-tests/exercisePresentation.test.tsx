@@ -2,7 +2,7 @@ import { useState, type ComponentProps } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MobileCatalogFilters, activeCatalogFilterCount, type CatalogFilters } from "../src/MobileCatalogFilters";
-import { MobilePracticeSolverPanel, MobileLibraryBrowsePanel, MobilePracticeSearchPanel, MobilePracticeSetupPanel } from "../src/App";
+import { MobileSingleProblemResultPanel, MobilePracticeSolverPanel, MobileLibraryBrowsePanel, MobilePracticeSearchPanel, MobilePracticeSetupPanel } from "../src/App";
 import { TeacherSourceLibraries } from "../src/TeacherSourceLibraries";
 import { TeachingCatalog } from "../src/TeachingCatalog";
 import { teachingClient, type TeachingAuth } from "../src/teaching";
@@ -19,6 +19,28 @@ function solver(overrides: Partial<ComponentProps<typeof MobilePracticeSolverPan
 }
 
 describe("role-aware exercise UI",()=>{
+  it("practical endgame solving and results keep the supplied problem title",()=>{
+    const ui=solver({problem:{...problem,title:"车兵巧胜单士",displayNumber:7},origin:{section:"题库",label:"实用残局"}});
+    expect(screen.getByText("第 7 题 · 车兵巧胜单士")).toBeTruthy();
+    ui.unmount();
+    render(<MobileSingleProblemResultPanel origin={{section:"题库",label:"实用残局"}} problem={{...problem,title:"车兵巧胜单士",displayNumber:7}} elapsed="00:30" hints={0} mistakes={0} revealed={false} message="" onBack={vi.fn()}/>);
+    expect(screen.getByText("第 7 题 · 车兵巧胜单士")).toBeTruthy();
+  });
+  it("identifies random practice instead of labeling every session as a topic",()=>{
+    solver({session:{id:"random-session",sourceKind:"random",mode:"solver",status:"active",startedAt:"",updatedAt:"",items:[]}});
+    expect(screen.getByText("练习 / 随机练习 / 做题")).toBeTruthy();
+  });
+  for(const label of ["基础杀法","杀法练习","连将杀","非连将杀","吃子","实战杀法","中局战术","残局杀法","实用残局","飞刀与陷阱"])it(`keeps ${label} as the origin when starting and switching questions`,()=>{
+    const session={id:"catalog-session",sourceKind:"random",mode:"solver" as const,status:"active" as const,startedAt:"",updatedAt:"",items:[]};
+    const ui=solver({session,origin:{section:"题库",label}});
+    expect(screen.getByText(`题库 / ${label} / 做题`)).toBeTruthy();
+    ui.rerender(<MobilePracticeSolverPanel {...ui.props} problem={{...problem,id:"next-question"}}/>);
+    expect(screen.getByText(`题库 / ${label} / 做题`)).toBeTruthy();
+  });
+  for(const [sourceKind,label] of [["daily","今日练习 / 做题"],["favorites","收藏 / 做题"],["mistakes","错题 / 重练"],["topic","自选练习 / 做题"]])it(`identifies ${sourceKind} practice`,()=>{
+    solver({session:{id:"session",sourceKind,mode:"solver",status:"active",startedAt:"",updatedAt:"",items:[]}});
+    expect(screen.getByText(`练习 / ${label}`)).toBeTruthy();
+  });
   it("renders the mobile commentary slot and historical explanation only with answer access",()=>{
     const onExplainAnswer=vi.fn();
     const ui=solver({answersAllowed:true,revealed:true,commentary:<button>解释刚才这步</button>,onExplainAnswer});
@@ -140,6 +162,15 @@ function catalogFixture() {
 }
 
 describe("catalog role, reading and filter integration",()=>{
+  it("mobile practical endgames lists the API problem title with its list number",async()=>{
+    window.dispatchEvent(new Event("teaching-content-reset"));catalogFixture();
+    const topic={id:"practical-title",name:"实用残局",kind:"category",teachingEntry:"practical_endgames",displayOrder:0,active:true,confirmed:true,itemCount:1};
+    vi.mocked(teachingClient.catalogBrowse).mockImplementation(async params=>({currentNode:params.nodeId?topic:null,breadcrumbs:params.nodeId?[topic]:[],children:params.nodeId?[]:[topic],learningMaterials:[],statisticsReady:true}));
+    vi.mocked(teachingClient.catalogProblems).mockResolvedValue({items:[{...problem,title:"车兵巧胜单士",sideToMove:"red",solutionLength:3}]} as never);
+    render(<TeachingCatalog auth={auth("student",true)} scene="browse" compact/>);
+    fireEvent.click(await screen.findByRole("button",{name:/实用残局/}));
+    expect(await screen.findByRole("button",{name:/第 1 题 · 车兵巧胜单士/})).toBeTruthy();
+  });
   for(const role of ["student","coach","admin"] as const)it(`${role}: original answer badge, reading items, and opening callbacks`,async()=>{
     window.dispatchEvent(new Event("teaching-content-reset"));catalogFixture();const onReadSolution=vi.fn(),onPractice=vi.fn(),onReadGame=vi.fn();
     render(<TeachingCatalog auth={auth(role)} teacher={role!=="student"} scene="browse" compact onReadSolution={onReadSolution} onPractice={onPractice} onReadGame={onReadGame}/>);
@@ -147,7 +178,7 @@ describe("catalog role, reading and filter integration",()=>{
     const question=await screen.findByRole("button",{name:/第 1 题 · 图1/});
     expect(Boolean(screen.queryByText("原题解"))).toBe(role!=="student");
     expect(Boolean(screen.queryByRole("button",{name:/看题解/}))).toBe(role!=="student");
-    fireEvent.click(question);expect(onPractice).toHaveBeenCalledWith(["p1"],"图1","p1",{p1:1});
+    fireEvent.click(question);expect(onPractice).toHaveBeenCalledWith(["p1"],"图1","p1",{p1:1},"基础杀法");
     expect(screen.queryByText("按教材查看")).toBeNull();
     expect(screen.queryByRole("button",{name:"教材学习"})).toBeNull();
     expect(onReadGame).not.toHaveBeenCalled();
@@ -163,7 +194,7 @@ describe("catalog role, reading and filter integration",()=>{
     const onPractice=vi.fn();render(<TeachingCatalog auth={studentAuth} scene="browse" compact onPractice={onPractice}/>);
     fireEvent.click(await screen.findByRole("button",{name:/基础杀法/}));await screen.findByText("第 1 题 · 图1");
     expect(screen.queryByText("按教材查看")).toBeNull();expect(screen.queryByRole("button",{name:"原书章节"})).toBeNull();
-    fireEvent.click(await screen.findByRole("button",{name:/第 1 题 · 图1/}));expect(onPractice).toHaveBeenCalledWith(["p1"],"图1","p1",{p1:1});
+    fireEvent.click(await screen.findByRole("button",{name:/第 1 题 · 图1/}));expect(onPractice).toHaveBeenCalledWith(["p1"],"图1","p1",{p1:1},"基础杀法");
     expect(screen.queryByRole("button",{name:"教材学习"})).toBeNull();
     expect(vi.mocked(teachingClient.catalogBrowse).mock.calls.some(([params])=>params.view==="materials")).toBe(false);
   });
@@ -233,7 +264,7 @@ describe("catalog role, reading and filter integration",()=>{
     fireEvent.click(await screen.findByRole("button",{name:/基础杀法/}));await screen.findByText("第 1 题 · 图1");
     fireEvent.click(screen.getByRole("button",{name:"加载更多题目"}));
     fireEvent.click(await screen.findByRole("button",{name:/第 2 题 · 图2/}));
-    expect(onPractice).toHaveBeenCalledWith(["p1","p2"],"图2","p2",{p1:1,p2:2});
+    expect(onPractice).toHaveBeenCalledWith(["p1","p2"],"图2","p2",{p1:1,p2:2},"基础杀法");
   });
   it("teacher assignment selection keeps its original filters and selection action",async()=>{
     window.dispatchEvent(new Event("teaching-content-reset"));catalogFixture();const onAdd=vi.fn();
@@ -259,4 +290,14 @@ describe("legacy source category cleanup",()=>{
     await waitFor(()=>expect(request).toHaveBeenCalled());
     expect(request.mock.calls.every(([query])=>query.category==="B")).toBe(true);
   });
+});
+
+it("only practical endgames shows source and visible number navigation",()=>{
+  const onSelect=vi.fn();
+  const navigator={items:[{id:"q1",number:21,title:"车兵巧胜",status:"pending" as const},{id:"q2",number:22,title:"马兵巧胜",status:"pending" as const}],index:0,onSelect};
+  const ui=solver({origin:{section:"题库",label:"实用残局"},sourceLibraries:[{id:"platform:local",title:"实用残局精选"}],navigator});
+  expect(screen.getByText("来源：《实用残局精选》 · 原题第 1 题")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button",{name:/跳到第 22 题/}));expect(onSelect).toHaveBeenCalledWith(1);
+  ui.rerender(<MobilePracticeSolverPanel {...ui.props} origin={{section:"题库",label:"基础杀法"}}/>);
+  expect(screen.queryByText(/来源：/)).toBeNull();expect(screen.queryByRole("navigation",{name:"数字导航"})).toBeNull();
 });

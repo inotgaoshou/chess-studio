@@ -1,9 +1,10 @@
 import type { VerificationGoal } from "../../../packages/training-verification/types";
 
-// Public source text is archival metadata. Mobile exercise names use only safe
-// numbered labels; never try to strip arbitrary authors/book names with a regex.
-export function mobileExerciseTitle(problem: {title:string;sourceIndex?:number;displayNumber?:number}): string {
+// Practical endgames keep their supplied titles. Other mobile exercises retain
+// numbered labels; never strip arbitrary authors/book names with a regex.
+export function mobileExerciseTitle(problem: {title:string;sourceIndex?:number;displayNumber?:number}, teachingEntry?:string): string {
   const title=problem.title.trim();
+  if(teachingEntry==="practical_endgames"&&title)return title;
   if (/^(?:图|题)\s*\d+$/.test(title) || /^(?:净得子|吃子|杀棋)练习\s*\d+$/.test(title)) return title;
   return `第 ${problem.displayNumber ?? (problem.sourceIndex ?? 0)+1} 题`;
 }

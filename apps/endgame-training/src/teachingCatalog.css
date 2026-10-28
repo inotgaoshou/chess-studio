@@ -270,3 +270,29 @@
 .practice-opening-status p { margin:0; font-size:14px; }
 .practice-opening-status small { font-size:12px; }
 .practice-opening-status button { min-width:70px; padding:8px 10px; }
+
+.problem-number-navigation { min-width:0; padding:8px 0; color:#294638; }
+.problem-number-navigation header { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:6px; font-size:12px; }
+.problem-number-navigation header strong { margin-right:auto; }
+.problem-number-navigation header button, .problem-number-navigation select { min-height:36px; padding:4px 8px; border:1px solid #c7d8ca; border-radius:6px; background:#f8fcf8; color:inherit; font:inherit; }
+.problem-number-grid { display:grid; grid-template-columns:repeat(10,minmax(0,1fr)); gap:4px; }
+.problem-number-grid button { min-width:0; min-height:40px; padding:2px; border:1px solid #c7d8ca; border-radius:6px; background:#f8fcf8; color:inherit; font-size:13px; }
+.problem-number-grid button.completed { background:#e1efdf; }
+.problem-number-grid button[aria-current="step"] { background:#29764d; color:#fff; border-color:#29764d; }
+.catalog-loaded-range, .problem-source { display:block; font-size:12px; color:#63746a; overflow-wrap:anywhere; }
+.catalog-problem-card { scroll-margin-top:12px; }
+.mobile-problem-source { padding:0 4px 6px; }
+
+/* Only the practical-endgame number navigator uses this floating surface. */
+.problem-number-pages { display:flex; gap:6px; align-items:center; justify-content:flex-end; margin-bottom:6px; }
+.problem-number-pages button { min-height:34px; padding:4px 8px; border:1px solid #c7d8ca; border-radius:6px; background:#f8fcf8; color:inherit; font:inherit; }
+.problem-number-navigation.is-floating { position:fixed; z-index:125; right:12px; bottom:calc(90px + env(safe-area-inset-bottom,0px)); width:min(360px,calc(100vw - 24px)); max-height:calc(100dvh - 140px); overflow:auto; padding:10px; border:1px solid #b7cebc; border-radius:14px; background:#f8fcf8; box-shadow:0 6px 24px #183d362b; }
+.problem-number-navigation.is-floating.is-collapsed { width:auto; max-width:calc(100vw - 24px); }
+.problem-number-navigation.is-collapsed header { margin-bottom:0; }
+.problem-number-navigation .problem-number-drag { margin-right:auto; cursor:grab; touch-action:none; font-weight:700; }
+.problem-number-drag:active { cursor:grabbing; }
+.catalog-practical-views { display:flex; gap:8px; padding:8px 0; }
+.catalog-practical-views button { padding:8px 12px; border:1px solid #c7d8ca; border-radius:8px; background:#f8fcf8; color:#294638; }
+.catalog-practical-views button[aria-pressed="true"] { background:#e1efdf; border-color:#397958; font-weight:700; }
+.catalog-practical-path { display:flex; flex-wrap:wrap; gap:6px; margin:6px 0; }
+.catalog-practical-path button { color:#397958; border:0; background:none; padding:4px; }

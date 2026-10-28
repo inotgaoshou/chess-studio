@@ -1,0 +1,73 @@
+import { expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { TeachingCatalog, type TeachingCatalogNode } from "../src/TeachingCatalog";
+import { teachingClient, type TeachingAuth } from "../src/teaching";
+
+it("practical endgames filters on the server, keeps the filter on return and navigates loaded numbers", async () => {
+  window.dispatchEvent(new Event("teaching-content-reset"));
+  const auth = {token:"fixture",expiresAt:"2099-01-01",user:{id:"practical-student",role:"student",vipActive:true}} as TeachingAuth;
+  const topic: TeachingCatalogNode = {id:"practical",name:"实用残局",kind:"category",teachingEntry:"practical_endgames",displayOrder:0,active:true,confirmed:true,itemCount:8632};
+  vi.spyOn(teachingClient,"catalogBrowse").mockImplementation(async params => ({currentNode:params.nodeId?topic:null,breadcrumbs:params.nodeId?[topic]:[],children:params.nodeId?[]:[topic],learningMaterials:[],statisticsReady:true,statisticsRevision:"1",statisticsSnapshotRevision:"1",availabilitySnapshotRevision:"1"}));
+  const problems = vi.spyOn(teachingClient,"catalogProblems").mockImplementation(async (_id, params) => {
+    const start = params?.cursor ? 20 : 0;
+    return {items:Array.from({length:20},(_,i)=>({id:`${params?.material||"all"}-${i+start}`,libraryId:"book",sourceIndex:i+start+10,title:"车兵巧胜单士",category:"实用残局",startingFen:"4k4/9/9/9/9/9/9/9/4R4/4K4 w",sideToMove:"red",solutionLength:1})),nextCursor:start?null:"page2"};
+  });
+  const onPractice = vi.fn();
+  const props = {auth,compact:true,scene:"browse" as const,sourceLibraries:[{id:"platform:book",title:"实用残局精选"}],onPractice};
+  const ui = render(<TeachingCatalog {...props}/>);
+  fireEvent.click(await screen.findByRole("button",{name:/实用残局/}));
+  expect(await screen.findByText("来源：《实用残局精选》 · 原题第 11 题")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button",{name:"加载更多题目"}));
+  await screen.findByRole("option",{name:"21–40"});
+  fireEvent.change(screen.getByRole("combobox",{name:"题号范围"}),{target:{value:"1"}});
+  const jump=screen.getByRole("button",{name:/跳到第 25 题/});
+  const scroll=vi.fn(); const card=ui.container.querySelectorAll<HTMLElement>(".catalog-problem-card")[24];card.scrollIntoView=scroll;
+  fireEvent.click(jump);expect(scroll).toHaveBeenCalled();
+  fireEvent.click(card.querySelector("button")!);
+  expect(onPractice.mock.calls[0][0]).toHaveLength(20);
+  expect(onPractice.mock.calls[0][2]).toBe("all-24");expect(onPractice.mock.calls[0][3]["all-24"]).toBe(25);
+  fireEvent.click(screen.getByRole("button",{name:/筛选/}));
+  fireEvent.change(screen.getByRole("combobox",{name:"兵种"}),{target:{value:"r"}});
+  await waitFor(()=>expect(problems.mock.calls.at(-1)?.[1]).toMatchObject({material:"r"}));
+  await waitFor(()=>expect(ui.container.querySelectorAll(".catalog-problem-card")).toHaveLength(20));
+  expect(screen.queryByRole("combobox",{name:"题号范围"})).toBeNull();
+  ui.unmount();render(<TeachingCatalog {...props}/>);
+  fireEvent.click(await screen.findByRole("button",{name:/筛选/}));
+  expect((screen.getByRole("combobox",{name:"兵种"}) as HTMLSelectElement).value).toBe("r");
+  fireEvent.click(screen.getByRole("button",{name:"清空"}));
+  await waitFor(()=>expect(problems.mock.calls.at(-1)?.[1].material).toBe(""));
+});
+
+it("browses practical books and chapters, keeps difficulty on return and switches back to all questions", async () => {
+  window.dispatchEvent(new Event("teaching-content-reset"));
+  const auth={token:"books",expiresAt:"2099-01-01",user:{id:"books-student",role:"student",vipActive:true}} as TeachingAuth;
+  const topic:TeachingCatalogNode={id:"practical-books",name:"实用残局",kind:"category",teachingEntry:"practical_endgames",displayOrder:0,active:true,confirmed:true,itemCount:30};
+  const book:TeachingCatalogNode={...topic,id:"book-a",parentId:topic.id,name:"实用残局精选",kind:"book",teachingEntry:undefined};
+  const chapter:TeachingCatalogNode={...book,id:"chapter-a",parentId:book.id,name:"第一章 车兵残局",kind:"chapter"};
+  vi.spyOn(teachingClient,"catalogBrowse").mockImplementation(async params=>{
+    const path=params.nodeId===chapter.id?[topic,book,chapter]:params.nodeId===book.id?[topic,book]:params.nodeId?[topic]:[];
+    return {currentNode:path.at(-1)??null,breadcrumbs:path,children:!params.nodeId?[topic]:params.nodeId===topic.id?[book]:params.nodeId===book.id?[chapter]:[],learningMaterials:[],statisticsReady:true,statisticsRevision:"1"};
+  });
+  const problems=vi.spyOn(teachingClient,"catalogProblems").mockResolvedValue({items:[{id:"book-question",libraryId:"book-a",sourceIndex:0,title:"车兵残局",category:"实用残局",startingFen:"4k4/9/9/9/9/9/9/9/4R4/4K4 w",sideToMove:"red",solutionLength:1}],nextCursor:null});
+  const props={auth,compact:true,scene:"browse" as const,onPractice:vi.fn()};
+  let view=render(<TeachingCatalog {...props}/>);
+  fireEvent.click(await screen.findByRole("button",{name:/实用残局/}));
+  fireEvent.click(await screen.findByRole("button",{name:"按书本学习"}));
+  fireEvent.click(await screen.findByRole("button",{name:/实用残局精选/}));
+  fireEvent.click(await screen.findByRole("button",{name:/第一章 车兵残局/}));
+  await screen.findByText("第 1 题 · 车兵残局");
+  fireEvent.click(screen.getByRole("button",{name:/筛选/}));
+  fireEvent.change(screen.getByRole("combobox",{name:"残局难度"}),{target:{value:"3"}});
+  await waitFor(()=>expect(problems.mock.calls.at(-1)?.[1]).toMatchObject({difficulty:3}));
+  fireEvent.click(view.container.querySelector('.catalog-problem-card button')!);
+  view.unmount();view=render(<TeachingCatalog {...props}/>);
+  await screen.findByText("第 1 题 · 车兵残局");
+  expect(screen.getByRole("button",{name:"按书本学习"}).getAttribute("aria-pressed")).toBe("true");
+  fireEvent.click(screen.getByRole("button",{name:/筛选/}));
+  expect((screen.getByRole("combobox",{name:"残局难度"}) as HTMLSelectElement).value).toBe("3");
+  fireEvent.click(screen.getByRole("button",{name:"返回上级目录"}));
+  expect(await screen.findByRole("button",{name:/第一章 车兵残局/})).toBeTruthy();
+  fireEvent.click(screen.getByRole("button",{name:"全部题目"}));
+  await waitFor(()=>expect(problems.mock.calls.at(-1)?.[0]).toBe(topic.id));
+  expect(screen.getByRole("button",{name:"全部题目"}).getAttribute("aria-pressed")).toBe("true");
+});
