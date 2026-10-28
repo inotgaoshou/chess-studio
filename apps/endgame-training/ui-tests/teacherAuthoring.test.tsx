@@ -396,3 +396,23 @@ it("ignores a source result after the search changes", async () => {
   resolveOld({items:[{id:"old",title:"旧结果",fen:START_FEN}],categories:[]});
   await waitFor(()=>expect(screen.queryByText("旧结果")).toBeNull());
 });
+
+it("waits for cold source preparation and cancels polling when returning",async()=>{
+  const f=fixture(),fallback=f.request.getMockImplementation()!;
+  let count=0;
+  f.request.mockImplementation(async(path,init)=>{
+    if(!path.startsWith(B+"/sources?"))return fallback(path,init);
+    count++;
+    if(count===1)throw new Error("题库正在准备，请稍候");
+    return {items:[{id:"ready",title:"准备完成",fen:START_FEN}],categories:["杀棋"]};
+  });
+  await openSourcePicker();
+  await screen.findByText("正在准备题库，请稍候…");
+  expect(screen.queryByRole("alert")).toBeNull();
+  await screen.findByText("准备完成",{}, {timeout:4000});
+  fireEvent.change(screen.getByLabelText("搜索题目或棋谱"),{target:{value:"取消"}});
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button",{name:"‹ 返回",exact:true}));
+  const before=count;
+  await new Promise(resolve=>setTimeout(resolve,300));
+  expect(count).toBe(before);
+});

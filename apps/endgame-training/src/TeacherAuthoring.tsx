@@ -646,28 +646,41 @@ function SourcePicker({api,kind,directoryId,existing,onClose,onChoose}:{
 }) {
   const [q,setQ] = useState(""), [category,setCategory] = useState(""), [reload,setReload] = useState(0);
   const [items,setItems] = useState<AuthoringSource[]>([]), [categories,setCategories] = useState<string[]>([]);
+  const [preparing,setPreparing] = useState(false);
   const [nextCursor,setNextCursor] = useState<string|null>(), [error,setError] = useState(""), [busy,setBusy] = useState(true), [choosing,setChoosing] = useState(false);
   const request = useRef(0), selectionLock = useRef(false), paginationLock = useRef(false);
   const list = useRef<HTMLDivElement>(null);
   const existingIds = new Set(existing.map(item => `${itemRef(item).kind}:${itemRef(item).subjectId}`));
-  async function readPage(after?:string) {
+  async function readPage(after?:string, signal?:AbortSignal) {
     const params = new URLSearchParams({kind,q:q.trim(),limit:"30"});
     if (category) params.set("category",category);
     if (directoryId) params.set("directoryId",directoryId);
     if (after) params.set("cursor",after);
-    return api.request<AuthoringSourcePage>(BASE+"/sources?"+params);
+    return api.request<AuthoringSourcePage>(BASE+"/sources?"+params,{signal});
   }
   useEffect(() => {
     const epoch=++request.current;
     setItems([]);setNextCursor(undefined);setError("");setBusy(true);paginationLock.current=false;
     list.current?.scrollTo?.({top:0});
-    const timer=setTimeout(()=> {
-      void readPage().then(page=>{
+    const controller=new AbortController(), deadline=Date.now()+180_000;
+    let timer:ReturnType<typeof setTimeout>;
+    setPreparing(false);
+    async function load() {
+      let retrying=false;
+      try {
+        const page=await readPage(undefined,controller.signal);
         if(epoch!==request.current)return;
-        setItems(mergeSources([],page.items));setCategories(page.categories ?? []);setNextCursor(page.nextCursor ?? null);
-      }).catch(reason=>{if(epoch===request.current)setError(message(reason));}).finally(()=>{if(epoch===request.current)setBusy(false);});
-    },200);
-    return ()=>{clearTimeout(timer);request.current++;};
+        setItems(mergeSources([],page.items));setCategories(page.categories ?? []);setNextCursor(page.nextCursor ?? null);setPreparing(false);
+      } catch(reason) {
+        if(epoch!==request.current)return;
+        const text=message(reason);
+        if(/^题库正在(准备|更新)/.test(text) && Date.now()<deadline) {
+          retrying=true;setPreparing(true);timer=setTimeout(()=>void load(),2000);
+        } else {setPreparing(false);setError(/^题库正在(准备|更新)/.test(text) ? "题库准备较慢，请稍后重试" : text);}
+      } finally {if(epoch===request.current && !retrying)setBusy(false);}
+    }
+    timer=setTimeout(()=>void load(),200);
+    return ()=>{clearTimeout(timer);controller.abort();request.current++;};
   },[q,category,kind,directoryId,api,reload]);
   async function loadMore() {
     if (!nextCursor || busy || choosing || paginationLock.current) return;
@@ -678,7 +691,7 @@ function SourcePicker({api,kind,directoryId,existing,onClose,onChoose}:{
       if(epoch!==request.current)return;
       if(page.nextCursor===after)throw new Error("分页读取异常，请重新搜索后重试");
       setItems(old=>mergeSources(old,page.items));setNextCursor(page.nextCursor ?? null);
-    } catch(reason) {if(epoch===request.current)setError(message(reason));}
+    } catch(reason) {if(epoch===request.current){if(/^题库正在(准备|更新)/.test(message(reason)))setReload(value=>value+1);else setError(message(reason));}}
     finally {if(epoch===request.current){setBusy(false);paginationLock.current=false;}}
   }
   async function choose(item:AuthoringSource) {
@@ -701,7 +714,7 @@ function SourcePicker({api,kind,directoryId,existing,onClose,onChoose}:{
           <AuthoringBoard fen={item.fen}/><span className="authoring-source-copy"><strong>{item.title}</strong><small>{[item.category,item.sourceScope,item.sourceTitle].filter(Boolean).join(" · ")}</small>{(item.sourceCount ?? 0)>1 && <small>已合并 {item.sourceCount} 个重复来源</small>}{added && <small>已添加</small>}</span>
         </button>;
       })}
-      {!items.length && <p role="status">{busy ? "正在读取…" : error ? "请修改搜索条件后重试" : "没有匹配内容"}</p>}
+      {!items.length && <p role="status">{busy ? preparing ? "正在准备题库，请稍候…" : "正在读取…" : error ? "请修改搜索条件后重试" : "没有匹配内容"}</p>}
       {nextCursor && <button type="button" disabled={busy || choosing} onClick={()=>void loadMore()}>{busy ? "正在读取…" : "加载更多"}</button>}
     </div>
   </section></div>;
