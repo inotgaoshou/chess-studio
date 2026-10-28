@@ -710,6 +710,9 @@ function QuestionEditor({
   onSave(q: AuthoredQuestion): Promise<void>;
   onCopy(body: QuestionBody): void;
 }) {
+  const [validating, setValidating] = useState(false);
+  const pauseValidation = useRef(false);
+  const contentVersion = useRef(0);
   const initialKey = `qixi.authoring:${scopeKey}:${question.id}`;
   const [cached] = useState(() => {
     try {
@@ -821,12 +824,14 @@ function QuestionEditor({
       return undefined;
     } finally {
       if (alive.current) {
+        setValidating(false);
         lock.current = false;
         setBusy(false);
       }
     }
   }
   function change(next: QuestionBody) {
+    contentVersion.current++;
     setBody(next);
     setConfirmed(false);
     setNotice("");
@@ -931,22 +936,14 @@ function QuestionEditor({
         setPath((old) => [...old, move]);
         setFen(result.fen);
       } else {
-        const node = choicesAt(body.solution, path).find(
-          (n) => n.iccs === move,
+        const saved = q.canEdit && (q.revision === 0 || JSON.stringify(q.body) !== JSON.stringify(body)) ? await save() : q;
+        const verdict = await api.request<{outcome:string;message:string;path:string[];completed:boolean}>(
+          saved.kind === "source" ? `/api/v1/admin/problems/${saved.id}/verify-move` : BASE + "/questions/" + saved.id + "/preview",
+          json({expectedRevision:saved.revision,path,candidate:move}),
         );
-        if (!node) {
-          setNotice("这步不在已录入答案中，请检查其他走法；不会记录学生成绩。");
-          return;
-        }
-        const next = [...path, move];
-        if (node.children.length && next.length % 2 === 1)
-          next.push(node.children[0].iccs);
-        setPath(next);
-        setNotice(
-          choicesAt(body.solution, next).length
-            ? "继续试做"
-            : "已走完这条答案。请确认题目目标是否达成。",
-        );
+        if (!alive.current) return;
+        if (verdict.outcome === "correct" || verdict.outcome === "completed") setPath(verdict.path);
+        setNotice(verdict.message + "（教师试做，不记录学生成绩）");
       }
     });
   }
@@ -965,7 +962,26 @@ function QuestionEditor({
   }
   async function operation(action: string) {
     await run(async () => {
+      const version = contentVersion.current;
       const saved = await save();
+      if (action === "publish" || action === "validate") {
+        pauseValidation.current = false;
+        setValidating(true);
+        let complete = false;
+        while (!complete && alive.current && !pauseValidation.current) {
+          const progress = await api.request<{checked:number;total:number;complete:boolean}>(
+            BASE + "/questions/" + saved.id + "/validate-next",
+            json({action:"validate",expectedRevision:saved.revision}),
+          );
+          if (!alive.current) return;
+          complete = progress.complete;
+          setNotice(`按学生判题标准校验：${progress.checked} / ${progress.total}；中断后可继续`);
+        }
+        setValidating(false);
+        if (!alive.current) return;
+        if (pauseValidation.current) {setNotice("校验已暂停，再次校验或发布会继续未完成的部分");return;}
+      }
+      if (version !== contentVersion.current) throw new Error("内容已改变，已停止发布，请重新校验当前内容");
       const result = await api.request<AuthoredQuestion>(
         BASE + "/questions/" + saved.id + "/actions",
         json({ action, expectedRevision: saved.revision }),
@@ -1006,6 +1022,7 @@ function QuestionEditor({
           {notice}
         </p>
       )}
+      {validating && <button type="button" onClick={() => {pauseValidation.current = true;setNotice("正在暂停，当前一步校验结束后保留进度");}}>暂停校验</button>}
       {conflict && (
         <section className="authoring-notice" role="alert">
           <p>
@@ -1194,7 +1211,7 @@ function QuestionEditor({
                     onChange={(e) => change({ ...body, title: e.target.value })}
                   />
                 </label>
-                <textarea
+                <textarea disabled={busy}
                   aria-label="局面 FEN"
                   value={body.startingFen}
                   readOnly
@@ -1320,7 +1337,7 @@ function QuestionEditor({
                           <summary>目标验证条件</summary>
                           <label>
                             验证半回合数
-                            <input
+                            <input disabled={busy}
                               type="number"
                               min={2}
                               max={40}
@@ -1347,7 +1364,7 @@ function QuestionEditor({
                             {body.trainingGoal.kind === "gain_material"
                               ? "最低净子力收益"
                               : "最低解题方局面分"}
-                            <input
+                            <input disabled={busy}
                               type="number"
                               value={
                                 body.trainingGoal.kind === "gain_material"
@@ -1409,7 +1426,7 @@ function QuestionEditor({
                   {path.length > 0 && (
                     <label>
                       当前着法注释
-                      <input
+                      <input disabled={busy}
                         value={
                           choicesAt(body.solution, path.slice(0, -1)).find(
                             (n) => n.iccs === path.at(-1),
@@ -1584,14 +1601,14 @@ function QuestionEditor({
         <div className="authoring-overlay">
           <section className="authoring-sheet">
             <h3>导入 FEN／PGN</h3>
-            <textarea
+            <textarea disabled={busy}
               aria-label="粘贴 FEN 或 PGN"
               value={text}
               onChange={(e) => setText(e.target.value)}
             />
             <label>
               选择 PGN 文件
-              <input
+              <input disabled={busy}
                 type="file"
                 accept=".pgn,.txt"
                 onChange={(e) => {
@@ -1623,7 +1640,7 @@ function QuestionEditor({
             <p>支持截图和书本棋图；图片在自有服务器处理，结果需要核对。</p>
             <label className="authoring-file">
               拍照
-              <input
+              <input disabled={busy}
                 type="file"
                 accept="image/*"
                 capture="environment"
@@ -1632,7 +1649,7 @@ function QuestionEditor({
             </label>
             <label className="authoring-file">
               从相册选择
-              <input
+              <input disabled={busy}
                 type="file"
                 accept="image/*"
                 onChange={(e) => setPhoto(e.target.files?.[0])}

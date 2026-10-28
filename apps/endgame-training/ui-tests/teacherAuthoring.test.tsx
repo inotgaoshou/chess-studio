@@ -226,3 +226,38 @@ it("preserves a conflicting offline edit and blocks an unpublished revision from
     await screen.findByText(/不可布置：一步杀（有待发布修订）/),
   ).toBeTruthy();
 });
+
+it("uses the server verdict for teacher trials without creating student attempts", async () => {
+  const q=question();q.kind="source";q.canEdit=false;
+  const {request}=fixture([q]);const fallback=request.getMockImplementation()!;
+  request.mockImplementation(async (path,init)=>{
+    if(path===B+"/import")return q.body;
+    if(path===B+"/board")return {fen:START_FEN};
+    if(path==="/api/v1/admin/problems/q/verify-move")return {outcome:"pending_review",message:"目标尚未确认",path:[],completed:false};
+    return fallback(path,init);
+  });
+  await enter();fireEvent.click(screen.getByRole("button",{name:/1\. 一步杀/}));
+  await screen.findByRole("heading",{name:"教师试做"});
+  fireEvent.click(screen.getByRole("button",{name:"10行1列车"}));
+  fireEvent.click(screen.getByRole("button",{name:"9行1列空位"}));
+  expect(await screen.findByText("目标尚未确认（教师试做，不记录学生成绩）")).toBeTruthy();
+  expect(request.mock.calls.some(([path])=>path.includes("/attempt")||path.includes("/practice/sessions"))).toBe(false);
+});
+
+it("pauses incremental answer validation and never publishes after a pause", async () => {
+  const q=question();const {request}=fixture([q]);const fallback=request.getMockImplementation()!;
+  let finish!:(value:unknown)=>void;
+  request.mockImplementation(async (path,init)=>{
+    if(path.endsWith('/validate-next'))return new Promise(resolve=>{finish=resolve;});
+    return fallback(path,init);
+  });
+  await enter();fireEvent.click(screen.getByRole("button",{name:/1\. 一步杀/}));
+  fireEvent.click(await screen.findByRole("button",{name:"编辑答案"}));
+  fireEvent.click(screen.getByRole("button",{name:"校验题目"}));
+  fireEvent.click(await screen.findByRole("button",{name:"暂停校验"}));
+  finish({checked:1,total:3,complete:false});
+  await screen.findByText("校验已暂停，再次校验或发布会继续未完成的部分");
+  expect(request.mock.calls.filter(([path])=>path.endsWith('/validate-next'))).toHaveLength(1);
+  expect(request.mock.calls.some(([path])=>path.endsWith('/actions'))).toBe(false);
+  expect((screen.getByRole("button",{name:"校验题目"}) as HTMLButtonElement).disabled).toBe(false);
+});

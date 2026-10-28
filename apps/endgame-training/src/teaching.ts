@@ -587,7 +587,7 @@ async function refreshAuth(source?: AbortSignal): Promise<TeachingAuth | undefin
 }
 
 async function request<T>(path: string, init: RequestInit = {}, token?: string, retry = true, context?: TeachingAuth): Promise<T> {
-  const timeoutMs = /\/authoring\/.*(generate|recognize)$/.test(path) ? 90_000 : /\/(verify-move|mate-move)$/.test(path) ? 25_000 : init.body instanceof FormData ? 60_000 : 15_000;
+  const timeoutMs = /\/authoring\/.*(generate|recognize|preview|validate-next)$/.test(path) ? 90_000 : /\/(verify-move|mate-move)$/.test(path) ? 25_000 : init.body instanceof FormData ? 60_000 : 15_000;
   // A single deadline covers capability probes, refresh, transport and body reading.
   return withRequestDeadline(signal => requestOnce<T>(path, { ...init, signal }, token, retry, context), init.signal, undefined, timeoutMs);
 }
