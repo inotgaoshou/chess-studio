@@ -1,3 +1,5 @@
+import { TeacherAuthoring } from "./TeacherAuthoring";
+import { teacherAuthoringSession } from "./teaching";
 import { MobileTeacherCheckin } from "./MobileCheckin";
 import { TeachingCatalog, goalLabel, type CatalogProblem } from "./TeachingCatalog";
 import { BookOpen, ChevronLeft, ChevronRight, ClipboardList, FileArchive, GraduationCap, Home, LogIn, Plus, RefreshCw, Search, Send, Trash2, UserRound, X } from "lucide-react";
@@ -195,6 +197,7 @@ export function TeacherMobileWorkspace({ auth, path, onNavigate, onLogout, onExi
   if (!auth.user.orgId && !auth.user.isPlatformAdmin) return <TeacherJoinOrganization auth={auth} onLogout={onLogout} onExit={onExit} onRelogin={onRelogin} onApproved={async () => { const next = await teachingClient.refreshSession(); if (!next) throw new Error("登录会话已失效，请重新登录。"); onAuthChange(next); onNavigate("/teacher"); }}/>;
   if (kind === "join") return <TeacherMobileShell active="join" onNavigate={onNavigate}><TeacherJoinOrganization auth={auth} onLogout={onLogout} onExit={() => onNavigate("/teacher")} onRelogin={onRelogin} onApproved={async () => { const next = await teachingClient.refreshSession(); if (!next) throw new Error("登录会话已失效，请重新登录。"); onAuthChange(next); onNavigate("/teacher"); }}/></TeacherMobileShell>;
   const scopeKey = `${auth.user.id}:${auth.user.orgId}`;
+  if (path === "/teacher/authoring") return <TeacherAuthoringHost key={scopeKey} auth={auth} onNavigate={onNavigate}/>;
   if (path === "/teacher/checkin") return <TeacherMobileShell active="home" onNavigate={onNavigate}><MobileTeacherCheckin auth={auth} onBack={() => onNavigate("/teacher")} /></TeacherMobileShell>;
   if (kind === "classes") return <TeacherMobileShell active="classes" onNavigate={onNavigate}><TeacherClasses key={scopeKey} onNavigate={onNavigate}/></TeacherMobileShell>;
   if (kind === "class") return <TeacherMobileShell active="classes" onNavigate={onNavigate}><TeacherClassDetail key={`${scopeKey}:${path}`} classId={routeId(path, "/teacher/classes/")} onNavigate={onNavigate}/></TeacherMobileShell>;
@@ -284,6 +287,7 @@ function TeacherHome({ auth, onNavigate, onAuthChange, onExit }: { auth: Teachin
     <TeacherHeader title="教师工作台" subtitle={auth.user.orgName || "当前机构"} onBack={onExit} backLabel="返回首页"/>
     <TeacherOrganizationSelect auth={auth} disabled={busy || Boolean(orgBusy)} onChange={(id) => void changeOrganization(id)}/>
     <section className="teacher-mobile-identity"><UserRound/><div><strong>{auth.user.displayName}</strong><small>{auth.user.loginName} · 可管理本人负责的班级</small></div></section>
+    <button type="button" className="teacher-mobile-row" onClick={()=>onNavigate("/teacher/authoring")}><BookOpen/><span><b>机构题库</b><small>摆棋出题 · 目录选题 · 布置作业</small></span><ChevronRight/></button>
     <section className="teacher-mobile-overview"><span><b>{classes.length}</b><small>负责班级</small></span><span><b>{published}</b><small>已发布作业</small></span><span><b>{drafts}</b><small>待发布草稿</small></span></section>
     {error && <p className="teacher-mobile-error">{error}</p>}
     <section className="teacher-mobile-actions"><button type="button" onClick={() => onNavigate("/teacher/checkin")}><ClipboardList/><span><b>学习打卡</b><small>阶段循环计划，可为不同孩子分别布置</small></span><ChevronRight/></button><button type="button" className="primary" onClick={() => onNavigate("/teacher/assignments/new")}><Send/><span><b>布置作业</b><small>按题目、班级和规则分步发布</small></span><ChevronRight/></button><button type="button" onClick={() => onNavigate("/teacher/classes")}><GraduationCap/><span><b>班级与学生</b><small>创建班级、加入或创建学生</small></span><ChevronRight/></button><button type="button" onClick={() => onNavigate("/teacher/join-organization")}><UserRound/><span><b>申请加入机构</b><small>查看已提交的机构申请</small></span><ChevronRight/></button></section>
@@ -669,4 +673,9 @@ function TeacherAssignmentDetail({ assignmentId, onNavigate, renderResultBoard }
     {assignment?.status === "draft" && <><p className="teacher-mobile-draft-note">这份作业还未发布，学生端不会同步。</p><button type="button" className="teacher-mobile-publish" disabled={busy} onClick={() => void publish()}><Send/>发布作业</button></>}
     {summary && <TeacherResults revision={revision} assignmentId={assignmentId} students={results} summary={summary} renderBoard={renderResultBoard}/>}
   </main>;
+}
+
+function TeacherAuthoringHost({auth,onNavigate}:{auth:TeachingAuth;onNavigate(path:string):void}){
+ const api=useMemo(()=>teacherAuthoringSession(auth),[auth]);
+ return <TeacherAuthoring key={api.scopeKey} api={api} scopeKey={api.scopeKey!} orgName={auth.user.orgName||"当前机构"} onBack={()=>onNavigate("/teacher")} onAssigned={id=>onNavigate(`/teacher/assignments/${id}`)}/>;
 }

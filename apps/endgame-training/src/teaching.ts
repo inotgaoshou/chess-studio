@@ -1,3 +1,4 @@
+import type { AuthoringApi } from "./authoringDomain";
 import { measureActiveOpening } from "./PracticeOpeningStatus";
 import { canBrowsePlatformSources, hasActiveCatalogVip } from "./catalogAccess";
 import { teachingRead } from "./teachingDeadline";
@@ -586,7 +587,7 @@ async function refreshAuth(source?: AbortSignal): Promise<TeachingAuth | undefin
 }
 
 async function request<T>(path: string, init: RequestInit = {}, token?: string, retry = true, context?: TeachingAuth): Promise<T> {
-  const timeoutMs = /\/(verify-move|mate-move)$/.test(path) ? 25_000 : init.body instanceof FormData ? 60_000 : 15_000;
+  const timeoutMs = /\/authoring\/.*(generate|recognize)$/.test(path) ? 90_000 : /\/(verify-move|mate-move)$/.test(path) ? 25_000 : init.body instanceof FormData ? 60_000 : 15_000;
   // A single deadline covers capability probes, refresh, transport and body reading.
   return withRequestDeadline(signal => requestOnce<T>(path, { ...init, signal }, token, retry, context), init.signal, undefined, timeoutMs);
 }
@@ -595,7 +596,7 @@ async function requestOnce<T>(path: string, init: RequestInit = {}, token?: stri
   init.signal?.throwIfAborted();
   if (context) requireTeacherAuth(context);
   const headers = new Headers(init.headers);
-  if (!(init.body instanceof FormData)) headers.set("content-type", "application/json");
+  if (!(init.body instanceof FormData) && !headers.has("content-type")) headers.set("content-type", "application/json");
   headers.set("x-xiangqi-app-id", appId());
   const accessToken = token ?? activeAuth?.token;
   const targetServer = serverUrl();
@@ -1744,4 +1745,11 @@ export function checkinSession(auth: TeachingAuth) {
   };
   return { api: makeCheckinApi(send, readPhoto, () => teachingClient.teacherClasses(auth), id => teachingClient.teacherClassStudents(id)),
     scope: JSON.stringify([captured.serverUrl, auth.user.id, auth.user.orgId]), isCurrent };
+}
+
+/** Capture identity/environment; late results cannot cross institution switches. */
+export function teacherAuthoringSession(auth:TeachingAuth):AuthoringApi {
+ const captured=authContexts.get(auth);
+ const check=()=>{if(!captured||!isCurrentAuthContext(captured))throw new Error("账号或机构已切换，请重新打开机构题库");};
+ return {scopeKey:`${captured?.serverUrl}:${auth.user.id}:${auth.user.orgId}`,request:async<T>(path:string,init:RequestInit={})=>{check();const value=await teacherRequest<T>(path,init,auth);check();return value;},classes:()=>{check();return teachingClient.teacherClasses(auth)},students:(id:string)=>{check();return teachingClient.teacherClassStudents(id,auth)}};
 }

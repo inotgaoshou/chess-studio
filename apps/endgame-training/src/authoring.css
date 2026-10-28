@@ -1,0 +1,353 @@
+.teacher-authoring {
+  --author-green: #397958;
+  --author-border: #cfdfd5;
+  background: #f2f7f2;
+  color: #213c2c;
+  padding: 12px;
+  min-height: 100%;
+  overflow: auto;
+  box-sizing: border-box;
+  font-size: 15px;
+}
+.teacher-authoring * {
+  box-sizing: border-box;
+}
+.teacher-authoring button,
+.teacher-authoring select,
+.teacher-authoring input,
+.teacher-authoring textarea {
+  font: inherit;
+}
+.teacher-authoring button {
+  min-height: 40px;
+  border: 1px solid var(--author-border);
+  border-radius: 9px;
+  background: #fff;
+  color: #315a42;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+.teacher-authoring button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.teacher-authoring button.primary {
+  background: var(--author-green);
+  color: white;
+  border-color: var(--author-green);
+}
+.teacher-authoring button[aria-pressed="true"] {
+  background: #daecdf;
+  outline: 2px solid var(--author-green);
+}
+.authoring-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.authoring-header h2 {
+  font-size: 21px;
+  margin: 0 0 4px;
+}
+.authoring-header small,
+.teacher-authoring small {
+  color: #61776a;
+}
+.authoring-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+}
+.authoring-actions.sticky {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: #f2f7f2;
+  padding: 8px 0;
+}
+.authoring-actions.bottom {
+  top: auto;
+  bottom: 0;
+  padding-bottom: max(8px, env(safe-area-inset-bottom));
+}
+.authoring-directories article {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--author-border);
+  border-radius: 12px;
+  background: white;
+  padding: 10px;
+  margin-bottom: 10px;
+  gap: 6px;
+}
+.authoring-directories .directory-title {
+  display: flex;
+  flex: 1;
+  text-align: left;
+  flex-direction: column;
+  gap: 8px;
+  border: 0;
+}
+.authoring-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.authoring-grid article {
+  background: #fff;
+  border: 1px solid var(--author-border);
+  border-radius: 10px;
+  padding: 5px;
+  min-width: 0;
+}
+.authoring-grid article.selected {
+  outline: 2px solid var(--author-green);
+}
+.authoring-card {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  gap: 5px;
+  padding: 0 !important;
+  border: 0 !important;
+  text-align: left;
+}
+.authoring-card strong {
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.authoring-card small {
+  font-size: 12px;
+}
+.authoring-add {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  min-height: 180px;
+  gap: 8px;
+  border-style: dashed !important;
+}
+.authoring-add span {
+  font-size: 44px;
+}
+.authoring-board {
+  display: block;
+  width: 100%;
+  height: auto;
+  touch-action: manipulation;
+  user-select: none;
+}
+.authoring-board [role="button"]:focus-visible {
+  outline: none;
+  filter: drop-shadow(0 0 5px #19854e);
+}
+.card-controls {
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+  margin-top: 6px;
+}
+.authoring-complete {
+  width: 100%;
+  margin-top: 6px;
+}
+.authoring-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1500;
+  background: #193a2a66;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-top: 32px;
+}
+.authoring-sheet {
+  width: min(100%, 640px);
+  max-height: 92dvh;
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: #f9fcf9;
+  padding: 20px 16px max(20px, env(safe-area-inset-bottom));
+  border-radius: 18px 18px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: 0 -4px 30px #0002;
+}
+.authoring-sheet h3 {
+  margin: 0;
+}
+.teacher-authoring label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0;
+}
+.teacher-authoring input:not([type="checkbox"]):not([type="range"]),
+.teacher-authoring textarea,
+.teacher-authoring select {
+  width: 100%;
+  border: 1px solid var(--author-border);
+  border-radius: 8px;
+  padding: 10px;
+  color: #213c2c;
+  background: white;
+  min-width: 0;
+}
+.teacher-authoring textarea {
+  min-height: 90px;
+  resize: vertical;
+}
+.teacher-authoring .authoring-check {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+.authoring-check input {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+.authoring-palette {
+  background: #e6f0e5;
+  padding: 8px;
+  border-radius: 12px;
+  margin-top: 6px;
+}
+.authoring-palette > div:not(.authoring-actions) {
+  display: flex;
+  justify-content: space-between;
+  gap: 3px;
+}
+.authoring-palette button {
+  padding: 2px;
+  min-height: 36px;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  flex: 1;
+}
+.authoring-palette img {
+  width: 100%;
+  max-width: 56px;
+  display: block;
+}
+.authoring-position-tools {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 4px;
+}
+.authoring-position-tools button {
+  padding: 6px 2px;
+  font-size: 12px;
+  min-height: 46px;
+}
+.authoring-error {
+  padding: 10px;
+  border: 1px solid #d7a99d;
+  background: #fff2ee;
+  color: #8e342b;
+  border-radius: 8px;
+}
+.authoring-notice {
+  padding: 10px;
+  background: #e2efe4;
+  border-radius: 8px;
+}
+.authoring-properties details {
+  padding: 8px 0;
+}
+.authoring-source-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.authoring-source-list button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
+}
+.authoring-source-list svg {
+  width: 90px;
+  flex-shrink: 0;
+}
+.authoring-photo-preview {
+  position: relative;
+  line-height: 0;
+}
+.authoring-photo-preview canvas {
+  width: 100%;
+  height: auto;
+}
+.crop-outline {
+  position: absolute;
+  border: 3px solid #08ae67;
+  pointer-events: none;
+}
+.authoring-file {
+  background: #e3eee5;
+  padding: 12px;
+  border-radius: 8px;
+}
+.authoring-assignment fieldset {
+  border: 1px solid var(--author-border);
+  border-radius: 10px;
+}
+.authoring-editor-layout {
+  display: grid;
+  gap: 14px;
+}
+.authoring-board-panel {
+  min-width: 0;
+}
+.authoring-properties {
+  min-width: 0;
+}
+.authoring-editor {
+  padding-bottom: 0;
+}
+.authoring-editor > .authoring-actions {
+  margin-bottom: 0;
+}
+@media (min-width: 600px) {
+  .authoring-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .authoring-editor-layout {
+    grid-template-columns: minmax(280px, 1fr) minmax(240px, 0.8fr);
+    align-items: start;
+  }
+  .authoring-board-panel {
+    position: sticky;
+    top: 0;
+  }
+  .authoring-position-tools {
+    max-width: 680px;
+    margin-inline: auto;
+  }
+  .authoring-overlay {
+    align-items: center;
+    padding: 24px;
+  }
+  .authoring-sheet {
+    border-radius: 18px;
+    max-height: 90dvh;
+  }
+}
+@media (min-width: 1000px) {
+  .teacher-authoring {
+    padding: 20px;
+  }
+  .authoring-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  .authoring-editor-layout {
+    grid-template-columns: minmax(320px, 600px) minmax(300px, 1fr);
+  }
+}
