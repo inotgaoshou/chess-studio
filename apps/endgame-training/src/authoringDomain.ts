@@ -242,6 +242,17 @@ export function assignable(q: AuthoredQuestion) {
 export function itemRef(q: AuthoredQuestion) {
   return { subjectId: q.subjectId || q.id, kind: q.kind || "authored" };
 }
+export function shiftQuestions<T extends { id: string }>(items: T[], selected: string[], direction: -1 | 1): T[] {
+  const result = [...items], ids = new Set(selected);
+  for (let step = 0; step < result.length; step++) {
+    const index = direction === -1 ? step : result.length - 1 - step;
+    const next = index + direction;
+    if (next >= 0 && next < result.length && ids.has(result[index].id) && !ids.has(result[next].id)) {
+      [result[index], result[next]] = [result[next], result[index]];
+    }
+  }
+  return result;
+}
 export function splitAssignments<T>(items: T[], size: number): T[][] {
   if (!Number.isInteger(size) || size < 1)
     throw new Error("每批题数必须为正整数");

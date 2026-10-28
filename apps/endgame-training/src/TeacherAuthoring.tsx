@@ -14,6 +14,7 @@ import {
   goalFor,
   assignable,
   itemRef,
+  shiftQuestions,
   toIccs,
   splitAssignments,
   type AuthoringApi,
@@ -76,6 +77,13 @@ export function TeacherAuthoring({
     [publish, setPublish] = useState(false),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
+  const [directoryEditing, setDirectoryEditing] = useState(false);
+  const [savedQuestion, setSavedQuestion] = useState<string>();
+  const [titleDialog, setTitleDialog] = useState<
+    { kind: "new"; title: string } |
+    { kind: "directory"; title: string; directory: AuthoringDirectory } |
+    { kind: "question"; title: string; question: AuthoredQuestion }
+  >();
   const [recoveries, setRecoveries] = useState<
     { id: string; directoryId?: string; body: QuestionBody }[]
   >([]);
@@ -106,7 +114,7 @@ export function TeacherAuthoring({
   }
   const generation = useRef(0),
     lock = useRef(false);
-  async function run(task: () => Promise<void>) {
+  async function run(task: () => Promise<unknown>) {
     if (lock.current) return;
     lock.current = true;
     setBusy(true);
@@ -135,7 +143,9 @@ export function TeacherAuthoring({
     refreshRecoveries();
     setDirs(value.items);
     setDir(detail);
+    if (id !== dir?.id) setSavedQuestion(undefined);
     setSelected([]);
+    return detail;
   }
   useEffect(() => {
     const epoch = generation.current;
@@ -165,6 +175,7 @@ export function TeacherAuthoring({
       ),
     );
     await load(dir?.id);
+    setSelected(selected.filter(id => items.some(q => q.id === id)));
   }
   function select(q: AuthoredQuestion) {
     setSelected((old) =>
@@ -186,6 +197,35 @@ export function TeacherAuthoring({
     setQuestion(value);
   }
   const selectedItems = dir?.items.filter((q) => selected.includes(q.id)) ?? [];
+  const shifted = (direction: -1 | 1) => shiftQuestions(dir?.items ?? [], selected, direction);
+  const canShift = (direction: -1 | 1) => shifted(direction).some((q, index) => q.id !== dir?.items[index].id);
+  async function moveDirectory(target: AuthoringDirectory, direction: -1 | 1) {
+    const orders = dirs.map(d => d.sortOrder);
+    const sortOrder = direction === -1 ? Math.min(...orders) - 1 : Math.max(...orders) + 1;
+    await api.request(BASE + "/directories/" + target.id, json({title:target.title,expectedRevision:target.revision,sortOrder}, "PATCH"));
+    await load();
+  }
+  async function saveTitle(title: string) {
+    if (!titleDialog) return;
+    if (titleDialog.kind === "new") {
+      await api.request(BASE + "/directories", json({id:crypto.randomUUID(),title,sortOrder:Math.max(-1,...dirs.map(d => d.sortOrder))+1}));
+      await load();
+    } else if (titleDialog.kind === "directory") {
+      const target = titleDialog.directory;
+      await api.request(BASE + "/directories/" + target.id, json({title,expectedRevision:target.revision}, "PATCH"));
+      await load(dir?.id);
+    } else {
+      const target = titleDialog.question;
+      await api.request(BASE + "/questions/" + target.id, json({expectedRevision:target.revision,body:{...target.body,title}}, "PUT"));
+      await load(dir?.id);
+    }
+    setTitleDialog(undefined);
+  }
+  useEffect(() => {
+    if (!savedQuestion || question || !dir) return;
+    const frame = requestAnimationFrame(() => document.getElementById(`authoring-item-${savedQuestion}`)?.scrollIntoView?.({block:"nearest"}));
+    return () => cancelAnimationFrame(frame);
+  }, [savedQuestion, question, dir]);
   if (question)
     return (
       <QuestionEditor
@@ -209,6 +249,7 @@ export function TeacherAuthoring({
         }
         onSave={async (q) => {
           await load(dir?.id);
+          setSavedQuestion(q.id);
           setQuestion(undefined);
         }}
       />
@@ -278,24 +319,11 @@ export function TeacherAuthoring({
           <div className="authoring-actions">
             <button
               disabled={busy}
-              onClick={() => {
-                const title = prompt("新建目录名称");
-                if (title?.trim())
-                  void run(async () => {
-                    await api.request(
-                      BASE + "/directories",
-                      json({
-                        id: crypto.randomUUID(),
-                        title,
-                        sortOrder: dirs.length,
-                      }),
-                    );
-                    await load();
-                  });
-              }}
+              onClick={() => setTitleDialog({kind:"new",title:""})}
             >
               ＋ 新增目录
             </button>
+            <button disabled={busy} aria-pressed={directoryEditing} onClick={() => setDirectoryEditing(!directoryEditing)}>{directoryEditing ? "完成调整" : "调整目录"}</button>
           </div>
           <div className="authoring-directories">
             {dirs.map((d, i) => (
@@ -310,45 +338,14 @@ export function TeacherAuthoring({
                     {d.draftCount ? ` · ${d.draftCount} 道待完善` : ""}
                   </small>
                 </button>
-                {d.canEdit && (
+                {!directoryEditing && <button disabled={busy} aria-label={`布置${d.title}`} onClick={() => void run(async () => {const detail = await load(d.id);if (!detail?.items.length) throw new Error("目录里还没有题目，请先添加题目");setPublish(true);})}>布置作业</button>}
+                {directoryEditing && d.canEdit && (
                   <>
+                    <button aria-label={`${d.title}置顶`} disabled={busy || i === 0} onClick={() => void run(() => moveDirectory(d, -1))}>置顶</button>
+                    <button aria-label={`${d.title}置底`} disabled={busy || i === dirs.length - 1} onClick={() => void run(() => moveDirectory(d, 1))}>置底</button>
                     <button
-                      aria-label={`${d.title}前移`}
-                      disabled={busy || i === 0}
-                      onClick={() =>
-                        void run(async () => {
-                          await api.request(
-                            BASE + "/directories/" + d.id,
-                            json(
-                              {
-                                title: d.title,
-                                expectedRevision: d.revision,
-                                sortOrder: (dirs[i - 1]?.sortOrder ?? 0) - 1,
-                              },
-                              "PATCH",
-                            ),
-                          );
-                          await load();
-                        })
-                      }
-                    >
-                      ↑
-                    </button>
-                    <button
-                      onClick={() => {
-                        const title = prompt("目录新名称", d.title);
-                        if (title)
-                          void run(async () => {
-                            await api.request(
-                              BASE + "/directories/" + d.id,
-                              json(
-                                { title, expectedRevision: d.revision },
-                                "PATCH",
-                              ),
-                            );
-                            await load();
-                          });
-                      }}
+                      disabled={busy}
+                      onClick={() => setTitleDialog({kind:"directory",title:d.title,directory:d})}
                     >
                       改名
                     </button>
@@ -377,7 +374,9 @@ export function TeacherAuthoring({
             >
               {editing ? "完成编辑" : "选择／编辑"}
             </button>
+            <small>{dir.items.length} 题{editing ? ` · 已选 ${selected.length} 题` : " · 按目录题序布置"}</small>
           </div>
+          {savedQuestion && !editing && <section className="authoring-saved" role="status"><span>已保存到当前目录。</span><button disabled={busy || !dir.canEdit} onClick={() => {setSavedQuestion(undefined);setAdding(true);}}>继续录题</button></section>}
           <div className="authoring-grid">
             {dir.canEdit && (
               <button className="authoring-add" onClick={() => setAdding(true)}>
@@ -387,6 +386,7 @@ export function TeacherAuthoring({
             {dir.items.map((q, i) => (
               <article
                 key={q.id}
+                id={`authoring-item-${q.id}`}
                 className={selected.includes(q.id) ? "selected" : ""}
               >
                 <button
@@ -475,8 +475,12 @@ export function TeacherAuthoring({
               >
                 全选
               </button>
+              <span>已选 {selected.length} 题</span>
               {dir.canEdit && (
                 <>
+                  <button disabled={busy || selectedItems.length !== 1 || !selectedItems[0]?.canEdit} onClick={() => setTitleDialog({kind:"question",title:selectedItems[0].body.title,question:selectedItems[0]})}>改名</button>
+                  <button disabled={busy || !canShift(-1)} onClick={() => void run(() => changeDir(shifted(-1)))}>前移</button>
+                  <button disabled={busy || !canShift(1)} onClick={() => void run(() => changeDir(shifted(1)))}>后移</button>
                   <button
                     disabled={busy || !selected.length}
                     onClick={() => {
@@ -533,6 +537,7 @@ export function TeacherAuthoring({
           )}
         </>
       )}
+      {titleDialog && <TitleSheet key={`${titleDialog.kind}:${titleDialog.title}`} title={titleDialog.kind === "new" ? "新增目录" : titleDialog.kind === "directory" ? "目录改名" : "题目改名"} value={titleDialog.title} busy={busy} error={error} onClose={() => setTitleDialog(undefined)} onSubmit={title => void run(() => saveTitle(title))}/>}
       {adding && (
         <div className="authoring-overlay">
           <section className="authoring-sheet">
@@ -613,6 +618,15 @@ export function TeacherAuthoring({
       )}
     </main>
   );
+}
+
+function TitleSheet({title,value,busy,error,onClose,onSubmit}:{title:string;value:string;busy:boolean;error:string;onClose():void;onSubmit(value:string):void}) {
+  const [text,setText] = useState(value);
+  return <div className="authoring-overlay"><form className="authoring-sheet" role="dialog" aria-modal="true" aria-label={title} onSubmit={event => {event.preventDefault();if(text.trim()&&!busy)onSubmit(text.trim());}} onKeyDown={event => {if(event.key === "Escape"&&!busy)onClose();}}>
+    <h3>{title}</h3><label>名称<input autoFocus aria-label={title === "题目改名" ? "题目新名称" : "目录名称"} value={text} maxLength={255} disabled={busy} onChange={event => setText(event.target.value)}/></label>
+    {error && <p role="alert" className="authoring-error">{error}</p>}
+    <button className="primary" type="submit" disabled={busy || !text.trim()}>{busy ? "保存中…" : "保存名称"}</button><button type="button" disabled={busy} onClick={onClose}>取消</button>
+  </form></div>;
 }
 
 function SourcePicker({
@@ -994,7 +1008,7 @@ function QuestionEditor({
   }
   const children = choicesAt(body.solution, path);
   return (
-    <main className="teacher-authoring authoring-editor">
+    <main className={`teacher-authoring authoring-editor ${mode === "position" ? "authoring-position-editor" : ""}`}>
       <header className="authoring-header">
         <button onClick={onClose} disabled={busy}>
           ‹ 返回目录
@@ -1951,6 +1965,10 @@ function AssignmentSheet({
     set(values.includes(id) ? values.filter((v) => v !== id) : [...values, id]);
   }
   function prepare() {
+    if (!items.length) {
+      setError("目录里还没有题目，请先添加题目");
+      return;
+    }
     setError("");
     if (invalid.length) {
       setError("所选题目包含草稿或已下架题，请返回完善答案或明确取消选择。");

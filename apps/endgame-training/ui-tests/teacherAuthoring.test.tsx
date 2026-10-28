@@ -8,6 +8,7 @@ import {
   addAnswer,
   choicesAt,
   goalFor,
+  shiftQuestions,
   type AuthoringApi,
   type AuthoringDirectory,
   type AuthoredQuestion,
@@ -117,6 +118,93 @@ it("records a position, preserves a piece on repeated move selection, flips only
     EMPTY_FEN.replace(" w ", " b "),
   );
   expect(f.directory.items[0].body.solution).toEqual([]);
+  fireEvent.click(screen.getByRole("button", {name:"继续录题"}));
+  fireEvent.click(await screen.findByRole("button", {name:"手动摆棋"}));
+  fireEvent.click(await screen.findByRole("button", {name:"完成摆棋"}));
+  await screen.findByText("2. 训练题");
+  expect(f.directory.items).toHaveLength(2);
+  expect(f.directory.items[0].body.startingFen).toBe(EMPTY_FEN.replace(" w ", " b "));
+  expect(f.directory.items[1].body.solution).toEqual([]);
+});
+
+it("opens the directory assignment sheet directly without repeating organization or question selection", async () => {
+  fixture([question()]);
+  fireEvent.click(await screen.findByRole("button", {name:"布置杀棋训练"}));
+  await screen.findByLabelText("一班（1人）");
+  expect(screen.getByLabelText("作业标题")).toHaveProperty("value", "杀棋训练");
+  expect((screen.getByLabelText("一班（1人）") as HTMLInputElement).checked).toBe(false);
+});
+
+it("blocks an empty directory before opening assignment", async () => {
+  const f = fixture();
+  fireEvent.click(await screen.findByRole("button", {name:"布置杀棋训练"}));
+  await screen.findByText("目录里还没有题目，请先添加题目");
+  expect(screen.queryByLabelText("作业标题")).toBeNull();
+  expect(f.assignment).not.toHaveBeenCalled();
+});
+
+it("moves directories to explicit ends even when sort orders are tied", async () => {
+  const dirs = ["a", "b", "c"].map(id => ({id,title:id,revision:1,sortOrder:0,canEdit:true,items:[]}));
+  const request = vi.fn(async (path:string, init?:RequestInit):Promise<any> => {
+    if (path === B + "/directories") return {items:[...dirs].sort((a,b)=>a.sortOrder-b.sortOrder || a.id.localeCompare(b.id))};
+    const target = dirs.find(d=>path===B+"/directories/"+d.id)!;
+    const body=JSON.parse(String(init?.body));
+    expect(body.expectedRevision).toBe(target.revision);
+    Object.assign(target,{sortOrder:body.sortOrder,revision:target.revision+1});
+    return target;
+  });
+  render(<TeacherAuthoring api={{request,classes:async()=>[],students:async()=>[]}} scopeKey="order" orgName="机构" onBack={()=>{}} onAssigned={()=>{}}/>);
+  fireEvent.click(await screen.findByRole("button",{name:"调整目录"}));
+  fireEvent.click(screen.getByRole("button",{name:"a置底"}));
+  await waitFor(()=>expect(dirs[0].sortOrder).toBe(1));
+  await waitFor(()=>expect((screen.getByRole("button",{name:"a置底"}) as HTMLButtonElement).disabled).toBe(true));
+  fireEvent.click(screen.getByRole("button",{name:"c置顶"}));
+  await waitFor(()=>expect(dirs[2].sortOrder).toBe(-1));
+  await waitFor(()=>expect((screen.getByRole("button",{name:"c置顶"}) as HTMLButtonElement).disabled).toBe(true));
+  expect(dirs).toHaveLength(3);
+});
+
+it("renames through an explicit form and keeps a selection after moving its ordered block", async () => {
+  const questions = ["a","b","c","d"].map(id => ({...question(),id,body:{...question().body,title:id}}));
+  const f = fixture(questions), fallback=f.request.getMockImplementation()!;
+  f.request.mockImplementation(async (path,init) => {
+    const body=init?.body?JSON.parse(String(init.body)):undefined;
+    if(path===B+"/directories/d" && init?.method==="PATCH") {
+      const byId=new Map(f.directory.items.map(q=>[q.id,q]));
+      f.directory.items=body.items.map((item:{subjectId:string})=>byId.get(item.subjectId)!);
+      f.directory.revision++;
+      return f.directory;
+    }
+    if(path===B+"/questions/c" && init?.method==="PUT") {
+      const index=f.directory.items.findIndex(q=>q.id==="c");
+      f.directory.items[index]={...f.directory.items[index],body:body.body,revision:2,status:"revising"};
+      return f.directory.items[index];
+    }
+    return fallback(path,init);
+  });
+  await enter();
+  fireEvent.click(screen.getByRole("button",{name:"选择／编辑"}));
+  fireEvent.click(screen.getByRole("checkbox",{name:"选择b"}));
+  fireEvent.click(screen.getByRole("checkbox",{name:"选择c"}));
+  fireEvent.click(screen.getByRole("button",{name:"前移",exact:true}));
+  await waitFor(()=>expect(f.directory.items.map(q=>q.id)).toEqual(["b","c","a","d"]));
+  await waitFor(()=>expect((screen.getByRole("checkbox",{name:"选择c"}) as HTMLInputElement).checked).toBe(true));
+  fireEvent.click(screen.getByRole("checkbox",{name:"选择b"}));
+  fireEvent.click(screen.getByRole("button",{name:"改名",exact:true}));
+  fireEvent.change(await screen.findByLabelText("题目新名称"),{target:{value:"新的题名"}});
+  fireEvent.click(screen.getByRole("button",{name:"保存名称"}));
+  await screen.findByText("2. 新的题名");
+  const saved=f.request.mock.calls.find(([path,init])=>path===B+"/questions/c"&&init?.method==="PUT");
+  expect(JSON.parse(String(saved?.[1]?.body))).toMatchObject({expectedRevision:1,body:{title:"新的题名"}});
+});
+
+it("moves selected questions stably and preserves every unselected and selected question", () => {
+  const items=["a","b","c","d","e"].map(id=>({id}));
+  expect(shiftQuestions(items,["b","c"],-1).map(q=>q.id)).toEqual(["b","c","a","d","e"]);
+  expect(shiftQuestions(items,["b","c"],1).map(q=>q.id)).toEqual(["a","d","b","c","e"]);
+  expect(shiftQuestions(items,["a","c","e"],-1).map(q=>q.id)).toEqual(["a","c","b","e","d"]);
+  expect(shiftQuestions(items,items.map(q=>q.id),1)).toEqual(items);
+  expect(items.map(q=>q.id)).toEqual(["a","b","c","d","e"]);
 });
 it("restores an offline new draft and persists mandatory recognition confirmation across reopening", async () => {
   localStorage.setItem(
