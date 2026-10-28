@@ -83,4 +83,3 @@
 - 补充正式验收：12 次教材/复现 + 32 次目录/书籍读取全部 < 1 秒，最慢分别为 984.03 ms / 749.59 ms。证据 `.local/practical-material-production-r7.jsonl` 和 `.local/practical-books-production-r7.jsonl`。这 44 次为服务器本机 HTTP，不能与前述 HTTPS 或手机网络延迟混为一谈。
 - 发布后 API 常驻内存约 130 MiB，宿主可用内存约 2.2 GiB，swap 使用约 2.8 GiB、剩余约 1.2 GiB；备份 I/O 会影响缓存和 swap 占用，未强行清理 swap。
 - 只读预览已停止，测试服务恢复至原先不运行状态，以减少正式机器资源竞争。手机实际网络复测等待用户反馈。
-
