@@ -11,7 +11,7 @@ export function MobileStudentCheckin({ auth, onBack }: { auth: TeachingAuth; onB
 }
 export function MobileTeacherCheckin({ auth, onBack }: { auth: TeachingAuth; onBack(): void }) {
   const api = useMemo(() => checkinSession(auth).api, [auth.user.id, auth.user.orgId, auth.expiresAt]);
-  return <CheckinTeacherWorkspace key={`${auth.user.id}:${auth.user.orgId}`} api={api} onBack={onBack} />;
+  return <div className="teacher-mobile-page mobile-teacher-checkin"><CheckinTeacherWorkspace key={`${auth.user.id}:${auth.user.orgId}`} api={api} onBack={onBack} /></div>;
 }
 export function CheckinSyncBridge({ auth }: { auth: TeachingAuth }) {
   const client = useClient(auth);

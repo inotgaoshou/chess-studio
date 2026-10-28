@@ -7426,3 +7426,8 @@ html.keyboard-open .manual-save-backdrop .manual-save-dialog { max-height:100%; 
 .xiangqi-board.move-feedback.capture .last-to .piece { animation:none; }
 
 .mobile-problem-group-nav{display:flex;justify-content:space-between;gap:8px;padding-top:10px}.mobile-problem-group-nav button{display:flex;align-items:center;justify-content:center;gap:4px;min-height:44px;padding:8px 14px;border:1px solid #c4d8cb;border-radius:10px;background:#f2f7f3;color:#24523e;font:inherit}.mobile-problem-group-nav button:last-child{margin-left:auto}.mobile-problem-group-range{font-size:.8em;opacity:.75}
+
+/* Teacher check-in uses the same viewport and keyboard-aware scroller as other teacher pages. */
+.training-app .teacher-mobile-page.mobile-teacher-checkin { padding:0; display:block; scroll-padding-top:12px; }
+.mobile-teacher-checkin .checkin-workspace { margin:0 auto; padding-bottom:24px; }
+.mobile-teacher-checkin .checkin-plan-editor { min-width:0; }

@@ -17,7 +17,7 @@
 .checkin-heading { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 18px; }
 .checkin-heading > div { flex: 1; min-width: 170px; }
 .checkin-heading p { color: var(--checkin-muted); font-size: 13px; }
-.checkin-field { display: grid; gap: 6px; margin: 12px 0; font-weight: 600; }
+.checkin-field { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: 6px; margin: 12px 0; font-weight: 600; }
 .checkin-field > input, .checkin-field > textarea, .checkin-field > select { font-weight: normal; }
 .checkin-stage, .checkin-route, .checkin-task-editor, .checkin-plan-editor, .checkin-results, .checkin-celebration { background: var(--checkin-paper); padding: 18px; border-radius: 14px; margin: 16px 0; border: 1px solid var(--checkin-line); }
 .checkin-stage > span { margin-left: 12px; color: var(--checkin-green); }
