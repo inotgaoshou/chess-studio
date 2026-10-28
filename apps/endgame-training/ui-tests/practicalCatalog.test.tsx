@@ -38,35 +38,44 @@ it("practical endgames filters on the server, keeps the filter on return and nav
   await waitFor(()=>expect(problems.mock.calls.at(-1)?.[1].material).toBe(""));
 });
 
-it("browses practical books and chapters, keeps difficulty on return and switches back to all questions", async () => {
+it.each([
+  {entry:"practical_endgames",name:"实用残局",book:"实用残局精选",chapter:"第一章 车兵残局",question:"车兵残局"},
+  {entry:"middlegame",name:"中局战术",book:"中局战术精选",chapter:"第一章 弃子战术",question:"弃子争先"},
+])("browses $name books and chapters, restores the visit and switches back to all questions", async ({entry,name,book:bookName,chapter:chapterName,question:questionTitle}) => {
   window.dispatchEvent(new Event("teaching-content-reset"));
-  const auth={token:"books",expiresAt:"2099-01-01",user:{id:"books-student",role:"student",vipActive:true}} as TeachingAuth;
-  const topic:TeachingCatalogNode={id:"practical-books",name:"实用残局",kind:"category",teachingEntry:"practical_endgames",displayOrder:0,active:true,confirmed:true,itemCount:30};
-  const book:TeachingCatalogNode={...topic,id:"book-a",parentId:topic.id,name:"实用残局精选",kind:"book",teachingEntry:undefined};
-  const chapter:TeachingCatalogNode={...book,id:"chapter-a",parentId:book.id,name:"第一章 车兵残局",kind:"chapter"};
+  const auth={token:"books",expiresAt:"2099-01-01",user:{id:`books-${entry}`,role:"student",vipActive:true}} as TeachingAuth;
+  const topic:TeachingCatalogNode={id:`${entry}-books`,name,kind:"category",teachingEntry:entry,displayOrder:0,active:true,confirmed:true,itemCount:30};
+  const book:TeachingCatalogNode={...topic,id:"book-a",parentId:topic.id,name:bookName,kind:"book",teachingEntry:undefined};
+  const chapter:TeachingCatalogNode={...book,id:"chapter-a",parentId:book.id,name:chapterName,kind:"chapter"};
   vi.spyOn(teachingClient,"catalogBrowse").mockImplementation(async params=>{
     const path=params.nodeId===chapter.id?[topic,book,chapter]:params.nodeId===book.id?[topic,book]:params.nodeId?[topic]:[];
     return {currentNode:path.at(-1)??null,breadcrumbs:path,children:!params.nodeId?[topic]:params.nodeId===topic.id?[book]:params.nodeId===book.id?[chapter]:[],learningMaterials:[],statisticsReady:true,statisticsRevision:"1"};
   });
-  const problems=vi.spyOn(teachingClient,"catalogProblems").mockResolvedValue({items:[{id:"book-question",libraryId:"book-a",sourceIndex:0,title:"车兵残局",category:"实用残局",startingFen:"4k4/9/9/9/9/9/9/9/4R4/4K4 w",sideToMove:"red",solutionLength:1}],nextCursor:null});
+  const problems=vi.spyOn(teachingClient,"catalogProblems").mockResolvedValue({items:[{id:"book-question",libraryId:"book-a",sourceIndex:0,title:questionTitle,category:name,startingFen:"4k4/9/9/9/9/9/9/9/4R4/4K4 w",sideToMove:"red",solutionLength:1}],nextCursor:null});
   const props={auth,compact:true,scene:"browse" as const,onPractice:vi.fn()};
   let view=render(<TeachingCatalog {...props}/>);
-  fireEvent.click(await screen.findByRole("button",{name:/实用残局/}));
+  fireEvent.click(await screen.findByRole("button",{name:new RegExp(name)}));
   fireEvent.click(await screen.findByRole("button",{name:"按书本学习"}));
-  fireEvent.click(await screen.findByRole("button",{name:/实用残局精选/}));
-  fireEvent.click(await screen.findByRole("button",{name:/第一章 车兵残局/}));
-  await screen.findByText("第 1 题 · 车兵残局");
-  fireEvent.click(screen.getByRole("button",{name:/筛选/}));
-  fireEvent.change(screen.getByRole("combobox",{name:"残局难度"}),{target:{value:"3"}});
-  await waitFor(()=>expect(problems.mock.calls.at(-1)?.[1]).toMatchObject({difficulty:3}));
+  fireEvent.click(await screen.findByRole("button",{name:new RegExp(bookName)}));
+  fireEvent.click(await screen.findByRole("button",{name:new RegExp(chapterName)}));
+  await screen.findByText(`第 1 题 · ${entry==="practical_endgames"?questionTitle:"第 1 题"}`);
+  await waitFor(()=>expect(problems.mock.calls.at(-1)?.[0]).toBe(chapter.id));
+  expect(screen.getByRole("navigation",{name:entry==="middlegame"?"中局书本目录":"残局书本目录"})).toBeTruthy();
+  if(entry==="practical_endgames") {
+    fireEvent.click(screen.getByRole("button",{name:/筛选/}));
+    fireEvent.change(screen.getByRole("combobox",{name:"残局难度"}),{target:{value:"3"}});
+    await waitFor(()=>expect(problems.mock.calls.at(-1)?.[1]).toMatchObject({difficulty:3}));
+  }
   fireEvent.click(view.container.querySelector('.catalog-problem-card button')!);
   view.unmount();view=render(<TeachingCatalog {...props}/>);
-  await screen.findByText("第 1 题 · 车兵残局");
+  await screen.findByText(`第 1 题 · ${entry==="practical_endgames"?questionTitle:"第 1 题"}`);
   expect(screen.getByRole("button",{name:"按书本学习"}).getAttribute("aria-pressed")).toBe("true");
-  fireEvent.click(screen.getByRole("button",{name:/筛选/}));
-  expect((screen.getByRole("combobox",{name:"残局难度"}) as HTMLSelectElement).value).toBe("3");
+  if(entry==="practical_endgames") {
+    fireEvent.click(screen.getByRole("button",{name:/筛选/}));
+    expect((screen.getByRole("combobox",{name:"残局难度"}) as HTMLSelectElement).value).toBe("3");
+  }
   fireEvent.click(screen.getByRole("button",{name:"返回上级目录"}));
-  expect(await screen.findByRole("button",{name:/第一章 车兵残局/})).toBeTruthy();
+  expect(await screen.findByRole("button",{name:new RegExp(chapterName)})).toBeTruthy();
   fireEvent.click(screen.getByRole("button",{name:"全部题目"}));
   await waitFor(()=>expect(problems.mock.calls.at(-1)?.[0]).toBe(topic.id));
   expect(screen.getByRole("button",{name:"全部题目"}).getAttribute("aria-pressed")).toBe("true");

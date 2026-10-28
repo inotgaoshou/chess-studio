@@ -33,7 +33,7 @@ function itemDisplayCache(scope:string) {
   return cache;
 }
 function saveItemDisplay(cache:Map<string,ItemPage>,key:string,page:ItemPage){cache.set(key,page);if(cache.size>80)cache.delete(cache.keys().next().value!);}
-type CatalogLocation = {practicalView?:"all"|"books";teachingEntry?:string;mateChoice?:string|null;directoryQuery:string; query:string; goal:string; difficulty:string; mateGroup:string; mateMoves:string; material:string; motif:string; mode:string; nodeCount:number; itemCount:number; materialCount:number; scroll:number};
+type CatalogLocation = {bookView?:"all"|"books";teachingEntry?:string;mateChoice?:string|null;directoryQuery:string; query:string; goal:string; difficulty:string; mateGroup:string; mateMoves:string; material:string; motif:string; mode:string; nodeCount:number; itemCount:number; materialCount:number; scroll:number};
 const navigation = new Map<string,CatalogLocation & {id:string|null}>();
 const locationCaches = new Map<string,Map<string,CatalogLocation>>();
 function scopedLocations(scope:string) {
@@ -48,6 +48,7 @@ const browseParams=(id:string|null,q:string):Record<string,string>=>({availabili
 // Production placements verified 2026-10-20. Other editions/placements remain available.
 const BASIC_TOPIC_ID = "e0c0221d-1b02-5f2c-9122-a7b0821f2603";
 const HIDDEN_BASIC_BOOKS = new Set(["90134f10-dc44-4b4e-b203-992af2d4c73c", "38f0967a-3b69-4fa5-9834-534959af52ed"]);
+const BOOK_TEACHING_ENTRIES = new Set(["practical_endgames", "middlegame"]);
 const MATE_TEACHING_ENTRIES = new Set(["basic_mates", "mate_series", "checking_mates", "quiet_mates", "practical_mates", "endgame_mates"]);
 function CatalogView({ sourceLibraries = [], initialMateStep, auth, teacher = false, scene = "select", compact = false, onNavigate, onLocationChange, sourceLibraryId, selectedIds = [], onAdd, onRemove, onPractice, onRehearse, onReadGame, onReadSolution, scope }: Props & {scope:string}) {
   const selection = teacher && scene === "select";
@@ -60,9 +61,9 @@ function CatalogView({ sourceLibraries = [], initialMateStep, auth, teacher = fa
   const previous=restoreLocation(navigation.get(scope));
   const restored=mobileBrowse && previous && HIDDEN_BASIC_BOOKS.has(previous.id ?? "") ? {...previous,id:BASIC_TOPIC_ID,nodeCount:0,itemCount:0,scroll:0} : previous;
   const [catalogEntry,setCatalogEntry]=useState(restored?.teachingEntry||"");
-  // Flying knives contains reviewed game materials, so retain its book navigation.
-  const [practicalView,setPracticalView]=useState<"all"|"books">(restored?.practicalView??"all");
-  const mobileBookBrowse=mobileBrowse&&(catalogEntry==="flying_knives"||(catalogEntry==="practical_endgames"&&practicalView==="books"));
+  // Keep reviewed game books and the optional book hierarchy for exercise topics.
+  const [bookView,setBookView]=useState<"all"|"books">(restored?.bookView??"all");
+  const mobileBookBrowse=mobileBrowse&&(catalogEntry==="flying_knives"||(BOOK_TEACHING_ENTRIES.has(catalogEntry)&&bookView==="books"));
   // Unknown legacy locations wait for their topic before enabling reading.
   const studentTrainingOnly=mobileBrowse&&auth?.user.role==="student"&&(!catalogEntry||MATE_TEACHING_ENTRIES.has(catalogEntry)||catalogEntry==="capture");
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -98,6 +99,7 @@ function CatalogView({ sourceLibraries = [], initialMateStep, auth, teacher = fa
   const selectedStep=mateChoice??(firstStep?String(firstStep):"all");
   useEffect(()=>{if(directMate&&mateChoice===null&&stepCounts!=null&&browse.page.currentNode?.id===nodeId)setMateChoice(firstStep?String(firstStep):"all");},[directMate,mateChoice,stepCounts,firstStep,nodeId,browse.page.currentNode?.id]);
   const mateMoves=directCapture?"":directMate&&mode==="training"?(selectedStep==="all"?"":selectedStep):rawMateMoves;
+  const bookLearning=mobileBrowse&&BOOK_TEACHING_ENTRIES.has(resolvedEntry??catalogEntry);
   const practicalBrowse=mobileBrowse&&(resolvedEntry??catalogEntry)==="practical_endgames";
   const difficulty=mobileBrowse&&!practicalBrowse?"":rawDifficulty,material=mobileBrowse&&!practicalBrowse?"":rawMaterial;
   const filters={goal,difficulty,material,motif,mateGroup,mateMoves};
@@ -107,7 +109,7 @@ function CatalogView({ sourceLibraries = [], initialMateStep, auth, teacher = fa
   const problemLevel = (mobileBrowse && !mobileBookBrowse && !!nodeId) || directMate || directCapture || browse.page.currentNode?.kind === "chapter" || Boolean(nodeId && browse.page.currentNode?.id === nodeId && !browse.loading && !nodes.length && !nodeCursor && (browse.page.currentNode.itemCount ?? 0) > 0);
 
   const locations=useRef(scopedLocations(scope));
-  function saveNavigation(){if(directMate)stepScroll.current.set(stepVisitKey,readScroll());const location={practicalView,teachingEntry:catalogEntry,mateChoice,directoryQuery,query,goal,difficulty,mateGroup,mateMoves,material,motif,mode,nodeCount:nodes.length,itemCount:items.length,materialCount:materials.length,scroll:readScroll()};navigation.set(scope,{id:nodeId,...location});locations.current.set(nodeId||"root",location);if(locations.current.size>80)locations.current.delete(locations.current.keys().next().value!);}
+  function saveNavigation(){if(directMate)stepScroll.current.set(stepVisitKey,readScroll());const location={bookView,teachingEntry:catalogEntry,mateChoice,directoryQuery,query,goal,difficulty,mateGroup,mateMoves,material,motif,mode,nodeCount:nodes.length,itemCount:items.length,materialCount:materials.length,scroll:readScroll()};navigation.set(scope,{id:nodeId,...location});locations.current.set(nodeId||"root",location);if(locations.current.size>80)locations.current.delete(locations.current.keys().next().value!);}
   const pendingScroll=useRef(true);
   const stepScroll=useRef(new Map<string,number>());
   const stepVisitKey=`${nodeId}:${selectedStep}`;
@@ -137,6 +139,7 @@ function CatalogView({ sourceLibraries = [], initialMateStep, auth, teacher = fa
         breadcrumbs: ancestor >= 0 ? path.slice(0, ancestor + 1) : [...path, target],
         children: [], nextCursor: null, learningMaterials: [], materialNextCursor: null, mateStepCounts: null });
     }
+    if(targetEntry!==catalogEntry)setBookView(old?.bookView??"all");
     setCatalogEntry(targetEntry);
     setMode(step ? "training" : old?.mode || (canReadBook && target?.itemCount === 0 && (target.materialCount ?? 0) > 0 ? "reading" : "training"));
     if (step) stepScroll.current.set(`${id}:${step}`, 0);
@@ -152,7 +155,7 @@ function CatalogView({ sourceLibraries = [], initialMateStep, auth, teacher = fa
     navigate(topic.id, initialMateStep);
   }, [mobileBrowse, initialMateStep, basicTopic?.id, nodeId, browse.loading]);
   useEffect(()=>{if(basicBrowse && path.some(n=>HIDDEN_BASIC_BOOKS.has(n.id))) navigate(BASIC_TOPIC_ID);},[basicBrowse,nodeId,path]);
-  useEffect(()=>{const old=navigation.get(scope);const same=old?.id===nodeId&&old.directoryQuery===directoryQuery&&old.query===query&&old.goal===goal&&old.difficulty===difficulty&&old.mateGroup===mateGroup&&old.mateMoves===mateMoves&&old.material===material&&old.motif===motif;navigation.set(scope,{id:nodeId,practicalView,teachingEntry:catalogEntry,mateChoice,directoryQuery,query,goal,difficulty,mateGroup,mateMoves,material,motif,mode,nodeCount:same?old.nodeCount:0,itemCount:same?old.itemCount:0,materialCount:same?old.materialCount:0,scroll:old?.id===nodeId?old.scroll:0});},[scope,nodeId,catalogEntry,practicalView,mateChoice,directoryQuery,query,goal,difficulty,mateGroup,mateMoves,material,motif,mode]);
+  useEffect(()=>{const old=navigation.get(scope);const same=old?.id===nodeId&&old.directoryQuery===directoryQuery&&old.query===query&&old.goal===goal&&old.difficulty===difficulty&&old.mateGroup===mateGroup&&old.mateMoves===mateMoves&&old.material===material&&old.motif===motif;navigation.set(scope,{id:nodeId,bookView,teachingEntry:catalogEntry,mateChoice,directoryQuery,query,goal,difficulty,mateGroup,mateMoves,material,motif,mode,nodeCount:same?old.nodeCount:0,itemCount:same?old.itemCount:0,materialCount:same?old.materialCount:0,scroll:old?.id===nodeId?old.scroll:0});},[scope,nodeId,catalogEntry,bookView,mateChoice,directoryQuery,query,goal,difficulty,mateGroup,mateMoves,material,motif,mode]);
 
   const itemKey=JSON.stringify([nodeId,browse.page.statisticsSnapshotRevision??browse.page.availabilitySnapshotRevision??browse.page.statisticsRevision??null,mode,problemSearch,goal,difficulty,mateGroup,mateMoves,material,motifSearch]);
   const itemAbort=useRef<AbortController|null>(null);
@@ -193,7 +196,7 @@ function CatalogView({ sourceLibraries = [], initialMateStep, auth, teacher = fa
   // Old sessions may restore a book/chapter. Move to its topic before painting a source name.
   const topicRoot=path.find(n=>!!n.teachingEntry);
   const practiceOriginLabel=mobileTopicName(topicRoot?.teachingEntry??catalogEntry);
-  useEffect(()=>{if(mobileBrowse && nodeId && topicRoot && topicRoot.teachingEntry!=="flying_knives" && !(topicRoot.teachingEntry==="practical_endgames"&&practicalView==="books") && topicRoot.id!==nodeId && browse.page.currentNode?.id===nodeId)navigate(topicRoot.id);},[mobileBrowse,nodeId,topicRoot?.id,browse.page.currentNode?.id,practicalView]);
+  useEffect(()=>{if(mobileBrowse && !mobileBookBrowse && nodeId && topicRoot && topicRoot.id!==nodeId && browse.page.currentNode?.id===nodeId)navigate(topicRoot.id);},[mobileBrowse,mobileBookBrowse,nodeId,topicRoot?.id,browse.page.currentNode?.id]);
   const current=browse.page.currentNode;const children=nodeId&&!selection?catalogVisibleChildren(nodes,mode,browse.page.currentNode?.teachingEntry):nodes;
   useEffect(()=>{if(!pendingScroll.current||loading||(mode==="reading"&&browse.materialBusy)||(current?.id??null)!==nodeId||((problemLevel||(mode==="reading"&&answersAllowed))&&itemOwner!==itemKey))return;const frame=requestAnimationFrame(()=>{pendingScroll.current=false;restoreScroll();});return()=>cancelAnimationFrame(frame);},[nodeId,loading,browse.materialBusy,mode,itemOwner,itemKey,current?.id,problemLevel]);
   const moreDirectories=()=>browse.more();
@@ -203,12 +206,12 @@ function CatalogView({ sourceLibraries = [], initialMateStep, auth, teacher = fa
   return <section ref={viewRef} className={`teaching-catalog ${compact ? "catalog-compact" : ""} ${mobileBrowse ? "catalog-phone-browse" : ""}`} aria-label="教学题库目录" aria-busy={loading||busy}>
     {selection&&<header className="catalog-mobile-heading"><div><h2>教学题库</h2><p>{selection?"按章节选题，组合布置作业":"按章节学习，循序练习"}</p></div>{selection&&<span className="catalog-count">已选 {new Set(selectedIds).size} 题</span>}</header>}
     {mobileBrowse && nodeId && <header className="catalog-back-heading"><button type="button" aria-label="返回上级目录" onClick={()=>navigate(mobileBookBrowse?current?.parentId||null:null)}><ArrowLeft aria-hidden="true"/>返回</button><h3>{mobileBookBrowse?current?.name||mobileTopicName(catalogEntry):mobileTopicName(topicRoot?.teachingEntry??catalogEntry)}</h3></header>}
-    {practicalBrowse && nodeId && <>
-      <div className="catalog-practical-views" aria-label="残局学习方式">
-        <button type="button" aria-pressed={practicalView==="all"} onClick={()=>{if(topicRoot&&nodeId!==topicRoot.id)navigate(topicRoot.id);setPracticalView("all");}}>全部题目</button>
-        <button type="button" aria-pressed={practicalView==="books"} onClick={()=>setPracticalView("books")}>按书本学习</button>
+    {bookLearning && nodeId && <>
+      <div className="catalog-practical-views" aria-label={catalogEntry==="middlegame"?"中局学习方式":"残局学习方式"}>
+        <button type="button" aria-pressed={bookView==="all"} onClick={()=>{if(topicRoot&&nodeId!==topicRoot.id)navigate(topicRoot.id);setBookView("all");}}>全部题目</button>
+        <button type="button" aria-pressed={bookView==="books"} onClick={()=>setBookView("books")}>按书本学习</button>
       </div>
-      {practicalView==="books"&&<nav className="catalog-practical-path" aria-label="残局书本目录">{path.map(n=><button type="button" key={n.id} aria-current={n.id===nodeId?"page":undefined} onClick={()=>navigate(n.id)}>{n.name}</button>)}</nav>}
+      {bookView==="books"&&<nav className="catalog-practical-path" aria-label={catalogEntry==="middlegame"?"中局书本目录":"残局书本目录"}>{path.map(n=><button type="button" key={n.id} aria-current={n.id===nodeId?"page":undefined} onClick={()=>navigate(n.id)}>{n.name}</button>)}</nav>}
     </>}
     {!mobileBrowse && nodeId&&<nav className="catalog-breadcrumb" aria-label="教学目录路径"><button type="button" onClick={()=>navigate(browse.page.currentNode?.parentId||null)}>返回上级</button>{path.map(n => <button type="button" disabled={busy} key={n.id} aria-current={n.id===nodeId?"page":undefined} onClick={() => navigate(n.id)}>› {n.name}</button>)}</nav>}
     {!mobileBrowse && (teacher || nodeId) && (!compact || !problemLevel || mode !== "training") && <CatalogSearch value={directoryQuery} onChange={setDirectoryQuery}/>}
