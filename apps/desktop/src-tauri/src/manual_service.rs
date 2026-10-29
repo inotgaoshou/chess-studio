@@ -1101,6 +1101,273 @@ pub(crate) fn preview_line(
     preview_line_steps(&fen, &pv)
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AppendVariationRequest {
+    pub(crate) game_id: Uuid,
+    pub(crate) anchor_node_id: Option<Uuid>,
+    pub(crate) starting_fen: String,
+    pub(crate) expected_fen: String,
+    pub(crate) moves: Vec<String>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AppendVariationResult {
+    pub(crate) board: BoardDto,
+    pub(crate) end_node_id: Uuid,
+    pub(crate) added: usize,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct VariationCopyLine {
+    pub(crate) moves: Vec<String>,
+    pub(crate) comments: Vec<String>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct VariationCopyRequest {
+    pub(crate) id: Uuid,
+    pub(crate) title: String,
+    pub(crate) note: String,
+    pub(crate) starting_fen: String,
+    pub(crate) lines: Vec<VariationCopyLine>,
+    pub(crate) anchor_path: Vec<String>,
+    pub(crate) moves: Vec<String>,
+}
+
+#[tauri::command]
+pub(crate) fn save_variation_copy(
+    request: VariationCopyRequest,
+    state: State<'_, DesktopState>,
+) -> Result<Uuid, String> {
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    save_variation_copy_to_model(&mut model, request)
+}
+
+pub(crate) fn save_variation_copy_to_model(
+    model: &mut AppModel,
+    request: VariationCopyRequest,
+) -> Result<Uuid, String> {
+    if model
+        .store
+        .load_game(request.id)
+        .map_err(|error| error.to_string())?
+        .is_some()
+    {
+        return Ok(request.id);
+    }
+    let mut document =
+        ManualDocument::new(request.starting_fen).map_err(|error| error.to_string())?;
+    document.metadata.title = request.title;
+    document.note = request.note;
+    let mut lines = request.lines;
+    lines.push(VariationCopyLine {
+        moves: request
+            .anchor_path
+            .into_iter()
+            .chain(request.moves)
+            .collect(),
+        comments: Vec::new(),
+    });
+    for line in lines {
+        let mut position =
+            Board::from_fen(&document.starting_fen).map_err(|error| error.to_string())?;
+        let mut parent = document.tree.root_id();
+        for (index, iccs) in line.moves.iter().enumerate() {
+            let mv = Move::from_iccs(iccs).map_err(|error| error.to_string())?;
+            position = position.apply_move(mv).map_err(|error| error.to_string())?;
+            parent = document
+                .tree
+                .add_move(
+                    parent,
+                    mv,
+                    line.comments.get(index).cloned().unwrap_or_default(),
+                )
+                .map_err(|error| error.to_string())?;
+        }
+    }
+    let nodes = collect_nodes(&document.tree)?;
+    let mut lamport = model.lamport;
+    let mut make_operation = |entity_id, kind, payload| {
+        lamport += 1;
+        Operation {
+            op_id: Uuid::new_v4(),
+            device_id: model.device_id,
+            entity_id,
+            game_id: request.id,
+            kind,
+            payload,
+            lamport,
+            created_at: Utc::now(),
+        }
+    };
+    let mut operations = vec![make_operation(
+        request.id,
+        OperationKind::CreateGame,
+        serde_json::to_value(CreateGamePayload {
+            title: document.metadata.title.clone(),
+            fen: document.starting_fen.clone(),
+            root_id: document.tree.root_id(),
+            external_source: None,
+        })
+        .map_err(|error| error.to_string())?,
+    )];
+    for node in &nodes {
+        operations.push(make_operation(
+            node.id,
+            OperationKind::AddMove,
+            serde_json::to_value(AddMovePayload {
+                node_id: node.id,
+                parent_id: node.parent_id,
+                move_iccs: node.mv.to_iccs(),
+                order_key: node.order_key,
+                is_mainline: node.is_mainline,
+            })
+            .map_err(|error| error.to_string())?,
+        ));
+        if !node.comment.is_empty() {
+            operations.push(make_operation(
+                node.id,
+                OperationKind::UpdateComment,
+                serde_json::to_value(UpdateCommentPayload {
+                    node_id: node.id,
+                    comment: node.comment.clone(),
+                })
+                .map_err(|error| error.to_string())?,
+            ));
+        }
+    }
+    operations.push(make_operation(
+        request.id,
+        OperationKind::UpdateGameMetadata,
+        serde_json::to_value(metadata_payload(&document.metadata, &document.note))
+            .map_err(|error| error.to_string())?,
+    ));
+    let metadata_json =
+        serde_json::to_string(&document.metadata).map_err(|error| error.to_string())?;
+    model
+        .store
+        .import_game_with_operations_mode(
+            ImportedGame {
+                id: request.id,
+                title: &document.metadata.title,
+                starting_fen: &document.starting_fen,
+                root_id: document.tree.root_id(),
+                current_node_id: None,
+                note: &document.note,
+                source_path: None,
+                source_format: Some("manual"),
+                playable: true,
+                metadata_json: &metadata_json,
+            },
+            &nodes,
+            &operations,
+            false,
+        )
+        .map_err(|error| error.to_string())?;
+    model.lamport = lamport;
+    Ok(request.id)
+}
+
+#[tauri::command]
+pub(crate) fn append_variation(
+    request: AppendVariationRequest,
+    state: State<'_, DesktopState>,
+) -> Result<AppendVariationResult, String> {
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    append_variation_to_model(&mut model, request)
+}
+
+/// Validate on a cloned tree, then persist nodes and outbox in one transaction.
+/// Neither navigation nor a partially valid line may change the source document.
+pub(crate) fn append_variation_to_model(
+    model: &mut AppModel,
+    request: AppendVariationRequest,
+) -> Result<AppendVariationResult, String> {
+    if model.game_id != request.game_id || model.starting_fen != request.starting_fen {
+        return Err("来源棋谱已变化，请另存临时线路".into());
+    }
+    if !model.playable || request.moves.is_empty() {
+        return Err("请先推演合法线路再保存".into());
+    }
+    if let Some(anchor) = request.anchor_node_id {
+        if model
+            .tree
+            .active_line(anchor)
+            .map_err(|_| "来源节点已失效")?
+            .iter()
+            .any(|node| node.deleted)
+        {
+            return Err("来源节点已删除，请另存临时线路".into());
+        }
+    }
+    let mut position = board_at(&model.starting_fen, &model.tree, request.anchor_node_id)?;
+    if position.to_fen() != request.expected_fen {
+        return Err("来源局面已变化，请另存临时线路".into());
+    }
+    let mut tree = model.tree.clone();
+    let mut parent = request.anchor_node_id.unwrap_or_else(|| tree.root_id());
+    let mut entries = Vec::new();
+    for (index, iccs) in request.moves.iter().enumerate() {
+        let mv = Move::from_iccs(iccs).map_err(|error| format!("第 {} 步：{error}", index + 1))?;
+        position = position
+            .apply_move(mv)
+            .map_err(|error| format!("第 {} 步：{error}", index + 1))?;
+        let existing = tree
+            .branches(parent)
+            .map_err(|error| error.to_string())?
+            .iter()
+            .find(|node| node.mv == mv)
+            .map(|node| node.id);
+        let id = tree
+            .add_move(parent, mv, "")
+            .map_err(|error| error.to_string())?;
+        if existing.is_none() {
+            let node = tree.node(id).map_err(|error| error.to_string())?.clone();
+            let operation = Operation {
+                op_id: Uuid::new_v4(),
+                device_id: model.device_id,
+                entity_id: id,
+                game_id: model.game_id,
+                kind: OperationKind::AddMove,
+                payload: serde_json::to_value(AddMovePayload {
+                    node_id: id,
+                    parent_id: parent,
+                    move_iccs: iccs.clone(),
+                    order_key: node.order_key,
+                    is_mainline: node.is_mainline,
+                })
+                .map_err(|error| error.to_string())?,
+                lamport: model.lamport + entries.len() as u64 + 1,
+                created_at: Utc::now(),
+            };
+            entries.push((node, operation));
+        }
+        parent = id;
+    }
+    model
+        .store
+        .append_move_nodes_with_operations(model.game_id, model.current_node, &entries)
+        .map_err(|error| error.to_string())?;
+    model.lamport += entries.len() as u64;
+    model.tree = tree;
+    let _ = sync_current_game_mirror(model);
+    Ok(AppendVariationResult {
+        board: board_dto(model)?,
+        end_node_id: parent,
+        added: entries.len(),
+    })
+}
+
 #[tauri::command]
 pub(crate) fn preview_recognized_move_from_current(
     iccs: String,

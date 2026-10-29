@@ -19,7 +19,7 @@ commands.allow = [
   "import_ttxq_history", "disconnect_ttxq", "list_games", "get_game_metadata", "update_game_metadata_for_game", "delete_games", "get_game_mirror_status",
   "update_game_mirror", "rebuild_game_mirrors", "reveal_game_mirror", "list_library_folders",
   "create_library_folder", "rename_library_folder", "delete_library_folder", "move_games_to_folder", "reorder_library_game", "update_game_library",
-  "open_game", "play_move", "confirm_recognized_move", "preview_recognized_move_from_current",
+  "open_game", "play_move", "append_variation", "save_variation_copy", "confirm_recognized_move", "preview_recognized_move_from_current",
   "resolve_screenshot_move", "preview_line", "parse_chinese_line", "new_game", "open_document", "import_cbl_game_library",
   "register_reference_source", "list_reference_sources", "scan_reference_source", "list_reference_import_batches",
   "review_reference_batch", "classify_reference_batch", "rebuild_reference_opening_catalog", "classify_reference_library", "list_reference_batch_issues",

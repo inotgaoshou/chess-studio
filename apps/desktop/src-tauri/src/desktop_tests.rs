@@ -74,6 +74,219 @@ mod tests {
         }
     }
 
+    fn variation_request(
+        model: &AppModel,
+        anchor: Option<Uuid>,
+        moves: &[&str],
+    ) -> AppendVariationRequest {
+        AppendVariationRequest {
+            game_id: model.game_id,
+            anchor_node_id: anchor,
+            starting_fen: model.starting_fen.clone(),
+            expected_fen: board_at(&model.starting_fen, &model.tree, anchor)
+                .unwrap()
+                .to_fen(),
+            moves: moves.iter().map(|value| value.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn variation_batch_preserves_navigation_mainline_and_existing_comments_and_deduplicates() {
+        let state = desktop_state_for_link_tests();
+        let mut model = state.model.lock().unwrap();
+        let first = commit_move(&mut model, "h2e2")
+            .unwrap()
+            .current_node
+            .unwrap();
+        let original = commit_move(&mut model, "h9g7")
+            .unwrap()
+            .current_node
+            .unwrap();
+        model.tree.update_comment(first, "原有注释").unwrap();
+        let before_fen = model.board.to_fen();
+        let before_ops = model.store.pending_operations(100).unwrap().len();
+        let request = variation_request(&model, None, &["h2e2", "b9c7", "h0g2"]);
+        let result = append_variation_to_model(&mut model, request).unwrap();
+        assert_eq!(result.added, 2);
+        assert_eq!(model.current_node, Some(original));
+        assert_eq!(model.board.to_fen(), before_fen);
+        assert_eq!(model.tree.node(first).unwrap().comment, "原有注释");
+        assert!(model.tree.node(original).unwrap().is_mainline);
+        assert_eq!(
+            model
+                .store
+                .load_game(model.game_id)
+                .unwrap()
+                .unwrap()
+                .current_node_id,
+            Some(original)
+        );
+        assert_eq!(
+            model.store.pending_operations(100).unwrap().len(),
+            before_ops + 2
+        );
+        let end = result.end_node_id;
+        let request = variation_request(&model, None, &["h2e2", "b9c7", "h0g2"]);
+        let again = append_variation_to_model(&mut model, request).unwrap();
+        assert_eq!(again.added, 0);
+        assert_eq!(again.end_node_id, end);
+        assert_eq!(
+            model.store.pending_operations(100).unwrap().len(),
+            before_ops + 2
+        );
+        let game = model.store.load_game(model.game_id).unwrap().unwrap();
+        let (restored_board, restored_tree) = restore_game(&model.store, &game).unwrap();
+        assert_eq!(restored_board.to_fen(), before_fen);
+        assert_eq!(restored_tree.line_to(end).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn variation_full_line_supports_black_first_custom_positions_beyond_sixteen_plies() {
+        let fen = "r3k4/9/9/9/4p4/4P4/9/9/9/4K3R b - - 0 1";
+        let state = desktop_state_for_link_tests();
+        let mut model = state.model.lock().unwrap();
+        install_document(
+            &mut model,
+            ManualDocument::new(fen.to_owned()).unwrap(),
+            None,
+            None,
+        )
+        .unwrap();
+        let mut position = Board::from_fen(fen).unwrap();
+        let mut seen = std::collections::HashSet::new();
+        let mut moves = Vec::new();
+        for _ in 0..24 {
+            let mut choices = position.legal_moves();
+            choices.sort_by_key(|mv| mv.to_iccs());
+            let (mv, next) = choices
+                .into_iter()
+                .find_map(|mv| {
+                    let next = position.apply_move(mv).ok()?;
+                    if seen.contains(
+                        &next
+                            .to_fen()
+                            .split_whitespace()
+                            .take(2)
+                            .collect::<Vec<_>>()
+                            .join(" "),
+                    ) {
+                        return None;
+                    }
+                    Some((mv, next))
+                })
+                .expect("a fresh legal continuation");
+            seen.insert(
+                next.to_fen()
+                    .split_whitespace()
+                    .take(2)
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            );
+            moves.push(mv.to_iccs());
+            position = next;
+        }
+        let frames = preview_line_steps(fen, &moves).unwrap();
+        assert_eq!(frames.len(), 24);
+        assert_eq!(frames[0].moved_by, "黑方");
+        let source = model.board.to_fen();
+        let request = AppendVariationRequest {
+            game_id: model.game_id,
+            anchor_node_id: None,
+            starting_fen: source.clone(),
+            expected_fen: source.clone(),
+            moves,
+        };
+        let result = append_variation_to_model(&mut model, request).unwrap();
+        assert_eq!(result.added, 24);
+        assert_eq!(model.tree.line_to(result.end_node_id).unwrap().len(), 24);
+        assert_eq!(model.board.to_fen(), source);
+        assert_eq!(model.current_node, None);
+    }
+
+    #[test]
+    fn variation_batch_invalid_final_move_leaves_no_partial_nodes_or_outbox() {
+        let state = desktop_state_for_link_tests();
+        let mut model = state.model.lock().unwrap();
+        let before = model.store.pending_operations(100).unwrap().len();
+        let request = variation_request(&model, None, &["h2e2", "h9g7", "a0a9"]);
+        assert!(append_variation_to_model(&mut model, request).is_err());
+        assert!(model
+            .tree
+            .branches(model.tree.root_id())
+            .unwrap()
+            .is_empty());
+        assert!(model
+            .store
+            .load_move_nodes(model.game_id)
+            .unwrap()
+            .is_empty());
+        assert_eq!(model.store.pending_operations(100).unwrap().len(), before);
+        assert_eq!(model.current_node, None);
+    }
+
+    #[test]
+    fn variation_batch_rejects_wrong_game_changed_fen_and_deleted_ancestor() {
+        let state = desktop_state_for_link_tests();
+        let mut model = state.model.lock().unwrap();
+        let mut request = variation_request(&model, None, &["h2e2"]);
+        request.game_id = Uuid::new_v4();
+        assert!(append_variation_to_model(&mut model, request).is_err());
+        let mut request = variation_request(&model, None, &["h2e2"]);
+        request.expected_fen = "different".into();
+        assert!(append_variation_to_model(&mut model, request).is_err());
+        let first = commit_move(&mut model, "h2e2")
+            .unwrap()
+            .current_node
+            .unwrap();
+        let last = commit_move(&mut model, "h9g7")
+            .unwrap()
+            .current_node
+            .unwrap();
+        let request = variation_request(&model, Some(last), &["h0g2"]);
+        model.tree.remove(first).unwrap();
+        assert!(append_variation_to_model(&mut model, request).is_err());
+    }
+
+    #[test]
+    fn variation_copy_preserves_active_document_and_is_retry_safe() {
+        let state = desktop_state_for_link_tests();
+        let mut model = state.model.lock().unwrap();
+        let current = commit_move(&mut model, "h2e2").unwrap().current_node;
+        let original_id = model.game_id;
+        model.store.set_active_game_id(original_id).unwrap();
+        let before = model.board.to_fen();
+        let copy_id = Uuid::new_v4();
+        let request = || VariationCopyRequest {
+            id: copy_id,
+            title: "布局推演副本".into(),
+            note: "原根注释".into(),
+            starting_fen: STARTING_FEN.into(),
+            lines: vec![VariationCopyLine {
+                moves: vec!["h2e2".into(), "h9g7".into()],
+                comments: vec!["原注释".into(), "".into()],
+            }],
+            anchor_path: vec!["h2e2".into()],
+            moves: vec!["b9c7".into()],
+        };
+        assert_eq!(
+            save_variation_copy_to_model(&mut model, request()).unwrap(),
+            copy_id
+        );
+        assert_eq!(model.game_id, original_id);
+        assert_eq!(model.current_node, current);
+        assert_eq!(model.board.to_fen(), before);
+        assert_eq!(model.store.active_game_id().unwrap(), Some(original_id));
+        let nodes = model.store.load_move_nodes(copy_id).unwrap();
+        assert_eq!(nodes.len(), 3);
+        assert!(nodes.iter().any(|node| node.comment == "原注释"));
+        let lamport = model.lamport;
+        assert_eq!(
+            save_variation_copy_to_model(&mut model, request()).unwrap(),
+            copy_id
+        );
+        assert_eq!(model.lamport, lamport);
+    }
+
     fn desktop_state_for_link_tests() -> DesktopState {
         let game_id = Uuid::new_v4();
         let device_id = Uuid::new_v4();

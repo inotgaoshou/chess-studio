@@ -33,6 +33,30 @@ check(try object(db.openManualGame("fixture")), folder:nil)
 let all = try JSONSerialization.jsonObject(with: Data(db.manualGames(folder:"", queryText:"").utf8)) as! [[String: Any]]
 precondition(all.count == 1)
 check(all[0], folder:nil)
+let snapshot = try object(db.openManualGame("fixture"))
+let version = snapshot["updatedAt"] as! String
+var variation = snapshot
+variation["branches"] = [["id":"original"], ["id":"new-variation"]]
+variation["updatedAt"] = "2099-01-01T00:00:00Z"
+try db.saveManualGame(variation, expectedUpdatedAt: version)
+let savedVariation = try object(db.openManualGame("fixture"))
+precondition((savedVariation["branches"] as? [[String: Any]])?.count == 2)
+var rejected = false
+do { try db.saveManualGame(snapshot, expectedUpdatedAt: version) } catch { rejected = true }
+precondition(rejected, "stale writer overwrote a newer variation")
+let afterConflict = try object(db.openManualGame("fixture"))
+precondition(afterConflict["updatedAt"] as? String == "2099-01-01T00:00:00Z")
+var readonly = variation
+readonly["id"] = "readonly"; readonly["readOnly"] = true
+try db.saveManualGame(readonly)
+rejected = false
+do { try db.saveManualGame(readonly, expectedUpdatedAt: "2099-01-01T00:00:00Z") } catch { rejected = true }
+precondition(rejected, "read-only source was modified")
+try db.deleteManualGame("fixture")
+rejected = false
+do { try db.saveManualGame(snapshot, expectedUpdatedAt: version) } catch { rejected = true }
+precondition(rejected, "deleted source was resurrected")
+print("PASS variation CAS: complete update, stale write, read-only source, deleted source")
 print("PASS production Swift SQLite store: nested move, source removal, folder rename, unclassified, sync timestamp, content preservation")
 '''
 with tempfile.TemporaryDirectory(prefix="qixi-folder-store-") as tmp:

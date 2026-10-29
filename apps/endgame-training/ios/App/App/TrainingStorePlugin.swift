@@ -119,7 +119,7 @@ final class TrainingStorePlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc func saveManualGame(_ call: CAPPluginCall) {
         respond(call, failure: "无法保存本地棋谱") {
-            try self.store.saveManualGame(try Self.object(from: call, key: "game"))
+            try self.store.saveManualGame(try Self.object(from: call, key: "game"), expectedUpdatedAt: call.getString("expectedUpdatedAt"))
             return [:]
         }
     }
@@ -351,12 +351,23 @@ private final class TrainingDatabase {
         }
     }
 
-    func saveManualGame(_ game: [String: Any]) throws {
+    func saveManualGame(_ game: [String: Any], expectedUpdatedAt: String? = nil) throws {
         try queue.sync {
+          try transaction {
+            if let expected = expectedUpdatedAt {
+                let rows = try query("SELECT updated_at,game_json FROM manual_games WHERE id=?", [try value(game, "id")]) { statement in
+                    ["version": text(statement, 0), "payload": text(statement, 1)]
+                }
+                guard let row = rows.first, row["version"] as? String == expected else { throw TrainingStoreError.invalidInput("棋谱已变化，请重试保存") }
+                if let raw = row["payload"] as? String, let stored = try jsonValue(raw) as? [String: Any] {
+                    if stored["readOnly"] as? Bool == true || (stored["origin"] as? [String: Any])?["kind"] as? String == "providerMirror" { throw TrainingStoreError.invalidInput("只读棋谱不可修改") }
+                }
+            }
             let folder = (game["folderPath"] as? String) ?? ""
             if !folder.isEmpty { try createFolderPath(folder) }
             let payload = try json(game)
             try execute("INSERT INTO manual_games (id,title,note,folder_path,starting_fen,current_node_id,tree_json,game_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,note=excluded.note,folder_path=excluded.folder_path,starting_fen=excluded.starting_fen,current_node_id=excluded.current_node_id,tree_json=excluded.tree_json,game_json=excluded.game_json,updated_at=excluded.updated_at", [try value(game, "id"), try value(game, "title"), (game["note"] as? String) ?? "", folder, try value(game, "startingFen"), (game["currentNodeId"] as? String) ?? "", payload, payload, (game["createdAt"] as? String) ?? isoNow(), (game["updatedAt"] as? String) ?? isoNow()])
+          }
         }
     }
 

@@ -151,7 +151,7 @@ export function CompactEngineAnalysisList({ busy, rows, onPlayMove, onPreview, o
             <span className="compact-engine-line">{continuation ? `后续：${continuation}` : "后续：等待引擎返回更多变化"}</span>
           </span>
           {hasActions && <span role="cell" className="compact-engine-row-actions" onClick={(event) => event.stopPropagation()}>
-            {onPreview && <button type="button" disabled={!canPreview} className="compact-engine-row-action preview" aria-label={row.previewActive ? `取消预览候选 ${row.rank}` : `预览候选 ${row.rank}`} title={row.previewActive ? "取消这条候选推演预览" : "预览这条后续推演"} onClick={() => onPreview(row)}><Eye size={12}/><span>{row.previewActive ? "取消" : "预览"}</span></button>}
+            {onPreview && <button type="button" disabled={!canPreview} className="compact-engine-row-action preview" aria-label={row.previewActive ? `取消预览候选 ${row.rank}` : `预览候选 ${row.rank}`} title={row.previewActive ? "取消这条候选推演预览" : "预览这条后续推演"} onClick={() => onPreview(row)}><Eye size={12}/><span>{row.previewActive ? "取消" : "小棋盘"}</span></button>}
             <button type="button" disabled={!canAdopt} className="compact-engine-row-action adopt" aria-label={`采用候选 ${row.rank}`} title="采用这条候选首着" onClick={() => onAdopt ? onAdopt(row) : row.iccs && onPlayMove(row.iccs, row)}><Play size={11}/><span>采用</span></button>
           </span>}
         </div>;

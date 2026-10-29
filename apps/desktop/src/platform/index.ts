@@ -1,3 +1,4 @@
+import type { AppendVariationRequest, AppendVariationResult, VariationCopyRequest } from "./types";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
@@ -441,6 +442,8 @@ class DesktopPlatform implements ChessPlatform {
   saveTheoryFeedback(feedback: Pick<TheoryCardFeedbackDto, "matchId" | "cardId" | "cardVersion" | "verdict" | "note">) { return invoke<TheoryCardFeedbackDto>("save_theory_feedback", { feedback }); }
   completeTrainingTask(taskId: string, completed: boolean) { return invoke<void>("complete_training_task", { taskId, completed }); }
   playMove(iccs: string) { return invoke<Partial<BoardState>>("play_move", { iccs }); }
+  appendVariation(request: AppendVariationRequest) { return invoke<AppendVariationResult>("append_variation", { request }); }
+  saveVariationCopy(request: VariationCopyRequest) { return invoke<string>("save_variation_copy", { request }); }
   prepareLinkSelectionWindow() { return invoke<void>("prepare_link_selection_window"); }
   listLinkTargetWindows() { return invoke<LinkTargetWindow[]>("list_link_target_windows"); }
   startLinkSession(request: StartLinkSessionRequest) { return invoke<LinkObservation>("start_link_session", { request }); }
@@ -618,6 +621,7 @@ class WebPlatform implements ChessPlatform {
   private gameId = "";
   private deviceId = "";
   private lamport = 0;
+  private variationCommit: Promise<void> = Promise.resolve();
   private abort?: AbortController;
   private module?: WebCoreModule;
   private corePromise?: Promise<WebCoreModule>;
@@ -707,6 +711,7 @@ class WebPlatform implements ChessPlatform {
     return { title: game.title, event: "", site: "", date: "", red: "", black: "", result: "", note: game.note ?? "" };
   }
   async updateGameMetadataForGame(gameId: string, metadata: GameMetadata): Promise<Partial<BoardState>> {
+    await this.variationCommit;
     if (gameId !== this.gameId) throw new Error("Web 端请先打开棋谱后再编辑");
     return this.updateGameMetadata(metadata.title, metadata.note);
   }
@@ -784,6 +789,7 @@ class WebPlatform implements ChessPlatform {
   async revealGameMirror(): Promise<void> { throw new Error("Web 端暂不支持棋谱镜像"); }
 
   async openGame(gameId: string): Promise<Partial<BoardState>> {
+    await this.variationCommit;
     const record = await webDatabase.game(gameId);
     if (!record) throw new Error("棋谱不存在或尚未同步");
     const module = await this.core();
@@ -877,6 +883,7 @@ class WebPlatform implements ChessPlatform {
     return readJsonResponse<MasterGameSummaryDto[]>(await fetch(endpoint));
   }
   async openMasterGame(gameId: string): Promise<Partial<BoardState>> {
+    await this.variationCommit;
     const endpoint = await this.serverEndpoint(`/api/v1/master/games/${encodeURIComponent(gameId)}`);
     const detail = await readJsonResponse<MasterGameDetailDto>(await fetch(endpoint));
     const module = await this.core();
@@ -1020,6 +1027,7 @@ class WebPlatform implements ChessPlatform {
     return this.getSyncAccount();
   }
   async openDocument(): Promise<Partial<BoardState> | undefined> {
+    await this.variationCommit;
     const file = await selectWebManualFile();
     if (!file) return undefined;
     const document = parseWebManualFile(await file.text());
@@ -1096,6 +1104,7 @@ class WebPlatform implements ChessPlatform {
   }
   async pasteDocument(): Promise<Partial<BoardState>> { throw new Error("Web 端棋谱粘贴将在后续版本开放"); }
   async updateGameMetadata(title: string, note: string): Promise<Partial<BoardState>> {
+    await this.variationCommit;
     this.draftTitle = title.trim() || "未命名棋谱";
     this.draftNote = note;
     if (!this.gamePersisted) return this.scoredState();
@@ -1106,6 +1115,7 @@ class WebPlatform implements ChessPlatform {
     return this.scoredState();
   }
   async reorderBranches(nodeIds: string[]): Promise<Partial<BoardState>> {
+    await this.variationCommit;
     if (nodeIds.length < 2) return this.scoredState();
     const snapshot = JSON.parse(this.requireGame().exportJson()) as { tree: { root_id: string; nodes: Record<string, { parent_id: string }> } };
     const parentId = snapshot.tree.nodes[nodeIds[0]]?.parent_id;
@@ -1231,7 +1241,90 @@ class WebPlatform implements ChessPlatform {
   async openCompactFloatingPanel(): Promise<boolean> { throw new Error("Web 端不支持系统级浮动窗口"); }
   async returnCompactFloatingPanel(): Promise<boolean> { return false; }
 
+  async saveVariationCopy(request: VariationCopyRequest): Promise<string> {
+    const previous = this.variationCommit;
+    let release!: () => void;
+    this.variationCommit = new Promise<void>(resolve => { release = resolve; });
+    await previous;
+    try { return await this.saveVariationCopyNow(request); } finally { release(); }
+  }
+
+  private async saveVariationCopyNow(request: VariationCopyRequest): Promise<string> {
+    if (await webDatabase.game(request.id)) return request.id;
+    const draft = new (await this.core()).WebGame(request.startingFen);
+    const operations: SyncOperation[] = [];
+    let lamport = this.lamport;
+    const operation = (kind: SyncOperation["kind"], entityId: string, payload: Record<string, unknown>) => operations.push({ opId: crypto.randomUUID(), deviceId: this.deviceId, entityId, gameId: request.id, kind, payload, lamport: ++lamport, createdAt: new Date().toISOString() });
+    operation("create_game", request.id, { title: request.title, fen: request.startingFen, rootId: draft.rootId() });
+    const lines = [...request.lines, { moves: [...request.anchorPath, ...request.moves], comments: [] as string[] }];
+    for (const line of lines) {
+      draft.navigateTo();
+      for (let index = 0; index < line.moves.length; index++) {
+        const move = line.moves[index], before = this.parseState(draft.stateJson());
+        const known = before.branches.some(item => item.iccs === move);
+        const after = this.parseState(draft.playMove(move)), node = after.history.at(-1)!;
+        if (!known) operation("add_move", node.id, { nodeId: node.id, parentId: before.currentNode ?? draft.rootId(), move, orderKey: Date.now() + operations.length, isMainline: node.isMainline });
+        if (line.comments[index] && !node.comment) { draft.updateComment(node.id, line.comments[index]); operation("update_comment", node.id, { nodeId: node.id, comment: line.comments[index] }); }
+      }
+    }
+    draft.navigateTo();
+    operation("update_game_metadata", request.id, { title: request.title, note: request.note });
+    const now = new Date().toISOString();
+    await webDatabase.saveVariation({ id: request.id, title: request.title, note: request.note, snapshot: draft.exportJson(), fen: request.startingFen, createdAt: now, updatedAt: now }, operations, lamport, null, false);
+    this.lamport = lamport;
+    return request.id;
+  }
+
+  async appendVariation(request: AppendVariationRequest): Promise<AppendVariationResult> {
+    const previous = this.variationCommit;
+    let release!: () => void;
+    this.variationCommit = new Promise<void>(resolve => { release = resolve; });
+    await previous;
+    try { return await this.appendVariationNow(request); } finally { release(); }
+  }
+
+  private async appendVariationNow(request: AppendVariationRequest): Promise<AppendVariationResult> {
+    if (request.gameId !== this.gameId || !request.moves.length) throw new Error("来源棋谱已变化，请另存临时线路");
+    const original = this.requireGame();
+    const originalSnapshot = original.exportJson();
+    const snapshot = JSON.parse(originalSnapshot) as { tree: { root_id: string; nodes: Record<string, { parent_id: string; deleted: boolean }> } };
+    const visited = new Set<string>();
+    for (let id = request.anchorNodeId; id && id !== snapshot.tree.root_id; id = snapshot.tree.nodes[id].parent_id) {
+      if (!snapshot.tree.nodes[id] || snapshot.tree.nodes[id].deleted || visited.has(id)) throw new Error("来源节点已删除，请另存临时线路");
+      visited.add(id);
+    }
+    const draft = (await this.core()).WebGame.importJson(originalSnapshot);
+    const root = this.parseState(draft.navigateTo());
+    if (root.fen !== request.startingFen) throw new Error("来源起始局面已变化");
+    const anchor = this.parseState(draft.navigateTo(request.anchorNodeId));
+    if (anchor.fen !== request.expectedFen) throw new Error("来源节点已失效");
+    const existing = await webDatabase.game(this.gameId);
+    const operations: SyncOperation[] = [];
+    let lamport = this.lamport;
+    const operation = (kind: SyncOperation["kind"], entityId: string, payload: Record<string, unknown>): SyncOperation => ({ opId: crypto.randomUUID(), deviceId: this.deviceId, entityId, gameId: request.gameId, kind, payload, lamport: ++lamport, createdAt: new Date().toISOString() });
+    if (!existing) operations.push(operation("create_game", request.gameId, { title: this.draftTitle, fen: root.fen, rootId: draft.rootId() }));
+    let endNodeId = request.anchorNodeId ?? draft.rootId();
+    let added = 0;
+    for (const move of request.moves) {
+      const before = this.parseState(draft.stateJson());
+      const known = before.branches.find(item => item.iccs === move);
+      const after = this.parseState(draft.playMove(move));
+      const node = after.history.at(-1)!;
+      endNodeId = node.id;
+      if (!known) { added++; operations.push(operation("add_move", node.id, { nodeId: node.id, parentId: before.currentNode ?? draft.rootId(), move, orderKey: Date.now() + added, isMainline: node.isMainline })); }
+    }
+    const restored = this.parseState(draft.navigateTo(this.state().currentNode));
+    // Awaited storage reads must never replace a newer navigation or document.
+    if (this.gameId !== request.gameId || original !== this.requireGame() || original.exportJson() !== originalSnapshot) throw new Error("棋谱已变化，请重试保存");
+    const now = new Date().toISOString();
+    await webDatabase.saveVariation({ ...existing, id: request.gameId, title: existing?.title ?? this.draftTitle, note: existing?.note ?? this.draftNote, snapshot: draft.exportJson(), fen: restored.fen, createdAt: existing?.createdAt ?? now, updatedAt: now }, operations, lamport, existing?.snapshot ?? null);
+    // Do not overwrite a document opened while the transaction was committing.
+    if (this.gameId === request.gameId && original === this.requireGame() && original.exportJson() === originalSnapshot) { this.game = draft; this.gamePersisted = true; this.lamport = lamport; }
+    return { board: await this.scoredState(), endNodeId, added };
+  }
+
   async playMove(iccs: string): Promise<Partial<BoardState>> {
+    await this.variationCommit;
     const before = this.state();
     const state = this.parseState(this.requireGame().playMove(iccs));
     const node = state.history.at(-1);
@@ -1274,6 +1367,7 @@ class WebPlatform implements ChessPlatform {
   async disconnectTtxq(): Promise<void> { throw new Error("Web 端暂不支持天天象棋账号同步"); }
 
   async newGame(fen: string, title?: string, note?: string): Promise<Partial<BoardState>> {
+    await this.variationCommit;
     const module = await this.core();
     this.game = new module.WebGame(fen);
     this.gameId = crypto.randomUUID();
@@ -1289,12 +1383,14 @@ class WebPlatform implements ChessPlatform {
   }
 
   async navigateTo(nodeId?: string): Promise<Partial<BoardState>> {
+    await this.variationCommit;
     const state = this.parseState(this.requireGame().navigateTo(nodeId));
     await this.persist(state);
     return this.scoredState(state);
   }
 
   async updateComment(nodeId: string, comment: string): Promise<Partial<BoardState>> {
+    await this.variationCommit;
     const state = this.parseState(this.requireGame().updateComment(nodeId, comment));
     await this.persist(state);
     if (this.gamePersisted) await this.enqueue("update_comment", nodeId, { nodeId, comment });
@@ -1302,6 +1398,7 @@ class WebPlatform implements ChessPlatform {
   }
 
   async setMainline(nodeId: string): Promise<Partial<BoardState>> {
+    await this.variationCommit;
     const snapshot = JSON.parse(this.requireGame().exportJson()) as { tree: { root_id: string; nodes: Record<string, { parent_id: string }> } };
     const parentId = snapshot.tree.nodes[nodeId]?.parent_id ?? snapshot.tree.root_id;
     const state = this.parseState(this.requireGame().setMainline(nodeId));
@@ -1311,6 +1408,7 @@ class WebPlatform implements ChessPlatform {
   }
 
   async deleteNode(nodeId: string): Promise<Partial<BoardState>> {
+    await this.variationCommit;
     const state = this.parseState(this.requireGame().deleteNode(nodeId));
     await this.persist(state);
     if (this.gamePersisted) await this.enqueue("delete_node", nodeId, { nodeId });
@@ -1400,6 +1498,7 @@ class WebPlatform implements ChessPlatform {
   loadSavedAnalysis(fen: string) { return webDatabase.analysis(fen); }
 
   async synchronize(serverUrl: string, token: string): Promise<SyncResult> {
+    await this.variationCommit;
     if (!navigator.onLine) throw new Error("当前离线，改动已保存在同步队列");
     const base = webServerBase(serverUrl);
     const pending = await webDatabase.pending();
@@ -1534,6 +1633,8 @@ class WebPlatform implements ChessPlatform {
     const record = await webDatabase.game(this.gameId);
     return {
       ...state,
+      gameId: this.gameId,
+      startingFen: (JSON.parse(this.requireGame().exportJson()) as { startingFen: string }).startingFen,
       title: record?.title ?? this.draftTitle,
       note: record?.note ?? this.draftNote,
       sourcePath: record?.sourcePath,

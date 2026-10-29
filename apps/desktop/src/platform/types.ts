@@ -18,6 +18,8 @@ export type ManualTreeNode = {
   children: ManualTreeNode[];
 };
 export type BoardState = {
+  gameId?: string;
+  startingFen?: string;
   fen: string;
   rootSideToMove: Side;
   rootScoreCp?: number;
@@ -1086,6 +1088,10 @@ export type EngineRuntimeEvent =
   | { type: "bestmove"; fen: string; best: string; ponder?: string }
   | { type: "error"; message: string };
 
+export type VariationCopyRequest = { id: string; title: string; note: string; startingFen: string; lines: { moves: string[]; comments: string[] }[]; anchorPath: string[]; moves: string[] };
+export type AppendVariationRequest = { gameId: string; anchorNodeId?: string; startingFen: string; expectedFen: string; moves: string[] };
+export type AppendVariationResult = { board: Partial<BoardState>; endNodeId: string; added: number };
+
 export interface ChessPlatform {
   readonly kind: "desktop" | "web";
   initialize(): Promise<Partial<BoardState>>;
@@ -1205,6 +1211,8 @@ export interface ChessPlatform {
   saveTheoryFeedback(feedback: Pick<TheoryCardFeedbackDto, "matchId" | "cardId" | "cardVersion" | "verdict" | "note">): Promise<TheoryCardFeedbackDto>;
   completeTrainingTask(taskId: string, completed: boolean): Promise<void>;
   playMove(iccs: string): Promise<Partial<BoardState>>;
+  appendVariation(request: AppendVariationRequest): Promise<AppendVariationResult>;
+  saveVariationCopy(request: VariationCopyRequest): Promise<string>;
   prepareLinkSelectionWindow(): Promise<void>;
   listLinkTargetWindows(): Promise<LinkTargetWindow[]>;
   startLinkSession(request: StartLinkSessionRequest): Promise<LinkObservation>;

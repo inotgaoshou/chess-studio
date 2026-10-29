@@ -171,6 +171,8 @@ fn main() {
             manual_service::delete_games,
             manual_service::open_game,
             manual_service::play_move,
+            manual_service::append_variation,
+            manual_service::save_variation_copy,
             manual_service::confirm_recognized_move,
             manual_service::preview_recognized_move_from_current,
             manual_service::resolve_screenshot_move,

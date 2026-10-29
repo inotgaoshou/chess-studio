@@ -1,0 +1,55 @@
+.variation-board { --variation-bg:#20262b; --variation-fg:#e6e9e7; --variation-muted:#a9b7ae; --variation-line:#435149; --variation-accent:#4c8768; background:var(--variation-bg); color:var(--variation-fg); border:1px solid var(--variation-line); border-radius:12px; box-shadow:0 8px 30px #0003; display:flex; flex-direction:column; width:380px; min-width:min(280px,calc(100vw - 16px)); max-width:calc(100vw - 16px); max-height:calc(100dvh - 24px); overflow:hidden; font:14px/1.4 system-ui,sans-serif; z-index:1600; }
+.variation-board.is-light,.variation-board.is-mobile { --variation-bg:#fcfdf9; --variation-fg:#263a2f; --variation-muted:#617367; --variation-line:#d8e3da; --variation-accent:#367851; }
+.variation-board.is-floating { position:fixed; resize:both; }
+.variation-board.is-docked { position:relative; align-self:start; flex:0 0 360px; margin:8px; }
+.variation-board.is-expanded { position:fixed; inset:12px; margin:auto; width:min(620px,calc(100vw - 24px)); height:calc(100dvh - 24px); resize:none; }
+.variation-board.is-collapsed { height:auto !important; resize:none; }
+.variation-board button,.variation-board select { font:inherit; color:var(--variation-fg); background:transparent; border:1px solid var(--variation-line); border-radius:6px; padding:5px 8px; cursor:pointer; min-height:32px; }
+.variation-board button:disabled { opacity:.45; cursor:default; }
+.variation-board button:hover:not(:disabled),.variation-board button.active { background:var(--variation-accent); color:white; }
+.variation-board .variation-board-header { flex:none; display:flex; flex-wrap:wrap; align-items:center; gap:6px; padding:8px; border-bottom:1px solid var(--variation-line); touch-action:none; cursor:grab; background:var(--variation-bg); }
+.variation-board-header strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1 1 110px; font-size:14px; }
+.variation-board .variation-board-header .variation-save { flex:1 0 auto; background:var(--variation-accent); color:white; font-size:12px; }
+.variation-board-header nav { display:flex; gap:3px; margin-left:auto; }
+.variation-board-header nav button { padding:2px 8px; font-size:18px; }
+.variation-board-content { overflow:auto; overscroll-behavior:contain; padding:8px; min-height:0; }
+.variation-board-canvas { position:relative; width:min(100%,480px); margin:auto; }
+.variation-board-canvas > * { width:100%; }
+.variation-board .variation-board-progress { display:flex; justify-content:space-between; margin:6px 0; color:var(--variation-muted); font-size:12px; }
+.variation-board .variation-progress-slider { width:100%; margin:0; accent-color:var(--variation-accent); }
+.variation-board .variation-playback { display:flex; gap:4px; margin:5px 0; }
+.variation-playback button { flex:1; }
+.variation-line-picker { display:flex; gap:8px; align-items:center; font-size:12px; margin:8px 0; }
+.variation-line-picker select { min-width:0; flex:1; }
+.variation-moves { display:flex; flex-wrap:wrap; gap:4px; max-height:90px; overflow:auto; }
+.variation-board .variation-moves button { font-size:12px; padding:3px 5px; }
+.variation-board small { display:block; margin-top:6px; color:var(--variation-muted); font-size:11px; }
+.variation-more { display:flex; flex-wrap:wrap; gap:4px; padding:6px; border-bottom:1px solid var(--variation-line); flex:none; }
+.variation-board .variation-more button { font-size:12px; }
+.variation-board .variation-error,.variation-board .variation-receipt,.variation-board > [role=status] { margin:0; padding:6px 8px; font-size:12px; overflow:auto; max-height:110px; flex:none; }
+.variation-board .variation-error { color:#d35e41; }
+.variation-receipt button { margin-left:4px; }
+.variation-close-confirm { padding:10px; border-top:1px solid var(--variation-line); flex:none; }
+.variation-close-confirm p { margin:0 0 8px; }
+.variation-close-confirm button { margin:3px; }
+.variation-desktop-board-hit-grid { position:absolute; inset:0; }
+.variation-desktop-board-hit-grid button { position:absolute; transform:translate(-50%,-50%); width:9%; height:8%; background:transparent !important; border:0; padding:0; min-height:0; }
+@media(max-width:700px) { .variation-board.is-docked { position:fixed; right:8px; top:60px; margin:0; } .variation-board.is-mobile { width:min(350px,calc(100vw - 16px)); max-height:calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 24px); } .variation-board button { min-height:36px; } }
+.variation-desktop-canvas { position:relative; }
+.variation-desktop-canvas .link-mini-board-wrap { width:100%; }
+.variation-desktop-canvas .link-mini-board-status { display:none; }
+.variation-free-entry { margin:5px 8px; align-self:start; font-size:12px; }
+@media(min-width:701px) {
+  .workspace.layout-compact > .board-section > .variation-board.is-docked { grid-column:2; grid-row:1; width:calc(100% - 12px); min-width:0; margin:6px; }
+  .workspace:not(.layout-compact) > .board-section:has(> .variation-board.is-docked) { display:flex; align-items:flex-start; gap:8px; }
+  .workspace:not(.layout-compact) > .board-section:has(> .variation-board.is-docked) > .board-main-stack { flex:1; min-width:0; }
+  .workspace:not(.layout-compact) > .board-section > .variation-board.is-docked { width:320px; flex-basis:320px; }
+}
+.training-app .manual-save-backdrop { z-index:2200; }
+.variation-safe-bounds { position:fixed; inset:calc(env(safe-area-inset-top,0px) + 8px) calc(env(safe-area-inset-right,0px) + 8px) calc(env(safe-area-inset-bottom,0px) + 8px) calc(env(safe-area-inset-left,0px) + 8px); visibility:hidden; pointer-events:none; }
+.variation-board.is-mobile { max-width:calc(100vw - env(safe-area-inset-left,0px) - env(safe-area-inset-right,0px) - 24px); }
+.variation-board.is-expanded { inset:calc(env(safe-area-inset-top,0px) + 12px) calc(env(safe-area-inset-right,0px) + 12px) calc(env(safe-area-inset-bottom,0px) + 12px) calc(env(safe-area-inset-left,0px) + 12px); height:auto; }
+@media(min-width:901px) {
+  .app-shell .workspace.layout-compact:has(> .board-section > .variation-board.is-docked) > .board-section { display:contents; }
+  .app-shell .workspace > .board-section > .variation-board.is-docked { max-height:calc(100dvh - 120px); }
+}

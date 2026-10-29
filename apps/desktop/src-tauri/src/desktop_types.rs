@@ -535,6 +535,8 @@ impl ExportFormat {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct BoardDto {
+    pub(crate) game_id: Uuid,
+    pub(crate) starting_fen: String,
     pub(crate) fen: String,
     pub(crate) root_side_to_move: &'static str,
     pub(crate) root_score_cp: Option<i32>,
@@ -1462,6 +1464,8 @@ pub(crate) fn board_dto(model: &AppModel) -> Result<BoardDto, String> {
         }
     }
     Ok(BoardDto {
+        game_id: model.game_id,
+        starting_fen: model.starting_fen.clone(),
         fen: model.board.to_fen(),
         root_side_to_move: side_label(root_board.side_to_move()),
         root_score_cp: root_analysis.as_ref().and_then(|summary| summary.score_cp),

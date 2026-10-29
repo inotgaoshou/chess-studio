@@ -15,7 +15,7 @@ type NativeStore = {
   renameManualFolder(options: { previous: string; next: string }): Promise<void>;
   deleteManualFolder(options: { path: string }): Promise<void>;
   manualGames(options: { folder?: string; query?: string }): Promise<{ items: string }>;
-  saveManualGame(options: { game: string }): Promise<void>;
+  saveManualGame(options: { game: string; expectedUpdatedAt?: string }): Promise<void>;
   openManualGame(options: { id: string }): Promise<{ item: string }>;
   deleteManualGame(options: { id: string }): Promise<void>;
   moveManualGame(options: { id: string; folder?: string }): Promise<void>;
@@ -158,11 +158,18 @@ export const trainingStore = {
       .filter((game) => !needle || `${game.title}${game.note}${game.folderPath ?? ""}`.includes(needle))
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   },
-  async saveManualGame(game: LocalManualGame): Promise<LocalManualGame> {
+  async saveManualGame(game: LocalManualGame, expectedUpdatedAt?: string): Promise<LocalManualGame> {
     const record: LocalManualGame = { ...game, folderPath: normalizeManualFolderPath(game.folderPath) || undefined };
     if (record.folderPath) ensureMemoryFolder(record.folderPath);
-    if (isNative()) await nativeStore.saveManualGame({ game: JSON.stringify(record) });
-    else memory.manualGames = [record, ...memory.manualGames.filter((item) => item.id !== record.id)];
+    if (isNative()) await nativeStore.saveManualGame({ game: JSON.stringify(record), expectedUpdatedAt });
+    else {
+      if (expectedUpdatedAt != null) {
+        const stored = memory.manualGames.find(item => item.id === record.id);
+        if (stored?.updatedAt !== expectedUpdatedAt) throw new Error("棋谱已变化，请重试保存");
+        if (stored.readOnly || stored.origin?.kind === "providerMirror") throw new Error("只读棋谱不可修改");
+      }
+      memory.manualGames = [record, ...memory.manualGames.filter((item) => item.id !== record.id)];
+    }
     return record;
   },
   async openManualGame(id: string): Promise<LocalManualGame | undefined> {

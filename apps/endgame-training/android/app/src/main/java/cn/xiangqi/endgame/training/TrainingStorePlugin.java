@@ -86,7 +86,7 @@ public class TrainingStorePlugin extends Plugin {
 
     @PluginMethod
     public void saveManualGame(PluginCall call) {
-        try { database.saveManualGame(new JSONObject(call.getString("game"))); call.resolve(); }
+        try { database.saveManualGame(new JSONObject(call.getString("game")), call.getString("expectedUpdatedAt")); call.resolve(); }
         catch (Exception error) { call.reject("无法保存本地棋谱", error); }
     }
 
@@ -275,7 +275,23 @@ public class TrainingStorePlugin extends Plugin {
             return result;
         }
 
-        void saveManualGame(JSONObject game) throws Exception {
+        void saveManualGame(JSONObject game, String expectedUpdatedAt) throws Exception {
+            SQLiteDatabase db = getWritableDatabase();
+            db.beginTransaction();
+            try {
+                if (expectedUpdatedAt != null) {
+                    try (Cursor cursor = db.rawQuery("SELECT updated_at,game_json FROM manual_games WHERE id=?", new String[]{game.getString("id")})) {
+                        if (!cursor.moveToFirst() || !expectedUpdatedAt.equals(cursor.getString(0))) throw new Exception("棋谱已变化，请重试保存");
+                        JSONObject stored = new JSONObject(cursor.getString(1));
+                        if (stored.optBoolean("readOnly") || (stored.optJSONObject("origin") != null && "providerMirror".equals(stored.getJSONObject("origin").optString("kind")))) throw new Exception("只读棋谱不可修改");
+                    }
+                }
+                saveManualGameRecord(game);
+                db.setTransactionSuccessful();
+            } finally { db.endTransaction(); }
+        }
+
+        private void saveManualGameRecord(JSONObject game) throws Exception {
             String folder = game.optString("folderPath", "");
             SQLiteDatabase db = getWritableDatabase();
             if (!folder.isEmpty()) createFolderPath(db, folder);
@@ -290,7 +306,7 @@ public class TrainingStorePlugin extends Plugin {
             values.put("game_json", game.toString());
             values.put("created_at", game.optString("createdAt", nowIso()));
             values.put("updated_at", game.optString("updatedAt", nowIso()));
-            db.insertWithOnConflict("manual_games", null, values, SQLiteDatabase.CONFLICT_REPLACE);
+            if (db.insertWithOnConflict("manual_games", null, values, SQLiteDatabase.CONFLICT_REPLACE) == -1) throw new Exception("棋谱保存失败");
         }
 
         String openManualGame(String id) throws Exception {

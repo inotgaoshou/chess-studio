@@ -1,5 +1,5 @@
-import { ArrowLeft, BookOpen, ChartNoAxesCombined, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ClipboardList, Cpu, Database, EyeOff, FilePenLine, FileUp, FlipVertical2, List, Pause, Pencil, Play, Plus, Save, Settings2, Star, X } from "lucide-react";
-export type ManualControlAction = "return"|"settings"|"metadata"|"favorite"|"save"|"import"|"rehearse"|"comments"|"library"|"engine"|"analysis"|"new"|"setup"|"moves"|"report"|"previous"|"next"|"previousVariation"|"nextVariation"|"play"|"flip"|"copy";
+import { GitBranch, ArrowLeft, BookOpen, ChartNoAxesCombined, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ClipboardList, Cpu, Database, EyeOff, FilePenLine, FileUp, FlipVertical2, List, Pause, Pencil, Play, Plus, Save, Settings2, Star, X } from "lucide-react";
+export type ManualControlAction = "variation"|"return"|"settings"|"metadata"|"favorite"|"save"|"import"|"rehearse"|"comments"|"library"|"engine"|"analysis"|"new"|"setup"|"moves"|"report"|"previous"|"next"|"previousVariation"|"nextVariation"|"play"|"flip"|"copy";
 export function ManualRecordingControls({cursor,moveCount,previousVariation,nextVariation,playing,engineEnabled,flipped,favorite,readOnly,menuOpen,onMenu,onAction}:{
  cursor:number;moveCount:number;previousVariation:boolean;nextVariation:boolean;playing:boolean;engineEnabled:boolean;flipped:boolean;favorite:boolean;readOnly:boolean;menuOpen:boolean;onMenu(open:boolean):void;onAction(action:ManualControlAction):void;
 }) {
@@ -7,6 +7,7 @@ export function ManualRecordingControls({cursor,moveCount,previousVariation,next
  return <>
   <div className="recording-quick-actions" aria-label="录谱快捷工具">
    <button type="button" aria-pressed={engineEnabled} onClick={()=>run("engine")}>{engineEnabled?<Cpu/>:<EyeOff/>}<span>AI {engineEnabled?"开启":"禁用"}</span></button>
+   <button type="button" onClick={()=>run("variation")}><GitBranch/><span>自由推演</span></button>
    <button type="button" onClick={()=>run("analysis")}><Cpu/><span>分析</span></button>
    <button type="button" disabled={readOnly} onClick={()=>run("new")}><Plus/><span>新增棋谱</span></button>
    <button type="button" disabled={readOnly} onClick={()=>run("setup")}><Pencil/><span>摆棋</span></button>

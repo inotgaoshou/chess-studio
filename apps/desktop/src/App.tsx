@@ -1,3 +1,4 @@
+import { VariationBoard, type VariationReceipt } from "./VariationBoard";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type SyntheticEvent } from "react";
 import { flushSync } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
@@ -1721,6 +1722,9 @@ export default function App() {
   const analysisSessionRevision = useRef(0);
   const reportLoadRevision = useRef(0);
   const boardRef = useRef<BoardState>(fallback);
+  const [variation, setVariation] = useState<{ id: string; source: BoardState; moves: string[]; title: string; epoch: number }>();
+  const variationDocumentEpoch = useRef(0);
+  const variationCopies = useRef(new Map<string, string>());
   const analysisFenRef = useRef<string | undefined>(undefined);
   const analysisStreamRef = useRef<AnalysisStreamBuffer | undefined>(undefined);
   const analysisHistoryRef = useRef<AnalysisHistoryBuffer | undefined>(undefined);
@@ -4045,55 +4049,58 @@ export default function App() {
   }
 
   async function previewCandidateLine(line: AnalysisLine, expectedFen: string, source?: Pick<EngineComparisonGroup, "id" | "name">) {
+    openVariationBoard(line.pv, expectedFen, `${source?.name ?? currentEngineLabel} · 候选 ${line.multipv}`);
+  }
+
+  function openVariationBoard(moves: string[] = [], expectedFen = boardRef.current.fen, title = "自由推演") {
+    if (variation) { setNotice("请先保存或关闭当前小棋盘，再打开另一条线路"); return; }
+    const source = boardRef.current;
+    if (!source.gameId || !source.startingFen) { setNotice("棋谱正在载入，请稍后打开小棋盘"); return; }
+    if (source.fen !== expectedFen || !source.playable) { setNotice("候选已过期或局面不可走棋，请重新分析"); return; }
     stopPlayback();
-    if (boardRef.current.fen !== expectedFen) {
-      setNotice("候选线路已过期，请重新分析后再预览");
-      return;
-    }
-    const sourceEngineId = source?.id ?? primaryAnalysisEngineRef.current;
-    const sourceEngineName = source?.name ?? currentEngineLabel;
-    if (candidatePreview?.sourceFen === expectedFen && candidatePreview.sourceEngineId === sourceEngineId && candidatePreview.rank === line.multipv) {
-      clearCandidatePreviews();
-      setNotice(`已取消 ${sourceEngineName} 候选 ${line.multipv} 推演预览`);
-      return;
-    }
-    const pv = line.pv.slice(0, CANDIDATE_PREVIEW_HALF_MOVES);
-    if (pv.length === 0) {
-      setNotice("当前候选没有可预览的 PV 线路");
-      return;
-    }
-    const coach = candidateInsights.find((candidate) => candidate.rank === line.multipv);
-    try {
-      const steps = await chessPlatform.previewLine(expectedFen, pv);
-      if (boardRef.current.fen !== expectedFen) {
-        setNotice("预览生成后局面已变化，请重新分析");
-        return;
+    setVariation({ id: crypto.randomUUID(), source: structuredClone(source), moves: [...moves], title, epoch: variationDocumentEpoch.current });
+  }
+
+  async function saveVariationCopy(moves: string[]): Promise<VariationReceipt> {
+    if (!variation?.source.startingFen) throw new Error("来源棋谱信息不可用");
+    const source = variation.source;
+    const lines: { moves: string[]; comments: string[] }[] = [];
+    const visit = (nodes: NonNullable<BoardState["manualTree"]>, path: string[], comments: string[]) => {
+      for (const node of [...nodes].sort((a, b) => Number(b.move.isMainline) - Number(a.move.isMainline))) {
+        const next = [...path, node.move.iccs], notes = [...comments, node.move.comment];
+        if (node.children.length) visit(node.children, next, notes); else lines.push({ moves: next, comments: notes });
       }
-      if (steps.length === 0) {
-        setNotice("当前候选没有可播放的合法步骤");
-        return;
+    };
+    visit(source.manualTree ?? [], [], []);
+    const key = `${variation.id}:${JSON.stringify(moves)}`;
+    const id = variationCopies.current.get(key) ?? crypto.randomUUID();
+    variationCopies.current.set(key, id);
+    await enqueueBoardOperation(() => chessPlatform.saveVariationCopy({ id, title: `${source.title} · 推演副本`, note: source.note, startingFen: source.startingFen!, lines, anchorPath: source.history.map(item => item.iccs), moves }));
+    setGames(await chessPlatform.listGames());
+    return { message: "已另存到本地棋谱库，原棋谱保持原位", view: async () => { await openGame(id); } };
+  }
+
+  async function saveVariation(moves: string[]): Promise<VariationReceipt> {
+    if (!variation?.source.gameId || !variation.source.startingFen) throw new Error("来源棋谱信息不可用，请重新打开棋谱");
+    const source = variation.source;
+    const result = await enqueueBoardOperation(() => {
+      if (variation.epoch !== variationDocumentEpoch.current) throw new Error("来源棋谱已切换，可在更多菜单另存临时线路");
+      return chessPlatform.appendVariation({ gameId: source.gameId!, anchorNodeId: source.currentNode, startingFen: source.startingFen!, expectedFen: source.fen, moves });
+    });
+    const latest = normalizeBoardState(result.board);
+    if (variation.epoch === variationDocumentEpoch.current && boardRef.current.gameId === source.gameId) {
+      // Update the tree only: navigation, analysis and report contexts stay untouched.
+      const current = boardRef.current;
+      if (latest.currentNode === current.currentNode && latest.fen === current.fen) {
+        boardRef.current = { ...current, manualTree: latest.manualTree, continuation: latest.continuation, branches: latest.branches, siblingBranches: latest.siblingBranches };
+        setBoard(boardRef.current);
       }
-      setSelected(null);
-      setSelectedPieceInspection(undefined);
-      setCandidatePreviewBranches([]);
-      setCandidatePreview({
-        rank: line.multipv,
-        color: analysisArrowColors[(line.multipv - 1) % analysisArrowColors.length] ?? analysisArrowColors[0],
-        sourceEngineId,
-        sourceEngineName,
-        sourceFen: expectedFen,
-        firstMove: line.notation?.[0] ?? line.pv[0] ?? `候选 ${line.multipv}`,
-        intent: coach?.intent ?? `候选 ${line.multipv}：观察这条线能否解决当前局面的主要矛盾。`,
-        possibility: coach?.possibility ?? "可能性：作为当前 MultiPV 返回的可选线路进行比较。",
-        risk: coach?.risk ?? "风险：预览时重点看对方回应后是否有直接反击。",
-        steps,
-        step: 0,
-      });
-      setNotice(`已载入 ${sourceEngineName} 候选 ${line.multipv} 推演：从第 1 步开始，手动点击“下一步”查看后续`);
-    } catch (error) {
-      clearCandidatePreviews();
-      setNotice(friendlyError(error));
     }
+    setGames(await chessPlatform.listGames());
+    return { message: result.added ? `已保存分支 · 新增 ${result.added} 步` : "该线路已在棋谱中", view: async () => {
+      if (boardRef.current.gameId !== source.gameId) throw new Error("请先返回来源棋谱再查看分支");
+      await navigateTo(result.endNodeId);
+    } };
   }
 
   async function previewEngineBranches(expectedFen: string) {
@@ -4118,7 +4125,7 @@ export default function App() {
     let skipped = 0;
     for (const [firstIccs, members] of grouped) {
       const primaryMember = members.find((member) => member.engine.primary) ?? members[0];
-      const pv = primaryMember.line.pv.slice(0, CANDIDATE_PREVIEW_HALF_MOVES);
+      const pv = [...primaryMember.line.pv];
       try {
         const steps = await chessPlatform.previewLine(expectedFen, pv);
         if (boardRef.current.fen !== expectedFen) {
@@ -5227,6 +5234,7 @@ export default function App() {
 
   function applyBoard(value?: Partial<BoardState> | null) {
     const next = normalizeBoardState(value);
+    if (next.gameId !== boardRef.current.gameId || next.startingFen !== boardRef.current.startingFen) variationDocumentEpoch.current++;
     const fenChanged = boardRef.current.fen !== next.fen;
     const positionChanged = fenChanged || boardRef.current.currentNode !== next.currentNode;
     boardRevision.current += 1;
@@ -8296,6 +8304,7 @@ export default function App() {
 
         <section className={`board-section ${mobilePanel === "board" ? "mobile-visible" : ""}`}>
           <div className="board-main-stack">
+          <button type="button" className="variation-free-entry" disabled={!board.playable || !board.gameId || !board.startingFen} onClick={() => openVariationBoard()}>自由推演</button>
           {desktopPreferences.layoutMode === "compact" && <div className="compact-board-heading">
             <span className="compact-board-title"><LayoutGrid size={15}/><strong>棋盘</strong></span>
             {isMasterLibraryGame && <span className="compact-board-master-info" title={`${manualMeta.red} vs ${manualMeta.black} · ${manualMeta.event} · ${manualMeta.date}${manualMeta.opening ? ` · ${manualMeta.opening}` : ""} · ${manualMeta.moveCount}手 · ${sideResultText(manualMeta.result)}`}>
@@ -8621,7 +8630,7 @@ export default function App() {
             <button onClick={() => void createGame()}>载入</button>
           </div>
           </div>
-          {!reviewModeOpen && candidateLinesView("board-candidate-rail", workspaceMode !== "research")}
+          {variation ? <VariationBoard key={variation.id} title={variation.title} base={{ ...variation.source, notation: undefined as string | undefined }} initialMoves={variation.moves} light={desktopPreferences.layoutMode === "compact"} validate={moves => chessPlatform.previewLine(variation.source.fen, moves).then(steps => steps.map(step => ({ ...variation.source, ...step })))} onSave={saveVariation} onSaveCopy={saveVariationCopy} onClose={() => setVariation(undefined)} renderBoard={(frame, controls) => <div className="variation-desktop-canvas"><LinkMiniBoard presentation="preview" animateMoves={false} pieces={frame.pieces} arrows={[]} selectedSquare={controls.selected} reversed={controls.flipped} sideToMove={frame.fen.split(/\s+/)[1] === "b" ? "黑方" : "红方"} pieceAsset={piece => pieceAsset(piece, displayedPieceSkin)} boardAsset={`/skins/${skinAssetFolder(displayedBoardSkin)}/board.png`}/><div className="variation-desktop-board-hit-grid">{Array.from({ length: 90 }, (_, index) => { const square = { row: Math.floor(index / 9), col: index % 9 }; return <button type="button" key={index} aria-label={`推演棋盘 ${square.row + 1} 行 ${square.col + 1} 列`} style={mainBoardCellStyle(square, controls.flipped, displayedBoardSkin)} onClick={() => controls.onSquare(square)}/>; })}</div></div>}/> : !reviewModeOpen && candidateLinesView("board-candidate-rail", workspaceMode !== "research")}
         </section>
 
         {referenceSidePanelActive ? <MasterOpeningPanel

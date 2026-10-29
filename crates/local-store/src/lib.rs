@@ -2566,6 +2566,16 @@ impl LocalStore {
         nodes: &[MoveNode],
         operations: &[Operation],
     ) -> Result<(), StoreError> {
+        self.import_game_with_operations_mode(game, nodes, operations, true)
+    }
+
+    pub fn import_game_with_operations_mode(
+        &mut self,
+        game: ImportedGame<'_>,
+        nodes: &[MoveNode],
+        operations: &[Operation],
+        make_active: bool,
+    ) -> Result<(), StoreError> {
         let transaction = self.connection.transaction()?;
         let updated_at = operations
             .last()
@@ -2611,11 +2621,13 @@ impl LocalStore {
         for operation in operations {
             insert_operation(&transaction, operation, false)?;
         }
-        transaction.execute(
-            "INSERT INTO sync_state (key, value) VALUES ('active_game_id', ?1)
-             ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            [game.id.to_string()],
-        )?;
+        if make_active {
+            transaction.execute(
+                "INSERT INTO sync_state (key, value) VALUES ('active_game_id', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                [game.id.to_string()],
+            )?;
+        }
         transaction.commit()?;
         Ok(())
     }

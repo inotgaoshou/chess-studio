@@ -84,6 +84,26 @@ async function writeOne(storeName: string, value: unknown): Promise<void> {
 }
 
 export const webDatabase = {
+  async saveVariation(game: WebGameRecord, operations: SyncOperation[], lamport: number, expectedSnapshot?: string | null, makeCurrent = true): Promise<void> {
+    const database = await openDatabase();
+    try {
+      const transaction = database.transaction(["games", "outbox", "meta"], "readwrite");
+      const done = transactionDone(transaction);
+      if (expectedSnapshot !== undefined) {
+        const previous = await requestResult(transaction.objectStore("games").get(game.id)) as WebGameRecord | undefined;
+        if ((previous?.snapshot ?? null) !== expectedSnapshot) {
+          transaction.abort(); await done.catch(() => undefined);
+          throw new Error("棋谱已变化，请重试保存");
+        }
+      }
+      transaction.objectStore("games").put(game);
+      for (const operation of operations) transaction.objectStore("outbox").add({ operation });
+      transaction.objectStore("meta").put({ key: "lamport", value: String(lamport) });
+      if (makeCurrent) transaction.objectStore("meta").put({ key: "currentGameId", value: game.id });
+      await done;
+    } finally { database.close(); }
+  },
+
   async currentGame(): Promise<WebGameRecord | undefined> {
     const current = await readOne<MetaRecord>("meta", "currentGameId");
     return current ? readOne<WebGameRecord>("games", current.value) : undefined;
