@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
 import { branchAfter, clampPanel, movesToSave, sameMoves } from "../../../packages/variation-session";
 import { Bookmark, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Ellipsis, LoaderCircle, Minus, Pause, Play, Plus, X } from "lucide-react";
 import "./variationBoard.css";
-import { variationEvaluation, variationRound, type VariationAnalysis } from "./variationAnalysis";
+import { orderedVariationLines, variationEvaluation, variationRound, type VariationAnalysis } from "./variationAnalysis";
 
 export type VariationSquare = { row: number; col: number };
 export type VariationFrame = { fen: string; pieces: { row: number; col: number; color: string }[]; notation?: string };
@@ -44,6 +44,8 @@ export function VariationBoard<F extends VariationFrame>(props: VariationBoardPr
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState("");
   const [analysisRetry, setAnalysisRetry] = useState(0);
+  const [bestWaiting, setBestWaiting] = useState(false);
+  const pendingBest = useRef<{ fen:string; active:number; cursor:number; generation:number } | undefined>(undefined);
   const [deleting, setDeleting] = useState<string>();
   const [deleteTemp, setDeleteTemp] = useState(false);
   const analysisTail = useRef<Promise<unknown>>(Promise.resolve());
@@ -74,6 +76,25 @@ export function VariationBoard<F extends VariationFrame>(props: VariationBoardPr
   const frame = cursor ? line.frames[cursor - 1] ?? base : base;
   const key = (moves: string[]) => JSON.stringify(moves);
   const sessionState = useRef({ lines, saved }); sessionState.current = { lines, saved };
+  const research = useRef({ fen:frame.fen, active, cursor }); research.current = { fen:frame.fen, active, cursor };
+  const playIccsRef = useRef(playIccs); playIccsRef.current = playIccs;
+  function cancelBest() { pendingBest.current = undefined; setBestWaiting(false); }
+  function acceptBest(result: VariationAnalysis) {
+    const pending = pendingBest.current, current = research.current;
+    if (!pending) return;
+    cancelBest();
+    if (pending.generation !== generation.current || pending.fen !== current.fen || pending.active !== current.active || pending.cursor !== current.cursor) return;
+    const best = orderedVariationLines(result)[0]?.pv[0];
+    if (!best || !/^[a-i][0-9][a-i][0-9]$/.test(best)) { setError("当前局面没有可用的引擎走法"); return; }
+    playIccsRef.current(best);
+  }
+  function requestBest() {
+    if (pendingBest.current || lock.current || busy || saving || deleting || !callbacks.current.analyze) return;
+    setPlaying(false); setError("");
+    pendingBest.current = { ...research.current, generation:generation.current }; setBestWaiting(true);
+    if (analysis?.fen === frame.fen) { acceptBest(analysis.result); return; }
+    if (!analyzing) setAnalysisRetry(value=>value+1);
+  }
   const dirty = lines.some(item => item.moves.length && !saved.includes(key(item.moves)));
 
   useEffect(() => {
@@ -87,7 +108,7 @@ export function VariationBoard<F extends VariationFrame>(props: VariationBoardPr
   }, []);
 
   useEffect(() => {
-    if (!props.analyze || !engineEnabled || collapsed || playing || busy) { setAnalyzing(false); return; }
+    if (!props.analyze || (!engineEnabled && !pendingBest.current) || collapsed || playing || busy) { setAnalyzing(false); return; }
     const controller = new AbortController(), fen = frame.fen;
     setAnalysisError(""); setAnalyzing(true);
     const timer = window.setTimeout(() => {
@@ -96,20 +117,24 @@ export function VariationBoard<F extends VariationFrame>(props: VariationBoardPr
         if (controller.signal.aborted) return;
         try {
           const result = await callbacks.current.analyze!(fen, controller.signal);
-          if (!controller.signal.aborted) setAnalysis({ fen, result });
+          if (!controller.signal.aborted) { setAnalysis({ fen, result }); acceptBest(result); }
         } catch (reason) {
-          if (!controller.signal.aborted) setAnalysisError(reason instanceof Error ? reason.message : "引擎暂不可用");
+          if (!controller.signal.aborted) { setAnalysisError(reason instanceof Error ? reason.message : "引擎暂不可用"); cancelBest(); }
         } finally { if (!controller.signal.aborted) setAnalyzing(false); }
       });
       analysisTail.current = pending;
     }, 300);
     return () => { clearTimeout(timer); controller.abort(); };
-  }, [frame.fen, engineEnabled, collapsed, playing, busy, analysisRetry, Boolean(props.analyze)]);
+  }, [frame.fen, engineEnabled, collapsed, playing, busy, analysisRetry, Boolean(props.analyze), active, cursor]);
   const result = analysis?.fen === frame.fen ? analysis.result : undefined;
-  const candidates = result?.lines.filter(item => /^[a-i][0-9][a-i][0-9]$/.test(item.pv[0] ?? "")) ?? [];
-  const evaluation = variationEvaluation(frame.fen, result?.lines[0]);
+  const rankedLines = orderedVariationLines(result);
+  const candidates = rankedLines.filter(item => /^[a-i][0-9][a-i][0-9]$/.test(item.pv[0] ?? ""));
+  const evaluation = variationEvaluation(frame.fen, rankedLines[0]);
   function playSuggestion(iccs: string) {
     if (!hints || analysis?.fen !== frame.fen || analyzing) return;
+    playIccs(iccs);
+  }
+  function playIccs(iccs:string) {
     void move({ col: iccs.charCodeAt(0) - 97, row: 9 - Number(iccs[1]) }, { col: iccs.charCodeAt(2) - 97, row: 9 - Number(iccs[3]) });
   }
   async function deleteSaved(id: string) {
@@ -121,6 +146,7 @@ export function VariationBoard<F extends VariationFrame>(props: VariationBoardPr
   }
   function removeTemporaryLine() {
     if (lock.current || busy) return;
+    cancelBest();
     const remaining = lines.filter(item => item.id !== line.id);
     setLines(remaining.length ? remaining : [{ id: nextId.current++, moves: [], frames: [] }]);
     setActive(remaining[0]?.id ?? nextId.current - 1); setCursor(0); setSelected(undefined); setPlaying(false);
@@ -170,7 +196,7 @@ export function VariationBoard<F extends VariationFrame>(props: VariationBoardPr
     return () => { observer?.disconnect(); window.removeEventListener("resize", constrain); window.visualViewport?.removeEventListener("resize", constrain); };
   }, [floating, expanded, collapsed]);
 
-  const requestClose = () => { if (lock.current) return; setPlaying(false); if (dirty) setClosing(true); else onClose(); };
+  const requestClose = () => { if (lock.current) return; cancelBest(); setPlaying(false); if (dirty) setClosing(true); else onClose(); };
   useEffect(() => {
     const escape = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.isComposing || lock.current) return;
@@ -185,6 +211,7 @@ export function VariationBoard<F extends VariationFrame>(props: VariationBoardPr
 
   async function move(from: VariationSquare, to: VariationSquare) {
     if (busy || lock.current) return;
+    cancelBest();
     const square = (value: VariationSquare) => `${String.fromCharCode(97 + value.col)}${9 - value.row}`;
     const iccs = square(from) + square(to);
     setSelected(undefined); setPlaying(false);
@@ -216,6 +243,7 @@ export function VariationBoard<F extends VariationFrame>(props: VariationBoardPr
 
   async function save(partial = false, copy = false, closeAfter = false) {
     if (lock.current || busy) return;
+    cancelBest();
     const moves = movesToSave(line.moves, partial ? cursor : undefined);
     if (!moves.length) return;
     const request = generation.current;
@@ -234,7 +262,7 @@ export function VariationBoard<F extends VariationFrame>(props: VariationBoardPr
     finally { if (request === generation.current) { lock.current = false; setSaving(false); } }
   }
 
-  const navigate = (step: number) => { if (lock.current || busy) return; setPlaying(false); setSelected(undefined); setCursor(Math.max(0, Math.min(line.moves.length, step))); };
+  const navigate = (step: number) => { if (lock.current || busy) return; cancelBest(); setPlaying(false); setSelected(undefined); setCursor(Math.max(0, Math.min(line.moves.length, step))); };
   const style: CSSProperties = floating && !expanded ? { left: position.x, top: position.y } : {};
   return <aside ref={panel} className={`variation-board ${mobile ? "is-mobile mobile-study-pieces" : "is-desktop"} ${light ? "is-light" : ""} ${floating ? "is-floating" : "is-docked"} ${collapsed ? "is-collapsed" : ""} ${expanded ? "is-expanded" : ""}`} style={style} aria-label="小棋盘推演">
     <div ref={viewportBounds} className="variation-safe-bounds" aria-hidden="true"/>
@@ -249,7 +277,7 @@ export function VariationBoard<F extends VariationFrame>(props: VariationBoardPr
     }}>
       <strong>小棋盘</strong>
       <button type="button" className="variation-save" aria-label={saving ? "保存中" : props.saveLabel ? "复制后保存" : "保存分支"} title={`${props.saveLabel ?? "保存整条线路"} · 共 ${line.moves.length} 步`} disabled={busy || saving || Boolean(deleting) || !line.moves.length} onClick={() => void save()}>{saving ? <LoaderCircle className="variation-saving"/> : <Bookmark/>}<span>{saving ? "保存中" : props.saveLabel ? "复制后保存" : "保存分支"}</span></button>
-      <nav><button type="button" aria-label="更多推演操作" aria-expanded={more} onClick={() => { setCollapsed(false); setMore(value => !value); }}><Ellipsis/></button><button type="button" aria-label={collapsed ? "展开小棋盘" : "收起小棋盘"} onClick={() => { setCollapsed(value => !value); setPlaying(false); setMore(false); }}>{collapsed ? <Plus/> : <Minus/>}</button><button type="button" aria-label="关闭小棋盘" disabled={saving || Boolean(deleting)} onClick={requestClose}><X/></button></nav>
+      <nav><button type="button" aria-label="更多推演操作" aria-expanded={more} onClick={() => { setCollapsed(false); setMore(value => !value); }}><Ellipsis/></button><button type="button" aria-label={collapsed ? "展开小棋盘" : "收起小棋盘"} onClick={() => { cancelBest(); setCollapsed(value => !value); setPlaying(false); setMore(false); }}>{collapsed ? <Plus/> : <Minus/>}</button><button type="button" aria-label="关闭小棋盘" disabled={saving || Boolean(deleting)} onClick={requestClose}><X/></button></nav>
     </header>
     {more && <section className="variation-more" aria-label="推演更多操作">
       <strong className="variation-source-title">{props.title}</strong>
@@ -261,7 +289,7 @@ export function VariationBoard<F extends VariationFrame>(props: VariationBoardPr
         {!mobile && <button type="button" onClick={() => { setFloating(value => !value); setMore(false); }}>{floating ? "并排显示" : "悬浮显示"}</button>}
         <button type="button" onClick={() => { setExpanded(value => !value); setMore(false); }}>{expanded ? "恢复大小" : "展开查看"}</button>
       </div>
-      {props.analyze && <button type="button" onClick={() => setEngineEnabled(value => !value)}>{engineEnabled ? "暂停计算" : "恢复计算"}</button>}
+      {props.analyze && <button type="button" onClick={() => { cancelBest(); setEngineEnabled(value => !value); }}>{engineEnabled ? "暂停计算" : "恢复计算"}</button>}
       <button type="button" disabled={busy || saving || Boolean(deleting) || !line.moves.length} onClick={() => setDeleteTemp(true)}>删除临时线路</button>
       {deleteTemp && <div role="alertdialog" aria-label="删除临时线路确认"><p>只移除此临时线路，已保存的变招保持不变。</p><button type="button" onClick={removeTemporaryLine}>确认删除临时线路</button><button type="button" onClick={() => setDeleteTemp(false)}>取消</button></div>}
       {props.onDeleteSaved && Boolean(props.savedBranches?.length) && <section aria-label="已保存变招"><strong>已保存变招{props.savedBranchTitle ? ` · 《${props.savedBranchTitle}》` : ""}</strong>{props.savedBranches!.map(branch => <div key={branch.id}><span>{branch.label}</span><button type="button" disabled={busy || saving || Boolean(deleting)} onClick={() => { if (window.confirm("删除此变招及其后续？原主线和其他变招保留。")) void deleteSaved(branch.id); }}>删除已保存变招 · {branch.label}</button></div>)}</section>}
@@ -275,9 +303,9 @@ export function VariationBoard<F extends VariationFrame>(props: VariationBoardPr
       <div ref={boardArea} className="variation-board-content"><div ref={boardCanvas} className="variation-board-canvas">{props.renderBoard(frame, { flipped, selected, hintMoves: hints ? candidates.map(item => item.pv[0]) : [], onSquare: clickSquare, onMove: (from, to) => void move(from, to) })}</div></div>
       <footer className="variation-board-footer">
         {props.analyze && <section className="variation-analysis" aria-label="推演引擎">
-          <div className="variation-evaluation"><b>{evaluation.label}</b><button type="button" aria-pressed={hints} onClick={() => setHints(value => !value)}>AI 提示{hints ? "开" : "关"}</button></div>
+          <div className="variation-evaluation"><b>{evaluation.label}</b><button type="button" className="variation-instant" aria-label="极速出招" aria-busy={bestWaiting} disabled={busy || saving || Boolean(deleting) || bestWaiting} onClick={requestBest}>{bestWaiting ? "计算中" : "极速出招"}</button><button type="button" aria-pressed={hints} onClick={() => setHints(value => !value)}>AI 提示{hints ? "开" : "关"}</button></div>
           <div className="variation-evaluation-bar" aria-label={evaluation.label}><i style={{ width: `${evaluation.redShare}%` }}/></div>
-          <p className="variation-analysis-metrics">深度 {result?.lines[0]?.depth ?? "—"} · 节点 {result?.lines[0]?.nodes?.toLocaleString() ?? "—"} · 耗时 {result?.lines[0]?.timeMs ?? result?.elapsedMs ?? "—"} ms{analyzing ? " · 计算中" : !engineEnabled ? " · 已暂停" : ""}</p>
+          <p className="variation-analysis-metrics">深度 {rankedLines[0]?.depth ?? "—"} · 节点 {rankedLines[0]?.nodes?.toLocaleString() ?? "—"} · 耗时 {rankedLines[0]?.timeMs ?? result?.elapsedMs ?? "—"} ms{analyzing ? " · 计算中" : !engineEnabled ? " · 已暂停" : ""}</p>
           <div className="variation-suggestion-slot">
             {analysisError ? <p className="variation-analysis-error" role="alert"><span title={analysisError}>{analysisError}</span><button type="button" onClick={() => setAnalysisRetry(value => value + 1)}>重试计算</button></p>
               : hints && candidates.length > 0 ? <div className="variation-suggestions" aria-label="推荐走法">{candidates.slice(0, 3).map((item, index) => <button type="button" key={index} disabled={busy || saving || analyzing || Boolean(deleting)} onClick={() => playSuggestion(item.pv[0])}>{index === 0 ? "走正招" : `候选 ${index + 1}`} · {item.notation?.[0] ?? item.pv[0]}</button>)}</div> : null}
@@ -288,7 +316,7 @@ export function VariationBoard<F extends VariationFrame>(props: VariationBoardPr
         <nav className="variation-playback" aria-label="推演回放">
           <button type="button" aria-label="推演起点" disabled={!cursor || busy || saving} onClick={() => navigate(0)}><ChevronsLeft/></button>
           <button type="button" aria-label="推演上一步" disabled={!cursor || busy || saving} onClick={() => navigate(cursor - 1)}><ChevronLeft/></button>
-          <button type="button" className="variation-play-toggle" aria-label={playing ? "暂停推演" : "播放推演"} disabled={!line.moves.length || busy || saving} onClick={() => { if (!playing && cursor === line.moves.length) setCursor(0); setPlaying(value => !value); }}>{playing ? <Pause/> : <Play/>}</button>
+          <button type="button" className="variation-play-toggle" aria-label={playing ? "暂停推演" : "播放推演"} disabled={!line.moves.length || busy || saving} onClick={() => { cancelBest(); if (!playing && cursor === line.moves.length) setCursor(0); setPlaying(value => !value); }}>{playing ? <Pause/> : <Play/>}</button>
           <button type="button" aria-label="推演下一步" disabled={cursor === line.moves.length || busy || saving} onClick={() => navigate(cursor + 1)}><ChevronRight/></button>
           <button type="button" aria-label="推演终点" disabled={cursor === line.moves.length || busy || saving} onClick={() => navigate(line.moves.length)}><ChevronsRight/></button>
         </nav>

@@ -7432,3 +7432,7 @@ html.keyboard-open .manual-save-backdrop .manual-save-dialog { max-height:100%; 
 .mobile-teacher-checkin .checkin-workspace { margin:0 auto; padding-bottom:24px; }
 .mobile-teacher-checkin .checkin-plan-editor { min-width:0; }
 .saved-branch-arrow .analysis-arrow-label { fill:#56a523; }
+
+/* A saved continuation and the replay controls share the first study row. */
+.study-branch-navigation { display:flex; flex-direction:column; gap:4px; }
+html.phone-webview .study-sidebar { grid-template-rows:auto 32px minmax(0,1fr); }

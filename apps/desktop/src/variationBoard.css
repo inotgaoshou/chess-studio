@@ -117,3 +117,5 @@
 .variation-board .variation-notices > p { display:flex; align-items:center; gap:4px; box-sizing:border-box; height:32px; max-height:32px; margin:0; padding:2px 8px; overflow:hidden; }
 .variation-notices > p > span { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; }
 .variation-notices > p > button { flex:none; }
+
+.variation-board .variation-evaluation .variation-instant { flex:0 0 64px; width:64px; padding:2px; color:var(--variation-accent); font-weight:600; }

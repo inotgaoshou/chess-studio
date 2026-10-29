@@ -1,7 +1,7 @@
 import { GitBranch, ArrowLeft, BookOpen, ChartNoAxesCombined, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ClipboardList, Cpu, Database, EyeOff, FilePenLine, FileUp, FlipVertical2, List, Pause, Pencil, Play, Plus, Save, Settings2, Star, X } from "lucide-react";
 export type ManualControlAction = "variation"|"return"|"settings"|"metadata"|"favorite"|"save"|"import"|"rehearse"|"comments"|"library"|"engine"|"analysis"|"new"|"setup"|"moves"|"report"|"previous"|"next"|"previousVariation"|"nextVariation"|"play"|"flip"|"copy";
-export function ManualRecordingControls({cursor,moveCount,previousVariation,nextVariation,playing,engineEnabled,flipped,favorite,readOnly,menuOpen,onMenu,onAction}:{
- cursor:number;moveCount:number;previousVariation:boolean;nextVariation:boolean;playing:boolean;engineEnabled:boolean;flipped:boolean;favorite:boolean;readOnly:boolean;menuOpen:boolean;onMenu(open:boolean):void;onAction(action:ManualControlAction):void;
+export function ManualRecordingControls({cursor,moveCount,canGoNext,previousVariation,nextVariation,playing,engineEnabled,flipped,favorite,readOnly,menuOpen,onMenu,onAction}:{
+ cursor:number;moveCount:number;canGoNext?:boolean;previousVariation:boolean;nextVariation:boolean;playing:boolean;engineEnabled:boolean;flipped:boolean;favorite:boolean;readOnly:boolean;menuOpen:boolean;onMenu(open:boolean):void;onAction(action:ManualControlAction):void;
 }) {
  const run=(action:ManualControlAction)=>{onMenu(false);onAction(action);};
  return <>
@@ -18,7 +18,7 @@ export function ManualRecordingControls({cursor,moveCount,previousVariation,next
    <button type="button" disabled={!previousVariation} onClick={()=>run("previousVariation")}><ChevronsLeft/><span>上变</span></button>
    <button type="button" disabled={!cursor} onClick={()=>run("previous")}><ChevronLeft/><span>上一步</span></button>
    <button type="button" disabled={!moveCount} aria-label={playing?"暂停播放":"播放棋谱"} aria-pressed={playing} onClick={()=>run("play")}>{playing?<Pause/>:<Play/>}<span>{playing?"暂停":"播放"}</span></button>
-   <button type="button" disabled={cursor>=moveCount} onClick={()=>run("next")}><ChevronRight/><span>下一步</span></button>
+   <button type="button" disabled={!(canGoNext ?? cursor<moveCount)} onClick={()=>run("next")}><ChevronRight/><span>下一步</span></button>
    <button type="button" disabled={!nextVariation} onClick={()=>run("nextVariation")}><ChevronsRight/><span>下变</span></button>
    <button type="button" aria-pressed={flipped} onClick={()=>run("flip")}><FlipVertical2/><span>翻转</span></button>
    <button type="button" disabled={!moveCount} onClick={()=>run("report")}><ChartNoAxesCombined/><span>报告</span></button>

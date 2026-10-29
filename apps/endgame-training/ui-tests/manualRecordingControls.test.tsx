@@ -28,3 +28,11 @@ it("keeps nested variations when the removed branch is still represented by the 
  const branches=[{id:"adopted",parentPath:[],parentCursor:0,moves:["h0g2"],notation:[],createdAt:1},{id:"child",parentPath:["h0g2"],parentCursor:1,moves:["h9g7"],notation:[],createdAt:1}];
  const result=removeManualBranch({moves:["h0g2","b9c7"],branches,comments:{"h0g2,h9g7":"保留变招"}},"adopted");expect(result.branches.map(branch=>branch.id)).toEqual(["child"]);expect(result.comments["h0g2,h9g7"]).toBe("保留变招");
 });
+
+it("enables next for real stored children beyond the old display array and honors an explicit leaf",()=>{
+ const props={cursor:5,moveCount:5,previousVariation:false,nextVariation:false,playing:false,engineEnabled:false,flipped:false,favorite:false,readOnly:false,menuOpen:false,onMenu:vi.fn(),onAction:vi.fn()};
+ const view=render(<ManualRecordingControls {...props} canGoNext={true}/>);
+ const next=screen.getByRole('button',{name:'下一步',exact:true}) as HTMLButtonElement;expect(next.disabled).toBe(false);fireEvent.click(next);expect(props.onAction).toHaveBeenCalledWith('next');
+ view.rerender(<ManualRecordingControls {...props} cursor={3} canGoNext={false}/>);expect(next.disabled).toBe(true);
+ view.rerender(<ManualRecordingControls {...props} cursor={3}/>);expect(next.disabled).toBe(false);
+});

@@ -33,3 +33,19 @@ describe("mobile direct branch navigation", () => {
     expect(saved.branches[2]).toMatchObject({parentPath:["b0c2"],moves:["a9a8"]});
   });
 });
+
+it("projects a saved sole continuation after 5/5 without promoting it into the canonical mainline",async()=>{
+ const {extendManualContinuation}=await import("../src/manualContinuation");
+ const source=game();source.moves=["b0c2","b9c7","h0g2","h9g7","a3a4"];
+ source.branches=[{id:"tail",parentCursor:5,parentPath:source.moves,moves:["a6a5","c3c4","c6c5","g3g4"],notation:[],createdAt:1}];
+ const before=structuredClone(source),projected=extendManualContinuation(source,source.moves);
+ expect(projected).toHaveLength(9);expect(projected.slice(0,5)).toEqual(source.moves);expect(source).toEqual(before);
+ expect(preserveManualMainline({...source,moves:projected},source,[])).toEqual(source);
+});
+it("stops a projected tail at the first undecided fork and respects the previously browsed route",async()=>{
+ const {extendManualContinuation}=await import("../src/manualContinuation");
+ const source=game();source.moves=["a3a4"];
+ source.branches=[{id:"a",parentCursor:1,parentPath:source.moves,moves:["a6a5","c3c4"],notation:[],createdAt:1},{id:"b",parentCursor:2,parentPath:["a3a4","a6a5"],moves:["g3g4"],notation:[],createdAt:2}];
+ expect(extendManualContinuation(source,source.moves)).toEqual(["a3a4","a6a5"]);
+ expect(extendManualContinuation(source,["a3a4","a6a5","c3c4"])).toEqual(["a3a4","a6a5","c3c4"]);
+});

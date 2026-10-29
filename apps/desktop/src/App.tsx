@@ -5784,6 +5784,7 @@ export default function App() {
     }
 
     while (token === playbackRevision.current) {
+      if(state.branches.length>1){stopPlayback();setBranchPickerOpen(true);setNotice("请选择下一步变招。");return;}
       const next = preferredContinuation(state);
       if (!next) break;
       await new Promise((resolve) => window.setTimeout(resolve, 700));

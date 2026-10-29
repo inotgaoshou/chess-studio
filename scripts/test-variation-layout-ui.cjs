@@ -58,6 +58,12 @@ try {
     await panel.getByRole('button',{name:'AI 提示关',exact:true}).click();await page.waitForTimeout(80);await stable(ready,'hints visible');
     await page.screenshot({path:output+`/stable-${viewport.width}x${viewport.height}.png`});
   }
+  const beforeInstant=await geometry();
+  await panel.getByRole('button',{name:'AI 提示开',exact:true}).click();
+  await panel.getByRole('button',{name:'极速出招',exact:true}).click();
+  await panel.getByText(/第 1 步 \/ 共 1 步/).waitFor();await page.waitForTimeout(80);await stable(beforeInstant,'instant move');
+  await panel.getByRole('button',{name:'推演起点',exact:true}).click();
+  await panel.getByRole('button',{name:'AI 提示关',exact:true}).click();
   const beforeMove=await geometry();engineFailure=true;
   await step(small,'h0 红马','g2');await panel.getByText(/第 1 步 \/ 共 1 步/).waitFor();await page.waitForTimeout(80);await stable(beforeMove,'move validation');
   await panel.getByRole('button',{name:'重试计算'}).waitFor();await page.waitForTimeout(80);await stable(beforeMove,'engine error');

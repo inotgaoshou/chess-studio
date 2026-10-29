@@ -46,3 +46,14 @@ export function reuseSavedBranchIds(branches: StudyManualBranch[], saved: StudyM
     return stored ? { ...branch, id:stored.id, createdAt:stored.createdAt } : branch;
   });
 }
+
+/** Expand only a unique tail; a fork waits for the reader to choose a route. */
+export function extendManualContinuation(game: Pick<LocalManualGame,"moves"|"branches">, viewed: string[]): string[] {
+  if (!manualPathExists(game,viewed)) return viewed;
+  const path=[...viewed];
+  for (;;) {
+    const choices=manualContinuations(game.moves,[],game.branches,path,[],[]);
+    if (choices.length!==1) return path;
+    path.push(choices[0].move);
+  }
+}

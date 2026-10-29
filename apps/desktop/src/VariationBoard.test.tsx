@@ -185,3 +185,73 @@ it("replaces an old success receipt with the current failure and a visible retry
  fireEvent.click(screen.getByRole("button",{name:"保存分支"}));await screen.findByText("写入失败");
  expect(screen.queryByText("已保存一支")).toBeNull();expect(screen.getByRole("button",{name:"重试保存"})).toBeTruthy();
 });
+
+it("plays the first ranked engine move immediately even when hints are hidden", async () => {
+ const analyze=vi.fn(async()=>({lines:[{multipv:2,pv:["b0c2"]},{multipv:1,pv:["a0a1"]}]}));
+ const {validate}=setup([],{analyze});await ready();await screen.findByRole("button",{name:/走正招/});
+ fireEvent.click(screen.getByRole("button",{name:"AI 提示开"}));
+ fireEvent.click(screen.getByRole("button",{name:"极速出招"}));await ready();
+ expect(validate).toHaveBeenLastCalledWith(["a0a1"]);expect(screen.getByText(/第 1 步 \/ 共 1 步/)).toBeTruthy();
+});
+it("waits for the current search once and cancels a queued best move on replay navigation", async () => {
+ let finish!:(value:{lines:{pv:string[]}[]})=>void;
+ const analyze=vi.fn(()=>new Promise<{lines:{pv:string[]}[]}>(resolve=>{finish=resolve;}));
+ const {validate}=setup(undefined,{analyze});await ready();
+ fireEvent.click(screen.getByRole("button",{name:"极速出招"}));
+ expect((screen.getByRole("button",{name:"极速出招"}) as HTMLButtonElement).disabled).toBe(true);
+ await waitFor(()=>expect(analyze).toHaveBeenCalledTimes(1));
+ fireEvent.click(screen.getByRole("button",{name:"推演下一步"}));
+ finish({lines:[{pv:["b0c2"]}]});await new Promise(resolve=>setTimeout(resolve,30));
+ expect(validate).toHaveBeenCalledTimes(1);expect(screen.getByText(/第 1 步 \/ 共 2 步/)).toBeTruthy();
+});
+it("performs one requested calculation while automatic calculation remains paused", async () => {
+ const analyze=vi.fn(async()=>({lines:[{pv:["a0a1"]}]}));
+ const {validate}=setup([],{analyze});await ready();
+ fireEvent.click(screen.getByRole("button",{name:"更多推演操作"}));fireEvent.click(screen.getByRole("button",{name:"暂停计算"}));
+ fireEvent.click(screen.getByRole("button",{name:"更多推演操作"}));
+ fireEvent.click(screen.getByRole("button",{name:"极速出招"}));
+ await waitFor(()=>expect(validate).toHaveBeenLastCalledWith(["a0a1"]));await ready();
+ await new Promise(resolve=>setTimeout(resolve,400));expect(analyze).toHaveBeenCalledTimes(1);
+ fireEvent.click(screen.getByRole("button",{name:"更多推演操作"}));expect(screen.getByRole("button",{name:"恢复计算"})).toBeTruthy();
+});
+
+it("consumes a pending result once despite repeated instant-move clicks", async () => {
+ let finish!:(value:{lines:{pv:string[]}[]})=>void;
+ const analyze=vi.fn(()=>new Promise<{lines:{pv:string[]}[]}>(resolve=>{finish=resolve;}));
+ const {validate,onSave}=setup([],{analyze});await ready();
+ await waitFor(()=>expect(analyze).toHaveBeenCalledTimes(1));
+ const button=screen.getByRole('button',{name:'极速出招'});fireEvent.click(button);fireEvent.click(button);
+ finish({lines:[{pv:['a0a1']}]});
+ await waitFor(()=>expect(validate).toHaveBeenLastCalledWith(['a0a1']));await ready();
+ expect(validate).toHaveBeenCalledTimes(2);expect(onSave).not.toHaveBeenCalled();
+ fireEvent.click(screen.getByRole('button',{name:'收起小棋盘'}));
+});
+it.each(['collapse','manual','switch','close'])("cancels a pending instant move on %s", async action=>{
+ let finish!:(value:{lines:{pv:string[]}[]})=>void;
+ const analyze=vi.fn(()=>new Promise<{lines:{pv:string[]}[]}>(resolve=>{finish=resolve;}));
+ const {validate}=setup(undefined,{analyze});await ready();
+ if(action==='switch') {fireEvent.click(screen.getByRole('button',{name:'试走 b0c2'}));await ready();}
+ await waitFor(()=>expect(analyze).toHaveBeenCalled());
+ fireEvent.click(screen.getByRole('button',{name:'极速出招'}));
+ if(action==='collapse')fireEvent.click(screen.getByRole('button',{name:'收起小棋盘'}));
+ if(action==='close')fireEvent.click(screen.getByRole('button',{name:'关闭小棋盘'}));
+ if(action==='manual'){fireEvent.click(screen.getByRole('button',{name:'试走 a0a1'}));await ready();}
+ if(action==='switch'){fireEvent.click(screen.getByRole('button',{name:'更多推演操作'}));fireEvent.change(screen.getByLabelText('切换临时线路'),{target:{value:'0'}});}
+ const count=validate.mock.calls.length;
+ finish({lines:[{pv:['b0c2']}]});await new Promise(resolve=>setTimeout(resolve,40));
+ expect(validate).toHaveBeenCalledTimes(count);
+});
+it.each(['empty','failure','illegal'])("retains the temporary position when the instant move is %s", async mode=>{
+ const analyze=vi.fn(async()=>{if(mode==='failure')throw new Error('引擎计算失败');return {lines:mode==='empty'?[]:[{pv:['a0a1']}]};});
+ const validate=vi.fn(async(moves:string[])=>{if(moves.length)throw new Error('这一步不合法');return [];});
+ const onSave=vi.fn();setup([],{analyze,validate,onSave});await ready();
+ fireEvent.click(screen.getByRole('button',{name:'极速出招'}));
+ await screen.findByText(mode==='empty'?'当前局面没有可用的引擎走法':mode==='failure'?'引擎计算失败':'这一步不合法');
+ expect(screen.getByText(/第 0 步 \/ 共 0 步/)).toBeTruthy();expect(onSave).not.toHaveBeenCalled();
+});
+it("plays a black-side best move through normal temporary legality validation",async()=>{
+ const validate=vi.fn(async(moves:string[])=>moves.map(notation=>({...base,notation})));
+ setup([],{base:{...base,fen:'base b - - 0 1'},validate,analyze:async()=>({lines:[{multipv:1,pv:['a9a8']}]})});await ready();
+ fireEvent.click(screen.getByRole('button',{name:'极速出招'}));
+ await waitFor(()=>expect(validate).toHaveBeenLastCalledWith(['a9a8']));
+});

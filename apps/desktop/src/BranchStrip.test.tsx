@@ -16,9 +16,9 @@ it("keeps direct-child order and merges common-prefix routes without navigating 
   fireEvent.click(screen.getByRole("button", {name:"分支 2 · 马八进七"}));
   expect(select).toHaveBeenCalledWith("variation"); expect(choices).toHaveLength(3);
 });
-it("does not show a branch bar when the position has just one distinct next move", () => {
+it("shows a sole saved continuation without requiring a fork", () => {
   render(<BranchStrip choices={[{id:"a", move:"h2e2", notation:"炮二平五"}]} onSelect={vi.fn()}/>);
-  expect(screen.queryByRole("navigation")).toBeNull();
+  expect(screen.getByRole("button",{name:"继续：炮二平五"})).toBeTruthy();
 });
 
 it("collapses and reopens choices without selecting a route", () => {
@@ -28,4 +28,15 @@ it("collapses and reopens choices without selecting a route", () => {
  expect(screen.queryByRole("button",{name:/分支 2/})).toBeNull();
  fireEvent.click(screen.getByRole("button",{name:/选择变招/}));
  expect(screen.getByRole("button",{name:/分支 2/})).toBeTruthy();expect(select).not.toHaveBeenCalled();
+});
+
+it("reopens a collapsed fork when next requests an explicit choice",()=>{
+ const choices=[{id:'a',move:'a0a1',notation:'车九进一'},{id:'b',move:'b0c2',notation:'马八进七'}],select=vi.fn();
+ const view=render(<BranchStrip choices={choices} onSelect={select} revealKey={0}/>);
+ fireEvent.click(screen.getByRole('button',{name:'收起变招选择'}));
+ view.rerender(<BranchStrip choices={choices} onSelect={select} revealKey={1}/>);
+ expect(screen.getByRole('button',{name:'分支 2 · 马八进七'})).toBeTruthy();expect(select).not.toHaveBeenCalled();
+});
+it("omits navigation at an actual leaf",()=>{
+ render(<BranchStrip choices={[]} onSelect={vi.fn()}/>);expect(screen.queryByRole('navigation')).toBeNull();
 });

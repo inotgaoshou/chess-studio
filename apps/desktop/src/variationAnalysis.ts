@@ -1,6 +1,7 @@
 import { evaluationLabel, evaluationRedShare } from "./analysisView";
 
 export type VariationAnalysisLine = {
+  multipv?: number;
   pv: string[];
   notation?: string[];
   scoreCp?: number;
@@ -27,4 +28,9 @@ export function variationRound(baseFen: string, cursor: number) {
   const fields = baseFen.split(/\s+/);
   const fullmove = Math.max(1, Number(fields[5]) || 1);
   return fullmove + Math.floor((cursor + (fields[1] === "b" ? 1 : 0)) / 2);
+}
+
+/** MultiPV rank, not arrival order, identifies the engine's preferred move. */
+export function orderedVariationLines(result?: VariationAnalysis) {
+  return [...(result?.lines ?? [])].sort((a,b)=>(a.multipv ?? 1)-(b.multipv ?? 1));
 }
