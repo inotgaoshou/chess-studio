@@ -3140,8 +3140,8 @@ export default function App() {
     // Preview already marks the simulated from/to squares. Hide route arrows
     // so old analysis lines never look like they are attached to the preview.
     if (candidatePreview && previewStep) return [];
-    if (isMobileWorkbench) return mobileArrowsEnabled ? mobileFocusedArrow : [];
     if (branchArrows.length > 0) return branchArrows;
+    if (isMobileWorkbench) return mobileArrowsEnabled ? mobileFocusedArrow : [];
     return analysisArrows;
   }, [analysisArrows, branchArrows, candidatePreview, isMobileWorkbench, mobileArrowsEnabled, mobileFocusedArrow, previewStep]);
   const mainBoardMarkerMove = displayedLastMove ?? lastMove;
@@ -4124,7 +4124,7 @@ export default function App() {
     setGames(await chessPlatform.listGames());
     return { message: result.added ? "已保存一支" : "该线路已保存", view: async () => {
       if (boardRef.current.gameId !== source.gameId) throw new Error("请先返回来源棋谱再查看分支");
-      await navigateTo(result.endNodeId);
+      await navigateTo(source.currentNode); setBranchPickerOpen(true);
     } };
   }
 
@@ -8520,7 +8520,7 @@ export default function App() {
               {selectedPieceThought.confidenceNote && <small>{selectedPieceThought.confidenceNote}</small>}
             </section>}
           </div>
-            <BranchStrip choices={board.branches.map(move => ({ id:move.id, move:move.iccs, notation:move.notation, selected:move.id === board.continuation[0]?.id }))} onSelect={id => void navigateTo(id)}/>
+            <BranchStrip choices={board.branches.map(move => ({ id:move.id, move:move.iccs, notation:move.notation, selected:move.id === board.continuation[0]?.id, isMainline:move.isMainline }))} onSelect={id => void selectBranchChoice(id)}/>
           {candidatePreview && previewStep && (
             <div className="candidate-preview-bar" style={{ "--pv-color": candidatePreview.color } as CSSProperties}>
               <div className="candidate-preview-main">

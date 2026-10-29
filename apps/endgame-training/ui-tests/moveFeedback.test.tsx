@@ -65,3 +65,15 @@ describe("actual-move feedback",()=>{
     expect(terminalWin({startingFen:"9 b"},{...state,fen:state.fen.replace(" b "," w "),status:"困毙"})).toBe(true);
   });
 });
+
+it("renders a numbered arrowhead for every saved branch independently of AI hints",()=>{
+  const moves=["b0c2","h0g2","a3a4","c3c4","e3e4","g3g4"];
+  const ui=render(<Board pieces={[]} branchMoves={moves} analysisMoves={[]} boardSkin="classic" pieceSkin="classic" riverText="" riverTextColor="#000" riverTextSize={20} supportsCustomRiverText={false} onSquare={vi.fn()}/>);
+  const arrows=[...ui.container.querySelectorAll('.saved-branch-arrow')];
+  expect(arrows).toHaveLength(moves.length);
+  expect(arrows.map(arrow=>arrow.querySelector('text')?.textContent)).toEqual(['1','2','3','4','5','6']);
+  for(const arrow of arrows){
+    const ref=arrow.querySelector('.analysis-arrow-stem')!.getAttribute('marker-end')!;
+    expect([...ui.container.querySelectorAll('marker')].some(marker=>ref===`url(#${marker.id})`)).toBe(true);
+  }
+});

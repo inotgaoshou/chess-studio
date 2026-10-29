@@ -278,8 +278,10 @@ export function VariationBoard<F extends VariationFrame>(props: VariationBoardPr
           <div className="variation-evaluation"><b>{evaluation.label}</b><button type="button" aria-pressed={hints} onClick={() => setHints(value => !value)}>AI 提示{hints ? "开" : "关"}</button></div>
           <div className="variation-evaluation-bar" aria-label={evaluation.label}><i style={{ width: `${evaluation.redShare}%` }}/></div>
           <p className="variation-analysis-metrics">深度 {result?.lines[0]?.depth ?? "—"} · 节点 {result?.lines[0]?.nodes?.toLocaleString() ?? "—"} · 耗时 {result?.lines[0]?.timeMs ?? result?.elapsedMs ?? "—"} ms{analyzing ? " · 计算中" : !engineEnabled ? " · 已暂停" : ""}</p>
-          {analysisError && <p role="alert">{analysisError}<button type="button" onClick={() => setAnalysisRetry(value => value + 1)}>重试计算</button></p>}
-          {hints && candidates.length > 0 && <div className="variation-suggestions" aria-label="推荐走法">{candidates.slice(0, 3).map((item, index) => <button type="button" key={index} disabled={busy || saving || analyzing || Boolean(deleting)} onClick={() => playSuggestion(item.pv[0])}>{index === 0 ? "走正招" : `候选 ${index + 1}`} · {item.notation?.[0] ?? item.pv[0]}</button>)}</div>}
+          <div className="variation-suggestion-slot">
+            {analysisError ? <p className="variation-analysis-error" role="alert"><span title={analysisError}>{analysisError}</span><button type="button" onClick={() => setAnalysisRetry(value => value + 1)}>重试计算</button></p>
+              : hints && candidates.length > 0 ? <div className="variation-suggestions" aria-label="推荐走法">{candidates.slice(0, 3).map((item, index) => <button type="button" key={index} disabled={busy || saving || analyzing || Boolean(deleting)} onClick={() => playSuggestion(item.pv[0])}>{index === 0 ? "走正招" : `候选 ${index + 1}`} · {item.notation?.[0] ?? item.pv[0]}</button>)}</div> : null}
+          </div>
         </section>}
         <p className="variation-board-progress">第 {cursor} 步 / 共 {line.moves.length} 步 <span>{frame.fen.split(/\s+/)[1] === "b" ? "黑方" : "红方"}行棋 · 第 {variationRound(base.fen, cursor)} 回合</span></p>
         <input className="variation-progress-slider" aria-label="推演进度" type="range" min={0} max={line.moves.length} value={cursor} disabled={busy || saving} onChange={event => navigate(Number(event.target.value))}/>
@@ -292,9 +294,12 @@ export function VariationBoard<F extends VariationFrame>(props: VariationBoardPr
         </nav>
       </footer>
     </>}
-    {busy && <p role="status">正在校验推演线路…</p>}
-    {receipt && <p className="variation-receipt" role="status">{receipt.message}{receipt.view && <button type="button" onClick={() => { setPlaying(false); void Promise.resolve(receipt.view!()).catch(reason => setError(String(reason))); }}>查看已保存分支</button>}</p>}
-    {error && <p className="variation-error" role="alert">{error}{retrySave && <button type="button" disabled={busy || saving || Boolean(deleting) || !line.moves.length} onClick={() => void retrySave()}>重试保存</button>}</p>}
+    <div className="variation-notices">
+    {error ? <p className="variation-error" role="alert"><span title={error}>{error}</span>{retrySave && <button type="button" disabled={busy || saving || Boolean(deleting) || !line.moves.length} onClick={() => void retrySave()}>重试保存</button>}</p>
+      : busy ? <p role="status">正在校验推演线路…</p>
+      : saving ? <p role="status">正在保存分支…</p>
+      : receipt ? <p className="variation-receipt" role="status"><span title={receipt.message}>{receipt.message}</span>{receipt.view && <button type="button" onClick={() => { setPlaying(false); void Promise.resolve(receipt.view!()).catch(reason => setError(String(reason))); }}>查看已保存分支</button>}</p> : null}
+    </div>
     {closing && <section className="variation-close-confirm" role="alertdialog" aria-label="保留未保存推演"><p>还有未保存的临时线路。</p><button type="button" disabled={busy || saving || Boolean(deleting) || !line.moves.length} onClick={() => void save(false, false, true)}>保存当前线路</button><button type="button" disabled={saving} onClick={onClose}>放弃并关闭</button><button type="button" onClick={() => setClosing(false)}>继续研究</button></section>}
   </aside>;
 }

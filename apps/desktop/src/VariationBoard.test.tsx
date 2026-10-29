@@ -177,3 +177,11 @@ it("confirms persisted branch deletion and retains its entry on failure for retr
   fireEvent.click(screen.getByRole("button",{name:"删除已保存变招 · 马二进三"}));
   await waitFor(()=>expect(onDeleteSaved).toHaveBeenCalledTimes(2));expect(confirm).toHaveBeenCalled();confirm.mockRestore();
 });
+
+it("replaces an old success receipt with the current failure and a visible retry", async () => {
+ const onSave=vi.fn().mockResolvedValueOnce({message:"已保存一支"}).mockRejectedValueOnce(new Error("写入失败"));
+ setup(undefined,{onSave});await ready();
+ fireEvent.click(screen.getByRole("button",{name:"保存分支"}));await screen.findByText("已保存一支");
+ fireEvent.click(screen.getByRole("button",{name:"保存分支"}));await screen.findByText("写入失败");
+ expect(screen.queryByText("已保存一支")).toBeNull();expect(screen.getByRole("button",{name:"重试保存"})).toBeTruthy();
+});

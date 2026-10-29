@@ -10,3 +10,14 @@
 
 .board-main-stack > .manual-branch-strip { flex:none; }
 .study-branch-navigation { min-width:0; }
+.manual-branch-strip { display:block; border:1px solid #819e91; border-radius:10px; }
+.manual-branch-strip header { display:flex; align-items:center; justify-content:space-between; gap:4px; padding-bottom:4px; }
+.manual-branch-strip header strong { display:flex; gap:5px; align-items:center; font:600 12px/1.3 system-ui,sans-serif; }
+.manual-branch-strip header > span { display:flex; flex:none; }
+.manual-branch-strip header button { border:0; padding:2px 5px; min-height:28px; background:transparent; }
+.manual-branch-strip .manual-branch-choices { display:flex; }
+.manual-branch-strip .manual-branch-choices button b { display:grid; place-items:center; width:22px; height:22px; border-radius:50%; color:white; background:#56a523; }
+.manual-branch-choices button span { display:grid; gap:2px; text-align:left; }
+.manual-branch-choices button strong { font-size:12px; }
+.manual-branch-choices button small { font-size:10px; opacity:.75; }
+.training-app .manual-branch-strip { background:#fbfefa; border-color:#bfd5c6; }

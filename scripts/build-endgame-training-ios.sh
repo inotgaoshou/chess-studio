@@ -211,7 +211,13 @@ case "$action" in
     xcodebuild -project "$project" -scheme App -configuration Debug -derivedDataPath "$derived_data" -destination 'generic/platform=iOS' PIKAFISH_IOS_ROOT="$pikafish_ios_root" PIKAFISH_TAG="$expected_pikafish_tag" MARKETING_VERSION="$ios_marketing_version" CURRENT_PROJECT_VERSION="$ios_build_number" CODE_SIGNING_ALLOWED=NO build
     ;;
   signed-build)
+    # Keep an immutable expectation before Xcode runs. Another build may update
+    # dist/public while this one is compiling; matching an orphaned asset is not enough.
+    verification_web="$(mktemp -d "${TMPDIR:-/tmp}/qixi-ios-web-check.XXXXXX")"
+    trap 'rm -rf "$verification_web"; report_build_growth' EXIT
+    cp -R "$app_dir/dist/." "$verification_web/"
     xcodebuild -project "$project" -scheme "$scheme" -configuration Debug -derivedDataPath "$derived_data" -destination 'generic/platform=iOS' PIKAFISH_IOS_ROOT="$pikafish_ios_root" PIKAFISH_TAG="$expected_pikafish_tag" MARKETING_VERSION="$ios_marketing_version" CURRENT_PROJECT_VERSION="$ios_build_number" -allowProvisioningUpdates build
+    node "$root_dir/scripts/verify-ios-web-bundle.mjs" --app "$derived_data/Build/Products/Debug-iphoneos/App.app" --expected-web "$verification_web"
     ;;
   archive)
     archive_app "${IOS_ARCHIVE_PATH:-$app_dir/build/App-$VITE_APP_ENV.xcarchive}"

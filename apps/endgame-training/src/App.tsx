@@ -844,7 +844,7 @@ function LegalTargetLayer({ targets, flipped = false, geometry }: { targets: Squ
   </div>;
 }
 
-function AnalysisArrowLayer({ moves, activeIndex, flipped = false, geometry }: { moves: string[]; activeIndex: number; flipped?: boolean; geometry: BoardGeometry }) {
+function AnalysisArrowLayer({ moves, activeIndex, flipped = false, geometry, branches = false }: { moves: string[]; activeIndex: number; flipped?: boolean; geometry: BoardGeometry; branches?: boolean }) {
   const colors = ["#168a55", "#2f7da4", "#b97b18", "#8753a3"];
   const markerPrefix = useId().replace(/:/g, "");
   const arrows = moves.flatMap((move, index) => {
@@ -866,10 +866,10 @@ function AnalysisArrowLayer({ moves, activeIndex, flipped = false, geometry }: {
     const endY = toY - dy / length * padding;
     const labelX = Math.max(130, Math.min(990, fromX + dx * .55));
     const labelY = Math.max(130, Math.min(1110, fromY + dy * .55));
-    const color = colors[index % colors.length];
-    const active = index === activeIndex;
-    const opacity = active ? 1 : .5;
-    return [<g key={`${move}-${index}`} className={`analysis-candidate-arrow ${active ? "active" : ""}`} opacity={opacity} style={{ "--analysis-arrow-color": color } as CSSProperties}>
+    const color = branches ? "#f87924" : colors[index % colors.length];
+    const active = !branches && index === activeIndex;
+    const opacity = branches || active ? 1 : .5;
+    return [<g key={`${move}-${index}`} className={`analysis-candidate-arrow ${branches ? "saved-branch-arrow" : ""} ${active ? "active" : ""}`} opacity={opacity} style={{ "--analysis-arrow-color": color } as CSSProperties}>
       <line className="analysis-arrow-backdrop" x1={startX} y1={startY} x2={endX} y2={endY}/>
       <line className="analysis-arrow-outline" x1={startX} y1={startY} x2={endX} y2={endY}/>
       <line className="analysis-arrow-stem" x1={startX} y1={startY} x2={endX} y2={endY} stroke={color} markerEnd={`url(#${markerPrefix}-analysis-arrow-${index})`}/>
@@ -878,7 +878,7 @@ function AnalysisArrowLayer({ moves, activeIndex, flipped = false, geometry }: {
     </g>];
   });
   return <svg className="analysis-arrow-layer" viewBox={`0 0 ${BOARD_ART_WIDTH} ${BOARD_ART_HEIGHT}`} preserveAspectRatio="none" aria-hidden="true">
-    <defs>{colors.map((color, index) => <marker key={color} id={`${markerPrefix}-analysis-arrow-${index}`} markerWidth="46" markerHeight="46" refX="38" refY="23" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0 L46 23 L0 46 Z" fill={color} fillOpacity=".88" stroke="rgba(255,255,255,.76)" strokeWidth="4" strokeLinejoin="round"/></marker>)}</defs>
+    <defs>{moves.map((move, index) => <marker key={`${move}-${index}`} id={`${markerPrefix}-analysis-arrow-${index}`} markerWidth="46" markerHeight="46" refX="38" refY="23" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0 L46 23 L0 46 Z" fill={branches ? "#f87924" : colors[index % colors.length]} fillOpacity=".88" stroke="rgba(255,255,255,.76)" strokeWidth="4" strokeLinejoin="round"/></marker>)}</defs>
     {arrows}
   </svg>;
 }
@@ -900,7 +900,7 @@ function BoardCoordinateLayer({ flipped = false, geometry }: { flipped?: boolean
   </div>;
 }
 
-export function Board({ pieces, selected, legalTargets = [], lastMove, hintMove, analysisMoves = [], activeAnalysis = 0, flipped = false, feedback, feedbackEvent, setupMode = false, showSideCoordinates = false, boardSkin, pieceSkin, riverText, riverTextColor, riverTextSize, supportsCustomRiverText, onSquare, onMove }: { pieces: BoardPiece[]; selected?: Square; legalTargets?: Square[]; lastMove?: string; hintMove?: string; analysisMoves?: string[]; activeAnalysis?: number; flipped?: boolean; feedback?: TrainingFeedbackKind; feedbackEvent?: TrainingFeedbackEvent; setupMode?: boolean; showSideCoordinates?: boolean; boardSkin: string; pieceSkin: string; riverText: string; riverTextColor: string; riverTextSize: number; supportsCustomRiverText: boolean; onSquare(square: Square): void; onMove?(from: Square, to: Square): void }) {
+export function Board({ pieces, selected, legalTargets = [], lastMove, hintMove, analysisMoves = [], branchMoves = [], activeAnalysis = 0, flipped = false, feedback, feedbackEvent, setupMode = false, showSideCoordinates = false, boardSkin, pieceSkin, riverText, riverTextColor, riverTextSize, supportsCustomRiverText, onSquare, onMove }: { pieces: BoardPiece[]; selected?: Square; legalTargets?: Square[]; lastMove?: string; hintMove?: string; analysisMoves?: string[]; branchMoves?: string[]; activeAnalysis?: number; flipped?: boolean; feedback?: TrainingFeedbackKind; feedbackEvent?: TrainingFeedbackEvent; setupMode?: boolean; showSideCoordinates?: boolean; boardSkin: string; pieceSkin: string; riverText: string; riverTextColor: string; riverTextSize: number; supportsCustomRiverText: boolean; onSquare(square: Square): void; onMove?(from: Square, to: Square): void }) {
   const boardRef = useRef<HTMLDivElement | null>(null);
   const [movingEvent,setMovingEvent] = useState<TrainingFeedbackEvent>();
   const [noticeEvent,setNoticeEvent] = useState<TrainingFeedbackEvent>();
@@ -1022,7 +1022,7 @@ export function Board({ pieces, selected, legalTargets = [], lastMove, hintMove,
   }}>
     {riverText && supportsCustomRiverText && <span className="river-custom-label" style={{ "--river-text-color": riverTextColor, "--river-text-size": `${riverTextSize}px` } as CSSProperties}>{riverText}</span>}
     {showSideCoordinates && <BoardCoordinateLayer flipped={flipped} geometry={geometry}/>}
-    {analysisMoves.length > 0 && <AnalysisArrowLayer moves={analysisMoves} activeIndex={activeAnalysis} flipped={flipped} geometry={geometry}/>}
+    {(branchMoves.length > 1 || analysisMoves.length > 0) && <AnalysisArrowLayer moves={branchMoves.length > 1 ? branchMoves : analysisMoves} branches={branchMoves.length > 1} activeIndex={activeAnalysis} flipped={flipped} geometry={geometry}/>}
     <LegalTargetLayer targets={legalTargets} flipped={flipped} geometry={geometry}/>
     <BoardMarkerLayer selected={selected} lastMove={last} flipped={flipped} geometry={geometry}/>
     {ALL_SQUARES.map((square, index) => { const piece = pieces.find((item) => item.row === square.row && item.col === square.col); const isSelected = sameSquare(selected, square); const isLegalTarget = legalTargets.some((target) => sameSquare(target, square)); const isDraggingOrigin = sameSquare(dragging?.from, square); const isDragTarget = sameSquare(dragging?.target, square); const isLastFrom = last?.from.row === square.row && last.from.col === square.col; const isLastTo = last?.to.row === square.row && last.to.col === square.col; const highlighted = hint?.row === square.row && hint.col === square.col; const position = boardPointStyle(square, geometry, flipped); return <button key={index} style={position} className={`board-square ${isSelected ? "selected" : ""} ${isLegalTarget ? "legal-target" : ""} ${isDraggingOrigin ? "drag-origin" : ""} ${isDragTarget ? "drag-target" : ""} ${isLastFrom ? "last-from" : ""} ${isLastTo ? "last-to" : ""} ${sameSquare(movingSquares?.to,square)?"animating-destination":""} ${highlighted ? "hint" : ""}`} onPointerDown={(event) => {
@@ -4752,14 +4752,9 @@ export function App() {
         if (variationContext.current().scope !== source.scope) throw new Error("请返回原账号后查看");
         const latest = await trainingStore.openManualGame(saved.id);
         if (!latest) throw new Error("棋谱已删除");
-        await openManualMode(false); await openManualGame(latest);
-        const fullPath = [...source.path, ...moves];
-        if (fullPath.every((move, index) => latest.moves[index] === move)) await navigateManualMove(fullPath.length);
-        else {
-          const branch = latest.branches.find(item => fullPath.every((move, index) => [...item.parentPath, ...item.moves][index] === move));
-          if (!branch) throw new Error("保存的分支已变化，请从棋谱中选择");
-          await adoptManualBranch(branch, fullPath.length);
-        }
+        if (variationContext.current().scope !== source.scope) throw new Error("请返回原账号后查看");
+        if (!manualPathExists(latest, source.path)) throw new Error("来源节点已失效，请从棋谱中选择");
+        await openManualMode(false); await openManualGame(latest, source.path);
       } };
     };
     const pending = manualSaveTail.current.then(write);
@@ -4985,25 +4980,31 @@ export function App() {
     return saved;
   }
 
-  async function openManualGame(game: LocalManualGame) {
+  async function openManualGame(game: LocalManualGame, focusPath?: string[]) {
     manualBranchSource.current = undefined;
     manualBranchNotation.current = [];
     setManualAutoPlaying(false);
     const revision = ++manualSaveRevision.current;
     await manualSaveTail.current;
     const loaded = await trainingStore.openManualGame(game.id) ?? game;
-    const cursor = Math.max(0, Math.min(loaded.cursor ?? loaded.moves.length, loaded.moves.length));
-    const activeMoves = loaded.moves.slice(0, cursor);
-    const [state, notation] = await Promise.all([
+    if (focusPath && !manualPathExists(loaded, focusPath)) throw new Error("来源节点已失效");
+    const canonicalPath = !focusPath || focusPath.every((move, index) => loaded.moves[index] === move);
+    const viewedMoves = canonicalPath ? loaded.moves : loaded.branches.map(branch => [...branch.parentPath, ...branch.moves]).find(path => focusPath!.every((move, index) => path[index] === move))!;
+    const cursor = focusPath?.length ?? Math.max(0, Math.min(loaded.cursor ?? loaded.moves.length, loaded.moves.length));
+    const activeMoves = viewedMoves.slice(0, cursor);
+    const [state, notation, canonicalNotation] = await Promise.all([
       boardAt(loaded.startingFen, activeMoves, studyRuleMode),
-      loaded.moves.length ? chineseLine(loaded.startingFen, loaded.moves).catch(() => loaded.moves) : Promise.resolve([]),
+      viewedMoves.length ? chineseLine(loaded.startingFen, viewedMoves).catch(() => viewedMoves) : Promise.resolve([]),
+      canonicalPath ? Promise.resolve([]) : chineseLine(loaded.startingFen, loaded.moves).catch(() => loaded.moves),
     ]);
     if (revision !== manualSaveRevision.current) return;
-    manualDocumentEpoch.current++;
+    const context = variationContext.current();
+    if (!focusPath || context.mode !== "manual" || context.snapshot.id !== loaded.id || context.snapshot.startingFen !== loaded.startingFen) manualDocumentEpoch.current++;
+    if (!canonicalPath) { manualBranchSource.current = loaded; manualBranchNotation.current = canonicalNotation; }
     setManualGame(loaded);
     setManualStartingFen(loaded.startingFen);
     setManualCurrentFen(state.fen);
-    setManualMoves(loaded.moves);
+    setManualMoves(viewedMoves);
     setManualBranches(loaded.branches ?? []);
     setManualComments(loaded.comments ?? {});
     setManualCursor(cursor);
@@ -6971,7 +6972,7 @@ export function App() {
       <button className={`study-engine-toggle ${studyEngineEnabled ? "active engine-enabled" : ""}`} disabled={Boolean(studyTerminal)} aria-pressed={studyEngineEnabled} aria-label={studyEngineEnabled ? "关闭引擎分析" : "开启引擎分析"} title={studyEngineEnabled ? "关闭引擎分析" : "开启引擎分析"} onClick={() => void toggleStudyEngine()}><Search/><span>{studyEngineEnabled ? "引擎开" : "引擎关"}</span></button>
       <button type="button" onClick={() => openMobileVariation()}>自由推演</button>
       <button className={studyPanelTab === "engine" ? "active" : ""} aria-label="打开引擎面板" title="打开引擎面板" onClick={() => setStudyPanelTab("engine")}><Cpu/><span>引擎</span></button>
-    </nav></header>{studyEvaluationVisible && <section className="study-engine-strip"><div><span>深度 {studySummaryLine?.depth ?? "--"}</span><span>节点 {studySummaryLine ? compactNumber(studySummaryLine.nodes) : "--"}</span><span>速度 {studySummaryLine ? `${compactNumber(studySummaryLine.nps)}/s` : "--"}</span></div><button className="study-evaluation-toggle" type="button" aria-label="隐藏顶部评估" onClick={toggleStudyEvaluation}>当前评估 {studyEvaluationLabel}</button></section>}<Board key="study" pieces={studyPieces} selected={studySelected} legalTargets={studyLegalTargets} lastMove={studyLastMove} analysisMoves={studyArrowMoves} activeAnalysis={studyArrowActiveIndex} flipped={boardFlipped} feedback={moveFeedback} feedbackEvent={feedbackEvent} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={(square) => void moveStudy(square)} onMove={(from, to) => void moveStudyFromTo(from, to)}/></main>
+    </nav></header>{studyEvaluationVisible && <section className="study-engine-strip"><div><span>深度 {studySummaryLine?.depth ?? "--"}</span><span>节点 {studySummaryLine ? compactNumber(studySummaryLine.nodes) : "--"}</span><span>速度 {studySummaryLine ? `${compactNumber(studySummaryLine.nps)}/s` : "--"}</span></div><button className="study-evaluation-toggle" type="button" aria-label="隐藏顶部评估" onClick={toggleStudyEvaluation}>当前评估 {studyEvaluationLabel}</button></section>}<Board key="study" pieces={studyPieces} selected={studySelected} legalTargets={studyLegalTargets} lastMove={studyLastMove} branchMoves={studyBranchChoices.map(item => item.move)} analysisMoves={studyArrowMoves} activeAnalysis={studyArrowActiveIndex} flipped={boardFlipped} feedback={moveFeedback} feedbackEvent={feedbackEvent} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={(square) => void moveStudy(square)} onMove={(from, to) => void moveStudyFromTo(from, to)}/></main>
     {studyMenuOpen && <section className="study-menu" aria-label="拆棋功能菜单">
         <header><span><strong>拆棋功能</strong><small>临时拆棋，不写题解树</small></span><button type="button" aria-label="关闭拆棋功能菜单" onClick={() => setStudyMenuOpen(false)}><X/></button></header>
         <StudySkinSettings boardSkin={boardSkin} pieceSkin={pieceSkin} boardSkinInfo={boardSkinInfo} riverText={riverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} onBoardSkinChange={changeBoardSkin} onPieceSkinChange={changePieceSkin} onUseSkinSet={useSkinSet} onRiverTextChange={changeRiverText} onRiverTextColorChange={changeRiverTextColor} onRiverTextSizeChange={changeRiverTextSize}/>
@@ -6987,7 +6988,7 @@ export function App() {
         <button className="study-menu-settings" onClick={() => runStudyMenuAction("settings")}><Settings2/><span>更多设置</span></button>
       </section>}
     <aside className="study-sidebar">
-      <div className="study-branch-navigation"><BranchStrip choices={studyBranchChoices} onSelect={id => { const choice = studyBranchChoices.find(item => item.id === id); if (choice) void selectStudyContinuation(choice).catch(error => setStudyNotice(String(error))); }}/>
+      <div className="study-branch-navigation"><BranchStrip choices={studyBranchChoices} onManage={() => setStudyPanelTab("manual")} onSelect={id => { const choice = studyBranchChoices.find(item => item.id === id); if (choice) void selectStudyContinuation(choice).catch(error => setStudyNotice(String(error))); }}/>
       <nav className="study-move-nav" aria-label="拆棋着法导航"><button disabled={!studyCursor} aria-label="回到开始" title="回到开始" onClick={() => void navigateStudyMove(0)}><ChevronsLeft/></button><button disabled={!studyCursor} aria-label="上一步" title="上一步" onClick={() => void navigateStudyMove(studyCursor - 1)}><ChevronLeft/></button><button className={studyAutoPlaying ? "active" : ""} disabled={!studyMoves.length} aria-label={studyAutoPlaying ? "暂停播放棋谱" : "自动播放棋谱"} title={studyAutoPlaying ? "暂停播放棋谱" : "自动播放棋谱"} onClick={() => void toggleStudyAutoPlay()}>{studyAutoPlaying ? <Pause/> : <Play/>}</button><button disabled={studyCursor >= studyMoves.length} aria-label="下一步" title="下一步" onClick={() => void navigateStudyMove(studyCursor + 1)}><ChevronRight/></button><button disabled={studyCursor >= studyMoves.length} aria-label="最后一步" title="最后一步" onClick={() => void navigateStudyMove(studyMoves.length)}><ChevronsRight/></button></nav></div>
       <nav className="study-panel-tabs" role="tablist" aria-label="拆棋研究面板">{studyPanelItems.map(([value, label, Icon]) => <button key={value} role="tab" aria-selected={studyPanelTab === value} className={studyPanelTab === value ? "active" : ""} onClick={() => setStudyPanelTab(value)}><Icon/><span>{label}</span></button>)}</nav>
       <div className="commentary-research-content">
@@ -7005,7 +7006,7 @@ export function App() {
       <div className="recording-title"><b>{manualSetupOpen ? `创建局面 · ${manualSetupSide === "red" ? "红先" : "黑先"}` : manualAnalysisExpanded ? "录谱分析" : manualReadOnly ? `云镜像 · 只读 ${manualCursor}/${manualMoves.length}` : `录谱 ${manualCursor}/${manualMoves.length}`}</b><small>{manualSetupOpen ? manualNotice : `${manualGame?.favorite ? "★ " : ""}${manualGame?.title ?? "标准开局"} · ${manualReadOnly ? "只读" : manualSaveStatus}${manualTerminal ? ` · ${manualTerminal}` : ""}`}</small></div>
 
       {manualSetupOpen ? <button type="button" aria-label="复制当前 FEN" title="复制当前 FEN" onClick={() => void copyManualSetupFen()}><ClipboardCopy/></button> : <button type="button" aria-label="打开棋库" onClick={() => openManualPanel("library")}><Database/></button>}
-    </header>{manualSetupOpen ? <section className="manual-setup-board-area">{renderManualSetupTray("black")}{manualSetupError && <p className="manual-setup-toast" role="alert" aria-live="assertive">{manualSetupError}</p>}<FittedBoardArea className="manual-setup-board-slot"><Board pieces={manualSetupPieces} selected={manualSetupSelected} legalTargets={[]} lastMove={undefined} analysisMoves={[]} activeAnalysis={manualArrowActiveIndex} flipped={boardFlipped} feedback={undefined} setupMode={true} showSideCoordinates={true} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={editManualSetupSquare}/></FittedBoardArea>{renderManualSetupTray("red")}</section> : <FittedBoardArea className="manual-play-board-area" suspended={Boolean(manualSaveDraft)}><Board key="manual" pieces={manualPieces} selected={manualSelected} legalTargets={manualLegalTargets} lastMove={manualLastMove} analysisMoves={manualArrowMoves} activeAnalysis={manualArrowActiveIndex} flipped={boardFlipped} feedback={moveFeedback} feedbackEvent={feedbackEvent} setupMode={false} showSideCoordinates={true} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={(square) => void moveManual(square)} onMove={(from, to) => void moveManualFromTo(from, to)}/></FittedBoardArea>}
+    </header>{manualSetupOpen ? <section className="manual-setup-board-area">{renderManualSetupTray("black")}{manualSetupError && <p className="manual-setup-toast" role="alert" aria-live="assertive">{manualSetupError}</p>}<FittedBoardArea className="manual-setup-board-slot"><Board pieces={manualSetupPieces} selected={manualSetupSelected} legalTargets={[]} lastMove={undefined} analysisMoves={[]} activeAnalysis={manualArrowActiveIndex} flipped={boardFlipped} feedback={undefined} setupMode={true} showSideCoordinates={true} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={editManualSetupSquare}/></FittedBoardArea>{renderManualSetupTray("red")}</section> : <FittedBoardArea className="manual-play-board-area" suspended={Boolean(manualSaveDraft)}><Board key="manual" pieces={manualPieces} selected={manualSelected} legalTargets={manualLegalTargets} lastMove={manualLastMove} branchMoves={manualBranchChoices.map(item => item.move)} analysisMoves={manualArrowMoves} activeAnalysis={manualArrowActiveIndex} flipped={boardFlipped} feedback={moveFeedback} feedbackEvent={feedbackEvent} setupMode={false} showSideCoordinates={true} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={(square) => void moveManual(square)} onMove={(from, to) => void moveManualFromTo(from, to)}/></FittedBoardArea>}
       {manualAnalysisExpanded && <section className="manual-analysis-dock" aria-label="录谱分析面板">
         <header><strong>自我分析</strong><div><button type="button" onClick={() => void analyzeManualMainline()}>整局分析</button><button type="button" onClick={() => { setManualAnalysisExpanded(false); setManualPanelTab("moves"); }}>收起</button></div></header>
         <div className="manual-commentary-content">{commentaryPanel}{renderManualAnalysisBody()}</div>
@@ -7014,7 +7015,7 @@ export function App() {
         {manualSetupOpen ? <>
           <div className="manual-tool-row setup-actions"><button type="button" onClick={() => void fillManualSetupStandardPosition()}>标准</button><button type="button" onClick={clearManualSetupBoard}>清空</button><button type="button" className={manualSetupTool === "erase" ? "active" : ""} aria-label="删除棋子" title="删除棋子" onClick={() => { setManualSetupTool("erase"); setManualSetupSelected(undefined); setManualSetupError(""); setManualNotice("删除模式：点棋盘上的非将帅棋子即可删除。"); }}><Trash2/></button><button type="button" disabled={!manualSetupHistory.length} onClick={undoManualSetup}><Undo2/>撤销</button><button type="button" onClick={toggleBoardFlipped}>翻转</button><button type="button" onClick={() => { rememberManualSetup(); setManualSetupSide((side) => { const next = side === "red" ? "black" : "red"; setManualSetupError(""); setManualNotice(`已设置为${next === "red" ? "红方" : "黑方"}先走。`); return next; }); }}>{manualSetupSide === "red" ? "红先⇄黑先" : "黑先⇄红先"}</button><button type="button" className="primary" onClick={() => void confirmManualSetup()}>完成</button></div>
         </> : <>
-        <BranchStrip choices={manualBranchChoices} onSelect={id => { const choice = manualBranchChoices.find(item => item.id === id); if (choice) void selectManualContinuation(choice).catch(error => setManualNotice(String(error))); }}/>
+        <BranchStrip choices={manualBranchChoices} onManage={() => openManualPanel("moves")} onSelect={id => { const choice = manualBranchChoices.find(item => item.id === id); if (choice) void selectManualContinuation(choice).catch(error => setManualNotice(String(error))); }}/>
         <div className="recording-feedback-row"><p className="recording-feedback" role="status" title={manualNotice}>{manualNotice}</p><button type="button" className="commentary-entry" disabled={!currentManualMoves.length} onClick={() => { setManualAnalysisExpanded(true); requestCommentary(currentManualMoves); }}><Lightbulb aria-hidden="true"/>讲解这步</button></div>
         <ManualRecordingControls cursor={manualCursor} moveCount={manualMoves.length}
           previousVariation={manualForkCursors.some(cursor => cursor < manualCursor)} nextVariation={manualForkCursors.some(cursor => cursor > manualCursor)}

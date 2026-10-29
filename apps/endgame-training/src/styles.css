@@ -7431,3 +7431,4 @@ html.keyboard-open .manual-save-backdrop .manual-save-dialog { max-height:100%; 
 .training-app .teacher-mobile-page.mobile-teacher-checkin { padding:0; display:block; scroll-padding-top:12px; }
 .mobile-teacher-checkin .checkin-workspace { margin:0 auto; padding-bottom:24px; }
 .mobile-teacher-checkin .checkin-plan-editor { min-width:0; }
+.saved-branch-arrow .analysis-arrow-label { fill:#56a523; }

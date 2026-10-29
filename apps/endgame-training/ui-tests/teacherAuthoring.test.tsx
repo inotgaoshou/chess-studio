@@ -42,6 +42,7 @@ function fixture(items: AuthoredQuestion[] = []) {
     async (path: string, init?: RequestInit): Promise<any> => {
       const body = init?.body ? JSON.parse(String(init.body)) : undefined;
       if (path === B + "/directories") return { items: [directory] };
+      if (path.startsWith(B + "/source-libraries?")) return {items:[{id:"book",title:"测试题库",sourceScope:"平台"}],nextCursor:null};
       if (path === B + "/directories/d") return directory;
       if (path === B + "/questions/q" && !init) return items[0];
       if (path.startsWith(B + "/questions/") && init?.method === "PUT") {
@@ -354,6 +355,8 @@ async function openSourcePicker() {
   await enter();
   fireEvent.click(screen.getByRole("button",{name:"＋添加题目"}));
   fireEvent.click(screen.getByRole("button",{name:"从平台／机构题库选题"}));
+  await screen.findByRole("dialog",{name:"选择题库／书本"});
+  fireEvent.click(await screen.findByRole("button",{name:/测试题库.*进入选题/}));
   return screen.findByRole("dialog",{name:"选择平台／机构题目"});
 }
 it("filters paged sources, merges duplicate identities, blocks existing items, and returns without changing the directory", async () => {
@@ -363,6 +366,7 @@ it("filters paged sources, merges duplicate identities, blocks existing items, a
     if(!path.startsWith(B+"/sources?"))return fallback(path,init);
     const params=new URL(path,"https://test.invalid").searchParams;
     expect(params.get("directoryId")).toBe("d");
+    expect(params.get("libraryId")).toBe("book");
     if(params.get("category")==="中局")return {items:[{...base,id:"different",title:"同局面不同答案",duplicateKey:"other"}],categories:["杀棋","中局","未分类"],nextCursor:null};
     return {items:params.has("cursor") ? [{...base,id:"duplicate",title:"重复来源",duplicateKey:"same"},{...base,id:"next",title:"下一页",duplicateKey:"next"}] : [{...base,id:"source",title:"原题",duplicateKey:"same"},{...base,id:"q",title:"已在目录",authored:true,alreadyAdded:true}],categories:["杀棋","中局","未分类"],nextCursor:params.has("cursor") ? null : "page2"};
   });
@@ -376,6 +380,8 @@ it("filters paged sources, merges duplicate identities, blocks existing items, a
   await screen.findByText("同局面不同答案");
   expect(screen.queryByText("原题")).toBeNull();
   fireEvent.click(within(screen.getByRole("dialog",{name:"选择平台／机构题目"})).getByRole("button",{name:"‹ 返回",exact:true}));
+  await screen.findByRole("dialog",{name:"选择题库／书本"});
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button",{name:"‹ 返回",exact:true}));
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(f.directory.items.map(q=>q.id)).toEqual(["q"]);
   expect(f.request.mock.calls.some(([,init])=>init?.method==="PATCH")).toBe(false);
@@ -415,4 +421,16 @@ it("waits for cold source preparation and cancels polling when returning",async(
   const before=count;
   await new Promise(resolve=>setTimeout(resolve,300));
   expect(count).toBe(before);
+});
+
+it("opens books first and never loads all-platform records before choosing a book",async()=>{
+  const f=fixture();
+  await enter();
+  fireEvent.click(screen.getByRole("button",{name:"＋添加题目"}));
+  fireEvent.click(screen.getByRole("button",{name:"从平台／机构题库选题"}));
+  await screen.findByRole("button",{name:/测试题库.*进入选题/});
+  expect(f.request.mock.calls.some(([path])=>path.startsWith(B+"/sources?"))).toBe(false);
+  expect(screen.queryByLabelText("题型分类")).toBeNull();
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button",{name:"‹ 返回",exact:true}));
+  expect(screen.queryByRole("dialog")).toBeNull();
 });

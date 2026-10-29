@@ -3,7 +3,7 @@ import { appendManualVariation, manualPathExists } from "./variationEditing";
 import type { StudyManualBranch } from "./StudyManualTree";
 import { moveNotationLabel } from "./moveNotation";
 
-export type ManualContinuation = { id: string; move: string; notation: string; selected: boolean; path: string[] };
+export type ManualContinuation = { id: string; move: string; notation: string; selected: boolean; isMainline: boolean; path: string[] };
 
 /** Build direct children from complete paths, including nested/common-prefix variations. */
 export function manualContinuations(moves: string[], notation: string[], branches: StudyManualBranch[], path: string[], activeMoves = moves, activeNotation = notation): ManualContinuation[] {
@@ -26,7 +26,7 @@ export function manualContinuations(moves: string[], notation: string[], branche
       if (line.id === "mainline") { existing.id = line.id; existing.path = line.moves; }
       continue;
     }
-    result.push({ id: line.id, move, notation: moveNotationLabel(line.notation[path.length]), selected: activeMoves[path.length] === move, path: line.moves });
+    result.push({ id: line.id, move, notation: moveNotationLabel(line.notation[path.length]), selected: activeMoves[path.length] === move, isMainline: path.every((item, index) => moves[index] === item) && moves[path.length] === move, path: line.moves });
   }
   return result;
 }

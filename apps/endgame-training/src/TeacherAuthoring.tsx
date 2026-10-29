@@ -636,14 +636,73 @@ function TitleSheet({title,value,busy,error,onClose,onSubmit}:{title:string;valu
   </form></div>;
 }
 
-function SourcePicker({api,kind,directoryId,existing,onClose,onChoose}:{
-  api:AuthoringApi;
-  kind:"problems"|"games";
-  directoryId?:string;
-  existing:AuthoredQuestion[];
-  onClose():void;
-  onChoose(item:AuthoringSource):Promise<void>;
-}) {
+type SourceLibrary = { id: string; title: string; sourceScope: string };
+type SourcePickerProps = {
+  api: AuthoringApi;
+  kind: "problems" | "games";
+  directoryId?: string;
+  existing: AuthoredQuestion[];
+  onClose(): void;
+  onChoose(item: AuthoringSource): Promise<void>;
+};
+function SourcePicker(props: SourcePickerProps) {
+  const {api,kind,onClose} = props;
+  const [library,setLibrary] = useState<SourceLibrary>();
+  const [q,setQ] = useState(""), [reload,setReload] = useState(0);
+  const [items,setItems] = useState<SourceLibrary[]>([]);
+  const [nextCursor,setNextCursor] = useState<string|null>();
+  const [busy,setBusy] = useState(true), [error,setError] = useState("");
+  const generation = useRef(0), paginationLock = useRef(false);
+  const list = useRef<HTMLDivElement>(null);
+  async function read(after?:string,signal?:AbortSignal) {
+    const params = new URLSearchParams({kind,q:q.trim(),limit:"30"});
+    if(after)params.set("cursor",after);
+    return api.request<{items:SourceLibrary[];nextCursor?:string|null}>(BASE+"/source-libraries?"+params,{signal});
+  }
+  useEffect(()=>{
+    const epoch=++generation.current, controller=new AbortController();
+    setItems([]);setNextCursor(undefined);setError("");setBusy(true);paginationLock.current=false;
+    list.current?.scrollTo?.({top:0});
+    const timer=setTimeout(()=>{
+      void read(undefined,controller.signal).then(page=>{
+        if(epoch===generation.current){setItems(page.items);setNextCursor(page.nextCursor??null);}
+      }).catch(reason=>{if(epoch===generation.current)setError(message(reason));})
+        .finally(()=>{if(epoch===generation.current)setBusy(false);});
+    },200);
+    return ()=>{clearTimeout(timer);controller.abort();generation.current++;};
+  },[api,kind,q,reload]);
+  async function loadMore() {
+    if(!nextCursor || busy || paginationLock.current)return;
+    const epoch=generation.current,after=nextCursor;
+    paginationLock.current=true;setBusy(true);setError("");
+    try {
+      const page=await read(after);
+      if(epoch!==generation.current)return;
+      if(page.nextCursor===after)throw new Error("分页读取异常，请重新搜索后重试");
+      setItems(old=>{const seen=new Set(old.map(item=>item.id));return [...old,...page.items.filter(item=>!seen.has(item.id))];});
+      setNextCursor(page.nextCursor??null);
+    } catch(reason){if(epoch===generation.current)setError(message(reason));}
+    finally{if(epoch===generation.current){paginationLock.current=false;setBusy(false);}}
+  }
+  if(library)return <SourceRecordPicker {...props} library={library} onClose={()=>setLibrary(undefined)}/>;
+  const title=kind==="games" ? "选择棋谱库／书本" : "选择题库／书本";
+  return <div className="authoring-overlay"><section className="authoring-sheet authoring-picker" role="dialog" aria-modal="true" aria-label={title}>
+    <header className="authoring-picker-header"><button type="button" onClick={onClose}>‹ 返回</button><h3>{title}</h3></header>
+    <input aria-label="搜索题库或书本" placeholder="输入题库或书本名称" value={q} onChange={event=>setQ(event.target.value)}/>
+    {error && <p role="alert" className="authoring-error">{error}<button type="button" disabled={busy} onClick={()=>setReload(value=>value+1)}>重试</button></p>}
+    <div className="authoring-source-list authoring-library-list" ref={list} aria-busy={busy}>
+      {items.map(item=><button type="button" key={item.id} onClick={()=>setLibrary(item)}>
+        <span className="authoring-library-icon" aria-hidden="true">▤</span>
+        <span className="authoring-source-copy"><strong>{item.title}</strong><small>{item.sourceScope} · {kind==="games" ? "查看棋谱" : "进入选题"}</small></span>
+        <span className="authoring-library-arrow" aria-hidden="true">›</span>
+      </button>)}
+      {!items.length && <p role="status">{busy ? "正在读取题库…" : error ? "请重试" : "没有匹配的题库或书本"}</p>}
+      {nextCursor && <button type="button" disabled={busy} onClick={()=>void loadMore()}>{busy ? "正在读取…" : "加载更多题库"}</button>}
+    </div>
+  </section></div>;
+}
+
+function SourceRecordPicker({api,kind,directoryId,existing,onClose,onChoose,library}:SourcePickerProps & {library:SourceLibrary}) {
   const [q,setQ] = useState(""), [category,setCategory] = useState(""), [reload,setReload] = useState(0);
   const [items,setItems] = useState<AuthoringSource[]>([]), [categories,setCategories] = useState<string[]>([]);
   const [preparing,setPreparing] = useState(false);
@@ -652,7 +711,7 @@ function SourcePicker({api,kind,directoryId,existing,onClose,onChoose}:{
   const list = useRef<HTMLDivElement>(null);
   const existingIds = new Set(existing.map(item => `${itemRef(item).kind}:${itemRef(item).subjectId}`));
   async function readPage(after?:string, signal?:AbortSignal) {
-    const params = new URLSearchParams({kind,q:q.trim(),limit:"30"});
+    const params = new URLSearchParams({kind,q:q.trim(),limit:"30",libraryId:library.id});
     if (category) params.set("category",category);
     if (directoryId) params.set("directoryId",directoryId);
     if (after) params.set("cursor",after);
@@ -681,7 +740,7 @@ function SourcePicker({api,kind,directoryId,existing,onClose,onChoose}:{
     }
     timer=setTimeout(()=>void load(),200);
     return ()=>{clearTimeout(timer);controller.abort();request.current++;};
-  },[q,category,kind,directoryId,api,reload]);
+  },[q,category,kind,directoryId,library.id,api,reload]);
   async function loadMore() {
     if (!nextCursor || busy || choosing || paginationLock.current) return;
     const epoch=request.current, after=nextCursor;
@@ -704,6 +763,7 @@ function SourcePicker({api,kind,directoryId,existing,onClose,onChoose}:{
   }
   return <div className="authoring-overlay"><section className="authoring-sheet authoring-picker" role="dialog" aria-modal="true" aria-label={kind === "games" ? "选择已有棋谱" : "选择平台／机构题目"}>
     <header className="authoring-picker-header"><button type="button" disabled={choosing} onClick={onClose}>‹ 返回</button><h3>{kind === "games" ? "选择已有棋谱" : "选择平台／机构题目"}</h3></header>
+    <p className="authoring-picker-book">{library.title}</p>
     {kind === "problems" && <label className="authoring-picker-category">题型分类<select aria-label="题型分类" value={category} disabled={choosing} onChange={event=>setCategory(event.target.value)}><option value="">全部</option>{categories.map(value=><option key={value} value={value}>{value}</option>)}</select></label>}
     <input aria-label="搜索题目或棋谱" placeholder="输入名称搜索" value={q} disabled={choosing} onChange={event=>setQ(event.target.value)}/>
     {error && <p role="alert" className="authoring-error">{error}<button type="button" disabled={busy || choosing} onClick={()=>setReload(value=>value+1)}>重试</button></p>}

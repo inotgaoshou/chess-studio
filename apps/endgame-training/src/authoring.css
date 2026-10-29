@@ -290,12 +290,15 @@
   gap: 8px;
 }
 .authoring-source-list button {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 12px;
   text-align: left;
 }
 .authoring-source-list svg {
+  display: block;
+  height: auto;
   width: 90px;
   flex-shrink: 0;
 }
@@ -419,3 +422,8 @@
 .authoring-source-copy { min-width: 0; display: grid; gap: 5px; overflow-wrap: anywhere; }
 .authoring-source-copy small { color: #61776a; font-size: 12px; }
 .authoring-source-list button:disabled { opacity: .65; }
+
+.authoring-picker-book { flex-shrink: 0; margin: 0; color: #61776a; overflow-wrap: anywhere; }
+.authoring-library-list > button { min-height: 78px; }
+.authoring-library-icon { flex-shrink: 0; font-size: 32px; color: #397958; }
+.authoring-library-arrow { margin-left: auto; flex-shrink: 0; font-size: 24px; }
