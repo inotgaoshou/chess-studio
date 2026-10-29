@@ -128,6 +128,76 @@ it("records a position, preserves a piece on repeated move selection, flips only
   expect(f.directory.items[1].body.solution).toEqual([]);
 });
 
+it("keeps generals on the board and removes both general palette options", async () => {
+  const f=fixture();await newPosition();
+  expect(screen.queryByRole("button",{name:"选择黑将",exact:true})).toBeNull();
+  expect(screen.queryByRole("button",{name:"选择红帅",exact:true})).toBeNull();
+  fireEvent.click(screen.getByRole("button",{name:"清空",exact:true}));
+  fireEvent.click(screen.getByRole("button",{name:"删除",exact:true}));
+  fireEvent.click(screen.getByRole("button",{name:"1行5列将",exact:true}));
+  fireEvent.click(screen.getByRole("button",{name:"10行5列帅",exact:true}));
+  expect(screen.getByRole("button",{name:"1行5列将",exact:true})).toBeTruthy();
+  expect(screen.getByRole("button",{name:"10行5列帅",exact:true})).toBeTruthy();
+  fireEvent.click(screen.getByRole("button",{name:"选择红车",exact:true}));
+  fireEvent.click(screen.getByRole("button",{name:"1行5列将",exact:true}));
+  expect(screen.getByRole("button",{name:"1行5列将",exact:true})).toBeTruthy();
+  fireEvent.click(screen.getByRole("button",{name:"完成摆棋",exact:true}));
+  await screen.findByText("1. 训练题");
+  expect(f.directory.items[0].body.startingFen).toBe(EMPTY_FEN);
+});
+
+it("moves generals only within their own palace, protects them from moved pieces, and supports undo after flipping",async()=>{
+  fixture();await newPosition();fireEvent.click(screen.getByRole("button",{name:"清空",exact:true}));
+  fireEvent.click(screen.getByRole("button",{name:"选择红车",exact:true}));
+  fireEvent.click(screen.getByRole("button",{name:"2行1列空位",exact:true}));
+  fireEvent.click(screen.getByRole("button",{name:"移动",exact:true}));
+  fireEvent.click(screen.getByRole("button",{name:"2行1列车",exact:true}));
+  fireEvent.click(screen.getByRole("button",{name:"1行5列将",exact:true}));
+  expect(screen.getByRole("button",{name:"1行5列将",exact:true})).toBeTruthy();
+  expect(screen.getByRole("button",{name:"2行1列车",exact:true})).toBeTruthy();
+  fireEvent.click(screen.getByRole("button",{name:"移动",exact:true}));
+  fireEvent.click(screen.getByRole("button",{name:"1行5列将",exact:true}));
+  fireEvent.click(screen.getByRole("button",{name:"4行5列空位",exact:true}));
+  expect(screen.getByRole("button",{name:"1行5列将",exact:true})).toBeTruthy();
+  fireEvent.click(screen.getByRole("button",{name:"2行5列空位",exact:true}));
+  expect(screen.getByRole("button",{name:"2行5列将",exact:true})).toBeTruthy();
+  fireEvent.click(screen.getByRole("button",{name:"翻转",exact:true}));
+  fireEvent.click(screen.getByRole("button",{name:"10行5列帅",exact:true}));
+  fireEvent.click(screen.getByRole("button",{name:"7行5列空位",exact:true}));
+  expect(screen.getByRole("button",{name:"10行5列帅",exact:true})).toBeTruthy();
+  fireEvent.click(screen.getByRole("button",{name:"8行6列空位",exact:true}));
+  expect(screen.getByRole("button",{name:"8行6列帅",exact:true})).toBeTruthy();
+  fireEvent.click(screen.getByRole("button",{name:"撤销",exact:true}));
+  expect(screen.getByRole("button",{name:"10行5列帅",exact:true})).toBeTruthy();
+  expect(screen.getByRole("button",{name:"2行5列将",exact:true})).toBeTruthy();
+});
+
+it("repairs a missing general without overwriting imported pieces or changing the side to move",async()=>{
+  localStorage.setItem("qixi.authoring:scope:offline",JSON.stringify({revision:0,directoryId:"d",body:{title:"缺将草稿",startingFen:"4r4/9/9/9/9/9/9/9/9/R3K4 b - - 0 1",note:"",solution:[]}}));
+  const f=fixture();fireEvent.click(await screen.findByRole("button",{name:"继续编辑：缺将草稿"}));
+  fireEvent.click(await screen.findByRole("button",{name:"完成摆棋",exact:true}));
+  await screen.findByText("将帅须保留在棋盘上，请先补齐将帅");
+  expect(f.request.mock.calls.some(([,init])=>init?.method==="PUT")).toBe(false);
+  fireEvent.click(screen.getByRole("button",{name:"补齐将帅",exact:true}));
+  expect(screen.getByRole("button",{name:"1行5列车",exact:true})).toBeTruthy();
+  expect(screen.getByRole("button",{name:"1行4列将",exact:true})).toBeTruthy();
+  expect(screen.getByRole("button",{name:"10行1列车",exact:true})).toBeTruthy();
+  expect(screen.getByRole("button",{name:"黑先",exact:true})).toBeTruthy();
+  fireEvent.click(screen.getByRole("button",{name:"完成摆棋",exact:true}));
+  await screen.findByText("1. 缺将草稿");
+  expect(f.directory.items[0].body.startingFen).toBe("3kr4/9/9/9/9/9/9/9/9/R3K4 b - - 0 1");
+});
+
+it("allows correcting an extra recognized general but protects the final one",async()=>{
+  localStorage.setItem("qixi.authoring:scope:offline",JSON.stringify({revision:0,directoryId:"d",body:{title:"重复将草稿",startingFen:"3kk4/9/9/9/9/9/9/9/9/4K4 w - - 0 1",note:"",solution:[]}}));
+  fixture();fireEvent.click(await screen.findByRole("button",{name:"继续编辑：重复将草稿"}));
+  fireEvent.click(await screen.findByRole("button",{name:"删除",exact:true}));
+  fireEvent.click(screen.getByRole("button",{name:"1行4列将",exact:true}));
+  expect(screen.getByRole("button",{name:"1行4列空位",exact:true})).toBeTruthy();
+  fireEvent.click(screen.getByRole("button",{name:"1行5列将",exact:true}));
+  expect(screen.getByRole("button",{name:"1行5列将",exact:true})).toBeTruthy();
+});
+
 it("opens the directory assignment sheet directly without repeating organization or question selection", async () => {
   fixture([question()]);
   fireEvent.click(await screen.findByRole("button", {name:"布置杀棋训练"}));
@@ -314,6 +384,26 @@ it("preserves a conflicting offline edit and blocks an unpublished revision from
   expect(
     await screen.findByText(/不可布置：一步杀（有待发布修订）/),
   ).toBeTruthy();
+});
+
+it("shows Chinese answer moves at each position and sends only ICCS data for navigation",async()=>{
+  const q=question();q.body.solution=[{iccs:"h2e2",comment:"",children:[{iccs:"b9c7",comment:"",children:[]}]},{iccs:"b0c2",comment:"",children:[]}];
+  const f=fixture([q]),fallback=f.request.getMockImplementation()!;
+  f.request.mockImplementation(async(path,init)=>{
+    if(path===B+"/board"){
+      const moves=JSON.parse(String(init?.body)).moves;
+      return {fen:START_FEN,moveNotations:moves.length ? {b9c7:"马2进3"} : {h2e2:"炮二平五",b0c2:"马八进七"}};
+    }
+    return fallback(path,init);
+  });
+  await enter();fireEvent.click(screen.getByRole("button",{name:/1. 一步杀/}));
+  fireEvent.click(await screen.findByRole("button",{name:"炮二平五",exact:true}));
+  await screen.findByRole("button",{name:"马2进3",exact:true});
+  expect(f.request.mock.calls.some(([path,init])=>path===B+"/board"&&JSON.parse(String(init?.body)).moves.join(" ")==="h2e2")).toBe(true);
+  expect(screen.queryByRole("button",{name:/h2e2|b9c7|b0c2/})).toBeNull();
+  fireEvent.click(screen.getByRole("button",{name:"起点",exact:true}));
+  await screen.findByRole("button",{name:"炮二平五",exact:true});
+  expect(screen.getByRole("button",{name:"马八进七",exact:true})).toBeTruthy();
 });
 
 it("uses the server verdict for teacher trials without creating student attempts", async () => {

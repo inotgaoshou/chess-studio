@@ -864,6 +864,7 @@ function QuestionEditor({
     [history, setHistory] = useState<string[]>([]),
     [path, setPath] = useState<string[]>([]),
     [fen, setFen] = useState(question.body.startingFen),
+    [moveNotations, setMoveNotations] = useState<{key:string;labels:Record<string,string>}>(),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
@@ -921,19 +922,23 @@ function QuestionEditor({
       }
     }
   }, [body, q.revision, q.id, recognition, conflict]);
+  const boardKey = JSON.stringify([body.startingFen,path]);
   useEffect(() => {
     const n = ++epoch.current;
-    if (mode === "position" || !path.length) {
+    if (mode === "position") {
       setFen(body.startingFen);
       return;
     }
     void api
-      .request<{ fen: string }>(
+      .request<{ fen: string; moveNotations?: Record<string,string> }>(
         BASE + "/board",
         json({ fen: body.startingFen, moves: path }),
       )
       .then((v) => {
-        if (alive.current && n === epoch.current) setFen(v.fen);
+        if (alive.current && n === epoch.current) {
+          setFen(v.fen);
+          setMoveNotations({key:boardKey,labels:v.moveNotations ?? {}});
+        }
       })
       .catch((e) => {
         if (alive.current && n === epoch.current) setError(message(e));
@@ -966,6 +971,7 @@ function QuestionEditor({
     setNotice("");
   }
   function position(next: string) {
+    setError("");
     setHistory((old) => [...old, body.startingFen].slice(-100));
     setSelected(undefined);
     setPath([]);
@@ -980,11 +986,30 @@ function QuestionEditor({
         : null,
     });
   }
+  const missingGenerals = (() => {
+    try {const cells=fenCells(body.startingFen);return ["k", "K"].some(code=>!cells.includes(code));}
+    catch {return false;}
+  })();
+  function restoreGenerals() {
+    const cells = fenCells(body.startingFen);
+    for (const code of ["k", "K"]) {
+      if (cells.includes(code)) continue;
+      const home = code === "k" ? 4 : 85;
+      const palace = Array.from({length:9},(_,i)=>(code === "k" ? 0 : 7)*9+Math.floor(i/3)*9+3+i%3);
+      const target = [home,...palace].find(index=>!cells[index]);
+      if (target == null) {setError("九宫已满，请先移开棋子，再补齐将帅");return;}
+      cells[target] = code;
+    }
+    position(cellsFen(cells, side));
+    setNotice("已补齐将帅，请核对并移动到正确位置");
+  }
   async function save(): Promise<AuthoredQuestion> {
     if (conflict)
       throw new Error(
         "机构题目已被另一端修订，请先另存本机草稿或采用机构最新版本",
       );
+    if (mode === "position" && missingGenerals)
+      throw new Error("将帅须保留在棋盘上，请先补齐将帅");
     if (recognition.pending)
       throw new Error("请先逐格核对识别棋盘和先走方，再确认保存");
     const next = await api.request<AuthoredQuestion>(
@@ -1018,9 +1043,35 @@ function QuestionEditor({
           setSelected(undefined);
           return;
         }
+        if (/[kK]/.test(cells[index])) {
+          setError("将帅须保留在棋盘上，不能被其他棋子覆盖");
+          return;
+        }
+        const moving = cells[selected];
+        if (/[kK]/.test(moving)) {
+          const row = Math.floor(index/9), col = index%9;
+          if (col < 3 || col > 5 || (moving === "k" ? row > 2 : row < 7)) {
+            setError(`${LABELS[moving]}只能在己方九宫内摆放`);
+            return;
+          }
+        }
         cells[index] = cells[selected];
         cells[selected] = "";
         position(cellsFen(cells, side));
+        return;
+      }
+      if (/[kK]/.test(cells[index])) {
+        if (piece === "" && cells.filter(code=>code===cells[index]).length>1) {
+          // Allow correcting duplicate recognition results while keeping one general.
+          cells[index] = "";
+          position(cellsFen(cells, side));
+        } else if (piece === "") {
+          setError("将帅须保留在棋盘上，不能删除；请使用移动调整位置");
+        } else {
+          setPiece("move");
+          setSelected(index);
+          setError("");
+        }
         return;
       }
       const limits: Record<string, number> = {
@@ -1193,7 +1244,7 @@ function QuestionEditor({
           />
           {mode === "position" && (
             <div className="authoring-palette">
-              {["rnbakcp", "RNBAKCP"].map((codes) => (
+              {["rnbacp", "RNBACP"].map((codes) => (
                 <div key={codes}>
                   {[...codes].map((code) => (
                     <button
@@ -1214,6 +1265,7 @@ function QuestionEditor({
                   ))}
                 </div>
               ))}
+              {missingGenerals && <button type="button" disabled={busy} onClick={restoreGenerals}>补齐将帅</button>}
               <div className="authoring-actions">
                 <button
                   aria-pressed={piece === "move"}
@@ -1238,6 +1290,8 @@ function QuestionEditor({
                   onClick={() => {
                     const old = history.at(-1)!;
                     setHistory((h) => h.slice(0, -1));
+                    setSelected(undefined);
+                    setError("");
                     change({ ...body, startingFen: old });
                   }}
                 >
@@ -1268,19 +1322,21 @@ function QuestionEditor({
                   上一步
                 </button>
                 <span>第 {path.length} 半回合</span>
-                {children.map((n) => (
-                  <button
+                {children.map((n) => {
+                  const label=moveNotations?.key===boardKey ? moveNotations.labels[n.iccs] : undefined;
+                  const chinese=label && !/^[a-i][0-9][a-i][0-9]$/i.test(label) ? label : undefined;
+                  return <button
                     key={n.iccs}
-                    disabled={busy}
+                    disabled={busy || !chinese}
                     onClick={() => {
                       setPath((p) => [...p, n.iccs]);
                       setSelected(undefined);
                     }}
                   >
-                    {n.iccs}
+                    {chinese ?? "着法待核对"}
                     {n.comment ? " · 注" : ""}
-                  </button>
-                ))}
+                  </button>;
+                })}
               </div>
               {mode === "answer" && (
                 <div className="authoring-actions">
