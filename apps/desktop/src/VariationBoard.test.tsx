@@ -19,8 +19,8 @@ describe("small calculation board", () => {
     const moves = Array.from({ length: 33 }, (_, index) => `move-${index}`);
     const { onSave } = setup(moves); await ready();
     fireEvent.click(screen.getByRole("button", { name: "推演下一步" }));
-    expect(screen.getByText(/第 1 步／共 33 步/)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "保存整条线路 · 共 33 步" }));
+    expect(screen.getByText(/第 1 步 \/ 共 33 步/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "保存分支" }));
     await waitFor(() => expect(onSave).toHaveBeenCalledWith(moves));
     expect(screen.getByTestId("mini-board").getAttribute("data-fen")).toBe("step b");
   });
@@ -35,31 +35,57 @@ describe("small calculation board", () => {
   it("forks at a manual deviation without attaching the old future and keeps the original selectable", async () => {
     const { onSave } = setup(); await ready();
     fireEvent.click(screen.getByRole("button", { name: "试走 b0c2" })); await ready();
-    fireEvent.click(screen.getByRole("button", { name: "保存整条线路 · 共 1 步" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存分支" }));
     await waitFor(() => expect(onSave).toHaveBeenCalledWith(["b0c2"]));
+    fireEvent.click(screen.getByRole("button", { name: "更多推演操作" }));
     fireEvent.change(screen.getByLabelText("切换临时线路"), { target: { value: "0" } });
-    expect(screen.getByText(/第 0 步／共 2 步/)).toBeTruthy();
+    expect(screen.getByText(/第 0 步 \/ 共 2 步/)).toBeTruthy();
   });
   it("extends a manual line without producing one temporary branch per move", async () => {
     setup([]); await ready();
     fireEvent.click(screen.getByRole("button", { name: "试走 b0c2" })); await ready();
     fireEvent.click(screen.getByRole("button", { name: "试走 a0a1" })); await ready();
     expect(screen.queryByLabelText("切换临时线路")).toBeNull();
-    expect(screen.getByText(/第 2 步／共 2 步/)).toBeTruthy();
+    expect(screen.getByText(/第 2 步 \/ 共 2 步/)).toBeTruthy();
   });
   it("retains the line when saving fails and allows retry", async () => {
     const save = vi.fn().mockRejectedValueOnce(new Error("磁盘写入失败")).mockResolvedValue({ message: "重试成功" });
     setup(undefined, { onSave: save }); await ready();
-    fireEvent.click(screen.getByRole("button", { name: "保存整条线路 · 共 2 步" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存分支" }));
     await screen.findByText("磁盘写入失败");
-    fireEvent.click(screen.getByRole("button", { name: "保存整条线路 · 共 2 步" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存分支" }));
     await screen.findByText("重试成功"); expect(save).toHaveBeenCalledTimes(2);
+  });
+  it("retries the frozen prefix even after the playback cursor changes", async () => {
+    const onSave=vi.fn().mockRejectedValueOnce(new Error("写入失败")).mockResolvedValue({message:"重试成功"});
+    setup(undefined,{onSave}); await ready();
+    fireEvent.click(screen.getByRole("button",{name:"推演下一步"}));
+    fireEvent.click(screen.getByRole("button",{name:"更多推演操作"}));
+    fireEvent.click(screen.getByRole("button",{name:"保存至当前步 · 1 步"}));
+    await screen.findByText("写入失败");
+    fireEvent.click(screen.getByRole("button",{name:"推演终点"}));
+    fireEvent.click(screen.getByRole("button",{name:"重试保存"}));
+    await screen.findByText("重试成功");
+    expect(onSave.mock.calls).toEqual([[["a0a1"]],[["a0a1"]]]);
+  });
+  it("retries a failed copy without writing into the source", async () => {
+    const onSave=vi.fn(),onSaveCopy=vi.fn().mockRejectedValueOnce(new Error("副本保存失败")).mockResolvedValue({message:"副本已保存"});
+    setup(undefined,{onSave,onSaveCopy}); await ready();
+    fireEvent.click(screen.getByRole("button",{name:"更多推演操作"}));
+    fireEvent.click(screen.getByRole("button",{name:"另存到我的棋谱"})); await screen.findByText("副本保存失败");
+    fireEvent.click(screen.getByRole("button",{name:"重试保存"})); await screen.findByText("副本已保存");
+    expect(onSaveCopy).toHaveBeenCalledTimes(2);expect(onSave).not.toHaveBeenCalled();
+  });
+  it("expands before opening more actions from a collapsed panel", async () => {
+    setup(); await ready();fireEvent.click(screen.getByRole("button",{name:"收起小棋盘"}));
+    fireEvent.click(screen.getByRole("button",{name:"更多推演操作"}));
+    expect(screen.getByTestId("mini-board")).toBeTruthy();expect(screen.getByRole("region",{name:"推演更多操作"})).toBeTruthy();
   });
   it("guards duplicate clicks while the persistent save is pending", async () => {
     let finish!: (value: { message: string }) => void;
     const save = vi.fn(() => new Promise<{ message: string }>(resolve => { finish = resolve; }));
     setup(undefined, { onSave: save }); await ready();
-    const button = screen.getByRole("button", { name: "保存整条线路 · 共 2 步" });
+    const button = screen.getByRole("button", { name: "保存分支" });
     fireEvent.click(button); fireEvent.click(button); expect(save).toHaveBeenCalledTimes(1);
     finish({ message: "保存成功" }); await screen.findByText("保存成功");
   });
@@ -71,7 +97,7 @@ describe("small calculation board", () => {
     fireEvent.click(screen.getByRole("button", { name: "收起小棋盘" }));
     expect(screen.queryByTestId("mini-board")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "展开小棋盘" }));
-    expect(screen.getByText(/第 0 步／共 2 步/)).toBeTruthy();
+    expect(screen.getByText(/第 0 步 \/ 共 2 步/)).toBeTruthy();
   });
   it("saves before closing and keeps other unsaved lines available", async () => {
     const onClose = vi.fn(); setup(undefined, { onClose }); await ready();
@@ -84,7 +110,7 @@ describe("small calculation board", () => {
     const props = { title: "原候选", base, initialMoves: ["a0a1"], validate: async (moves: string[]) => moves.map(notation => ({ ...base, notation })), onSave: vi.fn(), onClose: vi.fn(), renderBoard: () => null };
     const view = render(<VariationBoard {...props}/>); await ready();
     view.rerender(<VariationBoard {...props} initialMoves={["b0c2", "b9c7"]}/>);
-    expect(screen.getByRole("button", { name: "保存整条线路 · 共 1 步" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "保存分支" })).toBeTruthy();
   });
 });
 

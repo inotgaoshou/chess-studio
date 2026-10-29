@@ -1,0 +1,12 @@
+.manual-branch-strip { box-sizing:border-box; display:flex; align-items:center; gap:8px; width:100%; min-width:0; padding:4px 8px; color:#b7c5bb; font:12px/1.3 system-ui,sans-serif; }
+.manual-branch-strip > span { flex:none; }
+.manual-branch-strip > div { min-width:0; display:flex; gap:5px; overflow-x:auto; overscroll-behavior:contain; scrollbar-width:thin; }
+.manual-branch-strip button { box-sizing:border-box; display:flex; flex:none; align-items:center; gap:5px; min-height:36px; padding:4px 8px; border:1px solid #435149; border-radius:7px; background:transparent; color:inherit; font:inherit; white-space:nowrap; cursor:pointer; }
+.manual-branch-strip button b { font-weight:600; }
+.manual-branch-strip button[aria-current=true] { background:#31573e; border-color:#80a78e; color:#f5fff7; }
+.training-app .manual-branch-strip,.app-shell .workspace.layout-compact .manual-branch-strip { color:#52705c; }
+.training-app .manual-branch-strip button,.app-shell .workspace.layout-compact .manual-branch-strip button { border-color:#d5e2d7; background:#f9fcf7; }
+.training-app .manual-branch-strip button[aria-current=true],.app-shell .workspace.layout-compact .manual-branch-strip button[aria-current=true] { color:#215538; background:#e5f1e5; border-color:#8eb499; }
+
+.board-main-stack > .manual-branch-strip { flex:none; }
+.study-branch-navigation { min-width:0; }

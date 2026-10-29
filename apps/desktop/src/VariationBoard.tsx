@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { branchAfter, clampPanel, movesToSave, sameMoves } from "../../../packages/variation-session";
+import { Bookmark, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Ellipsis, LoaderCircle, Minus, Pause, Play, Plus, X } from "lucide-react";
 import "./variationBoard.css";
 
 export type VariationSquare = { row: number; col: number };
@@ -37,10 +38,14 @@ export function VariationBoard<F extends VariationFrame>(props: VariationBoardPr
   const [busy, setBusy] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [retrySave, setRetrySave] = useState<(() => Promise<void>) | undefined>(undefined);
   const [receipt, setReceipt] = useState<VariationReceipt>();
   const [saved, setSaved] = useState<string[]>([]);
   const [position, setPosition] = useState({ x: 12, y: 80 });
   const panel = useRef<HTMLElement>(null);
+  const boardArea = useRef<HTMLDivElement>(null);
+  const boardCanvas = useRef<HTMLDivElement>(null);
+  const placed = useRef(false);
   const viewportBounds = useRef<HTMLDivElement>(null);
   const constrainPosition = (x: number, y: number, width: number, height: number) => {
     const safe = viewportBounds.current?.getBoundingClientRect();
@@ -54,6 +59,7 @@ export function VariationBoard<F extends VariationFrame>(props: VariationBoardPr
   const line = lines.find(item => item.id === active) ?? lines[0];
   const frame = cursor ? line.frames[cursor - 1] ?? base : base;
   const key = (moves: string[]) => JSON.stringify(moves);
+  const sessionState = useRef({ lines, saved }); sessionState.current = { lines, saved };
   const dirty = lines.some(item => item.moves.length && !saved.includes(key(item.moves)));
 
   useEffect(() => {
@@ -67,6 +73,24 @@ export function VariationBoard<F extends VariationFrame>(props: VariationBoardPr
   }, []);
 
   useEffect(() => {
+    const area = boardArea.current, canvas = boardCanvas.current;
+    if (!area || !canvas) return;
+    // WKWebView can retain stale container-query lengths across device rotation.
+    // Measure the available content box so both axes fit after every native resize.
+    const fit = (width: number, height: number) => {
+      canvas.style.width = `${Math.max(0, Math.min(480, width, height * 1120 / 1240))}px`;
+    };
+    const padding = getComputedStyle(area);
+    fit(area.clientWidth - parseFloat(padding.paddingLeft) - parseFloat(padding.paddingRight), area.clientHeight - parseFloat(padding.paddingTop) - parseFloat(padding.paddingBottom));
+    const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(entries => {
+      const box = entries[0]?.contentRect;
+      if (box) fit(box.width, box.height);
+    });
+    observer?.observe(area);
+    return () => observer?.disconnect();
+  }, [collapsed]);
+
+  useEffect(() => {
     if (!playing || collapsed || busy || saving) return;
     if (cursor >= line.moves.length) { setPlaying(false); return; }
     const timer = window.setTimeout(() => setCursor(step => step + 1), 750);
@@ -77,7 +101,12 @@ export function VariationBoard<F extends VariationFrame>(props: VariationBoardPr
     const constrain = () => {
       if (!panel.current) return;
       const rect = panel.current.getBoundingClientRect();
-      setPosition(old => constrainPosition(old.x, old.y, rect.width, rect.height));
+      setPosition(old => {
+        const safe = viewportBounds.current?.getBoundingClientRect();
+        const initial = mobile && !placed.current && safe?.width;
+        placed.current = true;
+        return constrainPosition(initial ? safe.right - rect.width : old.x, initial ? safe.bottom - rect.height : old.y, rect.width, rect.height);
+      });
     };
     const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(constrain);
     if (panel.current) observer?.observe(panel.current);
@@ -135,24 +164,24 @@ export function VariationBoard<F extends VariationFrame>(props: VariationBoardPr
     const moves = movesToSave(line.moves, partial ? cursor : undefined);
     if (!moves.length) return;
     const request = generation.current;
-    lock.current = true; setSaving(true); setPlaying(false); setError(""); setMore(false);
+    lock.current = true; setSaving(true); setPlaying(false); setError(""); setRetrySave(undefined); setMore(false);
     try {
       const result = await (copy ? callbacks.current.onSaveCopy!(moves) : callbacks.current.onSave(moves));
       if (request !== generation.current) return;
       setReceipt(result); setSaved(items => [...new Set([...items, key(moves)])]);
       if (closeAfter) {
-        const othersDirty = lines.some(item => item.id !== line.id && item.moves.length && !saved.includes(key(item.moves)));
+        const othersDirty = sessionState.current.lines.some(item => item.moves.length && key(item.moves) !== key(moves) && !sessionState.current.saved.includes(key(item.moves)));
         if (othersDirty) setError("当前线路已保存，其他临时线路尚未保存；可继续切换保存，或放弃后关闭。");
         else onClose();
       }
       setClosing(false);
-    } catch (reason) { if (request === generation.current) setError(reason instanceof Error ? reason.message : "保存失败，临时线路已保留，请重试"); }
+    } catch (reason) { if (request === generation.current) { setError(reason instanceof Error ? reason.message : "保存失败，临时线路已保留，请重试"); setRetrySave(() => () => save(partial, copy, closeAfter)); } }
     finally { if (request === generation.current) { lock.current = false; setSaving(false); } }
   }
 
   const navigate = (step: number) => { if (lock.current || busy) return; setPlaying(false); setSelected(undefined); setCursor(Math.max(0, Math.min(line.moves.length, step))); };
   const style: CSSProperties = floating && !expanded ? { left: position.x, top: position.y } : {};
-  return <aside ref={panel} className={`variation-board ${mobile ? "is-mobile" : "is-desktop"} ${light ? "is-light" : ""} ${floating ? "is-floating" : "is-docked"} ${collapsed ? "is-collapsed" : ""} ${expanded ? "is-expanded" : ""}`} style={style} aria-label="小棋盘推演">
+  return <aside ref={panel} className={`variation-board ${mobile ? "is-mobile mobile-study-pieces" : "is-desktop"} ${light ? "is-light" : ""} ${floating ? "is-floating" : "is-docked"} ${collapsed ? "is-collapsed" : ""} ${expanded ? "is-expanded" : ""}`} style={style} aria-label="小棋盘推演">
     <div ref={viewportBounds} className="variation-safe-bounds" aria-hidden="true"/>
     <header className="variation-board-header" onPointerDown={event => {
       if (!floating || expanded || (event.target as HTMLElement).closest("button,select")) return;
@@ -163,37 +192,43 @@ export function VariationBoard<F extends VariationFrame>(props: VariationBoardPr
       const stop = () => { target.removeEventListener("pointermove", update); target.removeEventListener("pointerup", stop); target.removeEventListener("pointercancel", stop); };
       target.addEventListener("pointermove", update); target.addEventListener("pointerup", stop); target.addEventListener("pointercancel", stop);
     }}>
-      <strong title={props.title}>小棋盘 · {props.title}</strong>
-      <button type="button" className="variation-save" disabled={busy || saving || !line.moves.length} onClick={() => void save()}>{saving ? "保存中…" : `${props.saveLabel ?? "保存整条线路"} · 共 ${line.moves.length} 步`}</button>
-      <nav><button type="button" aria-label="更多推演操作" aria-expanded={more} onClick={() => setMore(value => !value)}>⋯</button><button type="button" aria-label={collapsed ? "展开小棋盘" : "收起小棋盘"} onClick={() => { setCollapsed(value => !value); setPlaying(false); }}>{collapsed ? "＋" : "−"}</button><button type="button" aria-label="关闭小棋盘" disabled={saving} onClick={requestClose}>×</button></nav>
+      <strong>小棋盘</strong>
+      <button type="button" className="variation-save" aria-label={saving ? "保存中" : props.saveLabel ? "复制后保存" : "保存分支"} title={`${props.saveLabel ?? "保存整条线路"} · 共 ${line.moves.length} 步`} disabled={busy || saving || !line.moves.length} onClick={() => void save()}>{saving ? <LoaderCircle className="variation-saving"/> : <Bookmark/>}<span>{saving ? "保存中" : props.saveLabel ? "复制后保存" : "保存分支"}</span></button>
+      <nav><button type="button" aria-label="更多推演操作" aria-expanded={more} onClick={() => { setCollapsed(false); setMore(value => !value); }}><Ellipsis/></button><button type="button" aria-label={collapsed ? "展开小棋盘" : "收起小棋盘"} onClick={() => { setCollapsed(value => !value); setPlaying(false); setMore(false); }}>{collapsed ? <Plus/> : <Minus/>}</button><button type="button" aria-label="关闭小棋盘" disabled={saving} onClick={requestClose}><X/></button></nav>
     </header>
-    {more && <nav className="variation-more">
-      <button type="button" disabled={!cursor || busy || saving} onClick={() => void save(true)}>保存至当前步 · {cursor} 步</button>
-      {props.onSaveCopy && <button type="button" disabled={!line.moves.length || busy || saving} onClick={() => void save(false, true)}>另存到我的棋谱</button>}
-      <button type="button" onClick={() => { setFlipped(value => !value); setMore(false); }}>翻转棋盘</button>
-      {!mobile && <button type="button" onClick={() => { setFloating(value => !value); setMore(false); }}>{floating ? "并排显示" : "悬浮显示"}</button>}
-      <button type="button" onClick={() => { setExpanded(value => !value); setMore(false); }}>{expanded ? "恢复大小" : "展开查看"}</button>
-    </nav>}
-    {!collapsed && <div className="variation-board-content">
-      <div className="variation-board-canvas">{props.renderBoard(frame, { flipped, selected, onSquare: clickSquare, onMove: (from, to) => void move(from, to) })}</div>
-      <p className="variation-board-progress">第 {cursor} 步／共 {line.moves.length} 步 <span>{frame.fen.split(/\s+/)[1] === "b" ? "黑方" : "红方"}行棋</span></p>
-      <input className="variation-progress-slider" aria-label="推演进度" type="range" min={0} max={line.moves.length} value={cursor} disabled={busy || saving} onChange={event => navigate(Number(event.target.value))}/>
-      <nav className="variation-playback" aria-label="推演回放">
-        <button type="button" aria-label="推演起点" disabled={!cursor || busy || saving} onClick={() => navigate(0)}>⏮</button>
-        <button type="button" aria-label="推演上一步" disabled={!cursor || busy || saving} onClick={() => navigate(cursor - 1)}>‹</button>
-        <button type="button" aria-label={playing ? "暂停推演" : "播放推演"} disabled={!line.moves.length || busy || saving} onClick={() => { if (!playing && cursor === line.moves.length) setCursor(0); setPlaying(value => !value); }}>{playing ? "暂停" : "播放"}</button>
-        <button type="button" aria-label="推演下一步" disabled={cursor === line.moves.length || busy || saving} onClick={() => navigate(cursor + 1)}>›</button>
-        <button type="button" aria-label="推演终点" disabled={cursor === line.moves.length || busy || saving} onClick={() => navigate(line.moves.length)}>⏭</button>
-      </nav>
-      {lines.length > 1 && <label className="variation-line-picker">临时线路<select aria-label="切换临时线路" value={active} disabled={busy || saving} onChange={event => { const id = Number(event.target.value); setActive(id); navigate(0); setReceipt(undefined); }}>
+    {more && <section className="variation-more" aria-label="推演更多操作">
+      <strong className="variation-source-title">{props.title}</strong>
+      <p>当前线路共 {line.moves.length} 步，顶部保存将保留整条线路。</p>
+      <div className="variation-more-actions">
+        <button type="button" disabled={!cursor || busy || saving} onClick={() => void save(true)}>保存至当前步 · {cursor} 步</button>
+        {props.onSaveCopy && <button type="button" disabled={!line.moves.length || busy || saving} onClick={() => void save(false, true)}>另存到我的棋谱</button>}
+        <button type="button" onClick={() => { setFlipped(value => !value); setMore(false); }}>翻转棋盘</button>
+        {!mobile && <button type="button" onClick={() => { setFloating(value => !value); setMore(false); }}>{floating ? "并排显示" : "悬浮显示"}</button>}
+        <button type="button" onClick={() => { setExpanded(value => !value); setMore(false); }}>{expanded ? "恢复大小" : "展开查看"}</button>
+      </div>
+      {lines.length > 1 && <label className="variation-line-picker">临时线路<select aria-label="切换临时线路" value={active} disabled={busy || saving} onChange={event => { const id = Number(event.target.value); setActive(id); navigate(0); setReceipt(undefined); setMore(false); }}>
         {lines.map((item, index) => <option key={item.id} value={item.id}>{index === 0 ? "原线路" : `推演 ${index}`} · {item.moves.length} 步{saved.includes(key(item.moves)) ? " · 已保存" : ""}</option>)}
       </select></label>}
-      <div className="variation-moves">{line.frames.map((item, index) => <button type="button" key={index} className={cursor === index + 1 ? "active" : ""} disabled={busy || saving} onClick={() => navigate(index + 1)}>{index + 1}. {item.notation ?? line.moves[index]}</button>)}</div>
+      <div className="variation-moves">{line.frames.map((item, index) => <button type="button" key={index} className={cursor === index + 1 ? "active" : ""} disabled={busy || saving} onClick={() => { navigate(index + 1); setMore(false); }}>{index + 1}. {item.notation ?? line.moves[index]}</button>)}</div>
       <small>点棋子再点目标位置可试走；点击保存才写入原棋谱。</small>
-    </div>}
+    </section>}
+    {!collapsed && <>
+      <div ref={boardArea} className="variation-board-content"><div ref={boardCanvas} className="variation-board-canvas">{props.renderBoard(frame, { flipped, selected, onSquare: clickSquare, onMove: (from, to) => void move(from, to) })}</div></div>
+      <footer className="variation-board-footer">
+        <p className="variation-board-progress">第 {cursor} 步 / 共 {line.moves.length} 步 <span>{frame.fen.split(/\s+/)[1] === "b" ? "黑方" : "红方"}行棋</span></p>
+        <input className="variation-progress-slider" aria-label="推演进度" type="range" min={0} max={line.moves.length} value={cursor} disabled={busy || saving} onChange={event => navigate(Number(event.target.value))}/>
+        <nav className="variation-playback" aria-label="推演回放">
+          <button type="button" aria-label="推演起点" disabled={!cursor || busy || saving} onClick={() => navigate(0)}><ChevronsLeft/></button>
+          <button type="button" aria-label="推演上一步" disabled={!cursor || busy || saving} onClick={() => navigate(cursor - 1)}><ChevronLeft/></button>
+          <button type="button" className="variation-play-toggle" aria-label={playing ? "暂停推演" : "播放推演"} disabled={!line.moves.length || busy || saving} onClick={() => { if (!playing && cursor === line.moves.length) setCursor(0); setPlaying(value => !value); }}>{playing ? <Pause/> : <Play/>}</button>
+          <button type="button" aria-label="推演下一步" disabled={cursor === line.moves.length || busy || saving} onClick={() => navigate(cursor + 1)}><ChevronRight/></button>
+          <button type="button" aria-label="推演终点" disabled={cursor === line.moves.length || busy || saving} onClick={() => navigate(line.moves.length)}><ChevronsRight/></button>
+        </nav>
+      </footer>
+    </>}
     {busy && <p role="status">正在校验推演线路…</p>}
     {receipt && <p className="variation-receipt" role="status">{receipt.message}{receipt.view && <button type="button" onClick={() => { setPlaying(false); void Promise.resolve(receipt.view!()).catch(reason => setError(String(reason))); }}>查看已保存分支</button>}</p>}
-    {error && <p className="variation-error" role="alert">{error}</p>}
+    {error && <p className="variation-error" role="alert">{error}{retrySave && <button type="button" disabled={busy || saving || !line.moves.length} onClick={() => void retrySave()}>重试保存</button>}</p>}
     {closing && <section className="variation-close-confirm" role="alertdialog" aria-label="保留未保存推演"><p>还有未保存的临时线路。</p><button type="button" disabled={busy || saving || !line.moves.length} onClick={() => void save(false, false, true)}>保存当前线路</button><button type="button" disabled={saving} onClick={onClose}>放弃并关闭</button><button type="button" onClick={() => setClosing(false)}>继续研究</button></section>}
   </aside>;
 }

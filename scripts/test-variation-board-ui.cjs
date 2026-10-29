@@ -18,6 +18,13 @@ async function bounds(panel) {
   const screen=await panel.page().evaluate(()=>({width:innerWidth,height:innerHeight}));
   assert(rect.x>=0&&rect.y>=0&&rect.x+rect.width<=screen.width+1&&rect.y+rect.height<=screen.height+1,`panel outside viewport: ${JSON.stringify(rect)}`);
   assert(await panel.locator('header button').first().evaluate(el=>{const r=el.getBoundingClientRect();return !!document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.closest('button');}),'header must receive taps');
+  if (!await panel.evaluate(el=>el.classList.contains('is-collapsed'))) {
+    await panel.page().waitForFunction(()=>{
+      const panel=document.querySelector('aside[aria-label="小棋盘推演"]');
+      const area=panel.querySelector('.variation-board-content').getBoundingClientRect(),board=panel.querySelector('.variation-board-canvas').getBoundingClientRect();
+      return board.width>0&&board.left>=area.left-1&&board.right<=area.right+1&&board.top>=area.top-1&&board.bottom<=area.bottom+1;
+    });
+  }
 }
 (async()=>{
 const browser=await(process.env.TEST_WEBKIT?webkit.launch({headless:true}):chromium.launch({channel:'chrome',headless:true}));
@@ -36,25 +43,51 @@ try {
   await page.getByRole('button',{name:'自由推演',exact:true}).click();
   const panel=panelOf(page);await panel.waitFor();
   const small=panel.locator('.xiangqi-board');
-  await step(small,'h0 红马','g2');await panel.getByText('第 1 步／共 1 步',{exact:false}).waitFor();
-  await step(small,'h9 黑马','g7');await panel.getByText('第 2 步／共 2 步',{exact:false}).waitFor();
+  await step(small,'h0 红马','g2');await panel.getByText('第 1 步 \/ 共 1 步',{exact:false}).waitFor();
+  await step(small,'h9 黑马','g7');await panel.getByText('第 2 步 \/ 共 2 步',{exact:false}).waitFor();
   assert.deepEqual((await read(page)).moves,game.moves);assert.deepEqual((await read(page)).branches,[],'preview must never write');
   await panel.getByRole('button',{name:'推演起点',exact:true}).click();
-  await panel.getByRole('button',{name:'保存整条线路 · 共 2 步',exact:true}).click();
-  await panel.getByText(/已保存到/).waitFor();
+  await panel.getByRole('button',{name:'保存分支',exact:true}).click();
+  await panel.getByText(/已保存一支/).waitFor();
   let saved=await read(page);assert.deepEqual(saved.moves,game.moves);assert.equal(saved.cursor,0);assert.deepEqual(saved.comments,game.comments);assert.equal(saved.branches.length,1);assert.deepEqual(saved.branches[0].moves,['h0g2','h9g7']);
-  await panel.getByRole('button',{name:'保存整条线路 · 共 2 步',exact:true}).click();await panel.getByText(/该线路已在棋谱中/).waitFor();assert.equal((await read(page)).branches.length,1);
+  await panel.getByRole('button',{name:'保存分支',exact:true}).click();await panel.getByText(/该线路已保存/).waitFor();assert.equal((await read(page)).branches.length,1);
   await bounds(panel);await page.screenshot({path:output+'/phone-portrait.png'});
+  // Actual CSS geometry, compact header, and both fixed toolbars on small phones.
+  for (const width of [320,390,430]) {
+    await page.setViewportSize({width,height:844});await bounds(panel);
+    const geometry=await panel.evaluate(el=>{
+      const rect=el.getBoundingClientRect(),header=el.querySelector('header').getBoundingClientRect(),footer=el.querySelector('footer').getBoundingClientRect();
+      const square=el.querySelector('.board-square'),piece=el.querySelector('.piece-lift');
+      return {width:rect.width,headerHeight:header.height,footerBottom:footer.bottom,panelBottom:rect.bottom,border:getComputedStyle(square).borderWidth,padding:getComputedStyle(square).padding,pieceRatio:piece.getBoundingClientRect().width/square.getBoundingClientRect().width,buttons:[...el.querySelectorAll('header button')].map(b=>b.getBoundingClientRect().top)};
+    });
+    assert(Math.abs(geometry.width-Math.min(width*.8,360))<2);assert(geometry.headerHeight<=50);
+    assert(Math.max(...geometry.buttons)-Math.min(...geometry.buttons)<2,'header must be one row');
+    assert(geometry.footerBottom<=geometry.panelBottom&&geometry.border==='0px'&&geometry.padding==='0px');
+    assert(Math.abs(geometry.pieceRatio-.946)<.02,'mini board must match the main board piece ratio');
+    await page.screenshot({path:output+`/phone-${width}.png`});
+  }
+  await page.setViewportSize({width:390,height:844});
+  // Branch navigation does not promote the browsed route or reorder saved branches.
+  await panel.getByRole('button',{name:'收起小棋盘'}).click();
+  const strip=page.locator('.manual-bottom-tools').getByRole('navigation',{name:'当前局面分支'});
+  assert.equal(await strip.getByRole('button').count(),2);
+  await strip.getByRole('button',{name:/马二进三/}).click();
+  await board.getByRole('button',{name:'g2 红马',exact:true}).waitFor();
+  assert.deepEqual((await read(page)).moves,game.moves);assert.deepEqual((await read(page)).branches,saved.branches);
+  await page.getByRole('button',{name:'上一步',exact:true}).click();await board.getByRole('button',{name:'h0 红马',exact:true}).waitFor();
+  assert.deepEqual((await read(page)).moves,game.moves);assert.deepEqual((await read(page)).branches,saved.branches);
+  await panel.getByRole('button',{name:'展开小棋盘'}).click();
   // Drag without allowing the fixed header to leave the viewport.
   const title=await panel.locator('header strong').boundingBox();await page.mouse.move(title.x+10,title.y+10);await page.mouse.down();await page.mouse.move(-400,-400);await page.mouse.up();await bounds(panel);
   await panel.getByRole('button',{name:'收起小棋盘'}).click();assert.equal(await small.count(),0);await panel.getByRole('button',{name:'展开小棋盘'}).click();
   await page.setViewportSize({width:844,height:390});await bounds(panel);await page.screenshot({path:output+'/phone-landscape.png'});
+  await page.setViewportSize({width:390,height:844});await bounds(panel);await page.screenshot({path:output+'/phone-rotation-restored.png'});
   await panel.getByRole('button',{name:'更多推演操作'}).click();await panel.getByRole('button',{name:'展开查看',exact:true}).click();await bounds(panel);
   await page.setViewportSize({width:820,height:1100});await bounds(panel);await page.screenshot({path:output+'/tablet-expanded.png'});
   await panel.getByRole('button',{name:'关闭小棋盘'}).click();await panel.waitFor({state:'hidden'});
   // A main-board edit queued after the explicit write must retain the new variation.
   await step(board,'a3 红兵','a4');await board.getByRole('button',{name:'a4 红兵',exact:true}).waitFor();
-  await page.waitForFunction(async()=>{const g=await(await import(window.fixtureStoreUrl||'/src/store.ts')).trainingStore.openManualGame('variation-fixture');return g.moves[0]==='a3a4'&&g.branches.some(b=>b.moves[0]==='h0g2');});
+  await page.waitForFunction(async()=>{const g=await(await import(window.fixtureStoreUrl||'/src/store.ts')).trainingStore.openManualGame('variation-fixture');return g.moves[0]==='b0c2'&&g.branches.some(b=>b.moves[0]==='a3a4')&&g.branches.some(b=>b.moves[0]==='h0g2');});
   assert.deepEqual((await read(page)).comments,game.comments);
   console.log('PASS phone: isolated preview, full save from start, dedup, non-destructive mainline/comments/cursor, subsequent autosave, touch/rotation/drag/expand');
   // A read-only record remains byte-for-byte intact; only the new personal copy is writable.
@@ -62,9 +95,9 @@ try {
   await page.getByRole('dialog',{name:'我的棋谱',exact:true}).getByRole('button',{name:'查看棋谱：只读推演验收',exact:true}).click();
   const readOnlyBefore=await read(page,'readonly-fixture');
   await page.getByRole('button',{name:'自由推演',exact:true}).click();const readOnlyPanel=panelOf(page);
-  await step(readOnlyPanel.locator('.xiangqi-board'),'h0 红马','g2');await readOnlyPanel.getByText(/第 1 步／共 1 步/).waitFor();
-  await readOnlyPanel.getByRole('button',{name:'复制到我的棋谱后保存 · 共 1 步',exact:true}).click();
-  const copyDialog=page.getByRole('dialog',{name:'保存棋谱',exact:true});await copyDialog.waitFor();await copyDialog.getByRole('button',{name:'保存棋谱',exact:true}).click();await copyDialog.waitFor({state:'hidden'});await readOnlyPanel.getByText(/已保存到/).waitFor();
+  await step(readOnlyPanel.locator('.xiangqi-board'),'h0 红马','g2');await readOnlyPanel.getByText(/第 1 步 \/ 共 1 步/).waitFor();
+  await readOnlyPanel.getByRole('button',{name:'复制后保存',exact:true}).click();
+  const copyDialog=page.getByRole('dialog',{name:'保存棋谱',exact:true});await copyDialog.waitFor();await copyDialog.getByRole('button',{name:'保存棋谱',exact:true}).click();await copyDialog.waitFor({state:'hidden'});await readOnlyPanel.getByText(/已保存一支/).waitFor();
   assert.deepEqual(await read(page,'readonly-fixture'),readOnlyBefore);
   const readOnlyCopy=await page.evaluate(async()=>{const items=await(await import(window.fixtureStoreUrl||'/src/store.ts')).trainingStore.manualGames();return items.find(g=>g.title==='只读推演验收 · 推演副本');});assert(readOnlyCopy&&!readOnlyCopy.readOnly);assert.deepEqual(readOnlyCopy.moves,game.moves);assert.deepEqual(readOnlyCopy.comments,game.comments);assert(readOnlyCopy.branches.some(b=>b.moves[0]==='h0g2'));
   await readOnlyPanel.getByRole('button',{name:'关闭小棋盘'}).click();await readOnlyPanel.waitFor({state:'hidden'});
@@ -75,20 +108,20 @@ try {
   const studyBoard=page.locator('.study-stage > .board-shell .xiangqi-board');await studyBoard.waitFor();
   await step(studyBoard,'b0 红马','c2');await studyBoard.getByRole('button',{name:'c2 红马',exact:true}).waitFor();
   await page.getByRole('button',{name:'回到开始',exact:true}).click();await page.getByRole('button',{name:'自由推演',exact:true}).click();
-  const studyPanel=panelOf(page);await step(studyPanel.locator('.xiangqi-board'),'h0 红马','g2');await studyPanel.getByText(/第 1 步／共 1 步/).waitFor();
+  const studyPanel=panelOf(page);await step(studyPanel.locator('.xiangqi-board'),'h0 红马','g2');await studyPanel.getByText(/第 1 步 \/ 共 1 步/).waitFor();
   await studyPanel.getByRole('button',{name:'收起小棋盘'}).click();
   await step(studyBoard,'a3 红兵','a4');await studyBoard.getByRole('button',{name:'a4 红兵',exact:true}).waitFor();
-  await studyPanel.getByRole('button',{name:'展开小棋盘'}).click();await studyPanel.getByRole('button',{name:'保存整条线路 · 共 1 步',exact:true}).click();
+  await studyPanel.getByRole('button',{name:'展开小棋盘'}).click();await studyPanel.getByRole('button',{name:'保存分支',exact:true}).click();
   const metadata=page.getByRole('dialog',{name:'保存棋谱',exact:true});await metadata.waitFor();
   assert(await metadata.getByLabel('棋谱名称',{exact:true}).evaluate(el=>{const r=el.getBoundingClientRect();return document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)===el;}),'metadata dialog must be above the small board');
-  await metadata.getByLabel('棋谱名称',{exact:true}).fill('自由拆棋三线保留');await metadata.getByRole('button',{name:'保存棋谱',exact:true}).click();await metadata.waitFor({state:'hidden'});await studyPanel.getByText(/已保存到/).waitFor();
+  await metadata.getByLabel('棋谱名称',{exact:true}).fill('自由拆棋三线保留');await metadata.getByRole('button',{name:'保存棋谱',exact:true}).click();await metadata.waitFor({state:'hidden'});await studyPanel.getByText(/已保存一支/).waitFor();
   const studySaved=await page.evaluate(async()=>{const games=await(await import(window.fixtureStoreUrl||'/src/store.ts')).trainingStore.manualGames();return games.find(g=>g.title==='自由拆棋三线保留');});
   assert.equal(studySaved.moves[0],'a3a4');assert(studySaved.branches.some(b=>b.moves[0]==='b0c2'),'original study line must survive');assert(studySaved.branches.some(b=>b.moves[0]==='h0g2'),'small board line must save');
   assert.equal(studySaved.cursor,1);await studyBoard.getByRole('button',{name:'a4 红兵',exact:true}).waitFor();
   await studyPanel.getByRole('button',{name:'收起小棋盘'}).click();await page.getByRole('button',{name:'新建标准棋局',exact:true}).click();await studyBoard.getByRole('button',{name:'a3 红兵',exact:true}).waitFor();await studyPanel.getByRole('button',{name:'展开小棋盘'}).click();
-  await studyPanel.getByRole('button',{name:'保存整条线路 · 共 1 步',exact:true}).click();await studyPanel.getByRole('alert').filter({hasText:'来源棋谱已变化'}).waitFor();
+  await studyPanel.getByRole('button',{name:'保存分支',exact:true}).click();await studyPanel.getByRole('alert').filter({hasText:'来源棋谱已变化'}).waitFor();
   assert.deepEqual(await read(page,studySaved.id),studySaved,'reset of same FEN must invalidate old source even after first save');
-  await studyPanel.getByRole('button',{name:'更多推演操作'}).click();await studyPanel.getByRole('button',{name:'另存到我的棋谱',exact:true}).click();await metadata.waitFor();await metadata.getByRole('button',{name:'保存棋谱',exact:true}).click();await metadata.waitFor({state:'hidden'});await studyPanel.getByText(/已保存到/).waitFor();
+  await studyPanel.getByRole('button',{name:'更多推演操作'}).click();await studyPanel.getByRole('button',{name:'另存到我的棋谱',exact:true}).click();await metadata.waitFor();await metadata.getByRole('button',{name:'保存棋谱',exact:true}).click();await metadata.waitFor({state:'hidden'});await studyPanel.getByText(/已保存一支/).waitFor();
   console.log('PASS phone study: latest original/main-board/mini branches preserved, metadata above panel, same-FEN source reset rejected, explicit copy retained');
   assert.deepEqual(errors,[]);
   await page.close();
@@ -103,20 +136,25 @@ try {
   await page.reload();await page.getByRole('button',{name:'自由推演',exact:true}).click();
   const deskPanel=panelOf(page);await deskPanel.waitFor();
   const ds=(row,col)=>deskPanel.getByRole('button',{name:`推演棋盘 ${row+1} 行 ${col+1} 列`,exact:true});
-  await ds(9,7).click();await ds(7,6).click();await deskPanel.getByText(/第 1 步／共 1 步/).waitFor();
-  await ds(0,7).click();await ds(2,6).click();await deskPanel.getByText(/第 2 步／共 2 步/).waitFor();
+  await ds(9,7).click();await ds(7,6).click();await deskPanel.getByText(/第 1 步 \/ 共 1 步/).waitFor();
+  await ds(0,7).click();await ds(2,6).click();await deskPanel.getByText(/第 2 步 \/ 共 2 步/).waitFor();
   const db=()=>page.evaluate(async()=>{const {webDatabase:d}=await import('/src/platform/indexedDb.ts');return d.currentGame();});
   const before=await db();
   await deskPanel.getByRole('button',{name:'推演起点',exact:true}).click();
-  await deskPanel.getByRole('button',{name:'保存整条线路 · 共 2 步',exact:true}).click();await deskPanel.getByText(/已保存分支 · 新增 2 步/).waitFor();
+  await deskPanel.getByRole('button',{name:'保存分支',exact:true}).click();await deskPanel.getByText(/已保存一支/).waitFor();
   const after=await db();assert.equal(after.id,before.id);assert.equal(after.fen,before.fen);assert(after.snapshot.includes('原主线注释'));
-  await deskPanel.getByRole('button',{name:'保存整条线路 · 共 2 步',exact:true}).click();await deskPanel.getByText(/该线路已在棋谱中/).waitFor();assert.deepEqual(JSON.parse((await db()).snapshot),JSON.parse(after.snapshot));
+  await deskPanel.getByRole('button',{name:'保存分支',exact:true}).click();await deskPanel.getByText(/该线路已保存/).waitFor();assert.deepEqual(JSON.parse((await db()).snapshot),JSON.parse(after.snapshot));
+  const deskStrip=page.locator('.board-main-stack > .manual-branch-strip');await deskStrip.waitFor();
+  await page.screenshot({path:output+'/desktop-branches.png'});
+  const navBefore=JSON.parse((await db()).snapshot);
+  await deskStrip.getByRole('button').last().click();
+  const navAfter=JSON.parse((await db()).snapshot);assert.deepEqual(navAfter.tree,navBefore.tree,'branch navigation must not edit the tree');
   await bounds(deskPanel);await page.screenshot({path:output+'/desktop-docked.png'});
   await deskPanel.getByRole('button',{name:'更多推演操作'}).click();await deskPanel.getByRole('button',{name:'悬浮显示',exact:true}).click();await bounds(deskPanel);
   await page.setViewportSize({width:900,height:600});await bounds(deskPanel);await page.screenshot({path:output+'/desktop-floating.png'});
   await deskPanel.getByRole('button',{name:'更多推演操作'}).click();await deskPanel.getByRole('button',{name:'另存到我的棋谱',exact:true}).click();await deskPanel.getByText(/已另存到本地棋谱库/).waitFor();assert.equal((await db()).id,before.id,'copy must not activate a different document');
   await deskPanel.getByRole('button',{name:'关闭小棋盘'}).click();await deskPanel.waitFor({state:'hidden'});
-  await page.reload();await page.getByText('离线棋谱已就绪',{exact:true}).waitFor({state:'attached'});assert.equal((await db()).id,before.id);assert.deepEqual(JSON.parse((await db()).snapshot),JSON.parse(after.snapshot),'restart must restore complete original tree and saved branch');
+  await page.reload();await page.getByText('离线棋谱已就绪',{exact:true}).waitFor({state:'attached'});assert.equal((await db()).id,before.id);assert.deepEqual(JSON.parse((await db()).snapshot).tree,JSON.parse(after.snapshot).tree,'restart must restore complete original tree and saved branch');
   const failures=await page.evaluate(async()=>{
     const source=await(await fetch('/src/App.tsx')).text();const {chessPlatform:p}=await import(source.match(/from \"(\/src\/platform\/index\.ts[^\"]*)\"/)[1]);const {webDatabase:d}=await import('/src/platform/indexedDb.ts');
     const initial=await d.currentGame(),tree=JSON.parse(initial.snapshot);let invalid=false,deleted=false;

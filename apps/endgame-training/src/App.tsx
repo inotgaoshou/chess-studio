@@ -1,3 +1,5 @@
+import { BranchStrip } from "../../desktop/src/BranchStrip";
+import { manualContinuations, preserveManualMainline, reuseSavedBranchIds, type ManualContinuation } from "./manualContinuation";
 import { VariationBoard, type VariationReceipt } from "../../desktop/src/VariationBoard";
 import { appendManualVariation, manualPathExists } from "./variationEditing";
 import { ProblemNumberNavigation } from "./ProblemNumberNavigation";
@@ -2709,6 +2711,9 @@ export function App() {
     window.addEventListener("keydown", close, true);
     return () => window.removeEventListener("keydown", close, true);
   }, [manualSheet]);
+  const studyBranchOrigin = useRef<{ epoch: number; snapshot: LocalManualGame; notation: string[] } | undefined>(undefined);
+  const manualBranchNotation = useRef<string[]>([]);
+  const manualBranchSource = useRef<LocalManualGame | undefined>(undefined);
   const [manualSaveStatus, setManualSaveStatus] = useState<"已保存" | "保存中" | "未保存" | "保存失败">("已保存");
   const [manualSetupPieces, setManualSetupPieces] = useState<BoardPiece[]>(() => initialManualSetupDraft?.current.pieces.map((piece) => ({ ...piece })) ?? []);
   const [manualSetupSide, setManualSetupSide] = useState<"red" | "black">(() => initialManualSetupDraft?.current.side ?? "red");
@@ -4596,7 +4601,7 @@ export function App() {
     setManualAutoPlaying(false); setStudyAutoPlaying(false);
     const mode = manualMode ? "manual" : "study";
     const now = new Date().toISOString();
-    const snapshot: LocalManualGame = manualMode ? structuredClone(manualPayload()) : { id: crypto.randomUUID(), title: "拆棋研究", note: "", startingFen: studyStartingFen, currentFen: studyCurrentFen, currentNodeId: currentStudyMoves.join(","), cursor: studyCursor, moves: [...studyMoves], branches: structuredClone(studyBranches), comments: { ...studyComments }, createdAt: now, updatedAt: now };
+    const snapshot: LocalManualGame = manualMode ? structuredClone(manualPayload()) : { id: crypto.randomUUID(), title: "拆棋研究", note: "", ...structuredClone(studyTreeState()), createdAt: now, updatedAt: now };
     setMobileVariation({ id: crypto.randomUUID(), mode, snapshot, path: [...(manualMode ? currentManualMoves : currentStudyMoves)], base: { fen: manualMode ? manualCurrentFen : studyCurrentFen, pieces: structuredClone(manualMode ? manualPieces : studyPieces), status: "进行中", sideToMove: "" }, moves: [...moves], scope: catalogAccountScope, epoch: manualMode ? manualDocumentEpoch.current : studyDocumentEpoch.current, ruleMode: studyRuleMode });
     setManualPanelOpen(false);
   }
@@ -4675,17 +4680,17 @@ export function App() {
       if (live.scope === source.scope && live.mode === "manual" && live.snapshot.id === saved.id) {
         manualVariationWrites.current.push({ revision: ++manualVariationRevision.current, gameId: saved.id, path: source.path, moves, notation });
         const visible = appendManualVariation(live.snapshot, source.path, moves, notation).game;
-        setManualBranches(visible.branches); setManualGame(saved); setManualSaveStatus("已保存");
+        setManualBranches(reuseSavedBranchIds(visible.branches, saved.branches)); if (manualBranchSource.current?.id === saved.id) manualBranchSource.current = saved; setManualGame(saved); setManualSaveStatus("已保存");
         if (!live.snapshot.moves.length) { setManualMoves(visible.moves); setManualNotation(await chineseLine(visible.startingFen, visible.moves)); }
       } else if (source.mode === "study" && live.mode === "study" && live.epoch === source.epoch && live.scope === source.scope) {
         if (manualPathExists(live.study, source.path)) {
           const visible = appendManualVariation({ ...saved, ...structuredClone(live.study) }, source.path, moves, notation).game;
-          setStudyBranches(visible.branches);
+          setStudyBranches(reuseSavedBranchIds(visible.branches, saved.branches));
           if (!live.study.moves.length) { setStudyMoves(visible.moves); setStudyNotation(await chineseLine(visible.startingFen, visible.moves)); }
         }
       }
       if (live.scope === source.scope) setManualGames(items => [saved, ...items.filter(item => item.id !== saved.id)]);
-      return { message: merged.added ? `已保存到《${saved.title}》 · 新增 ${merged.added} 步` : "该线路已在棋谱中", view: async () => {
+      return { message: merged.added ? `已保存一支 · 《${saved.title}》` : "该线路已保存", view: async () => {
         if (variationContext.current().scope !== source.scope) throw new Error("请返回原账号后查看");
         const latest = await trainingStore.openManualGame(saved.id);
         if (!latest) throw new Error("棋谱已删除");
@@ -4709,7 +4714,7 @@ export function App() {
     const id = overrides.id ?? manualGame?.id ?? crypto.randomUUID();
     const cursor = overrides.cursor ?? manualCursor;
     const movesValue = overrides.moves ?? manualMoves;
-    return {
+    const payload: LocalManualGame = {
       id,
       title: overrides.title ?? manualGame?.title ?? `本地录谱 ${new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date())}`,
       note: overrides.note ?? manualGame?.note ?? "",
@@ -4728,6 +4733,8 @@ export function App() {
       createdAt: overrides.createdAt ?? manualGame?.createdAt ?? now,
       updatedAt: overrides.updatedAt ?? now,
     };
+    const source = manualBranchSource.current;
+    return source ? preserveManualMainline(payload, source, manualNotation) : payload;
   }
 
   async function saveManualGame(overrides: Partial<LocalManualGame> = {}) {
@@ -4752,6 +4759,7 @@ export function App() {
       manualSaveTail.current = pending.then(() => undefined, () => undefined);
       const saved = await pending;
       if (revision === manualSaveRevision.current) {
+        if (manualBranchSource.current?.id === saved.id) manualBranchSource.current = saved;
         setManualGame(saved);
         setManualSaveStatus("已保存");
       }
@@ -4915,6 +4923,8 @@ export function App() {
   }
 
   async function openManualGame(game: LocalManualGame) {
+    manualBranchSource.current = undefined;
+    manualBranchNotation.current = [];
     setManualAutoPlaying(false);
     const revision = ++manualSaveRevision.current;
     await manualSaveTail.current;
@@ -5389,6 +5399,42 @@ export function App() {
     else if (action === "end") { setManualAutoPlaying(false); await navigateManualMove(manualMoves.length); }
   }
 
+  function studyTreeState() {
+    const view = { startingFen: studyStartingFen, currentFen: studyCurrentFen, currentNodeId: currentStudyMoves.join(","), cursor: studyCursor, moves: studyMoves, branches: studyBranches, comments: studyComments };
+    const origin = studyBranchOrigin.current;
+    if (origin?.epoch !== studyDocumentEpoch.current) return view;
+    const canonical = preserveManualMainline({ ...origin.snapshot, ...view }, origin.snapshot, studyNotation);
+    return { startingFen: canonical.startingFen, currentFen: canonical.currentFen, currentNodeId: canonical.currentNodeId, cursor: canonical.cursor, moves: canonical.moves, branches: canonical.branches, comments: canonical.comments };
+  }
+
+  async function selectStudyContinuation(choice: ManualContinuation) {
+    setStudyAutoPlaying(false);
+    const scope = catalogAccountScope, epoch = studyDocumentEpoch.current, generation = ++studyGeneration.current, cursor = studyCursor + 1;
+    const [state, notation] = await Promise.all([boardAt(studyStartingFen, choice.path.slice(0, cursor), studyRuleMode), chineseLine(studyStartingFen, choice.path)]);
+    if (epoch !== studyDocumentEpoch.current || generation !== studyGeneration.current || variationContext.current().scope !== scope || variationContext.current().mode !== "study") return;
+    if (studyBranchOrigin.current?.epoch !== epoch) studyBranchOrigin.current = { epoch, snapshot: { id:`study-${epoch}`,title:"拆棋研究",note:"",createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),...studyTreeState() }, notation:studyNotation };
+    setStudyMoves(choice.path); setStudyCursor(cursor); setStudyNotation(notation); setStudyPieces(state.pieces);
+    setStudySelected(undefined); setStudyLastMove(choice.path[cursor - 1]); setStudyTerminal(terminalResult(state.ruleStatus ?? state.status));
+    setStudyNotice("已定位到分支第一步。"); invalidateStudyCloud(state.fen); void resetAnalysis("study");
+  }
+
+  async function selectManualContinuation(choice: ManualContinuation) {
+    setManualAutoPlaying(false);
+    const source = manualBranchSource.current && manualBranchSource.current.id === manualGame?.id ? manualBranchSource.current : manualPayload();
+    const revision = ++manualSaveRevision.current;
+    const cursor = manualCursor + 1, epoch = manualDocumentEpoch.current, scope = catalogAccountScope;
+    const [state, notation] = await Promise.all([boardAt(manualStartingFen, choice.path.slice(0, cursor), studyRuleMode), chineseLine(manualStartingFen, choice.path).catch(() => choice.path)]);
+    const live = variationContext.current();
+    if (revision !== manualSaveRevision.current || epoch !== manualDocumentEpoch.current || live.scope !== scope || live.mode !== "manual" || live.snapshot.id !== source.id) return;
+    if (!manualBranchSource.current || manualBranchSource.current.id !== source.id) manualBranchNotation.current = manualNotation;
+    manualBranchSource.current = source;
+    setManualMoves(choice.path); setManualNotation(notation); setManualCursor(cursor);
+    setManualPieces(state.pieces); setManualCurrentFen(state.fen); setManualLastMove(choice.path[cursor - 1]);
+    setManualSelected(undefined); setManualTerminal(terminalResult(state.ruleStatus ?? state.status));
+    setManualNotice("已定位到分支第一步。");
+    void resetAnalysis("manual");
+  }
+
   async function adoptManualBranch(branch: ManualBranch, focusCursor?: number) {
     const revision = ++manualSaveRevision.current;
     const prefix = branch.parentPath;
@@ -5414,12 +5460,24 @@ export function App() {
     if (!manualReadOnly) void saveManualGame({ moves: fullMoves, cursor: nextCursor, currentFen: state.fen, currentNodeId: manualNodeId(nextCursor), branches }).catch(() => undefined);
   }
 
-  function deleteManualBranch(id: string) {
+  async function deleteManualBranch(id: string) {
     if (manualReadOnly) { setManualNotice("天天象棋云镜像为只读棋谱，请先复制后调整分支。"); return; }
-    const { branches, comments } = removeManualBranch({ moves: manualMoves, branches: manualBranches, comments: manualComments }, id);
+    const source = manualPayload(), revision = ++manualSaveRevision.current;
+    const { branches, comments } = removeManualBranch(source, id);
+    const next = { ...source, branches, comments };
+    const removedView = !manualPathExists(next, manualMoves);
+    const state = removedView ? await boardAt(source.startingFen, source.moves.slice(0, source.cursor), studyRuleMode) : undefined;
+    if (revision !== manualSaveRevision.current) return;
+    if (state) {
+      manualDocumentEpoch.current++;
+      manualBranchSource.current = next;
+      setManualMoves(source.moves); setManualCursor(source.cursor); setManualPieces(state.pieces);
+      setManualCurrentFen(state.fen); setManualLastMove(source.moves[source.cursor - 1]); setManualSelected(undefined);
+      setManualNotation(manualBranchNotation.current); setManualTerminal(terminalResult(state.ruleStatus ?? state.status));
+    }
     setManualBranches(branches); setManualComments(comments);
-    void saveManualGame({ branches, comments }).then(() => setManualNotice("已删除录谱分支并保存。"))
-      .catch(() => setManualNotice("分支删除尚未保存，请在棋谱信息中重试保存。"));
+    try { await saveManualGame(next); setManualNotice("已删除录谱分支并保存。"); }
+    catch { setManualNotice("分支删除尚未保存，请在棋谱信息中重试保存。"); }
   }
 
   function moveManualBranch(id: string, direction: -1 | 1) {
@@ -6230,6 +6288,10 @@ export function App() {
     </section>}
   </section>;
   const studyReturnLabel = studyReturnRoute === "game-browse" ? "返回棋谱" : studyReturnRoute === "library" ? "返回题库" : studyReturnRoute === "tool-setup" ? "返回摆棋" : studyReturnRoute === "account" ? "返回我的" : "返回练习";
+  const canonicalManual = manualBranchSource.current && manualBranchSource.current.id === manualGame?.id ? manualBranchSource.current : undefined;
+  const manualBranchChoices = manualContinuations(canonicalManual?.moves ?? manualMoves, canonicalManual ? manualBranchNotation.current : manualNotation, manualBranches, manualMoves.slice(0, manualCursor), manualMoves, manualNotation);
+  const canonicalStudy = studyBranchOrigin.current?.epoch === studyDocumentEpoch.current ? studyBranchOrigin.current : undefined;
+  const studyBranchChoices = manualContinuations(canonicalStudy?.snapshot.moves ?? studyMoves, canonicalStudy?.notation ?? studyNotation, studyBranches, studyMoves.slice(0, studyCursor), studyMoves, studyNotation);
   const workspaceTitle = studyMode ? `自由拆棋 · ${studyRuleLabel(studyRuleMode)}` : manualMode ? "本地录谱" : library?.title ?? "本地 CBL 题库";
   useEffect(() => {
     const confirmed = (event: Event) => {
@@ -6795,7 +6857,7 @@ export function App() {
   useEffect(() => {
     if (mobileRoute !== "teacher" || teacherPath !== "/teacher/assignments/new") setCatalogAssignment(undefined);
   }, [mobileRoute, teacherPath, catalogAccountScope]);
-  variationContext.current = () => ({ mode: manualMode ? "manual" : studyMode ? "study" : "training", scope: catalogAccountScope, snapshot: manualPayload(), study: { startingFen: studyStartingFen, currentFen: studyCurrentFen, currentNodeId: currentStudyMoves.join(","), cursor: studyCursor, moves: studyMoves, branches: studyBranches, comments: studyComments }, studyFen: studyStartingFen, epoch: manualMode ? manualDocumentEpoch.current : studyDocumentEpoch.current });
+  variationContext.current = () => ({ mode: manualMode ? "manual" : studyMode ? "study" : "training", scope: catalogAccountScope, snapshot: manualPayload(), study: studyTreeState(), studyFen: studyStartingFen, epoch: manualMode ? manualDocumentEpoch.current : studyDocumentEpoch.current });
   const rehearsalServer=teachingClient.serverUrl();
   useEffect(()=>{setRehearsalGame(undefined);},[teachingAuth?.user.id,teachingAuth?.user.orgId,mobileRoute,rehearsalServer]);
   const rehearsalOverlay=rehearsalGame?<main className="training-app rehearsal-page"><LineRehearsal key={`${rehearsalServer}:${teachingAuth?.user.id}:${rehearsalGame}`} gameId={rehearsalGame} request={rehearsalRequest} onClose={()=>{setRehearsalGame(undefined);window.dispatchEvent(new Event("teaching-rehearsal-updated"));}} renderBoard={(state,selected,onSquare,disabled)=><Board pieces={state.board.pieces} selected={selected} lastMove={state.history.at(-1)?.iccs} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={square=>{if(!disabled)onSquare(square.row,square.col);}}/>}/></main>:null;
@@ -6857,7 +6919,8 @@ export function App() {
         <button className="study-menu-settings" onClick={() => runStudyMenuAction("settings")}><Settings2/><span>更多设置</span></button>
       </section>}
     <aside className="study-sidebar">
-      <nav className="study-move-nav" aria-label="拆棋着法导航"><button disabled={!studyCursor} aria-label="回到开始" title="回到开始" onClick={() => void navigateStudyMove(0)}><ChevronsLeft/></button><button disabled={!studyCursor} aria-label="上一步" title="上一步" onClick={() => void navigateStudyMove(studyCursor - 1)}><ChevronLeft/></button><button className={studyAutoPlaying ? "active" : ""} disabled={!studyMoves.length} aria-label={studyAutoPlaying ? "暂停播放棋谱" : "自动播放棋谱"} title={studyAutoPlaying ? "暂停播放棋谱" : "自动播放棋谱"} onClick={() => void toggleStudyAutoPlay()}>{studyAutoPlaying ? <Pause/> : <Play/>}</button><button disabled={studyCursor >= studyMoves.length} aria-label="下一步" title="下一步" onClick={() => void navigateStudyMove(studyCursor + 1)}><ChevronRight/></button><button disabled={studyCursor >= studyMoves.length} aria-label="最后一步" title="最后一步" onClick={() => void navigateStudyMove(studyMoves.length)}><ChevronsRight/></button></nav>
+      <div className="study-branch-navigation"><BranchStrip choices={studyBranchChoices} onSelect={id => { const choice = studyBranchChoices.find(item => item.id === id); if (choice) void selectStudyContinuation(choice).catch(error => setStudyNotice(String(error))); }}/>
+      <nav className="study-move-nav" aria-label="拆棋着法导航"><button disabled={!studyCursor} aria-label="回到开始" title="回到开始" onClick={() => void navigateStudyMove(0)}><ChevronsLeft/></button><button disabled={!studyCursor} aria-label="上一步" title="上一步" onClick={() => void navigateStudyMove(studyCursor - 1)}><ChevronLeft/></button><button className={studyAutoPlaying ? "active" : ""} disabled={!studyMoves.length} aria-label={studyAutoPlaying ? "暂停播放棋谱" : "自动播放棋谱"} title={studyAutoPlaying ? "暂停播放棋谱" : "自动播放棋谱"} onClick={() => void toggleStudyAutoPlay()}>{studyAutoPlaying ? <Pause/> : <Play/>}</button><button disabled={studyCursor >= studyMoves.length} aria-label="下一步" title="下一步" onClick={() => void navigateStudyMove(studyCursor + 1)}><ChevronRight/></button><button disabled={studyCursor >= studyMoves.length} aria-label="最后一步" title="最后一步" onClick={() => void navigateStudyMove(studyMoves.length)}><ChevronsRight/></button></nav></div>
       <nav className="study-panel-tabs" role="tablist" aria-label="拆棋研究面板">{studyPanelItems.map(([value, label, Icon]) => <button key={value} role="tab" aria-selected={studyPanelTab === value} className={studyPanelTab === value ? "active" : ""} onClick={() => setStudyPanelTab(value)}><Icon/><span>{label}</span></button>)}</nav>
       <div className="commentary-research-content">
       {commentaryPanel}
@@ -6883,6 +6946,7 @@ export function App() {
         {manualSetupOpen ? <>
           <div className="manual-tool-row setup-actions"><button type="button" onClick={() => void fillManualSetupStandardPosition()}>标准</button><button type="button" onClick={clearManualSetupBoard}>清空</button><button type="button" className={manualSetupTool === "erase" ? "active" : ""} aria-label="删除棋子" title="删除棋子" onClick={() => { setManualSetupTool("erase"); setManualSetupSelected(undefined); setManualSetupError(""); setManualNotice("删除模式：点棋盘上的非将帅棋子即可删除。"); }}><Trash2/></button><button type="button" disabled={!manualSetupHistory.length} onClick={undoManualSetup}><Undo2/>撤销</button><button type="button" onClick={toggleBoardFlipped}>翻转</button><button type="button" onClick={() => { rememberManualSetup(); setManualSetupSide((side) => { const next = side === "red" ? "black" : "red"; setManualSetupError(""); setManualNotice(`已设置为${next === "red" ? "红方" : "黑方"}先走。`); return next; }); }}>{manualSetupSide === "red" ? "红先⇄黑先" : "黑先⇄红先"}</button><button type="button" className="primary" onClick={() => void confirmManualSetup()}>完成</button></div>
         </> : <>
+        <BranchStrip choices={manualBranchChoices} onSelect={id => { const choice = manualBranchChoices.find(item => item.id === id); if (choice) void selectManualContinuation(choice).catch(error => setManualNotice(String(error))); }}/>
         <div className="recording-feedback-row"><p className="recording-feedback" role="status" title={manualNotice}>{manualNotice}</p><button type="button" className="commentary-entry" disabled={!currentManualMoves.length} onClick={() => { setManualAnalysisExpanded(true); requestCommentary(currentManualMoves); }}><Lightbulb aria-hidden="true"/>讲解这步</button></div>
         <ManualRecordingControls cursor={manualCursor} moveCount={manualMoves.length}
           previousVariation={manualForkCursors.some(cursor => cursor < manualCursor)} nextVariation={manualForkCursors.some(cursor => cursor > manualCursor)}

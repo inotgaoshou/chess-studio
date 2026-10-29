@@ -1,3 +1,4 @@
+import { BranchStrip } from "./BranchStrip";
 import { VariationBoard, type VariationReceipt } from "./VariationBoard";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type SyntheticEvent } from "react";
 import { flushSync } from "react-dom";
@@ -4097,7 +4098,7 @@ export default function App() {
       }
     }
     setGames(await chessPlatform.listGames());
-    return { message: result.added ? `已保存分支 · 新增 ${result.added} 步` : "该线路已在棋谱中", view: async () => {
+    return { message: result.added ? "已保存一支" : "该线路已保存", view: async () => {
       if (boardRef.current.gameId !== source.gameId) throw new Error("请先返回来源棋谱再查看分支");
       await navigateTo(result.endNodeId);
     } };
@@ -8495,6 +8496,7 @@ export default function App() {
               {selectedPieceThought.confidenceNote && <small>{selectedPieceThought.confidenceNote}</small>}
             </section>}
           </div>
+            <BranchStrip choices={board.branches.map(move => ({ id:move.id, move:move.iccs, notation:move.notation, selected:move.id === board.continuation[0]?.id }))} onSelect={id => void navigateTo(id)}/>
           {candidatePreview && previewStep && (
             <div className="candidate-preview-bar" style={{ "--pv-color": candidatePreview.color } as CSSProperties}>
               <div className="candidate-preview-main">
