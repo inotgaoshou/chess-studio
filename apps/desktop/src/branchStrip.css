@@ -21,3 +21,25 @@
 .manual-branch-choices button strong { font-size:12px; }
 .manual-branch-choices button small { font-size:10px; opacity:.75; }
 .training-app .manual-branch-strip { background:#fbfefa; border-color:#bfd5c6; }
+
+/* This layer has no layout box in the board grid and no full-screen hit target. */
+.branch-floating-layer { position:fixed; z-index:1200; inset:0; pointer-events:none; padding:max(8px,env(safe-area-inset-top)) max(8px,env(safe-area-inset-right)) max(8px,env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left)); }
+.branch-floating-layer .manual-branch-strip.is-floating { position:absolute; display:flex; flex-direction:column; box-sizing:border-box; width:360px; min-width:0; margin:0; padding:6px; pointer-events:auto; color:#c5d5ca; background:#1e3028fa; border:1px solid #6d8b78; border-radius:12px; box-shadow:0 5px 20px #173c322b; overflow:hidden; }
+.branch-floating-layer .manual-branch-strip.is-light { color:#315d43; background:#f5fbf5fa; border-color:#afcbb8; }
+.manual-branch-strip.is-floating header { flex:none; padding:0 0 4px; min-height:36px; cursor:grab; touch-action:none; user-select:none; }
+.manual-branch-strip.is-floating header strong { min-width:0; gap:4px; }
+.manual-branch-strip.is-floating header button { min-width:36px; min-height:36px; }
+.manual-branch-strip.is-floating .manual-branch-choices { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:5px; min-height:0; overflow:auto; overscroll-behavior:contain; }
+.manual-branch-strip.is-floating .manual-branch-choices button { min-width:0; min-height:44px; padding:4px 6px; }
+.manual-branch-strip.is-floating .manual-branch-choices button span { min-width:0; }
+.manual-branch-strip.is-floating .manual-branch-choices strong { overflow:hidden; text-overflow:ellipsis; }
+.manual-branch-strip.is-floating.is-light button { color:inherit; background:#fbfefa; border-color:#c8dbcc; }
+.manual-branch-strip.is-floating.is-light button[aria-current=true] { color:#215538; background:#dfeddf; border-color:#85aa8c; }
+.manual-branch-strip.is-floating:is(.is-single,.is-collapsed) { width:max-content; }
+.manual-branch-strip .branch-compact { display:flex; align-items:center; min-width:0; touch-action:none; }
+.manual-branch-strip .branch-compact > button:last-child { min-width:0; overflow:hidden; text-overflow:ellipsis; }
+.manual-branch-strip button.branch-drag-handle { flex:none; min-width:28px; min-height:36px; padding:0 3px; border:0; background:transparent; cursor:grab; touch-action:none; }
+.branch-management-layer { position:fixed; z-index:1250; inset:0; display:grid; place-items:center; padding:max(12px,env(safe-area-inset-top)) 12px max(12px,env(safe-area-inset-bottom)); background:#162b2244; }
+.branch-management-layer .branch-map-controls.branch-map-floating { position:relative; inset:auto; transform:none; width:min(640px,calc(100vw - 24px)); max-width:100%; max-height:calc(100dvh - 48px); overflow:auto; }
+.branch-management-layer.is-light .branch-map-controls { color:#315d43; background:#f5fbf5; border-color:#b5cdbc; }
+.branch-management-layer.is-light .branch-map-controls button { color:#315d43; background:#f7fcf7; border-color:#c7dbcc; }

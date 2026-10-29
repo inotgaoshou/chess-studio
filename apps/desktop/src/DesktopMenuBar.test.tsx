@@ -28,6 +28,16 @@ function setup(status: MenuBarStatus = readyStatus, mode: WorkspaceMode = "resea
 }
 
 describe("DesktopMenuBar", () => {
+  it("reports menu visibility so floating board controls can yield", async () => {
+    const states: boolean[] = [];
+    render(<DesktopMenuBar mode="research" status={readyStatus} execute={() => {}} onOpenChange={open => states.push(open)}/>);
+    const user = userEvent.setup();
+    await user.click(screen.getByText("棋局", { selector: "summary" }));
+    expect(states.at(-1)).toBe(true);
+    await user.keyboard("{Escape}");
+    expect(states.at(-1)).toBe(false);
+  });
+
   it("keeps only one menu open and toggles the selected menu", async () => {
     const { user } = setup();
 

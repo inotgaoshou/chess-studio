@@ -118,14 +118,18 @@ export function DesktopMenuBar({
   appVersion,
   mode,
   execute,
+  onOpenChange,
 }: {
   status: MenuBarStatus;
   appVersion?: string;
+  onOpenChange?(open: boolean): void;
   mode: WorkspaceMode;
   execute(command: MenuCommand): void | Promise<void>;
 }) {
   const [openMenu, setOpenMenu] = useState<DesktopMenu | null>(null);
   const menuItemsRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => { onOpenChange?.(openMenu !== null); }, [openMenu, onOpenChange]);
 
   useEffect(() => {
     function closeFromOutside(event: PointerEvent) {

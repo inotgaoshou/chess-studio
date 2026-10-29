@@ -1,7 +1,7 @@
 import { BranchStrip } from "./BranchStrip";
 import { VariationBoard, type VariationReceipt } from "./VariationBoard";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type SyntheticEvent } from "react";
-import { flushSync } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -1649,6 +1649,7 @@ export default function App() {
   const [engineDivergencePosition, setEngineDivergencePosition] = useState<{ left: number; top: number }>();
   const [branchEditing, setBranchEditing] = useState(false);
   const [branchPickerOpen, setBranchPickerOpen] = useState(false);
+  const [branchRevealRequest, setBranchRevealRequest] = useState(0);
   const [branchEditNodeId, setBranchEditNodeId] = useState<string>();
   const [floatingManualRouteView, setFloatingManualRouteView] = useState<"tree" | "rounds">("tree");
   const [manualLineDialogOpen, setManualLineDialogOpen] = useState(false);
@@ -1724,6 +1725,7 @@ export default function App() {
   const reportLoadRevision = useRef(0);
   const boardRef = useRef<BoardState>(fallback);
   const [variation, setVariation] = useState<{ id: string; source: BoardState; moves: string[]; title: string; epoch: number }>();
+  const [variationCollapsed,setVariationCollapsed]=useState(false);
   const variationDocumentEpoch = useRef(0);
   const variationCopies = useRef(new Map<string, string>());
   const analysisFenRef = useRef<string | undefined>(undefined);
@@ -2230,16 +2232,17 @@ export default function App() {
   }, [board.currentNode, board.history]);
 
   useEffect(() => {
-    if (!branchPickerOpen) return;
+    if (!branchPickerOpen && !branchEditing) return;
     const closeOnEscape = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") {
         setBranchPickerOpen(false);
+        setBranchEditing(false);
         setBranchEditNodeId(undefined);
       }
     };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [branchPickerOpen]);
+  }, [branchPickerOpen, branchEditing]);
 
   useEffect(() => {
     setGameTitle(board.title);
@@ -4059,6 +4062,7 @@ export default function App() {
     if (!source.gameId || !source.startingFen) { setNotice("棋谱正在载入，请稍后打开小棋盘"); return; }
     if (source.fen !== expectedFen || !source.playable) { setNotice("候选已过期或局面不可走棋，请重新分析"); return; }
     stopPlayback();
+    setVariationCollapsed(false);
     setVariation({ id: crypto.randomUUID(), source: structuredClone(source), moves: [...moves], title, epoch: variationDocumentEpoch.current });
   }
 
@@ -5720,6 +5724,7 @@ export default function App() {
   function openBranchPicker() {
     if (!hasVisibleBranchChoices) return false;
     setBranchPickerOpen(true);
+    setBranchRevealRequest(value=>value+1);
     setNotice(`当前有 ${branchChoices.length} 条走法，请选择下一步`);
     return true;
   }
@@ -5784,7 +5789,7 @@ export default function App() {
     }
 
     while (token === playbackRevision.current) {
-      if(state.branches.length>1){stopPlayback();setBranchPickerOpen(true);setNotice("请选择下一步变招。");return;}
+      if(state.branches.length>1){stopPlayback();setBranchPickerOpen(true);setBranchRevealRequest(value=>value+1);setNotice("请选择下一步变招。");return;}
       const next = preferredContinuation(state);
       if (!next) break;
       await new Promise((resolve) => window.setTimeout(resolve, 700));
@@ -7169,16 +7174,22 @@ export default function App() {
     >{active ? <X size={13}/> : <GitFork size={13}/>}<span>{presentation.label}</span></button>;
   }
 
+  const [desktopMenuOpen, setDesktopMenuOpen] = useState(false);
+
+  function branchSelection() {
+    return <BranchStrip floating light={desktopPreferences.layoutMode === "compact"} contextKey={`${board.gameId}:${variationDocumentEpoch.current}:${board.currentNode ?? "root"}`} revealKey={branchRevealRequest} expanded={branchPickerOpen} onExpandedChange={setBranchPickerOpen} hidden={Boolean((variation && !variationCollapsed) || branchEditing || desktopMenuOpen || desktopDialog || positionEditorOpen || exportMenuOpen || skinMenuOpen || skinShopOpen || aboutOpen || manualLineDialogOpen || reportDialogOpen || masterAnalysisDialogOpen || mobileDrawerOpen || mobileExportOpen || analysisHelpOpen || teachingCenterOpen || userManualOpen || masterLibraryOpen || referenceLibraryOpen || ttxqImportOpen || game53StudyOpen || flyknifeOpen || endgameTrainingOpen || linkSessionOpen)} getAnchor={() => ({ board:document.querySelector(".board-main-stack .board"), toolbar:document.querySelector(".board-main-stack .playback-controls") ?? document.querySelector(".playback-controls") })} choices={board.branches.map(move => ({ id:move.id, move:move.iccs, notation:move.notation, selected:move.id === board.continuation[0]?.id, isMainline:move.isMainline }))} onManage={() => { setBranchEditing(true); setBranchPickerOpen(false); }} onSelect={id => void selectBranchChoice(id)}/>;
+  }
+
   function branchMapControls() {
     if (!hasVisibleBranchChoices) return null;
     const editingMove = branchChoices.find((move) => move.id === branchEditNodeId);
-    if (!branchPickerOpen && !branchEditing) return null;
-    return <section className={`branch-map-controls branch-map-floating ${branchEditing ? "editing" : ""}`} aria-label="当前分支选择" role="dialog" data-testid="branch-picker">
+    if (!branchEditing) return null;
+    return createPortal(<div className={`branch-management-layer ${desktopPreferences.layoutMode === "compact" ? "is-light" : ""}`}><section aria-modal="true" className={`branch-map-controls branch-map-floating ${branchEditing ? "editing" : ""}`} aria-label="当前分支选择" role="dialog" data-testid="branch-picker">
       <header>
         <span><GitFork size={14}/><strong>选择变招 · {branchChoices.length} 条</strong><small>按天天象棋顺序选择下一步</small></span>
         <div className="branch-map-header-actions">
           <button type="button" className={branchEditing ? "active branch-map-edit" : "branch-map-edit"} onClick={() => setBranchEditing((editing) => !editing)} title={branchEditing ? "完成分支管理" : "管理分支、编辑备注或删除"}><Settings2 size={12}/>{branchEditing ? "完成" : "管理"}</button>
-          <button type="button" className="branch-map-close" onClick={() => { setBranchPickerOpen(false); setBranchEditNodeId(undefined); }} title="关闭变招选择" aria-label="关闭变招选择"><X size={13}/></button>
+          <button type="button" className="branch-map-close" onClick={() => { setBranchPickerOpen(false); setBranchEditing(false); setBranchEditNodeId(undefined); }} title="关闭变招选择" aria-label="关闭变招选择"><X size={13}/></button>
         </div>
       </header>
       <HorizontalScrollArea className="branch-map-scroll" ariaLabel="横向滚动查看全部变招" showButtons={floatingPanel === "manual"}>
@@ -7201,7 +7212,7 @@ export default function App() {
         <label><span>编辑 {editingMove.notation} 的本地备注</span><input value={comment} onChange={(event) => setComment(event.target.value)} placeholder="可选：补充该分支说明" /></label>
         <button type="button" onClick={() => void saveCommentForNode(editingMove.id, comment).then((saved) => { if (saved) setBranchEditNodeId(undefined); })} title="保存本地备注"><Save size={12}/>保存</button>
       </div>}
-    </section>;
+    </section></div>, document.body);
   }
 
   function setManualViewMode(mode: ManualViewMode) {
@@ -7323,7 +7334,7 @@ export default function App() {
       {!compactManualCollapsed && <>
         {playbackControls("compact-playback")}
         {manualReviewContent("简洁布局棋谱着法")}
-        {branchMapControls()}
+
       </>}
     </section>;
   }
@@ -7395,7 +7406,7 @@ export default function App() {
           {!compactManualCollapsed && <>
             {playbackControls("compact-playback")}
             {manualReviewContent("简洁布局棋谱着法")}
-            {branchMapControls()}
+
           </>}
         </article>}
       </section>;
@@ -7865,6 +7876,8 @@ export default function App() {
         ) : (
           <section className="floating-panel-body floating-manual-body">
             {playbackControls("compact-playback floating-playback")}
+            {branchSelection()}
+            {branchEditing && branchMapControls()}
             <div className="floating-manual-route">
               <div className="floating-manual-route-tabs" role="tablist" aria-label="浮动窗口棋谱视图">
                 <button type="button" role="tab" aria-selected={floatingManualRouteView === "tree"} className={floatingManualRouteView === "tree" ? "active" : ""} onClick={() => setFloatingManualRouteView("tree")}><GitBranch size={13}/>分支树</button>
@@ -7872,7 +7885,7 @@ export default function App() {
               </div>
               {floatingManualRouteView === "tree" ? manualReviewContent("浮动窗口棋谱着法") : <FloatingManualRoundList branches={board.branches} currentNode={board.currentNode} issues={reportPresentation?.issues} manualTree={board.manualTree ?? []} moves={[...board.history, ...board.continuation]} showThoughts={showMoveThoughts} formatScore={formatMoveScore} onNavigate={(nodeId) => void navigateTo(nodeId)}/>}
             </div>
-            {branchMapControls()}
+
             <p className="floating-panel-note">这是系统独立窗口，可拖到主窗口外；主窗口走棋后这里会自动刷新。</p>
           </section>
         )}
@@ -8057,6 +8070,7 @@ export default function App() {
 
       <nav className="menubar" aria-label="主菜单">
         {chessPlatform.kind === "desktop" && <DesktopMenuBar
+          onOpenChange={setDesktopMenuOpen}
           appVersion={appInfo?.version}
           mode={workspaceMode}
           status={{
@@ -8521,7 +8535,8 @@ export default function App() {
               {selectedPieceThought.confidenceNote && <small>{selectedPieceThought.confidenceNote}</small>}
             </section>}
           </div>
-            <BranchStrip choices={board.branches.map(move => ({ id:move.id, move:move.iccs, notation:move.notation, selected:move.id === board.continuation[0]?.id, isMainline:move.isMainline }))} onSelect={id => void selectBranchChoice(id)}/>
+            {branchSelection()}
+            {branchEditing && branchMapControls()}
           {candidatePreview && previewStep && (
             <div className="candidate-preview-bar" style={{ "--pv-color": candidatePreview.color } as CSSProperties}>
               <div className="candidate-preview-main">
@@ -8545,7 +8560,7 @@ export default function App() {
           )}
           {reviewModeOpen && !isMobileWorkbench && <div className="review-board-playback-wrap">
             {playbackControls("review-board-playback")}
-            {branchMapControls()}
+
           </div>}
           <div className="board-statusbar">
             {boardMoveStatus && <span role="status" className="board-move-status">{boardMoveStatus}</span>}
@@ -8657,7 +8672,7 @@ export default function App() {
             <button onClick={() => void createGame()}>载入</button>
           </div>
           </div>
-          {variation ? <VariationBoard key={variation.id} title={variation.title} base={{ ...variation.source, notation: undefined as string | undefined }} initialMoves={variation.moves} analyze={analyzeVariation} savedBranchTitle={board.title} savedBranches={savedVariationBranches()} onDeleteSaved={deleteSavedVariation} light={desktopPreferences.layoutMode === "compact"} validate={moves => chessPlatform.previewLine(variation.source.fen, moves).then(steps => steps.map(step => ({ ...variation.source, ...step })))} onSave={saveVariation} onSaveCopy={saveVariationCopy} onClose={() => setVariation(undefined)} renderBoard={(frame, controls) => <div className="variation-desktop-canvas"><LinkMiniBoard presentation="preview" animateMoves={false} pieces={frame.pieces} arrows={controls.hintMoves.map((iccs, index) => ({ rank: index + 1, color: ["#3b9e5d", "#dc9839", "#6495cf"][index % 3], iccs, from: { col: iccs.charCodeAt(0) - 97, row: 9 - Number(iccs[1]) }, to: { col: iccs.charCodeAt(2) - 97, row: 9 - Number(iccs[3]) } }))} selectedSquare={controls.selected} reversed={controls.flipped} sideToMove={frame.fen.split(/\s+/)[1] === "b" ? "黑方" : "红方"} pieceAsset={piece => pieceAsset(piece, displayedPieceSkin)} boardAsset={`/skins/${skinAssetFolder(displayedBoardSkin)}/board.png`}/><div className="variation-desktop-board-hit-grid">{Array.from({ length: 90 }, (_, index) => { const square = { row: Math.floor(index / 9), col: index % 9 }; return <button type="button" key={index} aria-label={`推演棋盘 ${square.row + 1} 行 ${square.col + 1} 列`} style={mainBoardCellStyle(square, controls.flipped, displayedBoardSkin)} onClick={() => controls.onSquare(square)}/>; })}</div></div>}/> : !reviewModeOpen && candidateLinesView("board-candidate-rail", workspaceMode !== "research")}
+          {variation ? <VariationBoard key={variation.id} onCollapsedChange={setVariationCollapsed} title={variation.title} base={{ ...variation.source, notation: undefined as string | undefined }} initialMoves={variation.moves} analyze={analyzeVariation} savedBranchTitle={board.title} savedBranches={savedVariationBranches()} onDeleteSaved={deleteSavedVariation} light={desktopPreferences.layoutMode === "compact"} validate={moves => chessPlatform.previewLine(variation.source.fen, moves).then(steps => steps.map(step => ({ ...variation.source, ...step })))} onSave={saveVariation} onSaveCopy={saveVariationCopy} onClose={() => setVariation(undefined)} renderBoard={(frame, controls) => <div className="variation-desktop-canvas"><LinkMiniBoard presentation="preview" animateMoves={false} pieces={frame.pieces} arrows={controls.hintMoves.map((iccs, index) => ({ rank: index + 1, color: ["#3b9e5d", "#dc9839", "#6495cf"][index % 3], iccs, from: { col: iccs.charCodeAt(0) - 97, row: 9 - Number(iccs[1]) }, to: { col: iccs.charCodeAt(2) - 97, row: 9 - Number(iccs[3]) } }))} selectedSquare={controls.selected} reversed={controls.flipped} sideToMove={frame.fen.split(/\s+/)[1] === "b" ? "黑方" : "红方"} pieceAsset={piece => pieceAsset(piece, displayedPieceSkin)} boardAsset={`/skins/${skinAssetFolder(displayedBoardSkin)}/board.png`}/><div className="variation-desktop-board-hit-grid">{Array.from({ length: 90 }, (_, index) => { const square = { row: Math.floor(index / 9), col: index % 9 }; return <button type="button" key={index} aria-label={`推演棋盘 ${square.row + 1} 行 ${square.col + 1} 列`} style={mainBoardCellStyle(square, controls.flipped, displayedBoardSkin)} onClick={() => controls.onSquare(square)}/>; })}</div></div>}/> : !reviewModeOpen && candidateLinesView("board-candidate-rail", workspaceMode !== "research")}
         </section>
 
         {referenceSidePanelActive ? <MasterOpeningPanel
@@ -8836,7 +8851,7 @@ export default function App() {
             {playbackControls("desktop-playback")}
             <div className="move-review-pane tree-review-pane">
               {manualReviewContent("棋谱着法")}
-              {branchMapControls()}
+
               {board.currentNode && (
                 <div className="node-editor">
                   <input disabled={isPlaying} value={comment} onChange={(event) => setComment(event.target.value)} placeholder="当前着法注释" />

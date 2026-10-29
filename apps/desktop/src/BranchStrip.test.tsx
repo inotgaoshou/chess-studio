@@ -40,3 +40,22 @@ it("reopens a collapsed fork when next requests an explicit choice",()=>{
 it("omits navigation at an actual leaf",()=>{
  render(<BranchStrip choices={[]} onSelect={vi.fn()}/>);expect(screen.queryByRole('navigation')).toBeNull();
 });
+
+it("floats outside the board layout and suppresses the card while another tool is open",()=>{
+ const choices=[{id:'same',move:'a0a1',notation:'车九进一'},{id:'other',move:'b0c2',notation:'马八进七'}];
+ const view=render(<main data-testid="board-layout"><BranchStrip floating contextKey="game:root" light choices={choices} onSelect={vi.fn()}/></main>);
+ expect(screen.getByTestId('board-layout').children).toHaveLength(0);
+ expect(screen.getByRole('navigation',{name:'当前局面分支'}).classList.contains('is-floating')).toBe(true);
+ view.rerender(<main data-testid="board-layout"><BranchStrip floating hidden contextKey="game:root" choices={choices} onSelect={vi.fn()}/></main>);
+ expect(screen.queryByRole('navigation',{name:'当前局面分支'})).toBeNull();
+});
+it("reopens a new position with identical branch IDs but does not reopen on ordinary result refresh",()=>{
+ const choices=[{id:'same',move:'a0a1',notation:'车九进一'},{id:'other',move:'b0c2',notation:'马八进七'}],select=vi.fn();
+ const view=render(<BranchStrip floating contextKey="game:root" choices={choices} onSelect={select}/>);
+ fireEvent.click(screen.getByRole('button',{name:'收起变招选择'}));
+ view.rerender(<BranchStrip floating contextKey="game:root" choices={[...choices]} onSelect={select}/>);
+ expect(screen.queryByRole('button',{name:'分支 2 · 马八进七'})).toBeNull();
+ view.rerender(<BranchStrip floating contextKey="game:child" choices={choices} onSelect={select}/>);
+ expect(screen.getByRole('button',{name:'分支 2 · 马八进七'})).toBeTruthy();
+ expect(select).not.toHaveBeenCalled();
+});

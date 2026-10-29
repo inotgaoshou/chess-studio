@@ -86,7 +86,7 @@ try {
   await page.setViewportSize({width:390,height:844});
   // Branch navigation does not promote the browsed route or reorder saved branches.
   await panel.getByRole('button',{name:'收起小棋盘'}).click();
-  const strip=page.locator('.manual-bottom-tools').getByRole('navigation',{name:'当前局面分支'});
+  const strip=page.getByRole('navigation',{name:'当前局面分支'});await strip.getByRole('button',{name:/^分支 2/}).waitFor();
   assert.equal(await strip.getByRole('button',{name:/^分支 \d/}).count(),2);assert.equal(await board.locator('.saved-branch-arrow').count(),2);assert.deepEqual(await board.locator('.saved-branch-arrow text').allTextContents(),['1','2']);
   await strip.getByRole('button',{name:/马二进三/}).click();
   await board.getByRole('button',{name:'g2 红马',exact:true}).waitFor();
@@ -100,7 +100,7 @@ try {
   assert.equal((await read(page)).branches.length,0,'browsed variation deletion must persist');
   assert.deepEqual((await read(page)).moves,game.moves);
   await panel.getByRole('button',{name:'更多推演操作'}).click();await panel.getByRole('button',{name:'保存分支',exact:true}).click();await panel.getByText(/已保存一支/).waitFor();saved=await read(page);
-  await panel.getByRole('button',{name:'查看已保存分支',exact:true}).click();await board.getByRole('button',{name:'h0 红马',exact:true}).waitFor();assert.equal(await strip.getByRole('button',{name:/^分支 \d/}).count(),2);assert.equal(await board.locator('.saved-branch-arrow').count(),2);await panel.getByRole('button',{name:'保存分支',exact:true}).click();await panel.getByText(/该线路已保存/).waitFor();
+  await panel.getByRole('button',{name:'查看已保存分支',exact:true}).click();await board.getByRole('button',{name:'h0 红马',exact:true}).waitFor();assert.equal(await strip.count(),0,'expanded mini hides the branch card');assert.equal(await board.locator('.saved-branch-arrow').count(),2);await panel.getByRole('button',{name:'保存分支',exact:true}).click();await panel.getByText(/该线路已保存/).waitFor();
   // Drag without allowing the fixed header to leave the viewport.
   const title=await panel.locator('header strong').boundingBox();await page.mouse.move(title.x+10,title.y+10);await page.mouse.down();await page.mouse.move(-400,-400);await page.mouse.up();await bounds(panel);
   await panel.getByRole('button',{name:'收起小棋盘'}).click();assert.equal(await small.count(),0);await panel.getByRole('button',{name:'展开小棋盘'}).click();
@@ -197,11 +197,13 @@ try {
   await deskPanel.getByRole('button',{name:'保存分支',exact:true}).click();await deskPanel.getByText(/已保存一支/).waitFor();
   const after=await db();assert.equal(after.id,before.id);assert.equal(after.fen,before.fen);assert(after.snapshot.includes('原主线注释'));
   await deskPanel.getByRole('button',{name:'保存分支',exact:true}).click();await deskPanel.getByText(/该线路已保存/).waitFor();assert.deepEqual(JSON.parse((await db()).snapshot),JSON.parse(after.snapshot));
-  const deskStrip=page.locator('.board-main-stack > .manual-branch-strip');await deskStrip.waitFor();
+  await deskPanel.getByRole('button',{name:'收起小棋盘'}).click();
+  const deskStrip=page.getByRole('navigation',{name:'当前局面分支'});await deskStrip.waitFor();
   await page.screenshot({path:output+'/desktop-branches.png'});
   const navBefore=JSON.parse((await db()).snapshot);
   assert.equal(await deskStrip.getByRole('button',{name:/^分支 \d/}).count(),2);await deskStrip.getByRole('button',{name:/^分支 \d/}).last().click();
   const navAfter=JSON.parse((await db()).snapshot);assert.deepEqual(navAfter.tree,navBefore.tree,'branch navigation must not edit the tree');
+  await deskPanel.getByRole('button',{name:'展开小棋盘'}).click();
   await bounds(deskPanel);await page.screenshot({path:output+'/desktop-docked.png'});
   await deskPanel.getByRole('button',{name:'更多推演操作'}).click();await deskPanel.getByRole('button',{name:'悬浮显示',exact:true}).click();await bounds(deskPanel);
   await page.setViewportSize({width:900,height:600});await bounds(deskPanel);await page.screenshot({path:output+'/desktop-floating.png'});

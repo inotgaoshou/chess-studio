@@ -24,6 +24,7 @@ export type VariationBoardProps<F extends VariationFrame> = {
   onSaveCopy?(moves: string[]): Promise<VariationReceipt>;
   saveLabel?: string;
   onClose(): void;
+  onCollapsedChange?(collapsed:boolean):void;
 };
 
 /** This panel owns temporary positions only. All persistent writes are explicit callbacks. */
@@ -36,6 +37,8 @@ export function VariationBoard<F extends VariationFrame>(props: VariationBoardPr
   const [flipped, setFlipped] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  const collapseCallback=useRef(props.onCollapsedChange);collapseCallback.current=props.onCollapsedChange;
+  useEffect(()=>{collapseCallback.current?.(collapsed);},[collapsed]);
   const [floating, setFloating] = useState(mobile);
   const [expanded, setExpanded] = useState(false);
   const [hints, setHints] = useState(true);
