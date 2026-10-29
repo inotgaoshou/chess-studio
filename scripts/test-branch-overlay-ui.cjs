@@ -23,9 +23,9 @@ try{
  await page.setViewportSize(viewport);await open(0);const base=await rects(page);
  const buttons=await page.locator('.recording-quick-actions button').evaluateAll(nodes=>nodes.map(n=>{const r=n.getBoundingClientRect();return {top:r.top,left:r.left,right:r.right,height:r.height,scroll:n.scrollWidth,width:n.clientWidth};}));assert.equal(buttons.length,6);
  if(viewport.width<600){assert(Math.max(...buttons.map(b=>b.top))-Math.min(...buttons.map(b=>b.top))<=1,'six quick buttons must share a portrait row');assert(buttons.every(b=>b.scroll<=b.width+1),'quick labels must not overflow');}else assert.equal(new Set(buttons.map(b=>b.top)).size,2,'landscape side tools retain two rows');
- await open(1);await strip.getByRole('button',{name:/^继续：/}).waitFor();await stable(page,base,'single continuation');
+ await open(1);await strip.getByRole('button',{name:/^棋谱下一着：/}).waitFor();await stable(page,base,'single continuation');
  await open(2);await strip.getByRole('button',{name:/^分支 2/}).waitFor();await stable(page,base,'fork appears');
- const original=await strip.boundingBox();const toolbar=await page.locator('.manual-bottom-tools').boundingBox();assert(original.y+original.height<=toolbar.y+1 || original.x+original.width<=toolbar.x+1,'overlay must avoid toolbar');
+ const original=await strip.boundingBox();const toolbar=await page.locator('.manual-bottom-tools').boundingBox();const mainBoard=await page.locator('.manual-play-board-area > .board-shell').boundingBox();assert(original.y>=mainBoard.y+mainBoard.height-1 || original.x>=mainBoard.x+mainBoard.width-1 || original.x+original.width<=mainBoard.x+1 || original.y+original.height<=mainBoard.y+1,'overlay must not cover the board');await page.screenshot({path:output+`/branches-${viewport.width}x${viewport.height}.png`});
  assert.equal(await strip.evaluate(el=>!!el.closest('.manual-bottom-tools')),false,'card must be portaled outside normal layout');
  await strip.getByRole('button',{name:'收起变招选择'}).click();await stable(page,base,'collapse');await page.getByRole('button',{name:'下一步',exact:true}).click();await strip.getByRole('button',{name:/^分支 2/}).waitFor();await stable(page,base,'next reveals');
  const grip=await strip.getByRole('button',{name:'拖动分支选择'}).boundingBox();await page.mouse.move(grip.x+grip.width/2,grip.y+grip.height/2);await page.mouse.down();await page.mouse.move(18,90,{steps:5});await page.mouse.up();await stable(page,base,'drag');
@@ -52,7 +52,7 @@ try{
  await page.reload();await page.getByText('离线棋谱已就绪',{exact:true}).waitFor({state:'attached'});await page.waitForTimeout(150);
  const current=await deskRect();if(!base)base=current;else for(const selector of Object.keys(base))for(const key of ['x','y','width','height'])assert(Math.abs(current[selector][key]-base[selector][key])<=1,`desktop ${theme}/${count}: ${selector} ${key} changed`);
  if(count===0){assert.equal(await desktopStrip.count(),0);continue;}
- if(count===1){await desktopStrip.getByRole('button',{name:/^继续：/}).waitFor();continue;}
+ if(count===1){await desktopStrip.getByRole('button',{name:/^棋谱下一着：/}).waitFor();continue;}
  await desktopStrip.getByRole('button',{name:/^分支 2/}).waitFor();assert.equal(await page.locator('[data-testid=branch-picker]').count(),0,'only one picker exists');
  await desktopStrip.getByRole('button',{name:'收起变招选择'}).click();await page.getByRole('button',{name:'下一着（选择变招）',exact:true}).first().click();await desktopStrip.getByRole('button',{name:/^分支 2/}).waitFor();
  await desktopStrip.getByRole('button',{name:'管理变招'}).click();await page.getByRole('dialog',{name:'当前分支选择',exact:true}).waitFor();assert.equal(await desktopStrip.count(),0,'editor replaces selection');await page.getByRole('button',{name:'关闭变招选择',exact:true}).click();

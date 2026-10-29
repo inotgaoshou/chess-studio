@@ -7441,3 +7441,5 @@ html.phone-webview .study-sidebar { grid-template-rows:auto 32px minmax(0,1fr); 
  .manual-reference-layout .recording-quick-actions { gap:2px; }
  .manual-reference-layout .recording-quick-actions svg { width:21px; height:21px; }
 }
+.manual-reference-layout .recording-feedback-row { position:relative; }
+.manual-branch-dock { position:absolute; left:0; top:0; width:calc(100% - 105px); height:44px; pointer-events:none; }

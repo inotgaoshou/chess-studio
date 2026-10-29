@@ -5,7 +5,7 @@ import { branchOverlayBounds, placeBranchOverlay, type OverlayPoint } from "./br
 import "./branchStrip.css";
 
 export type BranchStripChoice = { id:string; move:string; notation:string; selected?:boolean; isMainline?:boolean };
-export type BranchStripAnchor = { board:Element|null; toolbar?:Element|null };
+export type BranchStripAnchor = { board:Element|null; toolbar?:Element|null; dock?:Element|null; dockInside?:boolean };
 type BranchStripProps = {
   choices:BranchStripChoice[]; onSelect(id:string):void; onManage?():void; revealKey?:number;
   contextKey?:string; floating?:boolean; hidden?:boolean; light?:boolean;
@@ -26,7 +26,7 @@ export function BranchStrip(props:BranchStripProps) {
   const identity=contextKey ?? unique.map(item=>item.id).join(",");
   const hasFork=unique.length>1,visible=!hidden && unique.length>0;
   function setOpen(value:boolean) { setInternalOpen(value); latest.current.onExpandedChange?.(value); }
-  useLayoutEffect(()=>{setOpen(true);},[identity,revealKey,hasFork]);
+  useLayoutEffect(()=>{setOpen(true);},[identity,revealKey,hasFork,unique.length>0]);
   useEffect(()=>{
     if (!visible) return;
     const escape=(event:KeyboardEvent)=>{if(event.key==="Escape"&&!event.isComposing)setOpen(false);};
@@ -40,18 +40,24 @@ export function BranchStrip(props:BranchStripProps) {
     const constrain=()=>{
       const viewport=window.visualViewport,padding=getComputedStyle(host);
       const left=viewport?.offsetLeft ?? 0,top=viewport?.offsetTop ?? 0;
-      const {board,toolbar}=latest.current.getAnchor?.() ?? {board:null};
+      const {board,toolbar,dock,dockInside}=latest.current.getAnchor?.() ?? {board:null};
       const boardRect=board?.getBoundingClientRect();
+      const toolbarRect=toolbar?.getBoundingClientRect(),dockRect=dock?.getBoundingClientRect();
+      const fitsGap=Boolean(dockInside&&boardRect&&toolbarRect&&toolbarRect.top-boardRect.bottom>=52);
+      const useSlot=dockInside&&!fitsGap;
+      const placementDock=dockInside&&!useSlot?undefined:dockRect;
       const bounds=branchOverlayBounds({
         left:left+(parseFloat(padding.paddingLeft)||8),top:top+(parseFloat(padding.paddingTop)||8),
         right:left+(viewport?.width ?? innerWidth)-(parseFloat(padding.paddingRight)||8),
         bottom:top+(viewport?.height ?? innerHeight)-(parseFloat(padding.paddingBottom)||8),
-      },boardRect,toolbar?.getBoundingClientRect());
-      node.style.maxWidth=`${Math.max(1,bounds.right-bounds.left)}px`;
-      node.style.maxHeight=`${Math.max(1,Math.min(bounds.bottom-bounds.top,(viewport?.height ?? innerHeight)*.4,240))}px`;
+      },boardRect,placementDock,preferred.current);
+      if(fitsGap&&!preferred.current&&toolbarRect)bounds.bottom=Math.min(bounds.bottom,toolbarRect.top-4);
+      node.dataset.dockInside=String(Boolean(useSlot));
+      node.style.maxWidth=`${Math.max(1,Math.min(bounds.right-bounds.left,useSlot&&dockRect?dockRect.width:Infinity))}px`;
+      const maxHeight=Math.max(1,Math.min(bounds.bottom-bounds.top,(viewport?.height ?? innerHeight)*.4,160,useSlot&&dockRect?dockRect.height-4:Infinity));
+      node.style.maxHeight=`${maxHeight}px`;node.style.setProperty("--branch-choice-height",`${maxHeight-8}px`);
       const rect=node.getBoundingClientRect();
-      const position=placeBranchOverlay(bounds,rect,boardRect,preferred.current);
-      if(preferred.current)preferred.current=position;
+      const position=placeBranchOverlay(bounds,rect,boardRect,preferred.current ?? (useSlot&&dockRect?{x:dockRect.left,y:dockRect.top+2}:undefined),placementDock);
       node.style.left=`${position.x}px`;node.style.top=`${position.y}px`;node.style.visibility="visible";
     };
     fit.current=constrain;constrain();
@@ -60,6 +66,7 @@ export function BranchStrip(props:BranchStripProps) {
     const anchor=latest.current.getAnchor?.();
     if(anchor?.board)observer?.observe(anchor.board);
     if(anchor?.toolbar)observer?.observe(anchor.toolbar);
+    if(anchor?.dock)observer?.observe(anchor.dock);
     window.addEventListener("resize",constrain);window.addEventListener("scroll",constrain,true);
     window.visualViewport?.addEventListener("resize",constrain);window.visualViewport?.addEventListener("scroll",constrain);
     return ()=>{observer?.disconnect();window.removeEventListener("resize",constrain);window.removeEventListener("scroll",constrain,true);window.visualViewport?.removeEventListener("resize",constrain);window.visualViewport?.removeEventListener("scroll",constrain);fit.current=()=>undefined;drag.current=undefined;};
@@ -86,10 +93,14 @@ export function BranchStrip(props:BranchStripProps) {
   const select=(id:string)=>{setOpen(false);onSelect(id);};
   if(!visible)return null;
   const content=<nav ref={card} className={`manual-branch-strip ${floating?"is-floating":""} ${light?"is-light":""} ${unique.length===1?"is-single":""} ${!open?"is-collapsed":""}`} aria-label="当前局面分支" style={floating?{visibility:"hidden"}:undefined}>
-    {unique.length===1 || !open ? <div className="branch-compact" {...dragEvents}>{handle}{unique.length===1
-      ? <button type="button" aria-label={`继续：${unique[0].notation}`} onClick={()=>select(unique[0].id)}>继续：{unique[0].notation}</button>
+    {floating ? <div className="branch-inline-controls"><span {...dragEvents}>{handle}</span>
+      {!open ? <button type="button" aria-label="展开棋谱后续" onClick={()=>setOpen(true)}><GitFork size={14}/>{unique.length === 1 ? "棋谱后续" : `分支 ${unique.length}`}</button>
+      : <div className="manual-branch-choices">{unique.map((choice,index)=><button key={choice.id} type="button" aria-label={unique.length === 1 ? `棋谱下一着：${choice.notation}` : `分支 ${index+1} · ${choice.notation}`} aria-current={choice.selected?"true":undefined} title="进入棋谱已有走法" onClick={()=>select(choice.id)}>{unique.length>1&&<b>{index+1}</b>}<strong>{unique.length===1?"下一着：":""}{choice.notation}</strong></button>)}</div>}
+      <span className="branch-small-actions">{onManage&&open&&unique.length>1&&<button type="button" aria-label="管理变招" onClick={onManage}><Settings2 size={14}/></button>}{open&&<button type="button" aria-label="收起变招选择" onClick={()=>setOpen(false)}><X size={14}/></button>}</span>
+    </div> : unique.length===1 || !open ? <div className="branch-compact">{unique.length===1
+      ? <button type="button" aria-label={`棋谱下一着：${unique[0].notation}`} onClick={()=>select(unique[0].id)}>下一着：{unique[0].notation}</button>
       : <button type="button" onClick={()=>setOpen(true)}><GitFork size={16}/>选择变招 · {unique.length} 条</button>}</div>
-    : <><header {...dragEvents}><strong>{handle}<GitFork size={15}/>选择变招 · {unique.length} 条</strong><span>{onManage&&<button type="button" aria-label="管理变招" onClick={onManage}><Settings2 size={14}/></button>}<button type="button" aria-label="收起变招选择" onClick={()=>setOpen(false)}><X size={14}/></button></span></header>
+    : <><header><strong><GitFork size={15}/>选择变招 · {unique.length} 条</strong><span>{onManage&&<button type="button" aria-label="管理变招" onClick={onManage}><Settings2 size={14}/></button>}<button type="button" aria-label="收起变招选择" onClick={()=>setOpen(false)}><X size={14}/></button></span></header>
     <div className="manual-branch-choices">{unique.map((choice,index)=><button key={choice.id} type="button" aria-label={`分支 ${index+1} · ${choice.notation}`} aria-current={choice.selected?"true":undefined} onClick={()=>select(choice.id)}><b>{index+1}</b><span><strong>{choice.notation}</strong><small>{choice.isMainline?"主线":"分支"} {index+1}</small></span></button>)}</div></>}
   </nav>;
   return floating?createPortal(<div ref={layer} className="branch-floating-layer">{content}</div>,document.body):content;

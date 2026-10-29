@@ -43,3 +43,22 @@
 .branch-management-layer .branch-map-controls.branch-map-floating { position:relative; inset:auto; transform:none; width:min(640px,calc(100vw - 24px)); max-width:100%; max-height:calc(100dvh - 48px); overflow:auto; }
 .branch-management-layer.is-light .branch-map-controls { color:#315d43; background:#f5fbf5; border-color:#b5cdbc; }
 .branch-management-layer.is-light .branch-map-controls button { color:#315d43; background:#f7fcf7; border-color:#c7dbcc; }
+
+/* Only the actual moves and small controls are visible; no extra title block. */
+.branch-floating-layer .manual-branch-strip.is-floating { width:max-content; padding:3px; border-radius:9px; }
+.manual-branch-strip.is-floating .branch-inline-controls { display:flex; align-items:center; gap:2px; min-width:0; overflow:hidden; }
+.branch-inline-controls > span,.branch-small-actions { display:flex; flex:none; }
+.manual-branch-strip.is-floating .manual-branch-choices { grid-template-columns:repeat(2,minmax(0,1fr)); flex:1 1 auto; max-height:inherit; gap:3px; }
+.manual-branch-strip.is-floating.is-single .manual-branch-choices { grid-template-columns:minmax(0,1fr); }
+.manual-branch-strip.is-floating .manual-branch-choices button { min-height:34px; padding:3px 5px; }
+.manual-branch-strip.is-floating .manual-branch-choices button b { width:19px; height:19px; flex:none; }
+.manual-branch-strip.is-floating .manual-branch-choices strong { min-width:0; font-size:12px; }
+.manual-branch-strip.is-floating .branch-small-actions button { min-width:26px; min-height:32px; padding:2px; border:0; background:transparent; }
+.manual-branch-strip.is-floating .branch-drag-handle { min-width:22px; min-height:32px; }
+.manual-branch-strip.is-floating .manual-branch-choices { max-height:var(--branch-choice-height,152px); }
+@media (max-width:380px) {
+ .manual-branch-strip.is-floating .manual-branch-choices button { padding:2px; gap:2px; }
+ .manual-branch-strip.is-floating .manual-branch-choices strong { font-size:10px; }
+ .manual-branch-strip.is-floating .manual-branch-choices button b { width:16px; height:16px; font-size:10px; }
+}
+.branch-floating-layer .manual-branch-strip.is-floating[data-dock-inside=true] { padding:1px; }

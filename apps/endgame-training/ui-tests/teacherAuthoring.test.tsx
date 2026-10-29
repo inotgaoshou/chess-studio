@@ -434,3 +434,33 @@ it("opens books first and never loads all-platform records before choosing a boo
   fireEvent.click(within(screen.getByRole("dialog")).getByRole("button",{name:"‹ 返回",exact:true}));
   expect(screen.queryByRole("dialog")).toBeNull();
 });
+
+it("filters all book pages by mate steps and carries the filter into the selected book",async()=>{
+  const f=fixture(),fallback=f.request.getMockImplementation()!;
+  f.request.mockImplementation(async(path,init)=>{
+    const params=new URL(path,"https://test.invalid").searchParams;
+    if(path.startsWith(B+"/source-libraries?"))return {mateFilterVersion:1,items:[{id:"book",title:params.get("mateMoves")==="2"?"两步杀书本":"测试题库",sourceScope:"平台"}],nextCursor:params.has("cursor")?null:"more"};
+    if(path.startsWith(B+"/sources?"))return {mateFilterVersion:1,items:[{id:"matched",title:"匹配的两步杀",fen:START_FEN}],categories:[],nextCursor:null};
+    return fallback(path,init);
+  });
+  await enter();fireEvent.click(screen.getByRole("button",{name:"＋添加题目"}));fireEvent.click(screen.getByRole("button",{name:"从平台／机构题库选题"}));
+  await screen.findByRole("button",{name:/测试题库.*进入选题/});
+  fireEvent.change(screen.getByLabelText("杀法步数"),{target:{value:"2"}});
+  fireEvent.click(await screen.findByRole("button",{name:/两步杀书本.*进入选题/}));
+  await screen.findByText("匹配的两步杀");
+  expect((screen.getByLabelText("杀法步数") as HTMLSelectElement).value).toBe("2");
+  const calls=f.request.mock.calls.map(([path])=>new URL(path,"https://test.invalid"));
+  expect(calls.some(url=>url.pathname.endsWith("/sources")&&url.searchParams.get("mateMoves")==="2")).toBe(true);
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button",{name:"‹ 返回",exact:true}));
+  fireEvent.click(await screen.findByRole("button",{name:"加载更多题库"}));
+  await waitFor(()=>expect(f.request.mock.calls.some(([path])=>path.includes("mateMoves=2")&&path.includes("cursor=more"))).toBe(true));
+  expect(f.request.mock.calls.some(([,init])=>init?.method==="POST"||init?.method==="PATCH")).toBe(false);
+});
+
+it("does not silently show unfiltered books on an older server",async()=>{
+  fixture();await enter();fireEvent.click(screen.getByRole("button",{name:"＋添加题目"}));fireEvent.click(screen.getByRole("button",{name:"从平台／机构题库选题"}));
+  await screen.findByRole("button",{name:/测试题库.*进入选题/});
+  fireEvent.change(screen.getByLabelText("杀法步数"),{target:{value:"long"}});
+  await screen.findByText(/服务器尚未支持杀法步数筛选/);
+  expect(screen.queryByRole("button",{name:/测试题库.*进入选题/})).toBeNull();
+});

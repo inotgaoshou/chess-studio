@@ -3123,10 +3123,10 @@ export default function App() {
     // still open. Clear that transient UI state so the next click always
     // opens choices for the current position.
     if (hasVisibleBranchChoices) return;
-    setBranchPickerOpen(false);
+    if (!board.branches.length) setBranchPickerOpen(false);
     setBranchEditing(false);
     setBranchEditNodeId(undefined);
-  }, [board.currentNode, hasVisibleBranchChoices]);
+  }, [board.currentNode, hasVisibleBranchChoices, board.branches.length]);
   const hasUpcomingBranch = hasUpcomingBranchPoint(board.manualTree ?? [], board.currentNode);
   const branchArrowColor = desktopPreferences.branchArrowColor || DEFAULT_BRANCH_ARROW_COLOR;
   const branchArrowBadgeColor = desktopPreferences.branchArrowBadgeColor || DEFAULT_BRANCH_ARROW_BADGE_COLOR;
@@ -7177,7 +7177,7 @@ export default function App() {
   const [desktopMenuOpen, setDesktopMenuOpen] = useState(false);
 
   function branchSelection() {
-    return <BranchStrip floating light={desktopPreferences.layoutMode === "compact"} contextKey={`${board.gameId}:${variationDocumentEpoch.current}:${board.currentNode ?? "root"}`} revealKey={branchRevealRequest} expanded={branchPickerOpen} onExpandedChange={setBranchPickerOpen} hidden={Boolean((variation && !variationCollapsed) || branchEditing || desktopMenuOpen || desktopDialog || positionEditorOpen || exportMenuOpen || skinMenuOpen || skinShopOpen || aboutOpen || manualLineDialogOpen || reportDialogOpen || masterAnalysisDialogOpen || mobileDrawerOpen || mobileExportOpen || analysisHelpOpen || teachingCenterOpen || userManualOpen || masterLibraryOpen || referenceLibraryOpen || ttxqImportOpen || game53StudyOpen || flyknifeOpen || endgameTrainingOpen || linkSessionOpen)} getAnchor={() => ({ board:document.querySelector(".board-main-stack .board"), toolbar:document.querySelector(".board-main-stack .playback-controls") ?? document.querySelector(".playback-controls") })} choices={board.branches.map(move => ({ id:move.id, move:move.iccs, notation:move.notation, selected:move.id === board.continuation[0]?.id, isMainline:move.isMainline }))} onManage={() => { setBranchEditing(true); setBranchPickerOpen(false); }} onSelect={id => void selectBranchChoice(id)}/>;
+    return <BranchStrip floating light={desktopPreferences.layoutMode === "compact"} contextKey={`${board.gameId}:${variationDocumentEpoch.current}:${board.currentNode ?? "root"}`} revealKey={branchRevealRequest} expanded={branchPickerOpen} onExpandedChange={setBranchPickerOpen} hidden={Boolean((variation && !variationCollapsed) || branchEditing || desktopMenuOpen || desktopDialog || positionEditorOpen || exportMenuOpen || skinMenuOpen || skinShopOpen || aboutOpen || manualLineDialogOpen || reportDialogOpen || masterAnalysisDialogOpen || mobileDrawerOpen || mobileExportOpen || analysisHelpOpen || teachingCenterOpen || userManualOpen || masterLibraryOpen || referenceLibraryOpen || ttxqImportOpen || game53StudyOpen || flyknifeOpen || endgameTrainingOpen || linkSessionOpen)} getAnchor={() => ({ board:document.querySelector(".board-main-stack .board"), toolbar:document.querySelector(".board-main-stack .playback-controls") ?? document.querySelector(".playback-controls"), dock:document.querySelector(".compact-engine-window .analysis-lines, .candidate-dock .analysis-lines") })} choices={board.branches.map(move => ({ id:move.id, move:move.iccs, notation:move.notation, selected:move.id === board.continuation[0]?.id, isMainline:move.isMainline }))} onManage={() => { setBranchEditing(true); setBranchPickerOpen(false); }} onSelect={id => void selectBranchChoice(id)}/>;
   }
 
   function branchMapControls() {

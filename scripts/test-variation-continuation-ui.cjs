@@ -33,7 +33,7 @@ async function step(board,from,to){await board.getByRole('button',{name:from,exa
  await big.getByRole('button',{name:'a4 红兵',exact:true}).waitFor();await panel.getByText(/第 4 步 \/ 共 4 步/).waitFor();
  let saved=await read();assert.deepEqual(saved.moves,moves);assert.deepEqual(saved.comments,game.comments);assert.equal(saved.cursor,5);assert.deepEqual(saved.branches[0].moves,tail);
  await panel.getByRole('button',{name:'保存分支',exact:true}).click();await panel.getByText(/该线路已保存/).waitFor();assert.deepEqual((await read()).branches,saved.branches);
- await panel.getByRole('button',{name:'收起小棋盘'}).click();const strip=page.getByRole('navigation',{name:'当前局面分支'});await strip.getByRole('button',{name:/^继续：/}).waitFor();
+ await panel.getByRole('button',{name:'收起小棋盘'}).click();const strip=page.getByRole('navigation',{name:'当前局面分支'});await strip.getByRole('button',{name:/^棋谱下一着：/}).waitFor();
  await page.screenshot({path:output+'/five-of-nine.png'});
  await page.getByRole('button',{name:'下一步',exact:true}).click();await title.getByText('录谱 6/9',{exact:true}).waitFor();await big.getByRole('button',{name:'a5 黑卒',exact:true}).waitFor();
  await page.getByRole('button',{name:'播放棋谱',exact:true}).click();await title.getByText('录谱 9/9',{exact:true}).waitFor();assert.deepEqual((await read()).moves,moves);
@@ -54,6 +54,10 @@ async function step(board,from,to){await board.getByRole('button',{name:from,exa
  const study=page.locator('.study-stage > .board-shell .xiangqi-board');await study.waitFor();await step(study,'b0 红马','c2');await study.getByRole('button',{name:'c2 红马',exact:true}).waitFor();
  await page.getByRole('button',{name:'自由推演',exact:true}).click();await step(small,'h9 黑马','g7');await panel.getByText(/第 1 步 \/ 共 1 步/).waitFor();await panel.getByRole('button',{name:'保存分支',exact:true}).click();
  const metadata=page.getByRole('dialog',{name:'保存棋谱',exact:true});await metadata.waitFor();await metadata.getByRole('button',{name:'保存棋谱',exact:true}).click();await panel.getByText(/已保存一支/).waitFor();await panel.getByRole('button',{name:'收起小棋盘'}).click();
+ await strip.getByRole('button',{name:/^棋谱下一着：/}).waitFor();
+ const studyBoardRect=await page.locator('.study-stage > .board-shell').boundingBox(),studyBranchRect=await strip.boundingBox();
+ assert(studyBranchRect.y>=studyBoardRect.y+studyBoardRect.height-1 || studyBranchRect.x>=studyBoardRect.x+studyBoardRect.width-1 || studyBranchRect.x+studyBranchRect.width<=studyBoardRect.x+1 || studyBranchRect.y+studyBranchRect.height<=studyBoardRect.y+1,'study continuation must start outside the board');
+ await page.screenshot({path:output+'/study-continuation-below-board.png'});
  await page.getByRole('button',{name:'下一步',exact:true}).click();await study.getByRole('button',{name:'g7 黑马',exact:true}).waitFor();await step(study,'a3 红兵','a4');await study.getByRole('button',{name:'a4 红兵',exact:true}).waitFor();
  await page.waitForFunction(()=>{const state=JSON.parse(localStorage.getItem('xiangqi-training-study-state'));return state.branches.some(b=>[...b.parentPath,...b.moves].join(',')==='b0c2,h9g7,a3a4');});
  assert.deepEqual(await page.evaluate(()=>JSON.parse(localStorage.getItem('xiangqi-training-study-state')).moves),['b0c2']);
@@ -73,8 +77,8 @@ async function step(board,from,to){await board.getByRole('button',{name:from,exa
  const after=await db(),beforeTree=JSON.parse(seed.game.snapshot).tree,afterTree=JSON.parse(after.snapshot).tree;
  assert.equal(after.fen,seed.game.fen);for(const [id,node] of Object.entries(beforeTree.nodes))assert.deepEqual(afterTree.nodes[id],node,'source mainline nodes/comments stay unchanged');
  await desk.getByRole('button',{name:'收起小棋盘'}).click();
- const stripDesk=page.getByRole('navigation',{name:'当前局面分支'});await stripDesk.getByRole('button',{name:/^继续：/}).waitFor();
- await stripDesk.getByRole('button',{name:/^继续：/}).click();assert.notEqual((await db()).fen,seed.game.fen);
+ const stripDesk=page.getByRole('navigation',{name:'当前局面分支'});await stripDesk.getByRole('button',{name:/^棋谱下一着：/}).waitFor();
+ await stripDesk.getByRole('button',{name:/^棋谱下一着：/}).click();assert.notEqual((await db()).fen,seed.game.fen);
  assert.deepEqual(JSON.parse((await db()).snapshot).tree,afterTree,'navigation never promotes canonical nodes');
  await page.reload();await page.getByText('离线棋谱已就绪',{exact:true}).waitFor({state:'attached'});assert.deepEqual(JSON.parse((await db()).snapshot).tree,afterTree);
  await page.screenshot({path:output+'/desktop-continuation.png'});

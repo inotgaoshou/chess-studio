@@ -18,7 +18,7 @@ it("keeps direct-child order and merges common-prefix routes without navigating 
 });
 it("shows a sole saved continuation without requiring a fork", () => {
   render(<BranchStrip choices={[{id:"a", move:"h2e2", notation:"炮二平五"}]} onSelect={vi.fn()}/>);
-  expect(screen.getByRole("button",{name:"继续：炮二平五"})).toBeTruthy();
+  expect(screen.getByRole("button",{name:"棋谱下一着：炮二平五"})).toBeTruthy();
 });
 
 it("collapses and reopens choices without selecting a route", () => {
@@ -58,4 +58,34 @@ it("reopens a new position with identical branch IDs but does not reopen on ordi
  view.rerender(<BranchStrip floating contextKey="game:child" choices={choices} onSelect={select}/>);
  expect(screen.getByRole('button',{name:'分支 2 · 马八进七'})).toBeTruthy();
  expect(select).not.toHaveBeenCalled();
+});
+
+it("collapses a single saved continuation without playing an AI move",()=>{
+ const select=vi.fn(); render(<BranchStrip floating choices={[{id:"saved",move:"a0a1",notation:"车九进一"}]} onSelect={select}/>);
+ expect(screen.getByRole("button",{name:"棋谱下一着：车九进一"})).toBeTruthy();
+ fireEvent.click(screen.getByRole("button",{name:"收起变招选择"}));
+ expect(select).not.toHaveBeenCalled();
+ fireEvent.click(screen.getByRole("button",{name:"展开棋谱后续"}));
+ fireEvent.click(screen.getByRole("button",{name:"棋谱下一着：车九进一"}));
+ expect(select).toHaveBeenCalledWith("saved");
+});
+it("reveals a new saved tail at the same anchor after an empty position",()=>{
+ const change=vi.fn();
+ const view=render(<BranchStrip floating contextKey="same" choices={[]} expanded={false} onExpandedChange={change} onSelect={vi.fn()}/>);
+ change.mockClear();
+ view.rerender(<BranchStrip floating contextKey="same" choices={[{id:"saved",move:"a0a1",notation:"车九进一"}]} expanded={false} onExpandedChange={change} onSelect={vi.fn()}/>);
+ expect(change).toHaveBeenCalledWith(true);
+});
+it("uses the status slot when the gap cannot fit a complete move button",()=>{
+ const board=document.createElement('div'),toolbar=document.createElement('div'),dock=document.createElement('div');
+ let gap=48;
+ board.getBoundingClientRect=()=>new DOMRect(8,0,300,600);
+ toolbar.getBoundingClientRect=()=>new DOMRect(0,600+gap,320,100);
+ dock.getBoundingClientRect=()=>new DOMRect(8,602+gap,200,44);
+ render(<BranchStrip floating choices={[{id:'a',move:'a0a1',notation:'车九进一'}]} onSelect={vi.fn()} getAnchor={()=>({board,toolbar,dock,dockInside:true})}/>);
+ const nav=screen.getByRole('navigation',{name:'当前局面分支'});
+ expect(nav.dataset.dockInside).toBe('true');
+ gap=52;fireEvent(window,new Event('resize'));
+ expect(nav.dataset.dockInside).toBe('false');
+ expect(parseFloat(nav.style.maxHeight)).toBeGreaterThanOrEqual(42);
 });

@@ -1,19 +1,24 @@
 export type OverlayRect = { left:number; top:number; right:number; bottom:number };
 export type OverlayPoint = { x:number; y:number };
 
-/** Keep the card above a bottom toolbar, or to the left of a landscape side toolbar. */
-export function branchOverlayBounds(view:OverlayRect, board?:OverlayRect, toolbar?:OverlayRect):OverlayRect {
-  const bounds={...view};
-  if (!board || !toolbar) return bounds;
-  if (toolbar.left >= board.right-8 && toolbar.top < board.bottom && toolbar.bottom > board.top) bounds.right=Math.min(bounds.right,toolbar.left-8);
-  else if (toolbar.top >= (board.top+board.bottom)/2 && toolbar.left < board.right && toolbar.right > board.left) bounds.bottom=Math.min(bounds.bottom,toolbar.top-8);
-  return {...bounds,right:Math.max(bounds.left+1,bounds.right),bottom:Math.max(bounds.top+1,bounds.bottom)};
+/** Use space outside the board, even when a branch is dragged or the screen rotates. */
+export function branchOverlayBounds(view:OverlayRect, board?:OverlayRect, dock?:OverlayRect, preferred?:OverlayPoint):OverlayRect {
+  if (!board) return view;
+  const regions = [
+    {...view, top:Math.max(view.top,board.bottom+6)},
+    {...view, left:Math.max(view.left,board.right+6)},
+    {...view, right:Math.min(view.right,board.left-6)},
+    {...view, bottom:Math.min(view.bottom,board.top-6)},
+  ].filter(r=>r.right-r.left>=100 && r.bottom-r.top>=36);
+  const target = preferred ?? (dock ? {x:dock.left,y:dock.bottom+6} : {x:board.left,y:board.bottom+6});
+  const distance=(r:OverlayRect)=>Math.hypot(Math.max(r.left-target.x,0,target.x-r.right),Math.max(r.top-target.y,0,target.y-r.bottom));
+  regions.sort((a,b)=>distance(a)-distance(b));
+  return regions[0] ?? view;
 }
 
-export function placeBranchOverlay(bounds:OverlayRect, size:{width:number;height:number}, board?:OverlayRect, preferred?:OverlayPoint):OverlayPoint {
-  const right=bounds.right-size.width, bottom=bounds.bottom-size.height;
+export function placeBranchOverlay(bounds:OverlayRect, size:{width:number;height:number}, board?:OverlayRect, preferred?:OverlayPoint, dock?:OverlayRect):OverlayPoint {
   return {
-    x:Math.max(bounds.left,Math.min(right,preferred?.x ?? (board?.right ?? bounds.right)-size.width)),
-    y:Math.max(bounds.top,Math.min(bottom,preferred?.y ?? (board?.bottom ?? bounds.bottom)-size.height-8)),
+    x:Math.max(bounds.left,Math.min(bounds.right-size.width,preferred?.x ?? dock?.left ?? board?.left ?? bounds.left)),
+    y:Math.max(bounds.top,Math.min(bounds.bottom-size.height,preferred?.y ?? (dock ? dock.bottom+6 : board ? board.bottom+6 : bounds.bottom-size.height))),
   };
 }
