@@ -36,6 +36,8 @@ pub struct EngineInfo {
     pub mate: Option<i32>,
     #[serde(default)]
     pub score_bound: Option<String>,
+    #[serde(default)]
+    pub nodes: Option<u64>,
     pub nps: Option<u64>,
     pub time_ms: Option<u64>,
     pub hashfull: Option<u32>,
@@ -101,6 +103,7 @@ impl Default for EngineInfo {
             score_cp: None,
             mate: None,
             score_bound: None,
+            nodes: None,
             nps: None,
             time_ms: None,
             hashfull: None,
@@ -223,6 +226,7 @@ pub fn parse_engine_line(line: &str) -> EngineEvent {
         match tokens[index] {
             "depth" => info.depth = tokens.get(index + 1).and_then(|v| v.parse().ok()),
             "hashfull" => info.hashfull = tokens.get(index + 1).and_then(|v| v.parse().ok()),
+            "nodes" => info.nodes = tokens.get(index + 1).and_then(|v| v.parse().ok()),
             "nps" => info.nps = tokens.get(index + 1).and_then(|v| v.parse().ok()),
             "time" => info.time_ms = tokens.get(index + 1).and_then(|v| v.parse().ok()),
             "multipv" => {
@@ -658,7 +662,7 @@ done
     #[test]
     fn parses_multi_pv_engine_output() {
         let event = parse_engine_line(
-            "info depth 16 score cp 38 nps 120000 time 530 hashfull 210 multipv 2 pv h2e2 h9g7",
+            "info depth 16 score cp 38 nodes 63600 nps 120000 time 530 hashfull 210 multipv 2 pv h2e2 h9g7",
         );
         assert_eq!(
             event,
@@ -667,6 +671,7 @@ done
                 score_cp: Some(38),
                 mate: None,
                 score_bound: None,
+                nodes: Some(63600),
                 nps: Some(120000),
                 time_ms: Some(530),
                 hashfull: Some(210),

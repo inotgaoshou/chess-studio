@@ -146,6 +146,7 @@ export type FlyknifePlan = { id?: string; title: string; side: FlyknifeSide; sta
 export type FlyknifeCandidate = { setupMove?: string; setupNotation?: string; lureMove: string; lureNotation?: string; knifeMove: string; mainline: string[]; notation: string[]; bestDefense: string[]; bestDefenseNotation: string[]; scoreCp?: number; baselineScoreCp?: number; swingCp?: number; mate?: number; verification?: "资料案例" | "待验证候选" | "已验证飞刀"; verificationDepth?: number; risk: string; annotations?: FlyknifeStepAnnotation[] };
 export type GenerateFlyknifeRequest = { startingFen: string; side: FlyknifeSide; setupMove?: string; lureMove: string; enginePath: string; threads: number; hashMb: number; searchMode: "time" | "depth" | "nodes"; searchValue: number };
 export type AnalysisLine = {
+  nodes?: number;
   depth?: number;
   scoreCp?: number;
   mate?: number;
@@ -179,6 +180,9 @@ export type ScreenshotMoveResolution = {
   reason?: string;
 };
 export type AnalysisOptions = {
+  /** Isolated temporary search: never persist or emit main-board engine events. */
+  previewOnly?: boolean;
+  signal?: AbortSignal;
   enginePath: string;
   engineId?: string;
   engineName?: string;

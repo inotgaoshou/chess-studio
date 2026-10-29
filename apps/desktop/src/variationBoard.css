@@ -84,3 +84,14 @@
   .variation-board.is-mobile .variation-safe-bounds { bottom:calc(env(safe-area-inset-bottom,0px) + 8px); }
   .variation-board.is-mobile .variation-save span { display:none; }
 }
+
+.variation-analysis { font-size:11px; margin-bottom:4px; }
+.variation-evaluation { display:flex; align-items:center; justify-content:space-between; gap:4px; }
+.variation-evaluation b { font-size:11px; overflow-wrap:anywhere; }
+.variation-board .variation-analysis button { min-height:28px; padding:2px 5px; font-size:11px; }
+.variation-evaluation-bar { display:flex; height:4px; border-radius:3px; overflow:hidden; background:#404b47; margin:3px 0; }
+.variation-evaluation-bar i { display:block; background:#c9564d; transition:width .2s; }
+.variation-board .variation-analysis-metrics { font-size:10px; color:var(--variation-muted); margin:2px 0; }
+.variation-suggestions { display:flex; gap:3px; overflow:auto; }
+.variation-suggestions button { flex:none; white-space:nowrap; }
+.variation-board.is-mobile:has(.variation-analysis) { height:calc(min(80vw,360px) * 1240 / 1120 + 230px); }

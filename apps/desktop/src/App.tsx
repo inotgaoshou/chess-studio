@@ -4062,6 +4062,30 @@ export default function App() {
     setVariation({ id: crypto.randomUUID(), source: structuredClone(source), moves: [...moves], title, epoch: variationDocumentEpoch.current });
   }
 
+  async function analyzeVariation(fen: string, signal: AbortSignal) {
+    const preferences = desktopPreferencesRef.current;
+    const started = performance.now();
+    const lines = await chessPlatform.analyze({ previewOnly: true, signal, fen, enginePath: enginePath.trim() || preferences.enginePath.trim() || BUILTIN_ENGINE_PATH, searchMode: "time", searchValue: 1500, threads: 2, hashMb: 128, multipv: 3, serverUrl, token });
+    signal.throwIfAborted();
+    return { lines, elapsedMs: Math.round(performance.now() - started) };
+  }
+  function savedVariationBranches() {
+    if (!variation || variation.source.gameId !== board.gameId) return [];
+    const result: { id: string; label: string }[] = [];
+    const visit = (nodes: NonNullable<BoardState["manualTree"]>, depth: number) => {
+      for (const node of nodes) {
+        if (!node.move.isMainline) result.push({ id: node.move.id, label: `${depth}. ${node.move.notation}` });
+        visit(node.children, depth + 1);
+      }
+    };
+    visit(board.manualTree ?? [], 1);
+    return result;
+  }
+  async function deleteSavedVariation(id: string) {
+    if (!variation || variation.epoch !== variationDocumentEpoch.current || variation.source.gameId !== boardRef.current.gameId || !savedVariationBranches().some(branch => branch.id === id)) throw new Error("来源已变化，请在原棋谱删除变招");
+    if (!await removeNode(id, true)) throw new Error("变招删除失败，请重试");
+  }
+
   async function saveVariationCopy(moves: string[]): Promise<VariationReceipt> {
     if (!variation?.source.startingFen) throw new Error("来源棋谱信息不可用");
     const source = variation.source;
@@ -8632,7 +8656,7 @@ export default function App() {
             <button onClick={() => void createGame()}>载入</button>
           </div>
           </div>
-          {variation ? <VariationBoard key={variation.id} title={variation.title} base={{ ...variation.source, notation: undefined as string | undefined }} initialMoves={variation.moves} light={desktopPreferences.layoutMode === "compact"} validate={moves => chessPlatform.previewLine(variation.source.fen, moves).then(steps => steps.map(step => ({ ...variation.source, ...step })))} onSave={saveVariation} onSaveCopy={saveVariationCopy} onClose={() => setVariation(undefined)} renderBoard={(frame, controls) => <div className="variation-desktop-canvas"><LinkMiniBoard presentation="preview" animateMoves={false} pieces={frame.pieces} arrows={[]} selectedSquare={controls.selected} reversed={controls.flipped} sideToMove={frame.fen.split(/\s+/)[1] === "b" ? "黑方" : "红方"} pieceAsset={piece => pieceAsset(piece, displayedPieceSkin)} boardAsset={`/skins/${skinAssetFolder(displayedBoardSkin)}/board.png`}/><div className="variation-desktop-board-hit-grid">{Array.from({ length: 90 }, (_, index) => { const square = { row: Math.floor(index / 9), col: index % 9 }; return <button type="button" key={index} aria-label={`推演棋盘 ${square.row + 1} 行 ${square.col + 1} 列`} style={mainBoardCellStyle(square, controls.flipped, displayedBoardSkin)} onClick={() => controls.onSquare(square)}/>; })}</div></div>}/> : !reviewModeOpen && candidateLinesView("board-candidate-rail", workspaceMode !== "research")}
+          {variation ? <VariationBoard key={variation.id} title={variation.title} base={{ ...variation.source, notation: undefined as string | undefined }} initialMoves={variation.moves} analyze={analyzeVariation} savedBranchTitle={board.title} savedBranches={savedVariationBranches()} onDeleteSaved={deleteSavedVariation} light={desktopPreferences.layoutMode === "compact"} validate={moves => chessPlatform.previewLine(variation.source.fen, moves).then(steps => steps.map(step => ({ ...variation.source, ...step })))} onSave={saveVariation} onSaveCopy={saveVariationCopy} onClose={() => setVariation(undefined)} renderBoard={(frame, controls) => <div className="variation-desktop-canvas"><LinkMiniBoard presentation="preview" animateMoves={false} pieces={frame.pieces} arrows={controls.hintMoves.map((iccs, index) => ({ rank: index + 1, color: ["#3b9e5d", "#dc9839", "#6495cf"][index % 3], iccs, from: { col: iccs.charCodeAt(0) - 97, row: 9 - Number(iccs[1]) }, to: { col: iccs.charCodeAt(2) - 97, row: 9 - Number(iccs[3]) } }))} selectedSquare={controls.selected} reversed={controls.flipped} sideToMove={frame.fen.split(/\s+/)[1] === "b" ? "黑方" : "红方"} pieceAsset={piece => pieceAsset(piece, displayedPieceSkin)} boardAsset={`/skins/${skinAssetFolder(displayedBoardSkin)}/board.png`}/><div className="variation-desktop-board-hit-grid">{Array.from({ length: 90 }, (_, index) => { const square = { row: Math.floor(index / 9), col: index % 9 }; return <button type="button" key={index} aria-label={`推演棋盘 ${square.row + 1} 行 ${square.col + 1} 列`} style={mainBoardCellStyle(square, controls.flipped, displayedBoardSkin)} onClick={() => controls.onSquare(square)}/>; })}</div></div>}/> : !reviewModeOpen && candidateLinesView("board-candidate-rail", workspaceMode !== "research")}
         </section>
 
         {referenceSidePanelActive ? <MasterOpeningPanel

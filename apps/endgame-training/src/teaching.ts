@@ -1447,11 +1447,12 @@ export const teachingClient = {
     const context = authContexts.get(auth);
     return `${context?.serverUrl ?? serverUrl()}::${auth.user.id}`;
   },
-  async analyzePosition(fen: string, moveTimeMs: number, multiPv: number) {
+  async analyzePosition(fen: string, moveTimeMs: number, multiPv: number, signal?: AbortSignal) {
     const auth = this.auth();
     if (!auth) throw new Error("Web 端请先登录账号后使用服务端 AI 分析");
     return request<ServerAnalysisResponse>("/api/v1/analysis", {
       method: "POST",
+      signal,
       body: JSON.stringify({ fen, mode: "time", value: Math.max(100, Math.min(5_000, moveTimeMs)), multiPv: Math.max(1, Math.min(5, multiPv)) }),
     }, auth.token);
   },

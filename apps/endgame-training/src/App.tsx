@@ -49,7 +49,7 @@ import { BookOpen, CalendarCheck2, ChevronDown, ChevronLeft, ChevronRight, Chevr
 import { type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { trainingStore } from "./store";
 import type { Attempt, BoardPiece, BoardState, LocalManualAnalysisSummary, LocalManualFolder, LocalManualGame, MobileWorkspaceMode, RuleMode, SolutionMove, TrainingLibrary, TrainingProblem } from "./types";
-import { acceptsMove, boardAt, legalTargetsAfter, cancelPikafishSearch, chineseLine, hasLocalPikafish, parseCbl, parseCblGames, queryCloudBook, queryPikafishAnalysis, queryPikafishReply, type CloudBookMove, type PikafishAnalysis, type PikafishAnalysisLine } from "./wasm";
+import { acceptsMove, boardAt, legalTargetsAfter, cancelPikafishSearch, chineseLine, hasLocalPikafish, parseCbl, parseCblGames, queryCloudBook, queryPikafishAnalysis, queryVariationAnalysis, queryPikafishReply, type CloudBookMove, type PikafishAnalysis, type PikafishAnalysisLine } from "./wasm";
 import { cancelTrainingFeedback, trainingFeedbackEvent, FEEDBACK_DURATION, playTrainingFeedback, TRAINING_FEEDBACK_PACK, type TrainingFeedbackEvent, type TrainingFeedbackKind } from "./moveFeedback";
 import { type PreferredOrientation } from "./orientation";
 import { useScreenOrientation } from "./useScreenOrientation";
@@ -2675,6 +2675,7 @@ export function App() {
   const manualVariationRevision = useRef(0);
   const renderedVariationRevision = manualVariationRevision.current;
   const variationTargets = useRef(new Map<string, string>());
+  const variationManagedTarget = useRef<{ session: string; gameId: string } | undefined>(undefined);
   const [variationSaveDraft, setVariationSaveDraft] = useState<{ game: LocalManualGame; resolve(game: LocalManualGame): void; reject(error: Error): void; commit(values: ManualSaveValues): Promise<LocalManualGame> }>();
   const variationContext = useRef<() => { mode: string; scope: string; snapshot: LocalManualGame; study: Pick<LocalManualGame, "startingFen" | "currentFen" | "currentNodeId" | "cursor" | "moves" | "branches" | "comments">; studyFen: string; epoch: number }>(() => { throw new Error("棋谱尚未就绪"); });
 
@@ -3500,10 +3501,10 @@ export function App() {
     };
   }, [showAbout]);
   useEffect(() => {
-    if (!studyMode || !studyEngineEnabled || !LOCAL_PIKAFISH_AVAILABLE || studyTerminal) return;
+    if (mobileVariation || !studyMode || !studyEngineEnabled || !LOCAL_PIKAFISH_AVAILABLE || studyTerminal) return;
     const timer = window.setTimeout(() => void startAnalysis(analysisMultiPv), 300);
     return () => window.clearTimeout(timer);
-  }, [analysisMoveTimeSec, studyCurrentFen, studyMode, studyTerminal, studyEngineEnabled]);
+  }, [analysisMoveTimeSec, studyCurrentFen, studyMode, studyTerminal, studyEngineEnabled, Boolean(mobileVariation)]);
   useEffect(() => {
     if (!studyAutoPlaying) return;
     if (studyCursor >= studyMoves.length) {
@@ -3642,6 +3643,7 @@ export function App() {
     return state;
   }
   async function startAnalysis(requestedMultiPv = analysisMultiPv, revealStudyEnginePanel = false) {
+    if (mobileVariation) return;
     const target = workspaceMode;
     const standalone = target === "study" || target === "manual";
     const terminal = target === "manual" ? manualTerminal : studyTerminal;
@@ -4599,11 +4601,66 @@ export function App() {
       return;
     }
     setManualAutoPlaying(false); setStudyAutoPlaying(false);
+    void resetAnalysis(manualMode ? "manual" : "study", false);
     const mode = manualMode ? "manual" : "study";
     const now = new Date().toISOString();
     const snapshot: LocalManualGame = manualMode ? structuredClone(manualPayload()) : { id: crypto.randomUUID(), title: "拆棋研究", note: "", ...structuredClone(studyTreeState()), createdAt: now, updatedAt: now };
     setMobileVariation({ id: crypto.randomUUID(), mode, snapshot, path: [...(manualMode ? currentManualMoves : currentStudyMoves)], base: { fen: manualMode ? manualCurrentFen : studyCurrentFen, pieces: structuredClone(manualMode ? manualPieces : studyPieces), status: "进行中", sideToMove: "" }, moves: [...moves], scope: catalogAccountScope, epoch: manualMode ? manualDocumentEpoch.current : studyDocumentEpoch.current, ruleMode: studyRuleMode });
     setManualPanelOpen(false);
+  }
+
+  async function analyzeMobileVariation(fen: string, signal: AbortSignal) {
+    const source = mobileVariation;
+    if (!source || source.scope !== catalogAccountScope) throw new Error("推演上下文已变化，请重新打开");
+    const started = performance.now();
+    const result = LOCAL_PIKAFISH_AVAILABLE ? await queryVariationAnalysis(fen, signal) : await teachingClient.analyzePosition(fen, 1500, 3, signal);
+    signal.throwIfAborted();
+    const lines = await Promise.all(result.lines.map(async line => ({ ...line, notation: await chineseLine(fen, line.pv).catch(() => line.pv) })));
+    signal.throwIfAborted();
+    return { lines, elapsedMs: "elapsedMs" in result ? result.elapsedMs : Math.round(performance.now() - started) };
+  }
+
+  function mobileSavedVariationGame() {
+    if (!mobileVariation || mobileVariation.scope !== catalogAccountScope) return undefined;
+    const target = variationManagedTarget.current?.session === mobileVariation.id ? variationManagedTarget.current.gameId : variationTargets.current.get(`${mobileVariation.id}:default`);
+    if (target && target !== mobileVariation.snapshot.id) return manualGames.find(game => game.id === target);
+    if (mobileVariation.mode === "manual" && mobileVariation.snapshot.id === manualGame?.id && !manualReadOnly) return manualPayload();
+    return undefined;
+  }
+  async function deleteMobileSavedVariation(id: string) {
+    const source = mobileVariation, game = mobileSavedVariationGame();
+    if (!source || !game || game.readOnly || game.origin?.kind === "providerMirror") throw new Error("此棋谱不可修改");
+    const invocation = variationContext.current();
+    const assertContext = () => {
+      const live = variationContext.current();
+      const managed = variationManagedTarget.current;
+      if (live.scope !== source.scope || live.mode !== invocation.mode || live.epoch !== invocation.epoch || (live.mode === "manual" && live.snapshot.id !== invocation.snapshot.id) || (live.mode === "study" && live.studyFen !== invocation.studyFen) || (managed?.session === source.id && managed.gameId !== game.id)) throw new Error("来源已变化，请返回原棋谱删除变招");
+      if (game.id === source.snapshot.id && (live.mode !== "manual" || live.epoch !== source.epoch || live.snapshot.id !== game.id)) throw new Error("来源已变化，请返回原棋谱删除变招");
+      return live;
+    };
+    assertContext();
+    if (!game.branches.some(branch => branch.id === id)) throw new Error("变招已变化，请重新选择");
+    if (source.mode === "manual" && game.id === source.snapshot.id) { await deleteManualBranch(id, true, assertContext); return; }
+    const write = async () => {
+      assertContext();
+      const latest = await trainingStore.openManualGame(game.id);
+      assertContext();
+      if (!latest) throw new Error("棋谱已删除");
+      const next = { ...latest, ...removeManualBranch(latest, id) };
+      assertContext();
+      const saved = await trainingStore.saveManualGame(next, latest.updatedAt);
+      const live = assertContext();
+      if (source.mode === "study" && live.mode === "study" && live.epoch === source.epoch) {
+        const branch = latest.branches.find(item => item.id === id);
+        const current = live.study.branches.find(item => branch && item.parentPath.join(",") === branch.parentPath.join(",") && item.moves.join(",") === branch.moves.join(","));
+        if (current) await deleteStudyBranch(current.id, true);
+      }
+      assertContext();
+      setManualGames(items => items.map(item => item.id === saved.id ? saved : item));
+    };
+    const pending = manualSaveTail.current.then(write);
+    manualSaveTail.current = pending.then(() => undefined, () => undefined);
+    await pending;
   }
 
   async function mobileVariationFrames(moves: string[]) {
@@ -4676,6 +4733,7 @@ export function App() {
         saved = await trainingStore.saveManualGame(saved, stored?.updatedAt);
       }
       variationTargets.current.set(key, saved.id);
+      variationManagedTarget.current = { session: source.id, gameId: saved.id };
       const live = variationContext.current();
       if (live.scope === source.scope && live.mode === "manual" && live.snapshot.id === saved.id) {
         manualVariationWrites.current.push({ revision: ++manualVariationRevision.current, gameId: saved.id, path: source.path, moves, notation });
@@ -4737,16 +4795,19 @@ export function App() {
     return source ? preserveManualMainline(payload, source, manualNotation) : payload;
   }
 
-  async function saveManualGame(overrides: Partial<LocalManualGame> = {}) {
+  async function saveManualGame(overrides: Partial<LocalManualGame> = {}, assertContext?: () => unknown) {
+    assertContext?.();
     assertManualGameEditable(manualGame);
     setManualSaveStatus("保存中");
     const revision = ++manualSaveRevision.current;
     try {
       const snapshot = manualPayload(overrides);
       const pending = manualSaveTail.current.then(async () => {
+        assertContext?.();
         // Folder ownership may change while the document remains open (move,
         // folder rename or sync). A later autosave must not restore its old path.
         const stored = await trainingStore.openManualGame(snapshot.id);
+        assertContext?.();
         assertManualGameEditable(stored);
         const folderPath = Object.prototype.hasOwnProperty.call(overrides, "folderPath")
           ? snapshot.folderPath : stored ? stored.folderPath : snapshot.folderPath;
@@ -4754,10 +4815,12 @@ export function App() {
         for (const addition of manualVariationWrites.current) {
           if (addition.gameId === snapshot.id && addition.revision > renderedVariationRevision && manualPathExists(merged, addition.path)) merged = appendManualVariation(merged, addition.path, addition.moves, addition.notation).game;
         }
+        assertContext?.();
         return trainingStore.saveManualGame({ ...merged, folderPath, updatedAt: overrides.updatedAt ?? new Date().toISOString() });
       });
       manualSaveTail.current = pending.then(() => undefined, () => undefined);
       const saved = await pending;
+      assertContext?.();
       if (revision === manualSaveRevision.current) {
         if (manualBranchSource.current?.id === saved.id) manualBranchSource.current = saved;
         setManualGame(saved);
@@ -5436,6 +5499,9 @@ export function App() {
   }
 
   async function adoptManualBranch(branch: ManualBranch, focusCursor?: number) {
+    if (!manualBranchSource.current || manualBranchSource.current.id !== manualGame?.id) {
+      manualBranchSource.current = manualPayload(); manualBranchNotation.current = manualNotation;
+    }
     const revision = ++manualSaveRevision.current;
     const prefix = branch.parentPath;
     const previousContinuation = manualMoves.slice(branch.parentCursor);
@@ -5460,24 +5526,26 @@ export function App() {
     if (!manualReadOnly) void saveManualGame({ moves: fullMoves, cursor: nextCursor, currentFen: state.fen, currentNodeId: manualNodeId(nextCursor), branches }).catch(() => undefined);
   }
 
-  async function deleteManualBranch(id: string) {
+  async function deleteManualBranch(id: string, confirmed = false, assertContext?: () => unknown) {
+    if (!confirmed && !window.confirm("删除此变招及其后续？原主线和其他变招保留。")) return;
     if (manualReadOnly) { setManualNotice("天天象棋云镜像为只读棋谱，请先复制后调整分支。"); return; }
     const source = manualPayload(), revision = ++manualSaveRevision.current;
     const { branches, comments } = removeManualBranch(source, id);
     const next = { ...source, branches, comments };
     const removedView = !manualPathExists(next, manualMoves);
     const state = removedView ? await boardAt(source.startingFen, source.moves.slice(0, source.cursor), studyRuleMode) : undefined;
-    if (revision !== manualSaveRevision.current) return;
+    if (revision !== manualSaveRevision.current) throw new Error("棋谱已变化，请重新选择变招");
+    assertContext?.();
     if (state) {
-      manualDocumentEpoch.current++;
       manualBranchSource.current = next;
       setManualMoves(source.moves); setManualCursor(source.cursor); setManualPieces(state.pieces);
       setManualCurrentFen(state.fen); setManualLastMove(source.moves[source.cursor - 1]); setManualSelected(undefined);
       setManualNotation(manualBranchNotation.current); setManualTerminal(terminalResult(state.ruleStatus ?? state.status));
     }
+    manualVariationWrites.current = manualVariationWrites.current.filter(item => item.gameId !== source.id || manualPathExists(next, [...item.path, ...item.moves]));
     setManualBranches(branches); setManualComments(comments);
-    try { await saveManualGame(next); setManualNotice("已删除录谱分支并保存。"); }
-    catch { setManualNotice("分支删除尚未保存，请在棋谱信息中重试保存。"); }
+    try { await saveManualGame(next, assertContext); setManualNotice("已删除录谱分支并保存。"); }
+    catch (error) { setManualNotice("分支删除尚未保存，请在棋谱信息中重试保存。"); throw error; }
   }
 
   function moveManualBranch(id: string, direction: -1 | 1) {
@@ -5810,6 +5878,8 @@ export function App() {
     });
   }
   async function adoptStudyBranch(branch: StudyBranch, focusCursor?: number) {
+    const epoch = studyDocumentEpoch.current;
+    if (studyBranchOrigin.current?.epoch !== epoch) studyBranchOrigin.current = { epoch, snapshot: { id:`study-${epoch}`, title:"拆棋研究", note:"", createdAt:new Date().toISOString(), updatedAt:new Date().toISOString(), ...studyTreeState() }, notation:studyNotation };
     setStudyAutoPlaying(false);
     const generation = ++studyGeneration.current;
     await resetAnalysis("study");
@@ -5890,23 +5960,21 @@ export function App() {
     if (!window.confirm("确定删除当前变招吗？删除后会切换到其它变招。")) return;
     await switchStudyLine(parentCursor, replacement, replacement ? "已删除当前变招，并切换到其它变招。" : "已删除当前变招。");
   }
-  async function deleteStudyBranch(id: string) {
-    const target = studyBranches.find((item) => item.id === id);
-    if (!target) return;
-    if (!window.confirm("确定删除这个变招吗？删除后不能恢复。")) return;
-    const sameParent = (item: StudyBranch) => item.parentCursor === target.parentCursor && item.parentPath.join(",") === target.parentPath.join(",");
-    const orderOf = (item: StudyBranch, fallback: number) => Number.isFinite(item.branchOrder) ? Math.max(0, Math.floor(Number(item.branchOrder))) : fallback;
-    const targetIsCurrent = studyMoves.slice(0, target.parentCursor).join(",") === target.parentPath.join(",") && studyMoves.slice(target.parentCursor).join(",") === target.moves.join(",");
-    const replacement = studyBranches
-      .map((item, index) => ({ item, index }))
-      .filter(({ item }) => item.id !== id && sameParent(item))
-      .sort((left, right) => orderOf(left.item, left.index) - orderOf(right.item, right.index))[0]?.item;
-    setStudyBranches((items) => items.filter((item) => item.id !== id));
-    if (targetIsCurrent) {
-      await switchStudyLine(target.parentCursor, replacement, replacement ? "已删除当前变招，并切换到其它变招。" : "已删除当前变招。");
-      return;
+  async function deleteStudyBranch(id: string, confirmed = false) {
+    if (!confirmed && !window.confirm("删除此变招及其后续？原主线和其他变招保留。")) return;
+    const source = studyTreeState(), epoch = studyDocumentEpoch.current, generation = ++studyGeneration.current;
+    const next = { ...source, ...removeManualBranch(source, id) };
+    const removedView = !manualPathExists(next, studyMoves);
+    const state = removedView ? await boardAt(source.startingFen, source.moves.slice(0, source.cursor), studyRuleMode) : undefined;
+    if (epoch !== studyDocumentEpoch.current || generation !== studyGeneration.current) return;
+    if (studyBranchOrigin.current?.epoch === epoch) studyBranchOrigin.current.snapshot = { ...studyBranchOrigin.current.snapshot, ...next };
+    setStudyBranches(next.branches); setStudyComments(next.comments);
+    if (state) {
+      setStudyMoves(source.moves); setStudyCursor(source.cursor); setStudyPieces(state.pieces); setStudySelected(undefined);
+      setStudyNotation(studyBranchOrigin.current?.notation ?? await chineseLine(source.startingFen, source.moves));
+      setStudyLastMove(source.moves[source.cursor - 1]); setStudyTerminal(terminalResult(state.ruleStatus ?? state.status)); invalidateStudyCloud(state.fen);
     }
-    setStudyNotice("已移除临时分支。");
+    setStudyNotice("已删除变招，原主线保持不变。");
   }
   function moveStudyBranch(id: string, direction: -1 | 1) {
     setStudyBranches((items) => {
@@ -6926,7 +6994,7 @@ export function App() {
       {commentaryPanel}
       {studyPanelTab === "engine" && (LOCAL_PIKAFISH_AVAILABLE || teachingAuth ? <AnalysisPanel onPreview={line => openMobileVariation(line.pv, line.analyzedFen)} onExplain={explainCandidate} lines={studyAnalysisLines} pending={analysisPending && studyMode} activeIndex={studyActiveAnalysis} disabled={Boolean(studyTerminal)} enabled={studyEngineEnabled} multiPv={analysisMultiPv} moveTimeSec={analysisMoveTimeSec} scoreSide={studyScoreSide} arrowsVisible={analysisArrowsVisible} onToggle={() => void (analysisPending ? stopAnalysis() : studyEngineEnabled ? startAnalysis() : enableStudyEngine())} onToggleArrows={toggleAnalysisArrows} onSelect={setStudyActiveAnalysis} onMultiPvChange={(value) => void changeAnalysisMultiPv(value)} onMoveTimeChange={(value) => void changeAnalysisMoveTimeSec(value)}/> : <section className="study-unavailable">Web 端登录后可使用服务端 Pikafish 分析。</section>)}
       {studyPanelTab === "cloud" && <section className="study-cloud-panel">{studyCloudPending ? <p className="study-cloud-empty">正在查询当前局面…</p> : studyCloudMoves.length ? <div className="study-cloud-list">{studyCloudMoves.map((item, index) => { const evaluation = cloudEvaluation(item, studyScoreSide); return <button key={item.iccs} onClick={() => void playStudyMove(item.iccs)}><b>{index + 1}</b><strong>{item.notation}</strong><em>红分 {evaluation.redScore > 0 ? "+" : ""}{evaluation.redScore}</em><small>红 {evaluation.redRate.toFixed(1)}% · 黑 {evaluation.blackRate.toFixed(1)}%</small></button>; })}</div> : <p className="study-cloud-empty">{studyCloudError ?? "当前局面暂无云库着法。"}</p>}</section>}
-      {studyPanelTab === "manual" && <StudyManualTree moves={studyMoves} notation={studyNotation} cursor={studyCursor} branches={studyBranches} comments={studyComments} onCommentChange={(key, comment) => setStudyComments((current) => ({ ...current, [key]: comment }))} onNavigate={(cursor) => void navigateStudyMove(cursor)} onAdopt={(branch, focusCursor) => void adoptStudyBranch(branch, focusCursor)} onDelete={(id) => void deleteStudyBranch(id)} onDiscardCurrent={(parentCursor, replacement) => void discardStudyCurrentLine(parentCursor, replacement)} onMove={moveStudyBranch} onExplain={index => requestCommentary(studyMoves.slice(0, index + 1))}/>}
+      {studyPanelTab === "manual" && <StudyManualTree moves={studyMoves} notation={studyNotation} cursor={studyCursor} branches={studyBranches} comments={studyComments} onCommentChange={(key, comment) => setStudyComments((current) => ({ ...current, [key]: comment }))} onNavigate={(cursor) => void navigateStudyMove(cursor)} onAdopt={(branch, focusCursor) => void adoptStudyBranch(branch, focusCursor)} onDelete={(id) => void deleteStudyBranch(id)} onDiscardCurrent={(parentCursor, replacement) => void discardStudyCurrentLine(parentCursor, replacement)} onMove={moveStudyBranch}/>}
       </div>
       <section className={`study-notice ${studyNoticeVisible ? "" : "hidden"} ${studyNoticePersistent ? "important" : ""}`} aria-live={studyNoticePersistent ? "assertive" : "polite"}><b>{studyRuleLabel(studyRuleMode)}</b><p>{studyNotice}</p></section>
     </aside>
@@ -6957,10 +7025,10 @@ export function App() {
     </main>
     {manualPanelOpen && <button className="manual-panel-scrim" aria-label="关闭录谱面板" onClick={() => setManualPanelOpen(false)}/>}
     {manualPanelOpen && <aside className="manual-panel-sheet" role="dialog" aria-modal="true" aria-label="录谱面板">
-      <header><strong>{manualPanelTab === "moves" ? "棋谱与注释" : manualPanelTab === "analysis" ? "本地分析" : "本地棋库"}</strong><button type="button" aria-label="关闭录谱面板" onClick={() => setManualPanelOpen(false)}><X/></button></header>
+      <header><strong>{manualPanelTab === "moves" ? "" : manualPanelTab === "analysis" ? "本地分析" : "本地棋库"}</strong><button type="button" aria-label="关闭录谱面板" onClick={() => setManualPanelOpen(false)}><X/></button></header>
       <nav className="study-panel-tabs" role="tablist" aria-label="录谱面板">{([["moves", "棋谱", ClipboardList], ["analysis", "分析", Cpu], ["library", "棋库", Database]] as const).map(([value, label, Icon]) => <button key={value} role="tab" aria-selected={manualPanelTab === value} className={manualPanelTab === value ? "active" : ""} onClick={() => openManualPanel(value)}><Icon/><span>{label}</span></button>)}</nav>
       <div className="manual-panel-content">
-        {manualPanelTab === "moves" && <StudyManualTree moves={manualMoves} notation={manualNotation} cursor={manualCursor} branches={manualBranches} comments={manualComments} readOnly={manualReadOnly} onCommentChange={(key, comment) => { if (manualReadOnly) return; const comments = { ...manualComments, [key]: comment }; setManualComments(comments); void saveManualGame({ comments }); }} onNavigate={(cursor) => void navigateManualMove(cursor)} onAdopt={(branch, focusCursor) => void adoptManualBranch(branch, focusCursor)} onDelete={deleteManualBranch} onDiscardCurrent={() => setManualNotice("主线删除后续首版暂不开放，请使用分支切换。")} onMove={moveManualBranch} onExplain={index => { requestCommentary(manualMoves.slice(0, index + 1)); setManualAnalysisExpanded(true); setManualPanelOpen(false); }}/>}
+        {manualPanelTab === "moves" && <StudyManualTree moves={manualMoves} notation={manualNotation} cursor={manualCursor} branches={manualBranches} comments={manualComments} readOnly={manualReadOnly} onCommentChange={(key, comment) => { if (manualReadOnly) return; const comments = { ...manualComments, [key]: comment }; setManualComments(comments); void saveManualGame({ comments }); }} onNavigate={(cursor) => void navigateManualMove(cursor)} onAdopt={(branch, focusCursor) => void adoptManualBranch(branch, focusCursor)} onDelete={id => void deleteManualBranch(id).catch(() => undefined)} onDiscardCurrent={() => setManualNotice("主线删除后续首版暂不开放，请使用分支切换。")} onMove={moveManualBranch}/>}
         {manualPanelTab === "analysis" && renderManualAnalysisBody()}
 
       </div>
@@ -6990,7 +7058,7 @@ export function App() {
     <fieldset className="study-rule-picker"><legend>棋规模式</legend>{(["domestic2020", "asianAxf", "free"] as RuleMode[]).map(value => <button key={value} type="button" aria-pressed={studyRuleMode === value} onClick={() => void changeStudyRuleMode(value)}>{studyRuleLabel(value)}</button>)}</fieldset>
     <footer><button type="button" onClick={() => {setManualSettingsOpen(false);void switchFromManualMode("study");}}>切换到拆棋</button><button type="button" className="primary" onClick={() => setManualSettingsOpen(false)}>完成</button></footer>
   </section></div>}
-  {mobileVariation && <VariationBoard key={mobileVariation.id} mobile light title={mobileVariation.mode === "manual" ? mobileVariation.snapshot.title : "拆棋研究"} base={mobileVariation.base} initialMoves={mobileVariation.moves} validate={mobileVariationFrames} saveLabel={mobileVariation.snapshot.readOnly || mobileVariation.snapshot.origin?.kind === "providerMirror" ? "复制到我的棋谱后保存" : undefined} onSave={moves => saveMobileVariation(moves)} onSaveCopy={moves => saveMobileVariation(moves, true)} onClose={() => setMobileVariation(undefined)} renderBoard={(frame, controls) => <Board pieces={frame.pieces} selected={controls.selected} flipped={controls.flipped} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={controls.onSquare} onMove={controls.onMove}/>}/>}
+  {mobileVariation && <VariationBoard key={mobileVariation.id} mobile light title={mobileVariation.mode === "manual" ? mobileVariation.snapshot.title : "拆棋研究"} base={mobileVariation.base} initialMoves={mobileVariation.moves} validate={mobileVariationFrames} analyze={mobileVariation.scope === catalogAccountScope ? analyzeMobileVariation : undefined} savedBranchTitle={mobileSavedVariationGame()?.title} savedBranches={mobileSavedVariationGame()?.branches.map(branch => ({ id: branch.id, label: `${branch.parentCursor + 1}. ${branch.notation[0] ?? branch.moves[0]} · ${branch.moves.length} 步` }))} onDeleteSaved={mobileSavedVariationGame() ? deleteMobileSavedVariation : undefined} saveLabel={mobileVariation.snapshot.readOnly || mobileVariation.snapshot.origin?.kind === "providerMirror" ? "复制到我的棋谱后保存" : undefined} onSave={moves => saveMobileVariation(moves)} onSaveCopy={moves => saveMobileVariation(moves, true)} onClose={() => setMobileVariation(undefined)} renderBoard={(frame, controls) => <Board pieces={frame.pieces} selected={controls.selected} flipped={controls.flipped} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} analysisMoves={controls.hintMoves} onSquare={controls.onSquare} onMove={controls.onMove}/>}/>}
   {variationSaveDraft && <ManualSaveDialog game={variationSaveDraft.game} folders={manualFolders} onCreateFolder={async path => { await trainingStore.createManualFolder(path); await refreshManualLibrary(); }} onSave={async values => {
     if (!mobileVariation || variationContext.current().scope !== mobileVariation.scope) throw new Error("账号或机构已切换，保存已取消");
     const saved = await variationSaveDraft.commit(values);

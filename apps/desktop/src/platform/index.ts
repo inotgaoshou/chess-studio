@@ -551,6 +551,7 @@ class DesktopPlatform implements ChessPlatform {
       engineId: options.engineId ?? null,
       engineName: options.engineName ?? null,
       analysisSessionId: options.analysisSessionId ?? null,
+      previewOnly: options.previewOnly ?? false,
       fen: options.fen,
       searchMode: options.searchMode,
       searchValue: options.searchValue,
@@ -1445,8 +1446,11 @@ class WebPlatform implements ChessPlatform {
     if (options.searchMode === "infinite") throw new Error("Web 端不支持持续分析，请选择时间或深度");
     const analyzedGameId = this.gameId;
     const analyzedNode = this.state().currentNode;
-    this.abort = new AbortController();
-    const controller = this.abort;
+    const controller = new AbortController();
+    if (!options.previewOnly) this.abort = controller;
+    const abort = () => controller.abort();
+    options.signal?.addEventListener("abort", abort, { once: true });
+    if (options.signal?.aborted) controller.abort();
     const completed = await runCloudAnalysisJob({
       baseUrl: webServerBase(options.serverUrl),
       headers: cloudAnalysisHeaders(options.token, options.guest),
@@ -1470,6 +1474,7 @@ class WebPlatform implements ChessPlatform {
         cacheHit: job.cacheHit,
       }),
     }).finally(() => {
+      options.signal?.removeEventListener("abort", abort);
       if (this.abort === controller) this.abort = undefined;
     });
     if (completed.guestQuota) {
@@ -1484,8 +1489,10 @@ class WebPlatform implements ChessPlatform {
       }
     }
     const lines = completed.lines;
-    await webDatabase.saveAnalysis(options.fen, lines);
-    if (analyzedNode) await webDatabase.saveNodeAnalysis(analyzedGameId, analyzedNode, lines);
+    if (!options.previewOnly) {
+      await webDatabase.saveAnalysis(options.fen, lines);
+      if (analyzedNode) await webDatabase.saveNodeAnalysis(analyzedGameId, analyzedNode, lines);
+    }
     return lines;
   }
 

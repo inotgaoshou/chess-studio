@@ -15,6 +15,7 @@ pub(crate) async fn analyze_position(
     engine_id: Option<String>,
     engine_name: Option<String>,
     analysis_session_id: Option<u64>,
+    preview_only: Option<bool>,
     fen: String,
     search_mode: String,
     search_value: u64,
@@ -26,6 +27,7 @@ pub(crate) async fn analyze_position(
     app: tauri::AppHandle,
     state: State<'_, DesktopState>,
 ) -> Result<Vec<AnalysisLine>, String> {
+    let preview_only = preview_only.unwrap_or(false);
     if state.report_running.load(Ordering::SeqCst) {
         return Err("整局报告正在生成，请先取消报告分析".into());
     }
@@ -38,14 +40,22 @@ pub(crate) async fn analyze_position(
             .map_err(|_| "state lock poisoned".to_owned())?;
         (model.board.to_fen() == fen).then_some((model.game_id, model.current_node))
     };
-    let limit = match search_mode.as_str() {
-        "time" => SearchLimit::MoveTime(search_value.clamp(100, 30_000)),
-        "depth" => SearchLimit::Depth(search_value.clamp(1, 100) as u32),
-        "nodes" => SearchLimit::Nodes(search_value.clamp(1_000, 100_000_000)),
-        "infinite" => SearchLimit::Infinite,
-        _ => return Err("unsupported search mode".into()),
+    let limit = if preview_only {
+        SearchLimit::MoveTime(search_value.clamp(100, 5000))
+    } else {
+        match search_mode.as_str() {
+            "time" => SearchLimit::MoveTime(search_value.clamp(100, 30_000)),
+            "depth" => SearchLimit::Depth(search_value.clamp(1, 100) as u32),
+            "nodes" => SearchLimit::Nodes(search_value.clamp(1_000, 100_000_000)),
+            "infinite" => SearchLimit::Infinite,
+            _ => return Err("unsupported search mode".into()),
+        }
     };
-    let multipv = multipv.max(1);
+    let multipv = if preview_only {
+        multipv.clamp(1, 3)
+    } else {
+        multipv.max(1)
+    };
     let mut search_moves = search_moves
         .into_iter()
         .take(90)
@@ -84,8 +94,8 @@ pub(crate) async fn analyze_position(
         state: EngineRuntimeState::Idle,
     };
     let protocol = runtime.session.protocol();
-    let threads = threads.clamp(1, 64);
-    let hash_mb = hash_mb.clamp(16, 4096);
+    let threads = threads.clamp(1, if preview_only { 2 } else { 64 });
+    let hash_mb = hash_mb.clamp(16, if preview_only { 128 } else { 4096 });
     configure_engine_for_xiangqi(&mut runtime.session, &resolved_engine_path).await?;
     runtime
         .session
@@ -108,12 +118,14 @@ pub(crate) async fn analyze_position(
         .await
         .map_err(|error| error.to_string())?;
     runtime.state = EngineRuntimeState::Analyzing;
-    state
-        .engine
-        .lock()
-        .await
-        .insert(resolved_engine_path_text.clone(), runtime.session.control());
-    emit_engine_state(&app, runtime.state);
+    if !preview_only {
+        state
+            .engine
+            .lock()
+            .await
+            .insert(resolved_engine_path_text.clone(), runtime.session.control());
+        emit_engine_state(&app, runtime.state);
+    }
     let started = Instant::now();
     let mut lines = BTreeMap::new();
     let mut read_error = None;
@@ -121,7 +133,9 @@ pub(crate) async fn analyze_position(
         match runtime.session.next_event().await {
             Ok(EngineEvent::Info(info)) if !info.pv.is_empty() => {
                 let line = analysis_line_from_engine_info(&analysis_board, info);
-                if state.analysis_generation.load(Ordering::SeqCst) == analysis_generation {
+                if !preview_only
+                    && state.analysis_generation.load(Ordering::SeqCst) == analysis_generation
+                {
                     emit_engine_event(
                         &app,
                         EngineRuntimeEvent::AnalysisInfo {
@@ -142,7 +156,9 @@ pub(crate) async fn analyze_position(
                     let board = analysis_board.apply_move(best_move).ok()?;
                     normalize_engine_move_for_board(&board, &value).or(Some(value))
                 });
-                if state.analysis_generation.load(Ordering::SeqCst) == analysis_generation {
+                if !preview_only
+                    && state.analysis_generation.load(Ordering::SeqCst) == analysis_generation
+                {
                     emit_engine_event(
                         &app,
                         EngineRuntimeEvent::Bestmove {
@@ -161,11 +177,16 @@ pub(crate) async fn analyze_position(
             _ => {}
         }
     }
-    state.engine.lock().await.remove(&resolved_engine_path_text);
+    if !preview_only {
+        state.engine.lock().await.remove(&resolved_engine_path_text);
+    }
     if let Some(error) = read_error {
         runtime.state = EngineRuntimeState::Faulted;
-        emit_engine_state(&app, runtime.state);
-        if state.analysis_generation.load(Ordering::SeqCst) == analysis_generation {
+        if !preview_only {
+            emit_engine_state(&app, runtime.state);
+        }
+        if !preview_only && state.analysis_generation.load(Ordering::SeqCst) == analysis_generation
+        {
             emit_engine_event(
                 &app,
                 EngineRuntimeEvent::Error {
@@ -177,9 +198,14 @@ pub(crate) async fn analyze_position(
         return Err(error);
     }
     runtime.state = EngineRuntimeState::Idle;
-    emit_engine_state(&app, runtime.state);
+    if !preview_only {
+        emit_engine_state(&app, runtime.state);
+    }
     let _ = runtime.session.close().await;
     let lines: Vec<_> = lines.into_values().collect();
+    if preview_only {
+        return Ok(lines);
+    }
     let elapsed_ms = started.elapsed().as_millis() as u64;
     let mut model = state
         .model
@@ -709,6 +735,7 @@ pub(crate) fn analysis_line_from_engine_info(
         score_cp: info.score_cp,
         mate: info.mate,
         nps: info.nps,
+        nodes: info.nodes,
         time_ms: info.time_ms,
         hashfull: info.hashfull,
         multipv: info.multipv,

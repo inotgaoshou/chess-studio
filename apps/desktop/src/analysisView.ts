@@ -318,7 +318,7 @@ function scoreText(scoreCp: number) {
   return value > 0 ? `+${value}` : `${value}`;
 }
 
-function evaluationLabel(scoreCp: number) {
+export function evaluationLabel(scoreCp: number) {
   const magnitude = Math.abs(scoreCp);
   // Engine cp values are a position evaluation, not a literal material count.
   // Use advantage bands here so a middle value like 320cp is not overexplained

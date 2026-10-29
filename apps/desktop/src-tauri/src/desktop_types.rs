@@ -702,6 +702,7 @@ pub(crate) struct LibraryFolderDto {
 #[derive(Clone, serde::Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AnalysisLine {
+    pub(crate) nodes: Option<u64>,
     pub(crate) depth: Option<u32>,
     pub(crate) score_cp: Option<i32>,
     pub(crate) mate: Option<i32>,

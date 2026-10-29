@@ -142,6 +142,12 @@ export async function queryPikafishAnalysis(fen: string, moveTimeMs = 2000, mult
   }
 }
 
+/** A preview owns only its coordinator job; aborting it never stops engine play. */
+export async function queryVariationAnalysis(fen: string, signal: AbortSignal): Promise<PikafishAnalysis> {
+  if (!hasLocalPikafish()) throw new Error("本地引擎不可用");
+  return engineCoordinator.run(2, () => nativePikafish.analyze({ fen, moveTimeMs: 1500, multiPv: 3 }), signal);
+}
+
 export async function cancelPikafishSearch() {
   if (hasLocalPikafish()) await engineCoordinator.cancel();
 }
