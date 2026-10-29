@@ -13,7 +13,7 @@ try{
  await page.route('**/api/v1/**',async r=>{const path=new URL(r.request().url()).pathname,user={id:'overlay',orgId:'school',role:'coach',displayName:'布局验收',organizations:[]};let body=[];if(path.endsWith('/auth/refresh'))body={token:'fixture',expiresAt:'2099-01-01T00:00:00Z',user};else if(path.endsWith('/auth/me'))body=user;else if(path.endsWith('/capabilities'))body={};await r.fulfill({contentType:'application/json',body:JSON.stringify(body)});});
  await page.goto((process.env.PRACTICE_URL||'http://127.0.0.1:1422')+'/account');await page.getByRole('button',{name:/我的棋谱 录谱/}).waitFor();
  await page.evaluate(async({fen,moves})=>{const source=await(await fetch('/src/App.tsx')).text();const {trainingStore}=await import(source.match(/from \"(\/src\/store\.ts[^\"]*)\"/)[1]);
- for(const count of [0,1,2,10])await trainingStore.saveManualGame({id:`overlay-${count}`,title:`布局验收${count}`,note:'',startingFen:fen,currentFen:fen,currentNodeId:'main:0',cursor:0,moves:count?[moves[0]]:[],branches:moves.slice(1,count).map((move,i)=>({id:`branch-${i}`,parentCursor:0,parentPath:[],moves:[move],notation:[`候选${i+2}`],createdAt:i+1})),comments:{},createdAt:'2026-10-29T00:00:00Z',updatedAt:'2026-10-29T00:00:00Z'});
+ for(const count of [0,1,2,3,10])await trainingStore.saveManualGame({id:`overlay-${count}`,title:`布局验收${count}`,note:'',startingFen:fen,currentFen:fen,currentNodeId:'main:0',cursor:0,moves:count?[moves[0]]:[],branches:moves.slice(1,count).map((move,i)=>({id:`branch-${i}`,parentCursor:0,parentPath:[],moves:[move],notation:[`候选${i+2}`],createdAt:i+1})),comments:{},createdAt:'2026-10-29T00:00:00Z',updatedAt:'2026-10-29T00:00:00Z'});
  },{fen,moves:firstMoves});
  async function open(count,first=false){if(first)await page.getByRole('button',{name:/我的棋谱 录谱/}).click();else{await page.getByRole('button',{name:'菜单',exact:true}).click();assert.equal(await page.getByRole('navigation',{name:'当前局面分支'}).count(),0,'menu hides overlay');await page.getByRole('button',{name:'我的棋谱',exact:true}).click();}
  await page.getByRole('dialog',{name:'我的棋谱',exact:true}).getByRole('button',{name:`打开棋谱：布局验收${count}`,exact:true}).click();await page.locator('.recording-title').getByText(`录谱 0/${count?1:0}`,{exact:true}).waitFor();await page.waitForTimeout(100);}
@@ -25,6 +25,29 @@ try{
  if(viewport.width<600){assert(Math.max(...buttons.map(b=>b.top))-Math.min(...buttons.map(b=>b.top))<=1,'six quick buttons must share a portrait row');assert(buttons.every(b=>b.scroll<=b.width+1),'quick labels must not overflow');}else assert.equal(new Set(buttons.map(b=>b.top)).size,2,'landscape side tools retain two rows');
  await open(1);await strip.getByRole('button',{name:/^棋谱下一着：/}).waitFor();await stable(page,base,'single continuation');
  await open(2);await strip.getByRole('button',{name:/^分支 2/}).waitFor();await stable(page,base,'fork appears');
+ await open(3);await strip.getByRole('button',{name:/^分支 3/}).waitFor();await stable(page,base,'three numbered choices');
+ const choices=await strip.locator('.manual-branch-choices button').evaluateAll(nodes=>nodes.map(n=>({move:n.dataset.move,label:n.getAttribute('aria-label')})));
+ const arrows=await page.locator('.manual-play-board-area .saved-branch-arrow').evaluateAll(nodes=>nodes.map(n=>({move:n.dataset.move,number:n.querySelector('text').textContent})));
+ assert.deepEqual(arrows,choices.map((c,i)=>({move:c.move,number:String(i+1)})),'arrows and branch choices must share ordered moves');
+ const visible=await strip.locator('.manual-branch-choices').evaluate(el=>{const r=el.getBoundingClientRect();return [...el.querySelectorAll('button')].every(b=>{const x=b.getBoundingClientRect();return x.top>=r.top-1&&x.bottom<=r.bottom+1&&x.left>=r.left-1&&x.right<=r.right+1;});});
+ assert(visible||viewport.width>600,'all three branch buttons must be visible with three board arrows '+JSON.stringify({viewport,details:await strip.evaluate(el=>({compact:el.dataset.compactChoices,slot:el.dataset.dockInside,html:el.outerHTML.slice(0,700),rect:[...el.querySelectorAll('.manual-branch-choices,.manual-branch-choices button')].map(n=>{const r=n.getBoundingClientRect();return [r.x,r.y,r.width,r.height];})}))}));
+ for(const choice of choices){
+  await strip.getByRole('button',{name:choice.label,exact:true}).click();
+  await page.locator('.recording-title b').getByText('录谱 1/1',{exact:true}).waitFor();
+  await page.locator('.manual-play-board-area .xiangqi-board').getByRole('button',{name:new RegExp('^'+choice.move.slice(2)+' ')}).waitFor();
+  await page.getByRole('button',{name:'上一步',exact:true}).click();await strip.getByRole('button',{name:/^分支 3/}).waitFor();
+ }
+ await page.screenshot({path:output+`/three-corresponding-choices-${viewport.width}x${viewport.height}.png`});
+ await strip.getByRole('button',{name:'管理变招',exact:true}).click();const manager=page.getByRole('dialog',{name:'录谱面板',exact:true});await manager.waitFor();
+ await manager.getByRole('button',{name:'选择变招',exact:true}).click();
+ assert.deepEqual(await manager.getByRole('option').evaluateAll(nodes=>nodes.map(n=>n.dataset.move)),choices.map(c=>c.move),'manager must share board/overlay move order');
+ await manager.getByRole('option').nth(0).click();await page.locator('.recording-title b').getByText('录谱 1/1',{exact:true}).waitFor();
+ await manager.getByRole('button',{name:'选择变招',exact:true}).click();await manager.getByRole('option').nth(1).click();
+ await page.locator('.manual-play-board-area .xiangqi-board').getByRole('button',{name:new RegExp('^'+choices[1].move.slice(2)+' ')}).waitFor({state:'attached'});
+ assert.equal(await page.locator('.recording-title b').innerText(),'录谱 1/1','choosing an earlier fork must go to that fork + one, not current cursor + one');
+ await manager.getByRole('button',{name:'关闭录谱面板',exact:true}).click();await page.getByRole('button',{name:'上一步',exact:true}).click();await strip.getByRole('button',{name:/^分支 3/}).waitFor();
+
+ await open(2);await strip.getByRole('button',{name:/^分支 2/}).waitFor();
  const original=await strip.boundingBox();const toolbar=await page.locator('.manual-bottom-tools').boundingBox();const mainBoard=await page.locator('.manual-play-board-area > .board-shell').boundingBox();assert(original.y>=mainBoard.y+mainBoard.height-1 || original.x>=mainBoard.x+mainBoard.width-1 || original.x+original.width<=mainBoard.x+1 || original.y+original.height<=mainBoard.y+1,'overlay must not cover the board');await page.screenshot({path:output+`/branches-${viewport.width}x${viewport.height}.png`});
  assert.equal(await strip.evaluate(el=>!!el.closest('.manual-bottom-tools')),false,'card must be portaled outside normal layout');
  await strip.getByRole('button',{name:'收起变招选择'}).click();await stable(page,base,'collapse');await page.getByRole('button',{name:'下一步',exact:true}).click();await strip.getByRole('button',{name:/^分支 2/}).waitFor();await stable(page,base,'next reveals');
@@ -34,7 +57,7 @@ try{
  await page.getByRole('button',{name:'上一步',exact:true}).click();await strip.getByRole('button',{name:/^分支 2/}).waitFor();await stable(page,base,'return reopens fork');
  const afterNavigation=await strip.boundingBox();assert(Math.abs(afterNavigation.x-dragged.x)<=1&&Math.abs(afterNavigation.y-dragged.y)<=1,'navigation retains dragged position');
  await open(10);await strip.getByRole('button',{name:/^分支 10/}).waitFor();await stable(page,base,'ten branches');
- assert(await strip.locator('.manual-branch-choices').evaluate(el=>el.scrollHeight>el.clientHeight),'long choice list scrolls internally');
+ assert(await strip.locator('.manual-branch-choices').evaluate(el=>el.scrollHeight>el.clientHeight||el.scrollWidth>el.clientWidth),'long choice list scrolls internally');
  await strip.getByRole('button',{name:/^分支 10/}).scrollIntoViewIfNeeded();await strip.getByRole('button',{name:/^分支 10/}).click();await page.locator('.recording-title b').getByText('录谱 1/1',{exact:true}).waitFor();await stable(page,base,'last branch remains clickable');
  await page.screenshot({path:output+`/mobile-${viewport.width}x${viewport.height}.png`});
  }

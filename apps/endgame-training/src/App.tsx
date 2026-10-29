@@ -869,7 +869,7 @@ function AnalysisArrowLayer({ moves, activeIndex, flipped = false, geometry, bra
     const color = branches ? "#f87924" : colors[index % colors.length];
     const active = !branches && index === activeIndex;
     const opacity = branches || active ? 1 : .5;
-    return [<g key={`${move}-${index}`} className={`analysis-candidate-arrow ${branches ? "saved-branch-arrow" : ""} ${active ? "active" : ""}`} opacity={opacity} style={{ "--analysis-arrow-color": color } as CSSProperties}>
+    return [<g key={`${move}-${index}`} data-move={move} className={`analysis-candidate-arrow ${branches ? "saved-branch-arrow" : ""} ${active ? "active" : ""}`} opacity={opacity} style={{ "--analysis-arrow-color": color } as CSSProperties}>
       <line className="analysis-arrow-backdrop" x1={startX} y1={startY} x2={endX} y2={endY}/>
       <line className="analysis-arrow-outline" x1={startX} y1={startY} x2={endX} y2={endY}/>
       <line className="analysis-arrow-stem" x1={startX} y1={startY} x2={endX} y2={endY} stroke={color} markerEnd={`url(#${markerPrefix}-analysis-arrow-${index})`}/>
@@ -4882,7 +4882,10 @@ export function App() {
     const folderPath = (values.folderPath || "") === (draft.folderPath || "") && stored
       ? stored.folderPath : values.folderPath || undefined;
     const saved = await trainingStore.saveManualGame({ ...latest, ...values, folderPath, updatedAt: new Date().toISOString() });
-    if (saved.id === manualGame?.id) setManualGame(saved);
+    if (saved.id === manualGame?.id) {
+      if (manualBranchSource.current?.id === saved.id) manualBranchSource.current = saved;
+      setManualGame(saved);
+    }
     const folder = saved.folderPath ?? "";
     setManualFolder(folder);
     setManualQuery("");
@@ -5524,7 +5527,7 @@ export function App() {
   async function selectStudyContinuation(choice: ManualContinuation, fromAutoPlay=false) {
     if(!fromAutoPlay)setStudyAutoPlaying(false);
     const path = extendManualContinuation(studyTreeState(), choice.selected ? studyMoves : choice.path);
-    const scope = catalogAccountScope, epoch = studyDocumentEpoch.current, generation = ++studyGeneration.current, cursor = studyCursor + 1;
+    const scope = catalogAccountScope, epoch = studyDocumentEpoch.current, generation = ++studyGeneration.current, cursor = choice.parentCursor + 1;
     const [state, notation] = await Promise.all([boardAt(studyStartingFen, path.slice(0, cursor), studyRuleMode), chineseLine(studyStartingFen, path)]);
     if (epoch !== studyDocumentEpoch.current || generation !== studyGeneration.current || variationContext.current().scope !== scope || variationContext.current().mode !== "study") return;
     if (studyBranchOrigin.current?.epoch !== epoch) studyBranchOrigin.current = { epoch, snapshot: { id:`study-${epoch}`,title:"拆棋研究",note:"",createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),...studyTreeState() }, notation:studyNotation };
@@ -5538,7 +5541,7 @@ export function App() {
     const source = manualBranchSource.current && manualBranchSource.current.id === manualGame?.id ? manualBranchSource.current : manualPayload();
     const path = extendManualContinuation(source, choice.selected ? manualMoves : choice.path);
     const revision = ++manualSaveRevision.current;
-    const cursor = manualCursor + 1, epoch = manualDocumentEpoch.current, scope = catalogAccountScope;
+    const cursor = choice.parentCursor + 1, epoch = manualDocumentEpoch.current, scope = catalogAccountScope;
     const [state, notation] = await Promise.all([boardAt(manualStartingFen, path.slice(0, cursor), studyRuleMode), chineseLine(manualStartingFen, path).catch(() => path)]);
     const live = variationContext.current();
     if (revision !== manualSaveRevision.current || epoch !== manualDocumentEpoch.current || live.scope !== scope || live.mode !== "manual" || live.snapshot.id !== source.id) return;
@@ -7048,7 +7051,7 @@ export function App() {
       {commentaryPanel}
       {studyPanelTab === "engine" && (LOCAL_PIKAFISH_AVAILABLE || teachingAuth ? <AnalysisPanel onPreview={line => openMobileVariation(line.pv, line.analyzedFen)} onExplain={explainCandidate} lines={studyAnalysisLines} pending={analysisPending && studyMode} activeIndex={studyActiveAnalysis} disabled={Boolean(studyTerminal)} enabled={studyEngineEnabled} multiPv={analysisMultiPv} moveTimeSec={analysisMoveTimeSec} scoreSide={studyScoreSide} arrowsVisible={analysisArrowsVisible} onToggle={() => void (analysisPending ? stopAnalysis() : studyEngineEnabled ? startAnalysis() : enableStudyEngine())} onToggleArrows={toggleAnalysisArrows} onSelect={setStudyActiveAnalysis} onMultiPvChange={(value) => void changeAnalysisMultiPv(value)} onMoveTimeChange={(value) => void changeAnalysisMoveTimeSec(value)}/> : <section className="study-unavailable">Web 端登录后可使用服务端 Pikafish 分析。</section>)}
       {studyPanelTab === "cloud" && <section className="study-cloud-panel">{studyCloudPending ? <p className="study-cloud-empty">正在查询当前局面…</p> : studyCloudMoves.length ? <div className="study-cloud-list">{studyCloudMoves.map((item, index) => { const evaluation = cloudEvaluation(item, studyScoreSide); return <button key={item.iccs} onClick={() => void playStudyMove(item.iccs)}><b>{index + 1}</b><strong>{item.notation}</strong><em>红分 {evaluation.redScore > 0 ? "+" : ""}{evaluation.redScore}</em><small>红 {evaluation.redRate.toFixed(1)}% · 黑 {evaluation.blackRate.toFixed(1)}%</small></button>; })}</div> : <p className="study-cloud-empty">{studyCloudError ?? "当前局面暂无云库着法。"}</p>}</section>}
-      {studyPanelTab === "manual" && <StudyManualTree moves={studyMoves} notation={studyNotation} cursor={studyCursor} branches={studyBranches} comments={studyComments} onCommentChange={(key, comment) => setStudyComments((current) => ({ ...current, [key]: comment }))} onNavigate={(cursor) => void navigateStudyMove(cursor)} onAdopt={(branch, focusCursor) => void adoptStudyBranch(branch, focusCursor)} onDelete={(id) => void deleteStudyBranch(id)} onDiscardCurrent={(parentCursor, replacement) => void discardStudyCurrentLine(parentCursor, replacement)} onMove={moveStudyBranch}/>}
+      {studyPanelTab === "manual" && <StudyManualTree canonicalMoves={canonicalStudy?.snapshot.moves ?? studyMoves} canonicalNotation={canonicalStudy?.notation ?? studyNotation} onSelectContinuation={choice => void selectStudyContinuation(choice).catch(error => setStudyNotice(String(error)))} moves={studyMoves} notation={studyNotation} cursor={studyCursor} branches={studyBranches} comments={studyComments} onCommentChange={(key, comment) => setStudyComments((current) => ({ ...current, [key]: comment }))} onNavigate={(cursor) => void navigateStudyMove(cursor)} onAdopt={(branch, focusCursor) => void adoptStudyBranch(branch, focusCursor)} onDelete={(id) => void deleteStudyBranch(id)} onDiscardCurrent={(parentCursor, replacement) => void discardStudyCurrentLine(parentCursor, replacement)} onMove={moveStudyBranch}/>}
       </div><span className="study-branch-dock" aria-hidden="true"/></div>
       <section className={`study-notice ${studyNoticeVisible ? "" : "hidden"} ${studyNoticePersistent ? "important" : ""}`} aria-live={studyNoticePersistent ? "assertive" : "polite"}><b>{studyRuleLabel(studyRuleMode)}</b><p>{studyNotice}</p></section>
     </aside>
@@ -7082,7 +7085,7 @@ export function App() {
       <header><strong>{manualPanelTab === "moves" ? "" : manualPanelTab === "analysis" ? "本地分析" : "本地棋库"}</strong><button type="button" aria-label="关闭录谱面板" onClick={() => setManualPanelOpen(false)}><X/></button></header>
       <nav className="study-panel-tabs" role="tablist" aria-label="录谱面板">{([["moves", "棋谱", ClipboardList], ["analysis", "分析", Cpu], ["library", "棋库", Database]] as const).map(([value, label, Icon]) => <button key={value} role="tab" aria-selected={manualPanelTab === value} className={manualPanelTab === value ? "active" : ""} onClick={() => openManualPanel(value)}><Icon/><span>{label}</span></button>)}</nav>
       <div className="manual-panel-content">
-        {manualPanelTab === "moves" && <StudyManualTree moves={manualMoves} notation={manualNotation} cursor={manualCursor} branches={manualBranches} comments={manualComments} readOnly={manualReadOnly} onCommentChange={(key, comment) => { if (manualReadOnly) return; const comments = { ...manualComments, [key]: comment }; setManualComments(comments); void saveManualGame({ comments }); }} onNavigate={(cursor) => void navigateManualMove(cursor)} onAdopt={(branch, focusCursor) => void adoptManualBranch(branch, focusCursor)} onDelete={id => void deleteManualBranch(id).catch(() => undefined)} onDiscardCurrent={() => setManualNotice("主线删除后续首版暂不开放，请使用分支切换。")} onMove={moveManualBranch}/>}
+        {manualPanelTab === "moves" && <StudyManualTree canonicalMoves={canonicalManual?.moves ?? manualMoves} canonicalNotation={canonicalManual ? manualBranchNotation.current : manualNotation} onSelectContinuation={choice => void selectManualContinuation(choice).catch(error => setManualNotice(String(error)))} moves={manualMoves} notation={manualNotation} cursor={manualCursor} branches={manualBranches} comments={manualComments} readOnly={manualReadOnly} onCommentChange={(key, comment) => { if (manualReadOnly) return; const comments = { ...manualComments, [key]: comment }; setManualComments(comments); void saveManualGame({ comments }); }} onNavigate={(cursor) => void navigateManualMove(cursor)} onAdopt={(branch, focusCursor) => void adoptManualBranch(branch, focusCursor)} onDelete={id => void deleteManualBranch(id).catch(() => undefined)} onDiscardCurrent={() => setManualNotice("主线删除后续首版暂不开放，请使用分支切换。")} onMove={moveManualBranch}/>}
         {manualPanelTab === "analysis" && renderManualAnalysisBody()}
 
       </div>

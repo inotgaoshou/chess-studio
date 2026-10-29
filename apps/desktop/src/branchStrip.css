@@ -45,8 +45,8 @@
 .branch-management-layer.is-light .branch-map-controls button { color:#315d43; background:#f7fcf7; border-color:#c7dbcc; }
 
 /* Only the actual moves and small controls are visible; no extra title block. */
-.branch-floating-layer .manual-branch-strip.is-floating { width:max-content; padding:3px; border-radius:9px; }
-.manual-branch-strip.is-floating .branch-inline-controls { display:flex; align-items:center; gap:2px; min-width:0; overflow:hidden; }
+.branch-floating-layer .manual-branch-strip.is-floating { width:max-content; padding:3px; border-radius:9px; align-items:stretch; }
+.manual-branch-strip.is-floating .branch-inline-controls { display:flex; align-items:center; gap:2px; min-width:0; max-width:100%; flex-shrink:0; overflow:hidden; }
 .branch-inline-controls > span,.branch-small-actions { display:flex; flex:none; }
 .manual-branch-strip.is-floating .manual-branch-choices { grid-template-columns:repeat(2,minmax(0,1fr)); flex:1 1 auto; max-height:inherit; gap:3px; }
 .manual-branch-strip.is-floating.is-single .manual-branch-choices { grid-template-columns:minmax(0,1fr); }
@@ -62,3 +62,10 @@
  .manual-branch-strip.is-floating .manual-branch-choices button b { width:16px; height:16px; font-size:10px; }
 }
 .branch-floating-layer .manual-branch-strip.is-floating[data-dock-inside=true] { padding:1px; }
+/* A one-row dock must expose its numbered choices instead of clipping row two. */
+.manual-branch-strip.is-floating.has-many-choices[data-compact-choices=true] .manual-branch-choices { display:flex; overflow-x:auto; overflow-y:hidden; }
+.manual-branch-strip.is-floating.has-many-choices[data-compact-choices=true] .manual-branch-choices button { justify-content:center; min-width:30px; padding:3px; }
+.manual-branch-strip.is-floating.has-many-choices[data-compact-choices=true] .manual-branch-choices strong { display:none; }
+.branch-choice-count { display:none; }
+.manual-branch-strip.is-floating.has-many-choices[data-compact-choices=true] .branch-manage-button > svg { display:none; }
+.manual-branch-strip.is-floating.has-many-choices[data-compact-choices=true] .branch-choice-count { display:inline; font-size:10px; }

@@ -55,7 +55,8 @@ export function BranchStrip(props:BranchStripProps) {
       node.dataset.dockInside=String(Boolean(useSlot));
       node.style.maxWidth=`${Math.max(1,Math.min(bounds.right-bounds.left,useSlot&&dockRect?dockRect.width:Infinity))}px`;
       const maxHeight=Math.max(1,Math.min(bounds.bottom-bounds.top,(viewport?.height ?? innerHeight)*.4,160,useSlot&&dockRect?dockRect.height-4:Infinity));
-      node.style.maxHeight=`${maxHeight}px`;node.style.setProperty("--branch-choice-height",`${maxHeight-8}px`);
+      node.dataset.compactChoices=String(maxHeight<80);
+      node.style.maxHeight=`${maxHeight}px`;node.style.setProperty("--branch-choice-height",`${Math.max(1,maxHeight-(useSlot?4:8))}px`);
       const rect=node.getBoundingClientRect();
       const position=placeBranchOverlay(bounds,rect,boardRect,preferred.current ?? (useSlot&&dockRect?{x:dockRect.left,y:dockRect.top+2}:undefined),placementDock);
       node.style.left=`${position.x}px`;node.style.top=`${position.y}px`;node.style.visibility="visible";
@@ -92,11 +93,11 @@ export function BranchStrip(props:BranchStripProps) {
   }}><GripVertical size={16}/></button>:null;
   const select=(id:string)=>{setOpen(false);onSelect(id);};
   if(!visible)return null;
-  const content=<nav ref={card} className={`manual-branch-strip ${floating?"is-floating":""} ${light?"is-light":""} ${unique.length===1?"is-single":""} ${!open?"is-collapsed":""}`} aria-label="当前局面分支" style={floating?{visibility:"hidden"}:undefined}>
+  const content=<nav ref={card} className={`manual-branch-strip ${floating?"is-floating":""} ${light?"is-light":""} ${unique.length===1?"is-single":""} ${unique.length>2?"has-many-choices":""} ${!open?"is-collapsed":""}`} aria-label="当前局面分支" style={floating?{visibility:"hidden"}:undefined}>
     {floating ? <div className="branch-inline-controls"><span {...dragEvents}>{handle}</span>
       {!open ? <button type="button" aria-label="展开棋谱后续" onClick={()=>setOpen(true)}><GitFork size={14}/>{unique.length === 1 ? "棋谱后续" : `分支 ${unique.length}`}</button>
-      : <div className="manual-branch-choices">{unique.map((choice,index)=><button key={choice.id} type="button" aria-label={unique.length === 1 ? `棋谱下一着：${choice.notation}` : `分支 ${index+1} · ${choice.notation}`} aria-current={choice.selected?"true":undefined} title="进入棋谱已有走法" onClick={()=>select(choice.id)}>{unique.length>1&&<b>{index+1}</b>}<strong>{unique.length===1?"下一着：":""}{choice.notation}</strong></button>)}</div>}
-      <span className="branch-small-actions">{onManage&&open&&unique.length>1&&<button type="button" aria-label="管理变招" onClick={onManage}><Settings2 size={14}/></button>}{open&&<button type="button" aria-label="收起变招选择" onClick={()=>setOpen(false)}><X size={14}/></button>}</span>
+      : <div className="manual-branch-choices">{unique.map((choice,index)=><button key={choice.id} type="button" data-move={choice.move} aria-label={unique.length === 1 ? `棋谱下一着：${choice.notation}` : `分支 ${index+1} · ${choice.notation}`} aria-current={choice.selected?"true":undefined} title={`${unique.length>1?`分支 ${index+1} · `:"下一着："}${choice.notation}`} onClick={()=>select(choice.id)}>{unique.length>1&&<b>{index+1}</b>}<strong>{unique.length===1?"下一着：":""}{choice.notation}</strong></button>)}</div>}
+      <span className="branch-small-actions">{onManage&&open&&unique.length>1&&<button type="button" className="branch-manage-button" aria-label="管理变招" title={`查看全部 ${unique.length} 条分支着法`} onClick={onManage}><Settings2 size={14}/><span className="branch-choice-count" aria-hidden="true">共{unique.length}</span></button>}{open&&<button type="button" aria-label="收起变招选择" onClick={()=>setOpen(false)}><X size={14}/></button>}</span>
     </div> : unique.length===1 || !open ? <div className="branch-compact">{unique.length===1
       ? <button type="button" aria-label={`棋谱下一着：${unique[0].notation}`} onClick={()=>select(unique[0].id)}>下一着：{unique[0].notation}</button>
       : <button type="button" onClick={()=>setOpen(true)}><GitFork size={16}/>选择变招 · {unique.length} 条</button>}</div>

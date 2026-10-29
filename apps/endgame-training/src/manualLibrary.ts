@@ -4,7 +4,7 @@ export function manualResult(game: LocalManualGame) {
   const result = game.metadata?.result;
   if (result === "draw") return { label: "和棋", score: "1/2–1/2", tone: "draw" };
   if (result === "multiple") return { label: "多种结果", score: "", tone: "unknown" };
-  if (result !== "first-win" && result !== "first-loss") return { label: "未定", score: "*", tone: "unknown" };
+  if (result !== "first-win" && result !== "first-loss") return { label: "结果未定", score: "*", tone: "unknown" };
   const firstRed = game.startingFen.split(/\s+/)[1] !== "b";
   const redWon = result === "first-win" ? firstRed : !firstRed;
   return redWon ? { label: "红胜", score: "1–0", tone: "red" } : { label: "黑胜", score: "0–1", tone: "black" };

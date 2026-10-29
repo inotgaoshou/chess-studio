@@ -1,5 +1,6 @@
 import { ArrowDown, ArrowUp, ChevronDown, Lightbulb, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { manualContinuations, type ManualContinuation } from "./manualContinuation";
 import { moveNotationLabel } from "./moveNotation";
 
 export type StudyManualBranch = {
@@ -15,6 +16,9 @@ export type StudyManualBranch = {
 type Props = {
   moves: string[];
   notation: string[];
+  canonicalMoves?: string[];
+  canonicalNotation?: string[];
+  onSelectContinuation?(choice: ManualContinuation): void;
   cursor: number;
   branches: StudyManualBranch[];
   comments: Record<string, string>;
@@ -30,9 +34,7 @@ type Props = {
 
 const MAINLINE_ID = "__mainline__";
 const moveLabel = (notation: string | undefined, iccs: string | undefined) => notation || iccs ? moveNotationLabel(notation) : "--";
-const branchLetter = (index: number) => String.fromCharCode(65 + index);
 const sameLine = (left: string[], right: string[]) => left.join(",") === right.join(",");
-const branchOrder = (branch: StudyManualBranch, fallbackIndex: number) => Number.isFinite(branch.branchOrder) ? Math.max(0, Math.floor(Number(branch.branchOrder))) : fallbackIndex + 1;
 
 type BranchChoice = {
   id: string;
@@ -41,11 +43,12 @@ type BranchChoice = {
   firstMove?: string;
   branch?: StudyManualBranch;
   mainline: boolean;
+  continuation: ManualContinuation;
 };
 
-type BranchChoiceWithLetter = BranchChoice & { letter: string };
+type NumberedBranchChoice = BranchChoice & { number: number };
 
-export function StudyManualTree({ moves, notation, cursor, branches, comments, onCommentChange, onNavigate, onAdopt, onDelete, onDiscardCurrent, onMove, readOnly = false, onExplain }: Props) {
+export function StudyManualTree({ moves, notation, canonicalMoves = moves, canonicalNotation = notation, onSelectContinuation, cursor, branches, comments, onCommentChange, onNavigate, onAdopt, onDelete, onDiscardCurrent, onMove, readOnly = false, onExplain }: Props) {
   const branchesAt = useMemo(() => {
     const result = new Map<number, StudyManualBranch[]>();
     for (const branch of branches) {
@@ -56,7 +59,15 @@ export function StudyManualTree({ moves, notation, cursor, branches, comments, o
     }
     return result;
   }, [branches, moves]);
-  const forkCursors = useMemo(() => [...branchesAt.keys()].sort((left, right) => left - right), [branchesAt]);
+  const forkCursors = useMemo(() => {
+    const forks = new Set(branchesAt.keys());
+    for (const line of [canonicalMoves, ...branches.map(branch => [...branch.parentPath, ...branch.moves])]) {
+      let common = 0;
+      while (common < Math.min(line.length, moves.length) && line[common] === moves[common]) common++;
+      if (line.length > common) forks.add(common);
+    }
+    return [...forks].filter(fork => branchesAt.has(fork) || manualContinuations(canonicalMoves,canonicalNotation,branches,moves.slice(0,fork),moves,notation).length > 1).sort((a,b)=>a-b);
+  }, [branchesAt,branches,moves,notation,canonicalMoves,canonicalNotation]);
   const [selectedFork, setSelectedFork] = useState(0);
   const [selectedBranchId, setSelectedBranchId] = useState(MAINLINE_ID);
   const [branchPickerOpen, setBranchPickerOpen] = useState(false);
@@ -66,7 +77,7 @@ export function StudyManualTree({ moves, notation, cursor, branches, comments, o
     if (!forkCursors.length) return;
     const nearestActive = [...forkCursors].reverse().find((fork) => fork < cursor);
     const currentPositionFork = forkCursors.find((fork) => fork === cursor);
-    const nearest = nearestActive ?? currentPositionFork ?? [...forkCursors].reverse().find((fork) => fork <= cursor) ?? forkCursors[0];
+    const nearest = currentPositionFork ?? nearestActive ?? [...forkCursors].reverse().find((fork) => fork <= cursor) ?? forkCursors[0];
     setSelectedFork(nearest);
     setSelectedBranchId(MAINLINE_ID);
     setBranchPickerOpen(false);
@@ -74,72 +85,19 @@ export function StudyManualTree({ moves, notation, cursor, branches, comments, o
 
   const currentPathKey = moves.slice(0, cursor).join(",");
 
-  function choicesForFork(fork: number): BranchChoiceWithLetter[] {
-    const localBranches = branchesAt.get(fork) ?? [];
-    const mainlineMove = moves[fork];
-    const mainlineNotation = notation[fork];
-    const mainlineContinuation = moves.slice(fork);
-    const mainlineSource = localBranches.find((branch) => sameLine(branch.moves, mainlineContinuation))
-      ?? [...localBranches].filter((branch) => branch.moves[0] === mainlineMove).sort((left, right) => right.moves.length - left.moves.length)[0];
-    const localOrders = localBranches.map((branch, index) => branchOrder(branch, index));
-    const minLocalOrder = localOrders.length ? Math.min(...localOrders) : 0;
-    const normalizedLocalOrder = (branch: StudyManualBranch, index: number) => branchOrder(branch, index) - minLocalOrder;
-    const maxLocalOrder = localBranches.reduce((max, branch, index) => Math.max(max, normalizedLocalOrder(branch, index)), -1);
-    return [
-      ...localBranches.map((branch, index) => ({
-        id: branch.id,
-        order: normalizedLocalOrder(branch, index),
-        label: moveLabel(branch.notation[0], branch.moves[0]),
-        firstMove: branch.moves[0],
-        branch,
-        mainline: false,
-      })),
-      ...(mainlineMove ? [{
-        id: mainlineSource?.id ?? MAINLINE_ID,
-        order: mainlineSource ? normalizedLocalOrder(mainlineSource, localBranches.indexOf(mainlineSource)) : maxLocalOrder + 1,
-        label: moveLabel(mainlineNotation, mainlineMove),
-        firstMove: mainlineMove,
-        branch: mainlineSource,
-        mainline: true,
-      }] : []),
-    ]
-      .reduce((items, choice) => {
-      const duplicated = items.findIndex((item) => item.id === choice.id || Boolean(choice.firstMove && item.firstMove === choice.firstMove));
-      if (duplicated < 0) return [...items, choice];
-      const existing = items[duplicated];
-      if (choice.mainline) {
-        const next = [...items];
-        next[duplicated] = {
-          ...existing,
-          id: choice.branch ? choice.id : existing.id,
-          order: Math.min(existing.order, choice.order),
-          label: choice.label || existing.label,
-          firstMove: choice.firstMove ?? existing.firstMove,
-          branch: choice.branch ?? existing.branch,
-          mainline: true,
-        };
-        return next;
-      }
-      if (existing.branch && choice.branch && choice.branch.moves.length > existing.branch.moves.length) {
-        const next = [...items];
-        next[duplicated] = { ...existing, ...choice, mainline: existing.mainline || choice.mainline };
-        return next;
-      }
-      if (!existing.branch && choice.branch) {
-        const next = [...items];
-        next[duplicated] = { ...existing, ...choice, mainline: existing.mainline };
-        return next;
-      }
-      return items;
-      }, [] as BranchChoice[])
-      .sort((left, right) => left.order - right.order)
-      .map((choice, index) => ({ ...choice, letter: branchLetter(index) }));
+  function choicesForFork(fork: number): NumberedBranchChoice[] {
+    const path = moves.slice(0,fork);
+    return manualContinuations(canonicalMoves,canonicalNotation,branches,path,moves,notation).map((choice,index) => {
+      const branch = branches.find(item => item.parentCursor === fork && sameLine(item.parentPath,path) && item.id === choice.id)
+        ?? branches.find(item => item.parentCursor === fork && sameLine(item.parentPath,path) && item.moves[0] === choice.move);
+      return {id:choice.id,order:index,label:choice.notation,firstMove:choice.move,branch,mainline:choice.move === moves[fork],continuation:choice,number:index+1};
+    });
   }
 
   const activeBranches = branchesAt.get(selectedFork) ?? [];
   const mainlineMove = moves[selectedFork];
   const branchChoices = choicesForFork(selectedFork);
-  const selectedChoice = branchChoices.find((choice) => choice.id === selectedBranchId) ?? branchChoices.find((choice) => choice.mainline) ?? branchChoices[0];
+  const selectedChoice = branchChoices.find((choice) => choice.id === selectedBranchId) ?? branchChoices.find((choice) => choice.continuation.selected) ?? branchChoices[0];
   const effectiveSelectedId = selectedChoice?.id ?? selectedBranchId;
   const selectedBranch = selectedChoice?.branch;
   const orderedBranchChoices = branchChoices.filter((choice) => choice.branch);
@@ -156,21 +114,23 @@ export function StudyManualTree({ moves, notation, cursor, branches, comments, o
   }, [activeRound, cursor, moves.length]);
 
   function branchBadge(index: number) {
-    if (!(branchesAt.get(index) ?? []).length) return undefined;
+    if (!forkCursors.includes(index)) return undefined;
     const localChoices = choicesForFork(index);
     if (localChoices.length <= 1) return undefined;
     const currentMove = moves[index];
     const currentChoice = index === selectedFork
       ? (selectedChoice ?? localChoices.find((choice) => choice.firstMove === currentMove))
       : localChoices.find((choice) => choice.firstMove === currentMove || (choice.branch && sameLine(choice.branch.moves, moves.slice(index))));
-    const letter = currentChoice?.letter ?? localChoices[0]?.letter ?? "A";
-    return `${localChoices.length}${letter}`;
+    const number = currentChoice?.number ?? localChoices[0]?.number ?? 1;
+    return `${number}/${localChoices.length}`;
   }
 
   function chooseBranch(id: string) {
     setSelectedBranchId(id);
     setBranchPickerOpen(false);
-    if (id === MAINLINE_ID) {
+    const choice = branchChoices.find(item => item.id === id);
+    if (choice && onSelectContinuation) { onSelectContinuation(choice.continuation); return; }
+    if (id === MAINLINE_ID || id === "mainline") {
       onNavigate(mainlineMove ? selectedFork + 1 : selectedFork);
       return;
     }
@@ -213,7 +173,7 @@ export function StudyManualTree({ moves, notation, cursor, branches, comments, o
         </ol>}
       </div>
       <aside className="study-variation-column">
-        {activeBranches.length ? <>
+        {branchChoices.length && forkCursors.length ? <>
           <header>
             <div><span>变着：</span><nav aria-label="变招操作">
               <button type="button" className="danger" disabled={readOnly || (!selectedBranch && !canDiscardSelectedMainline)} aria-label="删除变招" onClick={deleteSelectedBranch}><Trash2/></button>
@@ -223,14 +183,14 @@ export function StudyManualTree({ moves, notation, cursor, branches, comments, o
             <div className="study-branch-picker" onBlur={(event) => {
               if (!event.currentTarget.contains(event.relatedTarget)) setBranchPickerOpen(false);
             }}>
-              <button type="button" className="study-branch-picker-trigger" aria-haspopup="listbox" aria-expanded={branchPickerOpen} onClick={() => setBranchPickerOpen((open) => !open)}>
-                <span>{selectedChoice ? `${selectedChoice.letter}. ${selectedChoice.label}` : "选择变招"}</span>
+              <button type="button" className="study-branch-picker-trigger" aria-label="选择变招" aria-haspopup="listbox" aria-expanded={branchPickerOpen} onClick={() => setBranchPickerOpen((open) => !open)}>
+                <span>{selectedChoice ? `${selectedChoice.number}. ${selectedChoice.label}` : "选择变招"}</span>
                 <ChevronDown/>
               </button>
               {branchPickerOpen && <div className="study-branch-picker-menu" role="listbox" aria-label="选择变招">
-                {branchChoices.map((choice) => <button type="button" role="option" aria-selected={choice.id === effectiveSelectedId} key={choice.id} className={choice.id === effectiveSelectedId ? "active" : ""} onMouseDown={(event) => event.preventDefault()} onClick={() => chooseBranch(choice.id)}>
+                {branchChoices.map((choice) => <button type="button" role="option" data-move={choice.firstMove} aria-selected={choice.id === effectiveSelectedId} key={choice.id} className={choice.id === effectiveSelectedId ? "active" : ""} onMouseDown={(event) => event.preventDefault()} onClick={() => chooseBranch(choice.id)}>
                   <b>{choice.id === effectiveSelectedId ? "✓" : ""}</b>
-                  <span>{choice.letter}. {choice.label}</span>
+                  <span>{choice.number}. {choice.label}</span>
                 </button>)}
               </div>}
             </div>
