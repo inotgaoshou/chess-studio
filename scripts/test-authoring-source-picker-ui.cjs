@@ -9,7 +9,7 @@ const fen='4k4/3R5/R3P4/9/9/9/9/9/9/4K4 w - - 0 1';
  const browser=await(process.env.WEBKIT?webkit.launch({headless:true}):chromium.launch({channel:'chrome',headless:true}));
  fs.mkdirSync(output,{recursive:true});
  try {
-  for(const viewport of [{width:360,height:740},{width:390,height:844},{width:1024,height:768}]){
+  for(const viewport of [{width:320,height:740},{width:360,height:740},{width:390,height:844},{width:430,height:900},{width:1024,height:768}]){
    const page=await browser.newPage({viewport,isMobile:true,hasTouch:true});page.setDefaultTimeout(12000);
    const errors=[],calls=[];
    page.on('pageerror',error=>errors.push(error.message));
@@ -29,12 +29,12 @@ const fen='4k4/3R5/R3P4/9/9/9/9/9/9/4K4 w - - 0 1';
     else if(path==='/api/v1/admin/assignments')body=[{id:'pub',title:'发布作业详情入口',status:'published',itemCount:3,targetCount:2,completedCount:1},{id:'draft',title:'草稿详情入口',status:'draft',itemCount:1,targetCount:1,completedCount:0}];
     else if(path===base+'/directories')body={items:[directory]};
     else if(path===base+'/directories/d')body=directory;
-    else if(path===base+'/source-libraries')body={mateFilterVersion:1,items:[{id:'book-a',title:'验收题库',sourceScope:'平台'}]};
+    else if(path===base+'/source-libraries')body={mateFilterVersion:1,mateMultiFilterVersion:1,items:[{id:'book-a',title:'验收题库',sourceScope:'平台'}]};
     else if(path===base+'/sources'){
-     assert.equal(parsed.searchParams.get('libraryId'),'book-a');assert.equal(parsed.searchParams.get('mateMoves'),'2');
+     assert.equal(parsed.searchParams.get('libraryId'),'book-a');assert.equal(parsed.searchParams.get('mateSteps'),'1,2');
      const params=parsed.searchParams;
      const items=params.get('category')==='中局'?[{...source(99),title:'同局面不同答案',category:'中局'}]:params.has('cursor')?[source(0),source(30)]:Array.from({length:30},(_,i)=>({...source(i),alreadyAdded:i===1}));
-     body={mateFilterVersion:1,items,categories:['杀棋','中局','未分类'],nextCursor:params.has('cursor')||params.get('category')?null:'next-page',sourcePickerVersion:2};
+     body={mateFilterVersion:1,mateMultiFilterVersion:1,items,categories:['杀棋','中局','未分类'],nextCursor:params.has('cursor')||params.get('category')?null:'next-page',sourcePickerVersion:2};
     }
     await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(body)});
    });
@@ -57,12 +57,17 @@ const fen='4k4/3R5/R3P4/9/9/9/9/9/9/4K4 w - - 0 1';
    await page.getByRole('button',{name:'从平台／机构题库选题'}).click();
    const books=page.getByRole('dialog',{name:'选择题库／书本'});
    await books.getByRole('button',{name:/验收题库/}).waitFor();
-   await books.getByLabel('杀法步数',{exact:true}).selectOption('2');
-   await page.waitForResponse(response=>response.url().includes('/source-libraries?')&&new URL(response.url()).searchParams.get('mateMoves')==='2');
+   const tabs=books.getByRole('group',{name:'杀法步数',exact:true});
+   await tabs.getByRole('button',{name:'两步杀',exact:true}).click();
+   await tabs.getByRole('button',{name:'一步杀',exact:true}).click();
+   await page.waitForResponse(response=>response.url().includes('/source-libraries?')&&new URL(response.url()).searchParams.get('mateSteps')==='1,2');
+   assert.equal(await tabs.getByRole('button',{name:'一步杀',exact:true}).getAttribute('aria-pressed'),'true');
+   assert.equal(await tabs.getByRole('button',{name:'两步杀',exact:true}).getAttribute('aria-pressed'),'true');
+   for(const rect of await tabs.getByRole('button').evaluateAll(nodes=>nodes.map(n=>{const r=n.getBoundingClientRect();return {x:r.x,right:r.right,height:r.height,clipped:n.scrollWidth>n.clientWidth+1};}))){assert(rect.x>=0&&rect.right<=viewport.width&&rect.height>=34&&!rect.clipped,'step tabs must fit without clipping');}
    await page.screenshot({path:output+'/book-filter-'+viewport.width+'.png'});
    await books.getByRole('button',{name:/验收题库/}).click();
    const dialog=page.getByRole('dialog',{name:'选择平台／机构题目'}),list=dialog.locator('.authoring-source-list');
-   await dialog.getByText('分类题目 0',{exact:true}).waitFor();assert.equal(await dialog.getByLabel('杀法步数',{exact:true}).inputValue(),'2');
+   await dialog.getByText('分类题目 0',{exact:true}).waitFor();assert.equal(await dialog.getByRole('group',{name:'杀法步数'}).getByRole('button',{name:'两步杀',exact:true}).getAttribute('aria-pressed'),'true');
    assert(await dialog.getByRole('button',{name:/分类题目 1 平台|分类题目 1 杀棋/}).isDisabled());
    const cardRects=await list.locator('button:has(svg)').evaluateAll(nodes=>nodes.map(node=>{const r=node.getBoundingClientRect(),svg=node.querySelector('svg').getBoundingClientRect();return {top:r.top,bottom:r.bottom,svgTop:svg.top,svgBottom:svg.bottom};}));
    assert(cardRects.length>=30);cardRects.forEach((r,i)=>{assert(r.svgTop>=r.top-1&&r.svgBottom<=r.bottom+1,'thumbnail must fit the card');if(i)assert(r.top>=cardRects[i-1].bottom,'cards must never overlap');});

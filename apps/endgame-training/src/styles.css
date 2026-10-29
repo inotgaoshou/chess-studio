@@ -288,13 +288,13 @@
   box-shadow:0 0 4px rgba(0,0,0,.24);
 }
 .analysis-candidates { min-width:0; display:grid; gap:4px; }
-.analysis-candidates button { min-width:0; min-height:35px; padding:3px 5px; border:1px solid #d2e0d5; border-radius:5px; background:#fff; color:#365949; display:grid; grid-template-columns:21px minmax(0,1fr) auto; align-items:center; gap:1px 5px; text-align:left; }
-.analysis-candidates button.active { border-color:#397951; background:#eaf5ed; box-shadow:inset 3px 0 #397951; }
-.analysis-candidates button>b { grid-row:1 / span 3; width:19px; height:19px; border-radius:50%; background:#397951; color:#fff; display:grid; place-items:center; font-size:10px; }
-.analysis-candidates button>strong { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; }
-.analysis-candidates button>em { color:#a55e21; font-size:10px; font-style:normal; font-weight:800; font-variant-numeric:tabular-nums; }
-.analysis-candidates button>span { grid-column:2 / -1; min-width:0; overflow:hidden; color:#537060; text-overflow:ellipsis; white-space:nowrap; font-size:8px; font-variant-numeric:tabular-nums; }
-.analysis-candidates button>small { grid-column:2 / -1; min-width:0; overflow:hidden; color:#6d8276; text-overflow:ellipsis; white-space:nowrap; font-size:9px; }
+.analysis-candidates .analysis-candidate-select { min-width:0; min-height:35px; padding:3px 5px; border:1px solid #d2e0d5; border-radius:5px; background:#fff; color:#365949; display:grid; grid-template-columns:21px minmax(0,1fr) auto; align-items:center; gap:1px 5px; text-align:left; }
+.analysis-candidates .analysis-candidate-select.active { border-color:#397951; background:#eaf5ed; box-shadow:inset 3px 0 #397951; }
+.analysis-candidates .analysis-candidate-select>b { grid-row:1 / span 3; width:19px; height:19px; border-radius:50%; background:#397951; color:#fff; display:grid; place-items:center; font-size:10px; }
+.analysis-candidates .analysis-candidate-select>strong { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; }
+.analysis-candidates .analysis-candidate-select>em { color:#a55e21; font-size:10px; font-style:normal; font-weight:800; font-variant-numeric:tabular-nums; }
+.analysis-candidates .analysis-candidate-select>span { grid-column:2 / -1; min-width:0; overflow:hidden; color:#537060; text-overflow:ellipsis; white-space:nowrap; font-size:8px; font-variant-numeric:tabular-nums; }
+.analysis-candidates .analysis-candidate-select>small { grid-column:2 / -1; min-width:0; overflow:hidden; color:#6d8276; text-overflow:ellipsis; white-space:nowrap; font-size:9px; }
 .analysis-candidate-pager { min-width:0; padding-top:2px; display:flex; align-items:center; justify-content:center; gap:10px; }
 .analysis-candidate-pager button { width:34px; height:34px; min-width:34px; padding:0; border:2px solid #c5d9ca; border-radius:50%; background:#f8fbf9; color:#315d45; display:grid; place-items:center; font-size:13px; font-weight:900; }
 .analysis-candidate-pager button.active { border-color:#397951; background:#397951; color:#fff; }
@@ -3649,32 +3649,32 @@ html.phone-webview .analysis-candidates {
   gap:3px;
 }
 
-html.phone-webview .analysis-candidates button {
+html.phone-webview .analysis-candidates .analysis-candidate-select {
   min-height:31px;
   padding:2px 4px;
   grid-template-columns:20px minmax(0,1fr) auto;
   gap:0 4px;
 }
 
-html.phone-webview .analysis-candidates button > b {
+html.phone-webview .analysis-candidates .analysis-candidate-select > b {
   width:18px;
   height:18px;
   font-size:9px;
 }
 
-html.phone-webview .analysis-candidates button > strong {
+html.phone-webview .analysis-candidates .analysis-candidate-select > strong {
   font-size:10.5px;
 }
 
-html.phone-webview .analysis-candidates button > em {
+html.phone-webview .analysis-candidates .analysis-candidate-select > em {
   font-size:9px;
 }
 
-html.phone-webview .analysis-candidates button > span {
+html.phone-webview .analysis-candidates .analysis-candidate-select > span {
   font-size:7.5px;
 }
 
-html.phone-webview .analysis-candidates button > small {
+html.phone-webview .analysis-candidates .analysis-candidate-select > small {
   font-size:8px;
 }
 
@@ -7443,3 +7443,22 @@ html.phone-webview .study-sidebar { grid-template-rows:auto 32px minmax(0,1fr); 
 }
 .manual-reference-layout .recording-feedback-row { position:relative; }
 .manual-branch-dock { position:absolute; left:0; top:0; width:calc(100% - 105px); height:44px; pointer-events:none; }
+
+/* Candidate rows size to their content; action buttons share a single row. */
+html .analysis-panel.compact-analysis,
+.study-sidebar .commentary-research-content > .analysis-panel.compact-analysis {
+ display:flex; flex-direction:column; flex:0 0 auto; height:auto; min-height:0; max-height:none; overflow:visible; gap:4px;
+}
+html .analysis-panel.compact-analysis .analysis-candidates { height:auto; min-height:0; max-height:none; overflow:visible; align-content:start; grid-auto-rows:max-content; gap:5px; }
+.analysis-panel.compact-analysis .analysis-candidate-commentary { display:flex; flex-direction:column; gap:0; min-width:0; border:1px solid #d2e0d5; border-radius:6px; overflow:hidden; background:#fff; }
+.analysis-panel.compact-analysis .analysis-candidate-select { border:0; border-radius:0; min-height:40px; padding:4px 6px; }
+.analysis-panel.compact-analysis .analysis-candidate-select > small:empty { display:none; }
+.analysis-panel.compact-analysis .analysis-candidate-actions { display:flex; justify-content:flex-end; align-items:center; gap:6px; padding:2px 5px; border-top:1px solid #e7eee8; }
+.analysis-panel.compact-analysis .analysis-candidate-actions > .commentary-entry { display:inline-flex; width:auto; min-height:32px; padding:3px 7px; border:0; background:transparent; color:#426c53; box-shadow:none; font-size:11px; }
+.analysis-panel.compact-analysis .analysis-candidate-actions svg { width:14px; height:14px; }
+.analysis-panel.compact-analysis .analysis-multipv-picker { grid-template-columns:auto 78px auto; justify-content:start; gap:4px; font-size:10px; }
+.analysis-panel.compact-analysis .multipv-stepper { grid-template-columns:24px 30px 24px; }
+.analysis-panel.compact-analysis .multipv-stepper > button { width:24px; }
+.analysis-panel.compact-analysis .multipv-stepper > input { width:30px; }
+.study-research-stack { min-width:0; min-height:0; display:grid; grid-template-rows:minmax(0,1fr) 44px; }
+.study-branch-dock { display:block; width:100%; height:42px; pointer-events:none; }

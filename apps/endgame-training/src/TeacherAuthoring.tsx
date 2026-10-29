@@ -646,14 +646,26 @@ type SourcePickerProps = {
   onChoose(item: AuthoringSource): Promise<void>;
 };
 function MateStepFilter({value,onChange,disabled=false}:{value:string;onChange(value:string):void;disabled?:boolean}) {
-  return <label className="authoring-picker-category">杀法步数<select aria-label="杀法步数" value={value} disabled={disabled} onChange={event=>onChange(event.target.value)}><option value="">全部步数</option><option value="1">一步杀</option><option value="2">两步杀</option><option value="3">三步杀</option><option value="long">四步及以上</option></select></label>;
+  const options=[['1','一步杀'],['2','两步杀'],['3','三步杀'],['long','四步及以上']] as const;
+  const selected=new Set(value ? value.split(',') : []);
+  function toggle(step:string) {
+    if(selected.has(step))selected.delete(step);else selected.add(step);
+    onChange(options.map(([key])=>key).filter(key=>selected.has(key)).join(','));
+  }
+  return <div className="authoring-mate-filter"><span>杀法步数 <small>可多选</small></span><div className="authoring-mate-tabs" role="group" aria-label="杀法步数">
+    <button type="button" aria-pressed={!value} disabled={disabled} onClick={()=>onChange('')}>全部</button>
+    {options.map(([key,label])=><button key={key} type="button" aria-pressed={selected.has(key)} disabled={disabled} onClick={()=>toggle(key)}>{label}</button>)}
+  </div></div>;
 }
 function mateStepParams(params:URLSearchParams,filter:string) {
-  if(filter === "long")params.set("mateGroup","long");
+  if(filter.includes(','))params.set("mateSteps",filter);
+  else if(filter === "long")params.set("mateGroup","long");
   else if(filter)params.set("mateMoves",filter);
 }
-function requireMateFilter(page:{mateFilterVersion?:number},filter:string) {
+type MateFilterSupport={mateFilterVersion?:number;mateMultiFilterVersion?:number};
+function requireMateFilter(page:MateFilterSupport,filter:string) {
   if(filter && page.mateFilterVersion !== 1)throw new Error("服务器尚未支持杀法步数筛选，请更新服务端后重试");
+  if(filter.includes(',') && page.mateMultiFilterVersion !== 1)throw new Error("服务器尚未支持多选步数筛选，请更新服务端后重试");
 }
 function SourcePicker(props: SourcePickerProps) {
   const {api,kind,onClose} = props;
@@ -669,7 +681,7 @@ function SourcePicker(props: SourcePickerProps) {
     const params = new URLSearchParams({kind,q:q.trim(),limit:"30"});
     if(after)params.set("cursor",after);
     if(kind === "problems")mateStepParams(params,mateFilter);
-    const page = await api.request<{items:SourceLibrary[];nextCursor?:string|null;mateFilterVersion?:number}>(BASE+"/source-libraries?"+params,{signal});
+    const page = await api.request<{items:SourceLibrary[];nextCursor?:string|null} & MateFilterSupport>(BASE+"/source-libraries?"+params,{signal});
     requireMateFilter(page,mateFilter);
     return page;
   }
@@ -731,7 +743,7 @@ function SourceRecordPicker({api,kind,directoryId,existing,onClose,onChoose,libr
     if (directoryId) params.set("directoryId",directoryId);
     if (after) params.set("cursor",after);
     if(kind === "problems")mateStepParams(params,mateFilter);
-    const page = await api.request<AuthoringSourcePage & {mateFilterVersion?:number}>(BASE+"/sources?"+params,{signal});
+    const page = await api.request<AuthoringSourcePage & MateFilterSupport>(BASE+"/sources?"+params,{signal});
     requireMateFilter(page,mateFilter);
     return page;
   }
