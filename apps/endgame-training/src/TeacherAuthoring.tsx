@@ -647,14 +647,9 @@ type SourcePickerProps = {
 };
 function MateStepFilter({value,onChange,disabled=false}:{value:string;onChange(value:string):void;disabled?:boolean}) {
   const options=[['1','一步杀'],['2','两步杀'],['3','三步杀'],['long','四步及以上']] as const;
-  const selected=new Set(value ? value.split(',') : []);
-  function toggle(step:string) {
-    if(selected.has(step))selected.delete(step);else selected.add(step);
-    onChange(options.map(([key])=>key).filter(key=>selected.has(key)).join(','));
-  }
-  return <div className="authoring-mate-filter"><span>杀法步数 <small>可多选</small></span><div className="authoring-mate-tabs" role="group" aria-label="杀法步数">
+  return <div className="authoring-mate-filter"><span>杀法步数</span><div className="authoring-mate-tabs" role="group" aria-label="杀法步数">
     <button type="button" aria-pressed={!value} disabled={disabled} onClick={()=>onChange('')}>全部</button>
-    {options.map(([key,label])=><button key={key} type="button" aria-pressed={selected.has(key)} disabled={disabled} onClick={()=>toggle(key)}>{label}</button>)}
+    {options.map(([key,label])=><button key={key} type="button" aria-pressed={value===key} disabled={disabled} onClick={()=>onChange(key)}>{label}</button>)}
   </div></div>;
 }
 function mateStepParams(params:URLSearchParams,filter:string) {
@@ -675,7 +670,7 @@ function SourcePicker(props: SourcePickerProps) {
   const [items,setItems] = useState<SourceLibrary[]>([]);
   const [nextCursor,setNextCursor] = useState<string|null>();
   const [busy,setBusy] = useState(true), [error,setError] = useState("");
-  const generation = useRef(0), paginationLock = useRef(false);
+  const generation = useRef(0), paginationLock = useRef(false), lastSearch = useRef<string | undefined>(undefined);
   const list = useRef<HTMLDivElement>(null);
   async function read(after?:string,signal?:AbortSignal) {
     const params = new URLSearchParams({kind,q:q.trim(),limit:"30"});
@@ -686,17 +681,28 @@ function SourcePicker(props: SourcePickerProps) {
     return page;
   }
   useEffect(()=>{
+    if(library)return;
     const epoch=++generation.current, controller=new AbortController();
-    setItems([]);setNextCursor(undefined);setError("");setBusy(true);paginationLock.current=false;
+    setNextCursor(undefined);setError("");setBusy(true);paginationLock.current=false;
     list.current?.scrollTo?.({top:0});
-    const timer=setTimeout(()=>{
-      void read(undefined,controller.signal).then(page=>{
+    const searchChanged=lastSearch.current!==undefined && lastSearch.current!==q;lastSearch.current=q;
+    const deadline=Date.now()+30_000;
+    let timer:ReturnType<typeof setTimeout>;
+    async function load() {
+      let retrying=false;
+      try {
+        const page=await read(undefined,controller.signal);
         if(epoch===generation.current){setItems(page.items);setNextCursor(page.nextCursor??null);}
-      }).catch(reason=>{if(epoch===generation.current)setError(message(reason));})
-        .finally(()=>{if(epoch===generation.current)setBusy(false);});
-    },200);
+      } catch(reason) {
+        if(epoch!==generation.current)return;
+        if(/^题库正在(准备|更新)/.test(message(reason)) && Date.now()<deadline) {
+          retrying=true;timer=setTimeout(()=>void load(),500);
+        } else {setItems([]);setError(message(reason));}
+      } finally {if(epoch===generation.current && !retrying)setBusy(false);}
+    }
+    timer=setTimeout(()=>void load(),searchChanged?200:0);
     return ()=>{clearTimeout(timer);controller.abort();generation.current++;};
-  },[api,kind,q,mateFilter,reload]);
+  },[api,kind,q,mateFilter,reload,library?.id]);
   async function loadMore() {
     if(!nextCursor || busy || paginationLock.current)return;
     const epoch=generation.current,after=nextCursor;
@@ -718,7 +724,8 @@ function SourcePicker(props: SourcePickerProps) {
     <input aria-label="搜索题库或书本" placeholder="输入题库或书本名称" value={q} onChange={event=>setQ(event.target.value)}/>
     {error && <p role="alert" className="authoring-error">{error}<button type="button" disabled={busy} onClick={()=>setReload(value=>value+1)}>重试</button></p>}
     <div className="authoring-source-list authoring-library-list" ref={list} aria-busy={busy}>
-      {items.map(item=><button type="button" key={item.id} onClick={()=>setLibrary(item)}>
+      {busy && items.length>0 && <p className="authoring-picker-loading" role="status">正在更新题库…</p>}
+      {items.map(item=><button type="button" key={item.id} className={busy ? "authoring-retained" : undefined} disabled={busy} onClick={()=>setLibrary(item)}>
         <span className="authoring-library-icon" aria-hidden="true">▤</span>
         <span className="authoring-source-copy"><strong>{item.title}</strong><small>{item.sourceScope} · {kind==="games" ? "查看棋谱" : "进入选题"}</small></span>
         <span className="authoring-library-arrow" aria-hidden="true">›</span>
@@ -734,7 +741,7 @@ function SourceRecordPicker({api,kind,directoryId,existing,onClose,onChoose,libr
   const [items,setItems] = useState<AuthoringSource[]>([]), [categories,setCategories] = useState<string[]>([]);
   const [preparing,setPreparing] = useState(false);
   const [nextCursor,setNextCursor] = useState<string|null>(), [error,setError] = useState(""), [busy,setBusy] = useState(true), [choosing,setChoosing] = useState(false);
-  const request = useRef(0), selectionLock = useRef(false), paginationLock = useRef(false);
+  const request = useRef(0), selectionLock = useRef(false), paginationLock = useRef(false), lastSearch = useRef<string | undefined>(undefined);
   const list = useRef<HTMLDivElement>(null);
   const existingIds = new Set(existing.map(item => `${itemRef(item).kind}:${itemRef(item).subjectId}`));
   async function readPage(after?:string, signal?:AbortSignal) {
@@ -749,7 +756,7 @@ function SourceRecordPicker({api,kind,directoryId,existing,onClose,onChoose,libr
   }
   useEffect(() => {
     const epoch=++request.current;
-    setItems([]);setNextCursor(undefined);setError("");setBusy(true);paginationLock.current=false;
+    setNextCursor(undefined);setError("");setBusy(true);paginationLock.current=false;
     list.current?.scrollTo?.({top:0});
     const controller=new AbortController(), deadline=Date.now()+180_000;
     let timer:ReturnType<typeof setTimeout>;
@@ -765,10 +772,11 @@ function SourceRecordPicker({api,kind,directoryId,existing,onClose,onChoose,libr
         const text=message(reason);
         if(/^题库正在(准备|更新)/.test(text) && Date.now()<deadline) {
           retrying=true;setPreparing(true);timer=setTimeout(()=>void load(),2000);
-        } else {setPreparing(false);setError(/^题库正在(准备|更新)/.test(text) ? "题库准备较慢，请稍后重试" : text);}
+        } else {setItems([]);setPreparing(false);setError(/^题库正在(准备|更新)/.test(text) ? "题库准备较慢，请稍后重试" : text);}
       } finally {if(epoch===request.current && !retrying)setBusy(false);}
     }
-    timer=setTimeout(()=>void load(),200);
+    const searchChanged=lastSearch.current!==undefined && lastSearch.current!==q;lastSearch.current=q;
+    timer=setTimeout(()=>void load(),searchChanged?200:0);
     return ()=>{clearTimeout(timer);controller.abort();request.current++;};
   },[q,category,mateFilter,kind,directoryId,library.id,api,reload]);
   async function loadMore() {
@@ -799,9 +807,10 @@ function SourceRecordPicker({api,kind,directoryId,existing,onClose,onChoose,libr
     <input aria-label="搜索题目或棋谱" placeholder="输入名称搜索" value={q} disabled={choosing} onChange={event=>setQ(event.target.value)}/>
     {error && <p role="alert" className="authoring-error">{error}<button type="button" disabled={busy || choosing} onClick={()=>setReload(value=>value+1)}>重试</button></p>}
     <div className="authoring-source-list" ref={list} aria-busy={busy || choosing}>
+      {busy && items.length>0 && <p className="authoring-picker-loading" role="status">正在更新题目…</p>}
       {items.map(item=>{
         const added=kind === "problems" && (item.alreadyAdded || existingIds.has(`${item.authored ? "authored" : "source"}:${item.id}`));
-        return <button type="button" key={sourceIdentity(item)} disabled={busy || choosing || Boolean(added)} onClick={()=>void choose(item)}>
+        return <button type="button" key={sourceIdentity(item)} className={busy && !added ? "authoring-retained" : undefined} disabled={busy || choosing || Boolean(added)} onClick={()=>void choose(item)}>
           <AuthoringBoard fen={item.fen}/><span className="authoring-source-copy"><strong>{item.title}</strong><small>{[item.category,item.sourceScope,item.sourceTitle].filter(Boolean).join(" · ")}</small>{(item.sourceCount ?? 0)>1 && <small>已合并 {item.sourceCount} 个重复来源</small>}{added && <small>已添加</small>}</span>
         </button>;
       })}

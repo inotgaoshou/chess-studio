@@ -465,38 +465,56 @@ it("does not silently show unfiltered books on an older server",async()=>{
   expect(screen.queryByRole("button",{name:/测试题库.*进入选题/})).toBeNull();
 });
 
-it("unions selected step tabs, carries them into books and clears them with all",async()=>{
+it("replaces the single selected step, carries it into books and clears it with all",async()=>{
   const f=fixture(),fallback=f.request.getMockImplementation()!;
   f.request.mockImplementation(async(path,init)=>{
     const params=new URL(path,"https://test.invalid").searchParams;
-    const step=params.get("mateSteps")??params.get("mateMoves")??"all";
-    if(path.startsWith(B+"/source-libraries?"))return {mateFilterVersion:1,mateMultiFilterVersion:1,items:[{id:"book",title:"步数 "+step,sourceScope:"平台"}],nextCursor:null};
-    if(path.startsWith(B+"/sources?"))return {mateFilterVersion:1,mateMultiFilterVersion:1,items:[{id:"matched",title:"题目 "+step,fen:START_FEN}],categories:[],nextCursor:null};
+    const step=params.get("mateMoves")??"all";
+    if(path.startsWith(B+"/source-libraries?"))return {mateFilterVersion:1,items:[{id:"book",title:"步数 "+step,sourceScope:"平台"}],nextCursor:null};
+    if(path.startsWith(B+"/sources?"))return {mateFilterVersion:1,items:[{id:"matched",title:"题目 "+step,fen:START_FEN}],categories:[],nextCursor:null};
     return fallback(path,init);
   });
   await enter();fireEvent.click(screen.getByRole("button",{name:"＋添加题目"}));fireEvent.click(screen.getByRole("button",{name:"从平台／机构题库选题"}));
   await screen.findByRole("button",{name:/步数 all.*进入选题/});
   const tab=(name:string)=>within(screen.getByRole("group",{name:"杀法步数"})).getByRole("button",{name,exact:true});
   fireEvent.click(tab("两步杀"));fireEvent.click(tab("一步杀"));
-  fireEvent.click(await screen.findByRole("button",{name:/步数 1,2.*进入选题/}));
-  await screen.findByText("题目 1,2");
-  expect(tab("一步杀").getAttribute("aria-pressed")).toBe("true");expect(tab("两步杀").getAttribute("aria-pressed")).toBe("true");
-  fireEvent.click(tab("一步杀"));await screen.findByText("题目 2");
+  fireEvent.click(await screen.findByRole("button",{name:/步数 1.*进入选题/}));
+  await screen.findByText("题目 1");
+  expect(tab("一步杀").getAttribute("aria-pressed")).toBe("true");expect(tab("两步杀").getAttribute("aria-pressed")).toBe("false");
+  const bookRequests=f.request.mock.calls.filter(([path])=>path.startsWith(B+"/source-libraries?")).length;
+  fireEvent.click(tab("三步杀"));await screen.findByText("题目 3");
+  expect(f.request.mock.calls.filter(([path])=>path.startsWith(B+"/source-libraries?")).length).toBe(bookRequests);
+  expect(tab("一步杀").getAttribute("aria-pressed")).toBe("false");
+  fireEvent.click(tab("三步杀"));expect(tab("三步杀").getAttribute("aria-pressed")).toBe("true");
   fireEvent.click(within(screen.getByRole("dialog")).getByRole("button",{name:"‹ 返回",exact:true}));
-  await screen.findByRole("button",{name:/步数 2.*进入选题/});
+  await screen.findByRole("button",{name:/步数 3.*进入选题/});
   fireEvent.click(tab("全部"));await screen.findByRole("button",{name:/步数 all.*进入选题/});
-  expect(tab("全部").getAttribute("aria-pressed")).toBe("true");expect(tab("两步杀").getAttribute("aria-pressed")).toBe("false");
-  expect(f.request.mock.calls.some(([path])=>path.includes("/sources?")&&new URL(path,"https://test.invalid").searchParams.get("mateSteps")==="1,2")).toBe(true);
-  fireEvent.click(tab("三步杀"));await screen.findByRole("button",{name:/步数 3.*进入选题/});
-  fireEvent.click(tab("三步杀"));await screen.findByRole("button",{name:/步数 all.*进入选题/});
+  expect(tab("全部").getAttribute("aria-pressed")).toBe("true");expect(tab("三步杀").getAttribute("aria-pressed")).toBe("false");
+  expect(f.request.mock.calls.some(([path])=>path.includes("mateSteps"))).toBe(false);
 });
 
-it("refuses silently ignored multi-selection on a single-step-only server",async()=>{
+it("retains disabled previous rows while replacing filters and ignores late responses",async()=>{
   const f=fixture(),fallback=f.request.getMockImplementation()!;
-  f.request.mockImplementation(async(path,init)=>path.startsWith(B+"/source-libraries?")?{mateFilterVersion:1,items:[{id:"book",title:"旧版题库",sourceScope:"平台"}]}:fallback(path,init));
+  let resolveOld!:(value:unknown)=>void, rejectNew!:(reason:Error)=>void;
+  f.request.mockImplementation(async(path,init)=>{
+    if(path.startsWith(B+"/source-libraries?")){
+      const step=new URL(path,"https://test.invalid").searchParams.get("mateMoves");
+      if(step==="1")return new Promise(resolve=>{resolveOld=resolve;});
+      if(step==="2")return new Promise((_,reject)=>{rejectNew=reject;});
+    }
+    return fallback(path,init);
+  });
   await enter();fireEvent.click(screen.getByRole("button",{name:"＋添加题目"}));fireEvent.click(screen.getByRole("button",{name:"从平台／机构题库选题"}));
-  await screen.findByRole("button",{name:/旧版题库.*进入选题/});
-  const tabs=within(screen.getByRole("group",{name:"杀法步数"}));fireEvent.click(tabs.getByRole("button",{name:"一步杀"}));fireEvent.click(tabs.getByRole("button",{name:"三步杀"}));
-  await screen.findByText(/服务器尚未支持多选步数筛选/);
-  expect(screen.queryByRole("button",{name:/旧版题库.*进入选题/})).toBeNull();
+  const book=await screen.findByRole("button",{name:/测试题库.*进入选题/});
+  const tabs=within(screen.getByRole("group",{name:"杀法步数"}));
+  fireEvent.click(tabs.getByRole("button",{name:"一步杀"}));
+  await waitFor(()=>expect(resolveOld).toBeTypeOf("function"));expect(book.hasAttribute("disabled")).toBe(true);
+  fireEvent.click(tabs.getByRole("button",{name:"两步杀"}));
+  await waitFor(()=>expect(rejectNew).toBeTypeOf("function"));
+  resolveOld({mateFilterVersion:1,items:[{id:"old",title:"过期结果",sourceScope:"平台"}]});
+  rejectNew(new Error("筛选读取失败"));
+  await screen.findByText("筛选读取失败");
+  expect(screen.queryByText("过期结果")).toBeNull();expect(screen.queryByRole("button",{name:/测试题库.*进入选题/})).toBeNull();
+  fireEvent.click(tabs.getByRole("button",{name:"全部"}));
+  expect((await screen.findByRole("button",{name:/测试题库.*进入选题/})).hasAttribute("disabled")).toBe(false);
 });
