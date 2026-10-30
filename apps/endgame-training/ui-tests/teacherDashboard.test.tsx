@@ -14,8 +14,10 @@ it("shows neutral actions in the requested order and opens all three overview li
   const f=mount();
   await waitFor(()=>expect(teachingClient.teacherAssignments).toHaveBeenCalled());
   const actions=[...document.querySelectorAll('.teacher-mobile-actions > button')];
-  expect(actions.map(button=>button.querySelector('b')?.textContent)).toEqual(["机构题库 · 摆棋出题","布置作业","学习打卡","班级与学生","申请加入机构"]);
+  expect(actions.map(button=>button.querySelector('b')?.textContent)).toEqual(["我的题库","机构题库 · 摆棋出题","我的作业库 · 布置作业","学习打卡","班级与学生","申请加入机构"]);
   expect(actions.every(button=>!button.classList.contains('primary'))).toBe(true);
+  fireEvent.click(actions[0]);
+  expect(f.navigate).toHaveBeenLastCalledWith("/teacher/personal-library");
   const stats=within(screen.getByLabelText("教学统计"));
   fireEvent.click(stats.getByRole("button",{name:/负责班级/}));
   expect(f.navigate).toHaveBeenLastCalledWith("/teacher/classes");

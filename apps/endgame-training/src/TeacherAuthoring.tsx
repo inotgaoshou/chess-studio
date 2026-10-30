@@ -63,13 +63,27 @@ export function TeacherAuthoring({
   orgName,
   onBack,
   onAssigned,
+  onAdvanced,
+  personal = false,
+  organizationApi,
 }: {
   api: AuthoringApi;
   scopeKey: string;
   orgName: string;
   onBack(): void;
   onAssigned(id: string): void;
+  onAdvanced?(): void;
+  personal?: boolean;
+  organizationApi?: AuthoringApi;
 }) {
+  const [tab,setTab]=useState<"published"|"platform"|"mine">("mine");
+  const [publishedRows,setPublishedRows]=useState<Array<{id:string;title:string;status:string;itemCount:number;targetCount:number;completedCount:number}>>([]);
+  const [publishedError,setPublishedError]=useState("");
+  const [externalDirectory,setExternalDirectory]=useState<AuthoringDirectory>();
+  const [copying,setCopying]=useState<AuthoredQuestion>();
+  const [copyTargets,setCopyTargets]=useState<AuthoringDirectory[]>([]);
+  const [copyTargetId,setCopyTargetId]=useState("");
+  const [copyNotice,setCopyNotice]=useState("");
   const [dirs, setDirs] = useState<AuthoringDirectory[]>([]),
     [dir, setDir] = useState<AuthoringDirectory>(),
     [editing, setEditing] = useState(false),
@@ -165,6 +179,15 @@ export function TeacherAuthoring({
       generation.current++;
     };
   }, [scopeKey]);
+  useEffect(()=>{
+    if(tab!=="published")return;
+    let active=true;
+    setPublishedError("");
+    void api.request<typeof publishedRows>("/api/v1/admin/assignments")
+      .then(rows=>{if(active)setPublishedRows(rows.filter(row=>row.status==="published"||row.status==="closed"));})
+      .catch(reason=>{if(active)setPublishedError(message(reason));});
+    return ()=>{active=false;};
+  },[api,scopeKey,tab]);
   async function changeDir(items: AuthoredQuestion[], target = dir) {
     if (!target) return;
     await api.request(
@@ -225,6 +248,27 @@ export function TeacherAuthoring({
     }
     setTitleDialog(undefined);
   }
+  async function openCopy(q: AuthoredQuestion) {
+    if (!organizationApi) return;
+    const result = await organizationApi.request<{items:AuthoringDirectory[]}>(BASE + "/directories");
+    const targets = result.items.filter(item => item.canEdit);
+    if (!targets.length) throw new Error("机构作业库暂无可编辑目录，请先在机构题库新增目录");
+    setCopyTargets(targets);
+    setCopyTargetId(targets[0].id);
+    setCopying(q);
+  }
+  async function copyToOrganization() {
+    if (!copying || !organizationApi || !copyTargetId) return;
+    const target = await organizationApi.request<AuthoringDirectory>(BASE + "/directories/" + copyTargetId);
+    const result = await organizationApi.request<{alreadyAdded?:boolean}>(BASE + "/personal/copy", json({
+      sourceId: copying.id,
+      kind: copying.kind === "source" ? "source" : "authored",
+      targetId: target.id,
+      expectedRevision: target.revision,
+    }));
+    setCopyNotice(result.alreadyAdded ? "这道题已在机构目录中" : "已复制到机构作业库，机构草稿需补答案并发布后才能布置");
+    setCopying(undefined);
+  }
   useEffect(() => {
     if (!savedQuestion || question || !dir) return;
     const frame = requestAnimationFrame(() => document.getElementById(`authoring-item-${savedQuestion}`)?.scrollIntoView?.({block:"nearest"}));
@@ -251,6 +295,7 @@ export function TeacherAuthoring({
             setQuestion({ ...newQuestion(), body });
           })
         }
+        personal={personal}
         onSave={async (q) => {
           await load(dir?.id);
           setSavedQuestion(q.id);
@@ -274,8 +319,8 @@ export function TeacherAuthoring({
           ‹ 返回
         </button>
         <div>
-          <h2>{dir?.title || "机构题库"}</h2>
-          <small>{orgName} · 发布后仅本机构老师可用</small>
+          <h2>{dir?.title || (personal ? "我的题库" : tab==="published" ? "已发布作业" : tab==="platform" ? "平台作业库" : "我的作业库")}</h2>
+          <small>{personal ? "仅自己可见" : `${orgName} · 发布后仅本机构老师可用`}</small>
         </div>
       </header>
       {error && (
@@ -284,6 +329,7 @@ export function TeacherAuthoring({
           <button onClick={() => void run(() => load(dir?.id))}>刷新</button>
         </p>
       )}
+      {copyNotice && <p role="status" className="authoring-saved">{copyNotice}</p>}
       {recoveries.length > 0 && (
         <section className="authoring-recovery">
           <strong>本机待保存草稿</strong>
@@ -304,7 +350,7 @@ export function TeacherAuthoring({
               </button>
               <button
                 onClick={() => {
-                  if (confirm("删除这份尚未保存到机构的本机草稿？")) {
+                  if (confirm(`删除这份尚未保存到${personal ? "个人" : "机构"}题库的本机草稿？`)) {
                     localStorage.removeItem(
                       `qixi.authoring:${scopeKey}:${c.id}`,
                     );
@@ -320,6 +366,21 @@ export function TeacherAuthoring({
       )}
       {!dir ? (
         <>
+          {!personal && <nav className="authoring-home-tabs" aria-label="布置作业分类">
+            <button type="button" aria-current={tab==="published"?"page":undefined} onClick={()=>setTab("published")}>已发布作业</button>
+            <button type="button" aria-current={tab==="platform"?"page":undefined} onClick={()=>setTab("platform")}>平台作业库</button>
+            <button type="button" aria-current={tab==="mine"?"page":undefined} onClick={()=>setTab("mine")}>我的作业库</button>
+          </nav>}
+          {!personal && tab==="published" && <div className="authoring-published-list">
+            {publishedError && <p role="alert" className="authoring-error">{publishedError}</p>}
+            {publishedRows.map(row=><button type="button" key={row.id} onClick={()=>onAssigned(row.id)}><strong>{row.title}</strong><small>{row.itemCount} 题 · {row.completedCount}/{row.targetCount} 人完成</small></button>)}
+            {!publishedRows.length && !publishedError && <p>暂无已发布作业</p>}
+          </div>}
+          {!personal && tab==="platform" && <PlatformAssignmentCatalog api={api} onAssign={(title,nodeId,items)=>{
+            setExternalDirectory({id:nodeId,title,revision:0,sortOrder:0,canEdit:false,items});
+            setPublish(true);
+          }}/>}
+          {(personal || tab==="mine") && <>
           <div className="authoring-actions">
             <button
               disabled={busy}
@@ -338,11 +399,10 @@ export function TeacherAuthoring({
                 >
                   <strong>{d.title}</strong>
                   <small>
-                    {d.publishedCount ?? 0} 道已发布
-                    {d.draftCount ? ` · ${d.draftCount} 道待完善` : ""}
+                    {personal ? `${d.draftCount ?? 0} 道个人题目` : `${d.publishedCount ?? 0} 道已发布${d.draftCount ? ` · ${d.draftCount} 道待完善` : ""}`}
                   </small>
                 </button>
-                {!directoryEditing && <button disabled={busy} aria-label={`布置${d.title}`} onClick={() => void run(async () => {const detail = await load(d.id);if (!detail?.items.length) throw new Error("目录里还没有题目，请先添加题目");setPublish(true);})}>布置作业</button>}
+                {!personal && !directoryEditing && <button disabled={busy} aria-label={`布置${d.title}`} onClick={() => void run(async () => {const detail = await load(d.id);if (!detail?.items.length) throw new Error("目录里还没有题目，请先添加题目");setPublish(true);})}>布置作业</button>}
                 {directoryEditing && d.canEdit && (
                   <>
                     <button aria-label={`${d.title}置顶`} disabled={busy || i === 0} onClick={() => void run(() => moveDirectory(d, -1))}>置顶</button>
@@ -359,17 +419,19 @@ export function TeacherAuthoring({
             ))}
           </div>
           {!busy && !dirs.length && <p>还没有题目目录，先新建一个。</p>}
+          {!personal && onAdvanced && <button type="button" onClick={onAdvanced}>自由组合布置</button>}
+          </>}
         </>
       ) : (
         <>
           <div className="authoring-actions sticky">
-            <button
+            {!personal && <button
               className="primary"
               disabled={busy || !dir.items.length}
               onClick={() => setPublish(true)}
             >
               布置作业{selected.length ? `（${selected.length}题）` : ""}
-            </button>
+            </button>}
             <button
               onClick={() => {
                 setEditing(!editing);
@@ -463,6 +525,7 @@ export function TeacherAuthoring({
                     </button>
                   )
                 )}
+                {personal && organizationApi && !editing && <button className="authoring-complete" disabled={busy} onClick={() => void run(() => openCopy(q))}>复制到机构作业库</button>}
               </article>
             ))}
           </div>
@@ -542,6 +605,7 @@ export function TeacherAuthoring({
         </>
       )}
       {titleDialog && <TitleSheet key={`${titleDialog.kind}:${titleDialog.title}`} title={titleDialog.kind === "new" ? "新增目录" : titleDialog.kind === "directory" ? "目录改名" : "题目改名"} value={titleDialog.title} busy={busy} error={error} onClose={() => setTitleDialog(undefined)} onSubmit={title => void run(() => saveTitle(title))}/>}
+      {copying && <div className="authoring-overlay"><section className="authoring-sheet" role="dialog" aria-modal="true" aria-label="复制到机构作业库"><h3>复制到机构作业库</h3><p>{copying.body.title}</p>{error && <p role="alert" className="authoring-error">{error}</p>}<label>目标目录<select value={copyTargetId} onChange={event=>setCopyTargetId(event.target.value)}>{copyTargets.map(target=><option key={target.id} value={target.id}>{target.title}</option>)}</select></label><div className="authoring-actions"><button type="button" onClick={()=>setCopying(undefined)}>取消</button><button type="button" className="primary" disabled={busy||!copyTargetId} onClick={()=>void run(copyToOrganization)}>确认复制</button></div></section></div>}
       {adding && (
         <div className="authoring-overlay">
           <section className="authoring-sheet">
@@ -588,16 +652,7 @@ export function TeacherAuthoring({
           existing={dir?.items ?? []}
           onClose={() => setPicker(undefined)}
           onChoose={async (source) => {
-            if (picker === "problems") {
-              const q = {
-                id: source.id,
-                subjectId: source.id,
-                kind: source.authored ? "authored" : "source",
-              } as AuthoredQuestion;
-              if (dir?.items.some(item => itemRef(item).subjectId === q.subjectId && itemRef(item).kind === q.kind)) throw new Error("这道题已添加到当前目录");
-              await changeDir([...(dir?.items ?? []), q]);
-              setPicker(undefined);
-            } else {
+            if (picker === "games") {
               const body = await api.request<QuestionBody>(
                 BASE + "/import",
                 json({ gameId: source.id }),
@@ -610,21 +665,119 @@ export function TeacherAuthoring({
               setPicker(undefined);
             }
           }}
+          onChooseMany={async (sources) => {
+            if (!dir || picker !== "problems") return;
+            const existing = new Set(dir.items.map(item => `${itemRef(item).kind}:${itemRef(item).subjectId}`));
+            const added = sources.filter(source => !existing.has(`${source.authored ? "authored" : "source"}:${source.id}`));
+            if (dir.items.length + added.length > 1000) throw new Error("单目录最多1000题，请缩小筛选范围");
+            await changeDir([...dir.items, ...added.map(source => ({
+              id: source.id,
+              subjectId: source.id,
+              kind: source.authored ? "authored" : "source",
+            } as AuthoredQuestion))]);
+            setPicker(undefined);
+          }}
         />
       )}
-      {publish && dir && (
+      {publish && (dir || externalDirectory) && (
         <AssignmentSheet
           api={api}
           scopeKey={scopeKey}
           orgName={orgName}
-          directory={dir}
-          items={selected.length ? selectedItems : dir.items}
-          onClose={() => setPublish(false)}
+          directory={(dir || externalDirectory)!}
+          items={dir ? selected.length ? selectedItems : dir.items : externalDirectory!.items}
+          onClose={() => {setPublish(false);setExternalDirectory(undefined);}}
           onAssigned={onAssigned}
         />
       )}
     </main>
   );
+}
+
+type CatalogNode = {id:string;name:string;kind:string;itemCount?:number|null};
+type CatalogItem = {id:string;title:string;startingFen:string;contentFingerprint?:string;reviewStatus:string;validationStatus:string};
+function PlatformAssignmentCatalog({api,onAssign}:{api:AuthoringApi;onAssign(title:string,nodeId:string,items:AuthoredQuestion[]):void}) {
+  const [nodeId,setNodeId]=useState<string>();
+  const [title,setTitle]=useState("平台作业库");
+  const [parentId,setParentId]=useState<string>();
+  const [nodes,setNodes]=useState<CatalogNode[]>([]);
+  const [nodeCursor,setNodeCursor]=useState<string|null>(null);
+  const [items,setItems]=useState<CatalogItem[]>([]);
+  const [itemCursor,setItemCursor]=useState<string|null>(null);
+  const [selected,setSelected]=useState<CatalogItem[]>([]);
+  const [busy,setBusy]=useState(false),[error,setError]=useState("");
+  const generation=useRef(0);
+  async function browse(id:string|undefined,cursor?:string) {
+    const params=new URLSearchParams({availability:"available",limit:"100"});
+    if(id)params.set("nodeId",id);
+    if(cursor)params.set("cursor",cursor);
+    return api.request<{currentNode?:CatalogNode;breadcrumbs:CatalogNode[];children:CatalogNode[];nextCursor?:string|null}>(`/api/v1/admin/teaching-catalog/browse?${params}`);
+  }
+  async function problems(id:string,cursor?:string) {
+    const params=new URLSearchParams({limit:"100"});
+    if(cursor)params.set("cursor",cursor);
+    return api.request<{items:CatalogItem[];nextCursor?:string|null}>(`/api/v1/admin/teaching-catalog/${encodeURIComponent(id)}/problems?${params}`);
+  }
+  useEffect(()=>{
+    const epoch=++generation.current;
+    setBusy(true);setError("");setNodes([]);setItems([]);setSelected([]);setNodeCursor(null);setItemCursor(null);
+    void Promise.all([browse(nodeId),nodeId?problems(nodeId):Promise.resolve({items:[] as CatalogItem[],nextCursor:null})])
+      .then(([tree,page])=>{
+        if(epoch!==generation.current)return;
+        setTitle(tree.currentNode?.name||"平台作业库");
+        setParentId(tree.breadcrumbs.at(-2)?.id);
+        setNodes(tree.children);setNodeCursor(tree.nextCursor??null);
+        setItems(page.items.filter(item=>item.reviewStatus==="published"&&item.validationStatus==="ready"));
+        setItemCursor(page.nextCursor??null);
+      }).catch(reason=>{if(epoch===generation.current)setError(message(reason));})
+      .finally(()=>{if(epoch===generation.current)setBusy(false);});
+    return ()=>{generation.current++;};
+  },[api,nodeId]);
+  async function moreNodes() {
+    if(!nodeCursor||busy)return;
+    const epoch=generation.current;setBusy(true);
+    try {const page=await browse(nodeId,nodeCursor);if(epoch===generation.current){setNodes(old=>[...old,...page.children]);setNodeCursor(page.nextCursor??null);}}
+    catch(reason){if(epoch===generation.current)setError(message(reason));}
+    finally{if(epoch===generation.current)setBusy(false);}
+  }
+  async function moreItems() {
+    if(!nodeId||!itemCursor||busy)return;
+    const epoch=generation.current;setBusy(true);
+    try {const page=await problems(nodeId,itemCursor);if(epoch===generation.current){setItems(old=>[...old,...page.items.filter(item=>item.reviewStatus==="published"&&item.validationStatus==="ready")]);setItemCursor(page.nextCursor??null);}}
+    catch(reason){if(epoch===generation.current)setError(message(reason));}
+    finally{if(epoch===generation.current)setBusy(false);}
+  }
+  async function selectAll() {
+    if(!nodeId||busy)return;
+    const epoch=generation.current;setBusy(true);setError("");
+    try {
+      let all=[...items],cursor=itemCursor;
+      while(cursor) {
+        const page=await problems(nodeId,cursor);
+        if(epoch!==generation.current)return;
+        all=[...all,...page.items.filter(item=>item.reviewStatus==="published"&&item.validationStatus==="ready")];
+        cursor=page.nextCursor??null;
+        if(all.length>10000)throw new Error("一次最多布置10000题，请缩小范围");
+      }
+      setItems(all);setItemCursor(null);setSelected(all);
+    } catch(reason){if(epoch===generation.current)setError(message(reason));}
+    finally{if(epoch===generation.current)setBusy(false);}
+  }
+  const selectedIds=new Set(selected.map(item=>item.id));
+  return <section className="authoring-platform-catalog" aria-busy={busy}>
+    {nodeId && <button type="button" onClick={()=>setNodeId(parentId)}>‹ 返回上级</button>}
+    <div className="authoring-catalog-heading"><strong>{title}</strong><span>已选 {selected.length} 题</span></div>
+    {error && <p role="alert" className="authoring-error">{error}</p>}
+    <div className="authoring-platform-nodes">{nodes.map(node=><button type="button" key={node.id} onClick={()=>setNodeId(node.id)}><strong>{node.name}</strong><small>{node.itemCount??0} 题 ›</small></button>)}</div>
+    {nodeCursor && <button type="button" disabled={busy} onClick={()=>void moreNodes()}>加载更多目录</button>}
+    {!!items.length && <>
+      <div className="authoring-picker-actions"><button type="button" disabled={busy} onClick={()=>void selectAll()}>全选本目录</button><span>已选 {selected.length} 题</span><button type="button" disabled={busy||!selected.length} onClick={()=>setSelected([])}>清空</button></div>
+      <div className="authoring-platform-items">{items.map(item=><button type="button" key={item.id} aria-pressed={selectedIds.has(item.id)} onClick={()=>setSelected(old=>selectedIds.has(item.id)?old.filter(value=>value.id!==item.id):[...old,item])}><AuthoringBoard fen={item.startingFen}/><strong>{item.title}</strong>{selectedIds.has(item.id)&&<span aria-hidden="true">✓</span>}</button>)}</div>
+      {itemCursor && <button type="button" disabled={busy} onClick={()=>void moreItems()}>加载更多题目</button>}
+      <button type="button" className="primary" disabled={busy||!selected.length} onClick={()=>onAssign(title,nodeId!,selected.map(item=>({id:item.id,subjectId:item.id,kind:"source",revision:0,status:"source",canEdit:false,archived:false,publishedProblemId:item.id,contentFingerprint:item.contentFingerprint,body:{title:item.title,startingFen:item.startingFen,note:"",solution:[]}})))}>布置已选题目（{selected.length}）</button>
+    </>}
+    {!busy&&!nodes.length&&!items.length&&!error&&<p>此目录暂无可布置题目</p>}
+  </section>;
 }
 
 function TitleSheet({title,value,busy,error,onClose,onSubmit}:{title:string;value:string;busy:boolean;error:string;onClose():void;onSubmit(value:string):void}) {
@@ -644,6 +797,7 @@ type SourcePickerProps = {
   existing: AuthoredQuestion[];
   onClose(): void;
   onChoose(item: AuthoringSource): Promise<void>;
+  onChooseMany(items: AuthoringSource[]): Promise<void>;
 };
 function MateStepFilter({value,onChange,disabled=false}:{value:string;onChange(value:string):void;disabled?:boolean}) {
   const options=[['1','一步杀'],['2','两步杀'],['3','三步杀'],['long','四步及以上']] as const;
@@ -736,11 +890,13 @@ function SourcePicker(props: SourcePickerProps) {
   </section></div>;
 }
 
-function SourceRecordPicker({api,kind,directoryId,existing,onClose,onChoose,library,mateFilter,onMateFilterChange}:SourcePickerProps & {library:SourceLibrary;mateFilter:string;onMateFilterChange(value:string):void}) {
+function SourceRecordPicker({api,kind,directoryId,existing,onClose,onChoose,onChooseMany,library,mateFilter,onMateFilterChange}:SourcePickerProps & {library:SourceLibrary;mateFilter:string;onMateFilterChange(value:string):void}) {
   const [q,setQ] = useState(""), [category,setCategory] = useState(""), [reload,setReload] = useState(0);
   const [items,setItems] = useState<AuthoringSource[]>([]), [categories,setCategories] = useState<string[]>([]);
   const [preparing,setPreparing] = useState(false);
   const [nextCursor,setNextCursor] = useState<string|null>(), [error,setError] = useState(""), [busy,setBusy] = useState(true), [choosing,setChoosing] = useState(false);
+  const [selected,setSelected] = useState<AuthoringSource[]>([]);
+  const [preview,setPreview] = useState<AuthoringSource>();
   const request = useRef(0), selectionLock = useRef(false), paginationLock = useRef(false), lastSearch = useRef<string | undefined>(undefined);
   const list = useRef<HTMLDivElement>(null);
   const existingIds = new Set(existing.map(item => `${itemRef(item).kind}:${itemRef(item).subjectId}`));
@@ -799,24 +955,66 @@ function SourceRecordPicker({api,kind,directoryId,existing,onClose,onChoose,libr
     catch(reason){if(epoch===request.current)setError(message(reason));}
     finally {selectionLock.current=false;if(epoch===request.current)setChoosing(false);}
   }
+  const selectedKeys=new Set(selected.map(sourceIdentity));
+  function toggle(item:AuthoringSource) {
+    const identity=sourceIdentity(item);
+    setSelected(old=>old.some(value=>sourceIdentity(value)===identity)
+      ? old.filter(value=>sourceIdentity(value)!==identity) : [...old,item]);
+  }
+  async function selectAll() {
+    if(kind!=="problems" || busy || choosing || selectionLock.current)return;
+    const epoch=request.current;
+    selectionLock.current=true;setChoosing(true);setError("");
+    try {
+      let all=mergeSources([],items), cursor=nextCursor;
+      const seen=new Set<string>();
+      while(cursor) {
+        if(seen.has(cursor))throw new Error("分页读取异常，请重新搜索后重试");
+        seen.add(cursor);
+        const page=await readPage(cursor);
+        if(epoch!==request.current)return;
+        all=mergeSources(all,page.items);cursor=page.nextCursor??null;
+        if(all.length+existing.length>1000)throw new Error("单目录最多1000题，请缩小筛选范围");
+      }
+      const available=all.filter(item=>!item.alreadyAdded&&!existingIds.has(`${item.authored ? "authored" : "source"}:${item.id}`));
+      if(available.length+existing.length>1000)throw new Error("单目录最多1000题，请缩小筛选范围");
+      setItems(all);setNextCursor(null);
+      setSelected(old=>mergeSources(old,available));
+    } catch(reason) {if(epoch===request.current)setError(message(reason));}
+    finally {selectionLock.current=false;if(epoch===request.current)setChoosing(false);}
+  }
+  async function confirmSelection() {
+    if(selectionLock.current || !selected.length)return;
+    selectionLock.current=true;setChoosing(true);setError("");
+    try {await onChooseMany(selected);}
+    catch(reason){setError(message(reason));}
+    finally {selectionLock.current=false;setChoosing(false);}
+  }
   return <div className="authoring-overlay"><section className="authoring-sheet authoring-picker" role="dialog" aria-modal="true" aria-label={kind === "games" ? "选择已有棋谱" : "选择平台／机构题目"}>
     <header className="authoring-picker-header"><button type="button" disabled={choosing} onClick={onClose}>‹ 返回</button><h3>{kind === "games" ? "选择已有棋谱" : "选择平台／机构题目"}</h3></header>
     <p className="authoring-picker-book">{library.title}</p>
     {kind === "problems" && <label className="authoring-picker-category">题型分类<select aria-label="题型分类" value={category} disabled={choosing} onChange={event=>setCategory(event.target.value)}><option value="">全部</option>{categories.map(value=><option key={value} value={value}>{value}</option>)}</select></label>}
     {kind === "problems" && <MateStepFilter value={mateFilter} onChange={onMateFilterChange} disabled={choosing}/>}
     <input aria-label="搜索题目或棋谱" placeholder="输入名称搜索" value={q} disabled={choosing} onChange={event=>setQ(event.target.value)}/>
+    {kind === "problems" && <div className="authoring-picker-actions"><button type="button" disabled={busy||choosing||!items.length} onClick={()=>void selectAll()}>全选当前筛选</button><span>已选 {selected.length} 题</span><button type="button" disabled={choosing||!selected.length} onClick={()=>setSelected([])}>清空选择</button></div>}
     {error && <p role="alert" className="authoring-error">{error}<button type="button" disabled={busy || choosing} onClick={()=>setReload(value=>value+1)}>重试</button></p>}
-    <div className="authoring-source-list" ref={list} aria-busy={busy || choosing}>
+    <div className={kind === "problems" ? "authoring-source-list authoring-source-grid" : "authoring-source-list"} ref={list} aria-busy={busy || choosing}>
       {busy && items.length>0 && <p className="authoring-picker-loading" role="status">正在更新题目…</p>}
       {items.map(item=>{
         const added=kind === "problems" && (item.alreadyAdded || existingIds.has(`${item.authored ? "authored" : "source"}:${item.id}`));
-        return <button type="button" key={sourceIdentity(item)} className={busy && !added ? "authoring-retained" : undefined} disabled={busy || choosing || Boolean(added)} onClick={()=>void choose(item)}>
-          <AuthoringBoard fen={item.fen}/><span className="authoring-source-copy"><strong>{item.title}</strong><small>{[item.category,item.sourceScope,item.sourceTitle].filter(Boolean).join(" · ")}</small>{(item.sourceCount ?? 0)>1 && <small>已合并 {item.sourceCount} 个重复来源</small>}{added && <small>已添加</small>}</span>
-        </button>;
+        return <div className="authoring-source-tile" key={sourceIdentity(item)}>
+          <button type="button" className={`${busy && !added ? "authoring-retained" : ""} ${selectedKeys.has(sourceIdentity(item)) ? "selected" : ""}`} disabled={busy || choosing || Boolean(added)} aria-pressed={kind==="problems" ? selectedKeys.has(sourceIdentity(item)) : undefined} onClick={()=>kind==="problems" ? toggle(item) : void choose(item)}>
+            <AuthoringBoard fen={item.fen}/><span className="authoring-source-copy"><strong>{item.title}</strong><small>{item.category || "未分类"}</small>{added && <small>已添加</small>}</span>
+            {kind==="problems" && selectedKeys.has(sourceIdentity(item)) && <span className="authoring-source-check" aria-hidden="true">✓</span>}
+          </button>
+          {kind==="problems" && <button className="authoring-source-preview" type="button" onClick={()=>setPreview(item)}>详情</button>}
+        </div>;
       })}
       {!items.length && <p role="status">{busy ? preparing ? "正在准备题库，请稍候…" : "正在读取…" : error ? "请修改搜索条件后重试" : "没有匹配内容"}</p>}
       {nextCursor && <button type="button" disabled={busy || choosing} onClick={()=>void loadMore()}>{busy ? "正在读取…" : "加载更多"}</button>}
     </div>
+    {kind==="problems" && <footer className="authoring-picker-footer"><button type="button" className="primary" disabled={choosing||busy||!selected.length} onClick={()=>void confirmSelection()}>{choosing ? "正在添加…" : `确认添加（${selected.length}）`}</button></footer>}
+    {preview && <div className="authoring-preview-overlay"><section role="dialog" aria-modal="true" aria-label="题目详情" className="authoring-preview-detail"><h4>{preview.title}</h4><AuthoringBoard fen={preview.fen}/><p>{[preview.category || "未分类",preview.sourceScope,preview.sourceTitle].filter(Boolean).join(" · ")}</p>{(preview.sourceCount??0)>1 && <p>已合并 {preview.sourceCount} 个重复来源</p>}<button type="button" onClick={()=>setPreview(undefined)}>返回选题</button></section></div>}
   </section></div>;
 }
 
@@ -829,6 +1027,7 @@ function QuestionEditor({
   onClose,
   onSave,
   onCopy,
+  personal = false,
 }: {
   question: AuthoredQuestion;
   mode: "position" | "answer" | "preview";
@@ -838,6 +1037,7 @@ function QuestionEditor({
   onClose(): void;
   onSave(q: AuthoredQuestion): Promise<void>;
   onCopy(body: QuestionBody): void;
+  personal?: boolean;
 }) {
   const [validating, setValidating] = useState(false);
   const pauseValidation = useRef(false);
@@ -1683,14 +1883,14 @@ function QuestionEditor({
                     >
                       校验题目
                     </button>
-                    <button
+                    {!personal && <button
                       className="primary"
                       disabled={busy || !confirmed}
                       onClick={() => void operation("publish")}
                     >
                       发布到机构题库
-                    </button>
-                    {q.publishedProblemId && !q.archived && (
+                    </button>}
+                    {!personal && q.publishedProblemId && !q.archived && (
                       <button
                         disabled={busy}
                         onClick={() => {
@@ -2075,6 +2275,7 @@ function AssignmentSheet({
     [randomize, setRandomize] = useState(false),
     [batchMode, setBatchMode] = useState("none"),
     [batchValue, setBatchValue] = useState(20),
+    [stage, setStage] = useState<1 | 2>(1),
     [confirming, setConfirming] = useState(false),
     [busy, setBusy] = useState(false),
     [loading, setLoading] = useState(true),
@@ -2135,43 +2336,44 @@ function AssignmentSheet({
   function toggle(id: string, values: string[], set: (v: string[]) => void) {
     set(values.includes(id) ? values.filter((v) => v !== id) : [...values, id]);
   }
-  function prepare() {
+  function prepare(): boolean {
     if (!items.length) {
       setError("目录里还没有题目，请先添加题目");
-      return;
+      return false;
     }
     setError("");
     if (invalid.length) {
       setError("所选题目包含草稿或已下架题，请返回完善答案或明确取消选择。");
-      return;
+      return false;
     }
     if (!title.trim() || !recipients.size) {
       setError("请填写标题，并明确选择班级或学生");
-      return;
+      return false;
     }
     if (due && new Date(due) <= (start ? new Date(start) : new Date())) {
       setError("截止时间必须晚于开始时间");
-      return;
+      return false;
     }
     if (
       minutes &&
       (!Number.isInteger(Number(minutes)) || Number(minutes) < 1)
     ) {
       setError("作答时长须为正整数分钟");
-      return;
+      return false;
     }
     if (
       batchMode !== "none" &&
       (!Number.isInteger(batchValue) || batchValue < 1)
     ) {
       setError("分批数量须为正整数");
-      return;
+      return false;
     }
-    setConfirming(true);
+    return true;
   }
-  async function submit() {
+  async function submit(publishNow = true) {
     if (lock.current) return;
     lock.current = true;
+    setConfirming(true);
     setBusy(true);
     setError("");
     setRejected(false);
@@ -2215,7 +2417,7 @@ function AssignmentSheet({
             maxAttempts: attempts,
             allowAnswer,
             randomizeItems: randomize,
-            publishNow: true,
+            publishNow,
           },
         }));
         localStorage.setItem(storageKey, JSON.stringify(plans.current));
@@ -2288,7 +2490,7 @@ function AssignmentSheet({
         )}
         {confirming ? (
           <>
-            <h4>确认发布</h4>
+            <h4>继续上次提交</h4>
             {frozen ? (
               <p>
                 上次发布已完成 {completed}/{frozen.length}{" "}
@@ -2320,7 +2522,7 @@ function AssignmentSheet({
               {busy
                 ? `正在发布（已完成${completed}批）…`
                 : frozen
-                  ? "继续发布"
+                  ? frozen[0]?.body.publishNow === false ? "继续保存草稿" : "继续发布"
                   : "确认发布给学生"}
             </button>
             {frozen && rejected && (
@@ -2339,16 +2541,9 @@ function AssignmentSheet({
               </button>
             )}
           </>
-        ) : (
+        ) : stage === 1 ? (
           <>
-            <label>
-              作业标题
-              <input
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                maxLength={255}
-              />
-            </label>
+            <h4>1 / 2 · 选择学生</h4>
             <fieldset>
               <legend>选择班级</legend>
               {classes.map((c) => (
@@ -2376,6 +2571,20 @@ function AssignmentSheet({
               ))}
             </details>
             {loading && <p>正在读取班级和学生…</p>}
+            <p className="authoring-recipient-count">已选去重 {recipients.size} 人</p>
+            <button className="primary" disabled={busy || loading || !recipients.size} onClick={() => {setError("");setStage(2);}}>下一步 · 设置并核对</button>
+          </>
+        ) : (
+          <>
+            <h4>2 / 2 · 设置并核对</h4>
+            <label>
+              作业标题
+              <input
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                maxLength={255}
+              />
+            </label>
             <label>
               开始时间（留空立即）
               <input
@@ -2450,13 +2659,17 @@ function AssignmentSheet({
                 />
               )}
             </details>
-            <button
-              className="primary"
-              disabled={loading || !!invalid.length}
-              onClick={prepare}
-            >
-              核对并发布
-            </button>
+            <section className="authoring-assignment-summary" aria-label="发布摘要">
+              <strong>{title || "未填写标题"}</strong>
+              <span>{orgName} · {items.length} 题 · {recipients.size} 名学生</span>
+              <span>开始：{start || "立即"} · 截止：{due || "不限制"}</span>
+              <span>{randomize ? "随机题序" : "按目录顺序"}{batchMode !== "none" ? ` · 分批 ${batchValue}` : ""}</span>
+            </section>
+            <div className="authoring-assignment-actions">
+              <button disabled={busy} onClick={() => setStage(1)}>上一步</button>
+              <button disabled={busy || loading || !!invalid.length} onClick={() => {if(prepare())void submit(false);}}>保存草稿</button>
+              <button className="primary" disabled={busy || loading || !!invalid.length} onClick={() => {if(prepare())void submit(true);}}>确认发布给学生</button>
+            </div>
           </>
         )}
         <button disabled={busy} onClick={onClose}>

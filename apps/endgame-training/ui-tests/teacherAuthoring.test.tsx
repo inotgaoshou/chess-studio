@@ -43,6 +43,13 @@ function fixture(items: AuthoredQuestion[] = []) {
       const body = init?.body ? JSON.parse(String(init.body)) : undefined;
       if (path === B + "/directories") return { items: [directory] };
       if (path.startsWith(B + "/source-libraries?")) return {items:[{id:"book",title:"测试题库",sourceScope:"平台"}],nextCursor:null};
+      if (path === B + "/directories/d" && init?.method === "PATCH") {
+        directory.items = body.items.map((item: {subjectId:string;kind:string}) => ({
+          ...question(), id:item.subjectId, subjectId:item.subjectId, kind:item.kind,
+        }));
+        directory.revision++;
+        return {ok:true};
+      }
       if (path === B + "/directories/d") return directory;
       if (path === B + "/questions/q" && !init) return items[0];
       if (path.startsWith(B + "/questions/") && init?.method === "PUT") {
@@ -96,11 +103,39 @@ async function assignmentForm() {
 }
 async function confirmAssignment() {
   fireEvent.click(screen.getByLabelText("一班（1人）"));
-  fireEvent.click(screen.getByRole("button", { name: "核对并发布" }));
+  fireEvent.click(screen.getByRole("button", { name: "下一步 · 设置并核对" }));
   fireEvent.click(
     await screen.findByRole("button", { name: "确认发布给学生" }),
   );
 }
+
+it("keeps a personal library private and copies only after choosing an organization directory", async () => {
+  const item = { ...question(), status: "draft" as const, publishedProblemId: undefined };
+  const directory: AuthoringDirectory = { id:"personal", title:"我的练习", revision:0, sortOrder:0, canEdit:true, draftCount:1, items:[item] };
+  const personalRequest = vi.fn(async (path:string) => {
+    if (path === B + "/directories") return {items:[directory]};
+    if (path === B + "/directories/personal") return directory;
+    throw new Error(path);
+  });
+  const copy = vi.fn(async () => ({id:"copied"}));
+  const organizationRequest = vi.fn(async (path:string, init?:RequestInit) => {
+    if (path === B + "/directories") return {items:[{id:"target",title:"机构作业",canEdit:true}]};
+    if (path === B + "/directories/target") return {id:"target",title:"机构作业",revision:3,canEdit:true,items:[]};
+    if (path === B + "/personal/copy") return copy(JSON.parse(String(init?.body)));
+    throw new Error(path);
+  });
+  const api = {request:personalRequest,classes:async()=>[],students:async()=>[]} as unknown as AuthoringApi;
+  const organizationApi = {request:organizationRequest,classes:async()=>[],students:async()=>[]} as unknown as AuthoringApi;
+  render(<TeacherAuthoring api={api} organizationApi={organizationApi} personal scopeKey="personal" orgName="测试机构" onBack={()=>{}} onAssigned={()=>{}}/>);
+  expect(await screen.findByText("我的题库")).toBeTruthy();
+  expect(screen.queryByText("布置作业")).toBeNull();
+  fireEvent.click(screen.getByRole("button",{name:/我的练习.*个人题目/}));
+  fireEvent.click(await screen.findByRole("button",{name:"复制到机构作业库"}));
+  expect(copy).not.toHaveBeenCalled();
+  expect(await screen.findByRole("dialog",{name:"复制到机构作业库"})).toBeTruthy();
+  fireEvent.click(screen.getByRole("button",{name:"确认复制"}));
+  await waitFor(()=>expect(copy).toHaveBeenCalledWith({sourceId:"q",kind:"authored",targetId:"target",expectedRevision:3}));
+});
 
 it("records a position, preserves a piece on repeated move selection, flips only the view, and returns to directory", async () => {
   const f = fixture();
@@ -202,8 +237,11 @@ it("opens the directory assignment sheet directly without repeating organization
   fixture([question()]);
   fireEvent.click(await screen.findByRole("button", {name:"布置杀棋训练"}));
   await screen.findByLabelText("一班（1人）");
+  expect(screen.queryByLabelText("作业标题")).toBeNull();
+  fireEvent.click(screen.getByLabelText("一班（1人）"));
+  fireEvent.click(screen.getByRole("button", {name:"下一步 · 设置并核对"}));
   expect(screen.getByLabelText("作业标题")).toHaveProperty("value", "杀棋训练");
-  expect((screen.getByLabelText("一班（1人）") as HTMLInputElement).checked).toBe(false);
+  expect(screen.getByText(/1 名学生/)).toBeTruthy();
 });
 
 it("blocks an empty directory before opening assignment", async () => {
@@ -333,7 +371,6 @@ it("lets the teacher correct a definitive rejection and uses a new key", async (
   fireEvent.change(screen.getByLabelText("作业标题"), {
     target: { value: "重新布置" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "核对并发布" }));
   fireEvent.click(
     await screen.findByRole("button", { name: "确认发布给学生" }),
   );
@@ -475,6 +512,24 @@ it("filters paged sources, merges duplicate identities, blocks existing items, a
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(f.directory.items.map(q=>q.id)).toEqual(["q"]);
   expect(f.request.mock.calls.some(([,init])=>init?.method==="PATCH")).toBe(false);
+});
+it("selects every filtered page and adds once only after confirmation", async () => {
+  const f=fixture(), fallback=f.request.getMockImplementation()!;
+  f.request.mockImplementation(async(path,init)=>{
+    if(!path.startsWith(B+"/sources?"))return fallback(path,init);
+    const more=new URL(path,"https://test.invalid").searchParams.has("cursor");
+    return {items:[{id:more?"second":"first",title:more?"第二题":"第一题",fen:START_FEN}],nextCursor:more?null:"page2",categories:[]};
+  });
+  await openSourcePicker();
+  await screen.findByText("第一题");
+  fireEvent.click(screen.getByRole("button",{name:"全选当前筛选"}));
+  await screen.findByText("第二题");
+  expect(f.request.mock.calls.filter(([,init])=>init?.method==="PATCH")).toHaveLength(0);
+  expect(f.assignment).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button",{name:"确认添加（2）"}));
+  await waitFor(()=>expect(f.directory.items.map(item=>item.id)).toEqual(["first","second"]));
+  expect(f.request.mock.calls.filter(([,init])=>init?.method==="PATCH")).toHaveLength(1);
+  expect(f.assignment).not.toHaveBeenCalled();
 });
 it("ignores a source result after the search changes", async () => {
   const f=fixture(),fallback=f.request.getMockImplementation()!;

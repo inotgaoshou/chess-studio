@@ -594,7 +594,8 @@ async function request<T>(path: string, init: RequestInit = {}, token?: string, 
 
 async function requestOnce<T>(path: string, init: RequestInit = {}, token?: string, retry = true, context?: TeachingAuth): Promise<T> {
   init.signal?.throwIfAborted();
-  if (context) requireTeacherAuth(context);
+  const personalAuthoring = path.startsWith("/api/v1/admin/authoring/") && new Headers(init.headers).get("x-authoring-scope") === "personal";
+  if (context && !personalAuthoring) requireTeacherAuth(context);
   const headers = new Headers(init.headers);
   if (!(init.body instanceof FormData) && !headers.has("content-type")) headers.set("content-type", "application/json");
   headers.set("x-xiangqi-app-id", appId());
@@ -624,7 +625,7 @@ async function requestOnce<T>(path: string, init: RequestInit = {}, token?: stri
       init.signal?.throwIfAborted();
       if (refreshed) {
         if (authContext && !isCurrentAuthContext(authContext)) throw new Error("登录账号或机构已变化，请重新操作。");
-        if (context) requireTeacherAuth(context);
+        if (context && !personalAuthoring) requireTeacherAuth(context);
         if (init.method && !["GET", "HEAD"].includes(init.method.toUpperCase())) {
           throw Object.assign(new Error("登录已续期，请确认操作结果后重试。"), {status:401});
         }
@@ -1749,8 +1750,14 @@ export function checkinSession(auth: TeachingAuth) {
 }
 
 /** Capture identity/environment; late results cannot cross institution switches. */
-export function teacherAuthoringSession(auth:TeachingAuth):AuthoringApi {
+export function teacherAuthoringSession(auth:TeachingAuth, scope:"organization"|"personal"="organization"):AuthoringApi {
  const captured=authContexts.get(auth);
  const check=()=>{if(!captured||!isCurrentAuthContext(captured))throw new Error("账号或机构已切换，请重新打开机构题库");};
- return {scopeKey:`${captured?.serverUrl}:${auth.user.id}:${auth.user.orgId}`,request:async<T>(path:string,init:RequestInit={})=>{check();const value=await teacherRequest<T>(path,init,auth);check();return value;},classes:()=>{check();return teachingClient.teacherClasses(auth)},students:(id:string)=>{check();return teachingClient.teacherClassStudents(id,auth)}};
+ return {scopeKey:`${captured?.serverUrl}:${auth.user.id}:${auth.user.orgId}:${scope}`,request:async<T>(path:string,init:RequestInit={})=>{
+   check();const headers=new Headers(init.headers);headers.set("x-authoring-scope",scope);
+   const value=scope==="personal"
+     ? await request<T>(path,{...init,headers},auth.token,true,auth)
+     : await teacherRequest<T>(path,{...init,headers},auth);
+   check();return value;
+ },classes:()=>{check();return teachingClient.teacherClasses(auth)},students:(id:string)=>{check();return teachingClient.teacherClassStudents(id,auth)}};
 }
