@@ -63,6 +63,7 @@ export type AuthoringSource = {
 };
 export type AuthoringSourcePage = {
   items: AuthoringSource[];
+  totalCount?: number;
   categories?: string[];
   nextCursor?: string | null;
   sourcePickerVersion?: number;

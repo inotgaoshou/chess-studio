@@ -912,6 +912,10 @@ function SourcePicker(props: SourcePickerProps) {
 }
 
 const SOURCE_RECORD_PAGE_SIZE = 50;
+function sourceTotal(page: AuthoringSourcePage, loaded: AuthoringSource[]): number | undefined {
+  if (Number.isSafeInteger(page.totalCount) && page.totalCount! >= 0) return page.totalCount;
+  return page.nextCursor ? undefined : loaded.length;
+}
 function SourceRecordPicker({api,kind,directoryId,existing,onClose,onChoose,onChooseMany,library,mateFilter,onMateFilterChange}:SourcePickerProps & {library:SourceLibrary;mateFilter:string;onMateFilterChange(value:string):void}) {
   const [q,setQ] = useState(""), [category,setCategory] = useState(""), [reload,setReload] = useState(0);
   const [filtersOpen,setFiltersOpen] = useState(false);
@@ -920,6 +924,7 @@ function SourceRecordPicker({api,kind,directoryId,existing,onClose,onChoose,onCh
   const [nextCursor,setNextCursor] = useState<string|null>(), [error,setError] = useState(""), [busy,setBusy] = useState(true), [choosing,setChoosing] = useState(false);
   const [selected,setSelected] = useState<AuthoringSource[]>([]);
   const [pageIndex,setPageIndex] = useState(0);
+  const [totalCount,setTotalCount] = useState<number>();
   const [preview,setPreview] = useState<AuthoringSource>();
   const request = useRef(0), selectionLock = useRef(false), paginationLock = useRef(false), lastSearch = useRef<string | undefined>(undefined);
   const list = useRef<HTMLDivElement>(null);
@@ -936,7 +941,7 @@ function SourceRecordPicker({api,kind,directoryId,existing,onClose,onChoose,onCh
   }
   useEffect(() => {
     const epoch=++request.current;
-    setNextCursor(undefined);setPageIndex(0);setError("");setBusy(true);paginationLock.current=false;
+    setNextCursor(undefined);setTotalCount(undefined);setPageIndex(0);setError("");setBusy(true);paginationLock.current=false;
     list.current?.scrollTo?.({top:0});
     const controller=new AbortController(), deadline=Date.now()+180_000;
     let timer:ReturnType<typeof setTimeout>;
@@ -946,7 +951,8 @@ function SourceRecordPicker({api,kind,directoryId,existing,onClose,onChoose,onCh
       try {
         const page=await readPage(undefined,controller.signal);
         if(epoch!==request.current)return;
-        setItems(mergeSources([],page.items));setCategories(page.categories ?? []);setNextCursor(page.nextCursor ?? null);setPreparing(false);
+        const loaded=mergeSources([],page.items);setTotalCount(sourceTotal(page,loaded));
+        setItems(loaded);setCategories(page.categories ?? []);setNextCursor(page.nextCursor ?? null);setPreparing(false);
       } catch(reason) {
         if(epoch!==request.current)return;
         const text=message(reason);
@@ -966,7 +972,7 @@ function SourceRecordPicker({api,kind,directoryId,existing,onClose,onChoose,onCh
     const epoch=request.current;
     paginationLock.current=true;setBusy(true);setError("");
     try {
-      let loaded=items,cursor=nextCursor;
+      let loaded=items,cursor=nextCursor,total=totalCount;
       const seen=new Set<string>();
       while(cursor && loaded.length<(targetPage+1)*SOURCE_RECORD_PAGE_SIZE) {
         if(seen.has(cursor))throw new Error("分页读取异常，请重新搜索后重试");
@@ -974,9 +980,9 @@ function SourceRecordPicker({api,kind,directoryId,existing,onClose,onChoose,onCh
         const page=await readPage(cursor);
         if(epoch!==request.current)return;
         if(page.nextCursor===cursor)throw new Error("分页读取异常，请重新搜索后重试");
-        loaded=mergeSources(loaded,page.items);cursor=page.nextCursor??null;
+        loaded=mergeSources(loaded,page.items);cursor=page.nextCursor??null;total=sourceTotal(page,loaded)??total;
       }
-      setItems(loaded);setNextCursor(cursor);
+      setItems(loaded);setNextCursor(cursor);setTotalCount(total);
       setPageIndex(Math.min(targetPage,Math.max(0,Math.ceil(loaded.length/SOURCE_RECORD_PAGE_SIZE)-1)));
       list.current?.scrollTo?.({top:0});
     } catch(reason) {if(epoch===request.current){if(/^题库正在(准备|更新)/.test(message(reason)))setReload(value=>value+1);else setError(message(reason));}}
@@ -1013,7 +1019,7 @@ function SourceRecordPicker({api,kind,directoryId,existing,onClose,onChoose,onCh
       }
       const available=all.filter(item=>!item.alreadyAdded&&!existingIds.has(`${item.authored ? "authored" : "source"}:${item.id}`));
       if(available.length+existing.length>1000)throw new Error("单目录最多1000题，请缩小筛选范围");
-      setItems(all);setNextCursor(null);
+      setItems(all);setNextCursor(null);setTotalCount(all.length);
       setSelected(old=>mergeSources(old,available));
     } catch(reason) {if(epoch===request.current)setError(message(reason));}
     finally {selectionLock.current=false;if(epoch===request.current)setChoosing(false);}
@@ -1062,7 +1068,7 @@ function SourceRecordPicker({api,kind,directoryId,existing,onClose,onChoose,onCh
     </div>
     <nav className="authoring-picker-pagination" aria-label="题目分页">
       <button type="button" disabled={busy||choosing||pageIndex===0} onClick={()=>{setPageIndex(value=>value-1);list.current?.scrollTo?.({top:0});}}>上一页</button>
-      <p className="authoring-picker-page-status" aria-live="polite">第 {pageIndex+1} 页 · 本页 {visibleItems.length} 题<br/>每页 50 题</p>
+      <p className="authoring-picker-page-status" aria-live="polite">第 {pageIndex+1}{totalCount!=null?` / ${Math.max(1,Math.ceil(totalCount/SOURCE_RECORD_PAGE_SIZE))}`:""} 页 · 本页 {visibleItems.length} 题<br/>{totalCount!=null?`共 ${totalCount} 题 · 每页 50 题`:"总数统计中 · 每页 50 题"}</p>
       <button type="button" disabled={busy||choosing||!hasNextPage} onClick={()=>void loadMore()}>下一页</button>
     </nav>
     {preview && <div className="authoring-preview-overlay"><section role="dialog" aria-modal="true" aria-label="题目详情" className="authoring-preview-detail"><h4>{preview.title}</h4><AuthoringBoard fen={preview.fen}/><p>{[preview.category || "未分类",preview.sourceScope,preview.sourceTitle].filter(Boolean).join(" · ")}</p>{(preview.sourceCount??0)>1 && <p>已合并 {preview.sourceCount} 个重复来源</p>}<button type="button" onClick={()=>setPreview(undefined)}>返回选题</button></section></div>}

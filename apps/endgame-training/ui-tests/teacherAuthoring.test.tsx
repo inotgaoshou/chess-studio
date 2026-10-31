@@ -545,11 +545,12 @@ it("filters paged sources, merges duplicate identities, blocks existing items, a
     expect(params.get("directoryId")).toBe("d");
     expect(params.get("libraryId")).toBe("book");
     expect(params.get("limit")).toBe("50");
-    if(params.get("category")==="中局")return {items:[{...base,id:"different",title:"同局面不同答案",duplicateKey:"other"}],categories:["杀棋","中局","未分类"],nextCursor:null};
-    return {items:params.has("cursor") ? [{...base,id:"duplicate",title:"重复来源",duplicateKey:"same"},{...base,id:"next",title:"后页题目",duplicateKey:"next"}] : [{...base,id:"source",title:"原题",duplicateKey:"same"},{...base,id:"q",title:"已在目录",authored:true,alreadyAdded:true},...Array.from({length:48},(_,i)=>({...base,id:`filler-${i}`,title:`题目 ${i}`,duplicateKey:`filler-${i}`}))],categories:["杀棋","中局","未分类"],nextCursor:params.has("cursor") ? null : "page2"};
+    if(params.get("category")==="中局")return {items:[{...base,id:"different",title:"同局面不同答案",duplicateKey:"other"}],totalCount:1,categories:["杀棋","中局","未分类"],nextCursor:null};
+    return {items:params.has("cursor") ? [{...base,id:"duplicate",title:"重复来源",duplicateKey:"same"},{...base,id:"next",title:"后页题目",duplicateKey:"next"}] : [{...base,id:"source",title:"原题",duplicateKey:"same"},{...base,id:"q",title:"已在目录",authored:true,alreadyAdded:true},...Array.from({length:48},(_,i)=>({...base,id:`filler-${i}`,title:`题目 ${i}`,duplicateKey:`filler-${i}`}))],totalCount:51,categories:["杀棋","中局","未分类"],nextCursor:params.has("cursor") ? null : "page2"};
   });
   await openSourcePicker();
   await screen.findByText("原题");
+  expect(screen.getByText(/共 51 题 · 每页 50 题/).textContent).toContain("第 1 / 2 页");
   expect(screen.queryByLabelText("题型分类")).toBeNull();
   expect(screen.getAllByRole("img",{name:"题目棋盘"})[0].parentElement?.classList.contains("authoring-source-board")).toBe(true);
   expect((screen.getByText("已在目录").closest("button") as HTMLButtonElement).disabled).toBe(true);
@@ -557,6 +558,7 @@ it("filters paged sources, merges duplicate identities, blocks existing items, a
   fireEvent.click(screen.getByText("原题").closest("button")!);
   fireEvent.click(screen.getByRole("button",{name:"下一页",exact:true}));
   await screen.findByText("后页题目");
+  expect(screen.getByText(/共 51 题 · 每页 50 题/).textContent).toContain("第 2 / 2 页");
   expect(screen.queryByText("重复来源")).toBeNull();
   expect(screen.queryByText("原题")).toBeNull();
   expect(screen.getAllByRole("img",{name:"题目棋盘"})).toHaveLength(1);
@@ -567,6 +569,7 @@ it("filters paged sources, merges duplicate identities, blocks existing items, a
   openRecordFilters();
   fireEvent.change(screen.getByLabelText("题型分类"),{target:{value:"中局"}});
   await screen.findByText("同局面不同答案");
+  expect(screen.getByText(/共 1 题 · 每页 50 题/).textContent).toContain("第 1 / 1 页");
   expect((screen.getByRole("button",{name:"上一页",exact:true}) as HTMLButtonElement).disabled).toBe(true);
   expect(screen.queryByText("原题")).toBeNull();
   fireEvent.click(within(screen.getByRole("dialog",{name:"选择平台／机构题目"})).getByRole("button",{name:"‹ 返回",exact:true}));
@@ -622,15 +625,17 @@ it("ignores a source result after the search changes", async () => {
     if(!path.startsWith(B+"/sources?"))return fallback(path,init);
     const q=new URL(path,"https://test.invalid").searchParams.get("q");
     if(!q)return new Promise(resolve=>{resolveOld=resolve;});
-    return {items:[{id:"new",title:"新结果",fen:START_FEN}],categories:[]};
+    return {items:[{id:"new",title:"新结果",fen:START_FEN}],categories:[],totalCount:99};
   });
   await openSourcePicker();
   await waitFor(()=>expect(resolveOld).toBeTypeOf("function"));
   openRecordFilters();
   fireEvent.change(screen.getByLabelText("搜索题目或棋谱"),{target:{value:"新"}});
   await screen.findByText("新结果");
-  resolveOld({items:[{id:"old",title:"旧结果",fen:START_FEN}],categories:[]});
+  resolveOld({items:[{id:"old",title:"旧结果",fen:START_FEN}],categories:[],totalCount:999});
   await waitFor(()=>expect(screen.queryByText("旧结果")).toBeNull());
+  expect(screen.getByText(/共 99 题 · 每页 50 题/)).toBeTruthy();
+  expect(screen.queryByText(/共 999 题/)).toBeNull();
 });
 
 it("waits for cold source preparation and cancels polling when returning",async()=>{

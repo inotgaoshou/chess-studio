@@ -446,9 +446,9 @@
 .authoring-picker-header button { flex-shrink: 0; }
 .authoring-picker .authoring-picker-category { margin: 0; flex-shrink: 0; }
 .authoring-picker-toolbar { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(110px,1.35fr); gap:6px; flex-shrink:0; }
-.authoring-picker-pagination { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.5fr) minmax(0,1fr); gap:6px; align-items:center; flex-shrink:0; }
-.authoring-picker-pagination button { min-width:0; min-height:40px; padding:6px; }
-.authoring-picker-pagination .authoring-picker-page-status { text-align:center; }
+.authoring-picker-pagination { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:6px; align-items:center; flex-shrink:0; }
+.authoring-picker-pagination button { min-width:60px; min-height:40px; padding:6px; }
+.authoring-picker-pagination .authoring-picker-page-status { text-align:center; font-variant-numeric:tabular-nums; line-height:18px; min-height:36px; }
 .authoring-picker-toolbar button { min-width:0; min-height:38px; padding:6px 5px; display:flex; align-items:center; justify-content:center; gap:5px; font-size:13px; white-space:nowrap; }
 .authoring-picker-summary { min-height:24px; display:flex; align-items:center; justify-content:space-between; gap:8px; flex-shrink:0; color:#61776a; font-size:12px; }
 .authoring-picker-summary span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
