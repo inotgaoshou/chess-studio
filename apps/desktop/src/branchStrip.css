@@ -71,3 +71,13 @@
 .manual-branch-strip.is-floating.has-many-choices[data-compact-choices=true] .branch-choice-count { display:inline; font-size:10px; }
 
 .manual-branch-choices button[style] { box-shadow:inset 0 -2px 0 var(--branch-color); }
+
+/* Video-style branch row: choices stay on one baseline; extra branches scroll inside
+   the card, never change board height. Full Chinese moves remain accessible. */
+.manual-branch-strip.is-floating .manual-branch-choices { display:flex; flex-wrap:nowrap; overflow-x:auto; overflow-y:hidden; align-items:center; }
+.manual-branch-strip.is-floating .manual-branch-choices button { flex:0 0 auto; }
+.manual-branch-strip.is-floating.has-many-choices .manual-branch-choices button { min-width:34px; justify-content:center; }
+.manual-branch-strip.is-floating.has-many-choices .manual-branch-choices strong { display:none; }
+.manual-branch-strip.is-floating.has-many-choices .manual-branch-choices button b { width:24px; height:24px; font-size:13px; }
+.manual-branch-strip.is-floating .manual-branch-choices { scroll-snap-type:x proximity; }
+.manual-branch-strip.is-floating .manual-branch-choices button { scroll-snap-align:start; }

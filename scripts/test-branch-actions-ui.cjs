@@ -3,7 +3,7 @@ const {chromium,webkit}=require(process.env.PLAYWRIGHT_MODULE||'/Users/chenyubin
 const assert=require('node:assert/strict'),fs=require('node:fs');
 const fen='rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1';
 const prefix=['h2e2','h7e7','e2e6','d9e8','c0e2','h9g7'];
-const game={id:'branch-actions',title:'分支操作验收',note:'保留备注',startingFen:fen,currentFen:fen,currentNodeId:'main:6',cursor:6,moves:[...prefix,'e6e8'],branches:[{id:'retreat',parentCursor:6,parentPath:prefix,moves:['e6e5'],notation:['炮五退一'],createdAt:1}],comments:{[prefix.join(',')]:'分叉注释',[[...prefix,'e6e8'].join(',')]:'主线后续注释'},createdAt:'2026-10-31T00:00:00Z',updatedAt:'2026-10-31T00:00:00Z'};
+const game={id:'branch-actions',title:'分支操作验收',note:'保留备注',startingFen:fen,currentFen:fen,currentNodeId:'main:6',cursor:6,moves:[...prefix,'e6e8'],branches:[{id:'retreat',parentCursor:6,parentPath:prefix,moves:['e6e4'],notation:['炮五退二'],createdAt:1},{id:'left-capture',parentCursor:6,parentPath:prefix,moves:['e6a6'],notation:['炮五平九'],createdAt:2}],comments:{[prefix.join(',')]:'分叉注释',[[...prefix,'e6e8'].join(',')]:'主线后续注释'},createdAt:'2026-10-31T00:00:00Z',updatedAt:'2026-10-31T00:00:00Z'};
 (async()=>{const browser=await(process.env.TEST_WEBKIT?webkit.launch():chromium.launch({channel:'chrome'}));try{
  const page=await browser.newPage({viewport:{width:390,height:844},hasTouch:true});page.setDefaultTimeout(8000);const errors=[];page.on('pageerror',e=>errors.push(e.message));
  await page.addInitScript(()=>{Object.defineProperty(navigator,'maxTouchPoints',{get:()=>5});localStorage.setItem('xiangqi-training-mobile-onboarding-v1','done');localStorage.setItem('xiangqi-teaching-session-server','http://127.0.0.1:8090');});
@@ -18,24 +18,40 @@ const game={id:'branch-actions',title:'分支操作验收',note:'保留备注',s
  const out=process.env.EVIDENCE_DIR||'/tmp/qixi-branch-actions';fs.mkdirSync(out,{recursive:true});
  for(const width of [320,390,430,820]){
   await page.setViewportSize({width,height:width===820?1180:844});await page.waitForTimeout(180);
-  const colors=await board.locator('.saved-branch-arrow .analysis-arrow-stem').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('stroke')));assert.equal(new Set(colors).size,2);
+  const colors=await board.locator('.saved-branch-arrow .analysis-arrow-stem').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('stroke')));assert.equal(new Set(colors).size,3);
   assert.deepEqual(await strip.locator('[data-move]').evaluateAll(nodes=>nodes.map(n=>n.style.getPropertyValue('--branch-color'))),colors);
   const clear=await board.evaluate(node=>{
    const pieces=[...node.querySelectorAll('.board-square img.piece')].map(e=>e.getBoundingClientRect());
    return [...node.querySelectorAll('.analysis-arrow-label')].every(e=>{const r=e.getBoundingClientRect();return pieces.every(p=>Math.hypot(r.x+r.width/2-p.x-p.width/2,r.y+r.height/2-p.y-p.height/2)>(p.width+r.width)*.45);});
   });assert(clear,'Numbers must not cover piece faces');
+  const geometry=await board.evaluate(node=>{
+   const arrow=node.querySelector('[data-move="e6e4"] .analysis-arrow-stem');
+   const target=node.querySelector('.board-square[aria-label="e4"]');
+   return {x:Number(arrow.getAttribute('x2')),y:Number(arrow.getAttribute('y2')),tx:parseFloat(target.style.getPropertyValue('--piece-left'))*11.2,ty:parseFloat(target.style.getPropertyValue('--piece-top'))*12.4};
+  });assert(Math.hypot(geometry.x-geometry.tx,geometry.y-geometry.ty)<.01,'Empty destination must match board intersection');
+  const br=await board.boundingBox(),sr=await strip.boundingBox();assert(sr.y>=br.y+br.height,'Branch choices must stay below board');
   await page.screenshot({path:`${out}/branches-${width}.png`});
  }
- await page.setViewportSize({width:390,height:844});
+ await page.setViewportSize({width:390,height:844});await page.waitForTimeout(180);
+ // Choosing a branch clears the previous arrows and preserves board geometry.
+ const rectBefore=await board.boundingBox();
+ await strip.getByRole('button',{name:/分支 .*炮五退二/}).click();
+ await board.getByRole('button',{name:'e4 红炮',exact:true}).waitFor();
+ assert.equal(await board.locator('.saved-branch-arrow').count(),0);
+ const rectAfter=await board.boundingBox();for(const key of ['x','y','width','height'])assert(Math.abs(rectBefore[key]-rectAfter[key])<=1,`${key}: ${JSON.stringify(rectBefore)} -> ${JSON.stringify(rectAfter)}`);
+ await page.getByRole('button',{name:'上一步',exact:true}).click();await board.getByRole('button',{name:'e6 红炮',exact:true}).waitFor();
  await strip.getByRole('button',{name:'管理变招'}).click();const dialog=page.getByRole('dialog',{name:'管理当前分支'});
+ const third=dialog.locator('.branch-actions-list > div').filter({hasText:'炮五平九'});
+ await third.getByRole('button',{name:/删除分支/}).click();await dialog.getByRole('button',{name:'确认删除',exact:true}).click();await dialog.waitFor({state:'hidden'});
+ await strip.getByRole('button',{name:'管理变招'}).click();
  const mainRow=dialog.locator('.branch-actions-list > div').filter({hasText:'主线'});
  await mainRow.getByRole('button',{name:/删除分支/}).click();await dialog.getByText(/主线将截止/).waitFor();
  await page.evaluate(async()=>{const store=(await import(window.storeUrl)).trainingStore,save=store.saveManualGame.bind(store);store.saveManualGame=async game=>{store.saveManualGame=save;throw new Error('模拟写入失败');};});
  await dialog.getByRole('button',{name:'确认删除',exact:true}).click();await dialog.getByRole('alert').waitFor();assert.deepEqual((await read()).moves,game.moves);
  await dialog.getByRole('button',{name:'确认删除',exact:true}).click();await dialog.waitFor({state:'hidden'});
- let saved=await read();assert.deepEqual(saved.moves,prefix);assert.equal(saved.branches[0].moves[0],'e6e5');assert.equal(saved.comments[prefix.join(',')],'分叉注释');assert.equal(Object.keys(saved.comments).length,1);
+ let saved=await read();assert.deepEqual(saved.moves,prefix);assert.equal(saved.branches[0].moves[0],'e6e4');assert.equal(saved.comments[prefix.join(',')],'分叉注释');assert.equal(Object.keys(saved.comments).length,1);
  await board.getByRole('button',{name:'e6 红炮',exact:true}).waitFor();await strip.getByRole('button',{name:'管理变招'}).click();
- await dialog.getByRole('button',{name:'编辑分支 1'}).click();await dialog.waitFor({state:'hidden'});await board.getByRole('button',{name:'e5 红炮',exact:true}).waitFor();
+ await dialog.getByRole('button',{name:'编辑分支 1'}).click();await dialog.waitFor({state:'hidden'});await board.getByRole('button',{name:'e4 红炮',exact:true}).waitFor();
  await page.getByRole('button',{name:'上一步',exact:true}).click();await board.getByRole('button',{name:'e6 红炮',exact:true}).waitFor();
  await strip.getByRole('button',{name:'管理变招'}).click();await dialog.getByRole('button',{name:'删除分支 1'}).click();await dialog.getByRole('button',{name:'确认删除',exact:true}).click();await dialog.waitFor({state:'hidden'});
  saved=await read();assert.deepEqual(saved.moves,prefix);assert.equal(saved.branches.length,0);assert.equal(saved.comments[prefix.join(',')],'分叉注释');

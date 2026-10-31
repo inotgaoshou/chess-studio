@@ -899,26 +899,37 @@ function AnalysisArrowLayer({ moves, activeIndex, flipped = false, geometry, bra
     const dx = toX - fromX;
     const dy = toY - fromY;
     const length = Math.max(1, Math.hypot(dx, dy));
-    const padding = branches ? Math.min(38,length*.24) : Math.max(4, Math.min(8.5, length * .055));
-    const startX = fromX + dx / length * padding;
-    const startY = fromY + dy / length * padding;
-    const endX = toX - dx / length * padding;
-    const endY = toY - dy / length * padding;
+    // Empty intersections are exact destinations. Capture heads stop at the piece rim.
+    // Keep SVG's marker reference at its tip so it cannot add a second hidden offset.
+    const startPadding = Math.min(48, length * .4);
+    const endPadding = pieces.some(piece => sameSquare(piece, parsed.to)) ? Math.min(50, length * .42) : 0;
+    const startX = fromX + dx / length * startPadding;
+    const startY = fromY + dy / length * startPadding;
+    const endX = toX - dx / length * endPadding;
+    const endY = toY - dy / length * endPadding;
     const badge=branchBadgePoint(from,to,occupied,labels,BOARD_ART_WIDTH,BOARD_ART_HEIGHT);
     const labelX=badge.x,labelY=badge.y;labels.push(badge);
     const active = !branches && index === activeIndex;
     const opacity = branches || active ? 1 : .75;
     return [<g key={`${move}-${index}`} data-move={move} className={`analysis-candidate-arrow ${branches ? "saved-branch-arrow" : ""} ${active ? "active" : ""}`} opacity={opacity} style={{ "--analysis-arrow-color": color } as CSSProperties}>
+      <g mask={`url(#${markerPrefix}-piece-clearance)`}>
       <line className="analysis-arrow-backdrop" x1={startX} y1={startY} x2={endX} y2={endY}/>
       <line className="analysis-arrow-outline" x1={startX} y1={startY} x2={endX} y2={endY}/>
       <line className="analysis-arrow-stem" x1={startX} y1={startY} x2={endX} y2={endY} stroke={color} markerEnd={`url(#${markerPrefix}-analysis-arrow-${index})`}/>
       <line className="analysis-arrow-flow" x1={startX} y1={startY} x2={endX} y2={endY}/>
+      </g>
       <line className="branch-label-leader" x1={fromX+dx*.55} y1={fromY+dy*.55} x2={labelX} y2={labelY} stroke={color}/>
-      <circle className="analysis-arrow-label" cx={labelX} cy={labelY} r={branches?28:25}/><text x={labelX} y={labelY}>{index + 1}</text>
+      <circle className="analysis-arrow-label" cx={labelX} cy={labelY} r={branches?26:25}/><text x={labelX} y={labelY}>{index + 1}</text>
     </g>];
   });
   return <svg className="analysis-arrow-layer" viewBox={`0 0 ${BOARD_ART_WIDTH} ${BOARD_ART_HEIGHT}`} preserveAspectRatio="none" aria-hidden="true">
-    <defs>{moves.map((move, index) => <marker key={`${move}-${index}`} id={`${markerPrefix}-analysis-arrow-${index}`} markerWidth="46" markerHeight="46" refX="38" refY="23" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0 L46 23 L0 46 Z" fill={arrowColor(index)} fillOpacity={branches?1:.88} stroke="rgba(255,255,255,.76)" strokeWidth="4" strokeLinejoin="round"/></marker>)}</defs>
+    <defs>
+      <mask id={`${markerPrefix}-piece-clearance`} maskUnits="userSpaceOnUse" x="0" y="0" width={BOARD_ART_WIDTH} height={BOARD_ART_HEIGHT}>
+        <rect width={BOARD_ART_WIDTH} height={BOARD_ART_HEIGHT} fill="white"/>
+        {occupied.map((point,index)=><circle key={index} cx={point.x} cy={point.y} r="46" fill="black"/>)}
+      </mask>
+      {moves.map((move, index) => <marker key={`${move}-${index}`} id={`${markerPrefix}-analysis-arrow-${index}`} markerWidth="36" markerHeight="34" refX="34" refY="17" orient="auto" markerUnits="userSpaceOnUse" overflow="visible"><path d="M2 2 L34 17 L2 32 L9 17 Z" fill={arrowColor(index)} fillOpacity={branches?1:.88} stroke="rgba(255,255,255,.85)" strokeWidth="2" strokeLinejoin="round"/></marker>)}
+    </defs>
     {arrows}
   </svg>;
 }

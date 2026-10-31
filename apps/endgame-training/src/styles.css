@@ -7288,9 +7288,11 @@ html.keyboard-open .manual-save-backdrop .manual-save-dialog { max-height:100%; 
 .mobile-teacher-checkin .checkin-workspace { margin:0 auto; padding-bottom:24px; }
 .mobile-teacher-checkin .checkin-plan-editor { min-width:0; }
 .saved-branch-arrow .analysis-arrow-label { fill:var(--analysis-arrow-color); stroke:#fff; stroke-width:5px; }
-.saved-branch-arrow .analysis-arrow-stem { opacity:1; stroke-width:14px; filter:none; }
-.saved-branch-arrow .analysis-arrow-outline { stroke:#fffdf4; stroke-width:20px; opacity:.95; }
-.analysis-candidate-arrow .branch-label-leader { stroke-width:3px; opacity:.85; }
+.saved-branch-arrow .analysis-arrow-stem { opacity:.95; stroke-width:10px; filter:none; }
+.saved-branch-arrow .analysis-arrow-outline { stroke:#fffdf4; stroke-width:15px; opacity:.9; }
+.saved-branch-arrow .analysis-arrow-backdrop { stroke-width:17px; filter:none; opacity:.2; }
+.saved-branch-arrow .analysis-arrow-flow { display:block; stroke-width:2px; opacity:.5; animation-duration:1.8s; }
+.analysis-candidate-arrow .branch-label-leader { stroke-width:2px; opacity:.55; }
 .branch-actions-backdrop { z-index:1300; }
 .branch-actions-dialog { width:min(460px,calc(100vw - 24px)); max-height:80dvh; overflow:auto; padding:16px; border-radius:14px; background:#f6fbf5; color:#254d39; box-shadow:0 8px 32px #15332533; }
 .branch-actions-dialog header,.branch-actions-dialog footer,.branch-actions-list > div,.branch-actions-list > div > span { display:flex; align-items:center; gap:8px; }

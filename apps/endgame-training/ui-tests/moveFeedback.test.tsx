@@ -189,3 +189,20 @@ it("uses the same piece-avoiding badge positions for AI hints and saved branches
  expect(positions()).toEqual(branches);
  expect(ui.container.querySelectorAll('.branch-label-leader')).toHaveLength(2);
 });
+
+it.each([false,true])("points empty branch arrowheads at the actual intersection (flipped=%s)",flipped=>{
+ const pieces:BoardPiece[]=[{row:3,col:4,color:"red",kind:"cannon",label:"炮"},{row:1,col:4,color:"black",kind:"advisor",label:"士"}];
+ const ui=render(<Board pieces={pieces} flipped={flipped} branchMoves={["e6e8","e6e4"]} boardSkin="qingxin-zhuyun" pieceSkin="qingxin-zhuyun" riverText="" riverTextColor="#000" riverTextSize={20} supportsCustomRiverText={false} onSquare={vi.fn()}/>);
+ const square=ui.container.querySelector('.board-square[aria-label="e4"]') as HTMLElement;
+ const target={x:parseFloat(square.style.getPropertyValue('--piece-left'))*11.2,y:parseFloat(square.style.getPropertyValue('--piece-top'))*12.4};
+ const arrow=ui.container.querySelector('[data-move="e6e4"] .analysis-arrow-stem')!;
+ expect(Number(arrow.getAttribute('x2'))).toBeCloseTo(target.x,5);
+ expect(Number(arrow.getAttribute('y2'))).toBeCloseTo(target.y,5);
+ const ref=arrow.getAttribute('marker-end');
+ const marker=[...ui.container.querySelectorAll('marker')].find(m=>ref===`url(#${m.id})`)!;
+ const tip=marker.querySelector('path')!.getAttribute('d')!.match(/L([\d.]+) ([\d.]+)/)!;
+ expect(Number(marker.getAttribute('refX'))).toBe(Number(tip[1]));
+ const capture=ui.container.querySelector('[data-move="e6e8"] .analysis-arrow-stem')!;
+ const captured=ui.container.querySelector('.board-square[aria-label="e8 黑士"]') as HTMLElement;
+ expect(Math.abs(Number(capture.getAttribute('y2'))-parseFloat(captured.style.getPropertyValue('--piece-top'))*12.4)).toBeGreaterThanOrEqual(45);
+});
