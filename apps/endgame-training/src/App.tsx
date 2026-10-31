@@ -1676,13 +1676,19 @@ function SolutionReadPanel({ problem, initial, onClose }: { problem: TrainingPro
     return () => window.clearTimeout(timer);
   }, [playing, path]);
   return <div className="solution-read-overlay" role="dialog" aria-modal="true" aria-label="只读题解"><section className="solution-read-panel">
-    <header><h2>{mobileExerciseTitle(problem)}</h2><button type="button" aria-label="关闭题解" onClick={onClose}><X/></button></header>
-    <p>题解 · 仅查看，不计入做题成绩</p>
-    <div className="solution-read-board"><Board pieces={state.pieces} lastMove={path.at(-1)?.iccs} boardSkin={DEFAULT_SKIN_ID} pieceSkin={DEFAULT_SKIN_ID} riverText="" riverTextColor="#805c34" riverTextSize={20} supportsCustomRiverText={false} onSquare={() => {}}/></div>
-    {error && <p role="alert">{error}</p>}
-    <nav aria-label="题解播放"><button type="button" disabled={!path.length} onClick={() => {setPlaying(false);void go([]);}}>从头</button><button type="button" disabled={!path.length} onClick={() => {setPlaying(false);void go(path.slice(0,-1));}}>上一步</button><button type="button" disabled={!choices.length} onClick={() => {setPlaying(false);void go([...path,choices[0]]);}}>下一步</button><button type="button" disabled={!problem.solution.length} onClick={() => {if (!choices.length) void go([]);setPlaying(v=>!v);}}>{playing?"暂停":"播放"}</button></nav>
-    {choices.length > 1 && <div className="solution-branches" aria-label="题解变招">{choices.map((move,i)=><button type="button" key={`${i}:${move.iccs}`} onClick={()=>{setPlaying(false);void go([...path,move]);}}>变招 {i+1} · {moveNotationLabel(choiceNotation?.key === choiceKey ? choiceNotation.labels[i] : undefined)}</button>)}</div>}
-    <p>{problem.note}</p><p>{path.at(-1)?.comment}</p><ol>{notation.map((label,i)=><li key={i}><button type="button" onClick={()=>{setPlaying(false);void go(path.slice(0,i+1));}}>{label}</button></li>)}</ol>
+    <header className="solution-read-header"><h2 title={mobileExerciseTitle(problem)}>{mobileExerciseTitle(problem)}</h2><button className="solution-read-close" type="button" aria-label="关闭题解" onClick={onClose}><X aria-hidden="true"/></button></header>
+    <p className="solution-read-caption">题解 · 仅查看，不计入做题成绩</p>
+    <FittedBoardArea className="solution-read-board"><Board pieces={state.pieces} lastMove={path.at(-1)?.iccs} boardSkin={DEFAULT_SKIN_ID} pieceSkin={DEFAULT_SKIN_ID} riverText="" riverTextColor="#805c34" riverTextSize={20} supportsCustomRiverText={false} onSquare={() => {}}/></FittedBoardArea>
+    <nav className="solution-read-controls" aria-label="题解播放"><button type="button" disabled={!path.length} onClick={() => {setPlaying(false);void go([]);}}><ChevronsLeft aria-hidden="true"/><span>从头</span></button><button type="button" disabled={!path.length} onClick={() => {setPlaying(false);void go(path.slice(0,-1));}}><ChevronLeft aria-hidden="true"/><span>上一步</span></button><button type="button" disabled={!choices.length} onClick={() => {setPlaying(false);void go([...path,choices[0]]);}}><ChevronRight aria-hidden="true"/><span>下一步</span></button><button className="solution-read-play" type="button" disabled={!problem.solution.length} onClick={() => {if (!choices.length) void go([]);setPlaying(v=>!v);}}>{playing?<Pause aria-hidden="true"/>:<Play aria-hidden="true"/>}<span>{playing?"暂停":"播放"}</span></button></nav>
+    <p className="solution-read-position"><span>第 {path.length} 步{!choices.length && " · 已到结尾"}</span><span>{state.fen.trim().split(/\s+/)[1] === "b" ? "黑方" : "红方"}行棋</span></p>
+    <section className="solution-read-details" aria-label="题解与变招" tabIndex={0}>
+      {error && <p className="solution-read-error" role="alert">{error}</p>}
+      {choices.length > 1 && <div className="solution-branches" aria-label="题解变招">{choices.map((move,i)=><button type="button" key={`${i}:${move.iccs}`} onClick={()=>{setPlaying(false);void go([...path,move]);}}><b>{i+1}</b><span>{moveNotationLabel(choiceNotation?.key === choiceKey ? choiceNotation.labels[i] : undefined)}</span></button>)}</div>}
+      {path.at(-1)?.comment && <p className="solution-read-comment">{path.at(-1)?.comment}</p>}
+      {problem.note && <p className="solution-read-note">{problem.note}</p>}
+      {notation.length>0 && <ol className="solution-read-moves">{notation.map((label,i)=><li key={i}><button type="button" aria-current={i===path.length-1?"step":undefined} onClick={()=>{setPlaying(false);void go(path.slice(0,i+1));}}><small>{i+1}.</small>{label}</button></li>)}</ol>}
+      {!path.length && !problem.note && choices.length<=1 && <p className="solution-read-empty">点击下一步或播放，查看题解</p>}
+    </section>
   </section></div>;
 }
 

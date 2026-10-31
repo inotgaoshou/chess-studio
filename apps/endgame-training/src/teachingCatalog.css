@@ -190,15 +190,40 @@
 .practice-opening-status button:focus-visible { outline:2px solid #356b50; outline-offset:2px; }
 .practice-opening-status button:active { filter:brightness(.94); }
 .practice-opening-status button svg { width:18px; height:18px; }
-.solution-read-overlay { position:fixed; inset:0; z-index:200; background:#24352e88; display:flex; justify-content:center; overflow:auto; padding:env(safe-area-inset-top,12px) 12px env(safe-area-inset-bottom,12px); }
-.solution-read-panel { width:min(700px,100%); margin:auto; max-height:100%; overflow:auto; background:#fff; border-radius:8px; padding:16px; color:#273c32; }
-.solution-read-panel header { display:flex; align-items:center; gap:12px; }
-.solution-read-panel h2 { flex:1; min-width:0; font-size:18px; }
-.solution-read-panel button { min-height:44px; min-width:44px; }
-.solution-read-panel nav,.solution-branches { display:flex; gap:8px; flex-wrap:wrap; }
-.solution-read-board { max-width:480px; margin:auto; pointer-events:none; }
-.solution-read-panel .xiangqi-board { width:100%; }
-.solution-read-panel ol { display:flex; flex-wrap:wrap; gap:8px 24px; }
+.solution-read-overlay { position:fixed; inset:0; z-index:200; background:#24352e88; display:flex; align-items:center; justify-content:center; overflow:hidden; box-sizing:border-box; padding:12px; padding:max(12px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left)); }
+/* Explicit tracks keep the board and transport still when branches, labels,
+   comments or playback state change. Only the details region can scroll. */
+.solution-read-panel { box-sizing:border-box; width:min(620px,100%); height:min(880px,100%,calc((100vw - 64px) * 1.1071429 + 348px)); min-height:0; margin:0; overflow:hidden; display:grid; grid-template-rows:44px 18px minmax(0,1fr) 44px 20px 128px; gap:8px; background:#fff; border:1px solid #dce7df; border-radius:16px; padding:12px; color:#273c32; box-shadow:0 16px 48px #162e2929; font:14px/1.45 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif; }
+.solution-read-header { display:flex; align-items:center; gap:8px; min-width:0; }
+.solution-read-header h2 { flex:1; min-width:0; margin:0; font-size:17px; line-height:24px; font-weight:650; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.solution-read-panel .solution-read-close { display:grid; place-items:center; flex:0 0 44px; width:44px; height:44px; padding:0; border:0; border-radius:10px; background:#f1f5f2; color:#4e695a; }
+.solution-read-close svg { width:20px; height:20px; }
+.solution-read-panel .solution-read-caption { margin:0; color:#738477; font-size:12px; line-height:18px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.solution-read-board { min-width:0; min-height:0; width:100%; height:100%; display:grid; place-items:center; pointer-events:none; }
+.solution-read-board > .board-shell { width:min(var(--fitted-board-width,100%),480px); max-width:100%; margin:0; }
+.solution-read-controls { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px; }
+.solution-read-controls button,.solution-branches button,.solution-read-moves button { appearance:none; -webkit-appearance:none; display:flex; align-items:center; justify-content:center; gap:4px; min-width:0; min-height:44px; margin:0; padding:6px; border:1px solid #dae6dd; border-radius:10px; background:#f5f8f5; color:#355943; font-family:inherit; font-size:13px; line-height:1.25; white-space:nowrap; touch-action:manipulation; }
+.solution-read-controls button { height:44px; font-weight:600; }
+.solution-read-controls button svg { flex:none; width:16px; height:16px; }
+.solution-read-controls .solution-read-play { color:#fff; border-color:#467a58; background:#467a58; }
+.solution-read-controls button:disabled { opacity:.38; }
+.solution-read-controls button:active:not(:disabled),.solution-branches button:active,.solution-read-moves button:active { background:#e3eee5; color:#294e37; }
+.solution-read-panel .solution-read-position { display:flex; justify-content:space-between; align-items:center; margin:0; color:#78877c; font-size:12px; line-height:20px; font-variant-numeric:tabular-nums; }
+.solution-read-details { min-height:0; min-width:0; overflow:auto; overscroll-behavior:contain; -webkit-overflow-scrolling:touch; border-top:1px solid #e5ece7; padding:8px 2px 0; scrollbar-gutter:stable; overflow-wrap:anywhere; }
+.solution-branches { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; }
+.solution-branches button { justify-content:flex-start; padding:6px 9px; }
+.solution-branches b { display:grid; place-items:center; flex:none; width:23px; height:23px; border-radius:7px; background:#e2eee3; color:#3b6c48; font-size:12px; }
+.solution-branches button span { min-width:0; overflow:hidden; text-overflow:ellipsis; }
+.solution-read-details p { margin:8px 0; font-size:13px; line-height:1.6; }
+.solution-read-note,.solution-read-empty { color:#7b897e; }
+.solution-read-error { color:#a54738; }
+.solution-read-panel .solution-read-moves { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0 0; padding:0; list-style:none; }
+.solution-read-moves button { padding:6px 10px; background:#fff; font-weight:400; }
+.solution-read-moves small { color:#839188; font-size:11px; }
+.solution-read-moves button[aria-current="step"] { background:#edf5ec; border-color:#a3c5a9; color:#335f40; }
+.solution-read-controls button:focus-visible,.solution-branches button:focus-visible,.solution-read-close:focus-visible,.solution-read-moves button:focus-visible { outline:2px solid #568f67; outline-offset:1px; }
+@media(max-width:350px) { .solution-read-panel { height:min(880px,100%,calc((100vw - 60px) * 1.1071429 + 302px)); padding:10px; gap:6px; grid-template-rows:44px 18px minmax(0,1fr) 44px 20px 96px; }.solution-read-controls { gap:4px; }.solution-read-controls button { padding:4px 2px; font-size:12px; }.solution-read-controls button svg { width:14px; height:14px; } }
+@media(orientation:landscape) and (max-height:600px) { .solution-read-panel { width:min(900px,100%); height:100%; grid-template-columns:minmax(0,1fr) minmax(240px,.9fr); grid-template-rows:44px 18px 44px 20px minmax(0,1fr); column-gap:14px; }.solution-read-header { grid-column:1/-1; }.solution-read-board { grid-column:1; grid-row:2/-1; }.solution-read-caption { grid-column:2; grid-row:2; }.solution-read-controls { grid-column:2;grid-row:3; }.solution-read-position { grid-column:2;grid-row:4; }.solution-read-details { grid-column:2;grid-row:5; } }
 
 /* Compact app browsing only; assignment selection and desktop catalogs keep their controls. */
 .teaching-catalog.catalog-phone-browse { padding: 10px; margin: 0; border-radius: 10px; }
