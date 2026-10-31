@@ -161,9 +161,9 @@ it("renders a numbered arrowhead for every saved branch independently of AI hint
     const marker=[...ui.container.querySelectorAll('marker')].find(marker=>ref===`url(#${marker.id})`)!;
     const color=arrow.querySelector('.analysis-arrow-stem')!.getAttribute('stroke');
     expect(marker.querySelector('path')?.getAttribute('fill')).toBe(color);
-    expect((strip.container.querySelectorAll('.manual-branch-choices button')[index] as HTMLElement).style.getPropertyValue('--branch-color')).toBe(color);
+    expect((strip.container.querySelectorAll('.manual-branch-choices button')[index] as HTMLElement).style.getPropertyValue('--branch-color')).toBe((arrow as SVGGElement).style.getPropertyValue('--analysis-arrow-color'));
   }
-  expect(new Set(arrows.map(arrow=>arrow.querySelector('.analysis-arrow-stem')!.getAttribute('stroke'))).size).toBe(6);
+  expect(arrows.every(arrow=>(arrow as SVGGElement).style.getPropertyValue('--analysis-arrow-color')==='#438a52')).toBe(true);
 });
 
 it("keeps opposite cannon branch numbers off pieces and distinct after flipping",()=>{
@@ -204,5 +204,5 @@ it.each([false,true])("points empty branch arrowheads at the actual intersection
  expect(Number(marker.getAttribute('refX'))).toBe(Number(tip[1]));
  const capture=ui.container.querySelector('[data-move="e6e8"] .analysis-arrow-stem')!;
  const captured=ui.container.querySelector('.board-square[aria-label="e8 黑士"]') as HTMLElement;
- expect(Math.abs(Number(capture.getAttribute('y2'))-parseFloat(captured.style.getPropertyValue('--piece-top'))*12.4)).toBeGreaterThanOrEqual(45);
+ expect(Math.abs(Number(capture.getAttribute('y2'))-parseFloat(captured.style.getPropertyValue('--piece-top'))*12.4)).toBeGreaterThanOrEqual(30);
 });

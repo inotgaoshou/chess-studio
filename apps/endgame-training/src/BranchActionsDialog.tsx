@@ -2,8 +2,8 @@ import { useRef, useState } from "react";
 import type { ManualContinuation } from "./manualContinuation";
 import { branchChoiceColor } from "./branchPresentation";
 
-export function BranchActionsDialog({choices,readOnly,onClose,onEdit,onDelete}:{choices:ManualContinuation[];readOnly:boolean;onClose():void;onEdit(choice:ManualContinuation):Promise<void>;onDelete(choice:ManualContinuation):Promise<void>}) {
- const [pending,setPending]=useState<ManualContinuation>();
+export function BranchActionsDialog({choices,readOnly,onClose,onEdit,onDelete,initialDeleteId}:{choices:ManualContinuation[];initialDeleteId?:string;readOnly:boolean;onClose():void;onEdit(choice:ManualContinuation):Promise<void>;onDelete(choice:ManualContinuation):Promise<void>}) {
+ const [pending,setPending]=useState<ManualContinuation|undefined>(()=>choices.find(choice=>choice.id===initialDeleteId));
  const [busy,setBusy]=useState(false),[error,setError]=useState("");
  const lock=useRef(false);
  async function run(action:()=>Promise<void>) {

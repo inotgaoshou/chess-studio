@@ -81,3 +81,17 @@
 .manual-branch-strip.is-floating.has-many-choices .manual-branch-choices button b { width:24px; height:24px; font-size:13px; }
 .manual-branch-strip.is-floating .manual-branch-choices { scroll-snap-type:x proximity; }
 .manual-branch-strip.is-floating .manual-branch-choices button { scroll-snap-align:start; }
+
+/* Round numbered choices match the board labels; edit badges never move the row. */
+.manual-branch-strip.is-floating .branch-choice-item { position:relative; display:flex; flex:none; align-items:center; padding:3px 0; }
+.manual-branch-strip.is-floating.has-inline-edit .manual-branch-choices strong { display:none; }
+.manual-branch-strip.is-floating.has-inline-edit .manual-branch-choices button[data-move] { min-width:34px; padding:2px; justify-content:center; border:0; background:transparent; box-shadow:none; }
+.manual-branch-strip.is-floating.has-inline-edit .manual-branch-choices button b { box-sizing:border-box; width:28px; height:28px; font:700 14px/1 system-ui,sans-serif; color:#fff; background:linear-gradient(145deg,#64a66c,var(--branch-color,#438a52)); border:2px solid #edf8e9; box-shadow:0 0 0 1px #88b68d,inset 0 0 0 1px #ffffff25,0 1px 2px #315d3344; }
+.manual-branch-strip.is-floating.has-inline-edit .manual-branch-choices button[aria-current=true] b { box-shadow:0 0 0 2px #245f36,inset 0 0 0 1px #ffffff45; background:#347746; }
+.manual-branch-strip.is-floating .manual-branch-choices .branch-inline-delete { position:absolute; right:-1px; top:0; display:grid; place-items:center; min-width:20px; min-height:20px; width:20px; height:20px; padding:0; border:2px solid #fff; border-radius:50%; color:#fff; background:#c63a36; box-shadow:0 1px 2px #0002; }
+.manual-branch-strip.is-floating .branch-small-actions button { flex-direction:column; gap:0; }
+.manual-branch-strip.is-floating .branch-small-actions small { font-size:9px; line-height:11px; }
+.manual-branch-strip.is-floating.has-inline-edit .branch-manage-button .branch-choice-count { display:none; }
+.manual-branch-strip.is-floating.has-inline-edit .branch-manage-button > svg { display:block; }
+
+.manual-branch-strip.is-floating.has-inline-edit.has-many-choices[data-compact-choices=true] .branch-manage-button > svg { display:block; }

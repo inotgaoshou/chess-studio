@@ -882,12 +882,12 @@ function LegalTargetLayer({ targets, flipped = false, geometry }: { targets: Squ
 }
 
 function AnalysisArrowLayer({ moves, activeIndex, flipped = false, geometry, branches = false, pieces = [] }: { moves: string[]; activeIndex: number; flipped?: boolean; geometry: BoardGeometry; branches?: boolean; pieces?:BoardPiece[] }) {
-  const arrowColor=(index:number)=>branches?branchChoiceColor(index):"#f87924";
+  const arrowColor=()=>branches?"#efb52f":"#f87924";
   const labels:{x:number;y:number}[]=[];
   const occupied=pieces.map(piece=>boardPoint(piece,geometry,flipped));
   const markerPrefix = useId().replace(/:/g, "");
   const arrows = moves.flatMap((move, index) => {
-    const color=arrowColor(index);
+    const color=arrowColor();
     if (!/^[a-i][0-9][a-i][0-9]$/.test(move)) return [];
     const parsed = iccsSquares(move);
     const from = boardPoint(parsed.from, geometry, flipped);
@@ -901,8 +901,8 @@ function AnalysisArrowLayer({ moves, activeIndex, flipped = false, geometry, bra
     const length = Math.max(1, Math.hypot(dx, dy));
     // Empty intersections are exact destinations. Capture heads stop at the piece rim.
     // Keep SVG's marker reference at its tip so it cannot add a second hidden offset.
-    const startPadding = Math.min(48, length * .4);
-    const endPadding = pieces.some(piece => sameSquare(piece, parsed.to)) ? Math.min(50, length * .42) : 0;
+    const startPadding = Math.min(branches ? 34 : 48, length * .4);
+    const endPadding = pieces.some(piece => sameSquare(piece, parsed.to)) ? Math.min(branches ? 32 : 50, length * .42) : 0;
     const startX = fromX + dx / length * startPadding;
     const startY = fromY + dy / length * startPadding;
     const endX = toX - dx / length * endPadding;
@@ -911,12 +911,12 @@ function AnalysisArrowLayer({ moves, activeIndex, flipped = false, geometry, bra
     const labelX=badge.x,labelY=badge.y;labels.push(badge);
     const active = !branches && index === activeIndex;
     const opacity = branches || active ? 1 : .75;
-    return [<g key={`${move}-${index}`} data-move={move} className={`analysis-candidate-arrow ${branches ? "saved-branch-arrow" : ""} ${active ? "active" : ""}`} opacity={opacity} style={{ "--analysis-arrow-color": color } as CSSProperties}>
+    return [<g key={`${move}-${index}`} data-move={move} className={`analysis-candidate-arrow ${branches ? "saved-branch-arrow" : ""} ${active ? "active" : ""}`} opacity={opacity} style={{ "--analysis-arrow-color": branches ? branchChoiceColor(index) : color } as CSSProperties}>
       <g mask={`url(#${markerPrefix}-piece-clearance)`}>
       <line className="analysis-arrow-backdrop" x1={startX} y1={startY} x2={endX} y2={endY}/>
       <line className="analysis-arrow-outline" x1={startX} y1={startY} x2={endX} y2={endY}/>
       <line className="analysis-arrow-stem" x1={startX} y1={startY} x2={endX} y2={endY} stroke={color} markerEnd={`url(#${markerPrefix}-analysis-arrow-${index})`}/>
-      <line className="analysis-arrow-flow" x1={startX} y1={startY} x2={endX} y2={endY}/>
+      <line className="analysis-arrow-flow" x1={startX} y1={startY} x2={endX-dx/length*Math.min(42,length*.3)} y2={endY-dy/length*Math.min(42,length*.3)}/>
       </g>
       <line className="branch-label-leader" x1={fromX+dx*.55} y1={fromY+dy*.55} x2={labelX} y2={labelY} stroke={color}/>
       <circle className="analysis-arrow-label" cx={labelX} cy={labelY} r={branches?26:25}/><text x={labelX} y={labelY}>{index + 1}</text>
@@ -926,9 +926,9 @@ function AnalysisArrowLayer({ moves, activeIndex, flipped = false, geometry, bra
     <defs>
       <mask id={`${markerPrefix}-piece-clearance`} maskUnits="userSpaceOnUse" x="0" y="0" width={BOARD_ART_WIDTH} height={BOARD_ART_HEIGHT}>
         <rect width={BOARD_ART_WIDTH} height={BOARD_ART_HEIGHT} fill="white"/>
-        {occupied.map((point,index)=><circle key={index} cx={point.x} cy={point.y} r="46" fill="black"/>)}
+        {occupied.map((point,index)=><circle key={index} cx={point.x} cy={point.y} r="42" fill={branches ? "#999" : "black"}/>)}
       </mask>
-      {moves.map((move, index) => <marker key={`${move}-${index}`} id={`${markerPrefix}-analysis-arrow-${index}`} markerWidth="36" markerHeight="34" refX="34" refY="17" orient="auto" markerUnits="userSpaceOnUse" overflow="visible"><path d="M2 2 L34 17 L2 32 L9 17 Z" fill={arrowColor(index)} fillOpacity={branches?1:.88} stroke="rgba(255,255,255,.85)" strokeWidth="2" strokeLinejoin="round"/></marker>)}
+      {moves.map((move, index) => <marker key={`${move}-${index}`} id={`${markerPrefix}-analysis-arrow-${index}`} markerWidth="54" markerHeight="54" refX="52" refY="27" orient="auto" markerUnits="userSpaceOnUse" overflow="visible"><path d="M2 2 L52 27 L2 52 Z" fill={arrowColor()} fillOpacity={branches?1:.88} stroke={branches ? "#fff3a6" : "rgba(255,255,255,.85)"} strokeWidth="3" strokeLinejoin="round"/></marker>)}
     </defs>
     {arrows}
   </svg>;
@@ -2727,6 +2727,7 @@ export function App() {
   const [manualPanelTab, setManualPanelTab] = useState<ManualPanelTab>("moves");
   const [manualPanelOpen, setManualPanelOpen] = useState(false);
   const [branchManager,setBranchManager]=useState<"manual"|"study">();
+  const [branchDeleteRequest,setBranchDeleteRequest]=useState<string>();
   const newManualFromStudyLock=useRef(false);
   const [manualLibraryOpen, setManualLibraryOpen] = useState(false);
   const [manualLibraryFromAccount, setManualLibraryFromAccount] = useState(false);
@@ -7186,7 +7187,7 @@ export function App() {
         <button className="study-menu-settings" onClick={() => runStudyMenuAction("settings")}><Settings2/><span>更多设置</span></button>
       </section>}
     <aside className="study-sidebar">
-      <div className="study-branch-navigation"><BranchStrip floating light contextKey={`study:${studyDocumentEpoch.current}:${currentStudyMoves.join(",")}`} hidden={branchOverlayBlocked || studyMenuOpen} getAnchor={() => ({ board:document.querySelector(".study-stage > .board-shell"), toolbar:document.querySelector(".study-sidebar"), dock:document.querySelector(".study-branch-dock"), dockInside:true })} revealKey={studyForkRequest} choices={studyBranchChoices.map((choice,index)=>({...choice,color:branchChoiceColor(index)}))} onManage={() => {setStudyAutoPlaying(false);setBranchManager("study");}} onSelect={id => { const choice = studyBranchChoices.find(item => item.id === id); if (choice) void selectStudyContinuation(choice).catch(error => setStudyNotice(String(error))); }}/>
+      <div className="study-branch-navigation"><BranchStrip floating light contextKey={`study:${studyDocumentEpoch.current}:${currentStudyMoves.join(",")}`} hidden={branchOverlayBlocked || studyMenuOpen} getAnchor={() => ({ board:document.querySelector(".study-stage > .board-shell"), toolbar:document.querySelector(".study-sidebar"), dock:document.querySelector(".study-branch-dock"), dockInside:true })} revealKey={studyForkRequest} choices={studyBranchChoices.map((choice,index)=>({...choice,color:branchChoiceColor(index)}))} onRequestDelete={id=>{setStudyAutoPlaying(false);setBranchDeleteRequest(id);setBranchManager("study");}} onManage={() => {setBranchDeleteRequest(undefined);setStudyAutoPlaying(false);setBranchManager("study");}} onSelect={id => { const choice = studyBranchChoices.find(item => item.id === id); if (choice) void selectStudyContinuation(choice).catch(error => setStudyNotice(String(error))); }}/>
       <nav className="study-move-nav" aria-label="拆棋着法导航"><button disabled={!studyCursor} aria-label="回到开始" title="回到开始" onClick={() => void navigateStudyMove(0)}><ChevronsLeft/></button><button disabled={!studyCursor} aria-label="上一步" title="上一步" onClick={() => void navigateStudyMove(studyCursor - 1)}><ChevronLeft/></button><button className={studyAutoPlaying ? "active" : ""} disabled={!studyMoves.length} aria-label={studyAutoPlaying ? "暂停播放棋谱" : "自动播放棋谱"} title={studyAutoPlaying ? "暂停播放棋谱" : "自动播放棋谱"} onClick={() => void toggleStudyAutoPlay()}>{studyAutoPlaying ? <Pause/> : <Play/>}</button><button disabled={!studyBranchChoices.length} aria-label="下一步" title="下一步" onClick={() => void advanceStudyContinuation().catch(error=>setStudyNotice(String(error)))}><ChevronRight/></button><button disabled={studyCursor >= studyMoves.length} aria-label="最后一步" title="最后一步" onClick={() => void navigateStudyMove(studyMoves.length)}><ChevronsRight/></button></nav></div>
       <nav className="study-panel-tabs" role="tablist" aria-label="拆棋研究面板">{studyPanelItems.map(([value, label, Icon]) => <button key={value} role="tab" aria-selected={studyPanelTab === value} className={studyPanelTab === value ? "active" : ""} onClick={() => setStudyPanelTab(value)}><Icon/><span>{label}</span></button>)}</nav>
       <div className="study-research-stack"><div className="commentary-research-content">
@@ -7213,7 +7214,7 @@ export function App() {
         {manualSetupOpen ? <>
           <div className="manual-tool-row setup-actions"><button type="button" onClick={() => void fillManualSetupStandardPosition()}>标准</button><button type="button" onClick={clearManualSetupBoard}>清空</button><button type="button" className={manualSetupTool === "erase" ? "active" : ""} aria-label="删除棋子" title="删除棋子" onClick={() => { setManualSetupTool("erase"); setManualSetupSelected(undefined); setManualSetupError(""); setManualNotice("删除模式：点棋盘上的非将帅棋子即可删除。"); }}><Trash2/></button><button type="button" disabled={!manualSetupHistory.length} onClick={undoManualSetup}><Undo2/>撤销</button><button type="button" onClick={toggleBoardFlipped}>翻转</button><button type="button" onClick={() => { rememberManualSetup(); setManualSetupSide((side) => { const next = side === "red" ? "black" : "red"; setManualSetupError(""); setManualNotice(`已设置为${next === "red" ? "红方" : "黑方"}先走。`); return next; }); }}>{manualSetupSide === "red" ? "红先⇄黑先" : "黑先⇄红先"}</button><button type="button" className="primary" onClick={() => void confirmManualSetup()}>完成</button></div>
         </> : <>
-        <BranchStrip floating light contextKey={`manual:${manualDocumentEpoch.current}:${manualGame?.id}:${currentManualMoves.join(",")}`} hidden={branchOverlayBlocked || manualMenuOpen || manualSetupOpen || manualLibraryOpen} getAnchor={() => ({ board:document.querySelector(".manual-play-board-area > .board-shell"), toolbar:document.querySelector(".manual-bottom-tools"), dock:document.querySelector(".manual-branch-dock"), dockInside:true })} revealKey={manualForkRequest} choices={manualBranchChoices.map((choice,index)=>({...choice,color:branchChoiceColor(index)}))} onManage={() => {setManualAutoPlaying(false);setBranchManager("manual");}} onSelect={id => { const choice = manualBranchChoices.find(item => item.id === id); if (choice) void selectManualContinuation(choice).catch(error => setManualNotice(String(error))); }}/>
+        <BranchStrip floating light contextKey={`manual:${manualDocumentEpoch.current}:${manualGame?.id}:${currentManualMoves.join(",")}`} hidden={branchOverlayBlocked || manualMenuOpen || manualSetupOpen || manualLibraryOpen} getAnchor={() => ({ board:document.querySelector(".manual-play-board-area > .board-shell"), toolbar:document.querySelector(".manual-bottom-tools"), dock:document.querySelector(".manual-branch-dock"), dockInside:true })} revealKey={manualForkRequest} choices={manualBranchChoices.map((choice,index)=>({...choice,color:branchChoiceColor(index)}))} onRequestDelete={manualReadOnly?undefined:id=>{setManualAutoPlaying(false);setBranchDeleteRequest(id);setBranchManager("manual");}} onManage={() => {setBranchDeleteRequest(undefined);setManualAutoPlaying(false);setBranchManager("manual");}} onSelect={id => { const choice = manualBranchChoices.find(item => item.id === id); if (choice) void selectManualContinuation(choice).catch(error => setManualNotice(String(error))); }}/>
         <div className="recording-feedback-row"><span className="manual-branch-dock" aria-hidden="true"/><p className="recording-feedback" role="status" title={manualNotice}>{manualNotice}</p><button type="button" className="commentary-entry" disabled={!currentManualMoves.length} onClick={() => { setManualAnalysisExpanded(true); requestCommentary(currentManualMoves); }}><Lightbulb aria-hidden="true"/>讲解这步</button></div>
         <ManualRecordingControls cursor={manualCursor} moveCount={manualMoves.length} canGoNext={Boolean(manualBranchChoices.length)}
           previousVariation={manualForkCursors.some(cursor => cursor < manualCursor)} nextVariation={manualForkCursors.some(cursor => cursor > manualCursor)}
@@ -7263,7 +7264,7 @@ export function App() {
     const saved = await variationSaveDraft.commit(values);
     variationSaveDraft.resolve(saved); setVariationSaveDraft(undefined);
   }} onClose={() => { variationSaveDraft.reject(new Error("已取消保存，临时线路仍在小棋盘中")); setVariationSaveDraft(undefined); }}/ >}
-  {branchManager && <BranchActionsDialog choices={branchManager==="manual"?manualBranchChoices:studyBranchChoices} readOnly={branchManager==="manual"&&manualReadOnly} onClose={()=>setBranchManager(undefined)} onEdit={async choice=>{
+  {branchManager && <BranchActionsDialog initialDeleteId={branchDeleteRequest} choices={branchManager==="manual"?manualBranchChoices:studyBranchChoices} readOnly={branchManager==="manual"&&manualReadOnly} onClose={()=>setBranchManager(undefined)} onEdit={async choice=>{
     if(branchManager==="manual"){await selectManualContinuation(choice);setManualPanelOpen(false);setManualNotice("已进入所选分支，可继续走棋；在棋谱面板修改注释。");}
     else {await selectStudyContinuation(choice);setStudyNotice("已进入所选分支，可继续走棋或修改注释。");}
     setBranchManager(undefined);

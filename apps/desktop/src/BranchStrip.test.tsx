@@ -89,3 +89,14 @@ it("uses the status slot when the gap cannot fit a complete move button",()=>{
  expect(nav.dataset.dockInside).toBe('false');
  expect(parseFloat(nav.style.maxHeight)).toBeGreaterThanOrEqual(42);
 });
+
+it("edits numbered choices inline without selecting or deleting until requested",()=>{
+ const onSelect=vi.fn(),onRequestDelete=vi.fn();
+ render(<BranchStrip floating light choices={[{id:'a',move:'a0a1',notation:'车九进一'},{id:'b',move:'b0c2',notation:'马八进七'}]} onSelect={onSelect} onRequestDelete={onRequestDelete}/>);
+ fireEvent.click(screen.getByRole('button',{name:'编辑分支'}));
+ fireEvent.click(screen.getByRole('button',{name:'删除分支 2 · 马八进七'}));
+ expect(onRequestDelete).toHaveBeenCalledExactlyOnceWith('b');expect(onSelect).not.toHaveBeenCalled();
+ fireEvent.click(screen.getByRole('button',{name:'完成分支编辑'}));
+ expect(screen.queryByRole('button',{name:/删除分支/})).toBeNull();
+ expect(screen.getByRole('button',{name:'分支 2 · 马八进七'})).toBeTruthy();
+});

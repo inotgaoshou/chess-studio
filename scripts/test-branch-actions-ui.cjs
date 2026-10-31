@@ -18,7 +18,7 @@ const game={id:'branch-actions',title:'分支操作验收',note:'保留备注',s
  const out=process.env.EVIDENCE_DIR||'/tmp/qixi-branch-actions';fs.mkdirSync(out,{recursive:true});
  for(const width of [320,390,430,820]){
   await page.setViewportSize({width,height:width===820?1180:844});await page.waitForTimeout(180);
-  const colors=await board.locator('.saved-branch-arrow .analysis-arrow-stem').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('stroke')));assert.equal(new Set(colors).size,3);
+  const colors=await board.locator('.saved-branch-arrow').evaluateAll(nodes=>nodes.map(n=>n.style.getPropertyValue('--analysis-arrow-color')));assert.deepEqual(colors,['#438a52','#438a52','#438a52']);
   assert.deepEqual(await strip.locator('[data-move]').evaluateAll(nodes=>nodes.map(n=>n.style.getPropertyValue('--branch-color'))),colors);
   const clear=await board.evaluate(node=>{
    const pieces=[...node.querySelectorAll('.board-square img.piece')].map(e=>e.getBoundingClientRect());
@@ -33,6 +33,10 @@ const game={id:'branch-actions',title:'分支操作验收',note:'保留备注',s
   await page.screenshot({path:`${out}/branches-${width}.png`});
  }
  await page.setViewportSize({width:390,height:844});await page.waitForTimeout(180);
+ const flow=board.locator('.saved-branch-arrow .analysis-arrow-flow').first();
+ const offset=()=>flow.evaluate(n=>getComputedStyle(n).strokeDashoffset);
+ const firstOffset=await offset();await page.waitForTimeout(250);assert.notEqual(await offset(),firstOffset,'Arrow highlights must flow');
+ await page.emulateMedia({reducedMotion:'reduce'});assert.equal(await flow.evaluate(n=>getComputedStyle(n).animationName),'none');await page.emulateMedia({reducedMotion:'no-preference'});
  // Choosing a branch clears the previous arrows and preserves board geometry.
  const rectBefore=await board.boundingBox();
  await strip.getByRole('button',{name:/分支 .*炮五退二/}).click();
@@ -40,9 +44,27 @@ const game={id:'branch-actions',title:'分支操作验收',note:'保留备注',s
  assert.equal(await board.locator('.saved-branch-arrow').count(),0);
  const rectAfter=await board.boundingBox();for(const key of ['x','y','width','height'])assert(Math.abs(rectBefore[key]-rectAfter[key])<=1,`${key}: ${JSON.stringify(rectBefore)} -> ${JSON.stringify(rectAfter)}`);
  await page.getByRole('button',{name:'上一步',exact:true}).click();await board.getByRole('button',{name:'e6 红炮',exact:true}).waitFor();
- await strip.getByRole('button',{name:'管理变招'}).click();const dialog=page.getByRole('dialog',{name:'管理当前分支'});
- const third=dialog.locator('.branch-actions-list > div').filter({hasText:'炮五平九'});
- await third.getByRole('button',{name:/删除分支/}).click();await dialog.getByRole('button',{name:'确认删除',exact:true}).click();await dialog.waitFor({state:'hidden'});
+ // Flip uses the same board projection; rotate back without moving an existing card onto the board.
+ for(const flipped of [true,false]) {
+  await page.getByRole('button',{name:'翻转',exact:true}).click();
+  const mismatch=await board.evaluate(node=>{
+   const a=node.querySelector('[data-move="e6e4"] .analysis-arrow-stem'),t=node.querySelector('.board-square[aria-label="e4"]');
+   return Math.hypot(Number(a.getAttribute('x2'))-parseFloat(t.style.getPropertyValue('--piece-left'))*11.2,Number(a.getAttribute('y2'))-parseFloat(t.style.getPropertyValue('--piece-top'))*12.4);
+  });assert(mismatch<.01);await page.screenshot({path:`${out}/flip-${flipped}.png`});
+ }
+ for(const size of [{width:844,height:390},{width:390,height:844}]){
+  await page.setViewportSize(size);await page.waitForTimeout(180);
+  const br=await board.boundingBox(),sr=await strip.boundingBox();
+  assert(sr.y>=br.y+br.height||sr.x>=br.x+br.width||sr.x+sr.width<=br.x||sr.y+sr.height<=br.y,'Rotated card must not cover board');
+  assert(sr.x>=0&&sr.y>=0&&sr.x+sr.width<=size.width+1&&sr.y+sr.height<=size.height+1);
+  await page.screenshot({path:`${out}/rotation-${size.width}.png`});
+ }
+ const beforeEdit=await board.boundingBox();
+ await strip.getByRole('button',{name:'编辑分支',exact:true}).click();
+ await strip.getByRole('button',{name:/删除分支 .*炮五平九/}).click();const dialog=page.getByRole('dialog',{name:'管理当前分支'});
+ await dialog.getByRole('alertdialog',{name:'确认删除分支'}).waitFor();
+ await dialog.getByRole('button',{name:'确认删除',exact:true}).click();await dialog.waitFor({state:'hidden'});
+ const afterEdit=await board.boundingBox();for(const key of ['x','y','width','height'])assert(Math.abs(beforeEdit[key]-afterEdit[key])<=1);
  await strip.getByRole('button',{name:'管理变招'}).click();
  const mainRow=dialog.locator('.branch-actions-list > div').filter({hasText:'主线'});
  await mainRow.getByRole('button',{name:/删除分支/}).click();await dialog.getByText(/主线将截止/).waitFor();

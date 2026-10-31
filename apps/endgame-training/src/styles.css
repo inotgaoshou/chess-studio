@@ -7287,11 +7287,12 @@ html.keyboard-open .manual-save-backdrop .manual-save-dialog { max-height:100%; 
 .training-app .teacher-mobile-page.mobile-teacher-checkin { padding:0; display:block; scroll-padding-top:12px; }
 .mobile-teacher-checkin .checkin-workspace { margin:0 auto; padding-bottom:24px; }
 .mobile-teacher-checkin .checkin-plan-editor { min-width:0; }
-.saved-branch-arrow .analysis-arrow-label { fill:var(--analysis-arrow-color); stroke:#fff; stroke-width:5px; }
-.saved-branch-arrow .analysis-arrow-stem { opacity:.95; stroke-width:10px; filter:none; }
-.saved-branch-arrow .analysis-arrow-outline { stroke:#fffdf4; stroke-width:15px; opacity:.9; }
-.saved-branch-arrow .analysis-arrow-backdrop { stroke-width:17px; filter:none; opacity:.2; }
-.saved-branch-arrow .analysis-arrow-flow { display:block; stroke-width:2px; opacity:.5; animation-duration:1.8s; }
+.saved-branch-arrow .analysis-arrow-label { fill:var(--analysis-arrow-color); stroke:#f4fff0; stroke-width:5px; }
+.saved-branch-arrow text { fill:#fff; stroke:none; }
+.saved-branch-arrow .analysis-arrow-stem { opacity:.94; stroke-width:18px; filter:none; }
+.saved-branch-arrow .analysis-arrow-outline { stroke:#fff3a6; stroke-width:25px; opacity:.8; }
+.saved-branch-arrow .analysis-arrow-backdrop { stroke:#c57b12; stroke-width:30px; filter:drop-shadow(0 0 6px #f9d252); opacity:.35; }
+.saved-branch-arrow .analysis-arrow-flow { display:block; stroke-width:4px; opacity:.65; animation-duration:1.8s; }
 .analysis-candidate-arrow .branch-label-leader { stroke-width:2px; opacity:.55; }
 .branch-actions-backdrop { z-index:1300; }
 .branch-actions-dialog { width:min(460px,calc(100vw - 24px)); max-height:80dvh; overflow:auto; padding:16px; border-radius:14px; background:#f6fbf5; color:#254d39; box-shadow:0 8px 32px #15332533; }
