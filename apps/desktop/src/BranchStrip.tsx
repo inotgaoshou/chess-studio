@@ -9,6 +9,7 @@ export type BranchStripAnchor = { board:Element|null; toolbar?:Element|null; doc
 type BranchStripProps = {
   choices:BranchStripChoice[]; onSelect(id:string):void; onManage?():void; onRequestDelete?(id:string):void; revealKey?:number;
   contextKey?:string; floating?:boolean; hidden?:boolean; light?:boolean;
+  layoutKey?:string|number;
   getAnchor?():BranchStripAnchor; expanded?:boolean; onExpandedChange?(expanded:boolean):void;
 };
 
@@ -76,7 +77,7 @@ export function BranchStrip(props:BranchStripProps) {
     window.addEventListener("resize",constrain);window.addEventListener("scroll",constrain,true);
     window.visualViewport?.addEventListener("resize",constrain);window.visualViewport?.addEventListener("scroll",constrain);
     return ()=>{observer?.disconnect();if(resizeFrame!==undefined)cancelAnimationFrame(resizeFrame);window.removeEventListener("resize",constrain);window.removeEventListener("scroll",constrain,true);window.visualViewport?.removeEventListener("resize",constrain);window.visualViewport?.removeEventListener("scroll",constrain);fit.current=()=>undefined;drag.current=undefined;};
-  },[floating,visible,open,identity,unique.length]);
+  },[floating,visible,open,identity,unique.length,props.layoutKey]);
 
   function startDrag(event:PointerEvent<HTMLElement>) {
     if (!floating || event.button!==0 || (event.target as HTMLElement).closest("button:not(.branch-drag-handle)")) return;

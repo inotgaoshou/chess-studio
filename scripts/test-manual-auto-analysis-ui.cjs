@@ -12,13 +12,16 @@ const game={id:'automatic-analysis',title:'自动分析布局验收',note:'保�
   await route.fulfill({contentType:'application/json',body:JSON.stringify(body)}).catch(()=>{});
  });
  await page.route('**/chessdb.php**',route=>{clouds++;return route.fulfill({body:'status:unknown'});});
- await page.goto(base+'/account');await page.getByRole('button',{name:/我的棋谱 录谱/}).waitFor();
+ await page.goto(base+'/account',{waitUntil:'domcontentloaded'});await page.getByRole('button',{name:/我的棋谱 录谱/}).waitFor();
  await page.evaluate(async game=>{const source=await(await fetch('/src/App.tsx')).text();window.storeUrl=source.match(/from "(\/src\/store\.ts[^"]*)"/)[1];await(await import(window.storeUrl)).trainingStore.saveManualGame(game);},game);
  await page.getByRole('button',{name:/我的棋谱 录谱/}).click();await page.getByRole('button',{name:'打开棋谱：自动分析布局验收',exact:true}).click();
  const board=page.locator('.manual-workspace .xiangqi-board'),dock=page.getByRole('region',{name:'录谱内容'}),toolbar=page.getByRole('navigation',{name:'录谱工具栏'}),playback=page.getByRole('navigation',{name:'棋谱播放与导航'}),panel=page.getByRole('tabpanel');
- await board.waitFor();assert.equal(await toolbar.getByRole('button',{name:'新建棋谱',exact:true}).count(),0);assert.equal(await playback.getByRole('button').count(),5);
- const menu=()=>toolbar.getByRole('button',{name:'更多功能',exact:true}).click();
- const geometry=()=>page.evaluate(()=>Object.fromEntries(['.manual-workspace .xiangqi-board','.manual-command-toolbar','.manual-playback-controls','.manual-compact-dock > .study-panel-tabs'].map(selector=>{const r=document.querySelector(selector).getBoundingClientRect();return [selector,[r.x,r.y,r.width,r.height]];})));
+ await board.waitFor();assert.equal(await toolbar.getByRole('button',{name:'新建棋谱',exact:true}).count(),0);assert.equal(await toolbar.getByRole('button').count(),6);assert.equal(await playback.getByRole('button').count(),8);
+ for(const name of ['AI 禁用','自由推演','分析','新增棋谱','摆棋','查看棋谱与注释'])await toolbar.getByRole('button',{name,exact:true}).waitFor();
+ const defaultBoard=await board.boundingBox();assert(defaultBoard.width>=350,'Default recording board should use the phone width');await page.screenshot({path:out+'/reference-restored.png'});
+ await toolbar.getByRole('button',{name:'分析',exact:true}).click();await panel.locator('.analysis-candidate-select').first().waitFor();
+ const menu=()=>playback.getByRole('button',{name:'更多功能',exact:true}).click();
+ const geometry=()=>page.evaluate(()=>Object.fromEntries(['.manual-stage','.manual-workspace','.manual-workspace .xiangqi-board','.recording-quick-actions','.manual-playback-controls','.manual-dock-heading'].map(selector=>{const r=document.querySelector(selector).getBoundingClientRect();return [selector,[r.x,r.y,r.width,r.height]];})));
  const stable=(a,b)=>{for(const k in a)a[k].forEach((v,i)=>assert(Math.abs(v-b[k][i])<=1,`${k} shifted ${JSON.stringify(a[k])} -> ${JSON.stringify(b[k])}`));};
  for(const [width,height] of [[320,740],[390,844],[430,932],[844,390],[820,1180],[1180,820]]){
   await page.setViewportSize({width,height});await page.waitForTimeout(150);const before=await geometry();
@@ -47,5 +50,6 @@ const game={id:'automatic-analysis',title:'自动分析布局验收',note:'保�
  await menu();await page.getByRole('button',{name:'整局报告',exact:true}).click();const report=page.getByRole('dialog',{name:'录谱面板'});await report.getByText('已分析 3/3 个局面',{exact:true}).waitFor();assert((await report.locator('.manual-panel-content').boundingBox()).height>150,'Report must keep a usable content area');await page.screenshot({path:out+'/report.png'});const reportCount=requests.length;await page.waitForTimeout(650);assert.equal(requests.length,reportCount,'No parent analysis runs during report');await report.getByRole('button',{name:'关闭录谱面板',exact:true}).click();await page.waitForTimeout(650);assert.equal(requests.length,reportCount+1);stable(initial,await geometry());
  const saved=await page.evaluate(async()=> (await import(window.storeUrl)).trainingStore.openManualGame('automatic-analysis'));assert.deepEqual(saved.moves,game.moves);assert.deepEqual(saved.comments,game.comments);assert.deepEqual(saved.branches,game.branches);
  await page.getByRole('tab',{name:'云库',exact:true}).click();await panel.getByText('当前局面暂无云库着法。',{exact:true}).waitFor();assert(clouds>0);
- await page.getByRole('tab',{name:'引擎',exact:true}).click();await page.screenshot({path:out+'/automatic-analysis-final.png'});assert.deepEqual(errors,[]);console.log('PASS: stable phone/tablet layouts, auto analysis, debounce, parameters, disable, retry, preview/background ownership, tree preservation; requests='+requests.length);await page.close();
+ await page.getByRole('tab',{name:'引擎',exact:true}).click();await page.screenshot({path:out+'/automatic-analysis-final.png'});assert.deepEqual(errors,[]);await page.getByRole('button',{name:'收起录谱内容',exact:true}).click();await toolbar.getByRole('button',{name:'查看棋谱与注释',exact:true}).click();await page.getByRole('tab',{name:'棋谱',exact:true}).waitFor();
+ console.log('PASS: restored reference actions, stable phone/tablet layouts, auto analysis, debounce, parameters, disable, retry, preview/background ownership, tree preservation; requests='+requests.length);await page.close();
 }finally{await browser.close();}})().catch(error=>{console.error(error);process.exitCode=1;});

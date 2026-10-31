@@ -134,7 +134,7 @@ try {
   // Real study edits made while the panel is minimized must survive the first save dialog.
   await page.getByRole('button',{name:'菜单',exact:true}).click();await page.getByRole('button',{name:'棋盘与引擎设置',exact:true}).click();
   await page.getByRole('button',{name:'切换到拆棋',exact:true}).click();
-  const studyBoard=page.locator('.study-stage > .board-shell .xiangqi-board');await studyBoard.waitFor();
+  const studyBoard=page.locator('.study-play-board-area > .board-shell .xiangqi-board');await studyBoard.waitFor();
   await step(studyBoard,'b0 红马','c2');await studyBoard.getByRole('button',{name:'c2 红马',exact:true}).waitFor();
   await page.getByRole('button',{name:'回到开始',exact:true}).click();await page.getByRole('button',{name:'自由推演',exact:true}).click();
   const studyPanel=panelOf(page);await step(studyPanel.locator('.xiangqi-board'),'h0 红马','g2');await studyPanel.getByText(/第 1 步 \/ 共 1 步/).waitFor();

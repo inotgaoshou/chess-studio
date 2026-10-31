@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { currentListNumbers, initialPracticeItem, practiceGroupIds } from "../src/practiceNavigation.ts";
+import { currentListNumbers, initialPracticeItem, practiceGroupIds, practiceGroupSummary } from "../src/practiceNavigation.ts";
 
 test("display ordinals span deduplicated pages and restart for a different filter", () => {
   const first = Array.from({length: 50}, (_, i) => ({id: `p${i}`}));
@@ -37,4 +37,25 @@ test("groups after 20 retain list ordinals and can reach adjacent loaded groups"
   assert.equal(numberedProblemTitle("第 1 题 · 两步杀"),"两步杀");
   assert.equal(numberedProblemTitle("0002-两步杀"),"两步杀");
   assert.equal(numberedProblemTitle("2步杀"),"2步杀");
+});
+
+
+test("group totals include a partial last group and share navigation order", () => {
+  const numbers=currentListNumbers(Array.from({length:50},(_,i)=>({id:`p${i+1}`})));
+  assert.deepEqual(practiceGroupSummary(numbers,"p1",50),{current:1,total:3,complete:true});
+  assert.deepEqual(practiceGroupSummary(numbers,"p22",50),{current:2,total:3,complete:true});
+  assert.deepEqual(practiceGroupSummary(numbers,"p50",50),{current:3,total:3,complete:true});
+  assert.deepEqual(practiceGroupSummary({p:1},"p",1),{current:1,total:1,complete:true});
+  assert.deepEqual(practiceGroupSummary(currentListNumbers(Array.from({length:20},(_,i)=>({id:String(i)}))),"19",20),{current:1,total:1,complete:true});
+  assert.equal(practiceGroupSummary(numbers,"missing",50),undefined);
+});
+
+test("catalog total is independent of loaded pages; unknown counts are labelled incomplete", () => {
+  const numbers=currentListNumbers(Array.from({length:50},(_,i)=>({id:`p${i+1}`})));
+  assert.deepEqual(practiceGroupSummary(numbers,"p22",501),{current:2,total:26,complete:true});
+  for(const count of [undefined,null,NaN,Infinity,0,20,50.5]) {
+    assert.deepEqual(practiceGroupSummary(numbers,"p22",count),{current:2,total:3,complete:false});
+  }
+  assert.deepEqual(practiceGroupSummary({p:1,invalid:NaN,zero:0,negative:-1},"p",1),{current:1,total:1,complete:true});
+  assert.deepEqual(practiceGroupSummary(currentListNumbers([{id:"p50"}]),"p50",1),{current:1,total:1,complete:true});
 });

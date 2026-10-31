@@ -29,8 +29,19 @@ export function initialPracticeItem<T extends { id: string; problem: { id: strin
 }
 
 // Presentation context contains the loaded list, not just the API's 20-item session.
+function orderedPracticeIds(numbers: Record<string, number>): string[] {
+  return Object.entries(numbers).filter(([, n]) => Number.isInteger(n) && n > 0).sort((a,b) => a[1]-b[1]).map(([id])=>id);
+}
+
+export function practiceGroupSummary(numbers: Record<string, number>, currentId: string, totalProblems?: number | null) {
+  const ids = orderedPracticeIds(numbers), index = ids.indexOf(currentId);
+  if (index < 0) return undefined;
+  const complete = typeof totalProblems === "number" && Number.isInteger(totalProblems) && totalProblems >= ids.length;
+  return { current: Math.floor(index / 20) + 1, total: Math.ceil((complete ? totalProblems : ids.length) / 20), complete };
+}
+
 export function adjacentPracticeGroup(numbers: Record<string, number>, currentId: string, direction: -1 | 1): string[] {
-  const ids = Object.entries(numbers).filter(([, n]) => Number.isInteger(n) && n > 0).sort((a,b) => a[1]-b[1]).map(([id])=>id);
+  const ids = orderedPracticeIds(numbers);
   const index = ids.indexOf(currentId);
   if (index < 0) return [];
   const start = (Math.floor(index / 20) + direction) * 20;

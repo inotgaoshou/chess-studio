@@ -35,8 +35,10 @@
     },
     "stalemate": {
       "file": "v109-stalemate.wav",
-      "source": "Original deterministic terminal percussion plus locally synthesized Chinese 困毙 (Tingting, 270 wpm); cadence based on reference checkmate",
-      "referenceSample": false
+      "source": "Synthetic Mandarin 困 and 毙 (zh-CN-YunxiNeural); brighter accented delivery, short consonant attacks, concentrated final syllable and original two-strike impact. Uses prepared voice sources; no reference voice cloning.",
+      "referenceSample": false,
+      "generator": "scripts/generate-stalemate-feedback.py",
+      "revision": "accent-v3"
     }
   },
   "unmatched": []

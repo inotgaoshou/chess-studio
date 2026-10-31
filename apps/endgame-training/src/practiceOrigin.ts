@@ -1,4 +1,4 @@
-export type PracticeOrigin = { section: "题库" | "练习"; label?: string };
+export type PracticeOrigin = { section: "题库" | "练习"; label?: string; totalProblems?: number | null };
 
 const CACHE_KEY = "qixi-practice-origins-v1";
 function origins(): Record<string, PracticeOrigin> {

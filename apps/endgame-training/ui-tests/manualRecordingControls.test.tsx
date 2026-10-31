@@ -3,6 +3,12 @@ import {fireEvent,render,screen} from "@testing-library/react";
 import {ManualRecordingControls} from "../src/ManualRecordingControls";
 import {rehearsalChoices} from "../src/LocalManualRehearsal";
 import type {LocalManualGame} from "../src/types";
+it("keeps the reference recording shortcuts visible without opening a menu",()=>{
+ const onAction=vi.fn();render(<ManualRecordingControls cursor={1} moveCount={3} previousVariation={true} nextVariation={true} playing={false} engineEnabled={false} flipped={false} favorite={false} readOnly={false} menuOpen={false} onMenu={vi.fn()} onAction={onAction}/>);
+ for(const [name,action] of [["AI 禁用","engine"],["自由推演","variation"],["分析","analysis"],["新增棋谱","new"],["摆棋","setup"],["查看棋谱与注释","moves"],["翻转","flip"],["报告","report"],["上变","previousVariation"],["下变","nextVariation"]]){
+  fireEvent.click(screen.getByRole("button",{name,exact:true}));expect(onAction).toHaveBeenLastCalledWith(action);
+ }
+});
 it("navigation and menu actions reach real handlers, with unavailable steps disabled",()=>{
  const onAction=vi.fn(),onMenu=vi.fn();render(<ManualRecordingControls cursor={0} moveCount={3} previousVariation={false} nextVariation={true} playing={false} engineEnabled={false} flipped={false} favorite={false} readOnly={false} menuOpen={true} onMenu={onMenu} onAction={onAction}/>);
  expect((screen.getByRole("button",{name:"上一步",exact:true}) as HTMLButtonElement).disabled).toBe(true);

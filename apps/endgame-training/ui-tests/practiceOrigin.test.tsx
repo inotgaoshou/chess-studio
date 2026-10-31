@@ -4,12 +4,13 @@ import { loadPracticeOrigin, savePracticeOrigin, practiceBreadcrumb } from "../s
 beforeEach(()=>localStorage.clear());
 
 it("restores catalog origin across sessions while isolating accounts and groups",()=>{
-  const origin={section:"题库" as const,label:"基础杀法"};
+  const origin={section:"题库" as const,label:"基础杀法",totalProblems:501};
   savePracticeOrigin("account-a","group-1",origin);
   expect(loadPracticeOrigin("account-a","group-1")).toEqual(origin);
   expect(loadPracticeOrigin("account-b","group-1")).toBeUndefined();
   expect(loadPracticeOrigin("account-a","group-2")).toBeUndefined();
   savePracticeOrigin("account-a","group-2",loadPracticeOrigin("account-a","group-1")!);
+  expect(loadPracticeOrigin("account-a","group-2")?.totalProblems).toBe(501);
   expect(practiceBreadcrumb({sourceKind:"random",origin:loadPracticeOrigin("account-a","group-2")})).toBe("题库 / 基础杀法 / 做题");
 });
 

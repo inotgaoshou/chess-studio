@@ -19,11 +19,11 @@ const game={id:'branch-actions',title:'分支操作验收',note:'保留备注',s
 
  for(const [width,height] of [[320,844],[390,844],[430,844],[820,1180],[844,390]]){
   await page.setViewportSize({width,height});
-  const sizes=await page.locator('.manual-command-toolbar').evaluate(node=>{
+  const sizes=await page.locator('.recording-quick-actions').evaluate(node=>{
    const header=node.getBoundingClientRect(),buttons=[...node.querySelectorAll(':scope > button')];
-   return buttons.map(b=>{const r=b.getBoundingClientRect(),icon=b.querySelector('svg').getBoundingClientRect();return {h:r.height,icon:icon.width,inside:r.top>=header.top&&r.bottom<=header.bottom+1,center:Math.abs((r.top+r.bottom-icon.top-icon.bottom)/2)};});
+   return buttons.map(b=>{const r=b.getBoundingClientRect(),icon=b.querySelector('svg').getBoundingClientRect(),label=b.querySelector('span').getBoundingClientRect();return {h:r.height,icon:icon.width,inside:r.top>=header.top&&r.bottom<=header.bottom+1,center:Math.abs((r.top+r.bottom-icon.top-label.bottom)/2)};});
   });
-  assert(sizes.every(s=>s.h>=40&&s.icon>=17&&s.icon<=19&&s.inside&&s.center<1),'Header buttons must fit their compact row and be centered: '+JSON.stringify({width,sizes}));
+  assert(sizes.every(s=>s.h>=40&&s.icon>=17&&s.icon<=26&&s.inside&&s.center<1),'Recording shortcut buttons must fit their compact row and be centered: '+JSON.stringify({width,sizes}));
   await page.screenshot({path:out+'/header-'+width+'.png'});
  }
  await page.setViewportSize({width:390,height:844});

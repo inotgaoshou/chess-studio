@@ -70,7 +70,7 @@ async function assertRecordingFeedback(manual) {
       const bounds = await workspace.locator('.move-commentary').boundingBox();
       assert(bounds.width <= viewport.width, 'panel fits viewport');
       if (label === 'landscape') {
-        const board = await workspace.locator('.study-stage > .board-shell').boundingBox();
+        const board = await workspace.locator('.study-play-board-area > .board-shell').boundingBox();
         assert(board.height > viewport.height * .7, 'landscape board uses available height');
       }
       await page.screenshot({ path: `${output}/${label}.png` });
