@@ -925,7 +925,7 @@ function AnalysisArrowLayer({ moves, activeIndex, flipped = false, geometry, bra
       <line className="analysis-arrow-flow" x1={startX} y1={startY} x2={shaftX} y2={shaftY}/>
       </g>
       <line className="branch-label-leader" x1={fromX+dx*leaderT} y1={fromY+dy*leaderT} x2={labelX} y2={labelY} stroke={color}/>
-      <circle className="analysis-arrow-label" cx={labelX} cy={labelY} r={branches?26:25}/><text x={labelX} y={labelY}>{index + 1}</text>
+      <circle className="analysis-arrow-label" cx={labelX} cy={labelY} r={branches?21:25}/><text x={labelX} y={labelY}>{index + 1}</text>
     </g>];
   });
   return <svg className="analysis-arrow-layer" viewBox={`0 0 ${BOARD_ART_WIDTH} ${BOARD_ART_HEIGHT}`} preserveAspectRatio="none" aria-hidden="true">

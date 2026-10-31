@@ -7287,8 +7287,8 @@ html.keyboard-open .manual-save-backdrop .manual-save-dialog { max-height:100%; 
 .training-app .teacher-mobile-page.mobile-teacher-checkin { padding:0; display:block; scroll-padding-top:12px; }
 .mobile-teacher-checkin .checkin-workspace { margin:0 auto; padding-bottom:24px; }
 .mobile-teacher-checkin .checkin-plan-editor { min-width:0; }
-.saved-branch-arrow .analysis-arrow-label { fill:var(--analysis-arrow-color); stroke:#f4fff0; stroke-width:5px; }
-.saved-branch-arrow text { fill:#fff; stroke:none; }
+.saved-branch-arrow .analysis-arrow-label { fill:var(--analysis-arrow-color); stroke:#f4fff0; stroke-width:3.5px; }
+.saved-branch-arrow text { fill:#fff; stroke:none; font-size:30px; }
 .saved-branch-arrow .analysis-arrow-stem { opacity:.94; stroke-width:18px; filter:none; }
 .saved-branch-arrow .analysis-arrow-outline { stroke:#fff3a6; stroke-width:25px; opacity:.8; }
 .saved-branch-arrow .analysis-arrow-backdrop { stroke:#c57b12; stroke-width:30px; filter:drop-shadow(0 0 6px #f9d252); opacity:.35; }

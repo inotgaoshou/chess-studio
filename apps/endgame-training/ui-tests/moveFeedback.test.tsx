@@ -175,7 +175,7 @@ it("keeps opposite cannon branch numbers off pieces and distinct after flipping"
     const second=branchBadgePoint(from,project({x:560,y:540}),occupied,[first],1120,1240);
     for(const label of [first,second])for(const piece of occupied)expect(Math.hypot(label.x-piece.x,label.y-piece.y)).toBeGreaterThan(75);
     expect(Math.hypot(first.x-second.x,first.y-second.y)).toBeGreaterThan(60);
-    expect((first.x-from.x)*(second.x-from.x)).toBeLessThan(0);
+    expect((first.x-from.x)*(second.x-from.x)).toBeLessThanOrEqual(0); // an unobstructed number may sit on the shaft
   }
 });
 
@@ -227,4 +227,9 @@ it.each([false,true])("keeps short and horizontal heads pointing forward without
    expect(line.getAttribute('x2')).toBe(stem.getAttribute('x2'));expect(line.getAttribute('y2')).toBe(stem.getAttribute('y2'));
   }
  }
+});
+
+it("prefers a small badge on an unobstructed shaft",()=>{
+ const badge=branchBadgePoint({x:560,y:440},{x:560,y:680},[{x:560,y:440}],[],1120,1240);
+ expect(badge.x).toBe(560);expect(badge.y).toBeLessThan(630-21);
 });
