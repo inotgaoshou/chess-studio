@@ -911,6 +911,7 @@ function SourcePicker(props: SourcePickerProps) {
   </section></div>;
 }
 
+const SOURCE_RECORD_PAGE_SIZE = 50;
 function SourceRecordPicker({api,kind,directoryId,existing,onClose,onChoose,onChooseMany,library,mateFilter,onMateFilterChange}:SourcePickerProps & {library:SourceLibrary;mateFilter:string;onMateFilterChange(value:string):void}) {
   const [q,setQ] = useState(""), [category,setCategory] = useState(""), [reload,setReload] = useState(0);
   const [filtersOpen,setFiltersOpen] = useState(false);
@@ -918,12 +919,13 @@ function SourceRecordPicker({api,kind,directoryId,existing,onClose,onChoose,onCh
   const [preparing,setPreparing] = useState(false);
   const [nextCursor,setNextCursor] = useState<string|null>(), [error,setError] = useState(""), [busy,setBusy] = useState(true), [choosing,setChoosing] = useState(false);
   const [selected,setSelected] = useState<AuthoringSource[]>([]);
+  const [pageIndex,setPageIndex] = useState(0);
   const [preview,setPreview] = useState<AuthoringSource>();
   const request = useRef(0), selectionLock = useRef(false), paginationLock = useRef(false), lastSearch = useRef<string | undefined>(undefined);
   const list = useRef<HTMLDivElement>(null);
   const existingIds = new Set(existing.map(item => `${itemRef(item).kind}:${itemRef(item).subjectId}`));
   async function readPage(after?:string, signal?:AbortSignal) {
-    const params = new URLSearchParams({kind,q:q.trim(),limit:"30",libraryId:library.id});
+    const params = new URLSearchParams({kind,q:q.trim(),limit:String(SOURCE_RECORD_PAGE_SIZE),libraryId:library.id});
     if (category) params.set("category",category);
     if (directoryId) params.set("directoryId",directoryId);
     if (after) params.set("cursor",after);
@@ -934,7 +936,7 @@ function SourceRecordPicker({api,kind,directoryId,existing,onClose,onChoose,onCh
   }
   useEffect(() => {
     const epoch=++request.current;
-    setNextCursor(undefined);setError("");setBusy(true);paginationLock.current=false;
+    setNextCursor(undefined);setPageIndex(0);setError("");setBusy(true);paginationLock.current=false;
     list.current?.scrollTo?.({top:0});
     const controller=new AbortController(), deadline=Date.now()+180_000;
     let timer:ReturnType<typeof setTimeout>;
@@ -958,14 +960,25 @@ function SourceRecordPicker({api,kind,directoryId,existing,onClose,onChoose,onCh
     return ()=>{clearTimeout(timer);controller.abort();request.current++;};
   },[q,category,mateFilter,kind,directoryId,library.id,api,reload]);
   async function loadMore() {
-    if (!nextCursor || busy || choosing || paginationLock.current) return;
-    const epoch=request.current, after=nextCursor;
+    if (busy || choosing || paginationLock.current) return;
+    const targetPage=pageIndex+1;
+    if(!nextCursor && items.length<=targetPage*SOURCE_RECORD_PAGE_SIZE)return;
+    const epoch=request.current;
     paginationLock.current=true;setBusy(true);setError("");
     try {
-      const page=await readPage(after);
-      if(epoch!==request.current)return;
-      if(page.nextCursor===after)throw new Error("分页读取异常，请重新搜索后重试");
-      setItems(old=>mergeSources(old,page.items));setNextCursor(page.nextCursor ?? null);
+      let loaded=items,cursor=nextCursor;
+      const seen=new Set<string>();
+      while(cursor && loaded.length<(targetPage+1)*SOURCE_RECORD_PAGE_SIZE) {
+        if(seen.has(cursor))throw new Error("分页读取异常，请重新搜索后重试");
+        seen.add(cursor);
+        const page=await readPage(cursor);
+        if(epoch!==request.current)return;
+        if(page.nextCursor===cursor)throw new Error("分页读取异常，请重新搜索后重试");
+        loaded=mergeSources(loaded,page.items);cursor=page.nextCursor??null;
+      }
+      setItems(loaded);setNextCursor(cursor);
+      setPageIndex(Math.min(targetPage,Math.max(0,Math.ceil(loaded.length/SOURCE_RECORD_PAGE_SIZE)-1)));
+      list.current?.scrollTo?.({top:0});
     } catch(reason) {if(epoch===request.current){if(/^题库正在(准备|更新)/.test(message(reason)))setReload(value=>value+1);else setError(message(reason));}}
     finally {if(epoch===request.current){setBusy(false);paginationLock.current=false;}}
   }
@@ -1014,6 +1027,8 @@ function SourceRecordPicker({api,kind,directoryId,existing,onClose,onChoose,onCh
   }
   const mateFilterLabel = ({"1":"一步杀","2":"两步杀","3":"三步杀",long:"四步及以上"} as Record<string,string>)[mateFilter] || "";
   const filterSummary = [category, mateFilterLabel, q.trim()].filter(Boolean).join(" · ") || "全部题目";
+  const visibleItems=items.slice(pageIndex*SOURCE_RECORD_PAGE_SIZE,(pageIndex+1)*SOURCE_RECORD_PAGE_SIZE);
+  const hasNextPage=Boolean(nextCursor)||items.length>(pageIndex+1)*SOURCE_RECORD_PAGE_SIZE;
   return <div className="authoring-overlay"><section className="authoring-sheet authoring-picker" role="dialog" aria-modal="true" aria-label={kind === "games" ? "选择已有棋谱" : "选择平台／机构题目"}>
     <header className="authoring-picker-header"><button type="button" disabled={choosing} onClick={onClose}>‹ 返回</button><h3>{kind === "games" ? "选择已有棋谱" : "选择平台／机构题目"}</h3></header>
     <p className="authoring-picker-book">{library.title}</p>
@@ -1033,7 +1048,7 @@ function SourceRecordPicker({api,kind,directoryId,existing,onClose,onChoose,onCh
     {error && <p role="alert" className="authoring-error">{error}<button type="button" disabled={busy || choosing} onClick={()=>setReload(value=>value+1)}>重试</button></p>}
     <div className={kind === "problems" ? "authoring-source-list authoring-source-grid" : "authoring-source-list"} ref={list} aria-busy={busy || choosing}>
       {busy && items.length>0 && <p className="authoring-picker-loading" role="status">正在更新题目…</p>}
-      {items.map(item=>{
+      {visibleItems.map(item=>{
         const added=kind === "problems" && (item.alreadyAdded || existingIds.has(`${item.authored ? "authored" : "source"}:${item.id}`));
         return <div className="authoring-source-tile" key={sourceIdentity(item)}>
           <button type="button" className={`${busy && !added ? "authoring-retained" : ""} ${selectedKeys.has(sourceIdentity(item)) ? "selected" : ""}`} disabled={busy || choosing || Boolean(added)} aria-pressed={kind==="problems" ? selectedKeys.has(sourceIdentity(item)) : undefined} onClick={()=>kind==="problems" ? toggle(item) : void choose(item)}>
@@ -1044,9 +1059,12 @@ function SourceRecordPicker({api,kind,directoryId,existing,onClose,onChoose,onCh
         </div>;
       })}
       {!items.length && <div className="authoring-source-empty" role="status">{busy ? preparing ? "正在准备题库，请稍候…" : "正在读取…" : error ? "请修改搜索条件后重试" : "没有匹配内容"}{!busy && !error && kind === "problems" && (category || mateFilter || q) && <button type="button" onClick={()=>{setCategory("");onMateFilterChange("");setQ("");}}>清除筛选</button>}</div>}
-      <p className="authoring-picker-page-status">已显示 {items.length} 题{nextCursor ? " · 还有下一页" : ""}</p>
-      {nextCursor && <button type="button" disabled={busy || choosing} onClick={()=>void loadMore()}>{busy ? "正在读取…" : "下一页题目"}</button>}
     </div>
+    <nav className="authoring-picker-pagination" aria-label="题目分页">
+      <button type="button" disabled={busy||choosing||pageIndex===0} onClick={()=>{setPageIndex(value=>value-1);list.current?.scrollTo?.({top:0});}}>上一页</button>
+      <p className="authoring-picker-page-status" aria-live="polite">第 {pageIndex+1} 页 · 本页 {visibleItems.length} 题<br/>每页 50 题</p>
+      <button type="button" disabled={busy||choosing||!hasNextPage} onClick={()=>void loadMore()}>下一页</button>
+    </nav>
     {preview && <div className="authoring-preview-overlay"><section role="dialog" aria-modal="true" aria-label="题目详情" className="authoring-preview-detail"><h4>{preview.title}</h4><AuthoringBoard fen={preview.fen}/><p>{[preview.category || "未分类",preview.sourceScope,preview.sourceTitle].filter(Boolean).join(" · ")}</p>{(preview.sourceCount??0)>1 && <p>已合并 {preview.sourceCount} 个重复来源</p>}<button type="button" onClick={()=>setPreview(undefined)}>返回选题</button></section></div>}
   </section></div>;
 }
