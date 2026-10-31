@@ -19,15 +19,15 @@ const game={id:'branch-actions',title:'分支操作验收',note:'保留备注',s
 
  for(const [width,height] of [[320,844],[390,844],[430,844],[820,1180],[844,390]]){
   await page.setViewportSize({width,height});
-  const sizes=await page.locator('.manual-statusbar').evaluate(node=>{
+  const sizes=await page.locator('.manual-command-toolbar').evaluate(node=>{
    const header=node.getBoundingClientRect(),buttons=[...node.querySelectorAll(':scope > button')];
    return buttons.map(b=>{const r=b.getBoundingClientRect(),icon=b.querySelector('svg').getBoundingClientRect();return {h:r.height,icon:icon.width,inside:r.top>=header.top&&r.bottom<=header.bottom+1,center:Math.abs((r.top+r.bottom-icon.top-icon.bottom)/2)};});
   });
-  assert(sizes.every(s=>s.h===44&&s.icon===18&&s.inside&&s.center<1),'Header buttons must be 44px and centered: '+JSON.stringify({width,sizes}));
+  assert(sizes.every(s=>s.h>=40&&s.icon>=17&&s.icon<=19&&s.inside&&s.center<1),'Header buttons must fit their compact row and be centered: '+JSON.stringify({width,sizes}));
   await page.screenshot({path:out+'/header-'+width+'.png'});
  }
  await page.setViewportSize({width:390,height:844});
- await page.getByRole('button',{name:'菜单',exact:true}).click();
+ await page.getByRole('button',{name:'更多功能',exact:true}).click();
  await page.getByRole('button',{name:'背谱练习',exact:true}).click();
  const dialog=page.getByRole('dialog',{name:'背谱练习'});
  await dialog.getByRole('button',{name:'h2 红炮',exact:true}).waitFor();
@@ -44,5 +44,5 @@ const game={id:'branch-actions',title:'分支操作验收',note:'保留备注',s
  assert.equal(await dialog.locator('.board-moving-piece').count(),0);
  assert.deepEqual((await read()).moves,game.moves);
  assert.deepEqual(errors,[]);
- console.log('PASS rehearsal actual board animation, own/reply audio, quiet restart, original manual unchanged; header 44px/18px at 320/390/430/820');
+ console.log('PASS rehearsal actual board animation, own/reply audio, quiet restart, original manual unchanged; compact toolbar at 320/390/430/820');
  }finally{await browser.close();}})().catch(e=>{console.error(e);process.exitCode=1;});

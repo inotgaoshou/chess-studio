@@ -133,10 +133,10 @@ export async function queryPikafishReply(fen: string, moveTimeMs = 800): Promise
   }
 }
 
-export async function queryPikafishAnalysis(fen: string, moveTimeMs = 2000, multiPv = 4): Promise<PikafishAnalysis> {
+export async function queryPikafishAnalysis(fen: string, moveTimeMs = 2000, multiPv = 4, signal?: AbortSignal): Promise<PikafishAnalysis> {
   try {
     if (!hasLocalPikafish()) throw new Error("本地 Pikafish 仅在 Android 或 iOS 版可用");
-    return await engineCoordinator.run(2, () => nativePikafish.analyze({ fen, moveTimeMs, multiPv }));
+    return await engineCoordinator.run(2, () => nativePikafish.analyze({ fen, moveTimeMs, multiPv }), signal);
   } catch (error) {
     throw new Error(`AI 拆棋失败：${error instanceof Error ? error.message : "引擎启动失败"}`);
   }

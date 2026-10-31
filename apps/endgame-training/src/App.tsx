@@ -56,6 +56,7 @@ import { FeedbackSeal } from "./FeedbackSeal";
 import { movementDuration, cancelTrainingFeedback, prepareTrainingFeedbackAudio, replayTrainingFeedbackEvent, unlockTrainingFeedbackAudio, trainingFeedbackEvent, FEEDBACK_DURATION, playTrainingFeedback, type TrainingFeedbackEvent, type TrainingFeedbackKind } from "./moveFeedback";
 import { type PreferredOrientation } from "./orientation";
 import { useScreenOrientation } from "./useScreenOrientation";
+import { usePageVisible, usePositionAnalysis } from "./usePositionAnalysis";
 import { DEFAULT_SKIN_ID, LEGACY_DEFAULT_SKIN_ID, SKIN_CATALOG, normalizeSkinId, skinById, type SkinCatalogItem } from "./skinCatalog";
 import authoredSkins from "./authoredSkinCatalog.json";
 import authoredSkinGeometry from "./authoredSkinGeometry.json";
@@ -2681,7 +2682,6 @@ export function App() {
   const [feedbackEvent,setFeedbackEvent]=useState<TrainingFeedbackEvent>();
   const [trainingAnalysisLines, setTrainingAnalysisLines] = useState<AnalysisLine[]>([]);
   const [studyAnalysisLines, setStudyAnalysisLines] = useState<AnalysisLine[]>([]);
-  const [manualAnalysisLines, setManualAnalysisLines] = useState<AnalysisLine[]>([]);
   const [analysisPending, setAnalysisPending] = useState(false);
   const [trainingActiveAnalysis, setTrainingActiveAnalysis] = useState(0);
   const [studyActiveAnalysis, setStudyActiveAnalysis] = useState(0);
@@ -2730,7 +2730,6 @@ export function App() {
   const [manualQuery, setManualQuery] = useState("");
   const [manualFolder, setManualFolder] = useState("");
   const [manualGame, setManualGame] = useState<LocalManualGame>();
-  const [manualPanelTab, setManualPanelTab] = useState<ManualPanelTab>("moves");
   const [manualPanelOpen, setManualPanelOpen] = useState(false);
   const [branchManager,setBranchManager]=useState<"manual"|"study">();
   const [branchDeleteRequest,setBranchDeleteRequest]=useState<string>();
@@ -2739,7 +2738,8 @@ export function App() {
   const [manualLibraryFromAccount, setManualLibraryFromAccount] = useState(false);
   const [manualReturnToLibrary, setManualReturnToLibrary] = useState(false);
   const [manualSaveEditing, setManualSaveEditing] = useState(false);
-  const [manualAnalysisExpanded, setManualAnalysisExpanded] = useState(false);
+  const [manualDockTab, setManualDockTab] = useState<"moves" | "cloud" | "engine">("moves");
+  const [manualCommentaryOpen, setManualCommentaryOpen] = useState(false);
   const [manualAnalysisView, setManualAnalysisView] = useState<ManualAnalysisView>("trend");
   const [manualMenuOpen, setManualMenuOpen] = useState(false);
   const [manualSettingsOpen, setManualSettingsOpen] = useState(false);
@@ -2810,6 +2810,8 @@ export function App() {
   const [manualSetupTool, setManualSetupTool] = useState<{ color: "red" | "black"; kind: string; label: string } | "erase">({ color: "red", kind: "king", label: "帅" });
   const [manualSetupSelected, setManualSetupSelected] = useState<Square>();
   const [manualFullAnalysisProgress, setManualFullAnalysisProgress] = useState<{ done: number; total: number; running: boolean }>();
+  const manualReportRequest = useRef<AbortController | undefined>(undefined);
+  const manualReportPosition = useRef("");
   const [manualAnalysisSummaries, setManualAnalysisSummaries] = useState<Record<string, LocalManualAnalysisSummary>>({});
   const [manualCloudSyncing, setManualCloudSyncing] = useState(false);
   const [manualCloudSyncMessage, setManualCloudSyncMessage] = useState("仅同步个人录谱、目录和本地分析，不上传 CBL 题库。");
@@ -2861,7 +2863,7 @@ export function App() {
     analysisMultiPv, analysisMoveTimeSec, autoReplyPending, revealed, answerStep, manualLibraryOpen, session.current]);
   function requestCommentary(path: string[], reference?: CommentaryTarget["reference"]) {
     if (!commentaryAllowed || (!(studyMode || manualMode) && !answerOwnerIsCurrent(answerAccess.current))) return;
-    if (manualMode) { setManualAnalysisExpanded(true); setManualPanelOpen(false); }
+    if (manualMode) setManualCommentaryOpen(true);
     setCommentaryTarget({ context: commentaryContext, moves: path, reference, id: Date.now() });
   }
   function explainCandidate(line: AnalysisLine) {
@@ -2875,6 +2877,35 @@ export function App() {
     target={commentaryTarget} onTargetConsumed={() => setCommentaryTarget(undefined)} replyLabel={!studyMode && !manualMode && (mode === "ai" || mode === "cloud")}
     isAllowed={() => (studyMode || manualMode) ? teachingClient.presentationScope(teachingClient.auth()) === catalogAccountScope : answerOwnerIsCurrent(answerAccess.current)}/>;
 
+  useEffect(() => { setManualCommentaryOpen(false); }, [manualMode, manualGame?.id, catalogAccountScope]);
+  const pageVisible = usePageVisible();
+  const manualPositionKey = JSON.stringify([catalogAccountScope, manualDocumentEpoch.current, manualGame?.id, manualCurrentFen, studyRuleMode]);
+  const manualAnalysisSuspended = !manualMode || !pageVisible || manualSetupOpen || manualLibraryOpen || Boolean(mobileVariation || manualRehearsal) || manualPanelOpen || manualCommentaryOpen || Boolean(manualFullAnalysisProgress?.running);
+  const manualAnalysis = usePositionAnalysis<AnalysisLine[]>({
+    positionKey: JSON.stringify([manualPositionKey, analysisMultiPv, analysisMoveTimeSec]),
+    enabled: manualEngineEnabled && !manualTerminal && (LOCAL_PIKAFISH_AVAILABLE || Boolean(teachingAuth)),
+    suspended: manualAnalysisSuspended,
+    analyze: async signal => {
+      const result = await queryAvailableAnalysis(manualCurrentFen, analysisMoveTimeSec * 1000, analysisMultiPv, signal);
+      signal.throwIfAborted();
+      const lines = await Promise.all(result.lines.filter(line => line.pv.length).map(async line => ({ ...line, analyzedFen: manualCurrentFen, notation: await chineseLine(manualCurrentFen, line.pv).catch(() => line.pv) })));
+      signal.throwIfAborted();
+      return lines.sort((left, right) => left.multipv - right.multipv);
+    },
+  });
+  const manualAnalysisLines = manualAnalysis.value ?? [];
+  const manualCloud = usePositionAnalysis<CloudBookMove[]>({
+    positionKey: manualPositionKey,
+    enabled: manualMode && manualDockTab === "cloud" && !manualTerminal,
+    suspended: manualAnalysisSuspended,
+    analyze: async signal => { const rows = await queryCloudBook(manualCurrentFen); signal.throwIfAborted(); return rows.slice(0, 12); },
+  });
+  useEffect(() => { setManualActiveAnalysis(0); }, [manualPositionKey, analysisMultiPv]);
+  useEffect(() => {
+    if (manualMode && pageVisible && manualPanelOpen && manualReportPosition.current === manualPositionKey) return;
+    manualReportRequest.current?.abort();
+    setManualFullAnalysisProgress(progress => progress?.running ? { ...progress, running: false } : progress);
+  }, [manualMode, pageVisible, manualPanelOpen, manualPositionKey]);
   const manualReadOnly = manualGame?.readOnly === true || manualGame?.origin?.kind === "providerMirror";
   const manualFolderPath = cleanManualFolderPath(manualFolder);
   const manualMirrorFolderSelected = manualFolderPath === TTXQ_MIRROR_FOLDER || manualFolderPath.startsWith(`${TTXQ_MIRROR_FOLDER}/`);
@@ -3046,11 +3077,11 @@ export function App() {
     return () => { active = false;window.clearTimeout(expiryTimer); document.removeEventListener("visibilitychange", refreshSession); };
   }, [teachingAuth?.user.id, teachingAuth?.user.orgId, teachingAuth?.user.role,teachingAuth?.user.vipActive,teachingAuth?.user.vipExpiresAt]);
   async function resetAnalysis(workspace: MobileWorkspaceMode = workspaceMode, clear = true) {
+    if (workspace === "manual") { manualAnalysis.cancel(clear); return; }
     analysisGeneration.current += 1;
     setAnalysisPending(false);
     if (clear) {
       if (workspace === "study") { setStudyAnalysisLines([]); setStudyActiveAnalysis(0); }
-      else if (workspace === "manual") { setManualAnalysisLines([]); setManualActiveAnalysis(0); }
       else { setTrainingAnalysisLines([]); setTrainingActiveAnalysis(0); }
     }
     await cancelPikafishSearch().catch(() => undefined);
@@ -3063,9 +3094,9 @@ export function App() {
     }
     await resetAnalysis("training");
   }
-  async function queryAvailableAnalysis(fen: string, moveTimeMs: number, multiPv: number): Promise<PikafishAnalysis> {
-    if (LOCAL_PIKAFISH_AVAILABLE) return queryPikafishAnalysis(fen, moveTimeMs, multiPv);
-    const result = await teachingClient.analyzePosition(fen, moveTimeMs, multiPv);
+  async function queryAvailableAnalysis(fen: string, moveTimeMs: number, multiPv: number, signal?: AbortSignal): Promise<PikafishAnalysis> {
+    if (LOCAL_PIKAFISH_AVAILABLE) return queryPikafishAnalysis(fen, moveTimeMs, multiPv, signal);
+    const result = await teachingClient.analyzePosition(fen, moveTimeMs, multiPv, signal);
     const lines: PikafishAnalysisLine[] = result.lines.map((line) => ({
       multipv: line.multipv,
       depth: line.depth ?? 0,
@@ -3758,28 +3789,20 @@ export function App() {
   }
   async function startAnalysis(requestedMultiPv = analysisMultiPv, revealStudyEnginePanel = false) {
     if (mobileVariation) return;
+    if (manualMode) { manualAnalysis.refresh(); return; }
     const target = workspaceMode;
-    const standalone = target === "study" || target === "manual";
-    const terminal = target === "manual" ? manualTerminal : studyTerminal;
+    const standalone = target === "study";
+    const terminal = studyTerminal;
     if ((!LOCAL_PIKAFISH_AVAILABLE && !teachingClient.auth()) || (standalone && terminal) || (!standalone && (!problem || autoReplyPending || revealed))) return;
-    const startingFen = target === "manual" ? manualStartingFen : standalone ? studyStartingFen : problem!.startingFen;
-    const currentMoves = target === "manual" ? currentManualMoves : standalone ? currentStudyMoves : displayedTrainingMoves;
+    const startingFen = standalone ? studyStartingFen : problem!.startingFen;
+    const currentMoves = standalone ? currentStudyMoves : displayedTrainingMoves;
     const request = ++analysisGeneration.current;
     if (target === "study" && revealStudyEnginePanel) setStudyPanelTab("engine");
-    if (target === "manual") {
-      setManualPanelTab("analysis");
-      setManualAnalysisExpanded(true);
-      setManualPanelOpen(false);
-    }
     setAnalysisPending(true);
     if (target === "study") {
       setStudyAnalysisLines([]);
       setStudyActiveAnalysis(0);
       setStudyNotice(`${LOCAL_PIKAFISH_AVAILABLE ? "本地" : "服务端"} Pikafish 正在分析当前局面…`);
-    } else if (target === "manual") {
-      setManualAnalysisLines([]);
-      setManualActiveAnalysis(0);
-      setManualNotice(`${LOCAL_PIKAFISH_AVAILABLE ? "本地" : "服务端"} Pikafish 正在分析当前录谱局面…`);
     } else {
       setTrainingAnalysisLines([]);
       setTrainingActiveAnalysis(0);
@@ -3794,24 +3817,21 @@ export function App() {
       if (request !== analysisGeneration.current) return;
       const sorted = translated.sort((left, right) => left.multipv - right.multipv);
       if (target === "study") setStudyAnalysisLines(sorted);
-      else if (target === "manual") setManualAnalysisLines(sorted);
       else setTrainingAnalysisLines(sorted);
       const message = translated.length ? "AI 拆棋完成：点击候选可突出对应箭头。" : "Pikafish 没有返回可显示的候选线。";
       if (target === "study") setStudyNotice(message);
-      else if (target === "manual") setManualNotice(message);
       else setNotice(message);
     } catch (error) {
       if (request === analysisGeneration.current) {
         const message = error instanceof Error ? error.message : "AI 拆棋失败。";
         if (target === "study") setStudyNotice(message);
-        else if (target === "manual") setManualNotice(message);
         else setNotice(message);
       }
     } finally {
       if (request === analysisGeneration.current) setAnalysisPending(false);
     }
   }
-  async function stopAnalysis() { await resetAnalysis(); if (studyMode) setStudyNotice("已停止 AI 拆棋。"); else if (manualMode) setManualNotice("已停止 AI 分析。"); else setNotice("已停止 AI 拆棋。"); }
+  async function stopAnalysis() { if (manualMode) setManualEngineEnabled(false); await resetAnalysis(); if (studyMode) setStudyNotice("已停止 AI 拆棋。"); else if (manualMode) setManualNotice("已停止 AI 分析。"); else setNotice("已停止 AI 拆棋。"); }
   async function enableStudyEngine() {
     if ((!LOCAL_PIKAFISH_AVAILABLE && !teachingClient.auth()) || studyTerminal) return;
     localStorage.setItem(STUDY_ENGINE_ENABLED_KEY, "true");
@@ -3838,10 +3858,9 @@ export function App() {
     setAnalysisMultiPv(next);
     setTrainingAnalysisLines([]); setTrainingActiveAnalysis(0);
     setStudyAnalysisLines([]); setStudyActiveAnalysis(0);
-    setManualAnalysisLines([]); setManualActiveAnalysis(0);
-    await resetAnalysis(workspaceMode, false);
+    setManualActiveAnalysis(0);
+    if (!manualMode) await resetAnalysis(workspaceMode, false);
     if (studyMode && studyEngineEnabled && LOCAL_PIKAFISH_AVAILABLE && !studyTerminal) void startAnalysis(next);
-    if (manualMode && manualEngineEnabled && LOCAL_PIKAFISH_AVAILABLE && !manualTerminal) void startAnalysis(next);
   }
   async function changeAnalysisMoveTimeSec(value: number) {
     if (autoReplyPending) return;
@@ -3850,8 +3869,8 @@ export function App() {
     setAnalysisMoveTimeSec(next);
     setTrainingAnalysisLines([]); setTrainingActiveAnalysis(0);
     setStudyAnalysisLines([]); setStudyActiveAnalysis(0);
-    setManualAnalysisLines([]); setManualActiveAnalysis(0);
-    await resetAnalysis(workspaceMode, false);
+    setManualActiveAnalysis(0);
+    if (!manualMode) await resetAnalysis(workspaceMode, false);
   }
   function toggleAnalysisArrows() {
     setAnalysisArrowsVisible((visible) => {
@@ -5012,7 +5031,7 @@ export function App() {
     setManualPanelOpen(false);
     setManualLibraryOpen(false);
     setManualReturnToLibrary(false);
-    setManualAnalysisExpanded(false);
+    setManualDockTab("moves");
     setManualMenuOpen(false);
     setWorkspaceMode("training");
     if (trainingTimerWasRunning.current && problem && !ended && !revealed) startClock();
@@ -5039,7 +5058,7 @@ export function App() {
     setManualSelected(undefined);
     setManualSetupOpen(false);
     setManualPanelOpen(false);
-    setManualAnalysisExpanded(false);
+    setManualDockTab("moves");
     setManualMenuOpen(false);
     if (target === "study") {
       session.current += 1;
@@ -5091,12 +5110,12 @@ export function App() {
     setManualSelected(undefined);
     setManualLastMove(undefined);
     setManualTerminal(terminalResult(state.ruleStatus ?? state.status));
-    setManualAnalysisLines([]);
+    manualAnalysis.cancel();
     setManualAnalysisSummaries({});
     setManualNotice(`已新建棋谱：${saved.title}`);
     setManualSaveStatus("已保存");
     setManualSetupOpen(false);
-    setManualAnalysisExpanded(false);
+    setManualDockTab("moves");
     setManualGames(items => [saved, ...items.filter(item => item.id !== saved.id)]);
     // Creating the document has succeeded. A slow library read must not keep
     // the library dialog open or turn a successful creation into a failed jump.
@@ -5140,10 +5159,9 @@ export function App() {
     setManualTerminal(terminalResult(state.ruleStatus ?? state.status));
     setManualNotice(loaded.readOnly ? `已打开只读云镜像：${loaded.title}。如需编辑，请先复制到我的棋谱。` : `已打开：${loaded.title}`);
     setManualSaveStatus("已保存");
-    setManualPanelTab("moves");
     setManualPanelOpen(false);
     setManualLibraryOpen(false);
-    setManualAnalysisExpanded(false);
+    setManualDockTab("moves");
     setManualSetupOpen(false);
     setManualAnalysisSummaries({});
     void loadManualAnalyses(loaded.id).catch(() => undefined);
@@ -5505,10 +5523,8 @@ export function App() {
       return;
     }
     setManualAutoPlaying(false);
-    setManualPanelTab(tab);
-    setManualAnalysisExpanded(tab === "analysis");
-    if (tab === "analysis") setManualAnalysisView("trend");
-    setManualPanelOpen(tab !== "analysis");
+    setManualDockTab(tab === "analysis" ? "engine" : "moves");
+    setManualPanelOpen(false);
     setManualSetupOpen(false);
     setManualMenuOpen(false);
   }
@@ -5523,7 +5539,6 @@ export function App() {
     }
     setManualAutoPlaying(false);
     await navigateManualMove(target);
-    setManualPanelTab("moves");
     setManualNotice(`已定位到第 ${target} 手后的变招点。`);
   }
 
@@ -5569,12 +5584,13 @@ export function App() {
     if (action === "return") { setManualReturnToLibrary(true); await returnFromManualLibrary(); }
     else if (action === "engine") {
       if (manualEngineEnabled) { setManualEngineEnabled(false); await resetAnalysis("manual", false); setManualNotice("AI 已关闭。"); }
-      else { setManualEngineEnabled(true); await startAnalysis(); }
+      else { setManualEngineEnabled(true); setManualDockTab("engine"); }
     }
     else if (action === "previous") { setManualAutoPlaying(false); await navigateManualMove(manualCursor-1); }
     else if (action === "next") await advanceManualContinuation();
     else if (action === "previousVariation" || action === "nextVariation") await jumpManualVariation(action === "previousVariation" ? -1 : 1);
-    else if (action === "report") { openManualPanel("analysis"); setManualAnalysisView("report"); if (!Object.keys(manualAnalysisSummaries).length) await analyzeManualMainline("report"); }
+    else if (action === "report") { setManualAnalysisView("report"); setManualPanelOpen(true); if (!Object.keys(manualAnalysisSummaries).length) await analyzeManualMainline("report"); }
+    else if (action === "explain") { setManualCommentaryOpen(true); requestCommentary(currentManualMoves); }
     else if (action === "favorite") {
       if (manualReadOnly) return;
       const favorite = !manualGame?.favorite; await saveManualGame({ favorite }); setManualNotice(favorite ? "已收藏这盘棋。" : "已取消收藏。");
@@ -5603,7 +5619,7 @@ export function App() {
     else if (action === "setup") await openManualSetup();
     else if (action === "analysis") {
       openManualPanel("analysis");
-      if (!manualEngineEnabled) { setManualEngineEnabled(true); void startAnalysis(); }
+      setManualEngineEnabled(true);
     }
     else if (action === "new") await createManualFromFen(STANDARD_STARTING_FEN, "标准开局");
     else if (action === "flip") toggleBoardFlipped();
@@ -5814,7 +5830,7 @@ export function App() {
     setManualSetupActionOpen(false);
     setManualNotice(restore ? "已恢复未保存的摆棋草稿。" : "默认红先，可切换黑先；选择棋子后点棋盘放置。");
     setManualPanelOpen(false);
-    setManualAnalysisExpanded(false);
+    setManualDockTab("moves");
     setManualMenuOpen(false);
     setManualSelected(undefined);
     setManualSetupOpen(true);
@@ -5995,32 +6011,46 @@ export function App() {
       setManualNotice("请先保存棋谱；Web 端需登录后使用服务端 AI 分析。");
       return;
     }
-    const request = ++analysisGeneration.current;
+    manualAnalysis.cancel(false);
+    manualReportRequest.current?.abort();
+    const controller = new AbortController();
+    manualReportRequest.current = controller;
+    manualReportPosition.current = manualPositionKey;
+    const { signal } = controller;
+    const gameId = manualGame.id, epoch = manualDocumentEpoch.current;
+    const valid = () => !signal.aborted && manualReportRequest.current === controller && manualDocumentEpoch.current === epoch;
     const total = manualMoves.length + 1;
-    if (manualAnalysisExpanded) setManualPanelTab("analysis");
-    else openManualPanel("analysis");
+    setManualPanelOpen(true);
     setManualAnalysisView(view);
     setManualFullAnalysisProgress({ done: 0, total, running: true });
     const summaries: Record<string, LocalManualAnalysisSummary> = {};
     try {
       for (let index = 0; index < total; index += 1) {
-        if (request !== analysisGeneration.current) break;
+        if (!valid()) return;
         const position = await boardAt(manualStartingFen, manualMoves.slice(0, index), studyRuleMode);
-        const result = await queryAvailableAnalysis(position.fen, analysisMoveTimeSec * 1000, 1);
+        if (!valid()) return;
+        const result = await queryAvailableAnalysis(position.fen, analysisMoveTimeSec * 1000, 1, signal);
+        if (!valid()) return;
         const first = result.lines[0];
         if (first) {
-          const summary: LocalManualAnalysisSummary = { gameId: manualGame.id, nodeId: manualNodeId(index), fen: position.fen, scoreCp: first.scoreCp, mate: first.mate, depth: first.depth, bestMove: result.bestMove || first.pv[0] || "", pv: first.pv, updatedAt: new Date().toISOString() };
+          const summary: LocalManualAnalysisSummary = { gameId, nodeId: manualNodeId(index), fen: position.fen, scoreCp: first.scoreCp, mate: first.mate, depth: first.depth, bestMove: result.bestMove || first.pv[0] || "", pv: first.pv, updatedAt: new Date().toISOString() };
           summaries[summary.nodeId] = summary;
           await trainingStore.saveManualAnalysis(summary);
         }
+        if (!valid()) return;
         setManualFullAnalysisProgress({ done: index + 1, total, running: index + 1 < total });
       }
-      setManualAnalysisSummaries((current) => ({ ...current, ...summaries }));
-      setManualNotice(request === analysisGeneration.current ? "整局主线分析完成。" : "整局分析已停止。");
+      if (valid()) {
+        setManualAnalysisSummaries(current => ({ ...current, ...summaries }));
+        setManualNotice("整局主线分析完成。");
+      }
     } catch (error) {
-      if (request === analysisGeneration.current) setManualNotice(error instanceof Error ? error.message : "整局 AI 分析失败，请稍后重试。");
+      if (valid()) setManualNotice(error instanceof Error ? error.message : "整局 AI 分析失败，请稍后重试。");
     } finally {
-      if (request === analysisGeneration.current) setManualFullAnalysisProgress((progress) => progress ? { ...progress, running: false } : progress);
+      if (manualReportRequest.current === controller) {
+        manualReportRequest.current = undefined;
+        setManualFullAnalysisProgress(progress => progress ? { ...progress, running: false } : progress);
+      }
     }
   }
 
@@ -6455,8 +6485,8 @@ export function App() {
   const studyArrowActiveIndex = studyPanelTab === "engine" ? Math.min(studyActiveAnalysis, Math.max(visibleStudyAnalysisLines.length - 1, 0)) : 0;
   const manualScoreSide = sideToMove(manualStartingFen, currentManualMoves);
   const visibleManualAnalysisLines = manualAnalysisLines.slice(0, analysisMultiPv);
-  const manualArrowMoves = analysisArrowsVisible && manualEngineEnabled ? visibleManualAnalysisLines.map((item) => item.pv[0]) : [];
-  const manualArrowActiveIndex = Math.min(manualActiveAnalysis, Math.max(visibleManualAnalysisLines.length - 1, 0));
+  const manualArrowMoves = !analysisArrowsVisible ? [] : manualDockTab === "cloud" ? (manualCloud.value ?? []).slice(0, analysisMultiPv).map(item => item.iccs) : manualEngineEnabled ? visibleManualAnalysisLines.map(item => item.pv[0]) : [];
+  const manualArrowActiveIndex = manualDockTab === "cloud" ? 0 : Math.min(manualActiveAnalysis, Math.max(visibleManualAnalysisLines.length - 1, 0));
   const manualTrendSamples = useMemo<ManualTrendSample[]>(() => Array.from({ length: manualMoves.length + 1 }, (_, index) => {
     const summary = manualAnalysisSummaries[manualNodeId(index)];
     const scoreSide = sideToMove(manualStartingFen, manualMoves.slice(0, index));
@@ -6521,9 +6551,13 @@ export function App() {
   const manualLatestSummary = manualAnalysisSummaries[manualNodeId(manualMoves.length)];
   const manualLatestLabel = manualSummaryLabel(manualLatestSummary, sideToMove(manualStartingFen, manualMoves));
   const manualScoreDisplay = (score?: number) => score == null ? "--" : `${score}分`;
+  const manualControls = () => ({ cursor:manualCursor, moveCount:manualMoves.length, canGoNext:Boolean(manualBranchChoices.length), previousVariation:manualForkCursors.some(cursor=>cursor<manualCursor), nextVariation:manualForkCursors.some(cursor=>cursor>manualCursor), playing:manualAutoPlaying, engineEnabled:manualEngineEnabled, flipped:boardFlipped, favorite:manualGame?.favorite===true, readOnly:manualReadOnly, menuOpen:manualMenuOpen, onMenu:setManualMenuOpen, onAction:(action:ManualControlAction)=>void runManualControl(action) });
+  const renderManualTree = () => <StudyManualTree canonicalMoves={canonicalManual?.moves ?? manualMoves} canonicalNotation={canonicalManual ? manualBranchNotation.current : manualNotation} onSelectContinuation={choice => void selectManualContinuation(choice).catch(error => setManualNotice(String(error)))} moves={manualMoves} notation={manualNotation} cursor={manualCursor} branches={manualBranches} comments={manualComments} readOnly={manualReadOnly} onCommentChange={(key, comment) => { if (manualReadOnly) return; const comments = { ...manualComments, [key]: comment }; setManualComments(comments); void saveManualGame({ comments }); }} onNavigate={(cursor) => void navigateManualMove(cursor)} onAdopt={(branch, focusCursor) => void adoptManualBranch(branch, focusCursor)} onDelete={id => void deleteManualBranch(id).catch(() => undefined)} onDiscardCurrent={(parentCursor) => { const source=manualPayload(); const choice=manualContinuations(source.moves,manualBranchNotation.current,source.branches,manualMoves.slice(0,parentCursor),manualMoves,manualNotation).find(item=>item.move===manualMoves[parentCursor]); if(choice&&window.confirm(`删除 ${choice.notation} 及其后续？其他分支保留。`))void deleteDisplayedContinuation("manual",choice).catch(error=>setManualNotice(String(error))); }} onMove={moveManualBranch}/>;
+  const renderManualEngine = () => <>
+    <AnalysisPanel lines={manualAnalysisLines} pending={manualAnalysis.pending} activeIndex={manualActiveAnalysis} disabled={Boolean(manualTerminal)} enabled={manualEngineEnabled} multiPv={analysisMultiPv} moveTimeSec={analysisMoveTimeSec} scoreSide={manualScoreSide} arrowsVisible={analysisArrowsVisible} onToggle={() => { if (manualAnalysis.pending) { setManualEngineEnabled(false); manualAnalysis.cancel(false); } else { setManualEngineEnabled(true); manualAnalysis.refresh(); } }} onToggleArrows={toggleAnalysisArrows} onSelect={setManualActiveAnalysis} onMultiPvChange={value=>void changeAnalysisMultiPv(value)} onMoveTimeChange={value=>void changeAnalysisMoveTimeSec(value)} onPreview={line=>openMobileVariation(line.pv,line.analyzedFen)}/>
+    {manualAnalysis.error && <p className="manual-analysis-error" role="alert">{manualAnalysis.error}<button type="button" onClick={manualAnalysis.refresh}>重试</button></p>}
+  </>;
   const renderManualAnalysisBody = () => <section className="manual-analysis-workbench">
-    <AnalysisPanel lines={manualAnalysisLines} pending={analysisPending && manualMode} activeIndex={manualActiveAnalysis} disabled={Boolean(manualTerminal)} enabled={manualEngineEnabled} multiPv={analysisMultiPv} moveTimeSec={analysisMoveTimeSec} scoreSide={sideToMove(manualStartingFen, currentManualMoves)} arrowsVisible={analysisArrowsVisible} onToggle={() => void (analysisPending ? stopAnalysis() : startAnalysis())} onToggleArrows={toggleAnalysisArrows} onSelect={setManualActiveAnalysis} onMultiPvChange={value => void changeAnalysisMultiPv(value)} onMoveTimeChange={value => void changeAnalysisMoveTimeSec(value)} onPreview={line => openMobileVariation(line.pv, line.analyzedFen)}/>
-
     <nav className="manual-analysis-tabs" role="tablist" aria-label="录谱分析视图">
       {([["trend", "局势图"], ["report", "报告"], ["issues", "错误"]] as const).map(([value, label]) => <button key={value} type="button" role="tab" aria-selected={manualAnalysisView === value} className={manualAnalysisView === value ? "active" : ""} onClick={() => setManualAnalysisView(value)}>{label}</button>)}
     </nav>
@@ -7170,7 +7204,6 @@ export function App() {
   </div>}{studyMode && <div className={`study-workspace${mobileLayout ? " mobile-study-pieces" : ""}`}>
     <main className={`study-stage${studyEvaluationVisible ? "" : " evaluation-hidden"}`}><header className={`study-toolbar ${studyMenuOpen ? "menu-open" : ""}`}><nav className="study-command-bar" aria-label="拆棋工具栏">
       <button className="study-return-training" aria-label={studyReturnLabel} title={studyReturnLabel} onClick={() => void closeStudyMode(studyReturnRoute)}><ChevronLeft/><span>{studyReturnLabel}</span></button>
-      <button aria-label="新建棋谱" title="新建棋谱" onClick={() => void switchFromStudyToManualMode()}><FilePenLine/><span>新建棋谱</span></button>
       <button className={studyMenuOpen ? "active" : ""} aria-label="更多功能" title="更多功能" aria-expanded={studyMenuOpen} onClick={() => setStudyMenuOpen((open) => !open)}><Ellipsis/><span>更多</span></button>
       <button aria-label="新建标准棋局" title="新建标准棋局" onClick={() => runStudyMenuAction("standard")}><Plus/><span>新局</span></button>
       <button aria-label="编辑 FEN 局面" title="编辑 FEN 局面" onClick={() => runStudyMenuAction("edit")}><Pencil/><span>编辑</span></button>
@@ -7181,7 +7214,7 @@ export function App() {
     {studyMenuOpen && <section className="study-menu" aria-label="拆棋功能菜单">
         <header><span><strong>拆棋功能</strong><small>临时拆棋，不写题解树</small></span><button type="button" aria-label="关闭拆棋功能菜单" onClick={() => setStudyMenuOpen(false)}><X/></button></header>
         <StudySkinSettings boardSkin={boardSkin} pieceSkin={pieceSkin} boardSkinInfo={boardSkinInfo} riverText={riverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} onBoardSkinChange={changeBoardSkin} onPieceSkinChange={changePieceSkin} onUseSkinSet={useSkinSet} onRiverTextChange={changeRiverText} onRiverTextColorChange={changeRiverTextColor} onRiverTextSizeChange={changeRiverTextSize}/>
-        <div className="study-menu-group"><button onClick={() => runStudyMenuAction("training")}><BookOpen/><span>题库训练</span></button><button onClick={() => runStudyMenuAction("standard")}><Plus/><span>新局</span></button><button className={studyMoveTextOpen ? "active" : ""} onClick={() => runStudyMenuAction("toggleMoves")}><ListRestart/><span>{studyBranches.length ? `棋谱/分支(${studyBranches.length})` : "棋谱/分支"}</span></button></div>
+        <div className="study-menu-group"><button aria-label="新建棋谱" onClick={() => void switchFromStudyToManualMode()}><FilePenLine/><span>新建棋谱</span></button><button onClick={() => runStudyMenuAction("training")}><BookOpen/><span>题库训练</span></button><button onClick={() => runStudyMenuAction("standard")}><Plus/><span>新局</span></button><button className={studyMoveTextOpen ? "active" : ""} onClick={() => runStudyMenuAction("toggleMoves")}><ListRestart/><span>{studyBranches.length ? `棋谱/分支(${studyBranches.length})` : "棋谱/分支"}</span></button></div>
         <div className="study-menu-group"><button aria-label="复制当前局面" onClick={() => runStudyMenuAction("copyFen")}><ClipboardCopy/><span>复制局面</span></button><button aria-label="编辑 FEN 局面" onClick={() => runStudyMenuAction("edit")}><FilePenLine/><span>编辑局面</span></button><button className={boardFlipped ? "active" : ""} onClick={() => runStudyMenuAction("flip")}><FlipVertical2/><span>翻转棋盘</span></button></div>
         <div className="study-menu-group"><button disabled={!problem} onClick={() => runStudyMenuAction("problem")}><BookOpen/><span>当前题局</span></button>{canImportLocal && <button onClick={() => runStudyMenuAction("import")}><FileUp/><span>导入 CBL</span></button>}<button disabled={!studyCursor} onClick={() => runStudyMenuAction("undo")}><Undo2/><span>撤销一步</span></button><button type="button" onClick={() => { setStudyMenuOpen(false); openMobileVariation(); }}>自由推演</button><button disabled={!studyAnalysisLines.length && !studyCloudMoves.length} onClick={() => runStudyMenuAction("candidate")}><CircleCheckBig/><span>采用候选</span></button></div>
         <div className="study-menu-group study-menu-secondary"><button onClick={() => runStudyMenuAction("engine")}><Cpu/><span>引擎分析</span></button><button onClick={() => runStudyMenuAction("cloud")}><Database/><span>云库面板</span></button><button onClick={() => runStudyMenuAction("copyManual")}><ClipboardCopy/><span>复制棋谱</span></button></div>
@@ -7206,41 +7239,35 @@ export function App() {
     </aside>
     {studyMenuOpen && <button className="study-menu-scrim" aria-label="关闭拆棋菜单" onClick={() => setStudyMenuOpen(false)}/>}
   </div>}{manualMode && <div className="manual-workspace study-workspace manual-reference-layout" hidden={manualLibraryOpen} style={manualLibraryOpen ? { display: "none" } : undefined}>
-    <main className={`study-stage manual-stage evaluation-hidden ${manualSetupOpen ? "manual-setup-active" : ""} ${manualAnalysisExpanded ? "manual-analysis-expanded" : ""}`}><header className="study-toolbar manual-statusbar" aria-label="录谱状态">
-      <button type="button" className="manual-return-button" aria-label={manualSetupOpen ? "取消摆棋" : manualReturnToLibrary ? "返回我的棋谱" : "返回我的"} title={manualSetupOpen ? "取消摆棋" : manualReturnToLibrary ? "返回我的棋谱" : "返回我的"} onClick={() => manualSetupOpen ? cancelManualSetup() : void returnFromManual()}><ChevronLeft/><span>{manualSetupOpen ? "取消" : manualReturnToLibrary ? "返回我的棋谱" : "返回我的"}</span></button>
-      <div className="recording-title"><b>{manualSetupOpen ? `创建局面 · ${manualSetupSide === "red" ? "红先" : "黑先"}` : manualAnalysisExpanded ? "录谱分析" : manualReadOnly ? `云镜像 · 只读 ${manualCursor}/${manualMoves.length}` : `录谱 ${manualCursor}/${manualMoves.length}`}</b><small>{manualSetupOpen ? manualNotice : `${manualGame?.favorite ? "★ " : ""}${manualGame?.title ?? "标准开局"} · ${manualReadOnly ? "只读" : manualSaveStatus}${manualTerminal ? ` · ${manualTerminal}` : ""}`}</small></div>
+    <main className={`study-stage manual-stage evaluation-hidden ${manualSetupOpen ? "manual-setup-active" : "manual-compact-stage"}`}>
+      {manualSetupOpen ? <header className="study-toolbar manual-statusbar" aria-label="录谱状态"><button type="button" className="manual-return-button" aria-label="取消摆棋" onClick={cancelManualSetup}><ChevronLeft/><span>取消</span></button><div className="recording-title"><b>创建局面 · {manualSetupSide==="red"?"红先":"黑先"}</b><small>{manualNotice}</small></div><button type="button" aria-label="复制当前 FEN" onClick={()=>void copyManualSetupFen()}><ClipboardCopy/></button></header> : <header className="manual-compact-header"><ManualRecordingControls {...manualControls()} part="toolbar"/></header>}
+      {manualSetupOpen ? <section className="manual-setup-board-area">{renderManualSetupTray("black")}{manualSetupError && <p className="manual-setup-toast" role="alert" aria-live="assertive">{manualSetupError}</p>}<FittedBoardArea className="manual-setup-board-slot"><Board pieces={manualSetupPieces} selected={manualSetupSelected} legalTargets={[]} lastMove={undefined} analysisMoves={[]} activeAnalysis={manualArrowActiveIndex} flipped={boardFlipped} feedback={undefined} setupMode={true} showSideCoordinates={true} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={editManualSetupSquare}/></FittedBoardArea>{renderManualSetupTray("red")}</section> : <FittedBoardArea className="manual-play-board-area" suspended={Boolean(manualSaveDraft)}><Board key="manual" pieces={manualPieces} selected={manualSelected} legalTargets={manualLegalTargets} lastMove={manualLastMove} branchMoves={manualBranchChoices.map(item => item.move)} analysisMoves={manualArrowMoves} activeAnalysis={manualArrowActiveIndex} flipped={boardFlipped} feedback={moveFeedback} feedbackEvent={feedbackEvent} setupMode={false} showSideCoordinates={true} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={(square) => void moveManual(square)} onMove={(from, to) => void moveManualFromTo(from, to)}/></FittedBoardArea>}
 
-      {manualSetupOpen ? <button type="button" aria-label="复制当前 FEN" title="复制当前 FEN" onClick={() => void copyManualSetupFen()}><ClipboardCopy/></button> : <button type="button" aria-label="打开棋库" onClick={() => openManualPanel("library")}><Database/></button>}
-    </header>{manualSetupOpen ? <section className="manual-setup-board-area">{renderManualSetupTray("black")}{manualSetupError && <p className="manual-setup-toast" role="alert" aria-live="assertive">{manualSetupError}</p>}<FittedBoardArea className="manual-setup-board-slot"><Board pieces={manualSetupPieces} selected={manualSetupSelected} legalTargets={[]} lastMove={undefined} analysisMoves={[]} activeAnalysis={manualArrowActiveIndex} flipped={boardFlipped} feedback={undefined} setupMode={true} showSideCoordinates={true} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={editManualSetupSquare}/></FittedBoardArea>{renderManualSetupTray("red")}</section> : <FittedBoardArea className="manual-play-board-area" suspended={Boolean(manualSaveDraft)}><Board key="manual" pieces={manualPieces} selected={manualSelected} legalTargets={manualLegalTargets} lastMove={manualLastMove} branchMoves={manualBranchChoices.map(item => item.move)} analysisMoves={manualArrowMoves} activeAnalysis={manualArrowActiveIndex} flipped={boardFlipped} feedback={moveFeedback} feedbackEvent={feedbackEvent} setupMode={false} showSideCoordinates={true} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={(square) => void moveManual(square)} onMove={(from, to) => void moveManualFromTo(from, to)}/></FittedBoardArea>}
-      {manualAnalysisExpanded && <section className="manual-analysis-dock" aria-label="录谱分析面板">
-        <header><strong>自我分析</strong><div><button type="button" onClick={() => void analyzeManualMainline()}>整局分析</button><button type="button" onClick={() => { setManualAnalysisExpanded(false); setManualPanelTab("moves"); }}>收起</button></div></header>
-        <div className="manual-commentary-content">{commentaryPanel}{renderManualAnalysisBody()}</div>
-      </section>}
-      <section className={`manual-bottom-tools ${manualSetupOpen ? "manual-setup-tools" : ""}`} aria-label={manualSetupOpen ? "摆棋工具" : "录谱常用工具"}>
-        {manualSetupOpen ? <>
+      {manualSetupOpen ? <section className="manual-bottom-tools manual-setup-tools" aria-label="摆棋工具">
           <div className="manual-tool-row setup-actions"><button type="button" onClick={() => void fillManualSetupStandardPosition()}>标准</button><button type="button" onClick={clearManualSetupBoard}>清空</button><button type="button" className={manualSetupTool === "erase" ? "active" : ""} aria-label="删除棋子" title="删除棋子" onClick={() => { setManualSetupTool("erase"); setManualSetupSelected(undefined); setManualSetupError(""); setManualNotice("删除模式：点棋盘上的非将帅棋子即可删除。"); }}><Trash2/></button><button type="button" disabled={!manualSetupHistory.length} onClick={undoManualSetup}><Undo2/>撤销</button><button type="button" onClick={toggleBoardFlipped}>翻转</button><button type="button" onClick={() => { rememberManualSetup(); setManualSetupSide((side) => { const next = side === "red" ? "black" : "red"; setManualSetupError(""); setManualNotice(`已设置为${next === "red" ? "红方" : "黑方"}先走。`); return next; }); }}>{manualSetupSide === "red" ? "红先⇄黑先" : "黑先⇄红先"}</button><button type="button" className="primary" onClick={() => void confirmManualSetup()}>完成</button></div>
-        </> : <>
-        <BranchStrip floating light contextKey={`manual:${manualDocumentEpoch.current}:${manualGame?.id}:${currentManualMoves.join(",")}`} hidden={branchOverlayBlocked || manualMenuOpen || manualSetupOpen || manualLibraryOpen} getAnchor={() => ({ board:document.querySelector(".manual-play-board-area > .board-shell"), toolbar:document.querySelector(".manual-bottom-tools"), dock:document.querySelector(".manual-branch-dock"), dockInside:true })} revealKey={manualForkRequest} choices={manualBranchChoices.map((choice,index)=>({...choice,color:branchChoiceColor(index)}))} onRequestDelete={manualReadOnly?undefined:id=>{setManualAutoPlaying(false);setBranchDeleteRequest(id);setBranchManager("manual");}} onManage={() => {setBranchDeleteRequest(undefined);setManualAutoPlaying(false);setBranchManager("manual");}} onSelect={id => { const choice = manualBranchChoices.find(item => item.id === id); if (choice) void selectManualContinuation(choice).catch(error => setManualNotice(String(error))); }}/>
-        <div className="recording-feedback-row"><span className="manual-branch-dock" aria-hidden="true"/><p className="recording-feedback" role="status" title={manualNotice}>{manualNotice}</p><button type="button" className="commentary-entry" disabled={!currentManualMoves.length} onClick={() => { setManualAnalysisExpanded(true); requestCommentary(currentManualMoves); }}><Lightbulb aria-hidden="true"/>讲解这步</button></div>
-        <ManualRecordingControls cursor={manualCursor} moveCount={manualMoves.length} canGoNext={Boolean(manualBranchChoices.length)}
-          previousVariation={manualForkCursors.some(cursor => cursor < manualCursor)} nextVariation={manualForkCursors.some(cursor => cursor > manualCursor)}
-          playing={manualAutoPlaying} engineEnabled={manualEngineEnabled} flipped={boardFlipped} favorite={manualGame?.favorite === true} readOnly={manualReadOnly}
-          menuOpen={manualMenuOpen} onMenu={setManualMenuOpen} onAction={action => void runManualControl(action)}/>
-        </>}
-      </section>
+</section> : <>
+        <section className="manual-compact-dock" aria-label="录谱内容">
+          <ManualRecordingControls {...manualControls()} part="playback"/>
+          <nav className="study-panel-tabs" role="tablist" aria-label="录谱视图">{([["moves","棋谱",ClipboardList],["cloud","云库",Database],["engine","引擎",Cpu]] as const).map(([tab,label,Icon])=><button key={tab} type="button" role="tab" aria-selected={manualDockTab===tab} aria-controls={`manual-dock-${tab}`} id={`manual-tab-${tab}`} className={manualDockTab===tab?"active":""} onClick={()=>setManualDockTab(tab)}><Icon/><span>{label}</span></button>)}</nav>
+          <div className="manual-dock-content" id={`manual-dock-${manualDockTab}`} role="tabpanel" aria-labelledby={`manual-tab-${manualDockTab}`}>
+            {manualDockTab==="moves" && renderManualTree()}
+            {manualDockTab==="engine" && ((LOCAL_PIKAFISH_AVAILABLE||teachingAuth) ? renderManualEngine() : <p className="study-unavailable">Web 端登录后可使用服务端 Pikafish 分析。</p>)}
+            {manualDockTab==="cloud" && <section className="study-cloud-panel" aria-label="当前录谱云库">{manualCloud.pending ? <p className="study-cloud-empty">正在查询当前局面…</p> : manualCloud.error ? <p className="study-cloud-empty" role="alert">{manualCloud.error}<button type="button" onClick={manualCloud.refresh}>重试</button></p> : manualCloud.value?.length ? <div className="study-cloud-list">{manualCloud.value.map((item,index)=>{ const evaluation=cloudEvaluation(item,manualScoreSide);return <button key={item.iccs} disabled={manualReadOnly} onClick={()=>void playManualMove(item.iccs)}><b>{index+1}</b><strong>{item.notation}</strong><em>红分 {evaluation.redScore>0?"+":""}{evaluation.redScore}</em><small>红 {evaluation.redRate.toFixed(1)}% · 黑 {evaluation.blackRate.toFixed(1)}%</small></button>;})}</div> : <p className="study-cloud-empty">当前局面暂无云库着法。</p>}</section>}
+          </div>
+          <div className="manual-dock-status"><span className="manual-branch-dock" aria-hidden="true"/><div className="recording-title"><b>录谱 {manualCursor}/{manualMoves.length}</b><small>{manualGame?.favorite?"★ ":""}{manualGame?.title??"标准开局"} · {manualReadOnly?"只读":manualSaveStatus}</small></div><p className="recording-feedback" role="status" title={manualNotice}>{manualNotice}</p></div>
+        </section>
+        <BranchStrip floating light contextKey={`manual:${manualDocumentEpoch.current}:${manualGame?.id}:${currentManualMoves.join(",")}`} hidden={branchOverlayBlocked || manualMenuOpen || manualSetupOpen || manualLibraryOpen} getAnchor={() => ({ board:document.querySelector(".manual-play-board-area > .board-shell"), toolbar:document.querySelector(".manual-playback-controls"), dock:document.querySelector(".manual-branch-dock"), dockInside:true })} revealKey={manualForkRequest} choices={manualBranchChoices.map((choice,index)=>({...choice,color:branchChoiceColor(index)}))} onRequestDelete={manualReadOnly?undefined:id=>{setManualAutoPlaying(false);setBranchDeleteRequest(id);setBranchManager("manual");}} onManage={() => {setBranchDeleteRequest(undefined);setManualAutoPlaying(false);setBranchManager("manual");}} onSelect={id => { const choice = manualBranchChoices.find(item => item.id === id); if (choice) void selectManualContinuation(choice).catch(error => setManualNotice(String(error))); }}/>
+
+      </>}
     </main>
     {manualPanelOpen && <button className="manual-panel-scrim" aria-label="关闭录谱面板" onClick={() => setManualPanelOpen(false)}/>}
-    {manualPanelOpen && <aside className="manual-panel-sheet" role="dialog" aria-modal="true" aria-label="录谱面板">
-      <header><strong>{manualPanelTab === "moves" ? "" : manualPanelTab === "analysis" ? "本地分析" : "本地棋库"}</strong><button type="button" aria-label="关闭录谱面板" onClick={() => setManualPanelOpen(false)}><X/></button></header>
-      <nav className="study-panel-tabs" role="tablist" aria-label="录谱面板">{([["moves", "棋谱", ClipboardList], ["analysis", "分析", Cpu], ["library", "棋库", Database]] as const).map(([value, label, Icon]) => <button key={value} role="tab" aria-selected={manualPanelTab === value} className={manualPanelTab === value ? "active" : ""} onClick={() => openManualPanel(value)}><Icon/><span>{label}</span></button>)}</nav>
-      <div className="manual-panel-content">
-        {manualPanelTab === "moves" && <StudyManualTree canonicalMoves={canonicalManual?.moves ?? manualMoves} canonicalNotation={canonicalManual ? manualBranchNotation.current : manualNotation} onSelectContinuation={choice => void selectManualContinuation(choice).catch(error => setManualNotice(String(error)))} moves={manualMoves} notation={manualNotation} cursor={manualCursor} branches={manualBranches} comments={manualComments} readOnly={manualReadOnly} onCommentChange={(key, comment) => { if (manualReadOnly) return; const comments = { ...manualComments, [key]: comment }; setManualComments(comments); void saveManualGame({ comments }); }} onNavigate={(cursor) => void navigateManualMove(cursor)} onAdopt={(branch, focusCursor) => void adoptManualBranch(branch, focusCursor)} onDelete={id => void deleteManualBranch(id).catch(() => undefined)} onDiscardCurrent={(parentCursor) => { const source=manualPayload(); const choice=manualContinuations(source.moves,manualBranchNotation.current,source.branches,manualMoves.slice(0,parentCursor),manualMoves,manualNotation).find(item=>item.move===manualMoves[parentCursor]); if(choice&&window.confirm(`删除 ${choice.notation} 及其后续？其他分支保留。`))void deleteDisplayedContinuation("manual",choice).catch(error=>setManualNotice(String(error))); }} onMove={moveManualBranch}/>}
-        {manualPanelTab === "analysis" && renderManualAnalysisBody()}
-
-      </div>
+    {manualPanelOpen && <aside className="manual-panel-sheet manual-report-sheet" role="dialog" aria-modal="true" aria-label="录谱面板">
+      <header><strong>整局分析报告</strong><button type="button" aria-label="关闭录谱面板" onClick={() => setManualPanelOpen(false)}><X/></button></header>
+      <div className="manual-panel-content">{renderManualAnalysisBody()}</div>
       <section className="manual-panel-notice" aria-live="polite"><b>{manualGame?.title ?? "本地录谱"}</b><p>{manualNotice}</p></section>
     </aside>}
   </div>}
+  {manualCommentaryOpen && <div className="manual-feature-backdrop"><section className="manual-feature-dialog" role="dialog" aria-modal="true" aria-label="着法讲解"><header><strong>着法讲解</strong><button type="button" aria-label="关闭着法讲解" onClick={()=>setManualCommentaryOpen(false)}><X/></button></header>{commentaryPanel}</section></div>}
   {manualSetupActionOpen && <div className="confirm-backdrop manual-setup-action-dialog" role="dialog" aria-modal="true" onMouseDown={() => setManualSetupActionOpen(false)}><section onMouseDown={(event) => event.stopPropagation()}>
     <header><strong>摆棋完成</strong><button type="button" aria-label="继续编辑" onClick={() => setManualSetupActionOpen(false)}><X/></button></header>
     <p>局面已通过校验。可先进行临时拆棋分析，或保存到“我的棋谱”。</p>

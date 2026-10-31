@@ -82,8 +82,8 @@ const game={id:'branch-actions',title:'分支操作验收',note:'保留备注',s
  await strip.getByRole('button',{name:'管理变招'}).click();await dialog.getByRole('button',{name:'删除分支 1'}).click();await dialog.getByRole('button',{name:'确认删除',exact:true}).click();await dialog.waitFor({state:'hidden'});
  saved=await read();assert.deepEqual(saved.moves,prefix);assert.equal(saved.branches.length,0);assert.equal(saved.comments[prefix.join(',')],'分叉注释');
  // The paper-and-pencil action must create a new identity even with an existing manual open.
- await page.getByRole('button',{name:'菜单',exact:true}).click();await page.getByRole('button',{name:'棋盘与引擎设置',exact:true}).click();await page.getByRole('button',{name:'切换到拆棋',exact:true}).click();
- await page.getByRole('button',{name:'新建棋谱',exact:true}).click();await page.locator('.recording-title b').getByText('录谱 0/0',{exact:true}).waitFor();
+ await page.getByRole('button',{name:'更多功能',exact:true}).click();await page.getByRole('button',{name:'棋盘与引擎设置',exact:true}).click();await page.getByRole('button',{name:'切换到拆棋',exact:true}).click();
+ await page.getByRole('button',{name:'更多功能',exact:true}).click();await page.getByRole('button',{name:'新建棋谱',exact:true}).click();await page.locator('.recording-title b').getByText('录谱 0/0',{exact:true}).waitFor();
  const games=await page.evaluate(async()=> (await import(window.storeUrl)).trainingStore.manualGames());assert(games.some(g=>g.id!==game.id&&g.moves.length===0));assert.deepEqual((await read()).moves,prefix);
- assert.deepEqual(errors,[]);console.log('PASS branch colors/badges 320/390/430/820; mainline deletion, write failure/retry, sibling edit/delete, metadata preserved, paper button creates new game');
+ assert.deepEqual(errors,[]);console.log('PASS branch colors/badges 320/390/430/820; mainline deletion, write failure/retry, sibling edit/delete, metadata preserved, More menu creates new game');
  }finally{await browser.close();}})().catch(e=>{console.error(e);process.exitCode=1;});
