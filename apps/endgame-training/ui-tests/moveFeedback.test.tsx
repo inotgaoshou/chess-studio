@@ -48,7 +48,7 @@ describe("actual-move feedback",()=>{
     expect(ui.container.querySelector(".capture-feedback")).toBe(notice);
     act(()=>vi.advanceTimersByTime(FEEDBACK_DURATION.capture-280));expect(ui.container.querySelector(".capture-feedback")).toBeNull();
   });
-  it("anchors capture feedback and the fading captured piece to the actual destination",()=>{
+  it("keeps the captured piece at the destination while the notice gathers at the river",()=>{
     vi.useFakeTimers();
     const captured:BoardPiece={row:1,col:4,color:"black",kind:"pawn",label:"卒"};
     const event=trainingFeedbackEvent([piece,captured],{...state,status:"正常"},"c9e8");
@@ -59,6 +59,7 @@ describe("actual-move feedback",()=>{
     const target=ui.container.querySelector('.board-square[aria-label="e8 红马"]') as HTMLElement;
     const shadow=ui.container.querySelector('.board-captured-piece') as HTMLElement;
     const notice=ui.container.querySelector('.capture-feedback') as HTMLElement;
+    expect(notice.classList.contains('feedback-center')).toBe(true);
     expect(shadow.style.getPropertyValue("--piece-left")).toBe(target.style.getPropertyValue("--piece-left"));
     expect(shadow.style.getPropertyValue("--piece-top")).toBe(target.style.getPropertyValue("--piece-top"));
     expect(notice.style.getPropertyValue("--feedback-x")).toBe(target.style.getPropertyValue("--piece-left"));

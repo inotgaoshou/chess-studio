@@ -41,16 +41,24 @@ const fs=require('node:fs');
        const seal=document.querySelector('.board-event-seal');
        for(const a of document.querySelector('.xiangqi-board').getAnimations({subtree:true})){a.pause();a.currentTime=time;}
        const glyph=seal.querySelector('.feedback-lettering');
-       const r=glyph.getBoundingClientRect(),board=seal.closest('.xiangqi-board').getBoundingClientRect();
-       return {label:seal.getAttribute('aria-label'),pointer:getComputedStyle(seal).pointerEvents,inside:r.left>=board.left-1&&r.right<=board.right+1&&r.top>=board.top-1&&r.bottom<=board.bottom+1};
+       const r=glyph.getBoundingClientRect(),board=seal.closest('.xiangqi-board').getBoundingClientRect(),badge=seal.getBoundingClientRect();
+       return {label:seal.getAttribute('aria-label'),pointer:getComputedStyle(seal).pointerEvents,centered:Math.abs(badge.x+badge.width/2-board.x-board.width/2)<1&&Math.abs(badge.y+badge.height/2-board.y-board.height/2)<1,inside:r.left>=board.left-1&&r.right<=board.right+1&&r.top>=board.top-1&&r.bottom<=board.bottom+1};
      },time);
      assert.equal(result.pointer,'none');assert(result.inside,`${width}/${kind}/${time} lettering clipped`);
+     assert(result.centered,`${width}/${kind}/${time} notice must stay at the river, not follow the captured piece`);
      assert.deepEqual(await board.boundingBox(),before);
      if(output&&width===390)await board.screenshot({path:`${output}/${kind}-${time}.png`,animations:'allow'});
     }
     await page.locator('[aria-label="a9"]').click();
     assert(await page.evaluate(()=>window.touches>0),'Seal must not block board input');
    }
+   await page.emulateMedia({reducedMotion:'reduce'});
+   await page.evaluate(()=>window.renderSeal('ordinary'));
+   const reduced=await page.evaluate(()=>({
+     hidden:[...document.querySelectorAll('.feedback-embers,.feedback-rim,.feedback-flare')].every(e=>getComputedStyle(e).display==='none'),
+     label:document.querySelector('.board-event-seal').textContent,
+   }));
+   assert(reduced.hidden,'Reduced motion must suppress light trails');assert.equal(reduced.label,'吃');
    console.log(`PASS ${width}px: six event types, three phases, stable layout and touch-through`);
    await page.close();
   }

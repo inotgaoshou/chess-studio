@@ -6,11 +6,12 @@
   transform:translate(-50%,-50%); pointer-events:none; isolation:isolate;
   animation:feedback-lifetime var(--feedback-duration,1450ms) linear both;
 }
-.board-event-seal.feedback-center { left:50%; top:50%; --feedback-title-scale:3.4; }
+.board-event-seal.feedback-center { left:50%; top:50%; --feedback-title-scale:2.8; }
+.board-event-seal.feedback-ember { --feedback-title-scale:2.65; }
 .board-event-seal.feedback-terminal { width:28%; max-width:180px; }
 .board-event-seal svg { display:block; width:100%; height:100%; overflow:visible; }
 .board-event-seal text { font-family:QixiFeedbackBrush,STKaiti,KaiTi,serif; font-weight:400; }
-.board-event-seal :is(.feedback-lettering,.feedback-medallion,.feedback-flare,.feedback-smoke,.feedback-slash) {
+.board-event-seal :is(.feedback-lettering,.feedback-medallion,.feedback-flare,.feedback-smoke,.feedback-slash,.feedback-rim,.feedback-embers) {
   transform-box:view-box; transform-origin:100px 100px;
   animation-duration:var(--feedback-duration,1450ms); animation-fill-mode:both; animation-timing-function:linear;
 }
@@ -19,27 +20,44 @@
 .feedback-flare { animation-name:feedback-light-impact; }
 .feedback-smoke { animation-name:feedback-ink-gather; }
 .feedback-slash { animation-name:feedback-slash-cut; }
+.feedback-rim { animation-name:feedback-rim-glow; }
+.feedback-embers { animation-name:feedback-ember-gather; filter:drop-shadow(0 0 5px #ffae35); }
+.feedback-ember .feedback-smoke { display:none; }
+.feedback-ember .feedback-lettering { filter:drop-shadow(0 0 3px #fff0a9) drop-shadow(1px 3px 2px #b43b0b); }
+.feedback-ink:not(.feedback-terminal) .feedback-lettering { filter:drop-shadow(2px 3px 2px #481509aa); }
 .feedback-terminal .feedback-lettering { animation-name:feedback-terminal-settle; }
 @keyframes feedback-lifetime { 0%,8% { opacity:0; } 11%,86% { opacity:1; } 100% { opacity:0; } }
 /* Large calligraphy contracts into the small seal, as opposed to a static badge. */
 @keyframes feedback-title-settle {
   0%,9% { opacity:0; transform:scale(var(--feedback-title-scale)) rotate(-9deg); }
-  16% { opacity:1; transform:scale(var(--feedback-title-scale)) rotate(-7deg); }
-  27% { opacity:1; transform:scale(.92) rotate(-5deg); }
-  34%,86% { opacity:1; transform:scale(1) rotate(-5deg); }
+  17% { opacity:1; transform:scale(var(--feedback-title-scale)) rotate(-7deg); }
+  31% { opacity:1; transform:scale(.88) rotate(-5deg); }
+  39%,86% { opacity:1; transform:scale(1) rotate(-5deg); }
   100% { opacity:0; transform:scale(.97) rotate(-5deg); }
 }
 @keyframes feedback-stamp-settle {
-  0%,18% { opacity:0; transform:scale(.2) rotate(-35deg); }
-  28% { opacity:1; transform:scale(1.06) rotate(-5deg); }
-  38%,88% { opacity:1; transform:scale(1) rotate(0deg); }
+  0%,23% { opacity:0; transform:scale(.2) rotate(-35deg); }
+  33% { opacity:1; transform:scale(1.06) rotate(-5deg); }
+  42%,88% { opacity:1; transform:scale(1) rotate(0deg); }
   100% { opacity:0; transform:scale(.98) rotate(0deg); }
 }
 @keyframes feedback-light-impact {
-  0%,20% { opacity:0; transform:scale(.25); }
-  26% { opacity:1; transform:scale(1.35); }
-  37% { opacity:.5; transform:scale(1.1); }
-  49%,100% { opacity:0; transform:scale(1.3); }
+  0%,25% { opacity:0; transform:scale(.25); }
+  32% { opacity:1; transform:scale(1.35); }
+  41% { opacity:.5; transform:scale(1.1); }
+  53%,100% { opacity:0; transform:scale(1.3); }
+}
+@keyframes feedback-rim-glow {
+  0%,31% { opacity:0; transform:scale(.8) rotate(-25deg); }
+  43% { opacity:.95; transform:scale(1) rotate(0deg); }
+  65%,86% { opacity:.55; transform:scale(1) rotate(12deg); }
+  100% { opacity:0; transform:scale(1) rotate(15deg); }
+}
+@keyframes feedback-ember-gather {
+  0%,9% { opacity:0; transform:scale(2) rotate(-45deg); }
+  18% { opacity:.85; transform:scale(1.9) rotate(-20deg); }
+  34% { opacity:.9; transform:scale(1) rotate(20deg); }
+  51%,100% { opacity:0; transform:scale(1.05) rotate(38deg); }
 }
 @keyframes feedback-ink-gather {
   0%,8% { opacity:0; transform:scale(.2); }
@@ -61,5 +79,5 @@
 @media (prefers-reduced-motion:reduce) {
   .board-event-seal,.board-event-seal :is(.feedback-lettering,.feedback-medallion) { animation:none; transform:none; }
   .board-event-seal { transform:translate(-50%,-50%); }
-  .board-event-seal :is(.feedback-flare,.feedback-smoke,.feedback-slash) { display:none; }
+  .board-event-seal :is(.feedback-flare,.feedback-smoke,.feedback-slash,.feedback-embers,.feedback-rim) { display:none; }
 }

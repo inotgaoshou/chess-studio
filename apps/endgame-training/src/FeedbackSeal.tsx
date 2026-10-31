@@ -7,8 +7,9 @@ export function FeedbackSeal({kind,event,style}:{kind:Exclude<TrainingFeedbackKi
   const id=useId().replace(/:/g,"");
   const capture=kind==="capture", variant=captureVariant(event), terminal=kind==="checkmate"||kind==="stalemate";
   const label=capture?captureLabel(event):TRAINING_FEEDBACK_PACK.labels[kind];
-  const center=!capture||variant!=="ordinary";
-  return <span className={`board-event-seal ${capture?"capture-feedback":"ink-feedback"} ${kind} capture-${variant} ${center?"feedback-center":""} ${terminal?"feedback-terminal":""}`} style={style} role="status" aria-label={label}>
+  // Notices gather at the river; only the captured piece stays at the move's destination.
+  const impact=capture&&variant==="ordinary"?"ember":"ink";
+  return <span className={`board-event-seal ${capture?"capture-feedback":"ink-feedback"} ${kind} capture-${variant} feedback-center feedback-${impact} ${terminal?"feedback-terminal":""}`} style={style} role="status" aria-label={label}>
     <svg viewBox="0 0 200 200" aria-hidden="true">
       <defs>
         <radialGradient id={`${id}-smoke`}><stop stopColor="#211a14" stopOpacity=".85"/><stop offset=".55" stopColor="#30261d" stopOpacity=".5"/><stop offset="1" stopColor="#30261d" stopOpacity="0"/></radialGradient>
@@ -22,6 +23,14 @@ export function FeedbackSeal({kind,event,style}:{kind:Exclude<TrainingFeedbackKi
         <g fill="none" stroke="#a81e11" strokeWidth="3" strokeLinecap="round"><path d="M30 73C47 22 117 4 161 43M25 134C53 188 133 199 174 146M58 25l-12 13M145 173l18-10"/><path d="M23 87C15 113 28 144 46 158M173 53c14 18 17 44 11 66" strokeWidth="2"/></g>
         <g fill="#b62d17"><path d="M29 143l-13 15 20-9M158 33l16-11-8 20M55 174l-8 12 17-8"/><circle cx="22" cy="70" r="2"/><circle cx="178" cy="140" r="2"/></g>
       </g>
+      <g className="feedback-rim" fill="none" stroke={`url(#${id}-gold)`} strokeLinecap="round">
+        <path d="M40 61C62 25 117 20 151 50M166 78C180 119 146 166 107 172M80 171C49 165 28 140 28 112" strokeWidth="3"/>
+        <path d="M48 48C70 28 100 25 122 31M170 108C165 144 142 162 125 166" strokeWidth="1.5"/>
+      </g>
+      {impact==="ember"&&<g className="feedback-embers" fill="none" strokeLinecap="round">
+        <path d="M43 63C14 110 51 163 110 161C158 160 179 113 159 71" stroke="#fa982f" strokeWidth="9"/>
+        <path d="M32 84C26 131 66 167 113 156C144 149 158 126 153 105" stroke="#fff0a9" strokeWidth="3"/>
+      </g>}
       <g className="feedback-flare"><circle cx="100" cy="100" r="98" fill={`url(#${id}-flare)`}/><path d="M100 4L106 88 190 100 106 109 100 194 93 110 9 100 93 91Z" fill="#fff2ab"/><circle cx="100" cy="100" r="67" fill="none" stroke="#ffdb74" strokeWidth="2"/></g>
       {terminal&&<g className="feedback-slash"><path d="M-30 117L224 71 48 116 226 94 15 136 180 104Z" fill="#a1190d"/><path d="M-30 103L224 72" stroke="#fff3ae" strokeWidth="5"/><path d="M-30 112L213 83" stroke="#e95922" strokeWidth="3"/></g>}
       <g className="feedback-lettering" fill={`url(#${id}-gold)`} stroke="#a73418" strokeWidth="1.6" paintOrder="stroke fill" textAnchor="middle">
