@@ -7135,14 +7135,15 @@ html .mobile-solver-workspace > .mobile-problem-navigator.open { top:var(--solve
 
 /* Recording follows a board-first layout, with persistent playback controls. */
 .manual-reference-layout { background:linear-gradient(155deg,#e9f3eb,#d8eadf 70%,#cde3d5); }
-.manual-reference-layout .manual-statusbar { width:min(100%,760px); min-height:52px; height:52px; grid-template-columns:minmax(44px,105px) minmax(0,1fr) 44px; padding:4px; border:0; border-bottom:1px solid #b9d0c0; border-radius:0; background:transparent; box-shadow:none; }
+.manual-reference-layout .manual-statusbar { width:min(100%,760px); min-height:52px; height:52px; grid-template-columns:100px minmax(0,1fr) 100px; padding:4px; border:0; border-bottom:1px solid #b9d0c0; border-radius:0; background:transparent; box-shadow:none; }
 .manual-reference-layout .manual-statusbar > .recording-title { text-align:center; padding:0 5px; gap:3px; }
 .manual-reference-layout .manual-statusbar b { font-size:19px; line-height:1.2; color:#214d38; }
 .manual-reference-layout .manual-statusbar small { font-size:11px; color:#5c7b67; }
-.manual-reference-layout .manual-statusbar > button { min-height:42px; min-width:42px; background:#f8fcf8bb; border:1px solid #bdd3c3; border-radius:12px; }
+.manual-reference-layout .manual-statusbar > button { height:44px; min-height:44px; width:44px; min-width:44px; display:flex; align-items:center; justify-content:center; gap:3px; padding:0; background:#f8fcf8bb; border:1px solid #bdd3c3; border-radius:10px; box-shadow:0 1px 2px #254c340a; }
+.manual-reference-layout .manual-statusbar > button:last-child { justify-self:end; }
 .manual-reference-layout .manual-statusbar > button.manual-return-button { min-width:44px; width:auto; border-right:1px solid #bdd3c3; padding:0 7px; }
 .manual-reference-layout .manual-return-button > span { display:inline; font-size:11px; }
-.manual-reference-layout .manual-statusbar > button svg { width:20px; height:20px; }
+.manual-reference-layout .manual-statusbar > button svg { width:18px; height:18px; flex:none; stroke-width:1.8; }
 .manual-reference-layout .manual-bottom-tools:not(.manual-setup-tools) { width:min(100%,760px); padding:5px 6px 7px; gap:5px; border:0; border-radius:14px; background:#f5faf5d9; box-shadow:0 2px 10px #254c3410; }
 .manual-reference-layout .recording-feedback-row { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:8px; min-width:0; height:44px; min-height:44px; overflow:hidden; }
 .manual-reference-layout .recording-feedback { margin:0; padding:1px 5px 3px; font-size:11px; line-height:1.3; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#4e745c; text-align:center; }
@@ -7174,7 +7175,9 @@ html .mobile-solver-workspace > .mobile-problem-navigator.open { top:var(--solve
 .local-manual-rehearsal .rehearsal-progress { margin:0; font-size:13px; }.local-manual-rehearsal > .board-shell { width:min(100%,65vh,700px); height:auto; align-self:center; }.local-manual-rehearsal > footer { width:min(100%,760px); text-align:center; }.local-manual-rehearsal footer p { margin:0 0 8px; font-size:14px; }.local-manual-rehearsal footer div { display:flex; justify-content:center; gap:12px; }
 html.phone-webview .manual-reference-layout .manual-stage:not(.manual-setup-active):not(.manual-analysis-expanded),html.tablet-webview .manual-reference-layout .manual-stage:not(.manual-setup-active):not(.manual-analysis-expanded) { grid-template-rows:56px minmax(0,1fr) auto!important; gap:6px; }
 html.phone-webview .manual-reference-layout .manual-bottom-tools:not(.manual-setup-tools) { min-height:0; width:calc(100% - 8px); }
-html.phone-webview .manual-reference-layout .manual-statusbar { grid-template-columns:100px minmax(0,1fr) 42px; height:54px; min-height:54px; }
+html.phone-webview .manual-reference-layout .manual-statusbar { grid-template-columns:100px minmax(0,1fr) 100px; height:54px; min-height:54px; }
+html.phone-webview .manual-reference-layout .manual-statusbar > button { height:44px; min-height:44px; width:44px; min-width:44px; }
+html.phone-webview .manual-reference-layout .manual-statusbar > button.manual-return-button { width:auto; }
 html.phone-webview .manual-reference-layout .manual-return-button > span { font-size:10px; }
 @media (max-width:380px) { .recording-navigation button { font-size:10px; }.recording-navigation svg { width:21px;height:21px; }.recording-quick-actions button { font-size:10px; } }
 html.phone-webview .manual-reference-layout .manual-statusbar b,html.tablet-webview .manual-reference-layout .manual-statusbar b { font-size:18px; }
@@ -7184,6 +7187,8 @@ html.phone-webview .manual-reference-layout .manual-statusbar small { display:bl
 .local-manual-rehearsal > * { min-width:0; max-width:100%; }
 .local-manual-rehearsal > header { width:100%; max-width:760px; }
 .local-manual-rehearsal > header > button { flex:none; }
+.local-manual-rehearsal > header button,.local-manual-rehearsal > footer button { height:44px; min-height:44px; padding:0 10px; display:inline-flex; align-items:center; justify-content:center; gap:5px; font-size:13px; white-space:nowrap; }
+.local-manual-rehearsal > header button svg,.local-manual-rehearsal > footer button svg { width:18px; height:18px; stroke-width:1.8; flex:none; }
 .local-manual-rehearsal > header strong { display:block; max-width:100%; }
 .local-manual-rehearsal > .board-shell { border-radius:3px; box-shadow:0 1px 0 #fff9dc99, 0 3px 5px #49351f38, 0 14px 26px #304d302d; }
 .local-manual-rehearsal .xiangqi-board .board-square { --lift-piece-size:94.6%; min-width:0; min-height:0; padding:0; border:0; border-radius:0; background:transparent; box-shadow:none; appearance:none; }
@@ -7249,7 +7254,7 @@ html.phone-webview .manual-reference-layout .manual-stage.manual-analysis-expand
  html.phone-webview .manual-reference-layout .manual-stage:not(.manual-setup-active):not(.manual-analysis-expanded) { grid-template-rows:62px minmax(0,1fr) auto!important; }
  html.phone-webview .manual-reference-layout .manual-stage.manual-analysis-expanded:not(.manual-setup-active) { grid-template-rows:62px minmax(100px,1fr) minmax(120px,28vh) auto!important; }
  html.phone-webview .manual-reference-layout .manual-stage:not(.manual-setup-active) > .manual-statusbar { height:60px; min-height:60px; }
- html.phone-webview .manual-reference-layout .manual-stage:not(.manual-setup-active) > .manual-statusbar > button { min-height:50px; }
+ html.phone-webview .manual-reference-layout .manual-stage:not(.manual-setup-active) > .manual-statusbar > button { height:44px; min-height:44px; }
 }
 
 /* Keep save fields inside the visible viewport, including iOS 15 keyboards. */
