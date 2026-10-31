@@ -1,0 +1,43 @@
+{
+  "source": "5619d80bdb24e944d8076d67beaf5390.mp4",
+  "sourceSha256": "6bb5b25dcb8e6d5ba37439ac1f91247a3129b1798b9d3998ae315ddc57d68f4b",
+  "purpose": "User-requested reference matching for v1.0.9 device acceptance",
+  "samples": {
+    "move": {
+      "startSeconds": 5.805,
+      "durationSeconds": 0.2,
+      "file": "v109-move.wav"
+    },
+    "capture": {
+      "startSeconds": 1.398,
+      "durationSeconds": 0.37,
+      "file": "v109-capture.wav"
+    },
+    "capture-advisor": {
+      "startSeconds": 7.602,
+      "durationSeconds": 0.55,
+      "file": "v109-capture-advisor.wav"
+    },
+    "capture-elephant": {
+      "startSeconds": 23.183,
+      "durationSeconds": 0.61,
+      "file": "v109-capture-elephant.wav"
+    },
+    "check": {
+      "startSeconds": 4.174,
+      "durationSeconds": 0.55,
+      "file": "v109-check.wav"
+    },
+    "checkmate": {
+      "startSeconds": 56.353,
+      "durationSeconds": 0.68,
+      "file": "v109-checkmate.wav"
+    },
+    "stalemate": {
+      "file": "v109-stalemate.wav",
+      "source": "Original deterministic terminal percussion plus locally synthesized Chinese 困毙 (Tingting, 270 wpm); cadence based on reference checkmate",
+      "referenceSample": false
+    }
+  },
+  "unmatched": []
+}

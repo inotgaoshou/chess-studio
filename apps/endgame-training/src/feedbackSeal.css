@@ -1,0 +1,65 @@
+@font-face { font-family:QixiFeedbackBrush; src:url('/fonts/qixi-feedback-brush.woff2') format('woff2'); font-display:swap; }
+.board-event-seal {
+  --feedback-title-scale:2.65;
+  position:absolute; z-index:12; width:22%; max-width:144px; aspect-ratio:1;
+  left:clamp(14%,var(--feedback-x,50%),86%); top:clamp(18%,calc(var(--feedback-y,50%) + 8%),82%);
+  transform:translate(-50%,-50%); pointer-events:none; isolation:isolate;
+  animation:feedback-lifetime var(--feedback-duration,1450ms) linear both;
+}
+.board-event-seal.feedback-center { left:50%; top:50%; --feedback-title-scale:3.4; }
+.board-event-seal.feedback-terminal { width:28%; max-width:180px; }
+.board-event-seal svg { display:block; width:100%; height:100%; overflow:visible; }
+.board-event-seal text { font-family:QixiFeedbackBrush,STKaiti,KaiTi,serif; font-weight:400; }
+.board-event-seal :is(.feedback-lettering,.feedback-medallion,.feedback-flare,.feedback-smoke,.feedback-slash) {
+  transform-box:view-box; transform-origin:100px 100px;
+  animation-duration:var(--feedback-duration,1450ms); animation-fill-mode:both; animation-timing-function:linear;
+}
+.feedback-lettering { animation-name:feedback-title-settle; filter:drop-shadow(1px 2px 1px #66190b99); }
+.feedback-medallion { animation-name:feedback-stamp-settle; }
+.feedback-flare { animation-name:feedback-light-impact; }
+.feedback-smoke { animation-name:feedback-ink-gather; }
+.feedback-slash { animation-name:feedback-slash-cut; }
+.feedback-terminal .feedback-lettering { animation-name:feedback-terminal-settle; }
+@keyframes feedback-lifetime { 0%,8% { opacity:0; } 11%,86% { opacity:1; } 100% { opacity:0; } }
+/* Large calligraphy contracts into the small seal, as opposed to a static badge. */
+@keyframes feedback-title-settle {
+  0%,9% { opacity:0; transform:scale(var(--feedback-title-scale)) rotate(-9deg); }
+  16% { opacity:1; transform:scale(var(--feedback-title-scale)) rotate(-7deg); }
+  27% { opacity:1; transform:scale(.92) rotate(-5deg); }
+  34%,86% { opacity:1; transform:scale(1) rotate(-5deg); }
+  100% { opacity:0; transform:scale(.97) rotate(-5deg); }
+}
+@keyframes feedback-stamp-settle {
+  0%,18% { opacity:0; transform:scale(.2) rotate(-35deg); }
+  28% { opacity:1; transform:scale(1.06) rotate(-5deg); }
+  38%,88% { opacity:1; transform:scale(1) rotate(0deg); }
+  100% { opacity:0; transform:scale(.98) rotate(0deg); }
+}
+@keyframes feedback-light-impact {
+  0%,20% { opacity:0; transform:scale(.25); }
+  26% { opacity:1; transform:scale(1.35); }
+  37% { opacity:.5; transform:scale(1.1); }
+  49%,100% { opacity:0; transform:scale(1.3); }
+}
+@keyframes feedback-ink-gather {
+  0%,8% { opacity:0; transform:scale(.2); }
+  17% { opacity:.8; transform:scale(1.2); }
+  30%,100% { opacity:0; transform:scale(.6); }
+}
+@keyframes feedback-slash-cut {
+  0%,8% { opacity:0; transform:scaleX(.02) rotate(-7deg); }
+  15% { opacity:1; transform:scaleX(1.45) rotate(-7deg); }
+  28%,86% { opacity:1; transform:scaleX(1) rotate(-7deg); }
+  100% { opacity:0; transform:scaleX(1) rotate(-7deg); }
+}
+@keyframes feedback-terminal-settle {
+  0%,10% { opacity:0; transform:scale(1.9) rotate(-12deg); }
+  20% { opacity:1; transform:scale(1.1) rotate(-7deg); }
+  31%,86% { opacity:1; transform:scale(1) rotate(-5deg); }
+  100% { opacity:0; transform:scale(1) rotate(-5deg); }
+}
+@media (prefers-reduced-motion:reduce) {
+  .board-event-seal,.board-event-seal :is(.feedback-lettering,.feedback-medallion) { animation:none; transform:none; }
+  .board-event-seal { transform:translate(-50%,-50%); }
+  .board-event-seal :is(.feedback-flare,.feedback-smoke,.feedback-slash) { display:none; }
+}

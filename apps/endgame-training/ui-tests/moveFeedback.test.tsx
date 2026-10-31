@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render } from "@testing-library/react";
 import { Board } from "../src/App";
-import { cancelTrainingFeedback, playTrainingFeedback, prepareTrainingFeedbackAudio, replayTrainingFeedbackEvent, trainingFeedbackEvent, TRAINING_FEEDBACK_PACK, FEEDBACK_DURATION, unlockTrainingFeedbackAudio } from "../src/moveFeedback";
+import { captureLabel, captureVariant, feedbackAudioCue, cancelTrainingFeedback, playTrainingFeedback, prepareTrainingFeedbackAudio, replayTrainingFeedbackEvent, trainingFeedbackEvent, TRAINING_FEEDBACK_PACK, FEEDBACK_DURATION, unlockTrainingFeedbackAudio } from "../src/moveFeedback";
 import { currentVerification, needsTerminalWin, terminalWin, VERIFIER_VERSION } from "../src/verificationPolicy";
 import type { BoardPiece, BoardState } from "../src/types";
 
@@ -43,7 +43,10 @@ describe("actual-move feedback",()=>{
     act(()=>vi.advanceTimersByTime(100));ui.rerender(<Board {...props} lastMove="e8c7" feedback="move" feedbackEvent={{...capture,id:9902,kind:"move",iccs:"e8c7"}}/>);
     fireEvent.click(ui.container.querySelector(".board-square")!);expect(onSquare).toHaveBeenCalled();expect(ui.container.querySelector(".capture-feedback")).toBe(notice);
     expect((ui.container.querySelector(".xiangqi-board") as HTMLElement).style.getPropertyValue("--feedback-duration")).toBe(`${FEEDBACK_DURATION.capture}ms`);
-    act(()=>vi.advanceTimersByTime(FEEDBACK_DURATION.capture-100));expect(ui.container.querySelector(".capture-feedback")).toBeNull();
+    act(()=>vi.advanceTimersByTime(180));
+    ui.rerender(<Board {...props} lastMove="e8c7" feedback={undefined} feedbackEvent={undefined}/>);
+    expect(ui.container.querySelector(".capture-feedback")).toBe(notice);
+    act(()=>vi.advanceTimersByTime(FEEDBACK_DURATION.capture-280));expect(ui.container.querySelector(".capture-feedback")).toBeNull();
   });
   it("anchors capture feedback and the fading captured piece to the actual destination",()=>{
     vi.useFakeTimers();
@@ -60,10 +63,30 @@ describe("actual-move feedback",()=>{
     expect(shadow.style.getPropertyValue("--piece-top")).toBe(target.style.getPropertyValue("--piece-top"));
     expect(notice.style.getPropertyValue("--feedback-x")).toBe(target.style.getPropertyValue("--piece-left"));
     expect(notice.style.getPropertyValue("--feedback-y")).toBe(target.style.getPropertyValue("--piece-top"));
-    act(()=>vi.advanceTimersByTime(180));
+    act(()=>vi.advanceTimersByTime(280));
     expect(ui.container.querySelector('.board-captured-piece')).toBeNull();
     ui.rerender(<Board {...props} lastMove="e8c7" feedback="move" feedbackEvent={{...event,id:event.id+1,kind:"move",iccs:"e8c7",captured:undefined}}/>);
     expect((ui.container.querySelector('.capture-feedback') as HTMLElement).style.getPropertyValue("--feedback-y")).toBe(target.style.getPropertyValue("--piece-top"));
+  });
+  it("uses captured-piece identity for advisor and elephant cues, including replay and terminal priority",()=>{
+    for(const [kind,color,label,expected,cue] of [
+      ["advisor","black","士","破士","captureAdvisor"],
+      ["advisor","red","仕","破士","captureAdvisor"],
+      ["elephant","black","象","破象","captureElephant"],
+      ["elephant","red","相","破相","captureElephant"],
+      ["rook","black","车","吃","capture"],
+    ] as const) {
+      const mover={...piece,color:color==="red"?"black" as const:"red" as const};
+      const captured:BoardPiece={row:1,col:4,kind,color,label};
+      const event=trainingFeedbackEvent([mover,captured],{...state,status:"正常"},"c9e8");
+      expect(captureLabel(event)).toBe(expected);expect(feedbackAudioCue(event)).toBe(cue);
+      const replay=replayTrainingFeedbackEvent([mover,captured],{...state,status:"正常"},["c9e8"],0,1)!;
+      expect(captureVariant(replay)).toBe(captureVariant(event));
+      const ui=render(<Board pieces={state.pieces} lastMove="c9e8" feedback={event.kind} feedbackEvent={event} boardSkin="classic" pieceSkin="classic" riverText="" riverTextColor="#000" riverTextSize={20} supportsCustomRiverText={false} onSquare={vi.fn()}/>);
+      expect(ui.getByRole("status",{name:expected})).toBeTruthy();ui.unmount();
+      const terminal=trainingFeedbackEvent([mover,captured],{...state,status:"将死"},"c9e8");
+      expect(feedbackAudioCue(terminal)).toBe("checkmate");
+    }
   });
   it("replays feedback for one forward step, but not for backward or skipped moves",()=>{
     const captured:BoardPiece={row:1,col:4,color:"black",kind:"pawn",label:"卒"};
@@ -81,6 +104,18 @@ describe("actual-move feedback",()=>{
     expect(instances[1].src).toBe(TRAINING_FEEDBACK_PACK.voice.stalemate);
     expect(instances[0].pause).toHaveBeenCalled();
     await Promise.resolve();
+  });
+  it("aligns special capture audio with impact and cancels a queued cue on navigation",()=>{
+    vi.useFakeTimers();
+    const played:string[]=[];
+    vi.stubGlobal("Audio",class {currentTime=0;volume=0;preload="";pause(){};constructor(public src:string){} play(){played.push(this.src);return Promise.resolve();}});
+    const captured:BoardPiece={row:1,col:4,color:"black",kind:"advisor",label:"士"};
+    const event=trainingFeedbackEvent([piece,captured],{...state,status:"正常"},"c9e8");
+    playTrainingFeedback(event);expect(played).toEqual([]);
+    act(()=>vi.advanceTimersByTime(149));expect(played).toEqual([]);
+    act(()=>vi.advanceTimersByTime(1));expect(played).toEqual([TRAINING_FEEDBACK_PACK.voice.captureAdvisor]);
+    playTrainingFeedback({...event,id:event.id+1,captured:{...captured,kind:"elephant"}});
+    cancelTrainingFeedback();act(()=>vi.advanceTimersByTime(500));expect(played).toHaveLength(1);
   });
   it("guards old verdicts and terminal results for either solver side",()=>{
     expect(()=>currentVerification({verifierVersion:"training-multisolution-v1"} as never)).toThrow();
@@ -100,7 +135,7 @@ describe("actual-move feedback",()=>{
     vi.stubGlobal("fetch",vi.fn(async()=>({ok:true,arrayBuffer:async()=>new ArrayBuffer(4)})));
     vi.stubGlobal("Audio",class {currentTime=0;volume=0;preload="";pause=vi.fn();play=vi.fn(()=>Promise.reject(Error("blocked")));constructor(public src:string){}});
     prepareTrainingFeedbackAudio();
-    await vi.waitFor(()=>expect(resolveBuffers).toHaveLength(5));
+    await vi.waitFor(()=>expect(resolveBuffers).toHaveLength(Object.keys(TRAINING_FEEDBACK_PACK.voice).length));
     unlockTrainingFeedbackAudio();
     await context.resume.mock.results[0]?.value;
     playTrainingFeedback("capture");

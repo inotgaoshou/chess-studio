@@ -50,7 +50,8 @@ import { type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactN
 import { trainingStore } from "./store";
 import type { Attempt, BoardPiece, BoardState, LocalManualAnalysisSummary, LocalManualFolder, LocalManualGame, MobileWorkspaceMode, RuleMode, SolutionMove, TrainingLibrary, TrainingProblem } from "./types";
 import { acceptsMove, boardAt, legalTargetsAfter, cancelPikafishSearch, chineseLine, hasLocalPikafish, parseCbl, parseCblGames, queryCloudBook, queryPikafishAnalysis, queryVariationAnalysis, queryPikafishReply, type CloudBookMove, type PikafishAnalysis, type PikafishAnalysisLine } from "./wasm";
-import { cancelTrainingFeedback, prepareTrainingFeedbackAudio, replayTrainingFeedbackEvent, unlockTrainingFeedbackAudio, trainingFeedbackEvent, FEEDBACK_DURATION, playTrainingFeedback, TRAINING_FEEDBACK_PACK, type TrainingFeedbackEvent, type TrainingFeedbackKind } from "./moveFeedback";
+import { FeedbackSeal } from "./FeedbackSeal";
+import { movementDuration, cancelTrainingFeedback, prepareTrainingFeedbackAudio, replayTrainingFeedbackEvent, unlockTrainingFeedbackAudio, trainingFeedbackEvent, FEEDBACK_DURATION, playTrainingFeedback, type TrainingFeedbackEvent, type TrainingFeedbackKind } from "./moveFeedback";
 import { type PreferredOrientation } from "./orientation";
 import { useScreenOrientation } from "./useScreenOrientation";
 import { DEFAULT_SKIN_ID, LEGACY_DEFAULT_SKIN_ID, SKIN_CATALOG, normalizeSkinId, skinById, type SkinCatalogItem } from "./skinCatalog";
@@ -939,13 +940,21 @@ export function Board({ pieces, selected, legalTargets = [], lastMove, hintMove,
   const [movingEvent,setMovingEvent] = useState<TrainingFeedbackEvent>();
   const [noticeEvent,setNoticeEvent] = useState<TrainingFeedbackEvent>();
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const previousFeedbackMove = useRef(lastMove);
   useLayoutEffect(() => {
-    if (!lastMove || !feedbackEvent) { clearTimeout(noticeTimer.current); setNoticeEvent(undefined); return; }
+    const jumped=lastMove!==previousFeedbackMove.current;
+    previousFeedbackMove.current=lastMove;
+    if (!lastMove || (!feedbackEvent && jumped)) { clearTimeout(noticeTimer.current); setNoticeEvent(undefined); return; }
+    if (!feedbackEvent) return;
     if (feedbackEvent.kind === "move" || feedbackEvent.iccs !== lastMove) return;
     clearTimeout(noticeTimer.current); setNoticeEvent(feedbackEvent);
     noticeTimer.current = setTimeout(() => setNoticeEvent(undefined), FEEDBACK_DURATION[feedbackEvent.kind]);
   }, [feedbackEvent?.id, lastMove]);
-  useEffect(() => () => clearTimeout(noticeTimer.current), []);
+  useEffect(() => {
+    const clear=()=>{if(document.visibilityState==="hidden"){clearTimeout(noticeTimer.current);setNoticeEvent(undefined);setMovingEvent(undefined);}};
+    document.addEventListener("visibilitychange",clear);
+    return()=>{clearTimeout(noticeTimer.current);document.removeEventListener("visibilitychange",clear);};
+  }, []);
   const visibleFeedback = noticeEvent?.kind ?? feedback;
   const visibleFeedbackId = noticeEvent?.id ?? feedbackEvent?.id;
   const lastFeedbackId=useRef<number | undefined>(undefined);
@@ -955,7 +964,7 @@ export function Board({ pieces, selected, legalTargets = [], lastMove, hintMove,
     if(lastFeedbackId.current===feedbackEvent.id)return;
     lastFeedbackId.current=feedbackEvent.id;
     setMovingEvent(feedbackEvent);
-    const timer=setTimeout(()=>setMovingEvent(undefined),180);
+    const timer=setTimeout(()=>setMovingEvent(undefined),movementDuration(feedbackEvent));
     return()=>{clearTimeout(timer);setMovingEvent(undefined);};
   },[feedbackEvent?.id,lastMove]);
   const pointerGesture = useRef<BoardPointerGesture | undefined>(undefined);
@@ -1001,7 +1010,7 @@ export function Board({ pieces, selected, legalTargets = [], lastMove, hintMove,
   const feedbackStyle=feedbackPoint?{"--feedback-x":feedbackPoint["--piece-left"],"--feedback-y":feedbackPoint["--piece-top"]} as CSSProperties:undefined;
   const movementStyle = movingSquares ? (()=>{
     const from=boardPointStyle(movingSquares.from,geometry,flipped),to=boardPointStyle(movingSquares.to,geometry,flipped);
-    return {"--move-from-x":from["--piece-left"],"--move-from-y":from["--piece-top"],"--move-to-x":to["--piece-left"],"--move-to-y":to["--piece-top"]} as CSSProperties;
+    return {"--move-duration":`${movementDuration(movingEvent!)}ms`,"--move-from-x":from["--piece-left"],"--move-from-y":from["--piece-top"],"--move-to-x":to["--piece-left"],"--move-to-y":to["--piece-top"]} as CSSProperties;
   })():undefined;
   const boardImage = riverText && supportsCustomRiverText ? "board-river-blank.png" : "board.png";
   const boardStyle = { backgroundImage: `url("/skins/${normalizedBoardSkin}/${boardImage}")`, "--feedback-duration": visibleFeedback ? `${FEEDBACK_DURATION[visibleFeedback]}ms` : undefined } as CSSProperties;
@@ -1075,11 +1084,10 @@ export function Board({ pieces, selected, legalTargets = [], lastMove, hintMove,
       if ((event.detail > 0 || pointerType) && handledPointerClick.current) return;
       activateSquare(square, event.timeStamp, event.detail);
     }} aria-pressed={Boolean(piece && isSelected)} aria-label={`${squareName(square)}${piece ? ` ${piece.color === "red" ? "红" : "黑"}${piece.label}` : ""}`}>{piece && <><span className="piece-ground-shadow" aria-hidden="true"/><span className="piece-lift"><img className="piece" src={trainingPieceAsset(piece, pieceSkin)} alt={piece.label} draggable={false}/></span></>}</button>; })}
-    {movingEvent?.piece && <img key={`move-${movingEvent.id}`} className="piece board-moving-piece" style={movementStyle} src={trainingPieceAsset(movingEvent.piece,pieceSkin)} alt="" aria-hidden="true" draggable={false}/>}
-    {movingEvent?.captured && movingSquares && <img key={`captured-${movingEvent.id}`} className="piece board-captured-piece" style={boardPointStyle(movingSquares.to,geometry,flipped)} src={trainingPieceAsset(movingEvent.captured,pieceSkin)} alt="" aria-hidden="true" draggable={false}/>}
+    {movingEvent?.piece && <img key={`move-${movingEvent.id}`} className={`piece board-moving-piece ${movingEvent.captured ? "capturing" : ""}`} style={movementStyle} src={trainingPieceAsset(movingEvent.piece,pieceSkin)} alt="" aria-hidden="true" draggable={false}/>}
+    {movingEvent?.captured && movingSquares && <img key={`captured-${movingEvent.id}`} className="piece board-captured-piece" style={{...boardPointStyle(movingSquares.to,geometry,flipped),"--move-duration":`${movementDuration(movingEvent)}ms`} as CSSProperties} src={trainingPieceAsset(movingEvent.captured,pieceSkin)} alt="" aria-hidden="true" draggable={false}/>}
     {dragging && <img className="piece board-drag-ghost" style={{ "--drag-x": `${dragging.x}%`, "--drag-y": `${dragging.y}%` } as CSSProperties} src={trainingPieceAsset(dragging.piece, pieceSkin)} alt="" aria-hidden="true" draggable={false}/>}
-    {visibleFeedback === "capture" && <span key={`capture-${visibleFeedbackId}`} className="capture-feedback" style={feedbackStyle}><span>吃</span></span>}
-    {(visibleFeedback === "check" || visibleFeedback === "checkmate" || visibleFeedback === "stalemate") && <span key={`seal-${visibleFeedbackId}`} className={`ink-feedback ${visibleFeedback}`} style={feedbackStyle}><span>{TRAINING_FEEDBACK_PACK.labels[visibleFeedback]}</span></span>}
+    {visibleFeedback && visibleFeedback !== "move" && <FeedbackSeal key={`seal-${visibleFeedbackId}`} kind={visibleFeedback} event={noticeEvent ?? feedbackEvent} style={feedbackStyle}/>}
   </div></div>;
 }
 
@@ -3510,6 +3518,12 @@ export function App() {
   }, [studyNotice]);
   useEffect(() => { if (!feedbackEvent) return; const timer = window.setTimeout(() => {setMoveFeedback(undefined);setFeedbackEvent(undefined);}, FEEDBACK_DURATION[feedbackEvent.kind]); return () => clearTimeout(timer); }, [feedbackEvent]);
   useEffect(()=>{setMoveFeedback(undefined);setFeedbackEvent(undefined);cancelTrainingFeedback();},[problem?.id,workspaceMode,catalogAccountScope]);
+  useEffect(()=>{
+    const clear=()=>{setMoveFeedback(undefined);setFeedbackEvent(undefined);cancelTrainingFeedback();};
+    const visibility=()=>{if(document.visibilityState==="hidden")clear();};
+    document.addEventListener("visibilitychange",visibility);window.addEventListener("pagehide",clear);
+    return()=>{document.removeEventListener("visibilitychange",visibility);window.removeEventListener("pagehide",clear);cancelTrainingFeedback();};
+  },[]);
   useEffect(() => { if (!answersAllowed || !demoPlaying || !problem || answerStep >= answer.length) return; const timer = window.setTimeout(() => { void previewAnswerStep(answerStep + 1); }, 750); return () => clearTimeout(timer); }, [answersAllowed, answer.length, answerStep, demoPlaying, problem]);
   useEffect(() => {
     if (!studyMode || studyCloudFen === studyCurrentFen) return;
@@ -3706,7 +3720,7 @@ export function App() {
     if (move && emitFeedback) {
       const feedback = trainingFeedbackEvent(before, state, move);
       setMoveFeedback(feedback.kind); setFeedbackEvent(feedback);
-      playTrainingFeedback(feedback.kind);
+      playTrainingFeedback(feedback);
     }
     return state;
   }
@@ -3996,7 +4010,7 @@ export function App() {
       const last = position.path.at(-1);
       if (last && position.path.length===previousPath.length+1) {
         const feedback = trainingFeedbackEvent(previousPieces, position.board, last);
-        setMoveFeedback(feedback.kind); setFeedbackEvent(feedback); playTrainingFeedback(feedback.kind);
+        setMoveFeedback(feedback.kind); setFeedbackEvent(feedback); playTrainingFeedback(feedback);
       }
       previousPieces = position.board.pieces; previousPath=position.path;
     });
@@ -4092,7 +4106,7 @@ export function App() {
         setWrongMove(iccs);
         setPieces(candidateBoard.pieces); setLastMove(iccs); setSelected(undefined); setLegalTargets([]);
         const feedback=trainingFeedbackEvent(pieces,candidateBoard,iccs);
-        setMoveFeedback(feedback.kind);setFeedbackEvent(feedback);playTrainingFeedback(feedback.kind);
+        setMoveFeedback(feedback.kind);setFeedbackEvent(feedback);playTrainingFeedback(feedback);
         const movedAt=performance.now();
         await resetAnalysis();
         if (!stillActive()) return;
@@ -5369,7 +5383,7 @@ export function App() {
     setManualLastMove(iccs);
     setManualCurrentFen(state.fen);
     setMoveFeedback(feedback.kind); setFeedbackEvent(feedback);
-    playTrainingFeedback(feedback.kind);
+    playTrainingFeedback(feedback);
     const terminal = terminalResult(state.ruleStatus ?? state.status);
     setManualTerminal(terminal);
     setManualNotice(terminal ? `当前局面：${terminal}。` : "已记录这一手。");
@@ -5397,7 +5411,7 @@ export function App() {
     setManualSelected(undefined);
     setManualLastMove(nextMoves.at(-1));
     setMoveFeedback(feedback?.kind); setFeedbackEvent(feedback);
-    if (feedback) playTrainingFeedback(feedback.kind); else cancelTrainingFeedback();
+    if (feedback) playTrainingFeedback(feedback); else cancelTrainingFeedback();
     setManualCurrentFen(state.fen);
     setManualTerminal(terminalResult(state.ruleStatus ?? state.status));
     setManualNotice(nextCursor ? `已定位到第 ${nextCursor} 手。` : "已回到起始局面。");
@@ -6154,7 +6168,7 @@ export function App() {
     setStudyPieces(state.pieces);
     setStudyLastMove(iccs);
     setMoveFeedback(feedback.kind); setFeedbackEvent(feedback);
-    playTrainingFeedback(feedback.kind);
+    playTrainingFeedback(feedback);
     const terminal = terminalResult(state.ruleStatus ?? state.status);
     setStudyTerminal(terminal);
     setStudyNotice(terminal ? `当前局面：${terminal}。` : `${movingSide === "red" ? "红" : "黑"}方已落子。`);
@@ -6183,7 +6197,7 @@ export function App() {
     setStudySelected(undefined);
     setStudyLastMove(nextMoves.at(-1));
     setMoveFeedback(feedback?.kind); setFeedbackEvent(feedback);
-    if (feedback) playTrainingFeedback(feedback.kind); else cancelTrainingFeedback();
+    if (feedback) playTrainingFeedback(feedback); else cancelTrainingFeedback();
     setStudyTerminal(terminalResult(state.ruleStatus ?? state.status));
     setStudyNotice(nextCursor ? `已定位到第 ${nextCursor} 手：${studyNotation[nextCursor - 1] ?? nextMoves.at(-1)}。` : "已回到起始局面。");
     invalidateStudyCloud(state.fen);

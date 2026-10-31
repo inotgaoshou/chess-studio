@@ -21,3 +21,10 @@
 ## Move feedback audio
 
 行棋、吃子与鼓点/破风提示音由应用运行时通过 Web Audio API 合成。`apps/desktop/public/audio/move.wav`、`capture.wav`、`check.wav` 和 `checkmate.wav` 是 Xiangqi Studio 分发的原创反馈资源；其中后 3 段使用本机离线语音合成生成“吃！”、“将军！”与“绝杀！”，不是从其他应用或游戏复制的录音。上述素材均不包含第三方音频素材。
+
+### Ma Shan Zheng feedback lettering
+
+The v1.0.9 board feedback uses a glyph subset of Ma Shan Zheng (Google Fonts),
+licensed under SIL Open Font License 1.1. The bundled license is
+`apps/endgame-training/public/fonts/MaShanZheng-OFL.txt`.
+Only feedback lettering uses this font; chess-piece glyphs are unchanged.
