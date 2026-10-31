@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { branchAfter, clampPanel, movesToSave, sameMoves } from "../../../packages/variation-session";
-import { Bookmark, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Ellipsis, LoaderCircle, Minus, Pause, Play, Plus, X } from "lucide-react";
+import { Bookmark, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Ellipsis, FlipVertical2, LoaderCircle, Minus, Pause, Play, Plus, X } from "lucide-react";
 import "./variationBoard.css";
 import { orderedVariationLines, variationEvaluation, variationRound, type VariationAnalysis } from "./variationAnalysis";
 
@@ -12,6 +12,7 @@ export type VariationBoardProps<F extends VariationFrame> = {
   title: string;
   base: F;
   initialMoves: string[];
+  initialFlipped?: boolean;
   mobile?: boolean;
   light?: boolean;
   validate(moves: string[]): Promise<F[]>;
@@ -34,7 +35,7 @@ export function VariationBoard<F extends VariationFrame>(props: VariationBoardPr
   const [active, setActive] = useState(0);
   const [cursor, setCursor] = useState(0);
   const [selected, setSelected] = useState<VariationSquare>();
-  const [flipped, setFlipped] = useState(false);
+  const [flipped, setFlipped] = useState(props.initialFlipped ?? false);
   const [playing, setPlaying] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const collapseCallback=useRef(props.onCollapsedChange);collapseCallback.current=props.onCollapsedChange;
@@ -280,7 +281,7 @@ export function VariationBoard<F extends VariationFrame>(props: VariationBoardPr
     }}>
       <strong>小棋盘</strong>
       <button type="button" className="variation-save" aria-label={saving ? "保存中" : props.saveLabel ? "复制后保存" : "保存分支"} title={`${props.saveLabel ?? "保存整条线路"} · 共 ${line.moves.length} 步`} disabled={busy || saving || Boolean(deleting) || !line.moves.length} onClick={() => void save()}>{saving ? <LoaderCircle className="variation-saving"/> : <Bookmark/>}<span>{saving ? "保存中" : props.saveLabel ? "复制后保存" : "保存分支"}</span></button>
-      <nav><button type="button" aria-label="更多推演操作" aria-expanded={more} onClick={() => { setCollapsed(false); setMore(value => !value); }}><Ellipsis/></button><button type="button" aria-label={collapsed ? "展开小棋盘" : "收起小棋盘"} onClick={() => { cancelBest(); setCollapsed(value => !value); setPlaying(false); setMore(false); }}>{collapsed ? <Plus/> : <Minus/>}</button><button type="button" aria-label="关闭小棋盘" disabled={saving || Boolean(deleting)} onClick={requestClose}><X/></button></nav>
+      <nav><button type="button" aria-label="翻转小棋盘" title={flipped ? "切换红方视角" : "切换黑方视角"} aria-pressed={flipped} onClick={() => setFlipped(value => !value)}><FlipVertical2/></button><button type="button" aria-label="更多推演操作" aria-expanded={more} onClick={() => { setCollapsed(false); setMore(value => !value); }}><Ellipsis/></button><button type="button" aria-label={collapsed ? "展开小棋盘" : "收起小棋盘"} onClick={() => { cancelBest(); setCollapsed(value => !value); setPlaying(false); setMore(false); }}>{collapsed ? <Plus/> : <Minus/>}</button><button type="button" aria-label="关闭小棋盘" disabled={saving || Boolean(deleting)} onClick={requestClose}><X/></button></nav>
     </header>
     {more && <section className="variation-more" aria-label="推演更多操作">
       <strong className="variation-source-title">{props.title}</strong>
@@ -288,7 +289,6 @@ export function VariationBoard<F extends VariationFrame>(props: VariationBoardPr
       <div className="variation-more-actions">
         <button type="button" disabled={!cursor || busy || saving} onClick={() => void save(true)}>保存至当前步 · {cursor} 步</button>
         {props.onSaveCopy && <button type="button" disabled={!line.moves.length || busy || saving} onClick={() => void save(false, true)}>另存到我的棋谱</button>}
-        <button type="button" onClick={() => { setFlipped(value => !value); setMore(false); }}>翻转棋盘</button>
         {!mobile && <button type="button" onClick={() => { setFloating(value => !value); setMore(false); }}>{floating ? "并排显示" : "悬浮显示"}</button>}
         <button type="button" onClick={() => { setExpanded(value => !value); setMore(false); }}>{expanded ? "恢复大小" : "展开查看"}</button>
       </div>

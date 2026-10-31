@@ -380,6 +380,7 @@ for (const candidate of candidates) {
     }
     validateSkin(skinRoot);
     let id = skinIdFor(candidate.name, candidate.sourcePath);
+    if (id === defaultSkin.id) id = `skin-${hash(candidate.sourcePath)}`;
     if (seenIds.has(id)) id = `skin-${hash(`${candidate.sourcePath}:${candidate.kind}`)}`;
     seenIds.add(id);
     const target = path.join(outputRoot, id);

@@ -69,6 +69,6 @@ export function TeacherSourceLibraries({ auth, query, onOpen }: {
     {(loading || categoriesLoading) && <p role="status">正在加载题库…</p>}
     {(categoryError || error) && <div role="alert"><p>{categoryError || error}</p><button type="button" disabled={loading} onClick={() => categoryError ? setReload(value => value + 1) : void load(cursor)}>重试题库加载</button></div>}
     {!loading && !categoriesLoading && !categoryError && !error && !visibleItems.length && <p>{cursor ? "本页暂无匹配题库，可继续加载" : "当前分类暂无匹配题库"}</p>}
-    {cursor && !error && <button type="button" className="catalog-action" disabled={loading} onClick={() => void load(cursor)}>{loading ? "正在加载…" : "加载更多题库"}</button>}
+    {cursor && !error && <button type="button" className="catalog-action" disabled={loading} onClick={() => void load(cursor)}>{loading ? "正在加载…" : "下一页题库"}</button>}
   </section>;
 }

@@ -9,12 +9,21 @@ const base = { fen: "base w - - 0 1", pieces: [{ row: 9, col: 0, color: "red" },
 function setup(moves = ["a0a1", "a9a8"], overrides: Partial<VariationBoardProps<typeof base>> = {}) {
   const onSave = vi.fn(async () => ({ message: "保存成功" }));
   const validate = vi.fn(async (line: string[]) => line.map((move, index) => ({ ...base, fen: index % 2 ? "step w" : "step b", notation: move })));
-  render(<VariationBoard title="候选 1" base={base} initialMoves={moves} validate={validate} onSave={onSave} onClose={vi.fn()} renderBoard={(frame, controls) => <div data-testid="mini-board" data-fen={frame.fen}><button onClick={() => controls.onMove({ row: 9, col: 0 }, { row: 8, col: 0 })}>试走 a0a1</button><button onClick={() => controls.onMove({ row: 9, col: 1 }, { row: 7, col: 2 })}>试走 b0c2</button></div>} {...overrides}/>);
+  render(<VariationBoard title="候选 1" base={base} initialMoves={moves} validate={validate} onSave={onSave} onClose={vi.fn()} renderBoard={(frame, controls) => <div data-testid="mini-board" data-fen={frame.fen} data-flipped={controls.flipped}><button onClick={() => controls.onMove({ row: 9, col: 0 }, { row: 8, col: 0 })}>试走 a0a1</button><button onClick={() => controls.onMove({ row: 9, col: 1 }, { row: 7, col: 2 })}>试走 b0c2</button></div>} {...overrides}/>);
   return { onSave, validate };
 }
 const ready = () => waitFor(() => expect(screen.queryByText("正在校验推演线路…")).toBeNull());
 
 describe("small calculation board", () => {
+  it("inherits the source board perspective and exposes a visible flip control", async () => {
+    setup([], { initialFlipped: true }); await ready();
+    const flip = screen.getByRole("button", { name: "翻转小棋盘" });
+    expect(screen.getByTestId("mini-board").getAttribute("data-flipped")).toBe("true");
+    fireEvent.click(flip);
+    expect(screen.getByTestId("mini-board").getAttribute("data-flipped")).toBe("false");
+    fireEvent.click(flip);
+    expect(screen.getByTestId("mini-board").getAttribute("data-flipped")).toBe("true");
+  });
   it("keeps full candidates longer than eight rounds and saves all moves while paused at the root", async () => {
     const moves = Array.from({ length: 33 }, (_, index) => `move-${index}`);
     const { onSave } = setup(moves); await ready();

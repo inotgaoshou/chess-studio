@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Filter, X } from "lucide-react";
 import { AuthoringBoard } from "./AuthoringBoard";
 import {
   AUTHORING_BASE as BASE,
@@ -323,7 +324,7 @@ export function TeacherAuthoring({
           <small>{personal ? "仅自己可见" : `${orgName} · 发布后仅本机构老师可用`}</small>
         </div>
       </header>
-      {error && (
+      {error && (personal || tab === "mine" || dir) && (
         <p role="alert" className="authoring-error">
           {error}
           <button onClick={() => void run(() => load(dir?.id))}>刷新</button>
@@ -418,7 +419,7 @@ export function TeacherAuthoring({
               </article>
             ))}
           </div>
-          {!busy && !dirs.length && <p>还没有题目目录，先新建一个。</p>}
+          {!busy && !error && !dirs.length && <p>还没有题目目录，先新建一个。</p>}
           {!personal && onAdvanced && <button type="button" onClick={onAdvanced}>自由组合布置</button>}
           </>}
         </>
@@ -694,8 +695,9 @@ export function TeacherAuthoring({
   );
 }
 
-type CatalogNode = {id:string;name:string;kind:string;itemCount?:number|null};
+type CatalogNode = {id:string;name:string;kind:string;itemCount?:number|null;teachingEntry?:string};
 type CatalogItem = {id:string;title:string;startingFen:string;contentFingerprint?:string;reviewStatus:string;validationStatus:string};
+const BASIC_TOPIC_ID = "e0c0221d-1b02-5f2c-9122-a7b0821f2603";
 function PlatformAssignmentCatalog({api,onAssign}:{api:AuthoringApi;onAssign(title:string,nodeId:string,items:AuthoredQuestion[]):void}) {
   const [nodeId,setNodeId]=useState<string>();
   const [title,setTitle]=useState("平台作业库");
@@ -704,9 +706,12 @@ function PlatformAssignmentCatalog({api,onAssign}:{api:AuthoringApi;onAssign(tit
   const [nodeCursor,setNodeCursor]=useState<string|null>(null);
   const [items,setItems]=useState<CatalogItem[]>([]);
   const [itemCursor,setItemCursor]=useState<string|null>(null);
+  const [itemTotal,setItemTotal]=useState<number|null>(null);
+  const [mateStep,setMateStep]=useState("");
   const [selected,setSelected]=useState<CatalogItem[]>([]);
   const [busy,setBusy]=useState(false),[error,setError]=useState("");
   const generation=useRef(0);
+  const previousNode=useRef<string|undefined>(undefined);
   async function browse(id:string|undefined,cursor?:string) {
     const params=new URLSearchParams({availability:"available",limit:"100"});
     if(id)params.set("nodeId",id);
@@ -716,12 +721,16 @@ function PlatformAssignmentCatalog({api,onAssign}:{api:AuthoringApi;onAssign(tit
   async function problems(id:string,cursor?:string) {
     const params=new URLSearchParams({limit:"100"});
     if(cursor)params.set("cursor",cursor);
-    return api.request<{items:CatalogItem[];nextCursor?:string|null}>(`/api/v1/admin/teaching-catalog/${encodeURIComponent(id)}/problems?${params}`);
+    if(mateStep)params.set("mateMoves",mateStep);
+    return api.request<{items:CatalogItem[];nextCursor?:string|null;totalCount?:number|null}>(`/api/v1/admin/teaching-catalog/${encodeURIComponent(id)}/problems?${params}`);
   }
   useEffect(()=>{
     const epoch=++generation.current;
-    setBusy(true);setError("");setNodes([]);setItems([]);setSelected([]);setNodeCursor(null);setItemCursor(null);
-    void Promise.all([browse(nodeId),nodeId?problems(nodeId):Promise.resolve({items:[] as CatalogItem[],nextCursor:null})])
+    const nodeChanged=previousNode.current!==nodeId;
+    previousNode.current=nodeId;
+    setBusy(true);setError("");setItems([]);setItemCursor(null);setItemTotal(null);
+    if(nodeChanged){setNodes([]);setSelected([]);setNodeCursor(null);}
+    void Promise.all([browse(nodeId),nodeId?problems(nodeId):Promise.resolve({items:[] as CatalogItem[],nextCursor:null,totalCount:null})])
       .then(([tree,page])=>{
         if(epoch!==generation.current)return;
         setTitle(tree.currentNode?.name||"平台作业库");
@@ -729,21 +738,22 @@ function PlatformAssignmentCatalog({api,onAssign}:{api:AuthoringApi;onAssign(tit
         setNodes(tree.children);setNodeCursor(tree.nextCursor??null);
         setItems(page.items.filter(item=>item.reviewStatus==="published"&&item.validationStatus==="ready"));
         setItemCursor(page.nextCursor??null);
+        setItemTotal(page.totalCount??null);
       }).catch(reason=>{if(epoch===generation.current)setError(message(reason));})
       .finally(()=>{if(epoch===generation.current)setBusy(false);});
     return ()=>{generation.current++;};
-  },[api,nodeId]);
+  },[api,nodeId,mateStep]);
   async function moreNodes() {
     if(!nodeCursor||busy)return;
     const epoch=generation.current;setBusy(true);
-    try {const page=await browse(nodeId,nodeCursor);if(epoch===generation.current){setNodes(old=>[...old,...page.children]);setNodeCursor(page.nextCursor??null);}}
+    try {const page=await browse(nodeId,nodeCursor);if(epoch===generation.current){setNodes(old=>[...new Map([...old,...page.children].map(item=>[item.id,item])).values()]);setNodeCursor(page.nextCursor??null);}}
     catch(reason){if(epoch===generation.current)setError(message(reason));}
     finally{if(epoch===generation.current)setBusy(false);}
   }
   async function moreItems() {
     if(!nodeId||!itemCursor||busy)return;
     const epoch=generation.current;setBusy(true);
-    try {const page=await problems(nodeId,itemCursor);if(epoch===generation.current){setItems(old=>[...old,...page.items.filter(item=>item.reviewStatus==="published"&&item.validationStatus==="ready")]);setItemCursor(page.nextCursor??null);}}
+    try {const page=await problems(nodeId,itemCursor);if(epoch===generation.current){setItems(old=>[...new Map([...old,...page.items.filter(item=>item.reviewStatus==="published"&&item.validationStatus==="ready")].map(item=>[item.id,item])).values()]);setItemCursor(page.nextCursor??null);setItemTotal(page.totalCount??null);}}
     catch(reason){if(epoch===generation.current)setError(message(reason));}
     finally{if(epoch===generation.current)setBusy(false);}
   }
@@ -752,10 +762,13 @@ function PlatformAssignmentCatalog({api,onAssign}:{api:AuthoringApi;onAssign(tit
     const epoch=generation.current;setBusy(true);setError("");
     try {
       let all=[...items],cursor=itemCursor;
+      const seen=new Set<string>();
       while(cursor) {
+        if(seen.has(cursor))throw new Error("题目分页异常，请重试");
+        seen.add(cursor);
         const page=await problems(nodeId,cursor);
         if(epoch!==generation.current)return;
-        all=[...all,...page.items.filter(item=>item.reviewStatus==="published"&&item.validationStatus==="ready")];
+        all=[...new Map([...all,...page.items.filter(item=>item.reviewStatus==="published"&&item.validationStatus==="ready")].map(item=>[item.id,item])).values()];
         cursor=page.nextCursor??null;
         if(all.length>10000)throw new Error("一次最多布置10000题，请缩小范围");
       }
@@ -764,19 +777,26 @@ function PlatformAssignmentCatalog({api,onAssign}:{api:AuthoringApi;onAssign(tit
     finally{if(epoch===generation.current)setBusy(false);}
   }
   const selectedIds=new Set(selected.map(item=>item.id));
+  const chooseMateStep=(step:string)=>{
+    if(!nodeId && step)setNodeId(nodes.find(node=>node.teachingEntry==="basic_mates")?.id||BASIC_TOPIC_ID);
+    setMateStep(step);
+  };
   return <section className="authoring-platform-catalog" aria-busy={busy}>
-    {nodeId && <button type="button" onClick={()=>setNodeId(parentId)}>‹ 返回上级</button>}
+    {nodeId && <button type="button" onClick={()=>{setMateStep("");setNodeId(parentId);}}>‹ 返回上级</button>}
     <div className="authoring-catalog-heading"><strong>{title}</strong><span>已选 {selected.length} 题</span></div>
+    <div className="authoring-platform-mate-tabs" role="group" aria-label="杀法步数筛选">{[["","全部"],["1","一步杀"],["2","两步杀"],["3","三步杀"],["4","四步杀"]].map(([step,label])=><button type="button" key={step} aria-pressed={mateStep===step} disabled={busy} onClick={()=>chooseMateStep(step)}>{label}</button>)}</div>
     {error && <p role="alert" className="authoring-error">{error}</p>}
-    <div className="authoring-platform-nodes">{nodes.map(node=><button type="button" key={node.id} onClick={()=>setNodeId(node.id)}><strong>{node.name}</strong><small>{node.itemCount??0} 题 ›</small></button>)}</div>
-    {nodeCursor && <button type="button" disabled={busy} onClick={()=>void moreNodes()}>加载更多目录</button>}
+    <div className="authoring-platform-nodes">{nodes.map(node=><button type="button" key={node.id} onClick={()=>{setMateStep("");setNodeId(node.id);}}><strong>{node.name}</strong><small>{node.itemCount??0} 题 ›</small></button>)}</div>
+    {nodeCursor && <button type="button" disabled={busy} onClick={()=>void moreNodes()}>下一页目录</button>}
+    {nodeId && <p className="authoring-platform-page-status" role="status">已显示 {items.length}{itemTotal!==null?` / ${itemTotal}`:""} 题{itemCursor?" · 还有下一页":""}</p>}
     {!!items.length && <>
       <div className="authoring-picker-actions"><button type="button" disabled={busy} onClick={()=>void selectAll()}>全选本目录</button><span>已选 {selected.length} 题</span><button type="button" disabled={busy||!selected.length} onClick={()=>setSelected([])}>清空</button></div>
       <div className="authoring-platform-items">{items.map(item=><button type="button" key={item.id} aria-pressed={selectedIds.has(item.id)} onClick={()=>setSelected(old=>selectedIds.has(item.id)?old.filter(value=>value.id!==item.id):[...old,item])}><AuthoringBoard fen={item.startingFen}/><strong>{item.title}</strong>{selectedIds.has(item.id)&&<span aria-hidden="true">✓</span>}</button>)}</div>
-      {itemCursor && <button type="button" disabled={busy} onClick={()=>void moreItems()}>加载更多题目</button>}
       <button type="button" className="primary" disabled={busy||!selected.length} onClick={()=>onAssign(title,nodeId!,selected.map(item=>({id:item.id,subjectId:item.id,kind:"source",revision:0,status:"source",canEdit:false,archived:false,publishedProblemId:item.id,contentFingerprint:item.contentFingerprint,body:{title:item.title,startingFen:item.startingFen,note:"",solution:[]}})))}>布置已选题目（{selected.length}）</button>
     </>}
-    {!busy&&!nodes.length&&!items.length&&!error&&<p>此目录暂无可布置题目</p>}
+    {itemCursor && <button type="button" disabled={busy} onClick={()=>void moreItems()}>下一页题目</button>}
+    {busy && <p role="status">正在读取目录和题目…</p>}
+    {!busy&&!nodes.length&&!items.length&&!itemCursor&&!error&&<p>此目录暂无可布置题目</p>}
   </section>;
 }
 
@@ -885,13 +905,15 @@ function SourcePicker(props: SourcePickerProps) {
         <span className="authoring-library-arrow" aria-hidden="true">›</span>
       </button>)}
       {!items.length && <p role="status">{busy ? "正在读取题库…" : error ? "请重试" : "没有匹配的题库或书本"}</p>}
-      {nextCursor && <button type="button" disabled={busy} onClick={()=>void loadMore()}>{busy ? "正在读取…" : "加载更多题库"}</button>}
+      <p className="authoring-picker-page-status">已显示 {items.length} 本题库{nextCursor ? " · 还有下一页" : ""}</p>
+      {nextCursor && <button type="button" disabled={busy} onClick={()=>void loadMore()}>{busy ? "正在读取…" : "下一页题库"}</button>}
     </div>
   </section></div>;
 }
 
 function SourceRecordPicker({api,kind,directoryId,existing,onClose,onChoose,onChooseMany,library,mateFilter,onMateFilterChange}:SourcePickerProps & {library:SourceLibrary;mateFilter:string;onMateFilterChange(value:string):void}) {
   const [q,setQ] = useState(""), [category,setCategory] = useState(""), [reload,setReload] = useState(0);
+  const [filtersOpen,setFiltersOpen] = useState(false);
   const [items,setItems] = useState<AuthoringSource[]>([]), [categories,setCategories] = useState<string[]>([]);
   const [preparing,setPreparing] = useState(false);
   const [nextCursor,setNextCursor] = useState<string|null>(), [error,setError] = useState(""), [busy,setBusy] = useState(true), [choosing,setChoosing] = useState(false);
@@ -990,13 +1012,24 @@ function SourceRecordPicker({api,kind,directoryId,existing,onClose,onChoose,onCh
     catch(reason){setError(message(reason));}
     finally {selectionLock.current=false;setChoosing(false);}
   }
+  const mateFilterLabel = ({"1":"一步杀","2":"两步杀","3":"三步杀",long:"四步及以上"} as Record<string,string>)[mateFilter] || "";
+  const filterSummary = [category, mateFilterLabel, q.trim()].filter(Boolean).join(" · ") || "全部题目";
   return <div className="authoring-overlay"><section className="authoring-sheet authoring-picker" role="dialog" aria-modal="true" aria-label={kind === "games" ? "选择已有棋谱" : "选择平台／机构题目"}>
     <header className="authoring-picker-header"><button type="button" disabled={choosing} onClick={onClose}>‹ 返回</button><h3>{kind === "games" ? "选择已有棋谱" : "选择平台／机构题目"}</h3></header>
     <p className="authoring-picker-book">{library.title}</p>
-    {kind === "problems" && <label className="authoring-picker-category">题型分类<select aria-label="题型分类" value={category} disabled={choosing} onChange={event=>setCategory(event.target.value)}><option value="">全部</option>{categories.map(value=><option key={value} value={value}>{value}</option>)}</select></label>}
-    {kind === "problems" && <MateStepFilter value={mateFilter} onChange={onMateFilterChange} disabled={choosing}/>}
-    <input aria-label="搜索题目或棋谱" placeholder="输入名称搜索" value={q} disabled={choosing} onChange={event=>setQ(event.target.value)}/>
-    {kind === "problems" && <div className="authoring-picker-actions"><button type="button" disabled={busy||choosing||!items.length} onClick={()=>void selectAll()}>全选当前筛选</button><span>已选 {selected.length} 题</span><button type="button" disabled={choosing||!selected.length} onClick={()=>setSelected([])}>清空选择</button></div>}
+    {kind === "problems" ? <>
+      <div className="authoring-picker-toolbar">
+        <button type="button" aria-expanded={filtersOpen} aria-controls="authoring-record-filters" onClick={()=>setFiltersOpen(value=>!value)}><Filter size={16} aria-hidden="true"/>筛选</button>
+        <button type="button" disabled={busy||choosing||!items.length} onClick={()=>void selectAll()}>全选</button>
+        <button type="button" className="primary" disabled={choosing||busy||!selected.length} onClick={()=>void confirmSelection()}>{choosing ? "添加中…" : `确认添加（${selected.length}）`}</button>
+      </div>
+      <div className="authoring-picker-summary"><span title={filterSummary}>{filterSummary} · 已选 {selected.length} 题</span>{selected.length>0 && <button type="button" aria-label="清空选择" title="清空选择" disabled={choosing} onClick={()=>setSelected([])}><X size={16} aria-hidden="true"/></button>}</div>
+      {filtersOpen && <div className="authoring-picker-filters" id="authoring-record-filters">
+        <label className="authoring-picker-category">题型分类<select aria-label="题型分类" value={category} disabled={choosing} onChange={event=>setCategory(event.target.value)}><option value="">全部</option>{categories.map(value=><option key={value} value={value}>{value}</option>)}</select></label>
+        <MateStepFilter value={mateFilter} onChange={onMateFilterChange} disabled={choosing}/>
+        <input aria-label="搜索题目或棋谱" placeholder="输入名称搜索" value={q} disabled={choosing} onChange={event=>setQ(event.target.value)}/>
+      </div>}
+    </> : <input aria-label="搜索题目或棋谱" placeholder="输入名称搜索" value={q} disabled={choosing} onChange={event=>setQ(event.target.value)}/>}
     {error && <p role="alert" className="authoring-error">{error}<button type="button" disabled={busy || choosing} onClick={()=>setReload(value=>value+1)}>重试</button></p>}
     <div className={kind === "problems" ? "authoring-source-list authoring-source-grid" : "authoring-source-list"} ref={list} aria-busy={busy || choosing}>
       {busy && items.length>0 && <p className="authoring-picker-loading" role="status">正在更新题目…</p>}
@@ -1004,16 +1037,16 @@ function SourceRecordPicker({api,kind,directoryId,existing,onClose,onChoose,onCh
         const added=kind === "problems" && (item.alreadyAdded || existingIds.has(`${item.authored ? "authored" : "source"}:${item.id}`));
         return <div className="authoring-source-tile" key={sourceIdentity(item)}>
           <button type="button" className={`${busy && !added ? "authoring-retained" : ""} ${selectedKeys.has(sourceIdentity(item)) ? "selected" : ""}`} disabled={busy || choosing || Boolean(added)} aria-pressed={kind==="problems" ? selectedKeys.has(sourceIdentity(item)) : undefined} onClick={()=>kind==="problems" ? toggle(item) : void choose(item)}>
-            <AuthoringBoard fen={item.fen}/><span className="authoring-source-copy"><strong>{item.title}</strong><small>{item.category || "未分类"}</small>{added && <small>已添加</small>}</span>
+            <span className="authoring-source-board"><AuthoringBoard fen={item.fen}/></span><span className="authoring-source-copy"><strong>{item.title}</strong><small>{item.category || "未分类"}</small>{added && <small>已添加</small>}</span>
             {kind==="problems" && selectedKeys.has(sourceIdentity(item)) && <span className="authoring-source-check" aria-hidden="true">✓</span>}
           </button>
           {kind==="problems" && <button className="authoring-source-preview" type="button" onClick={()=>setPreview(item)}>详情</button>}
         </div>;
       })}
-      {!items.length && <p role="status">{busy ? preparing ? "正在准备题库，请稍候…" : "正在读取…" : error ? "请修改搜索条件后重试" : "没有匹配内容"}</p>}
-      {nextCursor && <button type="button" disabled={busy || choosing} onClick={()=>void loadMore()}>{busy ? "正在读取…" : "加载更多"}</button>}
+      {!items.length && <div className="authoring-source-empty" role="status">{busy ? preparing ? "正在准备题库，请稍候…" : "正在读取…" : error ? "请修改搜索条件后重试" : "没有匹配内容"}{!busy && !error && kind === "problems" && (category || mateFilter || q) && <button type="button" onClick={()=>{setCategory("");onMateFilterChange("");setQ("");}}>清除筛选</button>}</div>}
+      <p className="authoring-picker-page-status">已显示 {items.length} 题{nextCursor ? " · 还有下一页" : ""}</p>
+      {nextCursor && <button type="button" disabled={busy || choosing} onClick={()=>void loadMore()}>{busy ? "正在读取…" : "下一页题目"}</button>}
     </div>
-    {kind==="problems" && <footer className="authoring-picker-footer"><button type="button" className="primary" disabled={choosing||busy||!selected.length} onClick={()=>void confirmSelection()}>{choosing ? "正在添加…" : `确认添加（${selected.length}）`}</button></footer>}
     {preview && <div className="authoring-preview-overlay"><section role="dialog" aria-modal="true" aria-label="题目详情" className="authoring-preview-detail"><h4>{preview.title}</h4><AuthoringBoard fen={preview.fen}/><p>{[preview.category || "未分类",preview.sourceScope,preview.sourceTitle].filter(Boolean).join(" · ")}</p>{(preview.sourceCount??0)>1 && <p>已合并 {preview.sourceCount} 个重复来源</p>}<button type="button" onClick={()=>setPreview(undefined)}>返回选题</button></section></div>}
   </section></div>;
 }

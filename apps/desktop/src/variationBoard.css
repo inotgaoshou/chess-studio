@@ -64,7 +64,7 @@
 @keyframes variation-spin { to { transform:rotate(360deg); } }
 @media(max-width:360px) {
   .variation-board.is-mobile .variation-save span { display:none; }
-  .variation-board.is-mobile .variation-board-header button { min-width:44px; }
+  .variation-board.is-mobile .variation-board-header button { min-width:34px; }
 }
 @media(max-width:700px) { .variation-board.is-docked { position:fixed; right:8px; top:60px; margin:0; } }
 @media(min-width:701px) {

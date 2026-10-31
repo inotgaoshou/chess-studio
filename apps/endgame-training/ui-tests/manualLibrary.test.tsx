@@ -29,8 +29,8 @@ it("fits an old iOS viewport from both available dimensions and cleans up observ
   vi.spyOn(HTMLElement.prototype,"getBoundingClientRect").mockImplementation(()=>({width,height,x:0,y:0,top:0,left:0,right:width,bottom:height,toJSON(){}}));
   const ui=render(<FittedBoardArea className="manual-play-board-area"><div/></FittedBoardArea>);
   const area=ui.container.firstElementChild as HTMLElement;
-  expect(parseFloat(area.style.getPropertyValue("--fitted-board-width"))).toBeCloseTo(600*1120/1240);
+  expect(parseFloat(area.style.getPropertyValue("--fitted-board-width"))).toBeCloseTo((600-28)*1120/1240);
   width=768;height=900;resize();
-  expect(parseFloat(area.style.getPropertyValue("--fitted-board-width"))).toBe(760);
+  expect(parseFloat(area.style.getPropertyValue("--fitted-board-width"))).toBe(768-16);
   ui.unmount();expect(disconnect).toHaveBeenCalled();
 });

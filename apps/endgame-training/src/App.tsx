@@ -50,7 +50,7 @@ import { type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactN
 import { trainingStore } from "./store";
 import type { Attempt, BoardPiece, BoardState, LocalManualAnalysisSummary, LocalManualFolder, LocalManualGame, MobileWorkspaceMode, RuleMode, SolutionMove, TrainingLibrary, TrainingProblem } from "./types";
 import { acceptsMove, boardAt, legalTargetsAfter, cancelPikafishSearch, chineseLine, hasLocalPikafish, parseCbl, parseCblGames, queryCloudBook, queryPikafishAnalysis, queryVariationAnalysis, queryPikafishReply, type CloudBookMove, type PikafishAnalysis, type PikafishAnalysisLine } from "./wasm";
-import { cancelTrainingFeedback, trainingFeedbackEvent, FEEDBACK_DURATION, playTrainingFeedback, TRAINING_FEEDBACK_PACK, type TrainingFeedbackEvent, type TrainingFeedbackKind } from "./moveFeedback";
+import { cancelTrainingFeedback, prepareTrainingFeedbackAudio, replayTrainingFeedbackEvent, unlockTrainingFeedbackAudio, trainingFeedbackEvent, FEEDBACK_DURATION, playTrainingFeedback, TRAINING_FEEDBACK_PACK, type TrainingFeedbackEvent, type TrainingFeedbackKind } from "./moveFeedback";
 import { type PreferredOrientation } from "./orientation";
 import { useScreenOrientation } from "./useScreenOrientation";
 import { DEFAULT_SKIN_ID, LEGACY_DEFAULT_SKIN_ID, SKIN_CATALOG, normalizeSkinId, skinById, type SkinCatalogItem } from "./skinCatalog";
@@ -393,7 +393,6 @@ const BOARD_GEOMETRY_BY_SKIN: Record<string, BoardGeometry> = {
     rows: [69, 187, 309, 432, 556, 673, 793, 919, 1042, 1169],
   },
 };
-const markerCornerPath = "M -46 -46 H -22 M -46 -46 V -22 M 46 -46 H 22 M 46 -46 V -22 M -46 46 H -22 M -46 46 V 22 M 46 46 H 22 M 46 46 V 22";
 const pieceCodes: Record<string, string> = {
   king: "k", advisor: "a", elephant: "b", horse: "n", rook: "r", cannon: "c", pawn: "p",
 };
@@ -514,9 +513,14 @@ function sideToMove(startingFen: string, moves: string[]) {
   return (moves.length % 2 === 0) === startsWithBlack ? "black" : "red";
 }
 
+function pieceAssetPath(code: string, skin: string) {
+  const id = normalizeSkinId(skin);
+  return `/skins/${id}/${id === DEFAULT_SKIN_ID ? "retina/" : ""}${code}.png`;
+}
+
 function trainingPieceAsset(piece: BoardPiece, skin: string) {
   const code = pieceCodes[piece.kind.toLowerCase()] ?? "p";
-  return `/skins/${normalizeSkinId(skin)}/${piece.color === "red" ? "r" : "b"}${code}.png`;
+  return pieceAssetPath(`${piece.color === "red" ? "r" : "b"}${code}`, skin);
 }
 
 function piecesToFen(boardPieces: BoardPiece[], side: "red" | "black" = "red") {
@@ -789,6 +793,18 @@ async function renderBoardSnapshotPng({ pieces, boardSkin, pieceSkin, riverText,
   if (!context) throw new Error("当前浏览器不支持棋盘截图 Canvas");
   const board = await loadSkinImage(`/skins/${normalizedBoardSkin}/${boardImage}`);
   context.drawImage(board, 0, 0, BOARD_ART_WIDTH, BOARD_ART_HEIGHT);
+  if (normalizedBoardSkin === DEFAULT_SKIN_ID) {
+    const topShade = context.createLinearGradient(0, 0, 0, 96);
+    topShade.addColorStop(0, "rgba(70, 49, 25, .18)");
+    topShade.addColorStop(1, "rgba(70, 49, 25, 0)");
+    context.fillStyle = topShade;
+    context.fillRect(0, 0, BOARD_ART_WIDTH, 96);
+    const bottomShade = context.createLinearGradient(0, BOARD_ART_HEIGHT - 90, 0, BOARD_ART_HEIGHT);
+    bottomShade.addColorStop(0, "rgba(70, 49, 25, 0)");
+    bottomShade.addColorStop(1, "rgba(70, 49, 25, .13)");
+    context.fillStyle = bottomShade;
+    context.fillRect(0, BOARD_ART_HEIGHT - 90, BOARD_ART_WIDTH, 90);
+  }
   if (riverText && supportsCustomRiverText) {
     context.fillStyle = riverTextColor;
     context.font = `600 ${Math.max(16, Math.min(42, riverTextSize))}px STKaiti, KaiTi, serif`;
@@ -799,10 +815,18 @@ async function renderBoardSnapshotPng({ pieces, boardSkin, pieceSkin, riverText,
   }
   for (const piece of pieces) {
     const point = boardPoint(piece, geometry, flipped);
-    const image = await loadSkinImage(`/skins/${normalizedPieceSkin}/${piece.color === "red" ? "r" : "b"}${pieceCodes[piece.kind.toLowerCase()] ?? "p"}.png`);
+    const image = await loadSkinImage(trainingPieceAsset(piece, normalizedPieceSkin));
     const x = point.x - 60;
     const y = point.y - 60;
+    if (normalizedPieceSkin === DEFAULT_SKIN_ID) {
+      context.save();
+      context.shadowColor = "rgba(53, 39, 24, .33)";
+      context.shadowOffsetX = 2;
+      context.shadowOffsetY = 4;
+      context.shadowBlur = 3;
+    }
     context.drawImage(image, x, y, 120, 120);
+    if (normalizedPieceSkin === DEFAULT_SKIN_ID) context.restore();
   }
   return canvasToPngBytes(canvas);
 }
@@ -825,9 +849,18 @@ const boardPointStyle = (square: Square, geometry: BoardGeometry, flipped = fals
 const ALL_SQUARES = Array.from({ length: 90 }, (_, index) => ({ row: Math.floor(index / 9), col: index % 9 }));
 
 function BoardMarkerLayer({ selected, lastMove, flipped = false, geometry }: { selected?: Square; lastMove?: { from: Square; to: Square }; flipped?: boolean; geometry: BoardGeometry }) {
+  if (!lastMove) return null;
   const point = (square: Square) => { const { x, y } = boardPoint(square, geometry, flipped); return `${x} ${y}`; };
   return <svg className="board-marker-layer" viewBox={`0 0 ${BOARD_ART_WIDTH} ${BOARD_ART_HEIGHT}`} preserveAspectRatio="none" aria-hidden="true">
-    {lastMove && [lastMove.from, lastMove.to].filter((square) => !sameSquare(square, selected)).map((square, index) => <g key={index} transform={`translate(${point(square)})`}><path d={markerCornerPath}/></g>)}
+    <g className="board-last-move-source" transform={`translate(${point(lastMove.from)})`} visibility={sameSquare(lastMove.from, selected) ? "hidden" : undefined}>
+      <circle className="board-last-move-source-ring" r="19"/>
+      <circle className="board-last-move-source-center" r="7.6"/>
+    </g>
+    <g className="board-last-move-target" transform={`translate(${point(lastMove.to)})`} visibility={sameSquare(lastMove.to, selected) ? "hidden" : undefined}>
+      <circle className="board-last-move-halo" r="54"/>
+      <circle className="board-last-move-ring" r="49"/>
+      <g className="board-last-move-orbit"><circle r="49" pathLength="100" strokeDasharray="8 17"/></g>
+    </g>
   </svg>;
 }
 
@@ -846,7 +879,7 @@ function LegalTargetLayer({ targets, flipped = false, geometry }: { targets: Squ
 }
 
 function AnalysisArrowLayer({ moves, activeIndex, flipped = false, geometry, branches = false }: { moves: string[]; activeIndex: number; flipped?: boolean; geometry: BoardGeometry; branches?: boolean }) {
-  const colors = ["#168a55", "#2f7da4", "#b97b18", "#8753a3"];
+  const color = "#f87924";
   const markerPrefix = useId().replace(/:/g, "");
   const arrows = moves.flatMap((move, index) => {
     if (!/^[a-i][0-9][a-i][0-9]$/.test(move)) return [];
@@ -867,9 +900,8 @@ function AnalysisArrowLayer({ moves, activeIndex, flipped = false, geometry, bra
     const endY = toY - dy / length * padding;
     const labelX = Math.max(130, Math.min(990, fromX + dx * .55));
     const labelY = Math.max(130, Math.min(1110, fromY + dy * .55));
-    const color = branches ? "#f87924" : colors[index % colors.length];
     const active = !branches && index === activeIndex;
-    const opacity = branches || active ? 1 : .5;
+    const opacity = branches || active ? 1 : .75;
     return [<g key={`${move}-${index}`} data-move={move} className={`analysis-candidate-arrow ${branches ? "saved-branch-arrow" : ""} ${active ? "active" : ""}`} opacity={opacity} style={{ "--analysis-arrow-color": color } as CSSProperties}>
       <line className="analysis-arrow-backdrop" x1={startX} y1={startY} x2={endX} y2={endY}/>
       <line className="analysis-arrow-outline" x1={startX} y1={startY} x2={endX} y2={endY}/>
@@ -879,7 +911,7 @@ function AnalysisArrowLayer({ moves, activeIndex, flipped = false, geometry, bra
     </g>];
   });
   return <svg className="analysis-arrow-layer" viewBox={`0 0 ${BOARD_ART_WIDTH} ${BOARD_ART_HEIGHT}`} preserveAspectRatio="none" aria-hidden="true">
-    <defs>{moves.map((move, index) => <marker key={`${move}-${index}`} id={`${markerPrefix}-analysis-arrow-${index}`} markerWidth="46" markerHeight="46" refX="38" refY="23" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0 L46 23 L0 46 Z" fill={branches ? "#f87924" : colors[index % colors.length]} fillOpacity=".88" stroke="rgba(255,255,255,.76)" strokeWidth="4" strokeLinejoin="round"/></marker>)}</defs>
+    <defs>{moves.map((move, index) => <marker key={`${move}-${index}`} id={`${markerPrefix}-analysis-arrow-${index}`} markerWidth="46" markerHeight="46" refX="38" refY="23" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0 L46 23 L0 46 Z" fill={color} fillOpacity=".88" stroke="rgba(255,255,255,.76)" strokeWidth="4" strokeLinejoin="round"/></marker>)}</defs>
     {arrows}
   </svg>;
 }
@@ -902,13 +934,14 @@ function BoardCoordinateLayer({ flipped = false, geometry }: { flipped?: boolean
 }
 
 export function Board({ pieces, selected, legalTargets = [], lastMove, hintMove, analysisMoves = [], branchMoves = [], activeAnalysis = 0, flipped = false, feedback, feedbackEvent, setupMode = false, showSideCoordinates = false, boardSkin, pieceSkin, riverText, riverTextColor, riverTextSize, supportsCustomRiverText, onSquare, onMove }: { pieces: BoardPiece[]; selected?: Square; legalTargets?: Square[]; lastMove?: string; hintMove?: string; analysisMoves?: string[]; branchMoves?: string[]; activeAnalysis?: number; flipped?: boolean; feedback?: TrainingFeedbackKind; feedbackEvent?: TrainingFeedbackEvent; setupMode?: boolean; showSideCoordinates?: boolean; boardSkin: string; pieceSkin: string; riverText: string; riverTextColor: string; riverTextSize: number; supportsCustomRiverText: boolean; onSquare(square: Square): void; onMove?(from: Square, to: Square): void }) {
+  useEffect(()=>prepareTrainingFeedbackAudio(),[]);
   const boardRef = useRef<HTMLDivElement | null>(null);
   const [movingEvent,setMovingEvent] = useState<TrainingFeedbackEvent>();
   const [noticeEvent,setNoticeEvent] = useState<TrainingFeedbackEvent>();
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useLayoutEffect(() => {
-    if (!lastMove) { clearTimeout(noticeTimer.current); setNoticeEvent(undefined); return; }
-    if (!feedbackEvent || feedbackEvent.kind === "move" || feedbackEvent.iccs !== lastMove) return;
+    if (!lastMove || !feedbackEvent) { clearTimeout(noticeTimer.current); setNoticeEvent(undefined); return; }
+    if (feedbackEvent.kind === "move" || feedbackEvent.iccs !== lastMove) return;
     clearTimeout(noticeTimer.current); setNoticeEvent(feedbackEvent);
     noticeTimer.current = setTimeout(() => setNoticeEvent(undefined), FEEDBACK_DURATION[feedbackEvent.kind]);
   }, [feedbackEvent?.id, lastMove]);
@@ -962,6 +995,10 @@ export function Board({ pieces, selected, legalTargets = [], lastMove, hintMove,
   const normalizedBoardSkin = normalizeSkinId(boardSkin);
   const geometry = boardGeometryForSkin(normalizedBoardSkin);
   const movingSquares=movingEvent?iccsSquares(movingEvent.iccs):undefined;
+  const feedbackMove=noticeEvent?.iccs ?? feedbackEvent?.iccs ?? lastMove;
+  const feedbackTarget=feedbackMove?iccsSquares(feedbackMove).to:undefined;
+  const feedbackPoint=feedbackTarget?boardPointStyle(feedbackTarget,geometry,flipped):undefined;
+  const feedbackStyle=feedbackPoint?{"--feedback-x":feedbackPoint["--piece-left"],"--feedback-y":feedbackPoint["--piece-top"]} as CSSProperties:undefined;
   const movementStyle = movingSquares ? (()=>{
     const from=boardPointStyle(movingSquares.from,geometry,flipped),to=boardPointStyle(movingSquares.to,geometry,flipped);
     return {"--move-from-x":from["--piece-left"],"--move-from-y":from["--piece-top"],"--move-to-x":to["--piece-left"],"--move-to-y":to["--piece-top"]} as CSSProperties;
@@ -1003,7 +1040,8 @@ export function Board({ pieces, selected, legalTargets = [], lastMove, hintMove,
     else if (onMove) onMove(gesture.from, target);
     else onSquare(target);
   };
-  return <div className={`board-shell${AUTHORED_SKIN_IDS.has(normalizedBoardSkin) ? " authored-skin" : ""}${normalizedBoardSkin === "xuan-paper" ? " reference-wood-skin" : ""}`}><div ref={boardRef} className={`xiangqi-board ${setupMode ? "setup-board" : ""} ${feedback ? `move-feedback ${feedback}` : ""} ${dragging ? "dragging-piece" : ""}`} style={boardStyle} aria-label="残局棋盘" onPointerDownCapture={(event) => {
+  return <div className={`board-shell${AUTHORED_SKIN_IDS.has(normalizedBoardSkin) ? " authored-skin" : ""}${normalizedBoardSkin === "xuan-paper" ? " reference-wood-skin" : ""}${normalizedBoardSkin === DEFAULT_SKIN_ID ? " default-board-depth" : ""}${normalizeSkinId(pieceSkin) === DEFAULT_SKIN_ID ? " default-piece-depth" : ""}`}><div ref={boardRef} className={`xiangqi-board ${setupMode ? "setup-board" : ""} ${feedback ? `move-feedback ${feedback}` : ""} ${dragging ? "dragging-piece" : ""}`} style={boardStyle} aria-label="残局棋盘" onPointerDownCapture={(event) => {
+    unlockTrainingFeedbackAudio();
     if (event.isPrimary === false || (pointerGesture.current && pointerGesture.current.pointerId !== event.pointerId)) cancelPointer();
   }} onPointerMove={(event) => {
     const gesture = pointerGesture.current;
@@ -1038,9 +1076,10 @@ export function Board({ pieces, selected, legalTargets = [], lastMove, hintMove,
       activateSquare(square, event.timeStamp, event.detail);
     }} aria-pressed={Boolean(piece && isSelected)} aria-label={`${squareName(square)}${piece ? ` ${piece.color === "red" ? "红" : "黑"}${piece.label}` : ""}`}>{piece && <><span className="piece-ground-shadow" aria-hidden="true"/><span className="piece-lift"><img className="piece" src={trainingPieceAsset(piece, pieceSkin)} alt={piece.label} draggable={false}/></span></>}</button>; })}
     {movingEvent?.piece && <img key={`move-${movingEvent.id}`} className="piece board-moving-piece" style={movementStyle} src={trainingPieceAsset(movingEvent.piece,pieceSkin)} alt="" aria-hidden="true" draggable={false}/>}
+    {movingEvent?.captured && movingSquares && <img key={`captured-${movingEvent.id}`} className="piece board-captured-piece" style={boardPointStyle(movingSquares.to,geometry,flipped)} src={trainingPieceAsset(movingEvent.captured,pieceSkin)} alt="" aria-hidden="true" draggable={false}/>}
     {dragging && <img className="piece board-drag-ghost" style={{ "--drag-x": `${dragging.x}%`, "--drag-y": `${dragging.y}%` } as CSSProperties} src={trainingPieceAsset(dragging.piece, pieceSkin)} alt="" aria-hidden="true" draggable={false}/>}
-    {visibleFeedback === "capture" && <span key={`capture-${visibleFeedbackId}`} className="capture-feedback"><span>吃</span></span>}
-    {(visibleFeedback === "check" || visibleFeedback === "checkmate" || visibleFeedback === "stalemate") && <span key={`seal-${visibleFeedbackId}`} className={`ink-feedback ${visibleFeedback}`}><span>{TRAINING_FEEDBACK_PACK.labels[visibleFeedback]}</span></span>}
+    {visibleFeedback === "capture" && <span key={`capture-${visibleFeedbackId}`} className="capture-feedback" style={feedbackStyle}><span>吃</span></span>}
+    {(visibleFeedback === "check" || visibleFeedback === "checkmate" || visibleFeedback === "stalemate") && <span key={`seal-${visibleFeedbackId}`} className={`ink-feedback ${visibleFeedback}`} style={feedbackStyle}><span>{TRAINING_FEEDBACK_PACK.labels[visibleFeedback]}</span></span>}
   </div></div>;
 }
 
@@ -1059,7 +1098,7 @@ function AnalysisPanel({ lines, pending, activeIndex, disabled, enabled, multiPv
     </div>
     {!enabled ? <p className="analysis-empty">引擎默认关闭。点击“开启”或顶部放大镜开始分析。</p> : pending ? <p className="analysis-working">Pikafish 正在分析当前局面…</p> : summary ? <>
       <div className="analysis-winrate" style={{ "--red-win-rate": `${summaryRedRate}%` } as CSSProperties}><span>{summaryAdvantage?.red ?? "红优 0"}</span><i aria-hidden="true"><b/></i><span>{summaryAdvantage?.black ?? "黑优 0"}</span></div>
-      <div className="analysis-candidates">{visibleLines.map((line, index) => <div className="analysis-candidate-commentary" key={`${line.multipv}-${line.pv[0]}`}><button className={`analysis-candidate-select ${activeIndex === index ? "active" : ""}`} onClick={() => onSelect(index)}><b>{line.multipv}</b><strong>{moveNotationLabel(line.notation[0])}</strong><em>{analysisScore(line, scoreSide)}</em><span>深度 {line.depth} · 节点 {compactNumber(line.nodes)} · NPS {compactNumber(line.nps)}</span><small>{line.notation.slice(1).map(moveNotationLabel).join(" ")}</small></button><div className="analysis-candidate-actions">{onPreview && <button type="button" className="commentary-entry" disabled={pending || disabled || !line.pv.length} onClick={() => onPreview(line)}>小棋盘</button>}{onExplain && <button type="button" className="commentary-entry" disabled={pending || disabled} onClick={() => onExplain(line)}><Lightbulb aria-hidden="true"/>为什么推荐</button>}</div></div>)}</div>
+      <div className="analysis-candidates">{visibleLines.map((line, index) => <div className="analysis-candidate-commentary" key={`${line.multipv}-${line.pv[0]}`}><button className={`analysis-candidate-select ${activeIndex === index ? "active" : ""}`} onClick={() => onSelect(index)}><b>{index + 1}</b><strong>{moveNotationLabel(line.notation[0])}</strong><em>{analysisScore(line, scoreSide)}</em><span>深度 {line.depth} · 节点 {compactNumber(line.nodes)} · NPS {compactNumber(line.nps)}</span><small>{line.notation.slice(1).map(moveNotationLabel).join(" ")}</small></button><div className="analysis-candidate-actions">{onPreview && <button type="button" className="commentary-entry" disabled={pending || disabled || !line.pv.length} onClick={() => onPreview(line)}>小棋盘</button>}{onExplain && <button type="button" className="commentary-entry" disabled={pending || disabled} onClick={() => onExplain(line)}><Lightbulb aria-hidden="true"/>为什么推荐</button>}</div></div>)}</div>
     </> : <p className="analysis-empty">当前局面尚未分析</p>}
   </section>;
 }
@@ -1128,7 +1167,7 @@ function SkinPreview({ skinId, previewKind, large = false }: { skinId: string; p
     return <span className={`skin-board-preview ${large ? "large" : ""}`} style={{ backgroundImage: `url("/skins/${skinId}/board.png")` }} aria-hidden="true"/>;
   }
   return <span className={`skin-piece-preview ${large ? "large" : ""}`} aria-hidden="true">
-    {["rk", "rr", "rp", "bk", "br"].map((piece) => <img key={piece} src={`/skins/${skinId}/${piece}.png`} alt=""/>)}
+    {["rk", "rr", "rp", "bk", "br"].map((piece) => <img key={piece} src={pieceAssetPath(piece, skinId)} alt=""/>)}
   </span>;
 }
 
@@ -1143,8 +1182,8 @@ const SKIN_BOARD_PREVIEW_PIECES = [
 
 function SkinBoardEffectPreview({ boardSkin, pieceSkin }: { boardSkin: string; pieceSkin: string }) {
   const geometry = boardGeometryForSkin(boardSkin);
-  return <div className="skin-board-effect-preview" aria-label="棋盘和棋子整盘预览" style={{ backgroundImage: `url("/skins/${boardSkin}/board.png")` }}>
-    {SKIN_BOARD_PREVIEW_PIECES.map((item) => <img key={`${item.piece}-${item.row}-${item.col}`} src={`/skins/${pieceSkin}/${item.piece}.png`} alt="" style={{ left: `${geometry.columns[item.col] / BOARD_ART_WIDTH * 100}%`, top: `${geometry.rows[item.row] / BOARD_ART_HEIGHT * 100}%` }}/>)}
+  return <div className={`skin-board-effect-preview${boardSkin === DEFAULT_SKIN_ID ? " default-board-depth" : ""}${pieceSkin === DEFAULT_SKIN_ID ? " default-piece-depth" : ""}`} aria-label="棋盘和棋子整盘预览" style={{ backgroundImage: `url("/skins/${boardSkin}/board.png")` }}>
+    {SKIN_BOARD_PREVIEW_PIECES.map((item) => <img key={`${item.piece}-${item.row}-${item.col}`} src={pieceAssetPath(item.piece, pieceSkin)} alt="" style={{ left: `${geometry.columns[item.col] / BOARD_ART_WIDTH * 100}%`, top: `${geometry.rows[item.row] / BOARD_ART_HEIGHT * 100}%` }}/>)}
   </div>;
 }
 
@@ -5352,10 +5391,13 @@ export function App() {
     const nextMoves = manualMoves.slice(0, nextCursor);
     const state = await boardAt(manualStartingFen, nextMoves, studyRuleMode);
     if (revision !== manualSaveRevision.current) return;
+    const feedback = replayTrainingFeedbackEvent(manualPieces, state, nextMoves, manualCursor, nextCursor);
     setManualCursor(nextCursor);
     setManualPieces(state.pieces);
     setManualSelected(undefined);
     setManualLastMove(nextMoves.at(-1));
+    setMoveFeedback(feedback?.kind); setFeedbackEvent(feedback);
+    if (feedback) playTrainingFeedback(feedback.kind); else cancelTrainingFeedback();
     setManualCurrentFen(state.fen);
     setManualTerminal(terminalResult(state.ruleStatus ?? state.status));
     setManualNotice(nextCursor ? `已定位到第 ${nextCursor} 手。` : "已回到起始局面。");
@@ -6135,10 +6177,13 @@ export function App() {
     const nextMoves = studyMoves.slice(0, nextCursor);
     const state = await boardAt(studyStartingFen, nextMoves, studyRuleMode);
     if (generation !== studyGeneration.current) return;
+    const feedback = replayTrainingFeedbackEvent(studyPieces, state, nextMoves, studyCursor, nextCursor);
     setStudyCursor(nextCursor);
     setStudyPieces(state.pieces);
     setStudySelected(undefined);
     setStudyLastMove(nextMoves.at(-1));
+    setMoveFeedback(feedback?.kind); setFeedbackEvent(feedback);
+    if (feedback) playTrainingFeedback(feedback.kind); else cancelTrainingFeedback();
     setStudyTerminal(terminalResult(state.ruleStatus ?? state.status));
     setStudyNotice(nextCursor ? `已定位到第 ${nextCursor} 手：${studyNotation[nextCursor - 1] ?? nextMoves.at(-1)}。` : "已回到起始局面。");
     invalidateStudyCloud(state.fen);
@@ -7030,7 +7075,6 @@ export function App() {
       <button className={boardFlipped ? "active" : ""} aria-label="翻转棋盘" title="翻转棋盘" onClick={() => runStudyMenuAction("flip")}><FlipVertical2/><span>翻转</span></button>
       <button className={`study-engine-toggle ${studyEngineEnabled ? "active engine-enabled" : ""}`} disabled={Boolean(studyTerminal)} aria-pressed={studyEngineEnabled} aria-label={studyEngineEnabled ? "关闭引擎分析" : "开启引擎分析"} title={studyEngineEnabled ? "关闭引擎分析" : "开启引擎分析"} onClick={() => void toggleStudyEngine()}><Search/><span>{studyEngineEnabled ? "引擎开" : "引擎关"}</span></button>
       <button type="button" onClick={() => openMobileVariation()}>自由推演</button>
-      <button className={studyPanelTab === "engine" ? "active" : ""} aria-label="打开引擎面板" title="打开引擎面板" onClick={() => setStudyPanelTab("engine")}><Cpu/><span>引擎</span></button>
     </nav></header>{studyEvaluationVisible && <section className="study-engine-strip"><div><span>深度 {studySummaryLine?.depth ?? "--"}</span><span>节点 {studySummaryLine ? compactNumber(studySummaryLine.nodes) : "--"}</span><span>速度 {studySummaryLine ? `${compactNumber(studySummaryLine.nps)}/s` : "--"}</span></div><button className="study-evaluation-toggle" type="button" aria-label="隐藏顶部评估" onClick={toggleStudyEvaluation}>当前评估 {studyEvaluationLabel}</button></section>}<Board key="study" pieces={studyPieces} selected={studySelected} legalTargets={studyLegalTargets} lastMove={studyLastMove} branchMoves={studyBranchChoices.map(item => item.move)} analysisMoves={studyArrowMoves} activeAnalysis={studyArrowActiveIndex} flipped={boardFlipped} feedback={moveFeedback} feedbackEvent={feedbackEvent} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={(square) => void moveStudy(square)} onMove={(from, to) => void moveStudyFromTo(from, to)}/></main>
     {studyMenuOpen && <section className="study-menu" aria-label="拆棋功能菜单">
         <header><span><strong>拆棋功能</strong><small>临时拆棋，不写题解树</small></span><button type="button" aria-label="关闭拆棋功能菜单" onClick={() => setStudyMenuOpen(false)}><X/></button></header>
@@ -7118,14 +7162,14 @@ export function App() {
     <fieldset className="study-rule-picker"><legend>棋规模式</legend>{(["domestic2020", "asianAxf", "free"] as RuleMode[]).map(value => <button key={value} type="button" aria-pressed={studyRuleMode === value} onClick={() => void changeStudyRuleMode(value)}>{studyRuleLabel(value)}</button>)}</fieldset>
     <footer><button type="button" onClick={() => {setManualSettingsOpen(false);void switchFromManualMode("study");}}>切换到拆棋</button><button type="button" className="primary" onClick={() => setManualSettingsOpen(false)}>完成</button></footer>
   </section></div>}
-  {mobileVariation && <VariationBoard key={mobileVariation.id} onCollapsedChange={setMobileVariationCollapsed} mobile light title={mobileVariation.mode === "manual" ? mobileVariation.snapshot.title : "拆棋研究"} base={mobileVariation.base} initialMoves={mobileVariation.moves} validate={mobileVariationFrames} analyze={mobileVariation.scope === catalogAccountScope ? analyzeMobileVariation : undefined} savedBranchTitle={mobileSavedVariationGame()?.title} savedBranches={mobileSavedVariationGame()?.branches.map(branch => ({ id: branch.id, label: `${branch.parentCursor + 1}. ${branch.notation[0] ?? branch.moves[0]} · ${branch.moves.length} 步` }))} onDeleteSaved={mobileSavedVariationGame() ? deleteMobileSavedVariation : undefined} saveLabel={mobileVariation.snapshot.readOnly || mobileVariation.snapshot.origin?.kind === "providerMirror" ? "复制到我的棋谱后保存" : undefined} onSave={moves => saveMobileVariation(moves)} onSaveCopy={moves => saveMobileVariation(moves, true)} onClose={() => setMobileVariation(undefined)} renderBoard={(frame, controls) => <Board pieces={frame.pieces} selected={controls.selected} flipped={controls.flipped} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} analysisMoves={controls.hintMoves} onSquare={controls.onSquare} onMove={controls.onMove}/>}/>}
+  {mobileVariation && <VariationBoard key={mobileVariation.id} onCollapsedChange={setMobileVariationCollapsed} mobile light title={mobileVariation.mode === "manual" ? mobileVariation.snapshot.title : "拆棋研究"} base={mobileVariation.base} initialMoves={mobileVariation.moves} initialFlipped={boardFlipped} validate={mobileVariationFrames} analyze={mobileVariation.scope === catalogAccountScope ? analyzeMobileVariation : undefined} savedBranchTitle={mobileSavedVariationGame()?.title} savedBranches={mobileSavedVariationGame()?.branches.map(branch => ({ id: branch.id, label: `${branch.parentCursor + 1}. ${branch.notation[0] ?? branch.moves[0]} · ${branch.moves.length} 步` }))} onDeleteSaved={mobileSavedVariationGame() ? deleteMobileSavedVariation : undefined} saveLabel={mobileVariation.snapshot.readOnly || mobileVariation.snapshot.origin?.kind === "providerMirror" ? "复制到我的棋谱后保存" : undefined} onSave={moves => saveMobileVariation(moves)} onSaveCopy={moves => saveMobileVariation(moves, true)} onClose={() => setMobileVariation(undefined)} renderBoard={(frame, controls) => <Board pieces={frame.pieces} selected={controls.selected} flipped={controls.flipped} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} analysisMoves={controls.hintMoves} onSquare={controls.onSquare} onMove={controls.onMove}/>}/>}
   {variationSaveDraft && <ManualSaveDialog game={variationSaveDraft.game} folders={manualFolders} onCreateFolder={async path => { await trainingStore.createManualFolder(path); await refreshManualLibrary(); }} onSave={async values => {
     if (!mobileVariation || variationContext.current().scope !== mobileVariation.scope) throw new Error("账号或机构已切换，保存已取消");
     const saved = await variationSaveDraft.commit(values);
     variationSaveDraft.resolve(saved); setVariationSaveDraft(undefined);
   }} onClose={() => { variationSaveDraft.reject(new Error("已取消保存，临时线路仍在小棋盘中")); setVariationSaveDraft(undefined); }}/ >}
   {manualImportOpen && <ManualImportDialog folder={manualMirrorFolderSelected ? undefined : manualFolderPath || undefined} onClose={() => setManualImportOpen(false)} onImport={async (game,warnings) => {await manualSaveTail.current;await trainingStore.saveManualGame(game);setManualFolder(game.folderPath ?? "");setManualQuery("");await openManualGame(game);setManualReturnToLibrary(true);setManualNotice(warnings.length?`导入成功。${warnings.join("；")}`:"导入成功，主线、变招和注释已保留。");}}/>}
-  {manualRehearsal && <LocalManualRehearsal game={manualRehearsal} onClose={() => setManualRehearsal(undefined)} renderBoard={(state,selected,hint,onSquare) => <Board pieces={state.pieces} selected={selected} hintMove={hint} flipped={boardFlipped} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={onSquare}/>}/ >}
+  {manualRehearsal && <LocalManualRehearsal game={manualRehearsal} initialFlipped={boardFlipped} onClose={() => setManualRehearsal(undefined)} renderBoard={(state,selected,hint,flipped,onSquare,onMove) => <Board pieces={state.pieces} selected={selected} hintMove={hint} flipped={flipped} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={onSquare} onMove={onMove}/>}/ >}
   {manualShareDraft && <ManualShareDialog game={manualShareDraft} onClose={() => setManualShareDraft(undefined)}/> }
   {manualSaveDraft && <ManualSaveDialog
     game={manualSaveDraft}

@@ -1754,7 +1754,8 @@ export function teacherAuthoringSession(auth:TeachingAuth, scope:"organization"|
  const captured=authContexts.get(auth);
  const check=()=>{if(!captured||!isCurrentAuthContext(captured))throw new Error("账号或机构已切换，请重新打开机构题库");};
  return {scopeKey:`${captured?.serverUrl}:${auth.user.id}:${auth.user.orgId}:${scope}`,request:async<T>(path:string,init:RequestInit={})=>{
-   check();const headers=new Headers(init.headers);headers.set("x-authoring-scope",scope);
+   check();const headers=new Headers(init.headers);
+   if(path.startsWith("/api/v1/admin/authoring/"))headers.set("x-authoring-scope",scope);
    const value=scope==="personal"
      ? await request<T>(path,{...init,headers},auth.token,true,auth)
      : await teacherRequest<T>(path,{...init,headers},auth);

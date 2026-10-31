@@ -9,7 +9,12 @@ export function FittedBoardArea({ className, children, suspended = false }: { cl
     const node = element.current!;
     const fit = () => {
       const { width, height } = node.getBoundingClientRect();
-      if (width > 0 && height > 0) node.style.setProperty("--fitted-board-width", `${Math.min(width, height * 1120 / 1240, 760)}px`);
+      if (width > 0 && height > 0) {
+        // Leave room for the board frame and piece shadows at the viewport edge.
+        const availableWidth = Math.max(0, width - 16);
+        const availableHeight = Math.max(0, height - 28);
+        node.style.setProperty("--fitted-board-width", `${Math.min(availableWidth, availableHeight * 1120 / 1240, 760)}px`);
+      }
     };
     fit();
     const observer = new ResizeObserver(fit);

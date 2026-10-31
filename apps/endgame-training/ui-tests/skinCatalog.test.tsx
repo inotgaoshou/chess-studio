@@ -46,3 +46,33 @@ it("keeps all 90 targets aligned across the compact sets and mixed piece skins",
     }
   }
 });
+
+it("applies default depth independently to the board and pieces without moving hit targets", () => {
+  const props={pieces:[],boardSkin:DEFAULT_SKIN_ID,pieceSkin:DEFAULT_SKIN_ID,riverText:"",riverTextColor:"#000",riverTextSize:20,supportsCustomRiverText:false,onSquare:vi.fn()};
+  const ui=render(<Board {...props}/>);
+  const shell=()=>ui.container.querySelector(".board-shell")!;
+  const positions=()=>[...ui.container.querySelectorAll<HTMLElement>(".board-square")].map(square=>square.getAttribute("style"));
+  const baseline=positions();
+  expect(shell().classList.contains("default-board-depth")).toBe(true);
+  expect(shell().classList.contains("default-piece-depth")).toBe(true);
+  ui.rerender(<Board {...props} boardSkin={authoredSkins[0].id}/>);
+  expect(shell().classList.contains("default-board-depth")).toBe(false);
+  expect(shell().classList.contains("default-piece-depth")).toBe(true);
+  ui.rerender(<Board {...props} pieceSkin={authoredSkins[0].id}/>);
+  expect(shell().classList.contains("default-board-depth")).toBe(true);
+  expect(shell().classList.contains("default-piece-depth")).toBe(false);
+  expect(positions()).toEqual(baseline);
+});
+
+it("uses the sharper default pieces on large displays and keeps other skins unchanged", () => {
+  for (const side of ["r", "b"]) for (const kind of ["k", "a", "b", "n", "r", "c", "p"]) {
+    const png=readFileSync(`public/skins/${DEFAULT_SKIN_ID}/retina/${side}${kind}.png`);
+    expect([png.readUInt32BE(16),png.readUInt32BE(20)]).toEqual([240,240]);
+  }
+  const piece={row:9,col:4,color:"red" as const,kind:"king",label:"帅"};
+  const props={pieces:[piece],boardSkin:DEFAULT_SKIN_ID,pieceSkin:DEFAULT_SKIN_ID,riverText:"",riverTextColor:"#000",riverTextSize:20,supportsCustomRiverText:false,onSquare:vi.fn()};
+  const ui=render(<Board {...props}/>);
+  expect(ui.container.querySelector(".board-square .piece")?.getAttribute("src")).toContain("/qingxin-zhuyun/retina/rk.png");
+  ui.rerender(<Board {...props} pieceSkin={authoredSkins[0].id}/>);
+  expect(ui.container.querySelector(".board-square .piece")?.getAttribute("src")).toContain(`/skins/${authoredSkins[0].id}/rk.png`);
+});
