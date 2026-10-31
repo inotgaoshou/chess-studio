@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render } from "@testing-library/react";
 import { Board } from "../src/App";
 import { captureLabel, captureVariant, feedbackAudioCue, cancelTrainingFeedback, playTrainingFeedback, prepareTrainingFeedbackAudio, replayTrainingFeedbackEvent, trainingFeedbackEvent, TRAINING_FEEDBACK_PACK, FEEDBACK_DURATION, unlockTrainingFeedbackAudio } from "../src/moveFeedback";
+import { branchBadgePoint, branchChoiceColor } from "../src/branchPresentation";
+import { BranchStrip } from "../../desktop/src/BranchStrip";
 import { currentVerification, needsTerminalWin, terminalWin, VERIFIER_VERSION } from "../src/verificationPolicy";
 import type { BoardPiece, BoardState } from "../src/types";
 
@@ -152,8 +154,38 @@ it("renders a numbered arrowhead for every saved branch independently of AI hint
   const arrows=[...ui.container.querySelectorAll('.saved-branch-arrow')];
   expect(arrows).toHaveLength(moves.length);
   expect(arrows.map(arrow=>arrow.querySelector('text')?.textContent)).toEqual(['1','2','3','4','5','6']);
-  for(const arrow of arrows){
+  const choices=moves.map((move,index)=>({id:move,move,notation:`走法 ${index+1}`,color:branchChoiceColor(index)}));
+  const strip=render(<BranchStrip choices={choices} onSelect={vi.fn()}/>);
+  for(const [index,arrow] of arrows.entries()){
     const ref=arrow.querySelector('.analysis-arrow-stem')!.getAttribute('marker-end')!;
-    expect([...ui.container.querySelectorAll('marker')].some(marker=>ref===`url(#${marker.id})`)).toBe(true);
+    const marker=[...ui.container.querySelectorAll('marker')].find(marker=>ref===`url(#${marker.id})`)!;
+    const color=arrow.querySelector('.analysis-arrow-stem')!.getAttribute('stroke');
+    expect(marker.querySelector('path')?.getAttribute('fill')).toBe(color);
+    expect((strip.container.querySelectorAll('.manual-branch-choices button')[index] as HTMLElement).style.getPropertyValue('--branch-color')).toBe(color);
   }
+  expect(new Set(arrows.map(arrow=>arrow.querySelector('.analysis-arrow-stem')!.getAttribute('stroke'))).size).toBe(6);
+});
+
+it("keeps opposite cannon branch numbers off pieces and distinct after flipping",()=>{
+  for(const flipped of [false,true]) {
+    const project=({x,y}:{x:number;y:number})=>flipped?{x:1120-x,y:1240-y}:{x,y};
+    const from=project({x:560,y:430});
+    const occupied=[from,...[{x:560,y:210},{x:560,y:320}].map(project)];
+    const first=branchBadgePoint(from,project({x:560,y:210}),occupied,[],1120,1240);
+    const second=branchBadgePoint(from,project({x:560,y:540}),occupied,[first],1120,1240);
+    for(const label of [first,second])for(const piece of occupied)expect(Math.hypot(label.x-piece.x,label.y-piece.y)).toBeGreaterThan(75);
+    expect(Math.hypot(first.x-second.x,first.y-second.y)).toBeGreaterThan(60);
+    expect((first.x-from.x)*(second.x-from.x)).toBeLessThan(0);
+  }
+});
+
+it("uses the same piece-avoiding badge positions for AI hints and saved branches",()=>{
+ const pieces:BoardPiece[]=[{row:3,col:4,color:"red",kind:"cannon",label:"炮"},{row:2,col:4,color:"black",kind:"cannon",label:"炮"},{row:1,col:4,color:"black",kind:"advisor",label:"士"}];
+ const props={pieces,boardSkin:"classic",pieceSkin:"classic",riverText:"",riverTextColor:"#000",riverTextSize:20,supportsCustomRiverText:false,onSquare:vi.fn()};
+ const ui=render(<Board {...props} branchMoves={["e6e8","e6e5"]}/>);
+ const positions=()=>[...ui.container.querySelectorAll('.analysis-arrow-label')].map(e=>[e.getAttribute('cx'),e.getAttribute('cy')]);
+ const branches=positions();
+ ui.rerender(<Board {...props} analysisMoves={["e6e8","e6e5"]}/>);
+ expect(positions()).toEqual(branches);
+ expect(ui.container.querySelectorAll('.branch-label-leader')).toHaveLength(2);
 });

@@ -1,5 +1,24 @@
 import type {LocalManualGame,LocalManualMoveBranch} from "./types";
 const samePath=(a:string[],b:string[])=>a.length===b.length&&a.every((move,index)=>move===b[index]);
+const startsWith=(line:string[],prefix:string[])=>line.length>=prefix.length&&prefix.every((move,index)=>line[index]===move);
+
+/** Delete one child edge and its descendants, even when it belongs to the mainline.
+ * The mainline is shortened, never silently replaced by a surviving variation. */
+export function removeManualContinuation(game:Pick<LocalManualGame,"moves"|"branches"|"comments">,path:string[]) {
+ if(!path.length)throw new Error("不能删除起始局面");
+ if(![game.moves,...game.branches.map(b=>[...b.parentPath,...b.moves])].some(line=>startsWith(line,path)))throw new Error("这条走法已不存在，请重新选择");
+ const moves=startsWith(game.moves,path)?game.moves.slice(0,path.length-1):game.moves;
+ const branches=game.branches.flatMap(branch=>{
+  if(startsWith(branch.parentPath,path))return [];
+  const line=[...branch.parentPath,...branch.moves];
+  if(!startsWith(line,path))return [branch];
+  const keep=path.length-1-branch.parentPath.length;
+  return keep>0?[{...branch,moves:branch.moves.slice(0,keep),notation:branch.notation.slice(0,keep)}]:[];
+ });
+ const reachable=new Set([""]);
+ for(const line of [moves,...branches.map(b=>[...b.parentPath,...b.moves])])for(let i=1;i<=line.length;i++)reachable.add(line.slice(0,i).join(","));
+ return {moves,branches,comments:Object.fromEntries(Object.entries(game.comments).filter(([key])=>reachable.has(key)))};
+}
 export function removeManualBranch(game:Pick<LocalManualGame,"moves"|"branches"|"comments">,id:string){
  const target=game.branches.find(branch=>branch.id===id);if(!target)return {branches:game.branches,comments:game.comments};
  const reachable=new Set([""]);

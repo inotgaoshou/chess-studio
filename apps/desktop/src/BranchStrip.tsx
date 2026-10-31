@@ -1,10 +1,10 @@
-import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { GitFork, GripVertical, Settings2, X } from "lucide-react";
 import { branchOverlayBounds, placeBranchOverlay, type OverlayPoint } from "./branchOverlay";
 import "./branchStrip.css";
 
-export type BranchStripChoice = { id:string; move:string; notation:string; selected?:boolean; isMainline?:boolean };
+export type BranchStripChoice = { id:string; move:string; notation:string; selected?:boolean; isMainline?:boolean; color?:string };
 export type BranchStripAnchor = { board:Element|null; toolbar?:Element|null; dock?:Element|null; dockInside?:boolean };
 type BranchStripProps = {
   choices:BranchStripChoice[]; onSelect(id:string):void; onManage?():void; revealKey?:number;
@@ -96,13 +96,13 @@ export function BranchStrip(props:BranchStripProps) {
   const content=<nav ref={card} className={`manual-branch-strip ${floating?"is-floating":""} ${light?"is-light":""} ${unique.length===1?"is-single":""} ${unique.length>2?"has-many-choices":""} ${!open?"is-collapsed":""}`} aria-label="当前局面分支" style={floating?{visibility:"hidden"}:undefined}>
     {floating ? <div className="branch-inline-controls"><span {...dragEvents}>{handle}</span>
       {!open ? <button type="button" aria-label="展开棋谱后续" onClick={()=>setOpen(true)}><GitFork size={14}/>{unique.length === 1 ? "棋谱后续" : `分支 ${unique.length}`}</button>
-      : <div className="manual-branch-choices">{unique.map((choice,index)=><button key={choice.id} type="button" data-move={choice.move} aria-label={unique.length === 1 ? `棋谱下一着：${choice.notation}` : `分支 ${index+1} · ${choice.notation}`} aria-current={choice.selected?"true":undefined} title={`${unique.length>1?`分支 ${index+1} · `:"下一着："}${choice.notation}`} onClick={()=>select(choice.id)}>{unique.length>1&&<b>{index+1}</b>}<strong>{unique.length===1?"下一着：":""}{choice.notation}</strong></button>)}</div>}
-      <span className="branch-small-actions">{onManage&&open&&unique.length>1&&<button type="button" className="branch-manage-button" aria-label="管理变招" title={`查看全部 ${unique.length} 条分支着法`} onClick={onManage}><Settings2 size={14}/><span className="branch-choice-count" aria-hidden="true">共{unique.length}</span></button>}{open&&<button type="button" aria-label="收起变招选择" onClick={()=>setOpen(false)}><X size={14}/></button>}</span>
+      : <div className="manual-branch-choices">{unique.map((choice,index)=><button key={choice.id} style={choice.color?{"--branch-color":choice.color} as CSSProperties:undefined} type="button" data-move={choice.move} aria-label={unique.length === 1 ? `棋谱下一着：${choice.notation}` : `分支 ${index+1} · ${choice.notation}`} aria-current={choice.selected?"true":undefined} title={`${unique.length>1?`分支 ${index+1} · `:"下一着："}${choice.notation}`} onClick={()=>select(choice.id)}>{unique.length>1&&<b>{index+1}</b>}<strong>{unique.length===1?"下一着：":""}{choice.notation}</strong></button>)}</div>}
+      <span className="branch-small-actions">{onManage&&open&&unique.length>0&&<button type="button" className="branch-manage-button" aria-label="管理变招" title={`查看全部 ${unique.length} 条分支着法`} onClick={onManage}><Settings2 size={14}/><span className="branch-choice-count" aria-hidden="true">共{unique.length}</span></button>}{open&&<button type="button" aria-label="收起变招选择" onClick={()=>setOpen(false)}><X size={14}/></button>}</span>
     </div> : unique.length===1 || !open ? <div className="branch-compact">{unique.length===1
       ? <button type="button" aria-label={`棋谱下一着：${unique[0].notation}`} onClick={()=>select(unique[0].id)}>下一着：{unique[0].notation}</button>
       : <button type="button" onClick={()=>setOpen(true)}><GitFork size={16}/>选择变招 · {unique.length} 条</button>}</div>
     : <><header><strong><GitFork size={15}/>选择变招 · {unique.length} 条</strong><span>{onManage&&<button type="button" aria-label="管理变招" onClick={onManage}><Settings2 size={14}/></button>}<button type="button" aria-label="收起变招选择" onClick={()=>setOpen(false)}><X size={14}/></button></span></header>
-    <div className="manual-branch-choices">{unique.map((choice,index)=><button key={choice.id} type="button" aria-label={`分支 ${index+1} · ${choice.notation}`} aria-current={choice.selected?"true":undefined} onClick={()=>select(choice.id)}><b>{index+1}</b><span><strong>{choice.notation}</strong><small>{choice.isMainline?"主线":"分支"} {index+1}</small></span></button>)}</div></>}
+    <div className="manual-branch-choices">{unique.map((choice,index)=><button key={choice.id} style={choice.color?{"--branch-color":choice.color} as CSSProperties:undefined} type="button" aria-label={`分支 ${index+1} · ${choice.notation}`} aria-current={choice.selected?"true":undefined} onClick={()=>select(choice.id)}><b>{index+1}</b><span><strong>{choice.notation}</strong><small>{choice.isMainline?"主线":"分支"} {index+1}</small></span></button>)}</div></>}
   </nav>;
   return floating?createPortal(<div ref={layer} className="branch-floating-layer">{content}</div>,document.body):content;
 }

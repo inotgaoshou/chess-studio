@@ -7287,7 +7287,22 @@ html.keyboard-open .manual-save-backdrop .manual-save-dialog { max-height:100%; 
 .training-app .teacher-mobile-page.mobile-teacher-checkin { padding:0; display:block; scroll-padding-top:12px; }
 .mobile-teacher-checkin .checkin-workspace { margin:0 auto; padding-bottom:24px; }
 .mobile-teacher-checkin .checkin-plan-editor { min-width:0; }
-.saved-branch-arrow .analysis-arrow-label { fill:#56a523; }
+.saved-branch-arrow .analysis-arrow-label { fill:var(--analysis-arrow-color); stroke:#fff; stroke-width:5px; }
+.saved-branch-arrow .analysis-arrow-stem { opacity:1; stroke-width:14px; filter:none; }
+.saved-branch-arrow .analysis-arrow-outline { stroke:#fffdf4; stroke-width:20px; opacity:.95; }
+.analysis-candidate-arrow .branch-label-leader { stroke-width:3px; opacity:.85; }
+.branch-actions-backdrop { z-index:1300; }
+.branch-actions-dialog { width:min(460px,calc(100vw - 24px)); max-height:80dvh; overflow:auto; padding:16px; border-radius:14px; background:#f6fbf5; color:#254d39; box-shadow:0 8px 32px #15332533; }
+.branch-actions-dialog header,.branch-actions-dialog footer,.branch-actions-list > div,.branch-actions-list > div > span { display:flex; align-items:center; gap:8px; }
+.branch-actions-dialog header { justify-content:space-between; }
+.branch-actions-dialog h3 { margin:0; }
+.branch-actions-dialog p { font-size:13px; line-height:1.6; }
+.branch-actions-dialog button { min-height:40px; padding:6px 10px; border:1px solid #b9cfc0; border-radius:7px; background:#fff; color:inherit; }
+.branch-actions-dialog button:disabled { opacity:.5; }
+.branch-actions-list > div { padding:10px 0; border-top:1px solid #d6e4d8; }
+.branch-actions-list > div > span { flex:1; flex-wrap:wrap; }
+.branch-actions-list b { display:grid; place-items:center; width:24px; height:24px; border-radius:50%; color:white; }
+.branch-actions-dialog .danger,.branch-actions-dialog [role=alert] { color:#b13128; }
 
 /* A saved continuation and the replay controls share the first study row. */
 .study-branch-navigation { display:flex; flex-direction:column; gap:4px; }

@@ -16,7 +16,7 @@
 .manual-branch-strip header > span { display:flex; flex:none; }
 .manual-branch-strip header button { border:0; padding:2px 5px; min-height:28px; background:transparent; }
 .manual-branch-strip .manual-branch-choices { display:flex; }
-.manual-branch-strip .manual-branch-choices button b { display:grid; place-items:center; width:22px; height:22px; border-radius:50%; color:white; background:#56a523; }
+.manual-branch-strip .manual-branch-choices button b { display:grid; place-items:center; width:22px; height:22px; border-radius:50%; color:white; background:var(--branch-color,#56a523); }
 .manual-branch-choices button span { display:grid; gap:2px; text-align:left; }
 .manual-branch-choices button strong { font-size:12px; }
 .manual-branch-choices button small { font-size:10px; opacity:.75; }
@@ -69,3 +69,5 @@
 .branch-choice-count { display:none; }
 .manual-branch-strip.is-floating.has-many-choices[data-compact-choices=true] .branch-manage-button > svg { display:none; }
 .manual-branch-strip.is-floating.has-many-choices[data-compact-choices=true] .branch-choice-count { display:inline; font-size:10px; }
+
+.manual-branch-choices button[style] { box-shadow:inset 0 -2px 0 var(--branch-color); }
