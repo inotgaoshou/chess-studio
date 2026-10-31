@@ -7225,7 +7225,7 @@ html.phone-webview .manual-reference-layout .manual-stage.manual-analysis-expand
   gap:6px 12px;
  }
  html:is(.phone-webview,.tablet-webview) .manual-reference-layout .manual-stage:not(.manual-setup-active) > .manual-statusbar {
-  grid-column:1/-1; grid-row:1; width:100%; height:44px; min-height:44px; max-height:44px;
+  grid-column:1/-1; grid-row:1; width:100%; height:44px; min-height:44px; max-height:44px; padding:0 4px; border-bottom:0;
  }
  html:is(.phone-webview,.tablet-webview) .manual-reference-layout .manual-stage:not(.manual-setup-active) > .manual-play-board-area {
   grid-column:1; grid-row:2/-1; align-self:stretch;

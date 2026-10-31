@@ -17,8 +17,8 @@ const game={id:'branch-actions',title:'分支操作验收',note:'保留备注',s
  await board.getByRole('button',{name:'e6 红炮',exact:true}).waitFor();
  const out=process.env.EVIDENCE_DIR||'/tmp/qixi-rehearsal-feedback';fs.mkdirSync(out,{recursive:true});
 
- for(const width of [320,390,430,820]){
-  await page.setViewportSize({width,height:width===820?1180:844});
+ for(const [width,height] of [[320,844],[390,844],[430,844],[820,1180],[844,390]]){
+  await page.setViewportSize({width,height});
   const sizes=await page.locator('.manual-statusbar').evaluate(node=>{
    const header=node.getBoundingClientRect(),buttons=[...node.querySelectorAll(':scope > button')];
    return buttons.map(b=>{const r=b.getBoundingClientRect(),icon=b.querySelector('svg').getBoundingClientRect();return {h:r.height,icon:icon.width,inside:r.top>=header.top&&r.bottom<=header.bottom+1,center:Math.abs((r.top+r.bottom-icon.top-icon.bottom)/2)};});
