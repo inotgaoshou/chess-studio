@@ -1,0 +1,53 @@
+{
+  "passed": true,
+  "checks": [
+    "personal ownership, admin/peer/foreign isolation and legacy default",
+    "VIP personal access and institution-source rejection",
+    "private-to-org copy is a new private draft; retry idempotent",
+    "mate filters, counts, pagination and deduplication"
+  ],
+  "filters": [
+    {
+      "filter": {
+        "mateMoves": 1
+      },
+      "totalCount": 95,
+      "ms": 1274,
+      "nextPage": true,
+      "sourceTotal": 2,
+      "sourceMs": 50
+    },
+    {
+      "filter": {
+        "mateMoves": 2
+      },
+      "totalCount": 39,
+      "ms": 1211,
+      "nextPage": true,
+      "sourceTotal": 2,
+      "sourceMs": 101
+    },
+    {
+      "filter": {
+        "mateMoves": 3
+      },
+      "totalCount": 40,
+      "ms": 1271,
+      "nextPage": true,
+      "sourceTotal": 47,
+      "sourceMs": 30
+    },
+    {
+      "filter": {
+        "mateGroup": "long"
+      },
+      "totalCount": 104,
+      "ms": 1881,
+      "nextPage": true,
+      "sourceTotal": 1903,
+      "sourceMs": 834
+    }
+  ],
+  "assignmentsPublished": 0,
+  "fixturesCleaned": true
+}
