@@ -6,10 +6,10 @@ type Point = {x:number;y:number};
 export function branchBadgePoint(from:Point,to:Point,pieces:Point[],labels:Point[],width:number,height:number):Point {
   const dx=to.x-from.x,dy=to.y-from.y,length=Math.max(1,Math.hypot(dx,dy));
   let best={x:from.x,y:from.y},bestScore=-Infinity;
-  for(const t of [.76,.6,.4])for(const offset of [64,-64,88,-88]) {
+  for(const t of [.76,.6,.4])for(const offset of [0,40,-40,56,-56,72,-72,88,-88]) {
     const point={x:Math.max(38,Math.min(width-38,from.x+dx*t-dy/length*offset)),y:Math.max(38,Math.min(height-38,from.y+dy*t+dx/length*offset))};
-    const clearance=Math.min(100,...pieces.map(p=>Math.hypot(point.x-p.x,point.y-p.y)),...labels.map(p=>Math.hypot(point.x-p.x,point.y-p.y)-15));
-    const score=clearance-Math.abs(t-.76)*28-Math.abs(offset)*.02;
+    const clearance=Math.min(82,...pieces.map(p=>Math.hypot(point.x-p.x,point.y-p.y)),...labels.map(p=>Math.hypot(point.x-p.x,point.y-p.y)-15));
+    const score=clearance-Math.abs(t-.76)*28-Math.abs(offset)*.12;
     if(score>bestScore){best=point;bestScore=score;}
   }
   return best;

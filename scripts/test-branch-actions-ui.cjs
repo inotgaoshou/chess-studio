@@ -27,7 +27,9 @@ const game={id:'branch-actions',title:'分支操作验收',note:'保留备注',s
   const geometry=await board.evaluate(node=>{
    const arrow=node.querySelector('[data-move="e6e4"] .analysis-arrow-stem');
    const target=node.querySelector('.board-square[aria-label="e4"]');
-   return {x:Number(arrow.getAttribute('x2')),y:Number(arrow.getAttribute('y2')),tx:parseFloat(target.style.getPropertyValue('--piece-left'))*11.2,ty:parseFloat(target.style.getPropertyValue('--piece-top'))*12.4};
+   const marker=node.querySelector(arrow.getAttribute('marker-end').slice(4,-1)),tip=marker.querySelector('path').getAttribute('d').match(/L([\d.]+) ([\d.]+)/),extension=Number(tip[1])-Number(marker.getAttribute('refX'));
+   const dx=Number(arrow.getAttribute('x2'))-Number(arrow.getAttribute('x1')),dy=Number(arrow.getAttribute('y2'))-Number(arrow.getAttribute('y1')),length=Math.hypot(dx,dy);
+   return {x:Number(arrow.getAttribute('x2'))+dx/length*extension,y:Number(arrow.getAttribute('y2'))+dy/length*extension,tx:parseFloat(target.style.getPropertyValue('--piece-left'))*11.2,ty:parseFloat(target.style.getPropertyValue('--piece-top'))*12.4};
   });assert(Math.hypot(geometry.x-geometry.tx,geometry.y-geometry.ty)<.01,'Empty destination must match board intersection');
   const br=await board.boundingBox(),sr=await strip.boundingBox();assert(sr.y>=br.y+br.height,'Branch choices must stay below board');
   await page.screenshot({path:`${out}/branches-${width}.png`});
@@ -49,7 +51,9 @@ const game={id:'branch-actions',title:'分支操作验收',note:'保留备注',s
   await page.getByRole('button',{name:'翻转',exact:true}).click();
   const mismatch=await board.evaluate(node=>{
    const a=node.querySelector('[data-move="e6e4"] .analysis-arrow-stem'),t=node.querySelector('.board-square[aria-label="e4"]');
-   return Math.hypot(Number(a.getAttribute('x2'))-parseFloat(t.style.getPropertyValue('--piece-left'))*11.2,Number(a.getAttribute('y2'))-parseFloat(t.style.getPropertyValue('--piece-top'))*12.4);
+   const m=node.querySelector(a.getAttribute('marker-end').slice(4,-1)),tip=m.querySelector('path').getAttribute('d').match(/L([\d.]+) ([\d.]+)/),ext=Number(tip[1])-Number(m.getAttribute('refX'));
+   const dx=Number(a.getAttribute('x2'))-Number(a.getAttribute('x1')),dy=Number(a.getAttribute('y2'))-Number(a.getAttribute('y1')),len=Math.hypot(dx,dy);
+   return Math.hypot(Number(a.getAttribute('x2'))+dx/len*ext-parseFloat(t.style.getPropertyValue('--piece-left'))*11.2,Number(a.getAttribute('y2'))+dy/len*ext-parseFloat(t.style.getPropertyValue('--piece-top'))*12.4);
   });assert(mismatch<.01);await page.screenshot({path:`${out}/flip-${flipped}.png`});
  }
  for(const size of [{width:844,height:390},{width:390,height:844}]){

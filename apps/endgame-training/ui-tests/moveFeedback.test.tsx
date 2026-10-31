@@ -196,13 +196,35 @@ it.each([false,true])("points empty branch arrowheads at the actual intersection
  const square=ui.container.querySelector('.board-square[aria-label="e4"]') as HTMLElement;
  const target={x:parseFloat(square.style.getPropertyValue('--piece-left'))*11.2,y:parseFloat(square.style.getPropertyValue('--piece-top'))*12.4};
  const arrow=ui.container.querySelector('[data-move="e6e4"] .analysis-arrow-stem')!;
- expect(Number(arrow.getAttribute('x2'))).toBeCloseTo(target.x,5);
- expect(Number(arrow.getAttribute('y2'))).toBeCloseTo(target.y,5);
  const ref=arrow.getAttribute('marker-end');
  const marker=[...ui.container.querySelectorAll('marker')].find(m=>ref===`url(#${m.id})`)!;
  const tip=marker.querySelector('path')!.getAttribute('d')!.match(/L([\d.]+) ([\d.]+)/)!;
- expect(Number(marker.getAttribute('refX'))).toBe(Number(tip[1]));
+ const x1=Number(arrow.getAttribute('x1')),y1=Number(arrow.getAttribute('y1')),x2=Number(arrow.getAttribute('x2')),y2=Number(arrow.getAttribute('y2'));
+ const length=Math.hypot(x2-x1,y2-y1),extension=Number(tip[1])-Number(marker.getAttribute('refX'));
+ expect(x2+(x2-x1)/length*extension).toBeCloseTo(target.x,5);
+ expect(y2+(y2-y1)/length*extension).toBeCloseTo(target.y,5);
+ // The shaft and its 30-unit outline must end behind the head base, not leak
+ // a rounded second point beyond the triangle (the reported double-tip bug).
+ expect(extension).toBeGreaterThanOrEqual(30);
  const capture=ui.container.querySelector('[data-move="e6e8"] .analysis-arrow-stem')!;
  const captured=ui.container.querySelector('.board-square[aria-label="e8 黑士"]') as HTMLElement;
  expect(Math.abs(Number(capture.getAttribute('y2'))-parseFloat(captured.style.getPropertyValue('--piece-top'))*12.4)).toBeGreaterThanOrEqual(30);
+});
+
+it.each([false,true])("keeps short and horizontal heads pointing forward without a second rounded tip (flipped=%s)",flipped=>{
+ const pieces:BoardPiece[]=[{row:3,col:4,color:'red',kind:'cannon',label:'炮'},{row:2,col:4,color:'black',kind:'cannon',label:'炮'},{row:0,col:7,color:'red',kind:'rook',label:'车'},{row:0,col:6,color:'black',kind:'rook',label:'车'}];
+ const ui=render(<Board pieces={pieces} flipped={flipped} branchMoves={['e6e7','e6e5','h9g9']} boardSkin="qingxin-zhuyun" pieceSkin="qingxin-zhuyun" riverText="" riverTextColor="#000" riverTextSize={20} supportsCustomRiverText={false} onSquare={vi.fn()}/>);
+ for(const arrow of ui.container.querySelectorAll('.saved-branch-arrow')){
+  const move=arrow.getAttribute('data-move')!,stem=arrow.querySelector('.analysis-arrow-stem')!;
+  const point=(square:string)=>{const e=ui.container.querySelector(`.board-square[aria-label^="${square}"]`) as HTMLElement;return {x:parseFloat(e.style.getPropertyValue('--piece-left'))*11.2,y:parseFloat(e.style.getPropertyValue('--piece-top'))*12.4};};
+  const from=point(move.slice(0,2)),to=point(move.slice(2)),dx=to.x-from.x,dy=to.y-from.y;
+  const sx=Number(stem.getAttribute('x2'))-Number(stem.getAttribute('x1')),sy=Number(stem.getAttribute('y2'))-Number(stem.getAttribute('y1'));
+  expect(sx*dx+sy*dy).toBeGreaterThan(0);
+  const ref=stem.getAttribute('marker-end'),head=[...ui.container.querySelectorAll('marker')].find(m=>ref===`url(#${m.id})`)!;
+  const tip=Number(head.querySelector('path')!.getAttribute('d')!.match(/L([\d.]+)/)![1])-Number(head.getAttribute('refX'));
+  expect(tip).toBeGreaterThan(15); // widest shaft outline has radius 15
+  for(const line of arrow.querySelectorAll('line:not(.branch-label-leader)')){
+   expect(line.getAttribute('x2')).toBe(stem.getAttribute('x2'));expect(line.getAttribute('y2')).toBe(stem.getAttribute('y2'));
+  }
+ }
 });

@@ -884,6 +884,7 @@ function LegalTargetLayer({ targets, flipped = false, geometry }: { targets: Squ
 function AnalysisArrowLayer({ moves, activeIndex, flipped = false, geometry, branches = false, pieces = [] }: { moves: string[]; activeIndex: number; flipped?: boolean; geometry: BoardGeometry; branches?: boolean; pieces?:BoardPiece[] }) {
   const arrowColor=()=>branches?"#efb52f":"#f87924";
   const labels:{x:number;y:number}[]=[];
+  const headLengths:number[]=[];
   const occupied=pieces.map(piece=>boardPoint(piece,geometry,flipped));
   const markerPrefix = useId().replace(/:/g, "");
   const arrows = moves.flatMap((move, index) => {
@@ -898,27 +899,32 @@ function AnalysisArrowLayer({ moves, activeIndex, flipped = false, geometry, bra
     const toY = to.y;
     const dx = toX - fromX;
     const dy = toY - fromY;
-    const length = Math.max(1, Math.hypot(dx, dy));
+    if(dx===0&&dy===0)return [];
+    const length = Math.hypot(dx, dy);
     // Empty intersections are exact destinations. Capture heads stop at the piece rim.
-    // Keep SVG's marker reference at its tip so it cannot add a second hidden offset.
+    // End the shaft at the triangle base; its rounded outlines must never reach the tip.
     const startPadding = Math.min(branches ? 34 : 48, length * .4);
     const endPadding = pieces.some(piece => sameSquare(piece, parsed.to)) ? Math.min(branches ? 32 : 50, length * .42) : 0;
     const startX = fromX + dx / length * startPadding;
     const startY = fromY + dy / length * startPadding;
     const endX = toX - dx / length * endPadding;
     const endY = toY - dy / length * endPadding;
+    const headLength=Math.min(50,(length-startPadding-endPadding)*.8);
+    headLengths[index]=headLength;
+    const shaftX=endX-dx/length*headLength,shaftY=endY-dy/length*headLength;
     const badge=branchBadgePoint(from,to,occupied,labels,BOARD_ART_WIDTH,BOARD_ART_HEIGHT);
     const labelX=badge.x,labelY=badge.y;labels.push(badge);
+    const leaderT=Math.max(0,Math.min(1,((labelX-fromX)*dx+(labelY-fromY)*dy)/(length*length)));
     const active = !branches && index === activeIndex;
     const opacity = branches || active ? 1 : .75;
     return [<g key={`${move}-${index}`} data-move={move} className={`analysis-candidate-arrow ${branches ? "saved-branch-arrow" : ""} ${active ? "active" : ""}`} opacity={opacity} style={{ "--analysis-arrow-color": branches ? branchChoiceColor(index) : color } as CSSProperties}>
       <g mask={`url(#${markerPrefix}-piece-clearance)`}>
-      <line className="analysis-arrow-backdrop" x1={startX} y1={startY} x2={endX} y2={endY}/>
-      <line className="analysis-arrow-outline" x1={startX} y1={startY} x2={endX} y2={endY}/>
-      <line className="analysis-arrow-stem" x1={startX} y1={startY} x2={endX} y2={endY} stroke={color} markerEnd={`url(#${markerPrefix}-analysis-arrow-${index})`}/>
-      <line className="analysis-arrow-flow" x1={startX} y1={startY} x2={endX-dx/length*Math.min(42,length*.3)} y2={endY-dy/length*Math.min(42,length*.3)}/>
+      <line className="analysis-arrow-backdrop" x1={startX} y1={startY} x2={shaftX} y2={shaftY}/>
+      <line className="analysis-arrow-outline" x1={startX} y1={startY} x2={shaftX} y2={shaftY}/>
+      <line className="analysis-arrow-stem" x1={startX} y1={startY} x2={shaftX} y2={shaftY} stroke={color} markerEnd={`url(#${markerPrefix}-analysis-arrow-${index})`}/>
+      <line className="analysis-arrow-flow" x1={startX} y1={startY} x2={shaftX} y2={shaftY}/>
       </g>
-      <line className="branch-label-leader" x1={fromX+dx*.55} y1={fromY+dy*.55} x2={labelX} y2={labelY} stroke={color}/>
+      <line className="branch-label-leader" x1={fromX+dx*leaderT} y1={fromY+dy*leaderT} x2={labelX} y2={labelY} stroke={color}/>
       <circle className="analysis-arrow-label" cx={labelX} cy={labelY} r={branches?26:25}/><text x={labelX} y={labelY}>{index + 1}</text>
     </g>];
   });
@@ -928,7 +934,7 @@ function AnalysisArrowLayer({ moves, activeIndex, flipped = false, geometry, bra
         <rect width={BOARD_ART_WIDTH} height={BOARD_ART_HEIGHT} fill="white"/>
         {occupied.map((point,index)=><circle key={index} cx={point.x} cy={point.y} r="42" fill={branches ? "#999" : "black"}/>)}
       </mask>
-      {moves.map((move, index) => <marker key={`${move}-${index}`} id={`${markerPrefix}-analysis-arrow-${index}`} markerWidth="54" markerHeight="54" refX="52" refY="27" orient="auto" markerUnits="userSpaceOnUse" overflow="visible"><path d="M2 2 L52 27 L2 52 Z" fill={arrowColor()} fillOpacity={branches?1:.88} stroke={branches ? "#fff3a6" : "rgba(255,255,255,.85)"} strokeWidth="3" strokeLinejoin="round"/></marker>)}
+      {moves.map((move,index)=>{const length=headLengths[index]??50,half=length/2+2;return <marker key={`${move}-${index}`} id={`${markerPrefix}-analysis-arrow-${index}`} markerWidth={length+4} markerHeight={length+4} refX="2" refY={half} orient="auto" markerUnits="userSpaceOnUse" overflow="visible"><path d={`M2 2 L${length+2} ${half} L2 ${length+2} Z`} fill={arrowColor()} fillOpacity={branches?1:.88} stroke={branches?"#fff3a6":"rgba(255,255,255,.85)"} strokeWidth="3" strokeLinejoin="round"/></marker>;})}
     </defs>
     {arrows}
   </svg>;
