@@ -52,5 +52,24 @@ export function adjacentPracticeGroup(numbers: Record<string, number>, currentId
 export function numberedProblemTitle(title: string): string {
   // Strip only a source ordinal when a separate display ordinal is shown.
   // Mate lengths and substantive names remain untouched; stored titles do not change.
-  return title.replace(/^\s*(?:第\s*\d+\s*[题局]|[图题]\s*\d+|\d{3,}(?=[\s.、:：\-－—]))\s*[.、:：·\-－—]*\s*/, "") || title;
+  return title.replace(/^\s*(?:第\s*\d+\s*[题局]|[图题]\s*\d+|\d{3,}(?=[\s.、:：\-－—]))\s*[.、:：·\-－—]*\s*/, "").trim();
 }
+
+/** A single list ordinal, with a substantive title only when one exists. */
+export function numberedProblemLabel(number: number | undefined, title: string): string {
+  if (number == null) return title;
+  const name = numberedProblemTitle(title);
+  return `第 ${number} 题${name ? ` · ${name}` : ""}`;
+}
+
+export type ProblemNavigationStatus = "pending" | "completed" | "revealed" | "verifying";
+export function navigationStatus(status: string, verificationState?: "pending_server"): ProblemNavigationStatus {
+  if (status === "completed") return verificationState === "pending_server" ? "verifying" : "completed";
+  return status === "revealed" ? "revealed" : "pending";
+}
+export const navigationStatusLabel: Record<ProblemNavigationStatus, string> = {
+  pending: "待完成", completed: "已完成", revealed: "已查看解析", verifying: "待复核",
+};
+export const navigationStatusMark: Record<ProblemNavigationStatus, string> = {
+  pending: "", completed: "✓", revealed: "阅", verifying: "…",
+};

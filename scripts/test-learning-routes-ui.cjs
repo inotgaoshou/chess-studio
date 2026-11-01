@@ -26,7 +26,7 @@ const book={id:'route-book',parentId:'route-practical_endgames',name:'学习路�
     }
     if(/\/teaching-catalog\/[^/]+\/problems$/.test(url.pathname)) {
      requests.push({id:decodeURIComponent(url.pathname.split('/').at(-2)),params:Object.fromEntries(url.searchParams)});
-     data={items:[responseFor(new URL('http://fixture/api/v1/student/problems/p0'))],nextCursor:null};
+     data={items:[{...responseFor(new URL('http://fixture/api/v1/student/problems/p0')),verifiedMateMoves:Number(url.searchParams.get('mateMoves'))||undefined,trainingGoal:url.searchParams.get('goal')?{kind:url.searchParams.get('goal'),solverSide:'w',reviewMethod:'reviewed_solution'}:null}],nextCursor:null};
     }
     return route.fulfill({contentType:'application/json',body:JSON.stringify(data)});
    });
@@ -46,7 +46,7 @@ const book={id:'route-book',parentId:'route-practical_endgames',name:'学习路�
    assert.equal(scroll.overflow,'auto');
    if(height<1000)assert(scroll.content>scroll.height,'stages scroll inside sheet '+width+'x'+height+' '+JSON.stringify(scroll));
    await page.screenshot({path:`${out}/mate-${width}x${height}.png`});
-   assert.equal(requests.length,0,'route reading does not fetch answers or begin practice');
+   assert.equal(requests.length,0,'route reading does not fetch questions or begin practice');
    await sheet.getByRole('button',{name:'练三步杀',exact:true}).click();
    await sheet.waitFor({state:'hidden'});
    await page.waitForFunction(()=>document.querySelector('.catalog-problem-card'));
@@ -82,5 +82,24 @@ const book={id:'route-book',parentId:'route-practical_endgames',name:'学习路�
     for(const [key,value] of Object.entries(params))assert.equal(last.params[key]??null,value,JSON.stringify(last));
    }
   }
+  // A cold anonymous launch must offer login instead of exposing route entries.
+  const anonymous=await browser.newPage({viewport:{width:390,height:844},hasTouch:true});
+  anonymous.setDefaultTimeout(10000);
+  await anonymous.addInitScript(()=>{
+    localStorage.setItem('xiangqi-training-mobile-onboarding-v1','done');
+    localStorage.setItem('xiangqi-teaching-session-server','http://127.0.0.1:8090');
+  });
+  await anonymous.route('**/api/v1/**',route=>{
+    const req=route.request(),url=new URL(req.url());
+    return route.fulfill({status:/\/auth\/(refresh|me)$/.test(url.pathname)?401:200,contentType:'application/json',body:JSON.stringify(/\/auth\/(refresh|me)$/.test(url.pathname)?{message:'未登录'}:responseFor(url,req.method()))});
+  });
+  await anonymous.goto(base+'/library');
+  await anonymous.getByRole('button',{name:'登录后查看学习路线'}).waitFor();
+  assert.equal(await anonymous.getByRole('button',{name:/^杀法学习路线|^残局学习路线/}).count(),0);
+  await anonymous.getByRole('button',{name:'登录后查看学习路线'}).click();
+  await anonymous.locator('input[type="password"]').waitFor();
+  await anonymous.screenshot({path:`${out}/anonymous-login-390.png`});
+  console.log('PASS anonymous routes hidden and login entry opens account dialog');
+  await anonymous.close();
  } finally {await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

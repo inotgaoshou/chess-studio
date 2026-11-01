@@ -59,3 +59,23 @@ test("catalog total is independent of loaded pages; unknown counts are labelled 
   assert.deepEqual(practiceGroupSummary({p:1,invalid:NaN,zero:0,negative:-1},"p",1),{current:1,total:1,problemCount:1,complete:true});
   assert.deepEqual(practiceGroupSummary(currentListNumbers([{id:"p50"}]),"p50",1),{current:1,total:1,problemCount:1,complete:true});
 });
+
+
+test("source-only ordinals leave no second ordinal while meaningful titles remain",async()=>{
+ const {numberedProblemTitle}=await import("../src/practiceNavigation.ts");
+ for(const title of ["第 1 题","第2局","图 1","题3"]) assert.equal(numberedProblemTitle(title),"");
+ assert.equal(numberedProblemTitle("第 1 题 · 车兵巧胜"),"车兵巧胜");
+ assert.equal(numberedProblemTitle("3步杀"),"3步杀");
+});
+
+
+test("unreviewed local success remains separate from confirmed completion",async()=>{
+ const {navigationStatus,numberedProblemLabel}=await import("../src/practiceNavigation.ts");
+ assert.equal(navigationStatus("completed","pending_server"),"verifying");
+ assert.equal(navigationStatus("completed"),"completed");
+ assert.equal(navigationStatus("revealed"),"revealed");
+ assert.equal(navigationStatus("abandoned"),"pending");
+ assert.equal(numberedProblemLabel(22,"第 1 题"),"第 22 题");
+ assert.equal(numberedProblemLabel(22,"第 1 题 · 车兵巧胜"),"第 22 题 · 车兵巧胜");
+ assert.equal(numberedProblemLabel(undefined,"图1"),"图1");
+});

@@ -117,10 +117,10 @@ describe("single and multiple question navigation",()=>{
     expect(screen.queryByRole("button",{name:"上一题"})).toBeNull();
     expect(screen.queryByLabelText("题目目录")).toBeNull();
     fireEvent.click(screen.getByRole("button",{name:"下一题"}));expect(onSelect).toHaveBeenCalledWith(1);
-    fireEvent.click(screen.getByRole("button",{name:/^1\s*\/\s*1–3$/}));expect(screen.getByLabelText("第 2 题：二题，待完成")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button",{name:/^1\s*\/\s*1–3$/}));expect(screen.getByLabelText("第 2 题 · 二题，待完成")).toBeTruthy();
     fireEvent.click(screen.getByRole("button",{name:/^1\s*\/\s*1–3$/}));expect(screen.queryByLabelText("题目目录")).toBeNull();
     fireEvent.click(screen.getByRole("button",{name:/^1\s*\/\s*1–3$/}));
-    fireEvent.click(screen.getByLabelText("第 2 题：二题，待完成"));expect(onSelect).toHaveBeenLastCalledWith(1);
+    fireEvent.click(screen.getByLabelText("第 2 题 · 二题，待完成"));expect(onSelect).toHaveBeenLastCalledWith(1);
     expect(screen.queryByLabelText("题目目录")).toBeNull();
     ui.rerender(<MobilePracticeSolverPanel {...ui.props} problem={{...problem,id:"p2"}} navigator={{...nav,items:[...nav.items],index:1}}/>);
     expect(screen.getByRole("button",{name:"上一题"})).toBeTruthy();expect(screen.getByRole("button",{name:"下一题"})).toBeTruthy();
@@ -176,7 +176,7 @@ describe("catalog role, reading and filter integration",()=>{
     window.dispatchEvent(new Event("teaching-content-reset"));catalogFixture();const onReadSolution=vi.fn(),onPractice=vi.fn(),onReadGame=vi.fn();
     render(<TeachingCatalog auth={auth(role)} teacher={role!=="student"} scene="browse" compact onReadSolution={onReadSolution} onPractice={onPractice} onReadGame={onReadGame}/>);
     fireEvent.click(await screen.findByRole("button",{name:/基础杀法/}));
-    const question=await screen.findByRole("button",{name:/第 1 题 · 图1/});
+    const question=await screen.findByRole("button",{name:/第 1 题/});
     expect(Boolean(screen.queryByText("原题解"))).toBe(role!=="student");
     expect(Boolean(screen.queryByRole("button",{name:/看题解/}))).toBe(role!=="student");
     fireEvent.click(question);expect(onPractice).toHaveBeenCalledWith(["p1"],"图1","p1",{p1:1},"基础杀法",100);
@@ -193,9 +193,9 @@ describe("catalog role, reading and filter integration",()=>{
     const chapter={...topic,id:"source-chapter",parentId:topic.id,name:"原书章节",kind:"chapter"};
     vi.mocked(teachingClient.catalogBrowse).mockImplementation(async params=>({currentNode:params.nodeId===chapter.id?chapter:params.nodeId?topic:null,breadcrumbs:params.nodeId===chapter.id?[topic,chapter]:params.nodeId?[topic]:[],children:params.nodeId===chapter.id?[]:params.nodeId?[chapter]:[topic],learningMaterials:[],mateStepCounts:[{mateMoves:2,itemCount:100}],statisticsRevision:"1",statisticsSnapshotRevision:"1",availabilitySnapshotRevision:"1",statisticsReady:true}));
     const onPractice=vi.fn();render(<TeachingCatalog auth={studentAuth} scene="browse" compact onPractice={onPractice}/>);
-    fireEvent.click(await screen.findByRole("button",{name:/基础杀法/}));await screen.findByText("第 1 题 · 图1");
+    fireEvent.click(await screen.findByRole("button",{name:/基础杀法/}));await screen.findByText("第 1 题");
     expect(screen.queryByText("按教材查看")).toBeNull();expect(screen.queryByRole("button",{name:"原书章节"})).toBeNull();
-    fireEvent.click(await screen.findByRole("button",{name:/第 1 题 · 图1/}));expect(onPractice).toHaveBeenCalledWith(["p1"],"图1","p1",{p1:1},"基础杀法",100);
+    fireEvent.click(await screen.findByRole("button",{name:/第 1 题/}));expect(onPractice).toHaveBeenCalledWith(["p1"],"图1","p1",{p1:1},"基础杀法",100);
     expect(screen.queryByRole("button",{name:"教材学习"})).toBeNull();
     expect(vi.mocked(teachingClient.catalogBrowse).mock.calls.some(([params])=>params.view==="materials")).toBe(false);
   });
@@ -205,10 +205,10 @@ describe("catalog role, reading and filter integration",()=>{
     fireEvent.click(await screen.findByRole("button",{name:/基础杀法/}));
     fireEvent.click(screen.getByRole("button",{name:"棋谱学习"}));await screen.findByRole("button",{name:"真实教材棋谱"});
     ui.rerender(<TeachingCatalog auth={studentAuth} scene="browse" compact/>);
-    await screen.findByRole("button",{name:/第 1 题 · 图1/});
+    await screen.findByRole("button",{name:/第 1 题/});
     expect(screen.queryByRole("button",{name:"真实教材棋谱"})).toBeNull();
     ui.unmount();render(<TeachingCatalog auth={studentAuth} scene="browse" compact/>);
-    await screen.findByRole("button",{name:/第 1 题 · 图1/});
+    await screen.findByRole("button",{name:/第 1 题/});
     expect(screen.queryByText("暂无已审核教材")).toBeNull();
     expect(screen.queryByRole("button",{name:"教材学习"})).toBeNull();
   });
@@ -217,7 +217,7 @@ describe("catalog role, reading and filter integration",()=>{
     const chapter={id:"scoped-chapter",kind:"chapter",name:"专题章节",teachingEntry:entry,displayOrder:0,active:true,confirmed:true,itemCount:50,materialCount:1};
     vi.mocked(teachingClient.catalogBrowse).mockImplementation(async params=>({currentNode:params.nodeId?chapter:null,breadcrumbs:params.nodeId?[chapter]:[],children:params.nodeId?[]:[chapter],learningMaterials:params.view==="materials"?[{id:"book",title:"真实教材棋谱",reviewStatus:"approved"}]:[],statisticsRevision:"1",statisticsSnapshotRevision:"1",availabilitySnapshotRevision:"1",statisticsReady:true}));
     render(<TeachingCatalog auth={auth("student",true)} scene="browse" compact/>);
-    fireEvent.click(await screen.findByRole("button",{name:new RegExp(({practical_mates:"实战杀法",endgame_mates:"残局杀法",middlegame:"中局战术",practical_endgames:"实用残局"} as Record<string,string>)[entry])}));await screen.findByText("第 1 题 · 图1");
+    fireEvent.click(await screen.findByRole("button",{name:new RegExp(({practical_mates:"实战杀法",endgame_mates:"残局杀法",middlegame:"中局战术",practical_endgames:"实用残局"} as Record<string,string>)[entry])}));await screen.findByText("第 1 题");
     expect(screen.queryByRole("button",{name:"做题训练"})).toBeNull();expect(screen.queryByRole("button",{name:"棋谱学习"})).toBeNull();
     fireEvent.click(screen.getByRole("button",{name:"筛选"}));expect(screen.getByLabelText("题目目标")).toBeTruthy();
     expect(screen.queryByRole("button",{name:"真实教材棋谱"})).toBeNull();
@@ -225,20 +225,20 @@ describe("catalog role, reading and filter integration",()=>{
   it("collapsed filters preserve conditions, clearing resets cached pagination and keeps the selected mate step",async()=>{
     window.dispatchEvent(new Event("teaching-content-reset"));const {request}=catalogFixture();
     render(<TeachingCatalog auth={auth("student",true)} scene="browse" compact/>);
-    fireEvent.click(await screen.findByRole("button",{name:/基础杀法/}));await screen.findByText("第 1 题 · 图1");
+    fireEvent.click(await screen.findByRole("button",{name:/基础杀法/}));await screen.findByText("第 1 题");
     expect(screen.queryByLabelText("题目目标")).toBeNull();
-    fireEvent.click(screen.getByRole("button",{name:"加载更多题目"}));await screen.findByText("第 2 题 · 图2");
+    fireEvent.click(screen.getByRole("button",{name:"加载更多题目"}));await screen.findByText("第 2 题");
     fireEvent.click(screen.getByRole("button",{name:"筛选"}));fireEvent.change(screen.getByLabelText("题目目标"),{target:{value:"mate"}});
     fireEvent.click(screen.getByRole("button",{name:"收起"}));expect(screen.queryByLabelText("题目目标")).toBeNull();expect(screen.getByRole("button",{name:"筛选1"})).toBeTruthy();
     fireEvent.click(screen.getByRole("button",{name:"筛选1"}));expect((screen.getByLabelText("题目目标") as HTMLSelectElement).value).toBe("mate");
-    fireEvent.click(screen.getByRole("button",{name:"清空"}));await waitFor(()=>expect(screen.queryByText("第 2 题 · 图2")).toBeNull());
+    fireEvent.click(screen.getByRole("button",{name:"清空"}));await waitFor(()=>expect(screen.queryByText("第 2 题")).toBeNull());
     expect(screen.getByRole("tab",{name:"两步杀"}).getAttribute("aria-selected")).toBe("true");
     expect(request.mock.calls.at(-1)?.[1]).toMatchObject({mateMoves:2,goal:"",cursor:undefined});
   });
   it("typing a keyword waits for debounce instead of resending the old filter",async()=>{
     window.dispatchEvent(new Event("teaching-content-reset"));const {request}=catalogFixture();
     render(<TeachingCatalog auth={auth("student",true)} scene="browse" compact/>);
-    fireEvent.click(await screen.findByRole("button",{name:/基础杀法/}));await screen.findByText("第 1 题 · 图1");
+    fireEvent.click(await screen.findByRole("button",{name:/基础杀法/}));await screen.findByText("第 1 题");
     fireEvent.click(screen.getByRole("button",{name:"筛选"}));
     const count=request.mock.calls.length;
     fireEvent.change(screen.getByLabelText("题名关键词"),{target:{value:"答疑"}});
@@ -262,9 +262,9 @@ describe("catalog role, reading and filter integration",()=>{
   it("opening a catalog question carries the current practice group and selected problem",async()=>{
     window.dispatchEvent(new Event("teaching-content-reset"));catalogFixture();const onPractice=vi.fn();
     render(<TeachingCatalog auth={auth("student",true)} scene="browse" compact onPractice={onPractice}/>);
-    fireEvent.click(await screen.findByRole("button",{name:/基础杀法/}));await screen.findByText("第 1 题 · 图1");
+    fireEvent.click(await screen.findByRole("button",{name:/基础杀法/}));await screen.findByText("第 1 题");
     fireEvent.click(screen.getByRole("button",{name:"加载更多题目"}));
-    fireEvent.click(await screen.findByRole("button",{name:/第 2 题 · 图2/}));
+    fireEvent.click(await screen.findByRole("button",{name:/第 2 题/}));
     expect(onPractice).toHaveBeenCalledWith(["p1","p2"],"图2","p2",{p1:1,p2:2},"基础杀法",2);
   });
   it("teacher assignment selection keeps its original filters and selection action",async()=>{
@@ -274,7 +274,7 @@ describe("catalog role, reading and filter integration",()=>{
     render(<TeachingCatalog auth={auth("coach")} teacher scene="select" onAdd={onAdd}/>);
     fireEvent.click(await screen.findByRole("button",{name:/布置章节/}));
     expect(await screen.findByLabelText("搜索章节题目")).toBeTruthy();expect(screen.getByLabelText("精确杀法步数")).toBeTruthy();
-    fireEvent.click(await screen.findByRole("button",{name:/第 1 题 · 图1/}));expect(onAdd).toHaveBeenCalledOnce();
+    fireEvent.click(await screen.findByRole("button",{name:/第 1 题/}));expect(onAdd).toHaveBeenCalledOnce();
     expect(screen.queryByRole("button",{name:/看题解/})).toBeNull();expect(screen.getByRole("button",{name:"选择当前章节/筛选的全部题目"})).toBeTruthy();
   });
 });
@@ -334,4 +334,23 @@ it("opening learning pauses directly at the last replay ply without restarting p
  fireEvent.click(screen.getByRole("button",{name:"关闭学习思路"}));
  expect(onTogglePreview).not.toHaveBeenCalled();
  expect(screen.getByText("1. 车五进一")).toBeTruthy();
+});
+
+
+it("shows one list ordinal when the source title is only another ordinal",()=>{
+ const ui=solver({problem:{...problem,title:"第 1 题",displayNumber:22}});
+ expect(document.querySelector(".mobile-solver-heading strong")?.textContent).toBe("第 22 题");
+ ui.unmount();
+ render(<MobileSingleProblemResultPanel problem={{...problem,title:"第 1 题",displayNumber:22}} elapsed="00:30" hints={0} mistakes={0} revealed={false} message="" onBack={vi.fn()}/>);
+ expect(document.querySelector(".mobile-practice-result-summary strong")?.textContent).toBe("第 22 题");
+});
+
+it("keeps completion and revealed markers visible on the current numbered question",()=>{
+ solver({navigator:{items:[{id:"a",number:21,title:"",status:"completed"},{id:"b",number:22,title:"",status:"revealed"},{id:"c",number:23,title:"",status:"pending"}],index:0,onSelect:vi.fn()}});
+ fireEvent.click(screen.getByRole("button",{name:/21.*21–23/}));
+ const completed=screen.getByRole("listitem",{name:/第 21 题，当前题，已完成/});
+ expect(completed.getAttribute("aria-current")).toBe("step");
+ expect(completed.querySelector(".problem-number-status")?.textContent).toBe("✓");
+ expect(screen.getByRole("listitem",{name:/第 22 题，已查看解析/}).querySelector(".problem-number-status")?.textContent).toBe("阅");
+ expect(screen.getByRole("listitem",{name:/第 23 题，待完成/}).querySelector(".problem-number-status")).toBeNull();
 });

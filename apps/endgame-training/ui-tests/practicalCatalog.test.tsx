@@ -59,7 +59,7 @@ it.each([
   fireEvent.click(await screen.findByRole("button",{name:"按书本学习"}));
   fireEvent.click(await screen.findByRole("button",{name:new RegExp(bookName)}));
   fireEvent.click(await screen.findByRole("button",{name:new RegExp(chapterName)}));
-  await screen.findByText(`第 1 题 · ${entry==="practical_endgames"?questionTitle:"第 1 题"}`);
+  await screen.findByText(entry==="practical_endgames"?`第 1 题 · ${questionTitle}`:"第 1 题");
   await waitFor(()=>expect(problems.mock.calls.at(-1)?.[0]).toBe(chapter.id));
   expect(screen.getByRole("navigation",{name:entry==="middlegame"?"中局书本目录":"残局书本目录"})).toBeTruthy();
   if(entry==="practical_endgames") {
@@ -69,7 +69,7 @@ it.each([
   }
   fireEvent.click(view.container.querySelector('.catalog-problem-card button')!);
   view.unmount();view=render(<TeachingCatalog {...props}/>);
-  await screen.findByText(`第 1 题 · ${entry==="practical_endgames"?questionTitle:"第 1 题"}`);
+  await screen.findByText(entry==="practical_endgames"?`第 1 题 · ${questionTitle}`:"第 1 题");
   expect(screen.getByRole("button",{name:"按书本学习"}).getAttribute("aria-pressed")).toBe("true");
   if(entry==="practical_endgames") {
     fireEvent.click(screen.getByRole("button",{name:/筛选/}));

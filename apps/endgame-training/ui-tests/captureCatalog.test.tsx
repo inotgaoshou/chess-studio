@@ -8,7 +8,7 @@ it("shows both reviewed material-gain and mate objectives in the capture topic w
  const book={...capture,id:"capture-book",parentId:capture.id,name:"吃子教材",kind:"series"};
  const vip={...capture,id:"vip-only",name:"实战残局",teachingEntry:"practical_endgames"};
  vi.spyOn(teachingClient,"catalogBrowse").mockImplementation(async params=>({currentNode:params.nodeId?capture:null,breadcrumbs:params.nodeId?[capture]:[],children:params.nodeId?[book]:[capture,vip],learningMaterials:[],statisticsReady:true,mateStepCounts:[]}));
- const problems=vi.spyOn(teachingClient,"catalogProblems").mockResolvedValue({items:[{id:"capture-one",title:"净得子练习 0001",sourceIndex:0,startingFen:"4k4/9/9/9/9/9/9/9/9/3K5 w - - 0 1",sideToMove:"w",solutionLength:2,trainingGoal:{kind:"gain_material"}},{id:"capture-mate",title:"02步杀0001",sourceIndex:1,startingFen:"4k4/9/9/9/9/9/9/9/9/3K5 w - - 0 1",sideToMove:"w",solutionLength:3,mateMoves:2,trainingGoal:{kind:"mate"}}],nextCursor:null} as never);
+ const problems=vi.spyOn(teachingClient,"catalogProblems").mockResolvedValue({items:[{id:"capture-one",libraryId:"capture-lib",title:"净得子练习 0001",sourceIndex:0,startingFen:"4k4/9/9/9/9/9/9/9/9/3K5 w - - 0 1",sideToMove:"w",solutionLength:2,trainingGoal:{kind:"gain_material"}},{id:"capture-mate",libraryId:"capture-lib",title:"02步杀0001",sourceIndex:1,startingFen:"4k4/9/9/9/9/9/9/9/9/3K5 w - - 0 1",sideToMove:"w",solutionLength:3,mateMoves:2,trainingGoal:{kind:"mate"}}],nextCursor:null} as never);
  const auth={user:{id:"capture-student",role:"student",vipActive:false,displayName:"学生"}} as TeachingAuth;
  render(<TeachingCatalog auth={auth} compact scene="browse" onPractice={()=>{}}/>);
  fireEvent.click(await screen.findByRole("button",{name:/吃子/}));

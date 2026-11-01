@@ -6,9 +6,8 @@ import { isPublicCatalogEntry } from "./catalogAccess";
 import { useCatalogBrowse } from "./useCatalogBrowse";
 import "./learningRoutes.css";
 
-export type LearningRouteKind = "mate" | "endgame";
-export type LearningRouteSelection = { route: LearningRouteKind; stage: string; title: string; entry: string };
-export type LearningRouteAction = { label: string; entry: string; step?: string; goal?: string; material?: string; books?: boolean };
+import { learningRouteTarget, type LearningRouteKind, type LearningRouteSelection, type LearningRouteAction } from "./learningRouteNavigation";
+export type { LearningRouteKind, LearningRouteSelection, LearningRouteAction } from "./learningRouteNavigation";
 type Stage = { id: string; title: string; idea: string; check: string; actions: LearningRouteAction[] };
 export const LEARNING_ROUTES: Record<LearningRouteKind, {title: string; introduction: string; stages: Stage[]}> = {
   mate: {title:"杀法学习路线", introduction:"从识别一步杀到计算实战变化，先看清退路，再核对对方应手。", stages:[
@@ -36,9 +35,21 @@ export function LearningRouteEntries({ onOpen }: { onOpen(route:LearningRouteKin
 export function LearningRouteSheet({ initialRoute, selection, request, restricted, scope, libraryId, onSelect, onClose }: {
   initialRoute:LearningRouteKind; selection?:LearningRouteSelection; restricted:boolean; scope:string; libraryId?:string;
   request(params:Record<string,string>,signal:AbortSignal):ReturnType<typeof import("./teaching").teachingClient.catalogBrowse>;
-  onSelect(node:TeachingCatalogNode, action:LearningRouteAction, selection:LearningRouteSelection):void; onClose():void;
+  onSelect(node:TeachingCatalogNode, action:LearningRouteAction, selection:LearningRouteSelection, signal:AbortSignal):void|Promise<void>; onClose():void;
 }) {
   const [kind,setKind]=useState(initialRoute);
+  const [pending,setPending]=useState<string>();
+  const [actionError,setActionError]=useState<{key:string;message:string}>();
+  const actionTask=useRef<AbortController|undefined>(undefined);
+  const cancelAction=()=>{actionTask.current?.abort();actionTask.current=undefined;setPending(undefined);setActionError(undefined);};
+  useEffect(()=>()=>{actionTask.current?.abort();},[]);
+  async function choose(node:TeachingCatalogNode, action:LearningRouteAction, stage:Stage, key:string) {
+    if(actionTask.current)return;
+    const task=new AbortController();actionTask.current=task;setPending(key);setActionError(undefined);
+    try {await onSelect(node,action,{route:kind,stage:stage.id,title:stage.title,entry:action.entry,action},task.signal);}
+    catch(reason){if(!task.signal.aborted&&actionTask.current===task)setActionError({key,message:reason instanceof Error?reason.message:"读取失败，请重试。"});}
+    finally{if(actionTask.current===task){actionTask.current=undefined;if(!task.signal.aborted)setPending(undefined);}}
+  }
   const dialog=useRef<HTMLElement>(null),close=useRef(onClose); close.current=onClose;
   const browse=useCatalogBrowse<TeachingCatalogNode>(request,{availability:"available",allowStaleCounts:"true",limit:"50",...(libraryId?{libraryId}:{})},false,0,0,scope);
   const route=LEARNING_ROUTES[kind];
@@ -61,7 +72,7 @@ export function LearningRouteSheet({ initialRoute, selection, request, restricte
   return createPortal(<div className="learning-route-backdrop" onClick={onClose}>
     <section ref={dialog} className="learning-route-sheet" role="dialog" aria-modal="true" aria-label="学习路线" onClick={e=>e.stopPropagation()}>
       <header><BookOpen aria-hidden="true"/><strong>学习路线</strong><button className="learning-route-close" type="button" aria-label="关闭学习路线" onClick={onClose}><X/></button></header>
-      <div className="learning-route-tabs" role="tablist" aria-label="选择学习路线">{(["mate","endgame"] as const).map(value=><button type="button" role="tab" aria-selected={kind===value} key={value} onClick={()=>setKind(value)}>{LEARNING_ROUTES[value].title}</button>)}</div>
+      <div className="learning-route-tabs" role="tablist" aria-label="选择学习路线">{(["mate","endgame"] as const).map(value=><button type="button" role="tab" aria-selected={kind===value} key={value} onClick={()=>{cancelAction();setKind(value);}}>{LEARNING_ROUTES[value].title}</button>)}</div>
       <div className="learning-route-content" role="tabpanel" aria-label={route.title} key={kind} tabIndex={0}>
         <p className="learning-route-intro">{route.introduction}</p>
         <p className="learning-route-method">学思路 → 独立做题 → 回放复盘 → 遮住答案重做<br/>每次约 15–20 分钟，同一主题选 5–10 题。</p>
@@ -70,10 +81,11 @@ export function LearningRouteSheet({ initialRoute, selection, request, restricte
         <ol>{route.stages.map((stage,index)=><li key={stage.id} aria-current={selection?.route===kind&&selection.stage===stage.id?"step":undefined}>
           <h3><span>{index+1}</span>{stage.title}</h3><p>{stage.idea}</p><p className="learning-route-check">练后自查：{stage.check}</p>
           <div className="learning-route-actions">{stage.actions.map(action=>{
+            const key=`${kind}:${stage.id}:${action.label}`;
             const forbidden=restricted&&!isPublicCatalogEntry(action.entry);
             const node=forbidden?undefined:browse.page.children.find(n=>n.teachingEntry===action.entry&&n.active&&n.confirmed&&(n.itemCount==null||n.itemCount>0));
             const unavailable=forbidden?"当前账号暂无此专题权限":browse.loading?"正在核对题库":browse.error?"请先重试题库":browse.page.nextCursor?"可载入更多目录后再查看":"暂无可练题目";
-            return <span key={action.label}><button type="button" disabled={!node||browse.loading||!!browse.error} onClick={()=>{if(node&&!browse.loading&&!browse.error)onSelect(node,action,{route:kind,stage:stage.id,title:stage.title,entry:action.entry});}}>{action.label}<ChevronRight aria-hidden="true"/></button>{(!node||browse.error)&&<small>{unavailable}</small>}</span>;
+            return <span key={action.label}><button type="button" aria-pressed={selection?.action?.label===action.label&&selection.route===kind} aria-busy={pending===key} disabled={!node||browse.loading||!!browse.error||!!pending} onClick={()=>{if(node&&!browse.loading&&!browse.error)void choose(node,action,stage,key);}}>{pending===key?"核对题目中…":action.label}<ChevronRight aria-hidden="true"/></button><small className="learning-route-target">{learningRouteTarget(action)}</small>{(!node||browse.error)&&<small>{unavailable}</small>}{actionError?.key===key&&<small className="learning-route-action-error" role="alert">{actionError.message}</small>}</span>;
           })}</div>
         </li>)}</ol>
         {browse.page.nextCursor&&<button type="button" disabled={browse.loading} onClick={()=>void browse.more()}>载入更多学习目录</button>}

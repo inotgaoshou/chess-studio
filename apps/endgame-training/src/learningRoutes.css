@@ -39,3 +39,7 @@
 .catalog-learning-context small { font-size:10px; color:#6a7e6d; }
 .catalog-learning-context button { flex:none; min-height:34px; padding:4px 8px; border:1px solid #bcd3c0; border-radius:7px; background:#fff; color:#3c704c; font-size:11px; }
 @media(max-width:350px) { .learning-route-entries { gap:5px; }.learning-route-entries > button { padding:9px 7px; gap:4px; }.learning-route-entries > button > svg:first-child { display:none; }.learning-route-entries strong { font-size:12px; }.learning-route-sheet { padding:10px; }.learning-route-content li { padding:10px; } }
+.learning-route-actions .learning-route-target { max-width:190px; color:#597562; }
+.learning-route-actions .learning-route-action-error { max-width:260px; color:#a54d35; font-size:12px; line-height:1.7; }
+.learning-route-actions button[aria-pressed=true] { background:#dcefdc; border-color:#6d9e77; }
+.catalog-learning-target { color:#396a4c; overflow-wrap:anywhere; line-height:1.6; }
