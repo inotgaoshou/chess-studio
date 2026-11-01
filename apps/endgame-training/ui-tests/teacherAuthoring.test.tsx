@@ -98,7 +98,7 @@ function fixture(items: AuthoredQuestion[] = []) {
         return {ok:true};
       }
       if (path === B + "/directories/d") return directory;
-      if (path === B + "/questions/q" && !init) return items[0];
+      if (path === B + "/questions/q" && !init?.method) return items[0];
       if (path.startsWith(B + "/questions/") && init?.method === "PUT") {
         const q = {
           ...question(),
@@ -754,5 +754,5 @@ it("retains disabled previous rows while replacing filters and ignores late resp
   await screen.findByText("筛选读取失败");
   expect(screen.queryByText("过期结果")).toBeNull();expect(screen.queryByRole("button",{name:/测试题库.*进入选题/})).toBeNull();
   fireEvent.click(tabs.getByRole("button",{name:"全部"}));
-  expect((await screen.findByRole("button",{name:/测试题库.*进入选题/})).hasAttribute("disabled")).toBe(false);
+  await waitFor(()=>expect(screen.getByRole("button",{name:/测试题库.*进入选题/}).hasAttribute("disabled")).toBe(false));
 });

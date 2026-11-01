@@ -97,9 +97,13 @@ export function TeacherAuthoring({
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const [directoryEditing, setDirectoryEditing] = useState(false);
+  const [refreshing, setRefreshing] = useState(false), [refreshError,setRefreshError] = useState("");
+  const [titleBusy,setTitleBusy] = useState(false), [openingQuestion,setOpeningQuestion] = useState<string>();
+  const refreshRequest=useRef(0), navigationRequest=useRef(0), questionRequest=useRef(0), titleLock=useRef(false);
+  const questionController=useRef<AbortController|undefined>(undefined);
   const [savedQuestion, setSavedQuestion] = useState<string>();
   const [titleDialog, setTitleDialog] = useState<
-    { kind: "new"; title: string } |
+    { kind: "new"; title: string; id: string } |
     { kind: "directory"; title: string; directory: AuthoringDirectory } |
     { kind: "question"; title: string; question: AuthoredQuestion }
   >();
@@ -150,21 +154,35 @@ export function TeacherAuthoring({
       }
     }
   }
+  async function refreshDirectories(saved = false) {
+    const epoch=generation.current, request=++refreshRequest.current;
+    setRefreshing(true);setRefreshError("");
+    try {
+      const value=await api.request<{items:AuthoringDirectory[]}>(BASE+"/directories");
+      if(epoch!==generation.current || request!==refreshRequest.current)return;
+      setDirs(value.items);refreshRecoveries();
+    } catch(reason) {
+      if(epoch===generation.current && request===refreshRequest.current)
+        setRefreshError(`${saved ? "已保存，刷新失败" : "目录刷新失败"}：${message(reason)}`);
+    } finally {
+      if(epoch===generation.current && request===refreshRequest.current)setRefreshing(false);
+    }
+  }
   async function load(id?: string) {
-    const epoch = generation.current;
-    const value = await api.request<{ items: AuthoringDirectory[] }>(
-      BASE + "/directories",
-    );
-    const detail = id
-      ? await api.request<AuthoringDirectory>(BASE + "/directories/" + id)
-      : undefined;
-    if (epoch !== generation.current) return;
-    refreshRecoveries();
-    setDirs(value.items);
-    setDir(detail);
-    if (id !== dir?.id) setSavedQuestion(undefined);
-    setSelected([]);
-    return detail;
+    const epoch = generation.current, request=++navigationRequest.current;
+    questionRequest.current++;questionController.current?.abort();setOpeningQuestion(undefined);
+    // Opening one directory must not wait for an unrelated list refresh.
+    if(id) {
+      const detail=await api.request<AuthoringDirectory>(BASE+"/directories/"+id);
+      if(epoch!==generation.current || request!==navigationRequest.current)return;
+      setDir(detail);
+      if(id!==dir?.id)setSavedQuestion(undefined);
+      setSelected([]);refreshRecoveries();
+      return detail;
+    }
+    const value=await api.request<{items:AuthoringDirectory[]}>(BASE+"/directories");
+    if(epoch!==generation.current || request!==navigationRequest.current)return;
+    setDirs(value.items);setDir(undefined);setSelected([]);setSavedQuestion(undefined);refreshRecoveries();
   }
   useEffect(() => {
     const epoch = generation.current;
@@ -177,7 +195,7 @@ export function TeacherAuthoring({
         if (epoch === generation.current) setBusy(false);
       });
     return () => {
-      generation.current++;
+      generation.current++;questionController.current?.abort();
     };
   }, [scopeKey]);
   useEffect(()=>{
@@ -211,19 +229,25 @@ export function TeacherAuthoring({
     );
   }
   async function open(q: AuthoredQuestion, nextMode: typeof mode) {
-    const value =
-      q.kind === "source"
-        ? {
-            ...q,
-            body: await api.request<QuestionBody>(
-              BASE + "/import",
-              json({ problemId: q.id }),
-            ),
-          }
-        : await api.request<AuthoredQuestion>(BASE + "/questions/" + q.id);
-    setMode(nextMode);
-    setQuestion(value);
+    const epoch=generation.current, request=++questionRequest.current;
+    questionController.current?.abort();
+    const controller=new AbortController();questionController.current=controller;
+    setOpeningQuestion(q.id);setError("");
+    try {
+      const value=q.kind === "source"
+        ? {...q,body:await api.request<QuestionBody>(BASE+"/import",{...json({problemId:q.id}),signal:controller.signal})}
+        : await api.request<AuthoredQuestion>(BASE+"/questions/"+q.id,{signal:controller.signal});
+      if(epoch!==generation.current || request!==questionRequest.current || controller.signal.aborted)return;
+      setMode(nextMode);setQuestion(value);
+    } catch(reason) {
+      if(epoch===generation.current && request===questionRequest.current && !controller.signal.aborted)setError(message(reason));
+    } finally {
+      if(epoch===generation.current && request===questionRequest.current)setOpeningQuestion(undefined);
+    }
   }
+  useEffect(()=>{
+    questionRequest.current++;questionController.current?.abort();setOpeningQuestion(undefined);
+  },[adding,picker,publish,tab]);
   const selectedItems = dir?.items.filter((q) => selected.includes(q.id)) ?? [];
   const shifted = (direction: -1 | 1) => shiftQuestions(dir?.items ?? [], selected, direction);
   const canShift = (direction: -1 | 1) => shifted(direction).some((q, index) => q.id !== dir?.items[index].id);
@@ -234,20 +258,42 @@ export function TeacherAuthoring({
     await load();
   }
   async function saveTitle(title: string) {
-    if (!titleDialog) return;
-    if (titleDialog.kind === "new") {
-      await api.request(BASE + "/directories", json({id:crypto.randomUUID(),title,sortOrder:Math.max(-1,...dirs.map(d => d.sortOrder))+1}));
-      await load();
-    } else if (titleDialog.kind === "directory") {
-      const target = titleDialog.directory;
-      await api.request(BASE + "/directories/" + target.id, json({title,expectedRevision:target.revision}, "PATCH"));
-      await load(dir?.id);
-    } else {
-      const target = titleDialog.question;
-      await api.request(BASE + "/questions/" + target.id, json({expectedRevision:target.revision,body:{...target.body,title}}, "PUT"));
-      await load(dir?.id);
+    if (!titleDialog || titleLock.current) return;
+    const dialog=titleDialog, epoch=generation.current;
+    titleLock.current=true;setTitleBusy(true);setError("");
+    // A refresh started before this write may not replace its committed result.
+    refreshRequest.current++;
+    try {
+      let summary:AuthoringDirectory|undefined;
+      if(dialog.kind === "new") {
+        const result=await api.request<{id:string;directory?:AuthoringDirectory}>(BASE+"/directories",json({id:dialog.id,title,sortOrder:Math.max(-1,...dirs.map(d=>d.sortOrder))+1}));
+        summary=result.directory;
+        // Older servers acknowledge only id. Show that committed empty directory
+        // immediately; the independent refresh reconciles its canonical revision.
+        if(!summary)summary={id:result.id,title,revision:1,sortOrder:Math.max(-1,...dirs.map(d=>d.sortOrder))+1,canEdit:true,publishedCount:0,draftCount:0,items:[]};
+      } else if(dialog.kind === "directory") {
+        const target=dialog.directory;
+        const result=await api.request<{directory?:AuthoringDirectory}>(BASE+"/directories/"+target.id,json({title,expectedRevision:target.revision},"PATCH"));
+        summary=result.directory??{...target,title,revision:target.revision+1};
+      } else {
+        const target=dialog.question;
+        const updated=await api.request<AuthoredQuestion>(BASE+"/questions/"+target.id,json({expectedRevision:target.revision,body:{...target.body,title}},"PUT"));
+        if(epoch!==generation.current)return;
+        setDir(old=>old?{...old,items:old.items.map(item=>item.id===target.id?updated:item)}:old);
+      }
+      if(epoch!==generation.current)return;
+      if(summary) {
+        const updated=summary;
+        setDirs(old=>[...old.filter(item=>item.id!==updated.id),updated].sort((a,b)=>a.sortOrder-b.sortOrder));
+        setDir(old=>old?.id===updated.id?{...old,...updated,items:old.items}:old);
+      }
+      setTitleDialog(undefined);
+      void refreshDirectories(true);
+    } catch(reason) {
+      if(epoch===generation.current)setError(message(reason));
+    } finally {
+      if(epoch===generation.current){titleLock.current=false;setTitleBusy(false);}
     }
-    setTitleDialog(undefined);
   }
   async function openCopy(q: AuthoredQuestion) {
     if (!organizationApi) return;
@@ -330,6 +376,8 @@ export function TeacherAuthoring({
           <button onClick={() => void run(() => load(dir?.id))}>刷新</button>
         </p>
       )}
+      {refreshError && <p role="alert" className="authoring-error">{refreshError}<button disabled={refreshing} onClick={()=>void refreshDirectories()}>重试刷新</button></p>}
+      {openingQuestion && <p role="status" className="authoring-saved">正在打开题目…</p>}
       {copyNotice && <p role="status" className="authoring-saved">{copyNotice}</p>}
       {recoveries.length > 0 && (
         <section className="authoring-recovery">
@@ -385,7 +433,7 @@ export function TeacherAuthoring({
           <div className="authoring-actions">
             <button
               disabled={busy}
-              onClick={() => setTitleDialog({kind:"new",title:""})}
+              onClick={() => setTitleDialog({kind:"new",title:"",id:crypto.randomUUID()})}
             >
               ＋ 新增目录
             </button>
@@ -459,7 +507,7 @@ export function TeacherAuthoring({
                 <button
                   className="authoring-card"
                   onClick={() =>
-                    editing ? select(q) : void run(() => open(q, "preview"))
+                    editing ? select(q) : void open(q, "preview")
                   }
                 >
                   <AuthoringBoard
@@ -520,7 +568,7 @@ export function TeacherAuthoring({
                   q.canEdit && (
                     <button
                       className="authoring-complete"
-                      onClick={() => void run(() => open(q, "answer"))}
+                      onClick={() => void open(q, "answer")}
                     >
                       {q.status === "draft" ? "补答案" : "编辑题目"}
                     </button>
@@ -605,7 +653,7 @@ export function TeacherAuthoring({
           )}
         </>
       )}
-      {titleDialog && <TitleSheet key={`${titleDialog.kind}:${titleDialog.title}`} title={titleDialog.kind === "new" ? "新增目录" : titleDialog.kind === "directory" ? "目录改名" : "题目改名"} value={titleDialog.title} busy={busy} error={error} onClose={() => setTitleDialog(undefined)} onSubmit={title => void run(() => saveTitle(title))}/>}
+      {titleDialog && <TitleSheet key={`${titleDialog.kind}:${titleDialog.title}`} title={titleDialog.kind === "new" ? "新增目录" : titleDialog.kind === "directory" ? "目录改名" : "题目改名"} value={titleDialog.title} busy={titleBusy} error={error} onClose={() => {setTitleDialog(undefined);setError("");}} onSubmit={title => void saveTitle(title)}/>}
       {copying && <div className="authoring-overlay"><section className="authoring-sheet" role="dialog" aria-modal="true" aria-label="复制到机构作业库"><h3>复制到机构作业库</h3><p>{copying.body.title}</p>{error && <p role="alert" className="authoring-error">{error}</p>}<label>目标目录<select value={copyTargetId} onChange={event=>setCopyTargetId(event.target.value)}>{copyTargets.map(target=><option key={target.id} value={target.id}>{target.title}</option>)}</select></label><div className="authoring-actions"><button type="button" onClick={()=>setCopying(undefined)}>取消</button><button type="button" className="primary" disabled={busy||!copyTargetId} onClick={()=>void run(copyToOrganization)}>确认复制</button></div></section></div>}
       {adding && (
         <div className="authoring-overlay">
@@ -810,6 +858,23 @@ function TitleSheet({title,value,busy,error,onClose,onSubmit}:{title:string;valu
 }
 
 type SourceLibrary = { id: string; title: string; sourceScope: string };
+type SourceLibraryPage = {items:SourceLibrary[];nextCursor?:string|null;totalCount?:number;publicationRevision?:number;snapshotKey?:string} & MateFilterSupport;
+// Session-scoped display cache. Every open still revalidates before selection is enabled.
+const sourcePages=new WeakMap<AuthoringApi,Map<string,{at:number;value:unknown}>>();
+function cachedSourcePage<T>(api:AuthoringApi,path:string):T|undefined {
+  const hit=sourcePages.get(api)?.get(path);
+  return hit && Date.now()-hit.at<30_000 ? hit.value as T : undefined;
+}
+async function sourcePage<T>(api:AuthoringApi,path:string,signal?:AbortSignal):Promise<T> {
+  const value=await api.request<T>(path,{signal});
+  if(!signal?.aborted) {
+    let pages=sourcePages.get(api);if(!pages){pages=new Map();sourcePages.set(api,pages);}
+    if(pages.size>=32)pages.delete(pages.keys().next().value!);
+    pages.set(path,{at:Date.now(),value});
+  }
+  return value;
+}
+
 type SourcePickerProps = {
   api: AuthoringApi;
   kind: "problems" | "games";
@@ -842,22 +907,42 @@ function SourcePicker(props: SourcePickerProps) {
   const [mateFilter,setMateFilter] = useState("");
   const [q,setQ] = useState(""), [reload,setReload] = useState(0);
   const [items,setItems] = useState<SourceLibrary[]>([]);
+  const [totalCount,setTotalCount]=useState<number>(), [countError,setCountError]=useState("");
+  const [countQuery,setCountQuery]=useState<{path:string;revision?:number;snapshotKey?:string}>(), [countRetry,setCountRetry]=useState(0);
   const [nextCursor,setNextCursor] = useState<string|null>();
   const [busy,setBusy] = useState(true), [error,setError] = useState("");
   const generation = useRef(0), paginationLock = useRef(false), lastSearch = useRef<string | undefined>(undefined);
   const list = useRef<HTMLDivElement>(null);
-  async function read(after?:string,signal?:AbortSignal) {
-    const params = new URLSearchParams({kind,q:q.trim(),limit:"30"});
+  function pagePath(after?:string,view="page") {
+    const params=new URLSearchParams({kind,q:q.trim(),limit:"30",view});
     if(after)params.set("cursor",after);
-    if(kind === "problems")mateStepParams(params,mateFilter);
-    const page = await api.request<{items:SourceLibrary[];nextCursor?:string|null} & MateFilterSupport>(BASE+"/source-libraries?"+params,{signal});
+    if(kind==="problems")mateStepParams(params,mateFilter);
+    return BASE+"/source-libraries?"+params;
+  }
+  async function read(after?:string,signal?:AbortSignal) {
+    const page=await sourcePage<SourceLibraryPage>(api,pagePath(after),signal);
     requireMateFilter(page,mateFilter);
     return page;
   }
   useEffect(()=>{
+    if(!countQuery || library)return;
+    const controller=new AbortController();let active=true;
+    setCountError("");
+    void api.request<{totalCount?:number;publicationRevision?:number;snapshotKey?:string}>(countQuery.path,{signal:controller.signal})
+      .then(page=>{
+        if(!active)return;
+        if((countQuery.revision!=null && page.publicationRevision!==countQuery.revision) || (countQuery.snapshotKey && page.snapshotKey!==countQuery.snapshotKey)){setReload(value=>value+1);return;}
+        if(Number.isSafeInteger(page.totalCount)&&page.totalCount!>=0)setTotalCount(page.totalCount);
+      }).catch(reason=>{if(active && !controller.signal.aborted)setCountError(message(reason));});
+    return ()=>{active=false;controller.abort();};
+  },[api,countQuery,countRetry,library?.id]);
+  useEffect(()=>{
     if(library)return;
     const epoch=++generation.current, controller=new AbortController();
     setNextCursor(undefined);setError("");setBusy(true);paginationLock.current=false;
+    setTotalCount(undefined);setCountQuery(undefined);setCountError("");
+    const cached=cachedSourcePage<SourceLibraryPage>(api,pagePath());
+    if(cached){setItems(cached.items);setNextCursor(cached.nextCursor??null);}
     list.current?.scrollTo?.({top:0});
     const searchChanged=lastSearch.current!==undefined && lastSearch.current!==q;lastSearch.current=q;
     const deadline=Date.now()+30_000;
@@ -866,7 +951,10 @@ function SourcePicker(props: SourcePickerProps) {
       let retrying=false;
       try {
         const page=await read(undefined,controller.signal);
-        if(epoch===generation.current){setItems(page.items);setNextCursor(page.nextCursor??null);}
+        if(epoch===generation.current){
+          setItems(page.items);setNextCursor(page.nextCursor??null);setTotalCount(page.totalCount);
+          if(page.totalCount==null)setCountQuery({path:pagePath(undefined,"counts"),revision:page.publicationRevision,snapshotKey:page.snapshotKey});
+        }
       } catch(reason) {
         if(epoch!==generation.current)return;
         if(/^题库正在(准备|更新)/.test(message(reason)) && Date.now()<deadline) {
@@ -905,7 +993,8 @@ function SourcePicker(props: SourcePickerProps) {
         <span className="authoring-library-arrow" aria-hidden="true">›</span>
       </button>)}
       {!items.length && <p role="status">{busy ? "正在读取题库…" : error ? "请重试" : "没有匹配的题库或书本"}</p>}
-      <p className="authoring-picker-page-status">已显示 {items.length} 本题库{nextCursor ? " · 还有下一页" : ""}</p>
+      <p className="authoring-picker-page-status">已显示 {items.length} 本题库{totalCount!=null ? ` · 共 ${totalCount} 本` : countError ? " · 总数暂不可用" : " · 总数统计中"}{nextCursor ? " · 还有下一页" : ""}</p>
+      {countError && <p className="authoring-error">题库已加载，总数暂不可用<button type="button" onClick={()=>setCountRetry(value=>value+1)}>重试统计</button></p>}
       {nextCursor && <button type="button" disabled={busy} onClick={()=>void loadMore()}>{busy ? "正在读取…" : "下一页题库"}</button>}
     </div>
   </section></div>;
@@ -929,13 +1018,16 @@ function SourceRecordPicker({api,kind,directoryId,existing,onClose,onChoose,onCh
   const request = useRef(0), selectionLock = useRef(false), paginationLock = useRef(false), lastSearch = useRef<string | undefined>(undefined);
   const list = useRef<HTMLDivElement>(null);
   const existingIds = new Set(existing.map(item => `${itemRef(item).kind}:${itemRef(item).subjectId}`));
-  async function readPage(after?:string, signal?:AbortSignal) {
+  function recordPath(after?:string) {
     const params = new URLSearchParams({kind,q:q.trim(),limit:String(SOURCE_RECORD_PAGE_SIZE),libraryId:library.id});
     if (category) params.set("category",category);
     if (directoryId) params.set("directoryId",directoryId);
     if (after) params.set("cursor",after);
     if(kind === "problems")mateStepParams(params,mateFilter);
-    const page = await api.request<AuthoringSourcePage & MateFilterSupport>(BASE+"/sources?"+params,{signal});
+    return BASE+"/sources?"+params;
+  }
+  async function readPage(after?:string, signal?:AbortSignal) {
+    const page = await sourcePage<AuthoringSourcePage & MateFilterSupport>(api,recordPath(after),signal);
     requireMateFilter(page,mateFilter);
     return page;
   }
@@ -943,6 +1035,8 @@ function SourceRecordPicker({api,kind,directoryId,existing,onClose,onChoose,onCh
     const epoch=++request.current;
     setNextCursor(undefined);setTotalCount(undefined);setPageIndex(0);setError("");setBusy(true);paginationLock.current=false;
     list.current?.scrollTo?.({top:0});
+    const cached=cachedSourcePage<AuthoringSourcePage>(api,recordPath());
+    if(cached){setItems(mergeSources([],cached.items));setCategories(cached.categories??[]);setNextCursor(cached.nextCursor??null);setTotalCount(cached.totalCount);}
     const controller=new AbortController(), deadline=Date.now()+180_000;
     let timer:ReturnType<typeof setTimeout>;
     setPreparing(false);
