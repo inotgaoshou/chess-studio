@@ -33,7 +33,7 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
      else if(path.endsWith('/capabilities'))body={};
      else if(path===base+'/directories'){
       if(req.method()==='POST'){
-       const payload=req.postDataJSON();const summary={...directory,id:payload.id,title:payload.title,sortOrder:1};dirs.push(summary);createdAt=Date.now();body={id:summary.id,directory:summary};
+       const payload=req.postDataJSON();const summary={...directory,id:payload.id,title:payload.title,sortOrder:1,itemCount:12};dirs.push(summary);createdAt=Date.now();body={id:summary.id,directory:summary};
       }else{
        listReads++;
        if(listReads===2){await pause(1400);status=503;body={error:'验收刷新延迟'};}
@@ -41,7 +41,7 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
        else body={items:dirs};
       }
      }else if(path.startsWith(base+'/directories/')&&req.method()==='DELETE'){
-      const index=dirs.findIndex(dir=>dir.id===path.split('/').at(-1));assert(index>=0);assert.equal(dirs[index].itemCount,0);
+      const index=dirs.findIndex(dir=>dir.id===path.split('/').at(-1));assert(index>=0);assert.equal(req.postDataJSON().removeItems,true);
       assert.equal(req.postDataJSON().expectedRevision,dirs[index].revision);
       dirs.splice(index,1);await pause(80);deletedAt=Date.now();body={ok:true};
      }else if(path===base+'/directories/d'){
@@ -54,6 +54,16 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
      }else if(path===base+'/sources'){
       assert.equal(url.searchParams.get('libraryId'),'book');assert.equal(url.searchParams.get('limit'),'50');
       const after=url.searchParams.has('cursor');body={items:Array.from({length:after?13:50},(_,i)=>source(i+(after?50:0))),totalCount:63,categories:['杀棋'],nextCursor:after?null:'page-two',mateFilterVersion:1};
+     }else if(path==='/api/v1/admin/teaching-catalog/browse'){
+      assert.equal(url.searchParams.get('allowStaleCounts'),'true');assert.equal(url.searchParams.get('limit'),'50');
+      const id=url.searchParams.get('nodeId'),counts=url.searchParams.get('view')==='counts';
+      const basic={id:'basic',name:'基础杀法验收',kind:'topic',teachingEntry:'basic_mates',itemCount:counts?150:null};
+      if(counts)await pause(900);
+      body={currentNode:id?basic:undefined,breadcrumbs:id?[basic]:[],children:id?[{id:'chapter',name:'第一章验收',kind:'chapter',itemCount:counts?30:null}]:[basic]};
+     }else if(path==='/api/v1/admin/teaching-catalog/basic/problems'){
+      assert.equal(url.searchParams.get('pageOnly'),'true');assert.equal(url.searchParams.get('limit'),'50');
+      const late=url.searchParams.get('mateMoves')==='4';await pause(late?1800:550);
+      body={items:[{id:late?'late':'catalog-p',title:late?'过期题目不得显示':'平台题目验收',startingFen:fen,reviewStatus:'published',validationStatus:'ready'}],nextCursor:null,totalCount:null};
      }else if(path.endsWith('/classes'))body=admin?{items:[],totalCount:0}:[];
      await route.fulfill({status,contentType:'application/json',body:JSON.stringify(body)}).catch(error=>{if(!/closed|canceled|cancelled/i.test(error.message))throw error;});
     });
@@ -75,7 +85,7 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
     assert((await management.boundingBox()).width<=viewport.width,'directory controls fit the viewport');
     await page.screenshot({path:`${output}/${name}-${viewport.width}-directories.png`});
     page.once('dialog',dialog=>dialog.accept());
-    const remove=page.getByRole('button',{name:'删除空目录保存无需等刷新',exact:true});
+    const remove=page.getByRole('button',{name:'删除目录保存无需等刷新',exact:true});
     await remove.click();await remove.waitFor({state:'hidden',timeout:700});
     const deleteFinishMs=Date.now()-deletedAt;assert(deleteFinishMs<300,'deletion must not wait for background refresh');
     await page.getByText(/已删除，刷新失败/).waitFor();
@@ -108,6 +118,18 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
     await page.getByRole('dialog',{name:'选择题库／书本',exact:true}).getByRole('button',{name:'‹ 返回',exact:true}).click();
     assert.equal(calls.filter(call=>call.method==='PATCH').length,0,'returning without confirmation must not add questions');
     assert.equal(calls.filter(call=>call.method==='POST'&&call.path.includes('assignments')).length,0,'selecting must never publish an assignment');
+    await page.locator('.authoring-header > button').click();
+    await page.getByRole('button',{name:'平台作业库',exact:true}).click();
+    await page.getByRole('button',{name:/基础杀法验收/}).click();
+    await page.getByRole('button',{name:/第一章验收/}).waitFor();
+    assert(await page.getByRole('button',{name:'两步杀',exact:true}).isEnabled(),'filters must stay usable during reads');
+    await page.getByText('平台题目验收',{exact:true}).waitFor();
+    await page.screenshot({path:`${output}/${name}-${viewport.width}-platform.png`});
+    await page.getByRole('button',{name:'四步杀',exact:true}).click();
+    await page.getByRole('button',{name:'‹ 返回上级',exact:true}).click();
+    await page.getByRole('button',{name:/基础杀法验收/}).waitFor();
+    await pause(1900);
+    assert.equal(await page.getByText('过期题目不得显示',{exact:true}).count(),0);
     assert.deepEqual(errors,[]);
     results.push({browser:name,viewport,host:admin?'admin':'mobile',saveFinishMs:finishMs,deleteFinishMs,pass:true});console.log(JSON.stringify(results.at(-1)));await page.close();
    }

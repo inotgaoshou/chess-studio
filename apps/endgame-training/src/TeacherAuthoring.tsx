@@ -260,7 +260,7 @@ export function TeacherAuthoring({
   async function deleteDirectory(target: AuthoringDirectory) {
     const epoch=generation.current;
     refreshRequest.current++;
-    await api.request(BASE+"/directories/"+target.id,json({expectedRevision:target.revision},"DELETE"));
+    await api.request(BASE+"/directories/"+target.id,json({expectedRevision:target.revision,removeItems:true},"DELETE"));
     if(epoch!==generation.current)return;
     setDirs(old=>old.filter(item=>item.id!==target.id));
     void refreshDirectories("deleted");
@@ -396,7 +396,7 @@ export function TeacherAuthoring({
                 disabled={busy}
                 onClick={() =>
                   void run(async () => {
-                    const target = c.directoryId || (await writableDirectory());
+                    const target = dirs.find(item=>item.id===c.directoryId && item.canEdit)?.id || (await writableDirectory());
                     await load(target);
                     setMode("position");
                     setQuestion({ ...newQuestion(), id: c.id, body: c.body });
@@ -472,8 +472,8 @@ export function TeacherAuthoring({
                     </button>
                   </>
                 )}
-                {d.canEdit && d.itemCount===0 && <button type="button" className="authoring-directory-delete" disabled={busy} aria-label={`删除空目录${d.title}`} onClick={()=>{
-                  if(confirm(`删除空目录“${d.title}”？`))void run(()=>deleteDirectory(d));
+                {d.canEdit && <button type="button" className="authoring-directory-delete" disabled={busy} aria-label={`删除目录${d.title}`} onClick={()=>{
+                  if(confirm(`删除目录“${d.title}”？${d.itemCount!=null ? `其中 ${d.itemCount} 道题仅移出目录，` : ""}原题和已布置作业会保留。`))void run(()=>deleteDirectory(d));
                 }}>删除</button>}
               </article>
             ))}
@@ -768,60 +768,86 @@ function PlatformAssignmentCatalog({api,onAssign}:{api:AuthoringApi;onAssign(tit
   const [itemTotal,setItemTotal]=useState<number|null>(null);
   const [mateStep,setMateStep]=useState("");
   const [selected,setSelected]=useState<CatalogItem[]>([]);
-  const [busy,setBusy]=useState(false),[error,setError]=useState("");
-  const generation=useRef(0);
+  const [treeBusy,setTreeBusy]=useState(false),[itemBusy,setItemBusy]=useState(false),[selectBusy,setSelectBusy]=useState(false);
+  const [treeError,setTreeError]=useState(""),[itemError,setItemError]=useState(""),[countError,setCountError]=useState("");
+  const [retry,setRetry]=useState(0);
+  const busy=treeBusy||itemBusy||selectBusy;
+  const generation=useRef(0),active=useRef<AbortController|null>(null);
   const previousNode=useRef<string|undefined>(undefined);
-  async function browse(id:string|undefined,cursor?:string) {
-    const params=new URLSearchParams({availability:"available",limit:"100"});
+  // Bound reads even when the underlying API fails to settle after cancellation.
+  async function read<T>(path:string):Promise<T> {
+    const parent=active.current?.signal,controller=new AbortController();
+    let timer:ReturnType<typeof setTimeout>|undefined,onAbort=()=>{};
+    try {
+      return await Promise.race([api.request<T>(path,{signal:controller.signal}),new Promise<never>((_,reject)=>{
+        onAbort=()=>{controller.abort();reject(new Error("读取已取消"));};
+        parent?.addEventListener("abort",onAbort,{once:true});
+        if(parent?.aborted){onAbort();return;}
+        timer=setTimeout(()=>{controller.abort();reject(new Error("读取超时，请重试"));},10_000);
+      })]);
+    } finally {clearTimeout(timer);parent?.removeEventListener("abort",onAbort);}
+  }
+  async function browse(id:string|undefined,cursor?:string,view="structure") {
+    const params=new URLSearchParams({availability:"available",limit:"50",view,allowStaleCounts:"true"});
     if(id)params.set("nodeId",id);
     if(cursor)params.set("cursor",cursor);
-    return api.request<{currentNode?:CatalogNode;breadcrumbs:CatalogNode[];children:CatalogNode[];nextCursor?:string|null}>(`/api/v1/admin/teaching-catalog/browse?${params}`);
+    return read<{currentNode?:CatalogNode;breadcrumbs:CatalogNode[];children:CatalogNode[];nextCursor?:string|null}>(`/api/v1/admin/teaching-catalog/browse?${params}`);
   }
   async function problems(id:string,cursor?:string) {
-    const params=new URLSearchParams({limit:"100"});
+    const params=new URLSearchParams({limit:"50",pageOnly:"true"});
     if(cursor)params.set("cursor",cursor);
     if(mateStep)params.set("mateMoves",mateStep);
-    return api.request<{items:CatalogItem[];nextCursor?:string|null;totalCount?:number|null}>(`/api/v1/admin/teaching-catalog/${encodeURIComponent(id)}/problems?${params}`);
+    return read<{items:CatalogItem[];nextCursor?:string|null;totalCount?:number|null}>(`/api/v1/admin/teaching-catalog/${encodeURIComponent(id)}/problems?${params}`);
+  }
+  async function counts(epoch:number,cursor?:string) {
+    try {
+      const page=await browse(nodeId,cursor,"counts");
+      if(epoch!==generation.current)return;
+      const values=new Map(page.children.map(node=>[node.id,node.itemCount]));
+      setNodes(old=>old.map(node=>({...node,itemCount:values.get(node.id)??node.itemCount})));
+    } catch {if(epoch===generation.current)setCountError("题数统计暂不可用，可重试读取");}
   }
   useEffect(()=>{
-    const epoch=++generation.current;
-    const nodeChanged=previousNode.current!==nodeId;
-    previousNode.current=nodeId;
-    setBusy(true);setError("");setItems([]);setItemCursor(null);setItemTotal(null);
-    if(nodeChanged){setNodes([]);setSelected([]);setNodeCursor(null);}
-    void Promise.all([browse(nodeId),nodeId?problems(nodeId):Promise.resolve({items:[] as CatalogItem[],nextCursor:null,totalCount:null})])
-      .then(([tree,page])=>{
-        if(epoch!==generation.current)return;
-        setTitle(tree.currentNode?.name||"平台作业库");
-        setParentId(tree.breadcrumbs.at(-2)?.id);
-        setNodes(tree.children);setNodeCursor(tree.nextCursor??null);
-        setItems(page.items.filter(item=>item.reviewStatus==="published"&&item.validationStatus==="ready"));
-        setItemCursor(page.nextCursor??null);
-        setItemTotal(page.totalCount??null);
-      }).catch(reason=>{if(epoch===generation.current)setError(message(reason));})
-      .finally(()=>{if(epoch===generation.current)setBusy(false);});
-    return ()=>{generation.current++;};
-  },[api,nodeId,mateStep]);
+    const epoch=++generation.current,controller=new AbortController();active.current=controller;
+    const changed=previousNode.current!==nodeId;previousNode.current=nodeId;
+    setTreeBusy(true);setItemBusy(!!nodeId);setSelectBusy(false);
+    setTreeError("");setItemError("");setCountError("");setItems([]);setItemCursor(null);setItemTotal(null);
+    if(changed){setNodes([]);setSelected([]);setNodeCursor(null);}
+    void browse(nodeId).then(tree=>{
+      if(epoch!==generation.current)return;
+      setTitle(tree.currentNode?.name||"平台作业库");setParentId(tree.breadcrumbs.at(-2)?.id);
+      setNodes(tree.children);setNodeCursor(tree.nextCursor??null);void counts(epoch);
+    }).catch(reason=>{if(epoch===generation.current)setTreeError(message(reason));})
+      .finally(()=>{if(epoch===generation.current)setTreeBusy(false);});
+    if(nodeId)void problems(nodeId).then(page=>{
+      if(epoch!==generation.current)return;
+      setItems(page.items.filter(item=>item.reviewStatus==="published"&&item.validationStatus==="ready"));
+      setItemCursor(page.nextCursor??null);setItemTotal(page.totalCount??null);
+    }).catch(reason=>{if(epoch===generation.current)setItemError(message(reason));})
+      .finally(()=>{if(epoch===generation.current)setItemBusy(false);});
+    return ()=>{generation.current++;controller.abort();};
+  },[api,nodeId,mateStep,retry]);
   async function moreNodes() {
-    if(!nodeCursor||busy)return;
-    const epoch=generation.current;setBusy(true);
-    try {const page=await browse(nodeId,nodeCursor);if(epoch===generation.current){setNodes(old=>[...new Map([...old,...page.children].map(item=>[item.id,item])).values()]);setNodeCursor(page.nextCursor??null);}}
-    catch(reason){if(epoch===generation.current)setError(message(reason));}
-    finally{if(epoch===generation.current)setBusy(false);}
+    if(!nodeCursor||treeBusy)return;
+    const epoch=generation.current,cursor=nodeCursor;setTreeBusy(true);setTreeError("");
+    try {const page=await browse(nodeId,cursor);if(epoch===generation.current){setNodes(old=>[...new Map([...old,...page.children].map(item=>[item.id,item])).values()]);setNodeCursor(page.nextCursor??null);void counts(epoch,cursor);}}
+    catch(reason){if(epoch===generation.current)setTreeError(message(reason));}
+    finally{if(epoch===generation.current)setTreeBusy(false);}
   }
   async function moreItems() {
-    if(!nodeId||!itemCursor||busy)return;
-    const epoch=generation.current;setBusy(true);
+    if(!nodeId||!itemCursor||itemBusy||selectBusy)return;
+    const epoch=generation.current;setItemBusy(true);setItemError("");
     try {const page=await problems(nodeId,itemCursor);if(epoch===generation.current){setItems(old=>[...new Map([...old,...page.items.filter(item=>item.reviewStatus==="published"&&item.validationStatus==="ready")].map(item=>[item.id,item])).values()]);setItemCursor(page.nextCursor??null);setItemTotal(page.totalCount??null);}}
-    catch(reason){if(epoch===generation.current)setError(message(reason));}
-    finally{if(epoch===generation.current)setBusy(false);}
+    catch(reason){if(epoch===generation.current)setItemError(message(reason));}
+    finally{if(epoch===generation.current)setItemBusy(false);}
   }
   async function selectAll() {
-    if(!nodeId||busy)return;
-    const epoch=generation.current;setBusy(true);setError("");
+    if(!nodeId||itemBusy||selectBusy)return;
+    const epoch=generation.current;setSelectBusy(true);setItemError("");
     try {
       let all=[...items],cursor=itemCursor;
       const seen=new Set<string>();
+      if(all.length>10000)throw new Error("一次最多布置10000题，请缩小范围");
       while(cursor) {
         if(seen.has(cursor))throw new Error("题目分页异常，请重试");
         seen.add(cursor);
@@ -832,8 +858,8 @@ function PlatformAssignmentCatalog({api,onAssign}:{api:AuthoringApi;onAssign(tit
         if(all.length>10000)throw new Error("一次最多布置10000题，请缩小范围");
       }
       setItems(all);setItemCursor(null);setSelected(all);
-    } catch(reason){if(epoch===generation.current)setError(message(reason));}
-    finally{if(epoch===generation.current)setBusy(false);}
+    } catch(reason){if(epoch===generation.current)setItemError(message(reason));}
+    finally{if(epoch===generation.current)setSelectBusy(false);}
   }
   const selectedIds=new Set(selected.map(item=>item.id));
   const chooseMateStep=(step:string)=>{
@@ -843,9 +869,9 @@ function PlatformAssignmentCatalog({api,onAssign}:{api:AuthoringApi;onAssign(tit
   return <section className="authoring-platform-catalog" aria-busy={busy}>
     {nodeId && <button type="button" onClick={()=>{setMateStep("");setNodeId(parentId);}}>‹ 返回上级</button>}
     <div className="authoring-catalog-heading"><strong>{title}</strong><span>已选 {selected.length} 题</span></div>
-    <div className="authoring-platform-mate-tabs" role="group" aria-label="杀法步数筛选">{[["","全部"],["1","一步杀"],["2","两步杀"],["3","三步杀"],["4","四步杀"]].map(([step,label])=><button type="button" key={step} aria-pressed={mateStep===step} disabled={busy} onClick={()=>chooseMateStep(step)}>{label}</button>)}</div>
-    {error && <p role="alert" className="authoring-error">{error}</p>}
-    <div className="authoring-platform-nodes">{nodes.map(node=><button type="button" key={node.id} onClick={()=>{setMateStep("");setNodeId(node.id);}}><strong>{node.name}</strong><small>{node.itemCount??0} 题 ›</small></button>)}</div>
+    <div className="authoring-platform-mate-tabs" role="group" aria-label="杀法步数筛选">{[["","全部"],["1","一步杀"],["2","两步杀"],["3","三步杀"],["4","四步杀"]].map(([step,label])=><button type="button" key={step} aria-pressed={mateStep===step} onClick={()=>chooseMateStep(step)}>{label}</button>)}</div>
+    {(treeError||itemError||countError) && <div className="authoring-error" role="alert">{[treeError,itemError,countError].filter(Boolean).join("；")} <button type="button" onClick={()=>setRetry(old=>old+1)}>重试读取</button></div>}
+    <div className="authoring-platform-nodes">{nodes.map(node=><button type="button" key={node.id} onClick={()=>{setMateStep("");setNodeId(node.id);}}><strong>{node.name}</strong><small>{node.itemCount==null?"题数统计中":`${node.itemCount} 题`} ›</small></button>)}</div>
     {nodeCursor && <button type="button" disabled={busy} onClick={()=>void moreNodes()}>下一页目录</button>}
     {nodeId && <p className="authoring-platform-page-status" role="status">已显示 {items.length}{itemTotal!==null?` / ${itemTotal}`:""} 题{itemCursor?" · 还有下一页":""}</p>}
     {!!items.length && <>
@@ -854,8 +880,10 @@ function PlatformAssignmentCatalog({api,onAssign}:{api:AuthoringApi;onAssign(tit
       <button type="button" className="primary" disabled={busy||!selected.length} onClick={()=>onAssign(title,nodeId!,selected.map(item=>({id:item.id,subjectId:item.id,kind:"source",revision:0,status:"source",canEdit:false,archived:false,publishedProblemId:item.id,contentFingerprint:item.contentFingerprint,body:{title:item.title,startingFen:item.startingFen,note:"",solution:[]}})))}>布置已选题目（{selected.length}）</button>
     </>}
     {itemCursor && <button type="button" disabled={busy} onClick={()=>void moreItems()}>下一页题目</button>}
-    {busy && <p role="status">正在读取目录和题目…</p>}
-    {!busy&&!nodes.length&&!items.length&&!itemCursor&&!error&&<p>此目录暂无可布置题目</p>}
+    {treeBusy && <p role="status">正在读取目录…</p>}
+    {itemBusy && <p role="status">正在读取题目…</p>}
+    {selectBusy && <p role="status">正在选择本目录题目…</p>}
+    {!busy&&!nodes.length&&!items.length&&!itemCursor&&!treeError&&!itemError&&<p>此目录暂无可布置题目</p>}
   </section>;
 }
 

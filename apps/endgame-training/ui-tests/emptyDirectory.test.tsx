@@ -9,18 +9,18 @@ function show(request:AuthoringApi["request"],personal=false){
 }
 afterEach(()=>vi.restoreAllMocks());
 
-it("offers deletion only for an editable, genuinely empty directory",async()=>{
+it("offers deletion for editable empty and populated directories",async()=>{
   show(vi.fn(async()=>({items:[empty,{...empty,id:"hidden",title:"含下架题目",itemCount:1},{...empty,id:"other",title:"他人目录",canEdit:false},{...empty,id:"legacy",title:"旧版摘要",itemCount:undefined}]})) as AuthoringApi["request"]);
-  await screen.findByRole("button",{name:"删除空目录空目录"});
-  expect(screen.getAllByRole("button",{name:/^删除空目录/})).toHaveLength(1);
+  await screen.findByRole("button",{name:"删除目录空目录"});
+  expect(screen.getAllByRole("button",{name:/^删除目录/})).toHaveLength(3);
 });
 
 it("keeps the directory and makes no delete request when confirmation is cancelled",async()=>{
   vi.spyOn(window,"confirm").mockReturnValue(false);
   const request=vi.fn(async()=>({items:[empty]}));show(request as AuthoringApi["request"]);
-  fireEvent.click(await screen.findByRole("button",{name:"删除空目录空目录"}));
+  fireEvent.click(await screen.findByRole("button",{name:"删除目录空目录"}));
   expect(request).toHaveBeenCalledTimes(1);
-  expect(screen.getByRole("button",{name:"删除空目录空目录"})).toBeTruthy();
+  expect(screen.getByRole("button",{name:"删除目录空目录"})).toBeTruthy();
 });
 
 it("deletes a personal empty directory once and finishes before background refresh",async()=>{
@@ -32,12 +32,12 @@ it("deletes a personal empty directory once and finishes before background refre
     if(path===B+"/directories")return ++reads===1?{items:[empty]}:new Promise(()=>{});
     throw new Error(path);
   });show(request as AuthoringApi["request"],true);
-  const button=await screen.findByRole("button",{name:"删除空目录空目录"});
+  const button=await screen.findByRole("button",{name:"删除目录空目录"});
   fireEvent.click(button);fireEvent.click(button);
   expect(request.mock.calls.filter(([,init])=>init?.method==="DELETE")).toHaveLength(1);
-  expect(request).toHaveBeenCalledWith(B+"/directories/empty",expect.objectContaining({method:"DELETE",body:JSON.stringify({expectedRevision:4})}));
+  expect(request).toHaveBeenCalledWith(B+"/directories/empty",expect.objectContaining({method:"DELETE",body:JSON.stringify({expectedRevision:4,removeItems:true})}));
   await act(async()=>finish({ok:true}));
-  await waitFor(()=>expect(screen.queryByRole("button",{name:"删除空目录空目录"})).toBeNull());
+  await waitFor(()=>expect(screen.queryByRole("button",{name:"删除目录空目录"})).toBeNull());
   expect(screen.getByRole("button",{name:"＋ 新增目录"}).hasAttribute("disabled")).toBe(false);
 });
 
@@ -47,9 +47,9 @@ it("retains a directory when the server detects a concurrent addition",async()=>
     if(init?.method==="DELETE")throw new Error("目录已变化，请刷新后重试");
     return {items:[empty]};
   }) as AuthoringApi["request"]);
-  fireEvent.click(await screen.findByRole("button",{name:"删除空目录空目录"}));
+  fireEvent.click(await screen.findByRole("button",{name:"删除目录空目录"}));
   await screen.findByText("目录已变化，请刷新后重试");
-  expect(screen.getByRole("button",{name:"删除空目录空目录"})).toBeTruthy();
+  expect(screen.getByRole("button",{name:"删除目录空目录"})).toBeTruthy();
 });
 
 it("reports refresh failure separately after deletion has succeeded",async()=>{
@@ -59,7 +59,26 @@ it("reports refresh failure separately after deletion has succeeded",async()=>{
     if(++reads===1)return {items:[empty]};
     throw new Error("网络超时");
   }) as AuthoringApi["request"]);
-  fireEvent.click(await screen.findByRole("button",{name:"删除空目录空目录"}));
+  fireEvent.click(await screen.findByRole("button",{name:"删除目录空目录"}));
   await screen.findByText(/已删除，刷新失败/);
-  expect(screen.queryByRole("button",{name:"删除空目录空目录"})).toBeNull();
+  expect(screen.queryByRole("button",{name:"删除目录空目录"})).toBeNull();
+});
+
+it("confirms reference-only deletion for a populated directory",async()=>{
+  const confirm=vi.spyOn(window,"confirm").mockReturnValue(true);
+  const request=vi.fn(async(_path:string,init?:RequestInit)=>init?.method==="DELETE"?{ok:true}:{items:[{...empty,itemCount:12}]});
+  show(request as AuthoringApi["request"]);
+  fireEvent.click(await screen.findByRole("button",{name:"删除目录空目录"}));
+  expect(confirm).toHaveBeenCalledWith(expect.stringContaining("12 道题仅移出目录，原题和已布置作业会保留"));
+  await waitFor(()=>expect(request).toHaveBeenCalledWith(B+"/directories/empty",expect.objectContaining({method:"DELETE",body:JSON.stringify({expectedRevision:4,removeItems:true})})));
+});
+
+it("recovers a local draft in a surviving directory after its old directory was deleted",async()=>{
+  localStorage.setItem("qixi.authoring:delete:local",JSON.stringify({revision:0,directoryId:"deleted",body:{title:"待保存题目",startingFen:"4k4/9/9/9/9/9/9/9/9/4K4 w - - 0 1",note:"",solution:[]}}));
+  const request=vi.fn(async(path:string)=>path===B+"/directories"?{items:[empty]}:path===B+"/directories/empty"?empty:Promise.reject(new Error("不可读取已删除目录")));
+  show(request as AuthoringApi["request"]);
+  fireEvent.click(await screen.findByRole("button",{name:"继续编辑：待保存题目"}));
+  await waitFor(()=>expect(request).toHaveBeenCalledWith(B+"/directories/empty"));
+  expect(request.mock.calls.some(([path])=>path.endsWith("/deleted"))).toBe(false);
+  localStorage.removeItem("qixi.authoring:delete:local");
 });

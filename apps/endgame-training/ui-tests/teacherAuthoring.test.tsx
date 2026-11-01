@@ -59,7 +59,7 @@ it("keeps platform assignment pagination available after an empty first page and
   expect(await screen.findByText("后页题目")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "两步杀" }));
   expect(await screen.findByText("两步杀题")).toBeTruthy();
-  expect(api.request).toHaveBeenCalledWith(expect.stringMatching(/\/basic\/problems\?.*mateMoves=2/));
+  expect(api.request).toHaveBeenCalledWith(expect.stringMatching(/\/basic\/problems\?.*mateMoves=2/),expect.objectContaining({signal:expect.any(AbortSignal)}));
 });
 
 function question(): AuthoredQuestion {
