@@ -18,8 +18,9 @@ const game={id:'branch-actions',title:'分支操作验收',note:'保留备注',s
  const out=process.env.EVIDENCE_DIR||'/tmp/qixi-branch-actions';fs.mkdirSync(out,{recursive:true});
  for(const width of [320,390,430,820]){
   await page.setViewportSize({width,height:width===820?1180:844});await page.waitForTimeout(180);
-  const colors=await board.locator('.saved-branch-arrow').evaluateAll(nodes=>nodes.map(n=>n.style.getPropertyValue('--analysis-arrow-color')));assert.deepEqual(colors,['#438a52','#438a52','#438a52']);
-  assert.deepEqual(await strip.locator('[data-move]').evaluateAll(nodes=>nodes.map(n=>n.style.getPropertyValue('--branch-color'))),colors);
+  const appearance=await board.locator('.saved-branch-arrow').evaluateAll(nodes=>nodes.map(n=>({color:n.style.getPropertyValue('--analysis-arrow-color'),width:getComputedStyle(n.querySelector('.analysis-arrow-stem')).strokeWidth,badge:getComputedStyle(n.querySelector('.analysis-arrow-label')).fill,head:n.closest('svg').querySelector(n.querySelector('.analysis-arrow-stem').getAttribute('marker-end').slice(4,-1)+' path').getAttribute('fill')})));
+  assert.deepEqual(appearance,Array.from({length:3},()=>({color:'#f87924',width:'12px',badge:'rgb(86, 165, 35)',head:'#f87924'})),'Saved branches must use slim orange arrows with green badges, matching the accepted AI reference');
+  assert.deepEqual(await strip.locator('[data-move]').evaluateAll(nodes=>nodes.map(n=>n.style.getPropertyValue('--branch-color'))),['#438a52','#438a52','#438a52']);
   const clear=await board.evaluate(node=>{
    const pieces=[...node.querySelectorAll('.board-square img.piece')].map(e=>e.getBoundingClientRect());
    return [...node.querySelectorAll('.analysis-arrow-label')].every(e=>{const r=e.getBoundingClientRect();return pieces.every(p=>Math.hypot(r.x+r.width/2-p.x-p.width/2,r.y+r.height/2-p.y-p.height/2)>(p.width+r.width)*.45);});
@@ -64,8 +65,8 @@ const game={id:'branch-actions',title:'分支操作验收',note:'保留备注',s
   await page.screenshot({path:`${out}/rotation-${size.width}.png`});
  }
  const beforeEdit=await board.boundingBox();
- await strip.getByRole('button',{name:'编辑分支',exact:true}).click();
- await strip.getByRole('button',{name:/删除分支 .*炮五平九/}).click();const dialog=page.getByRole('dialog',{name:'管理当前分支'});
+ await strip.getByRole('button',{name:'管理变招',exact:true}).click();const dialog=page.getByRole('dialog',{name:'管理当前分支'});
+ await dialog.locator('.branch-actions-list > div').filter({hasText:'炮五平九'}).getByRole('button',{name:/删除分支/}).click();
  await dialog.getByRole('alertdialog',{name:'确认删除分支'}).waitFor();
  await dialog.getByRole('button',{name:'确认删除',exact:true}).click();await dialog.waitFor({state:'hidden'});
  const afterEdit=await board.boundingBox();for(const key of ['x','y','width','height'])assert(Math.abs(beforeEdit[key]-afterEdit[key])<=1);
@@ -76,11 +77,11 @@ const game={id:'branch-actions',title:'分支操作验收',note:'保留备注',s
  await dialog.getByRole('button',{name:'确认删除',exact:true}).click();await dialog.getByRole('alert').waitFor();assert.deepEqual((await read()).moves,game.moves);
  await dialog.getByRole('button',{name:'确认删除',exact:true}).click();await dialog.waitFor({state:'hidden'});
  let saved=await read();assert.deepEqual(saved.moves,prefix);assert.equal(saved.branches[0].moves[0],'e6e4');assert.equal(saved.comments[prefix.join(',')],'分叉注释');assert.equal(Object.keys(saved.comments).length,1);
- await board.getByRole('button',{name:'e6 红炮',exact:true}).waitFor();await strip.getByRole('button',{name:'管理变招'}).click();
- await dialog.getByRole('button',{name:'编辑分支 1'}).click();await dialog.waitFor({state:'hidden'});await board.getByRole('button',{name:'e4 红炮',exact:true}).waitFor();
+ await board.getByRole('button',{name:'e6 红炮',exact:true}).waitFor();
+ assert.equal(await strip.count(),0,'A sole continuation has no floating selection or edit controls');
+ await page.getByRole('button',{name:'下一步',exact:true}).click();await board.getByRole('button',{name:'e4 红炮',exact:true}).waitFor();
  await page.getByRole('button',{name:'上一步',exact:true}).click();await board.getByRole('button',{name:'e6 红炮',exact:true}).waitFor();
- await strip.getByRole('button',{name:'管理变招'}).click();await dialog.getByRole('button',{name:'删除分支 1'}).click();await dialog.getByRole('button',{name:'确认删除',exact:true}).click();await dialog.waitFor({state:'hidden'});
- saved=await read();assert.deepEqual(saved.moves,prefix);assert.equal(saved.branches.length,0);assert.equal(saved.comments[prefix.join(',')],'分叉注释');
+ saved=await read();assert.deepEqual(saved.moves,prefix);assert.equal(saved.branches.length,1);assert.equal(saved.comments[prefix.join(',')],'分叉注释');
  // The paper-and-pencil action must create a new identity even with an existing manual open.
  await page.getByRole('button',{name:'更多功能',exact:true}).click();await page.getByRole('button',{name:'棋盘与引擎设置',exact:true}).click();await page.getByRole('button',{name:'切换到拆棋',exact:true}).click();
  await page.getByRole('button',{name:'更多功能',exact:true}).click();await page.getByRole('button',{name:'新建棋谱',exact:true}).click();await page.locator('.recording-title b').getByText('录谱 0/0',{exact:true}).waitFor();

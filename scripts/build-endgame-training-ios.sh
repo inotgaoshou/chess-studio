@@ -7,8 +7,8 @@ pnpm_bin="${PNPM_BIN:-pnpm}"
 action="${1:-open}"
 project="$app_dir/ios/App/App.xcodeproj"
 scheme="App"
-ios_marketing_version="${IOS_MARKETING_VERSION:-1.0.9}"
-ios_build_number="${IOS_BUILD_NUMBER:-10102}"
+ios_marketing_version="${IOS_MARKETING_VERSION:-1.1.0}"
+ios_build_number="${IOS_BUILD_NUMBER:-10131}"
 if [[ ! "$ios_marketing_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ || ! "$ios_build_number" =~ ^[1-9][0-9]*$ ]]; then
   echo "IOS_MARKETING_VERSION must be x.y.z and IOS_BUILD_NUMBER a positive integer." >&2
   exit 64

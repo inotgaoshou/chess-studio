@@ -17,7 +17,8 @@ it("practical endgames filters on the server, keeps the filter on return and nav
   const ui = render(<TeachingCatalog {...props}/>);
   fireEvent.click(await screen.findByRole("button",{name:/实用残局/}));
   expect(await screen.findByText("来源：《实用残局精选》 · 原题第 11 题")).toBeTruthy();
-  fireEvent.click(screen.getByRole("button",{name:"加载更多题目"}));
+  fireEvent.click(screen.getByRole("button",{name:"下一页题目"}));
+  fireEvent.click(screen.getByRole("button",{name:/跳题.*已显示/}));
   await screen.findByRole("option",{name:"21–40"});
   fireEvent.change(screen.getByRole("combobox",{name:"题号范围"}),{target:{value:"1"}});
   const jump=screen.getByRole("button",{name:/跳到第 25 题/});

@@ -34,11 +34,13 @@
       "file": "v109-checkmate.wav"
     },
     "stalemate": {
-      "file": "v109-stalemate.wav",
-      "source": "Synthetic Mandarin 困 and 毙 (zh-CN-YunxiNeural); brighter accented delivery, short consonant attacks, concentrated final syllable and original two-strike impact. Uses prepared voice sources; no reference voice cloning.",
+      "file": "v109-stalemate-reference-v5.wav",
+      "source": "Reference-conditioned Mandarin 困毙 voice generated locally with Qwen3-TTS Base from the existing 绝杀 sample; reference-aligned accent envelope, no pitch shifting or extra synthesized impact",
       "referenceSample": false,
       "generator": "scripts/generate-stalemate-feedback.py",
-      "revision": "accent-v3"
+      "revision": "reference-v5",
+      "voiceReference": "v109-checkmate.wav",
+      "voiceReferenceSha256": "986863dde158521b263cefa4d4f163ce00f8757246c52f3f41e4106feaaaf8a3"
     }
   },
   "unmatched": []

@@ -34,3 +34,13 @@ it("fits an old iOS viewport from both available dimensions and cleans up observ
   expect(parseFloat(area.style.getPropertyValue("--fitted-board-width"))).toBe(768-16);
   ui.unmount();expect(disconnect).toHaveBeenCalled();
 });
+
+it("pins the research board to the top while still fitting short viewports",()=>{
+ vi.spyOn(globalThis,"ResizeObserver").mockImplementation(function(){return {observe(){},unobserve(){},disconnect(){}};} as unknown as typeof ResizeObserver);
+ vi.spyOn(HTMLElement.prototype,"getBoundingClientRect").mockImplementation(()=>({width:390,height:300,x:0,y:0,top:0,left:0,right:390,bottom:300,toJSON(){}}));
+ const ui=render(<FittedBoardArea className="manual-play-board-area" alignment="top"><div/></FittedBoardArea>);
+ const area=ui.container.firstElementChild as HTMLElement;
+ expect(area.style.alignItems).toBe("start");
+ expect(parseFloat(area.style.getPropertyValue("--fitted-board-width"))).toBeCloseTo((300-12)*1120/1240);
+ ui.unmount();
+});

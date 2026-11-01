@@ -95,3 +95,15 @@
 .manual-branch-strip.is-floating.has-inline-edit .branch-manage-button > svg { display:block; }
 
 .manual-branch-strip.is-floating.has-inline-edit.has-many-choices[data-compact-choices=true] .branch-manage-button > svg { display:block; }
+
+/* Optional mobile presentation; management keeps editing, deletion and sorting. */
+.branch-floating-layer .manual-branch-strip.is-floating.is-compact { padding:2px 4px; border-radius:8px; box-shadow:0 2px 7px #173c321a; }
+.manual-branch-strip.is-floating.is-compact .branch-drag-handle { min-width:20px; }
+.manual-branch-strip.is-floating.is-compact .branch-choice-item { padding:2px 0; }
+.manual-branch-strip.is-floating.is-compact .manual-branch-choices button[data-move] { min-width:34px; min-height:34px; }
+.manual-branch-strip.is-floating.is-compact .manual-branch-choices button b { width:26px; height:26px; border:1px solid #edf8e9; box-shadow:0 0 0 1px #7aaa83; }
+.manual-branch-strip.is-floating.is-compact .manual-branch-choices button[aria-current=true] b { box-shadow:0 0 0 1px #245f36; }
+.manual-branch-strip.is-floating.is-compact .branch-small-actions button { min-width:30px; min-height:34px; }
+.manual-branch-strip.is-floating.is-compact .branch-source-handle { display:flex; flex:none; flex-direction:column; align-items:center; min-width:24px; cursor:grab; touch-action:none; }
+.manual-branch-strip.is-floating.is-compact .branch-source-handle .branch-drag-handle { min-height:20px; }
+.manual-branch-strip.is-floating.is-compact .branch-source-handle small { font-size:9px; line-height:12px; white-space:nowrap; }

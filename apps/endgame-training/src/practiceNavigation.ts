@@ -37,7 +37,8 @@ export function practiceGroupSummary(numbers: Record<string, number>, currentId:
   const ids = orderedPracticeIds(numbers), index = ids.indexOf(currentId);
   if (index < 0) return undefined;
   const complete = typeof totalProblems === "number" && Number.isInteger(totalProblems) && totalProblems >= ids.length;
-  return { current: Math.floor(index / 20) + 1, total: Math.ceil((complete ? totalProblems : ids.length) / 20), complete };
+  const problemCount = complete ? totalProblems : ids.length;
+  return { current: Math.floor(index / 20) + 1, total: Math.ceil(problemCount / 20), problemCount, complete };
 }
 
 export function adjacentPracticeGroup(numbers: Record<string, number>, currentId: string, direction: -1 | 1): string[] {

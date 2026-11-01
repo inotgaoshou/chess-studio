@@ -9,13 +9,13 @@ export type BranchStripAnchor = { board:Element|null; toolbar?:Element|null; doc
 type BranchStripProps = {
   choices:BranchStripChoice[]; onSelect(id:string):void; onManage?():void; onRequestDelete?(id:string):void; revealKey?:number;
   contextKey?:string; floating?:boolean; hidden?:boolean; light?:boolean;
-  layoutKey?:string|number;
+  layoutKey?:string|number; compact?:boolean;
   getAnchor?():BranchStripAnchor; expanded?:boolean; onExpandedChange?(expanded:boolean):void;
 };
 
 /** Direct children of the displayed position; floating content never enters the board grid. */
 export function BranchStrip(props:BranchStripProps) {
-  const {choices,onSelect,onManage,revealKey,floating=false,hidden=false,light=false,contextKey}=props;
+  const {choices,onSelect,onManage,revealKey,floating=false,hidden=false,light=false,contextKey,compact=false}=props;
   const unique=choices.filter((choice,index)=>choices.findIndex(item=>item.move===choice.move)===index);
   const [internalOpen,setInternalOpen]=useState(true);
   const [editing,setEditing]=useState(false);
@@ -103,11 +103,11 @@ export function BranchStrip(props:BranchStripProps) {
     {editing&&props.onRequestDelete&&<button type="button" className="branch-inline-delete" aria-label={`删除分支 ${index+1} · ${choice.notation}`} onClick={()=>props.onRequestDelete?.(choice.id)}><Minus size={12}/></button>}
   </span>;
   if(!visible)return null;
-  const content=<nav ref={card} className={`manual-branch-strip ${floating?"is-floating":""} ${light?"is-light":""} ${unique.length===1?"is-single":""} ${unique.length>2?"has-many-choices":""} ${!open?"is-collapsed":""} ${props.onRequestDelete?"has-inline-edit":""} ${editing?"is-editing":""}`} aria-label="当前局面分支" style={floating?{visibility:"hidden"}:undefined}>
-    {floating ? <div className="branch-inline-controls"><span {...dragEvents}>{handle}</span>
+  const content=<nav ref={card} className={`manual-branch-strip ${floating?"is-floating":""} ${light?"is-light":""} ${unique.length===1?"is-single":""} ${unique.length>2?"has-many-choices":""} ${!open?"is-collapsed":""} ${props.onRequestDelete?"has-inline-edit":""} ${editing?"is-editing":""} ${compact?"is-compact":""}`} aria-label="当前局面分支" style={floating?{visibility:"hidden"}:undefined}>
+    {floating ? <div className="branch-inline-controls"><span className={compact&&open?"branch-source-handle":undefined} {...dragEvents}>{handle}{compact&&open&&<small>分支</small>}</span>
       {!open ? <button type="button" aria-label="展开棋谱后续" onClick={()=>setOpen(true)}><GitFork size={14}/>{unique.length === 1 ? "棋谱后续" : `分支 ${unique.length}`}</button>
       : <div className="manual-branch-choices">{unique.map(floatingChoice)}</div>}
-      <span className="branch-small-actions">{props.onRequestDelete&&open&&<button type="button" aria-label={editing?"完成分支编辑":"编辑分支"} aria-pressed={editing} onClick={()=>setEditing(value=>!value)}>{editing?<Check size={15}/>:<Pencil size={15}/>}<small>{editing?"完成":"编辑"}</small></button>}{onManage&&open&&unique.length>0&&<button type="button" className="branch-manage-button" aria-label="管理变招" title={`查看全部 ${unique.length} 条分支着法`} onClick={onManage}><Settings2 size={14}/><span className="branch-choice-count" aria-hidden="true">共{unique.length}</span></button>}{open&&<button type="button" aria-label="收起变招选择" onClick={()=>setOpen(false)}><X size={14}/></button>}</span>
+      <span className="branch-small-actions">{props.onRequestDelete&&open&&!(compact&&onManage)&&<button type="button" aria-label={editing?"完成分支编辑":"编辑分支"} aria-pressed={editing} onClick={()=>setEditing(value=>!value)}>{editing?<Check size={15}/>:<Pencil size={15}/>}<small>{editing?"完成":"编辑"}</small></button>}{onManage&&open&&unique.length>0&&<button type="button" className="branch-manage-button" aria-label="管理变招" title={`编辑、删除或排序 ${unique.length} 条分支着法`} onClick={onManage}>{compact?<><Pencil size={15}/><small>编辑</small></>:<><Settings2 size={14}/><span className="branch-choice-count" aria-hidden="true">共{unique.length}</span></>}</button>}{open&&<button type="button" aria-label="收起变招选择" onClick={()=>setOpen(false)}>{compact?<Minus size={15}/>:<X size={14}/>}</button>}</span>
     </div> : unique.length===1 || !open ? <div className="branch-compact">{unique.length===1
       ? <button type="button" aria-label={`棋谱下一着：${unique[0].notation}`} onClick={()=>select(unique[0].id)}>下一着：{unique[0].notation}</button>
       : <button type="button" onClick={()=>setOpen(true)}><GitFork size={16}/>选择变招 · {unique.length} 条</button>}</div>

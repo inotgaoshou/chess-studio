@@ -1,0 +1,42 @@
+.practice-learning-entry { display:flex; align-items:center; gap:7px; width:100%; height:38px; min-height:38px; padding:3px 8px; border:1px solid #c9ddce; border-radius:8px; background:#f4faf5; color:#35664c; text-align:left; }
+.practice-learning-entry > svg { width:19px; height:19px; flex:none; }
+.practice-learning-entry > span { flex:1; min-width:0; display:flex; align-items:center; gap:8px; overflow:hidden; }
+.practice-learning-entry strong { font-size:12px; white-space:nowrap; }
+.practice-learning-entry small { font-size:10px; color:#718477; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.practice-learning-backdrop { position:fixed; z-index:160; inset:0; display:flex; align-items:flex-end; justify-content:center; padding:env(safe-area-inset-top,0px) 0 0; background:#203e3152; }
+.practice-learning-sheet { width:100%; max-width:680px; max-height:90%; min-height:0; display:flex; flex-direction:column; overflow:hidden; border:1px solid #c9ddce; border-radius:16px 16px 0 0; background:#f6fbf7; color:#315642; box-shadow:0 -8px 32px #203e3124; }
+.practice-learning-sheet > header { flex:none; display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:50px; padding:5px 12px; border-bottom:1px solid #d4e2d7; }
+.practice-learning-sheet > header > span { display:grid; gap:2px; min-width:0; }
+.practice-learning-sheet > header strong { font-size:15px; }
+.practice-learning-sheet > header small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.practice-learning-sheet button { min-height:36px; padding:5px 9px; display:inline-flex; justify-content:center; align-items:center; gap:5px; border:1px solid #c4daca; border-radius:7px; background:#fff; color:#356b4c; font-size:12px; }
+.practice-learning-sheet button svg { width:17px; height:17px; }
+.practice-learning-sheet .practice-learning-close { width:38px; height:38px; flex:none; padding:5px; border:0; background:transparent; }
+.practice-learning-content { min-height:0; overflow:auto; overscroll-behavior:contain; -webkit-overflow-scrolling:touch; padding:10px 12px; }
+.practice-learning-content > section { margin-bottom:12px; padding:10px; border:1px solid #d8e5dc; border-radius:8px; background:#fff; }
+.practice-learning-sheet h3 { margin:0 0 7px; font-size:14px; }
+.practice-learning-sheet p { margin:6px 0; font-size:12px; line-height:1.6; }
+.practice-learning-sheet small { font-size:10px; color:#6c8072; line-height:1.5; }
+.practice-learning-sheet :is(ol,ul) { margin:8px 0; padding-left:20px; font-size:12px; line-height:1.7; }
+.practice-learning-sheet li + li { margin-top:6px; }
+.practice-learning-sheet dl { margin:0; font-size:12px; line-height:1.6; }
+.practice-learning-sheet dt { font-weight:700; }
+.practice-learning-sheet dd { margin:1px 0 9px; }
+.practice-learning-sheet .practice-learning-current-hint { padding:8px; border-radius:6px; background:#e9f3eb; }
+.practice-learning-sheet .practice-learning-locked { padding:8px; color:#6b7e70; }
+.practice-learning-sheet > footer { flex:none; padding:7px 12px calc(8px + env(safe-area-inset-bottom,0px)); border-top:1px solid #d4e2d7; background:#eef6f0; }
+.practice-learning-sheet > footer > p { margin:0 0 5px; font-size:10px; }
+.practice-learning-sheet > footer > button { width:100%; background:#397b56; color:#fff; border-color:#397b56; }
+.practice-learning-sheet .move-commentary { margin-block:10px; }
+.practice-learning-sheet .move-commentary > header { min-height:38px; padding:4px; gap:4px; }
+.practice-learning-sheet .commentary-heading small { display:none; }
+.practice-learning-sheet .commentary-heading-icon { width:26px; height:26px; }
+.practice-learning-sheet .commentary-heading strong { font-size:12px; }
+.practice-learning-sheet .mobile-solver-answer { padding:8px 0; }
+.practice-learning-sheet .mobile-solver-answer ol { max-height:150px; overflow:auto; }
+.practice-learning-sheet .mobile-solver-answer li + li { margin-top:0; }
+@media (orientation:landscape) and (max-height:500px) {
+ .practice-learning-sheet { max-height:96%; }
+ .practice-learning-sheet > header { min-height:40px; }
+ .practice-learning-sheet > footer { padding-block:4px; }
+}

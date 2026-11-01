@@ -100,3 +100,14 @@ it("edits numbered choices inline without selecting or deleting until requested"
  expect(screen.queryByRole('button',{name:/删除分支/})).toBeNull();
  expect(screen.getByRole('button',{name:'分支 2 · 马八进七'})).toBeTruthy();
 });
+
+it("keeps mobile branch management in one entry and still allows collapse",()=>{
+ const onManage=vi.fn(),onSelect=vi.fn();
+ render(<BranchStrip floating compact light choices={[{id:'a',move:'a0a1',notation:'车九进一'}]} onSelect={onSelect} onManage={onManage} onRequestDelete={vi.fn()}/>);
+ expect(screen.getByText('分支',{exact:true})).toBeTruthy();
+ expect(screen.queryByRole('button',{name:'编辑分支'})).toBeNull();
+ fireEvent.click(screen.getByRole('button',{name:'管理变招'}));expect(onManage).toHaveBeenCalledOnce();expect(onSelect).not.toHaveBeenCalled();
+ fireEvent.click(screen.getByRole('button',{name:'收起变招选择'}));
+ fireEvent.click(screen.getByRole('button',{name:'展开棋谱后续'}));
+ expect(screen.getByRole('button',{name:'棋谱下一着：车九进一'})).toBeTruthy();
+});

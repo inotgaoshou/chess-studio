@@ -1,6 +1,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { usePageVisible, usePositionAnalysis } from "../src/usePositionAnalysis";
+import { manualAiMode, type ManualAiPhase } from "../src/manualAiMode";
 
 afterEach(() => { vi.useRealTimers(); });
 it("debounces moves and ignores obsolete results even when a provider ignores abort", async () => {
@@ -43,4 +44,13 @@ it("tracks native page hiding and visibility restoration",()=>{
   act(()=>window.dispatchEvent(new Event("pageshow")));expect(hook.result.current).toBe(true);
   act(()=>document.dispatchEvent(new Event("pause")));expect(hook.result.current).toBe(false);
   act(()=>document.dispatchEvent(new Event("resume")));expect(hook.result.current).toBe(true);
+});
+
+it("reuses the same search across both evaluation phases and hints, but aborts on disable",async()=>{
+  vi.useFakeTimers();const analyze=vi.fn().mockResolvedValue("current position");
+  const hook=renderHook(({phase}:{phase:ManualAiPhase})=>usePositionAnalysis({positionKey:"same-fen",enabled:manualAiMode(phase)!=="disabled",suspended:false,analyze}),{initialProps:{phase:1 as ManualAiPhase}});
+  await act(async()=>{vi.advanceTimersByTime(300);});expect(hook.result.current.value).toBe("current position");
+  for(const phase of [2,3] as const){hook.rerender({phase});await act(async()=>{vi.advanceTimersByTime(500);});expect(analyze).toHaveBeenCalledTimes(1);expect(hook.result.current.value).toBe("current position");}
+  hook.rerender({phase:0});expect(hook.result.current.value).toBeUndefined();
+  hook.rerender({phase:1});await act(async()=>{vi.advanceTimersByTime(300);});expect(analyze).toHaveBeenCalledTimes(2);
 });

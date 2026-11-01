@@ -193,7 +193,7 @@
 .solution-read-overlay { position:fixed; inset:0; z-index:200; background:#24352e88; display:flex; align-items:center; justify-content:center; overflow:hidden; box-sizing:border-box; padding:12px; padding:max(12px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left)); }
 /* Explicit tracks keep the board and transport still when branches, labels,
    comments or playback state change. Only the details region can scroll. */
-.solution-read-panel { box-sizing:border-box; width:min(620px,100%); height:min(880px,100%,calc((100vw - 64px) * 1.1071429 + 348px)); min-height:0; margin:0; overflow:hidden; display:grid; grid-template-rows:44px 18px minmax(0,1fr) 44px 20px 128px; gap:8px; background:#fff; border:1px solid #dce7df; border-radius:16px; padding:12px; color:#273c32; box-shadow:0 16px 48px #162e2929; font:14px/1.45 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif; }
+.solution-read-panel { box-sizing:border-box; width:min(620px,100%); height:min(880px,100%,calc((100vw - 64px) * 1.1071429 + 396px)); min-height:0; margin:0; overflow:hidden; display:grid; grid-template-rows:44px 18px minmax(0,1fr) 44px 20px 176px; gap:8px; background:#fff; border:1px solid #dce7df; border-radius:16px; padding:12px; color:#273c32; box-shadow:0 16px 48px #162e2929; font:14px/1.45 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif; }
 .solution-read-header { display:flex; align-items:center; gap:8px; min-width:0; }
 .solution-read-header h2 { flex:1; min-width:0; margin:0; font-size:17px; line-height:24px; font-weight:650; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .solution-read-panel .solution-read-close { display:grid; place-items:center; flex:0 0 44px; width:44px; height:44px; padding:0; border:0; border-radius:10px; background:#f1f5f2; color:#4e695a; }
@@ -222,7 +222,7 @@
 .solution-read-moves small { color:#839188; font-size:11px; }
 .solution-read-moves button[aria-current="step"] { background:#edf5ec; border-color:#a3c5a9; color:#335f40; }
 .solution-read-controls button:focus-visible,.solution-branches button:focus-visible,.solution-read-close:focus-visible,.solution-read-moves button:focus-visible { outline:2px solid #568f67; outline-offset:1px; }
-@media(max-width:350px) { .solution-read-panel { height:min(880px,100%,calc((100vw - 60px) * 1.1071429 + 302px)); padding:10px; gap:6px; grid-template-rows:44px 18px minmax(0,1fr) 44px 20px 96px; }.solution-read-controls { gap:4px; }.solution-read-controls button { padding:4px 2px; font-size:12px; }.solution-read-controls button svg { width:14px; height:14px; } }
+@media(max-width:350px) { .solution-read-panel { height:min(880px,100%,calc((100vw - 60px) * 1.1071429 + 334px)); padding:10px; gap:6px; grid-template-rows:44px 18px minmax(0,1fr) 44px 20px 128px; }.solution-read-controls { gap:4px; }.solution-read-controls button { padding:4px 2px; font-size:12px; }.solution-read-controls button svg { width:14px; height:14px; } }
 @media(orientation:landscape) and (max-height:600px) { .solution-read-panel { width:min(900px,100%); height:100%; grid-template-columns:minmax(0,1fr) minmax(240px,.9fr); grid-template-rows:44px 18px 44px 20px minmax(0,1fr); column-gap:14px; }.solution-read-header { grid-column:1/-1; }.solution-read-board { grid-column:1; grid-row:2/-1; }.solution-read-caption { grid-column:2; grid-row:2; }.solution-read-controls { grid-column:2;grid-row:3; }.solution-read-position { grid-column:2;grid-row:4; }.solution-read-details { grid-column:2;grid-row:5; } }
 
 /* Compact app browsing only; assignment selection and desktop catalogs keep their controls. */
@@ -321,3 +321,62 @@
 .catalog-practical-views button[aria-pressed="true"] { background:#e1efdf; border-color:#397958; font-weight:700; }
 .catalog-practical-path { display:flex; flex-wrap:wrap; gap:6px; margin:6px 0; }
 .catalog-practical-path button { color:#397958; border:0; background:none; padding:4px; }
+
+/* Practical-endgame browsing: compact chrome, full-size thumbnails, on-demand navigation. */
+.teaching-catalog.catalog-practical-compact { padding:8px; }
+.catalog-practical-compact .catalog-back-heading { min-height:38px; margin:0 0 3px; gap:4px; }
+.catalog-practical-compact .catalog-back-heading h3 { flex:1; font-size:14px; }
+.catalog-practical-compact .catalog-back-heading > button { min-height:38px; padding:0 5px; font-size:13px; }
+.catalog-practical-compact .catalog-back-heading .catalog-directory-trigger { border:1px solid #cadbce; border-radius:7px; background:#f5faf6; gap:4px; }
+.catalog-practical-compact .catalog-directory-trigger svg { width:16px; height:16px; }
+.catalog-practical-compact .catalog-practical-views { padding:3px 0; gap:5px; }
+.catalog-practical-compact .catalog-practical-views button { min-height:34px; padding:4px 10px; font-size:13px; }
+.catalog-practical-compact .catalog-practical-path { flex-wrap:nowrap; overflow:auto; margin:2px 0; gap:3px; scrollbar-width:none; }
+.catalog-practical-compact .catalog-practical-path:empty { display:none; }
+.catalog-practical-compact .catalog-practical-path button { flex:none; min-height:28px; padding:2px 4px; max-width:75%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; }
+.catalog-practical-compact .catalog-practical-path button + button::before { content:"› "; }
+.catalog-practical-compact .catalog-content-toolbar { margin:3px 0; }
+.catalog-practical-compact .catalog-content-toolbar .catalog-filter-toggle { min-height:34px; padding:4px 8px; font-size:12px; }
+.catalog-practical-compact .catalog-nodes.catalog-chapter-rows { gap:5px; margin:5px 0; }
+.teaching-catalog.catalog-practical-compact .catalog-chapter-rows > button { min-height:52px; padding:6px 8px; gap:7px; }
+.catalog-practical-compact .catalog-chapter-rows .catalog-node-copy { gap:0; }
+.catalog-practical-compact .catalog-chapter-rows .catalog-node-copy strong { font-size:14px; line-height:1.35; }
+.catalog-practical-compact .catalog-node-meta { font-size:11px; line-height:1.35; }
+.catalog-compact-numbers { margin:3px 0; padding:0 8px; border:1px solid #d8e4da; border-radius:7px; background:#f5faf6; }
+.teaching-catalog .catalog-compact-number-trigger { min-height:34px; width:100%; display:flex; align-items:center; padding:3px 0; border:0; background:none; cursor:pointer; color:#35654a; font-size:12px; text-align:left; }
+.catalog-compact-number-trigger::before { content:"▸"; margin-right:5px; }
+.catalog-compact-number-trigger[aria-expanded="true"]::before { content:"▾"; }
+.catalog-compact-number-trigger > span { margin-left:8px; color:#718277; font-size:11px; }
+.catalog-compact-numbers .catalog-loaded-range { padding-bottom:5px; font-size:10px; }
+.teaching-catalog.catalog-practical-compact .catalog-problems { gap:6px; margin:5px 0; }
+.teaching-catalog.catalog-practical-compact .catalog-problem-card { position:relative; border-radius:9px; }
+.teaching-catalog.catalog-practical-compact .catalog-problem-card > button:first-child { padding:8px; gap:8px; }
+.teaching-catalog.catalog-practical-compact .catalog-problem-copy { gap:2px; padding-bottom:24px; }
+.teaching-catalog.catalog-practical-compact .catalog-problem-copy strong { font-size:14px; line-height:1.4; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.teaching-catalog.catalog-practical-compact .catalog-problem-copy small { font-size:11px; line-height:1.4; }
+.teaching-catalog.catalog-practical-compact .catalog-problem-copy .problem-source { display:-webkit-box; -webkit-line-clamp:1; -webkit-box-orient:vertical; overflow:hidden; }
+.teaching-catalog.catalog-practical-compact .catalog-read-solution { position:absolute; right:8px; bottom:7px; width:auto; min-height:28px; padding:3px 8px; border:1px solid #d5e3d8; border-radius:6px; font-size:11px; }
+.teaching-catalog.catalog-practical-compact .catalog-read-solution svg { width:14px; height:14px; }
+html.phone-webview .mobile-library-page:has(.catalog-practical-compact) > .mobile-page-heading { min-height:36px; padding-block:2px; margin-bottom:5px; }
+html.phone-webview .mobile-library-page:has(.catalog-practical-compact) > .mobile-page-heading strong { font-size:18px; }
+html.phone-webview .mobile-library-page:has(.catalog-practical-compact) > .mobile-page-heading .mobile-heading-icon { width:34px; height:34px; min-height:34px; }
+.catalog-directory-backdrop { position:fixed; z-index:170; inset:0; display:flex; justify-content:center; align-items:flex-end; padding-top:env(safe-area-inset-top,0px); background:#203e3152; color:#315642; font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif; }
+.catalog-directory-sheet { width:100%; max-width:640px; max-height:85%; display:flex; flex-direction:column; background:#f7fbf8; border-radius:14px 14px 0 0; overflow:hidden; box-shadow:0 -8px 30px #213c3220; }
+.catalog-directory-sheet button { display:inline-flex; align-items:center; gap:6px; min-height:38px; padding:6px 8px; color:inherit; border:1px solid #d2e0d6; border-radius:6px; background:#fff; font:inherit; font-size:13px; }
+.catalog-directory-sheet svg { width:18px; height:18px; flex:none; }
+.catalog-directory-sheet > header { display:flex; align-items:center; gap:7px; min-height:44px; padding:4px 10px; border-bottom:1px solid #d9e4dc; }
+.catalog-directory-sheet > header strong { flex:1; }
+.catalog-directory-sheet .catalog-directory-close { border:0; background:transparent; width:38px; justify-content:center; }
+.catalog-directory-sheet > nav { display:flex; flex-wrap:wrap; padding:6px 10px; gap:4px; border-bottom:1px solid #e2ebe4; }
+.catalog-directory-sheet > nav button { font-size:11px; min-height:30px; padding:3px 6px; max-width:100%; overflow-wrap:anywhere; }
+.catalog-directory-sheet [aria-current="page"] { background:#e6f2e9; border-color:#729e7f; }
+.catalog-directory-content { min-height:0; overflow:auto; overscroll-behavior:contain; padding:8px 10px; }
+.catalog-directory-content p { font-size:12px; line-height:1.6; }
+.catalog-directory-row { display:flex; gap:3px; margin-bottom:5px; }
+.catalog-directory-row > button:first-child { min-width:0; flex:1; text-align:left; }
+.catalog-directory-row span { display:grid; min-width:0; gap:2px; }
+.catalog-directory-row strong { font-size:13px; line-height:1.4; overflow-wrap:anywhere; }
+.catalog-directory-row small { font-size:11px; color:#73867a; }
+.catalog-directory-row > button:last-child { flex:none; width:38px; justify-content:center; }
+.catalog-directory-sheet > footer { padding:8px 10px calc(8px + env(safe-area-inset-bottom,0px)); border-top:1px solid #d9e4dc; }
+.catalog-directory-sheet > footer button { width:100%; justify-content:center; color:#fff; background:#397b56; border-color:#397b56; }

@@ -44,6 +44,7 @@ describe("role-aware exercise UI",()=>{
   it("renders the mobile commentary slot and historical explanation only with answer access",()=>{
     const onExplainAnswer=vi.fn();
     const ui=solver({answersAllowed:true,revealed:true,commentary:<button>解释刚才这步</button>,onExplainAnswer});
+    fireEvent.click(screen.getByRole("button",{name:/学习思路/}));
     expect(screen.getByRole("button",{name:"解释刚才这步"})).toBeTruthy();
     fireEvent.click(screen.getByRole("button",{name:"讲解这步"}));
     expect(onExplainAnswer).toHaveBeenCalledWith(0);
@@ -178,7 +179,7 @@ describe("catalog role, reading and filter integration",()=>{
     const question=await screen.findByRole("button",{name:/第 1 题 · 图1/});
     expect(Boolean(screen.queryByText("原题解"))).toBe(role!=="student");
     expect(Boolean(screen.queryByRole("button",{name:/看题解/}))).toBe(role!=="student");
-    fireEvent.click(question);expect(onPractice).toHaveBeenCalledWith(["p1"],"图1","p1",{p1:1},"基础杀法");
+    fireEvent.click(question);expect(onPractice).toHaveBeenCalledWith(["p1"],"图1","p1",{p1:1},"基础杀法",100);
     expect(screen.queryByText("按教材查看")).toBeNull();
     expect(screen.queryByRole("button",{name:"教材学习"})).toBeNull();
     expect(onReadGame).not.toHaveBeenCalled();
@@ -194,7 +195,7 @@ describe("catalog role, reading and filter integration",()=>{
     const onPractice=vi.fn();render(<TeachingCatalog auth={studentAuth} scene="browse" compact onPractice={onPractice}/>);
     fireEvent.click(await screen.findByRole("button",{name:/基础杀法/}));await screen.findByText("第 1 题 · 图1");
     expect(screen.queryByText("按教材查看")).toBeNull();expect(screen.queryByRole("button",{name:"原书章节"})).toBeNull();
-    fireEvent.click(await screen.findByRole("button",{name:/第 1 题 · 图1/}));expect(onPractice).toHaveBeenCalledWith(["p1"],"图1","p1",{p1:1},"基础杀法");
+    fireEvent.click(await screen.findByRole("button",{name:/第 1 题 · 图1/}));expect(onPractice).toHaveBeenCalledWith(["p1"],"图1","p1",{p1:1},"基础杀法",100);
     expect(screen.queryByRole("button",{name:"教材学习"})).toBeNull();
     expect(vi.mocked(teachingClient.catalogBrowse).mock.calls.some(([params])=>params.view==="materials")).toBe(false);
   });
@@ -264,7 +265,7 @@ describe("catalog role, reading and filter integration",()=>{
     fireEvent.click(await screen.findByRole("button",{name:/基础杀法/}));await screen.findByText("第 1 题 · 图1");
     fireEvent.click(screen.getByRole("button",{name:"加载更多题目"}));
     fireEvent.click(await screen.findByRole("button",{name:/第 2 题 · 图2/}));
-    expect(onPractice).toHaveBeenCalledWith(["p1","p2"],"图2","p2",{p1:1,p2:2},"基础杀法");
+    expect(onPractice).toHaveBeenCalledWith(["p1","p2"],"图2","p2",{p1:1,p2:2},"基础杀法",2);
   });
   it("teacher assignment selection keeps its original filters and selection action",async()=>{
     window.dispatchEvent(new Event("teaching-content-reset"));catalogFixture();const onAdd=vi.fn();
@@ -292,12 +293,45 @@ describe("legacy source category cleanup",()=>{
   });
 });
 
-it("only practical endgames shows source and visible number navigation",()=>{
+it("uses the same question picker for practical endgames and mates, with source inside learning",()=>{
   const onSelect=vi.fn();
   const navigator={items:[{id:"q1",number:21,title:"车兵巧胜",status:"pending" as const},{id:"q2",number:22,title:"马兵巧胜",status:"pending" as const}],index:0,onSelect};
   const ui=solver({origin:{section:"题库",label:"实用残局"},sourceLibraries:[{id:"platform:local",title:"实用残局精选"}],navigator});
+  expect(screen.queryByText(/来源：/)).toBeNull();expect(screen.queryByRole("navigation",{name:"数字导航"})).toBeNull();
+  fireEvent.click(screen.getByRole("button",{name:/21.*21–22/}));
+  fireEvent.click(screen.getByRole("listitem",{name:/第 22 题/}));expect(onSelect).toHaveBeenCalledWith(1);
+  fireEvent.click(screen.getByRole("button",{name:/学习思路/}));
   expect(screen.getByText("来源：《实用残局精选》 · 原题第 1 题")).toBeTruthy();
-  fireEvent.click(screen.getByRole("button",{name:/跳到第 22 题/}));expect(onSelect).toHaveBeenCalledWith(1);
+  fireEvent.click(screen.getByRole("button",{name:"关闭学习思路"}));
   ui.rerender(<MobilePracticeSolverPanel {...ui.props} origin={{section:"题库",label:"基础杀法"}}/>);
   expect(screen.queryByText(/来源：/)).toBeNull();expect(screen.queryByRole("navigation",{name:"数字导航"})).toBeNull();
+});
+
+it("drops the learning dialog and commentary immediately when changing question or account",()=>{
+ const ui=solver({accessScope:"teacher-a",answersAllowed:true,ended:true,resultOutcome:"completed",commentary:<p>私有讲解</p>});
+ fireEvent.click(screen.getByRole("button",{name:/学习思路/}));expect(screen.getByText("私有讲解")).toBeTruthy();
+ ui.rerender(<MobilePracticeSolverPanel {...ui.props} problem={{...problem,id:"p2"}}/>);
+ expect(screen.queryByRole("dialog",{name:"学习思路"})).toBeNull();expect(screen.queryByText("私有讲解")).toBeNull();
+ fireEvent.click(screen.getByRole("button",{name:/学习思路/}));
+ ui.rerender(<MobilePracticeSolverPanel {...ui.props} accessScope="teacher-b"/>);
+ expect(screen.queryByRole("dialog",{name:"学习思路"})).toBeNull();
+});
+
+it("historical explanation opens learning, and closing it pauses replay without touching answers",()=>{
+ const onExplainAnswer=vi.fn(),onTogglePreview=vi.fn();
+ solver({answersAllowed:true,revealed:true,ended:true,resultOutcome:"revealed",demoPlaying:true,onExplainAnswer,onTogglePreview,commentary:<p>按步讲解</p>});
+ fireEvent.click(screen.getByRole("button",{name:"讲解这步",exact:true}));expect(onExplainAnswer).toHaveBeenCalledWith(0);
+ expect(screen.getByRole("dialog",{name:"学习思路"})).toBeTruthy();expect(screen.getByText("按步讲解")).toBeTruthy();
+ fireEvent.click(screen.getByRole("button",{name:"关闭学习思路"}));expect(onTogglePreview).toHaveBeenCalledOnce();
+ expect(screen.getByText("1. 车五进一")).toBeTruthy();
+});
+
+it("opening learning pauses directly at the last replay ply without restarting playback",()=>{
+ const onStopPreview=vi.fn(),onTogglePreview=vi.fn();
+ solver({answersAllowed:true,revealed:true,ended:true,resultOutcome:"revealed",answerStep:1,demoPlaying:true,onStopPreview,onTogglePreview});
+ fireEvent.click(screen.getByRole("button",{name:/学习思路/}));
+ expect(onStopPreview).toHaveBeenCalledOnce();
+ fireEvent.click(screen.getByRole("button",{name:"关闭学习思路"}));
+ expect(onTogglePreview).not.toHaveBeenCalled();
+ expect(screen.getByText("1. 车五进一")).toBeTruthy();
 });

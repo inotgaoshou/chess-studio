@@ -1,0 +1,66 @@
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, expect, it, vi } from "vitest";
+import { SolutionReadPanel } from "../src/App";
+import { SolutionExplanation } from "../src/SolutionExplanation";
+import * as wasm from "../src/wasm";
+import * as feedback from "../src/moveFeedback";
+import type { BoardState, TrainingProblem } from "../src/types";
+const speech = vi.hoisted(() => ({ speakCommentary:vi.fn(), stopCommentarySpeech:vi.fn() }));
+vi.mock("../src/commentarySpeech", () => speech);
+const initial:BoardState={fen:"start w",sideToMove:"red",status:"进行中",pieces:[{row:9,col:0,color:"red",kind:"rook",label:"车"},{row:8,col:0,color:"black",kind:"advisor",label:"士"}]};
+const after:BoardState={fen:"after b",sideToMove:"black",status:"将死",pieces:[{...initial.pieces[0],row:8}]};
+const problem:TrainingProblem={id:"solution",libraryId:"local",sourceIndex:0,title:"题解",category:"残局",startingFen:initial.fen,note:"方法。[b]限制将位[/b]① 观察退路。\n再看配合。",solution:[{iccs:"a0a1",comment:"关键一步",children:[]}],completedAttempts:0,totalElapsedMs:0};
+beforeEach(()=>{
+  vi.clearAllMocks();
+  speech.stopCommentarySpeech.mockResolvedValue(undefined);
+  vi.spyOn(wasm,"boardAt").mockImplementation(async(_,path)=>path.length?after:initial);
+  vi.spyOn(wasm,"chineseLine").mockImplementation(async(_,path)=>path.map(()=>"车九进一"));
+  vi.spyOn(feedback,"playTrainingFeedback").mockImplementation(()=>{});
+  vi.spyOn(feedback,"cancelTrainingFeedback").mockImplementation(()=>{});
+  vi.spyOn(feedback,"unlockTrainingFeedbackAudio").mockImplementation(()=>{});
+});
+it("read-only single-step shares terminal/capture feedback; backward and restart stay silent",async()=>{
+  const ui=render(<SolutionReadPanel problem={problem} initial={initial} onClose={vi.fn()}/>);
+  expect(feedback.playTrainingFeedback).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button",{name:"下一步",exact:true}));
+  await screen.findByText("关键一步");
+  expect(feedback.playTrainingFeedback).toHaveBeenCalledWith(expect.objectContaining({iccs:"a0a1",kind:"checkmate",piece:initial.pieces[0],captured:initial.pieces[1]}));
+  expect(ui.container.querySelector('.board-moving-piece')).toBeTruthy();
+  fireEvent.click(screen.getByRole("button",{name:"上一步",exact:true}));
+  await screen.findByText("第 0 步");
+  expect(feedback.playTrainingFeedback).toHaveBeenCalledTimes(1);
+  expect(ui.container.querySelector('.board-moving-piece')).toBeNull();
+});
+it("closing while a board read is pending cannot play stale feedback",async()=>{
+  let finish!:(state:BoardState)=>void;
+  vi.mocked(wasm.boardAt).mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
+  const ui=render(<SolutionReadPanel problem={problem} initial={initial} onClose={vi.fn()}/>);
+  fireEvent.click(screen.getByRole("button",{name:"下一步",exact:true}));
+  ui.unmount();
+  await act(async()=>finish(after));
+  expect(feedback.playTrainingFeedback).not.toHaveBeenCalled();
+});
+it("formats book emphasis safely and reads only the current explanation; changing step stops voice",async()=>{
+  let finish!:()=>void;
+  speech.speakCommentary.mockImplementationOnce(()=>new Promise<void>(resolve=>{finish=resolve;}));
+  const onRead=vi.fn();
+  const ui=render(<SolutionExplanation context="q1:0" note={problem.note} onRead={onRead}/>);
+  expect(screen.getByText("限制将位").tagName).toBe("STRONG");
+  expect(ui.container.textContent).not.toMatch(/\[\/?b\]/);
+  fireEvent.click(screen.getByRole("button",{name:"朗读说明"}));
+  await waitFor(()=>expect(speech.speakCommentary).toHaveBeenCalledWith("题目说明。方法。\n限制将位\n① 观察退路。\n再看配合。",1));
+  expect(onRead).toHaveBeenCalledOnce();
+  const stopCount=speech.stopCommentarySpeech.mock.calls.length;
+  ui.rerender(<SolutionExplanation context="q1:1" comment="新着法" note={problem.note} onRead={onRead}/>);
+  expect(speech.stopCommentarySpeech.mock.calls.length).toBeGreaterThan(stopCount);
+  await act(async()=>finish());
+  expect(screen.getByRole("button",{name:"朗读说明"})).toBeTruthy();
+});
+it("reports missing offline speech instead of silently failing and allows retry",async()=>{
+  speech.speakCommentary.mockRejectedValueOnce(new Error("缺少离线中文语音包")).mockResolvedValueOnce(undefined);
+  render(<SolutionExplanation context="q1" note="讲解内容"/>);
+  fireEvent.click(screen.getByRole("button",{name:"朗读说明"}));
+  await screen.findByText("缺少离线中文语音包");
+  fireEvent.click(screen.getByRole("button",{name:"朗读说明"}));
+  await waitFor(()=>expect(speech.speakCommentary).toHaveBeenCalledTimes(2));
+});

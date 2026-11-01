@@ -3,7 +3,9 @@ import { branchBadgePoint, branchChoiceColor } from "./branchPresentation";
 import { extendManualContinuation, manualContinuations, preserveManualMainline, reuseSavedBranchIds, type ManualContinuation } from "./manualContinuation";
 import { VariationBoard, type VariationReceipt } from "../../desktop/src/VariationBoard";
 import { appendManualVariation, manualPathExists } from "./variationEditing";
-import { ProblemNumberNavigation } from "./ProblemNumberNavigation";
+import { PracticeLearningPanel } from "./PracticeLearningPanel";
+import { SolutionExplanation } from "./SolutionExplanation";
+import { stopCommentarySpeech } from "./commentarySpeech";
 import { problemSourceLabel, type ProblemSourceLibrary } from "./problemSource";
 import { MoveCommentaryPanel, type CommentaryTarget } from "./MoveCommentaryPanel";
 import { moveNotationLabel } from "./moveNotation";
@@ -13,6 +15,8 @@ import { BranchActionsDialog } from "./BranchActionsDialog";
 import { LocalManualRehearsal } from "./LocalManualRehearsal";
 import { ManualImportDialog } from "./ManualImportDialog";
 import { ManualRecordingControls, type ManualControlAction } from "./ManualRecordingControls";
+import { analysisEntryPhase, manualAiMode, nextManualAiPhase, type ManualAiPhase } from "./manualAiMode";
+import { ManualAnalysisPanel } from "./ManualAnalysisPanel";
 import { retryOpeningRead } from "./openingRead";
 import { usePracticeClock } from "./usePracticeClock";
 import { canViewExerciseSolutions, exerciseMode, hasQuestionNavigation, ownsAnswerAccess, type AnswerAccess } from "./exercisePresentation";
@@ -47,7 +51,7 @@ import { ManualShareDialog } from "./ManualShareDialog";
 import { ManualLibraryDialog } from "./ManualLibraryDialog";
 import { FittedBoardArea } from "./FittedBoardArea";
 import { ManualSaveDialog, isImeEnter, type ManualSaveValues } from "./ManualSaveDialog";
-import { BookOpen, CalendarCheck2, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, CircleCheckBig, CircleHelp, ClipboardCopy, ClipboardList, Clock3, CloudUpload, Cpu, Database, Ellipsis, Eye, EyeOff, FilePenLine, FileUp, FlipVertical2, Folder, GraduationCap, Home, Lightbulb, Link, ListRestart, LockKeyhole, LogIn, Minus, Palette, Pause, Pencil, Play, Plus, RefreshCw, RotateCcw, Search, Settings2, Square as StopIcon, Trash2, Undo2, UserRound, X } from "lucide-react";
+import { BookOpen, CalendarCheck2, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, CircleCheckBig, CircleHelp, ClipboardCopy, ClipboardList, Clock3, CloudUpload, Cpu, Database, Ellipsis, Eye, EyeOff, FilePenLine, FileUp, FlipVertical2, Folder, GitBranch, GraduationCap, Home, Lightbulb, Link, ListRestart, LockKeyhole, LogIn, Minus, Palette, Pause, Pencil, Play, Plus, RefreshCw, RotateCcw, Search, Settings2, Square as StopIcon, Trash2, Undo2, UserRound, X, Zap } from "lucide-react";
 import { type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { trainingStore } from "./store";
 import type { Attempt, BoardPiece, BoardState, LocalManualAnalysisSummary, LocalManualFolder, LocalManualGame, MobileWorkspaceMode, RuleMode, SolutionMove, TrainingLibrary, TrainingProblem } from "./types";
@@ -883,13 +887,14 @@ function LegalTargetLayer({ targets, flipped = false, geometry }: { targets: Squ
 }
 
 function AnalysisArrowLayer({ moves, activeIndex, flipped = false, geometry, branches = false, pieces = [] }: { moves: string[]; activeIndex: number; flipped?: boolean; geometry: BoardGeometry; branches?: boolean; pieces?:BoardPiece[] }) {
-  const arrowColor=()=>branches?"#efb52f":"#f87924";
+  // Branch buttons stay green; the route itself shares the AI arrow's orange.
+  const arrowColor="#f87924";
   const labels:{x:number;y:number}[]=[];
   const headLengths:number[]=[];
   const occupied=pieces.map(piece=>boardPoint(piece,geometry,flipped));
   const markerPrefix = useId().replace(/:/g, "");
   const arrows = moves.flatMap((move, index) => {
-    const color=arrowColor();
+    const color=arrowColor;
     if (!/^[a-i][0-9][a-i][0-9]$/.test(move)) return [];
     const parsed = iccsSquares(move);
     const from = boardPoint(parsed.from, geometry, flipped);
@@ -918,7 +923,7 @@ function AnalysisArrowLayer({ moves, activeIndex, flipped = false, geometry, bra
     const leaderT=Math.max(0,Math.min(1,((labelX-fromX)*dx+(labelY-fromY)*dy)/(length*length)));
     const active = !branches && index === activeIndex;
     const opacity = branches || active ? 1 : .75;
-    return [<g key={`${move}-${index}`} data-move={move} className={`analysis-candidate-arrow ${branches ? "saved-branch-arrow" : ""} ${active ? "active" : ""}`} opacity={opacity} style={{ "--analysis-arrow-color": branches ? branchChoiceColor(index) : color } as CSSProperties}>
+    return [<g key={`${move}-${index}`} data-move={move} className={`analysis-candidate-arrow ${branches ? "saved-branch-arrow" : ""} ${active ? "active" : ""}`} opacity={opacity} style={{ "--analysis-arrow-color": color } as CSSProperties}>
       <g mask={`url(#${markerPrefix}-piece-clearance)`}>
       <line className="analysis-arrow-backdrop" x1={startX} y1={startY} x2={shaftX} y2={shaftY}/>
       <line className="analysis-arrow-outline" x1={startX} y1={startY} x2={shaftX} y2={shaftY}/>
@@ -929,13 +934,13 @@ function AnalysisArrowLayer({ moves, activeIndex, flipped = false, geometry, bra
       <circle className="analysis-arrow-label" cx={labelX} cy={labelY} r={branches?21:25}/><text x={labelX} y={labelY}>{index + 1}</text>
     </g>];
   });
-  return <svg className="analysis-arrow-layer" viewBox={`0 0 ${BOARD_ART_WIDTH} ${BOARD_ART_HEIGHT}`} preserveAspectRatio="none" aria-hidden="true">
+  return <svg className="analysis-arrow-layer" data-arrow-source={branches ? "saved-branch" : "recommendation"} viewBox={`0 0 ${BOARD_ART_WIDTH} ${BOARD_ART_HEIGHT}`} preserveAspectRatio="none" aria-hidden="true">
     <defs>
       <mask id={`${markerPrefix}-piece-clearance`} maskUnits="userSpaceOnUse" x="0" y="0" width={BOARD_ART_WIDTH} height={BOARD_ART_HEIGHT}>
         <rect width={BOARD_ART_WIDTH} height={BOARD_ART_HEIGHT} fill="white"/>
         {occupied.map((point,index)=><circle key={index} cx={point.x} cy={point.y} r="42" fill={branches ? "#999" : "black"}/>)}
       </mask>
-      {moves.map((move,index)=>{const length=headLengths[index]??50,half=length/2+2;return <marker key={`${move}-${index}`} id={`${markerPrefix}-analysis-arrow-${index}`} markerWidth={length+4} markerHeight={length+4} refX="2" refY={half} orient="auto" markerUnits="userSpaceOnUse" overflow="visible"><path d={`M2 2 L${length+2} ${half} L2 ${length+2} Z`} fill={arrowColor()} fillOpacity={branches?1:.88} stroke={branches?"#fff3a6":"rgba(255,255,255,.85)"} strokeWidth="3" strokeLinejoin="round"/></marker>;})}
+      {moves.map((move,index)=>{const length=headLengths[index]??50,half=length/2+2;return <marker key={`${move}-${index}`} id={`${markerPrefix}-analysis-arrow-${index}`} markerWidth={length+4} markerHeight={length+4} refX="2" refY={half} orient="auto" markerUnits="userSpaceOnUse" overflow="visible"><path d={`M2 2 L${length+2} ${half} L2 ${length+2} Z`} fill={arrowColor} fillOpacity=".88" stroke="rgba(255,255,255,.85)" strokeWidth="3" strokeLinejoin="round"/></marker>;})}
     </defs>
     {arrows}
   </svg>;
@@ -1107,10 +1112,10 @@ export function Board({ pieces, selected, legalTargets = [], lastMove, hintMove,
       const pointerType = (event.nativeEvent as PointerEvent).pointerType;
       if ((event.detail > 0 || pointerType) && handledPointerClick.current) return;
       activateSquare(square, event.timeStamp, event.detail);
-    }} aria-pressed={Boolean(piece && isSelected)} aria-label={`${squareName(square)}${piece ? ` ${piece.color === "red" ? "红" : "黑"}${piece.label}` : ""}`}>{piece && <><span className="piece-ground-shadow" aria-hidden="true"/><span className="piece-lift"><img className="piece" src={trainingPieceAsset(piece, pieceSkin)} alt={piece.label} draggable={false}/></span></>}</button>; })}
+    }} aria-pressed={Boolean(piece && isSelected)} aria-label={`${squareName(square)}${piece ? ` ${piece.color === "red" ? "红" : "黑"}${piece.label}` : ""}`}>{piece && <><span className="piece-ground-shadow" aria-hidden="true"/><span className="piece-lift"><span className="piece-edge" aria-hidden="true" style={{ backgroundImage:`url("${trainingPieceAsset(piece,pieceSkin)}")` }}/><img className="piece" src={trainingPieceAsset(piece, pieceSkin)} alt={piece.label} draggable={false}/></span></>}</button>; })}
     {movingEvent?.piece && <img key={`move-${movingEvent.id}`} className={`piece board-moving-piece ${movingEvent.captured ? "capturing" : ""}`} style={movementStyle} src={trainingPieceAsset(movingEvent.piece,pieceSkin)} alt="" aria-hidden="true" draggable={false}/>}
     {movingEvent?.captured && movingSquares && <img key={`captured-${movingEvent.id}`} className="piece board-captured-piece" style={{...boardPointStyle(movingSquares.to,geometry,flipped),"--move-duration":`${movementDuration(movingEvent)}ms`} as CSSProperties} src={trainingPieceAsset(movingEvent.captured,pieceSkin)} alt="" aria-hidden="true" draggable={false}/>}
-    {dragging && <img className="piece board-drag-ghost" style={{ "--drag-x": `${dragging.x}%`, "--drag-y": `${dragging.y}%` } as CSSProperties} src={trainingPieceAsset(dragging.piece, pieceSkin)} alt="" aria-hidden="true" draggable={false}/>}
+    {dragging && <><span className="board-drag-shadow" aria-hidden="true" style={{ "--drag-x":`${dragging.x}%`, "--drag-y":`${dragging.y}%` } as CSSProperties}/><span className="piece-lift board-drag-ghost" style={{ "--drag-x": `${dragging.x}%`, "--drag-y": `${dragging.y}%` } as CSSProperties} aria-hidden="true"><span className="piece-edge" style={{backgroundImage:`url("${trainingPieceAsset(dragging.piece,pieceSkin)}")`}}/><img className="piece" src={trainingPieceAsset(dragging.piece, pieceSkin)} alt="" draggable={false}/></span></>}
     {visibleFeedback && visibleFeedback !== "move" && <FeedbackSeal key={`seal-${visibleFeedbackId}`} kind={visibleFeedback} event={noticeEvent ?? feedbackEvent} style={feedbackStyle}/>}
   </div></div>;
 }
@@ -1655,11 +1660,12 @@ function MobileGameBrowsePanel({ library, games, onBack, onOpenGame, scope }: {
   </main>;
 }
 
-function SolutionReadPanel({ problem, initial, onClose }: { problem: TrainingProblem; initial: BoardState; onClose(): void }) {
+export function SolutionReadPanel({ problem, initial, onClose }: { problem: TrainingProblem; initial: BoardState; onClose(): void }) {
   const [state, setState] = useState(initial);
   const [path, setPath] = useState<SolutionMove[]>([]);
   const [playing, setPlaying] = useState(false);
   const [error, setError] = useState("");
+  const [feedback, setFeedback] = useState<TrainingFeedbackEvent>();
   const generation = useRef(0);
   const [notation, setNotation] = useState<string[]>([]);
   const choices = path.at(-1)?.children ?? problem.solution;
@@ -1672,38 +1678,44 @@ function SolutionReadPanel({ problem, initial, onClose }: { problem: TrainingPro
     });
     return () => { active = false; };
   }, [choiceKey]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const key = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
     window.addEventListener("keydown", key);
     window.addEventListener("popstate", onClose);
-    return () => { ++generation.current; window.removeEventListener("keydown", key); window.removeEventListener("popstate", onClose); };
+    const pause = () => { ++generation.current; setPlaying(false); setFeedback(undefined); cancelTrainingFeedback(); };
+    const hidden = () => { if (document.hidden) pause(); };
+    document.addEventListener("visibilitychange", hidden); window.addEventListener("pagehide", pause);
+    return () => { ++generation.current; cancelTrainingFeedback(); window.removeEventListener("keydown", key); window.removeEventListener("popstate", onClose); document.removeEventListener("visibilitychange", hidden); window.removeEventListener("pagehide", pause); };
   }, []);
   async function go(next: SolutionMove[]) {
+    unlockTrainingFeedbackAudio(); void stopCommentarySpeech(); cancelTrainingFeedback(); setFeedback(undefined);
     const current = ++generation.current; setError("");
     try {
       const moves = next.map(node => node.iccs);
       const [board, labels] = await withRequestDeadline(() => Promise.all([boardAt(problem.startingFen, moves), chineseLine(problem.startingFen, moves)]));
       if (current !== generation.current) return;
-      setState(board); setPath(next); setNotation(labels);
+      const event = replayTrainingFeedbackEvent(state.pieces, board, moves, path.length, next.length);
+      setState(board); setPath(next); setNotation(labels); setFeedback(event);
+      if (event) playTrainingFeedback(event);
+      return true;
     } catch { if (current === generation.current) { setPlaying(false); setError("题解暂时无法播放，请重试或返回列表。"); } }
   }
   useEffect(() => {
     if (!playing) return;
     if (!choices.length) { setPlaying(false); return; }
-    const timer = window.setTimeout(() => void go([...path, choices[0]]), 1000);
+    const timer = window.setTimeout(() => void go([...path, choices[0]]), Math.max(1000, feedback ? FEEDBACK_DURATION[feedback.kind] : 0));
     return () => window.clearTimeout(timer);
-  }, [playing, path]);
+  }, [playing, path, feedback?.id]);
   return <div className="solution-read-overlay" role="dialog" aria-modal="true" aria-label="只读题解"><section className="solution-read-panel">
     <header className="solution-read-header"><h2 title={mobileExerciseTitle(problem)}>{mobileExerciseTitle(problem)}</h2><button className="solution-read-close" type="button" aria-label="关闭题解" onClick={onClose}><X aria-hidden="true"/></button></header>
     <p className="solution-read-caption">题解 · 仅查看，不计入做题成绩</p>
-    <FittedBoardArea className="solution-read-board"><Board pieces={state.pieces} lastMove={path.at(-1)?.iccs} boardSkin={DEFAULT_SKIN_ID} pieceSkin={DEFAULT_SKIN_ID} riverText="" riverTextColor="#805c34" riverTextSize={20} supportsCustomRiverText={false} onSquare={() => {}}/></FittedBoardArea>
-    <nav className="solution-read-controls" aria-label="题解播放"><button type="button" disabled={!path.length} onClick={() => {setPlaying(false);void go([]);}}><ChevronsLeft aria-hidden="true"/><span>从头</span></button><button type="button" disabled={!path.length} onClick={() => {setPlaying(false);void go(path.slice(0,-1));}}><ChevronLeft aria-hidden="true"/><span>上一步</span></button><button type="button" disabled={!choices.length} onClick={() => {setPlaying(false);void go([...path,choices[0]]);}}><ChevronRight aria-hidden="true"/><span>下一步</span></button><button className="solution-read-play" type="button" disabled={!problem.solution.length} onClick={() => {if (!choices.length) void go([]);setPlaying(v=>!v);}}>{playing?<Pause aria-hidden="true"/>:<Play aria-hidden="true"/>}<span>{playing?"暂停":"播放"}</span></button></nav>
+    <FittedBoardArea className="solution-read-board"><Board pieces={state.pieces} lastMove={path.at(-1)?.iccs} feedback={feedback?.kind} feedbackEvent={feedback} boardSkin={DEFAULT_SKIN_ID} pieceSkin={DEFAULT_SKIN_ID} riverText="" riverTextColor="#805c34" riverTextSize={20} supportsCustomRiverText={false} onSquare={() => {}}/></FittedBoardArea>
+    <nav className="solution-read-controls" aria-label="题解播放"><button type="button" disabled={!path.length} onClick={() => {setPlaying(false);void go([]);}}><ChevronsLeft aria-hidden="true"/><span>从头</span></button><button type="button" disabled={!path.length} onClick={() => {setPlaying(false);void go(path.slice(0,-1));}}><ChevronLeft aria-hidden="true"/><span>上一步</span></button><button type="button" disabled={!choices.length} onClick={() => {setPlaying(false);void go([...path,choices[0]]);}}><ChevronRight aria-hidden="true"/><span>下一步</span></button><button className="solution-read-play" type="button" disabled={!problem.solution.length} onClick={() => {void stopCommentarySpeech(); if (playing) { ++generation.current; cancelTrainingFeedback(); setFeedback(undefined); setPlaying(false); return; } if (!choices.length) { void go([]).then(ok => { if (ok) setPlaying(true); }); } else setPlaying(v=>!v);}}>{playing?<Pause aria-hidden="true"/>:<Play aria-hidden="true"/>}<span>{playing?"暂停":"播放"}</span></button></nav>
     <p className="solution-read-position"><span>第 {path.length} 步{!choices.length && " · 已到结尾"}</span><span>{state.fen.trim().split(/\s+/)[1] === "b" ? "黑方" : "红方"}行棋</span></p>
     <section className="solution-read-details" aria-label="题解与变招" tabIndex={0}>
       {error && <p className="solution-read-error" role="alert">{error}</p>}
       {choices.length > 1 && <div className="solution-branches" aria-label="题解变招">{choices.map((move,i)=><button type="button" key={`${i}:${move.iccs}`} onClick={()=>{setPlaying(false);void go([...path,move]);}}><b>{i+1}</b><span>{moveNotationLabel(choiceNotation?.key === choiceKey ? choiceNotation.labels[i] : undefined)}</span></button>)}</div>}
-      {path.at(-1)?.comment && <p className="solution-read-comment">{path.at(-1)?.comment}</p>}
-      {problem.note && <p className="solution-read-note">{problem.note}</p>}
+      <SolutionExplanation context={`${problem.id}:${path.map(p=>p.iccs).join(",")}`} comment={path.at(-1)?.comment} note={problem.note} onRead={() => { setPlaying(false); ++generation.current; setFeedback(undefined); }}/>
       {notation.length>0 && <ol className="solution-read-moves">{notation.map((label,i)=><li key={i}><button type="button" aria-current={i===path.length-1?"step":undefined} onClick={()=>{setPlaying(false);void go(path.slice(0,i+1));}}><small>{i+1}.</small>{label}</button></li>)}</ol>}
       {!path.length && !problem.note && choices.length<=1 && <p className="solution-read-empty">点击下一步或播放，查看题解</p>}
     </section>
@@ -1944,7 +1956,7 @@ function ProblemNavigator({ navigator, open, onClose }: { navigator: ProblemNavi
       <button type="button" className="mobile-problem-navigator-scrim" aria-label="关闭题目目录" onClick={onClose}/>
     )}
     <aside className={`mobile-problem-navigator ${open ? "open" : ""}`} aria-label="题目目录">
-      <header><span><strong>题目目录</strong><small>{navigator.group && <>第 {navigator.group.current} 组 / {navigator.group.complete ? "共" : "已加载"} {navigator.group.total} 组 · </>}已完成 {navigator.items.filter((item) => item.status === "completed").length}/{navigator.items.length}</small></span><button type="button" aria-label="关闭题目目录" onClick={onClose}><X/></button></header>
+      <header><span><strong>题目目录</strong><small>{navigator.group ? <>第 {navigator.group.current} 组 / {navigator.group.complete ? "共" : "已加载"} {navigator.group.total} 组 · {navigator.group.complete ? "共" : "已加载"} {navigator.group.problemCount} 题</> : <>共 {navigator.items.length} 题</>}</small><small>{navigator.group ? "本组已完成" : "已完成"} {navigator.items.filter((item) => item.status === "completed").length}/{navigator.items.length}</small></span><button type="button" aria-label="关闭题目目录" onClick={onClose}><X/></button></header>
       <div className="mobile-problem-navigator-legend"><span className="current">当前</span><span className="completed">已完成</span><span className="revealed">已解析</span></div>
       <div className="mobile-problem-navigator-grid" role="list">
         {navigator.items.map((item, index) => <button type="button" role="listitem" key={item.id} className={`${item.status} ${index === navigator.index ? "active" : ""}`} aria-current={index === navigator.index ? "step" : undefined} aria-label={`第 ${item.number ?? index + 1} 题：${item.title}，${index === navigator.index ? "当前题" : item.status === "completed" ? "已完成" : item.status === "revealed" ? "已查看解析" : "待完成"}`} title={`第 ${item.number ?? index + 1} 题：${item.title}`} onClick={() => { navigator.onSelect(index); onClose(); }}>{item.number ?? index + 1}</button>)}
@@ -1954,7 +1966,8 @@ function ProblemNavigator({ navigator, open, onClose }: { navigator: ProblemNavi
   </>;
 }
 
-export function MobilePracticeSolverPanel({ answersAllowed, sourceLibraries = [], origin, problem, session, item, navigator, pieces, selected, legalTargets, lastMove, hints, mistakes, resultOutcome, wrongMove, moveRejection, onRetryWrongMove, trialAwaitingReply, trialBusy, onRetryTrialReply, hintMove, elapsed, timerPaused = false, ended, revealed, notice, boardSkin, pieceSkin, riverText, riverTextColor, riverTextSize, supportsCustomRiverText, feedback, feedbackEvent, onSquare, onMove, onBack, onHint, onRestart, onReveal, onNext, onPrevious, onFinish, onFavorite, favoriteEnabled, backLabel, answer, answerStep, demoPlaying, onPreviewStep, onTogglePreview, goalEditor, commentary, onExplainAnswer }: {
+export function MobilePracticeSolverPanel({ accessScope = "local", answersAllowed, sourceLibraries = [], origin, problem, session, item, navigator, pieces, selected, legalTargets, lastMove, hints, mistakes, resultOutcome, wrongMove, moveRejection, onRetryWrongMove, trialAwaitingReply, trialBusy, onRetryTrialReply, hintMove, elapsed, timerPaused = false, ended, revealed, notice, boardSkin, pieceSkin, riverText, riverTextColor, riverTextSize, supportsCustomRiverText, feedback, feedbackEvent, onSquare, onMove, onBack, onHint, onRestart, onReveal, onNext, onPrevious, onFinish, onFavorite, favoriteEnabled, backLabel, answer, answerStep, demoPlaying, onPreviewStep, onTogglePreview, onStopPreview, goalEditor, commentary, onExplainAnswer }: {
+  accessScope?: string;
   answersAllowed: boolean;
   sourceLibraries?: ProblemSourceLibrary[];
   goalEditor?: ReactNode;
@@ -2008,10 +2021,13 @@ export function MobilePracticeSolverPanel({ answersAllowed, sourceLibraries = []
   demoPlaying: boolean;
   onPreviewStep(step: number): void;
   onTogglePreview(): void;
+  onStopPreview?(): void;
 }) {
   const practical=origin?.section==="题库"&&origin.label==="实用残局";
   const sourceLabel=practical?problemSourceLabel(problem,sourceLibraries):undefined;
   const displayTitle=mobileExerciseTitle(problem,origin?.section==="题库"&&origin.label==="实用残局"?"practical_endgames":undefined);
+  const learningIdentity = JSON.stringify([accessScope, problem.id, session?.id, answersAllowed]);
+  const [learningRequest, setLearningRequest] = useState<{context:string; sequence:number}>();
   const [navigatorOpen, setNavigatorOpen] = useState(false);
   const solverPage = useRef<HTMLElement>(null);
   const index = navigator?.index ?? (session && item ? session.items.findIndex((candidate) => candidate.id === item.id) : -1);
@@ -2024,32 +2040,31 @@ export function MobilePracticeSolverPanel({ answersAllowed, sourceLibraries = []
     let fittedViewport = "";
     const fitBoard = () => {
       const board = page.querySelector<HTMLElement>(".mobile-solver-board");
-      const last = page.lastElementChild;
-      if (!board || !last || !page.clientHeight) return;
-      const pageBox = page.getBoundingClientRect();
+      if (!board || !page.clientHeight) return;
       const navigation = page.querySelector(".mobile-solver-nav");
       if (navigation) page.style.setProperty("--solver-picker-top", `${navigation.getBoundingClientRect().bottom + 8}px`);
-      // Verdicts and mate animations must not resize the board mid-question.
-      // Refit only for a new question or a changed viewport (rotation/keyboard).
+      // Question text, verdicts, learning and replay never take space away from
+      // the board. Only the actual viewport determines its scale.
       const viewport = `${page.clientWidth}:${page.clientHeight}`;
       if (viewport === fittedViewport) return;
-      const boardBox = board.getBoundingClientRect();
+      const landscape = window.matchMedia("(orientation:landscape) and (min-width:700px), (min-width:1000px)").matches;
+      const boardOffset = board.getBoundingClientRect().top - page.getBoundingClientRect().top + page.scrollTop;
       const paddingBottom = parseFloat(getComputedStyle(page).paddingBottom) || 0;
-      const nonBoardHeight = last.getBoundingClientRect().bottom - pageBox.top + page.scrollTop + paddingBottom - boardBox.height;
-      const width = Math.min(board.clientWidth, 620, Math.max(260, (page.clientHeight - nonBoardHeight) * 1120 / 1240));
-      if (Math.abs(parseFloat(page.style.getPropertyValue("--solver-board-fit-width")) - width) > .5 || !page.style.getPropertyValue("--solver-board-fit-width")) {
-        page.style.setProperty("--solver-board-fit-width", `${width}px`);
-      }
+      const availableHeight = Math.max(0, page.clientHeight - boardOffset - paddingBottom - 12);
+      const detailsReserve = landscape ? 0 : 184;
+      const width = Math.min(board.clientWidth, 620, Math.max(80, availableHeight - detailsReserve) * 1120 / 1240);
+      if (width <= 0) return;
+      page.style.setProperty("--solver-board-fit-width", `${width}px`);
       fittedViewport = viewport;
     };
     const schedule = () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(fitBoard); };
     const observer = new ResizeObserver(schedule);
     observer.observe(page);
-    for (const element of page.querySelectorAll(".mobile-solver-heading, .mobile-solver-nav, .mobile-solver-playfield")) observer.observe(element);
+    for (const element of page.querySelectorAll(".mobile-solver-heading, .mobile-solver-nav, .mobile-solver-playfield, .mobile-solver-board")) observer.observe(element);
     schedule();
     page.addEventListener("scroll", schedule, { passive: true });
     return () => { observer.disconnect(); cancelAnimationFrame(frame); page.removeEventListener("scroll", schedule); };
-  }, [showNavigation, problem.id]);
+  }, [showNavigation]);
   useEffect(()=>{setNavigatorOpen(false);},[showNavigation,problem.id,session?.id]);
   const canPrevious = index > 0 || !!navigator?.onPreviousGroup;
   const canNext = (index >= 0 && index < total - 1) || !!navigator?.onNextGroup;
@@ -2064,29 +2079,43 @@ export function MobilePracticeSolverPanel({ answersAllowed, sourceLibraries = []
     else if (offset > 0) onNext();
     else onPrevious();
   };
+  let answerNodes = problem.solution;
+  let answerComment = "";
+  for (let i = 0; i < answerStep && answerNodes[0]; i++) { answerComment = answerNodes[0].comment ?? ""; answerNodes = answerNodes[0].children; }
+  const solution = <section className="mobile-solver-answer">
+    <header><strong>题解</strong><small>{answerStep}/{answer.length} 手</small></header>
+    <div className="mobile-solver-answer-controls">
+      <button type="button" disabled={answerStep <= 0} aria-label="题解上一步" title="题解上一步" onClick={() => onPreviewStep(answerStep - 1)}><ChevronLeft/></button>
+      <button type="button" disabled={!answer.length} aria-label={demoPlaying ? "暂停预演" : "播放题解"} title={demoPlaying ? "暂停预演" : "播放题解"} onClick={onTogglePreview}>{demoPlaying ? <Pause/> : <Play/>}</button>
+      <button type="button" disabled={answerStep >= answer.length} aria-label="题解下一步" title="题解下一步" onClick={() => onPreviewStep(answerStep + 1)}><ChevronRight/></button>
+      <button type="button" aria-label="题解回到起点" title="题解回到起点" onClick={() => onPreviewStep(0)}><RotateCcw/></button>
+    </div>
+    <SolutionExplanation context={`${learningIdentity}:${answerStep}`} comment={answerComment} note={problem.note} onRead={() => { if (onStopPreview) onStopPreview(); else if (demoPlaying) onTogglePreview(); }}/>
+    <ol>{answer.map((move, index) => <li key={index} aria-current={answerStep === index + 1 ? "step" : undefined}><button type="button" onClick={() => onPreviewStep(index + 1)}>{index + 1}. {move}</button>{onExplainAnswer && <button type="button" className="commentary-entry" onClick={() => { setLearningRequest(previous => ({context:learningIdentity,sequence:(previous?.sequence ?? 0)+1})); onExplainAnswer(index); }}><Lightbulb aria-hidden="true"/>讲解这步</button>}</li>)}</ol>
+  </section>;
   return <main ref={solverPage} className="mobile-solver-page">
-    <header className="mobile-solver-heading"><button type="button" className="mobile-back-button" aria-label={backLabel} title={backLabel} onClick={onBack}><ChevronLeft/></button><span><small>{practiceBreadcrumb({origin,sourceKind:session?.sourceKind,learning:answersAllowed && session?.mode === "learning",assignment:problem.source === "teaching"})}</small><strong>{problem.displayNumber!=null?`第 ${problem.displayNumber} 题 · `:""}{problem.displayNumber!=null?numberedProblemTitle(displayTitle):displayTitle}</strong>{problem.trainingGoal && <small>{goalLabel(problem.trainingGoal)} · {problem.trainingGoal.reviewMethod === "reviewed_solution" ? "按审核题解" : "强制杀验证"}</small>}</span><div className="mobile-solver-heading-actions"><PracticeRulesButton/><em>{item?.problem.sideToMove === "black" ? "黑方走" : "红方走"}</em></div></header>
+    <header className="mobile-solver-heading"><button type="button" className="mobile-back-button" aria-label={backLabel} title={backLabel} onClick={onBack}><ChevronLeft/></button><span><small>{practiceBreadcrumb({origin,sourceKind:session?.sourceKind,learning:answersAllowed && session?.mode === "learning",assignment:problem.source === "teaching"})}</small><strong>{problem.displayNumber!=null?`第 ${problem.displayNumber} 题 · `:""}{problem.displayNumber!=null?numberedProblemTitle(displayTitle):displayTitle}</strong></span><div className="mobile-solver-heading-actions"><PracticeRulesButton/><em>{(item?.problem.sideToMove ?? (problem.trainingGoal?.solverSide === "b" || problem.startingFen.split(/\s+/)[1] === "b" ? "black" : "red")) === "black" ? "黑方走" : "红方走"}</em></div></header>
     {showNavigation && navigator ? <nav className="mobile-solver-nav" aria-label="题目导航">{canPrevious && <button type="button" className="mobile-solver-previous" onClick={() => selectOffset(-1)}><ChevronLeft/>上一题</button>}<button type="button" className="mobile-problem-navigator-trigger" aria-expanded={navigatorOpen} onClick={() => setNavigatorOpen((open) => !open)}>{navigator.items[index]?.number ?? (index >= 0 ? index + 1 : 1)}<span className="mobile-problem-group-range"> / {navigator.items[0]?.number ?? 1}–{navigator.items.at(-1)?.number ?? total}</span><ChevronDown/></button>{canNext && <button type="button" className="mobile-solver-next" onClick={() => selectOffset(1)}>下一题<ChevronRight/></button>}</nav> : null}
-    {practical && navigator && <ProblemNumberNavigation items={navigator.items} activeId={navigator.items[navigator.index]?.id} onSelect={navigator.onSelect} onPreviousGroup={navigator.onPreviousGroup} onNextGroup={navigator.onNextGroup}/>}
-    {sourceLabel && <small className="problem-source mobile-problem-source">{sourceLabel}</small>}
     <section className="mobile-solver-workspace">
       <div className="mobile-solver-playfield">
         <section className="mobile-solver-board"><Board key={`mobile-${problem.id}`} pieces={pieces} selected={selected} legalTargets={legalTargets} lastMove={lastMove} hintMove={hints >= 2 && !ended && !wrongMove ? hintMove : undefined} analysisMoves={hints >= 3 && !ended && !wrongMove && hintMove ? [hintMove] : []} activeAnalysis={0} flipped={false} feedback={feedback} feedbackEvent={feedbackEvent} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={riverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={supportsCustomRiverText} onSquare={onSquare} onMove={onMove}/></section>
-        {problem.trainingGoal?.description && <details key={problem.id} className="training-goal-details"><summary>目标说明</summary><p>{mobileGoalDescription(problem.trainingGoal)}</p></details>}
-        {goalEditor}
         <section className="mobile-solver-meta"><span><Clock3/>本题用时 <b>{elapsed}</b><small className="mobile-solver-clock-status" aria-label="本题计时状态">{ended ? "已结束" : timerPaused ? "已暂停" : "计时中"}</small></span><span>{isWrongReview ? `上次错误 ${item?.problem ? "需重新掌握" : ""}` : total>1?`本组进度 ${index >= 0 ? index + 1 : 1}/${total}`:"单题练习"}</span></section>
+        <div className="mobile-solver-content" role="region" aria-label="练习操作与题解" tabIndex={0}>
+        {goalEditor}
         {isWrongReview && <p className="mobile-solver-warning">错题重练：完成且零错误、零提示才标为已掌握；看解析或放弃会保持待复习。</p>}
         {!ended && !trialBusy && <TrainingMoveVerdict rejection={moveRejection} mistakes={mistakes}/>}
-        {ended ? <section className="mobile-solver-result"><strong>{resultOutcome === "abandoned" ? "本题未完成" : resultOutcome === "revealed" || revealed ? "已查看解析" : mistakes ? `第 ${mistakes + 1} 次尝试完成` : hints ? "提示后完成" : "本次已完成"}</strong><p className="practice-score" aria-label="本题评分">{item?.verificationState === "pending_server" ? "本地通过，待服务端复核" : `${score} 分 · ${score} 星`}</p><p>{revealed || mistakes || hints || resultOutcome !== "completed" ? "不计入首次正确率，可继续巩固。" : "首次正确以提交后的记录为准。"}</p><p>{problem.trialOwner ? "个人试做进度仅保存在本机，不计入学生成绩。" : problem.source === "teaching" ? "结果保存在本机，请返回作业检查并手动提交。" : item?.verificationState === "pending_server" ? "联网后自动复核，成绩尚未确认。" : "练习结果已保存到学习档案。"}</p><div><button type="button" onClick={onRestart}><RotateCcw/>再试一次</button><button type="button" className="primary" onClick={() => canNext ? selectOffset(1) : onNext()}>{canNext ? "下一题" : "查看结果"}<ChevronRight/></button></div></section> : <section className="mobile-solver-actions">{wrongMove ? <button type="button" className="primary" onClick={onRetryWrongMove}><RotateCcw/>退回重试{mistakes > 0 ? ` · 已错 ${mistakes} 次` : ""}</button> : <button type="button" className="primary" onClick={onHint}><Lightbulb/>提示 {hints}/3</button>}<div>{trialAwaitingReply && !trialBusy && <button type="button" onClick={onRetryTrialReply}><RefreshCw/>重试 AI 应手</button>}<button type="button" onClick={onRestart}><RotateCcw/>重来</button>{answersAllowed&&<button type="button" onClick={()=>{if(answersAllowed)onReveal();}}><ListRestart/>查看解析</button>}</div></section>}
-        {answersAllowed && commentary}
-        {answersAllowed && revealed && <section className="mobile-solver-answer"><header><strong>题解</strong><small>{answerStep}/{answer.length} 手</small></header>{!problem.serverProblemId && problem.note && <p>{problem.note}</p>}<ol>{answer.map((move, index) => <li key={index} aria-current={answerStep === index + 1 ? "step" : undefined}><button type="button" onClick={() => onPreviewStep(index + 1)}>{index + 1}. {move}</button>{onExplainAnswer && <button type="button" className="commentary-entry" onClick={() => onExplainAnswer(index)}><Lightbulb aria-hidden="true"/>讲解这步</button>}</li>)}</ol><div><button type="button" disabled={answerStep <= 0} aria-label="题解上一步" title="题解上一步" onClick={() => onPreviewStep(answerStep - 1)}><ChevronLeft/></button><button type="button" disabled={!answer.length} aria-label={demoPlaying ? "暂停预演" : "播放题解"} title={demoPlaying ? "暂停预演" : "播放题解"} onClick={onTogglePreview}>{demoPlaying ? <Pause/> : <Play/>}</button><button type="button" disabled={answerStep >= answer.length} aria-label="题解下一步" title="题解下一步" onClick={() => onPreviewStep(answerStep + 1)}><ChevronRight/></button><button type="button" aria-label="题解回到起点" title="题解回到起点" onClick={() => onPreviewStep(0)}><RotateCcw/></button></div></section>}
+        {ended ? <section className="mobile-solver-result"><strong>{resultOutcome === "abandoned" ? "本题未完成" : resultOutcome === "revealed" || (revealed && resultOutcome !== "completed") ? "已查看解析" : mistakes ? `第 ${mistakes + 1} 次尝试完成` : hints ? "提示后完成" : "本次已完成"}</strong><p className="practice-score" aria-label="本题评分">{item?.verificationState === "pending_server" ? "本地通过，待服务端复核" : `${score} 分 · ${score} 星`}</p><p>{mistakes || hints || resultOutcome !== "completed" ? "不计入首次正确率，可继续巩固。" : "首次正确以提交后的记录为准。"}</p><p>{problem.trialOwner ? "个人试做进度仅保存在本机，不计入学生成绩。" : problem.source === "teaching" ? "结果保存在本机，请返回作业检查并手动提交。" : item?.verificationState === "pending_server" ? "联网后自动复核，成绩尚未确认。" : "练习结果已保存到学习档案。"}</p><div><button type="button" onClick={onRestart}><RotateCcw/>再试一次</button><button type="button" className="primary" onClick={() => canNext ? selectOffset(1) : onNext()}>{canNext ? "下一题" : "查看结果"}<ChevronRight/></button></div></section> : <section className="mobile-solver-actions">{wrongMove ? <button type="button" className="primary" onClick={onRetryWrongMove}><RotateCcw/>退回重试{mistakes > 0 ? ` · 已错 ${mistakes} 次` : ""}</button> : <button type="button" className="primary" disabled={Boolean(trialBusy) || hints >= 3} onClick={onHint}><Lightbulb/>提示 {hints}/3</button>}<div>{trialAwaitingReply && !trialBusy && <button type="button" onClick={onRetryTrialReply}><RefreshCw/>重试 AI 应手</button>}<button type="button" onClick={onRestart}><RotateCcw/>重来</button>{answersAllowed&&<button type="button" onClick={()=>{if(answersAllowed)onReveal();}}><ListRestart/>查看解析</button>}</div></section>}
+        <PracticeLearningPanel key={learningIdentity} openRequest={learningRequest?.context === learningIdentity ? learningRequest.sequence : 0} problem={problem} practical={practical} sourceLabel={sourceLabel} answersAllowed={answersAllowed} completed={ended && resultOutcome === "completed"} ended={ended} revealed={revealed} hints={hints} hintDisabled={Boolean(trialBusy || wrongMove)} notice={notice} commentary={commentary} onHint={onHint} onReveal={onReveal} onRestart={onRestart} onOpen={onStopPreview} onClose={() => { if (demoPlaying) { if (onStopPreview) onStopPreview(); else onTogglePreview(); } }}/>
+
+        {answersAllowed && revealed && solution}
         <section className="mobile-solver-note"><p>{notice}</p>{favoriteEnabled && problem.serverProblemId && <PracticeFavoriteButton key={problem.serverProblemId} problemId={problem.serverProblemId} onSaved={onFavorite}/>}</section>
+        {!ended ? <button type="button" className="mobile-solver-finish" onClick={onFinish}>{session ? "放弃本题" : "结束练习"}</button> : null}
+        </div>
       </div>
       {showNavigation && navigator && (
         <ProblemNavigator navigator={navigator} open={navigatorOpen} onClose={() => setNavigatorOpen(false)}/>
       )}
     </section>
-    {!ended ? <button type="button" className="mobile-solver-finish" onClick={onFinish}>{session ? "放弃本题" : "结束练习"}</button> : null}
   </main>;
 }
 
@@ -2657,6 +2686,7 @@ export function App() {
   const [attemptStarted, setAttemptStarted] = useState(false);
   const [ended, setEnded] = useState(false);
   const [hints, setHints] = useState(0);
+  const hintTask = useRef<{session:number; scope:string; path:string} | undefined>(undefined);
   const [mistakes, setMistakes] = useState(0);
   const [answerVerification, setAnswerVerification] = useState<VerificationResult>();
   const [wrongMove, setWrongMove] = useState<string>();
@@ -2671,6 +2701,7 @@ export function App() {
   const revealed = answersAllowed && answerRevealed;
   const [answer, setAnswer] = useState<string[]>([]);
   const [answerStep, setAnswerStep] = useState(0);
+  const answerPreviewGeneration = useRef(0);
   const [demoPlaying, setDemoPlaying] = useState(false);
   const [attempts, setAttempts] = useState<Attempt[]>([]);
   const [showHistory, setShowHistory] = useState(false);
@@ -2683,6 +2714,9 @@ export function App() {
   const [trainingAnalysisLines, setTrainingAnalysisLines] = useState<AnalysisLine[]>([]);
   const [studyAnalysisLines, setStudyAnalysisLines] = useState<AnalysisLine[]>([]);
   const [analysisPending, setAnalysisPending] = useState(false);
+  const [instantMove, setInstantMove] = useState<{ mode:"study"|"manual"; ownsSearch:boolean }>();
+  const instantTask = useRef<{ controller:AbortController; key:string } | undefined>(undefined);
+  const availableAnalysisTask = useRef<{ fen:string; signal?:AbortSignal; promise:Promise<PikafishAnalysis> } | undefined>(undefined);
   const [trainingActiveAnalysis, setTrainingActiveAnalysis] = useState(0);
   const [studyActiveAnalysis, setStudyActiveAnalysis] = useState(0);
   const [manualActiveAnalysis, setManualActiveAnalysis] = useState(0);
@@ -2690,7 +2724,11 @@ export function App() {
   const [analysisMoveTimeSec, setAnalysisMoveTimeSec] = useState(() => Math.max(1, Math.min(5, Number(localStorage.getItem("xiangqi-training-analysis-seconds")) || 2)));
   const [analysisArrowsVisible, setAnalysisArrowsVisible] = useState(() => localStorage.getItem(ANALYSIS_ARROWS_VISIBLE_KEY) !== "false");
   const [studyEngineEnabled, setStudyEngineEnabled] = useState(false);
-  const [manualEngineEnabled, setManualEngineEnabled] = useState(false);
+  const [manualAiPhase, setManualAiPhase] = useState<ManualAiPhase>(0);
+  const manualAi = manualAiMode(manualAiPhase);
+  const manualEngineEnabled = manualAi !== "disabled";
+  const [manualAnalysisPage, setManualAnalysisPage] = useState(false);
+  const manualRecordingView = useRef<{ open: boolean; tab: "moves" | "cloud" | "engine" }>({ open: false, tab: "moves" });
   const [studyRuleMode, setStudyRuleMode] = useState<RuleMode>(() => readStoredStudyRuleMode());
   const [studyReturnRoute, setStudyReturnRoute] = useState<MobileRoute>("practice");
   const [workspaceMode, setWorkspaceMode] = useState<MobileWorkspaceMode>(initialStudyState.enabled ? "study" : "training");
@@ -2740,6 +2778,7 @@ export function App() {
   const [manualSaveEditing, setManualSaveEditing] = useState(false);
   const [manualDockOpen, setManualDockOpen] = useState(false);
   const [manualDockTab, setManualDockTab] = useState<"moves" | "cloud" | "engine">("moves");
+  const manualDockVisible = manualAnalysisPage || manualDockOpen;
   const [manualCommentaryOpen, setManualCommentaryOpen] = useState(false);
   const [manualAnalysisView, setManualAnalysisView] = useState<ManualAnalysisView>("trend");
   const [manualMenuOpen, setManualMenuOpen] = useState(false);
@@ -2880,8 +2919,18 @@ export function App() {
 
   useEffect(() => { setManualCommentaryOpen(false); }, [manualMode, manualGame?.id, catalogAccountScope]);
   const pageVisible = usePageVisible();
+  const instantPositionKey = JSON.stringify([workspaceMode, catalogAccountScope, manualMode ? manualDocumentEpoch.current : studyDocumentEpoch.current, manualMode ? manualGame?.id : undefined, manualMode ? manualStartingFen : studyStartingFen, manualMode ? currentManualMoves : currentStudyMoves, studyRuleMode]);
+  const instantBlocked = !pageVisible || Boolean(mobileVariation || manualRehearsal) || (manualMode && (manualSetupOpen || manualLibraryOpen || manualPanelOpen || manualCommentaryOpen || manualFullAnalysisProgress?.running));
+  const instantContext = useRef({key:instantPositionKey,blocked:instantBlocked});
+  instantContext.current = {key:instantPositionKey,blocked:instantBlocked};
+  useLayoutEffect(() => {
+    if (instantTask.current && (instantTask.current.key !== instantPositionKey || instantBlocked)) {
+      instantTask.current.controller.abort(); instantTask.current = undefined; setInstantMove(undefined);
+    }
+  }, [instantPositionKey,instantBlocked]);
+  useEffect(() => () => { instantTask.current?.controller.abort(); instantTask.current = undefined; }, []);
   const manualPositionKey = JSON.stringify([catalogAccountScope, manualDocumentEpoch.current, manualGame?.id, manualCurrentFen, studyRuleMode]);
-  const manualAnalysisSuspended = !manualMode || !pageVisible || manualSetupOpen || manualLibraryOpen || Boolean(mobileVariation || manualRehearsal) || manualPanelOpen || manualCommentaryOpen || Boolean(manualFullAnalysisProgress?.running);
+  const manualAnalysisSuspended = !manualMode || !pageVisible || manualSetupOpen || manualLibraryOpen || Boolean(mobileVariation || manualRehearsal) || manualPanelOpen || manualCommentaryOpen || Boolean(manualFullAnalysisProgress?.running) || (instantMove?.mode === "manual" && instantMove.ownsSearch);
   const manualAnalysis = usePositionAnalysis<AnalysisLine[]>({
     positionKey: JSON.stringify([manualPositionKey, analysisMultiPv, analysisMoveTimeSec]),
     enabled: manualEngineEnabled && !manualTerminal && (LOCAL_PIKAFISH_AVAILABLE || Boolean(teachingAuth)),
@@ -2897,7 +2946,7 @@ export function App() {
   const manualAnalysisLines = manualAnalysis.value ?? [];
   const manualCloud = usePositionAnalysis<CloudBookMove[]>({
     positionKey: manualPositionKey,
-    enabled: manualMode && manualDockOpen && manualDockTab === "cloud" && !manualTerminal,
+    enabled: manualMode && manualDockVisible && manualDockTab === "cloud" && !manualTerminal,
     suspended: manualAnalysisSuspended,
     analyze: async signal => { const rows = await queryCloudBook(manualCurrentFen); signal.throwIfAborted(); return rows.slice(0, 12); },
   });
@@ -3096,18 +3145,22 @@ export function App() {
     await resetAnalysis("training");
   }
   async function queryAvailableAnalysis(fen: string, moveTimeMs: number, multiPv: number, signal?: AbortSignal): Promise<PikafishAnalysis> {
-    if (LOCAL_PIKAFISH_AVAILABLE) return queryPikafishAnalysis(fen, moveTimeMs, multiPv, signal);
-    const result = await teachingClient.analyzePosition(fen, moveTimeMs, multiPv, signal);
-    const lines: PikafishAnalysisLine[] = result.lines.map((line) => ({
-      multipv: line.multipv,
-      depth: line.depth ?? 0,
-      scoreCp: line.scoreCp,
-      mate: line.mate,
-      nodes: 0,
-      nps: line.nps ?? 0,
-      pv: line.pv,
-    }));
-    return { bestMove: lines[0]?.pv[0] ?? "", lines };
+    const promise = LOCAL_PIKAFISH_AVAILABLE ? queryPikafishAnalysis(fen, moveTimeMs, multiPv, signal) : (async () => {
+      const result = await teachingClient.analyzePosition(fen, moveTimeMs, multiPv, signal);
+      const lines: PikafishAnalysisLine[] = result.lines.map((line) => ({
+        multipv: line.multipv,
+        depth: line.depth ?? 0,
+        scoreCp: line.scoreCp,
+        mate: line.mate,
+        nodes: 0,
+        nps: line.nps ?? 0,
+        pv: line.pv,
+      }));
+      return { bestMove: lines.find(line=>line.multipv===1)?.pv[0] ?? "", lines };
+    })();
+    const task = {fen,signal,promise}; availableAnalysisTask.current = task;
+    try { return await promise; }
+    finally { if (availableAnalysisTask.current === task) availableAnalysisTask.current = undefined; }
   }
   async function selectLibrary(next: TrainingLibrary, source?: AbortSignal) {
     source?.throwIfAborted();
@@ -3581,14 +3634,14 @@ export function App() {
     return () => window.clearTimeout(timer);
   }, [studyNotice]);
   useEffect(() => { if (!feedbackEvent) return; const timer = window.setTimeout(() => {setMoveFeedback(undefined);setFeedbackEvent(undefined);}, FEEDBACK_DURATION[feedbackEvent.kind]); return () => clearTimeout(timer); }, [feedbackEvent]);
-  useEffect(()=>{setMoveFeedback(undefined);setFeedbackEvent(undefined);cancelTrainingFeedback();},[problem?.id,workspaceMode,catalogAccountScope]);
+  useEffect(()=>{answerPreviewGeneration.current++;setMoveFeedback(undefined);setFeedbackEvent(undefined);cancelTrainingFeedback();},[problem?.id,workspaceMode,catalogAccountScope]);
   useEffect(()=>{
-    const clear=()=>{setMoveFeedback(undefined);setFeedbackEvent(undefined);cancelTrainingFeedback();};
+    const clear=()=>{answerPreviewGeneration.current++;setDemoPlaying(false);setMoveFeedback(undefined);setFeedbackEvent(undefined);cancelTrainingFeedback();};
     const visibility=()=>{if(document.visibilityState==="hidden")clear();};
     document.addEventListener("visibilitychange",visibility);window.addEventListener("pagehide",clear);
     return()=>{document.removeEventListener("visibilitychange",visibility);window.removeEventListener("pagehide",clear);cancelTrainingFeedback();};
   },[]);
-  useEffect(() => { if (!answersAllowed || !demoPlaying || !problem || answerStep >= answer.length) return; const timer = window.setTimeout(() => { void previewAnswerStep(answerStep + 1); }, 750); return () => clearTimeout(timer); }, [answersAllowed, answer.length, answerStep, demoPlaying, problem]);
+  useEffect(() => { if (!answersAllowed || !demoPlaying || !problem || answerStep >= answer.length) return; const timer = window.setTimeout(() => { void previewAnswerStep(answerStep + 1); }, Math.max(750, feedbackEvent ? FEEDBACK_DURATION[feedbackEvent.kind] : 0)); return () => clearTimeout(timer); }, [answersAllowed, answer.length, answerStep, demoPlaying, problem]);
   useEffect(() => {
     if (!studyMode || studyCloudFen === studyCurrentFen) return;
     void refreshStudyCloud(studyCurrentFen);
@@ -3627,10 +3680,10 @@ export function App() {
     };
   }, [showAbout]);
   useEffect(() => {
-    if (mobileVariation || !studyMode || !studyEngineEnabled || !LOCAL_PIKAFISH_AVAILABLE || studyTerminal) return;
+    if (mobileVariation || instantMove?.mode === "study" || !studyMode || !studyEngineEnabled || !LOCAL_PIKAFISH_AVAILABLE || studyTerminal) return;
     const timer = window.setTimeout(() => void startAnalysis(analysisMultiPv), 300);
     return () => window.clearTimeout(timer);
-  }, [analysisMoveTimeSec, studyCurrentFen, studyMode, studyTerminal, studyEngineEnabled, Boolean(mobileVariation)]);
+  }, [analysisMoveTimeSec, studyCurrentFen, studyMode, studyTerminal, studyEngineEnabled, Boolean(mobileVariation),instantMove?.mode]);
   useEffect(() => {
     if (!studyAutoPlaying) return;
     const timer=window.setTimeout(()=>void advanceStudyContinuation(true).catch(error=>{setStudyAutoPlaying(false);setStudyNotice(String(error));}),700);
@@ -3832,7 +3885,7 @@ export function App() {
       if (request === analysisGeneration.current) setAnalysisPending(false);
     }
   }
-  async function stopAnalysis() { if (manualMode) setManualEngineEnabled(false); await resetAnalysis(); if (studyMode) setStudyNotice("已停止 AI 拆棋。"); else if (manualMode) setManualNotice("已停止 AI 分析。"); else setNotice("已停止 AI 拆棋。"); }
+  async function stopAnalysis() { if (manualMode) setManualAiPhase(0); await resetAnalysis(); if (studyMode) setStudyNotice("已停止 AI 拆棋。"); else if (manualMode) setManualNotice("已停止 AI 分析。"); else setNotice("已停止 AI 拆棋。"); }
   async function enableStudyEngine() {
     if ((!LOCAL_PIKAFISH_AVAILABLE && !teachingClient.auth()) || studyTerminal) return;
     localStorage.setItem(STUDY_ENGINE_ENABLED_KEY, "true");
@@ -4249,31 +4302,63 @@ export function App() {
     }
   }
 
+  function stopAnswerPreview() {
+    answerPreviewGeneration.current++;
+    setDemoPlaying(false); setMoveFeedback(undefined); setFeedbackEvent(undefined); cancelTrainingFeedback();
+    void stopCommentarySpeech();
+  }
   async function previewAnswerStep(nextStep: number) {
     const owner = answerAccess.current;
-    if (!problem || !answerOwnerIsCurrent(owner)) return;
-    const previewSession = session.current;
+    if (!problem || !answerOwnerIsCurrent(owner)) return false;
+    unlockTrainingFeedbackAudio(); void stopCommentarySpeech(); cancelTrainingFeedback();
+    setMoveFeedback(undefined); setFeedbackEvent(undefined);
+    const request = ++answerPreviewGeneration.current;
+    const previewSession = session.current, view = trainingView.current;
     const activeProblem = problem;
     const solutionMoves = mainline(activeProblem.solution);
     const boundedStep = Math.max(0, Math.min(nextStep, solutionMoves.length));
-    const state = await boardAt(activeProblem.startingFen, solutionMoves.slice(0, boundedStep));
-    if (previewSession !== session.current || !answerOwnerIsCurrent(owner)) return;
-    setPieces(state.pieces);
-    setAnswerStep(boundedStep);
-    setLastMove(boundedStep > 0 ? solutionMoves[boundedStep - 1] : undefined);
-    if (boundedStep >= solutionMoves.length) setDemoPlaying(false);
+    const current = () => request === answerPreviewGeneration.current && previewSession === session.current && view === trainingView.current && answerOwnerIsCurrent(owner);
+    try {
+      const state = await boardAt(activeProblem.startingFen, solutionMoves.slice(0, boundedStep));
+      if (!current()) return false;
+      const event = replayTrainingFeedbackEvent(pieces, state, solutionMoves, answerStep, boundedStep);
+      setPieces(state.pieces); setAnswerStep(boundedStep);
+      setLastMove(boundedStep > 0 ? solutionMoves[boundedStep - 1] : undefined);
+      setMoveFeedback(event?.kind); setFeedbackEvent(event);
+      if (event) playTrainingFeedback(event);
+      if (boundedStep >= solutionMoves.length) setDemoPlaying(false);
+      return true;
+    } catch {
+      if (current()) { setDemoPlaying(false); setNotice("题解暂时无法播放，请重试。"); }
+      return false;
+    }
   }
   function toggleAnswerPreview() {
     const owner = answerAccess.current;
     if (!answerOwnerIsCurrent(owner)) return;
+    unlockTrainingFeedbackAudio(); void stopCommentarySpeech();
+    if (demoPlaying) { stopAnswerPreview(); return; }
     if (answerStep >= answer.length) {
-      const previewSession=session.current;
-      void previewAnswerStep(0).then(() => {if(previewSession===session.current&&answerOwnerIsCurrent(owner))setDemoPlaying(true);});
+      void previewAnswerStep(0).then(ok => { if (ok) setDemoPlaying(true); });
       return;
     }
-    setDemoPlaying((value) => !value);
+    setDemoPlaying(true);
   }
-  async function reveal() { const owner=answerAccess.current; if (!problem || ended || !answerOwnerIsCurrent(owner)) return; const revealSession = session.current; const activeProblem = problem; const notation = await chineseLine(activeProblem.startingFen, mainline(activeProblem.solution)); if (revealSession !== session.current || !answerOwnerIsCurrent(owner)) return; await finish("revealed", readElapsed(), revealSession); if (revealSession !== session.current || !answerOwnerIsCurrent(owner)) return; const initialBoard = await boardAt(activeProblem.startingFen, []); if (revealSession !== session.current || !answerOwnerIsCurrent(owner)) return; setAnswer(notation); setRevealed(true); setTrialPosition(undefined); setMoveRejection(undefined); setWrongMove(undefined); setPieces(initialBoard.pieces); setMoves([]); setLastMove(undefined); setAnswerStep(0); setDemoPlaying(false); setNotice("答案已显示，可预演。"); }
+  async function reveal() {
+    const owner = answerAccess.current;
+    if (!problem || !answerOwnerIsCurrent(owner) || (ended && resultOutcome !== "completed")) return;
+    const revealSession = session.current;
+    const activeProblem = problem;
+    const notation = await chineseLine(activeProblem.startingFen, mainline(activeProblem.solution));
+    if (revealSession !== session.current || !answerOwnerIsCurrent(owner)) return;
+    if (!ended) await finish("revealed", readElapsed(), revealSession);
+    if (revealSession !== session.current || !answerOwnerIsCurrent(owner)) return;
+    const initialBoard = await boardAt(activeProblem.startingFen, []);
+    if (revealSession !== session.current || !answerOwnerIsCurrent(owner)) return;
+    setAnswer(notation); setRevealed(true); setTrialPosition(undefined); setMoveRejection(undefined); setWrongMove(undefined);
+    setPieces(initialBoard.pieces); setMoves([]); setLastMove(undefined); setAnswerStep(0); setDemoPlaying(false);
+    setNotice("答案已显示，可预演。重做继续保留本题的错误、提示和用时。");
+  }
   async function restart() {
     if (!problem) return;
     const wasRunning = clockRunning;
@@ -4317,20 +4402,26 @@ export function App() {
   function pause() { if (ended) return; if (clockRunning) { stopClock(); setNotice("已暂停，暂停时间不会计入用时。"); } else if (elapsed) { startClock(); setNotice("继续作答。"); } }
   async function confirmDelete() { const target = deleteTarget; if (!target) return; setDeleteTarget(undefined); if (target.id.startsWith("teaching:") || target.id.startsWith("platform:")) { setNotice(target.id.startsWith("platform:") ? "平台题库由平台维护，学生端不能删除。" : "线上作业由老师管理，学生端不能删除。"); return; } if (target.type === "library") { await trainingStore.deleteLibrary(target.id); const next = await availableLibraries(); setLibraries(next); if (!mobileLayout && next[0]) await selectLibrary(next[0]); else { session.current += 1; await resetAnalysis(); setLibrary(undefined); setProblems([]); setProblem(undefined); } } else { await trainingStore.hideProblem(target.id); if (library) await selectLibrary(library); } }
   const giveHint = async () => {
-    if (!problem || ended || autoReplyPending) return;
+    if (!problem || ended || autoReplyPending || hints >= 3 || hintTask.current?.session === session.current) return;
     if (trialPosition) { setNotice("试走中，可继续走棋；退回后可查看解题提示。"); return; }
+    const owner = {session:session.current,scope:catalogAccountScope,path:moves.join(",")}; hintTask.current = owner;
+    const valid = () => owner.session === session.current && !finishing.current && owner.path === latestTrainingMoves.current.join(",") && owner.scope === teachingClient.presentationScope(teachingClient.auth());
     if (!clockRunning) startClock();
-    const next = Math.min(3, hints + 1) as 1 | 2 | 3;
-    setHints(next);
-    const lead = line[0]?.iccs;
-    const notation = lead ? (await chineseLine(problem.startingFen, [...moves, lead])).at(-1) : undefined;
-    const logicHint = trainingLogicHint(problem, next, notation);
-    if (next === 3 && lead) setNotice(`${notation && !/^[a-i][0-9][a-i][0-9]$/.test(notation) ? `这一步：${notation}。` : ""}${logicHint ?? "棋盘箭头已标出起点与目标位置。"}`);
-    else if (logicHint) setNotice(logicHint);
-    else if (next === 1) setNotice(problem.note || "先寻找将军、吃子和强制着。");
-    else if (!lead) setNotice("当前路线需要继续复核，暂时没有可用提示。");
-    else if (next === 2) setNotice("提示：棋盘上已标出当前应走棋子。");
-    else setNotice(`这一步：${notation}`);
+    const next = (hints + 1) as 1 | 2 | 3;
+    try {
+      const lead = line[0]?.iccs;
+      const notation = lead ? (await chineseLine(problem.startingFen, [...moves, lead])).at(-1) : undefined;
+      if (!valid()) return;
+      setHints(next);
+      const logicHint = trainingLogicHint(problem, next, notation);
+      if (next === 3 && lead) setNotice(`${notation && !/^[a-i][0-9][a-i][0-9]$/.test(notation) ? `这一步：${notation}。` : ""}${logicHint ?? "棋盘箭头已标出起点与目标位置。"}`);
+      else if (logicHint) setNotice(logicHint);
+      else if (next === 1) setNotice("先观察题目目标，检查将帅位置、双方威胁和强制着。");
+      else if (!lead) setNotice("当前路线需要继续复核，暂时没有可用提示。");
+      else if (next === 2) setNotice("提示：棋盘上已标出当前应走棋子。");
+      else setNotice(`这一步：${notation}`);
+    } catch { if (valid()) setNotice("提示暂不可用，请重试；本次未增加提示次数。"); }
+    finally { if (hintTask.current === owner) hintTask.current = undefined; }
   };
   function changeRiverText(next: string) { const value = next.slice(0, 16); localStorage.setItem("xiangqi-training-river-text", value); setRiverText(value); }
   function changeRiverTextColor(next: string) { localStorage.setItem("xiangqi-training-river-text-color", next); setRiverTextColor(next); }
@@ -5515,11 +5606,52 @@ export function App() {
     .filter((cursor) => cursor >= 0 && cursor <= manualMoves.length)
     .sort((left, right) => left - right);
 
+  function leaveManualAnalysisPage() {
+    setManualAnalysisPage(false);
+    setManualAutoPlaying(false);
+    setManualMenuOpen(false);
+    setManualDockOpen(manualRecordingView.current.open);
+    setManualDockTab(manualRecordingView.current.tab);
+  }
+
+  function openManualAnalysisPage() {
+    if (!manualAnalysisPage) {
+      manualRecordingView.current = { open: manualDockOpen, tab: manualDockTab };
+      window.history.pushState({ ...window.history.state, manualAnalysisPage: true }, "");
+    }
+    setManualAnalysisPage(true);
+    setManualDockTab("engine");
+    setManualAiPhase(analysisEntryPhase);
+    setManualAutoPlaying(false);
+    setManualPanelOpen(false);
+    setManualSetupOpen(false);
+    setManualMenuOpen(false);
+  }
+
+  function returnToManualRecording() {
+    if (window.history.state?.manualAnalysisPage) window.history.back();
+    else leaveManualAnalysisPage();
+  }
+
+  useEffect(() => {
+    if (!manualAnalysisPage) return;
+    const back = () => leaveManualAnalysisPage();
+    const key = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !manualMenuOpen && !mobileVariation && !manualPanelOpen && !manualSaveDraft && !manualCommentaryOpen && !manualSettingsOpen && !manualImportOpen && !branchManager && !manualShareDraft && !manualSheet && !variationSaveDraft && !manualRehearsal) returnToManualRecording();
+    };
+    window.addEventListener("popstate", back);
+    window.addEventListener("keydown", key);
+    return () => { window.removeEventListener("popstate", back); window.removeEventListener("keydown", key); };
+  }, [manualAnalysisPage, manualMenuOpen, mobileVariation, manualPanelOpen, manualSaveDraft, manualCommentaryOpen, manualSettingsOpen, manualImportOpen, branchManager, manualShareDraft, manualSheet, variationSaveDraft, manualRehearsal]);
+
+  useEffect(() => { setManualAnalysisPage(false); }, [manualMode, manualGame?.id]);
+
   function openManualPanel(tab: ManualPanelTab) {
     if (tab === "library") {
       setManualAutoPlaying(false);
       if (!manualLibraryOpen && !manualReturnToLibrary) setManualLibraryFromAccount(false);
       setManualLibraryOpen(true);
+      setManualAnalysisPage(false);
       setManualPanelOpen(false);
       setManualMenuOpen(false);
       void refreshManualLibrary();
@@ -5586,10 +5718,8 @@ export function App() {
   async function performManualControl(action: ManualControlAction) {
     setManualMenuOpen(false);
     if (action === "return") { setManualReturnToLibrary(true); await returnFromManualLibrary(); }
-    else if (action === "engine") {
-      if (manualEngineEnabled) { setManualEngineEnabled(false); await resetAnalysis("manual", false); setManualNotice("AI 已关闭。"); }
-      else { setManualEngineEnabled(true); setManualDockTab("engine"); }
-    }
+    else if (action === "engine") setManualAiPhase(nextManualAiPhase);
+    else if (action === "instant") await requestInstantMove("manual");
     else if (action === "previous") { setManualAutoPlaying(false); await navigateManualMove(manualCursor-1); }
     else if (action === "next") await advanceManualContinuation();
     else if (action === "previousVariation" || action === "nextVariation") await jumpManualVariation(action === "previousVariation" ? -1 : 1);
@@ -5608,6 +5738,7 @@ export function App() {
 
   async function returnFromManualLibrary() {
     setManualAutoPlaying(false); setManualPanelOpen(false); setManualMenuOpen(false);
+    setManualAnalysisPage(false);
     setManualDockOpen(false); setManualLibraryOpen(true); await manualSaveTail.current; await refreshManualLibrary();
   }
 
@@ -5622,8 +5753,7 @@ export function App() {
     else if (action === "comment") { openManualPanel("moves"); setManualNotice("正在查看当前棋谱与分支。"); }
     else if (action === "setup") await openManualSetup();
     else if (action === "analysis") {
-      openManualPanel("analysis");
-      setManualEngineEnabled(true);
+      openManualAnalysisPage();
     }
     else if (action === "new") await createManualFromFen(STANDARD_STARTING_FEN, "标准开局");
     else if (action === "flip") toggleBoardFlipped();
@@ -6404,6 +6534,45 @@ export function App() {
     }
   }
 
+  async function requestInstantMove(mode:"study"|"manual") {
+    if (instantTask.current || workspaceMode !== mode || instantContext.current.blocked) return;
+    const notify = mode === "manual" ? setManualNotice : setStudyNotice;
+    if (mode === "manual" && manualReadOnly) { notify("只读棋谱请先复制到我的棋谱再出招。"); return; }
+    if (mode === "manual" ? manualTerminal : studyTerminal) { notify("棋局已结束，没有可走着法。"); return; }
+    if (!LOCAL_PIKAFISH_AVAILABLE && !teachingClient.auth()) { notify("请先登录，再使用闪电出招。"); return; }
+    const fen = mode === "manual" ? manualCurrentFen : studyCurrentFen;
+    const cached = (mode === "manual" ? manualAnalysisLines : studyAnalysisLines).find(line=>line.multipv===1 && line.analyzedFen===fen)?.pv[0];
+    const running = availableAnalysisTask.current;
+    const shared = running?.fen === fen && !running.signal?.aborted ? running : undefined;
+    const task = {controller:new AbortController(),key:instantPositionKey};
+    const revision = mode === "manual" ? manualSaveRevision.current : studyGeneration.current;
+    const valid = () => instantTask.current === task && !task.controller.signal.aborted && !instantContext.current.blocked && instantContext.current.key === task.key && revision === (mode === "manual" ? manualSaveRevision.current : studyGeneration.current);
+    instantTask.current = task;
+    setInstantMove({mode,ownsSearch:!cached&&!shared});
+    if (mode === "manual") setManualAutoPlaying(false); else setStudyAutoPlaying(false);
+    try {
+      let move = cached;
+      if (!move) {
+        if (!shared) {
+          await resetAnalysis(mode);
+          await cancelPikafishSearch().catch(()=>undefined);
+          if (!valid()) return;
+        }
+        const result = await (shared?.promise ?? queryAvailableAnalysis(fen,Math.min(1500,analysisMoveTimeSec*1000),1,task.controller.signal));
+        if (!valid()) return;
+        move = result.lines.find(line=>line.multipv===1)?.pv[0] || result.bestMove;
+      }
+      if (!valid()) return;
+      if (!move || !/^[a-i][0-9][a-i][0-9]$/.test(move)) throw new Error("当前局面没有可用的引擎最优着法。");
+      // Both paths retain their normal legality, feedback, branch and save rules.
+      if (mode === "manual") await playManualMove(move); else await playStudyMove(move);
+    } catch (error) {
+      if (valid()) notify(`闪电出招失败：${error instanceof Error ? error.message : String(error)}，可点击闪电重试。`);
+    } finally {
+      if (instantTask.current === task) { instantTask.current = undefined; setInstantMove(undefined); }
+    }
+  }
+
   async function playActiveStudyCandidate() {
     const move = studyPanelTab === "cloud"
       ? studyCloudMoves[0]?.iccs
@@ -6489,8 +6658,14 @@ export function App() {
   const studyArrowActiveIndex = studyPanelTab === "engine" ? Math.min(studyActiveAnalysis, Math.max(visibleStudyAnalysisLines.length - 1, 0)) : 0;
   const manualScoreSide = sideToMove(manualStartingFen, currentManualMoves);
   const visibleManualAnalysisLines = manualAnalysisLines.slice(0, analysisMultiPv);
-  const manualArrowMoves = !analysisArrowsVisible ? [] : manualDockOpen && manualDockTab === "cloud" ? (manualCloud.value ?? []).slice(0, analysisMultiPv).map(item => item.iccs) : manualEngineEnabled ? visibleManualAnalysisLines.map(item => item.pv[0]) : [];
-  const manualArrowActiveIndex = manualDockOpen && manualDockTab === "cloud" ? 0 : Math.min(manualActiveAnalysis, Math.max(visibleManualAnalysisLines.length - 1, 0));
+  // Cloud suggestions follow the same AI mode and visibility rules as engine hints.
+  // Saved manual continuations remain independent branch navigation.
+  const manualArrowMoves = manualAi === "hints" && analysisArrowsVisible && !manualAnalysisSuspended
+    ? manualDockVisible && manualDockTab === "cloud"
+      ? (manualCloud.value ?? []).slice(0, analysisMultiPv).map(item => item.iccs)
+      : visibleManualAnalysisLines.map(item => item.pv[0])
+    : [];
+  const manualArrowActiveIndex = manualDockVisible && manualDockTab === "cloud" ? 0 : Math.min(manualActiveAnalysis, Math.max(visibleManualAnalysisLines.length - 1, 0));
   const manualTrendSamples = useMemo<ManualTrendSample[]>(() => Array.from({ length: manualMoves.length + 1 }, (_, index) => {
     const summary = manualAnalysisSummaries[manualNodeId(index)];
     const scoreSide = sideToMove(manualStartingFen, manualMoves.slice(0, index));
@@ -6555,12 +6730,16 @@ export function App() {
   const manualLatestSummary = manualAnalysisSummaries[manualNodeId(manualMoves.length)];
   const manualLatestLabel = manualSummaryLabel(manualLatestSummary, sideToMove(manualStartingFen, manualMoves));
   const manualScoreDisplay = (score?: number) => score == null ? "--" : `${score}分`;
-  const manualControls = () => ({ cursor:manualCursor, moveCount:manualMoves.length, canGoNext:Boolean(manualBranchChoices.length), previousVariation:manualForkCursors.some(cursor=>cursor<manualCursor), nextVariation:manualForkCursors.some(cursor=>cursor>manualCursor), playing:manualAutoPlaying, engineEnabled:manualEngineEnabled, flipped:boardFlipped, favorite:manualGame?.favorite===true, readOnly:manualReadOnly, menuOpen:manualMenuOpen, onMenu:setManualMenuOpen, onAction:(action:ManualControlAction)=>void runManualControl(action) });
+  const manualControls = () => ({ cursor:manualCursor, moveCount:manualMoves.length, canGoNext:Boolean(manualBranchChoices.length), previousVariation:manualForkCursors.some(cursor=>cursor<manualCursor), nextVariation:manualForkCursors.some(cursor=>cursor>manualCursor), playing:manualAutoPlaying, enginePhase:manualAiPhase, flipped:boardFlipped, favorite:manualGame?.favorite===true, readOnly:manualReadOnly, menuOpen:manualMenuOpen, instantPending:instantMove?.mode==="manual", instantDisabled:Boolean(manualTerminal), onMenu:setManualMenuOpen, onAction:(action:ManualControlAction)=>void runManualControl(action) });
   const renderManualTree = () => <StudyManualTree canonicalMoves={canonicalManual?.moves ?? manualMoves} canonicalNotation={canonicalManual ? manualBranchNotation.current : manualNotation} onSelectContinuation={choice => void selectManualContinuation(choice).catch(error => setManualNotice(String(error)))} moves={manualMoves} notation={manualNotation} cursor={manualCursor} branches={manualBranches} comments={manualComments} readOnly={manualReadOnly} onCommentChange={(key, comment) => { if (manualReadOnly) return; const comments = { ...manualComments, [key]: comment }; setManualComments(comments); void saveManualGame({ comments }); }} onNavigate={(cursor) => void navigateManualMove(cursor)} onAdopt={(branch, focusCursor) => void adoptManualBranch(branch, focusCursor)} onDelete={id => void deleteManualBranch(id).catch(() => undefined)} onDiscardCurrent={(parentCursor) => { const source=manualPayload(); const choice=manualContinuations(source.moves,manualBranchNotation.current,source.branches,manualMoves.slice(0,parentCursor),manualMoves,manualNotation).find(item=>item.move===manualMoves[parentCursor]); if(choice&&window.confirm(`删除 ${choice.notation} 及其后续？其他分支保留。`))void deleteDisplayedContinuation("manual",choice).catch(error=>setManualNotice(String(error))); }} onMove={moveManualBranch}/>;
-  const renderManualEngine = () => <>
-    <AnalysisPanel lines={manualAnalysisLines} pending={manualAnalysis.pending} activeIndex={manualActiveAnalysis} disabled={Boolean(manualTerminal)} enabled={manualEngineEnabled} multiPv={analysisMultiPv} moveTimeSec={analysisMoveTimeSec} scoreSide={manualScoreSide} arrowsVisible={analysisArrowsVisible} onToggle={() => { if (manualAnalysis.pending) { setManualEngineEnabled(false); manualAnalysis.cancel(false); } else { setManualEngineEnabled(true); manualAnalysis.refresh(); } }} onToggleArrows={toggleAnalysisArrows} onSelect={setManualActiveAnalysis} onMultiPvChange={value=>void changeAnalysisMultiPv(value)} onMoveTimeChange={value=>void changeAnalysisMoveTimeSec(value)} onPreview={line=>openMobileVariation(line.pv,line.analyzedFen)}/>
-    {manualAnalysis.error && <p className="manual-analysis-error" role="alert">{manualAnalysis.error}<button type="button" onClick={manualAnalysis.refresh}>重试</button></p>}
-  </>;
+  const manualSummaryLine = !manualAnalysisSuspended ? visibleManualAnalysisLines[0] : undefined;
+  const manualEvaluation = manualSummaryLine ? analysisAdvantage(manualSummaryLine, manualScoreSide).compact : "--";
+  const renderManualEvaluation = () => <section className="manual-evaluation-strip" aria-label="录谱局势与计算信息" aria-busy={manualAnalysis.pending} data-ai-mode={manualAi}>
+    {manualEngineEnabled&&manualSummaryLine&&<span className="manual-evaluation-meter" aria-hidden="true"><i style={{width:`${redWinRate(manualSummaryLine,manualScoreSide)}%`}}/></span>}
+    <span className="manual-calculation-info" title={manualAnalysis.error ?? undefined}>{!manualEngineEnabled ? "AI 已禁用" : manualTerminal ? "棋局已结束" : manualAnalysisSuspended ? "分析已暂停" : manualAnalysis.error ? "分析失败，请重试" : manualSummaryLine ? `深度 ${manualSummaryLine.depth} · 节点 ${compactNumber(manualSummaryLine.nodes)} · 速度 ${compactNumber(manualSummaryLine.nps)}/s` : manualAnalysis.pending ? "正在计算当前局面…" : "等待分析当前局面"}</span>
+    <strong data-side={manualEvaluation.startsWith("黑")?"black":"red"}>{manualEngineEnabled ? manualEvaluation : "--"}</strong>
+  </section>;
+  const renderManualEngine = () => <ManualAnalysisPanel mode={manualAi} lines={visibleManualAnalysisLines.map(line => ({ ...line, scoreLabel:analysisScore(line,manualScoreSide), metricsLabel:`节点 ${compactNumber(line.nodes)} · 速度 ${compactNumber(line.nps)}/s` }))} pending={manualAnalysis.pending} suspended={manualAnalysisSuspended} terminal={Boolean(manualTerminal)} error={manualAnalysis.error} activeIndex={manualActiveAnalysis} multiPv={analysisMultiPv} moveTimeSec={analysisMoveTimeSec} onSelect={setManualActiveAnalysis} onPreview={index=>{const line=visibleManualAnalysisLines[index];if(line)openMobileVariation(line.pv,line.analyzedFen);}} onMultiPvChange={value=>void changeAnalysisMultiPv(value)} onMoveTimeChange={value=>void changeAnalysisMoveTimeSec(value)} onRefresh={manualAnalysis.refresh}/>;
   const renderManualAnalysisBody = () => <section className="manual-analysis-workbench">
     <nav className="manual-analysis-tabs" role="tablist" aria-label="录谱分析视图">
       {([["trend", "局势图"], ["report", "报告"], ["issues", "错误"]] as const).map(([value, label]) => <button key={value} type="button" role="tab" aria-selected={manualAnalysisView === value} className={manualAnalysisView === value ? "active" : ""} onClick={() => setManualAnalysisView(value)}>{label}</button>)}
@@ -7197,26 +7376,27 @@ export function App() {
       <MobileSettingsPanel boardSkin={boardSkin} pieceSkin={pieceSkin} boardSkinInfo={boardSkinInfo} riverText={riverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} tabletNavigationPosition={tabletNavigationPosition} tabletNavigationAvailable={tabletNavigationAvailable} onBack={() => navigateMobileRoute("account")} onBoardSkinChange={changeBoardSkin} onPieceSkinChange={changePieceSkin} onUseSkinSet={useSkinSet} onRiverTextChange={changeRiverText} onRiverTextColorChange={changeRiverTextColor} onRiverTextSizeChange={changeRiverTextSize} onTabletNavigationPositionChange={changeTabletNavigationPosition}/>
     )}
     {mobileLayout && mobileRoute === "onboarding" && !studyMode && !manualMode && <MobileOnboardingPanel onLogin={() => { localStorage.setItem(MOBILE_ONBOARDING_KEY, "done"); navigateMobileRoute("account", true); setTeachingAccountOpen(true); }} onLocal={() => { localStorage.setItem(MOBILE_ONBOARDING_KEY, "done"); navigateMobileRoute("home", true); }} />}
-    {answersAllowed && solutionView && ownsAnswerAccess(solutionView.owner,answerAccess.current) && <SolutionReadPanel problem={solutionView.problem} initial={solutionView.state} onClose={() => setSolutionView(undefined)}/>}
+    {answersAllowed && solutionView && ownsAnswerAccess(solutionView.owner,answerAccess.current) && <SolutionReadPanel key={`${solutionView.problem.id}:${solutionView.problem.startingFen}`} problem={solutionView.problem} initial={solutionView.state} onClose={() => setSolutionView(undefined)}/>}
     {mobileLayout && <PracticeOpeningStatus busy={practiceCreating} message={practiceMessage} title={openingTitle} phase={openingPhase} delayMs={mobileRoute === "practice-session" ? 300 : 0} onRetry={() => practiceRetry.current?.()} onCancel={cancelPracticeOpening}/>}
     {mobileLayout && mobileRoute === "practice-topic" && teachingAuth?.user.role === "student" && !studyMode && !manualMode && <MobileTopicDetailPanel key={`${teachingClient.presentationScope()}:${practiceTopicId ?? window.location.pathname}`} initialTopic={practiceHome?.topics.find(t => t.id === practiceTopicId)} busy={practiceCreating} message={""} topicId={practiceTopicId ?? window.location.pathname.match(/^\/practice\/topics\/([^/]+)/)?.[1]} onBack={() => navigateMobileRoute("practice")} onStart={(topic) => void createPracticeSession({ sourceKind: "topic", topicId: topic.id, scope: "all", libraryIds: topic.sources.map((source) => source.libraryId), category: topic.sources[0]?.category ?? undefined, count: 10, mode: "solver" })} onOpenLibrary={(libraryId, kind) => { const source = kind === "problem" ? libraries.find((item) => item.source === "platform" && item.fingerprint === libraryId) : undefined; if (source) void selectLibrary(source).then(() => navigateMobileRoute("library-browse")); else { const gameLibrary = platformGameLibraries.find((item) => item.id === libraryId); if (gameLibrary) void selectPlatformGameLibrary(gameLibrary); else navigateMobileRoute("library"); } }} />}
     {mobileLayout && mobileRoute === "practice-search" && teachingAuth?.user.role === "student" && !studyMode && !manualMode && <MobilePracticeSearchPanel answersAllowed={answersAllowed} key={catalogAccountScope} scope={catalogAccountScope} onReadSolution={(id,title)=>void openTeacherSolution(id,title)} message={""} busy={practiceCreating} onBack={() => navigateMobileRoute("practice")} onOpenProblem={(next) => { if (next.serverProblemId) void createPracticeSession({ sourceKind: "random", scope: "all", problemIds: [next.serverProblemId], count: 1 },undefined,"practice-search",next.title,undefined,{[next.serverProblemId]:next.displayNumber??1}); }} />}
     {mobileLayout && mobileRoute === "practice-assets" && teachingAuth?.user.role === "student" && !studyMode && !manualMode && <MobileLearningAssetsPanel home={practiceHome} onBack={() => navigateMobileRoute("practice")} onMistakes={() => navigateMobileRoute("practice-mistakes")} onFavorites={() => navigateMobileRoute("practice-favorites")} />}
     {mobileLayout && singleProblemResultOpen && problem && <MobileSingleProblemResultPanel origin={practiceOrigin} problem={problem} elapsed={fmt(elapsed)} hints={hints} mistakes={mistakes} revealed={resultOutcome==="revealed" || revealed} message={teachingMessage} onBack={closeSingleProblemResult}/>}
-    {mobileLayout && mobileRoute === "checkin" ? null : mobileLayout && mobileRoute === "personal-library" && teachingAuth && (teachingAuth.user.role === "coach" || teachingAuth.user.role === "admin" || teachingAuth.user.vipActive) ? <PersonalAuthoringHost key={`${teachingAuth.user.id}:${teachingAuth.user.orgId}`} auth={teachingAuth} onBack={() => navigateMobileRoute("home")}/> : mobileLayout && ["tool-settings", "tool-sync", "onboarding", "practice-topic", "practice-search", "practice-assets"].includes(mobileRoute) && !studyMode && !manualMode && (["tool-settings", "tool-sync", "onboarding"].includes(mobileRoute) || teachingAuth?.user.role === "student") ? null : mobileLayout && ["practice-setup", "practice-mistakes", "practice-favorites", "practice-topic", "practice-search", "practice-assets", "practice-session", "practice-result"].includes(mobileRoute) && teachingAuth?.user.role !== "student" ? <main className="mobile-practice-page"><PracticeAccessPanel signedIn={Boolean(teachingAuth)} onLogin={() => { if (teachingAuth) { teachingClient.logout(); setTeachingAuth(undefined); } setTeachingAccountOpen(true); }}/></main> : mobileLayout && mobileRoute === "teacher" && teachingAuth && ["coach", "admin"].includes(teachingAuth.user.role) ? <TeacherMobileWorkspace initialProblems={catalogAssignment?.scope === catalogAccountScope ? catalogAssignment.problems : undefined} onReadGame={id => void openPlatformGame({id}, "library").catch(reason => setTeachingMessage(String(reason)))} onReadSolution={ids => void openTeacherSolution(ids[0])} onRehearse={setRehearsalGame} renderResultBoard={(fen, label) => <FenMiniBoard fen={fen} label={label}/>} auth={teachingAuth} path={teacherPath} onNavigate={navigateTeacher} onAuthChange={(auth) => applyTeachingAuth(auth, true)} onExit={() => navigateMobileRoute("home", true)} onRelogin={() => { teachingClient.logout(); setTeachingAuth(undefined); setResumeTeacherAfterLogin(true); navigateMobileRoute("account", true); setTeachingAccountOpen(true); }} onLogout={() => { teachingClient.logout(); setTeachingAuth(undefined); navigateMobileRoute("home", true); }}/> : mobileLayout && mobileRoute === "practice-setup" ? <MobilePracticeSetupPanel answersAllowed={answersAllowed} busy={practiceCreating} message={""} topics={practiceHome?.topics ?? []} onBack={() => navigateMobileRoute("practice")} onStart={(payload) => void createPracticeSession({ sourceKind: "topic", topicId: payload.topicId, scope: payload.scope, mode: payload.mode, libraryIds: payload.libraryIds, category: payload.category, difficulty: payload.difficulty, count: payload.count })}/> : mobileLayout && mobileRoute === "practice-mistakes" ? <MobilePracticeReviewPanel busy={practiceCreating} message={""} kind="mistakes" onBack={() => navigateMobileRoute("practice")} onStart={(problemIds, state) => void createPracticeSession({ sourceKind: "mistakes", scope: state === "mastered" ? "all" : "mistakes", problemIds, count: problemIds.length })}/> : mobileLayout && mobileRoute === "practice-favorites" ? <MobilePracticeReviewPanel busy={practiceCreating} message={""} kind="favorites" onBack={() => navigateMobileRoute("practice")} onStart={(problemIds) => void createPracticeSession({ sourceKind: "favorites", scope: "favorites", problemIds, count: problemIds.length })}/> : mobileLayout && mobileRoute === "practice-result" ? <MobilePracticeResultPanel session={practiceSession} message={""} backLabel={practiceReturnRoute.startsWith("library") ? "返回题库" : practiceReturnRoute === "practice-search" ? "返回搜索" : "返回练习"} onBack={leavePracticeSession} onRetryMistakes={() => navigateMobileRoute("practice-mistakes")} onRestart={() => navigateMobileRoute("practice-setup")} /> : mobileLayout && mobileSolverVisible && problem && !studyMode && !manualMode ? <MobilePracticeSolverPanel sourceLibraries={libraries} origin={practiceSession ? practiceOrigin : problem?.trialOwner && catalogTrialGroup?.scope===catalogAccountScope && catalogTrialGroup.ids.includes(problem.serverProblemId??"") ? {section:"题库",label:catalogTrialGroup.originLabel} : undefined} commentary={!studyMode && !manualMode ? commentaryPanel : undefined} onExplainAnswer={index => requestCommentary(mainline(problem!.solution).slice(0, index + 1))} answersAllowed={answersAllowed} goalEditor={localGoalEditor} backLabel={practiceSession ? practiceReturnRoute.startsWith("library") ? "返回题库" : practiceReturnRoute === "practice-search" ? "返回搜索" : "返回练习" : problem.source === "teaching" ? "返回作业" : "返回题库"} answer={answer} answerStep={answerStep} demoPlaying={demoPlaying} onPreviewStep={(step) => { setDemoPlaying(false); void previewAnswerStep(step); }} onTogglePreview={toggleAnswerPreview} problem={problem} session={practiceSession} item={activePracticeItem} navigator={activeSolverNavigator} pieces={pieces} selected={selected} legalTargets={legalTargets} lastMove={lastMove} hints={hints} mistakes={mistakes} resultOutcome={resultOutcome} hintMove={line[0]?.iccs} wrongMove={wrongMove} moveRejection={moveRejection} trialAwaitingReply={trialPosition?.awaitingReply} trialBusy={autoReplyPending} onRetryTrialReply={() => void retryTrialReply()} onRetryWrongMove={() => void retryWrongMove()} elapsed={fmt(elapsed)} timerPaused={!clockRunning} ended={ended} revealed={revealed} notice={practiceSession ? practiceMessage || notice : notice} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} feedback={moveFeedback} feedbackEvent={feedbackEvent} onSquare={(square) => void move(square)} onMove={(from, to) => void moveFromTo(from, to)} onBack={() => practiceSession ? leavePracticeSession() : problem.source === "teaching" ? returnToStudentAssignments() : leaveLibraryProblem()} onHint={() => void giveHint()} onRestart={() => void restart()} onReveal={() => void reveal()} onPrevious={() => { if (!practiceSession || !activePracticeItem) return; const index = practiceSession.items.findIndex((item) => item.id === activePracticeItem.id); const previous = practiceSession.items[index - 1]; if (previous) void selectPracticeSessionItem(previous); }} onNext={nextSolverProblem} onFinish={() => void finish("abandoned")} favoriteEnabled={teachingAuth?.user.role === "student"} onFavorite={() => void refreshPracticeHome()}/> : mobileLayout && mobileRoute === "home" && !studyMode && !manualMode ? <MobileHomePanel onMate={step => { navigateMobileRoute("library"); window.history.replaceState({ mobileRoute: "library" }, "", `/library?mate=${encodeURIComponent(step)}`); }} onCheckin={() => navigateMobileRoute("checkin")} auth={teachingAuth} home={practiceHome} libraries={libraries} gameLibraries={platformGameLibraries} unreadAssignments={unreadAssignmentCount} onPractice={() => navigateMobileRoute("practice")} onLibrary={() => navigateMobileRoute("library")} onAssignments={() => openMobileTab("assignments")} onSetup={() => navigateMobileRoute("tool-setup")} onTeacher={() => { if (teachingAuth) navigateTeacher(teachingAuth.user.orgId ? "/teacher" : "/teacher/join-organization"); }} onPersonal={() => navigateMobileRoute("personal-library")} onLogin={() => setTeachingAccountOpen(true)}/> : mobileLayout && mobileRoute === "library" && !studyMode && !manualMode ? <MobileLibraryPanel onCatalogNavigate={cancelPracticeOpening} key={catalogAccountScope} onCatalogAssign={items => { setCatalogAssignment({scope: catalogAccountScope, problems: items}); navigateTeacher("/teacher/assignments/new"); }} teachingAuth={teachingAuth} onCatalogPractice={(ids,title,preferredProblemId,numbers,originLabel,totalProblems)=>void openCatalogPractice(ids,title,preferredProblemId,numbers,originLabel,totalProblems)} onCatalogRead={ids=>void openTeacherSolution(ids[0])} onCatalogGame={id=>void openPlatformGame({id},"library").catch(reason => setTeachingMessage(String(reason)))} onCatalogRehearse={id=>setRehearsalGame(id)} canImportLocal={canImportLocal} libraries={libraries} gameLibraries={platformGameLibraries} signedIn={Boolean(teachingAuth)} onOpenLibrary={(next) => { void selectLibrary(next).then(() => navigateMobileRoute("library-browse")); }} onOpenGameLibrary={(next) => { void selectPlatformGameLibrary(next); }} onImport={openImportPanel} onOpenAssignments={() => openMobileTab("assignments")}/> : mobileLayout && mobileRoute === "library-browse" && !studyMode && !manualMode ? <MobileLibraryBrowsePanel answersAllowed={answersAllowed} key={`problems:${catalogAccountScope}:${library?.id}`} scope={`${catalogAccountScope}:${library?.id}`} message={""} busy={practiceCreating} library={library} problems={problems} onReadSolution={next => next.serverProblemId && void openTeacherSolution(next.serverProblemId, next.title)} onBack={() => navigateMobileRoute("library")} onOpenProblem={(next,numbers) => void openLibraryPractice(next,numbers)}/> : mobileLayout && mobileRoute === "game-browse" && !studyMode && !manualMode ? <MobileGameBrowsePanel key={`games:${catalogAccountScope}:${platformGameLibrary?.id}`} scope={`games:${catalogAccountScope}:${platformGameLibrary?.id}`} library={platformGameLibrary} games={platformGames} onBack={() => navigateMobileRoute("library")} onOpenGame={(next) => void openPlatformGame(next)}/> : mobileLayout && mobileTab === "account" && !studyMode && !manualMode ? <MobileAccountPanel canImportLocal={canImportLocal} auth={teachingAuth} syncing={manualCloudSyncing} onLogin={() => setTeachingAccountOpen(true)} onTeaching={() => { if (!teachingAuth) setTeachingAccountOpen(true); else navigateTeacher(teachingAuth.user.orgId ? "/teacher" : "/teacher/join-organization"); }} onManual={() => { setManualLibraryFromAccount(true); setManualLibraryOpen(true); navigateMobileRoute("tool-manual"); }} onStudy={() => navigateMobileRoute("tool-study")} onSetup={() => navigateMobileRoute("tool-setup")} onImport={openImportPanel} onSync={() => void syncPersonalManualLibrary()} onSettings={() => navigateMobileRoute("tool-settings")} onAbout={() => setShowAbout(true)}/> : mobileLayout && mobileTab === "practice" && !studyMode && !manualMode ? <MobilePracticePanel auth={teachingAuth} loading={practiceHomeLoading} error={practiceHomeError} busy={practiceCreating} message={""} onRetry={() => void refreshPracticeHome()} onRetryPractice={() => practiceRetry.current?.()} onLogin={() => { if (teachingAuth) { teachingClient.logout(); setTeachingAuth(undefined); } setTeachingAccountOpen(true); }} onSearch={() => navigateMobileRoute("practice-search")} onAssets={() => navigateMobileRoute("practice-assets")} libraries={libraries} home={practiceHome} onBrowseLibrary={() => { const first = platformGameLibraries[0]; if (first) void selectPlatformGameLibrary(first); else navigateMobileRoute("library"); }} onImport={openImportPanel} onStudy={() => navigateMobileRoute("tool-study")} onOpenAssignments={() => openMobileTab("assignments")} onSetup={() => navigateMobileRoute("practice-setup")} onMistakes={() => navigateMobileRoute("practice-mistakes")} onFavorites={() => navigateMobileRoute("practice-favorites")} onResume={() => { if (practiceHome?.resumeSession) void resumePracticeSession(practiceHome.resumeSession.id); }} onRandom={() => { const ids = practiceHome?.topics.flatMap((topic) => topic.sources.map((source) => source.libraryId)) ?? []; void createPracticeSession({ sourceKind: "random", scope: "random", libraryIds: ids, count: 10, mode: "solver" }); }} onDaily={() => { if (practiceHome?.dailyPlan) void createPracticeSession({}, practiceHome.dailyPlan.id); }} onTopic={(topic) => navigatePracticeTopic(topic.id)}/> : mobileLayout && mobileTab === "assignments" && !studentAssignmentsOpen && !studyMode && !manualMode ? <MobileAssignmentsAccessPanel onCheckin={() => navigateMobileRoute("checkin")} auth={teachingAuth} onLogin={() => setTeachingAccountOpen(true)} onSwitchAccount={() => { teachingClient.logout(); setTeachingAuth(undefined); setUnreadAssignmentCount(0); setStudentAssignmentsOpen(false); setTeachingAccountOpen(true); }} onTeacher={() => { if (teachingAuth) navigateTeacher(teachingAuth.user.orgId ? "/teacher" : "/teacher/join-organization"); }} onOpenStudent={() => setStudentAssignmentsOpen(true)} onBrowseLibrary={() => navigateMobileRoute("library")}/> : mobileLayout && studentAssignmentsOpen && !studyMode && !manualMode && teachingAuth?.user.role === "student" ? <StudentAssignmentsPanel onCheckin={() => navigateMobileRoute("checkin")} auth={teachingAuth} syncing={teachingSyncing} lastSyncAt={teachingLastSyncAt} message={teachingMessage} onSync={() => void syncTeachingAssignments()} onOpenAccount={() => setTeachingAccountOpen(true)} onOpenPractice={openStudentPractice} onOpenProblem={(next) => void openStudentProblem(next)} onUnreadChange={setUnreadAssignmentCount} /> : <div className="training-layout">
+    {mobileLayout && mobileRoute === "checkin" ? null : mobileLayout && mobileRoute === "personal-library" && teachingAuth && (teachingAuth.user.role === "coach" || teachingAuth.user.role === "admin" || teachingAuth.user.vipActive) ? <PersonalAuthoringHost key={`${teachingAuth.user.id}:${teachingAuth.user.orgId}`} auth={teachingAuth} onBack={() => navigateMobileRoute("home")}/> : mobileLayout && ["tool-settings", "tool-sync", "onboarding", "practice-topic", "practice-search", "practice-assets"].includes(mobileRoute) && !studyMode && !manualMode && (["tool-settings", "tool-sync", "onboarding"].includes(mobileRoute) || teachingAuth?.user.role === "student") ? null : mobileLayout && ["practice-setup", "practice-mistakes", "practice-favorites", "practice-topic", "practice-search", "practice-assets", "practice-session", "practice-result"].includes(mobileRoute) && teachingAuth?.user.role !== "student" ? <main className="mobile-practice-page"><PracticeAccessPanel signedIn={Boolean(teachingAuth)} onLogin={() => { if (teachingAuth) { teachingClient.logout(); setTeachingAuth(undefined); } setTeachingAccountOpen(true); }}/></main> : mobileLayout && mobileRoute === "teacher" && teachingAuth && ["coach", "admin"].includes(teachingAuth.user.role) ? <TeacherMobileWorkspace initialProblems={catalogAssignment?.scope === catalogAccountScope ? catalogAssignment.problems : undefined} onReadGame={id => void openPlatformGame({id}, "library").catch(reason => setTeachingMessage(String(reason)))} onReadSolution={ids => void openTeacherSolution(ids[0])} onRehearse={setRehearsalGame} renderResultBoard={(fen, label) => <FenMiniBoard fen={fen} label={label}/>} auth={teachingAuth} path={teacherPath} onNavigate={navigateTeacher} onAuthChange={(auth) => applyTeachingAuth(auth, true)} onExit={() => navigateMobileRoute("home", true)} onRelogin={() => { teachingClient.logout(); setTeachingAuth(undefined); setResumeTeacherAfterLogin(true); navigateMobileRoute("account", true); setTeachingAccountOpen(true); }} onLogout={() => { teachingClient.logout(); setTeachingAuth(undefined); navigateMobileRoute("home", true); }}/> : mobileLayout && mobileRoute === "practice-setup" ? <MobilePracticeSetupPanel answersAllowed={answersAllowed} busy={practiceCreating} message={""} topics={practiceHome?.topics ?? []} onBack={() => navigateMobileRoute("practice")} onStart={(payload) => void createPracticeSession({ sourceKind: "topic", topicId: payload.topicId, scope: payload.scope, mode: payload.mode, libraryIds: payload.libraryIds, category: payload.category, difficulty: payload.difficulty, count: payload.count })}/> : mobileLayout && mobileRoute === "practice-mistakes" ? <MobilePracticeReviewPanel busy={practiceCreating} message={""} kind="mistakes" onBack={() => navigateMobileRoute("practice")} onStart={(problemIds, state) => void createPracticeSession({ sourceKind: "mistakes", scope: state === "mastered" ? "all" : "mistakes", problemIds, count: problemIds.length })}/> : mobileLayout && mobileRoute === "practice-favorites" ? <MobilePracticeReviewPanel busy={practiceCreating} message={""} kind="favorites" onBack={() => navigateMobileRoute("practice")} onStart={(problemIds) => void createPracticeSession({ sourceKind: "favorites", scope: "favorites", problemIds, count: problemIds.length })}/> : mobileLayout && mobileRoute === "practice-result" ? <MobilePracticeResultPanel session={practiceSession} message={""} backLabel={practiceReturnRoute.startsWith("library") ? "返回题库" : practiceReturnRoute === "practice-search" ? "返回搜索" : "返回练习"} onBack={leavePracticeSession} onRetryMistakes={() => navigateMobileRoute("practice-mistakes")} onRestart={() => navigateMobileRoute("practice-setup")} /> : mobileLayout && mobileSolverVisible && problem && !studyMode && !manualMode ? <MobilePracticeSolverPanel accessScope={catalogAccountScope} sourceLibraries={libraries} origin={practiceSession ? practiceOrigin : problem?.trialOwner && catalogTrialGroup?.scope===catalogAccountScope && catalogTrialGroup.ids.includes(problem.serverProblemId??"") ? {section:"题库",label:catalogTrialGroup.originLabel} : undefined} commentary={!studyMode && !manualMode ? commentaryPanel : undefined} onExplainAnswer={index => requestCommentary(mainline(problem!.solution).slice(0, index + 1))} answersAllowed={answersAllowed} goalEditor={localGoalEditor} backLabel={practiceSession ? practiceReturnRoute.startsWith("library") ? "返回题库" : practiceReturnRoute === "practice-search" ? "返回搜索" : "返回练习" : problem.source === "teaching" ? "返回作业" : "返回题库"} answer={answer} answerStep={answerStep} demoPlaying={demoPlaying} onPreviewStep={(step) => { setDemoPlaying(false); void previewAnswerStep(step); }} onTogglePreview={toggleAnswerPreview} onStopPreview={stopAnswerPreview} problem={problem} session={practiceSession} item={activePracticeItem} navigator={activeSolverNavigator} pieces={pieces} selected={selected} legalTargets={legalTargets} lastMove={lastMove} hints={hints} mistakes={mistakes} resultOutcome={resultOutcome} hintMove={line[0]?.iccs} wrongMove={wrongMove} moveRejection={moveRejection} trialAwaitingReply={trialPosition?.awaitingReply} trialBusy={autoReplyPending} onRetryTrialReply={() => void retryTrialReply()} onRetryWrongMove={() => void retryWrongMove()} elapsed={fmt(elapsed)} timerPaused={!clockRunning} ended={ended} revealed={revealed} notice={practiceSession ? practiceMessage || notice : notice} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} feedback={moveFeedback} feedbackEvent={feedbackEvent} onSquare={(square) => void move(square)} onMove={(from, to) => void moveFromTo(from, to)} onBack={() => practiceSession ? leavePracticeSession() : problem.source === "teaching" ? returnToStudentAssignments() : leaveLibraryProblem()} onHint={() => void giveHint()} onRestart={() => void restart()} onReveal={() => void reveal()} onPrevious={() => { if (!practiceSession || !activePracticeItem) return; const index = practiceSession.items.findIndex((item) => item.id === activePracticeItem.id); const previous = practiceSession.items[index - 1]; if (previous) void selectPracticeSessionItem(previous); }} onNext={nextSolverProblem} onFinish={() => void finish("abandoned")} favoriteEnabled={teachingAuth?.user.role === "student"} onFavorite={() => void refreshPracticeHome()}/> : mobileLayout && mobileRoute === "home" && !studyMode && !manualMode ? <MobileHomePanel onMate={step => { navigateMobileRoute("library"); window.history.replaceState({ mobileRoute: "library" }, "", `/library?mate=${encodeURIComponent(step)}`); }} onCheckin={() => navigateMobileRoute("checkin")} auth={teachingAuth} home={practiceHome} libraries={libraries} gameLibraries={platformGameLibraries} unreadAssignments={unreadAssignmentCount} onPractice={() => navigateMobileRoute("practice")} onLibrary={() => navigateMobileRoute("library")} onAssignments={() => openMobileTab("assignments")} onSetup={() => navigateMobileRoute("tool-setup")} onTeacher={() => { if (teachingAuth) navigateTeacher(teachingAuth.user.orgId ? "/teacher" : "/teacher/join-organization"); }} onPersonal={() => navigateMobileRoute("personal-library")} onLogin={() => setTeachingAccountOpen(true)}/> : mobileLayout && mobileRoute === "library" && !studyMode && !manualMode ? <MobileLibraryPanel onCatalogNavigate={cancelPracticeOpening} key={catalogAccountScope} onCatalogAssign={items => { setCatalogAssignment({scope: catalogAccountScope, problems: items}); navigateTeacher("/teacher/assignments/new"); }} teachingAuth={teachingAuth} onCatalogPractice={(ids,title,preferredProblemId,numbers,originLabel,totalProblems)=>void openCatalogPractice(ids,title,preferredProblemId,numbers,originLabel,totalProblems)} onCatalogRead={ids=>void openTeacherSolution(ids[0])} onCatalogGame={id=>void openPlatformGame({id},"library").catch(reason => setTeachingMessage(String(reason)))} onCatalogRehearse={id=>setRehearsalGame(id)} canImportLocal={canImportLocal} libraries={libraries} gameLibraries={platformGameLibraries} signedIn={Boolean(teachingAuth)} onOpenLibrary={(next) => { void selectLibrary(next).then(() => navigateMobileRoute("library-browse")); }} onOpenGameLibrary={(next) => { void selectPlatformGameLibrary(next); }} onImport={openImportPanel} onOpenAssignments={() => openMobileTab("assignments")}/> : mobileLayout && mobileRoute === "library-browse" && !studyMode && !manualMode ? <MobileLibraryBrowsePanel answersAllowed={answersAllowed} key={`problems:${catalogAccountScope}:${library?.id}`} scope={`${catalogAccountScope}:${library?.id}`} message={""} busy={practiceCreating} library={library} problems={problems} onReadSolution={next => next.serverProblemId && void openTeacherSolution(next.serverProblemId, next.title)} onBack={() => navigateMobileRoute("library")} onOpenProblem={(next,numbers) => void openLibraryPractice(next,numbers)}/> : mobileLayout && mobileRoute === "game-browse" && !studyMode && !manualMode ? <MobileGameBrowsePanel key={`games:${catalogAccountScope}:${platformGameLibrary?.id}`} scope={`games:${catalogAccountScope}:${platformGameLibrary?.id}`} library={platformGameLibrary} games={platformGames} onBack={() => navigateMobileRoute("library")} onOpenGame={(next) => void openPlatformGame(next)}/> : mobileLayout && mobileTab === "account" && !studyMode && !manualMode ? <MobileAccountPanel canImportLocal={canImportLocal} auth={teachingAuth} syncing={manualCloudSyncing} onLogin={() => setTeachingAccountOpen(true)} onTeaching={() => { if (!teachingAuth) setTeachingAccountOpen(true); else navigateTeacher(teachingAuth.user.orgId ? "/teacher" : "/teacher/join-organization"); }} onManual={() => { setManualLibraryFromAccount(true); setManualLibraryOpen(true); navigateMobileRoute("tool-manual"); }} onStudy={() => navigateMobileRoute("tool-study")} onSetup={() => navigateMobileRoute("tool-setup")} onImport={openImportPanel} onSync={() => void syncPersonalManualLibrary()} onSettings={() => navigateMobileRoute("tool-settings")} onAbout={() => setShowAbout(true)}/> : mobileLayout && mobileTab === "practice" && !studyMode && !manualMode ? <MobilePracticePanel auth={teachingAuth} loading={practiceHomeLoading} error={practiceHomeError} busy={practiceCreating} message={""} onRetry={() => void refreshPracticeHome()} onRetryPractice={() => practiceRetry.current?.()} onLogin={() => { if (teachingAuth) { teachingClient.logout(); setTeachingAuth(undefined); } setTeachingAccountOpen(true); }} onSearch={() => navigateMobileRoute("practice-search")} onAssets={() => navigateMobileRoute("practice-assets")} libraries={libraries} home={practiceHome} onBrowseLibrary={() => { const first = platformGameLibraries[0]; if (first) void selectPlatformGameLibrary(first); else navigateMobileRoute("library"); }} onImport={openImportPanel} onStudy={() => navigateMobileRoute("tool-study")} onOpenAssignments={() => openMobileTab("assignments")} onSetup={() => navigateMobileRoute("practice-setup")} onMistakes={() => navigateMobileRoute("practice-mistakes")} onFavorites={() => navigateMobileRoute("practice-favorites")} onResume={() => { if (practiceHome?.resumeSession) void resumePracticeSession(practiceHome.resumeSession.id); }} onRandom={() => { const ids = practiceHome?.topics.flatMap((topic) => topic.sources.map((source) => source.libraryId)) ?? []; void createPracticeSession({ sourceKind: "random", scope: "random", libraryIds: ids, count: 10, mode: "solver" }); }} onDaily={() => { if (practiceHome?.dailyPlan) void createPracticeSession({}, practiceHome.dailyPlan.id); }} onTopic={(topic) => navigatePracticeTopic(topic.id)}/> : mobileLayout && mobileTab === "assignments" && !studentAssignmentsOpen && !studyMode && !manualMode ? <MobileAssignmentsAccessPanel onCheckin={() => navigateMobileRoute("checkin")} auth={teachingAuth} onLogin={() => setTeachingAccountOpen(true)} onSwitchAccount={() => { teachingClient.logout(); setTeachingAuth(undefined); setUnreadAssignmentCount(0); setStudentAssignmentsOpen(false); setTeachingAccountOpen(true); }} onTeacher={() => { if (teachingAuth) navigateTeacher(teachingAuth.user.orgId ? "/teacher" : "/teacher/join-organization"); }} onOpenStudent={() => setStudentAssignmentsOpen(true)} onBrowseLibrary={() => navigateMobileRoute("library")}/> : mobileLayout && studentAssignmentsOpen && !studyMode && !manualMode && teachingAuth?.user.role === "student" ? <StudentAssignmentsPanel onCheckin={() => navigateMobileRoute("checkin")} auth={teachingAuth} syncing={teachingSyncing} lastSyncAt={teachingLastSyncAt} message={teachingMessage} onSync={() => void syncTeachingAssignments()} onOpenAccount={() => setTeachingAccountOpen(true)} onOpenPractice={openStudentPractice} onOpenProblem={(next) => void openStudentProblem(next)} onUnreadChange={setUnreadAssignmentCount} /> : <div className="training-layout">
     <aside className={`catalogue ${catalogueOpen ? "drawer-open" : ""}`}><header className="catalogue-heading"><span><strong>题库目录</strong><small>{libraries.length} 本题库</small></span>{library && (library.source === "local" || !library.source) && <button className="catalogue-delete" title="删除当前题库" onClick={() => setDeleteTarget({ type: "library", id: library.id, title: library.title })}><Trash2/></button>}</header><div className="library-list"><MateLibraryGroups libraries={libraries} onOpen={(next) => void selectLibrary(next)}/>{[...libraries.filter(item => !item.mateCollection), ...(library?.mateCollection ? [library] : [])].map((item) => <section key={item.id}><button className={`library-row ${expanded === item.id ? "expanded" : ""}`} onClick={() => expanded === item.id ? setExpanded(undefined) : void selectLibrary(item)}><BookOpen/><span><b>{item.title}</b><small>{item.completedCount}/{item.problemCount} 已完成{accessTierLabel(item.accessTier) ? ` · ${accessTierLabel(item.accessTier)}` : ""}</small></span>{expanded === item.id ? <ChevronDown/> : <ChevronRight/>}</button>{expanded === item.id && <div className="problem-area"><div className="filters"><div className="problem-search"><Search/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索残局题名或分类" aria-label="搜索残局题名或分类" autoComplete="off"/>{query && <button type="button" aria-label="清除搜索" title="清除搜索" onClick={() => setQuery("")}><X/></button>}</div><select value={category} onChange={(event) => setCategory(event.target.value)} aria-label="按残局分类筛选">{categories.map((value) => <option key={value}>{value}</option>)}</select></div>{visible.length ? visible.map((item) => <button key={item.id} className={`problem-row ${problem?.id === item.id ? "active" : ""}`} onClick={() => { navigateMobileRoute("practice"); void selectProblem(item); }}><b>{item.sourceIndex + 1}</b><span>{item.title}<small>{item.category} · {item.completedAttempts ? `累计 ${fmt(item.totalElapsedMs)}` : "未练"}{accessTierLabel(item.accessTier) ? ` · ${accessTierLabel(item.accessTier)}` : ""}</small></span></button>) : <p className="problem-empty">没有找到匹配的残局</p>}</div>}</section>)}</div></aside>
     <main className="training-stage">{problem ? <><header className={`problem-heading ${problem.source === "teaching" && teachingAuth?.user.role === "student" ? "teaching-problem-heading" : ""}`}><span className="problem-heading-side problem-heading-left">{problem.source === "teaching" && teachingAuth?.user.role === "student" && <button type="button" className="student-assignment-back" aria-label="返回我的作业" title="返回我的作业" onClick={returnToStudentAssignments}><ChevronLeft/><span>作业</span></button>}</span><span className="problem-heading-title"><small>第 {problem.sourceIndex + 1}/{problems.length} 题</small><strong>{problem.displayNumber!=null?`第 ${problem.displayNumber} 题 · `:""}{problem.displayNumber!=null?numberedProblemTitle(problem.title):problem.title}</strong>{problem.trainingGoal && <small>{goalLabel(problem.trainingGoal)} · {problem.trainingGoal.reviewMethod === "reviewed_solution" ? "按审核题解" : "强制杀验证"}</small>}</span><span className="problem-heading-side problem-heading-right">{(!problem.source || problem.source === "local") && <button className="problem-delete-button" title="移除当前残局" onClick={() => setDeleteTarget({ type: "problem", id: problem.id, title: problem.title })}><Trash2/></button>}</span></header>{problem.trainingGoal?.description && <details key={problem.id} className="training-goal-details"><summary>目标说明</summary><p>{problem.trainingGoal.description}</p></details>}<Board key="training" pieces={pieces} selected={selected} legalTargets={legalTargets} lastMove={lastMove} hintMove={hints >= 2 && !trialPosition ? line[0]?.iccs : undefined} analysisMoves={analysisArrowsVisible ? trainingAnalysisLines.map((item) => item.pv[0]) : []} activeAnalysis={trainingActiveAnalysis} flipped={boardFlipped} feedback={moveFeedback} feedbackEvent={feedbackEvent} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={(square) => void move(square)} onMove={(from, to) => void moveFromTo(from, to)}/><p className="board-tip">{mode === "cloud" ? "云库优先应手；未收录时由本地 Pikafish 接手。" : mode === "ai" ? "本地 Pikafish 离线应手，不访问云库。" : problem.source === "teaching" ? "线上作业：完成后在作业详情检查并手动提交。" : "合法走法可继续试走，皮卡鱼自动应手；退回后重新解题。"}</p></> : <div className="empty"><BookOpen/><strong>选择题库内容</strong><span>登录后可练习平台题库，或导入本地 CBL。</span></div>}</main>
     <aside className={`controls ${controlsOpen ? "drawer-open" : ""} ${revealed ? "answer-revealed" : ""}`}>{problem ? <><section className="clock"><Clock3/><small>本题用时</small><strong>{fmt(elapsed)}</strong><span>累计用时 {fmt(problem.totalElapsedMs)}</span><button onClick={() => { setShowHistory((value) => !value); void trainingStore.attempts(problem.id).then(setAttempts); }}>记录</button></section><section className="modes">{(["cloud", ...(LOCAL_PIKAFISH_AVAILABLE ? ["ai" as const] : []), "solver", "replay", "free"] as Mode[]).filter(value=>answersAllowed||value!=="replay").map((value) => <label key={value}><input type="radio" checked={mode === value} disabled={attemptStarted || ended} onChange={() => changeMode(value)}/>{modeLabel[value]}{value === "cloud" && (LOCAL_PIKAFISH_AVAILABLE ? "（云库优先）" : "（云库应手）")}{value === "ai" && "（纯离线）"}{value === "replay" && "（按题解）"}</label>)}</section>{LOCAL_PIKAFISH_AVAILABLE && <AnalysisPanel onExplain={answersAllowed ? explainCandidate : undefined} lines={trainingAnalysisLines} pending={analysisPending && !studyMode} activeIndex={trainingActiveAnalysis} disabled={autoReplyPending || revealed || ended} enabled={true} multiPv={analysisMultiPv} moveTimeSec={analysisMoveTimeSec} scoreSide={sideToMove(problem.startingFen, displayedTrainingMoves)} arrowsVisible={analysisArrowsVisible} onToggle={() => void (analysisPending ? stopAnalysis() : startAnalysis())} onToggleArrows={toggleAnalysisArrows} onSelect={setTrainingActiveAnalysis} onMultiPvChange={(value) => void changeAnalysisMultiPv(value)} onMoveTimeChange={(value) => void changeAnalysisMoveTimeSec(value)}/>}{!studyMode && !manualMode && commentaryPanel}{localGoalEditor}<section className={`actions ${revealed ? "revealed-actions" : ""}`}>{revealed ? <><button className="primary" onClick={toggleAnswerPreview}>{demoPlaying ? <Pause/> : <Play/>}{demoPlaying ? "暂停预演" : answerStep >= answer.length ? "重播答案" : "答案预演"}</button><button onClick={() => void restart()}><RotateCcw/>重来</button></> : <><button className="primary" disabled={ended} onClick={() => void giveHint()}><Lightbulb/>提示 {hints}/3</button><button disabled={ended || (!clockRunning && !elapsed)} onClick={pause}>{clockRunning ? <Pause/> : <Play/>}{clockRunning ? "暂停" : "继续"}</button><button onClick={() => void restart()}><RotateCcw/>重来</button>{mode === "free" || mode === "cloud" || mode === "ai" ? <button disabled={ended} onClick={() => void finish("free_finished")}>{mode === "free" ? "结束实战" : "结束对练"}</button> : answersAllowed && <button disabled={ended} onClick={() => void reveal()}><ListRestart/>看答案</button>}</>}</section>{wrongMove && <button type="button" onClick={() => void retryWrongMove()}><RotateCcw/>退回重试{mistakes > 0 ? ` · 已错 ${mistakes} 次` : ""}</button>}{trialPosition?.awaitingReply && !autoReplyPending && <button type="button" onClick={() => void retryTrialReply()}><RefreshCw/>重试 AI 应手</button>}{!ended && !autoReplyPending && <TrainingMoveVerdict rejection={moveRejection} mistakes={mistakes}/>}<section className={`notice ${revealed ? "answer-notice" : ""}`}><b>错误 {mistakes} 次{revealed ? " · 答案已显示，可预演" : ""}</b>{!revealed && <p>{renderNote(notice)}</p>}</section>{showHistory ? <section className="history"><b>答题记录</b>{attempts.length ? attempts.slice(0, 30).map((item) => <p key={item.id}><strong>{item.outcome === "completed" ? "解出" : item.outcome === "revealed" ? "看答案" : item.outcome === "free_finished" ? "实战结束" : "已放弃"}</strong><span>{modeLabel[item.mode]} · {fmt(item.elapsedMs)} · 错 {item.mistakes} · 提示 {item.hintsUsed}</span></p>) : <p>还没有答题记录</p>}</section> : revealed && <section className="answer"><header><b>答案预演</b><small>{answerStep}/{answer.length} 手</small></header><footer className="answer-preview-controls"><button disabled={answerStep <= 0} onClick={() => { setDemoPlaying(false); void previewAnswerStep(answerStep - 1); }}><ChevronLeft/>上一步</button><button disabled={answerStep >= answer.length} onClick={() => { setDemoPlaying(false); void previewAnswerStep(answerStep + 1); }}><ChevronRight/>下一步</button><button disabled={!answer.length} onClick={toggleAnswerPreview}>{demoPlaying ? <Pause/> : <Play/>}{demoPlaying ? "暂停" : answerStep >= answer.length ? "重播" : "继续"}</button><button onClick={() => { setDemoPlaying(false); void previewAnswerStep(0); }}><RotateCcw/>从头</button></footer><div className="answer-move-list">{Array.from({ length: Math.ceil(answer.length / 2) }, (_, index) => <p key={index} className={answerStep > index * 2 ? "active" : ""}><b>第 {index + 1} 回合</b><span>红方 {answer[index * 2]}{answer[index * 2 + 1] ? ` · 黑方 ${answer[index * 2 + 1]}` : ""}</span></p>)}</div></section>}<footer className="navigate"><button disabled={currentIndex <= 0} onClick={() => void selectProblem(visible[currentIndex - 1])}><ChevronLeft/></button><button disabled={currentIndex >= visible.length - 1} onClick={() => void selectProblem(visible[currentIndex + 1])}><ChevronRight/></button></footer></> : <p>从目录选择题目。</p>}</aside>
-  </div>}{studyMode && <div className={`study-workspace${mobileLayout ? " mobile-study-pieces" : ""}`}>
+  </div>}{studyMode && <div className={`study-workspace${mobileLayout ? " mobile-study-pieces" : ""}`} style={{ "--study-top-height": studyEvaluationVisible ? "56px" : "36px" } as CSSProperties}>
     <main className={`study-stage${studyEvaluationVisible ? "" : " evaluation-hidden"}`}><header className={`study-toolbar ${studyMenuOpen ? "menu-open" : ""}`}><nav className="study-command-bar" aria-label="拆棋工具栏">
       <button className="study-return-training" aria-label={studyReturnLabel} title={studyReturnLabel} onClick={() => void closeStudyMode(studyReturnRoute)}><ChevronLeft/><span>{studyReturnLabel}</span></button>
       <button className={studyMenuOpen ? "active" : ""} aria-label="更多功能" title="更多功能" aria-expanded={studyMenuOpen} onClick={() => setStudyMenuOpen((open) => !open)}><Ellipsis/><span>更多</span></button>
+      <button type="button" className="study-instant-button" aria-label="闪电出招" title="走引擎最优一步" aria-busy={instantMove?.mode==="study"} disabled={Boolean(studyTerminal)||instantMove?.mode==="study"} onClick={()=>void requestInstantMove("study")}><Zap/><span>{instantMove?.mode==="study"?"计算中":"闪电出招"}</span></button>
       <button aria-label="新建标准棋局" title="新建标准棋局" onClick={() => runStudyMenuAction("standard")}><Plus/><span>新局</span></button>
       <button aria-label="编辑 FEN 局面" title="编辑 FEN 局面" onClick={() => runStudyMenuAction("edit")}><Pencil/><span>编辑</span></button>
       <button className={boardFlipped ? "active" : ""} aria-label="翻转棋盘" title="翻转棋盘" onClick={() => runStudyMenuAction("flip")}><FlipVertical2/><span>翻转</span></button>
       <button className={`study-engine-toggle ${studyEngineEnabled ? "active engine-enabled" : ""}`} disabled={Boolean(studyTerminal)} aria-pressed={studyEngineEnabled} aria-label={studyEngineEnabled ? "关闭引擎分析" : "开启引擎分析"} title={studyEngineEnabled ? "关闭引擎分析" : "开启引擎分析"} onClick={() => void toggleStudyEngine()}><Search/><span>{studyEngineEnabled ? "引擎开" : "引擎关"}</span></button>
-      <button type="button" onClick={() => openMobileVariation()}>自由推演</button>
-    </nav></header>{studyEvaluationVisible && <section className="study-engine-strip"><div><span>深度 {studySummaryLine?.depth ?? "--"}</span><span>节点 {studySummaryLine ? compactNumber(studySummaryLine.nodes) : "--"}</span><span>速度 {studySummaryLine ? `${compactNumber(studySummaryLine.nps)}/s` : "--"}</span></div><button className="study-evaluation-toggle" type="button" aria-label="隐藏顶部评估" onClick={toggleStudyEvaluation}>当前评估 {studyEvaluationLabel}</button></section>}<FittedBoardArea className="study-play-board-area"><Board key="study" pieces={studyPieces} selected={studySelected} legalTargets={studyLegalTargets} lastMove={studyLastMove} branchMoves={studyBranchChoices.map(item => item.move)} analysisMoves={studyArrowMoves} activeAnalysis={studyArrowActiveIndex} flipped={boardFlipped} feedback={moveFeedback} feedbackEvent={feedbackEvent} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={(square) => void moveStudy(square)} onMove={(from, to) => void moveStudyFromTo(from, to)}/></FittedBoardArea></main>
+      <button type="button" aria-label="自由推演" title="自由推演" onClick={() => openMobileVariation()}><GitBranch/><span>推演</span></button>
+    </nav></header>{studyEvaluationVisible && <section className="study-engine-strip"><div><span>深度 {studySummaryLine?.depth ?? "--"}</span><span>节点 {studySummaryLine ? compactNumber(studySummaryLine.nodes) : "--"}</span><span>速度 {studySummaryLine ? `${compactNumber(studySummaryLine.nps)}/s` : "--"}</span></div><button className="study-evaluation-toggle" type="button" aria-label="隐藏顶部评估" onClick={toggleStudyEvaluation}>当前评估 {studyEvaluationLabel}</button></section>}<FittedBoardArea className="study-play-board-area" alignment="top"><Board key="study" pieces={studyPieces} selected={studySelected} legalTargets={studyLegalTargets} lastMove={studyLastMove} branchMoves={studyBranchChoices.map(item => item.move)} analysisMoves={studyArrowMoves} activeAnalysis={studyArrowActiveIndex} flipped={boardFlipped} feedback={moveFeedback} feedbackEvent={feedbackEvent} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={(square) => void moveStudy(square)} onMove={(from, to) => void moveStudyFromTo(from, to)}/></FittedBoardArea></main>
     {studyMenuOpen && <section className="study-menu" aria-label="拆棋功能菜单">
         <header><span><strong>拆棋功能</strong><small>临时拆棋，不写题解树</small></span><button type="button" aria-label="关闭拆棋功能菜单" onClick={() => setStudyMenuOpen(false)}><X/></button></header>
         <StudySkinSettings boardSkin={boardSkin} pieceSkin={pieceSkin} boardSkinInfo={boardSkinInfo} riverText={riverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} onBoardSkinChange={changeBoardSkin} onPieceSkinChange={changePieceSkin} onUseSkinSet={useSkinSet} onRiverTextChange={changeRiverText} onRiverTextColorChange={changeRiverTextColor} onRiverTextSizeChange={changeRiverTextSize}/>
@@ -7232,7 +7412,7 @@ export function App() {
         <button className="study-menu-settings" onClick={() => runStudyMenuAction("settings")}><Settings2/><span>更多设置</span></button>
       </section>}
     <aside className="study-sidebar">
-      <div className="study-branch-navigation"><BranchStrip floating light contextKey={`study:${studyDocumentEpoch.current}:${currentStudyMoves.join(",")}`} hidden={branchOverlayBlocked || studyMenuOpen} getAnchor={() => ({ board:document.querySelector(".study-play-board-area > .board-shell"), toolbar:document.querySelector(".study-sidebar"), dock:document.querySelector(".study-branch-dock"), dockInside:true })} revealKey={studyForkRequest} choices={studyBranchChoices.map((choice,index)=>({...choice,color:branchChoiceColor(index)}))} onRequestDelete={id=>{setStudyAutoPlaying(false);setBranchDeleteRequest(id);setBranchManager("study");}} onManage={() => {setBranchDeleteRequest(undefined);setStudyAutoPlaying(false);setBranchManager("study");}} onSelect={id => { const choice = studyBranchChoices.find(item => item.id === id); if (choice) void selectStudyContinuation(choice).catch(error => setStudyNotice(String(error))); }}/>
+      <div className="study-branch-navigation"><BranchStrip floating light contextKey={`study:${studyDocumentEpoch.current}:${currentStudyMoves.join(",")}`} hidden={branchOverlayBlocked || studyMenuOpen || studyBranchChoices.length<2} getAnchor={() => ({ board:document.querySelector(".study-play-board-area > .board-shell"), toolbar:document.querySelector(".study-sidebar"), dock:document.querySelector(".study-branch-dock"), dockInside:true })} revealKey={studyForkRequest} choices={studyBranchChoices.map((choice,index)=>({...choice,color:branchChoiceColor(index)}))} onRequestDelete={id=>{setStudyAutoPlaying(false);setBranchDeleteRequest(id);setBranchManager("study");}} onManage={() => {setBranchDeleteRequest(undefined);setStudyAutoPlaying(false);setBranchManager("study");}} onSelect={id => { const choice = studyBranchChoices.find(item => item.id === id); if (choice) void selectStudyContinuation(choice).catch(error => setStudyNotice(String(error))); }}/>
       <nav className="study-move-nav" aria-label="拆棋着法导航"><button disabled={!studyCursor} aria-label="回到开始" title="回到开始" onClick={() => void navigateStudyMove(0)}><ChevronsLeft/></button><button disabled={!studyCursor} aria-label="上一步" title="上一步" onClick={() => void navigateStudyMove(studyCursor - 1)}><ChevronLeft/></button><button className={studyAutoPlaying ? "active" : ""} disabled={!studyMoves.length} aria-label={studyAutoPlaying ? "暂停播放棋谱" : "自动播放棋谱"} title={studyAutoPlaying ? "暂停播放棋谱" : "自动播放棋谱"} onClick={() => void toggleStudyAutoPlay()}>{studyAutoPlaying ? <Pause/> : <Play/>}</button><button disabled={!studyBranchChoices.length} aria-label="下一步" title="下一步" onClick={() => void advanceStudyContinuation().catch(error=>setStudyNotice(String(error)))}><ChevronRight/></button><button disabled={studyCursor >= studyMoves.length} aria-label="最后一步" title="最后一步" onClick={() => void navigateStudyMove(studyMoves.length)}><ChevronsRight/></button></nav></div>
       <nav className="study-panel-tabs" role="tablist" aria-label="拆棋研究面板">{studyPanelItems.map(([value, label, Icon]) => <button key={value} role="tab" aria-selected={studyPanelTab === value} className={studyPanelTab === value ? "active" : ""} onClick={() => setStudyPanelTab(value)}><Icon/><span>{label}</span></button>)}</nav>
       <div className="study-research-stack"><div className="commentary-research-content">
@@ -7245,24 +7425,25 @@ export function App() {
     </aside>
     {studyMenuOpen && <button className="study-menu-scrim" aria-label="关闭拆棋菜单" onClick={() => setStudyMenuOpen(false)}/>}
   </div>}{manualMode && <div className="manual-workspace study-workspace manual-reference-layout" hidden={manualLibraryOpen} style={manualLibraryOpen ? { display: "none" } : undefined}>
-    <main className={`study-stage manual-stage evaluation-hidden ${manualSetupOpen ? "manual-setup-active" : `manual-compact-stage${manualDockOpen ? " manual-dock-expanded" : ""}`}`}>
-      {manualSetupOpen ? <header className="study-toolbar manual-statusbar" aria-label="录谱状态"><button type="button" className="manual-return-button" aria-label="取消摆棋" onClick={cancelManualSetup}><ChevronLeft/><span>取消</span></button><div className="recording-title"><b>创建局面 · {manualSetupSide==="red"?"红先":"黑先"}</b><small>{manualNotice}</small></div><button type="button" aria-label="复制当前 FEN" onClick={()=>void copyManualSetupFen()}><ClipboardCopy/></button></header> : <header className="study-toolbar manual-statusbar manual-compact-header" aria-label="录谱状态"><button type="button" className="manual-return-button" aria-label="返回我的棋谱" onClick={()=>void runManualControl("return")}><ChevronLeft/><span>返回我的棋谱</span></button><div className="recording-title"><b>{manualReadOnly?"只读 · ":""}录谱 {manualCursor}/{manualMoves.length}</b><small>{manualGame?.favorite?"★ ":""}{manualGame?.title??"标准开局"} · {manualReadOnly?"只读":manualSaveStatus}</small></div><button type="button" aria-label="打开棋库" onClick={()=>openManualPanel("library")}><Database/></button></header>}
-      {manualSetupOpen ? <section className="manual-setup-board-area">{renderManualSetupTray("black")}{manualSetupError && <p className="manual-setup-toast" role="alert" aria-live="assertive">{manualSetupError}</p>}<FittedBoardArea className="manual-setup-board-slot"><Board pieces={manualSetupPieces} selected={manualSetupSelected} legalTargets={[]} lastMove={undefined} analysisMoves={[]} activeAnalysis={manualArrowActiveIndex} flipped={boardFlipped} feedback={undefined} setupMode={true} showSideCoordinates={true} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={editManualSetupSquare}/></FittedBoardArea>{renderManualSetupTray("red")}</section> : <FittedBoardArea className="manual-play-board-area" suspended={Boolean(manualSaveDraft)}><Board key="manual" pieces={manualPieces} selected={manualSelected} legalTargets={manualLegalTargets} lastMove={manualLastMove} branchMoves={manualBranchChoices.map(item => item.move)} analysisMoves={manualArrowMoves} activeAnalysis={manualArrowActiveIndex} flipped={boardFlipped} feedback={moveFeedback} feedbackEvent={feedbackEvent} setupMode={false} showSideCoordinates={true} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={(square) => void moveManual(square)} onMove={(from, to) => void moveManualFromTo(from, to)}/></FittedBoardArea>}
+    <main className={`study-stage manual-stage evaluation-hidden ${manualSetupOpen ? "manual-setup-active" : `manual-compact-stage${manualDockVisible ? " manual-dock-expanded" : ""}${manualAnalysisPage ? " manual-analysis-page" : ""}`}`}>
+      {manualSetupOpen ? <header className="study-toolbar manual-statusbar" aria-label="录谱状态"><button type="button" className="manual-return-button" aria-label="取消摆棋" onClick={cancelManualSetup}><ChevronLeft/><span>取消</span></button><div className="recording-title"><b>创建局面 · {manualSetupSide==="red"?"红先":"黑先"}</b><small>{manualNotice}</small></div><button type="button" aria-label="复制当前 FEN" onClick={()=>void copyManualSetupFen()}><ClipboardCopy/></button></header> : <div className="manual-top-area">{manualAnalysisPage ? <ManualRecordingControls {...manualControls()} layout="analysis" part="toolbar" onBack={returnToManualRecording}/> : <header className="study-toolbar manual-statusbar manual-compact-header" aria-label="录谱状态"><button type="button" className="manual-return-button" aria-label="返回我的棋谱" onClick={()=>void runManualControl("return")}><ChevronLeft/><span>我的棋谱</span></button><div className="recording-title"><b>{manualReadOnly?"只读 · ":""}录谱 {manualCursor}/{manualMoves.length}</b><small>{manualGame?.favorite?"★ ":""}{manualGame?.title??"标准开局"} · {manualReadOnly?"只读":manualSaveStatus}</small></div><button type="button" className="manual-library-button" aria-label="打开棋库" onClick={()=>openManualPanel("library")}><BookOpen/><span>棋库</span></button></header>}{renderManualEvaluation()}</div>}
+      {manualSetupOpen ? <section className="manual-setup-board-area">{renderManualSetupTray("black")}{manualSetupError && <p className="manual-setup-toast" role="alert" aria-live="assertive">{manualSetupError}</p>}<FittedBoardArea className="manual-setup-board-slot"><Board pieces={manualSetupPieces} selected={manualSetupSelected} legalTargets={[]} lastMove={undefined} analysisMoves={[]} activeAnalysis={manualArrowActiveIndex} flipped={boardFlipped} feedback={undefined} setupMode={true} showSideCoordinates={true} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={editManualSetupSquare}/></FittedBoardArea>{renderManualSetupTray("red")}</section> : <FittedBoardArea className="manual-play-board-area" alignment="top" suspended={Boolean(manualSaveDraft)}><Board key="manual" pieces={manualPieces} selected={manualSelected} legalTargets={manualLegalTargets} lastMove={manualLastMove} branchMoves={manualBranchChoices.map(item => item.move)} analysisMoves={manualArrowMoves} activeAnalysis={manualArrowActiveIndex} flipped={boardFlipped} feedback={moveFeedback} feedbackEvent={feedbackEvent} setupMode={false} showSideCoordinates={true} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={(square) => void moveManual(square)} onMove={(from, to) => void moveManualFromTo(from, to)}/></FittedBoardArea>}
 
       {manualSetupOpen ? <section className="manual-bottom-tools manual-setup-tools" aria-label="摆棋工具">
           <div className="manual-tool-row setup-actions"><button type="button" onClick={() => void fillManualSetupStandardPosition()}>标准</button><button type="button" onClick={clearManualSetupBoard}>清空</button><button type="button" className={manualSetupTool === "erase" ? "active" : ""} aria-label="删除棋子" title="删除棋子" onClick={() => { setManualSetupTool("erase"); setManualSetupSelected(undefined); setManualSetupError(""); setManualNotice("删除模式：点棋盘上的非将帅棋子即可删除。"); }}><Trash2/></button><button type="button" disabled={!manualSetupHistory.length} onClick={undoManualSetup}><Undo2/>撤销</button><button type="button" onClick={toggleBoardFlipped}>翻转</button><button type="button" onClick={() => { rememberManualSetup(); setManualSetupSide((side) => { const next = side === "red" ? "black" : "red"; setManualSetupError(""); setManualNotice(`已设置为${next === "red" ? "红方" : "黑方"}先走。`); return next; }); }}>{manualSetupSide === "red" ? "红先⇄黑先" : "黑先⇄红先"}</button><button type="button" className="primary" onClick={() => void confirmManualSetup()}>完成</button></div>
 </section> : <>
         <section className="manual-compact-dock" aria-label="录谱内容">
-          {manualDockOpen && <><div className="manual-dock-heading"><nav className="study-panel-tabs" role="tablist" aria-label="录谱视图">{([["moves","棋谱",ClipboardList],["cloud","云库",Database],["engine","引擎",Cpu]] as const).map(([tab,label,Icon])=><button key={tab} type="button" role="tab" aria-selected={manualDockTab===tab} aria-controls={`manual-dock-${tab}`} id={`manual-tab-${tab}`} className={manualDockTab===tab?"active":""} onClick={()=>setManualDockTab(tab)}><Icon/><span>{label}</span></button>)}</nav><button type="button" aria-label="收起录谱内容" onClick={()=>setManualDockOpen(false)}><ChevronDown/><span>收起</span></button></div>
+          {manualAnalysisPage && <ManualRecordingControls {...manualControls()} layout="analysis" part="playback"/>}
+          {manualDockVisible && <><div className="manual-dock-heading"><nav className="study-panel-tabs" role="tablist" aria-label="录谱视图">{([["moves","棋谱",ClipboardList],["cloud","云库",Database],["engine","引擎",Cpu]] as const).map(([tab,label,Icon])=><button key={tab} type="button" role="tab" aria-selected={manualDockTab===tab} aria-controls={`manual-dock-${tab}`} id={`manual-tab-${tab}`} className={manualDockTab===tab?"active":""} onClick={()=>setManualDockTab(tab)}><Icon/><span>{label}</span></button>)}</nav>{!manualAnalysisPage && <button type="button" aria-label="收起录谱内容" onClick={()=>setManualDockOpen(false)}><ChevronDown/><span>收起</span></button>}</div>
           <div className="manual-dock-content" id={`manual-dock-${manualDockTab}`} role="tabpanel" aria-labelledby={`manual-tab-${manualDockTab}`}>
             {manualDockTab==="moves" && renderManualTree()}
             {manualDockTab==="engine" && ((LOCAL_PIKAFISH_AVAILABLE||teachingAuth) ? renderManualEngine() : <p className="study-unavailable">Web 端登录后可使用服务端 Pikafish 分析。</p>)}
             {manualDockTab==="cloud" && <section className="study-cloud-panel" aria-label="当前录谱云库">{manualCloud.pending ? <p className="study-cloud-empty">正在查询当前局面…</p> : manualCloud.error ? <p className="study-cloud-empty" role="alert">{manualCloud.error}<button type="button" onClick={manualCloud.refresh}>重试</button></p> : manualCloud.value?.length ? <div className="study-cloud-list">{manualCloud.value.map((item,index)=>{ const evaluation=cloudEvaluation(item,manualScoreSide);return <button key={item.iccs} disabled={manualReadOnly} onClick={()=>void playManualMove(item.iccs)}><b>{index+1}</b><strong>{item.notation}</strong><em>红分 {evaluation.redScore>0?"+":""}{evaluation.redScore}</em><small>红 {evaluation.redRate.toFixed(1)}% · 黑 {evaluation.blackRate.toFixed(1)}%</small></button>;})}</div> : <p className="study-cloud-empty">当前局面暂无云库着法。</p>}</section>}
           </div></>}
-          <div className="recording-feedback-row"><span className="manual-branch-dock" aria-hidden="true"/><p className="recording-feedback" role="status" title={manualNotice}>{manualNotice}</p><button type="button" className="commentary-entry" disabled={!manualCursor} onClick={()=>void runManualControl("explain")}><Lightbulb/>讲解这步</button></div>
-          <ManualRecordingControls {...manualControls()}/>
+          <div className="recording-feedback-row"><span className="manual-branch-dock" aria-hidden="true"/><p className="recording-feedback" role="status" title={manualNotice}>{manualNotice}</p>{!manualAnalysisPage && <button type="button" className="commentary-entry" disabled={!manualCursor} onClick={()=>void runManualControl("explain")}><Lightbulb/>讲解这步</button>}</div>
+          {!manualAnalysisPage && <ManualRecordingControls {...manualControls()}/>}
         </section>
-        <BranchStrip floating light layoutKey={Number(manualDockOpen)} contextKey={`manual:${manualDocumentEpoch.current}:${manualGame?.id}:${currentManualMoves.join(",")}`} hidden={branchOverlayBlocked || manualMenuOpen || manualSetupOpen || manualLibraryOpen} getAnchor={() => ({ board:document.querySelector(".manual-play-board-area > .board-shell"), toolbar:document.querySelector(".manual-compact-dock"), dock:document.querySelector(".manual-branch-dock"), dockInside:true })} revealKey={manualForkRequest} choices={manualBranchChoices.map((choice,index)=>({...choice,color:branchChoiceColor(index)}))} onRequestDelete={manualReadOnly?undefined:id=>{setManualAutoPlaying(false);setBranchDeleteRequest(id);setBranchManager("manual");}} onManage={() => {setBranchDeleteRequest(undefined);setManualAutoPlaying(false);setBranchManager("manual");}} onSelect={id => { const choice = manualBranchChoices.find(item => item.id === id); if (choice) void selectManualContinuation(choice).catch(error => setManualNotice(String(error))); }}/>
+        <BranchStrip floating light compact layoutKey={`${Number(manualDockVisible)}:${Number(manualAnalysisPage)}`} contextKey={`manual:${manualDocumentEpoch.current}:${manualGame?.id}:${currentManualMoves.join(",")}`} hidden={branchOverlayBlocked || manualMenuOpen || manualSetupOpen || manualLibraryOpen || manualBranchChoices.length<2} getAnchor={() => ({ board:document.querySelector(".manual-play-board-area > .board-shell"), toolbar:document.querySelector(".manual-compact-dock"), dock:document.querySelector(".manual-branch-dock"), dockInside:true })} revealKey={manualForkRequest} choices={manualBranchChoices.map((choice,index)=>({...choice,color:branchChoiceColor(index)}))} onRequestDelete={manualReadOnly?undefined:id=>{setManualAutoPlaying(false);setBranchDeleteRequest(id);setBranchManager("manual");}} onManage={() => {setBranchDeleteRequest(undefined);setManualAutoPlaying(false);setBranchManager("manual");}} onSelect={id => { const choice = manualBranchChoices.find(item => item.id === id); if (choice) void selectManualContinuation(choice).catch(error => setManualNotice(String(error))); }}/>
 
       </>}
     </main>

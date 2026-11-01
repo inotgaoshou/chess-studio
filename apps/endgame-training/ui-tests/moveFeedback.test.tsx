@@ -161,9 +161,11 @@ it("renders a numbered arrowhead for every saved branch independently of AI hint
     const marker=[...ui.container.querySelectorAll('marker')].find(marker=>ref===`url(#${marker.id})`)!;
     const color=arrow.querySelector('.analysis-arrow-stem')!.getAttribute('stroke');
     expect(marker.querySelector('path')?.getAttribute('fill')).toBe(color);
-    expect((strip.container.querySelectorAll('.manual-branch-choices button')[index] as HTMLElement).style.getPropertyValue('--branch-color')).toBe((arrow as SVGGElement).style.getPropertyValue('--analysis-arrow-color'));
+    expect((strip.container.querySelectorAll('.manual-branch-choices button')[index] as HTMLElement).style.getPropertyValue('--branch-color')).toBe('#438a52');
   }
-  expect(arrows.every(arrow=>(arrow as SVGGElement).style.getPropertyValue('--analysis-arrow-color')==='#438a52')).toBe(true);
+  expect(arrows.every(arrow=>(arrow as SVGGElement).style.getPropertyValue('--analysis-arrow-color')==='#f87924')).toBe(true);
+  expect(arrows.every(arrow=>arrow.querySelector('.analysis-arrow-stem')?.getAttribute('stroke')==='#f87924')).toBe(true);
+  expect(ui.container.querySelector('svg[data-arrow-source="saved-branch"]')).toBeTruthy();
 });
 
 it("keeps opposite cannon branch numbers off pieces and distinct after flipping",()=>{
@@ -188,6 +190,8 @@ it("uses the same piece-avoiding badge positions for AI hints and saved branches
  ui.rerender(<Board {...props} analysisMoves={["e6e8","e6e5"]}/>);
  expect(positions()).toEqual(branches);
  expect(ui.container.querySelectorAll('.branch-label-leader')).toHaveLength(2);
+ expect(ui.container.querySelector('svg[data-arrow-source="recommendation"]')).toBeTruthy();
+ expect(ui.container.querySelector('.analysis-arrow-stem')?.getAttribute('stroke')).toBe('#f87924');
 });
 
 it.each([false,true])("points empty branch arrowheads at the actual intersection (flipped=%s)",flipped=>{

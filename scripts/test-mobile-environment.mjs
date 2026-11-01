@@ -90,6 +90,7 @@ function harness({ packageEnv = "test", native = true, dev = false, configured =
     "./providerMirrors": load("providerMirrors"),
     "./appEnvironment": environment,
     "./practiceScoring": load("practiceScoring"),
+    "./verificationPolicy": load("verificationPolicy"),
     "./secureSession": {
       isNativeSessionStore: () => native,
       secureSession: {

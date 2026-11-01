@@ -21,6 +21,17 @@ func check(_ game: [String: Any], folder: String?) {
     precondition((game["branches"] as? [[String: Any]])?.count == 1, "branches lost")
 }
 private let db = TrainingDatabase()
+if CommandLine.arguments.count > 2 && CommandLine.arguments[2] == "read-restart" {
+    let saved = try object(db.openManualGame("restart-fixture"))
+    precondition(saved["moves"] as? [String] == ["a3a4"])
+    precondition((saved["comments"] as? [String: String])?["main:1"] == "保留注释")
+    precondition((saved["branches"] as? [[String: Any]])?.count == 2)
+    precondition(saved["cursor"] as? Int == 1)
+    precondition(saved["currentNodeId"] as? String == "a3a4")
+    precondition(saved["currentFen"] as? String == "persisted-fen")
+    print("PASS fresh process: mainline, comments, saved variations and current position survive SQLite reopen")
+    exit(0)
+}
 try db.saveManualGame(["id":"fixture", "title":"移动验证", "folderPath":"比赛", "startingFen":"fen", "moves":["a3a4"], "comments":["main:1":"保留注释"], "branches":[["id":"branch"]], "updatedAt":"2000-01-01T00:00:00Z"])
 try db.moveManualGame(id:"fixture", folder:"比赛/决赛/精选")
 check(try object(db.openManualGame("fixture")), folder:"比赛/决赛/精选")
@@ -52,6 +63,10 @@ try db.saveManualGame(readonly)
 rejected = false
 do { try db.saveManualGame(readonly, expectedUpdatedAt: "2099-01-01T00:00:00Z") } catch { rejected = true }
 precondition(rejected, "read-only source was modified")
+var restart = savedVariation
+restart["id"] = "restart-fixture"
+restart["cursor"] = 1; restart["currentNodeId"] = "a3a4"; restart["currentFen"] = "persisted-fen"
+try db.saveManualGame(restart)
 try db.deleteManualGame("fixture")
 rejected = false
 do { try db.saveManualGame(snapshot, expectedUpdatedAt: version) } catch { rejected = true }
@@ -65,3 +80,5 @@ with tempfile.TemporaryDirectory(prefix="qixi-folder-store-") as tmp:
     executable = pathlib.Path(tmp) / "test-store"
     subprocess.run(["xcrun", "swiftc", str(path), "-o", str(executable)], check=True)
     subprocess.run([str(executable), tmp], check=True)
+
+    subprocess.run([str(executable), tmp, "read-restart"], check=True)

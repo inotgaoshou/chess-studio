@@ -42,20 +42,20 @@ test("groups after 20 retain list ordinals and can reach adjacent loaded groups"
 
 test("group totals include a partial last group and share navigation order", () => {
   const numbers=currentListNumbers(Array.from({length:50},(_,i)=>({id:`p${i+1}`})));
-  assert.deepEqual(practiceGroupSummary(numbers,"p1",50),{current:1,total:3,complete:true});
-  assert.deepEqual(practiceGroupSummary(numbers,"p22",50),{current:2,total:3,complete:true});
-  assert.deepEqual(practiceGroupSummary(numbers,"p50",50),{current:3,total:3,complete:true});
-  assert.deepEqual(practiceGroupSummary({p:1},"p",1),{current:1,total:1,complete:true});
-  assert.deepEqual(practiceGroupSummary(currentListNumbers(Array.from({length:20},(_,i)=>({id:String(i)}))),"19",20),{current:1,total:1,complete:true});
+  assert.deepEqual(practiceGroupSummary(numbers,"p1",50),{current:1,total:3,problemCount:50,complete:true});
+  assert.deepEqual(practiceGroupSummary(numbers,"p22",50),{current:2,total:3,problemCount:50,complete:true});
+  assert.deepEqual(practiceGroupSummary(numbers,"p50",50),{current:3,total:3,problemCount:50,complete:true});
+  assert.deepEqual(practiceGroupSummary({p:1},"p",1),{current:1,total:1,problemCount:1,complete:true});
+  assert.deepEqual(practiceGroupSummary(currentListNumbers(Array.from({length:20},(_,i)=>({id:String(i)}))),"19",20),{current:1,total:1,problemCount:20,complete:true});
   assert.equal(practiceGroupSummary(numbers,"missing",50),undefined);
 });
 
 test("catalog total is independent of loaded pages; unknown counts are labelled incomplete", () => {
   const numbers=currentListNumbers(Array.from({length:50},(_,i)=>({id:`p${i+1}`})));
-  assert.deepEqual(practiceGroupSummary(numbers,"p22",501),{current:2,total:26,complete:true});
+  assert.deepEqual(practiceGroupSummary(numbers,"p22",501),{current:2,total:26,problemCount:501,complete:true});
   for(const count of [undefined,null,NaN,Infinity,0,20,50.5]) {
-    assert.deepEqual(practiceGroupSummary(numbers,"p22",count),{current:2,total:3,complete:false});
+    assert.deepEqual(practiceGroupSummary(numbers,"p22",count),{current:2,total:3,problemCount:50,complete:false});
   }
-  assert.deepEqual(practiceGroupSummary({p:1,invalid:NaN,zero:0,negative:-1},"p",1),{current:1,total:1,complete:true});
-  assert.deepEqual(practiceGroupSummary(currentListNumbers([{id:"p50"}]),"p50",1),{current:1,total:1,complete:true});
+  assert.deepEqual(practiceGroupSummary({p:1,invalid:NaN,zero:0,negative:-1},"p",1),{current:1,total:1,problemCount:1,complete:true});
+  assert.deepEqual(practiceGroupSummary(currentListNumbers([{id:"p50"}]),"p50",1),{current:1,total:1,problemCount:1,complete:true});
 });

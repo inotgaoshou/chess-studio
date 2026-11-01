@@ -250,13 +250,16 @@ describe("endgame shared board selection", () => {
 describe("endgame selection markers", () => {
   it("uses lift alone for selection and restores overlapping last-move markers on release", () => {
     const { container, rerender } = render(<Board {...defaults} selected={pieces[0]} onSquare={() => {}}/>);
-    expect(container.querySelectorAll(".board-marker-layer path")).toHaveLength(0);
+    expect(container.querySelector(".board-marker-layer")).toBeNull();
     rerender(<Board {...defaults} selected={pieces[0]} lastMove="a1a0" onSquare={() => {}}/>);
-    expect(container.querySelectorAll(".board-marker-layer path")).toHaveLength(1);
+    expect(container.querySelector(".board-last-move-target")?.getAttribute("visibility")).toBe("hidden");
+    expect(container.querySelector(".board-last-move-source")?.getAttribute("visibility")).toBeNull();
     rerender(<Board {...defaults} lastMove="a1a0" onSquare={() => {}}/>);
-    expect(container.querySelectorAll(".board-marker-layer path")).toHaveLength(2);
+    expect(container.querySelector(".board-last-move-target")?.getAttribute("visibility")).toBeNull();
+    expect(container.querySelector(".board-last-move-source")?.getAttribute("visibility")).toBeNull();
     rerender(<Board {...defaults} selected={pieces[0]} lastMove="a0a1" flipped onSquare={() => {}}/>);
-    expect(container.querySelectorAll(".board-marker-layer path")).toHaveLength(1);
+    expect(container.querySelector(".board-last-move-source")?.getAttribute("visibility")).toBe("hidden");
+    expect(container.querySelector(".board-last-move-target")?.getAttribute("visibility")).toBeNull();
   });
 });
 

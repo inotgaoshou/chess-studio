@@ -7,7 +7,7 @@ export const FEEDBACK_DURATION: Record<TrainingFeedbackKind, number> = { move:18
 export const TRAINING_FEEDBACK_PACK = {
   id: "reference-board-v109",
   labels: { check: "将", checkmate: "绝杀", stalemate: "困毙" },
-  voice: { move:"/audio/v109-move.wav",capture:"/audio/v109-capture.wav",captureAdvisor:"/audio/v109-capture-advisor.wav",captureElephant:"/audio/v109-capture-elephant.wav",check:"/audio/v109-check.wav",checkmate:"/audio/v109-checkmate.wav",stalemate:"/audio/v109-stalemate.wav" },
+  voice: { move:"/audio/v109-move.wav",capture:"/audio/v109-capture.wav",captureAdvisor:"/audio/v109-capture-advisor.wav",captureElephant:"/audio/v109-capture-elephant.wav",check:"/audio/v109-check.wav",checkmate:"/audio/v109-checkmate.wav",stalemate:"/audio/v109-stalemate-reference-v5.wav" },
 } as const;
 export type FeedbackAudioCue = keyof typeof TRAINING_FEEDBACK_PACK.voice;
 export function captureVariant(event?: TrainingFeedbackEvent) {
