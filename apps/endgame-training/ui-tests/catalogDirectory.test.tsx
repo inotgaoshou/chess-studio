@@ -19,7 +19,7 @@ it("opens a paged directory without starting practice and selects a sibling chap
  fireEvent.click(screen.getByRole("button",{name:"按书本学习",exact:true}));
  fireEvent.click(await screen.findByRole("button",{name:/实用残局增订本.*可练题/}));
  fireEvent.click(await screen.findByRole("button",{name:/车类.*可练题/}));
- await screen.findByRole("button",{name:/第 1 题 · 车兵胜法/});
+ await screen.findByRole("button",{name:/^(?!跳到).*第 1 题 · 车兵胜法/});
  expect(screen.queryByRole("navigation",{name:"数字导航"})).toBeNull();
  fireEvent.click(screen.getByRole("button",{name:"目录",exact:true}));const dialog=within(screen.getByRole("dialog",{name:"残局目录"}));
  fireEvent.click(await dialog.findByRole("button",{name:/马类.*可练题/}));

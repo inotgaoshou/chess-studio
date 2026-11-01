@@ -170,13 +170,13 @@ describe("catalog role, reading and filter integration",()=>{
     vi.mocked(teachingClient.catalogProblems).mockResolvedValue({items:[{...problem,title:"车兵巧胜单士",sideToMove:"red",solutionLength:3}]} as never);
     render(<TeachingCatalog auth={auth("student",true)} scene="browse" compact/>);
     fireEvent.click(await screen.findByRole("button",{name:/实用残局/}));
-    expect(await screen.findByRole("button",{name:/第 1 题 · 车兵巧胜单士/})).toBeTruthy();
+    expect(await screen.findByRole("button",{name:/^(?!跳到).*第 1 题 · 车兵巧胜单士/})).toBeTruthy();
   });
   for(const role of ["student","coach","admin"] as const)it(`${role}: original answer badge, reading items, and opening callbacks`,async()=>{
     window.dispatchEvent(new Event("teaching-content-reset"));catalogFixture();const onReadSolution=vi.fn(),onPractice=vi.fn(),onReadGame=vi.fn();
     render(<TeachingCatalog auth={auth(role)} teacher={role!=="student"} scene="browse" compact onReadSolution={onReadSolution} onPractice={onPractice} onReadGame={onReadGame}/>);
     fireEvent.click(await screen.findByRole("button",{name:/基础杀法/}));
-    const question=await screen.findByRole("button",{name:/第 1 题/});
+    const question=await screen.findByRole("button",{name:/^(?!跳到).*第 1 题/});
     expect(Boolean(screen.queryByText("原题解"))).toBe(role!=="student");
     expect(Boolean(screen.queryByRole("button",{name:/看题解/}))).toBe(role!=="student");
     fireEvent.click(question);expect(onPractice).toHaveBeenCalledWith(["p1"],"图1","p1",{p1:1},"基础杀法",100);
@@ -195,7 +195,7 @@ describe("catalog role, reading and filter integration",()=>{
     const onPractice=vi.fn();render(<TeachingCatalog auth={studentAuth} scene="browse" compact onPractice={onPractice}/>);
     fireEvent.click(await screen.findByRole("button",{name:/基础杀法/}));await screen.findByText("第 1 题");
     expect(screen.queryByText("按教材查看")).toBeNull();expect(screen.queryByRole("button",{name:"原书章节"})).toBeNull();
-    fireEvent.click(await screen.findByRole("button",{name:/第 1 题/}));expect(onPractice).toHaveBeenCalledWith(["p1"],"图1","p1",{p1:1},"基础杀法",100);
+    fireEvent.click(await screen.findByRole("button",{name:/^(?!跳到).*第 1 题/}));expect(onPractice).toHaveBeenCalledWith(["p1"],"图1","p1",{p1:1},"基础杀法",100);
     expect(screen.queryByRole("button",{name:"教材学习"})).toBeNull();
     expect(vi.mocked(teachingClient.catalogBrowse).mock.calls.some(([params])=>params.view==="materials")).toBe(false);
   });
@@ -205,10 +205,10 @@ describe("catalog role, reading and filter integration",()=>{
     fireEvent.click(await screen.findByRole("button",{name:/基础杀法/}));
     fireEvent.click(screen.getByRole("button",{name:"棋谱学习"}));await screen.findByRole("button",{name:"真实教材棋谱"});
     ui.rerender(<TeachingCatalog auth={studentAuth} scene="browse" compact/>);
-    await screen.findByRole("button",{name:/第 1 题/});
+    await screen.findByRole("button",{name:/^(?!跳到).*第 1 题/});
     expect(screen.queryByRole("button",{name:"真实教材棋谱"})).toBeNull();
     ui.unmount();render(<TeachingCatalog auth={studentAuth} scene="browse" compact/>);
-    await screen.findByRole("button",{name:/第 1 题/});
+    await screen.findByRole("button",{name:/^(?!跳到).*第 1 题/});
     expect(screen.queryByText("暂无已审核教材")).toBeNull();
     expect(screen.queryByRole("button",{name:"教材学习"})).toBeNull();
   });
@@ -264,7 +264,7 @@ describe("catalog role, reading and filter integration",()=>{
     render(<TeachingCatalog auth={auth("student",true)} scene="browse" compact onPractice={onPractice}/>);
     fireEvent.click(await screen.findByRole("button",{name:/基础杀法/}));await screen.findByText("第 1 题");
     fireEvent.click(screen.getByRole("button",{name:"加载更多题目"}));
-    fireEvent.click(await screen.findByRole("button",{name:/第 2 题/}));
+    fireEvent.click(await screen.findByRole("button",{name:/^(?!跳到).*第 2 题/}));
     expect(onPractice).toHaveBeenCalledWith(["p1","p2"],"图2","p2",{p1:1,p2:2},"基础杀法",2);
   });
   it("teacher assignment selection keeps its original filters and selection action",async()=>{
@@ -274,7 +274,7 @@ describe("catalog role, reading and filter integration",()=>{
     render(<TeachingCatalog auth={auth("coach")} teacher scene="select" onAdd={onAdd}/>);
     fireEvent.click(await screen.findByRole("button",{name:/布置章节/}));
     expect(await screen.findByLabelText("搜索章节题目")).toBeTruthy();expect(screen.getByLabelText("精确杀法步数")).toBeTruthy();
-    fireEvent.click(await screen.findByRole("button",{name:/第 1 题/}));expect(onAdd).toHaveBeenCalledOnce();
+    fireEvent.click(await screen.findByRole("button",{name:/^(?!跳到).*第 1 题/}));expect(onAdd).toHaveBeenCalledOnce();
     expect(screen.queryByRole("button",{name:/看题解/})).toBeNull();expect(screen.getByRole("button",{name:"选择当前章节/筛选的全部题目"})).toBeTruthy();
   });
 });
@@ -299,7 +299,7 @@ it("uses the same question picker for practical endgames and mates, with source 
   const ui=solver({origin:{section:"题库",label:"实用残局"},sourceLibraries:[{id:"platform:local",title:"实用残局精选"}],navigator});
   expect(screen.queryByText(/来源：/)).toBeNull();expect(screen.queryByRole("navigation",{name:"数字导航"})).toBeNull();
   fireEvent.click(screen.getByRole("button",{name:/21.*21–22/}));
-  fireEvent.click(screen.getByRole("listitem",{name:/第 22 题/}));expect(onSelect).toHaveBeenCalledWith(1);
+  fireEvent.click(screen.getByRole("listitem",{name:/^(?!跳到).*第 22 题/}));expect(onSelect).toHaveBeenCalledWith(1);
   fireEvent.click(screen.getByRole("button",{name:/学习思路/}));
   expect(screen.getByText("来源：《实用残局精选》 · 原题第 1 题")).toBeTruthy();
   fireEvent.click(screen.getByRole("button",{name:"关闭学习思路"}));
@@ -348,9 +348,18 @@ it("shows one list ordinal when the source title is only another ordinal",()=>{
 it("keeps completion and revealed markers visible on the current numbered question",()=>{
  solver({navigator:{items:[{id:"a",number:21,title:"",status:"completed"},{id:"b",number:22,title:"",status:"revealed"},{id:"c",number:23,title:"",status:"pending"}],index:0,onSelect:vi.fn()}});
  fireEvent.click(screen.getByRole("button",{name:/21.*21–23/}));
- const completed=screen.getByRole("listitem",{name:/第 21 题，当前题，已完成/});
+ const completed=screen.getByRole("listitem",{name:/^(?!跳到).*第 21 题，当前题，已完成/});
  expect(completed.getAttribute("aria-current")).toBe("step");
  expect(completed.querySelector(".problem-number-status")?.textContent).toBe("✓");
- expect(screen.getByRole("listitem",{name:/第 22 题，已查看解析/}).querySelector(".problem-number-status")?.textContent).toBe("阅");
- expect(screen.getByRole("listitem",{name:/第 23 题，待完成/}).querySelector(".problem-number-status")).toBeNull();
+ expect(screen.getByRole("listitem",{name:/^(?!跳到).*第 22 题，已查看解析/}).querySelector(".problem-number-status")?.textContent).toBe("阅");
+ expect(screen.getByRole("listitem",{name:/^(?!跳到).*第 23 题，待完成/}).querySelector(".problem-number-status")).toBeNull();
+});
+
+it("keeps only the question picker and previous/next in the solver, with no inline number grid",()=>{
+ solver({navigator:{items:[{id:"a",number:1,title:"",status:"pending"},{id:"b",number:2,title:"",status:"completed"}],index:0,onSelect:vi.fn()}});
+ expect(screen.queryByRole("navigation",{name:"练习数字导航"})).toBeNull();
+ expect(screen.queryByRole("navigation",{name:"题库数字导航"})).toBeNull();
+ expect(document.querySelector(".practice-question-number-grid")).toBeNull();
+ expect(screen.getByRole("button",{name:"下一题"})).toBeTruthy();
+ expect(document.querySelector(".mobile-problem-navigator-trigger")).toBeTruthy();
 });

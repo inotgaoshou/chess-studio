@@ -8,8 +8,8 @@ const chapter={...book,id:'practical-chapter',name:'车兵残局',kind:'chapter'
 const makeProblem=i=>({...responseFor(new URL('http://fixture/api/v1/student/problems/p'+i)),title:'车兵巧胜单士 '+(i+1)});
 (async()=>{
  const browser=await(process.env.WEBKIT?webkit.launch({headless:true}):chromium.launch({channel:'chrome',headless:true}));
- const output=process.env.OUTPUT_DIR||'.local/practical-10073';fs.mkdirSync(output,{recursive:true});
- try{for(const viewport of [{width:390,height:844},{width:1024,height:768}]){
+ const output=process.env.OUTPUT_DIR||'artifacts/practice-navigation-10134/practical';fs.mkdirSync(output,{recursive:true});
+ try{for(const viewport of [{width:320,height:740},{width:390,height:844},{width:430,height:932},{width:844,height:390},{width:820,height:1180},{width:1180,height:820}]){
   const page=await browser.newPage({viewport,hasTouch:true,isMobile:true});page.setDefaultTimeout(10000);const requests=[],errors=[];let session;
   page.on('pageerror',e=>errors.push(e.message));
   await page.route('**/api/v1/**',async route=>{
@@ -23,7 +23,7 @@ const makeProblem=i=>({...responseFor(new URL('http://fixture/api/v1/student/pro
    await route.fulfill({contentType:'application/json',body:JSON.stringify(body)});
   });
   await page.addInitScript(()=>{localStorage.setItem('xiangqi-training-mobile-onboarding-v1','done');localStorage.setItem('xiangqi-teaching-session-server','http://127.0.0.1:8090');document.documentElement?.classList.add('tablet-webview');});
-  await page.goto((process.env.MOBILE_URL||'http://127.0.0.1:1479')+'/library');
+  await page.goto((process.env.MOBILE_URL||'http://127.0.0.1:1462')+'/library');
   await page.getByRole('button',{name:/实用残局/}).click();
   const catalog=page.getByRole('region',{name:'教学题库目录',exact:true});
   await catalog.getByText('来源：《训练教材》 · 原题第 1 题',{exact:true}).waitFor();
@@ -32,10 +32,10 @@ const makeProblem=i=>({...responseFor(new URL('http://fixture/api/v1/student/pro
   const card=catalog.locator('.catalog-problem-card').nth(24);
   await page.waitForFunction(()=>{const r=document.querySelectorAll('.catalog-problem-card')[24]?.getBoundingClientRect();return r&&r.top>=0&&r.top<innerHeight;});
   assert(await card.evaluate(node=>{const r=node.getBoundingClientRect();return r.top>=0&&r.top<innerHeight;}),'numeric jump must scroll to the card');
-  await catalog.getByRole('button',{name:'加载更多题目'}).click();
+  await catalog.getByRole('button',{name:'下一页题目'}).click();
   await page.getByRole('option',{name:'61–80'}).waitFor({state:'attached'});
   await page.getByRole('combobox',{name:'题号范围'}).selectOption('0');
-  await page.getByRole('button',{name:/跳到第 1 题：/}).click();
+  await page.getByRole('button',{name:/跳到第 1 题/}).click();
   await catalog.getByRole('button',{name:/筛选/}).click();
   await catalog.getByRole('combobox',{name:'兵种'}).selectOption('r');
   await page.waitForFunction(()=>document.querySelectorAll('.catalog-problem-card').length===50);
@@ -47,23 +47,19 @@ const makeProblem=i=>({...responseFor(new URL('http://fixture/api/v1/student/pro
   await catalog.getByRole('button',{name:/车兵残局.*可练题/}).click();
   await catalog.locator('.catalog-problem-card').first().waitFor();
   await page.screenshot({path:`${output}/book-chapter-${viewport.width}.png`});
-  await page.getByRole('button',{name:'悬浮题号导航',exact:true}).click();
-  const floating=page.getByRole('navigation',{name:'数字导航',exact:true});
-  assert(await floating.evaluate(n=>n.parentElement===document.body),'floating navigator must escape scroll ancestors');
-  const handle=page.getByRole('button',{name:/拖动题号导航/});
-  const start=await handle.boundingBox();
-  await page.mouse.move(start.x+20,start.y+20);await page.mouse.down();await page.mouse.move(20,80,{steps:5});await page.mouse.up();
-  const bounds=await floating.boundingBox();assert(bounds.x>=0&&bounds.y>=0&&bounds.x+bounds.width<=viewport.width+1,'drag keeps panel on screen');
-  await page.getByRole('button',{name:'收起题号导航',exact:true}).click();
-  assert(await floating.getByRole('button',{name:/跳到第/}).count()===0);
-  await page.screenshot({path:`${output}/floating-collapsed-${viewport.width}.png`});
-  await page.getByRole('button',{name:'展开题号导航',exact:true}).click();
-  await page.screenshot({path:`${output}/floating-expanded-${viewport.width}.png`});
-  await page.getByRole('button',{name:'取消悬浮题号导航',exact:true}).click();
+  const numbers=page.getByRole('navigation',{name:'题库数字导航',exact:true});
+  await numbers.getByRole('button',{name:'收起数字导航',exact:true}).click();
+  assert.equal(await numbers.getByRole('button',{name:/跳到第/}).count(),0);
+  await numbers.getByRole('button',{name:'展开数字导航',exact:true}).click();
+  await numbers.getByRole('combobox',{name:'题号范围'}).selectOption('1');
+  await numbers.getByRole('button',{name:/跳到第 25 题/}).waitFor();
+  await numbers.scrollIntoViewIfNeeded();
+  await page.screenshot({path:`${output}/outer-numbers-${process.env.WEBKIT?'webkit':'chrome'}-${viewport.width}.png`});
   await catalog.locator('.catalog-problem-card').first().locator('button').first().click();
-  await page.getByRole('navigation',{name:'数字导航',exact:true}).waitFor();
-  await page.getByText('来源：《训练教材》 · 原题第 1 题',{exact:true}).waitFor();
-  await page.getByRole('button',{name:/跳到第 5 题/}).click();
+  await page.locator('.mobile-solver-page').waitFor();
+  assert.equal(await page.getByRole('navigation',{name:'题库数字导航',exact:true}).count(),0);
+  await page.locator('.mobile-problem-navigator-trigger').click();
+  await page.getByRole('listitem',{name:/^第 5 题/}).click();
   await page.getByText('第 5 题 · 车兵巧胜单士 5',{exact:true}).waitFor();
   await page.screenshot({path:`${output}/solver-${process.env.WEBKIT?'webkit':'chrome'}-${viewport.width}.png`});
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'no horizontal overflow');

@@ -1,10 +1,11 @@
 import { LearningRouteEntries, LearningRouteSheet, LEARNING_ROUTES, type LearningRouteKind, type LearningRouteSelection } from "./LearningRoutes";
 import { learningRouteApplied, learningRouteQuery, learningRouteTarget, validateLearningRouteItems } from "./learningRouteNavigation";
 import { CatalogDirectorySheet } from "./CatalogDirectorySheet";
-import { ProblemNumberNavigation } from "./ProblemNumberNavigation";
+import { PracticeQuestionNumbers } from "./PracticeQuestionNumbers";
+import { localTrialNavigationStatus } from "./localTrainingProgress";
 import { problemSourceLabel, type ProblemSourceLibrary } from "./problemSource";
 import { mobileExerciseTitle, mobileTopicName } from "./mobileExercisePresentation";
-import { numberedProblemLabel, currentListNumbers, practiceGroupIds } from "./practiceNavigation";
+import { numberedProblemLabel, numberedProblemTitle, type ProblemNavigationStatus, currentListNumbers, practiceGroupIds } from "./practiceNavigation";
 import { canViewExerciseSolutions } from "./exercisePresentation";
 import { MobileCatalogFilters, activeCatalogFilterCount } from "./MobileCatalogFilters";
 import {catalogContentLabels,catalogVisibleChildren,catalogReadingItems} from "./catalogContent";
@@ -26,7 +27,7 @@ export function FenThumbnail({ fen }: { fen: string }) {
   return <svg className="catalog-board" viewBox="0 0 168 186" role="img" aria-label="初始棋盘缩略图"><rect width="168" height="186" rx="5" fill="#f4deb3"/>{Array.from({ length: 10 }, (_, i) => <path key={`r${i}`} d={`M12 ${12 + i * 18}h144`} stroke="#a88c60" strokeWidth=".7"/>)}{Array.from({ length: 9 }, (_, i) => <path key={`c${i}`} d={i === 0 || i === 8 ? `M${12 + i * 18} 12v162` : `M${12 + i * 18} 12v72m0 18v72`} stroke="#a88c60" strokeWidth=".7"/>)}<path d="M66 12l36 36m0-36L66 48m0 90l36 36m0-36l-36 36" stroke="#a88c60" strokeWidth=".7"/>{pieces.map(({ x, y, code }, i) => <g key={i}><circle cx={x} cy={y} r="7.8" fill="#fff5df" stroke="#a98d62"/><text x={x} y={y + 3.2} textAnchor="middle" fontSize="10" fontWeight="700" fill={code === code.toUpperCase() ? "#a32c22" : "#282620"}>{labels[code]}</text></g>)}</svg>;
 }
 export type CatalogBrowsePage = { currentNode?:TeachingCatalogNode|null; breadcrumbs:TeachingCatalogNode[]; children:TeachingCatalogNode[]; nextCursor?:string|null; learningMaterials:Array<{id:string;title:string;reviewStatus:string}>; materialNextCursor?:string|null };
-type Props = { sourceLibraries?: ProblemSourceLibrary[]; initialMateStep?: string; auth?: TeachingAuth; teacher?: boolean; scene?: "browse" | "select"; compact?: boolean; onNavigate?():void; onLocationChange?(inside:boolean):void; sourceLibraryId?:string; selectedIds?: string[]; onAdd?(items: CatalogProblem[]): void; onRemove?(id:string):void; onPractice?(ids:string[],title?:string,preferredProblemId?:string,numbers?:Record<string,number>,originLabel?:string,totalProblems?:number|null):void; onRehearse?(id:string):void; onReadGame?(id:string):void; onReadSolution?(ids:string[]):void };
+type Props = { practiceStatuses?: Record<string,ProblemNavigationStatus>; sourceLibraries?: ProblemSourceLibrary[]; initialMateStep?: string; auth?: TeachingAuth; teacher?: boolean; scene?: "browse" | "select"; compact?: boolean; onNavigate?():void; onLocationChange?(inside:boolean):void; sourceLibraryId?:string; selectedIds?: string[]; onAdd?(items: CatalogProblem[]): void; onRemove?(id:string):void; onPractice?(ids:string[],title?:string,preferredProblemId?:string,numbers?:Record<string,number>,originLabel?:string,totalProblems?:number|null):void; onRehearse?(id:string):void; onReadGame?(id:string):void; onReadSolution?(ids:string[]):void };
 type ItemPage = {items:CatalogProblem[];cursor?:string|null;firstPage?:{items:CatalogProblem[];cursor?:string|null}};
 const itemDisplays = new Map<string, Map<string, ItemPage>>();
 function itemDisplayCache(scope:string) {
@@ -36,7 +37,7 @@ function itemDisplayCache(scope:string) {
   return cache;
 }
 function saveItemDisplay(cache:Map<string,ItemPage>,key:string,page:ItemPage){cache.set(key,page);if(cache.size>80)cache.delete(cache.keys().next().value!);}
-type CatalogLocation = {learningSelection?:LearningRouteSelection;bookView?:"all"|"books";teachingEntry?:string;mateChoice?:string|null;directoryQuery:string; query:string; goal:string; difficulty:string; mateGroup:string; mateMoves:string; material:string; motif:string; mode:string; nodeCount:number; itemCount:number; materialCount:number; scroll:number};
+type CatalogLocation = {activeProblemId?:string;learningSelection?:LearningRouteSelection;bookView?:"all"|"books";teachingEntry?:string;mateChoice?:string|null;directoryQuery:string; query:string; goal:string; difficulty:string; mateGroup:string; mateMoves:string; material:string; motif:string; mode:string; nodeCount:number; itemCount:number; materialCount:number; scroll:number};
 const navigation = new Map<string,CatalogLocation & {id:string|null}>();
 const locationCaches = new Map<string,Map<string,CatalogLocation>>();
 function scopedLocations(scope:string) {
@@ -53,7 +54,7 @@ const BASIC_TOPIC_ID = "e0c0221d-1b02-5f2c-9122-a7b0821f2603";
 const HIDDEN_BASIC_BOOKS = new Set(["90134f10-dc44-4b4e-b203-992af2d4c73c", "38f0967a-3b69-4fa5-9834-534959af52ed"]);
 const BOOK_TEACHING_ENTRIES = new Set(["practical_endgames", "middlegame"]);
 const MATE_TEACHING_ENTRIES = new Set(["basic_mates", "mate_series", "checking_mates", "quiet_mates", "practical_mates", "endgame_mates"]);
-function CatalogView({ sourceLibraries = [], initialMateStep, auth, teacher = false, scene = "select", compact = false, onNavigate, onLocationChange, sourceLibraryId, selectedIds = [], onAdd, onRemove, onPractice, onRehearse, onReadGame, onReadSolution, scope }: Props & {scope:string}) {
+function CatalogView({ practiceStatuses, sourceLibraries = [], initialMateStep, auth, teacher = false, scene = "select", compact = false, onNavigate, onLocationChange, sourceLibraryId, selectedIds = [], onAdd, onRemove, onPractice, onRehearse, onReadGame, onReadSolution, scope }: Props & {scope:string}) {
   const selection = teacher && scene === "select";
   const answersAllowed = canViewExerciseSolutions(auth);
   const mobileBrowse = compact && scene === "browse";
@@ -74,7 +75,7 @@ function CatalogView({ sourceLibraries = [], initialMateStep, auth, teacher = fa
   const studentTrainingOnly=mobileBrowse&&auth?.user.role==="student"&&(!catalogEntry||MATE_TEACHING_ENTRIES.has(catalogEntry)||catalogEntry==="capture");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [directoryOpen,setDirectoryOpen] = useState(false);
-  const [numbersOpen,setNumbersOpen] = useState(false);
+  const [activeProblemId,setActiveProblemId] = useState(restored?.activeProblemId);
   const viewRef=useRef<HTMLElement>(null);
   const readScroll=()=>scrollContainer(viewRef.current)?.scrollTop??window.scrollY;
   const restoreScroll=()=>{const top=directMate&&stepScroll.current.has(stepVisitKey)?stepScroll.current.get(stepVisitKey)!:restoreLocation(locations.current.get(nodeId||"root"))?.scroll??(restored?.id===nodeId?restored.scroll:0)??0;const container=scrollContainer(viewRef.current);if(container)container.scrollTop=top;else window.scrollTo(0,top);};
@@ -119,7 +120,7 @@ function CatalogView({ sourceLibraries = [], initialMateStep, auth, teacher = fa
   const problemLevel = (mobileBrowse && !mobileBookBrowse && !!nodeId) || directMate || directCapture || browse.page.currentNode?.kind === "chapter" || Boolean(nodeId && browse.page.currentNode?.id === nodeId && !browse.loading && !nodes.length && !nodeCursor && (browse.page.currentNode.itemCount ?? 0) > 0);
 
   const locations=useRef(scopedLocations(scope));
-  function saveNavigation(){if(directMate)stepScroll.current.set(stepVisitKey,readScroll());const location={learningSelection,bookView,teachingEntry:catalogEntry,mateChoice,directoryQuery,query,goal,difficulty,mateGroup,mateMoves,material,motif,mode,nodeCount:nodes.length,itemCount:items.length,materialCount:materials.length,scroll:readScroll()};navigation.set(scope,{id:nodeId,...location});locations.current.set(nodeId||"root",location);if(locations.current.size>80)locations.current.delete(locations.current.keys().next().value!);}
+  function saveNavigation(activeId=activeProblemId){if(directMate)stepScroll.current.set(stepVisitKey,readScroll());const location={activeProblemId:activeId,learningSelection,bookView,teachingEntry:catalogEntry,mateChoice,directoryQuery,query,goal,difficulty,mateGroup,mateMoves,material,motif,mode,nodeCount:nodes.length,itemCount:items.length,materialCount:materials.length,scroll:readScroll()};navigation.set(scope,{id:nodeId,...location});locations.current.set(nodeId||"root",location);if(locations.current.size>80)locations.current.delete(locations.current.keys().next().value!);}
   const pendingScroll=useRef(true);
   const stepScroll=useRef(new Map<string,number>());
   const stepVisitKey=`${nodeId}:${selectedStep}`;
@@ -128,12 +129,13 @@ function CatalogView({ sourceLibraries = [], initialMateStep, auth, teacher = fa
   const autoReading=useRef(false);
   useEffect(()=>{if(autoReading.current&&browse.page.currentNode?.id===nodeId&&browse.page.currentNode.itemCount!=null){autoReading.current=false;if(browse.page.currentNode.itemCount===0&&(browse.page.currentNode.materialCount??0)>0)setMode("reading");}},[nodeId,browse.page.currentNode]);
   function navigate(id: string | null, step?: string, suppliedTarget?: TeachingCatalogNode) {
-    setDirectoryOpen(false);setNumbersOpen(false);
+    setDirectoryOpen(false);
     onNavigate?.();
     saveNavigation();
     // A direct step entry is a fresh exercise choice; ordinary browsing keeps
     // the prior page's mode, filters and scroll position.
     const old = step ? undefined : restoreLocation(locations.current.get(id || "root"));
+    setActiveProblemId(old?.activeProblemId);
     setMateChoice(step ?? old?.mateChoice ?? null);
     pendingScroll.current = true;
     setDirectoryQuery(old?.directoryQuery || ""); setQuery(old?.query || "");
@@ -259,7 +261,7 @@ function CatalogView({ sourceLibraries = [], initialMateStep, auth, teacher = fa
       <label className="catalog-more-steps"><span>{Number(selectedStep)>=5?`${selectedStep}步杀 ▾`:"更多步数 ▾"}</span><select aria-label="更多步数" value={Number(selectedStep)>=5?selectedStep:""} onChange={e=>{if(e.target.value)chooseStep(e.target.value);}}><option value="" disabled>更多步数</option>{stepCounts?.filter(n=>n.mateMoves>=5&&n.itemCount>0).map(n=><option key={n.mateMoves} value={n.mateMoves}>{n.mateMoves}步杀（{n.itemCount}题）</option>)}</select></label></div>
       {stepCounts==null?<div className="catalog-step-status" role="status">步数统计更新中，可先按题号浏览。<button type="button" onClick={browse.retryCounts}>重试统计</button></div>:!firstStep?<p className="catalog-step-status">步数待确认，按题号显示。</p>:null}
       <button className="catalog-filter-toggle" type="button" aria-expanded={filtersOpen} onClick={()=>setFiltersOpen(v=>!v)}><SlidersHorizontal aria-hidden="true"/>筛选{filterCount>0&&<span>{filterCount}</span>}</button>
-      {selectedStep!=="all"&&<button className="catalog-original-order" type="button" onClick={()=>chooseStep("all")}>按题号浏览</button>}
+      {selectedStep!=="all"&&<button className="catalog-original-order" type="button" onClick={()=>chooseStep("all")}>全部步数</button>}
     </div>}
 
     {mobileBrowse && !nodeId && basicTopic && <section className="catalog-quick-mates" aria-label="杀法快捷练习"><header><strong>直接练杀法</strong><small>选择步数，直接看题</small></header><div>{[["1","一步杀"],["2","两步杀"],["3","三步杀"],["4","四步杀"]].map(([step,label])=><button type="button" key={step} onClick={()=>navigate(basicTopic.id,step)}>{label}<CatalogChevron/></button>)}</div></section>}
@@ -275,8 +277,11 @@ function CatalogView({ sourceLibraries = [], initialMateStep, auth, teacher = fa
           <label><span>题目难度</span><select aria-label="题目难度" value={difficulty} onChange={e => setDifficulty(e.target.value)}><option value="">全部难度</option>{[1,2,3,4,5].map(n => <option key={n} value={n}>难度 {n}</option>)}</select></label>
           </details></fieldset>}
         {selection && <div className="catalog-selection-toolbar"><button type="button" className="catalog-action" disabled={busy || loading || !!error} onClick={() => void selectChapter()}>选择当前章节/筛选的全部题目</button><small>已选题保留原顺序，跨章节自动去重</small></div>}
-        {practicalBrowse && shownItems.length > 0 && <><section className="catalog-compact-numbers"><button type="button" className="catalog-compact-number-trigger" aria-expanded={numbersOpen} onClick={()=>setNumbersOpen(v=>!v)}>跳题 <span>已显示 {shownItems.length}{totalPracticeProblems!=null?` / 共 ${totalPracticeProblems}`:""} 题</span></button>{numbersOpen&&<><ProblemNumberNavigation key={itemKey} items={shownItems} onSelect={index => { const card = viewRef.current?.querySelectorAll<HTMLElement>(".catalog-problem-card")[index]; card?.scrollIntoView({block:"start",behavior:"smooth"}); card?.querySelector<HTMLButtonElement>("button")?.focus({preventScroll:true}); }}/><small className="catalog-loaded-range">题号随筛选结果排列{cursor ? "，可在列表底部读取下一页" : ""}。</small></>}</section></>}
-        <div className="catalog-problems">{shownItems.map((p, displayIndex) => <article className="catalog-problem-card" key={p.id}><button type="button" disabled={busy} aria-pressed={selection ? selectedIds.includes(p.id) : undefined} onClick={() => selection ? selectedIds.includes(p.id) ? onRemove?.(p.id) : onAdd?.([{ ...p, teachingChapter: current?.name }]) : (()=>{saveNavigation();const ids=mobileBrowse?practiceGroupIds(shownItems,p.id):[p.id];onPractice?.(ids,p.title,p.id,mobileBrowse?currentListNumbers(shownItems):undefined,practiceOriginLabel,totalPracticeProblems);})()}><FenThumbnail fen={p.startingFen}/><span className="catalog-problem-copy"><strong>{numberedProblemLabel(mobileBrowse?displayIndex+1:p.sourceIndex+1,mobileBrowse?mobileExerciseTitle(p,topicRoot?.teachingEntry??catalogEntry):p.title)}</strong><small>{p.sideToMove==="black"||p.sideToMove==="b"?"黑方先走":"红方先走"}{!mobileBrowse && ` · ${current?.name}`}</small>{mobileBrowse && <small className="problem-source">{problemSourceLabel(p,sourceLibraries) ?? `来源：原题第 ${p.sourceIndex+1} 题`}</small>}<span className="catalog-problem-tags">{(p.trainingGoal||answersAllowed)&&<span className="catalog-badge catalog-badge-goal">{goalLabel(p.trainingGoal)}</span>}{selection&&<span className={`catalog-badge ${selectedIds.includes(p.id)?"catalog-badge-ready":""}`}>{selectedIds.includes(p.id)?"✓ 已选":"点击选择"}</span>}</span><small>{p.verifiedMateMoves != null ? `已验证${p.verifiedMateMoves}步杀` : directMate ? "步数待确认" : !mobileBrowse ? `题解 ${p.solutionLength} 半回合` : ""}{!mobileBrowse && p.verifiedMateMoves != null && ` · 题解 ${p.solutionLength} 半回合`}</small>{!mobileBrowse && p.trainingGoal?.reviewMethod === "reviewed_solution" && <small>按审核题解</small>}</span></button>{!selection && answersAllowed && <button type="button" className="catalog-read-solution" onClick={() => {saveNavigation();if(answersAllowed)onReadSolution?.([p.id]);}}><BookOpen/>看题解</button>}</article>)}</div>
+        {mobileBrowse && shownItems.length > 0 && <PracticeQuestionNumbers key={itemKey} items={shownItems.map((p,i)=>({id:p.id,number:i+1,title:numberedProblemTitle(mobileExerciseTitle(p,topicRoot?.teachingEntry??catalogEntry)),status:auth&&["coach","admin"].includes(auth.user.role)?localTrialNavigationStatus(JSON.stringify([teachingClient.serverUrl(),auth.user.id,auth.user.orgId,auth.user.role]),p.id):practiceStatuses?.[p.id]}))} index={shownItems.findIndex(p=>p.id===activeProblemId)} total={totalPracticeProblems} hasMore={!!cursor} onSelect={index=>{
+          const selected=shownItems[index];if(!selected)return;setActiveProblemId(selected.id);saveNavigation(selected.id);
+          const card=viewRef.current?.querySelectorAll<HTMLElement>(".catalog-problem-card")[index];card?.scrollIntoView({block:"start",behavior:"smooth"});card?.querySelector<HTMLButtonElement>("button")?.focus({preventScroll:true});
+        }}/>}
+        <div className="catalog-problems">{shownItems.map((p, displayIndex) => <article className="catalog-problem-card" key={p.id}><button type="button" disabled={busy} aria-pressed={selection ? selectedIds.includes(p.id) : undefined} onClick={() => selection ? selectedIds.includes(p.id) ? onRemove?.(p.id) : onAdd?.([{ ...p, teachingChapter: current?.name }]) : (()=>{setActiveProblemId(p.id);saveNavigation(p.id);const ids=mobileBrowse?practiceGroupIds(shownItems,p.id):[p.id];onPractice?.(ids,p.title,p.id,mobileBrowse?currentListNumbers(shownItems):undefined,practiceOriginLabel,totalPracticeProblems);})()}><FenThumbnail fen={p.startingFen}/><span className="catalog-problem-copy"><strong>{numberedProblemLabel(mobileBrowse?displayIndex+1:p.sourceIndex+1,mobileBrowse?mobileExerciseTitle(p,topicRoot?.teachingEntry??catalogEntry):p.title)}</strong><small>{p.sideToMove==="black"||p.sideToMove==="b"?"黑方先走":"红方先走"}{!mobileBrowse && ` · ${current?.name}`}</small>{mobileBrowse && <small className="problem-source">{problemSourceLabel(p,sourceLibraries) ?? `来源：原题第 ${p.sourceIndex+1} 题`}</small>}<span className="catalog-problem-tags">{(p.trainingGoal||answersAllowed)&&<span className="catalog-badge catalog-badge-goal">{goalLabel(p.trainingGoal)}</span>}{selection&&<span className={`catalog-badge ${selectedIds.includes(p.id)?"catalog-badge-ready":""}`}>{selectedIds.includes(p.id)?"✓ 已选":"点击选择"}</span>}</span><small>{p.verifiedMateMoves != null ? `已验证${p.verifiedMateMoves}步杀` : directMate ? "步数待确认" : !mobileBrowse ? `题解 ${p.solutionLength} 半回合` : ""}{!mobileBrowse && p.verifiedMateMoves != null && ` · 题解 ${p.solutionLength} 半回合`}</small>{!mobileBrowse && p.trainingGoal?.reviewMethod === "reviewed_solution" && <small>按审核题解</small>}</span></button>{!selection && answersAllowed && <button type="button" className="catalog-read-solution" onClick={() => {setActiveProblemId(p.id);saveNavigation(p.id);if(answersAllowed)onReadSolution?.([p.id]);}}><BookOpen/>看题解</button>}</article>)}</div>
         {cursor && <button type="button" className="catalog-more" disabled={busy||problemLoading} onClick={() => void more()}>{practicalBrowse?"下一页题目":"加载更多题目"}</button>}
         {!teacher && shownItems.length > 0 && <button type="button" className="catalog-action" disabled={busy || loading || !!error} onClick={() => {saveNavigation();onPractice?.(shownItems.slice(0, 20).map(p => p.id),undefined,undefined,mobileBrowse?currentListNumbers(shownItems):undefined,practiceOriginLabel,totalPracticeProblems);}}>练习当前列表前 {Math.min(20, shownItems.length)} 题</button>}</>:null}</>}
     <div className="catalog-load-status" role="status" aria-live="polite">{busy?"正在核对题目…":loading?(children.length||shownItems.length||materials.length?"正在更新内容…":"正在读取教学题库…"):browse.page.statisticsReady===false?"题数后台更新中，可继续浏览":""}</div>

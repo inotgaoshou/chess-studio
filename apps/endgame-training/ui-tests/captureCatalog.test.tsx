@@ -12,8 +12,8 @@ it("shows both reviewed material-gain and mate objectives in the capture topic w
  const auth={user:{id:"capture-student",role:"student",vipActive:false,displayName:"学生"}} as TeachingAuth;
  render(<TeachingCatalog auth={auth} compact scene="browse" onPractice={()=>{}}/>);
  fireEvent.click(await screen.findByRole("button",{name:/吃子/}));
- await screen.findByRole("button",{name:/第 1 题.*净得子/});
- await screen.findByRole("button",{name:/第 2 题.*杀棋/});
+ await screen.findByRole("button",{name:/^(?!跳到).*第 1 题.*净得子/});
+ await screen.findByRole("button",{name:/^(?!跳到).*第 2 题.*杀棋/});
  expect(problems).toHaveBeenCalledWith(capture.id,expect.objectContaining({goal:"",mateMoves:undefined,mateGroup:""}),false,auth,expect.anything());
  expect(screen.queryByRole("button",{name:/实战残局/})).toBeNull();
  expect(screen.queryByRole("button",{name:"两步杀",exact:true})).toBeNull();

@@ -18,7 +18,6 @@ it("practical endgames filters on the server, keeps the filter on return and nav
   fireEvent.click(await screen.findByRole("button",{name:/实用残局/}));
   expect(await screen.findByText("来源：《实用残局精选》 · 原题第 11 题")).toBeTruthy();
   fireEvent.click(screen.getByRole("button",{name:"下一页题目"}));
-  fireEvent.click(screen.getByRole("button",{name:/跳题.*已显示/}));
   await screen.findByRole("option",{name:"21–40"});
   fireEvent.change(screen.getByRole("combobox",{name:"题号范围"}),{target:{value:"1"}});
   const jump=screen.getByRole("button",{name:/跳到第 25 题/});
@@ -80,4 +79,32 @@ it.each([
   fireEvent.click(screen.getByRole("button",{name:"全部题目"}));
   await waitFor(()=>expect(problems.mock.calls.at(-1)?.[0]).toBe(topic.id));
   expect(screen.getByRole("button",{name:"全部题目"}).getAttribute("aria-pressed")).toBe("true");
+});
+
+it.each([
+ {entry:"basic_mates",name:"基础杀法"},
+ {entry:"practical_endgames",name:"实用残局"},
+])("shows collapsible numeric navigation outside $name questions and locates a card without starting practice",async({entry,name})=>{
+ window.dispatchEvent(new Event("teaching-content-reset"));localStorage.removeItem("qixi-catalog-numbers-collapsed-v1");
+ const auth={token:"outer-numbers",expiresAt:"2099-01-01",user:{id:`outer-${entry}`,role:"student",vipActive:true}} as TeachingAuth;
+ const topic={id:entry,name,kind:"category",teachingEntry:entry,displayOrder:0,active:true,confirmed:true,itemCount:50};
+ vi.spyOn(teachingClient,"catalogBrowse").mockImplementation(async params=>({currentNode:params.nodeId?topic:null,breadcrumbs:params.nodeId?[topic]:[],children:params.nodeId?[]:[topic],learningMaterials:[],statisticsReady:true,mateStepCounts:[{mateMoves:2,itemCount:50}]}));
+ const questions=Array.from({length:50},(_,i)=>({id:`outer-${i}`,libraryId:"book",sourceIndex:i,title:"第 1 题",category:name,startingFen:"4k4/9/9/9/9/9/9/9/4R4/4K4 w",sideToMove:"red",solutionLength:1,verifiedMateMoves:2}));
+ vi.spyOn(teachingClient,"catalogProblems").mockResolvedValue({items:questions,nextCursor:null});
+ const onPractice=vi.fn();const ui=render(<TeachingCatalog auth={auth} compact scene="browse" onPractice={onPractice} practiceStatuses={{"outer-24":"revealed"}}/>);
+ fireEvent.click(await screen.findByRole("button",{name:new RegExp(name)}));
+ await screen.findByRole("navigation",{name:"题库数字导航"});
+ expect(screen.getByRole("button",{name:"收起数字导航"}).getAttribute("aria-expanded")).toBe("true");
+ fireEvent.change(screen.getByRole("combobox",{name:"题号范围"}),{target:{value:"1"}});
+ const scroll=vi.fn(),card=ui.container.querySelectorAll<HTMLElement>(".catalog-problem-card")[24];card.scrollIntoView=scroll;
+ fireEvent.click(screen.getByRole("button",{name:"跳到第 25 题，已查看解析"}));
+ expect(scroll).toHaveBeenCalledOnce();expect(onPractice).not.toHaveBeenCalled();
+ expect(document.activeElement).toBe(card.querySelector("button"));
+ expect(ui.container.querySelectorAll(".practice-question-numbers")).toHaveLength(1);
+ expect(ui.container.querySelector(".practice-question-numbers")?.compareDocumentPosition(card)! & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+ fireEvent.click(screen.getByRole("button",{name:"收起数字导航"}));
+ expect(screen.queryByRole("button",{name:/跳到第/})).toBeNull();
+ fireEvent.click(screen.getByRole("button",{name:"展开数字导航"}));
+ fireEvent.click(card.querySelector("button")!);expect(onPractice.mock.calls[0][2]).toBe("outer-24");
+ ui.unmount();
 });
