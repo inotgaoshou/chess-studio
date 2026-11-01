@@ -154,7 +154,7 @@ export function TeacherAuthoring({
       }
     }
   }
-  async function refreshDirectories(saved = false) {
+  async function refreshDirectories(saved: boolean | "deleted" = false) {
     const epoch=generation.current, request=++refreshRequest.current;
     setRefreshing(true);setRefreshError("");
     try {
@@ -163,7 +163,7 @@ export function TeacherAuthoring({
       setDirs(value.items);refreshRecoveries();
     } catch(reason) {
       if(epoch===generation.current && request===refreshRequest.current)
-        setRefreshError(`${saved ? "已保存，刷新失败" : "目录刷新失败"}：${message(reason)}`);
+        setRefreshError(`${saved === "deleted" ? "已删除，刷新失败" : saved ? "已保存，刷新失败" : "目录刷新失败"}：${message(reason)}`);
     } finally {
       if(epoch===generation.current && request===refreshRequest.current)setRefreshing(false);
     }
@@ -256,6 +256,14 @@ export function TeacherAuthoring({
     const sortOrder = direction === -1 ? Math.min(...orders) - 1 : Math.max(...orders) + 1;
     await api.request(BASE + "/directories/" + target.id, json({title:target.title,expectedRevision:target.revision,sortOrder}, "PATCH"));
     await load();
+  }
+  async function deleteDirectory(target: AuthoringDirectory) {
+    const epoch=generation.current;
+    refreshRequest.current++;
+    await api.request(BASE+"/directories/"+target.id,json({expectedRevision:target.revision},"DELETE"));
+    if(epoch!==generation.current)return;
+    setDirs(old=>old.filter(item=>item.id!==target.id));
+    void refreshDirectories("deleted");
   }
   async function saveTitle(title: string) {
     if (!titleDialog || titleLock.current) return;
@@ -441,7 +449,7 @@ export function TeacherAuthoring({
           </div>
           <div className="authoring-directories">
             {dirs.map((d, i) => (
-              <article key={d.id}>
+              <article key={d.id} className={directoryEditing ? "editing" : undefined}>
                 <button
                   className="directory-title"
                   onClick={() => void run(() => load(d.id))}
@@ -451,7 +459,7 @@ export function TeacherAuthoring({
                     {personal ? `${d.draftCount ?? 0} 道个人题目` : `${d.publishedCount ?? 0} 道已发布${d.draftCount ? ` · ${d.draftCount} 道待完善` : ""}`}
                   </small>
                 </button>
-                {!personal && !directoryEditing && <button disabled={busy} aria-label={`布置${d.title}`} onClick={() => void run(async () => {const detail = await load(d.id);if (!detail?.items.length) throw new Error("目录里还没有题目，请先添加题目");setPublish(true);})}>布置作业</button>}
+                {!personal && !directoryEditing && d.itemCount!==0 && <button disabled={busy} aria-label={`布置${d.title}`} onClick={() => void run(async () => {const detail = await load(d.id);if (!detail?.items.length) throw new Error("目录里还没有题目，请先添加题目");setPublish(true);})}>布置作业</button>}
                 {directoryEditing && d.canEdit && (
                   <>
                     <button aria-label={`${d.title}置顶`} disabled={busy || i === 0} onClick={() => void run(() => moveDirectory(d, -1))}>置顶</button>
@@ -464,6 +472,9 @@ export function TeacherAuthoring({
                     </button>
                   </>
                 )}
+                {d.canEdit && d.itemCount===0 && <button type="button" className="authoring-directory-delete" disabled={busy} aria-label={`删除空目录${d.title}`} onClick={()=>{
+                  if(confirm(`删除空目录“${d.title}”？`))void run(()=>deleteDirectory(d));
+                }}>删除</button>}
               </article>
             ))}
           </div>

@@ -16,8 +16,8 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
     const page=await browser.newPage({viewport,isMobile:!admin,hasTouch:!admin});page.setDefaultTimeout(12000);
     const errors=[],calls=[];page.on('pageerror',error=>errors.push(error.message));
     const user={id:'responsive-teacher',orgId:'responsive-org',orgName:'响应验收机构',role:'coach',displayName:'验收老师',loginName:'fixture',organizations:[],classes:[],isPlatformAdmin:false,vipEnabled:true,vipActive:true,createdAt:'2026-10-01T00:00:00Z'};
-    const directory={id:'d',title:'响应验收目录',revision:1,sortOrder:0,canEdit:true,publishedCount:0,draftCount:0,items:[]};
-    const dirs=[directory];let createdAt=0,listReads=0,countsStarted=false;
+    const directory={id:'d',title:'响应验收目录',revision:1,sortOrder:0,canEdit:true,itemCount:0,publishedCount:0,draftCount:0,items:[]};
+    const dirs=[directory];let createdAt=0,deletedAt=0,deleteRefresh=false,listReads=0,countsStarted=false;
     await page.addInitScript(()=>{
      localStorage.setItem('xiangqi-training-mobile-onboarding-v1','done');
      localStorage.setItem('xiangqi-teaching-environment','production');
@@ -36,8 +36,14 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
        const payload=req.postDataJSON();const summary={...directory,id:payload.id,title:payload.title,sortOrder:1};dirs.push(summary);createdAt=Date.now();body={id:summary.id,directory:summary};
       }else{
        listReads++;
-       if(listReads===2){await pause(1400);status=503;body={error:'验收刷新延迟'};}else body={items:dirs};
+       if(listReads===2){await pause(1400);status=503;body={error:'验收刷新延迟'};}
+       else if(deletedAt&&!deleteRefresh){deleteRefresh=true;await pause(1400);status=503;body={error:'删除后刷新延迟'};}
+       else body={items:dirs};
       }
+     }else if(path.startsWith(base+'/directories/')&&req.method()==='DELETE'){
+      const index=dirs.findIndex(dir=>dir.id===path.split('/').at(-1));assert(index>=0);assert.equal(dirs[index].itemCount,0);
+      assert.equal(req.postDataJSON().expectedRevision,dirs[index].revision);
+      dirs.splice(index,1);await pause(80);deletedAt=Date.now();body={ok:true};
      }else if(path===base+'/directories/d'){
       if(req.method()==='PATCH'){
        directory.revision++;directory.items=req.postDataJSON().items.map(item=>({id:item.subjectId,subjectId:item.subjectId,kind:item.kind,status:'source',canEdit:false,body:{title:'验收题目 '+item.subjectId.slice(1),startingFen:fen,note:'',solution:[]}}));body={ok:true};
@@ -64,6 +70,18 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
     await page.getByText(/已保存，刷新失败/).waitFor();
     await page.getByRole('button',{name:'重试刷新',exact:true}).click();
     await page.getByText(/已保存，刷新失败/).waitFor({state:'hidden'});
+    await page.getByRole('button',{name:'调整目录',exact:true}).click();
+    const management=page.locator('.authoring-directories');
+    assert((await management.boundingBox()).width<=viewport.width,'directory controls fit the viewport');
+    await page.screenshot({path:`${output}/${name}-${viewport.width}-directories.png`});
+    page.once('dialog',dialog=>dialog.accept());
+    const remove=page.getByRole('button',{name:'删除空目录保存无需等刷新',exact:true});
+    await remove.click();await remove.waitFor({state:'hidden',timeout:700});
+    const deleteFinishMs=Date.now()-deletedAt;assert(deleteFinishMs<300,'deletion must not wait for background refresh');
+    await page.getByText(/已删除，刷新失败/).waitFor();
+    await page.getByRole('button',{name:'重试刷新',exact:true}).click();
+    await page.getByText(/已删除，刷新失败/).waitFor({state:'hidden'});
+    await page.getByRole('button',{name:'完成调整',exact:true}).click();
     const readsBefore=listReads;
     await page.getByRole('button',{name:/响应验收目录.*道已发布/}).click();
     await page.getByRole('button',{name:/添加题目/}).waitFor().catch(async error=>{console.log(JSON.stringify({url:page.url(),body:await page.locator('body').innerText(),errors,calls}));throw error;});assert.equal(listReads,readsBefore,'opening detail must not reread all directories');
@@ -91,7 +109,7 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
     assert.equal(calls.filter(call=>call.method==='PATCH').length,0,'returning without confirmation must not add questions');
     assert.equal(calls.filter(call=>call.method==='POST'&&call.path.includes('assignments')).length,0,'selecting must never publish an assignment');
     assert.deepEqual(errors,[]);
-    results.push({browser:name,viewport,host:admin?'admin':'mobile',saveFinishMs:finishMs,pass:true});console.log(JSON.stringify(results.at(-1)));await page.close();
+    results.push({browser:name,viewport,host:admin?'admin':'mobile',saveFinishMs:finishMs,deleteFinishMs,pass:true});console.log(JSON.stringify(results.at(-1)));await page.close();
    }
   }finally{await browser.close();}
  }

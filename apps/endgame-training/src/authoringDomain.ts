@@ -45,6 +45,7 @@ export type AuthoringDirectory = {
   revision: number;
   sortOrder: number;
   canEdit: boolean;
+  itemCount?: number;
   publishedCount?: number;
   draftCount?: number;
   items: AuthoredQuestion[];

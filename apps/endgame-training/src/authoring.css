@@ -90,7 +90,13 @@
   flex-direction: column;
   gap: 8px;
   border: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
+.authoring-directories article.editing { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); }
+.authoring-directories article.editing .directory-title { grid-column:1/-1; }
+.authoring-directories article.editing > button:not(.directory-title) { min-width:0; padding:6px 4px; }
+.authoring-directories .authoring-directory-delete { color:#a4423a; }
 .authoring-home-tabs { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:4px; margin:4px 0 12px; }
 .authoring-home-tabs button { min-width:0; min-height:42px; padding:6px 4px; font-size:12px; }
 .authoring-home-tabs button[aria-current="page"] { background:#e2efe4; border-color:#82ae90; font-weight:800; }

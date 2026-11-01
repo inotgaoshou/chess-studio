@@ -6,10 +6,10 @@ const [fixturePath,reportPath,...flags]=process.argv.slice(2);
 assert(fixturePath&&reportPath,'Usage: node scripts/probe-authoring-responsiveness.mjs <fixture.json> <report.json> [--write-directory]');
 const fixture=JSON.parse(await fs.readFile(fixturePath,'utf8'));
 const base='/api/v1/admin/authoring',samples=[];let token,complete=false;
-async function read(label,path,{body,budget=1500}={}){
+async function read(label,path,{body,method=body?'POST':'GET',budget=1500}={}){
  const start=performance.now();let sample;
  try{
-  const response=await fetch(new URL(path,fixture.api),{method:body?'POST':'GET',headers:{'content-type':'application/json','x-xiangqi-app-id':'student-mobile','x-authoring-scope':'organization',...(token?{authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(12000)});
+  const response=await fetch(new URL(path,fixture.api),{method,headers:{'content-type':'application/json','x-xiangqi-app-id':'student-mobile','x-authoring-scope':'organization',...(token?{authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(12000)});
   const value=await response.json();sample={label,status:response.status,ms:Math.round(performance.now()-start),items:value.items?.length,total:value.totalCount,budget};
   samples.push(sample);console.log(JSON.stringify(sample));assert.equal(response.status,200,label);assert(sample.ms<=budget,`${label} exceeded ${budget}ms`);return value;
  }catch(error){if(!sample)samples.push({label,ms:Math.round(performance.now()-start),failed:true,error:error.name});else sample.failed=true;throw error;}
@@ -41,6 +41,12 @@ try{
   const created=await read('directory.create',base+'/directories',{body});assert.equal(created.id,id);assert.equal(created.directory.title,body.title);
   const replay=await read('directory.create.retry',base+'/directories',{body});assert.equal(replay.id,id);assert.equal(replay.directory.revision,created.directory.revision);
   const current=await read('directories.after-create',base+'/directories');assert.equal(current.items.filter(item=>item.id===id).length,1);
+  if(flags.includes('--delete-directory')){
+   assert.equal(created.directory.itemCount,0);
+   await read('directory.delete',base+'/directories/'+id,{method:'DELETE',body:{expectedRevision:created.directory.revision}});
+   await read('directory.delete.retry',base+'/directories/'+id,{method:'DELETE',body:{expectedRevision:created.directory.revision}});
+   const remaining=await read('directories.after-delete',base+'/directories');assert(!remaining.items.some(item=>item.id===id));
+  }
  }
  complete=true;
 }finally{await fs.writeFile(reportPath,JSON.stringify({at:new Date().toISOString(),complete,samples},null,2)+'\n');}
