@@ -1,4 +1,6 @@
-// The practice API accepts at most 20 questions. Keep the clicked question in its
+export const PRACTICE_GROUP_SIZE=25;
+
+// Keep the clicked question in its
 // original group rather than silently replacing a list with a one-question test.
 export function currentListNumbers(items: { id: string }[]): Record<string, number> {
   return Object.fromEntries([...new Set(items.map(item => item.id))].map((id, i) => [id, i + 1]));
@@ -14,8 +16,8 @@ export function practiceGroupIds(items: { id: string }[], selectedId: string): s
   const ids = [...new Set(items.map(item => item.id))];
   const index = ids.indexOf(selectedId);
   if (index < 0) return [];
-  const start = Math.floor(index / 20) * 20;
-  return ids.slice(start, start + 20);
+  const start = Math.floor(index / PRACTICE_GROUP_SIZE) * PRACTICE_GROUP_SIZE;
+  return ids.slice(start, start + PRACTICE_GROUP_SIZE);
 }
 
 export function initialPracticeItem<T extends { id: string; problem: { id: string }; status: string }>(
@@ -28,7 +30,7 @@ export function initialPracticeItem<T extends { id: string; problem: { id: strin
     ?? items[0];
 }
 
-// Presentation context contains the loaded list, not just the API's 20-item session.
+// Presentation context contains the loaded list, not just the current practice session.
 function orderedPracticeIds(numbers: Record<string, number>): string[] {
   return Object.entries(numbers).filter(([, n]) => Number.isInteger(n) && n > 0).sort((a,b) => a[1]-b[1]).map(([id])=>id);
 }
@@ -38,15 +40,15 @@ export function practiceGroupSummary(numbers: Record<string, number>, currentId:
   if (index < 0) return undefined;
   const complete = typeof totalProblems === "number" && Number.isInteger(totalProblems) && totalProblems >= ids.length;
   const problemCount = complete ? totalProblems : ids.length;
-  return { current: Math.floor(index / 20) + 1, total: Math.ceil(problemCount / 20), problemCount, complete };
+  return { current: Math.floor(index / PRACTICE_GROUP_SIZE) + 1, total: Math.ceil(problemCount / PRACTICE_GROUP_SIZE), problemCount, complete };
 }
 
 export function adjacentPracticeGroup(numbers: Record<string, number>, currentId: string, direction: -1 | 1): string[] {
   const ids = orderedPracticeIds(numbers);
   const index = ids.indexOf(currentId);
   if (index < 0) return [];
-  const start = (Math.floor(index / 20) + direction) * 20;
-  return start < 0 ? [] : ids.slice(start, start + 20);
+  const start = (Math.floor(index / PRACTICE_GROUP_SIZE) + direction) * PRACTICE_GROUP_SIZE;
+  return start < 0 ? [] : ids.slice(start, start + PRACTICE_GROUP_SIZE);
 }
 
 export function numberedProblemTitle(title: string): string {

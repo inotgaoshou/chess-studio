@@ -8,7 +8,7 @@ const chapter={...book,id:'practical-chapter',name:'车兵残局',kind:'chapter'
 const makeProblem=i=>({...responseFor(new URL('http://fixture/api/v1/student/problems/p'+i)),title:'车兵巧胜单士 '+(i+1)});
 (async()=>{
  const browser=await(process.env.WEBKIT?webkit.launch({headless:true}):chromium.launch({channel:'chrome',headless:true}));
- const output=process.env.OUTPUT_DIR||'artifacts/practice-navigation-10134/practical';fs.mkdirSync(output,{recursive:true});
+ const output=process.env.OUTPUT_DIR||'artifacts/practice-navigation-10135/practical';fs.mkdirSync(output,{recursive:true});
  try{for(const viewport of [{width:320,height:740},{width:390,height:844},{width:430,height:932},{width:844,height:390},{width:820,height:1180},{width:1180,height:820}]){
   const page=await browser.newPage({viewport,hasTouch:true,isMobile:true});page.setDefaultTimeout(10000);const requests=[],errors=[];let session;
   page.on('pageerror',e=>errors.push(e.message));
@@ -27,14 +27,17 @@ const makeProblem=i=>({...responseFor(new URL('http://fixture/api/v1/student/pro
   await page.getByRole('button',{name:/实用残局/}).click();
   const catalog=page.getByRole('region',{name:'教学题库目录',exact:true});
   await catalog.getByText('来源：《训练教材》 · 原题第 1 题',{exact:true}).waitFor();
-  await page.getByRole('combobox',{name:'题号范围'}).selectOption('1');
+  await require('./catalog-sticky-numbers.cjs').checkStickyNumbers(page);
   await page.getByRole('button',{name:/跳到第 25 题/}).click();
   const card=catalog.locator('.catalog-problem-card').nth(24);
   await page.waitForFunction(()=>{const r=document.querySelectorAll('.catalog-problem-card')[24]?.getBoundingClientRect();return r&&r.top>=0&&r.top<innerHeight;});
+  await require('./catalog-sticky-numbers.cjs').checkUncoveredCard(page,24);
   assert(await card.evaluate(node=>{const r=node.getBoundingClientRect();return r.top>=0&&r.top<innerHeight;}),'numeric jump must scroll to the card');
   await catalog.getByRole('button',{name:'下一页题目'}).click();
-  await page.getByRole('option',{name:'61–80'}).waitFor({state:'attached'});
-  await page.getByRole('combobox',{name:'题号范围'}).selectOption('0');
+  await page.getByRole('button',{name:'第 4 组 · 5 题',exact:true}).waitFor();
+  assert.equal(await catalog.locator('.catalog-problem-card').count(),30);
+  assert.match(await catalog.locator('.catalog-problem-card').first().locator('strong').textContent(),/^第 51 题/);
+  await catalog.getByRole('button',{name:'上一页题目',exact:true}).click();
   await page.getByRole('button',{name:/跳到第 1 题/}).click();
   await catalog.getByRole('button',{name:/筛选/}).click();
   await catalog.getByRole('combobox',{name:'兵种'}).selectOption('r');
@@ -51,8 +54,8 @@ const makeProblem=i=>({...responseFor(new URL('http://fixture/api/v1/student/pro
   await numbers.getByRole('button',{name:'收起数字导航',exact:true}).click();
   assert.equal(await numbers.getByRole('button',{name:/跳到第/}).count(),0);
   await numbers.getByRole('button',{name:'展开数字导航',exact:true}).click();
-  await numbers.getByRole('combobox',{name:'题号范围'}).selectOption('1');
-  await numbers.getByRole('button',{name:/跳到第 25 题/}).waitFor();
+  await numbers.getByRole('button',{name:'第 2 组 · 25 题',exact:true}).click();
+  await numbers.getByRole('button',{name:/跳到第 26 题/}).waitFor();
   await numbers.scrollIntoViewIfNeeded();
   await page.screenshot({path:`${output}/outer-numbers-${process.env.WEBKIT?'webkit':'chrome'}-${viewport.width}.png`});
   await catalog.locator('.catalog-problem-card').first().locator('button').first().click();

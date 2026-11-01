@@ -30,7 +30,7 @@ import { loadTrialDraft, saveTrialDraft } from "./trialProgress";
 import { localTrainingProgress, saveLocalTrainingProgress, saveLocalTrainingOutcome, localTrialNavigationStatus } from "./localTrainingProgress";
 import { withRequestDeadline } from "./requestDeadline";
 import { practiceBreadcrumb, savePracticeOrigin, loadPracticeOrigin, type PracticeOrigin } from "./practiceOrigin";
-import { practiceGroupSummary, adjacentPracticeGroup, numberedProblemTitle, numberedProblemLabel, navigationStatus, navigationStatusLabel, navigationStatusMark, type ProblemNavigationStatus, currentListNumbers, loadListNumbers, saveListNumbers, initialPracticeItem, practiceGroupIds } from "./practiceNavigation";
+import { practiceGroupSummary, adjacentPracticeGroup, numberedProblemTitle, numberedProblemLabel, navigationStatus, navigationStatusLabel, navigationStatusMark, type ProblemNavigationStatus, PRACTICE_GROUP_SIZE, currentListNumbers, loadListNumbers, saveListNumbers, initialPracticeItem, practiceGroupIds } from "./practiceNavigation";
 import { practiceContent } from "./practiceProgress";
 import { LocalGoalEditor } from "./LocalGoalEditor";
 import { missingPlatformGoal, needsTerminalWin, terminalWin } from "./verificationPolicy";
@@ -7132,7 +7132,7 @@ export function App() {
       setCatalogTrialGroup({scope:catalogAccountScope,ids,originLabel,totalProblems});
       await openTeacherTrial(preferredProblemId??ids[0],title);
     } else {
-      await createPracticeSession({problemIds:ids,sourceKind:"random",mode:"solver",count:Math.min(20,ids.length)},undefined,"library",title,preferredProblemId,numbers,{section:"题库",label:originLabel,totalProblems});
+      await createPracticeSession({problemIds:ids,sourceKind:"random",mode:"solver",count:Math.min(PRACTICE_GROUP_SIZE,ids.length)},undefined,"library",title,preferredProblemId,numbers,{section:"题库",label:originLabel,totalProblems});
     }
   }
 

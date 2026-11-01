@@ -20,13 +20,20 @@ it("collapses, remembers the preference across remounts and can expand again",()
  localStorage.removeItem("qixi-catalog-numbers-collapsed-v1");
 });
 
-it("pages only loaded numbers and returns the global list index without opening a question",()=>{
- localStorage.removeItem("qixi-catalog-numbers-collapsed-v1");const onSelect=vi.fn();
- render(<PracticeQuestionNumbers items={Array.from({length:50},(_,i)=>({id:String(i),title:"",number:i+1}))} total={501} hasMore onSelect={onSelect}/>);
- expect(screen.getByText("已显示 50 / 共 501 题")).toBeTruthy();
- fireEvent.change(screen.getByRole("combobox",{name:"题号范围"}),{target:{value:"2"}});
- expect(screen.queryByRole("button",{name:"跳到第 40 题",exact:true})).toBeNull();
- fireEvent.click(screen.getByRole("button",{name:"跳到第 50 题",exact:true}));expect(onSelect).toHaveBeenCalledWith(49);
- expect(screen.getByRole("button",{name:"下一组"}).hasAttribute("disabled")).toBe(true);
- expect(screen.getByText(/列表底部读取下一页/)).toBeTruthy();
+it("separates 50-question pages and 25-question groups with a partial final group",()=>{
+ localStorage.removeItem("qixi-catalog-numbers-collapsed-v1");const onSelect=vi.fn(),onPageChange=vi.fn();
+ const items=Array.from({length:100},(_,i)=>({id:String(i),title:"",number:i+1}));
+ const ui=render(<PracticeQuestionNumbers items={items} total={1831} hasMore onPageChange={onPageChange} onSelect={onSelect}/>);
+ expect(screen.getByText("第 1 页 / 共 37 页 · 每页 50 题")).toBeTruthy();
+ expect(screen.getByText("共 1831 题 · 共 74 组 · 每组 25 题")).toBeTruthy();
+ expect(screen.getAllByRole("button",{name:/跳到第/})).toHaveLength(25);
+ fireEvent.click(screen.getByRole("button",{name:"第 2 组 · 25 题"}));expect(onSelect).toHaveBeenCalledWith(25);
+ ui.rerender(<PracticeQuestionNumbers items={items} index={25} total={1831} hasMore onPageChange={onPageChange} onSelect={onSelect}/>);
+ fireEvent.click(screen.getByRole("button",{name:"跳到第 50 题",exact:true}));expect(onSelect).toHaveBeenLastCalledWith(49);
+ fireEvent.click(screen.getByRole("button",{name:"下一页",exact:true}));expect(onPageChange).toHaveBeenCalledWith(1);
+ ui.rerender(<PracticeQuestionNumbers items={items.slice(0,56)} page={1} total={56} onPageChange={onPageChange} onSelect={onSelect}/>);
+ expect(screen.getByText("第 2 页 / 共 2 页 · 每页 50 题")).toBeTruthy();
+ expect(screen.getByRole("button",{name:"第 3 组 · 6 题"})).toBeTruthy();
+ expect(screen.getByRole("button",{name:"下一页",exact:true}).hasAttribute("disabled")).toBe(true);
+ fireEvent.click(screen.getByRole("button",{name:"上一页",exact:true}));expect(onPageChange).toHaveBeenLastCalledWith(0);
 });

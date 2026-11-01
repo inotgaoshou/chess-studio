@@ -20,8 +20,25 @@
 .practice-question-number-pages :is(button,select) { min-height:30px; padding:3px 6px; border:1px solid #ccddce; border-radius:5px; background:#f8fcf7; color:#437357; font-size:11px; }
 .practice-question-number-pages button:disabled { opacity:.4; }
 .practice-question-number-pages select { min-width:0; }
+.practice-question-number-groups { display:flex; gap:5px; margin:4px 0; }
+.teaching-catalog .practice-question-number-groups button { flex:1; min-height:30px; padding:3px 5px; font-size:11px; white-space:nowrap; }
+.teaching-catalog .practice-question-number-groups button[aria-pressed="true"] { background:#e3efe7; border-color:#7ca68a; color:#27563d; }
 .practice-question-numbers .practice-question-number-help { margin:5px 0 0; font-size:10px; line-height:1.5; color:#718579; }
 .catalog-compact .practice-question-numbers { margin:8px 0 10px; }
+.catalog-phone-browse .practice-question-numbers {
+  position:sticky; top:var(--catalog-number-top,0px); z-index:5; align-self:start;
+  max-height:50dvh; overflow-y:auto; overscroll-behavior:contain;
+  box-shadow:0 3px 7px #24442f12;
+}
+.catalog-phone-browse .practice-question-numbers > header {
+  position:sticky; top:-5px; z-index:1; background:#f8fcf7;
+}
+.catalog-list-pages { display:flex; align-items:center; justify-content:space-between; gap:6px; margin:12px 0; }
+.catalog-list-pages > span { font-size:11px; white-space:nowrap; color:#587066; }
+.teaching-catalog .catalog-list-pages button { min-height:36px; padding:5px 8px; font-size:12px; }
+.catalog-phone-browse .catalog-problem-card {
+  scroll-margin-top:calc(var(--catalog-number-height,0px) + 10px);
+}
 /* Catalog-wide button padding must not squeeze two-digit numbers into two lines. */
 .teaching-catalog .practice-question-number-grid button { height:36px; min-height:36px; padding:2px 3px 7px; font-size:12px; line-height:16px; white-space:nowrap; overflow-wrap:normal; }
 .teaching-catalog .practice-question-numbers > header button { min-height:28px; padding:2px 5px; font-size:11px; white-space:nowrap; }
