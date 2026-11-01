@@ -1,0 +1,157 @@
+{
+  "at": "2026-11-01T13:16:45.689Z",
+  "complete": true,
+  "samples": [
+    {
+      "label": "teacher.login",
+      "status": 200,
+      "ms": 140,
+      "budget": 2500
+    },
+    {
+      "label": "directories.first",
+      "status": 200,
+      "ms": 42,
+      "items": 2,
+      "budget": 1500
+    },
+    {
+      "label": "directories.warm",
+      "status": 200,
+      "ms": 16,
+      "items": 2,
+      "budget": 500
+    },
+    {
+      "label": "directory.detail",
+      "status": 200,
+      "ms": 21,
+      "items": 5,
+      "budget": 1500
+    },
+    {
+      "label": "libraries.1.first",
+      "status": 200,
+      "ms": 467,
+      "items": 30,
+      "budget": 1500
+    },
+    {
+      "label": "libraries.1.warm",
+      "status": 200,
+      "ms": 67,
+      "items": 30,
+      "budget": 500
+    },
+    {
+      "label": "libraries.1.counts",
+      "status": 200,
+      "ms": 2042,
+      "total": 96,
+      "budget": 8000
+    },
+    {
+      "label": "libraries.2.first",
+      "status": 200,
+      "ms": 373,
+      "items": 30,
+      "budget": 1500
+    },
+    {
+      "label": "libraries.2.warm",
+      "status": 200,
+      "ms": 64,
+      "items": 30,
+      "budget": 500
+    },
+    {
+      "label": "libraries.2.counts",
+      "status": 200,
+      "ms": 577,
+      "total": 39,
+      "budget": 8000
+    },
+    {
+      "label": "libraries.3.first",
+      "status": 200,
+      "ms": 241,
+      "items": 30,
+      "budget": 1500
+    },
+    {
+      "label": "libraries.3.warm",
+      "status": 200,
+      "ms": 61,
+      "items": 30,
+      "budget": 500
+    },
+    {
+      "label": "libraries.3.counts",
+      "status": 200,
+      "ms": 530,
+      "total": 40,
+      "budget": 8000
+    },
+    {
+      "label": "sources.3.preparation",
+      "ms": 106,
+      "items": 47
+    },
+    {
+      "label": "sources.3.warm",
+      "status": 200,
+      "ms": 22,
+      "items": 47,
+      "total": 47,
+      "budget": 500
+    },
+    {
+      "label": "libraries.long.first",
+      "status": 200,
+      "ms": 602,
+      "items": 30,
+      "budget": 1500
+    },
+    {
+      "label": "libraries.long.warm",
+      "status": 200,
+      "ms": 60,
+      "items": 30,
+      "budget": 500
+    },
+    {
+      "label": "libraries.long.counts",
+      "status": 200,
+      "ms": 1052,
+      "total": 104,
+      "budget": 8000
+    },
+    {
+      "label": "libraries.legacy",
+      "status": 200,
+      "ms": 56,
+      "items": 30,
+      "total": 372,
+      "budget": 2500
+    },
+    {
+      "label": "directory.create",
+      "status": 200,
+      "ms": 28,
+      "budget": 1500
+    },
+    {
+      "label": "directory.create.retry",
+      "status": 200,
+      "ms": 16,
+      "budget": 1500
+    },
+    {
+      "label": "directories.after-create",
+      "status": 200,
+      "ms": 22,
+      "items": 3,
+      "budget": 1500
+    }
+  ]
+}

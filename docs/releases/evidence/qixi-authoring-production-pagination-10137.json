@@ -1,0 +1,36 @@
+{
+  "at": "2026-11-01T13:17:54.948Z",
+  "libraries": [
+    {
+      "filter": "mateMoves=1",
+      "legacyTotal": 96,
+      "pages": 4,
+      "uniqueBooks": 96
+    },
+    {
+      "filter": "mateMoves=2",
+      "legacyTotal": 39,
+      "pages": 2,
+      "uniqueBooks": 39
+    },
+    {
+      "filter": "mateMoves=3",
+      "legacyTotal": 40,
+      "pages": 2,
+      "uniqueBooks": 40
+    },
+    {
+      "filter": "mateGroup=long",
+      "legacyTotal": 104,
+      "pages": 4,
+      "uniqueBooks": 104
+    }
+  ],
+  "questions": {
+    "first": 50,
+    "next": 49,
+    "total": 99,
+    "nextMs": 21,
+    "duplicates": 0
+  }
+}
