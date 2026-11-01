@@ -1,7 +1,7 @@
 .variation-board {
   --variation-bg:#20262b; --variation-fg:#e6e9e7; --variation-muted:#a9b7ae; --variation-line:#435149; --variation-accent:#4c8768;
   box-sizing:border-box; background:var(--variation-bg); color:var(--variation-fg); border:1px solid var(--variation-line); border-radius:16px; box-shadow:0 8px 30px #0003;
-  display:flex; flex-direction:column; width:360px; height:582px; min-width:min(256px,calc(100vw - 16px)); max-width:calc(100vw - 16px); max-height:calc(100dvh - 24px); overflow:hidden; font:14px/1.4 system-ui,sans-serif; z-index:1600;
+  display:flex; flex-direction:column; width:360px; height:566px; min-width:min(256px,calc(100vw - 16px)); max-width:calc(100vw - 16px); max-height:calc(100dvh - 24px); overflow:hidden; font:14px/1.4 system-ui,sans-serif; z-index:1600;
 }
 .variation-board.is-light,.variation-board.is-mobile { --variation-bg:#fcfdf9; --variation-fg:#263a2f; --variation-muted:#617367; --variation-line:#d8e3da; --variation-accent:#367851; }
 .variation-board.is-floating { position:fixed; resize:both; }
@@ -43,6 +43,13 @@
 .variation-moves { display:flex; flex-wrap:wrap; gap:4px; max-height:130px; overflow:auto; margin-top:8px; }
 .variation-board .variation-moves button { font-size:12px; padding:3px 5px; }
 .variation-board .variation-moves button.active { background:var(--variation-accent); color:white; }
+.variation-saved-branches { margin-top:10px; padding-top:8px; border-top:1px solid var(--variation-line); }
+.variation-saved-branches > strong { display:block; font-size:12px; overflow-wrap:anywhere; }
+.variation-saved-branches ul { list-style:none; padding:0; margin:6px 0 0; display:grid; gap:4px; }
+.variation-saved-branches li { display:flex; align-items:center; gap:8px; min-height:36px; padding:2px 4px 2px 8px; border-radius:6px; background:color-mix(in srgb,var(--variation-accent) 6%,var(--variation-bg)); }
+.variation-saved-branches li > span { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
+.variation-board .variation-saved-branches li > button { flex:none; display:grid; place-items:center; width:36px; height:36px; padding:0; border:0; color:#a64b3b; }
+.variation-saved-branches li svg { width:16px; height:16px; }
 .variation-board small { display:block; margin-top:6px; color:var(--variation-muted); font-size:11px; }
 .variation-board .variation-error,.variation-board .variation-receipt,.variation-board > [role=status] { margin:0; padding:4px 8px; font-size:12px; overflow:auto; max-height:76px; flex:none; }
 .variation-board .variation-error { color:#d35e41; }
@@ -57,7 +64,7 @@
 .variation-desktop-canvas .link-mini-board-status { display:none; }
 .variation-free-entry { margin:5px 8px; align-self:start; font-size:12px; }
 .variation-safe-bounds { position:fixed; inset:calc(env(safe-area-inset-top,0px) + 8px) calc(env(safe-area-inset-right,0px) + 8px) calc(env(safe-area-inset-bottom,0px) + 8px) calc(env(safe-area-inset-left,0px) + 8px); visibility:hidden; pointer-events:none; }
-.variation-board.is-mobile { width:min(80vw,360px); height:calc(min(80vw,360px) * 1240 / 1120 + 178px); max-width:calc(100vw - env(safe-area-inset-left,0px) - env(safe-area-inset-right,0px) - 24px); max-height:calc(100dvh - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px) - 88px); resize:none; }
+.variation-board.is-mobile { width:min(80vw,360px); height:calc(min(80vw,360px) * 1240 / 1120 + 162px); max-width:calc(100vw - env(safe-area-inset-left,0px) - env(safe-area-inset-right,0px) - 24px); max-height:calc(100dvh - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px) - 88px); resize:none; }
 .variation-board.is-mobile .variation-safe-bounds { bottom:calc(env(safe-area-inset-bottom,0px) + 80px); }
 .variation-board.is-mobile.is-expanded { width:calc(100vw - env(safe-area-inset-left,0px) - env(safe-area-inset-right,0px) - 24px); height:calc(100dvh - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px) - 24px); max-height:none; }
 .variation-saving { animation:variation-spin 1s linear infinite; }
@@ -94,7 +101,7 @@
 .variation-board .variation-analysis-metrics { font-size:10px; color:var(--variation-muted); margin:2px 0; }
 .variation-suggestions { display:flex; gap:3px; overflow:auto; }
 .variation-suggestions button { flex:none; white-space:nowrap; }
-.variation-board.is-mobile:has(.variation-analysis) { height:calc(min(80vw,360px) * 1240 / 1120 + 262px); }
+.variation-board.is-mobile:has(.variation-analysis) { height:calc(min(80vw,360px) * 1240 / 1120 + 246px); }
 /* Engine updates and notices never participate in the board's available height. */
 .variation-evaluation { height:28px; }
 .variation-evaluation b { min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -106,16 +113,24 @@
 .variation-analysis-error span { min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
 .variation-analysis-error button { flex:none; }
 .variation-board .variation-board-progress { height:16px; line-height:16px; white-space:nowrap; overflow:hidden; }
+.variation-board-status { display:flex; flex-direction:column; justify-content:center; height:32px; }
 .variation-notices { position:relative; flex:none; height:32px; overflow:auto; scrollbar-width:thin; }
 .variation-notices > * { background:var(--variation-bg); white-space:nowrap; }
 
 .variation-board .variation-notices > [role=status] { margin:0; padding:4px 8px; font-size:12px; }
 .variation-board.is-collapsed .variation-notices { display:none; }
 
-.variation-close-confirm { position:absolute; z-index:9; top:48px; left:0; right:0; max-height:calc(100% - 48px); overflow:auto; background:var(--variation-bg); }
+.variation-close-confirm { position:absolute; z-index:9; inset:48px 0 0; box-sizing:border-box; max-height:calc(100% - 48px); display:flex; flex-direction:column; justify-content:center; padding:12px; overflow:auto; background:color-mix(in srgb,var(--variation-bg) 55%,transparent); backdrop-filter:blur(2px); }
+.variation-close-card { flex:none; display:grid; gap:8px; padding:14px; border:1px solid var(--variation-line); border-radius:12px; background:var(--variation-bg); box-shadow:0 6px 24px #0002; }
+.variation-close-card > strong { font-size:16px; }
+.variation-close-confirm p { font-size:13px; color:var(--variation-muted); }
+.variation-close-actions { display:grid; gap:8px; }
+.variation-board .variation-close-actions button { width:100%; min-height:40px; margin:0; }
 
 .variation-board .variation-notices > p { display:flex; align-items:center; gap:4px; box-sizing:border-box; height:32px; max-height:32px; margin:0; padding:2px 8px; overflow:hidden; }
 .variation-notices > p > span { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; }
 .variation-notices > p > button { flex:none; }
+.variation-notices > p > button[aria-label="关闭推演提示"] { width:28px; height:28px; min-height:28px; padding:4px; }
+.variation-notices svg { display:block; width:14px; height:14px; }
 
 .variation-board .variation-evaluation .variation-instant { flex:0 0 64px; width:64px; padding:2px; color:var(--variation-accent); font-weight:600; }

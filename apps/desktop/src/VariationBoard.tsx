@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { branchAfter, clampPanel, movesToSave, sameMoves } from "../../../packages/variation-session";
-import { Bookmark, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Ellipsis, FlipVertical2, LoaderCircle, Minus, Pause, Play, Plus, X } from "lucide-react";
+import { Bookmark, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Ellipsis, FlipVertical2, LoaderCircle, Minus, Pause, Play, Plus, Trash2, X } from "lucide-react";
 import "./variationBoard.css";
 import { orderedVariationLines, variationEvaluation, variationRound, type VariationAnalysis } from "./variationAnalysis";
 
@@ -200,7 +200,14 @@ export function VariationBoard<F extends VariationFrame>(props: VariationBoardPr
     return () => { observer?.disconnect(); window.removeEventListener("resize", constrain); window.visualViewport?.removeEventListener("resize", constrain); };
   }, [floating, expanded, collapsed]);
 
-  const requestClose = () => { if (lock.current) return; cancelBest(); setPlaying(false); if (dirty) setClosing(true); else onClose(); };
+  const requestClose = () => {
+    if (lock.current) return;
+    cancelBest(); setPlaying(false); setMore(false); setDeleteTemp(false);
+    if (dirty) { setCollapsed(false); setClosing(true); } else onClose();
+  };
+  useEffect(() => {
+    if (closing) panel.current?.querySelector<HTMLButtonElement>(".variation-close-confirm .variation-continue")?.focus();
+  }, [closing]);
   useEffect(() => {
     const escape = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.isComposing || lock.current) return;
@@ -267,6 +274,11 @@ export function VariationBoard<F extends VariationFrame>(props: VariationBoardPr
   }
 
   const navigate = (step: number) => { if (lock.current || busy) return; cancelBest(); setPlaying(false); setSelected(undefined); setCursor(Math.max(0, Math.min(line.moves.length, step))); };
+  const notationLabel = (value?: string) => value && !/^[a-i][0-9][a-i][0-9]$/i.test(value) ? value : "着法待核对";
+  const notice = error ? <p className="variation-error" role="alert"><span title={error}>{error}</span>{retrySave && <button type="button" disabled={busy || saving || Boolean(deleting) || !line.moves.length} onClick={() => void retrySave()}>重试保存</button>}<button type="button" aria-label="关闭推演提示" onClick={() => { setError(""); setRetrySave(undefined); }}><X/></button></p>
+    : busy ? <p role="status">正在校验推演线路…</p>
+    : saving ? <p role="status">正在保存分支…</p>
+    : receipt ? <p className="variation-receipt" role="status"><span title={receipt.message}>{receipt.message}</span>{receipt.view && <button type="button" onClick={() => { setPlaying(false); void Promise.resolve(receipt.view!()).catch(reason => setError(String(reason))); }}>查看已保存分支</button>}<button type="button" aria-label="关闭推演提示" onClick={() => setReceipt(undefined)}><X/></button></p> : null;
   const style: CSSProperties = floating && !expanded ? { left: position.x, top: position.y } : {};
   return <aside ref={panel} className={`variation-board ${mobile ? "is-mobile mobile-study-pieces" : "is-desktop"} ${light ? "is-light" : ""} ${floating ? "is-floating" : "is-docked"} ${collapsed ? "is-collapsed" : ""} ${expanded ? "is-expanded" : ""}`} style={style} aria-label="小棋盘推演">
     <div ref={viewportBounds} className="variation-safe-bounds" aria-hidden="true"/>
@@ -280,8 +292,8 @@ export function VariationBoard<F extends VariationFrame>(props: VariationBoardPr
       target.addEventListener("pointermove", update); target.addEventListener("pointerup", stop); target.addEventListener("pointercancel", stop);
     }}>
       <strong>小棋盘</strong>
-      <button type="button" className="variation-save" aria-label={saving ? "保存中" : props.saveLabel ? "复制后保存" : "保存分支"} title={`${props.saveLabel ?? "保存整条线路"} · 共 ${line.moves.length} 步`} disabled={busy || saving || Boolean(deleting) || !line.moves.length} onClick={() => void save()}>{saving ? <LoaderCircle className="variation-saving"/> : <Bookmark/>}<span>{saving ? "保存中" : props.saveLabel ? "复制后保存" : "保存分支"}</span></button>
-      <nav><button type="button" aria-label="翻转小棋盘" title={flipped ? "切换红方视角" : "切换黑方视角"} aria-pressed={flipped} onClick={() => setFlipped(value => !value)}><FlipVertical2/></button><button type="button" aria-label="更多推演操作" aria-expanded={more} onClick={() => { setCollapsed(false); setMore(value => !value); }}><Ellipsis/></button><button type="button" aria-label={collapsed ? "展开小棋盘" : "收起小棋盘"} onClick={() => { cancelBest(); setCollapsed(value => !value); setPlaying(false); setMore(false); }}>{collapsed ? <Plus/> : <Minus/>}</button><button type="button" aria-label="关闭小棋盘" disabled={saving || Boolean(deleting)} onClick={requestClose}><X/></button></nav>
+      <button type="button" className="variation-save" aria-label={saving ? "保存中" : props.saveLabel ? "复制后保存" : "保存分支"} title={`${props.saveLabel ?? "保存整条线路"} · 共 ${line.moves.length} 步`} disabled={busy || saving || closing || Boolean(deleting) || !line.moves.length} onClick={() => void save()}>{saving ? <LoaderCircle className="variation-saving"/> : <Bookmark/>}<span>{saving ? "保存中" : props.saveLabel ? "复制后保存" : "保存分支"}</span></button>
+      <nav><button type="button" aria-label="翻转小棋盘" disabled={closing} title={flipped ? "切换红方视角" : "切换黑方视角"} aria-pressed={flipped} onClick={() => setFlipped(value => !value)}><FlipVertical2/></button><button type="button" aria-label="更多推演操作" disabled={closing} aria-expanded={more} onClick={() => { setCollapsed(false); setMore(value => !value); }}><Ellipsis/></button><button type="button" disabled={closing} aria-label={collapsed ? "展开小棋盘" : "收起小棋盘"} onClick={() => { cancelBest(); setCollapsed(value => !value); setPlaying(false); setMore(false); }}>{collapsed ? <Plus/> : <Minus/>}</button><button type="button" aria-label="关闭小棋盘" aria-expanded={closing} disabled={saving || Boolean(deleting)} onClick={requestClose}><X/></button></nav>
     </header>
     {more && <section className="variation-more" aria-label="推演更多操作">
       <strong className="variation-source-title">{props.title}</strong>
@@ -295,26 +307,26 @@ export function VariationBoard<F extends VariationFrame>(props: VariationBoardPr
       {props.analyze && <button type="button" onClick={() => { cancelBest(); setEngineEnabled(value => !value); }}>{engineEnabled ? "暂停计算" : "恢复计算"}</button>}
       <button type="button" disabled={busy || saving || Boolean(deleting) || !line.moves.length} onClick={() => setDeleteTemp(true)}>删除临时线路</button>
       {deleteTemp && <div role="alertdialog" aria-label="删除临时线路确认"><p>只移除此临时线路，已保存的变招保持不变。</p><button type="button" onClick={removeTemporaryLine}>确认删除临时线路</button><button type="button" onClick={() => setDeleteTemp(false)}>取消</button></div>}
-      {props.onDeleteSaved && Boolean(props.savedBranches?.length) && <section aria-label="已保存变招"><strong>已保存变招{props.savedBranchTitle ? ` · 《${props.savedBranchTitle}》` : ""}</strong>{props.savedBranches!.map(branch => <div key={branch.id}><span>{branch.label}</span><button type="button" disabled={busy || saving || Boolean(deleting)} onClick={() => { if (window.confirm("删除此变招及其后续？原主线和其他变招保留。")) void deleteSaved(branch.id); }}>删除已保存变招 · {branch.label}</button></div>)}</section>}
+      {props.onDeleteSaved && Boolean(props.savedBranches?.length) && <section className="variation-saved-branches" aria-label="已保存变招"><strong>已保存变招{props.savedBranchTitle ? ` · 《${props.savedBranchTitle}》` : ""}</strong><ul>{props.savedBranches!.map(branch => <li key={branch.id}><span title={branch.label}>{branch.label}</span><button type="button" aria-label={`删除已保存变招 · ${branch.label}`} title="删除此变招" disabled={busy || saving || Boolean(deleting)} onClick={() => { if (window.confirm("删除此变招及其后续？原主线和其他变招保留。")) void deleteSaved(branch.id); }}><Trash2/></button></li>)}</ul></section>}
       {lines.length > 1 && <label className="variation-line-picker">临时线路<select aria-label="切换临时线路" value={active} disabled={busy || saving} onChange={event => { const id = Number(event.target.value); setActive(id); navigate(0); setReceipt(undefined); setMore(false); }}>
         {lines.map((item, index) => <option key={item.id} value={item.id}>{index === 0 ? "原线路" : `推演 ${index}`} · {item.moves.length} 步{saved.includes(key(item.moves)) ? " · 已保存" : ""}</option>)}
       </select></label>}
-      <div className="variation-moves">{line.frames.map((item, index) => <button type="button" key={index} className={cursor === index + 1 ? "active" : ""} disabled={busy || saving} onClick={() => { navigate(index + 1); setMore(false); }}>{index + 1}. {item.notation ?? line.moves[index]}</button>)}</div>
+      <div className="variation-moves">{line.frames.map((item, index) => <button type="button" key={index} className={cursor === index + 1 ? "active" : ""} disabled={busy || saving} onClick={() => { navigate(index + 1); setMore(false); }}>{index + 1}. {notationLabel(item.notation)}</button>)}</div>
       <small>点棋子再点目标位置可试走；点击保存才写入原棋谱。</small>
     </section>}
     {!collapsed && <>
-      <div ref={boardArea} className="variation-board-content"><div ref={boardCanvas} className="variation-board-canvas">{props.renderBoard(frame, { flipped, selected, hintMoves: hints ? candidates.map(item => item.pv[0]) : [], onSquare: clickSquare, onMove: (from, to) => void move(from, to) })}</div></div>
-      <footer className="variation-board-footer">
+      <div ref={boardArea} className="variation-board-content" inert={closing}><div ref={boardCanvas} className="variation-board-canvas">{props.renderBoard(frame, { flipped, selected, hintMoves: hints ? candidates.map(item => item.pv[0]) : [], onSquare: clickSquare, onMove: (from, to) => void move(from, to) })}</div></div>
+      <footer className="variation-board-footer" inert={closing}>
         {props.analyze && <section className="variation-analysis" aria-label="推演引擎">
           <div className="variation-evaluation"><b>{evaluation.label}</b><button type="button" className="variation-instant" aria-label="极速出招" aria-busy={bestWaiting} disabled={busy || saving || Boolean(deleting) || bestWaiting} onClick={requestBest}>{bestWaiting ? "计算中" : "极速出招"}</button><button type="button" aria-pressed={hints} onClick={() => setHints(value => !value)}>AI 提示{hints ? "开" : "关"}</button></div>
           <div className="variation-evaluation-bar" aria-label={evaluation.label}><i style={{ width: `${evaluation.redShare}%` }}/></div>
           <p className="variation-analysis-metrics">深度 {rankedLines[0]?.depth ?? "—"} · 节点 {rankedLines[0]?.nodes?.toLocaleString() ?? "—"} · 耗时 {rankedLines[0]?.timeMs ?? result?.elapsedMs ?? "—"} ms{analyzing ? " · 计算中" : !engineEnabled ? " · 已暂停" : ""}</p>
           <div className="variation-suggestion-slot">
             {analysisError ? <p className="variation-analysis-error" role="alert"><span title={analysisError}>{analysisError}</span><button type="button" onClick={() => setAnalysisRetry(value => value + 1)}>重试计算</button></p>
-              : hints && candidates.length > 0 ? <div className="variation-suggestions" aria-label="推荐走法">{candidates.slice(0, 3).map((item, index) => <button type="button" key={index} disabled={busy || saving || analyzing || Boolean(deleting)} onClick={() => playSuggestion(item.pv[0])}>{index === 0 ? "走正招" : `候选 ${index + 1}`} · {item.notation?.[0] ?? item.pv[0]}</button>)}</div> : null}
+              : hints && candidates.length > 0 ? <div className="variation-suggestions" aria-label="推荐走法">{candidates.slice(0, 3).map((item, index) => <button type="button" key={index} disabled={busy || saving || analyzing || Boolean(deleting)} onClick={() => playSuggestion(item.pv[0])}>{index === 0 ? "走正招" : `候选 ${index + 1}`} · {notationLabel(item.notation?.[0])}</button>)}</div> : null}
           </div>
         </section>}
-        <p className="variation-board-progress">第 {cursor} 步 / 共 {line.moves.length} 步 <span>{frame.fen.split(/\s+/)[1] === "b" ? "黑方" : "红方"}行棋 · 第 {variationRound(base.fen, cursor)} 回合</span></p>
+        <div className="variation-board-status">{notice ? <div className="variation-notices">{notice}</div> : <p className="variation-board-progress">第 {cursor} 步 / 共 {line.moves.length} 步 <span>{frame.fen.split(/\s+/)[1] === "b" ? "黑方" : "红方"}行棋 · 第 {variationRound(base.fen, cursor)} 回合</span></p>}</div>
         <input className="variation-progress-slider" aria-label="推演进度" type="range" min={0} max={line.moves.length} value={cursor} disabled={busy || saving} onChange={event => navigate(Number(event.target.value))}/>
         <nav className="variation-playback" aria-label="推演回放">
           <button type="button" aria-label="推演起点" disabled={!cursor || busy || saving} onClick={() => navigate(0)}><ChevronsLeft/></button>
@@ -325,12 +337,6 @@ export function VariationBoard<F extends VariationFrame>(props: VariationBoardPr
         </nav>
       </footer>
     </>}
-    <div className="variation-notices">
-    {error ? <p className="variation-error" role="alert"><span title={error}>{error}</span>{retrySave && <button type="button" disabled={busy || saving || Boolean(deleting) || !line.moves.length} onClick={() => void retrySave()}>重试保存</button>}</p>
-      : busy ? <p role="status">正在校验推演线路…</p>
-      : saving ? <p role="status">正在保存分支…</p>
-      : receipt ? <p className="variation-receipt" role="status"><span title={receipt.message}>{receipt.message}</span>{receipt.view && <button type="button" onClick={() => { setPlaying(false); void Promise.resolve(receipt.view!()).catch(reason => setError(String(reason))); }}>查看已保存分支</button>}</p> : null}
-    </div>
-    {closing && <section className="variation-close-confirm" role="alertdialog" aria-label="保留未保存推演"><p>还有未保存的临时线路。</p><button type="button" disabled={busy || saving || Boolean(deleting) || !line.moves.length} onClick={() => void save(false, false, true)}>保存当前线路</button><button type="button" disabled={saving} onClick={onClose}>放弃并关闭</button><button type="button" onClick={() => setClosing(false)}>继续研究</button></section>}
+    {closing && <section className="variation-close-confirm" role="alertdialog" aria-modal="true" aria-label="保留未保存推演"><div className="variation-close-card"><strong>结束推演？</strong><p>还有未保存的临时线路，请选择保存或放弃后关闭。</p><div className="variation-close-actions"><button type="button" disabled={busy || saving || Boolean(deleting) || !line.moves.length} onClick={() => void save(false, false, true)}>保存当前线路</button><button type="button" disabled={saving} onClick={onClose}>放弃并关闭</button><button type="button" className="variation-continue" onClick={() => setClosing(false)}>继续研究</button></div></div></section>}
   </aside>;
 }

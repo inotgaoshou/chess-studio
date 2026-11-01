@@ -108,6 +108,31 @@ describe("small calculation board", () => {
     fireEvent.click(screen.getByRole("button", { name: "展开小棋盘" }));
     expect(screen.getByText(/第 0 步 \/ 共 2 步/)).toBeTruthy();
   });
+  it("replaces the more menu with an actionable close confirmation", async () => {
+    const onClose = vi.fn(); setup(undefined, { onClose }); await ready();
+    fireEvent.click(screen.getByRole("button", { name: "更多推演操作" }));
+    fireEvent.click(screen.getByRole("button", { name: "关闭小棋盘" }));
+    expect(screen.queryByRole("region", { name: "推演更多操作" })).toBeNull();
+    expect(screen.getByRole("button", { name: "继续研究" })).toBe(document.activeElement);
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "放弃并关闭" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+  it("expands a collapsed dirty panel before asking to close", async () => {
+    setup(); await ready();
+    fireEvent.click(screen.getByRole("button", { name: "收起小棋盘" }));
+    fireEvent.click(screen.getByRole("button", { name: "关闭小棋盘" }));
+    expect(screen.getByRole("alertdialog")).toBeTruthy();
+    expect(screen.getByTestId("mini-board")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "继续研究" }));
+    expect(screen.getByText(/第 0 步 \/ 共 2 步/)).toBeTruthy();
+  });
+  it("closes an unchanged preview immediately", async () => {
+    const onClose = vi.fn(); setup([], { onClose }); await ready();
+    fireEvent.click(screen.getByRole("button", { name: "关闭小棋盘" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
   it("saves before closing and keeps other unsaved lines available", async () => {
     const onClose = vi.fn(); setup(undefined, { onClose }); await ready();
     fireEvent.click(screen.getByRole("button", { name: "试走 b0c2" })); await ready();
@@ -145,9 +170,9 @@ it("hides hints and arrows while retaining evaluation and calculation data", asy
 });
 
 it("applies a suggested move only to the temporary line and validates it", async () => {
-  const analyze = vi.fn(async () => ({ lines:[{pv:["b0c2"],scoreCp:10}] }));
+  const analyze = vi.fn(async () => ({ lines:[{pv:["b0c2"],notation:["马八进七"],scoreCp:10}] }));
   const {onSave,validate} = setup([], {analyze}); await ready();
-  fireEvent.click(await screen.findByRole("button",{name:"走正招 · b0c2"})); await ready();
+  fireEvent.click(await screen.findByRole("button",{name:"走正招 · 马八进七"})); await ready();
   expect(validate).toHaveBeenLastCalledWith(["b0c2"]);
   expect(screen.getByText(/第 1 步 \/ 共 1 步/)).toBeTruthy();
   expect(onSave).not.toHaveBeenCalled();
@@ -256,6 +281,7 @@ it.each(['empty','failure','illegal'])("retains the temporary position when the 
  const onSave=vi.fn();setup([],{analyze,validate,onSave});await ready();
  fireEvent.click(screen.getByRole('button',{name:'极速出招'}));
  await screen.findByText(mode==='empty'?'当前局面没有可用的引擎走法':mode==='failure'?'引擎计算失败':'这一步不合法');
+ const dismiss=screen.queryByRole('button',{name:'关闭推演提示'});if(dismiss)fireEvent.click(dismiss);
  expect(screen.getByText(/第 0 步 \/ 共 0 步/)).toBeTruthy();expect(onSave).not.toHaveBeenCalled();
 });
 it("plays a black-side best move through normal temporary legality validation",async()=>{

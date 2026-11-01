@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const output = process.env.EVIDENCE_DIR || '/tmp/qixi-variation-layout';
 fs.mkdirSync(output, { recursive: true });
 const fen = 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1';
-const game = {id:'variation-fixture',title:'推演验收',note:'原备注',startingFen:fen,currentFen:fen,currentNodeId:'main:0',moves:['b0c2','b9c7'],cursor:0,branches:[],comments:{'b0c2':'保留注释'},createdAt:'2026-10-20T10:00:00Z',updatedAt:'2026-10-25T10:00:00Z'};
+const game = {id:'variation-fixture',title:'推演验收',note:'原备注',startingFen:fen,currentFen:fen,currentNodeId:'main:0',moves:['b0c2','b9c7'],cursor:0,branches:[{id:'legacy-coordinate',parentCursor:0,parentPath:[],moves:['c3c4'],notation:['c3c4'],createdAt:0}],comments:{'b0c2':'保留注释'},createdAt:'2026-10-20T10:00:00Z',updatedAt:'2026-10-25T10:00:00Z'};
 const panelOf = page => page.locator('aside[aria-label="小棋盘推演"]');
 async function read(page,id=game.id) { return page.evaluate(async id => (await import(window.fixtureStoreUrl||'/src/store.ts')).trainingStore.openManualGame(id),id); }
 async function step(board,from,to) {
@@ -49,9 +49,11 @@ try {
   const stable=async(before,label)=>{const after=await geometry();for(const selector of Object.keys(before))for(const key of ['x','y','width','height'])assert(Math.abs(before[selector][key]-after[selector][key])<=1,`${label} ${selector} ${key} moved ${after[selector][key]-before[selector][key]}px`);};
   await page.waitForTimeout(120);const pending=await geometry();
   await panel.getByRole('button',{name:/走正招/}).waitFor();await page.waitForTimeout(120);await stable(pending,'idle result');
-  for(const viewport of [{width:320,height:844},{width:390,height:844},{width:430,height:844},{width:844,height:390},{width:390,height:844}]){
+  for(const viewport of [{width:320,height:844},{width:390,height:844},{width:430,height:844},{width:844,height:390},{width:820,height:1180},{width:1180,height:820},{width:390,height:844}]){
     await page.setViewportSize(viewport);await bounds(panel);await page.waitForTimeout(120);
     const ready=await geometry();
+    const bottomGap=await panel.evaluate(el=>el.getBoundingClientRect().bottom-el.querySelector('.variation-playback').getBoundingClientRect().bottom);
+    assert(bottomGap<=10,`unnecessary bottom gap: ${bottomGap}px`);
     await panel.getByRole('button',{name:'AI 提示开',exact:true}).click();await page.waitForTimeout(80);await stable(ready,'hints hidden');
     assert.equal(await panel.getByRole('button',{name:/走正招/}).count(),0);
     assert.equal(await panel.locator('.analysis-arrow-layer').count(),0);
@@ -69,6 +71,28 @@ try {
   await panel.getByRole('button',{name:'重试计算'}).waitFor();await page.waitForTimeout(80);await stable(beforeMove,'engine error');
   engineFailure=false;await panel.getByRole('button',{name:'重试计算'}).click();await panel.getByRole('button',{name:/走正招/}).waitFor();await page.waitForTimeout(80);await stable(beforeMove,'engine retry');
   await panel.getByRole('button',{name:'保存分支',exact:true}).click();await panel.getByText(/已保存一支/).waitFor();await page.waitForTimeout(80);await stable(beforeMove,'save receipt');
-  console.log('PASS geometry: idle result, hint toggle, move validation, error/retry, save; 320/390/430, landscape and rotation');
+  await panel.getByRole('button',{name:'关闭推演提示',exact:true}).click();await stable(beforeMove,'receipt dismissed');
+  await panel.getByRole('button',{name:'更多推演操作',exact:true}).click();
+  const branches=panel.getByRole('region',{name:'已保存变招',exact:true});
+  await branches.getByText('1. 兵七进一 · 1 步',{exact:true}).waitFor();
+  assert(!/[a-i][0-9][a-i][0-9]/i.test(await branches.innerText()),'saved move labels must use Chinese notation');
+  for(const row of await branches.locator('li').all()){
+    const text=await row.locator('span').boundingBox(),remove=await row.getByRole('button').boundingBox();
+    assert(text.x+text.width<=remove.x+1,'branch text must not overlap its delete control');
+  }
+  await page.screenshot({path:output+'/saved-branches.png'});
+  await panel.getByRole('button',{name:'关闭小棋盘',exact:true}).click();
+  assert.equal(await panel.getByRole('region',{name:'推演更多操作'}).count(),0);
+  const confirm=panel.getByRole('alertdialog',{name:'保留未保存推演'});await confirm.waitFor();
+  await confirm.getByRole('button',{name:'放弃并关闭',exact:true}).click({trial:true});
+  await page.screenshot({path:output+'/close-confirm.png'});
+  await confirm.getByRole('button',{name:'继续研究',exact:true}).click();await stable(beforeMove,'continue after close confirmation');
+  await panel.getByRole('button',{name:'收起小棋盘',exact:true}).click();
+  await panel.getByRole('button',{name:'关闭小棋盘',exact:true}).click();
+  await confirm.getByRole('button',{name:'放弃并关闭',exact:true}).click();await panel.waitFor({state:'hidden'});
+  await page.getByRole('button',{name:'自由推演',exact:true}).click();await panel.waitFor();
+  await panel.getByRole('button',{name:'关闭小棋盘',exact:true}).click();await panel.waitFor({state:'hidden'});
+  assert.deepEqual(errors,[]);
+  console.log('PASS geometry and closing: no bottom gap, idle result, hint toggle, move/error/retry/save, Chinese legacy labels, more/close/collapse/discard; 320/390/430, landscape and iPad');
 }finally{await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});
