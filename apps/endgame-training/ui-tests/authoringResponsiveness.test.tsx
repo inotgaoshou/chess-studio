@@ -82,16 +82,16 @@ it("allows entering a book while its exact total is still pending",async()=>{
   }) as AuthoringApi["request"]);
   fireEvent.click(await screen.findByRole("button",{name:/练习目录.*道已发布/}));
   fireEvent.click(await screen.findByRole("button",{name:"＋添加题目"}));
-  fireEvent.click(screen.getByRole("button",{name:"从平台／机构题库选题"}));
-  const books=await screen.findByRole("dialog",{name:"选择题库／书本"});
+  fireEvent.click(screen.getByRole("button",{name:"从已有棋谱选局面"}));
+  const books=await screen.findByRole("dialog",{name:"选择棋谱库／书本"});
   const book=await within(books).findByRole("button",{name:/独立统计题库/});
   expect(book.hasAttribute("disabled")).toBe(false);
   expect(paths.some(path=>path.includes("view=page"))).toBe(true);
   await waitFor(()=>expect(paths.some(path=>path.includes("view=counts"))).toBe(true));
   fireEvent.click(book);
-  await screen.findByRole("dialog",{name:"选择平台／机构题目"});
+  await screen.findByRole("dialog",{name:"选择已有棋谱"});
   await act(async()=>counts.resolve({totalCount:1}));
-  expect(screen.queryByRole("dialog",{name:"选择题库／书本"})).toBeNull();
+  expect(screen.queryByRole("dialog",{name:"选择棋谱库／书本"})).toBeNull();
 });
 
 it("also finishes a save immediately with an older id-only create response",async()=>{

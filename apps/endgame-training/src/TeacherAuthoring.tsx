@@ -964,7 +964,7 @@ function SourcePicker(props: SourcePickerProps) {
     return page;
   }
   useEffect(()=>{
-    if(!countQuery || library)return;
+    if(!countQuery || library || kind==="problems")return;
     const controller=new AbortController();let active=true;
     setCountError("");
     void api.request<{totalCount?:number;publicationRevision?:number;snapshotKey?:string}>(countQuery.path,{signal:controller.signal})
@@ -974,9 +974,9 @@ function SourcePicker(props: SourcePickerProps) {
         if(Number.isSafeInteger(page.totalCount)&&page.totalCount!>=0)setTotalCount(page.totalCount);
       }).catch(reason=>{if(active && !controller.signal.aborted)setCountError(message(reason));});
     return ()=>{active=false;controller.abort();};
-  },[api,countQuery,countRetry,library?.id]);
+  },[api,countQuery,countRetry,library?.id,kind]);
   useEffect(()=>{
-    if(library)return;
+    if(library || kind==="problems")return;
     const epoch=++generation.current, controller=new AbortController();
     setNextCursor(undefined);setError("");setBusy(true);paginationLock.current=false;
     setTotalCount(undefined);setCountQuery(undefined);setCountError("");
@@ -1017,11 +1017,11 @@ function SourcePicker(props: SourcePickerProps) {
     } catch(reason){if(epoch===generation.current)setError(message(reason));}
     finally{if(epoch===generation.current){paginationLock.current=false;setBusy(false);}}
   }
+  if(kind==="problems")return <SourceRecordPicker {...props} mateFilter={mateFilter} onMateFilterChange={setMateFilter}/>;
   if(library)return <SourceRecordPicker {...props} library={library} mateFilter={mateFilter} onMateFilterChange={setMateFilter} onClose={()=>setLibrary(undefined)}/>;
   const title=kind==="games" ? "选择棋谱库／书本" : "选择题库／书本";
   return <div className="authoring-overlay"><section className="authoring-sheet authoring-picker" role="dialog" aria-modal="true" aria-label={title}>
     <header className="authoring-picker-header"><button type="button" onClick={onClose}>‹ 返回</button><h3>{title}</h3></header>
-    {kind === "problems" && <MateStepFilter value={mateFilter} onChange={setMateFilter}/>}
     <input aria-label="搜索题库或书本" placeholder="输入题库或书本名称" value={q} onChange={event=>setQ(event.target.value)}/>
     {error && <p role="alert" className="authoring-error">{error}<button type="button" disabled={busy} onClick={()=>setReload(value=>value+1)}>重试</button></p>}
     <div className="authoring-source-list authoring-library-list" ref={list} aria-busy={busy}>
@@ -1044,7 +1044,7 @@ function sourceTotal(page: AuthoringSourcePage, loaded: AuthoringSource[]): numb
   if (Number.isSafeInteger(page.totalCount) && page.totalCount! >= 0) return page.totalCount;
   return page.nextCursor ? undefined : loaded.length;
 }
-function SourceRecordPicker({api,kind,directoryId,existing,onClose,onChoose,onChooseMany,library,mateFilter,onMateFilterChange}:SourcePickerProps & {library:SourceLibrary;mateFilter:string;onMateFilterChange(value:string):void}) {
+function SourceRecordPicker({api,kind,directoryId,existing,onClose,onChoose,onChooseMany,library,mateFilter,onMateFilterChange}:SourcePickerProps & {library?:SourceLibrary;mateFilter:string;onMateFilterChange(value:string):void}) {
   const [q,setQ] = useState(""), [category,setCategory] = useState(""), [reload,setReload] = useState(0);
   const [filtersOpen,setFiltersOpen] = useState(false);
   const [items,setItems] = useState<AuthoringSource[]>([]), [categories,setCategories] = useState<string[]>([]);
@@ -1058,7 +1058,8 @@ function SourceRecordPicker({api,kind,directoryId,existing,onClose,onChoose,onCh
   const list = useRef<HTMLDivElement>(null);
   const existingIds = new Set(existing.map(item => `${itemRef(item).kind}:${itemRef(item).subjectId}`));
   function recordPath(after?:string) {
-    const params = new URLSearchParams({kind,q:q.trim(),limit:String(SOURCE_RECORD_PAGE_SIZE),libraryId:library.id});
+    const params = new URLSearchParams({kind,q:q.trim(),limit:String(SOURCE_RECORD_PAGE_SIZE)});
+    if (library) params.set("libraryId",library.id);
     if (category) params.set("category",category);
     if (directoryId) params.set("directoryId",directoryId);
     if (after) params.set("cursor",after);
@@ -1097,7 +1098,7 @@ function SourceRecordPicker({api,kind,directoryId,existing,onClose,onChoose,onCh
     const searchChanged=lastSearch.current!==undefined && lastSearch.current!==q;lastSearch.current=q;
     timer=setTimeout(()=>void load(),searchChanged?200:0);
     return ()=>{clearTimeout(timer);controller.abort();request.current++;};
-  },[q,category,mateFilter,kind,directoryId,library.id,api,reload]);
+  },[q,category,mateFilter,kind,directoryId,library?.id,api,reload]);
   async function loadMore() {
     if (busy || choosing || paginationLock.current) return;
     const targetPage=pageIndex+1;
@@ -1170,8 +1171,9 @@ function SourceRecordPicker({api,kind,directoryId,existing,onClose,onChoose,onCh
   const hasNextPage=Boolean(nextCursor)||items.length>(pageIndex+1)*SOURCE_RECORD_PAGE_SIZE;
   return <div className="authoring-overlay"><section className="authoring-sheet authoring-picker" role="dialog" aria-modal="true" aria-label={kind === "games" ? "选择已有棋谱" : "选择平台／机构题目"}>
     <header className="authoring-picker-header"><button type="button" disabled={choosing} onClick={onClose}>‹ 返回</button><h3>{kind === "games" ? "选择已有棋谱" : "选择平台／机构题目"}</h3></header>
-    <p className="authoring-picker-book">{library.title}</p>
+    {library && <p className="authoring-picker-book">{library.title}</p>}
     {kind === "problems" ? <>
+      <MateStepFilter value={mateFilter} onChange={onMateFilterChange} disabled={choosing}/>
       <div className="authoring-picker-toolbar">
         <button type="button" aria-expanded={filtersOpen} aria-controls="authoring-record-filters" onClick={()=>setFiltersOpen(value=>!value)}><Filter size={16} aria-hidden="true"/>筛选</button>
         <button type="button" disabled={busy||choosing||!items.length} onClick={()=>void selectAll()}>全选</button>
@@ -1180,7 +1182,6 @@ function SourceRecordPicker({api,kind,directoryId,existing,onClose,onChoose,onCh
       <div className="authoring-picker-summary"><span title={filterSummary}>{filterSummary} · 已选 {selected.length} 题</span>{selected.length>0 && <button type="button" aria-label="清空选择" title="清空选择" disabled={choosing} onClick={()=>setSelected([])}><X size={16} aria-hidden="true"/></button>}</div>
       {filtersOpen && <div className="authoring-picker-filters" id="authoring-record-filters">
         <label className="authoring-picker-category">题型分类<select aria-label="题型分类" value={category} disabled={choosing} onChange={event=>setCategory(event.target.value)}><option value="">全部</option>{categories.map(value=><option key={value} value={value}>{value}</option>)}</select></label>
-        <MateStepFilter value={mateFilter} onChange={onMateFilterChange} disabled={choosing}/>
         <input aria-label="搜索题目或棋谱" placeholder="输入名称搜索" value={q} disabled={choosing} onChange={event=>setQ(event.target.value)}/>
       </div>}
     </> : <input aria-label="搜索题目或棋谱" placeholder="输入名称搜索" value={q} disabled={choosing} onChange={event=>setQ(event.target.value)}/>}

@@ -52,7 +52,7 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
       if(url.searchParams.get('view')==='counts'){countsStarted=true;await pause(1600);body={totalCount:1,publicationRevision:7,snapshotKey:'fixture-seven'};}
       else {await pause(60);body={items:[{id:'book',title:'快速响应书本',sourceScope:'平台'}],nextCursor:null,publicationRevision:7,snapshotKey:'fixture-seven',mateFilterVersion:1};}
      }else if(path===base+'/sources'){
-      assert.equal(url.searchParams.get('libraryId'),'book');assert.equal(url.searchParams.get('limit'),'50');
+      assert.equal(url.searchParams.has('libraryId'),false);assert.equal(url.searchParams.get('limit'),'50');
       const after=url.searchParams.has('cursor');body={items:Array.from({length:after?13:50},(_,i)=>source(i+(after?50:0))),totalCount:63,categories:['杀棋'],nextCursor:after?null:'page-two',mateFilterVersion:1};
      }else if(path==='/api/v1/admin/teaching-catalog/browse'){
       assert.equal(url.searchParams.get('allowStaleCounts'),'true');assert.equal(url.searchParams.get('limit'),'50');
@@ -97,15 +97,15 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
     await page.getByRole('button',{name:/添加题目/}).waitFor().catch(async error=>{console.log(JSON.stringify({url:page.url(),body:await page.locator('body').innerText(),errors,calls}));throw error;});assert.equal(listReads,readsBefore,'opening detail must not reread all directories');
     await page.getByRole('button',{name:/添加题目/}).click();
     await page.getByRole('button',{name:'从平台／机构题库选题',exact:true}).click();
-    const books=page.getByRole('dialog',{name:'选择题库／书本',exact:true});
-    const book=books.getByRole('button',{name:/快速响应书本/});await book.waitFor();assert(await book.isEnabled());
-    await page.waitForFunction(()=>Boolean(document.querySelector('.authoring-library-list button')));
-    await pause(50);assert(countsStarted,'counts request must run separately');
-    await page.screenshot({path:`${output}/${name}-${viewport.width}-books.png`});
-    await book.click();
     const picker=page.getByRole('dialog',{name:'选择平台／机构题目',exact:true});
     await picker.getByText('验收题目 49',{exact:true}).waitFor();
     assert.equal(await picker.locator('.authoring-source-tile').count(),50);
+    await picker.getByRole('button',{name:'两步杀',exact:true}).click();
+    await picker.getByText('验收题目 49',{exact:true}).waitFor();
+    await page.waitForFunction(()=>!document.querySelector('.authoring-source-grid[aria-busy="true"]'));
+    assert(calls.some(call=>call.path===base+'/sources'&&call.query.includes('mateMoves=2')));
+    assert.equal(calls.filter(call=>call.path===base+'/source-libraries').length,0);
+    await page.screenshot({path:`${output}/${name}-${viewport.width}-direct-filter.png`});
     const header=await picker.locator('.authoring-picker-header').boundingBox();
     await picker.locator('.authoring-source-list').evaluate(node=>node.scrollTop=node.scrollHeight);
     const moved=await picker.locator('.authoring-picker-header').boundingBox();assert(Math.abs(header.y-moved.y)<=1);
@@ -115,7 +115,6 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
     await picker.getByRole('button',{name:'确认添加（62）',exact:true}).waitFor();
     await page.screenshot({path:`${output}/${name}-${viewport.width}-selection.png`});
     await picker.getByRole('button',{name:'‹ 返回',exact:true}).click();
-    await page.getByRole('dialog',{name:'选择题库／书本',exact:true}).getByRole('button',{name:'‹ 返回',exact:true}).click();
     assert.equal(calls.filter(call=>call.method==='PATCH').length,0,'returning without confirmation must not add questions');
     assert.equal(calls.filter(call=>call.method==='POST'&&call.path.includes('assignments')).length,0,'selecting must never publish an assignment');
     await page.locator('.authoring-header > button').click();
