@@ -35,8 +35,16 @@ Chromium和WebKit各7场景（320/390/430、手机横屏、iPad竖横屏及后�
 
 ## 商店与安装包
 
-商店目标版本 **1.1.0（10142）**；代码提交 `c82feed9`。iOS Release归档成功，生产配置及严格签名验证通过。Xcode直接上传失败 `Failed to Use Accounts`，Chrome仍在Apple密码页；**未上传、未提交审核**，也尚未核对ASC已使用最高构建号。无需撤回或替换旧审核构建。
+最终提交 **1.1.0（10143）**，代码提交 `5756ad57`。2026-11-02 12:11（Asia/Shanghai）App Store Connect确认已提交1个项目，审核详情显示 **等待审核**，构建号10143；提交ID `0c1329df-0853-4e25-bf2a-798518b78bab`。保留审核通过后手动发布，已分发1.0.9保持原样。
 
-归档：`/Users/chenyubin/Library/Developer/Xcode/Archives/2026-11-02/Qixi-1.1.0-10142.xcarchive`。更新说明：`app-store-assets/qixi-review-1.1.0-10142/`。
+补拍商店截图时发现10142在iPad宽竖屏下拆棋棋盘归零。修复后七种视口几何检查、264项界面测试、67项逻辑测试和生产构建通过；10143原生iPad Pro 13模拟器竖屏实际显示棋盘并完成Pikafish分析。10142虽已上传，但未提交审核，由10143替代。生产后端仍为上述固定发布，无额外业务变更。
 
-正式APK版本、生产配置与签名已核对；文件93,266,430字节（约88.95MiB），SHA-256 `1836d008ca231e4dffd36eb89c46ab99e87c9ea7930b375a8a80193f6d15d26b`。路径：`apps/endgame-training/android/app/build/outputs/apk/release/棋析-v1.1.0-10142-正式版.apk`。本轮未覆盖安装10142；设备当前离线，之前已安装并启动的是10140，不能将其算作10142的真机验收。
+iOS归档：`/Users/chenyubin/Library/Developer/Xcode/Archives/2026-11-02/Qixi-1.1.0-10143.xcarchive`。生产配置、严格签名验证和打包Web资源校验通过。Android与iOS使用同一源提交；JS比对除构建时间戳外相同，CSS完全相同。
+
+正式APK：`apps/endgame-training/android/app/build/outputs/apk/release/棋析-v1.1.0-10143-正式版.apk`，版本、生产API、签名和内置资源通过核对。精确大小与SHA-256见 `artifacts/releases/qixi-1.1.0-10143/release.json`。
+
+商店素材：`app-store-assets/qixi-review-1.1.0-10143/`。iPhone中等及大屏各4张、iPad13英寸4张，更新中文说明；大屏旧截图引用已移出该版本草稿，原图保留素材库。另提供通用1920×1080宣传图。原生模拟器与生产API响应式预览的来源分别记录于素材README，不将预览截图冒充真机。
+
+本轮未覆盖安装10143到iPhone，之前已安装并启动的是10140；不能将旧包或模拟器结果计为10143真机触控和听音验收。生产API采样范围与上述限制保持不变。
+
+提交截图：`artifacts/releases/qixi-1.1.0-10143/app-store-submitted.png`；等待审核详情：`artifacts/releases/qixi-1.1.0-10143/app-store-waiting-review.png`。本机截图预览服务及模拟器验收后已停止。
