@@ -7512,9 +7512,10 @@ html:is(.phone-webview,.tablet-webview) .study-workspace:not(.manual-workspace) 
 html:is(.phone-webview,.tablet-webview) .study-workspace:not(.manual-workspace) .study-engine-strip { display:grid; width:100%; height:20px; min-height:20px; max-height:20px; overflow:hidden; }
 .study-stage > .study-play-board-area { width:100%; height:100%; min-width:0; min-height:0; display:grid; place-items:center; overflow:hidden; }
 .study-stage > .study-play-board-area > .board-shell { width:var(--fitted-board-width); height:auto; max-width:100%; max-height:100%; margin:0; }
-@media (max-width:999px) and (orientation:portrait) {
+@media (orientation:portrait) {
  /* Cap the first row at the full-width board's natural height. Extra vertical
-    room belongs to the content below, rather than a gap above replay controls. */
+    room belongs to the content below, rather than a gap above replay controls.
+    Include wide iPads: an auto row cannot size the observed fitted-board cell. */
  html.phone-webview .study-workspace:not(.manual-workspace),html.tablet-webview .study-workspace:not(.manual-workspace) { grid-template-columns:minmax(0,1fr); grid-template-rows:minmax(0,min(calc(min(760px,100vw - 22px) * 1.107142857 + var(--study-top-height,36px) + 12px),calc(100% - clamp(200px,27dvh,260px)))) minmax(0,1fr); }
  html.phone-webview .study-workspace:not(.manual-workspace) > .study-stage,html.tablet-webview .study-workspace:not(.manual-workspace) > .study-stage { height:100%; min-height:0; grid-template-rows:36px 20px minmax(0,1fr); gap:0; padding:0 3px; align-content:stretch; }
  html.phone-webview .study-workspace:not(.manual-workspace) > .study-stage.evaluation-hidden,html.tablet-webview .study-workspace:not(.manual-workspace) > .study-stage.evaluation-hidden { grid-template-rows:36px minmax(0,1fr); }
