@@ -8,6 +8,7 @@ public class TrainingStoreContractTest {
 
     @Test
     public void usesTheStandaloneTrainingPackage() {
-        assertEquals("cn.xiangqi.endgame.training", BuildConfig.APPLICATION_ID);
+        String suffix = BuildConfig.BUILD_TYPE.equals("family") ? ".family" : BuildConfig.BUILD_TYPE.equals("debug") ? ".preview" : "";
+        assertEquals("cn.xiangqi.endgame.training" + suffix, BuildConfig.APPLICATION_ID);
     }
 }

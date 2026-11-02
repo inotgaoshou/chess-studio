@@ -37,6 +37,14 @@ android {
         debug {
             applicationIdSuffix ".preview"
         }
+        family {
+            initWith debug
+            applicationIdSuffix ".family"
+            matchingFallbacks = ["debug"]
+            resValue "string", "app_name", "棋析·家庭学习"
+            resValue "string", "title_activity_main", "棋析·家庭学习"
+            versionNameSuffix "-family"
+        }
         release {
             minifyEnabled false
             if (System.getenv("ANDROID_KEYSTORE_PATH")) {

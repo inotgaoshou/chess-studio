@@ -7,7 +7,7 @@
     "wasm:build": "wasm-pack build ../../crates/web-core --target web --out-dir ../../apps/endgame-training/public/wasm --out-name xiangqi_web_core",
     "skins:prepare": "node ../../scripts/prepare-endgame-training-skins.mjs",
     "dev": "vite --host 0.0.0.0 --port 1422",
-    "build": "tsc && vite build",
+    "build": "node ../../scripts/verify-video-package.mjs && tsc && vite build && node ../../scripts/verify-video-package.mjs",
     "test:provider-mirrors": "node --experimental-strip-types --test tests/providerMirrors.test.ts",
     "mobile:build": "pnpm wasm:build && pnpm build",
     "android:sync": "pnpm mobile:build && cap sync android",

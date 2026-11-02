@@ -30,3 +30,8 @@ apps/desktop/mobile-package-size-report.*
 
 # Ignore dependency directories even when local worktrees use symlinks.
 node_modules
+
+# Private video data and local Python test caches.
+__pycache__/
+/video-staging/
+/VideoLibrary/

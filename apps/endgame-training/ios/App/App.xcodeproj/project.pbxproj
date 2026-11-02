@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		C07E00000000000000000003 /* VideoLibraryPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = C07E00000000000000000004 /* VideoLibraryPlugin.swift */; };
 		C07E00000000000000000001 /* CommentarySpeechPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = C07E00000000000000000002 /* CommentarySpeechPlugin.swift */; };
 		2FAD9763203C412B000D30F8 /* config.xml in Resources */ = {isa = PBXBuildFile; fileRef = 2FAD9762203C412B000D30F8 /* config.xml */; };
 		4D22ABE92AF431CB00220026 /* CapApp-SPM in Frameworks */ = {isa = PBXBuildFile; productRef = 4D22ABE82AF431CB00220026 /* CapApp-SPM */; };
@@ -27,6 +28,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		C07E00000000000000000004 /* VideoLibraryPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoLibraryPlugin.swift; sourceTree = "<group>"; };
 		C07E00000000000000000002 /* CommentarySpeechPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommentarySpeechPlugin.swift; sourceTree = "<group>"; };
 		2FAD9762203C412B000D30F8 /* config.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = config.xml; sourceTree = "<group>"; };
 		50379B222058CBB4000EE86E /* capacitor.config.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = capacitor.config.json; sourceTree = "<group>"; };
@@ -93,6 +95,7 @@
 				91F3B3C30000000100000010 /* CloudBookPlugin.swift */,
 				91F3B3C30000000100000012 /* PikafishPlugin.swift */,
 				C07E00000000000000000002 /* CommentarySpeechPlugin.swift */,
+				C07E00000000000000000004 /* VideoLibraryPlugin.swift */,
 				91F3B3C30000000100000013 /* Pikafish */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
 				504EC30E1FED79650016851F /* Assets.xcassets */,
@@ -240,6 +243,7 @@
 				91F3B3C30000000100000009 /* CloudBookPlugin.swift in Sources */,
 				91F3B3C30000000100000011 /* PikafishPlugin.swift in Sources */,
 				C07E00000000000000000001 /* CommentarySpeechPlugin.swift in Sources */,
+				C07E00000000000000000003 /* VideoLibraryPlugin.swift in Sources */,
 				91F3B3C30000000100000014 /* PFPikafishEngine.mm in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -404,6 +408,7 @@
 				PIKAFISH_IOS_ROOT = "$(SRCROOT)/../../../../../pikafish-ios";
 				PIKAFISH_TAG = "Pikafish-2026-09-06";
 				PRODUCT_BUNDLE_IDENTIFIER = cn.xiangqi.endgame.training;
+				QIXI_DISPLAY_NAME = "棋析";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OBJC_BRIDGING_HEADER = "$(SRCROOT)/App/Pikafish/Pikafish-Bridging-Header.h";
@@ -435,6 +440,7 @@
 				PIKAFISH_IOS_ROOT = "$(SRCROOT)/../../../../../pikafish-ios";
 				PIKAFISH_TAG = "Pikafish-2026-09-06";
 				PRODUCT_BUNDLE_IDENTIFIER = cn.xiangqi.endgame.training;
+				QIXI_DISPLAY_NAME = "棋析";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "";
 				SWIFT_OBJC_BRIDGING_HEADER = "$(SRCROOT)/App/Pikafish/Pikafish-Bridging-Header.h";
