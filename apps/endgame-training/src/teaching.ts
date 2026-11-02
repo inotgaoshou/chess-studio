@@ -32,6 +32,23 @@ const VIP_ACCESS_MESSAGE = "作业权益已过期或未开通，请联系老师�
 let lastSubmitError = "";
 const contentEpochs = new ContentEpochTracker({ getItem: key => localStorage.getItem(key), setItem: (key, value) => localStorage.setItem(key, value) });
 const epochProbes = new Map<string, Promise<boolean>>();
+const optionalCapabilities = new Map<string, { until: number; value: Promise<string[]> }>();
+async function requireServerCapability(auth: TeachingAuth, capability: string, message: string) {
+  const context = authContexts.get(auth);
+  if (!context || !isCurrentAuthContext(context)) throw new Error("登录账号或环境已变化，请重新操作。");
+  const key = `${context.serverUrl}:${context.ownerId}:${context.epoch}`;
+  let cached = optionalCapabilities.get(key);
+  if (!cached || cached.until < Date.now()) {
+    const value = request<{ capabilities?: string[] }>("/api/v1/capabilities", {}, auth.token)
+      .then(body => body.capabilities ?? []);
+    cached = { until: Date.now() + 60_000, value };
+    optionalCapabilities.set(key, cached);
+    void value.catch(() => { if (optionalCapabilities.get(key) === cached) optionalCapabilities.delete(key); });
+  }
+  const capabilities = await cached.value;
+  if (!isCurrentAuthContext(context)) throw new Error("登录账号或环境已变化，请重新操作。");
+  if (!capabilities.includes(capability)) throw new Error(message);
+}
 async function ensureContentEpoch(context: AuthContext): Promise<boolean> {
   const key = `${context.serverUrl}:${context.ownerId}:${context.epoch}`;
   const existing = epochProbes.get(key);
@@ -1440,6 +1457,7 @@ export const teachingClient = {
   async providerManualMirrors() {
     const auth = this.auth();
     if (!auth) throw new Error("请先登录后同步天天象棋云镜像");
+    await requireServerCapability(auth, "personal_provider_imports", "当前服务尚未开放天天象棋云镜像同步");
     return request<ProviderManualMirrorsResponse>("/api/v1/personal-manual-sync/provider-imports", {}, auth.token);
   },
   providerManualMirrorOwnerKey() {
@@ -1460,6 +1478,7 @@ export const teachingClient = {
   async personalManualSyncStatus() {
     const auth = this.auth();
     if (!auth) throw new Error("请先登录后查看个人棋谱同步状态");
+    await requireServerCapability(auth, "personal_manual_sync_status", "当前服务暂不提供云端同步统计，本地棋谱与普通同步可继续使用");
     return request<PersonalManualSyncStatus>("/api/v1/personal-manual-sync/status", {}, auth.token);
   },
   completePersonalManualSync(response: PersonalManualSyncResponse) {
