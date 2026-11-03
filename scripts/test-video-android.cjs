@@ -17,6 +17,7 @@ const {_android}=require(process.env.PLAYWRIGHT_MODULE_PATH||'/Users/chenyubin/.
   const target=await p.locator('video').evaluate(v=>Math.min(125,Math.max(1,v.duration/2)));
   await p.locator('video').evaluate(async(v,target)=>{v.currentTime=target;await new Promise(resolve=>v.addEventListener('seeked',resolve,{once:true}));await v.play()},target);
   await p.waitForFunction(t=>document.querySelector('video').currentTime>t+0.5,target);await p.locator('video').evaluate(v=>v.pause());
+  await p.locator('summary[aria-label="更多播放操作"]').click();
   await p.getByRole('button',{name:'加书签',exact:true}).click();
   await p.getByRole('button',{name:'去练棋',exact:true}).click();await p.getByRole('button',{name:'‹ 返回视频学习',exact:true}).click();
   await p.waitForFunction(()=>document.querySelector('video')?.readyState>=1);

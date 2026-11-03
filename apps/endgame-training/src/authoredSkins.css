@@ -17,3 +17,93 @@
   height: auto;
   aspect-ratio: 1120 / 1240;
 }
+
+/* Joined side faces and one contact shadow, without offset copies of the face. */
+.board-shell:is(.golden-timber-board, .ivory-timber-board),
+.skin-board-effect-preview:is(.golden-timber-board, .ivory-timber-board) {
+  position: relative;
+  isolation: isolate;
+  border-radius: 2px;
+  box-shadow: none;
+}
+.board-shell:is(.golden-timber-board, .ivory-timber-board)::before,
+.skin-board-effect-preview:is(.golden-timber-board, .ivory-timber-board)::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  left: -4.2857143%;
+  top: -3.8709677%;
+  width: 108.5714286%;
+  height: 107.7419355%;
+  background: var(--timber-board-depth) center / 100% 100% no-repeat;
+  pointer-events: none;
+}
+.skin-board-effect-preview:is(.golden-timber-board, .ivory-timber-board) {
+  border-color: #b29353;
+  overflow: visible;
+}
+.golden-timber-board { --timber-board-depth: url('/skins/golden-timber/board-depth.png'); }
+.ivory-timber-board { --timber-board-depth: url('/skins/ivory-timber/board-depth.png'); }
+.board-shell:is(.golden-timber-pieces, .ivory-timber-pieces) .board-square:not(.selected) .piece-ground-shadow {
+  width: var(--lift-piece-size, 86%);
+  height: auto;
+  aspect-ratio: 1;
+  left: calc(50% - var(--lift-piece-size, 86%) / 2);
+  top: calc(50% - var(--lift-piece-size, 86%) / 2);
+  background: var(--timber-piece-shadow) center / contain no-repeat;
+  filter: none;
+}
+.board-shell:is(.golden-timber-pieces, .ivory-timber-pieces) .board-square .piece-lift { filter: none; }
+/* The top rank has less headroom; keep the lifted disc below the toolbar. */
+.board-shell:is(.golden-timber-pieces, .ivory-timber-pieces) .board-square[data-display-row="0"] { --piece-raise: -10%; }
+.board-shell:is(.golden-timber-pieces, .ivory-timber-pieces) .piece-edge {
+  inset: 7% 7% 9%;
+  border-radius: 50%;
+  background-image: var(--timber-piece-edge) !important;
+  filter: none;
+}
+.board-shell:is(.golden-timber-pieces, .ivory-timber-pieces) .board-square.selected .piece-ground-shadow {
+  background: radial-gradient(ellipse, #342b1c70 0%, #342b1c4d 40%, #342b1c1a 68%, transparent 100%);
+}
+.board-shell:is(.golden-timber-pieces, .ivory-timber-pieces) .board-drag-shadow {
+  background: radial-gradient(ellipse, #342b1c70 0%, #342b1c4d 40%, #342b1c1a 68%, transparent 100%);
+}
+.board-shell:is(.golden-timber-pieces, .ivory-timber-pieces) :is(.board-moving-piece, .board-captured-piece),
+.skin-board-effect-preview:is(.golden-timber-pieces, .ivory-timber-pieces) img {
+  background: var(--timber-piece-shadow) center / contain no-repeat;
+  filter: none !important;
+}
+.board-shell:is(.golden-timber-pieces, .ivory-timber-pieces) .board-drag-ghost { filter: none !important; }
+.variation-board.is-mobile .board-shell:is(.golden-timber-pieces, .ivory-timber-pieces) { --lift-piece-size: 94.6%; }
+.variation-board.is-mobile .board-shell:is(.golden-timber-pieces, .ivory-timber-pieces) .board-square .piece-lift { width: 94.6%; }
+.variation-board.is-mobile .board-shell:is(.golden-timber-pieces, .ivory-timber-pieces) :is(.board-moving-piece, .board-captured-piece, .board-drag-ghost, .board-drag-shadow) { width: 10.12%; }
+.variation-board.is-mobile :is(.golden-timber-pieces, .ivory-timber-pieces) :is(.piece-ground-shadow, .board-drag-shadow) { opacity: .75; }
+
+/* Each set keeps its own disc material when boards and pieces are mixed. */
+.golden-timber-pieces {
+  --timber-piece-shadow: url('/skins/golden-timber/piece-shadow.png');
+  --timber-piece-edge: linear-gradient(145deg, #bbb5a2, #7c7564 78%, #a9a18c);
+}
+.ivory-timber-pieces {
+  --timber-piece-shadow: url('/skins/ivory-timber/piece-shadow.png');
+  --timber-piece-edge: linear-gradient(145deg, #e7b976, #a57540 78%, #cf9c59);
+}
+.skin-board-effect-preview.ivory-timber-board { border-color: #b58a58; }
+
+/* Source wood shadow extends beyond its disc; never crop it into a square. */
+.board-shell.ivory-timber-pieces .board-square:not(.selected) .piece-ground-shadow {
+  width: calc(var(--lift-piece-size, 100%) * 1.25);
+  border-radius: 0;
+}
+.board-shell.ivory-timber-pieces :is(.board-moving-piece, .board-captured-piece) {
+  filter: drop-shadow(2px 4px 3px #30221780) !important;
+}
+.skin-board-effect-preview:is(.golden-timber-pieces, .ivory-timber-pieces) img:not(.skin-piece-cast-shadow) {
+  width: 10.7142857%;
+}
+.skin-board-effect-preview.ivory-timber-pieces img {
+  background: none;
+}
+.skin-board-effect-preview.ivory-timber-pieces img.skin-piece-cast-shadow {
+  width: 13.3928571%;
+}

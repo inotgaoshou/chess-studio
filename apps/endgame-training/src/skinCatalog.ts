@@ -6,10 +6,13 @@ export type SkinCatalogItem = {
   source: "folder" | "zip";
   supportsCustomRiverText: boolean;
   group?: "2d" | "3d";
+  highResolutionPieces?: boolean;
 };
 
 export const DEFAULT_SKIN_ID = "qingxin-zhuyun";
 export const LEGACY_DEFAULT_SKIN_ID = "skin-bb439484";
+export const GOLDEN_TIMBER_SKIN_ID = "golden-timber";
+export const IVORY_TIMBER_SKIN_ID = "ivory-timber";
 
 export const SKIN_CATALOG = [
   {
@@ -54,13 +57,6 @@ export const SKIN_CATALOG = [
     "group": "3d"
   },
   {
-    "id": "skin-a84084f7",
-    "name": "青铜",
-    "source": "zip",
-    "supportsCustomRiverText": false,
-    "group": "2d"
-  },
-  {
     "id": "skin-a48d1624",
     "name": "赛博",
     "source": "zip",
@@ -70,13 +66,6 @@ export const SKIN_CATALOG = [
   {
     "id": "skin-ca04de9d",
     "name": "碳纤",
-    "source": "zip",
-    "supportsCustomRiverText": false,
-    "group": "3d"
-  },
-  {
-    "id": "skin-da64d5ba",
-    "name": "曜石",
     "source": "zip",
     "supportsCustomRiverText": false,
     "group": "3d"
@@ -95,7 +84,7 @@ export function normalizeSkinId(value: string | null | undefined) {
   return SKIN_CATALOG.some((skin) => skin.id === value) ? value as string : DEFAULT_SKIN_ID;
 }
 
-export function skinById(value: string | null | undefined) {
+export function skinById(value: string | null | undefined): SkinCatalogItem {
   const id = normalizeSkinId(value);
   return SKIN_CATALOG.find((skin) => skin.id === id) ?? SKIN_CATALOG[0];
 }

@@ -9,34 +9,10 @@ case "$VITE_APP_ENV" in
   test|production) ;;
   *) echo "VITE_APP_ENV must be test or production" >&2; exit 2 ;;
 esac
-signing_dir="${ENDGAME_SIGNING_DIR:-$HOME/.config/xiangqi-endgame-training}"
-keychain_service="${ENDGAME_SIGNING_KEYCHAIN_SERVICE:-Xiangqi Endgame Training Release}"
+source "$root_dir/scripts/android-release-signing.sh"
 
-keychain_password() {
-  /usr/bin/security find-generic-password -s "$keychain_service" -a "$1" -w 2>/dev/null || true
-}
-
-# A local release key is kept outside the repository. CI can continue to pass
-# the standard ANDROID_KEYSTORE_* variables instead of using this fallback.
-if [[ -z "${ANDROID_KEYSTORE_PATH:-}" && -f "$signing_dir/release.jks" ]]; then
-  export ANDROID_KEYSTORE_PATH="$signing_dir/release.jks"
-fi
-if [[ -z "${ANDROID_KEY_ALIAS:-}" && -n "$(keychain_password key-alias)" ]]; then
-  export ANDROID_KEY_ALIAS="$(keychain_password key-alias)"
-fi
-if [[ -z "${ANDROID_KEYSTORE_PASSWORD:-}" ]]; then
-  export ANDROID_KEYSTORE_PASSWORD="$(keychain_password store-password)"
-fi
-if [[ -z "${ANDROID_KEY_PASSWORD:-}" ]]; then
-  export ANDROID_KEY_PASSWORD="$(keychain_password key-password)"
-fi
-
-for required in ANDROID_KEYSTORE_PATH ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
-  if [[ -z "${!required:-}" ]]; then
-    echo "Missing $required. Signed APK builds require all Android signing variables." >&2
-    exit 1
-  fi
-done
+build_variant="${1:-release}"
+case "$build_variant" in release) gradle_variant=Release;; local) gradle_variant=Local;; *) echo "Usage: $0 [release|local]" >&2; exit 2;; esac
 
 java_version=""
 if [[ -n "${JAVA_HOME:-}" && -x "$JAVA_HOME/bin/java" ]]; then
@@ -137,11 +113,11 @@ export ANDROID_VERSION_CODE="${ANDROID_VERSION_CODE:-10142}"
 "$pnpm_bin" --dir "$app_dir" mobile:build
 "$pnpm_bin" --dir "$app_dir" exec cap sync android
 cd "$app_dir/android"
-./gradlew :app:assembleRelease
+./gradlew ":app:assemble$gradle_variant"
 
-apk_path="$app_dir/android/app/build/outputs/apk/release/app-release.apk"
+apk_path="$app_dir/android/app/build/outputs/apk/$build_variant/app-$build_variant.apk"
 test -f "$apk_path"
-versioned_apk_path="$app_dir/android/app/build/outputs/apk/release/app-release-${ANDROID_VERSION_NAME}.apk"
+versioned_apk_path="$app_dir/android/app/build/outputs/apk/$build_variant/app-$build_variant-${ANDROID_VERSION_NAME}.apk"
 cp "$apk_path" "$versioned_apk_path"
 echo "Signed training APK: $apk_path"
 echo "Versioned training APK: $versioned_apk_path"

@@ -8,6 +8,10 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));const adb=(...args)=>execFileSy
 const view=async()=>{for(let i=0;i<100;i++){const v=(await d.webViews()).find(v=>v.pkg()==='cn.xiangqi.endgame.training.family');if(v)return v.page();await sleep(100)}throw Error('no view')};let p=await view();await p.goto('https://localhost/video-learning');p.setDefaultTimeout(15000);await p.waitForFunction(()=>document.querySelector('video')?.readyState>=1);
 await p.locator('video').evaluate(async v=>{v.currentTime=233;await new Promise(r=>v.addEventListener('seeked',r,{once:true}));await v.play()});await p.waitForFunction(()=>document.querySelector('video').currentTime>233.5);
 adb('shell','input','keyevent','KEYCODE_HOME');await sleep(1500);
+// Android can detach the WebView debugging target while the app is backgrounded.
+// Reattach after foregrounding instead of querying a closed CDP page.
+await d.close();adb('shell','am','start','-n','cn.xiangqi.endgame.training.family/cn.xiangqi.endgame.training.MainActivity');
+d=(await _android.devices()).find(d=>d.serial()===serial);p=await view();await p.waitForFunction(()=>document.querySelector('video')?.readyState>=1);
 const paused=await p.locator('video').evaluate(v=>v.paused);assert(paused,'background paused');
 const before=await p.evaluate(()=>Capacitor.registerPlugin('VideoLibrary').snapshot());const saved=before.progress.find(v=>v.position>=233.5);assert(saved,'background saved');assert.equal(before.videos.length,204);
 adb('shell','am','force-stop','cn.xiangqi.endgame.training.family');await d.close();

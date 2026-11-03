@@ -1,21 +1,167 @@
-.vl-page {padding:12px; max-width:1400px; margin:auto; color:var(--text,#263a32)}
-.vl-page > header,.vl-controls,.vl-entry {display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.vl-page > header {margin-bottom:12px}.vl-page h1 {font-size:20px;margin:0;flex:1}.vl-page h2 {font-size:17px;margin:8px 0}
-.vl-page button,.vl-page select,.vl-page input {font:inherit;min-height:40px;border:1px solid #bdc9be;border-radius:8px;padding:7px 10px;background:#fff;color:#233d2c;max-width:100%;overflow-wrap:anywhere}
-.vl-page button:disabled {opacity:.4}.vl-page button[aria-current],.vl-page button[aria-pressed=true] {background:#dcebd4;border-color:#376a3d;color:#173d21}
-.vl-page label {display:flex;gap:8px;align-items:center;flex-wrap:wrap}.vl-page small {color:#526454}.vl-page p {font-size:14px;overflow-wrap:anywhere}
-.vl-page [role=alert] {background:#fff0e8;color:#8a310f;padding:12px;border-radius:8px}
-.vl-entry {width:100%;text-align:left;padding:14px;border:1px solid #c6d5c1;border-radius:12px;background:#f3f8ef;color:#29432e;margin:10px 0;flex-wrap:nowrap}
-.vl-entry > span:nth-child(2) {flex:1;min-width:0}.vl-entry b,.vl-entry small {display:block}.vl-entry small {margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.vl-layout {display:flex;flex-direction:column;gap:12px}.vl-watch {min-width:0;flex:1}.vl-player video {display:block;width:100%;max-height:64vh;background:#000;border-radius:10px}.vl-player > small {display:block;margin-top:10px}
-.vl-player .vl-controls {margin-top:8px}.vl-navigation,.vl-directory,.vl-empty,.vl-import,.vl-task,.vl-edit {background:#f6f8f3;border:1px solid #d3dece;padding:12px;border-radius:12px;margin:10px 0}
-.vl-numbers {display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px;margin-top:10px}.vl-numbers .viewed {color:#23673a;background:#e7f3e6}.vl-numbers .started {border-bottom:3px solid #b58127}
-.vl-series {border-top:1px solid #d3dece;padding:8px 0}.vl-title {font-weight:700;width:100%;text-align:left}.vl-chapter {padding:6px 0 6px 8px}.vl-chapter ol {list-style:none;padding:0;margin:8px 0}.vl-chapter li {margin:5px 0}.vl-chapter li > button {width:100%;text-align:left}.vl-help {color:#66705f}
-.vl-bookmarks {list-style:none;padding:0}.vl-bookmarks li {display:flex;gap:5px;margin:6px 0}.vl-task progress {width:100%}.vl-task small {display:block}.vl-import label {margin:8px 0}.vl-edit {display:flex;gap:8px;flex-wrap:wrap}
-@media (min-width:900px) {.vl-layout {flex-direction:row;align-items:flex-start}.vl-directory {width:310px;flex-shrink:0;max-height:80vh;overflow:auto;margin-top:0}.vl-numbers {grid-template-columns:repeat(10,minmax(0,1fr))}}
+/* Video styles are confined to this module and its active route. */
+.training-app.video-active > .app-header {display:none}
+.mobile-home-page.vl-page {display:block;top:0;padding:0;grid-template-columns:none;max-width:none;margin:0;background:#f4f7f3;color:#263f33;font-size:14px;line-height:1.5;overflow-x:hidden}
+.vl-page * {box-sizing:border-box}
+.vl-page button,.vl-page input,.vl-page select {font:inherit;color:inherit}
+.vl-page button {display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:44px;border:1px solid #d4ded3;border-radius:11px;padding:8px 12px;background:#fff;cursor:pointer;touch-action:manipulation}
+.vl-page button:disabled {opacity:.35;cursor:default}
+.vl-page button:focus-visible,.vl-entry:focus-visible {outline:3px solid #79a88b;outline-offset:2px}
+.vl-page svg,.vl-entry svg {width:18px;height:18px;flex-shrink:0;stroke-width:1.8}
+.vl-page input,.vl-page select {min-height:42px;min-width:0;max-width:100%;border:1px solid #d4ded3;border-radius:9px;background:#fff;padding:8px 10px}
+.vl-page input {font-size:16px;width:100%}
+.vl-page label {display:flex;align-items:center;gap:8px}
+.vl-page h1,.vl-page h2,.vl-page p {margin:0}
+.vl-page small,.vl-muted,.vl-help {color:#738276}
+.vl-page button.vl-primary {background:#386b4b;color:white;border-color:#386b4b}
+.vl-page button.vl-icon-button {width:44px;min-width:44px;padding:8px;border-color:transparent;background:transparent}
+.vl-page button.vl-text-button {padding:4px 8px;min-height:36px;border:0;background:transparent;color:#386b4b}
+.vl-toolbar {position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:7px;padding:calc(8px + env(safe-area-inset-top,0px)) max(12px,env(safe-area-inset-right,0px)) 9px max(8px,env(safe-area-inset-left,0px));background:#f9fcf9f5;border-bottom:1px solid #e0e7df;backdrop-filter:blur(14px)}
+.vl-toolbar h1 {flex:1;min-width:0;font-size:18px;white-space:nowrap;letter-spacing:.02em}
+.vl-toolbar > button {font-size:13px;padding:7px 10px;min-height:40px}
+.vl-body {padding:10px max(12px,env(safe-area-inset-right,0px)) 18px max(12px,env(safe-area-inset-left,0px));max-width:1360px;margin:auto}
+.vl-page [role=alert] {display:flex;align-items:center;justify-content:space-between;gap:8px;margin:8px 0;padding:10px 12px;border-radius:10px;background:#fff0e8;color:#8a310f;overflow-wrap:anywhere}
+.vl-entry {display:flex;align-items:center;gap:12px;width:100%;padding:16px;border:1px solid #c5d8c8;border-radius:14px;background:linear-gradient(115deg,#eff7ed,#fafcf7);color:#294b36;text-align:left;cursor:pointer;font:inherit}
+.mobile-home-page > .vl-entry {grid-column:1 / -1;margin:0}
+.vl-entry-icon {display:grid;place-items:center;flex-shrink:0;width:44px;height:44px;border-radius:13px;background:#386b4b;color:white}
+.vl-entry-icon svg {width:23px;height:23px}
+.vl-entry-copy {flex:1;min-width:0}.vl-entry-copy b {display:block;font-size:16px}.vl-entry-copy small {display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#738276;font-size:12px;margin-top:3px}
+.vl-entry-action {display:flex;align-items:center;gap:2px;font-size:12px;white-space:nowrap}
+.vl-entry-progress {display:block;height:3px;margin-top:9px;max-width:220px;background:#dae7d9;border-radius:4px;overflow:hidden}.vl-entry-progress > span {display:block;height:100%;background:#67936c}
+.vl-management-entry {background:#fff;border-color:#dce5db}.vl-management-entry .vl-entry-icon {background:#edf3e9;color:#527449}
+.vl-layout {display:flex;flex-direction:column;gap:10px}.vl-watch {min-width:0;flex:1}
+.vl-lesson-heading {display:flex;align-items:center;justify-content:space-between;gap:6px;margin:0 0 7px}.vl-lesson-heading > div {min-width:0;flex:1}.vl-lesson-heading > .vl-icon-button {flex-shrink:0}
+.vl-lesson-heading small {display:block;margin-bottom:4px;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:calc(100vw - 40px)}
+.vl-lesson-heading h2 {font-size:17px;font-weight:650;line-height:1.45;overflow-wrap:anywhere}
+.vl-video-frame {overflow:hidden;border-radius:13px;background:#101711;box-shadow:0 3px 16px #29473010}
+.vl-player video {display:block;width:100%;max-height:60vh;aspect-ratio:16/9;object-fit:contain;background:#101711}
+.vl-transport {display:grid;grid-template-columns:44px 1fr minmax(84px,1.5fr) 1fr 44px;align-items:center;gap:3px;padding:3px 0 0}
+.vl-transport > button {border-color:transparent;background:transparent;padding:7px;position:relative}
+.vl-transport > button > span {font-size:11px}.vl-transport > button > svg {width:21px;height:21px}
+.vl-transport > button.vl-play-toggle {min-height:44px;background:#386b4b;color:white;border-radius:24px}.vl-play-toggle span {font-size:14px!important;font-weight:600}
+.vl-playback-options {display:grid;grid-template-columns:minmax(60px,.8fr) minmax(94px,1.25fr) auto;align-items:center;margin:3px 0 6px;gap:6px}.vl-playback-options label {min-width:0}.vl-playback-options select {width:100%;height:40px;min-height:40px;padding:5px 8px;font-size:13px}
+.vl-page button.vl-fullscreen-button {color:#386b4b;background:#e6efe2;border-color:transparent;min-height:40px;font-size:12px;padding:6px 10px;white-space:nowrap}
+.vl-study-tools {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;border-top:1px solid #dfe7dc;padding-top:6px}.vl-study-tools > button {padding:8px 5px;font-size:12px;white-space:nowrap;background:#fdfefd}.vl-study-tools > .vl-practice-button {color:#386b4b;border-color:#b9cfb8;background:#e9f2e4}.vl-study-tools button[aria-pressed=true] {background:#edf4e8;color:#386b4b;border-color:#b7cfad}
+.vl-bookmark-panel {margin-top:6px;border-top:1px solid #dfe7dc}.vl-bookmarks {list-style:none;padding:0;margin:4px 0}.vl-bookmarks li {display:flex;gap:5px;margin:5px 0}.vl-bookmarks li > button:first-child {flex:1;justify-content:flex-start;color:#386b4b;font-size:12px}.vl-bookmarks li > button > span {color:#738276;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.vl-section-heading {display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:4px 6px;min-width:0;margin-bottom:5px}
+.vl-page button.vl-disclosure {display:flex;flex:1;justify-content:space-between;min-height:38px;padding:3px 0;border:0;border-radius:0;background:transparent;text-align:left}.vl-disclosure > span {font-size:11px;color:#738276}.vl-disclosure svg {width:15px;color:#7b8c7b}.vl-closed {transform:rotate(-90deg)}.vl-rotated {transform:rotate(90deg)}
+.vl-navigation {width:100%;min-width:0;margin-top:6px;padding:6px;background:#fff;border:1px solid #e0e8dc;border-radius:13px}.vl-navigation .vl-disclosure {flex:0 0 auto;gap:8px}.vl-group-pager {display:flex;align-items:center;gap:2px;min-width:0;margin-left:auto;font-size:11px;font-variant-numeric:tabular-nums;white-space:nowrap}.vl-group-pager > span {text-align:center;min-width:66px}.vl-group-pager small {font-size:10px}.vl-page .vl-group-pager > button {width:30px;min-width:30px;min-height:32px;padding:3px;border:0;border-radius:6px;background:#f0f5ed}.vl-group-pager svg {width:15px;height:15px}
+.vl-numbers {display:grid;grid-template-columns:repeat(auto-fill,minmax(36px,1fr));gap:4px}.vl-numbers > button {position:relative;min-width:0;min-height:36px;height:36px;border-color:#e0e8dc;background:#fafcf9;border-radius:6px;font-size:12px;font-variant-numeric:tabular-nums;padding:3px}.vl-numbers > button[aria-current] {color:#fff;background:#386b4b;border-color:#386b4b;font-weight:650}.vl-numbers > button.viewed:not([aria-current]) {color:#467844;background:#edf6e7;border-color:#d1e3c8}.vl-numbers > button.started:not([aria-current]) {border-color:#9caf8e}.vl-numbers > button > span {position:absolute;right:5px;top:0;font-size:11px;line-height:15px}.vl-legend {display:flex;flex-wrap:wrap;align-items:center;gap:3px 9px;margin-top:6px;font-size:10px}.vl-bottom-pager {display:flex;align-items:center;gap:3px;margin-left:auto}.vl-page .vl-bottom-pager > button {min-height:32px;font-size:11px;padding:3px 6px}.vl-bottom-pager svg {width:14px;height:14px}
+.vl-directory {min-width:0;padding:14px;background:#fff;border:1px solid #e0e8dc;border-radius:13px}.vl-catalog-filter {justify-content:space-between;font-size:12px;color:#738276;padding-bottom:8px}.vl-catalog-filter select {font-size:12px;min-height:34px;padding:4px 8px;background:#f6f8f3;border:0;max-width:190px}
+.vl-series {border-top:1px solid #edf1e9}.vl-page button.vl-title {display:flex;width:100%;text-align:left;justify-content:flex-start;gap:9px;padding:12px 0;border:0;background:transparent;border-radius:0;font-size:13px}.vl-title > span {flex:1;min-width:0;overflow-wrap:anywhere;font-weight:600}.vl-title > svg {color:#6e8c65;transition:transform .15s}.vl-title > svg:last-child {width:15px}
+.vl-chapter {padding:0 0 7px 10px}.vl-page button.vl-chapter-title {padding:8px 5px;border:0;background:transparent;color:#78906d;font-size:12px;text-align:left;justify-content:flex-start;min-height:38px}
+.vl-chapter ol {list-style:none;margin:0;padding:0}.vl-page .vl-chapter li > button {display:flex;gap:8px;width:100%;padding:10px 9px;border:0;border-radius:8px;background:transparent;text-align:left;font-size:12px}.vl-chapter li > button > span {min-width:22px;font-size:11px;color:#9aa895}.vl-chapter li > button > strong {flex:1;font-weight:400;overflow-wrap:anywhere}.vl-chapter li > button[aria-current] {background:#eaf2e5;color:#386b4b}
+.vl-empty {padding:28px 18px 24px;text-align:center;background:#fff;border:1px solid #e0e8dc;border-radius:14px}.vl-empty-icon {display:grid;place-items:center;margin:0 auto 14px;width:54px;height:54px;border-radius:18px;background:#edf5e7;color:#5c8650}.vl-empty-icon svg {width:28px;height:28px}.vl-empty h2 {font-size:19px}.vl-empty p {font-size:13px;color:#738276;margin:9px 0 18px;line-height:1.7}
+.vl-import-notice {display:flex!important;width:100%;justify-content:flex-start!important;font-size:12px!important;margin-bottom:12px;background:#eef4e8!important;border-color:#d3e0c7!important}.vl-import-notice > span {flex:1;text-align:left}
+.vl-storage-card {display:flex;align-items:center;justify-content:space-between;gap:14px;padding:10px 12px;border:1px solid #dbe5d6;border-radius:14px;background:linear-gradient(110deg,#e9f2e3,#f8fbf5)}.vl-storage-card > div:last-child {text-align:right}.vl-storage-card strong {font-size:18px;letter-spacing:-.03em}.vl-storage-card strong > span {font-size:12px;font-weight:400;letter-spacing:0}.vl-storage-card small {display:block;font-size:11px;margin-top:3px}
+.vl-management-tabs {position:sticky;top:0;z-index:4;display:flex;gap:3px;margin:8px 0;padding:3px;border-radius:12px;background:#e8eee4}.vl-management-tabs > button {flex:1;border:0!important;background:transparent;min-height:38px;font-size:12px;padding:6px}.vl-management-tabs > button[aria-selected=true] {background:#fff;color:#386b4b;box-shadow:0 1px 5px #2947300c;font-weight:600}
+.vl-management-filters {display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:8px 0}.vl-management-filters label {flex:1;min-width:120px;font-size:12px}.vl-management-filters select {flex:1;width:100%;font-size:12px}.vl-row-actions {display:flex;align-items:center;gap:3px;flex-wrap:wrap}.vl-row-actions button {font-size:12px}.vl-row-actions .vl-icon-button {width:38px;min-width:38px;min-height:40px;padding:7px}.vl-row-actions .vl-icon-button svg {width:16px;height:16px}
+.vl-page button.vl-danger {color:#b65243}.vl-page button.vl-danger-solid {color:white;background:#a94e40;border-color:#a94e40}
+.vl-managed-series-list {display:grid;gap:10px}.vl-managed-series {border:1px solid #dee7d9;border-radius:12px;background:#fff;overflow:hidden}.vl-page button.vl-series-heading {display:flex;align-items:center;justify-content:flex-start;gap:10px;width:100%;border:0;border-radius:0;background:transparent;text-align:left;padding:14px 12px}.vl-series-heading > span {flex:1;min-width:0}.vl-series-heading strong {display:block;font-size:13px;overflow-wrap:anywhere}.vl-series-heading small {display:block;font-size:11px;font-weight:400;margin-top:3px}.vl-series-heading > svg {color:#769267}
+.vl-series-editor {padding:0 12px 12px}.vl-series-editor > label {font-size:12px;margin:10px 0}.vl-series-editor > label select {flex:1;font-size:12px}.vl-managed-chapter {border-top:1px solid #e4ebdf;padding-top:8px;margin-top:8px}.vl-managed-chapter-heading {display:flex;align-items:flex-start;justify-content:space-between;gap:7px;flex-wrap:wrap}.vl-managed-chapter-heading > button {flex:1;justify-content:flex-start;min-width:140px;padding:4px 0;border:0;background:transparent;text-align:left;font-size:12px}
+.vl-managed-videos {margin:0;padding:0;list-style:none}.vl-managed-videos > li {display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px;padding:4px 0;border-top:1px solid #edf1e9}.vl-page button.vl-managed-video-info {display:flex;align-items:center;justify-content:flex-start;gap:7px;min-width:0;min-height:48px;padding:4px 0;border:0;border-radius:0;background:transparent;text-align:left}.vl-managed-video-copy {display:block;min-width:0;flex:1}.vl-row-number {display:grid;place-items:center;flex-shrink:0;width:27px;height:27px;border-radius:8px;background:#edf3e9;color:#7d9570;font-size:11px}.vl-managed-video-info strong {display:block;font-size:13px;font-weight:500;overflow-wrap:anywhere}.vl-managed-video-info small {display:block;font-size:10px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.vl-managed-videos .vl-row-actions {justify-content:flex-end;display:grid;grid-template-columns:repeat(2,40px);gap:0;margin:0}.vl-managed-videos .vl-row-actions .vl-icon-button {width:40px;min-width:40px;min-height:44px}.vl-managed-videos {padding:0 10px;background:#fff;border-radius:12px}
+.vl-search {gap:6px;margin:7px 0}.vl-search svg {color:#859780}.vl-search input {font-size:14px}.vl-empty-note {padding:24px;text-align:center;color:#7c8b76}.vl-empty-note p {margin:8px 0 14px}.vl-empty-note > svg {width:28px;height:28px}
+.vl-task {padding:12px;background:#fff;border:1px solid #dde6d7;border-radius:12px;margin:10px 0}.vl-task > summary {display:list-item;cursor:pointer;font-size:12px}.vl-task > summary > span {float:right;color:#8a9882}.vl-task p {font-size:12px;margin:10px 0}.vl-task progress {width:100%;accent-color:#608354;height:7px}.vl-task small {display:block;font-size:11px;overflow-wrap:anywhere}.vl-task > button {font-size:12px;margin-top:10px}
+.vl-help {font-size:11px;margin-top:16px!important;line-height:1.8}.vl-muted {font-size:12px}
+.vl-modal-shade {position:fixed;top:var(--input-viewport-top,0px);right:0;left:0;height:var(--input-viewport-height,100dvh);z-index:10020;display:flex;align-items:center;justify-content:center;background:#172b206b;color:#263f33;font:14px/1.5 system-ui,-apple-system,"PingFang SC",sans-serif;padding:max(10px,env(safe-area-inset-top,0px)) 12px max(10px,env(safe-area-inset-bottom,0px));backdrop-filter:blur(3px)}
+.vl-modal {display:flex;flex-direction:column;max-width:480px;width:100%;max-height:100%;overflow:hidden;background:#fcfefb;border-radius:16px;padding:10px 14px 14px;box-shadow:0 12px 70px #0003}.vl-modal-body {min-height:0;overflow:auto;overscroll-behavior:contain}.vl-modal > header {display:flex;flex-shrink:0;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px}.vl-modal h2 {font-size:17px}.vl-modal p {font-size:13px;line-height:1.8;overflow-wrap:anywhere}.vl-dialog-actions {position:sticky;bottom:0;display:flex;justify-content:flex-end;gap:8px;margin-top:12px;padding-top:6px;background:#fcfefb}.vl-dialog-actions button {min-width:72px}.vl-dialog-actions button {font-size:13px}
+.vl-modal form > label {display:block;font-size:12px}.vl-modal form input {margin-top:6px;font-size:16px}.vl-import-fields {display:grid;grid-template-columns:1fr auto;gap:12px 8px;margin:16px 0}.vl-import-fields label {display:block;font-size:12px}.vl-import-fields label select,.vl-import-fields label input {width:100%;margin-top:5px}.vl-import-fields label:not(:first-child) {grid-column:1 / -1}.vl-import-fields > button {align-self:end;font-size:12px}.vl-import-choices {display:grid;gap:8px;margin-top:20px}.vl-import-choices > button {text-align:left;justify-content:flex-start;padding:13px;gap:12px}.vl-import-choices > button > span {flex:1}.vl-import-choices strong {display:block;font-size:14px}.vl-import-choices small {display:block;font-size:11px;margin-top:3px}.vl-import-choices > button > svg:first-child {width:24px;height:24px;color:#658552}
+.vl-sr-only {position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.vl-return {margin:6px 12px;padding:8px 12px;border:1px solid #b6ccb0;border-radius:8px;background:#f1f7eb;color:#28472c;font:inherit}.app-header .vl-return {flex-shrink:0;min-height:34px;margin:0;padding:4px 8px;font-size:12px;white-space:nowrap}
+.vl-page .vl-player.vl-immersive {position:fixed;inset:0;z-index:11000;display:flex;flex-direction:column;justify-content:center;padding:max(12px,env(safe-area-inset-top,0px)) max(14px,env(safe-area-inset-right,0px)) max(12px,env(safe-area-inset-bottom,0px)) max(14px,env(safe-area-inset-left,0px));background:#101711;color:white}.vl-immersive .vl-video-frame {flex:1;min-height:0;display:flex;align-items:center;justify-content:center}.vl-immersive video {width:100%;height:100%;max-height:none;object-fit:contain}.vl-immersive .vl-lesson-heading {flex-shrink:0}.vl-immersive .vl-lesson-heading h2 {font-size:14px}.vl-immersive .vl-transport {max-width:480px;width:100%;align-self:center;flex-shrink:0}.vl-immersive .vl-playback-options {flex-shrink:0;margin-bottom:0}.vl-immersive .vl-transport > button {color:white}.vl-immersive .vl-exit-fullscreen {color:white;border-color:#ffffff40;background:#ffffff15;font-size:12px;white-space:nowrap}.vl-immersive .vl-lesson-heading small {max-width:60vw;color:#b5c4ae}.vl-immersive .vl-playback-options label {color:#b5c4ae}.vl-immersive .vl-playback-options select {color:#263f33}
+@media (min-width:700px) {.vl-modal-shade {padding:20px}.vl-body {padding:20px 24px 32px}.vl-toolbar {padding-right:24px;padding-left:20px}.vl-management {max-width:1000px;margin:auto}.vl-managed-videos > li {gap:8px}.vl-managed-video-info {flex:1}.vl-managed-videos .vl-row-actions {flex-shrink:0;margin-top:0}}
+@media (min-width:900px) {.vl-layout {flex-direction:row;align-items:flex-start;gap:24px}.vl-directory {width:310px;flex-shrink:0;max-height:calc(100dvh - 150px);overflow:auto;position:sticky;top:calc(84px + env(safe-area-inset-top,0px))}.vl-lesson-heading h2 {font-size:20px}.vl-lesson-heading small {max-width:650px}.vl-transport {max-width:450px;margin:auto}.vl-study-tools {max-width:540px;margin:auto}.vl-player video {max-height:60vh}.vl-navigation {margin-top:10px}.vl-playback-options {padding:0 6px}}
+html.tablet-webview .training-app.video-active:not(.tablet-navigation-bottom) .mobile-primary-nav {top:0;padding-top:max(12px,env(safe-area-inset-top,0px))}
+.vl-library-search {margin-bottom:14px}.vl-library-search > p {font-size:11px;margin-top:6px}.vl-library-search .vl-search {margin-bottom:0}.vl-library-search .vl-search input {flex:1;width:0}.vl-library-search .vl-search > .vl-icon-button {min-height:32px;width:32px;min-width:32px;padding:4px}.vl-search-results {margin-top:10px;max-height:40vh;overflow:auto;background:#fff;border:1px solid #dce5d8;border-radius:12px}.vl-search-results > button {display:flex;justify-content:flex-start;width:100%;border:0;border-radius:0;border-bottom:1px solid #edf1e9;text-align:left;padding:12px}.vl-search-results > button:last-child {border-bottom:0}.vl-search-results > button > span {flex:1;min-width:0}.vl-search-results strong,.vl-search-results small {display:block;overflow-wrap:anywhere}.vl-search-results strong {font-size:13px;font-weight:600}.vl-search-results small {font-size:10px;margin-top:3px}
 
-.vl-return {margin:6px 12px;padding:8px 12px;border:1px solid #b6ccb0;border-radius:8px;background:#f1f7eb;color:#28472c;font:inherit}
+/* Titles are the default; the same groups remain available as a number grid. */
+.vl-episode-view {display:flex;gap:0;background:#eef3e9;border-radius:7px;padding:2px}
+.vl-episode-view > button {min-height:32px;border:0;border-radius:5px;background:transparent;padding:3px 7px;font-size:11px}
+.vl-episode-view > button[aria-pressed=true] {background:#fff;color:#386b4b;box-shadow:0 1px 3px #29473016}
+.vl-episode-list {list-style:none;padding:0;margin:0}
+.vl-episode-list > li {display:flex;align-items:center;min-width:0;border-top:1px solid #edf1e9;border-radius:7px}
+.vl-page button.vl-episode-pick {flex:1;min-width:0;display:flex;justify-content:flex-start;gap:8px;min-height:44px;padding:6px;border:0;border-radius:7px;background:transparent;text-align:left}
+.vl-episode-number {display:grid;place-items:center;flex-shrink:0;min-width:25px;height:25px;border-radius:6px;background:#edf3e9;color:#6d8866;font-size:11px}
+.vl-episode-pick > strong {flex:1;white-space:normal;min-width:0;font-size:13px;font-weight:500;overflow-wrap:anywhere}
+.vl-episode-pick > small {flex-shrink:0;color:#71866a;font-size:10px}
+.vl-episode-list > li > .vl-icon-button {flex-shrink:0;width:40px;min-width:40px;min-height:44px;color:#7b8f72}
+.vl-current-episode {background:#e8f1e2}.vl-current-episode .vl-episode-number {background:#386b4b;color:#fff}
+.vl-video-filters {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:end}
+.vl-video-filters > label {display:grid;min-width:0;gap:2px;font-size:10px;color:#738276}
+.vl-video-filters select {min-width:0;height:40px;min-height:40px;padding:5px 6px;font-size:12px;text-overflow:ellipsis}
+.vl-management > .vl-muted {font-size:11px;margin:4px 0}
+/* Keep playback and its compact controls separate from the scrolling lesson browser. */
+.mobile-home-page.vl-page:is(.vl-learning-page,.vl-management-page) {display:flex;flex-direction:column;align-items:stretch;overflow:hidden}
+.vl-learning-page > .vl-toolbar,.vl-management-page > .vl-toolbar {position:relative;flex-shrink:0}
+.vl-learning-page > .vl-body {display:flex;flex:1;min-height:0;width:100%;padding-bottom:0}
+.vl-study-layout {display:flex;flex-direction:column;flex:1;min-height:0;min-width:0;width:100%;gap:8px}
+.vl-pinned-player {flex-shrink:0;min-width:0;min-height:0}
+.vl-pinned-player video {max-height:min(32dvh,360px)}
+.vl-pinned-player .vl-bookmarks {max-height:80px;overflow:auto}
+.vl-course-browser {overflow-anchor:none;flex:1;min-height:100px;min-width:0;max-width:100%;overflow-x:hidden;overflow-y:auto;touch-action:pan-y pinch-zoom;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;padding-bottom:12px;scroll-padding-block:8px}
+.vl-course-browser .vl-layout {display:block}
+.vl-course-browser .vl-directory {position:static;width:auto;max-height:none;overflow:visible;margin-top:8px}
+.vl-course-browser .vl-library-search {margin-bottom:8px}
+.vl-playback-bar {display:grid;grid-template-columns:36px 44px 36px minmax(64px,1fr) minmax(78px,1.2fr) 40px;align-items:center;gap:5px;max-width:560px;width:100%;margin:6px auto 2px}
+.vl-playback-bar .vl-transport,.vl-playback-bar .vl-playback-options {display:contents}
+.vl-playback-bar button {min-width:0;min-height:40px;padding:4px}
+.vl-playback-bar .vl-transport > button > svg {width:20px;height:20px}
+.vl-playback-bar .vl-transport > button:not(.vl-play-toggle) > span {position:absolute;right:2px;bottom:1px;font-size:8px;line-height:10px}
+.vl-playback-bar .vl-play-toggle > span {display:none}
+.vl-playback-bar .vl-playback-options select {height:40px;min-height:40px;font-size:13px;border-radius:10px;background:#eaf0e7;border-color:transparent}
+.vl-playback-bar .vl-fullscreen-button {padding:4px;min-height:40px}
+.vl-immersive .vl-playback-bar {flex-shrink:0;align-self:center}
+@media (max-width:359px) {.vl-playback-bar {grid-template-columns:28px 40px 28px minmax(60px,1fr) minmax(68px,1.1fr) 34px;gap:3px}}
+@media (min-width:900px), (min-width:600px) and (max-height:600px) {
+  .vl-study-layout {display:grid;grid-template-columns:minmax(0,1.3fr) minmax(280px,1fr);gap:16px}
+  .vl-pinned-player {max-height:100%;overflow:auto}
+  .vl-pinned-player video {max-height:58dvh}
+  .vl-course-browser {height:100%;min-height:0}
+}
+@media (min-width:600px) and (max-height:600px) {
+  .vl-study-layout {grid-template-columns:minmax(0,1fr) minmax(240px,.85fr);gap:10px}
+  .vl-pinned-player video {max-height:max(90px,calc(100dvh - 250px))}
+}
 
-.vl-confirm-shade {position:fixed;inset:0;background:#17241d80;z-index:10020;display:grid;place-items:center;padding:20px}.vl-confirm {background:#fff;color:#263a32;border-radius:14px;padding:20px;width:min(460px,100%);box-shadow:0 12px 60px #0004}.vl-confirm p {line-height:1.7}
+/* Native pickers keep their platform interactions, with one consistent compact face. */
+.vl-page .vl-compact-select {position:relative;display:block;min-width:0}
+.vl-page .vl-compact-select select {appearance:none;-webkit-appearance:none;display:block;width:100%;padding:8px 27px 8px 10px;text-overflow:ellipsis;cursor:pointer}
+.vl-compact-select > svg {position:absolute;right:8px;top:50%;transform:translateY(-50%);width:13px;height:13px;pointer-events:none;color:#66816a}
+.vl-lesson-heading > .vl-player-more {flex-shrink:0}
+.vl-player-more {position:relative}
+.vl-player-more > summary {display:flex;align-items:center;justify-content:center;width:40px;height:44px;list-style:none;cursor:pointer;border-radius:10px;touch-action:manipulation}
+.vl-player-more > summary::-webkit-details-marker {display:none}
+.vl-player-more > summary:focus-visible {outline:3px solid #79a88b;outline-offset:2px}
+.vl-player-more[open] > summary {background:#e6efe2}
+.vl-more-panel {position:absolute;right:0;top:100%;z-index:8;width:min(260px,calc(100vw - 40px));max-height:50dvh;overflow:auto;padding:6px;background:#fcfefb;border:1px solid #d4ded3;border-radius:12px;box-shadow:0 8px 28px #18342024}
+.vl-page .vl-more-panel > button {display:flex;width:100%;justify-content:flex-start;border:0;background:transparent;font-size:13px;padding:9px}
+.vl-more-panel > button[aria-pressed=true] {color:#386b4b;background:#edf4e8}
+.vl-more-panel > small {display:block;border-top:1px solid #dfe7dc;padding:8px 8px 0;font-size:11px}
+.vl-pinned-player .vl-more-panel .vl-bookmarks {max-height:none}
+.vl-course-switcher {width:100%;min-width:0;padding:4px 0 2px}
+.vl-browser-heading {display:flex;align-items:center;gap:8px;margin-bottom:3px}
+.vl-browser-heading > strong {font-size:13px}
+.vl-browser-heading > small {font-size:10px;color:#7b8b79;flex:1}
+.vl-browser-heading > button {font-size:12px;gap:4px}
+.vl-browser-heading > button svg {width:15px;height:15px}
+.vl-category-switch {display:flex;flex-wrap:wrap;min-width:0;gap:4px;padding:2px 0 6px}
+.vl-category-switch::-webkit-scrollbar {display:none}
+.vl-page .vl-category-switch > button {max-width:100%;overflow-wrap:anywhere;border:0;border-radius:8px;padding:5px 13px;min-height:36px;font-size:12px;background:#eaf0e6;color:#667d61}
+.vl-page .vl-category-switch > button[aria-pressed=true] {background:#386b4b;color:#fff}
+.vl-course-selects {min-width:0;width:100%;display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:6px}
+.vl-course-selects select {height:40px;min-height:40px;font-size:12px}
+.vl-course-switcher .vl-library-search {margin-bottom:5px}
+.vl-course-switcher .vl-search {margin-top:0}
 
-.mobile-home-page.vl-page {display:block;grid-template-columns:none;max-width:none;margin:0}.mobile-home-page > .vl-entry {grid-column:1 / -1;margin:0}.app-header .vl-return {flex-shrink:0;min-height:34px;margin:0;padding:4px 8px;font-size:12px;white-space:nowrap}
+/* The header stays outside each scrolling body, so sticky controls need no device-specific offset. */
+.vl-management-page {gap:0}
+.vl-management-page .vl-storage-card {margin-top:10px}
+.vl-management-page > .vl-body {display:block;flex:1;min-height:0;width:100%;padding-top:0;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;scroll-padding-top:54px}
+.vl-management-page .vl-management-tabs {box-shadow:0 -8px 0 #f4f7f3,0 5px 0 #f4f7f3}
+.vl-category-bar {position:sticky;top:0;z-index:4;min-width:0;padding:4px 0;background:#f4f7f3;box-shadow:0 1px 0 #dde5d9}
+.vl-category-row {display:flex;align-items:flex-start;gap:4px;min-width:0}
+.vl-category-bar .vl-category-switch {flex:1;padding-bottom:2px}
+.vl-page .vl-directory-toggle {flex-shrink:0;gap:3px;min-height:36px;padding:5px 6px;border:0;background:transparent;color:#527449;font-size:11px}
+.vl-directory-toggle > svg {width:14px;height:14px}
+.vl-directory-toggle > svg:last-child {width:11px;height:11px}
+.vl-directory-toggle[aria-expanded=true] {background:#e6efe2}
+.vl-course-selects {margin-top:6px}

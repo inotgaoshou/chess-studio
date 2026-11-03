@@ -6,15 +6,19 @@ const serial=process.env.VIDEO_TEST_SERIAL||'emulator-5554',pkg='cn.xiangqi.endg
 const adb=process.env.ADB_BIN||`${process.env.HOME}/Library/Android/sdk/platform-tools/adb`;
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 (async()=>{
- assert(serial.startsWith('emulator-'),'emulator only');const manifest=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+ assert(serial.startsWith('emulator-'),'emulator only');const manifest=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),bundled=process.argv.includes('--bundled');
  const d=(await _android.devices()).find(d=>d.serial()===serial);assert(d);
  try{
-  const p=await (await d.webViews()).find(v=>v.pkg()===pkg).page();
+  let view;for(let i=0;i<100&&!view;i++){view=(await d.webViews()).find(v=>v.pkg()===pkg);if(!view)await sleep(200)}assert(view,'launch the family app first');
+  const p=await view.page();
   // Keep the player unmounted so its periodic saves do not update the timestamps under test.
   await p.goto('https://localhost/');
   const invoke=(method,args)=>p.evaluate(({method,args})=>Capacitor.registerPlugin('VideoLibrary')[method](args),{method,args});
   const wait=async()=>{for(let i=0;i<1800;i++){const s=await invoke('snapshot');if(!s.tasks.some(t=>['running','scanning'].includes(t.state)))return s;await sleep(100)}throw Error('import timed out')};
+  const before=await invoke('snapshot');
   await invoke('receiveProvisioned');let s=await wait();
+  assert(!s.tasks.some(t=>t.failed>0),'no failed imports');
+  if(bundled){assert.deepEqual(s.progress,before.progress,'bundled upgrade retains positions');assert.deepEqual(s.bookmarks,before.bookmarks,'bundled upgrade retains bookmarks');}
   const check=s=>{
    for(const set of manifest.series){
     const series=s.series.find(v=>v.title===set.title);assert(series,'missing '+set.title);
@@ -24,8 +28,10 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
    }
   };check(s);const progress=s.progress,bookmarks=s.bookmarks,ids=s.videos.map(v=>v.id).sort();
   // Same manifest again: native checks existing media instead of copying; records remain stable.
-  execFileSync(adb,['-s',serial,'shell','-T',`run-as ${pkg} sh -c 'cat > files/VideoLibrary/staging/manifest.json'`],{input:JSON.stringify(manifest)});
+  const tasks=s.tasks.length;
+  if(!bundled)execFileSync(adb,['-s',serial,'shell','-T',`run-as ${pkg} sh -c 'cat > files/VideoLibrary/staging/manifest.json'`],{input:JSON.stringify(manifest)});
   await invoke('receiveProvisioned');s=await wait();check(s);
+  if(bundled)assert.equal(s.tasks.length,tasks,'same bundle is not reimported');
   assert.deepEqual(s.progress,progress);assert.deepEqual(s.bookmarks,bookmarks);assert.deepEqual(s.videos.map(v=>v.id).sort(),ids);
   const decoded=[];
   for(const set of manifest.series){

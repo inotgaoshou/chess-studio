@@ -8,7 +8,8 @@ const repoRoot = path.resolve(new URL("..", import.meta.url).pathname);
 const sourceRoot = process.argv[2] ?? "/Users/chenyubin/Documents/chess/皮肤";
 const outputRoot = path.join(repoRoot, "apps/endgame-training/public/skins");
 const catalogPath = path.join(repoRoot, "apps/endgame-training/src/skinCatalog.ts");
-const authoredSkins = JSON.parse(fs.readFileSync(path.join(repoRoot, "apps/endgame-training/src/authoredSkinCatalog.json"), "utf8"));
+const retiredSkins = JSON.parse(fs.readFileSync(path.join(repoRoot, "scripts/skin-designs/retired-skins.json"), "utf8"));
+const authoredSkins = JSON.parse(fs.readFileSync(path.join(repoRoot, "apps/endgame-training/src/authoredSkinCatalog.json"), "utf8")).filter(skin => !retiredSkins.includes(skin.id));
 const statusPath = path.join(sourceRoot, "SKIN_STATUS.md");
 
 const requiredFiles = [
@@ -212,7 +213,7 @@ function collectCandidates() {
 }
 
 function writeCatalog(items) {
-  const catalogItems = [defaultSkin, ...items.filter((item) => item.id !== defaultSkin.id)];
+  const catalogItems = [defaultSkin, ...items.filter((item) => item.id !== defaultSkin.id && !retiredSkins.includes(item.id))];
   const body = `import authoredSkins from "./authoredSkinCatalog.json";
 
 export type SkinCatalogItem = {
@@ -221,10 +222,13 @@ export type SkinCatalogItem = {
   source: "folder" | "zip";
   supportsCustomRiverText: boolean;
   group?: "2d" | "3d";
+  highResolutionPieces?: boolean;
 };
 
 export const DEFAULT_SKIN_ID = ${JSON.stringify(defaultSkin.id)};
 export const LEGACY_DEFAULT_SKIN_ID = "skin-bb439484";
+export const GOLDEN_TIMBER_SKIN_ID = "golden-timber";
+export const IVORY_TIMBER_SKIN_ID = "ivory-timber";
 
 export const SKIN_CATALOG = [...${JSON.stringify(catalogItems, null, 2)}, ...authoredSkins.map((skin) => ({ ...skin, source: "folder" as const, group: "2d" as const }))] as const satisfies readonly SkinCatalogItem[];
 
@@ -232,7 +236,7 @@ export function normalizeSkinId(value: string | null | undefined) {
   return SKIN_CATALOG.some((skin) => skin.id === value) ? value as string : DEFAULT_SKIN_ID;
 }
 
-export function skinById(value: string | null | undefined) {
+export function skinById(value: string | null | undefined): SkinCatalogItem {
   const id = normalizeSkinId(value);
   return SKIN_CATALOG.find((skin) => skin.id === id) ?? SKIN_CATALOG[0];
 }

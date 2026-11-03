@@ -2,10 +2,11 @@ import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, render } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { Board } from "../src/App";
-import { DEFAULT_SKIN_ID, SKIN_CATALOG, normalizeSkinId } from "../src/skinCatalog";
+import { DEFAULT_SKIN_ID, GOLDEN_TIMBER_SKIN_ID, IVORY_TIMBER_SKIN_ID, SKIN_CATALOG, normalizeSkinId } from "../src/skinCatalog";
 import authoredSkins from "../src/authoredSkinCatalog.json";
 import defaultGeometry from "../src/authoredSkinGeometry.json";
 import referenceGeometry from "../src/referenceSkinGeometry.json";
+import originalDefaultGeometry from "../src/defaultSkinGeometry.json";
 
 afterEach(cleanup);
 it("preserves stored skin IDs and falls back safely for removed or invalid settings", () => {
@@ -17,6 +18,10 @@ it("preserves stored skin IDs and falls back safely for removed or invalid setti
 
 it("ships all board, blank river and red/black piece assets at the renderer's dimensions", () => {
   for (const skin of authoredSkins) {
+    if ([GOLDEN_TIMBER_SKIN_ID, IVORY_TIMBER_SKIN_ID].includes(skin.id)) {
+      const depth=readFileSync(`public/skins/${skin.id}/board-depth.png`);
+      expect([depth.readUInt32BE(16),depth.readUInt32BE(20)]).toEqual([1216,1336]);
+    }
     for (const file of ["board", "board-river-blank", ...["r", "b"].flatMap(side => ["k","a","b","n","r","c","p"].map(p => side+p))]) {
       const png=readFileSync(`public/skins/${skin.id}/${file}.png`);
       expect(png.subarray(1,4).toString()).toBe("PNG");
@@ -35,7 +40,7 @@ it("keeps all 90 targets aligned across the compact sets and mixed piece skins",
     expect(baseline).toHaveLength(90);
     for (const skin of authoredSkins) {
       ui.rerender(<Board {...props} flipped={flipped} boardSkin={skin.id}/>);
-      const geometry=skin.id==="xuan-paper"?referenceGeometry["xuan-paper"]:defaultGeometry;
+      const geometry=skin.id==="xuan-paper"?referenceGeometry["xuan-paper"]:[GOLDEN_TIMBER_SKIN_ID,IVORY_TIMBER_SKIN_ID].includes(skin.id)?originalDefaultGeometry:defaultGeometry;
       [...ui.container.querySelectorAll<HTMLElement>(".board-square")].forEach((square,index) => {
         const row=Math.floor(index/9), col=index%9;
         expect(parseFloat(square.style.getPropertyValue("--piece-left"))).toBeCloseTo(geometry.columns[flipped?8-col:col]/1120*100);
@@ -75,4 +80,52 @@ it("uses the sharper default pieces on large displays and keeps other skins unch
   expect(ui.container.querySelector(".board-square .piece")?.getAttribute("src")).toContain("/qingxin-zhuyun/retina/rk.png");
   ui.rerender(<Board {...props} pieceSkin={authoredSkins[0].id}/>);
   expect(ui.container.querySelector(".board-square .piece")?.getAttribute("src")).toContain(`/skins/${authoredSkins[0].id}/rk.png`);
+});
+
+it("offers golden timber as an optional set and isolates board and piece effects when mixed", () => {
+  const skin=SKIN_CATALOG.find(skin=>skin.id===GOLDEN_TIMBER_SKIN_ID);
+  expect(skin).toMatchObject({name:"金木雅韵",supportsCustomRiverText:true,highResolutionPieces:true});
+  expect(SKIN_CATALOG[0].id).toBe(DEFAULT_SKIN_ID);
+  const piece={row:0,col:4,color:"black" as const,kind:"king",label:"将"};
+  const props={pieces:[piece],boardSkin:GOLDEN_TIMBER_SKIN_ID,pieceSkin:GOLDEN_TIMBER_SKIN_ID,riverText:"",riverTextColor:"#000",riverTextSize:20,supportsCustomRiverText:true,onSquare:vi.fn()};
+  const ui=render(<Board {...props}/>);
+  const shell=()=>ui.container.querySelector(".board-shell")!;
+  expect(shell().classList.contains("golden-timber-board")).toBe(true);
+  expect(shell().classList.contains("golden-timber-pieces")).toBe(true);
+  expect(ui.container.querySelector(".board-square .piece")?.getAttribute("src")).toContain("/golden-timber/retina/bk.png");
+  expect(ui.container.querySelector('[aria-label="e9 黑将"]')?.getAttribute("data-display-row")).toBe("0");
+  ui.rerender(<Board {...props} flipped/>);
+  expect(ui.container.querySelector('[aria-label="e9 黑将"]')?.getAttribute("data-display-row")).toBe("9");
+  ui.rerender(<Board {...props} pieceSkin={DEFAULT_SKIN_ID}/>);
+  expect(shell().classList.contains("golden-timber-board")).toBe(true);
+  expect(shell().classList.contains("golden-timber-pieces")).toBe(false);
+  ui.rerender(<Board {...props} boardSkin={DEFAULT_SKIN_ID}/>);
+  expect(shell().classList.contains("golden-timber-board")).toBe(false);
+  expect(shell().classList.contains("golden-timber-pieces")).toBe(true);
+  for (const side of ["r","b"]) for (const code of ["k","a","b","n","r","c","p"]) {
+    const png=readFileSync(`public/skins/${GOLDEN_TIMBER_SKIN_ID}/retina/${side}${code}.png`);
+    expect([png.readUInt32BE(16),png.readUInt32BE(20)]).toEqual([240,240]);
+  }
+  const shadow=readFileSync(`public/skins/${GOLDEN_TIMBER_SKIN_ID}/piece-shadow.png`);
+  expect([shadow.readUInt32BE(16),shadow.readUInt32BE(20)]).toEqual([120,120]);
+});
+
+it("keeps the two timber sets independently selectable with calibrated mixed boards", () => {
+  expect(SKIN_CATALOG.find(s=>s.id===IVORY_TIMBER_SKIN_ID)).toMatchObject({name:"暖木素韵",highResolutionPieces:true,supportsCustomRiverText:true});
+  const props={pieces:[{row:9,col:4,color:"red" as const,kind:"king",label:"帅"}],boardSkin:IVORY_TIMBER_SKIN_ID,pieceSkin:GOLDEN_TIMBER_SKIN_ID,riverText:"",riverTextColor:"#000",riverTextSize:20,supportsCustomRiverText:true,onSquare:vi.fn()};
+  const ui=render(<Board {...props}/>);
+  const shell=()=>ui.container.querySelector('.board-shell')!;
+  expect(shell().classList.contains('ivory-timber-board')).toBe(true);
+  expect(shell().classList.contains('golden-timber-pieces')).toBe(true);
+  expect(ui.container.querySelector('.piece')?.getAttribute('src')).toContain('/golden-timber/retina/rk.png');
+  const targets=[...ui.container.querySelectorAll('.board-square')].map(s=>s.getAttribute('style'));
+  ui.rerender(<Board {...props} boardSkin={GOLDEN_TIMBER_SKIN_ID} pieceSkin={IVORY_TIMBER_SKIN_ID}/>);
+  expect(shell().classList.contains('golden-timber-board')).toBe(true);
+  expect(shell().classList.contains('ivory-timber-pieces')).toBe(true);
+  expect(ui.container.querySelector('.piece')?.getAttribute('src')).toContain('/ivory-timber/retina/rk.png');
+  expect([...ui.container.querySelectorAll('.board-square')].map(s=>s.getAttribute('style'))).toEqual(targets);
+  for(const side of ['r','b'])for(const kind of ['k','a','b','n','r','c','p']){
+    const png=readFileSync(`public/skins/${IVORY_TIMBER_SKIN_ID}/retina/${side}${kind}.png`);
+    expect([png.readUInt32BE(16),png.readUInt32BE(20)]).toEqual([240,240]);
+  }
 });

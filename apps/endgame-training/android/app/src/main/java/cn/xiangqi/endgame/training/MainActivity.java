@@ -14,5 +14,6 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(CommentarySpeechPlugin.class);
         super.onCreate(savedInstanceState);
         bridge.setWebViewClient(new VideoWebViewClient(bridge));
+        bridge.getWebView().setWebChromeClient(new VideoWebChromeClient(bridge));
     }
 }

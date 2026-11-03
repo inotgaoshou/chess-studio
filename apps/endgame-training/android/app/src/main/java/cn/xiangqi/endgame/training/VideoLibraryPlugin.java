@@ -54,6 +54,7 @@ public class VideoLibraryPlugin extends Plugin {
         String json=state.toString();
         try { db.execSQL("INSERT OR REPLACE INTO library(id,json) VALUES(1,?)",new Object[]{json}); committed=json; }
         catch(RuntimeException error){ rollback();throw error; }
+        try {JSONObject jobs=state.getJSONObject("jobs");JSONObject latest=null;String receipt="";JSONArray tasks=arr("tasks");for(int i=0;i<tasks.length();i++){JSONObject task=tasks.getJSONObject(i),job=jobs.optJSONObject(task.getString("id"));if(job!=null&&job.has("migration")){latest=task;receipt=job.getString("receipt");}}if(latest!=null){JSONObject status=new JSONObject().put("receipt",receipt).put("requestId",jobs.getJSONObject(latest.getString("id")).optString("requestId")).put("replayed",jobs.getJSONObject(latest.getString("id")).optBoolean("replayed")).put("state",latest.getString("state")).put("completed",latest.optInt("completed")).put("total",latest.optInt("total")).put("error",latest.optJSONArray("errors"));File temp=new File(root,"migration-status.json.part");Files.write(temp.toPath(),status.toString().getBytes(StandardCharsets.UTF_8));android.system.Os.rename(temp.getAbsolutePath(),new File(root,"migration-status.json").getAbsolutePath());}}catch(Exception ignored){}
         // Rebuildable receipt used only to skip computer transfers, never as the database.
         try { JSONObject receipt=new JSONObject(); for(int i=0;i<arr("videos").length();i++){JSONObject v=arr("videos").getJSONObject(i);String h=v.getString("hash");File f=new File(media,h+".mp4");if(f.isFile()&&f.length()==v.getLong("size"))receipt.put(h,f.length());}File tmp=new File(root,"inventory.json.part");Files.write(tmp.toPath(),receipt.toString().getBytes(StandardCharsets.UTF_8));tmp.renameTo(new File(root,"inventory.json")); }catch(Exception ignored){}
     }
@@ -66,6 +67,36 @@ public class VideoLibraryPlugin extends Plugin {
     private interface Action { void run() throws Exception; }
     private synchronized void reply(PluginCall c,Action a) { try{a.run();c.resolve();}catch(Exception e){rollback();c.reject(e.getMessage(),e);} }
     @PluginMethod public synchronized void snapshot(PluginCall c) {try{JSONObject out=new JSONObject();for(String k:KINDS)out.put(k,arr(k));c.resolve(JSObject.fromJSONObject(out));}catch(Exception e){c.reject(e.getMessage(),e);} }
+    @PluginMethod public synchronized void exportMetadata(PluginCall c) {
+        try { if(!active.isEmpty())throw new Exception("请等待导入完成后导出迁移资料");
+            JSONObject metadata=VideoMigration.metadata(state);
+            File temp=new File(root,"migration-export.json.part");Files.write(temp.toPath(),metadata.toString().getBytes(StandardCharsets.UTF_8));
+            android.system.Os.rename(temp.getAbsolutePath(),new File(root,"migration-export.json").getAbsolutePath());
+            c.resolve(JSObject.fromJSONObject(metadata));
+        }catch(Exception e){c.reject(e.getMessage(),e);}
+    }
+    private synchronized void startMigration(String id,JSONObject manifest) throws Exception {
+        JSONObject migration=manifest.getJSONObject("migration"),metadata=VideoMigration.metadata(migration.getJSONObject("metadata"));
+        String receipt=migration.getString("receipt");if(!receipt.matches("[a-f0-9]{64}"))throw new Exception("迁移回执无效");
+        long bytes=0;JSONArray videos=metadata.getJSONArray("videos");for(int i=0;i<videos.length();i++)bytes+=videos.getJSONObject(i).getLong("size");
+        scanning(id);require("tasks",id).put("state","running").put("total",videos.length()).put("totalBytes",bytes);
+        state.getJSONObject("jobs").put(id,new JSONObject().put("migration",metadata).put("receipt",receipt).put("requestId",manifest.optString("requestId",id)).put("replayed",state.optJSONObject("migrationReceipts")!=null&&state.getJSONObject("migrationReceipts").has(receipt)));persist();
+    }
+    private void processMigration(String id) throws Exception {
+        JSONObject job; synchronized(this){job=new JSONObject(state.getJSONObject("jobs").getJSONObject(id).toString());}
+        JSONObject metadata=job.getJSONObject("migration");JSONArray videos=metadata.getJSONArray("videos");
+        // Validate every byte before a single metadata transaction. Moved files remain reusable on retry.
+        for(int i=0;i<videos.length();i++) {
+            if(cancelled)throw new InterruptedIOException("迁移已取消，可重试");
+            JSONObject v=videos.getJSONObject(i);String h=v.getString("hash");File target=new File(media,h+".mp4"),file=new File(staging,h+".mp4");if(!file.isFile())file=target;
+            if(!file.isFile() || file.length()!=v.getLong("size"))throw new Exception("迁移文件缺失或大小不符，请重新传输："+v.getString("title"));
+            MessageDigest digest=MessageDigest.getInstance("SHA-256");try(InputStream in=new FileInputStream(file)){byte[] b=new byte[256*1024];int n;while((n=in.read(b))!=-1){if(cancelled)throw new InterruptedIOException("迁移已取消");digest.update(b,0,n);}}
+            if(!hex(digest.digest()).equals(h))throw new Exception("迁移校验失败，请重新传输："+v.getString("title"));validate(file);
+            if(!file.equals(target))android.system.Os.rename(file.getAbsolutePath(),target.getAbsolutePath());
+            synchronized(this){JSONObject task=require("tasks",id);task.put("current",v.getString("title")).put("completed",i+1);persist();}
+        }
+        synchronized(this){if(cancelled)throw new InterruptedIOException("迁移已取消");state=VideoMigration.merge(state,metadata,job.getString("receipt"));require("tasks",id).put("state","completed").put("current","");persist();}
+    }
     @PluginMethod public void pick(PluginCall c) {
         if(!active.isEmpty()){c.reject("已有导入任务，请等待或取消后再试");return;}
         Intent i=new Intent(Boolean.TRUE.equals(c.getBoolean("folder"))?Intent.ACTION_OPEN_DOCUMENT_TREE:Intent.ACTION_OPEN_DOCUMENT);
@@ -117,17 +148,20 @@ public class VideoLibraryPlugin extends Plugin {
         MediaExtractor ex=new MediaExtractor();try{ex.setDataSource(file.getAbsolutePath());boolean video=false;for(int i=0;i<ex.getTrackCount();i++){String mime=ex.getTrackFormat(i).getString(MediaFormat.KEY_MIME);if(mime!=null&&mime.startsWith("video/")){if(!mime.equals("video/avc"))throw new Exception("视频编码不兼容，请转为 H.264 + AAC MP4 后导入");video=true;}if(mime!=null&&mime.startsWith("audio/")&&!mime.equals("audio/mp4a-latm"))throw new Exception("声音编码不兼容，请转为 AAC 后导入");}if(!video)throw new Exception("文件没有可播放的视频轨道，请检查原文件");}finally{ex.release();}
     }
     private void process(String id) throws Exception {
+        boolean migration; synchronized(this){migration=state.getJSONObject("jobs").getJSONObject(id).has("migration");}
+        if(migration){processMigration(id);return;}
         JSONObject job; synchronized(this){job=state.getJSONObject("jobs").getJSONObject(id);}JSONArray sources=job.getJSONArray("sources");
         for(int i=0;i<sources.length();i++){
             if(cancelled)break;JSONObject s=sources.getJSONObject(i);if(s.optString("status").equals("done"))continue;
             File partial=new File(media,id+".part");File inputFile=null;
             synchronized(this){require("tasks",id).put("current",s.optString("title"));persist();}
             try{
-                String uri=s.getString("uri");boolean staged=uri.startsWith("staged:");long length=s.optLong("size");
-                if(staged){String h=s.getString("hash");if(!h.matches("[a-f0-9]{64}"))throw new Exception("清单校验值无效");inputFile=new File(staging,h+".mp4");if(!inputFile.isFile()){File existing=new File(media,h+".mp4");if(existing.isFile())inputFile=existing;else throw new Exception("暂存视频未传输完成，请重新运行电脑预置");}}
+                String uri=s.getString("uri");boolean staged=uri.startsWith("staged:"),bundled=uri.startsWith("bundled:");long length=s.optLong("size");
+                if(bundled){if(!BuildConfig.ALLOW_LOCAL_VIDEO_PROVISION)throw new Exception("当前安装包不支持内置课程");String h=s.getString("hash");if(!h.matches("[a-f0-9]{64}"))throw new Exception("内置课程校验值无效");File existing=new File(media,h+".mp4");if(existing.isFile()&&existing.length()==length){staged=true;inputFile=existing;}}
+                if(staged&&inputFile==null){String h=s.getString("hash");if(!h.matches("[a-f0-9]{64}"))throw new Exception("清单校验值无效");inputFile=new File(staging,h+".mp4");if(!inputFile.isFile()){File existing=new File(media,h+".mp4");if(existing.isFile())inputFile=existing;else throw new Exception("暂存视频未传输完成，请重新运行电脑预置");}}
                 if(!staged&&media.getUsableSpace()<length+32L*1024*1024)throw new Exception("空间不足，请释放空间后重试");
                 MessageDigest digest=MessageDigest.getInstance("SHA-256");long bytes=0;
-                try(InputStream in=staged?new FileInputStream(inputFile):getContext().getContentResolver().openInputStream(Uri.parse(uri));OutputStream out=staged?new OutputStream(){@Override public void write(int b){} @Override public void write(byte[] b,int o,int n){}}:new FileOutputStream(partial)){
+                try(InputStream in=staged?new FileInputStream(inputFile):bundled?getContext().getAssets().open("private-video/"+s.getString("hash")+".mp4"):getContext().getContentResolver().openInputStream(Uri.parse(uri));OutputStream out=staged?new OutputStream(){@Override public void write(int b){} @Override public void write(byte[] b,int o,int n){}}:new FileOutputStream(partial)){
                     if(in==null)throw new Exception("原文件不可访问，请重新选择导入");byte[] buffer=new byte[256*1024];int n;while((n=in.read(buffer))!=-1){if(cancelled)throw new InterruptedIOException("导入已取消");digest.update(buffer,0,n);out.write(buffer,0,n);bytes+=n;}
                 }
                 String h=hex(digest.digest());if(!s.optString("hash").isEmpty()&&!s.getString("hash").equals(h))throw new Exception("校验失败，请重新传输此视频");if(length>0&&bytes!=length)throw new Exception("文件大小不符，请重新传输");
@@ -151,16 +185,26 @@ public class VideoLibraryPlugin extends Plugin {
             task.put("state","cancelled");persist();if(active.equals(id))cancelled=true;
         }
     });}
-    @PluginMethod public synchronized void retry(PluginCall c){try{if(!active.isEmpty())throw new Exception("已有导入任务，请稍后重试");String id=c.getString("taskId");if(!state.getJSONObject("jobs").has(id))throw new Exception("扫描尚未完成，请重新选择原文件夹导入");require("series",state.getJSONObject("jobs").getJSONObject(id).getString("seriesId"));JSONObject t=require("tasks",id);t.put("failed",0).put("errors",new JSONArray()).put("state","running");persist();active=id;cancelled=false;c.resolve();worker.execute(()->{try{process(id);}catch(Exception e){finishError(id,e);}finally{active="";}});}catch(Exception e){c.reject(e.getMessage(),e);}}
+    @PluginMethod public synchronized void retry(PluginCall c){try{if(!active.isEmpty())throw new Exception("已有导入任务，请稍后重试");String id=c.getString("taskId");if(!state.getJSONObject("jobs").has(id))throw new Exception("扫描尚未完成，请重新选择原文件夹导入");if(!state.getJSONObject("jobs").getJSONObject(id).has("migration"))require("series",state.getJSONObject("jobs").getJSONObject(id).getString("seriesId"));JSONObject t=require("tasks",id);t.put("failed",0).put("errors",new JSONArray()).put("state","running");persist();active=id;cancelled=false;c.resolve();worker.execute(()->{try{process(id);}catch(Exception e){finishError(id,e);}finally{active="";}});}catch(Exception e){c.reject(e.getMessage(),e);}}
     private synchronized void finishError(String id,Exception e){try{JSONObject t=require("tasks",id);t.put("state",cancelled?"cancelled":"interrupted");t.getJSONArray("errors").put(e.getMessage());persist();}catch(Exception ignored){} }
+    private byte[] bundledManifest() throws IOException {
+        if(!BuildConfig.ALLOW_LOCAL_VIDEO_PROVISION)return null;
+        try(InputStream in=getContext().getAssets().open("private-video/manifest.json");ByteArrayOutputStream out=new ByteArrayOutputStream()){
+            byte[] buffer=new byte[8192];int n;while((n=in.read(buffer))!=-1){if(out.size()+n>8*1024*1024)throw new IOException("内置课程清单过大");out.write(buffer,0,n);}return out.toByteArray();
+        }catch(FileNotFoundException absent){return null;}
+    }
+    private void keepImportScreenOn(boolean keep){getActivity().runOnUiThread(()->{if(keep)getActivity().getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);else getActivity().getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);});}
     @PluginMethod public void receiveProvisioned(PluginCall c){
-        synchronized(this){if(!active.isEmpty()){c.resolve();return;}File manifest=new File(staging,"manifest.json");if(!manifest.isFile()){c.resolve();return;}active=UUID.randomUUID().toString();cancelled=false;}
+        if(!BuildConfig.ALLOW_LOCAL_VIDEO_PROVISION){c.resolve();return;}
+        final byte[] embedded;final String bundleReceipt;
+        try{synchronized(this){if(!active.isEmpty()){c.resolve();return;}File manifest=new File(staging,"manifest.json");embedded=manifest.isFile()?null:bundledManifest();if(!manifest.isFile()&&embedded==null){for(int n=0;n<arr("tasks").length();n++){JSONObject task=arr("tasks").getJSONObject(n);String tid=task.getString("id");if(task.optString("state").equals("interrupted")&&state.getJSONObject("jobs").optJSONObject(tid)!=null&&state.getJSONObject("jobs").getJSONObject(tid).has("migration")){active=tid;cancelled=false;task.put("state","running");persist();keepImportScreenOn(true);worker.execute(()->{try{processMigration(tid);}catch(Exception error){finishError(tid,error);}finally{active="";keepImportScreenOn(false);}});break;}}c.resolve();return;}bundleReceipt=embedded==null?"":hash(new String(embedded,StandardCharsets.UTF_8));if(!bundleReceipt.isEmpty()&&bundleReceipt.equals(state.optString("bundleReceipt"))){c.resolve();return;}active=UUID.randomUUID().toString();cancelled=false;}}catch(Exception e){c.reject(e.getMessage(),e);return;}
+        keepImportScreenOn(true);
         String id=active;worker.execute(()->{try{
-            File manifest=new File(staging,"manifest.json");if(manifest.length()>8*1024*1024)throw new Exception("预置清单过大");JSONObject m=new JSONObject(new String(Files.readAllBytes(manifest.toPath()),StandardCharsets.UTF_8));if(m.getInt("version")!=1)throw new Exception("预置清单版本不支持");
+            File manifest=new File(staging,"manifest.json");if(embedded==null&&manifest.length()>8*1024*1024)throw new Exception("预置清单过大");JSONObject m=new JSONObject(new String(embedded==null?Files.readAllBytes(manifest.toPath()):embedded,StandardCharsets.UTF_8));if(m.getInt("version")==2){startMigration(id,m);if(embedded==null)manifest.delete();JSObject result=new JSObject();result.put("taskId",id);c.resolve(result);try{processMigration(id);}catch(Exception error){finishError(id,error);}return;}if(m.getInt("version")!=1)throw new Exception("预置清单版本不支持");
             // One task per series; all jobs are durable before the manifest is removed.
-            List<String> ids=new ArrayList<>();JSONArray sets=m.getJSONArray("series");synchronized(this){for(int j=0;j<sets.length();j++){JSONObject set=sets.getJSONObject(j);String tid=j==0?id:UUID.randomUUID().toString();JSONArray entries=set.getJSONArray("videos"),sources=new JSONArray();for(int n=0;n<entries.length();n++){JSONObject e=entries.getJSONObject(n);sources.put(source("staged:",e.getString("title")+".mp4",e.optString("chapter"),e.getLong("size"),n,e.getString("hash")));}String cat=set.optString("categoryId","category-other");start(tid,sources,cat,set.optString("seriesId",""),set.getString("title"));ids.add(tid);}manifest.delete();}
+            List<String> ids=new ArrayList<>();JSONArray sets=m.getJSONArray("series");synchronized(this){for(int j=0;j<sets.length();j++){JSONObject set=sets.getJSONObject(j);String tid=j==0?id:UUID.randomUUID().toString();JSONArray entries=set.getJSONArray("videos"),sources=new JSONArray();for(int n=0;n<entries.length();n++){JSONObject e=entries.getJSONObject(n);sources.put(source(embedded==null?"staged:":"bundled:",e.getString("title")+".mp4",e.optString("chapter"),e.getLong("size"),n,e.getString("hash")));}String cat=set.optString("categoryId","category-other");start(tid,sources,cat,set.optString("seriesId",""),set.getString("title"));ids.add(tid);}if(embedded==null)manifest.delete();else{state.put("bundleReceipt",bundleReceipt);persist();}}
             JSObject out=new JSObject();out.put("taskId",id);c.resolve(out);for(String tid:ids){synchronized(this){if(require("tasks",tid).optString("state").equals("cancelled"))continue;active=tid;cancelled=false;}try{process(tid);}catch(Exception e){finishError(tid,e);}}
-        }catch(Exception e){c.reject(e.getMessage(),e);}finally{active="";}});
+        }catch(Exception e){c.reject(e.getMessage(),e);}finally{active="";keepImportScreenOn(false);}});
     }
     @PluginMethod public synchronized void update(PluginCall c){reply(c,()->{
         String key;switch(c.getString("kind","")){case "category":key="categories";break;case "series":key="series";break;case "chapter":key="chapters";break;case "video":key="videos";break;default:throw new Exception("不支持的目录类型");}

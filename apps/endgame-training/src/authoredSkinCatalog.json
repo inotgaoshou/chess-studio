@@ -24,11 +24,21 @@
     "group": "2d"
   },
   {
-    "id": "dusk-jade",
-    "name": "暮山深青",
-    "description": "深青夜色 · 低眩光",
+    "id": "golden-timber",
+    "name": "金木雅韵",
+    "description": "暖金木纹 · 灰白厚边棋子",
     "source": "folder",
     "supportsCustomRiverText": true,
-    "group": "2d"
+    "group": "2d",
+    "highResolutionPieces": true
+  },
+  {
+    "id": "ivory-timber",
+    "name": "暖木素韵",
+    "description": "浅暖木盘 · 原木厚边棋子",
+    "source": "folder",
+    "supportsCustomRiverText": true,
+    "group": "2d",
+    "highResolutionPieces": true
   }
 ]

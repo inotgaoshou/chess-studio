@@ -6,37 +6,51 @@ const root=path.resolve(__dirname,'..');
 const reference=require('./skin-designs/reference-assets.json');
 const {createHash}=require('node:crypto');
 const designs=JSON.parse(fs.readFileSync(path.join(__dirname,'skin-designs/palettes.json'),'utf8'));
+const woodPieceSource=require('./skin-designs/golden-timber-pieces-source.json');
+const retiredSkins=require('./skin-designs/retired-skins.json');
+const skinOption=process.argv.indexOf('--skin');
+const selectedSkin=skinOption<0?undefined:process.argv[skinOption+1];
+if(skinOption>=0&&(!selectedSkin||!designs.some(d=>d.id===selectedSkin)))throw new Error('Use --skin with a known skin ID');
+const boardsOnly=process.argv.includes('--boards-only'),piecesOnly=process.argv.includes('--pieces-only');
+if(boardsOnly&&piecesOnly)throw new Error('Choose either --boards-only or --pieces-only');
 const output=path.join(root,'apps/endgame-training/public/skins');
 // Share calibration with the renderer: artwork, touch, animation and exports agree.
-const {columns:cols,rows}=require("../apps/endgame-training/src/authoredSkinGeometry.json");
+const authoredGeometry=require("../apps/endgame-training/src/authoredSkinGeometry.json");
+const defaultGeometry=require("../apps/endgame-training/src/defaultSkinGeometry.json");
 const labels={r:['帥','仕','相','馬','車','炮','兵'],b:['將','士','象','馬','車','炮','卒']},codes=['k','a','b','n','r','c','p'];
 const line=(x,y,x2,y2,stroke,width=2.6)=>`<path d="M${x} ${y}L${x2} ${y2}" fill="none" stroke="${stroke}" stroke-width="${width}" stroke-linecap="round"/>`;
 const svg=(w,h,body)=>`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${body}</svg>`;
-function board(d,blank=false){
+function board(d,blank=false,material){
+ const golden=d.style==='golden-timber';
+ const {columns:cols,rows}=golden?defaultGeometry:authoredGeometry;
  // A thin 6px sidewall; rounded silhouette and grid calibration stay independent.
  let b=`<defs>
   <linearGradient id="board-surface" x1="0" y1="0" x2=".12" y2="1"><stop stop-color="${d.field}"/><stop offset=".48" stop-color="${d.fieldMiddle||d.field}"/><stop offset="1" stop-color="${d.fieldBottom||d.field}"/></linearGradient>
   <linearGradient id="board-side" x1="0" y1="0" x2=".2" y2="1"><stop stop-color="${tone(d.edge,-.1)}"/><stop offset=".8" stop-color="${tone(d.edge,-.15)}"/><stop offset="1" stop-color="${tone(d.edge,-.24)}"/></linearGradient>
   <linearGradient id="board-bevel" x1="0" y1="0" x2=".7" y2="1"><stop stop-color="${tone(d.field,.45)}"/><stop offset=".4" stop-color="${tone(d.field,.12)}"/><stop offset=".8" stop-color="${d.edge}"/><stop offset="1" stop-color="${tone(d.edge,-.1)}"/></linearGradient>
   <radialGradient id="board-light" cx=".12" cy=".05" r="1.15"><stop stop-color="#fff9e8" stop-opacity="${d.motif === 'clean' ? .02 : .08}"/><stop offset=".55" stop-color="#fff9e8" stop-opacity="0"/><stop offset="1" stop-color="#45301b" stop-opacity="${d.motif === 'clean' ? 0 : .04}"/></radialGradient>
-  <clipPath id="board-face"><rect x="5" y="5" width="1110" height="1224" rx="12"/></clipPath>
+  <clipPath id="board-face"><rect x="5" y="5" width="1110" height="${golden?1213:1224}" rx="${golden?5:12}"/></clipPath>
  </defs>
- <rect x="1" y="5" width="1118" height="1234" rx="16" fill="url(#board-side)"/>
- <rect x="1" y="1" width="1118" height="1232" rx="16" fill="url(#board-bevel)"/>
+ <rect x="1" y="5" width="1118" height="1234" rx="${golden?7:16}" fill="url(#board-side)"/>
+ <rect x="1" y="1" width="1118" height="${golden?1222:1232}" rx="${golden?7:16}" fill="url(#board-bevel)"/>
  <g clip-path="url(#board-face)"><rect width="1120" height="1240" fill="url(#board-surface)"/>`;
  // Fine grain belongs to the surface only; it never runs across the bevel or sidewall.
- if(d.motif==='wood'){
+ if(golden&&material){
+  b+=`<image width="1120" height="1240" href="${material}"/>`;
+ }else if(d.motif==='wood'){
   b+=`<defs><linearGradient id="timber"><stop stop-color="#fff5d4" stop-opacity=".2"/><stop offset=".45" stop-color="#b67b37" stop-opacity=".04"/><stop offset="1" stop-color="#fff3c9" stop-opacity=".15"/></linearGradient></defs><rect width="1120" height="1240" rx="8" fill="url(#timber)"/>`;
   // Rasterize organic grain once; the client receives a normal PNG, not a live filter.
-  b+=`<defs><filter id="natural-grain" x="0" y="0" width="100%" height="100%"><feTurbulence type="fractalNoise" baseFrequency=".052 .0032" numOctaves="3" seed="23" stitchTiles="stitch"/><feColorMatrix type="saturate" values="0"/></filter></defs><rect x="5" y="5" width="1110" height="1224" filter="url(#natural-grain)" opacity=".12" style="mix-blend-mode:soft-light"/>`;
+  b+=`<defs><filter id="natural-grain" x="0" y="0" width="100%" height="100%"><feTurbulence type="fractalNoise" baseFrequency="${golden?'.035 .006':'.052 .0032'}" numOctaves="3" seed="23" stitchTiles="stitch"/><feColorMatrix type="saturate" values="0"/></filter></defs><rect x="5" y="5" width="1110" height="1224" filter="url(#natural-grain)" opacity="${golden?'.18':'.12'}" style="mix-blend-mode:soft-light"/>`;
   const noise=i=>{const v=Math.sin(i*127.1+31.7)*43758.5453;return v-Math.floor(v);};
   for(let i=0;i<90;i++){
    const x=i*13-20+noise(i)*10, bend=(noise(i+113)-.5)*50;
    const warm=i%3!==0;
-   b+=`<path d="M${x} -20 C${x+bend} 250 ${x-bend*.4} 430 ${x+Math.sin(i)*12} 640 S${x+bend*.7} 970 ${x+noise(i+33)*18} 1260" fill="none" stroke="${warm?d.line:'#fff2cb'}" stroke-opacity="${warm ? .035+noise(i+44)*.05 : .13}" stroke-width="${.6+noise(i+72)*2}"/>`;
+   const opacity=golden ? (warm ? .012+noise(i+44)*.025 : .045) : (warm ? .035+noise(i+44)*.05 : .13);
+   b+=`<path d="M${x} -20 C${x+bend} 250 ${x-bend*.4} 430 ${x+Math.sin(i)*12} 640 S${x+bend*.7} 970 ${x+noise(i+33)*18} 1260" fill="none" stroke="${warm?d.line:'#fff2cb'}" stroke-opacity="${opacity}" stroke-width="${.6+noise(i+72)*2}"/>`;
   }
  }
  b+=`<rect width="1120" height="1240" fill="url(#board-light)"/></g><path d="M3 28V18Q3 3 18 3H1100" fill="none" stroke="${tone(d.field,.65)}" stroke-opacity=".65" stroke-width="1.5"/><path d="M19 1235H1100" fill="none" stroke="${tone(d.edge,.2)}" stroke-opacity=".6" stroke-width="1"/>`;
+ if(golden)b+=`<path d="M7 1219H1112M9 1226H1110" fill="none" stroke="${d.id==='ivory-timber'?'#8e8779':'#7c5b28'}" stroke-width="1.2" stroke-opacity=".5"/><path d="M7 8H1112M7 8V1215" fill="none" stroke="${d.id==='ivory-timber'?'#fffdf7':'#fff0bd'}" stroke-width="2" stroke-opacity=".65"/>`;
  // Draw each boundary once. A slightly stronger perimeter frames the fine grid.
  b+=`<rect x="${cols[0]}" y="${rows[0]}" width="${cols[8]-cols[0]}" height="${rows[9]-rows[0]}" fill="none" stroke="${d.line}" stroke-width="3.6" stroke-linejoin="round"/>`;
  let grid='';
@@ -58,6 +72,7 @@ function tone(hex,amount){
  return '#'+channels.map(v=>Math.round(amount>0?v+(255-v)*amount:v*(1+amount)).toString(16).padStart(2,'0')).join('');
 }
 function piece(d,side,label){
+ if(d.style==='golden-timber')return require('./skin-designs/golden-ivory-piece.cjs')(d,side,label);
  const red=side==='r', ink=red?d.red:d.black;
  const bamboo=d.style==='bamboo',competitive=d.style==='competitive';
  const dark=!red&&d.style==='porcelain';
@@ -89,6 +104,10 @@ function piece(d,side,label){
   ${glyph(baseline,text)}
  `);
 }
+// Floor shadows remain separate from imported discs during selection and drag.
+function goldenPieceShadow(){
+ return svg(120,120,`<defs><radialGradient id="cast"><stop stop-color="#30291c" stop-opacity=".58"/><stop offset=".6" stop-color="#30291c" stop-opacity=".42"/><stop offset=".83" stop-color="#30291c" stop-opacity=".2"/><stop offset="1" stop-color="#30291c" stop-opacity="0"/></radialGradient></defs><ellipse cx="64" cy="75" rx="56" ry="44" fill="url(#cast)"/>`);
+}
 (async()=>{
  const browser=await chromium.launch({channel:'chrome',headless:true});
  try{
@@ -101,6 +120,7 @@ function piece(d,side,label){
  await page.evaluate(()=>document.fonts.load('650 70px SkinText','帥仕相馬車炮兵將士象卒楚河漢界一二三四五六七八九'));
  await page.evaluate(()=>document.fonts.load('400 80px SkinKai','帥仕相馬車炮兵將士象卒楚河漢界'));
  for(const d of designs){
+  if(selectedSkin&&d.id!==selectedSkin)continue;
   if(d.id===reference.id){
    for(const [file,hash] of Object.entries(reference.files)){
     const bytes=fs.readFileSync(path.join(output,d.id,file));
@@ -109,15 +129,54 @@ function piece(d,side,label){
    console.log(`${d.id}: original source assets preserved`);continue;
   }
   const dir=path.join(output,d.id);fs.mkdirSync(dir,{recursive:true});
-  const assets={'board.png':board(d),'board-river-blank.png':board(d,true)};
-  if(!process.argv.includes('--boards-only'))for(const side of ['r','b'])codes.forEach((code,i)=>assets[side+code+'.png']=piece(d,side,labels[side][i]));
+  const importedPieces={};
+  if(d.pieces==='wood'&&!boardsOnly){
+   for(const [file,hash] of Object.entries(woodPieceSource.files)){
+    const bytes=fs.readFileSync(path.join(__dirname,'skin-designs/golden-timber-pieces-source',file));
+    if(createHash('sha256').update(bytes).digest('hex')!==hash)throw new Error(`Wood piece source changed: ${file}`);
+    importedPieces[file]='data:image/png;base64,'+bytes.toString('base64');
+   }
+  }
+  const material=!piecesOnly&&d.style==='golden-timber'&&d.motif==='wood'?await page.evaluate(require('./skin-designs/golden-timber-material.cjs')):undefined;
+  const assets=piecesOnly?{}:{'board.png':board(d,false,material),'board-river-blank.png':board(d,true,material)};
+  if(d.style==='golden-timber'&&!piecesOnly)assets['board-depth.png']=require('./skin-designs/timber-board-depth.cjs')(d);
+  if(d.style==='golden-timber'&&!boardsOnly)assets['piece-shadow.png']=goldenPieceShadow();
+  if(!boardsOnly&&d.pieces!=='wood')for(const side of ['r','b'])codes.forEach((code,i)=>assets[side+code+'.png']=piece(d,side,labels[side][i]));
   for(const [name,source] of Object.entries(assets)){
    await page.locator('main').evaluate((el,source)=>el.innerHTML=source,source);
    await page.locator('svg').screenshot({path:path.join(dir,name),omitBackground:true});
   }
-  console.log(`${d.id}: ${Object.keys(assets).length} PNG assets`);
+  if(d.boardSource==='xuan-paper'&&!piecesOnly){
+   const bytes=fs.readFileSync(path.join(output,'xuan-paper','board.png'));
+   if(createHash('sha256').update(bytes).digest('hex')!==reference.files['board.png'])throw new Error('Reference board changed');
+   for(const blank of [false,true]){
+    const png=await page.evaluate(require('./skin-designs/reference-warm-board.cjs'),{
+     dataUrl:'data:image/png;base64,'+bytes.toString('base64'),
+     sourceGeometry:require('../apps/endgame-training/src/referenceSkinGeometry.json')['xuan-paper'],targetGeometry:defaultGeometry,blank
+    });
+    fs.writeFileSync(path.join(dir,blank?'board-river-blank.png':'board.png'),Buffer.from(png.split(',')[1],'base64'));
+   }
+  }
+  if(d.pieces==='wood'&&!boardsOnly){
+   const retina=path.join(dir,'retina');fs.mkdirSync(retina,{recursive:true});
+   for(const [file,dataUrl] of Object.entries(importedPieces))for(const size of [120,240]){
+    const png=await page.evaluate(require('./skin-designs/normalize-wood-piece.cjs'),{dataUrl,size});
+    fs.writeFileSync(path.join(size===240?retina:dir,file),Buffer.from(png.split(',')[1],'base64'));
+   }
+   const shadow=await page.evaluate(require('./skin-designs/normalize-wood-piece.cjs'),{dataUrl:importedPieces['rr.png'],size:150,bodySize:120,shadowOnly:true});
+   fs.writeFileSync(path.join(dir,'piece-shadow.png'),Buffer.from(shadow.split(',')[1],'base64'));
+  }else if(d.highResolutionPieces&&!boardsOnly){
+   const retina=path.join(dir,'retina');fs.mkdirSync(retina,{recursive:true});
+   for(const side of ['r','b'])for(const [index,code] of codes.entries()){
+    const source=piece(d,side,labels[side][index]).replace('width="120" height="120"','width="240" height="240"');
+    await page.locator('main').evaluate((el,source)=>el.innerHTML=source,source);
+    await page.locator('svg').screenshot({path:path.join(retina,side+code+'.png'),omitBackground:true});
+   }
+  }
+  const renderedRetina=d.highResolutionPieces&&!boardsOnly&&d.pieces!=='wood'?codes.length*2:0;
+  console.log(`${d.id}: ${Object.keys(assets).length+renderedRetina+Object.keys(importedPieces).length*(d.highResolutionPieces?2:1)} PNG assets`);
  }
- const catalog=designs.map(({id,name,description})=>({id,name,description,source:'folder',supportsCustomRiverText:id!==reference.id,group:'2d'}));
+ const catalog=designs.filter(design=>!retiredSkins.includes(design.id)).map(({id,name,description,highResolutionPieces})=>({id,name,description,source:'folder',supportsCustomRiverText:id!==reference.id,group:'2d',...(highResolutionPieces?{highResolutionPieces:true}:{})}));
  fs.writeFileSync(path.join(root,'apps/endgame-training/src/authoredSkinCatalog.json'),JSON.stringify(catalog,null,2)+'\n');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

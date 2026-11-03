@@ -14,10 +14,12 @@ export interface VideoSnapshot {
   categories: VideoCategory[]; series: VideoSeries[]; chapters: VideoChapter[];
   videos: LearningVideo[]; progress: VideoProgress[]; bookmarks: VideoBookmark[]; tasks: VideoImportTask[];
 }
+export type VideoMigrationMetadata = Pick<VideoSnapshot, 'categories' | 'series' | 'chapters' | 'videos' | 'progress' | 'bookmarks'>;
 export type VideoEntity = 'category' | 'series' | 'chapter' | 'video';
 export interface VideoLibraryPlugin {
   addListener(event: 'background', listener: () => void): Promise<PluginListenerHandle>;
   snapshot(): Promise<VideoSnapshot>;
+  exportMetadata(): Promise<VideoMigrationMetadata>;
   pick(options: { folder: boolean; categoryId: string; seriesId?: string; seriesTitle?: string }): Promise<{ taskId?: string }>;
   receiveProvisioned(): Promise<{ taskId?: string }>;
   cancel(options: { taskId: string }): Promise<void>;

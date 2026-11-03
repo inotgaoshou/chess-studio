@@ -37,7 +37,12 @@ final class ScreenOrientationPlugin: CAPPlugin, CAPBridgedPlugin {
 
             if #available(iOS 16.0, *), let scene = controller.view.window?.windowScene {
                 controller.setNeedsUpdateOfSupportedInterfaceOrientations()
-                scene.requestGeometryUpdate(UIWindowScene.GeometryPreferences.iOS(interfaceOrientations: mask)) { error in
+                // Unlocking all orientations alone leaves UIKit in the fullscreen landscape.
+                // Request the pre-player orientation once while retaining the automatic mask.
+                let restore = call.getString("restoreOrientation")
+                let target: UIInterfaceOrientationMask = orientation == "auto" && restore == "portrait" ? .portrait
+                    : orientation == "auto" && restore == "landscape" ? .landscape : mask
+                scene.requestGeometryUpdate(UIWindowScene.GeometryPreferences.iOS(interfaceOrientations: target)) { error in
                     call.reject("无法切换屏幕方向", nil, error)
                 }
                 call.resolve(["requiresPhysicalRotation": false])

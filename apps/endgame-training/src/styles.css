@@ -43,7 +43,9 @@
 .xiangqi-board {
   position: relative;
   width: 100%;
-  height: 100%;
+  /* WebKit can resolve 100% against the outer grid when the shell has auto height. */
+  height: auto;
+  aspect-ratio: 1120 / 1240;
   overflow: visible;
   border: 0;
   background-color: transparent;

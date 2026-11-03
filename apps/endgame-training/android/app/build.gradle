@@ -8,6 +8,7 @@ android {
     }
     defaultConfig {
         applicationId "cn.xiangqi.endgame.training"
+        buildConfigField "boolean", "ALLOW_LOCAL_VIDEO_PROVISION", "false"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode Integer.parseInt(System.getenv("ANDROID_VERSION_CODE") ?: "10143")
@@ -37,14 +38,6 @@ android {
         debug {
             applicationIdSuffix ".preview"
         }
-        family {
-            initWith debug
-            applicationIdSuffix ".family"
-            matchingFallbacks = ["debug"]
-            resValue "string", "app_name", "棋析·家庭学习"
-            resValue "string", "title_activity_main", "棋析·家庭学习"
-            versionNameSuffix "-family"
-        }
         release {
             minifyEnabled false
             if (System.getenv("ANDROID_KEYSTORE_PATH")) {
@@ -52,6 +45,24 @@ android {
             }
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
+        local {
+            initWith release
+            debuggable true
+            signingConfig signingConfigs.release
+            matchingFallbacks = ["release"]
+            buildConfigField "boolean", "ALLOW_LOCAL_VIDEO_PROVISION", "true"
+        }
+        // Legacy migration source only; never the default install target.
+        family {
+            initWith debug
+            buildConfigField "boolean", "ALLOW_LOCAL_VIDEO_PROVISION", "true"
+            applicationIdSuffix ".family"
+            matchingFallbacks = ["debug"]
+            resValue "string", "app_name", "棋析·家庭学习"
+            resValue "string", "title_activity_main", "棋析·家庭学习"
+            versionNameSuffix "-family"
+        }
+
     }
     packagingOptions {
         jniLibs {
@@ -73,6 +84,7 @@ dependencies {
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')
     testImplementation "junit:junit:$junitVersion"
+    testImplementation "org.json:json:20240303"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')

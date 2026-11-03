@@ -28,6 +28,10 @@
 	<string>用于选择学习打卡作业或棋盘图片，仅在你确认提交或识别后上传。</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<!-- iPad multitasking ignores orientation locks; use a full-screen scene so
+	     the player's landscape/portrait setting can rotate the interface. -->
+	<key>UIRequiresFullScreen</key>
+	<true/>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>UILaunchStoryboardName</key>

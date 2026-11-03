@@ -13,14 +13,15 @@ private let videoTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 final class VideoLibraryPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDelegate {
     let identifier = "VideoLibraryPlugin"
     let jsName = "VideoLibrary"
-    let pluginMethods: [CAPPluginMethod] = ["snapshot", "pick", "receiveProvisioned", "cancel", "retry", "update", "deleteSeries", "deleteContent", "playback", "saveProgress", "bookmark"].compactMap { CAPPluginMethod(name: $0, returnType: CAPPluginReturnPromise) }
+    let pluginMethods: [CAPPluginMethod] = ["snapshot", "exportMetadata", "pick", "receiveProvisioned", "cancel", "retry", "update", "deleteSeries", "deleteContent", "playback", "saveProgress", "bookmark"].compactMap { CAPPluginMethod(name: $0, returnType: CAPPluginReturnPromise) }
     private let lock = NSRecursiveLock()
     private let worker = DispatchQueue(label: "cn.xiangqi.video-import", qos: .utility)
     private var database: OpaquePointer?
     private var state: [String: Any] = [:]
     private var committed: Data?
     private var openingError: Error?
-    private var active = ""
+    private var active = "" { didSet { updateImportIdleTimer() } }
+    private var previousIdleTimerDisabled: Bool?
     private var cancelled = false
     private var backgroundObserver: NSObjectProtocol?
     private var pickerCall: CAPPluginCall?
@@ -49,7 +50,23 @@ final class VideoLibraryPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDel
             try persist()
         } catch { openingError = error }
     }
-    deinit { if let observer=backgroundObserver{NotificationCenter.default.removeObserver(observer)};sqlite3_close(database) }
+    deinit {
+        if let observer=backgroundObserver{NotificationCenter.default.removeObserver(observer)}
+        if let previous=previousIdleTimerDisabled { DispatchQueue.main.async { UIApplication.shared.isIdleTimerDisabled=previous } }
+        sqlite3_close(database)
+    }
+    private func updateImportIdleTimer() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            if self.locked({!self.active.isEmpty}) {
+                if self.previousIdleTimerDisabled == nil { self.previousIdleTimerDisabled=UIApplication.shared.isIdleTimerDisabled }
+                UIApplication.shared.isIdleTimerDisabled=true
+            } else if let previous=self.previousIdleTimerDisabled {
+                UIApplication.shared.isIdleTimerDisabled=previous
+                self.previousIdleTimerDisabled=nil
+            }
+        }
+    }
     private func sql(_ sql: String) throws { guard sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK else { throw videoError("视频库写入失败，请释放本机空间后重试") } }
     private func persist() throws {
         let data = try JSONSerialization.data(withJSONObject: state)
@@ -59,6 +76,10 @@ final class VideoLibraryPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDel
         sqlite3_bind_text(stmt,1,text,-1,videoTransient)
         guard sqlite3_step(stmt) == SQLITE_DONE else { rollback(); throw videoError("保存失败，请释放存储空间后重试") }
         committed=data
+        if let jobs=state["jobs"] as? [String:[String:Any]],let task=list("tasks").last(where:{jobs[$0["id"] as? String ?? ""]?["migration"] != nil}),let id=task["id"] as? String,let receipt=jobs[id]?["receipt"] as? String {
+            let status:[String:Any]=["receipt":receipt,"requestId":jobs[id]?["requestId"] ?? "","replayed":jobs[id]?["replayed"] ?? false,"state":task["state"] ?? "interrupted","completed":task["completed"] ?? 0,"total":task["total"] ?? 0,"error":task["errors"] ?? []]
+            if let bytes=try? JSONSerialization.data(withJSONObject:status){try? bytes.write(to:root.appendingPathComponent("migration-status.json"),options:.atomic)}
+        }
         var receipt=[String:Int64]()
         for video in list("videos") { if let h=video["hash"] as? String,let size=video["size"] as? NSNumber,let attrs=try? FileManager.default.attributesOfItem(atPath:media.appendingPathComponent(h+".mp4").path),let actual=attrs[.size] as? NSNumber,actual.int64Value==size.int64Value {receipt[h]=actual.int64Value} }
         if let bytes=try? JSONSerialization.data(withJSONObject:receipt){try? bytes.write(to:root.appendingPathComponent("inventory.json"),options:.atomic)}
@@ -74,6 +95,35 @@ final class VideoLibraryPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDel
     private func digest(_ value:String) -> String { SHA256.hash(data:Data(value.utf8)).map{String(format:"%02x",$0)}.joined() }
     private func isCancelled() -> Bool { locked { cancelled } }
     @objc func snapshot(_ call:CAPPluginCall) { respond(call) { Dictionary(uniqueKeysWithValues: self.keys.map{($0,self.list($0))}) } }
+    @objc func exportMetadata(_ call:CAPPluginCall) {respond(call){
+        guard active.isEmpty else{throw videoError("请等待导入完成后导出迁移资料")}
+        let metadata=try VideoMigration.metadata(state)
+        try JSONSerialization.data(withJSONObject:metadata).write(to:root.appendingPathComponent("migration-export.json"),options:.atomic)
+        return metadata
+    }}
+    private func startMigration(_ id:String,_ manifest:[String:Any]) throws {
+        guard let migration=manifest["migration"] as? [String:Any],let input=migration["metadata"] as? [String:Any],let receipt=migration["receipt"] as? String,receipt.range(of:"^[a-f0-9]{64}$",options:.regularExpression) != nil else{throw videoError("迁移清单无效")}
+        let metadata=try VideoMigration.metadata(input),videos=metadata["videos"] as? [[String:Any]] ?? []
+        put("tasks",["id":id,"state":"running","total":videos.count,"completed":0,"duplicates":0,"failed":0,"bytes":0,"totalBytes":videos.reduce(Int64(0)){$0+(($1["size"] as? NSNumber)?.int64Value ?? 0)},"errors":[String]()])
+        var jobs=state["jobs"] as? [String:Any] ?? [:];jobs[id]=["migration":metadata,"receipt":receipt,"requestId":manifest["requestId"] as? String ?? id,"replayed":(state["migrationReceipts"] as? [String:Bool])?[receipt]==true];state["jobs"]=jobs;try persist()
+    }
+    private func processMigration(_ id:String) throws {
+        let j=try locked{try job(id)}
+        guard let metadata=j["migration"] as? [String:Any],let receipt=j["receipt"] as? String else{throw videoError("迁移任务缺失")}
+        for (i,v) in (metadata["videos"] as? [[String:Any]] ?? []).enumerated() {
+            if isCancelled(){throw videoError("迁移已取消，可重试")}
+            let h=v["hash"] as? String ?? "",target=media.appendingPathComponent(h+".mp4"),staged=staging.appendingPathComponent(h+".mp4")
+            let file=FileManager.default.fileExists(atPath:staged.path) ? staged : target
+            guard let expected=v["size"] as? NSNumber,let attrs=try? FileManager.default.attributesOfItem(atPath:file.path),let size=attrs[.size] as? NSNumber,size.int64Value==expected.int64Value else{throw videoError("迁移视频缺失或大小不符，请重新传输")}
+            let input=try FileHandle(forReadingFrom:file);var hash=SHA256()
+            do{while let data=try input.read(upToCount:256*1024),!data.isEmpty{if isCancelled(){throw videoError("迁移已取消")};hash.update(data:data)};try input.close()}catch{try? input.close();throw error}
+            guard hash.finalize().map({String(format:"%02x",$0)}).joined()==h else{throw videoError("迁移视频校验失败，请重新传输")}
+            try validate(file)
+            if file != target {guard rename(file.path,target.path)==0 else{throw videoError("迁移保存失败，请检查空间")}}
+            try locked{var task=try require("tasks",id);task["completed"]=i+1;task["current"]=v["title"];put("tasks",task);try persist()}
+        }
+        try locked{if cancelled{throw videoError("迁移已取消")};state=try VideoMigration.merge(state,metadata,receipt);var task=try require("tasks",id);task["state"]="completed";task["current"]="";put("tasks",task);try persist()}
+    }
     @objc func pick(_ call:CAPPluginCall) {
         DispatchQueue.main.async {
             guard self.locked({self.active.isEmpty}), self.pickerCall == nil else { call.reject("已有导入任务，请稍后再试"); return }
@@ -133,6 +183,7 @@ final class VideoLibraryPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDel
         for track in asset.tracks(withMediaType:.audio) {for description in track.formatDescriptions {let format=description as! CMFormatDescription;guard CMFormatDescriptionGetMediaSubType(format)==kAudioFormatMPEG4AAC else{throw videoError("音频编码不兼容，请转为 AAC 后导入")}}}
     }
     private func process(_ id:String) throws {
+        if try locked({try job(id)["migration"] != nil}) {try processMigration(id);return}
         let j=try locked{try job(id)};let sources=j["sources"] as? [[String:Any]] ?? []
         for (index,original) in sources.enumerated() {
             if isCancelled(){break};if original["status"] as? String == "done"{continue};var s=original
@@ -184,14 +235,60 @@ final class VideoLibraryPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDel
         if ["running","scanning"].contains(task["state"] as? String ?? "") {task["state"]="cancelled";put("tasks",task);try persist();if active==id{cancelled=true}}
         return [:]
     }}
-    @objc func retry(_ call:CAPPluginCall){respond(call){guard active.isEmpty else{throw videoError("已有导入任务，请稍后再试")};let id=call.getString("taskId","");_ = try require("series",try job(id)["seriesId"] as? String ?? "");var t=try require("tasks",id);t["failed"]=0;t["errors"]=[String]();t["state"]="running";put("tasks",t);try persist();active=id;cancelled=false;worker.async{defer{self.locked{self.active=""}};do{try self.process(id)}catch{self.finishError(id,error)}};return [:]}}
+    @objc func retry(_ call:CAPPluginCall){respond(call){guard active.isEmpty else{throw videoError("已有导入任务，请稍后再试")};let id=call.getString("taskId","");if try job(id)["migration"] == nil {_ = try require("series",try job(id)["seriesId"] as? String ?? "")};var t=try require("tasks",id);t["failed"]=0;t["errors"]=[String]();t["state"]="running";put("tasks",t);try persist();active=id;cancelled=false;worker.async{defer{self.locked{self.active=""}};do{try self.process(id)}catch{self.finishError(id,error)}};return [:]}}
+    private var allowsLocalProvision:Bool {
+        #if QIXI_LOCAL_VIDEO_PROVISION
+        return true
+        #else
+        return false
+        #endif
+    }
     @objc func receiveProvisioned(_ call:CAPPluginCall) {
-        guard locked({active.isEmpty}),FileManager.default.fileExists(atPath:staging.appendingPathComponent("manifest.json").path) else{call.resolve();return}
+        guard allowsLocalProvision else{call.resolve();return}
+        guard locked({active.isEmpty}) else{call.resolve();return}
+        guard FileManager.default.fileExists(atPath:staging.appendingPathComponent("manifest.json").path) else {
+            // A killed or upgraded app still has its verified files and pending staged sources.
+            // Resume only interrupted computer installs; never restart a user's cancelled task.
+            do {
+                let ids: [String] = try locked {
+                    guard active.isEmpty else { return [] }
+                    let ids=list("tasks").filter { task in
+                        guard task["state"] as? String == "interrupted",let id=task["id"] as? String,
+                              let j=try? job(id) else {return false}
+                        if j["migration"] != nil {return true}
+                        guard let sid=j["seriesId"] as? String,find("series",sid) != nil,let sources=j["sources"] as? [[String:Any]],!sources.isEmpty else { return false }
+                        return sources.allSatisfy { $0["uri"] as? String == "staged:" }
+                    }.compactMap { $0["id"] as? String }
+                    if let first=ids.first {
+                        for id in ids {var t=try require("tasks",id);t["state"]="running";t["failed"]=0;t["errors"]=[String]();put("tasks",t)}
+                        try persist();active=first;cancelled=false
+                    }
+                    return ids
+                }
+                if !ids.isEmpty {
+                    worker.async {
+                        defer { self.locked { self.active="" } }
+                        for id in ids {
+                            let skip=self.locked {if self.find("tasks",id)?["state"] as? String == "cancelled"{return true};self.active=id;self.cancelled=false;return false}
+                            if skip { continue }
+                            do {try self.process(id)} catch {self.finishError(id,error)}
+                        }
+                    }
+                }
+                call.resolve()
+            } catch { call.reject(error.localizedDescription) }
+            return
+        }
         let id=UUID().uuidString;locked{active=id;cancelled=false}
         worker.async {
             defer{self.locked{self.active=""}}
             do {
-                let file=self.staging.appendingPathComponent("manifest.json");let bytes=try Data(contentsOf:file);guard bytes.count<8*1024*1024,let manifest=try JSONSerialization.jsonObject(with:bytes) as? [String:Any],manifest["version"] as? Int == 1,let series=manifest["series"] as? [[String:Any]] else{throw videoError("预置清单无效或版本不支持")}
+                let file=self.staging.appendingPathComponent("manifest.json");let bytes=try Data(contentsOf:file);guard bytes.count<8*1024*1024,let manifest=try JSONSerialization.jsonObject(with:bytes) as? [String:Any],[1,2].contains(manifest["version"] as? Int ?? 0) else{throw videoError("预置清单无效或版本不支持")}
+                if manifest["version"] as? Int == 2 {
+                    try self.locked{try self.startMigration(id,manifest);try FileManager.default.removeItem(at:file)}
+                    call.resolve(["taskId":id]);do{try self.processMigration(id)}catch{self.finishError(id,error)};return
+                }
+                guard let series=manifest["series"] as? [[String:Any]] else{throw videoError("预置系列缺失")}
                 var ids=[String]()
                 try self.locked {for (i,set) in series.enumerated(){let tid=i==0 ? id : UUID().uuidString;let sources=(set["videos"] as? [[String:Any]] ?? []).map{entry -> [String:Any] in var s=entry;s["uri"]="staged:";s["status"]="pending";return s};try self.start(tid,sources:sources,category:set["categoryId"] as? String ?? "category-other",series:set["seriesId"] as? String ?? "",title:set["title"] as? String ?? "预置视频");ids.append(tid)};try FileManager.default.removeItem(at:file)}
                 call.resolve(["taskId":id]);for tid in ids {let skip=self.locked{if self.find("tasks",tid)?["state"] as? String == "cancelled"{return true};self.active=tid;self.cancelled=false;return false};if skip{continue};do{try self.process(tid)}catch{self.finishError(tid,error)}}
@@ -241,5 +338,66 @@ final class VideoLibraryPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDel
         for key in retired{jobs.removeValue(forKey:key)};state["jobs"]=jobs;remove("tasks",{retired.contains($0["id"] as? String ?? "")})
         if kind=="series"{remove("series",{$0["id"] as? String == id})};remove("chapters",{chapters.contains($0["id"] as? String ?? "")});remove("videos",{videos.contains($0["id"] as? String ?? "")});remove("progress",{videos.contains($0["id"] as? String ?? "")});remove("bookmarks",{videos.contains($0["videoId"] as? String ?? "")});try persist()
         let hashes=Set(list("videos").compactMap{$0["hash"] as? String});for file in try FileManager.default.contentsOfDirectory(at:media,includingPropertiesForKeys:nil) where file.pathExtension=="mp4" && !hashes.contains(file.deletingPathExtension().lastPathComponent){try FileManager.default.removeItem(at:file)}
+    }
+}
+
+
+/// Video-only merge shared by native export and provisioning; all other stores are out of scope.
+private enum VideoMigration {
+    static let fields: [(String,[String])] = [
+        ("categories",["id","title","order"]),("series",["id","categoryId","title","order"]),
+        ("chapters",["id","seriesId","title","path","order"]),("videos",["id","chapterId","title","hash","size","order"]),
+        ("progress",["id","position","duration","viewed","updatedAt"]),("bookmarks",["id","videoId","position","title"])
+    ]
+    static func metadata(_ state:[String:Any]) throws -> [String:Any] {
+        var result=[String:Any]()
+        for (key,columns) in fields {
+            guard let input=state[key] as? [[String:Any]] else{throw videoError("迁移数据不完整")}
+            var rows=[[String:Any]](),ids=Set<String>()
+            for item in input {
+                var row=[String:Any]()
+                for field in columns {guard let value=item[field] else{throw videoError("迁移字段缺失")};row[field]=value}
+                guard let id=row["id"] as? String,!id.isEmpty,id.count<=512,ids.insert(id).inserted else{throw videoError("迁移标识为空或重复")}
+                if columns.contains("order") {guard let order=row["order"] as? Int,order>=0,let title=row["title"] as? String,!title.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty else{throw videoError("迁移名称或顺序无效")}}
+                if key=="videos" {guard let h=row["hash"] as? String,h.range(of:"^[a-f0-9]{64}$",options:.regularExpression) != nil,let size=row["size"] as? NSNumber,size.int64Value>0 else{throw videoError("迁移视频校验信息无效")}}
+                for field in ["position","duration","updatedAt"] where columns.contains(field) {guard let n=row[field] as? NSNumber,n.doubleValue.isFinite,n.doubleValue>=0 else{throw videoError("迁移播放记录无效")}}
+                rows.append(row)
+            }
+            result[key]=rows
+        }
+        for (key,field,parent) in [("series","categoryId","categories"),("chapters","seriesId","series"),("videos","chapterId","chapters"),("progress","id","videos"),("bookmarks","videoId","videos")] {
+            let ids=Set((result[parent] as? [[String:Any]] ?? []).compactMap{$0["id"] as? String})
+            for item in result[key] as? [[String:Any]] ?? [] {guard let ref=item[field] as? String,ids.contains(ref) else{throw videoError("迁移目录或视频引用缺失")}}
+        }
+        return result
+    }
+    static func sameBookmark(_ a:[String:Any],_ b:[String:Any])->Bool {
+        a["videoId"] as? String == b["videoId"] as? String && a["title"] as? String == b["title"] as? String && (a["position"] as? NSNumber)?.doubleValue == (b["position"] as? NSNumber)?.doubleValue
+    }
+    static func merge(_ destination:[String:Any],_ input:[String:Any],_ receipt:String) throws -> [String:Any] {
+        guard receipt.range(of:"^[a-f0-9]{64}$",options:.regularExpression) != nil else{throw videoError("迁移回执无效")}
+        let source=try metadata(input);var next=destination,receipts=destination["migrationReceipts"] as? [String:Bool] ?? [:]
+        if receipts[receipt]==true{return next}
+        for (key,_) in fields {
+            var rows=next[key] as? [[String:Any]] ?? []
+            for var item in source[key] as? [[String:Any]] ?? [] {
+                let old=rows.first{$0["id"] as? String == item["id"] as? String}
+                if let old,key=="videos" {guard old["hash"] as? String == item["hash"] as? String,(old["size"] as? NSNumber)?.int64Value == (item["size"] as? NSNumber)?.int64Value,old["chapterId"] as? String == item["chapterId"] as? String else{throw videoError("视频标识冲突，未覆盖已有课程")}}
+                if let old,key=="chapters",old["seriesId"] as? String != item["seriesId"] as? String {throw videoError("章节标识冲突，未覆盖已有目录")}
+                if let old,key=="progress",(old["updatedAt"] as? NSNumber)?.doubleValue ?? 0 >= (item["updatedAt"] as? NSNumber)?.doubleValue ?? 0 {continue}
+                if let old,key=="bookmarks" {
+                    if sameBookmark(old,item){continue}
+                    let millis=Int64(((item["position"] as? NSNumber)?.doubleValue ?? 0)*1000+0.5)
+                    let seed="\(item["id"] as? String ?? "")|\(item["videoId"] as? String ?? "")|\(item["title"] as? String ?? "")|\(millis)"
+                    let base="migration-"+SHA256.hash(data:Data(seed.utf8)).map{String(format:"%02x",$0)}.joined()
+                    var candidate=base,n=0
+                    while let conflict=rows.first(where:{$0["id"] as? String == candidate}),!sameBookmark(conflict,item){n+=1;candidate=base+"-\(n)"}
+                    item["id"]=candidate
+                }
+                if let i=rows.firstIndex(where:{$0["id"] as? String == item["id"] as? String}){rows[i]=item}else{rows.append(item)}
+            }
+            next[key]=rows
+        }
+        receipts[receipt]=true;next["migrationReceipts"]=receipts;return next
     }
 }

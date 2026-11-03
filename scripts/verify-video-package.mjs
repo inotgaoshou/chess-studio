@@ -10,7 +10,7 @@ function scan(folder) {
   for (const item of readdirSync(folder)) {
     const path = join(folder,item), info = lstatSync(path);
     if (info.isSymbolicLink()) throw new Error(`打包资源不允许符号链接：${path}`);
-    if (/^(VideoLibrary|video-staging)$/i.test(item) || /\.mp4$/i.test(item)) throw new Error(`拒绝将私人课程或暂存内容放进安装包：${path}`);
+    if (/^(VideoLibrary|video-staging|private-video)$/i.test(item) || /\.mp4$/i.test(item)) throw new Error(`拒绝将私人课程或暂存内容放进安装包：${path}`);
     if (info.isDirectory()) scan(path);
   }
 }

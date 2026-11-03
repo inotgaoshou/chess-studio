@@ -1,4 +1,5 @@
 import { VideoLearning, VideoLearningEntry } from "./video/VideoLearning";
+import { SkinPreviewDialog } from "./SkinPreviewDialog";
 import { BranchStrip } from "../../desktop/src/BranchStrip";
 import { branchBadgePoint, branchChoiceColor } from "./branchPresentation";
 import { extendManualContinuation, manualContinuations, preserveManualMainline, reuseSavedBranchIds, type ManualContinuation } from "./manualContinuation";
@@ -54,7 +55,7 @@ import { ManualLibraryDialog } from "./ManualLibraryDialog";
 import { FittedBoardArea } from "./FittedBoardArea";
 import { ManualSaveDialog, isImeEnter, type ManualSaveValues } from "./ManualSaveDialog";
 import { BookOpen, CalendarCheck2, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, CircleCheckBig, CircleHelp, ClipboardCopy, ClipboardList, Clock3, CloudUpload, Cpu, Database, Ellipsis, Eye, EyeOff, FilePenLine, FileUp, FlipVertical2, Folder, GitBranch, GraduationCap, Home, Lightbulb, Link, ListRestart, LockKeyhole, LogIn, Minus, Palette, Pause, Pencil, Play, Plus, RefreshCw, RotateCcw, Search, Settings2, Square as StopIcon, Trash2, Undo2, UserRound, X, Zap } from "lucide-react";
-import { type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { trainingStore } from "./store";
 import type { Attempt, BoardPiece, BoardState, LocalManualAnalysisSummary, LocalManualFolder, LocalManualGame, MobileWorkspaceMode, RuleMode, SolutionMove, TrainingLibrary, TrainingProblem } from "./types";
 import { acceptsMove, boardAt, legalTargetsAfter, cancelPikafishSearch, chineseLine, hasLocalPikafish, parseCbl, parseCblGames, queryCloudBook, queryPikafishAnalysis, queryVariationAnalysis, queryPikafishReply, type CloudBookMove, type PikafishAnalysis, type PikafishAnalysisLine } from "./wasm";
@@ -63,8 +64,9 @@ import { movementDuration, cancelTrainingFeedback, prepareTrainingFeedbackAudio,
 import { type PreferredOrientation } from "./orientation";
 import { useScreenOrientation } from "./useScreenOrientation";
 import { usePageVisible, usePositionAnalysis } from "./usePositionAnalysis";
-import { DEFAULT_SKIN_ID, LEGACY_DEFAULT_SKIN_ID, SKIN_CATALOG, normalizeSkinId, skinById, type SkinCatalogItem } from "./skinCatalog";
+import { DEFAULT_SKIN_ID, LEGACY_DEFAULT_SKIN_ID, GOLDEN_TIMBER_SKIN_ID, IVORY_TIMBER_SKIN_ID, SKIN_CATALOG, normalizeSkinId, skinById, type SkinCatalogItem } from "./skinCatalog";
 import authoredSkins from "./authoredSkinCatalog.json";
+import defaultSkinGeometry from "./defaultSkinGeometry.json";
 import authoredSkinGeometry from "./authoredSkinGeometry.json";
 import referenceSkinGeometry from "./referenceSkinGeometry.json";
 import "./authoredSkins.css";
@@ -262,11 +264,9 @@ const ANALYSIS_ARROWS_VISIBLE_KEY = "xiangqi-training-analysis-arrows-visible";
 const STUDY_ENGINE_ENABLED_KEY = "xiangqi-training-study-engine-enabled";
 const BOARD_ART_WIDTH = 1120;
 const BOARD_ART_HEIGHT = 1240;
-const QINGXIN_COLUMNS = [83, 213, 330, 444, 559, 675, 789, 906, 1035];
-const QINGXIN_ROWS = [82, 192, 306, 425, 546, 676, 791, 909, 1023, 1136];
 const BLACK_FILE_LABELS = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
 const RED_FILE_LABELS = ["一", "二", "三", "四", "五", "六", "七", "八", "九"];
-const DEFAULT_BOARD_GEOMETRY: BoardGeometry = { columns: QINGXIN_COLUMNS, rows: QINGXIN_ROWS };
+const DEFAULT_BOARD_GEOMETRY: BoardGeometry = defaultSkinGeometry;
 
 function mobileRouteFromPath(pathname = window.location.pathname): MobileRoute {
   if (pathname === "/video-learning") return "video-learning";
@@ -362,6 +362,8 @@ const BOARD_GEOMETRY_BY_SKIN: Record<string, BoardGeometry> = {
   ...Object.fromEntries(authoredSkins.map((skin) => [skin.id, authoredSkinGeometry])),
   ...referenceSkinGeometry,
   "qingxin-zhuyun": DEFAULT_BOARD_GEOMETRY,
+  [GOLDEN_TIMBER_SKIN_ID]: DEFAULT_BOARD_GEOMETRY,
+  [IVORY_TIMBER_SKIN_ID]: DEFAULT_BOARD_GEOMETRY,
   "skin-bb439484": {
     columns: [83, 203, 324, 442, 561, 678, 796, 913, 1034],
     rows: [82, 200, 317, 433, 554, 679, 793, 910, 1027, 1148],
@@ -525,7 +527,7 @@ function sideToMove(startingFen: string, moves: string[]) {
 
 function pieceAssetPath(code: string, skin: string) {
   const id = normalizeSkinId(skin);
-  return `/skins/${id}/${id === DEFAULT_SKIN_ID ? "retina/" : ""}${code}.png`;
+  return `/skins/${id}/${id === DEFAULT_SKIN_ID || skinById(id).highResolutionPieces ? "retina/" : ""}${code}.png`;
 }
 
 function trainingPieceAsset(piece: BoardPiece, skin: string) {
@@ -791,17 +793,25 @@ function canvasToPngBytes(canvas: HTMLCanvasElement) {
   });
 }
 
-async function renderBoardSnapshotPng({ pieces, boardSkin, pieceSkin, riverText, riverTextColor, riverTextSize, supportsCustomRiverText, flipped }: { pieces: BoardPiece[]; boardSkin: string; pieceSkin: string; riverText: string; riverTextColor: string; riverTextSize: number; supportsCustomRiverText: boolean; flipped: boolean }) {
+export async function renderBoardSnapshotPng({ pieces, boardSkin, pieceSkin, riverText, riverTextColor, riverTextSize, supportsCustomRiverText, flipped }: { pieces: BoardPiece[]; boardSkin: string; pieceSkin: string; riverText: string; riverTextColor: string; riverTextSize: number; supportsCustomRiverText: boolean; flipped: boolean }) {
   const normalizedBoardSkin = normalizeSkinId(boardSkin);
   const normalizedPieceSkin = normalizeSkinId(pieceSkin);
   const geometry = boardGeometryForSkin(normalizedBoardSkin);
   const boardImage = riverText && supportsCustomRiverText ? "board-river-blank.png" : "board.png";
   const canvas = document.createElement("canvas");
-  canvas.width = BOARD_ART_WIDTH;
-  canvas.height = BOARD_ART_HEIGHT;
+  const timberBoard = [GOLDEN_TIMBER_SKIN_ID, IVORY_TIMBER_SKIN_ID].includes(normalizedBoardSkin);
+  // Transparent margin retains the raised board's edge and full cast shadow.
+  const padding = timberBoard ? 72 : 0;
+  canvas.width = BOARD_ART_WIDTH + padding * 2;
+  canvas.height = BOARD_ART_HEIGHT + padding * 2;
   const context = canvas.getContext("2d");
   if (!context) throw new Error("当前浏览器不支持棋盘截图 Canvas");
+  context.translate(padding, padding);
   const board = await loadSkinImage(`/skins/${normalizedBoardSkin}/${boardImage}`);
+  if (timberBoard) {
+    const depth = await loadSkinImage(`/skins/${normalizedBoardSkin}/board-depth.png`);
+    context.drawImage(depth, -48, -48, BOARD_ART_WIDTH + 96, BOARD_ART_HEIGHT + 96);
+  }
   context.drawImage(board, 0, 0, BOARD_ART_WIDTH, BOARD_ART_HEIGHT);
   if (normalizedBoardSkin === DEFAULT_SKIN_ID) {
     const topShade = context.createLinearGradient(0, 0, 0, 96);
@@ -823,11 +833,17 @@ async function renderBoardSnapshotPng({ pieces, boardSkin, pieceSkin, riverText,
     (context as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = "2px";
     context.fillText(riverText, BOARD_ART_WIDTH / 2, BOARD_ART_HEIGHT * 0.5);
   }
+  const pieceShadow = (normalizedPieceSkin === GOLDEN_TIMBER_SKIN_ID || normalizedPieceSkin === IVORY_TIMBER_SKIN_ID) && pieces.length
+    ? await loadSkinImage(`/skins/${normalizedPieceSkin}/piece-shadow.png`) : undefined;
   for (const piece of pieces) {
     const point = boardPoint(piece, geometry, flipped);
     const image = await loadSkinImage(trainingPieceAsset(piece, normalizedPieceSkin));
     const x = point.x - 60;
     const y = point.y - 60;
+    if (pieceShadow) {
+      const shadowSize = normalizedPieceSkin === IVORY_TIMBER_SKIN_ID ? 150 : 120;
+      context.drawImage(pieceShadow, x, y, shadowSize, shadowSize);
+    }
     if (normalizedPieceSkin === DEFAULT_SKIN_ID) {
       context.save();
       context.shadowColor = "rgba(53, 39, 24, .33)";
@@ -1080,7 +1096,7 @@ export function Board({ pieces, selected, legalTargets = [], lastMove, hintMove,
     else if (onMove) onMove(gesture.from, target);
     else onSquare(target);
   };
-  return <div className={`board-shell${AUTHORED_SKIN_IDS.has(normalizedBoardSkin) ? " authored-skin" : ""}${normalizedBoardSkin === "xuan-paper" ? " reference-wood-skin" : ""}${normalizedBoardSkin === DEFAULT_SKIN_ID ? " default-board-depth" : ""}${normalizeSkinId(pieceSkin) === DEFAULT_SKIN_ID ? " default-piece-depth" : ""}`}><div ref={boardRef} className={`xiangqi-board ${setupMode ? "setup-board" : ""} ${feedback ? `move-feedback ${feedback}` : ""} ${dragging ? "dragging-piece" : ""}`} style={boardStyle} aria-label="残局棋盘" onPointerDownCapture={(event) => {
+  return <div className={`board-shell${AUTHORED_SKIN_IDS.has(normalizedBoardSkin) ? " authored-skin" : ""}${normalizedBoardSkin === "xuan-paper" ? " reference-wood-skin" : ""}${normalizedBoardSkin === DEFAULT_SKIN_ID ? " default-board-depth" : ""}${normalizeSkinId(pieceSkin) === DEFAULT_SKIN_ID ? " default-piece-depth" : ""}${normalizedBoardSkin === GOLDEN_TIMBER_SKIN_ID ? " golden-timber-board" : ""}${normalizedBoardSkin === IVORY_TIMBER_SKIN_ID ? " ivory-timber-board" : ""}${normalizeSkinId(pieceSkin) === GOLDEN_TIMBER_SKIN_ID ? " golden-timber-pieces" : ""}${normalizeSkinId(pieceSkin) === IVORY_TIMBER_SKIN_ID ? " ivory-timber-pieces" : ""}`}><div ref={boardRef} className={`xiangqi-board ${setupMode ? "setup-board" : ""} ${feedback ? `move-feedback ${feedback}` : ""} ${dragging ? "dragging-piece" : ""}`} style={boardStyle} aria-label="残局棋盘" onPointerDownCapture={(event) => {
     unlockTrainingFeedbackAudio();
     if (event.isPrimary === false || (pointerGesture.current && pointerGesture.current.pointerId !== event.pointerId)) cancelPointer();
   }} onPointerMove={(event) => {
@@ -1104,7 +1120,7 @@ export function Board({ pieces, selected, legalTargets = [], lastMove, hintMove,
     {(branchMoves.length > 1 || analysisMoves.length > 0) && <AnalysisArrowLayer moves={branchMoves.length > 1 ? branchMoves : analysisMoves} branches={branchMoves.length > 1} activeIndex={activeAnalysis} flipped={flipped} geometry={geometry} pieces={pieces}/>}
     <LegalTargetLayer targets={legalTargets} flipped={flipped} geometry={geometry}/>
     <BoardMarkerLayer selected={selected} lastMove={last} flipped={flipped} geometry={geometry}/>
-    {ALL_SQUARES.map((square, index) => { const piece = pieces.find((item) => item.row === square.row && item.col === square.col); const isSelected = sameSquare(selected, square); const isLegalTarget = legalTargets.some((target) => sameSquare(target, square)); const isDraggingOrigin = sameSquare(dragging?.from, square); const isDragTarget = sameSquare(dragging?.target, square); const isLastFrom = last?.from.row === square.row && last.from.col === square.col; const isLastTo = last?.to.row === square.row && last.to.col === square.col; const highlighted = hint?.row === square.row && hint.col === square.col; const position = boardPointStyle(square, geometry, flipped); return <button key={index} style={position} className={`board-square ${isSelected ? "selected" : ""} ${isLegalTarget ? "legal-target" : ""} ${isDraggingOrigin ? "drag-origin" : ""} ${isDragTarget ? "drag-target" : ""} ${isLastFrom ? "last-from" : ""} ${isLastTo ? "last-to" : ""} ${sameSquare(movingSquares?.to,square)?"animating-destination":""} ${highlighted ? "hint" : ""}`} onPointerDown={(event) => {
+    {ALL_SQUARES.map((square, index) => { const piece = pieces.find((item) => item.row === square.row && item.col === square.col); const isSelected = sameSquare(selected, square); const isLegalTarget = legalTargets.some((target) => sameSquare(target, square)); const isDraggingOrigin = sameSquare(dragging?.from, square); const isDragTarget = sameSquare(dragging?.target, square); const isLastFrom = last?.from.row === square.row && last.from.col === square.col; const isLastTo = last?.to.row === square.row && last.to.col === square.col; const highlighted = hint?.row === square.row && hint.col === square.col; const position = boardPointStyle(square, geometry, flipped); return <button key={index} style={position} data-display-row={displaySquare(square, flipped).row} className={`board-square ${isSelected ? "selected" : ""} ${isLegalTarget ? "legal-target" : ""} ${isDraggingOrigin ? "drag-origin" : ""} ${isDragTarget ? "drag-target" : ""} ${isLastFrom ? "last-from" : ""} ${isLastTo ? "last-to" : ""} ${sameSquare(movingSquares?.to,square)?"animating-destination":""} ${highlighted ? "hint" : ""}`} onPointerDown={(event) => {
       if (event.isPrimary === false || event.button !== 0) return;
       handledPointerClick.current = false;
       pointerGesture.current = { pointerId: event.pointerId, from: square, piece, startX: event.clientX, startY: event.clientY, moved: false, captureTarget: event.currentTarget };
@@ -1221,7 +1237,8 @@ const SKIN_BOARD_PREVIEW_PIECES = [
 
 function SkinBoardEffectPreview({ boardSkin, pieceSkin }: { boardSkin: string; pieceSkin: string }) {
   const geometry = boardGeometryForSkin(boardSkin);
-  return <div className={`skin-board-effect-preview${boardSkin === DEFAULT_SKIN_ID ? " default-board-depth" : ""}${pieceSkin === DEFAULT_SKIN_ID ? " default-piece-depth" : ""}`} aria-label="棋盘和棋子整盘预览" style={{ backgroundImage: `url("/skins/${boardSkin}/board.png")` }}>
+  return <div className={`skin-board-effect-preview${boardSkin === DEFAULT_SKIN_ID ? " default-board-depth" : ""}${pieceSkin === DEFAULT_SKIN_ID ? " default-piece-depth" : ""}${boardSkin === GOLDEN_TIMBER_SKIN_ID ? " golden-timber-board" : ""}${boardSkin === IVORY_TIMBER_SKIN_ID ? " ivory-timber-board" : ""}${pieceSkin === GOLDEN_TIMBER_SKIN_ID ? " golden-timber-pieces" : ""}${pieceSkin === IVORY_TIMBER_SKIN_ID ? " ivory-timber-pieces" : ""}`} aria-label="棋盘和棋子整盘预览" style={{ backgroundImage: `url("/skins/${boardSkin}/board.png")` }}>
+    {pieceSkin === IVORY_TIMBER_SKIN_ID && SKIN_BOARD_PREVIEW_PIECES.map((item) => <img className="skin-piece-cast-shadow" key={`shadow-${item.row}-${item.col}`} src="/skins/ivory-timber/piece-shadow.png" alt="" style={{ left: `${(geometry.columns[item.col] + 15) / BOARD_ART_WIDTH * 100}%`, top: `${(geometry.rows[item.row] + 15) / BOARD_ART_HEIGHT * 100}%` }}/>)}
     {SKIN_BOARD_PREVIEW_PIECES.map((item) => <img key={`${item.piece}-${item.row}-${item.col}`} src={pieceAssetPath(item.piece, pieceSkin)} alt="" style={{ left: `${geometry.columns[item.col] / BOARD_ART_WIDTH * 100}%`, top: `${geometry.rows[item.row] / BOARD_ART_HEIGHT * 100}%` }}/>)}
   </div>;
 }
@@ -1246,8 +1263,36 @@ function skinCardName(skin: SkinCatalogItem, index?: number) {
   return <>{displayIndex}. {skin.group === "3d" && <em>3D</em>}{skin.name}</>;
 }
 
-function StudySkinSettings({ boardSkin, pieceSkin, boardSkinInfo, riverText, riverTextColor, riverTextSize, onBoardSkinChange, onPieceSkinChange, onUseSkinSet, onRiverTextChange, onRiverTextColorChange, onRiverTextSizeChange, initiallyExpanded = false }: { boardSkin: string; pieceSkin: string; boardSkinInfo: SkinCatalogItem; riverText: string; riverTextColor: string; riverTextSize: number; onBoardSkinChange(id: string): void; onPieceSkinChange(id: string): void; onUseSkinSet(id: string): void; onRiverTextChange(value: string): void; onRiverTextColorChange(value: string): void; onRiverTextSizeChange(value: number): void; initiallyExpanded?: boolean }) {
+const SKIN_PREVIEW_FULL_PIECES: BoardPiece[] = (["black", "red"] as const).flatMap(color => {
+  const red = color === "red";
+  const kinds = ["rook", "horse", "elephant", "advisor", "king", "advisor", "elephant", "horse", "rook"];
+  const labels = red ? "车马相仕帅仕相马车" : "车马象士将士象马车";
+  return [
+    ...kinds.map((kind, col) => ({ row: red ? 9 : 0, col, color, kind, label: labels[col] })),
+    ...[1, 7].map(col => ({ row: red ? 7 : 2, col, color, kind: "cannon", label: "炮" })),
+    ...[0, 2, 4, 6, 8].map(col => ({ row: red ? 6 : 3, col, color, kind: "pawn", label: red ? "兵" : "卒" })),
+  ];
+});
+
+function SkinLargePreview({ boardSkin, pieceSkin, riverText, riverTextColor, riverTextSize, onClose }: {
+  boardSkin: string; pieceSkin: string; riverText: string; riverTextColor: string; riverTextSize: number; onClose(): void;
+}) {
+  const [selected, setSelected] = useState<Square>();
+  const [flipped, setFlipped] = useState(false);
+  return <SkinPreviewDialog boardName={skinById(boardSkin).name} pieceName={skinById(pieceSkin).name} onClose={onClose} onFlip={() => setFlipped(value => !value)}>
+    <Board pieces={SKIN_PREVIEW_FULL_PIECES} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={riverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={skinById(boardSkin).supportsCustomRiverText} flipped={flipped} selected={selected} onSquare={square => setSelected(current => SKIN_PREVIEW_FULL_PIECES.some(piece => sameSquare(piece, square)) && !sameSquare(current, square) ? square : undefined)}/>
+  </SkinPreviewDialog>;
+}
+
+export function StudySkinSettings({ boardSkin, pieceSkin, boardSkinInfo, riverText, riverTextColor, riverTextSize, onBoardSkinChange, onPieceSkinChange, onUseSkinSet, onRiverTextChange, onRiverTextColorChange, onRiverTextSizeChange, initiallyExpanded = false }: { boardSkin: string; pieceSkin: string; boardSkinInfo: SkinCatalogItem; riverText: string; riverTextColor: string; riverTextSize: number; onBoardSkinChange(id: string): void; onPieceSkinChange(id: string): void; onUseSkinSet(id: string): void; onRiverTextChange(value: string): void; onRiverTextColorChange(value: string): void; onRiverTextSizeChange(value: number): void; initiallyExpanded?: boolean }) {
   const [expanded, setExpanded] = useState(initiallyExpanded);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const closePreview = useCallback(() => setPreviewOpen(false), []);
+  const openPreview = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    // Safari touch clicks do not focus buttons automatically.
+    event.currentTarget.focus({ preventScroll: true });
+    setPreviewOpen(true);
+  };
   const board = skinById(boardSkin);
   const piece = skinById(pieceSkin);
   const extraSkins = SKIN_CATALOG.filter((skin) => skin.id !== DEFAULT_SKIN_ID);
@@ -1257,29 +1302,32 @@ function StudySkinSettings({ boardSkin, pieceSkin, boardSkinInfo, riverText, riv
       <Palette/><span><b>棋盘/棋子皮肤</b><small>{board.name} / {piece.name}</small></span><em className="study-skin-toggle"><i className="closed">展开</i><i className="opened">收起</i></em>
     </button>
     {expanded && <>
-      <section className="study-skin-board-effect"><div><b>当前效果</b><button type="button" disabled={usingDefaultSkin} onClick={() => onUseSkinSet(DEFAULT_SKIN_ID)}>恢复默认</button></div><SkinBoardEffectPreview boardSkin={boardSkin} pieceSkin={pieceSkin}/></section>
+      <section className="study-skin-board-effect"><div><b>当前搭配</b><dl className="skin-current-selection"><div><dt>棋盘</dt><dd>{board.name}</dd></div><div><dt>棋子</dt><dd>{piece.name}</dd></div></dl><div className="skin-current-actions"><button type="button" className="skin-preview-button" aria-label="预览当前棋盘和棋子" onClick={openPreview}><Eye/>预览</button><button type="button" disabled={usingDefaultSkin} onClick={() => onUseSkinSet(DEFAULT_SKIN_ID)}>恢复默认</button></div></div><button type="button" className="skin-current-thumbnail" aria-label="放大当前皮肤" onClick={openPreview}><SkinBoardEffectPreview boardSkin={boardSkin} pieceSkin={pieceSkin}/></button></section>
       <section className="study-skin-card-library" aria-label="皮肤库">
         <header><b>皮肤库</b><small>默认清新竹韵，另有 {extraSkins.length} 套方案</small></header>
-        <div>{extraSkins.map((skin, index) => <button key={skin.id} type="button" className={boardSkin === skin.id && pieceSkin === skin.id ? "active" : ""} onClick={() => onUseSkinSet(skin.id)}>
+        <div>{extraSkins.map((skin, index) => <button key={skin.id} type="button" className={boardSkin === skin.id || pieceSkin === skin.id ? "active" : ""} aria-pressed={boardSkin === skin.id && pieceSkin === skin.id} onClick={() => onUseSkinSet(skin.id)}>
           <SkinBoardEffectPreview boardSkin={skin.id} pieceSkin={skin.id}/>
           <span>{skinCardName(skin, index)}</span>
+          <div className="skin-card-state" aria-hidden="true">{boardSkin === skin.id && <i>✓ 棋盘</i>}{pieceSkin === skin.id && <i>✓ 棋子</i>}</div>
         </button>)}</div>
       </section>
       <details className="study-skin-mix-settings">
         <summary>高级：棋盘/棋子混搭</summary>
         <section className="study-skin-mix-panel" aria-label="只更换棋盘">
-          <header><b>棋盘</b><small>只更换棋盘，可与任意棋子搭配</small></header>
+          <header><b>棋盘</b><small>只更换棋盘</small><button type="button" className="skin-preview-button" aria-label="预览棋盘搭配" onClick={openPreview}><Eye/>预览</button></header>
           <div className="study-skin-mix-grid">
-            {SKIN_CATALOG.map((skin) => <button key={`board-${skin.id}`} type="button" className={boardSkin === skin.id ? "active" : ""} onClick={() => onBoardSkinChange(skin.id)}>
+            {SKIN_CATALOG.map((skin) => <button key={`board-${skin.id}`} type="button" className={boardSkin === skin.id ? "active" : ""} aria-pressed={boardSkin === skin.id} onClick={() => onBoardSkinChange(skin.id)}>
+              {boardSkin === skin.id && <CircleCheckBig className="skin-choice-mark" aria-hidden="true"/>}
               <SkinPreview skinId={skin.id} previewKind="board" large/>
               <span>{skinCardName(skin)}</span>
             </button>)}
           </div>
         </section>
         <section className="study-skin-mix-panel" aria-label="只更换棋子">
-          <header><b>棋子</b><small>只更换棋子，可与任意棋盘搭配</small></header>
+          <header><b>棋子</b><small>只更换棋子</small><button type="button" className="skin-preview-button" aria-label="预览棋子搭配" onClick={openPreview}><Eye/>预览</button></header>
           <div className="study-skin-mix-grid">
-            {SKIN_CATALOG.map((skin) => <button key={`piece-${skin.id}`} type="button" className={pieceSkin === skin.id ? "active" : ""} onClick={() => onPieceSkinChange(skin.id)}>
+            {SKIN_CATALOG.map((skin) => <button key={`piece-${skin.id}`} type="button" className={pieceSkin === skin.id ? "active" : ""} aria-pressed={pieceSkin === skin.id} onClick={() => onPieceSkinChange(skin.id)}>
+              {pieceSkin === skin.id && <CircleCheckBig className="skin-choice-mark" aria-hidden="true"/>}
               <SkinPreview skinId={skin.id} previewKind="piece" large/>
               <span>{skinCardName(skin)}</span>
             </button>)}
@@ -1294,6 +1342,7 @@ function StudySkinSettings({ boardSkin, pieceSkin, boardSkinInfo, riverText, riv
         <small>{boardSkinInfo.supportsCustomRiverText ? "留空保留皮肤原有河界文字。" : "当前棋盘缺少空河界图，暂不支持覆盖。"}</small>
       </details>
     </>}
+    {previewOpen && <SkinLargePreview boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={riverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} onClose={closePreview}/>}
   </section>;
 }
 
@@ -7371,7 +7420,7 @@ export function App() {
   const rehearsalServer=teachingClient.serverUrl();
   useEffect(()=>{setRehearsalGame(undefined);},[teachingAuth?.user.id,teachingAuth?.user.orgId,mobileRoute,rehearsalServer]);
   const rehearsalOverlay=rehearsalGame?<main className="training-app rehearsal-page"><LineRehearsal key={`${rehearsalServer}:${teachingAuth?.user.id}:${rehearsalGame}`} gameId={rehearsalGame} request={rehearsalRequest} onClose={()=>{setRehearsalGame(undefined);window.dispatchEvent(new Event("teaching-rehearsal-updated"));}} renderBoard={(state,selected,onSquare,disabled)=><Board pieces={state.board.pieces} selected={selected} lastMove={state.history.at(-1)?.iccs} boardSkin={boardSkin} pieceSkin={pieceSkin} riverText={activeRiverText} riverTextColor={riverTextColor} riverTextSize={riverTextSize} supportsCustomRiverText={boardSkinInfo.supportsCustomRiverText} onSquare={square=>{if(!disabled)onSquare(square.row,square.col);}}/>}/></main>:null;
-  return <>{rehearsalOverlay}<div style={{display:rehearsalGame?"none":"contents"}}><div className={`training-app mobile-tab-${mobileTab} tablet-navigation-${tabletNavigationPosition} ${studyMode ? "study-active" : ""} ${manualMode ? "manual-active" : ""} ${revealed && !studyMode && !manualMode ? "answer-revealed" : ""}`}>
+  return <>{rehearsalOverlay}<div style={{display:rehearsalGame?"none":"contents"}}><div className={`training-app ${mobileLayout && mobileRoute === "video-learning" ? "video-active" : ""} mobile-tab-${mobileTab} tablet-navigation-${tabletNavigationPosition} ${studyMode ? "study-active" : ""} ${manualMode ? "manual-active" : ""} ${revealed && !studyMode && !manualMode ? "answer-revealed" : ""}`}>
     {teachingAuth?.user.role === "student" && <CheckinSyncBridge key={`${teachingAuth.user.id}:${teachingAuth.user.orgId}`} auth={teachingAuth} />}
     {mobileLayout && mobileRoute === "checkin" && !studyMode && !manualMode && (teachingAuth?.user.role === "student" ? <MobileStudentCheckin auth={teachingAuth} onBack={() => navigateMobileRoute("home")} /> : <main className="mobile-practice-page"><p>请登录学生账号查看打卡。</p><button onClick={() => setTeachingAccountOpen(true)}>登录</button><button onClick={() => navigateMobileRoute("home")}>返回首页</button></main>)}
     <header className={`app-header ${studyMode || manualMode ? "study-mode-header" : ""}`}>

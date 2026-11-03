@@ -33,6 +33,7 @@ try {
   page=await browser.newPage({viewport:{width:390,height:844},hasTouch:true});page.setDefaultTimeout(8000);
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.addInitScript(()=>{Object.defineProperty(navigator,'maxTouchPoints',{get:()=>5});localStorage.setItem('xiangqi-training-mobile-onboarding-v1','done');localStorage.setItem('xiangqi-teaching-session-server','http://127.0.0.1:8090');localStorage.setItem('xiangqi-ttxq-mirror-owner','http://127.0.0.1:8090::variation-coach');});
+  if(process.env.TEST_SKIN)await page.addInitScript(skin=>{localStorage.setItem('xiangqi-training-board-skin',skin);localStorage.setItem('xiangqi-training-piece-skin',skin);},process.env.TEST_SKIN);
   await page.route('**/api/v1/**',async route=>{const path=new URL(route.request().url()).pathname;let body=[];const user={id:'variation-coach',orgId:'school',role:'coach',displayName:'回归账号',organizations:[]};if(path.endsWith('/auth/refresh'))body={token:'fixture',expiresAt:'2099-01-01T00:00:00Z',user};else if(path.endsWith('/auth/me'))body=user;else if(path.endsWith('/capabilities'))body={};else if(path.endsWith('/analysis')){const {fen}=route.request().postDataJSON();body={elapsedMs:1500,lines:[{multipv:1,depth:22,scoreCp:200,nodes:12345,nps:8000,pv:[fen.split(' ')[1]==='b'?'h9g7':'a3a4']}]};}await route.fulfill({contentType:'application/json',body:JSON.stringify(body)});});
   await page.goto((process.env.PRACTICE_URL||'http://127.0.0.1:1422')+'/account');await page.getByRole('button',{name:/我的棋谱 录谱/}).waitFor();
   await page.evaluate(async()=>{const source=await(await fetch('/src/App.tsx')).text();window.fixtureStoreUrl=source.match(/from \"(\/src\/store\.ts[^\"]*)\"/)[1];});
@@ -132,7 +133,7 @@ try {
   await readOnlyPanel.getByRole('button',{name:'关闭小棋盘'}).click();await readOnlyPanel.waitFor({state:'hidden'});
   console.log('PASS phone read-only: personal copy, original untouched, comments/mainline preserved');
   // Real study edits made while the panel is minimized must survive the first save dialog.
-  await page.getByRole('button',{name:'菜单',exact:true}).click();await page.getByRole('button',{name:'棋盘与引擎设置',exact:true}).click();
+  await page.getByRole('button',{name:'更多功能',exact:true}).click();await page.getByRole('button',{name:'棋盘与引擎设置',exact:true}).click();
   await page.getByRole('button',{name:'切换到拆棋',exact:true}).click();
   const studyBoard=page.locator('.study-play-board-area > .board-shell .xiangqi-board');await studyBoard.waitFor();
   await step(studyBoard,'b0 红马','c2');await studyBoard.getByRole('button',{name:'c2 红马',exact:true}).waitFor();
@@ -171,6 +172,8 @@ try {
   console.log('PASS phone study: latest original/main-board/mini branches preserved, metadata above panel, same-FEN source reset rejected, explicit copy retained');
   assert.deepEqual(errors,[]);
   await page.close();
+  // Mobile skin changes do not need a second desktop application server.
+  if(process.env.VARIATION_MOBILE_ONLY==='1')return;
   page=await browser.newPage({viewport:{width:1440,height:1000}});page.setDefaultTimeout(8000);
   const desktopErrors=[];page.on('pageerror',e=>desktopErrors.push(e.message));
   await page.route('**/chessdb.php**',r=>r.fulfill({body:'status:unknown'}));
